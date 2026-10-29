@@ -163,7 +163,7 @@ class MenuChoices(unittest.TestCase):
         self.assertNotIn("recommended", quiet)
         normal = settings_summary("2024", "2014", True, "peek", "normal")[-1]
         self.assertIn("**Normal** (recommended) — how much DMbot says", normal)
-        self.assertIn("press ⚙️ Settings on the pinned card in your DM screen", normal)
+        self.assertIn("press ⚙️ Settings in the DM Bot channel", normal)
 
     def test_campaign_names_are_cut_for_a_phone(self) -> None:
         from dmbot.ui.logic import NAME_LABEL_MAX, name_label
@@ -254,3 +254,21 @@ class UploadLimit(unittest.TestCase):
         self.assertEqual(logic.upload_limit(50 * 1024 * 1024), 50 * 1024 * 1024)
         self.assertEqual(logic.upload_limit(8 * 1024 * 1024), logic.FILE_MAX)
         self.assertEqual(logic.upload_limit(0), logic.FILE_MAX)
+
+
+class TranscriptFiles(unittest.TestCase):
+    def test_the_files_of_a_copy_are_named_and_counted(self) -> None:
+        from dmbot.ui import logic
+
+        name = logic.part_filename("Frostmaiden Reborn!", 1_700_000_000, 2, 3)
+        self.assertEqual(name, "frostmaiden-reborn-2023-11-14.transcripts-2-of-3.dmbot.json.gz")
+        self.assertEqual(logic.backup_parts({"parts": {"id": "x", "count": 3}}), 3)
+        for none in ({}, {"parts": None}, {"parts": {"count": "3"}}, {"parts": {"count": 0}}, 5):
+            self.assertEqual(logic.backup_parts(none), 0)
+
+    def test_files_go_in_messages_within_discords_counts_and_sizes(self) -> None:
+        from dmbot.ui import logic
+
+        self.assertEqual(logic.part_batches([], 100), [])
+        self.assertEqual(logic.part_batches([40, 40, 40], 100), [[0, 1], [2]])
+        self.assertEqual(logic.part_batches([1] * 12, 100), [list(range(10)), [10, 11]])

@@ -35,7 +35,7 @@ describe("the list", () => {
     expect(await screen.findByText(/Closed — you can write again/)).toBeTruthy();
     cleanup();
     render(<MyQuestions api={apiWith(closed)} />);
-    expect(await screen.findByText(/· Closed$/)).toBeTruthy();
+    expect(await screen.findByText(/· Closed/)).toBeTruthy();
   });
 
   it("shows the subject, the date sent and the three status words", async () => {
@@ -54,9 +54,9 @@ describe("the list", () => {
     expect(await screen.findByRole("heading", { name: text.questionsHeading })).toBeTruthy();
     const rows = screen.getAllByRole("listitem");
     expect(rows.map((r) => r.textContent)).toEqual([
-      "InvoiceSent 15 January 2027 · Waiting",
-      "ServerSent 14 January 2027 · Answered — check your email",
-      "OldSent 13 January 2027 · Closed",
+      "InvoiceSent 15 January 2027 · WaitingRead the conversation",
+      "ServerSent 14 January 2027 · Answered — check your emailRead the conversation",
+      "OldSent 13 January 2027 · ClosedRead the conversation",
     ]);
     expect(screen.getByText(text.questionsLead)).toBeTruthy();
     expect(within(rows[1]!).getByText(/Answered/).textContent).toContain("check your email");
@@ -68,7 +68,7 @@ describe("the list", () => {
         api={apiWith({ reply: false, tickets: [{ at: DAY, subject: "Hi", status: "answered" }] })}
       />,
     );
-    expect(await screen.findByText(/Sent 15 January 2027 · Answered$/)).toBeTruthy();
+    expect(await screen.findByText(/Sent 15 January 2027 · Answered/)).toBeTruthy();
     expect(screen.queryByText(/check your email/)).toBeNull();
     // And the lead says why, and what to do, so "Answered" is not a dead end.
     expect(screen.getByText(text.questionsLeadNoEmail)).toBeTruthy();
@@ -137,6 +137,7 @@ describe("the API call", () => {
               { at: 5, subject: "ok", status: "new" },
               { at: "x", subject: "bad time", status: "new" },
               { at: 6, subject: "bad status", status: "weird" },
+              { at: 7, subject: "with the team", status: "escalated" },
               null,
             ],
             reply: false,
@@ -146,7 +147,14 @@ describe("the API call", () => {
     );
     const api = httpApi("https://api.dmbot.example", fetchMock as unknown as typeof fetch);
     const found = await api.mySupport!();
-    expect(found).toEqual({ tickets: [{ at: 5, subject: "ok", status: "new" }], reply: false });
+    // A question that is with the team is kept (it was once dropped from the list).
+    expect(found).toEqual({
+      tickets: [
+        { at: 5, subject: "ok", status: "new" },
+        { at: 7, subject: "with the team", status: "escalated" },
+      ],
+      reply: false,
+    });
     const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe("https://api.dmbot.example/support/mine");
     expect(init.method).toBe("GET");
@@ -162,5 +170,178 @@ describe("the API call", () => {
     );
     const api = httpApi("https://api.dmbot.example", fetchMock as unknown as typeof fetch);
     expect(await api.mySupport!()).toEqual({ tickets: [], reply: true });
+  });
+});
+
+describe("who answered, and the latest answer (#1432)", () => {
+  const list = (tickets: MySupport["tickets"], reply = true): MySupport => ({ reply, tickets });
+
+  it("names the helper or the team, and says when a person has it", async () => {
+    render(
+      <MyQuestions
+        api={apiWith(
+          list([
+            { at: DAY, subject: "A", status: "answered", answeredBy: "helper", latest: "Open the Billing page." },
+            { at: DAY - 1, subject: "B", status: "answered", answeredBy: "team", latest: "I fixed it." },
+            { at: DAY - 2, subject: "C", status: "escalated", answeredBy: "helper", latest: "Not sure." },
+            { at: DAY - 3, subject: "D", status: "new", answeredBy: null, latest: null },
+          ]),
+        )}
+      />,
+    );
+    await screen.findByRole("heading", { name: text.questionsHeading });
+    const rows = screen.getAllByRole("listitem").map((r) => r.textContent);
+    expect(rows[0]).toContain("Answered by DMbot's AI helper — check your email");
+    expect(rows[0]).toContain(text.questionLatest("Open the Billing page."));
+    expect(rows[1]).toContain("Answered by the team — check your email");
+    expect(rows[2]).toContain("· With the team");
+    expect(rows[2]).toContain(text.questionLatest("Not sure."));
+    expect(rows[3]).toContain("· Waiting");
+    expect(rows[3]).not.toContain("Last reply");
+  });
+
+  it("does not say to check email when the account has none", async () => {
+    render(
+      <MyQuestions
+        api={apiWith(
+          list([{ at: DAY, subject: "A", status: "answered", answeredBy: "team", latest: "Done." }], false),
+        )}
+      />,
+    );
+    expect(await screen.findByText(/· Answered by the team$/)).toBeTruthy();
+    expect(screen.queryByText(/check your email/)).toBeNull();
+  });
+
+  it("is unchanged from an API without the new fields", async () => {
+    render(<MyQuestions api={apiWith(list([{ at: DAY, subject: "Old", status: "answered" }]))} />);
+    expect(await screen.findByText(/· Answered — check your email$/)).toBeTruthy();
+    expect(screen.queryByText(/Last reply/)).toBeNull();
+  });
+});
+
+describe("the whole conversation (#2193)", () => {
+  const question: MySupport = {
+    reply: true,
+    tickets: [{ at: DAY, subject: "My invoice", status: "answered", answeredBy: "team" }],
+  };
+  const parts = [
+    { who: "you" as const, text: "Why was I charged\ntwice?", at: DAY },
+    { who: "helper" as const, text: "Check the Billing page.", at: DAY + 60 },
+    { who: "you" as const, text: "<b>That</b> did not help.", at: DAY + 86400 },
+    { who: "team" as const, text: "Fixed, sorry.", at: DAY + 2 * 86400 },
+  ];
+  const withThread = (read: AccountApi["supportThread"]): AccountApi =>
+    ({ ...apiWith(question), supportThread: read }) as AccountApi;
+
+  it("stays closed, and reads nothing, until it is asked for", async () => {
+    const read = vi.fn(async () => parts);
+    render(<MyQuestions api={withThread(read)} />);
+    const button = await screen.findByRole("button", { name: /^Read the conversation/ });
+    expect(button.getAttribute("aria-expanded")).toBe("false");
+    expect(read).not.toHaveBeenCalled();
+    expect(screen.queryByText("Check the Billing page.")).toBeNull();
+  });
+
+  it("shows each part oldest first with who wrote it and its date", async () => {
+    const read = vi.fn(async () => parts);
+    render(<MyQuestions api={withThread(read)} />);
+    fireEvent.click(await screen.findByRole("button", { name: /^Read the conversation/ }));
+    const region = await screen.findByRole("group", { name: text.conversationLabel("My invoice") });
+    await waitFor(() => expect(within(region).getAllByRole("listitem")).toHaveLength(4));
+    expect(read).toHaveBeenCalledWith(DAY);
+    expect(within(region).getAllByRole("listitem").map((r) => r.textContent)).toEqual([
+      "You15 January 2027Why was I charged\ntwice?",
+      "DMbot's helper (a program)15 January 2027Check the Billing page.",
+      "You16 January 2027<b>That</b> did not help.",
+      "DMbot team17 January 2027Fixed, sorry.",
+    ]);
+    // Words, never markup.
+    expect(region.querySelector("b")).toBeNull();
+    const button = screen.getByRole("button", { name: /^Hide the conversation/ });
+    expect(button.getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("hides it again, and reads it afresh the next time so a new reply shows", async () => {
+    const read = vi.fn(async () => parts);
+    render(<MyQuestions api={withThread(read)} />);
+    fireEvent.click(await screen.findByRole("button", { name: /^Read the conversation/ }));
+    await screen.findByText("Fixed, sorry.");
+    fireEvent.click(screen.getByRole("button", { name: /^Hide the conversation/ }));
+    expect(screen.queryByText("Fixed, sorry.")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /^Read the conversation/ }));
+    await screen.findByText("Fixed, sorry.");
+    expect(read).toHaveBeenCalledTimes(2);
+  });
+
+  it("says plainly when it can't be read, and the list stays", async () => {
+    const read = vi.fn(async (): Promise<never> => Promise.reject(new ApiError("not-found")));
+    render(<MyQuestions api={withThread(read)} />);
+    fireEvent.click(await screen.findByRole("button", { name: /^Read the conversation/ }));
+    expect(await screen.findByText(text.conversationError)).toBeTruthy();
+    expect(screen.getByText("My invoice")).toBeTruthy();
+    // And there is a way to try again from the message itself.
+    fireEvent.click(screen.getByRole("button", { name: text.conversationRetry }));
+    expect(read).toHaveBeenCalledTimes(2);
+  });
+
+  it("names each button by its question, and says when there is no reply yet", async () => {
+    const read = vi.fn(async () => [parts[0]!]);
+    render(<MyQuestions api={withThread(read)} />);
+    const button = await screen.findByRole("button", { name: "Read the conversation: My invoice" });
+    fireEvent.click(button);
+    expect(await screen.findByText(text.conversationNoReply)).toBeTruthy();
+    expect(screen.getByRole("status").textContent).toBe(text.conversationLoaded);
+  });
+
+  it("lets only the newest read set what is shown", async () => {
+    let first!: (v: typeof parts) => void;
+    const read = vi
+      .fn()
+      .mockImplementationOnce(() => new Promise<typeof parts>((done) => (first = done)))
+      .mockImplementation(async () => [{ ...parts[3]! }]);
+    render(<MyQuestions api={withThread(read)} />);
+    fireEvent.click(await screen.findByRole("button", { name: /^Read the conversation/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Hide the conversation/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Read the conversation/ }));
+    await screen.findByText("Fixed, sorry.");
+    first(parts);
+    await new Promise((done) => setTimeout(done, 0));
+    expect(screen.queryByText("Check the Billing page.")).toBeNull();
+  });
+
+  it("has no button on an API older than the conversation", async () => {
+    const { supportThread: _none, ...older } = apiWith(question) as AccountApi & { supportThread?: unknown };
+    render(<MyQuestions api={older as AccountApi} />);
+    await screen.findByText("My invoice");
+    expect(screen.queryByRole("button", { name: /^Read the conversation/ })).toBeNull();
+  });
+});
+
+describe("the conversation API call (#2193)", () => {
+  const fetchOf = (body: unknown, status = 200) =>
+    vi.fn(async () => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } }));
+
+  it("reads the person's own question by the time it was sent, and keeps only well-formed parts", async () => {
+    const fetcher = fetchOf({
+      messages: [
+        { who: "you", text: "Hi", at: 5 },
+        { who: "someone", text: "odd", at: 6 },
+        { who: "team", text: 3, at: 7 },
+        { who: "helper", text: "Hello", at: 8 },
+      ],
+    });
+    const api = httpApi("https://api.dmbot.example", fetcher as unknown as typeof fetch);
+    expect(await api.supportThread?.(1_800_000_000)).toEqual([
+      { who: "you", text: "Hi", at: 5 },
+      { who: "helper", text: "Hello", at: 8 },
+    ]);
+    const [url, init] = fetcher.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe("https://api.dmbot.example/support/mine/1800000000");
+    expect(init.method).toBe("GET");
+  });
+
+  it("is an error for a question that isn't theirs or isn't there", async () => {
+    const api = httpApi("https://api.dmbot.example", fetchOf({ detail: "not_found" }, 404) as unknown as typeof fetch);
+    await expect(api.supportThread?.(1)).rejects.toBeInstanceOf(ApiError);
   });
 });

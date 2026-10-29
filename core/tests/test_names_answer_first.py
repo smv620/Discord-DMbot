@@ -14,7 +14,7 @@ from dmbot.campaigns.models import Campaign
 from dmbot.memory.lookup import CampaignLookup, LookupData
 from dmbot.memory.models import CONFIRMED, Alias, Entity, MemoryRuleError, Relation, name_key
 from dmbot.memory.sounds import sound_codes
-from dmbot.ui import dmbot_commands, logic, name_card, name_lists, names
+from dmbot.ui import connection_edit, dmbot_commands, logic, name_card, name_lists, names
 
 GUILD, DM = 1, 7
 DISCORD_WAITS_S = 3
@@ -187,7 +187,7 @@ class AnswerFirst(unittest.IsolatedAsyncioTestCase):
         self.assert_in_time(it, "defer", "followup", defer=NEW)
 
     async def test_card_steps_answer_before_the_names_load(self) -> None:
-        card = name_card.NameCard(CAMPAIGN.id, BELL, others=False, longer=False)
+        card = name_card.NameCard(CAMPAIGN.id, BELL, others=False)
         it = self.it()
         await card._connect(it)
         self.assert_in_time(it, "defer", "edit_original", defer=IN_PLACE)
@@ -224,15 +224,19 @@ class AnswerFirst(unittest.IsolatedAsyncioTestCase):
         memory = self.bot.memory
         memory.aliases = self.slow([bell])
         for write in ("set_entity_type", "confirm_entity", "set_main_name", "update_alias",
-                      "add_alias", "update_relation", "set_unique"):  # fmt: skip
+                      "add_alias", "set_unique"):  # fmt: skip
             setattr(memory, write, self.slow())
+        memory.alias_knowers = self.slow({})  # (the Who-knows page reads these first, #2935)
+        memory.lookup_data = self.slow(LookupData(0, (), (), (), ()))
+        memory.update_relation = self.slow(SimpleNamespace(batch=7))  # the Undo needs the batch
         memory.add_entity = self.slow(SimpleNamespace(value=ENTITIES[BELL]))
         memory.confirmed_name_for = AsyncMock(return_value=None)  # a new spelling: no clash
-        memory.rename_entity = self.slow(SimpleNamespace(value=ENTITIES[BELL]))
-        memory.add_relation = self.slow(SimpleNamespace(value=(None, [])))
+        memory.rename_entity = self.slow(SimpleNamespace(value=ENTITIES[BELL], batch=None))
+        memory.add_relation = self.slow(SimpleNamespace(value=(SimpleNamespace(secret=False), [])))
         knows = Relation("r" * 32, BELL, "knows", ULF, "", 1.0, CONFIRMED, "dm", (),
                          None, None, None, None, False, 0)  # fmt: skip
         memory.relations = AsyncMock(return_value=[knows])
+        memory.pinned_connections = AsyncMock(return_value=set())
         player = MagicMock(spec=discord.Member, bot=False, id=5)
 
         def picked(view: Any, select: Any, value: str) -> Any:
@@ -246,14 +250,12 @@ class AnswerFirst(unittest.IsolatedAsyncioTestCase):
         kind = names.KindPicker(CAMPAIGN.id, "Kesh", [], [])
         change = name_card.KindChange(CAMPAIGN.id, BELL, "Belleros")
         one = name_card.OneName(CAMPAIGN.id, BELL, bell, secrets=True)
-        links = name_card.Connect(CAMPAIGN.id, BELL, "Belleros", [("r" * 32, "knows Ulfgar")])
+        removing = connection_edit.ConfirmRemove(CAMPAIGN.id, BELL, "r" * 32)
         # Each step, and the slow call it must reach (not an early "isn't there" reply).
         steps: dict[str, tuple[Any, str]] = {
             "KindPicker": (lambda it: picked(kind, kind.pick, "npc")._picked(it), "add_entity"),
             "NameCard._edit_others": (
-                lambda it: name_card.NameCard(
-                    CAMPAIGN.id, BELL, others=True, longer=False
-                )._edit_others(it),
+                lambda it: name_card.NameCard(CAMPAIGN.id, BELL, others=True)._edit_others(it),
                 "aliases",
             ),
             "NameCard._one_of_a_kind": (
@@ -271,12 +273,9 @@ class AnswerFirst(unittest.IsolatedAsyncioTestCase):
                 "confirm_entity",
             ),
             "OneName._main": (one._main, "set_main_name"),
-            "OneName._secret": (one._secret, "update_alias"),
+            "OneName._who": (one._who, "alias_knowers"),
             "OneName._not_this": (one._not_this, "update_alias"),
-            "Connect._remove_picked": (
-                lambda it: picked(links, links.remove, "r" * 32)._remove_picked(it),
-                "update_relation",
-            ),
+            "ConfirmRemove._yes": (removing._yes, "update_relation"),
             "connect": (
                 lambda it: name_card.connect(it, CAMPAIGN.id, BELL, "knows", ULF),
                 "add_relation",
@@ -499,7 +498,7 @@ class AnswerFirst(unittest.IsolatedAsyncioTestCase):
         first, second = questions.children
         assert isinstance(first, name_lists.KindSelect)
         assert isinstance(second, name_lists.KindSelect)
-        first._values, second._values = ["npc"], ["creature"]
+        first._values, second._values = ["npc"], ["place"]
         self.gate = asyncio.Event()
         saving = asyncio.create_task(questions.picked(first, self.it()))
         await asyncio.sleep(0)

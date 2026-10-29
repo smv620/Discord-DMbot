@@ -1,0 +1,72 @@
+---
+import Base from "../layouts/Base.astro";
+import {
+  INITIATIVE_STYLE_LIVE,
+  consentStep,
+  fightBotStep,
+  heyDmBotStep,
+  initiativeStyleSteps,
+  noThanksStep,
+  playerNote,
+  stopStep,
+  transcriptStep,
+} from "../content/help";
+import { consentPromises, consentPromisesHeading, consentPromisesLead } from "../content/consent-promises";
+import { askYourGm, beforeYes, playersHeading, playersIntro, playersLead, sayingYesHeading, seeHeading } from "../content/players";
+
+// The steps are the Help page's own (one copy each); the initiative sentence shows only while its
+// feature is live, with the same switch as Help (#1821).
+const yes = [consentStep, noThanksStep, stopStep];
+const see = [transcriptStep, heyDmBotStep, fightBotStep, ...(INITIATIVE_STYLE_LIVE ? initiativeStyleSteps : [])];
+---
+
+<Base title="Playing at a table" description="What DMbot does at your table, how to say yes, and what you may see.">
+  <h1>{playersHeading}</h1>
+  <p class="lead">{playersLead}</p>
+  <p class="muted">{playersIntro}</p>
+
+  <section aria-labelledby="agree-heading">
+    <h2 id="agree-heading">{consentPromisesHeading}</h2>
+    <p>{consentPromisesLead}</p>
+    <ul>
+      {consentPromises.map((p) => <li>{p.text}</li>)}
+    </ul>
+  </section>
+
+  <section aria-labelledby="yes-heading">
+    <h2 id="yes-heading">{sayingYesHeading}</h2>
+    <p>{beforeYes}</p>
+    <ol>
+      {yes.map((s) => <li>{s.text}</li>)}
+    </ol>
+  </section>
+
+  <section aria-labelledby="see-heading">
+    <h2 id="see-heading">{seeHeading}</h2>
+    <ul>
+      {see.map((s) => <li>{s.text}</li>)}
+      <li>{playerNote}</li>
+    </ul>
+  </section>
+
+  <p class="muted">
+    {askYourGm} More steps are on the <a href="/help#player-heading">Help page</a>. What DMbot keeps is on the{" "}
+    <a href="/legal/privacy">Privacy page</a>.
+  </p>
+</Base>
+
+<style>
+  ol,
+  ul {
+    max-width: var(--text-width);
+    padding-left: var(--space-6);
+  }
+
+  li {
+    margin-bottom: var(--space-4);
+  }
+
+  section {
+    margin-top: var(--space-8);
+  }
+</style>

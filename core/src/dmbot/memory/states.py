@@ -26,6 +26,9 @@ from dmbot.memory.checks import (
 from dmbot.memory.models import (
     DM,
     ENDED,
+    GOING,
+    HINTED,
+    OPEN,
     REJECTED,
     Entity,
     MemoryRuleError,
@@ -36,6 +39,7 @@ from dmbot.memory.models import (
 from dmbot.memory.ontology import Ontology, check_condition_change, conditions_for
 
 NOT_THE_DM = "Only the DM can change that."
+LIVE = (HINTED, OPEN, GOING)  # a story thread's states that can go on
 ONLY_ITEMS = "Only an item can be one of a kind."
 BAD_TIME = "That date isn't one DMbot can use."
 INT64_MAX = 2**63 - 1
@@ -89,7 +93,9 @@ async def place_nesting(w: Scope, onto: Ontology) -> Nesting:
         " JOIN memory_entities o ON (o.guild_id, o.campaign_id, o.id)"
         "    = (r.guild_id, r.campaign_id, r.object_id)"
         " WHERE r.guild_id = %s AND r.campaign_id = %s AND r.predicate = %s"
-        " AND r.status <> 'rejected' AND r.to_session_at IS NULL"
+        " AND r.status <> 'rejected'"
+        " AND NOT (r.status = 'proposed' AND r.secret AND r.source = 'extractor')"
+        " AND r.to_session_at IS NULL"
         " AND s.type = ANY(%s) AND o.type = ANY(%s)",
         (*w.ids, NESTS, places, places),
     )
@@ -170,13 +176,42 @@ async def set_condition(
     return state_of(row)
 
 
+ONLY_LIVE_THREADS = "Only a thread that is hinted, open or going on can be checked."
+
+
+async def touch_thread(
+    w: Changes, onto: Ontology, entity: Mapping[str, Any], *, from_session_at: int | None
+) -> State:
+    """The DM looked at a thread and it is still going (#1662): the same state written again,
+    dated, so the thread counts as touched. It closes the current row and opens an equal one;
+    the history shows it as "checked, still going", never as a change."""
+    _check_when(from_session_at)
+    held = (await current_states(w, [entity["id"]])).get(entity["id"])
+    if not onto.is_a(entity["type"], "thread") or held is None or held.condition not in LIVE:
+        raise MemoryRuleError(ONLY_LIVE_THREADS)
+    await w.update(STATES, held.id, {"closed_at": w.now})
+    row = await w.insert(
+        STATES,
+        {
+            "id": new_id(),
+            "entity_id": entity["id"],
+            "condition": held.condition,
+            "from_session_at": from_session_at,
+            "source": w.source,
+            "created_at": w.now,
+            "closed_at": None,
+        },
+    )
+    return state_of(row)
+
+
 async def settle_kind(
     w: Changes, onto: Ontology, entity_ids: Collection[str], type_key: str
 ) -> None:
     """After ANY write that gives entries a new kind: a condition the new kind can't have is
     closed (an item made a character is no longer `intact`; the history stays) and
-    `unique_item` is cleared unless the new kind is an item. Without it a backup of the
-    campaign would be refused as damaged when restored."""
+    `unique_item` is cleared unless the new kind is an item, and `audience_limited` unless it is
+    a clue. Without it a backup of the campaign would be refused as damaged when restored."""
     ids = sorted(set(entity_ids))
     if not ids:
         return
@@ -184,9 +219,27 @@ async def settle_kind(
     for held in (await current_states(w, ids)).values():
         if allowed is None or held.condition not in allowed:
             await w.update(STATES, held.id, {"closed_at": w.now})
-    if not onto.is_a(type_key, "item"):
-        flagged = await w.select(ENTITIES, " AND unique_item IS NOT NULL AND id = ANY(%s)", [ids])
-        await w.update_rows(ENTITIES, {r["id"]: {"unique_item": None} for r in flagged})
+    # One look for the flags only some kinds have: one of a kind (an item, #1267), a clue's
+    # audience (#1649) and the party (#1655), so a long list of new names costs no extra statement
+    # for each.
+    flagged = await w.select(
+        ENTITIES,
+        " AND (unique_item IS NOT NULL OR audience_limited OR party) AND id = ANY(%s)",
+        [ids],
+    )
+    clears: dict[str, dict[str, Any]] = {}
+    for r in flagged:
+        undo: dict[str, Any] = {}
+        if r["unique_item"] is not None and not onto.is_a(type_key, "item"):
+            undo["unique_item"] = None
+        if r["party"] and type_key != "faction":
+            undo["party"] = False  # only a group can be the party
+        if r["audience_limited"] and type_key != "clue":
+            undo["audience_limited"] = False  # only a clue has an audience
+        if undo:
+            clears[r["id"]] = undo
+    if clears:
+        await w.update_rows(ENTITIES, clears)
 
 
 async def move_states(

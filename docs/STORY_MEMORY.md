@@ -195,7 +195,7 @@ each with a plain label:
   has its own.
 
 **Relationships** (each with domain, range, how many, conflicts):
-- `involved_in` (being/group/item/place → thread, detail = role: quest giver, target,
+- `in_thread` (being/group/item/place → thread, detail = role: quest giver, target,
   villain, victim, reward);
 - `advances` / `resolves` (event → thread);
 - `led_to` (event → event: cause and effect, no loops);
@@ -204,7 +204,7 @@ each with a plain label:
 - `knows` (being/group → clue): who knows what, and since when. A clue is an entry of
   its own, so this is an ordinary relationship, never one that points at another
   relationship. A clue can have a **limited audience** (only these people know it);
-  most clues don't;
+  most clues don't (as built, #1649: only a character is listed; `knows` has no group on its subject side);
 - `witnessed` (being → event): feeds who knows and reputation;
 - `owns` stays as it is: owning isn't holding, and owning has no limit on the item side;
 - `carries` (being → item, new): who has it right now. **One holder at a time, only for
@@ -498,6 +498,11 @@ assembles context in code; the AI only reads it.
    notes), `transcript` (nothing from here ever goes into a transcript).
 4. **Add summaries and evidence:** the entity/thread summaries for the seeds, plus a
    few transcript lines as quotes (with session and time) from the mention index.
+   **(Today, #1740:** nothing writes the mention index (`memory_mentions`; `add_mention` has no caller), so the
+   quoted lines come only from the claim a fact was confirmed from, which needs the extractor (off until
+   #1282); a fact the DM typed in by hand has none. "Was this name heard in a session?" is read from
+   `memory_heard`, which the after-session name scan writes: the pre-session note, health, recall's ranking,
+   Guide me and the deeds' fade all read it.)
 5. **Budget and cite:** a fixed token budget, ordered by score; every item carries its
    fact or line ID, and an answer is checked to cite only IDs it was given.
 
@@ -537,6 +542,362 @@ on embeddings. Apache AGE is still not needed: these are 1–2 hop lookups.
 - Retention: when a person's lines are deleted, their claims go too; facts the DM
   confirmed stay (they're the DM's word), with the evidence link removed. Proposals that
   rested only on those lines are dropped.
+
+### 9. Assertions, perspectives and evidence (owner, 2026-10-22)
+
+**Why.** In a mystery or political campaign, logging "facts" breaks: players' theories, revealed clues and
+NPCs' words can all be wrong, by mistake or on purpose (framing, illusions, lies). So the graph logs **the
+claim itself as its own object**, and records **who believes it, how strongly, and on what evidence**.
+Overlapping realities (the truth, the party's view, a theory, a frame-up) then live side by side without
+corrupting each other. This is the owner's assertion-centric design, kept in Postgres tables (section 1;
+no graph database, PLAN "Considered and not chosen").
+
+**The four kinds of thing, as tables in each campaign** (server + campaign columns, forced RLS, as today):
+
+| Owner's node | Here | Notes |
+|---|---|---|
+| `:Entity` (character, faction, place, item) | the names entries (`memory_entities`) | Unchanged. Never joined to each other directly. |
+| `:Assertion` (type, summary) | a connection row (`memory_relations`) | Each row already **is** the reified statement: its id is the assertion, and its subject and object columns are `HAS_SUBJECT` and `HAS_OBJECT`. "Lucian works for the Bishop" is one row whoever believes it. |
+| `:Perspective` (owner) | `memory_perspectives` (new) | Built in for every campaign: **The truth** (the DM's meta-truth) and **The party** (the shared log of what the players have learned). More as needed: one per PC, or an NPC whose beliefs matter. |
+| `:Evidence` (clue, event; session, game time) | the claims and transcript lines (section 1), clue entries, and events | A belief points at the lines or events that justify it, by id only (the same pointers as places, #2329). |
+
+**Beliefs** (`memory_beliefs`, new): perspective → assertion, with `confidence` (0.0 = certainly false,
+1.0 = certainly true), `status` (Theory · Accusation · Revealed Fact · False Evidence · Secret Plot ·
+Magically Verified · Evasion under Magic), the session, and the evidence ids. History is kept: a new belief
+adds a row (bitemporal, section 1). **Manipulation** (`MANIPULATED_BY`): an evidence row may point at the
+evidence or item that faked it ("Fabio plants the ledger" → the ledger clue; a Ring of Mind Shielding →
+the Zone of Truth event).
+
+**Everything is an assertion; 100% truth is a pin** (owner, 2026-10-22, replacing the first mapping). Every
+relationship is asserted by someone: the table, a player, an NPC, the DM. Nothing is treated as true because
+DMbot heard it, read it, or the DM confirmed it. **The only truth is what the DM pins as 100% truth**, from
+campaign lore uploaded as truth or with 📌 on a connection in the story graph. A campaign may never pin
+anything, and every fact stays an assertion. 100% truth has one job: private DM-screen notices when the story
+goes off the rails from what the DM intended by mistake ("This contradicts a 📌 truth: …"). It never changes
+what players see.
+- **The perspectives** (the tables #2409 built, renamed in words only): **The DM's view** (what the DM has
+  asserted or kept, which the code calls `truth`) and **The party** (what the players have been shown). A
+  DM's-view belief carries a **📌 pinned** mark when it is 100% truth.
+- **Secret / not revealed yet** = the DM's view holds it, and The party has no belief.
+- **Revealed** = The party believes it at 1.0 (Revealed Fact): said at the table, or typed in the table chat
+  DMbot reads.
+- **A theory** = The party (or one PC) at about 0.5 (Theory).
+- **A lie or red herring** = The party believes it while a 📌 truth says otherwise (False Evidence), with the
+  real assertion beside it.
+- **The DM confirms (✅ Keep)** = the DM's view asserts it. **📌 Pin as 100% truth** = the same belief, pinned.
+  Only the DM writes the DM's view or pins, so "only DM-confirmed facts count" stands.
+- **Players View** draws The party's beliefs (theories dotted, "?"). **Full View** draws the DM's view, with
+  📌 on pinned truths, and marks where the party is wrong or doesn't know yet.
+
+**The four rules DMbot follows when reading a session** (the extractor and EntityBot, section 3):
+- **A. Theories:** a player or NPC voices a suspicion, a theory or an accusation the DM hasn't confirmed.
+  Find or make the assertion, then add the speaker's (or the party's) belief at 0.5 (higher or lower for
+  "surely" or "unlikely"), as Theory or Accusation, with the line as evidence. **A guess is never a
+  reveal:** a guessed name may become a lone name in the players' view, and a guessed connection is
+  drawn as uncertain.
+- **B. Revealed facts:** the DM lets the characters find a clue or see an event that confirms something.
+  The party's belief becomes 1.0, Revealed Fact, justified by that clue or event.
+- **C. Framing and secrets:** the DM says a revealed clue is fake, or someone is framed. The truth holds
+  the public assertion at 0.0 (False Evidence) and a new assertion ("Fabio framed Lucian") at 1.0 (Secret
+  Plot). The act of deception is an event that `MANIPULATED_BY` points at.
+- **D. Divination** (Zone of Truth, Detect Thoughts…): the casting is an event, and it justifies the party's
+  belief. A confession is 1.0 (Magically Verified), and an evasion or silence about 0.7 (Evasion under
+  Magic). When the target resisted or was protected, The truth stays as it is, and the protection is linked
+  to the event as `MANIPULATED_BY`.
+
+**Built so far (#2412, slice 1):** `memory/readings.py` holds the prompt for these four rules (its own
+text; the claims prompt and its measured version are untouched), reads the model's answer and turns
+each reading into belief proposals. The model says words only; code sets every number (a guess 0.5,
+"surely" 0.75, "unlikely" 0.25, a reveal 1.0, a dodge under a spell 0.7, a false public statement 0.0)
+and every status. A guess goes to one player character's point of view, and to the party's only when the
+table agreed out loud. Anything about The truth is a proposal that waits for the DM. Storing them, the
+players' points of view and the running pass come in the next slices.
+
+**Built so far (#2412, slices 2a and 2b; decided with Supervisor, 2026-10-25).** A reading waits as a
+claim that carries its reading (migration 0236) and is never asked as a fact. The DM *places* it
+(`memory/placing.py`), one write with one Undo. A belief needs a connection to hang on, and a theory or
+an accusation is something nobody has kept, so placing makes a **proposed, secret connection** to hold
+it (the same `memory_relations` row the assertion already is), and no reader shows a proposed one to the
+players: every players' reader filters confirmed connections the party holds at 1.0, which a guess never
+is, and `tests/test_relation_readers.py` makes a new reader of the table choose. A connection that is
+already there is never changed: the belief is added to it, whatever its status, secret flag or words,
+and a connection the DM turned down is not brought back (a new proposed one is made). A reveal or a
+confession the players saw is kept, shown, with the reading's own status and the claim as evidence; a
+secret connection is never revealed this way. A frame-up gives the false public statement The truth's
+0.0 False Evidence and keeps the new plot as the DM's secret. A character gets a point of view the first
+time one is needed (a player's character as `pc`, any other as `npc`). Belief time is the session the claim
+was made in; a later belief for the same view replaces it from its own session. The DM's Keep on a
+waiting connection is today's confirm and takes the DM's secret flag with it; a No leaves the character's
+or the party's belief standing, because it is still what they believe. The checks skip these
+secret proposals (they are not judged against facts, nor facts against them; other proposals are judged
+as before), a guess about a connection the players already know is refused so it can never hide it, a
+proposal the DM keeps is checked as a fact at that moment, and merging two names carries what was believed of a folded connection to its
+twin. **Stop recording me and readings** (Supervisor, 2026-10-25): the same line as for claims. What the DM kept stays
+(a reveal or a confession shown to the players, a false clue, a plot), its link to the person's words turned
+into a placeholder. What only that person's words produced goes: a guess, an accusation or a dodge the DM
+placed, its claim, the belief it created (a belief that also stands on other evidence stays and loses only the
+link) and the waiting connection made just to hold it, if nothing else is believed of it.
+A guess's holding connection is recorded as the extractor's, whoever pressed the button, and stands on the
+claim it was made for (an evidence link), so Stop recording me removes only the connections a placement made.
+Both ways of forgetting a person (`forget_speaker` and Delete my transcripts) run the same code under each
+campaign's lock and take the deleted rows out of the undo log (`memory/forget_readings.py`). A reading's claim
+is never quoted as the source of a fact (recall and continuity skip claims that carry one).
+**The running pass (slice 3a, off by default).** With `DMBOT_STORY_READINGS=1` (and the extractor on), each batch
+of lines is asked the second question after its claims (`memory/extractor.py`, `readings.READING_SYSTEM`). It is a
+call like any other: counted before it is made and held to the same session and day limits, so a session reaches
+its limit sooner and the limit does not grow. Its answers are stored as claims that carry a reading (prompt version
+`readings-1`), never as facts and never making a new name. A failed reading call never stops the claims; running out
+of money stops the run. The log gets counts only.
+**The website's list (slice 3b, migration 0237).** "What people believe" (DM only): `GET .../web/readings` lists the
+readings that wait (the claim's own words, who believes it, how sure; never a transcript line); `POST` queues
+`place` (keep as a belief), `no` or `undo` through the website's action queue, and the bot makes the calls the DM
+screen would (`ClaimStore.place`, `reject`, the store's Undo). `place` asks who is recorded again inside its write
+(the bot passes a function, not a snapshot). The answer is polled like the others and also says its wait (stage,
+how long, when it last moved: counts and stages only) and whether it can still be undone. A Discord version waits
+until the owner asks for one.
+**What a placed reading rests on (slice 3c).** When a reading is placed, the clue or event it names as its reason
+(`because`) and the act or ward that faked or blocked it (`manipulated_by`) become typed links (`clue` or `event`) on
+the belief it made (for a secret plot, which makes no belief, on the connection, but only one this placing made itself: the
+Undo does not reverse a link, so a connection that was there before takes none). A name is looked up among the
+campaign's existing, kept entries and links only when it fits exactly one clue or event: a reading never makes a name
+or an event, a name that finds nothing, a waiting entry, a person, a place or an item adds no link, and none of that
+stops the placing; the health line counts placed readings whose name found no entry (`readings_unlinked`, a count only). The faked clue's own `manipulated_by` column stays the DM's to set.
+
+DMbot proposes these; the DM confirms them in the review below, as every fact today. Code checks the
+shapes (a confidence from 0 to 1, a known status, both ends in the campaign); the AI never writes The truth.
+
+**The knowledge map review, after every session** (DM only, private). One summary with three lists:
+1. **Secrets exposed:** secret names and connections said or typed at the table. Each one is revealed
+   (The party, Revealed Fact) unless the DM presses **↩️ Recant**: a slip of the tongue, a misheard word, or
+   a name the DM will change to keep the mystery. "Is it revealed now?", asked during the session, is an
+   early answer to the same question.
+2. **New names** heard this session (today's 📝 Check new names).
+3. **New connections**, each marked with who believes it: the party's theories, revealed facts, the DM's
+   own words. Each has ✅ Keep, 🤫 Truth but secret, ❓ Party theory, and ❌ No.
+
+Each list is capped, like the after-session check, with the rest on the website.
+
+**What it's for: PlotBot and recaps.** The story is this graph plus the timeline. **Importance** is how
+connected an entity is in The truth, counting hidden connections too. Lucian, mentioned only as a patron at
+the inn, is important when the truth ties him to many others. The recap picks the session's beats by the
+importance of the entities in them, so Lucian is included. It **writes only what The party believes**:
+it mentions Lucian as the patron the party met, and never a hidden connection.
+
+### 9a. The contract for points of view, time, contradictions and evidence (owner, 2026-10-24)
+
+Written after the owner's architecture review (#2643) and the owner's notes there. This is the rule
+the code follows; a change to it is a change to this section first. Section 9 still describes the
+tables; this says what they mean.
+
+**Points of view** (`memory_perspectives`). Their names, in words and in code:
+- **The DM's view** (code: `truth`): what the DM asserted or kept. Only the DM writes it or pins
+  in it (📌 100% truth). An extracted claim never writes or pins it.
+- **The party** (code: `party`): what the players as a group have been shown.
+- **Each player character**: what that character knows or believes. A PC can know what the party
+  doesn't, because PCs keep secrets from each other. A character's private talk reaches DMbot when
+  the DM uploads it as campaign lore, which asks "Whose is this?" (#2650).
+- **An NPC whose beliefs matter**, when the DM or the story needs one.
+
+"The same point of view" means exactly the same one: the party and one of its members are two.
+
+**Two clocks.** Every belief has both, and "at time T" always says which.
+1. **Story time:** when the asserted thing is true in the story. Session span (`from_session_at` /
+   `to_session_at`), and game time once TimeBot records it.
+2. **Belief time:** when that point of view held the belief, from the session it was formed to the
+   session it was replaced. A new belief adds a row; nothing is overwritten.
+
+`recorded_at` is when DMbot learned it. A correction made later (backdated) keeps an earlier story
+time and a later `recorded_at`, so "what did the party believe in session 5" and "what did DMbot know
+then" have separate answers. Tests cover backdated changes, corrections and rebuilding the history.
+
+**One timeline.** Each campaign has one history. Dreams, visions, illusions and other planes are points
+of view or places, never timelines. A timeline identity is added only when a campaign really uses
+time travel or alternate realities, and that decision is recorded in docs/PLAN.md when it is made.
+
+**Contradictions.**
+- **A candidate** is two assertions that conflict under the ontology, held by the **same** point of
+  view, whose **story times** overlap and whose **belief times** overlap. Rules find candidates; the
+  check is deterministic (`memory/checks.py`, `memory/continuity.py`).
+- **Different points of view disagreeing is not a contradiction.** The party believing what the DM's
+  view denies is story (a theory, a lie, a disguise). It goes into the after-session report below,
+  never into a contradiction warning.
+- **Missing game time counts as overlapping** (the cautious rule, as `same_time` does), and the
+  warning says so: "These may clash. The game times aren't known." Those warnings sort lower.
+- **PlotBot grades each candidate major or minor, with a one-line reason.**
+  - **Major:** said at once, privately, on the DM screen during play, short and on topic. At most 3
+    in a session; the rest wait for the report.
+  - **Minor:** go into the after-session report.
+- **The DM decides.** Nothing changes a belief or picks the true one automatically.
+- **Built (#2660 slice 1): the finder.** `memory/contradictions.py` finds the candidates among the
+  connections one point of view holds (The truth, the party, one character): the same rules as
+  `check_relation` (a clashing relationship between the same two names, too many of a kind, a
+  one-of-a-kind item held twice), only between beliefs of the SAME point of view that overlap in story
+  time (`same_time`) and in belief time. A belief asserts at 0.5 or more and is not a denial; a belief
+  is held from the session it was formed in until the next belief of that point of view in that
+  connection (the newest has no end); one replaced by a belief with no known session has no knowable end
+  and is left out. A candidate holds ids only, and `times_unknown` is set when either connection has no
+  game time ("The game times aren't known"; those sort last). A clashing pair counts for every point of view; "too many" and "held twice" only for a point of view that is not The truth (the DM's own confirmed connections were warned about when confirmed), and being in the inn and in the town it is in is one place. A belief formed and changed in the same session was never held. Two connections The truth holds together are not raised for a point of view that merely copies them. A waiting guess connection (a character's guess a reading placed) is read as if kept, and a candidate that involves one says so (`involves_guess`). It reads one campaign and writes nothing.
+  **Built (#2660 slice 2a): where a grade is kept.** `memory_contradictions` (migration 0238) holds one row
+  for each candidate: the point of view, the kind, the ids of the two connections, a grade (`major`,
+  `minor` or `not_graded`: an answer that was cut or unreadable is never "minor"), PlotBot's one-line
+  reason, whether the game times and a guess are involved, and `said_at` (a major one is told to the DM
+  once). Ids and DMbot's own words only, never a transcript line; the DM's alone. A backup leaves it out
+  (it is made again by the next check). `memory/contradiction_grades.py` saves, reads and marks it.
+  **Built (#2660 slice 2c-2d): the pass and its switch.** `memory/contradiction_run.py` finds the
+  candidates, grades the ones not graded yet and keeps the grades (a `major` or `minor` one is not asked
+  again; a `not_graded` one is). `DMBOT_STORY_CONTRADICTIONS=1` (off by default, and only with the
+  extractor) runs it after the extractor in the after-session steps: the campaign's plan must include
+  story memory (closed if it can't be checked), it makes at most 3 AI calls a session, counted in the
+  extractor's session and day limits, and the log gets counts only.
+  **Built (#2660 slice 2e): telling the DM.** After the grading, with the same switches and plan check, DMbot
+  tells the DM the `major` clashes not yet told, at most 3 each time the step runs (once after a session), as
+  one message (one plain line each, saying when the game times aren't known or one side is a guess, and
+  "Nothing was changed. You decide what is true."). The line can name an entry, so with a **private** DM
+  screen it is posted there (and pulled back if the screen opens up); with peek or open it goes to each DM by
+  private message and the screen never carries it. If the private messages are closed the screen says only how
+  many wait, and they stay untold for the next session. A clash is marked told only once a message reached
+  a DM. No AI call. The minor ones are not told here; they wait for the after-session report. Still to
+  build: that report. (The point-of-view reading that was once planned for `continuity.conflicts_in` is not
+  needed: `memory/contradictions.py` answers that question, and `conflicts_in` was renamed
+  `claim_conflicts_in` because all it answers is whether a waiting claim clashes with the confirmed story.)
+
+**Built (#2661 slice 2, migration 0244): the report's storage.** `memory_differences` keeps what the
+party (or a player's character) believes that differs from The truth, with PlotBot's sort (disguised,
+misunderstood, false, or `not_sorted` when the answer was cut or unreadable: never "false") and its
+one-line reason. `report_answers` keeps the DM's answer to each item (`intended`, `not_a_problem`,
+`remind`, `fixed`), apart from the items and under a key made from the item's own ids, so an item that is
+made again meets its answer again, and one that is no longer found is dropped without losing the DM's
+decision. `memory_report_runs` keeps how far making a session's report has got (stage, done of total,
+started, last moved), counts and codes only. The items are made again by each check and are not in a
+backup; the answers cannot be made again, so they are (the `report_answers` backup section). Nothing here
+holds a transcript word or a speaker.
+
+**Built (#2661 slice 3a): PlotBot's sort.** `memory/difference_sorter.py` sorts what the party has wrong into
+disguised, misunderstood and false, with a one-line reason, as the contradiction grader grades clashes: the
+AI is shown each difference as two plain statements in the campaign's own names (what the point of view
+believes, and what the DM's view holds or says is not so), never a transcript line or anyone's speech.
+A cut, refused or unreadable answer is `not_sorted` and is asked again next time, never "false"; the whole
+items before a cut are kept; calls are counted before they are made and held to a limit; progress is said
+in counts. Nothing changes a belief. Still to build: the make job that runs the grading and the sort under
+the plan's limits with the shared progress, and the doors.
+
+**The after-session report** (DM only; it is full of spoilers, and nothing in it reaches players):
+- the minor contradictions;
+- **"What the party has wrong":** where the party's or a PC's beliefs differ from the DM's view,
+  sorted into disguised, misunderstood and simply false, so the DM can close plot holes before they
+  grow.
+  **Built (#2661 slice 1): the differences finder.** `memory/differences.py` lists the beliefs a point of
+  view that is not The truth holds NOW (0.5 or more, not a denial) where The truth either denies that very
+  connection (0.0, False Evidence) or holds a clashing connection between the same two names that overlaps
+  it in story time. A guess The truth neither holds nor denies is not a difference, nor is the DM's own
+  doubt. Ids and numbers only (the sort into disguised, misunderstood and false is PlotBot's, a later
+  slice); each point of view and connection is reported once.
+  **Built (#2661 slice 3b): the make job.** `memory/report_make.py` makes one session's report in the
+  order reading, grading, sorting: it finds the differences, grades the clashes (the contradiction
+  pass, with its progress), drops differences that no longer hold, sorts the rest, then marks the run
+  ready. One run at a time per session; one call limit shared by both steps; a step that could not
+  finish leaves its items for the next run, never as "nothing found". A failure keeps only a code
+  (`out_of_funds`, `failed`); the log line and the progress are counts and stages, never words.
+
+Everything after a session is built on the **website first**. A Discord version is added only when
+the owner chooses it, one at a time.
+
+**Authority and lineage.**
+- Confirming, rejecting, correcting or undoing a claim never erases who made it or the evidence it
+  came from: the claim, its speaker and its evidence stay linked to the belief (`fact_id`).
+- Consent and privacy rules apply whenever source lines are read or shown.
+
+**Evidence links.**
+- Evidence is a typed, campaign-scoped link (a claim, a transcript line, a clue, an event), not an
+  untyped list of ids. The database keeps it inside the campaign, and a dangling link is found and
+  reported.
+- **When a line's words are removed** (Stop recording me, Delete my transcripts, account deletion,
+  the retention setting), its link becomes a placeholder: "a line from session 12, no longer
+  available". It keeps the session and the kind of evidence, and never the words or who said them.
+- A belief the DM confirmed stands on its own, because it is the DM's word.
+- A link never gives anyone access to what it points at.
+- **Built (#2662):** the table is `memory_evidence` (a link's owner is a connection or a belief; kind
+  `claim`, `line`, `clue` or `event`; the target; the session; when it was added). A new connection
+  or belief writes its links there beside the old lists (`mention_ids`, `evidence_ids`), which a
+  later migration drops once nothing reads them; a reader takes the table. A removed line or claim
+  clears its link's target in every place that removes one. A backup carries a line's link as a
+  placeholder (a restored campaign has none of those lines). The health report counts links,
+  placeholders, dangling and foreign links.
+
+**Embeddings (meaning search).** Voyage AI (owner, 2026-10-24): `voyage-3.5` for embeddings and
+`rerank-2.5` for the second pass that picks what matters most. It is named on the privacy page as a
+processor before it is used.
+- **What is embedded:** text that belongs to the campaign:
+  - assertions in DMbot's own words;
+  - PlotBot's note on why an event matters;
+  - DM notes;
+  - lore the DM shared under the IP rule.
+
+  Those vectors stay with the campaign, like the rest of its generated content.
+- **A person's words** (transcript lines) may be embedded while the line exists, for search, and the
+  vector is deleted with the line. **No vector of a person's words is ever kept after the words are
+  deleted**: a text embedding can be turned back into much of the sentence, and the deletion promise
+  (PLAN, "Data, ownership and deletion") covers what was learned from a person, too.
+- Each vector stores the model name and version, so a change of model re-embeds everything.
+- Vectors are per campaign and never compared across campaigns or servers.
+- `pgvector` is a database image change, which only dev1 deploys.
+- **Built (#2664 part 2): where the numbers live.** `memory_vectors` (migration 0248) holds them as a
+  plain list of numbers, and `memory/vectors.py` compares them in Python inside ONE campaign (stock
+  Postgres has no `pgvector`; a read over 20,000 rows logs a counts-only warning, and `pgvector`
+  can replace the comparison later without changing what a row means). A transcript line's row is
+  tied to the line by a foreign key that deletes it with the line, so Stop recording me, Delete my
+  transcripts, retention and a deleted session or campaign all take the numbers in the same
+  statement. A line deleted while its text was away at Voyage AI is never saved (the save selects
+  the line). Not in a backup: they are made again.
+- **Built (#2664 parts 3 and 4): keeping them up to date, and using them.** `memory/embedding.py` is
+  the after-session job (batches under one call limit, consent read before every batch and again
+  after the call, long text split and never cut, counts-only progress, no credit stops it). It runs
+  only with `DMBOT_MEANING_SEARCH=1` and a Voyage key, inside the story plan, and sends only the
+  campaign's confirmed entries and the game talk of people who agree to be recorded.
+  `memory/meaning.py` gives the sidebar more starting points: the entries closest in meaning to a
+  question, re-scored by `rerank-2.5`, added to the names the question spelled out. Optional: a
+  switch off, no numbers yet, nothing close or any failure means names alone. An entry the players
+  may not know yet is never a lead for a sidebar answer. Table questions never ask for leads.
+- **Built (#2733): the Names page searches by meaning.** `POST /me/campaigns/{ref}/all-names/search`
+  with `{q}` in the body, never the address (`web/names_smart.py`): the DM's words become numbers (Voyage AI, the same model the kept numbers
+  were made with), the database door `dmbot_web_names_near` finds the nearest names in that one
+  campaign (the website's role has no right on the numbers, so the comparing is done there), and
+  `rerank-2.5` puts the best in order by reading each name's text. The text is the name, its
+  description, its other names (never a secret one) and up to ten connections in plain words ("is an
+  ally of Brannoc"), put together in one place (`memory/entity_text.py`) so the numbers, the
+  reranker and the sidebar read the same words. A connection the DM keeps secret, or one to a name
+  the players don't know yet, is never in it. DMs only (a server manager who is not a DM gets "not
+  found": the text holds descriptions the page does not show them), and the DM is checked before any
+  word leaves for Voyage AI. 20 searches a minute for each person. When the search cannot run (off,
+  no credit, Voyage AI not answering within 10 seconds, no scan slot free in 10 seconds, or a scan
+  past the website's 5-second limit) the refusal is `not_available` (HTTP 409) and the page falls
+  back to the letters search. The words are never logged. The rows come back in the
+  list's usual shape (`dmbot_web_all_names` now takes a short list of ids as well as one). One
+  search compares the newest 10,000 numbers (measured: about 3 seconds of one core for 20,000; two
+  at a time in the process; `capped` tells the page there were more), until `pgvector` can replace
+  the comparing. A changed description, other name or connection makes that entry's numbers again
+  at the next run, so the Voyage bill follows how much the DM edits. The stored text can lag until the next embedding
+  run after an entry becomes hidden or a connection is taken back, so the text a player-facing lead
+  reads is always rebuilt live (`entry_texts`), never the stored one.
+
+**Hard rules and warnings** (owner, 2026-10-24, #2663). Every rule is one or the other, and a new
+rule says which in `memory/checks.py`'s docstring.
+- **Structural: never broken, so the write is refused.** The shape of the data, not the story:
+  a connection joins two different names; every row and both ends of a connection or belief are in
+  the one campaign (composite keys in the database, never a check in code); a "led to" link joins
+  confirmed names and does not close a loop when it is made; a confidence, a status and a span are
+  valid; a campaign has one "truth" view (the DM's) and one party view.
+- **A warning: flagged for the DM, never refused.** A one-of-a-kind item in two holders' hands
+  (a handoff, a theft or a mistaken belief), a place inside itself, a dead name acting later, too many
+  of a kind, a clash between two facts. The fact is stored as given.
+- **Two writers can't both pass the same check.** A structural rule that reads before it writes runs
+  inside `MemoryStore._write`, which holds the campaign's row lock to the end of the transaction, so
+  one campaign's writes run one at a time. A path outside `_write` locks the same campaign row (an
+  advisory lock would not keep `_write` out) or uses a constraint.
+- **Every check stays in one campaign.** Two campaigns' items are never compared, even when they share a
+  name.
+- **Known gap (follow-up):** the loop check runs when a "led to" link is made; confirming a rejected
+  one, merging two names and restoring a backup skip it.
 
 ## Build order (proposed)
 
@@ -595,7 +956,8 @@ Each step is useful on its own and ships behind the existing phases.
    counts only.
    Start after-session only, then live.
 2. **Phase 5b: NPC tracker and reputation:** knowledge (clues, `knows`, `witnessed`),
-   deeds, standing, the NPC channel, the recall service. **Slice 1 is built (#1350): the recall
+   deeds, standing, the NPC channel (**a roster is built, #1761**: `RecallService.roster` lists the
+   confirmed NPCs and groups the players may know, in the NPC channel; see docs/PLAN.md, "Channels"), the recall service. **Slice 1 is built (#1350): the recall
    service,** `dmbot.memory.recall`, in code only (no AI, no screen, used nowhere yet). From some
    names or entry ids, an audience (`dm_screen`, `players` or `transcript`), a story time and a
    size budget (`DMBOT_RECALL_BUDGET`, 4000 characters unless set) it walks one or two steps over
@@ -619,13 +981,273 @@ Each step is useful on its own and ships behind the existing phases.
    `DMBOT_SIDEBAR_RECALL_BUDGET` (1000) characters beside today's "campaign names" section, which
    stays (names, kinds and other names only). `DMBOT_SIDEBAR_RECALL=0` makes the prompt exactly
    the names-only one.
+   **Slice 3 is built (#1649): who knows a secret.** `clue` ("clue or secret") is a core kind, a
+   subtype of `concept`, and an entry of its own. A clue carries one flag, `audience_limited`
+   (migration 0115), the DM's switch **🔒 Only some know this** on its name card (DM only). Who
+   knows it is its confirmed, still-true `knows` facts from characters, so there is no new table
+   and no relationship pointing at a relationship. The switch can be turned on only with at least
+   one person listed; when the last person is removed it turns itself off. The flag is cleared if
+   the entry becomes another kind, kept if two clues merge, and carried in backups (an older
+   backup restores it off). After a session, the continuity run (`dmbot.memory.continuity`,
+   the same list, quoting rules, critical mass and buttons) adds a heads-up when a claim ties a
+   confirmed character who is not on the list to a limited clue: **possible** by default, **likely**
+   when the claim's words say they told it or used it. A character still waiting to be confirmed
+   gives none. Its buttons are **They learned it** (confirms the claim and writes a dated `knows`
+   fact, which also stops the warning), **Wasn't real** and **Ignore**. A clue without the switch
+   never warns about anyone: a missing `knows` means DMbot doesn't know. Recall's **players**
+   audience drops a limited clue (and with it every fact that points to it), and its name card is
+   the DM's alone. `witnessed` is still not a term: nothing reads it until reputation (slice 4),
+   and `appears_in` serves for who was at an event.
+   **Slice 4a is built (#1655): standing the DM sets, worked out on demand** (no AI, no extractor;
+   deeds come later). Core gains the kind `people` (a subtype of `concept`: the tabaxi, outsiders)
+   and the connection `of_people` (character → people), the DM's word and never copied from a
+   species link. The party is one group per campaign flagged `party`; its members are the
+   confirmed player characters, worked out in code (nothing written when one joins). Two tables,
+   `memory_impressions` (viewer → subject) and `memory_attitudes` (group or place → a people), hold
+   a score −100..100 and the weight of the evidence, with the history kept: a newer word for a pair
+   closes the older (`closed_at`). They are campaign-scoped with forced RLS, in the change log
+   (Undo), in backups and deleted with the campaign. The DM's five steps store as −80, −40, 0, 40,
+   80 and read back at ±20 and ±60. The pure rule (`dmbot.memory.standing`) climbs at most two rungs
+   up each ladder (judged: character → party → groups → people; judging: NPC → groups and places →
+   the wider place), never in a loop, counting each found row with its weight halved per rung. **The
+   DM always wins:** the viewer's own DM-set impression on the exact pair, or its own attitude
+   toward a people the subject is of, decides the step, and the rungs above are only reasons;
+   otherwise the weighted mean decides, so direct evidence outweighs prejudice as it grows.
+   Nothing found is shown as **No opinion yet**, never as Wary. A name card for an NPC, group or
+   place has **🤝 Standing** (DM only) with the reasons, **Set standing…** and, on a group or place,
+   **Set attitude…**; a line says it only reminds the DM. Recall does not read these tables, and
+   the players' audience and transcripts never get them. 30 pairs take well under 5 ms.
+   **Slice 4b is built (#1732): deeds the DM confirms move standing** (no AI, no extractor, nothing
+   reads speech). On a player character's or the party's name card, **⚔️ Record a deed** (DM only):
+   what happened (up to 200 characters), who it mattered to (up to five NPCs, groups or places), how it
+   landed (**Helped them** +20, **Pleased them** +10, **Annoyed them** −10, **Hurt them** −20), one
+   confirmation, then **↩ Undo that**. No new table: core gains the kind `deed` (under `event`) and the
+   connections `did` (doer → deed) and `affected` (deed → whom, the effect as the detail); the words
+   are the deed's description. All of it is one change in the memory change log (one Undo), in
+   backups, and deleted with the campaign. A deed is the DM's own note, with no name the table can match (its words are not a name anyone says,
+   and no real name inside them is hidden): recall's players audience, the players' lookup and name
+   cards, and transcripts never get it. **Standing:** each deed is evidence
+   of weight 20 (score from how it landed) from each one it mattered to toward the doer, climbing the
+   same ladders as an impression (so a deed by the party reaches each player character). A deed older
+   than ten sessions counts at half weight (old news fades; the DM can always set it); the sessions
+   counted are the ones names were heard in (`memory_heard`) and the ones deeds were recorded for; a deed
+   recorded with no session running takes the newest one. The DM's own word
+   on the exact pair still decides outright, and the deed shows only as a reason. **🤝 Standing**
+   lists it: "⚔️ Saved the mill (session 4, helped)". Because Helped them (+20) is exactly the
+   Friendly line, deeds alone take "No opinion yet" to Friendly at once, and mixed with a Wary word
+   they move it only as far as the mean goes. A later slice may propose deeds from claims for the DM
+   to confirm.
+   **Phase 5c slice 1 is built (#1662): story threads the DM keeps** (no AI; the DM writes
+   them). Core gains `thread` with the kinds `quest`, `mystery`, `hook` and `goal` under it (as
+   `clue` sits under `concept`), and the connections `in_thread` (who, with their role in the
+   detail), `advances` and `resolves` (event → thread). A thread's state is kept in
+   `memory_states` (migration 0118 widens its `condition` check): hinted, open, active, resolved,
+   abandoned. Forward moves are free; reopening a resolved or dropped thread is the DM's alone.
+   Resolving never changes the state by itself: the DM is offered "Is the thread resolved now?".
+   **Stalled is worked out, never stored:** a hinted, open or active thread is stalled when at
+   least N known sessions (distinct `session_started_at` in `memory_heard`, N from
+   `DMBOT_THREAD_STALLED_SESSIONS`, default 3) started since it last moved: its newest state row,
+   its newest connection, or the session its name was last heard. **Still going** writes a dated
+   row with the same state; the card shows it as "checked, still going (Session N)", never as a
+   change, and a reading of "what changed" skips it. After a session the report says "N threads
+   haven't moved for M sessions" with a button to answer each (Still going, Resolved, Dropped). A
+   thread is the DM's plot note: lookup (`hidden`, so a server manager who is not a DM never finds
+   it) and the players' recall leave it, and every fact that points to it, out. The connection is
+   named `in_thread` because `involved_in` is already a synonym of `appears_in`. Backups,
+   isolation and deletion are those of every memory entry; `memory_heard` is in a backup as counts only (#1747),
+   kept at restore for people recorded now in the restoring server and for entries the campaign
+   has, so a restored campaign shows the same stalled threads.
+   **Phase 5c slice 2 is built (#1674): promises the DM keeps** (no AI; the DM writes them).
+   `promise` is a fifth kind under `thread`, beside quest, mystery, hook and goal, so it reuses the
+   thread states, the stalled rule and the after-session question exactly: no new condition and no
+   migration. It shows its own words for the same states: made in passing, open, due soon, kept,
+   broken or let go. Two connections, the DM's word and both set from the promise's card:
+   `promised_by` (character or group → promise) and `promised_to` (character, group or place →
+   promise); a promise may name more than one of each. An optional due note is free text kept in the
+   entry's description and never read as a date. The card says "**Kael** promised **Dunhollow**:
+   bring the healer back", then the state and "Due: …". The after-session line says "promise" where
+   all the quiet ones are promises. Privacy and isolation are those of threads: DM only, hidden from
+   lookup and from the players' recall, in backups, deleted with the campaign.
+   **Phase 5c slice 3 is built (#1675): quiet threads in the pre-session note.** When a session
+   starts, the note on the DM screen gains one line, only when a thread is stalled (by the rule above,
+   promises included): "🧵 Quiet threads: <name>, <name>, <name> (+N more)", the longest quiet first.
+   A **🧵 Threads** button on the note opens the DM's private list of every live thread, those in
+   play first, the quiet ones marked ⏳, with Still going, Finished/Dropped (Kept/Broken for a
+   promise) on each. The line is in-game content: it stays on the DM screen, never in the DM Bot
+   channel, a transcript or the players' recall. A campaign with no live thread skips the read (a
+   one-row look at `memory_states`); otherwise it is the one `threads()` read.
+   **Phase 5c slice 4 is built (#1679): `led_to`.** A core connection, the DM's word only: a clue,
+   an event or a thread led to a thread or an event (no AI, no migration). It is set from a card's
+   **➡ Led to…** button, which picks from the campaign's threads and events. A link to itself, or
+   one that would close a loop or run past ten steps, is refused (not flagged). The fact is stored
+   secret, so it is the DM's alone wherever facts are shown, and a link into a thread is hidden
+   with the thread. A thread's card shows "Came from" and "Led to", at most five names each then
+   "+N more", from the one thread read; a clue's or event's card shows the same from a single read
+   of its own links. A link is not the thread moving, so it does not reset its quiet count.
+   **Promises due soon (#1680):** the pre-session note gains up to two lines, "🤝 Due soon: <who> →
+   <whom>: <what> (due: <note>)", for the promises the DM put in **Due soon**, the quietest first, then
+   "🤝 +N more promises due soon". A promise without both parties reads "🤝 Due soon: <what>". The claims
+   line sits above the thread lines, so a full note cuts those, never it. The due note is shown
+   as the DM wrote it, never parsed into a date. They come from the same `threads()` read as the quiet
+   line (no new query), and the 🧵 Threads button covers them. DM screen only, like threads.
 3. **Phase 5c: PlotBot:** threads, promises, clues, `led_to`, stalled-thread nudges,
    summaries, the pre-session note, the AI recap.
 4. **Phase 5d: Shared story:** the story plan, `same_as` links, divergence ("Watch
    the story"), then "Guide me".
+   **Phase 5d slice 1 is built (#1692): the Shared story switch.** Only the switch and the DM's
+   confirmation (no AI, no adventure reading). A campaign setting `story_mode` — `off` (the
+   default), `watch` or `guide` — set from ⚙️ Settings → 🧭 Shared story, DMs only, with each
+   mode's one-line meaning. The first time it is turned on the DM sees the warning from the IP
+   rule ("Only give DMbot material you have the right to use. DMbot doesn't check this.") and the
+   mode is saved only by **I have the right**, which records who and when (purpose
+   `shared_story` in `shared_confirmations`, a fingerprint of the words, not the words). Without
+   that press it stays Off; Off keeps the record, so turning it on again does not ask again. It is
+   in backups, but a record that came from a backup file never counts as a press here: the mode
+   comes back on only for the person whose confirmation is in the file (the same DM restoring
+   their own backup), anyone else restoring it starts with the switch Off and confirms for
+   themselves. **Nothing reads the mode yet**: the story-plan reader, the divergence
+   warnings and Guide me are the next slices, and the card says "Not working yet. Soon you will be
+   able to give DMbot your adventure." Each of those must ask for the right to use the material
+   it is given, not rely on this switch alone. Offered on every plan (PLAN names no plan rule for it).
+   **Phase 5d slice 2 is built (#1698): give DMbot your adventure.** On the Shared story card, once
+   the switch is on and a DM said here they have the right to use the material, **📖 Give DMbot your
+   adventure** opens a list of what DMbot holds (name, about how many pages, who added it, when) with
+   **Give a file** and a **🗑 Remove** on each (one confirmation). One file at a time, PDF, Word,
+   text or Markdown, up to 10 MB, read by the same time-limited reading process as the names screen
+   (up to 120 s) and cut into chunks of about 2,000 characters at headings and blank lines, never
+   mid-word. Migration 0122 adds `adventure_documents` and `adventure_chunks`, isolated per server
+   and deleted with the campaign. The same file twice is refused (a SHA-256 of its text); a campaign
+   holds at most 2,000,000 characters and 20 documents. **No AI and nothing reads the text yet**: the
+   next slice (the story-plan reader) will. The text stays in that one campaign: never in a
+   transcript, a shared ruleset, a pack, another campaign or a server's other campaigns, and never
+   shown to players. **The text is NOT in the campaign's backup** (Supervisor, 2026-10-17): anyone in the
+   server may download a paid campaign's backup, which would hand a commercial adventure's full
+   text to all of them, past what the DM confirmed the right to use; and unlike the DM's notes the
+   text is replaceable, the DM still has the file. The backup keeps only the list (file name,
+   characters, fingerprint, who added it and when). After a restore the card lists each as "give
+   DMbot this file again to use it", and giving the same file fills it in (the fingerprint
+   matches). A restore adds no confirmation (#1692), so a restored campaign gets no button until
+   a DM turns the switch on again and says they have the right. A 300-page test PDF reads in about 2 seconds and stores in under 1.
+   **Phase 5d slice 3 is built (#1714): the story-plan reader.** On the same card **📖 Read it now**
+   (after one yes, naming the file) has the AI read a file **once**, never by itself, and keep what the
+   book expects as the **story plan**, a layer of its own that is never table facts and never shown
+   to players: chapters, places and people (`plan_nodes`, each with the chunks it came from and a
+   quote of at most 200 characters) and "depends on" links between two of them (`plan_links`, with
+   what is needed, "alive", and its own quote). Migration 0123. The card shows "reading… 40%" with
+   **🔄 Refresh**, and when done "read: 3 chapters, 41 places, 57 people, 12 depends-on links"; **📋
+   See what was read** scrolls the list. **The text goes to the AI as quoted data** (brackets
+   neutralised so nothing can close the quote) with the names found so far, and the answer is read as
+   data: an entry stays only if its quote (at least 12 characters) really is in the text it cites,
+   every word of its name is in the text (the plan never makes up what the book says), and nothing in it
+   reads like an instruction to DMbot; the rest are dropped and counted. A name seen again keeps its first entry; a link to a name nobody found is let go. **The
+   switch and a non-restored confirmation are checked before every batch and again before its answer
+   is stored**, and so is the owner's plan. **Money** (docs/costs.md): the CAREFUL tier, about $0.70 for
+   300 pages, at most **$3 a file and $10 a campaign a month**; before each call the reader works out the
+   most it could cost and stops, saying so, when that would cross a cap. What each call cost goes to a
+   ledger, first as a reservation of the call's worst case (made while the campaign row is locked, so two
+   reads can't spend the same money) and then settled to the real cost; a failed call keeps its input cost,
+   and the ledger is kept by the file's fingerprint when the file is removed, so removing and re-adding
+   can't get round the caps. An answer cut short is read again in halves; a failed call is tried again
+   after a wait, at most three times in a row and six in a read.
+   **A stopped or restarted read carries on** from the first batch not stored (the batches before it
+   are kept), when the DM presses Read it now again; a read the bot's restart cut shows as "stopped".
+   **Not in backups, like the text:** the plan is deleted with its file and with the campaign, and
+   after a restore it is rebuilt by giving the file again and reading again. The one exception is
+   the money ledger, in a backup as amounts only by file fingerprint and month (#1723), so a restore
+   does not reset the caps; a replace never lowers what a campaign has spent. When a read ends the
+   DM screen gets one line ("DMbot finished reading <file>: 3 chapters, 41 places…", or why it
+   stopped), and a read waiting for one of the two bot-wide slots says "waiting for a turn" on the card. No divergence, no
+   **Phase 5d slice 4 is built (#1715): the book and the table.** "The book's Captain Varn" and "our
+   Captain Varn" are joined only by the DM's word and stay two things (migration 0124, `plan_same_as`:
+   a book entry, a table entry, **same** or **not the same**, who and when). **No AI:** a book person
+   or place and a confirmed table entry of the same kind (people and groups with people, places with
+   places) are suggested when they have the same name, or the table entry is called that (names compare
+   the way they do everywhere: case, accents, apostrophes and hyphens don't matter). The Shared story
+   card's **🔗 Match names** shows up to ten at a time as "In your adventure: Captain Varn ↔ DMbot remembers: Captain Varn"
+   with two menus, *these are the same* and *these are not the same*; either answer is remembered, so
+   a pair is never asked about twice, and the next ten follow. On a name's card (DM only) **📖 In my
+   adventure…** picks from the book's entries by hand (the ones sharing a word with the name first)
+   and takes a link off. **One for one:** a book entry is the same as at most one table entry, and a
+   table entry as at most one book entry in each file; a refused answer writes nothing. Every change is
+   in the memory change log, so **↩ Undo that** (right after, and for a taken-off link) puts it back.
+   The table entry's card shows "📖 In your adventure: Captain Varn (Chapter 1: The Harbour)" to the DM only
+   (the chapter is the nearest one at or before the entry in the file). The link is the DM's alone:
+   recall, the players' views and transcripts never read it; it goes with the book entry (its file, or
+   the campaign) and with the table entry, and is not in backups, like the plan.
+
+   **Phase 5d slice 5 is built (#1729): watch the story, the first check, no AI.** The book says "Chapter 3
+   needs Captain Varn alive", the DM said the book's Varn is the table's Varn, and the table says he is
+   dead: DMbot tells the DM, once, on the DM screen only. A clash is a plan link whose `need` and the table
+   entry's current condition cannot both be true, through a `same` link (a pure table in
+   `memory/story_watch.py`): alive or present against dead, missing, captured or transformed; found against
+   lost or destroyed; and "dead" in the book against "alive" the table said after the plan was read. Any
+   other `need` text is ignored, and so is `unknown`. A name the DM rejected or merged away never counts.
+   **When:** only with Shared story on (Watch the story or Guide me), a DM's own confirmation (not one that
+   came back in a backup) and the owner's plan allowing it, all asked again every time; once after each
+   session, and when the DM confirms a fact that is a condition on the claims review (for that one
+   condition). **Once only:** migration 0125 `plan_divergences`, one row for each plan link and condition
+   seen (`open`, `known` after **👍 I know**, `gone` when an Undo, a later change or a taken-off link means
+   the clash no longer stands), forced RLS, not in backups, deleted with the plan link or the table entry.
+   The message has at most five lines and "+N more" (those come with the next check), each
+   "📖 Your adventure: Mother Ilse needs Captain Varn alive (Chapter 3: The Circle). At your table Captain
+   Varn is dead (Session 4).", the chapter being the nearest one at or before the book's entry (the rule
+   `book_links` uses; left out when the entry is itself a chapter),
+   with **👍 I know** and **📋 Book's words** (the plan link's quote, at most 200 characters, only to
+   the DM who pressed). It never says what to do. Cost: none; it reads `plan_links`, `plan_same_as`,
+   `memory_states` through their indexes, a few rows for one campaign. **Guide me** gets the same check; the
+   rest of it is the next slice. After an Undo of the condition, or a name merged or rejected, a clash
+   already told goes `gone` at the next check and its buttons stop answering; a deleted or merged name that
+   comes back by Undo may tell a clash the DM already answered again (`plan_divergences` is derived and not
+   in the memory change log's dependents).
+
+   **Phase 5d slice 6 is built (#1731): Guide me, no AI.** With Shared story on **Guide me**, **🧭 What's
+   next?** (on the Shared story card, and on the pre-session note) answers the DM who pressed, privately:
+   "🧭 Probably **Chapter 2** (heard: Bryn, Pell)." / "In the book, this chapter also has: …, +N more." (the
+   book's people and places with no link to the table, up to 6) / "The book's next chapter: **Chapter 3**:
+   <its summary, cut at 150 characters>" or "This is the book's last chapter."; then the clashes Watch the
+   story already told for this chapter, each with its **📋 Book's words**. **Which chapter:** the one with
+   the most table entries the DM linked to the book (`plan_same_as`) among those heard in the last two
+   sessions (`memory_heard`, where a session's names are kept); a tie goes to the later chapter. There is **one chapter rule**, in SQL in
+   `book_links` (`chapter_of` gives the name, `chapter_id_of` the id): the nearest chapter at or before an
+   entry in its file, the later when two share a place. Both the "(Chapter …)" text and Guide me use it.
+   **"Pick my chapter…"** saves the DM's word (migration 0126, `plan_position`: one row for each file; it
+   beats the guess until **Use DMbot's guess**; in the memory change log, so **↩ Undo that** works; gone
+   with its file, its chapter or the campaign; not in backups). With several files it asks which first;
+   with more than 25 chapters, Earlier / Later chapters move the menu. If nothing is linked and heard:
+   "No names heard yet, so no guess. Pick your chapter below." Nothing is invented: every name and summary
+   is what the reader stored. No chapters: "DMbot didn't find chapters in this file. Try another file."
+   **Checks:** Guide me, a DM's own (non-restored) confirmation, and the owner's plan are asked again once
+   in every interaction (the button, and each menu choice), and the pre-session note shows the button only
+   when all three hold. **Cost:** none. About nine calls a press: the checks (campaign, confirmation,
+   plan), the files (2), and the guide's own three reads (nodes with the pick, linked entries, clashes);
+   the reads took about 17 ms on a plan of 440 entries and 20 links. **Help and the website** are WebDev's
+   later.
+   **Ask it aloud (#1739):** "Hey DMbot, what's next?" from a DM gets the same answer, privately, in the
+   DM's own chat with DMbot (said at the table, or typed or sent as a voice message in that chat; never
+   in the table's DMbot chat, and never for a player). The phrase list is strict and pure
+   (`sidebar/guide_phrase.py`): "what's next", "what happens next (in the adventure or the book)", "what
+   does the book have next", "where are we in the adventure", with or without "DMbot" and "please" ("what's
+   next in initiative", "what time is it" and "if they go north, what's next" are not it). No AI decides.
+   It answers only when the three conditions hold; otherwise the sidebar answers as it always did. **The
+   reply is DM-screen content and is never written to a transcript:** the question is logged as any
+   sidebar question, and the reply as "(answered privately: Guide me)". The text is made by the same
+   function as the button's (`ui/guide.compose`), so the two cannot differ.
+
 5. **Throughout:** the ontology steward and graph curator take over the after-session
    cleanup; their health numbers (duplicates, orphans, unused terms, flags per session,
    how often the DM is asked, warnings ignored) go to the server logs, never to players.
+   **The graph's health numbers are built (#1699).** After each session's other after-session work
+   there is one line per campaign in the server log, counts only, never a name or any text, and
+   never shown to a player or a DM: `memory health: entities=N confirmed=N proposed=N duplicates=N
+   orphans=N unused_terms=N flags_this_session=N asked_dm=N`. *entities* is the live entities
+   (confirmed + proposed); *duplicates* is pairs of confirmed entities of one kind (people
+   excepted) that share a name or an alias key and are not joined by a live `same_as` link;
+   *orphans* is confirmed entities (people excepted) with no live relation that were not heard in
+   the last three sessions; *unused_terms* is the campaign's own relationship terms that no live
+   relation uses; *flags_this_session* is the continuity and rule-check flags raised since the
+   session began; *asked_dm* is the claims waiting for the DM from that session plus the "Did they
+   mean…?" questions put to the DM. One read per campaign, counted in SQL; a failed read is a
+   warning and never stops the other after-session steps (`dmbot.memory.health`).
 
 TimeBot (Phase 4) makes game-time checks exact; until then facts are ordered by session,
 as today.
@@ -633,5 +1255,29 @@ as today.
 ## Decided
 
 All of the open decisions were answered by the owner on 2026-10-06: see "Decisions"
-at the top. Still to measure before 5a is built: the "how it was said" accuracy (player
-or DM, statement or plan) and the tokens per call, on saved test sets (PyCharm session).
+at the top. The 5a extractor was measured on 2026-10-15; the numbers and costs are in
+`docs/costs.md` ("Measured 2026-10-15").
+
+**Built (#2409).** Part A (migration 0179): the two perspectives, the beliefs, `manipulated_by`, the backfill,
+`MemoryStore.believe`, `party_view` and `truth_view`, and the writers kept in step through the connection's
+`secret` flag. Part B: the readers that show the players the story read what The party believes, not the flag:
+recall's players audience and the NPC roster behind the NPC pages, the name lookup the name dropdown and the
+cleaner use (`beliefs.party_knows()` in SQL), and the website's relationship web (migration 0185). Until
+guesses arrive (#2412) The party's belief and the flag always agree, and tests hold the readers to it. A
+reworded connection (#2408) carries the old one's beliefs, evidence, mentions and session span. The flag
+and the API's `secret` field stay until every reader has moved and a later migration drops the flag.
+
+## The name pass's report, kept for the website (#2684)
+
+PlotBot's name pass (#2628) used to say what it did only in a Discord message, and an Undo deleted the
+lines that proved a fix was made. `name_pass_reports` (migration 0239) now keeps one row for each session
+(the counts: words left as heard, names offered as new, words left alone near a secret name, and whether
+PlotBot's answer was cut) and `name_pass_fixes` one row for each name fixed (its Undo number, the list
+name, how many times, and when it was undone). Counts and the campaign's own list names only; the
+spellings as heard stay in `transcript_respells`, read from there while a fix stands and never copied.
+Written by the pass; the Discord Undo marks a fix undone. A backup leaves both out (a log of a run).
+
+The recap page reads it through `GET /me/recaps/{ref}/names-fixed` (#2684, migration 0240, a DM-only door
+`dmbot_recap_names_fixed`): the counts, each fix with its Undo number, list name, times, whether it was
+undone, and the spellings as heard (only while the fix stands; transcript words, for the campaign's DM
+alone, never logged). A player, another DM or an unknown recap gets "not found".

@@ -2,6 +2,8 @@
 import PlanCard from "../components/PlanCard.astro";
 import GreetingIsland from "../personal/Greeting";
 import Base from "../layouts/Base.astro";
+import { pricingRow } from "../content/recap-audio";
+import { RECAP_AUDIO_LIVE } from "../content/recap-words";
 import {
   extraHours,
   headline,
@@ -49,6 +51,23 @@ import {
       </article>
     </div>
   </section>
+
+  {
+    RECAP_AUDIO_LIVE && (
+      <section class="more" aria-labelledby="addons-heading">
+        <h2 id="addons-heading">{pricingRow.heading}</h2>
+        <p class="lead">{pricingRow.lead}</p>
+        <div class="more-grid">
+          <article class="extra" aria-labelledby="addon-recap-heading" data-plan="recap-audio">
+            <h3 id="addon-recap-heading">{pricingRow.name}</h3>
+            {pricingRow.priceLine && <p class="extra-price">{pricingRow.priceLine}</p>}
+            <p>{pricingRow.included}</p>
+            <p>{pricingRow.line}</p>
+          </article>
+        </div>
+      </section>
+    )
+  }
 
   <section id="questions" class="faq" aria-labelledby="faq-heading">
     <h2 id="faq-heading">{labels.faqHeading}</h2>

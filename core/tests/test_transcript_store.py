@@ -4,21 +4,24 @@
 import asyncio
 from dataclasses import replace
 from types import SimpleNamespace
-from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from typing import Any, cast
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import discord
 
 from dmbot.audio.segmenter import Segmenter, Utterance
-from dmbot.bot import DMBot, Table
+from dmbot.bot import DMBot
 from dmbot.campaigns import CampaignStore
 from dmbot.config import Settings
 from dmbot.consent import ConsentStore
 from dmbot.dm_screen import messages as screen_messages
 from dmbot.sessions import SessionStore
-from dmbot.transcript import export
+from dmbot.table import Table
+from dmbot.transcript import export, fix_notes
+from dmbot.transcript import questions as name_questions
 from dmbot.transcript.models import SIDEBAR_ANSWER, SIDEBAR_QUESTION, VIA_VOICE, Line, Lineage
 from dmbot.transcript.store import TranscriptStore
+from dmbot.transcript.suggestions import Suggestion, SuggestionStore
 from dmbot.ui import transcripts as ui
 from tests.pg import DatabaseTest
 
@@ -46,6 +49,22 @@ class StoreTests(DatabaseTest):
         lines = await self.store.lines(GUILD, sid)
         self.assertEqual([(x.heard, x.text) for x in lines], [("first",) * 2, ("second",) * 2])
 
+    async def test_the_next_session_start_counts_only_later_sessions_with_lines(self) -> None:
+        first = await self.store.open_session(GUILD, self.campaign.id, START)
+        await self.store.add_lines(GUILD, first, [line(1, PLAYER, "hello")])
+        empty = await self.store.open_session(GUILD, self.campaign.id, START + 100)  # no lines yet
+        other = await self.campaigns.create(GUILD, "Sunken City", DM)
+        elsewhere = await self.store.open_session(GUILD, other.id, START + 50)
+        await self.store.add_lines(GUILD, elsewhere, [line(2, PLAYER, "another game")])
+        self.assertIsNone(await self.store.next_session_start(GUILD, self.campaign.id, START))
+        self.assertIsNone(await self.store.next_session_start(GUILD, self.campaign.id, START + 500))
+        later = await self.store.open_session(GUILD, self.campaign.id, START + 200)
+        await self.store.add_lines(GUILD, later, [line(3, PLAYER, "next week")])
+        self.assertEqual(
+            await self.store.next_session_start(GUILD, self.campaign.id, START), START + 200
+        )  # the empty one at START + 100 and the other campaign's do not end the window
+        self.assertEqual(empty != later, True)
+
     async def test_a_typed_line_is_saved_and_read_back_as_typed(self) -> None:
         # Typed chat at the table (#1118): the flag survives the database.
         sid = await self.store.open_session(GUILD, self.campaign.id, START)
@@ -63,6 +82,23 @@ class StoreTests(DatabaseTest):
         self.assertEqual(
             (flags["said"], flags["t"], flags["we take a long rest"]), (False, True, True)
         )
+
+    async def test_an_image_line_is_saved_and_read_back_as_an_image(self) -> None:
+        # A described picture (#2450): the flag survives the database, beside typed ones.
+        sid = await self.store.open_session(GUILD, self.campaign.id, START)
+        picture = Line(
+            START * 1000 + 1000, DM, "a picture: a map", "an image: a map", typed=True, image=True
+        )
+        typed = Line(START * 1000 + 2000, DM, "hello", "hello", typed=True)
+        await self.store.add_lines(GUILD, sid, [picture, typed, line(9, PLAYER, "said")])
+        got = {x.heard: (x.typed, x.image) for x in await self.store.lines(GUILD, sid)}
+        self.assertEqual(got["a picture: a map"], (True, True))
+        self.assertEqual(got["hello"], (True, False))
+        self.assertEqual(got["said"], (False, False))
+
+    def test_an_image_line_must_be_a_typed_line(self) -> None:
+        with self.assertRaises(ValueError):
+            Line(1, DM, "a", "a", image=True)
 
     async def test_table_chat_defaults_on_and_is_kept_per_campaign(self) -> None:
         self.assertEqual(
@@ -99,6 +135,35 @@ class StoreTests(DatabaseTest):
         await self.campaigns.set_transcript_channel(GUILD, other.id, 13)
         self.assertEqual(await self.campaigns.special_channel_ids(GUILD), frozenset({11, 12, 13}))
         self.assertEqual(await self.campaigns.special_channel_ids(GUILD + 9), frozenset())
+
+    async def test_an_off_the_record_marker_is_kept_but_is_not_speech(self) -> None:
+        """#2466: a gap's marker is a line of its own kind; it is not counted as speech and not
+        a speaker."""
+        sid = await self.store.open_session(GUILD, self.campaign.id, START)
+        marker = Line(
+            START * 1000 + 60_000, 5, "off the record", "off the record", 300_000,
+            sidebar="off_record",
+        )  # fmt: skip
+        await self.store.add_lines(GUILD, sid, [marker, line(5, DM, "table speech")])
+        (counted,) = await self.store.sessions(GUILD, self.campaign.id)
+        self.assertEqual((counted.lines, counted.speakers), (1, (DM,)))
+        lines = await self.store.lines(GUILD, sid)
+        kept = next(x for x in lines if x.sidebar)
+        self.assertEqual((kept.sidebar, kept.user_id, kept.duration_ms), ("off_record", 5, 300_000))
+
+    async def test_a_topic_is_set_on_the_typed_line_or_the_spoken_one_never_both(self) -> None:
+        """#2447: typed chat and speech of one person can share a millisecond."""
+        sid = await self.store.open_session(GUILD, self.campaign.id, START)
+        ms = START * 1000 + 5000
+        spoken = Line(ms, DM, "hello there", "hello there", 1000)
+        typed = Line(ms, DM, "my cat", "my cat", typed=True)
+        await self.store.add_lines(GUILD, sid, [spoken, typed])
+        self.assertEqual(await self.store.set_topic(GUILD, sid, DM, ms, "off_topic", typed=True), 1)
+        by = {x.typed: x.topic for x in await self.store.lines(GUILD, sid)}
+        self.assertEqual(by, {False: "game", True: "off_topic"})
+        self.assertEqual(await self.store.set_topics(GUILD, sid, DM, [ms], "game", typed=True), 1)
+        by = {x.typed: x.topic for x in await self.store.lines(GUILD, sid)}
+        self.assertEqual(by, {False: "game", True: "game"})
 
     async def test_sidebar_lines_are_kept_apart_and_never_edited(self) -> None:
         sid = await self.store.open_session(GUILD, self.campaign.id, START)
@@ -434,6 +499,112 @@ class BotTests(DatabaseTest):
         await save
         self.assertEqual(await self.saved(table), [(PLAYER, "keep me")])
 
+    async def kept(self, table: Table) -> dict[int, str]:
+        assert table.transcript_session_id is not None
+        session = await self.store.session(GUILD, table.transcript_session_id)
+        assert session is not None
+        return dict(session.speaker_names)
+
+    async def test_the_speakers_names_are_kept_with_the_session_once(self) -> None:
+        await self.consent.grant(GUILD, PLAYER)
+        await self.consent.grant(GUILD, DM)
+        table = self.table()
+        self.said(table, PLAYER, "I attack.")
+        self.said(table, DM, "Roll.", 2)
+        await self.bot.save_transcript(table)
+        self.assertEqual(await self.kept(table), {PLAYER: "Mia", DM: "Sam"})
+        asked: list[set[int]] = []
+        real = self.bot._keep_speaker_names
+
+        async def counting(gid: int, session_id: str, ids: set[int]) -> set[int]:
+            asked.append(ids)
+            return await real(gid, session_id, ids)
+
+        self.bot._keep_speaker_names = counting  # type: ignore[method-assign,assignment]
+        self.said(table, PLAYER, "again", 3)
+        await self.bot.save_transcript(table)
+        self.assertEqual(await self.kept(table), {PLAYER: "Mia", DM: "Sam"})
+        self.assertEqual(asked, [])  # nobody is looked up again on a later save
+
+    async def test_someone_who_stopped_while_saving_is_not_named(self) -> None:
+        await self.consent.grant(GUILD, PLAYER)
+        await self.consent.grant(GUILD, DM)
+        table = self.table()
+        self.said(table, PLAYER, "keep me")
+        self.said(table, DM, "drop me", 2)
+        real = self.store.add_lines
+        saving, release = asyncio.Event(), asyncio.Event()
+
+        async def slow(*args: Any) -> list[int]:
+            saving.set()
+            await release.wait()
+            return await real(*args)
+
+        self.store.add_lines = slow  # type: ignore[method-assign,assignment]
+        save = asyncio.create_task(self.bot.save_transcript(table))
+        await saving.wait()
+        await self.consent.revoke(GUILD, DM)
+        release.set()
+        await save
+        self.assertEqual(await self.kept(table), {PLAYER: "Mia"})
+
+    async def test_a_busy_discord_is_not_taken_for_a_person_who_left(self) -> None:
+        await self.consent.grant(GUILD, PLAYER)
+        await self.consent.grant(GUILD, STRANGER)
+        table = self.table()
+        self.said(table, PLAYER, "hello")
+        self.said(table, STRANGER, "hi", 2)
+        self.guild.get_member = lambda uid: None
+        busy = discord.HTTPException(MagicMock(status=429), "slow down")
+        gone = discord.NotFound(MagicMock(status=404), "Unknown Member")
+        self.guild.fetch_member = AsyncMock(
+            side_effect=lambda uid: (_ for _ in ()).throw(busy if uid == PLAYER else gone)
+        )
+        await self.bot.save_transcript(table)
+        self.assertEqual(await self.kept(table), {STRANGER: ""})  # Mia is asked again, not "gone"
+        self.assertEqual(table.named_speakers, {STRANGER})
+
+    async def test_a_name_goes_when_the_persons_lines_are_taken_back_out(self) -> None:
+        await self.consent.grant(GUILD, PLAYER)
+        table = self.table()
+        self.said(table, PLAYER, "hello")
+        await self.bot.save_transcript(table)
+        self.assertEqual(await self.kept(table), {PLAYER: "Mia"})
+        assert table.transcript_session_id is not None
+        lines = await self.store.lines(GUILD, table.transcript_session_id)
+        async with self.db.guild(GUILD) as conn:
+            cur = await conn.execute("SELECT id FROM transcript_lines")
+            ids = [int(r["id"]) for r in await cur.fetchall()]
+        self.assertEqual(len(lines), len(ids))
+        await self.store.remove_lines(GUILD, table.transcript_session_id, ids)
+        self.assertEqual(await self.kept(table), {})
+
+    async def test_a_server_not_there_to_ask_keeps_nothing_and_is_tried_again(self) -> None:
+        await self.consent.grant(GUILD, PLAYER)
+        table = self.table()
+        self.said(table, PLAYER, "hello")
+        self.bot.get_guild = lambda gid: None  # type: ignore[method-assign]
+        await self.bot.save_transcript(table)
+        self.assertEqual(await self.kept(table), {})
+        self.bot.get_guild = lambda gid: self.guild  # type: ignore[method-assign]
+        self.said(table, PLAYER, "again", 2)
+        await self.bot.save_transcript(table)
+        self.assertEqual(await self.kept(table), {PLAYER: "Mia"})
+
+    async def test_the_start_up_fill_in_names_older_sessions_and_marks_those_gone(self) -> None:
+        await self.consent.grant(GUILD, PLAYER)
+        table = self.table()
+        self.said(table, PLAYER, "hello")
+        self.said(table, STRANGER, "left the server", 2)
+        await self.consent.grant(GUILD, STRANGER)
+        self.bot.get_guild = lambda gid: None  # type: ignore[method-assign]
+        await self.bot.save_transcript(table)  # saved, but with no name kept
+        self.bot.get_guild = lambda gid: self.guild  # type: ignore[method-assign]
+        with patch.object(DMBot, "guilds", new=[self.guild]), patch("asyncio.sleep", AsyncMock()):
+            await self.bot._name_old_speakers()
+        self.assertEqual(await self.kept(table), {PLAYER: "Mia", STRANGER: ""})
+        self.assertEqual(await self.store.unnamed(GUILD), [])  # one-off: nothing left to do
+
     async def test_a_failed_start_loses_nothing_and_warns_the_dm_once(self) -> None:
         await self.consent.grant(GUILD, PLAYER)
         table = self.table()
@@ -491,7 +662,8 @@ class BotTests(DatabaseTest):
         sid = table.transcript_session_id
         self.assertEqual(
             [b.custom_id for b in call.kwargs["view"].children],
-            [f"dmbot:transcript:{GUILD}:{sid}:{c}" for c in ("cleaned", "heard", "both")],
+            [f"dmbot:transcript:{GUILD}:{sid}:{c}" for c in ("cleaned", "heard", "both")]
+            + [f"dmbot:fixline:{GUILD}:{sid}"],  # and a player's suggested fix (#1491)
         )
         session = await self.store.session(GUILD, sid or "")
         assert session is not None and session.ended_at is not None
@@ -566,7 +738,9 @@ class BotTests(DatabaseTest):
         users = await self.end_with_gate(AsyncMock(return_value=None), AsyncMock(return_value=True))
         for user in users.values():
             call = user.send.await_args
-            self.assertEqual(len(call.kwargs["view"].children), 3)
+            self.assertEqual(
+                len(call.kwargs["view"].children), 4
+            )  # three downloads and ✏️ Fix (#1491)
             self.assertIn("Download the transcript", call.args[0])
 
     async def test_the_plan_is_asked_at_most_twice_for_the_whole_table(self) -> None:
@@ -658,6 +832,51 @@ class BotTests(DatabaseTest):
         await button.callback(it)
         return it
 
+    async def test_the_download_marks_the_dm_and_keeps_the_name_of_someone_who_left(self) -> None:
+        sid = await self.finished_session()
+        await self.store.add_lines(
+            GUILD, sid, [Line(START * 1000 + 60_000, DM, "Roll for it.", "Roll for it.")]
+        )
+        async with self.store.db.guild(GUILD) as conn:  # the name kept when Mia was still here
+            await conn.execute(
+                "UPDATE transcript_sessions SET speaker_names = %s::jsonb WHERE id = %s",
+                (f'{{"{PLAYER}": "Mia then"}}', sid),
+            )
+        self.guild.get_member = lambda uid: (  # Mia has left the server; Sam is still there
+            SimpleNamespace(display_name="Sam") if uid == DM else None
+        )
+        result = await ui.make_file(self.bot, self.guild, GUILD, sid, PLAYER, (export.AS_HEARD,))
+        assert not isinstance(result, str)
+        text = result[0].fp.read().decode()
+        self.assertIn("(Sam, DM): Roll for it.", text)  # today's name, and the mark
+        self.assertIn("(Mia then): We ride at dawn.", text)  # the kept name, not "Someone"
+
+    async def test_one_person_has_one_label_in_the_download_and_on_the_website(self) -> None:
+        from dmbot.web import transcripts as web
+
+        sid = await self.finished_session()
+        # Two people called Sam; the player (Mia's line is already there) only typed first
+        typed = Line(START * 1000 + 1000, STRANGER, "brb", "brb", 0, "off_topic", typed=True)
+        said = Line(START * 1000 + 60_000, DM, "Roll for it.", "Roll for it.")
+        await self.store.add_lines(GUILD, sid, [typed, said])
+        self.guild.get_member = lambda uid: SimpleNamespace(display_name="Sam")
+        lines = await self.store.lines(GUILD, sid)
+        for version in (export.AS_HEARD, export.CLEANED):
+            result = await ui.make_file(self.bot, self.guild, GUILD, sid, PLAYER, (version,))
+            assert not isinstance(result, str)
+            text = result[0].fp.read().decode()
+            site = web.speaker_names(lines, version, {PLAYER: "Sam", DM: "Sam", STRANGER: "Sam"})
+            for user in export.speaker_order(lines, version):
+                # the same label either way (the download adds the DM mark)
+                suffix = ", DM" if user == DM else ""
+                self.assertIn(f"({site[user]}{suffix})", text, (version, user))
+        cleaned = await ui.make_file(self.bot, self.guild, GUILD, sid, PLAYER, (export.CLEANED,))
+        assert not isinstance(cleaned, str)
+        body = cleaned[0].fp.read().decode()
+        self.assertNotIn(
+            "(2)", body.split("\n\n", 1)[1].replace("(Sam (2), DM)", "")
+        )  # the typist is hidden
+
     async def test_everyone_who_can_read_the_raw_file_sees_the_sidebar_lines_and_nobody_the_cleaned(
         self,
     ) -> None:
@@ -689,7 +908,7 @@ class BotTests(DatabaseTest):
         assert not isinstance(result, str)
         heard, cleaned = (f.fp.read().decode() for f in result)
         self.assertIn(
-            "(Sam) [DM Sidebar id=a1b2c3 via=voice-memo stt=deepgram/nova-3]: "
+            "(Sam, DM) [DM Sidebar id=a1b2c3 via=voice-memo stt=deepgram/nova-3]: "
             "find if flanking is optional",
             heard,
         )
@@ -752,3 +971,413 @@ class BotTests(DatabaseTest):
     async def test_names_dmbot_cant_find_show_as_someone(self) -> None:
         names = await ui.display_names(self.guild, (PLAYER, STRANGER))
         self.assertEqual(names, {PLAYER: "Mia"})
+
+    # ---- a player's suggested fix, once the DM accepts it (#1491) ------------------------
+
+    async def fix_setup(self) -> tuple[Table, str]:
+        await self.consent.grant(GUILD, PLAYER)
+        self.bot.suggestions = SuggestionStore(self.db)
+        table = self.table()
+        self.said(table, PLAYER, "I saw Beleros")
+        await self.bot.save_transcript(table)
+        sid = table.transcript_session_id
+        assert sid is not None
+        return table, sid
+
+    async def test_an_accepted_fix_changes_the_saved_words_of_a_finished_session(self) -> None:
+        table, sid = await self.fix_setup()
+        del self.bot.tables[GUILD]  # the session is over
+        started = START * 1000 + 1000
+        done = await self.bot.apply_line_fix(
+            GUILD, table.campaign_id or "", sid, PLAYER, started, "I saw Belleros"
+        )
+        self.assertTrue(done)
+        (line,) = await self.store.lines(GUILD, sid)
+        self.assertEqual((line.heard, line.text), ("I saw Beleros", "I saw Belleros"))
+
+    async def test_an_accepted_fix_in_a_running_session_goes_through_the_notes_too(self) -> None:
+        table, sid = await self.fix_setup()
+        started = START * 1000 + 1000
+        self.assertTrue(
+            await self.bot.apply_line_fix(
+                GUILD, table.campaign_id or "", sid, PLAYER, started, "I saw Belleros"
+            )
+        )
+        (note,) = table.fix_notes.answers  # a later Undo of a name fix keeps these words
+        self.assertEqual((note.heard, note.written), ("I saw Beleros", "I saw Belleros"))
+        (line,) = await self.store.lines(GUILD, sid)
+        self.assertEqual((line.heard, line.text), ("I saw Beleros", "I saw Belleros"))
+
+    async def test_a_line_still_waiting_to_be_saved_changes_where_it_waits(self) -> None:
+        await self.consent.grant(GUILD, PLAYER)
+        self.bot.suggestions = SuggestionStore(self.db)
+        table = self.table()
+        self.said(table, PLAYER, "I saw Beleros")
+        sid = "s" * 32
+        table.transcript_session_id = sid
+        started = START * 1000 + 1000
+        self.assertTrue(
+            await self.bot.apply_line_fix(
+                GUILD, table.campaign_id or "", sid, PLAYER, started, "I saw Belleros"
+            )
+        )
+        (waiting,) = table.unsaved._waiting
+        self.assertEqual((waiting.heard, waiting.text), ("I saw Beleros", "I saw Belleros"))
+
+    async def test_someone_who_stopped_being_recorded_has_nothing_written(self) -> None:
+        table, sid = await self.fix_setup()
+        self.bot.consent.has_consent = lambda guild_id, user_id: False  # type: ignore[method-assign]
+        done = await self.bot.apply_line_fix(
+            GUILD, table.campaign_id or "", sid, PLAYER, START * 1000 + 1000, "I saw Belleros"
+        )
+        self.assertFalse(done)
+        (line,) = await self.store.lines(GUILD, sid)
+        self.assertEqual(line.text, "I saw Beleros")
+
+    async def image_setup(self) -> tuple[Table, str, int]:
+        """A saved speech line and a saved picture line of the same person at the same moment."""
+        await self.consent.grant(GUILD, PLAYER)
+        self.bot.suggestions = SuggestionStore(self.db)
+        table = self.table()
+        started = START * 1000 + 1000
+        words = 'a picture: A note. Text written on it: "Meet at the old mill."'
+        table.unsaved.add(Line(started, PLAYER, words, words, typed=True, image=True))
+        self.said(table, PLAYER, "I saw Beleros")  # (speech, at the same moment)
+        await self.bot.save_transcript(table)
+        sid = table.transcript_session_id
+        assert sid is not None
+        return table, sid, started
+
+    async def test_a_picture_fix_is_noted_with_undo_and_leaves_the_speech_alone(self) -> None:
+        table, sid, started = await self.image_setup()
+        self.bot.memory = MagicMock(add_correction=AsyncMock())
+        new = 'a picture: A note. Text written on it: "Meet at the new mill."'
+        with patch.object(self.bot.consent, "has_image_consent", return_value=True):
+            done = await self.bot.apply_line_fix(
+                GUILD, table.campaign_id or "", sid, PLAYER, started, new, image=True
+            )
+        self.assertTrue(done)
+        rows = {x.heard: x.text for x in await self.store.lines(GUILD, sid)}
+        self.assertEqual(rows["I saw Beleros"], "I saw Beleros")  # the speech is untouched
+        self.assertIn("new mill", next(t for h, t in rows.items() if "mill" in h))
+        (note,) = table.fix_notes.shown()  # listed with Undo, as other whole-line fixes
+        self.assertEqual(note.fix.written, new)
+        with patch.object(self.bot.consent, "has_image_consent", return_value=True):
+            text, allow = await self.bot.undo_fix(GUILD, note.id, DM)
+        self.assertIn("Undone", text)
+        self.assertIsNone(allow)  # no name was learned
+        rows = {x.heard: x.text for x in await self.store.lines(GUILD, sid)}
+        self.assertIn("old mill", next(t for h, t in rows.items() if "mill" in h))
+
+    async def test_a_second_picture_fix_replaces_the_first_and_undo_restores_the_original(
+        self,
+    ) -> None:
+        table, sid, started = await self.image_setup()
+        self.bot.memory = MagicMock(add_correction=AsyncMock())
+        first = 'a picture: A note. Text written on it: "Meet at the new mill."'
+        second = 'a picture: A note. Text written on it: "Meet at the river."'
+        with patch.object(self.bot.consent, "has_image_consent", return_value=True):
+            for words in (first, second):
+                self.assertTrue(
+                    await self.bot.apply_line_fix(
+                        GUILD,
+                        table.campaign_id or "",
+                        sid,
+                        PLAYER,
+                        started,
+                        words,
+                        image=True,
+                        by=PLAYER,
+                    )
+                )
+            (note,) = table.fix_notes.shown()  # one note, not two: the second replaced the first
+            self.assertEqual(note.fix.written, second)
+            text, _ = await self.bot.undo_fix(GUILD, note.id, DM)
+        self.assertIn("Undone", text)
+        rows = {x.heard: x.text for x in await self.store.lines(GUILD, sid)}
+        self.assertIn("old mill", next(t for h, t in rows.items() if "mill" in h))  # as first read
+
+    async def test_a_poster_cannot_replace_a_dms_pending_picture_fix_but_a_dm_can_replace_theirs(
+        self,
+    ) -> None:
+        table, sid, started = await self.image_setup()
+        self.bot.memory = MagicMock(add_correction=AsyncMock())
+        words = 'a picture: A note. Text written on it: "%s"'
+        fixes = {w: words % w for w in ("Meet at the river.", "Meet at the ford.", "Meet at dawn.")}
+        c = table.campaign_id or ""
+
+        async def fix(w: str, by: int, dm: bool) -> bool:
+            return bool(
+                await self.bot.apply_line_fix(
+                    GUILD, c, sid, PLAYER, started, fixes[w], image=True, by=by, by_dm=dm
+                )
+            )
+
+        with patch.object(self.bot.consent, "has_image_consent", return_value=True):
+            self.assertTrue(await fix("Meet at the river.", DM, True))  # the DM fixes it
+            self.assertFalse(await fix("Meet at the ford.", PLAYER, False))  # the poster may not
+            (note,) = table.fix_notes.shown()
+            self.assertEqual((note.fix.written, note.by), (fixes["Meet at the river."], DM))
+            rows = {x.heard: x.text for x in await self.store.lines(GUILD, sid)}
+            self.assertTrue(any("river" in t for t in rows.values()))  # the DM's words stay
+            self.assertTrue(await fix("Meet at dawn.", DM, True))  # a DM may replace a DM's own
+
+    async def test_a_note_that_is_not_a_picture_fix_is_not_replaced(self) -> None:
+        table, sid, started = await self.image_setup()
+        self.bot.memory = MagicMock(add_correction=AsyncMock())
+        from dmbot.transcript.cleaner import SPELLING, Fix
+
+        table.fix_notes.add(
+            PLAYER, started, "x", (Fix(0, 1, "x", "y", "", SPELLING, sure=False),), by=0
+        )  # a name fix on the same line
+        with patch.object(self.bot.consent, "has_image_consent", return_value=True):
+            done = await self.bot.apply_line_fix(
+                GUILD, table.campaign_id or "", sid, PLAYER, started, "a picture: z",
+                image=True, by=DM, by_dm=True,
+            )  # fmt: skip
+        self.assertFalse(done)
+
+    async def test_a_name_fix_on_the_same_line_is_not_replaced_by_a_picture_fix(self) -> None:
+        table, sid, started = await self.image_setup()
+        table.fix_notes.answered(
+            fix_notes.Answer(None, PLAYER, started, "x", (), 0, 1, "y")  # an answer on the line
+        )
+        with patch.object(self.bot.consent, "has_image_consent", return_value=True):
+            done = await self.bot.apply_line_fix(
+                GUILD, table.campaign_id or "", sid, PLAYER, started, "a picture: z", image=True
+            )
+        self.assertFalse(done)
+
+    async def test_undo_of_a_picture_fix_also_needs_the_posters_yes_to_pictures(self) -> None:
+        table, sid, started = await self.image_setup()
+        self.bot.memory = MagicMock(add_correction=AsyncMock())
+        new = 'a picture: A note. Text written on it: "Meet at the new mill."'
+        with patch.object(self.bot.consent, "has_image_consent", return_value=True):
+            await self.bot.apply_line_fix(
+                GUILD, table.campaign_id or "", sid, PLAYER, started, new, image=True
+            )
+        (note,) = table.fix_notes.shown()
+        with patch.object(self.bot.consent, "has_image_consent", return_value=False):
+            text, _ = await self.bot.undo_fix(GUILD, note.id, DM)
+        self.assertNotIn("Undone", text)  # their yes to pictures is gone: nothing is touched
+        rows = {x.heard: x.text for x in await self.store.lines(GUILD, sid)}
+        self.assertIn("new mill", next(t for h, t in rows.items() if "mill" in h))
+
+    async def test_a_picture_fix_needs_the_posters_yes_to_pictures(self) -> None:
+        table, sid, started = await self.image_setup()
+        with patch.object(self.bot.consent, "has_image_consent", return_value=False):
+            done = await self.bot.apply_line_fix(
+                GUILD, table.campaign_id or "", sid, PLAYER, started, "a picture: x", image=True
+            )
+        self.assertFalse(done)
+
+    async def test_a_dms_own_edit_is_noted_with_undo_and_learns_no_rule(self) -> None:
+        table, sid = await self.fix_setup()
+        memory = MagicMock(add_correction=AsyncMock())
+        self.bot.memory = memory
+        started = START * 1000 + 1000
+        done = await self.bot.apply_line_fix(
+            GUILD, table.campaign_id or "", sid, PLAYER, started, "I saw Belleros there", noted=True
+        )
+        self.assertTrue(done)
+        (line,) = await self.store.lines(GUILD, sid)
+        self.assertEqual((line.heard, line.text), ("I saw Beleros", "I saw Belleros there"))
+        (note,) = table.fix_notes.shown()  # listed with Undo, as a whole-line DM edit
+        self.assertEqual((note.fix.how, note.fix.written), ("edit", "I saw Belleros there"))
+        # A second edit of the same line waits for the first to be undone.
+        self.assertFalse(
+            await self.bot.apply_line_fix(
+                GUILD, table.campaign_id or "", sid, PLAYER, started, "again", noted=True
+            )
+        )
+        text, allow = await self.bot.undo_fix(GUILD, note.id, DM)
+        self.assertIn("Undone", text)
+        self.assertIsNone(allow)  # no "Allow again": nothing was learned
+        memory.add_correction.assert_not_awaited()  # and no "keep as heard" rule for a whole line
+        (line,) = await self.store.lines(GUILD, sid)
+        self.assertEqual(line.text, "I saw Beleros")  # as heard again
+
+    async def test_a_dm_edit_is_refused_over_a_line_with_a_name_fix_waiting(self) -> None:
+        from dmbot.transcript.cleaner import Fix
+
+        table, sid = await self.fix_setup()
+        started = START * 1000 + 1000
+        fix = Fix(6, 13, "Beleros", "Belleros", "e" * 32, "sound", sure=False)
+        table.fix_notes.add(PLAYER, started, "I saw Beleros", (fix,))
+        done = await self.bot.apply_line_fix(
+            GUILD, table.campaign_id or "", sid, PLAYER, started, "something else", noted=True
+        )
+        self.assertFalse(done)  # undoing the older fix would bring its words back over this
+        (line,) = await self.store.lines(GUILD, sid)
+        self.assertEqual(line.text, "I saw Beleros")
+
+    async def test_a_dm_edit_is_refused_over_a_line_with_an_open_question(self) -> None:
+        from dmbot.transcript.questions import Asked
+
+        table, sid = await self.fix_setup()
+        started = START * 1000 + 1000
+        table.questions.open = Asked("q1", PLAYER, "Beleros", (), 0.0, started_ms=started)
+        done = await self.bot.apply_line_fix(
+            GUILD, table.campaign_id or "", sid, PLAYER, started, "something else", noted=True
+        )
+        self.assertFalse(done)  # answering it later would write over the edit
+        (line,) = await self.store.lines(GUILD, sid)
+        self.assertEqual(line.text, "I saw Beleros")
+
+    async def test_the_summary_counts_what_the_cleaner_did(self) -> None:
+        from dmbot.transcript.cleaner import Fix
+
+        table, sid = await self.fix_setup()
+        started = START * 1000 + 1000
+        store = self.bot.suggestions
+        assert store is not None
+        made = await store.suggest(
+            GUILD, table.campaign_id or "", sid, PLAYER, started, "I saw Belleros"
+        )
+        assert isinstance(made, Suggestion)
+        table.names_fixed, table.names_asked = 3, 2
+        table.questions.closed_why.update({"a": "answered", "b": name_questions.ENDED})
+        edit = Fix(0, 13, "I saw Beleros", "x", "", "edit", sure=False)
+        table.fix_notes.add(PLAYER, started, "I saw Beleros", (edit,))
+        self.bot.post_message = AsyncMock(return_value=MagicMock())  # type: ignore[method-assign]
+        await self.bot.post_session_summary(table, START + 60, True, 0)
+        text = cast(Any, self.bot.post_message).await_args.args[1]
+        self.assertIn(
+            "✏️ Names: DMbot fixed 3 by itself, asked you about 2 (1 not answered), "
+            "you corrected 1, players suggested 1 (1 still waiting).",
+            text,
+        )
+
+    async def test_a_quiet_session_has_no_names_line(self) -> None:
+        table, _ = await self.fix_setup()
+        self.bot.post_message = AsyncMock(return_value=MagicMock())  # type: ignore[method-assign]
+        await self.bot.post_session_summary(table, START + 60, True, 0)
+        self.assertNotIn("Names:", cast(Any, self.bot.post_message).await_args.args[1])
+
+    async def test_the_dm_screens_summary_carries_the_fix_a_line_button(self) -> None:
+        table, sid = await self.fix_setup()
+        self.bot.post_message = AsyncMock(return_value=MagicMock())  # type: ignore[method-assign]
+        await self.bot.post_session_summary(table, START + 60, True, 0)
+        _, _, view = cast(Any, self.bot.post_message).await_args.args
+        ids = [c.item.custom_id for c in view.children]
+        self.assertEqual(ids, [f"dmbot:fixline:{GUILD}:{sid}"])
+        self.assertEqual(view.children[0].item.label, "✏️ Fix a line")
+
+    async def waiting_setup(self, count: int = 1) -> tuple[Table, list[int]]:
+        """`count` open suggestions on lines of two recorded people, oldest first."""
+        other = PLAYER + 1
+        await self.consent.grant(GUILD, PLAYER)
+        await self.consent.grant(GUILD, other)
+        self.bot.suggestions = SuggestionStore(self.db)
+        table = self.table()
+        for i in range(count):
+            self.said(table, PLAYER if i % 2 == 0 else other, f"I saw Beleros {i}", i + 1)
+        await self.bot.save_transcript(table)
+        sid = table.transcript_session_id
+        assert sid is not None
+        store = self.bot.suggestions
+        ids = []
+        for i in range(count):
+            made = await store.suggest(
+                GUILD,
+                table.campaign_id or "",
+                sid,
+                PLAYER if i % 2 == 0 else other,
+                START * 1000 + (i + 1) * 1000,
+                f"I saw Belleros {i}",
+            )
+            assert isinstance(made, Suggestion)
+            ids.append(made.id)
+        self.bot.post_message = AsyncMock(return_value=MagicMock())  # type: ignore[method-assign]
+        return table, ids
+
+    def posted(self) -> list[tuple[str, Any]]:
+        return [
+            (c.args[1], c.args[2] if len(c.args) > 2 else None)
+            for c in cast(Any, self.bot.post_message).await_args_list
+        ]
+
+    async def test_a_waiting_suggestion_is_put_on_the_dm_screen_again_at_session_start(
+        self,
+    ) -> None:
+        table, (sid,) = await self.waiting_setup(1)
+        await self.bot._waiting_suggestions(table)
+        ((text, view),) = self.posted()
+        self.assertIn("suggests a fix to their line", text)
+        self.assertIn("I saw Belleros 0", text)
+        self.assertEqual(
+            [c.item.custom_id for c in view.children],
+            [f"dmbot:linefix:yes:{sid}", f"dmbot:linefix:no:{sid}"],
+        )
+        self.assertEqual(cast(Any, self.bot.post_message).await_args_list[0].args[0], SCREEN)
+
+    async def test_nothing_for_an_answered_or_dropped_suggestion(self) -> None:
+        table, (first, second) = await self.waiting_setup(2)
+        store = self.bot.suggestions
+        assert store is not None
+        await store.decide(GUILD, first, "declined", DM)
+        await store.decide(GUILD, second, "dropped", DM)
+        await self.bot._waiting_suggestions(table)
+        cast(Any, self.bot.post_message).assert_not_awaited()
+
+    async def test_at_most_three_are_shown_oldest_first_and_the_rest_counted(self) -> None:
+        table, ids = await self.waiting_setup(5)
+        await self.bot._waiting_suggestions(table)
+        shown = self.posted()
+        self.assertEqual(len(shown), 4)
+        for i, (text, view) in enumerate(shown[:3]):
+            self.assertIn(f"I saw Belleros {i}", text)
+            self.assertEqual(view.children[0].item.custom_id, f"dmbot:linefix:yes:{ids[i]}")
+        self.assertEqual(shown[3], ("…and 2 more that go when this session ends.", None))
+
+    async def test_nothing_after_a_restart_in_the_middle_of_a_session(self) -> None:
+        table, _ = await self.waiting_setup(1)
+        table.resumed = True
+        await self.bot._waiting_suggestions(table)
+        cast(Any, self.bot.post_message).assert_not_awaited()
+
+    async def test_nothing_if_the_session_ended_meanwhile(self) -> None:
+        table, _ = await self.waiting_setup(1)
+        del self.bot.tables[GUILD]
+        await self.bot._waiting_suggestions(table)
+        cast(Any, self.bot.post_message).assert_not_awaited()
+
+    async def test_nothing_for_a_speaker_who_is_no_longer_recorded(self) -> None:
+        table, _ = await self.waiting_setup(1)
+        await self.consent.revoke(GUILD, PLAYER)
+        await self.bot._waiting_suggestions(table)
+        cast(Any, self.bot.post_message).assert_not_awaited()
+
+    async def test_a_person_who_stops_while_the_lines_go_up_is_left_out(self) -> None:
+        table, _ = await self.waiting_setup(2)  # one line each from two people
+
+        async def stop_the_other(*_: Any, **__: Any) -> Any:
+            await self.consent.revoke(GUILD, PLAYER + 1)
+            return MagicMock()
+
+        self.bot.post_message = AsyncMock(side_effect=stop_the_other)  # type: ignore[method-assign]
+        await self.bot._waiting_suggestions(table)
+        self.assertEqual(cast(Any, self.bot.post_message).await_count, 1)  # only the first went up
+
+    async def test_a_failure_costs_the_lines_not_the_session(self) -> None:
+        table, _ = await self.waiting_setup(1)
+        self.bot.post_message = AsyncMock(side_effect=RuntimeError("down"))  # type: ignore[method-assign]
+        await self.bot._waiting_suggestions(table)  # does not raise
+
+    async def test_when_a_session_ends_only_its_own_suggestions_stay(self) -> None:
+        table, sid = await self.fix_setup()
+        store = self.bot.suggestions
+        assert store is not None
+        made = await store.suggest(
+            GUILD, table.campaign_id or "", sid, PLAYER, START * 1000 + 1000, "I saw Belleros"
+        )
+        assert isinstance(made, Suggestion)
+        await self.bot._drop_old_suggestions(table, sid)  # its own session ended: it stays
+        kept = await store.get(GUILD, made.id)
+        assert kept is not None
+        self.assertEqual(kept.state, "open")
+        later = await self.store.open_session(GUILD, table.campaign_id or "", START + 86400)
+        await self.bot._drop_old_suggestions(table, later)  # the next one ended: it goes
+        dropped = await store.get(GUILD, made.id)
+        assert dropped is not None
+        self.assertEqual(dropped.state, "dropped")

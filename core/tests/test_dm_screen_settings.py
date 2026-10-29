@@ -69,7 +69,8 @@ class SettingsCardTest(unittest.TestCase):
         self.assertIn("• **How much DMbot says:** Normal (recommended). Asks about", text)
         self.assertIn("Warnings always show", text)
         self.assertIn("• **Who can see the DM screen:** The DM. Players can choose", text)
-        self.assertIn("`/transcript`", text)
+        self.assertIn("Change it with 👁️ Who can see the DM screen.", text)
+        self.assertNotIn("`/transcript`", text)  # the transcripts line moved to Campaign management
         quiet = settings_text(campaign("quiet"))
         self.assertIn(
             "Quiet. Only what you ask for, warnings, and lines it left out as off-topic; "
@@ -82,29 +83,17 @@ class SettingsCardTest(unittest.TestCase):
         view = settings_view(campaign("quiet", vis="private"), None, DM)
         items: list[Any] = list(view.children)
         self.assertEqual(
-            [i.row for i in items], [0, 0, 1, 1, 1, 2, 3, 3, 3, 3, 3, 4, 4, 4]
-        )  # Take it on, Look up, Rules cards, Clock, House file, Invite, chat, sides, shared
+            [i.row for i in items],
+            [0, 0, 1, 1, 3, 3, 3, 3, 3, 4, 4, 0, 4, 4, 4, 1, 0],
+        )  # the two menus (Who can see, Campaign management) sit by the levels (#2281) ...
+        # ... then Look up, Rules cards, Clock, House file, Invite, chat, Recaps, Stop when quiet,
+        # Shared rules, Homebrew, Names, What's switched on and Shared story
         labels = [i.item.label for i in items]
         self.assertEqual(labels[:2], ["✓ Quiet", "Normal"])  # no Chatty
-        self.assertEqual(labels[2], "✓ Only the DM")  # the current one, the same way
+        self.assertEqual(labels[2:4], ["Who can see the DM screen", "Campaign management"])
         self.assertEqual(
             [i.item.disabled for i in items],
-            [
-                True,
-                False,
-                True,
-                False,
-                False,
-                False,
-                False,
-                False,
-                False,
-                False,
-                False,
-                False,
-                False,
-                False,
-            ],
+            [True] + [False] * (len(items) - 1),
         )
         for item in items:
             self.assertLessEqual(len(item.item.label), 25)
@@ -122,10 +111,9 @@ class SettingsCardTest(unittest.TestCase):
             self.assertEqual("Look up a rule" in settings_text(c, None, viewer), expected, viewer)
         self.assertIn("free rules (SRD)", settings_text(c, None, DM))
 
-    def test_the_help_card_has_settings_between_sessions(self) -> None:
+    def test_the_help_card_no_longer_has_settings(self) -> None:
         ids = [str(i.item.custom_id) for i in card_view(campaign()).children]  # type: ignore[attr-defined]
-        self.assertIn(f"dmbot:settings:{CAMPAIGN}", ids)
-        self.assertLessEqual(len(ids), 5)  # one row
+        self.assertNotIn(f"dmbot:settings:{CAMPAIGN}", ids)  # it is in the DM Bot channel (#1666)
 
 
 class SettingsButtonsTest(unittest.IsolatedAsyncioTestCase):
@@ -139,6 +127,28 @@ class SettingsButtonsTest(unittest.IsolatedAsyncioTestCase):
             kwargs = it.response.send_message.await_args.kwargs
             self.assertTrue(kwargs["ephemeral"])  # only they see it
             self.assertIsNotNone(kwargs["view"])
+
+    async def test_a_campaign_without_the_dm_bot_channel_gets_one_and_is_told_where(self) -> None:
+        it = press(DM, found=campaign())
+        it.client.upgrade_dm_bot_channel = AsyncMock(return_value=680000000000000077)
+        await SettingsButton(CAMPAIGN).callback(it)
+        it.client.upgrade_dm_bot_channel.assert_awaited_once()
+        said = it.followup.send.await_args
+        self.assertIn("<#680000000000000077>", said.args[0])
+        self.assertTrue(said.kwargs["ephemeral"])
+
+    async def test_a_campaign_that_has_it_hears_nothing_more(self) -> None:
+        it = press(DM, found=campaign())
+        it.client.upgrade_dm_bot_channel = AsyncMock(return_value=None)
+        await SettingsButton(CAMPAIGN).callback(it)
+        it.followup.send.assert_not_awaited()
+
+    async def test_a_failed_upgrade_never_blocks_the_card(self) -> None:
+        it = press(DM, found=campaign())
+        it.client.upgrade_dm_bot_channel = AsyncMock(side_effect=RuntimeError("x"))
+        with self.assertLogs("dmbot.dm_screen.settings", "ERROR"):
+            await SettingsButton(CAMPAIGN).callback(it)
+        self.assertIsNotNone(it.response.send_message.await_args.kwargs["view"])
 
     async def test_another_servers_campaign_finds_nothing(self) -> None:
         it = press(DM, found=None)
@@ -206,9 +216,11 @@ class SettingsButtonsTest(unittest.IsolatedAsyncioTestCase):
         save.assert_awaited_once_with(it, *allowed, "private", quiet=True)
         it.response.defer.assert_awaited_once()
         kwargs = it.edit_original_response.await_args.kwargs
-        self.assertIn("**Who can see the DM screen:** Only the DM.", kwargs["content"])
+        self.assertIn("Only the DM.", kwargs["content"])
+        self.assertIn("Who can see the DM screen", kwargs["content"])  # the visibility card
         labels = [i.item.label for i in kwargs["view"].children]
         self.assertIn("✓ Only the DM", labels)  # the card shows what's saved now
+        self.assertIn("Back to Settings", labels)
 
     async def test_a_refused_visibility_tap_leaves_the_card(self) -> None:
         it = press(PLAYER)
@@ -223,7 +235,7 @@ class SettingsWordsTest(unittest.IsolatedAsyncioTestCase):
 
     def test_the_card_says_what_cant_be_changed_and_what_follows(self) -> None:
         text = settings_text(campaign())
-        self.assertIn("`/transcript`. (This can't be changed.)", text)
+        self.assertNotIn("Kept until the campaign is deleted", text)  # moved to its own card
         self.assertIn("If DMbot is listening now, it follows the change from now on.", text)
         self.assertNotIn("next line", text)
         self.assertEqual(LOAD_FAILED, "Sorry, something went wrong. Please try again.")

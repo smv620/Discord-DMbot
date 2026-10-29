@@ -37,6 +37,7 @@ TIMEOUT_S = 30
 MAX_REDIRECTS = 3
 FETCHING = asyncio.Semaphore(3)  # links opened at once, across all servers
 _GDOC = re.compile(r"^/document/(?:u/\d+/)?d/([A-Za-z0-9_-]{20,})")
+_GSHEET = re.compile(r"^/spreadsheets/d/([A-Za-z0-9_-]{20,})")
 _GDRIVE = re.compile(r"^/file/(?:u/\d+/)?d/([A-Za-z0-9_-]{20,})")
 # File hosts whose web pages (not files) mean "sign in" or "not shared with everyone".
 _FILE_HOSTS = (
@@ -59,18 +60,38 @@ _DRIVE_HOSTS = ("drive.google.com", "drive.usercontent.google.com")
 _TYPES = {
     "application/pdf": ".pdf",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
     "application/msword": ".doc",
     "text/plain": ".txt",
     "text/markdown": ".txt",
-    "text/csv": ".txt",
+    "text/csv": ".csv",
     "text/html": ".html",
     "application/xhtml+xml": ".html",
 }
-_ENDINGS = (".pdf", ".docx", ".doc", ".txt", ".md", ".csv", ".html", ".htm")
+# What an image fetch (#2450) accepts: the picture types the AI reads, by Content-Type.
+_IMAGE_TYPES = {
+    "image/png": ".png",
+    "image/jpeg": ".jpg",
+    "image/webp": ".webp",
+    "image/gif": ".gif",
+}
+_ENDINGS = (".pdf", ".docx", ".xlsx", ".doc", ".txt", ".md", ".csv", ".html", ".htm")
 
 
 class LinkError(Exception):
     """Plain words for the DM: why the link can't be read and what to do."""
+
+
+class NotShared(LinkError):
+    """The host wants a sign-in, or the document isn't shared with everyone."""
+
+
+class TooBig(LinkError):
+    """More bytes than the caller allows."""
+
+
+class Unreachable(LinkError):
+    """The host did not answer, or answered badly."""
 
 
 NOT_A_LINK = (
@@ -168,6 +189,11 @@ def direct_url(link: str) -> yarl.URL:
     host = url.host.casefold()
     if host == "docs.google.com" and (m := _GDOC.match(url.path)):
         return yarl.URL(f"https://docs.google.com/document/d/{m[1]}/export?format=txt")
+    if host == "docs.google.com" and (m := _GSHEET.match(url.path)):
+        # The sheet's first tab as CSV (a link to another tab keeps its `gid`).
+        gid = url.query.get("gid") or (url.fragment.removeprefix("gid=") if url.fragment else "")
+        tab = f"&gid={gid}" if gid.isdigit() else ""
+        return yarl.URL(f"https://docs.google.com/spreadsheets/d/{m[1]}/export?format=csv{tab}")
     if host == "drive.google.com" and (m := _GDRIVE.match(url.path)):
         return yarl.URL(f"https://drive.google.com/uc?export=download&id={m[1]}")
     if _host_is(host, "dropbox.com"):
@@ -179,6 +205,24 @@ def direct_url(link: str) -> yarl.URL:
     if _host_is(host, "sharepoint.com"):
         return url.update_query(download="1")
     return url
+
+
+def google_doc_export(link: str) -> yarl.URL | None:
+    """The plain-text export address of a Google Doc link (docs.google.com/document/d/<id>),
+    or None for any other link, a spreadsheet or form on the same host included: the strict
+    reader a caller uses when only Google Docs are allowed (#2140)."""
+    try:
+        url = direct_url(link)
+    except LinkError:
+        return None
+    if (
+        (url.host or "").casefold() == "docs.google.com"
+        and _GDOC.match(url.path)
+        and url.path.endswith("/export")
+        and dict(url.query) == {"format": "txt"}
+    ):
+        return url
+    return None
 
 
 def check_url(url: yarl.URL, policy: Policy = STRICT) -> None:
@@ -247,7 +291,9 @@ class Fetched:
     filename: str  # an ending text_of reads it by: "link.pdf", "link.html", ...
 
 
-def _ending(resp: aiohttp.ClientResponse, url: yarl.URL) -> str | None:
+def _ending(resp: aiohttp.ClientResponse, url: yarl.URL, images: bool = False) -> str | None:
+    if images:  # a picture fetch takes pictures only, by what the host says it is
+        return _IMAGE_TYPES.get(resp.content_type.casefold())
     kind = _TYPES.get(resp.content_type.casefold())
     if kind:
         return kind
@@ -259,13 +305,21 @@ def _ending(resp: aiohttp.ClientResponse, url: yarl.URL) -> str | None:
     for name in names:
         for ending in _ENDINGS:
             if name.endswith(ending):
-                return {".md": ".txt", ".csv": ".txt", ".htm": ".html"}.get(ending, ending)
+                return {".md": ".txt", ".htm": ".html"}.get(ending, ending)
     return None
 
 
-async def fetch(link: str, policy: Policy = STRICT) -> Fetched:
+async def fetch(
+    link: str,
+    policy: Policy = STRICT,
+    *,
+    max_bytes: int | None = None,
+    stay_on: tuple[str, ...] = (),
+    images: bool = False,
+) -> Fetched:
     """The file or page behind a link. Raises LinkError in plain words for anything that
-    goes wrong (never another error, and never with the link in it)."""
+    goes wrong (never another error, and never with the link in it). `images` (#2450): the link
+    must be a picture (png, jpeg, webp or gif); nothing else is taken."""
     target = direct_url(link)
     hosts = [target.host or ""]
     timeout = aiohttp.ClientTimeout(total=TIMEOUT_S)
@@ -285,32 +339,43 @@ async def fetch(link: str, policy: Policy = STRICT) -> Fetched:
                         if resp.status in (301, 302, 303, 307, 308):
                             location = resp.headers.get("Location")
                             if not location:
-                                raise LinkError(UNREACHABLE)
+                                raise Unreachable(UNREACHABLE)
                             target = target.join(yarl.URL(location))
                             hosts.append(target.host or "")
+                            if stay_on and not any(  # a caller that names its hosts keeps to them
+                                _host_is((target.host or "").casefold(), d) for d in stay_on
+                            ):
+                                raise Unreachable(UNREACHABLE)
                             continue
-                        return await _read(resp, target, hosts)
-                raise LinkError(NOT_SHARED)  # a redirect loop is usually a sign-in page
+                        return await _read(resp, target, hosts, max_bytes, images)
+                raise NotShared(NOT_SHARED)  # a redirect loop is usually a sign-in page
     except LinkError:
         raise
     except (TimeoutError, aiohttp.ClientError, OSError, ValueError) as exc:
         if isinstance(exc.__cause__, LinkError):  # the resolver's refusal, wrapped
             raise exc.__cause__ from None
-        raise LinkError(UNREACHABLE) from None
+        raise Unreachable(UNREACHABLE) from None
 
 
-async def _read(resp: aiohttp.ClientResponse, url: yarl.URL, hosts: list[str]) -> Fetched:
+async def _read(
+    resp: aiohttp.ClientResponse,
+    url: yarl.URL,
+    hosts: list[str],
+    max_bytes: int | None = None,
+    images: bool = False,
+) -> Fetched:
+    max_bytes = MAX_BYTES if max_bytes is None else max_bytes  # read now: tests move the limit
     if resp.status in (401, 403, 404, 410):
-        raise LinkError(NOT_SHARED)
+        raise NotShared(NOT_SHARED)
     if resp.status != 200:
-        raise LinkError(UNREACHABLE)
-    ending = _ending(resp, url)
+        raise Unreachable(UNREACHABLE)
+    ending = _ending(resp, url, images)
     if ending is None:
         raise LinkError(WRONG_TYPE)
     if sign_in_page(ending, url, *hosts):
-        raise LinkError(sign_in_message(*hosts))
-    if (resp.content_length or 0) > MAX_BYTES:  # bytes as sent: compressed or not
-        raise LinkError(TOO_BIG)
+        raise NotShared(sign_in_message(*hosts))
+    if (resp.content_length or 0) > max_bytes:  # bytes as sent: compressed or not
+        raise TooBig(TOO_BIG)
     encoding = resp.headers.get("Content-Encoding", "identity").strip().casefold()
     if encoding in ("", "identity"):
         inflate = None
@@ -323,36 +388,37 @@ async def _read(resp: aiohttp.ClientResponse, url: yarl.URL, hosts: list[str]) -
     try:
         async for piece in resp.content.iter_chunked(64 * 1024):
             sent += len(piece)
-            if sent > MAX_BYTES:
-                raise LinkError(TOO_BIG)
+            if sent > max_bytes:
+                raise TooBig(TOO_BIG)
             if inflate is None:
                 data += piece
             else:
-                await _inflate(inflate, piece, data)
-            if len(data) > MAX_BYTES:
-                raise LinkError(TOO_BIG)
+                await _inflate(inflate, piece, data, max_bytes)
+            if len(data) > max_bytes:
+                raise TooBig(TOO_BIG)
         if inflate is not None and not inflate.eof:
-            await _inflate(inflate, b"", data)  # anything zlib still held back
+            await _inflate(inflate, b"", data, max_bytes)  # anything zlib still held back
     except zlib.error:
-        raise LinkError(UNREACHABLE) from None
+        raise Unreachable(UNREACHABLE) from None
     if inflate is not None and not inflate.eof:
-        raise LinkError(UNREACHABLE)  # cut short: never send half a document to the AI
+        raise Unreachable(UNREACHABLE)  # cut short: never send half a document to the AI
     return Fetched(bytes(data), "link" + ending)
 
 
-async def _inflate(inflate: Any, piece: bytes, data: bytearray) -> None:
+async def _inflate(inflate: Any, piece: bytes, data: bytearray, max_bytes: int = MAX_BYTES) -> None:
     """Unpack one piece into `data`: never more than the room left (a tiny "zip bomb"
     stays tiny), at most _INFLATE_STEP at a time with a pause between, and nothing after
     the end of the gzip stream (it would pile up unread inside zlib)."""
+    max_bytes = MAX_BYTES if max_bytes is None else max_bytes
     if inflate.eof:
-        raise LinkError(UNREACHABLE)
+        raise Unreachable(UNREACHABLE)
     while True:
-        room = MAX_BYTES + 1 - len(data)
+        room = max_bytes + 1 - len(data)
         data += inflate.decompress(piece, min(_INFLATE_STEP, room))
-        if len(data) > MAX_BYTES:
-            raise LinkError(TOO_BIG)
+        if len(data) > max_bytes:
+            raise TooBig(TOO_BIG)
         if inflate.eof and inflate.unused_data:
-            raise LinkError(UNREACHABLE)  # bytes after the end: refused, not stored
+            raise Unreachable(UNREACHABLE)  # bytes after the end: refused, not stored
         piece = inflate.unconsumed_tail
         if not piece:
             return

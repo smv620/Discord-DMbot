@@ -31,7 +31,7 @@ from dmbot.memory.name_documents import UNREADABLE, DocumentError, text_of
 READ_TIME_S = 30.0
 # Read in a process: pure-Python parsers that a hostile file can keep busy. Other types
 # are read in a thread (text decoding; web pages have their own time limit).
-IN_A_PROCESS = (".pdf", ".docx")
+IN_A_PROCESS = (".pdf", ".docx", ".xlsx")
 # A child's memory: a damaged file can't take the whole server's (Linux only). A real
 # 10 MB, 500-page PDF peaks near 60 MB, and two can be read at once (#251 review). One
 # page holding a huge vector drawing (about 20 bytes per unpacked byte) can pass this
@@ -107,7 +107,12 @@ def _child(conn: Connection, parse: Parse, filename: str, raw: bytes) -> None:
 
 
 def _run(
-    parse: Parse, filename: str, raw: bytes, limit_s: float, stop: threading.Event
+    parse: Parse,
+    filename: str,
+    raw: bytes,
+    limit_s: float,
+    stop: threading.Event,
+    max_reply: int = MAX_REPLY_BYTES,
 ) -> tuple[str, str, str]:
     """Start the child, wait for its answer up to `limit_s`, and always end and collect
     it. Blocking: runs in a thread, all of it, so a cancelled caller can't leave a child
@@ -141,7 +146,7 @@ def _run(
         try:
             # No deadline needed: the answer has started arriving, or the child has gone
             # (only a child stopped mid-answer could hold this).
-            answer = receive.recv_bytes(MAX_REPLY_BYTES)
+            answer = receive.recv_bytes(max_reply)
         except (EOFError, OSError):  # it died (memory, killed) or answered too much
             return "died", "", ""
         kind, cause, text = [*answer.split(_SEP, 2), b"", b""][:3]
@@ -164,17 +169,19 @@ async def read_document(
     *,
     parse: Parse = text_of,
     limit_s: float = READ_TIME_S,
+    max_reply: int = MAX_REPLY_BYTES,
 ) -> str:
     """The file's text, as `text_of` gives it. PDF and Word files are read in a child
     process that is ended after `limit_s` seconds. `parse` must be importable by name
-    (a child process starts it afresh); tests pass a slow one."""
+    (a child process starts it afresh); tests pass a slow one. `max_reply`: the longest answer
+    read back (an adventure's text is longer than a names list's, #1698)."""
     suffix = PurePath(filename).suffix.casefold()
     if suffix not in IN_A_PROCESS:
         return await asyncio.to_thread(parse, filename, raw)
     stop = threading.Event()
     try:
         work = asyncio.get_running_loop().run_in_executor(
-            _WAITERS, _run, parse, filename, raw, limit_s, stop
+            _WAITERS, _run, parse, filename, raw, limit_s, stop, max_reply
         )
         # If the caller is cancelled, the work ends its child in its thread (within
         # _POLL_S); nobody waits for it, so its result is dropped quietly.

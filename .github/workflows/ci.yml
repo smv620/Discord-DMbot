@@ -19,12 +19,17 @@ jobs:
   # does any push this job cannot work out (the jobs below also run if this one fails).
   changes:
     name: changes (which jobs to run)
+    permissions:
+      contents: read
+      actions: read  # asks whether this commit already has a green run (#1984); no other job gets it
     runs-on: ubuntu-22.04  # 24.04 runners were queueing for hours (2026-10-05); see #29
     timeout-minutes: 5
     outputs:
       core: ${{ steps.decide.outputs.core }}
       ears: ${{ steps.decide.outputs.ears }}
       web: ${{ steps.decide.outputs.web }}
+      # "true" only when an earlier run of this very commit was green for every job this run needs.
+      done: ${{ steps.reuse.outputs.done }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -34,11 +39,28 @@ jobs:
         run: |
           set -o pipefail
           scripts/ci-changes.sh | tee -a "$GITHUB_OUTPUT"
+      - id: reuse
+        # A commit that already passed (a branch cut from a green commit, a fast-forward of
+        # development) is not tested twice (#1984). A new commit has no earlier run, so it always runs.
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NEED_CORE: ${{ steps.decide.outputs.core }}
+          NEED_EARS: ${{ steps.decide.outputs.ears }}
+          NEED_WEB: ${{ steps.decide.outputs.web }}
+        run: |
+          scripts/ci-already-green.sh | tee -a "$GITHUB_OUTPUT" | tee /tmp/reuse.txt
+          if grep -q '^done=true' /tmp/reuse.txt; then
+            run=$(sed -n 's/^run=//p' /tmp/reuse.txt)
+            echo "::notice title=CI skipped::This commit already passed CI in run ${run}; nothing changed, so nothing is run again."
+          elif ! grep -q '^done=false' /tmp/reuse.txt; then
+            echo "::warning title=CI skip check::The 'already green?' check gave no answer; everything runs."
+          fi
 
   ears:
     name: ears (Node voice service)
     needs: changes
-    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.ears != 'false') }}
+    if: ${{ always() && needs.changes.outputs.done != 'true' && (needs.changes.result != 'success' || needs.changes.outputs.ears != 'false') }}
     runs-on: ubuntu-22.04  # 24.04 runners were queueing for hours (2026-10-05); see #29
     defaults:
       run:
@@ -70,7 +92,7 @@ jobs:
   web:
     name: web (customer website)
     needs: changes
-    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.web != 'false') }}
+    if: ${{ always() && needs.changes.outputs.done != 'true' && (needs.changes.result != 'success' || needs.changes.outputs.web != 'false') }}
     runs-on: ubuntu-22.04  # 24.04 runners were queueing for hours (2026-10-05); see #29
     timeout-minutes: 10
     defaults:
@@ -94,16 +116,34 @@ jobs:
       - run: npm test
       - run: npm run build
       - run: npm run check:links
+      - run: npm run check:golive  # the *_LIVE switches and docs/GO_LIVE.md match (#1881)
       - run: npm run check:csp
       - run: npm run check:transitions  # page-change budget, less motion, plain legal pages (#1311)
       - run: npm run check:a11y  # real browser: contrast, focus ring, 320 px, reduced motion (#1224)
         timeout-minutes: 5
+      - run: npm run check:weight  # page weight against a budget, and no picture over 150 KB (#1947)
+      - run: npm run check:smoke  # real browser: the signed-in pages load and their main buttons work (#1488)
+        timeout-minutes: 5
+      - run: npm run check:phone  # real browser at 360 and 390 px: no sideways scroll, thumb-sized targets (#2250)
+        timeout-minutes: 5
+        env:
+          PHONE_SKIP_BUILD: "1"  # reuses the build check:smoke just made (dist-smoke/)
 
-  core:
-    name: core (Python)
+  # The core tests ran as one 15-minute job on a 4-core runner (#1984; `-n auto` finds the same 4
+  # cores, so more workers would not help). They now run as four parts side by side (three finished in 8.2 minutes, the slowest part 6:40 of tests, so a fourth brings the whole job under 8), each on its
+  # own runner and database, split by test file (core/tests/shard.py; a test in the wrong place
+  # can't be skipped, the parts add up to the whole run, proven in tests/test_shard.py).
+  # The job named "core (Python)" below is the one result to watch (and to require): it passes only
+  # when every part did, so the name branch rules see has not changed.
+  core-tests:
+    name: core tests (part ${{ matrix.part }} of 4)
     needs: changes
-    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.core != 'false') }}
+    if: ${{ always() && needs.changes.outputs.done != 'true' && (needs.changes.result != 'success' || needs.changes.outputs.core != 'false') }}
     runs-on: ubuntu-22.04  # 24.04 runners were queueing for hours (2026-10-05); see #29
+    strategy:
+      fail-fast: false  # a red part must not hide what the others found
+      matrix:
+        part: [1, 2, 3, 4]
     defaults:
       run:
         working-directory: core
@@ -120,6 +160,7 @@ jobs:
       DMBOT_TEST_DATABASE_URL: postgresql://dmbot:dmbot@localhost:5432/dmbot_test
       DMBOT_TEST_SUPERUSER_URL: postgresql://postgres:postgres@localhost:5432/dmbot_test
       DMBOT_REQUIRE_DB_TESTS: "1"
+      DMBOT_TEST_SHARD: ${{ matrix.part }}/4
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -128,15 +169,22 @@ jobs:
           cache: pip
           cache-dependency-path: core/pyproject.toml
       - run: pip install -e ".[dev]"
-      - run: ruff check --output-format=github .
-      - run: ruff format --check .
+      # Lint and types look at the code, not the tests' split, so one part does them.
+      - if: ${{ matrix.part == 1 }}
+        run: ruff check --output-format=github .
+      - if: ${{ matrix.part == 1 }}
+        run: ruff format --check .
       - name: mypy
+        if: ${{ matrix.part == 1 }}
         run: |
           set -o pipefail
           mypy --no-pretty --no-error-summary 2>&1 | tee mypy.log || {
             sed -nE 's/^([^:]+):([0-9]+): error: (.*)$/::error file=core\/\1,line=\2::\3/p' mypy.log | head -50
             exit 1
           }
+      - name: feature boundaries (import-linter)
+        if: ${{ matrix.part == 1 }}
+        run: lint-imports
       - name: test database
         run: >-
           psql "postgresql://postgres:postgres@localhost:5432/postgres"
@@ -156,28 +204,56 @@ jobs:
         # own schema (core/tests/pg.py, random name) and migrations lock per schema, so workers
         # never share state.
         # --durations shows where the time goes. Nothing is skipped, deselected or xfailed.
+        # Coverage (#1858) is printed (only the files with lines no test runs) and kept as
+        # coverage.xml. It is a report, not a gate: no threshold until the baseline is known.
         run: |
           set -o pipefail
-          pytest -q --tb=short -rfE -n 4 --durations=25 2>&1 | tee pytest.log || {
+          pytest -q --tb=short -rfE -n 4 --durations=25 \
+            --cov=dmbot --cov-report=term-missing:skip-covered --cov-report=xml 2>&1 | tee pytest.log || {
             # One multi-line annotation, so failures are readable without the raw log.
             summary=$(grep -E "^(FAILED|ERROR) |^E  |^[^ ].*\.py:[0-9]+: " pytest.log | head -80 | sed -e 's/%/%25/g' | sed ':a;N;$!ba;s/\n/%0A/g')
             echo "::error title=pytest failures::${summary}"
             exit 1
           }
+      - name: keep the coverage report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: core-coverage-part-${{ matrix.part }}
+          path: core/coverage.xml
+          if-no-files-found: ignore
+
+  core:
+    name: core (Python)
+    needs: [changes, core-tests]
+    # always(): a skipped part list (core untouched, or this commit already passed) is a pass, and
+    # a failed or cancelled part must fail this job rather than skip it.
+    if: ${{ always() && needs.changes.outputs.done != 'true' && (needs.changes.result != 'success' || needs.changes.outputs.core != 'false') }}
+    runs-on: ubuntu-22.04  # 24.04 runners were queueing for hours (2026-10-05); see #29
+    timeout-minutes: 5
+    steps:
+      - run: |
+          echo "core tests: ${{ needs.core-tests.result }}"
+          test "${{ needs.core-tests.result }}" = "success"
 
   scripts:
     name: scripts (server helpers)
+    needs: changes
+    if: ${{ always() && needs.changes.outputs.done != 'true' }}
     runs-on: ubuntu-22.04  # 24.04 runners were queueing for hours (2026-10-05); see #29
     steps:
       - uses: actions/checkout@v5
-      - run: shellcheck scripts/set-key scripts/update-env scripts/set-admin-password scripts/replay scripts/ci-changes.sh scripts/tests/*.sh   # on the runner
+      - run: shellcheck scripts/set-key scripts/update-env scripts/set-admin-password scripts/replay scripts/set-variables scripts/ci-changes.sh scripts/ci-already-green.sh scripts/tests/*.sh   # on the runner
       - run: bash scripts/tests/test-set-key.sh
       - run: bash scripts/tests/test-update-env.sh
       - run: bash scripts/tests/test-set-admin-password.sh
       - run: bash scripts/tests/test-ci-changes.sh
+      - run: bash scripts/tests/test-ci-already-green.sh
 
   docker:
     name: docker images
+    needs: changes
+    if: ${{ always() && needs.changes.outputs.done != 'true' }}
     runs-on: ubuntu-22.04  # 24.04 runners were queueing for hours (2026-10-05); see #29
     steps:
       - uses: actions/checkout@v5

@@ -4,32 +4,30 @@
 
 ---
 
-## Test I: the new consent question
+## Test M: the backstory upload again (long document)
 
-**People:** 1 (you, as the DM)
-**Time:** about 5 minutes
-**Why:** the big update is on the server. DMbot's words about recording changed, because it now also reads the table's chat. So everyone who agreed before is asked again, and nobody is recorded until they say yes. This checks that.
+**People:** you (the DM), alone, on the test server
+**Time:** about 10 minutes
+**Why:** the last long upload reported "no new names", but the reading had been cut off, not finished. The fix reads the whole text in two passes, and a second run picks up where the first stopped. This checks a long document gives back its names and connections.
 
 ### Steps
-1. Join your voice channel. Type `/dmbot start`, press **▶ Continue last campaign**, then **▶ Start listening** (once only).
-2. DMbot sends you a **private message** with a new question. Read it: it should say DMbot also reads the table's chat. **Don't press anything yet.**
-3. Say out loud: **"This sentence is before I agreed."**
-4. In the private message, press **I'm 16 or older, record me**. DMbot confirms, and the message has a **⚙️ Menu** button.
-5. Say out loud: **"This sentence is after I agreed."**
-6. Leave the voice channel and join it again. DMbot sends a short private reminder with the date you agreed and a **⚙️ Menu** button.
-7. Type `/dmbot stop`. Press the transcript download.
+1. In the test server, open the names menu (the names panel, then 📜 From my story, or 📜 Upload campaign lore if you see it).
+2. Paste the link to the same long document you used last time.
+3. Press **🤖 Find names**.
+4. Wait for DMbot's reply in the DM screen. Don't press anything else while it works.
+5. If the reply says a part couldn't be read, press **🤖 Find names** again. It picks up the rest.
 
 ### It worked if
-- Step 2: you were asked again, even though you agreed before, and the words mention the table's chat.
-- Step 4: DMbot confirmed it, with a **⚙️ Menu** button.
-- Step 6: the reminder shows the date and **⚙️ Menu**.
-- Step 7: the transcript has the "after" sentence and **not** the "before" one.
+- Step 4: the reply lists names and connections from the document (it does not say "no new names" for a long text).
+- Step 5, if needed: a second press adds what the first one missed, and the reply says so.
 
-**If not:** type `/dmbot stop`, then tell dev1 the step where it went wrong and what you saw.
+**If not:** tell dev1 the step where it went wrong, and what the reply said (copy the message, but leave out any private names).
 
 ### Tell dev1
-- **Worked** or **didn't work** for each of steps 2, 4, 6 and 7, and anything that felt confusing.
+- **Worked** or **didn't work** for each step 1 to 5.
+- How many names and connections the reply gave, and whether a part was left unread (a count is enough; no names or words).
+- Anything that felt confusing.
 
 ---
 
-*The full test plan and every result are in `docs/testing-status.log` and `docs/testing-history.log`. This page is only the next step.*
+*Test L (a real session with a recap) is paused until the recap fix is checked. Test K was done on 2026-10-18 (the owner, one person). Test I passed on 2026-10-17. The full record is in `docs/testing-status.log` and `docs/testing-history.log`. This page is only the next step.*

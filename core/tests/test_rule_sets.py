@@ -41,6 +41,7 @@ class Content(unittest.TestCase):
                     },
                 ],
                 "link": "https://example.org/rules",
+                "definitions": [],
             },
         )
         self.assertNotIn("LEAK", repr(got))  # the scenario and the session never travel

@@ -256,7 +256,7 @@ async def _pin(card: discord.Message, reason: str = "DMbot: DM screen help card"
     return True
 
 
-async def _update_help_card(
+async def update_help_card(
     channel: discord.TextChannel, campaign: Campaign, me: discord.Member
 ) -> str | None:
     """Make sure the screen has one up-to-date, pinned help card.
@@ -270,7 +270,9 @@ async def _update_help_card(
     """
     from dmbot.dm_screen.buttons import card_view  # buttons imports this module
 
-    text = messages.help_card(campaign.name, campaign.dm_screen_visibility)
+    text = messages.help_card(
+        campaign.name, campaign.dm_screen_visibility, campaign.dm_bot_channel_id
+    )
     old_cards: list[discord.Message] = []
     pin_notes: list[discord.Message] = []
     async for m in channel.history(limit=HELP_CARD_SCAN):
@@ -341,10 +343,18 @@ async def setup_dm_screen(
             if channel is None:
                 channel, overwrites = await _create(guild, campaign, store, me, category)
             else:
+                if campaign.dm_screen_visibility != "private":
+                    # Players may look at the screen (or are about to): a question there that shows
+                    # a secret name is pulled back BEFORE the permissions open it (#2097). Decided
+                    # from the state, so a restored backup is covered, and the whole history is
+                    # searched for what a restart forgot.
+                    from dmbot.dm_screen import secret_posts
+
+                    await secret_posts.hide(guild.id, campaign_id, channel=channel, bot_id=me.id)
                 overwrites = await _apply(channel, campaign, me)
                 if not shared:  # two campaigns renaming one channel would fight over it
                     await _try_rename(channel, campaign)
-            pin_warning = await _update_help_card(channel, campaign, me)
+            pin_warning = await update_help_card(channel, campaign, me)
         except discord.Forbidden as exc:
             # The server-wide check passed, so something more local blocks it, such as
             # the category's own permissions.

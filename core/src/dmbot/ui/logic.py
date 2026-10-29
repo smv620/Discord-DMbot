@@ -6,17 +6,21 @@ technical terms, and always clear that DMbot never invents story or decides.
 
 from __future__ import annotations
 
-import re
 from collections.abc import Collection, Iterable
 from datetime import UTC, datetime
 
 from dmbot.campaigns import DM_SCREEN_VISIBILITY, FALLBACK_NONE, RULESETS, Campaign
+from dmbot.campaigns.backup_names import backup_campaign_name as backup_campaign_name
+from dmbot.campaigns.backup_names import backup_filename as backup_filename
+from dmbot.campaigns.backup_names import backup_parts as backup_parts
 from dmbot.campaigns.models import (
     DEFAULT_DM_SCREEN_LEVEL,
     DM_SCREEN_LEVELS,
     DM_SCREEN_LEVELS_OFFERED,
 )
 from dmbot.consent_words import CONSENT_LABEL, MIN_AGE
+from dmbot.discord_limits import PHONE_LABEL_MAX as PHONE_LABEL_MAX
+from dmbot.discord_limits import shorten as shorten
 from dmbot.transcription.config import Engine
 
 # Discord limits.
@@ -25,19 +29,11 @@ FILE_MAX = 10 * 1024 * 1024  # the biggest file a bot may send
 OPTION_LABEL_MAX = 100
 DESCRIPTION_MAX = 100  # a menu choice's second line
 SELECT_OPTIONS_MAX = 25
-# What a phone shows of a button or menu choice before cutting it off (#112). Labels
-# DMbot writes itself stay within this. Names people chose (a campaign's) are cut to
-# NAME_LABEL_MAX, only in menu lists, which open full-width; never in buttons.
-PHONE_LABEL_MAX = 25
+# Names people chose (a campaign's) are cut to NAME_LABEL_MAX, only in menu lists, which open
+# full-width; never in buttons. PHONE_LABEL_MAX (the phone's limit) is in discord_limits.
 NAME_LABEL_MAX = 32
 
 NO_CAMPAIGN_ACCESS = "Only this campaign's DM (or a server manager) can do that."
-
-
-def shorten(text: str, limit: int) -> str:
-    """Trim text to fit a Discord label, ending with an ellipsis if it was cut."""
-    text = " ".join(text.split())
-    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
 
 
 def can_run(campaign: Campaign, user_id: int, is_server_manager: bool) -> bool:
@@ -148,7 +144,7 @@ def settings_summary(
         f"• **{level.capitalize()}**{RECOMMENDED if level == DEFAULT_DM_SCREEN_LEVEL else ''}"
         f" — how much DMbot says, in the DM screen only: {DM_SCREEN_LEVELS.get(level, level)}."
         " Warnings (like DMbot no longer hearing the table) always show. Change it any time:"
-        " press ⚙️ Settings on the pinned card in your DM screen.",
+        " press ⚙️ Settings in the DM Bot channel, or type `/dmbot settings`.",
     ]
 
 
@@ -229,10 +225,25 @@ def writing_status(engine: Engine, backlog: int, last_latency_s: float | None) -
     return f"Writing things down: keeping up{behind}"
 
 
-def backup_filename(campaign_name: str, now: int) -> str:
-    slug = re.sub(r"[^a-z0-9]+", "-", campaign_name.casefold()).strip("-")[:40] or "campaign"
-    day = datetime.fromtimestamp(now, UTC).strftime("%Y-%m-%d")
-    return f"{slug}-{day}.dmbot.json.gz"  # compressed since #164; .dmbot.json still restores
+def part_filename(campaign_name: str, now: int, number: int, total: int) -> str:
+    """The name of one transcripts file of a copy (#2552): the copy's name, then which of them."""
+    base = backup_filename(campaign_name, now).removesuffix(".dmbot.json.gz")
+    return f"{base}.transcripts-{number}-of-{total}.dmbot.json.gz"
+
+
+def part_batches(sizes: list[int], limit: int, per_message: int = 10) -> list[list[int]]:
+    """Which transcripts files go in which message: in order, each message holding at most
+    `per_message` files and `limit` bytes in all (Discord's limits). A file bigger than `limit` by
+    itself is the caller's to refuse before sending anything."""
+    batches: list[list[int]] = []
+    used = 0
+    for index, size in enumerate(sizes):
+        if not batches or len(batches[-1]) >= per_message or used + size > limit:
+            batches.append([])
+            used = 0
+        batches[-1].append(index)
+        used += size
+    return batches
 
 
 WELCOME_TEXT = (
@@ -254,9 +265,12 @@ HELP_TEXT = (
     "• `/dmbot start`: pick your campaign and voice channel, then start listening\n"
     "• `/dmbot stop`: stop listening\n"
     "• `/dmbot names`: the names DMbot listens for (characters, places, NPCs)\n"
+    "• 📜 Upload campaign lore (DMs, in 👤 DMbot Main Menu): DMbot finds names and connections in "
+    "your notes; you keep what's right\n"
     "• `/dmbot optionalrules`: turn optional rules from Xanathar's and Tasha's on or off\n"
     "• `/dmbot houserules`: see this campaign's house rules (its DM adds, edits and removes them)\n"
-    "• `/dmbot rule`: look up a spell, condition or creature in the free rules (the DM only)\n"
+    "• `/dmbot rule`: look up a spell, condition, creature or rule in the free rules "
+    "(anyone; only you see the answer)\n"
     "• `/transcript`: download what was said in a session (anyone in the server)\n"
     "• `/dmbot backup`: download a complete copy of a campaign (anyone can)\n"
     "• `/dmbot restore`: bring a campaign back from a copy\n"
@@ -273,24 +287,13 @@ HELP_TEXT = (
     "Anyone in this server can read what DMbot writes down. "
     "An AI company (Anthropic) also reads it, with who said it, to give the DM notes. "
     "It isn't used to train their AI.\n"
-    "Play on D&D Beyond? Press **⚙️ Menu** in DMbot's private message, then 📜 My character "
+    "Play on D&D Beyond? Press **🗂️ Menu** in DMbot's private message, then 📜 My character "
     "sheet, so DMbot spells your spell names better.\n"
     "No message from DMbot? Check your Message Requests, or type `/consent give`. "
-    "To stop, press **⚙️ Menu** in DMbot's private message, then **Stop recording me**, then "
+    "To stop, press **🗂️ Menu** in DMbot's private message, then **Stop recording me**, then "
     "**Yes**, or "
     "type `/consent revoke`."
 )
-
-
-def backup_campaign_name(data: object) -> str | None:
-    """The campaign name inside a parsed backup, for messages; None if it's not there."""
-    if isinstance(data, dict):
-        campaign = data.get("campaign")
-        if isinstance(campaign, dict):
-            name = campaign.get("name")
-            if isinstance(name, str) and name.strip():
-                return shorten(name, OPTION_LABEL_MAX)
-    return None
 
 
 def dm_list(campaign: Campaign) -> str:

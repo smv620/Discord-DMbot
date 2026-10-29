@@ -1,0 +1,119 @@
+{
+ "source": "SRD 5.1",
+ "edition": "2014",
+ "licence": "CC-BY-4.0",
+ "document": {
+  "title": "System Reference Document 5.1",
+  "url": "https://media.dndbeyond.com/compendium-images/srd/5.1/SRD_CC_v5.1.pdf",
+  "sha256": "2504d2a0abb0a4d491a939be4f17910a2dde0312570ab8d208080225ccf0a1f0",
+  "pages": 403,
+  "word_list_sha256": "e29a1c1cb7c00d6a44d25b7e71f996b43ca4200a15792fa25d5d1231e104fa72"
+ },
+ "kind": "origin",
+ "section": "Races and Backgrounds",
+ "entries": [
+  {
+   "kind": "species",
+   "section": "Races",
+   "name": "Dwarf",
+   "creature_type": "",
+   "size": "Medium",
+   "speed": "25 feet",
+   "text": "Your dwarf character has an assortment of inborn abilities, part and parcel of dwarven nature.\nAbility Score Increase. Your Constitution score increases by 2.\nAge. Dwarves mature at the same rate as humans, but they’re considered young until they reach the age of 50. On average, they live about 350 years.\nAlignment. Most dwarves are lawful, believing firmly in the benefits of a well-ordered society. They tend toward good as well, with a strong sense of fair play and a belief that everyone deserves to share in the benefits of a just order.\nSize. Dwarves stand between 4 and 5 feet tall and average about 150 pounds. Your size is Medium.\nSpeed. Your base walking speed is 25 feet. Your speed is not reduced by wearing heavy armor.\nDarkvision. Accustomed to life underground, you have superior vision in dark and dim conditions. You can see in dim light within 60 feet of you as if it were bright light, and in darkness as if it were dim light. You can’t discern color in darkness, only shades of gray.\nDwarven Resilience. You have advantage on saving throws against poison, and you have resistance against poison damage.\nDwarven Combat Training. You have proficiency with the battleaxe, handaxe, light hammer, and warhammer.\nTool Proficiency. You gain proficiency with the artisan’s tools of your choice: smith’s tools, brewer’s supplies, or mason’s tools.\nStonecunning. Whenever you make an Intelligence (History) check related to the origin of stonework, you are considered proficient in the History skill and add double your proficiency bonus to the check, instead of your normal proficiency bonus.\nLanguages. You can speak, read, and write Common and Dwarvish. Dwarvish is full of hard consonants and guttural sounds, and those characteristics spill over into whatever other language a dwarf might speak.\nSubrace: Hill Dwarf\nAs a hill dwarf, you have keen senses, deep intuition, and remarkable resilience.\nAbility Score Increase. Your Wisdom score increases by 1.\nDwarven Toughness. Your hit point maximum increases by 1, and it increases by 1 every time you gain a level.",
+   "page": 3
+  },
+  {
+   "kind": "species",
+   "section": "Races",
+   "name": "Elf",
+   "creature_type": "",
+   "size": "Medium",
+   "speed": "30 feet",
+   "text": "Your elf character has a variety of natural abilities, the result of thousands of years of elven refinement.\nAbility Score Increase. Your Dexterity score increases by 2.\nAge. Although elves reach physical maturity at about the same age as humans, the elven understanding of adulthood goes beyond physical growth to encompass worldly experience. An elf typically claims adulthood and an adult name around the age of 100 and can live to be 750 years old.\nAlignment. Elves love freedom, variety, and self-expression, so they lean strongly toward the gentler aspects of chaos. They value and protect others’ freedom as well as their own, and they are more often good than not.\nSize. Elves range from under 5 to over 6 feet tall and have slender builds. Your size is Medium.\nSpeed. Your base walking speed is 30 feet.\nDarkvision. Accustomed to twilit forests and the night sky, you have superior vision in dark and dim conditions. You can see in dim light within 60 feet of you as if it were bright light, and in darkness as if it were dim light. You can’t discern color in darkness, only shades of gray.\nKeen Senses. You have proficiency in the Perception skill.\nFey Ancestry. You have advantage on saving throws against being charmed, and magic can’t put you to sleep.\nTrance. Elves don’t need to sleep. Instead, they meditate deeply, remaining semiconscious, for 4 hours a day. (The Common word for such meditation is “trance.”) While meditating, you can dream after a fashion; such dreams are actually mental exercises that have become reflexive through years of practice. After resting in this way, you gain the same benefit that a human does from 8 hours of sleep.\nLanguages. You can speak, read, and write Common and Elvish. Elvish is fluid, with subtle intonations and intricate grammar. Elven literature is rich and varied, and their songs and poems are famous among other races. Many bards learn their language so they can add Elvish ballads to their repertoires.\nSubrace: High Elf\nAs a high elf, you have a keen mind and a mastery of at least the basics of magic. In many fantasy gaming worlds, there are two kinds of high elves. One type is haughty and reclusive, believing themselves to be superior to non-elves and even other elves. The other type is more common and more friendly, and often encountered among humans and other races.\nAbility Score Increase. Your Intelligence score increases by 1.\nElf Weapon Training. You have proficiency with the longsword, shortsword, shortbow, and longbow.\nCantrip. You know one cantrip of your choice from the wizard spell list. Intelligence is your spellcasting ability for it.\nExtra Language. You can speak, read, and write one extra language of your choice.",
+   "page": 4
+  },
+  {
+   "kind": "species",
+   "section": "Races",
+   "name": "Halfling",
+   "creature_type": "",
+   "size": "Small",
+   "speed": "25 feet",
+   "text": "Your halfling character has a number of traits in common with all other halflings.\nAbility Score Increase. Your Dexterity score increases by 2.\nAge. A halfling reaches adulthood at the age of 20 and generally lives into the middle of his or her second century.\nAlignment. Most halflings are lawful good. As a rule, they are good-hearted and kind, hate to see others in pain, and have no tolerance for oppression. They are also very orderly and traditional, leaning heavily on the support of their community and the comfort of their old ways.\nSize. Halflings average about 3 feet tall and weigh about 40 pounds. Your size is Small.\nSpeed. Your base walking speed is 25 feet.\nLucky. When you roll a 1 on the d20 for an attack roll, ability check, or saving throw, you can reroll the die and must use the new roll.\nBrave. You have advantage on saving throws against being frightened.\nHalfling Nimbleness. You can move through the space of any creature that is of a size larger than yours.\nLanguages. You can speak, read, and write Common and Halfling. The Halfling language isn’t secret, but halflings are loath to share it with others. They write very little, so they don’t have a rich body of literature. Their oral tradition, however, is very strong. Almost all halflings speak Common to converse with the people in whose lands they dwell or through which they are traveling.\nSubrace: Lightfoot\nAs a lightfoot halfling, you can easily hide from notice, even using other people as cover. You’re inclined to be affable and get along well with others.\nLightfoots are more prone to wanderlust than other halflings, and often dwell alongside other races or take up a nomadic life.\nAbility Score Increase. Your Charisma score increases by 1.\nNaturally Stealthy. You can attempt to hide even when you are obscured only by a creature that is at least one size larger than you.",
+   "page": 4
+  },
+  {
+   "kind": "species",
+   "section": "Races",
+   "name": "Human",
+   "creature_type": "",
+   "size": "Medium",
+   "speed": "30 feet",
+   "text": "It’s hard to make generalizations about humans, but your human character has these traits.\nAbility Score Increase. Your ability scores each increase by 1.\nAge. Humans reach adulthood in their late teens and live less than a century.\nAlignment. Humans tend toward no particular alignment. The best and the worst are found among them.\nSize. Humans vary widely in height and build, from barely 5 feet to well over 6 feet tall. Regardless of your position in that range, your size is Medium.\nSpeed. Your base walking speed is 30 feet.\nLanguages. You can speak, read, and write Common and one extra language of your choice. Humans typically learn the languages of other peoples they deal with, including obscure dialects. They are fond of sprinkling their speech with words borrowed from other tongues: Orc curses, Elvish musical expressions, Dwarvish military phrases, and so on.",
+   "page": 5
+  },
+  {
+   "kind": "species",
+   "section": "Races",
+   "name": "Dragonborn",
+   "creature_type": "",
+   "size": "Medium",
+   "speed": "30 feet",
+   "text": "Your draconic heritage manifests in a variety of traits you share with other dragonborn.\nAbility Score Increase. Your Strength score increases by 2, and your Charisma score increases by 1.\nAge. Young dragonborn grow quickly. They walk hours after hatching, attain the size and development of a 10-year-old human child by the age of 3, and reach adulthood by 15. They live to be around 80.\nAlignment. Dragonborn tend to extremes, making a conscious choice for one side or the other in the cosmic war between good and evil. Most dragonborn are good, but those who side with evil can be terrible villains.\nSize. Dragonborn are taller and heavier than humans, standing well over 6 feet tall and averaging almost 250 pounds. Your size is Medium.\nSpeed. Your base walking speed is 30 feet.\nDraconic Ancestry. You have draconic ancestry. Choose one type of dragon from the Draconic Ancestry table. Your breath weapon and damage resistance are determined by the dragon type, as shown in the table.\nBreath Weapon. You can use your action to exhale destructive energy. Your draconic ancestry determines the size, shape, and damage type of the exhalation.\nWhen you use your breath weapon, each creature in the area of the exhalation must make a saving throw, the type of which is determined by your draconic ancestry. The DC for this saving throw equals 8 + your Constitution modifier + your proficiency bonus. A creature takes 2d6 damage on a failed save, and half as much damage on a successful one. The damage increases to 3d6 at 6th level, 4d6 at 11th level, and 5d6 at 16th level.\nAfter you use your breath weapon, you can’t use it again until you complete a short or long rest.\nDamage Resistance. You have resistance to the damage type associated with your draconic ancestry.\nLanguages. You can speak, read, and write Common and Draconic. Draconic is thought to be one of the oldest languages and is often used in the study of magic. The language sounds harsh to most other creatures and includes numerous hard consonants and sibilants.\n(The Draconic Ancestry table is not included here.)",
+   "page": 5
+  },
+  {
+   "kind": "species",
+   "section": "Races",
+   "name": "Gnome",
+   "creature_type": "",
+   "size": "Small",
+   "speed": "25 feet",
+   "text": "Your gnome character has certain characteristics in common with all other gnomes.\nAbility Score Increase. Your Intelligence score increases by 2.\nAge. Gnomes mature at the same rate humans do, and most are expected to settle down into an adult life by around age 40. They can live 350 to almost 500 years.\nAlignment. Gnomes are most often good. Those who tend toward law are sages, engineers, researchers, scholars, investigators, or inventors. Those who tend toward chaos are minstrels, tricksters, wanderers, or fanciful jewelers. Gnomes are good-hearted, and even the tricksters among them are more playful than vicious.\nSize. Gnomes are between 3 and 4 feet tall and average about 40 pounds. Your size is Small.\nSpeed. Your base walking speed is 25 feet.\nDarkvision. Accustomed to life underground, you have superior vision in dark and dim conditions. You can see in dim light within 60 feet of you as if it were bright light, and in darkness as if it were dim light. You can’t discern color in darkness, only shades of gray.\nGnome Cunning. You have advantage on all Intelligence, Wisdom, and Charisma saving throws against magic.\nLanguages. You can speak, read, and write Common and Gnomish. The Gnomish language, which uses the Dwarvish script, is renowned for its technical treatises and its catalogs of knowledge about the natural world.\nSubrace: Rock Gnome\nAs a rock gnome, you have a natural inventiveness and hardiness beyond that of other gnomes.\nAbility Score Increase. Your Constitution score increases by 1.\nArtificer’s Lore. Whenever you make an Intelligence (History) check related to magic items, alchemical objects, or technological devices, you can add twice your proficiency bonus, instead of any proficiency bonus you normally apply.\nTinker. You have proficiency with artisan’s tools (tinker’s tools). Using those tools, you can spend 1 hour and 10 gp worth of materials to construct a Tiny clockwork device (AC 5, 1 hp). The device ceases to function after 24 hours (unless you spend 1 hour repairing it to keep the device functioning), or when you use your action to dismantle it; at that time, you can reclaim the materials used to create it. You can have up to three such devices active at a time.\nWhen you create a device, choose one of the following options: Clockwork Toy. This toy is a clockwork animal, monster, or person, such as a frog, mouse, bird, dragon, or soldier. When placed on the ground, the toy moves 5 feet across the ground on each of your turns in a random direction. It makes noises as appropriate to the creature it represents. Fire Starter. The device produces a miniature flame, which you can use to light a candle, torch, or campfire. Using the device requires your action. Music Box. When opened, this music box plays a single song at a moderate volume. The box stops playing when it reaches the song’s end or when it is closed.",
+   "page": 6
+  },
+  {
+   "kind": "species",
+   "section": "Races",
+   "name": "Half-Elf",
+   "creature_type": "",
+   "size": "Medium",
+   "speed": "30 feet",
+   "text": "Your half-elf character has some qualities in common with elves and some that are unique to half-elves.\nAbility Score Increase. Your Charisma score increases by 2, and two other ability scores of your choice increase by 1.\nAge. Half-elves mature at the same rate humans do and reach adulthood around the age of 20. They live much longer than humans, however, often exceeding 180 years.\nAlignment. Half-elves share the chaotic bent of their elven heritage. They value both personal freedom and creative expression, demonstrating neither love of leaders nor desire for followers. They chafe at rules, resent others’ demands, and sometimes prove unreliable, or at least unpredictable.\nSize. Half-elves are about the same size as humans, ranging from 5 to 6 feet tall. Your size is Medium.\nSpeed. Your base walking speed is 30 feet.\nDarkvision. Thanks to your elf blood, you have superior vision in dark and dim conditions. You can see in dim light within 60 feet of you as if it were bright light, and in darkness as if it were dim light. You can’t discern color in darkness, only shades of gray.\nFey Ancestry. You have advantage on saving throws against being charmed, and magic can’t put you to sleep.\nSkill Versatility. You gain proficiency in two skills of your choice.\nLanguages. You can speak, read, and write Common, Elvish, and one extra language of your choice.",
+   "page": 6
+  },
+  {
+   "kind": "species",
+   "section": "Races",
+   "name": "Half-Orc",
+   "creature_type": "",
+   "size": "Medium",
+   "speed": "30 feet",
+   "text": "Your half-orc character has certain traits deriving from your orc ancestry.\nAbility Score Increase. Your Strength score increases by 2, and your Constitution score increases by 1.\nAge. Half-orcs mature a little faster than humans, reaching adulthood around age 14. They age noticeably faster and rarely live longer than 75 years.\nAlignment. Half-orcs inherit a tendency toward chaos from their orc parents and are not strongly inclined toward good. Half-orcs raised among orcs and willing to live out their lives among them are usually evil.\nSize. Half-orcs are somewhat larger and bulkier than humans, and they range from 5 to well over 6 feet tall. Your size is Medium.\nSpeed. Your base walking speed is 30 feet.\nDarkvision. Thanks to your orc blood, you have superior vision in dark and dim conditions. You can see in dim light within 60 feet of you as if it were bright light, and in darkness as if it were dim light. You can’t discern color in darkness, only shades of gray.\nMenacing. You gain proficiency in the Intimidation skill.\nRelentless Endurance. When you are reduced to 0 hit points but not killed outright, you can drop to 1 hit point instead. You can’t use this feature again until you finish a long rest.\nSavage Attacks. When you score a critical hit with a melee weapon attack, you can roll one of the weapon’s damage dice one additional time and add it to the extra damage of the critical hit.\nLanguages. You can speak, read, and write Common and Orc. Orc is a harsh, grating language with hard consonants. It has no script of its own but is written in the Dwarvish script.",
+   "page": 7
+  },
+  {
+   "kind": "species",
+   "section": "Races",
+   "name": "Tiefling",
+   "creature_type": "",
+   "size": "Medium",
+   "speed": "30 feet",
+   "text": "Tieflings share certain racial traits as a result of their infernal descent.\nAbility Score Increase. Your Intelligence score increases by 1, and your Charisma score increases by 2.\nAge. Tieflings mature at the same rate as humans but live a few years longer.\nAlignment. Tieflings might not have an innate tendency toward evil, but many of them end up there. Evil or not, an independent nature inclines many tieflings toward a chaotic alignment.\nSize. Tieflings are about the same size and build as humans. Your size is Medium.\nSpeed. Your base walking speed is 30 feet.\nDarkvision. Thanks to your infernal heritage, you have superior vision in dark and dim conditions. You can see in dim light within 60 feet of you as if it were bright light, and in darkness as if it were dim light. You can’t discern color in darkness, only shades of gray.\nHellish Resistance. You have resistance to fire damage.\nInfernal Legacy. You know the thaumaturgy cantrip. When you reach 3rd level, you can cast the hellish rebuke spell as a 2nd-level spell once with this trait and regain the ability to do so when you finish a long rest. When you reach 5th level, you can cast the darkness spell once with this trait and regain the ability to do so when you finish a long rest. Charisma is your spellcasting ability for these spells.\nLanguages. You can speak, read, and write Common and Infernal.",
+   "page": 7
+  },
+  {
+   "kind": "background",
+   "section": "Backgrounds",
+   "name": "Acolyte",
+   "skills": "Insight, Religion",
+   "languages": "Two of your choice",
+   "equipment": "A holy symbol (a gift to you when you entered the priesthood), a prayer book or prayer wheel, 5 sticks of incense, vestments, a set of common clothes, and a pouch containing 15 gp",
+   "text": "Skill Proficiencies: Insight, Religion\nLanguages: Two of your choice\nEquipment: A holy symbol (a gift to you when you entered the priesthood), a prayer book or prayer wheel, 5 sticks of incense, vestments, a set of common clothes, and a pouch containing 15 gp\nYou have spent your life in the service of a temple to a specific god or pantheon of gods. You act as an intermediary between the realm of the holy and the mortal world, performing sacred rites and offering sacrifices in order to conduct worshipers into the presence of the divine. You are not necessarily a cleric—performing sacred rites is not the same thing as channeling divine power.\nChoose a god, a pantheon of gods, or some other quasi-divine being from among those listed in \"Fantasy-Historical Pantheons\" or those specified by your GM, and work with your GM to detail the nature of your religious service. Were you a lesser functionary in a temple, raised from childhood to assist the priests in the sacred rites? Or were you a high priest who suddenly experienced a call to serve your god in a different way? Perhaps you were the leader of a small cult outside of any established temple structure, or even an occult group that served a fiendish master that you now deny.\nFeature: Shelter of the Faithful\nAs an acolyte, you command the respect of those who share your faith, and you can perform the religious ceremonies of your deity. You and your adventuring companions can expect to receive free healing and care at a temple, shrine, or other established presence of your faith, though you must provide any material components needed for spells. Those who share your religion will support you (but only you) at a modest lifestyle.\nYou might also have ties to a specific temple dedicated to your chosen deity or pantheon, and you have a residence there. This could be the temple where you used to serve, if you remain on good terms with it, or a temple where you have found a new home. While near your temple, you can call upon the priests for assistance, provided the assistance you ask for is not hazardous and you remain in good standing with your temple.",
+   "page": 60,
+   "ability_scores": "",
+   "feat": "",
+   "tool": ""
+  }
+ ]
+}

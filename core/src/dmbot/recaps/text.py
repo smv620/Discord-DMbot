@@ -7,13 +7,18 @@ from __future__ import annotations
 import re
 from collections.abc import Collection
 
+# The secret-name check is one matcher for every caller (#2087); re-exported so the recap stages
+# keep importing it from the text helpers.
+from dmbot.secrets_match import WHOLE_NAME as WHOLE_NAME
+from dmbot.secrets_match import names_a_secret as names_a_secret
+from dmbot.secrets_match import secret_rule as secret_rule
+from dmbot.word_end import at_word_end as at_word_end  # (kept here for the recaps' callers)
+
 _CUE = re.compile(r"《[^《》]{1,60}》")
 _PERFORMANCE = re.compile(r"\(\([^()]{1,60}\)\)")
 _WORD = re.compile(r"[\w'’]+")
 _CAPITAL = re.compile(r"(?<![\w'’-])([A-ZÀ-Þ][\w'’-]*)")
 _POSSESSIVE = re.compile(r"['’]s$", re.IGNORECASE)
-# Small words that are part of names ("Son of Ash") and say nothing on their own.
-SMALL_WORDS = frozenset({"the", "and", "for", "son", "von", "van", "der", "del", "los", "las"})
 NOT_NAMES = frozenset({"i", "the", "a", "an", "and", "but", "or", "as", "day", "night"})
 
 CUE = _CUE
@@ -81,29 +86,3 @@ def is_known_name(name: str, allowed_names: Collection[str]) -> bool:
     """The name is one of the confirmed names (all its words are in one of them)."""
     mine = set(words(name))
     return bool(mine) and any(mine <= set(words(a)) for a in allowed_names)
-
-
-def names_a_secret(
-    text: str, secret_names: Collection[str], allowed_names: Collection[str]
-) -> bool:
-    """Whether the text names anything the DM keeps secret, in any form: the whole name, its
-    possessive or plural ("Vex's", "the Vexes"), a word of it longer than three letters (except
-    one the confirmed names also use), a spelling with hyphens, and a name no word pattern can
-    read (a name in symbols), which is looked for as written. Used on the draft, on the DM's
-    edit, and again when the DM posts, with the secret names read fresh each time."""
-    padded = f" {' '.join(words(text))} "
-    folded = text.casefold()
-    open_words = {w for n in allowed_names for w in words(n)}
-    for secret in secret_names:
-        tokens = words(secret)
-        if not tokens:  # nothing a word regex can read: look for it as written
-            if secret.strip() and secret.strip().casefold() in folded:
-                return True
-            continue
-        plain = " ".join(tokens)
-        if any(f" {plain}{end} " in padded for end in ("", "s", "es")):
-            return True
-        for token in tokens:
-            if len(token) >= 3 and token not in open_words | SMALL_WORDS and f" {token} " in padded:
-                return True
-    return False

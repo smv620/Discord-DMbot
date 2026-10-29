@@ -45,6 +45,7 @@ from dmbot.web.admin import (
 )
 from dmbot.web.feedback import rate_key
 from dmbot.web.settings import WebSettings
+from dmbot.web.support_ai import SupportHelper
 
 log = logging.getLogger(__name__)
 
@@ -53,7 +54,7 @@ MAX_BODY = 4 * 1024
 WRONG = "wrong_sign_in"
 # A Discord user id: a snowflake, 17 to 20 digits (#773).
 DISCORD_ID = re.compile(r"[0-9]{17,20}")
-RECENT_CHANGES = 50
+RECENT_CHANGES = 20  # entries on one page of Recent changes (#2199)
 # Password tries waiting for the one before them; more than this is a flood, answered
 # "busy" (not WRONG: the owner's own try in a flood mustn't say their password is wrong).
 MAX_WAITING = 8
@@ -64,6 +65,7 @@ def router(
     *,
     db: Database,
     google: GoogleSignIn | None,
+    helper: SupportHelper | None = None,
     admin_sessions: AdminSessions,
     tries: FailedTries,
     client_address: Callable[[Request], str],
@@ -308,24 +310,39 @@ def router(
 
     # Free access (#773)
 
+    async def log_page(page: int) -> tuple[list[dict[str, Any]], int]:
+        """One page of the change log, newest first, in the page's shape, and how many pages
+        there are (at least one, so an empty log is still "page 1 of 1")."""
+        rows, pages = await grants.log_page(db, page, RECENT_CHANGES)
+        names = await sessions.display_names(db, [e.discord_user_id for e in rows], now=clock())
+        return [
+            {
+                "discordId": str(e.discord_user_id),
+                "name": names.get(e.discord_user_id),
+                "at": e.at,
+                "by": e.admin_email,
+                "action": e.action,
+            }
+            for e in rows
+        ], pages
+
     @api.get("/grants")
     async def list_grants(session: Admin) -> dict[str, Any]:
         """The owner's free list (server settings, not editable here), the grants still in
-        force or ended (revoked ones live in the history), and the last changes."""
+        force or ended (revoked ones live in the history), and page 1 of the changes (the
+        rest come from `/grants/log`, so this first load stays one call)."""
         rows = [r for r in await grants.grants(db) if r.revoked_at is None]
-        log_rows = await grants.log_entries(db, limit=RECENT_CHANGES)
         free_ids = sorted(settings.free_users)
         # Names, where a person signed in lately: for the ids on this page only.
         names = await sessions.display_names(
-            db,
-            [*free_ids, *(r.discord_user_id for r in rows), *(e.discord_user_id for e in log_rows)],
-            now=clock(),
+            db, [*free_ids, *(r.discord_user_id for r in rows)], now=clock()
         )
 
         def who(user_id: int) -> dict[str, str | None]:
             # Ids are strings: they don't fit in a JavaScript number.
             return {"discordId": str(user_id), "name": names.get(user_id)}
 
+        log_rows, pages = await log_page(1)
         return {
             "free": [who(i) for i in free_ids],
             "grants": [
@@ -336,19 +353,30 @@ def router(
                     "note": r.note,
                     "grantedBy": r.granted_by,
                     "grantedAt": r.granted_at,
+                    # A grant given before the person joined the server's free list: the page
+                    # shows them once, under "Always free" (#2196).
+                    "alsoFree": r.discord_user_id in settings.free_users,
                 }
                 for r in rows
             ],
-            "log": [
-                {
-                    **who(e.discord_user_id),
-                    "at": e.at,
-                    "by": e.admin_email,
-                    "action": e.action,
-                }
-                for e in log_rows
-            ],
+            "log": log_rows,
+            "logPage": 1,
+            "logPages": pages,
         }
+
+    @api.get("/grants/log")
+    async def grants_log(session: Admin, page: str = "1") -> dict[str, Any]:
+        """One page of Recent changes, newest first (#2199): `?page=N` from 1. A page that
+        isn't a whole number from 1 to the last answers 400 `bad_page`, and the site then shows
+        page 1."""
+        # isdecimal: int() would also take " 2", "+2" and non-ASCII digits.
+        wanted = int(page) if page.isascii() and page.isdecimal() and len(page) <= 9 else 0
+        if wanted < 1:
+            raise HTTPException(status_code=400, detail="bad_page")
+        rows, pages = await log_page(wanted)
+        if wanted > pages:
+            raise HTTPException(status_code=400, detail="bad_page")
+        return {"log": rows, "page": wanted, "pages": pages}
 
     @api.post("/grants")
     async def give(request: Request, session: AdminWrite) -> dict[str, str | None]:
@@ -403,17 +431,31 @@ def router(
     # Support tickets (#1340)
 
     @api.get("/support")
-    async def list_support(session: Admin, status: str = "all") -> dict[str, Any]:
-        """Private tickets from paying people, newest first; `?status=new|answered|closed` keeps
-        one status and `all` (the default) every one (#1375). `counts` always covers all of them,
-        for the filter buttons. The words go to the signed-in admin only, and are never logged."""
+    async def list_support(session: Admin, status: str = "all", page: str = "1") -> dict[str, Any]:
+        """Private tickets from signed-in people, twenty a page (`?page=N` from 1, #2211). Newest
+        first, except `?status=escalated` (Needs the team), which is longest-waiting first (#1485).
+        `?status=new|answered|closed|escalated` keeps one status and `all` (the default) every one
+        (#1375); the pages are of that filtered list. `page` and `pages` come back, and a page that
+        isn't there answers 400 `bad_page`. `counts` always covers every ticket, for the filter
+        buttons. The words go to the signed-in admin only, and are never logged."""
         wanted = next((s for s in support.STATUSES if s == status), None)
         if status != "all" and wanted is None:
             raise HTTPException(status_code=400, detail="bad_status")
-        rows = await support.newest(db, status=wanted)
+        # `?page=N` from 1, 20 tickets a page within the filtered list (#2211). Anything that is
+        # not a plain whole number from 1 to the last page answers 400 `bad_page`.
+        number = int(page) if page.isascii() and page.isdecimal() and len(page) <= 9 else 0
+        if number < 1:
+            raise HTTPException(status_code=400, detail="bad_page")
+        rows, pages = await support.page(db, status=wanted, number=number)
+        if number > pages:
+            raise HTTPException(status_code=400, detail="bad_page")
         counts = await support.counts(db)
-        # One lookup per distinct person, so the list is kept short (support.LIST_LIMIT).
+        this_week = await support.week(db, clock())
+        # One lookup per distinct person, so a page is kept short (support.PAGE_SIZE).
         names = await sessions.display_names(db, sorted({r.user_id for r in rows}), now=clock())
+        threads = {
+            r.id: await support.thread(db, r.id) for r in rows
+        }  # (#1431) one read per ticket
         return {
             "tickets": [
                 {
@@ -428,12 +470,32 @@ def router(
                     "message": r.message,
                     "source": r.source,
                     "status": r.status,
+                    # Why it came to a person: one of support.REASONS, or null.
+                    "reason": r.reason,
+                    # When it was handed to a person (Unix seconds), null if never; kept after an
+                    # answer, unlike the reason.
+                    "handedOverAt": r.handed_over_at,
                     # Where the team replies; null when the account has no email.
                     "email": r.email,
+                    # The helper's answers, the person's emailed replies and the team's replies.
+                    "replies": [
+                        {"id": x.id, "who": x.who, "text": x.text, "at": x.created_at}
+                        for x in threads[r.id]
+                    ],
                 }
                 for r in rows
             ],
             "counts": counts,
+            "page": number,
+            "pages": pages,
+            # How support went in the last seven days (#1480): numbers only.
+            "week": {
+                "questions": this_week.questions,
+                "helper": this_week.helper,
+                "team": this_week.team,
+                "waiting": this_week.waiting,
+                "reasons": this_week.reasons,
+            },
         }
 
     @api.post("/support/{ticket_id}/status", status_code=204)
@@ -448,6 +510,26 @@ def router(
             raise HTTPException(status_code=404, detail="no_ticket")
         # The number and the new status only: never the ticket's words or the admin's email.
         log.info("Admin set support ticket %s to %s", ticket_id, status)
+        return Response(status_code=204)
+
+    @api.post("/support/{ticket_id}/reply", status_code=204)
+    async def reply_to_support(
+        ticket_id: Annotated[int, Path(ge=1, le=2**63 - 1)], request: Request, session: AdminWrite
+    ) -> Response:
+        """The team's reply to a ticket (#1431): emailed to the person from the support address
+        and kept on the ticket, which becomes answered. Never logged beyond the number."""
+        raw = await read_json(request)
+        text = raw.get("text") if isinstance(raw, dict) else None
+        if not isinstance(text, str):
+            raise HTTPException(status_code=400, detail="bad_text")
+        text = text.replace("\r\n", "\n").strip()
+        if not text or len(text) > support.MAX_MESSAGE:
+            raise HTTPException(status_code=400, detail="bad_text")
+        if helper is None:
+            raise HTTPException(status_code=503, detail="reply_off")
+        if not await helper.team_reply(ticket_id, text):
+            raise HTTPException(status_code=404, detail="no_ticket")
+        log.info("Admin replied to support ticket %s", ticket_id)
         return Response(status_code=204)
 
     return api

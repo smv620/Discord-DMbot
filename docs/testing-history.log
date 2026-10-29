@@ -2435,3 +2435,306 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
   best 42.2 / 45.6 / 46.7, median 57.5 / 63.4 / 59.4, worst 68.7 / 75.1 / 82.6. The best case meets the 50 ms goal (5 of 6 under it); a typical recall (median 52 to
   66 ms) does not quite. Numbers and caveats on #1350.
   Found: the CI check post-supervisor-status fails on every pull request (scripts/supervisor_review.py imports datetime.UTC, Python 3.11+, and the job runs Python 3.10): #1409.
+
+==============================================================================
+2026-10-16  dev1  DEPLOY: migrations 0077 and 0079-0084 (recaps, recap audio, the extractor gates) are live as e49cdb00
+  Supervisor's handover on #516 (03:06, 03:36, 04:05): deploy development's core batch in one go. Deployed exactly e49cdb00 (development had moved on to 47e3f03a
+  with #1433, website only).
+  Dry run first (04:20 UTC): a fresh pg_dumpall of the live database (at 0078), restored into a throwaway postgres:16, migrated as the dmbot role, deleted after:
+  "Database updated: 0077_extractor_progress, 0079_recap_jobs, 0080_recap_audio_addon, 0081_recap_audio_follow_ups, 0082_recap_audio_jobs, 0083_memory_said_as,
+  0084_recap_switches" in 0.17 s; a second run applied nothing; rows unchanged (3 campaigns, 152 entries, 237 aliases, 147 transcript lines); recap_jobs and
+  recap_dictionaries have row-level security on and forced; recap_audio_strays has none (no campaign data, to be confirmed by Supervisor).
+  CI: the core job on e49cdb00 FAILED twice (04:29 and, after one re-run, 04:39): 1 failed, 6282 passed, 2 skipped; the one failure is
+  tests/test_extractor_gates.py::Progress::test_a_run_that_made_no_calls_does_not_move_when_the_session_last_ran with psycopg UniqueViolation on
+  pg_authid_rolname_index: two test workers creating the role dmbot_web at once, while core/tests/pg.py::make_web_role suppresses only DuplicateObject (#1439, #1438).
+  dev1 did not deploy on the red job; Supervisor recorded a ONE-TIME exception on #516 at 04:50 for exactly that failure in test setup (no product code, 6282 of 6283
+  passed, dry run and image valid) and told dev1 to deploy.
+  No game running (active_sessions 0). Image rebuilt with ffmpeg (ffmpeg -version in the image: 7.1.5, the recap needs 4.4 or newer).
+  Backup: ~/db-backups/dmbot-before-e49cdb00-20261016T045137Z.sql (chmod 600). `docker compose build core web-api` with GIT_COMMIT set; `docker compose stop core web-api`
+  at 04:51:48 UTC (neither running afterwards); `up -d --no-deps core`; `up -d --no-deps web-api`.
+  Result: core logged "Database updated: 0077_extractor_progress, 0079_recap_jobs, 0080_recap_audio_addon, 0081_recap_audio_follow_ups, 0082_recap_audio_jobs, 0083_memory_said_as,
+  0084_recap_switches", "ears connected" and "Connected to 1 server(s)". web-api healthy. schema_migrations: 84 rows, last 0084_recap_switches. The tables recap_jobs,
+  recap_audio_strays and recap_dictionaries exist. ffmpeg 7.1.5 works inside the running core container. The restart also applied the owner's .env changes (the Resend
+  mail settings); only start-up warning: the old AI_MODEL line next to AI_MODEL_FAST (dev1 does not touch .env).
+  Nothing turned on: DMBOT_RECAPS is not set, there is no ElevenLabs key, the extractor is off.
+  10-minute check, 05:01 UTC (9 minutes after the start): 0 ERROR, CRITICAL or traceback lines in core and web-api since 04:51; both up, web-api healthy; no session or
+  recap in the logs.
+  Not yet checked (needs the owner): a short test session with the owner as the DM for the "Before tonight" note (#1406) and, if a player says a secret name, the
+  question (#1410). Blocked: the own-ticket listing and the SUPPORT_TEAM_EMAIL test (they need a signed-in paid test account: Stripe test mode #1096, and the dev site's
+  sign-in, whose API paths the public tunnel does not publish, see #1271); the Resend test sign-in email (same sign-in path). Earlier today: the sidebar checker's "after" run
+  stopped on its first question twice (the 8 s budget; posted on #1370); the CI bug #1409 was fixed by #1416; scripts/set-key refuses ELEVENLABS_API_KEY because the line is
+  commented out in .env.example (#1440).
+
+==============================================================================
+2026-10-16  dev1  Dry run on development edfe5a60 with 0085 recap_audio_again (#1430), and the owner's ElevenLabs key  - PASSED
+  #1430 (the website's door to new recap audio) merged. Migration 0085_recap_audio_again adds recap_jobs.audio_asked_at and the SECURITY DEFINER function
+  dmbot_recap_audio_again (the website's role may execute it). Same method: a fresh pg_dumpall of the live database (at 0084), restored into a throwaway postgres:16, migrated as
+  the dmbot role, deleted after: "Database updated: 0085_recap_audio_again" in 0.15 s; a second run applied nothing; rows unchanged (3 campaigns, 152 entries, 147 transcript
+  lines, 0 recap jobs). The same change set also edits core/Dockerfile (/data/recap-audio owned by the bot) and docker-compose.yml (a new named volume recap-audio, read-only
+  for web-api, and WEB_RECAP_AUDIO_DIR): a rebuild and a recreate, no hand-made volume. A "Ready to deploy" line is in docs/testing-status.log; no deploy yet.
+  Also today: scripts/set-key refused ELEVENLABS_API_KEY because the line was commented out in .env.example (#1440); fixed by #1443 (the line is active and empty); dev1 pulled the
+  fix and tested set-key on a throwaway env file only (it saves); the owner saves the key themselves at set-key's hidden prompt, and the narrator voice goes in .env as
+  ELEVENLABS_VOICE_ID (the code's name; #1385 said DMBOT_RECAP_VOICE_ID). Nothing turns on until DMBOT_RECAPS=1, a key and a voice id all exist.
+
+==============================================================================
+2026-10-16  dev1  DEPLOY: migration 0085 recap_audio_again, the rebuild and the recap-audio volume are live as e8555e2c; dry run of 0086
+  Supervisor's go on #516 (06:21): deploy the head dry-run, e8555e2c, with a green core job (06:11), rebuilding both containers (the compose volumes changed), old containers stopped first.
+  Dry run first (05:3x, at edfe5a60, the same migrations): a fresh pg_dumpall of the live database (at 0084), restored into a throwaway postgres:16, migrated as the dmbot role, deleted after:
+  "Database updated: 0085_recap_audio_again" in 0.15 s; a second run applied nothing; rows unchanged (3 campaigns, 152 entries, 147 transcript lines, 0 recap jobs); recap_jobs.audio_asked_at exists and
+  dmbot_recap_audio_again is security definer and executable by the website's role.
+  No game running (active_sessions 0). Backup: ~/db-backups/dmbot-before-e8555e2c-20261016T062559Z.sql (chmod 600). `docker compose build core web-api` with GIT_COMMIT set (core/Dockerfile now makes
+  /data/recap-audio owned by the bot; the image has ffmpeg 7.1.5); `docker compose stop core web-api` at 06:28:39 UTC (neither running afterwards); `up -d --no-deps core`; `up -d --no-deps web-api`.
+  Result: core logged "Database updated: 0085_recap_audio_again", "ears connected" and "Connected to 1 server(s)"; web-api healthy; schema_migrations 85 rows, last 0085_recap_audio_again.
+  Supervisor's checks: the volume discord-dmbot_recap-audio is mounted read-write at /data/recap-audio in core (a test write worked) and read-only at /recap-audio in web-api (a write is refused);
+  WEB_RECAP_AUDIO_DIR=/recap-audio is set in web-api; GET /recap-audio/x/voice without a signature answers 404 (inside web-api) and /health answers 200; ffmpeg 7.1.5 works in the running core.
+  Start-up warning (harmless, expected): .env is missing ELEVENLABS_API_KEY, ELEVENLABS_VOICE_ID, ELEVENLABS_SPEECH_MODEL and DMBOT_RECAP_AUDIO_MAX_CREDITS since #1443 made those lines active in
+  .env.example; defaults apply, nothing turns on; the owner saves the key with scripts/set-key (which works now) and may run scripts/update-env for the rest. The old AI_MODEL line still warns too.
+  10-minute check, 06:41 UTC (12 minutes after the start): 0 ERROR, CRITICAL or traceback lines in core and web-api since 06:28; both up, web-api healthy; 85 migrations; no session or recap in the logs.
+  Nothing turned on: recaps off (DMBOT_RECAPS unset), no ElevenLabs key, the extractor off.
+  Not checked: a Try It test account seeing the Support form, the own-ticket listing and the SUPPORT_TEAM_EMAIL test (all need the dev site's sign-in, which the public tunnel does not publish,
+  and the ticket ones need a paid account: Stripe test mode #1096); the owner's test session (the "Before tonight" note #1406, the secret-name question #1410).
+  Dry run of 0086_support_thread (#1452) on development eafa5dcd (06:4x): live copy at 0085: "Database updated: 0086_support_thread" in 0.20 s; second run nothing; rows unchanged; support_replies and
+  support_tickets have row-level security on and forced. Ready to deploy (line in docs/testing-status.log); not deployed.
+2026-10-16  dev1  DEPLOY: migrations 0086 support_thread, 0087 web_names and 0088 support_mine_answer, the rebuild and the support flow are live as 1ba2c3d3 (Supervisor's "go", cross-session message ~07:30 UTC). Core CI on the head: success.
+  Dry run (07:3x UTC) on a copy of the live database (pg_dumpall into a throwaway postgres:16 on its own network, at 0085): "Database updated: 0086_support_thread, 0087_web_names, 0088_support_mine_answer"
+  in 0.21 s; a second run applied nothing; 88 migrations; rows unchanged (147 transcript lines, 3 campaigns); support_replies and support_tickets have row-level security on and forced;
+  support_replies policies: support_admin_read, support_admin_add, read_own_answers. Copy deleted. No game running. Backup: ~/db-backups/dmbot-before-1ba2c3d3-1016-0735.sql (chmod 600).
+  `docker compose build core web-api` with GIT_COMMIT set; `docker compose stop core web-api` then `up -d --no-deps core` (07:42 UTC), then web-api.
+  Result: core logged "Database updated: 0086_support_thread, 0087_web_names, 0088_support_mine_answer"; web-api healthy; 0 ERROR, CRITICAL or traceback lines in core and web-api in the first 5 minutes.
+  Supervisor's checks: web-api has the four new settings but all are empty (MAIL_SUPPORT_FROM, MAIL_ALERTS_FROM, MAIL_INBOUND_SECRET, SUPPORT_AI_MODEL: the owner has not set them in .env), and ANTHROPIC_API_KEY is present
+  in web-api. /mail/inbound inside web-api: POST without the secret answers 404 as designed, but GET answers 405 (the route exists and takes POST only), not 404 as the handover expected.
+  Start-up warning (harmless): .env is missing 10 settings that are in .env.example (the four mail and support ones, the four ElevenLabs and recap-audio ones, DMBOT_RECAPS_PER_MONTH, DMBOT_RECAP_AUDIO_PER_MONTH); defaults apply.
+  Not done, not mine: setting MAIL_SUPPORT_FROM and MAIL_ALERTS_FROM in .env (the owner) and the Cloudflare route ^/mail/inbound$ (the owner, in the dashboard).
+  10-minute check, 07:52 UTC (10 minutes after the start): 0 ERROR, CRITICAL or traceback lines in core and web-api since 07:42; core "ears connected" and "Connected to 1 server(s)";
+  web-api healthy; schema_migrations 88 rows, last 0088_support_mine_answer. The DM-screen recap buttons (#1457) register in setup_hook with no log line; a bad registration would have stopped the start, and it did not.
+  Nothing turned on for users (recaps off, no ElevenLabs key, no mail sender set, the extractor off).
+2026-10-16  dev1  DEPLOY: migrations 0089 memory_from_set, 0090 support_reason and 0091 web_recap_choices, and the code behind #1471, #1473, #1476, #1469 and #1477 are live as be0d42fd (Supervisor's "go", cross-session message ~08:35 UTC). Core CI on the head: success.
+  Dry run (08:3x UTC) on a copy of the live database (pg_dumpall into a throwaway postgres:16 on its own network, at 0088): "Database updated: 0089_memory_from_set, 0090_support_reason, 0091_web_recap_choices"
+  in 0.16 s; a second run applied nothing; 91 migrations; rows unchanged (147 transcript lines, 3 campaigns, 0 memory claims). Copy deleted. No game running. Backup: ~/db-backups/dmbot-before-be0d42fd-1016-0835.sql (chmod 600).
+  `docker compose build core web-api` with GIT_COMMIT set; `docker compose stop core web-api` at 08:43:11 UTC, `up -d --no-deps core`, then web-api. No compose or .env change.
+  Result: core logged "Database updated: 0089_memory_from_set, 0090_support_reason, 0091_web_recap_choices", "ears connected" and "Connected to 1 server(s)"; web-api healthy; schema_migrations 91 rows, last 0091_web_recap_choices.
+  Supervisor's check: GET /me/campaigns/<ref>/recap-choices signed out answers 401 (inside web-api).
+  10-minute check, 08:54 UTC (11 minutes after the start): 0 ERROR, CRITICAL or traceback lines in core and web-api since 08:43; both up, web-api healthy; schema_migrations 91 rows, last 0091_web_recap_choices.
+  Nothing turned on for users (recaps off, no ElevenLabs key, the extractor off).
+2026-10-16  dev1  DEPLOY: migrations 0092 support_handed_over and 0093 transcript_suggestions, and the code behind #1481, #1482, #1484, #1490, #1492, #1493, #1496, #1497 and #1498 are live as bbaab1bd (Supervisor's "go" after #1498 merged, ~10:15 UTC). Core CI on the head: success.
+  Dry run (10:0x UTC, on development b2de390e, which held both migrations) on a copy of the live database (pg_dumpall into a throwaway postgres:16 on its own network, at 0091): "Database updated: 0092_support_handed_over, 0093_transcript_suggestions"
+  in 0.16 s; a second run applied nothing; 93 migrations; rows unchanged (147 transcript lines, 3 campaigns, 0 tickets); transcript_suggestions has row-level security on and forced; support_tickets has handed_over_at and handed_over_reason.
+  Copy deleted. No game running. Backup: ~/db-backups/dmbot-before-bbaab1bd-1016-1015.sql (chmod 600). `docker compose build core web-api` with GIT_COMMIT set; `docker compose stop core web-api` at 10:20:47 UTC,
+  `up -d --no-deps core`, then web-api. No compose or .env change. The migration files did not change between the dry run and the deploy head (checked).
+  Result: core logged "Database updated: 0092_support_handed_over, 0093_transcript_suggestions", "ears connected" and "Connected to 1 server(s)"; web-api healthy; schema_migrations 93 rows, last 0093_transcript_suggestions.
+  Not checked: a recorded player types /dmbot fix after a session and sees the picker (needs a game session).
+  10-minute check, 10:32 UTC (11 minutes after the start): 0 ERROR, CRITICAL or traceback lines in core and web-api since 10:20; both up, web-api healthy; schema_migrations 93 rows, last 0093_transcript_suggestions.
+  Nothing turned on for users (recaps off, no ElevenLabs key, the extractor off).
+2026-10-16  dev1  DEPLOY: migrations 0094 web_transcripts, 0095 web_transcript_pages, 0096 support_week_mail, 0097 homebrew_entries, 0098 web_house_rules and 0099 homebrew_from_book, and the code behind #1501-#1526 are live as 1cc09299 (Supervisor's "go", cross-session message 13:12 UTC). Core CI on the head: success.
+  Dry run (13:0x UTC) on a copy of the live database (pg_dumpall into a throwaway postgres:16 on its own network, at 0093): "Database updated: 0094 ... 0099" (all six) in 0.19 s; a second run applied nothing; 99 migrations;
+  rows unchanged (147 transcript lines, 3 campaigns, 0 memory claims); homebrew_entries and support_week_mail have row-level security on and forced; homebrew_entries has from_book. Copy deleted. No game running.
+  Backup: ~/db-backups/dmbot-before-1cc09299-1016-1307.sql (chmod 600). docker-compose.yml, core/Dockerfile and ears are unchanged since bbaab1bd (checked). `docker compose build core web-api` with GIT_COMMIT set;
+  `docker compose stop core web-api` at 13:19:49 UTC, `up -d --no-deps core`, then web-api.
+  Result: core logged "Database updated: 0094 ... 0099", "ears connected" and "Connected to 1 server(s)"; web-api healthy; schema_migrations 99 rows, last 0099_homebrew_from_book.
+  Supervisor's checks: signed-out GET /me/campaigns/<ref>/transcripts and /me/campaigns/<ref>/house-rules answer 401, /health 200 (inside web-api).
+  Not checked (need a game session or a signed-in member): the Transcripts and House rules pages for a signed-in member; Settings -> Homebrew (Add, Download file, Load file); /dmbot fix after a session.
+  docs/next-test-step.md stays Test I (consent v6, not yet run): one test at a time; the new checks are in docs/testing-status.log.
+  10-minute check, 13:30 UTC (10 minutes after the start): 0 ERROR, CRITICAL or traceback lines in core and web-api since 13:19; both up, web-api healthy; schema_migrations 99 rows, last 0099_homebrew_from_book.
+  Nothing turned on for users (recaps off, no ElevenLabs key, the extractor off, homebrew's What's new entry held).
+2026-10-16  dev1  DEPLOY: migrations 0100 web_homebrew, 0101 transcript_keep and 0102 pack_suggestions, and the code behind #1536, #1539, #1540, #1544, #1545 and #1549 are live as 11f794f0 (Supervisor's "go", cross-session message). Core CI on the head: success.
+  Dry run (15:0x UTC) on a copy of the live database (pg_dumpall into a throwaway postgres:16 on its own network, at 0099): "Database updated: 0100_web_homebrew, 0101_transcript_keep, 0102_pack_suggestions" in 0.25 s;
+  a second run applied nothing; 102 migrations; rows unchanged (147 transcript lines, 3 campaigns); pack_suggestions and pack_suggestions_sent have row-level security on and forced; new columns
+  campaigns.transcript_keep_days and recap_jobs.housekeeping. Copy deleted. No game running. Backup: ~/db-backups/dmbot-before-11f794f0-1016-1507.sql (chmod 600). docker-compose.yml, core/Dockerfile and ears are
+  unchanged since 1cc09299 (checked). `docker compose build core web-api` with GIT_COMMIT set; `docker compose stop core web-api` at 15:14:42 UTC, `up -d --no-deps core`; web-api started after core was connected, as Supervisor asked.
+  Result: core logged "Database updated: 0100 ... 0102", "ears connected" and "Connected to 1 server(s)"; web-api healthy; schema_migrations 102 rows, last 0102_pack_suggestions. Signed-out GET /me/campaigns/<ref>/homebrew and /transcripts answer 401, /health 200.
+  Not checked (need the owner in Discord): Settings -> Transcripts opens and saves a choice; the Menu shows Delete my transcripts with its one warning; Homebrew packs opens; the name card's Show all select.
+  docs/next-test-step.md is now Test J (Keep, Delete's warning with cancel, Homebrew packs); Test I (consent v6) moves to after it.
+2026-10-16  dev1  DEPLOY: migration 0103 web_transcript_deleted and the code behind #1543, #1550, #1551, #1553, #1555, #1556, #1560, #1561 and #1564 are live as 47d4ccf4 (Supervisor's "go", cross-session message). Core CI on the head: success.
+  Dry run (16:3x UTC) on a copy of the live database (pg_dumpall into a throwaway postgres:16 on its own network, at 0102): "Database updated: 0103_web_transcript_deleted" in 0.17 s; a second run applied nothing; 103 migrations;
+  rows unchanged (147 transcript lines, 3 campaigns). Copy deleted. No game running. Backup: ~/db-backups/dmbot-before-47d4ccf4-1016-1635.sql (chmod 600). docker-compose.yml, core/Dockerfile and ears are unchanged
+  since 11f794f0 (checked). `docker compose build core web-api` with GIT_COMMIT set; `docker compose stop core web-api` at 16:38:47 UTC, `up -d --no-deps core`; web-api started once core was connected.
+  Result: core logged "Database updated: 0103_web_transcript_deleted", "ears connected" and "Connected to 1 server(s)"; web-api healthy; schema_migrations 103 rows, last 0103_web_transcript_deleted.
+  Signed-out GET /me/campaigns/<ref>/transcripts answers 401, /health 200 (inside web-api).
+  Not checked (need the owner in Discord): /dmbot rule as a non-DM member (private card ending "Your DM decides what applies at your table."); Connect to... shows Secret: no for a DM; a DM's Download all names file has the player rows section.
+  docs/next-test-step.md stays Test J (Keep, Delete's warning with Cancel, Homebrew packs): it still needs the owner.
+  10-minute check, 16:49 UTC (10 minutes after the start): 0 ERROR, CRITICAL or traceback lines in core and web-api since 16:38; both up, web-api healthy; schema_migrations 103 rows, last 0103_web_transcript_deleted.
+  Nothing turned on for users (recaps off, no ElevenLabs key, the extractor off).
+2026-10-16  dev1  DEPLOY: migration 0104 homebrew_book_edition and the code behind #1568 are live as 1df5a4e5 (Supervisor's "go", cross-session message). Core CI on the head: success.
+  Dry run (17:0x UTC) on a copy of the live database (pg_dumpall into a throwaway postgres:16 on its own network, at 0103): "Database updated: 0104_homebrew_book_edition" in 0.14 s; a second run applied nothing; 104 migrations;
+  rows unchanged (147 transcript lines, 3 campaigns, 0 homebrew entries); homebrew_entries.book_edition exists and is nullable. Copy deleted. No game running. Backup: ~/db-backups/dmbot-before-1df5a4e5-1016-1705.sql (chmod 600).
+  docker-compose.yml, core/Dockerfile and ears are unchanged since 47d4ccf4 (checked). `docker compose build core web-api` with GIT_COMMIT set; `docker compose stop core web-api` at 17:08:52 UTC, `up -d --no-deps core`;
+  web-api started once core was connected.
+  Result: core logged "Database updated: 0104_homebrew_book_edition", "ears connected" and "Connected to 1 server(s)"; web-api healthy; schema_migrations 104 rows, last 0104_homebrew_book_edition; /health 200 inside web-api.
+  Not checked (needs the owner in Discord): a DM loads a from-book homebrew file and sees "Which rules is this book written for?" after "I have the right"; /dmbot rule ranking by edition with the [Shared book] tag.
+  docs/next-test-step.md stays Test J (Keep, Delete's warning with Cancel, Homebrew packs): it still needs the owner.
+  10-minute check, 17:19 UTC (10 minutes after the start): 0 ERROR, CRITICAL or traceback lines in core and web-api since 17:08; both up, web-api healthy; schema_migrations 104 rows, last 0104_homebrew_book_edition.
+  Nothing turned on for users (recaps off, no ElevenLabs key, the extractor off).
+2026-10-16  dev1  DEPLOY: migration 0105 web_transcript_keep and the code behind #1573, #1574, #1575 and #1578 are live as 257f5b67 (Supervisor's "go", cross-session message; I first built 5bd12b1e, then #1578 merged during the build and I took the newer head with 0105). Core CI on the head: success.
+  Dry run (17:5x UTC) on a copy of the live database (pg_dumpall into a throwaway postgres:16 on its own network, at 0104): "Database updated: 0105_web_transcript_keep" in 0.18 s; a second run applied nothing; 105 migrations;
+  rows unchanged (147 transcript lines, 3 campaigns). Copy deleted. No game running. Backup: ~/db-backups/dmbot-before-257f5b67-1016-1755.sql (chmod 600). docker-compose.yml, core/Dockerfile and ears are unchanged since
+  1df5a4e5 (checked). `docker compose build core web-api` with GIT_COMMIT set; `docker compose stop core web-api` at 18:02:39 UTC, `up -d --no-deps core`; web-api started once core was connected.
+  Result: core logged "Database updated: 0105_web_transcript_keep", "ears connected" and "Connected to 1 server(s)"; web-api healthy; schema_migrations 105 rows, last 0105_web_transcript_keep; /health 200 inside web-api.
+  Not checked (needs the owner in Discord or a signed-in member): a non-DM /dmbot rule card; the Transcripts page of a campaign with a keep limit showing "Transcripts are kept for N days after each session, then deleted."
+  docs/next-test-step.md stays Test J (Keep, Delete's warning with Cancel, Homebrew packs): it still needs the owner.
+  10-minute check, 18:13 UTC (10 minutes after the start): 0 ERROR, CRITICAL or traceback lines in core and web-api since 18:02; both up, web-api healthy; schema_migrations 105 rows, last 0105_web_transcript_keep.
+  Nothing turned on for users (recaps off, no ElevenLabs key, the extractor off).
+2026-10-16  dev1  TEST J PASSED (the owner, 1 person as the DM, on 257f5b67; no voice, nothing deleted): all four steps worked. (2) The DM-screen help card's Settings button -> Transcripts opened the list of how long to keep transcripts; (3) a choice was saved and was still picked on reopening, then set back to keep as before;
+  (4) Menu -> Delete my transcripts showed its one warning, and Cancel left everything as it was; (5) Settings -> Shared rules -> Homebrew packs opened. Core logs: 0 ERROR or CRITICAL lines during the test. The owner could not find Settings at first: it is on the help card in #dm-screen (it works between sessions),
+  not in a session message; docs/next-test-step.md did not say so (Test I's page already starts with /dmbot start). The owner asked for new words on the Homebrew packs card (#1615, with Supervisor; the owner is settling the D&D Beyond line with Supervisor directly).
+  Seen working for the first time: Keep transcripts for (#1533, 0101), Delete my transcripts (#1532) and Homebrew packs (#1527). WebDev's held What's new entries for these can go live. docs/next-test-step.md is Test I again (consent v6, not yet run).
+2026-10-16  dev1  DEPLOY: migrations 0106 waiting_name_questions, 0107 web_homebrew_book and 0108 web_homebrew_packs, and the code behind #1581, #1587, #1590, #1596 and #1599 are live as a026cfd7 (Supervisor's "go", cross-session message; the owner said "restart now" when I asked). Core CI on the head: success (all jobs).
+  Dry run (21:0x UTC) on a copy of the live database (pg_dumpall into a throwaway postgres:16 on its own network, at 0105): "Database updated: 0106_waiting_name_questions, 0107_web_homebrew_book, 0108_web_homebrew_packs" in 0.17 s; a second run applied nothing;
+  108 migrations; rows unchanged (147 transcript lines, 3 campaigns); waiting_name_questions has row-level security on and forced. Copy deleted. No game running. Backup: ~/db-backups/dmbot-before-a026cfd7-1016-2105.sql (chmod 600).
+  docker-compose.yml, core/Dockerfile and ears are unchanged since 257f5b67 (checked). `docker compose build core web-api` with GIT_COMMIT set; `docker compose stop core web-api` at 21:13:09 UTC, `up -d --no-deps core`; web-api started once core was connected.
+  Result: core logged "Database updated: 0106 ... 0108", "ears connected" and "Connected to 1 server(s)"; web-api healthy; schema_migrations 108 rows, last 0108_web_homebrew_packs; /health 200 inside web-api.
+  Not checked (need the owner in Discord, or an entry that exists): a DM's Check names button after a session that left a question unanswered; "Three days later, you..." moving the clock with Undo; the website Homebrew page showing "From a shared book".
+  docs/next-test-step.md is Test I (consent v6, #1617 merged), not yet run.
+  10-minute check, 21:23 UTC (10 minutes after the start): 0 ERROR, CRITICAL or traceback lines in core and web-api since 21:13; both up, web-api healthy; schema_migrations 108 rows, last 0108_web_homebrew_packs.
+  Nothing turned on for users (recaps off, no ElevenLabs key, the extractor off).
+2026-10-17  dev1  DEPLOY: migrations 0109 game_clock_groups, 0110 improvement_opt_outs, 0111 homebrew_rules_to_house_rules, 0112 homebrew_enabled, 0113 homebrew_sources and 0114 homebrew_pack_doors, and the code behind them (#1600, #1607, #1608, #1614, #1619, #1629, #1630, #1634, #1635, #1636, #1638, #1639, #1644, #1647 and others) are live as 3535138d
+  (Supervisor's go, cross-session message and the brief on #516; the owner said "restart now" when I asked). I first prepared 87ca7e11, then RepoManager's batch G (#1644, #1647) merged, so I took 3535138d with 0114 and redid the backup and dry run. Core CI on the head: success (all jobs).
+  Dry run (00:0x UTC) on a copy of the live database (pg_dumpall into a throwaway postgres:16 on its own network, at 0108): "Database updated: 0109 ... 0114" (all six) in 0.26 s; a second run applied nothing; 114 migrations; counts before and after: 147 transcript lines, 3 campaigns,
+  0 homebrew entries, 0 house rules (so the row-moving 0111 and 0113 had nothing to move on live data; their paths are proved by CI's populated-table tests); game_clock_groups, improvement_opt_outs and site_approvals have row-level security on and forced; homebrew_pages has none by design
+  (public page content, no campaign or server column; the schema comment calls it the second exception to campaign isolation, next to shared rulesets: Supervisor to confirm it is recorded in PLAN and CLAUDE.md); players_may_know is gone; no leftover migrate_* policies. Copy deleted. No game running.
+  Backup: ~/db-backups/dmbot-before-3535138d-1017-0001.sql (chmod 600; 0112 drops a column, so this is the way back). docker-compose.yml, core/Dockerfile and ears are unchanged since a026cfd7 (checked). `docker compose build core web-api` with GIT_COMMIT set;
+  `docker compose stop core web-api` at 00:22:40 UTC, `up -d --no-deps core`; web-api started once core was connected.
+  Result: core logged "Database updated: 0109 ... 0114", "ears connected" and "Connected to 1 server(s)"; web-api healthy; schema_migrations 114 rows, last 0114_homebrew_pack_doors; /health 200 inside web-api.
+  A mistake of mine on the way: my first dry-run row-count query named a table that does not exist, so it printed no counts; I redid the dry run from the same backup with the right query (the migrations themselves had applied cleanly both times).
+  Not checked (need the owner in Discord): the six live checks in docs/testing-status.log (Settings button and /dmbot settings; Game masters; split the party; Homebrew on/off and Who made these; Add from a link with one published D&D Beyond homebrew link; the Delete a campaign button for the plan holder only).
+  docs/next-test-step.md is Test I (consent v6), not yet run.
+  10-minute check, 00:33 UTC (10 minutes after the start): 0 ERROR, CRITICAL or traceback lines in core and web-api since 00:22; both up, web-api healthy; schema_migrations 114 rows, last 0114_homebrew_pack_doors.
+  Nothing turned on for users (recaps off, no ElevenLabs key, the extractor off).
+2026-10-17  dev1  LIVE CHECK PASSED (reported by the owner to Supervisor in chat, relayed on #516 at 01:27 UTC; I did not see it myself; on 3535138d): Homebrew -> Add from a link (#1634) worked with one published D&D Beyond homebrew link: D&D Beyond DOES answer our server, so the link import works from the server's address.
+  The held Help and What's new lines for it are released by WebDev in #1664. The same check found a gap, not a bug: adding homebrew by hand offered no species or subclass kind; CloudDev adds species, subclass and background in #1663.
+  Still not checked from the 3535138d list: the Settings button on the /dmbot start voice step and /dmbot settings; Game masters; split the party; Homebrew on/off and Who made these; the Delete a campaign button for the plan holder only.
+2026-10-17  dev1  DEPLOY: migrations 0115 clue_audience, 0116 web_homebrew_source, 0117 standing, 0118 story_threads and 0119 homebrew_more_kinds, and the code behind #1651, #1654, #1657, #1658, #1660, #1661, #1670 and #1671 are live as 68a8949f
+  (Supervisor's go on #516 at 02:07 and by cross-session message; the owner said "restart now" when I asked). I first prepared 95130726 (0115-0118); #1671 merged before I stopped anything, so I took 68a8949f with 0119 and redid the backup and dry run. Core CI on the head: success (all jobs).
+  Dry run (03:4x UTC) on a copy of the live database (pg_dumpall into a throwaway postgres:16 on its own network, at 0114): "Database updated: 0115 ... 0119" (all five) in 0.24 s; a second run applied nothing; 119 migrations; counts before and after the same:
+  147 transcript lines, 3 campaigns, 3 homebrew entries (the owner's), 0 house rules; no leftover migrate_* policies. Copy deleted. No game running. Backup: ~/db-backups/dmbot-before-68a8949f-1017-0342.sql (chmod 600).
+  docker-compose.yml, core/Dockerfile and ears are unchanged since 3535138d (checked). `docker compose build core web-api` with GIT_COMMIT set; `docker compose stop core web-api` at 03:46:09 UTC, `up -d --no-deps core`; web-api started once core was connected.
+  Result: core logged "Database updated: 0115 ... 0119" and "Connected to 1 server(s)"; web-api healthy; schema_migrations 119 rows, last 0119_homebrew_more_kinds; /health 200 inside web-api.
+  Not checked (need the owner in Discord): Approved sites in Homebrew (see and Take back); a homebrew entry's source line on the website; Standing on an NPC's name card (Set standing...); the new homebrew kinds species, subclass and background; that the secrets and story-thread buttons appear on a name card.
+  docs/next-test-step.md is Test I (consent v6), not yet run.
+  10-minute check, 03:56 UTC (10 minutes after the start): 0 ERROR, CRITICAL or traceback lines in core and web-api since 03:46; both up, web-api healthy; schema_migrations 119 rows, last 0119_homebrew_more_kinds.
+  Nothing turned on for users (recaps off, no ElevenLabs key, the extractor off).
+2026-10-17  dev1  DEPLOY: migration 0120 dm_bot_channel and the code behind #1672, #1673, #1677, #1678 and #1682 are live as e25d74ea (Supervisor's go on #516 at 05:12/05:20 and by cross-session message; the owner said "restart now" when I asked). Core CI on the head: success (all jobs).
+  Dry run (05:1x UTC) on a copy of the live database (pg_dumpall into a throwaway postgres:16 on its own network, at 0119): "Database updated: 0120_dm_bot_channel" in 0.14 s; a second run applied nothing; 120 migrations; counts before and after the same:
+  147 transcript lines, 3 campaigns, 3 homebrew entries, 0 house rules; no leftover migrate_* policies. Copy deleted. No game running. Backup: ~/db-backups/dmbot-before-e25d74ea-1017-0518.sql (chmod 600).
+  docker-compose.yml, core/Dockerfile and ears are unchanged since 68a8949f (checked). `docker compose build core web-api` with GIT_COMMIT set; `docker compose stop core web-api` at 05:28:34 UTC, `up -d --no-deps core`; web-api started once core was connected.
+  Result: core logged "Database updated: 0120_dm_bot_channel", "ears connected" and "Connected to 1 server(s)"; web-api healthy; schema_migrations 120 rows, last 0120_dm_bot_channel; /health 200 inside web-api.
+  Not checked (need the owner in Discord): the dmb-dm-bot channel appears with My buttons and Help; each role sees its own buttons; the DM screen no longer shows Settings; Homebrew kinds show with counts.
+  Same morning: scripts/set-variables (#1685) merged and is on the server (a twin of set-key for non-secret settings); a PR to add its two CI lines and the QAbot workflow was refused by GitHub (the server's login has no workflow scope), see #516.
+  docs/next-test-step.md is Test I (consent v6), not yet run.
+2026-10-17  dev1  TEST I PASSED, WITH A SLOW BUTTON (the owner, 1 person as the DM, on e25d74ea, about 06:26 to 06:30 UTC): steps 2, 4, 6 and 7 all worked: asked again with the new words, "I'm 16 or older, record me" confirmed with a Menu button, the reminder on rejoining, and the transcript had the "after" sentence only.
+  The one complaint: the "I'm 16 or older, record me" button took much longer than expected to show up in the private message. Core log: Session saved/started 06:26:32.77; "In the voice channel; 0 of 0 there opted in" 06:26:33.54; recording notice in the voice channel's chat 06:26:34.45; "Consent given" 06:28:00.36 (87 s after the start, which includes the owner reading and pressing);
+  no Discord rate-limit or retry lines in core. The consent message is sent as one call with its button (consent_dm.send_prompt, member.send(text, view=...)), so the button is not added later. But nothing in the log says when that private message was SENT, so the delay cannot be placed. Ears was healthy (audio received=expected, no decrypt or decode errors).
+  Follow-up: a timing log line for the consent message (CloudDev), see the issue linked on #516. Capture and transcript were fine: "Listened 3.3 min, sent 0.1 min of speech", transcript download offered privately to 1 of 1.
+2026-10-17  dev1  DEPLOY: migration 0121 story_mode and the code behind #1685, #1687, #1690, #1693, #1696, #1700 and #1704 (Stripe on API version 2026-09-30.endive) are live as 713e7349 (Supervisor's go on #516 at 07:19, batch N merged 07:10; the owner said "restart now" when I asked). Core CI on the head: success (all jobs).
+  Dry run (07:2x UTC) on a copy of the live database (pg_dumpall into a throwaway postgres:16 on its own network, at 0120): "Database updated: 0121_story_mode" in 0.16 s; a second run applied nothing; 121 migrations; counts before and after the same: 149 transcript lines, 3 campaigns, 3 homebrew entries, 0 house rules;
+  story_mode defaults to 'off'; no leftover migrate_* policies. Copy deleted. No game running. Backup: ~/db-backups/dmbot-before-713e7349-1017-0720.sql (chmod 600). docker-compose.yml, core/Dockerfile and ears are unchanged since e25d74ea (checked).
+  `docker compose build core web-api` with GIT_COMMIT set; `docker compose stop core web-api` at 07:35:58 UTC, `up -d --no-deps core`; web-api started once core was connected.
+  Result: core logged "Database updated: 0121_story_mode", "ears connected" and "Connected to 1 server(s)"; web-api healthy; schema_migrations 121 rows, last 0121_story_mode; /health 200 inside web-api.
+  Settings the new web-api picked up, checked INSIDE the container with yes/no only (no value printed): PAYMENT_PROVIDER is stripe; STRIPE_SECRET_KEY set and starts sk_test_; PAYMENT_WEBHOOK_SECRET set and starts whsec_; all five STRIPE_PRICE_* set, start price_, 30 characters each;
+  **STRIPE_MANAGED_PAYMENTS is 0, not 1** (the owner is to set it with scripts/set-variables; then web-api restarts); MAIL_SUPPORT_FROM and MAIL_ALERTS_FROM set; SUPPORT_TEAM_EMAIL set (the alert address: there is NO setting called MAIL_ALERTS_TO in the code or compose file, so what I told the owner earlier about MAIL_ALERTS_TO was wrong);
+  core has ELEVENLABS_API_KEY and ELEVENLABS_VOICE_ID set; DMBOT_RECAPS unset (recaps off); DMBOT_ENFORCE_PLANS=0.
+  **The Stripe sandbox run (#1096, #1704's four checks) is BLOCKED by the tunnel:** from outside, POST https://api.getdmbot.com/webhooks/stripe (empty, unsigned) answers 404, as do /mail/inbound and /health; /admin answers 403. The tunnel route still publishes only ^/admin(/|$) (docs/DEPLOY.md step 3), so Stripe cannot deliver its webhooks and the signed-in website paths (sign-in, checkout) are closed too (the same blocker as #1271). The owner or Supervisor has to open the routes in the Cloudflare dashboard; the list of paths is Supervisor's to give.
+  Not checked: the whole #1096 sandbox list, the four checks in #1704 (Stripe accepts managed_payments[enabled] and ui_mode=hosted_page on endive; the real shape of invoice.paid's parent.subscription_details and the subscription item period fields; customer.updated fields), and the portal behaviour (downgrade and cancel at period end, three plans switchable).
+  10-minute check, 07:46 UTC (10 minutes after the start): 0 ERROR, CRITICAL or traceback lines in core and web-api since 07:36; both up, web-api healthy; schema_migrations 121 rows, last 0121_story_mode.
+  Nothing turned on for users beyond what was already on (recaps off, plans not enforced; PAYMENT_PROVIDER=stripe is set but buying cannot be reached from outside while the tunnel only opens /admin).
+2026-10-17  dev1  DEPLOY: migrations 0122 adventure_text, 0123 story_plan, 0124 plan_same_as, 0125 plan_divergences, 0126 plan_position and 0127 rules_channel are live as 3b75a693 (the owner said "Yes, deploy fae78edd now" to a question asked at 15:09 UTC; development moved to 3b75a693 before the restart, and I deployed that head: the commits between the two heads are web Help text only, no core, migration, compose or image change, checked with git diff).
+  Dry run (15:08 UTC) on a copy of the live database, on fae78edd (migrations are identical on 3b75a693): "Database updated" for 0122 to 0127 (all six); a second run applied nothing; 127 migrations; counts before and after the same: 149 transcript lines, 3 campaigns, 3 homebrew entries, 0 house rules;
+  adventure_documents, adventure_chunks, adventure_reads, plan_nodes, plan_links, plan_spend, plan_same_as, plan_divergences, plan_position: row-level security on and forced; no leftover migrate_* policies. Copy deleted. No game running.
+  Backups: ~/db-backups/dmbot-before-fae78edd-1017-1508.sql (taken 15:08 UTC, chmod 600; this is the way back for these six migrations).
+  `docker compose build core web-api` with GIT_COMMIT set; `docker compose stop core web-api` at 15:13:43 UTC, `up -d --no-deps core`, then web-api once core was connected.
+  Result: core logged "Database updated: 0122 ... 0127" and "Connected to 1 server(s)"; web-api healthy; schema_migrations 127 rows, last 0127_rules_channel. 10-minute check: 0 ERROR, CRITICAL or traceback lines from 15:13 to 15:24.
+  Settings: STRIPE_MANAGED_PAYMENTS=1 and PAYMENT_PROVIDER=stripe in the running web-api since 08:03 (unchanged); MAIL_REPLY_DOMAIN left empty (Supervisor's instruction).
+  Not checked: the Stripe test (no payment activity yet: the owner has not started it), the consent timing line (#1706, needs the owner to repeat the consent test), and the story-plan reader itself (no one has used it; AI spend has not been exercised).
+2026-10-17  dev1  FRESH INSTALL CHECK, FAILED AT /dmbot start (the owner, on a new test server; the owner ran it): the bot joined, but the new server had no slash commands (`/dmbot` did not appear). Cause (Supervisor, bug #1767, CloudDev fixing): slash commands are synced only to the server whose ID is DISCORD_DEV_GUILD_ID (the dev server), so a new server gets none until the fix ships.
+  The interim fix (set DISCORD_DEV_GUILD_ID to the new server's ID and restart DMbot) was offered; the owner chose to wait for CloudDev's fix. NOTHING was changed: DISCORD_DEV_GUILD_ID untouched, no restart. The old server keeps the commands it already has.
+  Watched: the core log from 15:53 UTC; no error during the attempt that I could tie to this (the missing commands are the failure).
+  Not done: the rest of the fresh-install steps (make a campaign, start listening); to repeat after #1767 ships.
+2026-10-17  dev1  STRIPE TEST 1 (new subscription, the owner, on dev.getdmbot.com, test mode): BLOCKED BEFORE CHECKOUT. Every plan's "Choose" button and "Sign in with Discord" answer Discord's page "Invalid OAuth2 redirect_uri". Cause: the website's Discord sign-in sends Discord
+  https://api.getdmbot.com/auth/discord/callback (settings.oauth_redirect_uri), and that address is not on the Redirects list of DMbot's Discord app. docs/DEPLOY.md (Discord app, step on Redirects) says to leave Redirects empty until #498 (customer sign-in closed).
+  So no checkout, no Stripe event, and nothing reached the server (web-api log: no sign-in attempt). Not changed: nothing on Discord, nothing in .env, no restart. Needs the owner and Supervisor: add that exact address to the Redirects list in the Discord developer portal (a decision, since sign-in was meant to be closed), or test with a fresh email sign-in link instead (not checked).
+  Also reported by the owner (for WebDev): the desktop buttons highlight on load (they should only on hover), and the email field needs a grey hint such as your@email.here.
+
+2026-10-17 17:00 UTC  dev1  DEPLOY 174c35ec (#1772 slash commands on every server; #1760 time suggestions; web Help). Owner's OK by AskUserQuestion; Supervisor's go on #516.
+  Steps: dry run on a copy of the live database (pg_dumpall of 3b75a693 state, restored into a throwaway postgres:16 on its own network; ALTER ROLE for the copy; migrations run from the 174c35ec core copy: 0 new migrations, second run idempotent). Backup ~/db-backups/dmbot-before-174c35ec-20261017T165023Z.sql (chmod 600). Images built from 174c35ec.
+  Settings (scripts/set-variables, the owner at the terminal): DISCORD_DEV_GUILD_ID emptied; DISCORD_CLEAR_GUILD_COMMANDS set to the live server's ID by mistake (dev1 gave the wrong ID: it was read from the running dev-server setting, which is a live server other people use). The owner corrected it to empty before the restart, so no server's commands were cleared. Nothing was cleared.
+  Restart: core once (up -d --no-deps core), then web-api. Core connected to Discord (1 server), ears connected, 0 errors in the log. Web-api healthy (/health 200 from inside its container).
+  Log notes (not changed): .env is missing MAIL_REPLY_DOMAIN and DMBOT_TIME_SUGGESTIONS (defaults used); .env has both AI_MODEL and AI_MODEL_FAST (only AI_MODEL_FAST is used; the AI_MODEL line can be deleted).
+  Not yet checked: /dmbot in the owner's test server (1561035576076017774) and in dnd_testing, and the fresh-install test (after this deploy).
+  Follow-up for the owner: delete the old .env backup (named in the set-variables output) once DMbot runs fine.
+
+2026-10-18 01:40 UTC  dev1  DEPLOY 86976110 (core, then web-api). Owner's pre-approval ("deploy as soon as it's ready") after core CI went green on 86976110.
+  Contents since 174c35ec: migrations 0128_npcs_channel (NPC roster channel), 0129_initiative_style, 0130_initiative_style_backfill; #1774, #1775, #1782, #1783, #1786, #1787, #1779; no-pings default (#1834); start-up smoke test (#1830); players page (#1821); privacy wording (#1810).
+  Steps: the head was checked before each step (git ls-remote). Dry run of 0128 to 0130 on a copy of the live database (restored into a throwaway postgres:16 on its own network): applied, second run applied nothing. Fresh backup ~/db-backups/dmbot-before-86976110-20261018T0141Z.sql (chmod 600; the name posted on #516 earlier said 0137Z, which was wrong). Images built from 86976110.
+  Restart: core once (migrations applied at start-up; connected to Discord with 2 servers; ears connected; 0 errors), then web-api (healthy, /health 200 from inside its container).
+  Still to do: the duplicate-commands clear. The owner sets DISCORD_CLEAR_GUILD_COMMANDS at the terminal to the old per-server copies' server (the one that used to be DISCORD_DEV_GUILD_ID); one restart; the log should show "Clearing the old per-server commands" and "removed"; then the variable is emptied again. Then /dmbot checks in the owner's test server and dnd_testing, and the Stripe test 1 rerun.
+  Log notes (unchanged): .env had AI_MODEL and AI_MODEL_FAST both (only AI_MODEL_FAST is used).
+
+2026-10-18  dev1  TEST K (the DM Bot channel), the owner as the only person, on the owner's test server. Result: DONE, with four problems (#1963 to #1966) and one wording note.
+  Step 1: the channel was not there after the bot was added. Only dmb-dm-bot- appeared; the other channels (dm-screen and the rest) appeared only after /dmbot start, then Start listening (the test page said Continue, not Start listening: the owner pressed Start listening). Note for the page, not a bug yet.
+  Step 2: one panel message with buttons; nobody else can post there. Problems: the panel is not pinned (#1963); the gears are the wrong way round (Settings should be ⚙️, Menu 🗂️) (#1966).
+  Step 3: Settings was private. Worked.
+  Step 4: Homebrew shows counts. Worked. Removing an item worked; its undo button cut the name off: "[{icon} Put back Amulet of T...]" (#1965).
+  Step 5: ❓ Help: "DMbot didn't respond in time" (#1964). The Help text did not show.
+  Step 6: #dm-screen has no Settings card or option buttons, and is clear of noise. Worked.
+  The owner's note (for the test page): the player view is not tested (it needs a second person).
+2026-10-18 21:33 UTC  dev1  DUPLICATE-COMMANDS CLEAR (DISCORD_CLEAR_GUILD_COMMANDS), one restart of core. Owner's terminal set the variable to the original server's ID, the owner answered y to the restart, and the owner emptied the variable afterwards.
+  Correction to the 2026-10-17 entry: that entry called the ID "the live server's ID by mistake". The owner has since confirmed it is the owner's original test server, the one that used to be DISCORD_DEV_GUILD_ID and still showed each command twice. Clearing removes only that server's old per-server copies; the global commands stay.
+  Result from the core log (the server's name as the log gives it): "Clearing the old per-server commands in <id> (Dunjeons and Dragins)", then "Server <id>: old per-server commands removed". 0 errors since the restart. Connected to 2 servers; ears connected. The start-up log has no "Features" line in this build; not checked further.
+  DISCORD_CLEAR_GUILD_COMMANDS is empty in .env (the owner emptied it). The running process still holds the value it started with until the next restart; the next restart reads the empty value.
+  Still to check by the owner: /dmbot shows each command once in that server, and in the owner's test server (1561035576076017774) and dnd_testing. Then the Stripe test 1 rerun.
+
+2026-10-19 00:0x UTC  dev1  DEPLOY 61757d7 (core, then web-api). The owner's OK by AskUserQuestion after core CI went green on 61757d7.
+  Contents: the recap test tool (#1972, #1980; recaps stay off); two empty-safe email settings for web-api (OWNER_ALERT_EMAIL, MAIL_ALERTS_REPLY_TO). No migrations (0130 is the newest, already live).
+  Head note: development moved to 2e1dbef3 (CI only: #1984, core tests in parts, a skip for commits that already passed; no runtime code) before the restart. The deploy was of 61757d7, the approved and green head; the checkout was set to 61757d7 for the build.
+  Backup: ~/db-backups/dmbot-before-61757d7e-*.sql (chmod 600). Images built from 61757d7.
+  Restart: core once (connected to Discord, 2 servers; ears connected; 0 errors), then web-api (healthy, /health 200 from inside its container; 0 errors).
+  Records: the owner confirmed /dmbot shows once in the original server (the cleanup worked). The owner removed the old .env backup.
+  Recap test: a private folder on the server for the owner's transcript (chmod 700); the owner runs the tool themselves because it asks a consent question on the terminal.
+
+2026-10-19 00:26 UTC  dev1  RECAP TEST 1 (recap_run --transcript, the owner's own file, --audio, recaps stay off). Result: NOT FINISHED, by design. The recap failed the grounding check (every detail must come from what was said), so nothing was written; the --out folder is empty.
+  Scores and counts only: 652 lines, 5 speakers, 3 header lines skipped, 79 wrapped lines joined. Calls: 4 (3 fast, 1 careful); tokens in 21091, out 6810. Spend about $0.042 (the careful model has no price on file, so its share is not in the figure). Audio not made.
+  Consent: the owner answered yes to the consent question for everyone in the file and to this test.
+  Tool notes for CloudDev: after the run, aiohttp "Unclosed client session" and "Unclosed connector" warnings print (a teardown leak; the run still ends). The careful model needs --price MODEL=IN,OUT to be costed.
+  Still to do: the owner decides whether to try again or to change the recap; the transcript copies are in the server's ~/recap-test folder and /tmp in the container, and are deleted when the owner says.
+
+2026-10-20 17:09 UTC  dev1  DEPLOY 0d5a4b52 (approved by the owner and Supervisor): recaps on (DMBOT_RECAPS=1, set by the owner at the terminal), the approval gate #2090, the whole-name secret matcher #2093, the secret reveal question #2094. Migrations 0133 to 0135 (dry run on a copy passed; second run changed nothing). Backup taken; core restarted once (connected, 2 servers, ears connected, 0 errors); web-api recreated (healthy). Features line: recaps on, recap audio on (follows recaps and the ElevenLabs key, guarded by the approval gate), live heads-up off, secret reveal on. Supervisor confirmed audio stays on (#2108).
+
+2026-10-22 14:09 UTC  dev1  DEPLOY ac362329 (Supervisor's handover at 13:27 with CI green; the owner approved the deploy through the prompt before it went out; Supervisor's "Step I is a go" in chat came at about 14:15, after the deploy): core first, then web-api. Migrations 0173_backstory_links (a new table) and 0175_recap_address_co_dm (a function change); both dry-run on a copy first, a second run changed nothing. A backup was taken before the build and again before the restart. Bot connected to 2 servers, ears connected, 0 errors; web-api health 200, 0 errors. Check: the PUT preflight to the recap edit route from the site's origin answers 200 with PUT allowed (no recap saved). Live: #2417 (CORS PUT and DELETE), #2399 (co-DM recap address), #2397 (recap critics), #2389 (backstory connections). Still on the server: the owner's Test L recap is in the posted state (the DM posted it).
+
+2026-10-23 04:58 UTC  dev1  DEPLOY 3ed42d18 (Step J stage 1; Supervisor's handover; the owner approved through the prompt; CI green on that head): core first, then web-api. Migrations 0172 to 0196 applied (dry run on a copy of a fresh backup first; a second run changed nothing). 0179 wrote the belief rows for the existing connections; 0187 added a column that defaults to not hidden. Live counts after the deploy: 10 belief rows (5 truth, 5 party), the same as the copy. A backup was taken before the build and again before the restart. Bot connected to 2 servers, ears connected, 0 errors; web-api health 200, 0 errors. Not done by dev1: the on-site checks (My Account, the recap header and buttons, Story graph views, names hidden until shown, NPC list); for the owner or Supervisor. development is at f64f214f, not deployed.
+2026-10-28 05:1x UTC  dev1  DEPLOY f1cd9aaf (owner's OK through the prompt; Supervisor's handover at 02:01 UTC; the head had moved to d93225f0, which was not deployed). Dry run on a copy of a fresh live backup: 30 migrations (0231 to 0258) applied in 1.2 s, the second run applied nothing. Backup taken before the stop (chmod 600). The owner set RECAP_STRUCTURED_OUTPUT_SPLIT and RECAP_STRUCTURED_OUTPUT_BEATS to 1 at the terminal. Core stopped, started: connected to 2 servers, 0 errors since the start; start-up features line: structured split on, structured beats on, handover email off, meaning search off, plot checks off. Live migrations: 255 rows, last 0258_web_backup_parts. web-api stopped, started: Docker health healthy. Ears and cloudflared not restarted. Not done by dev1: the /dmbot check in the test server, and the first 3 live recaps (state, faithful and cut counts) for Supervisor.
+
+DEPLOY 6fe8344c (2026-10-28, dev1, owner's OK through the prompt "Deploy now"; Supervisor's second deploy handover 13:37). Live was f1cd9aaf.
+- CI: every job green on 6fe8344c before the start.
+- Dry run on a copy (restored from a backup taken 14:4x UTC): 11 migrations applied (0257 to 0269), 255 rows to 266, 0.44 s, no error. Second run applied nothing.
+- Backup before the stop (chmod 600, private folder). Bot stopped with web-api, bot started first, web-api after.
+- Live: 266 migration rows, last 0269_report_fixed_remind. Bot connected to 2 servers, ears connected, 0 errors since start. Features line: handover email off, who is he off, recaps on, structured split and beats on, meaning search off, plot checks off, test recordings off. Co-DMs, rule sharing, sheets and report make stay off (their own switches, not on the features line).
+- web-api healthy. Not yet checked: /dmbot in the test server (owner), and the website routes behind the off switches (404).
+
+DEPLOY 6f29673f (2026-10-29, dev1, owner's OK through the prompt "Deploy now"; Supervisor's third deploy handover 21:11 UTC on 2026-10-28). Live was 6fe8344c.
+- CI: every job green on 6f29673f before the start.
+- Dry run on a copy (restored from a backup taken 21:5x UTC): 4 migrations applied (0270 to 0274), 266 to 270 rows, 0.36 s, no error. Second run applied nothing.
+- Backup before the stop (chmod 600, private folder). Bot stopped with web-api, bot started first, web-api after.
+- Live: 270 migration rows, last 0274_web_sheet_typed_document. Bot connected to 2 servers, ears connected, 0 errors since start. Features line: handover email off, who is he off, recaps on, structured split and beats on, meaning search off, plot checks off, test recordings off. Website restore switch (DMBOT_WEB_RESTORE) stays 0.
+- web-api healthy. Not yet checked: /dmbot in the test server (owner), the lore re-read on #2757, and the website routes behind the off switches.
+- The bot logged two warnings at start-up: .env is missing 13 settings that .env.example has (optional, see the start-up warning), and .env has both AI_MODEL and AI_MODEL_FAST (only AI_MODEL_FAST is used). Both are for the owner to tidy; no change made.
+
+WEBSITE DELETE TEST (2026-10-29, dev1, the owner's run on dev.getdmbot.com, #2838). Counts only.
+- The owner deleted test campaigns from the website ("Delete this campaign", backup taken first, name typed). The owner reports it worked.
+- Database check after the delete: the three recent campaigns from the session (the lore test campaign included) are gone; the campaign table holds 1 row. The owner confirmed the summary.
+- Not yet reported: the backup file count, the restored campaign's session, transcript-line and name counts, and the unreachable-server check (steps 1 and 3 of #2838).
+
+LORE TEST (2026-10-29, dev1, owner's live test on the new test campaign, build 6f29673f). Counts only.
+- Re-run of the owner's lore document, same campaign, after #2846 and #2855 went live. Earlier run (14:47 UTC, build 6fe8344c): 23 relationship lines found, 12 not_in_text, 2 word_not_allowed, 9 kept.
+- Re-run (03:09 UTC): 40 relationship lines found (25 from pass 1 alone), 9 not_in_text, 4 same_pair, 1 word_not_allowed; 26 kept in the background line (the pass-2 line reports 30); names kept 48 in both runs.
+- The owner's verdict: "vastly improved". The owner's next need (middle knowledge, names known only by some characters) is #2935.
+- Open for the code side: the 26 vs 30 kept-connection difference between the background line and the pass-2 line (#2757).
+
+DEPLOY 88dbce2b (2026-10-29, dev1, owner's OK through the prompt "Deploy now"; Supervisor's fourth deploy handover, 03:35 UTC on #516). Live was 6f29673f.
+- CI: every job green on 88dbce2b before the start (the merge of #2922).
+- Dry run on a copy (restored from a backup taken before the dry run): 270 to 275 migration rows, no error. Second run applied nothing.
+- Backup before the stop (chmod 600, private folder). Bot stopped with web-api, bot started first, web-api after.
+- Live: 275 migration rows, last 0278_web_waiting_progress. Bot connected to 2 servers, ears connected, 0 errors since start.
+- Start-up channel sweep: 3 old rules, NPC and game-time channels deleted, 0 kept, 0 failed.
+- Features line: handover email off, time suggestions on, recaps on, plot checks off, meaning search off, recap audio on, structured split and beats on, sidebar on, secret reveal on, who is he off, importing sessions on, billing link on, email on. Test recordings on: the owner confirmed (2026-10-29, through Supervisor) that this is deliberate, for reuse across test rounds; they save voice only for people who opted in.
+- web-api healthy.
+- Not yet checked: /dmbot start in the test server (owner; the three old channels should be gone), the game-time line, and the Delete row at the bottom of a campaign page on the website.

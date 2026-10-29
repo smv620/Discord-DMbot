@@ -1,7 +1,7 @@
-"""⏸️ Pause this campaign / ▶️ Unpause, on ⚙️ Settings (#957; docs/PLAN.md, "Plans and
-pricing"). A paused campaign keeps everything, can't start and doesn't count toward its
-owner's plan. Only the owner has the button: it is their plan's room that changes. The
-other DMs see the state, and are told to ask the owner.
+"""⏸️ Pause this campaign / ▶️ Unpause, in ⚙️ Settings → 🗂️ Campaign management (#957;
+docs/PLAN.md, "Plans and pricing"). A paused campaign keeps everything, can't start and
+doesn't count toward its owner's plan. Only the owner has the button: it is their plan's
+room that changes. The other DMs see the state, and are told to ask the owner.
 
 The buttons' IDs carry the campaign, so they work after a restart. Register with
 `bot.add_dynamic_items(PauseButton)`.
@@ -19,10 +19,10 @@ from dmbot.campaigns import Campaign
 from dmbot.campaigns.models import CampaignError
 from dmbot.dm_screen import handover, messages
 from dmbot.logs import set_log_context
+from dmbot.mentions import NO_PINGS
 
 log = logging.getLogger(__name__)
 
-NO_PINGS = discord.AllowedMentions.none()
 _ID = r"(?P<campaign>[0-9a-f]{32})"
 PAUSE_LABEL = "Pause this campaign"
 UNPAUSE_LABEL = "Unpause"

@@ -21,7 +21,7 @@ from dmbot.web.discord import DiscordUser
 from dmbot.web.me import build_me
 from dmbot.web.payments import FakeProvider
 from tests.pg import REQUIRE_DB, SUPERUSER_URL, DatabaseTest
-from tests.test_web_api import ALICE, API, GORRAK, QUILLON, SITE, THURSDAY, FakeDiscord, settings
+from tests.test_web_api import ALICE, GORRAK, QUILLON, SITE, THURSDAY, FakeDiscord, settings
 from tests.test_web_role import ensure_web_role, web_url
 
 BOB = DiscordUser(id=2002, name="Quillon", email="quillon@example.com")
@@ -42,7 +42,7 @@ class Recording(DatabaseTest):
         await self.bot.grant(THURSDAY.id, ALICE.id)
         await self.bot.grant(THURSDAY.id, BOB.id)
         await self.bot.grant(GORRAK.id, ALICE.id)
-        await self.bot.grant(4444, ALICE.id)  # a server that isn't in her list
+        await self.bot.grant(680000000000000444, ALICE.id)  # a server that isn't in her list
         self.discord = FakeDiscord()
         self.app = create_app(
             settings(),
@@ -52,7 +52,9 @@ class Recording(DatabaseTest):
             clock=lambda: self.now,
         )
         self.client = httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=self.app), base_url=API, follow_redirects=False
+            transport=httpx.ASGITransport(app=self.app),
+            base_url="https://web-api.internal.test",
+            follow_redirects=False,
         )
         await self.sign_in(self.client)
 
@@ -77,7 +79,7 @@ class Recording(DatabaseTest):
         )
         self.assertTrue(all(r["agreedOn"] for r in recording))
         # Not a server outside her list, and not Bob's consent.
-        self.assertNotIn("4444", str(recording))
+        self.assertNotIn("680000000000000444", str(recording))
         self.assertEqual(len(recording), 2)
 
     async def test_wording_from_before_is_listed_as_off(self) -> None:
@@ -104,9 +106,9 @@ class Recording(DatabaseTest):
         self.assertEqual((await self.client.post(url, headers=HEADERS)).status_code, 204)
 
     async def test_a_server_that_is_not_hers_is_refused_and_untouched(self) -> None:
-        refused = await self.client.post("/me/recording/4444/stop", headers=HEADERS)
+        refused = await self.client.post("/me/recording/680000000000000444/stop", headers=HEADERS)
         self.assertEqual((refused.status_code, refused.json()), (404, {"error": "not_found"}))
-        self.assertTrue(await self.still_agreed(4444, ALICE.id))
+        self.assertTrue(await self.still_agreed(680000000000000444, ALICE.id))
         junk = await self.client.post("/me/recording/not-a-number/stop", headers=HEADERS)
         self.assertEqual(junk.status_code, 404)
 
@@ -115,7 +117,7 @@ class Recording(DatabaseTest):
         self.assertEqual(plain.status_code, 403)
         self.assertTrue(await self.still_agreed(THURSDAY.id, ALICE.id))
         async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=self.app), base_url=API
+            transport=httpx.ASGITransport(app=self.app), base_url="https://web-api.internal.test"
         ) as stranger:
             out = await stranger.post(f"/me/recording/{THURSDAY.id}/stop", headers=HEADERS)
         self.assertEqual(out.status_code, 401)
@@ -153,14 +155,18 @@ class Recording(DatabaseTest):
         self.assertFalse(await self.still_agreed(THURSDAY.id, ALICE.id))
         self.assertTrue(await self.still_agreed(THURSDAY.id, BOB.id))  # someone else's
         self.assertTrue(await self.still_agreed(GORRAK.id, ALICE.id))  # another of her servers
-        self.assertTrue(await self.still_agreed(4444, ALICE.id))  # a server not on her list
+        self.assertTrue(
+            await self.still_agreed(680000000000000444, ALICE.id)
+        )  # a server not on her list
 
     async def test_a_delete_in_a_server_not_on_her_list_removes_nothing(self) -> None:
         async with self.web.user(ALICE.id, session=await self.alice_hash()) as conn:
-            await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", ("4444",))
+            await conn.execute(
+                "SELECT set_config('dmbot.guild_id', %s, true)", ("680000000000000444",)
+            )
             cur = await conn.execute("DELETE FROM consent RETURNING user_id")
             self.assertEqual(await cur.fetchall(), [])
-        self.assertTrue(await self.still_agreed(4444, ALICE.id))
+        self.assertTrue(await self.still_agreed(680000000000000444, ALICE.id))
 
     async def alice_hash(self) -> str:
         token = await sessions.sign_in(self.web, ALICE, [THURSDAY, GORRAK], now=self.now, days=30)

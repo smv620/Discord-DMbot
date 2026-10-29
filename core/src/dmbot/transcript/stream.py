@@ -23,8 +23,9 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-MESSAGE_MAX = 2000  # Discord's limit for one message
-LINE_MAX = 1800  # one line, after escaping, leaving room for the speaker's name
+from dmbot.discord_limits import MESSAGE_MAX
+
+LINE_MAX = MESSAGE_MAX - 200  # one line, after escaping, leaving room for the speaker's name
 NAME_MAX = 80
 MAX_WAITING = 300  # lines kept while posting fails; the oldest go first
 EDIT_WINDOW_S = 30.0  # a posted message can still be edited for a late fix this long

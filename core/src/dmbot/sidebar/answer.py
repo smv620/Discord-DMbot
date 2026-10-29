@@ -8,9 +8,10 @@ What it does, in order:
 2. **The context**, this one campaign's data only (`dmbot.sidebar.context`).
 3. **One fast-model call**, small context, a few hundred tokens out, timed and logged (the
    target is an answer in about 5 seconds).
-4. **The brevity rules in code** (`dmbot.sidebar.brevity`): too long, no Yes/No first or
-   padded gets one more try telling the model what to fix; if it is still too long it is cut
-   at a sentence end. A paragraph is never sent.
+4. **The brevity rules in code** (`dmbot.sidebar.brevity`): no Yes/No first, or padding, gets
+   one more try telling the model what to fix. Length is only an instruction in the prompt
+   (owner, 2026-10-24, #2597): an answer is never sent back or cut for it, and one over Discord's
+   limit goes out as several messages.
 5. **Only on topic.** Off-topic gets one fixed line. Never invents story, never decides.
 6. **The full text only when asked**: then the rule card (as `/dmbot rule` shows it, in parts)
    and a link to read it outside Discord, with no AI call.
@@ -34,15 +35,17 @@ from dmbot.campaigns.models import Campaign
 from dmbot.memory.lookup import CampaignLookup
 from dmbot.memory.recall import Recall, check_citations
 from dmbot.rules import facts as rule_facts
+from dmbot.rules import rule_card
+from dmbot.rules.homebrew import Homebrew
 from dmbot.rules.house import HouseRule
-from dmbot.rules.index import Hit, Index, normalize
-from dmbot.sidebar import brevity, context, table_links
-from dmbot.ui import rule_card
+from dmbot.rules.index import ASKED_FOR, Hit, Index, normalize
+from dmbot.rules.wins import Win
+from dmbot.sidebar import brevity, context, looked, rule_clash, table_links
 
 log = logging.getLogger(__name__)
 T = TypeVar("T")
 
-PROMPT_VERSION = "sidebar-11"  # bump when SYSTEM or the reply form changes (it is recorded)
+PROMPT_VERSION = "sidebar-13"  # bump when SYSTEM or the reply form changes (it is recorded)
 MAX_TOKENS = 150  # 200 characters of answer and the four fields fit in ~100
 CALL_TIMEOUT_S = 6  # one AI call; a Haiku answer of ~80 tokens takes 1 to 3 s
 TOTAL_BUDGET_S = 8  # everything after the plan check, retry included (the target is ~5 s)
@@ -69,7 +72,8 @@ The table is waiting, so answer as briefly as you can.
 Rules:
 1. Give the shortest accurate answer. If "Yes." or "No." answers it, start with that and add \
 at most one short sentence of why. Otherwise use one or two short sentences, under 200 \
-characters in all. No greeting, no repeating the question, no "let me know", no offers of more\
+characters in all. Write only the answer and the fields asked for: no thinking out loud, no notes \
+before or after. No greeting, no repeating the question, no "let me know", no offers of more\
  help, no extra detail.
 2. Use only the material given below: house rules, rules entries, campaign names, who is who at \
 the table, the scene, and DMbot's help. If it does not answer the question, say so in a few \
@@ -131,6 +135,13 @@ with a label like F1. Use them for questions about the campaign's people, places
 and set SOURCE to "facts you confirmed". Say nothing about the story that is not in them or in the \
 other material given. List the labels you used on one more line: CITED: F1, F3 (or CITED: none). \
 Cite only labels that are given; never write a label or an ID in ANSWER."""
+# Added to SYSTEM only when the prompt holds a HOMEBREW section (#1520).
+HOMEBREW_RULES = """
+
+13. Under HOMEBREW are the campaign's own creations. They come after \
+house rules and before the free rules, and they beat the free rules for the same name. When one \
+names what the question is about, answer from it, set SOURCE to its source line exactly as given, \
+and keep its [Homebrew] tag."""
 CONFIRMED_SOURCE = "facts you confirmed"  # the source shown for an answer from the DM's own facts
 # A label (F1) or an id as the reply's wording would show it: never shown to anyone (#1370).
 _LEAK = re.compile(r"\s*\[?\bF\d+\b\]?|\s*\b[0-9a-f]{32}\b", re.IGNORECASE)
@@ -154,12 +165,16 @@ _NOTE_ANYWHERE = re.compile(
 )
 _OLD_WORDS = {"sure": "confident", "not sure": "uncertain"}
 _FIELD = re.compile(
-    r"^\s*(ANSWER|SOURCE|CONFIDENCE|SURE|IN_GAME|ON_TOPIC|QUESTION|CITED)\s*:\s*(.*)$",
+    r"^\s*(ANSWER|SOURCE|CONFIDENCE|SURE|IN_GAME|ON_TOPIC|QUESTION|CITED|CONFLICT)\s*:\s*(.*)$",
     re.IGNORECASE,
 )
 
 
 async def _nothing_list() -> list[str]:
+    return []
+
+
+async def _nothing_brews() -> list[Homebrew]:
     return []
 
 
@@ -179,11 +194,19 @@ class AIClient(Protocol):
 # Why can't they use the AI? None if they can. (campaign, asking user id)
 Gate = Callable[[Campaign, int], Awaitable[str | None]]
 Houses = Callable[[Campaign], Awaitable[Sequence[HouseRule]]]
+# The DM's settled pairs of disagreeing house rules (#2284).
+SettledPairs = Callable[[Campaign], Awaitable[Sequence[Win]]]
+Brews = Callable[[Campaign], Awaitable[Sequence[Homebrew]]]
 Names = Callable[[Campaign], Awaitable[CampaignLookup | None]]
 # Who is who at the table, as short lines of names only (no ids): "Mia plays Cerric".
 People = Callable[[Campaign], Awaitable[Sequence[str]]]
 # What the DM has confirmed around these entries (their ids), for the audience "players" (#1370).
 Recaller = Callable[[Campaign, Sequence[str]], Awaitable[Recall | None]]
+# Entry ids closest in meaning to the question (#2664): more starting points for the recall, for
+# a question that describes someone without naming them. Optional, and never the reason an answer
+# is late or missing.
+ENOUGH_SEEDS = 3  # names the question spelled out that make a search by meaning unnecessary
+Meaning = Callable[[Campaign, str, int], Awaitable[Sequence[str]]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -200,6 +223,12 @@ class Answer:
     sources: tuple[str, ...] = ()  # everything the AI was given, in short words
     parts: tuple[str, ...] = ()  # a long answer (the full text) as messages; else (text,)
     seconds: float = 0.0
+    # What the answer was built from (#1957), for the DM's "What I looked at" button: taken when
+    # the answer is made, never worked out again.
+    looked_at: tuple[looked.Looked, ...] = ()
+    # Two house rules that disagree about this question and the DM has not settled (#2284): the
+    # answer is the question to the DM, not an answer, and DMbot picks neither.
+    clash: tuple[rule_clash.Side, rule_clash.Side] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -213,6 +242,7 @@ class Fields:
     on_topic: bool
     question: str = ""  # a table question restated in a few words (#1187); "" when none
     cited: tuple[str, ...] = ()  # the labels of the confirmed facts it used (#1370)
+    conflict: str = ""  # the labels of two house rules that disagree, as written (#2284)
 
 
 RESTATED_WORDS = 12
@@ -262,6 +292,7 @@ def parse(raw: str) -> Fields:
         on_topic=found.get("ON_TOPIC", "yes").strip().lower() != "no",
         question=restated(found.get("QUESTION", "")),
         cited=cited_labels(found.get("CITED", "")),
+        conflict=found.get("CONFLICT", ""),
     )
 
 
@@ -387,6 +418,8 @@ def canonical_source(said: str | None, ctx: context.Context) -> str | None:
     ):
         if key in lowered and given in ctx.sources:
             return given
+    if "homebrew" in lowered:
+        return next((g for g in ctx.sources if "homebrew:" in g.lower()), None)
     if lowered.startswith("house rule"):
         number = re.search(r"\d+", said)
         if number:
@@ -445,7 +478,10 @@ class Sidebar:
         names: Names,
         people: People | None = None,
         recall: Recaller | None = None,
+        meaning: Meaning | None = None,
+        brews: Brews | None = None,
         second_try: AIClient | None = None,
+        settled: SettledPairs | None = None,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._ai = ai
@@ -456,6 +492,9 @@ class Sidebar:
         self._names = names
         self._people = people
         self._recall = recall
+        self._meaning = meaning
+        self._brews = brews
+        self._settled = settled
         self._clock = clock
 
     async def answer(
@@ -479,13 +518,19 @@ class Sidebar:
             return Answer(refusal, in_game=False, refused=True, parts=(refusal,))
         try:
             async with asyncio.timeout(TOTAL_BUDGET_S):
-                return await self._answer(campaign, question, scene, started, table)
+                return await self._answer(campaign, question, scene, started, table, asker_id)
         except TimeoutError as exc:
             log.warning("The sidebar took over %d seconds in all", TOTAL_BUDGET_S)
             raise AIError(TOO_SLOW) from exc
 
     async def _answer(
-        self, campaign: Campaign, question: str, scene: str, started: float, table: bool = False
+        self,
+        campaign: Campaign,
+        question: str,
+        scene: str,
+        started: float,
+        table: bool = False,
+        asker_id: int = 0,
     ) -> Answer:
         question = " ".join(question.split())[: context.QUESTION_MAX]
         # The names are the DM screen's memory (secret names, NPC and plot facts the players
@@ -493,17 +538,31 @@ class Sidebar:
         # rather than asking the model to hide them (#1187).
         # Who is who is names only, which everyone at the table already hears, so a table
         # question reads it too (#1188).
-        houses, lookup, people = await asyncio.gather(
+        houses, lookup, people, brews = await asyncio.gather(
             self._safely(self._houses(campaign), [], "house rules"),
             self._safely(self._names(campaign), None, "names") if not table else _nothing(),
             self._safely(self._people(campaign), [], "who is who")
             if self._people is not None
             else _nothing_list(),
+            self._safely(self._brews(campaign), [], "homebrew")
+            if self._brews is not None
+            else _nothing_brews(),
         )
+        if self._settled is not None and len(houses) > 1:
+            # A pair the DM settled is followed with no question: the losing rule is not given,
+            # so the answer comes from the winning one (#2284).
+            wins = await self._safely(self._settled(campaign), [], "settled house rules")
+            houses = rule_clash.settled(houses, wins)
         index = self._index() if callable(self._index) else self._index
         recalled = None
         if self._recall is not None and not table:
-            seeds = context.mentioned_ids(question, lookup)
+            seeds = list(context.mentioned_ids(question, lookup))
+            if self._meaning is not None and len(seeds) < ENOUGH_SEEDS:
+                # (a question that already names enough needs no search by meaning: no call)
+                by_meaning = await self._safely(
+                    self._meaning(campaign, question, asker_id), [], "meaning"
+                )
+                seeds += [i for i in by_meaning if i not in seeds]
             if seeds:
                 recalled = await self._safely(
                     self._recall(campaign, seeds), None, "confirmed story"
@@ -519,19 +578,29 @@ class Sidebar:
             people=people,
             table=table,
             recalled=recalled,
+            homebrew=brews,
+            campaign_name=campaign.name,
         )
         system = SYSTEM + RECALL_RULES if ctx.labels else SYSTEM
+        if ctx.homebrew:
+            system += HOMEBREW_RULES
+        if len(ctx.house_rules) > 1:  # a clash needs two rules; with fewer the prompt is as before
+            system += rule_clash.CLASH_RULES
         # Asked for the whole text, and the rule is one DMbot has: no AI call at all. If it
         # isn't, the question is answered like any other, short (a paragraph is never sent).
-        full = brevity.asks_for_full_text(question) and bool(ctx.hits)
+        # (a glossary word like "spell", or a feature, in the question is not an entry it asks the
+        # text of)
+        wholes = [h for h in ctx.hits if h.entry.kind not in ASKED_FOR]
+        full = brevity.asks_for_full_text(question) and bool(wholes)
         if full:
-            parts = full_text_parts(ctx.hits[0], question, ctx.house_rules)
+            parts = full_text_parts(wholes[0], question, ctx.house_rules)
             return self._done(
                 Answer(
                     parts[0],
                     in_game=True,
-                    sources=(context.source_of(ctx.hits[0]),),
+                    sources=(context.source_of(wholes[0]),),
                     parts=parts,
+                    looked_at=looked.of(ctx, index),
                 ),
                 started,
                 used_ai=False,
@@ -542,6 +611,30 @@ class Sidebar:
         if not fields.on_topic:
             return self._done(
                 Answer(OFF_TOPIC, in_game=False, model=self._ai.model, parts=(OFF_TOPIC,)),
+                started,
+            )
+        if rule_clash.said_clash(fields.answer) and not rule_clash.named(
+            fields.conflict, ctx.house_rules
+        ):
+            # The model said "clash" but the line did not check out: that word is never shown,
+            # and nothing is answered from one rule on its say-so.
+            fields = replace(fields, answer=ONE_FOR_DM if table else NO_INFO_ANSWER, source=None)
+            fields = replace(fields, confidence=None)
+        if clash := rule_clash.named(fields.conflict, ctx.house_rules):
+            # Two rules the DM has not settled disagree about this (#2284): DMbot answers from
+            # neither. The DM is asked; a table question gets "one for your DM" and the DM is told.
+            asked = rule_clash.question_text(*clash)
+            return self._done(
+                Answer(
+                    ONE_FOR_DM if table else asked,
+                    in_game=not table,
+                    one_for_dm=table,
+                    question=fields.question if table else "",
+                    model=reply.model or self._ai.model,
+                    sources=(),  # (which rules were involved is not kept in the transcript)
+                    parts=(ONE_FOR_DM,) if table else (asked,),
+                    clash=clash,
+                ),
                 started,
             )
         if table and _ONE_FOR_DM.match(fields.answer.strip()):
@@ -611,8 +704,6 @@ class Sidebar:
             # names, and never over a house rule (those come first).
             text = entry_fact(named, question)
             fields = replace(fields, source=context.source_of(named), confidence=None, in_game=True)
-        if not brevity.within_limit(text):
-            text = brevity.shorten(text)
         if not text:
             raise AIError(NO_ANSWER)
         source, confidence = canonical_source(fields.source, ctx), fields.confidence
@@ -625,7 +716,7 @@ class Sidebar:
         if fields.in_game and not source and not says_no_info(text):
             # A rule with no entry or house rule behind it is never "confident" (CLAUDE.md,
             # citations): it says plainly it is not from DMbot's rules. It sits with the
-            # source suffix, outside the length limit.
+            # source suffix, after the answer's own words.
             text, confidence = f"{text} {NOT_IN_RULES}", None
         if not says_no_info(text):
             source = legacy_citation(source, ctx) or source
@@ -646,9 +737,12 @@ class Sidebar:
                 in_game=fields.in_game,
                 question=fields.question if table else "",
                 model=reply.model or self._ai.model,  # the one that answered, if it says
-                prompt_version=f"{PROMPT_VERSION}+recall" if ctx.labels else PROMPT_VERSION,
+                prompt_version=PROMPT_VERSION
+                + ("+recall" if ctx.labels else "")
+                + ("+homebrew" if ctx.homebrew else ""),
                 sources=ctx.sources,
                 parts=(text,),
+                looked_at=looked.of(ctx, index),
             ),
             started,
         )

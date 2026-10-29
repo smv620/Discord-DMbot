@@ -6,7 +6,7 @@ import unittest
 from dataclasses import dataclass, field
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import ANY, AsyncMock
 
 from dmbot.ai import AIError
 from dmbot.sidebar import service
@@ -18,6 +18,8 @@ from dmbot.transcript.models import (
     SIDEBAR_TABLE_QUESTION,
     Line,
 )
+from dmbot.ui import looked_at
+from dmbot.ui.rule_clash import ClashView
 from tests.test_sidebar_memo import ogg_opus
 
 GUILD, OTHER_GUILD, DM, CO_DM, PLAYER, STARTER = 1, 2, 7, 70, 8, 99
@@ -35,6 +37,7 @@ class FakeAnswer:
     parts: tuple[str, ...] = ()
     one_for_dm: bool = False
     question: str = ""  # the AI's few-word restatement of a table question
+    clash: Any = None  # two house rules that disagree (#2284)
 
 
 class FakeAnswerer:
@@ -83,6 +86,7 @@ class FakeHost:
     agreed: set[tuple[int, int]] = field(default_factory=set)
     saved: list[Line] = field(default_factory=list)
     dms: list[tuple[int, str]] = field(default_factory=list)
+    views: list[Any] = field(default_factory=list)  # the view under each private answer (#1957)
     screen: list[str] = field(default_factory=list)
     heard_as: str | None = "find if you need line of sight for fireball"
     transcribed: int = 0
@@ -95,6 +99,14 @@ class FakeHost:
     nudged: list[int] = field(default_factory=list)
     house_link: str | None = None
     character_names: dict[int, str] = field(default_factory=dict)
+    guide: str | None = None  # Guide me's answer (#1739); None: not on for this campaign
+    guide_asked: list[int] = field(default_factory=list)
+    guide_raises: bool = False
+    guide_withdraws: bool = False  # consent goes while the answer is being made
+    paused: set[int] = field(default_factory=set)  # off the record (#2466)
+
+    def sidebar_paused(self, guild_id: int, user_id: int) -> bool:
+        return user_id in self.paused
 
     def sidebar_has_consent(self, guild_id: int, user_id: int) -> bool:
         return (guild_id, user_id) in self.agreed
@@ -120,8 +132,9 @@ class FakeHost:
     def sidebar_clean(self, table: Any, text: str) -> str:
         return text.replace("Fire ball", "Fireball")
 
-    async def sidebar_send_dm(self, user_id: int, text: str) -> str:
+    async def sidebar_send_dm(self, user_id: int, text: str, view: Any = None) -> str:
         self.dms.append((user_id, text))
+        self.views.append(view)
         return "sent" if self.can_dm else self.refusal
 
     def sidebar_save(self, table: Any, line: Line) -> None:
@@ -132,6 +145,19 @@ class FakeHost:
 
     async def sidebar_tell_screen(self, table: Any, text: str) -> None:
         self.screen.append(text)
+
+    async def sidebar_record_win(self, campaign: Any, winner: Any, loser: Any, by: int) -> bool:
+        return True
+
+    def sidebar_clash_view(self, campaign: Any, clash: Any, retry: Any) -> Any:
+        # (what the bot builds: the sidebar itself imports nothing from `ui`, #2827)
+        async def record(winner: Any, loser: Any, by: int) -> bool:
+            return await self.sidebar_record_win(campaign, winner, loser, by)
+
+        return ClashView(clash, dm_ids=campaign.dm_user_ids, record=record, retry=retry)
+
+    def sidebar_looked_view(self, key: str) -> Any:
+        return looked_at.view(key)
 
     def sidebar_house_rule(self, table: Any, user_id: int, text: str) -> str:
         self.house_rules.append((table.guild_id, user_id, text))
@@ -149,6 +175,19 @@ class FakeHost:
 
     async def sidebar_nudge_chat(self, table: Any, user_id: int) -> None:
         self.nudged.append(user_id)
+
+    async def sidebar_recap_feedback(self, table: Any, user_id: int, text: str) -> bool:
+        asked = self.__dict__.setdefault("feedback_asked", [])
+        asked.append((user_id, text))
+        return bool(self.__dict__.get("feedback_handled", False))
+
+    async def sidebar_guide(self, table: Any, user_id: int) -> str | None:
+        self.guide_asked.append(user_id)
+        if self.guide_raises:
+            raise RuntimeError("boom")
+        if self.guide_withdraws:
+            self.agreed.discard((table.guild_id, user_id))
+        return self.guide
 
 
 def dm_message(
@@ -198,6 +237,32 @@ class PrivateMessages(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(question_line.text, "find if you need line of sight for Fireball")
         self.assertEqual((answer_line.user_id, answer_line.sidebar), (DM, SIDEBAR_ANSWER))
         self.assertEqual(answer_line.heard, FakeAnswer().text)
+
+    async def test_a_paused_dms_typed_question_is_answered_but_nothing_is_stored(self) -> None:
+        """Off the record (#2466): a question to DMbot is a deliberate act and is answered, but no
+        line of it reaches the transcript."""
+        self.host.paused.add(DM)
+        message = dm_message(content="find if you need line of sight for Fire ball")
+        await self.sidebar.on_dm_message(message)
+        self.assertEqual(sent(message), [FakeAnswer().text])
+        self.assertEqual(self.host.saved, [])
+
+    async def test_a_question_asked_while_paused_is_never_stored_even_if_answered_after_a_resume(
+        self,
+    ) -> None:
+        """#2466: whether it is stored is decided when it is asked, not when the answer arrives."""
+        self.host.paused.add(DM)
+        self.answerer.gate = asyncio.Event()  # the answer waits
+        message = dm_message(content="find if you need line of sight for Fire ball")
+        task = asyncio.create_task(self.sidebar.on_dm_message(message))
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        self.host.paused.discard(DM)  # they resume while the answer is still being made
+        self.answerer.gate.set()
+        await task
+        self.assertEqual(sent(message), [FakeAnswer().text])  # answered
+        self.assertEqual(self.host.saved, [])  # and not stored
+        self.assertEqual(self.sidebar._unstored, set())  # nothing left behind
 
     async def test_every_line_records_where_it_came_from(self) -> None:
         await self.sidebar.on_dm_message(dm_message(content="check how grappling works"))
@@ -462,7 +527,7 @@ class PrivateMessages(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.host.saved, [])  # the plan said no: nothing to remember
 
     async def test_an_answer_about_discord_or_dmbot_is_not_in_the_transcript(self) -> None:
-        self.answerer.answer_to_give = FakeAnswer("Press ⚙️ Menu.", in_game=False)
+        self.answerer.answer_to_give = FakeAnswer("Press 🗂️ Menu.", in_game=False)
         await self.sidebar.on_dm_message(dm_message(content="check how to stop recording me"))
         self.assertEqual([x.sidebar for x in self.host.saved], [SIDEBAR_QUESTION])
 
@@ -644,10 +709,11 @@ class SaidAtTheTable(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((self.sidebar._tasks, self.host.dms, self.answerer.asked), (set(), [], []))
 
     async def test_ordinary_talk_and_in_character_lines_start_nothing(self) -> None:
-        for said, kw in [
+        cases: list[tuple[str, dict[str, Any]]] = [
             ("I need to find the map", {}),
             ("Hold on, I need to find the dragon's lair on this map", {"in_character": True}),
-        ]:
+        ]
+        for said, kw in cases:
             self.assertFalse(self.sidebar.ask_at_table(self.table, DM, said, **kw))
 
     async def test_six_questions_a_minute_for_the_table(self) -> None:
@@ -1029,6 +1095,28 @@ class TableQuestions(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.host.chat), 1)
         self.assertEqual(self.answerer.asked[0][1], "does fireball need line of sight?")
 
+    async def test_the_same_question_from_someone_not_paused_is_stored_in_the_raw_transcript(
+        self,
+    ) -> None:
+        """The pair of the test below (#2466): off the record is what makes the difference."""
+        self.assertTrue(
+            self.sidebar.ask_in_chat(self.table, PLAYER, "does fireball need line of sight?")
+        )
+        await self.settle()
+        self.assertEqual(len(self.host.chat), 1)
+        self.assertEqual(len(self.host.saved), 2)  # their question and DMbot's answer
+
+    async def test_a_paused_players_typed_question_is_answered_but_nothing_is_stored(self) -> None:
+        """Off the record (#2466): they agreed, so the question gets its answer in the chat; no
+        line of it, and no agree button, reaches the transcript."""
+        self.host.paused.add(PLAYER)  # (paused: not counted as recorded)
+        self.assertTrue(
+            self.sidebar.ask_in_chat(self.table, PLAYER, "does fireball need line of sight?")
+        )
+        await self.settle()
+        self.assertEqual(len(self.host.chat), 1)
+        self.assertEqual((self.host.saved, self.host.nudged), ([], []))
+
     async def test_someone_who_has_not_agreed_is_shown_the_button_once_and_nothing_is_asked(
         self,
     ) -> None:
@@ -1164,14 +1252,19 @@ class TableQuestions(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.host.chat[0].count("http"), 1)
         self.assertNotIn("evil", self.host.chat[0])
 
-    async def test_a_long_answer_is_one_message_inside_discords_limit(self) -> None:
+    async def test_a_long_answer_in_the_chat_is_split_inside_discords_limit_never_cut(self) -> None:
         self.answerer.answer_to_give = FakeAnswer(
             text="x" * 50, parts=("a" * 1900, "b" * 1900, "c" * 500)
         )
         self.sidebar.ask_in_chat(self.table, PLAYER, "read me the whole grapple rule")
         await self.settle()
-        self.assertEqual(len(self.host.chat), 1)
-        self.assertLessEqual(len(self.host.chat[0]), service.MESSAGE_LIMIT)
+        self.assertGreater(len(self.host.chat), 1)
+        for message in self.host.chat:
+            self.assertLessEqual(len(message), service.MESSAGE_LIMIT)
+        joined = "".join(self.host.chat)
+        self.assertGreaterEqual(joined.count("a"), 1900)  # every character of each part arrived
+        self.assertGreaterEqual(joined.count("b"), 1900)
+        self.assertGreaterEqual(joined.count("c"), 500)
 
     async def test_consent_withdrawn_while_the_name_is_looked_up_posts_nothing(self) -> None:
         gate = asyncio.Event()
@@ -1228,3 +1321,303 @@ class TableQuestions(unittest.IsolatedAsyncioTestCase):
         self.sidebar.ask_in_chat(self.table, PLAYER, "does fireball need line of sight")
         await self.settle()
         self.assertTrue(self.host.chat[1].startswith("Q (Mira): Does fireball need line of sight?"))
+
+
+class SaidAsAnNpc(SaidAtTheTable):
+    """#1624: a spoken trigger said as a named NPC never asks DMbot anything."""
+
+    HOLD_ON = "Hold on, I need to find the key to the cellar."
+    HEY = "Hey DMbot, what's the range of fireball?"
+
+    async def test_narrating_still_asks(self) -> None:
+        from dmbot.transcript.models import NARRATING
+
+        self.assertTrue(self.sidebar.ask_at_table(self.table, DM, self.HOLD_ON, entity=NARRATING))
+        await self.settle()
+        self.assertEqual(len(self.host.dms), 1)
+
+    async def test_an_unknown_entity_still_asks(self) -> None:
+        self.assertTrue(self.sidebar.ask_at_table(self.table, DM, self.HEY, entity=""))
+        await self.settle()
+        self.assertEqual(len(self.answerer.asked), 1)
+
+    async def test_a_line_said_as_a_named_npc_asks_nothing(self) -> None:
+        for said in (self.HOLD_ON, self.HEY):
+            self.assertFalse(
+                self.sidebar.ask_at_table(self.table, DM, said, entity="Innkeeper Orla")
+            )
+        self.assertEqual((self.sidebar._tasks, self.host.dms, self.answerer.asked), (set(), [], []))
+
+    async def test_a_player_saying_hey_dmbot_as_a_character_asks_nothing(self) -> None:
+        self.assertFalse(self.sidebar.ask_at_table(self.table, PLAYER, self.HEY, entity="Mira"))
+        self.assertEqual(self.answerer.asked, [])
+
+    def test_the_pure_test(self) -> None:
+        from dmbot.sidebar.ask import voiced_by_npc
+        from dmbot.transcript.models import NARRATING
+
+        self.assertFalse(voiced_by_npc(""))
+        self.assertFalse(voiced_by_npc(NARRATING))
+        self.assertTrue(voiced_by_npc("Innkeeper Orla"))
+
+
+class RecapFeedback(unittest.IsolatedAsyncioTestCase):
+    """ "Hey DMbot, the recap was too long-winded" from the DM (#2076): handled privately, never
+    answered by the engine, and the transcript holds the question and a private note only."""
+
+    SAID = "Hey DMbot, the recap was too long-winded"
+
+    def setUp(self) -> None:
+        self.host = FakeHost(
+            tables={GUILD: make_table(chat=555)}, agreed={(GUILD, DM), (GUILD, PLAYER)}
+        )
+        self.host.feedback_handled = True  # type: ignore[attr-defined]
+        self.answerer = FakeAnswerer()
+        self.sidebar = SidebarService(self.host)
+        self.sidebar.answerer = self.answerer
+        self.table = self.host.tables[GUILD]
+
+    async def settle(self) -> None:
+        await asyncio.sleep(0)
+        await asyncio.gather(*self.sidebar._tasks)
+
+    async def test_the_dms_feedback_goes_to_the_recap_handler_and_not_the_engine(self) -> None:
+        self.assertTrue(self.sidebar.ask_at_table(self.table, DM, self.SAID))
+        await self.settle()
+        self.assertEqual(len(self.host.feedback_asked), 1)  # type: ignore[attr-defined]
+        self.assertEqual(self.answerer.asked, [])
+        self.assertEqual(self.host.chat, [])  # nothing for the table
+
+    async def test_the_transcript_holds_the_question_and_a_private_note_only(self) -> None:
+        self.sidebar.ask_at_table(self.table, DM, self.SAID)
+        await self.settle()
+        question, answer = self.host.saved
+        self.assertEqual(question.sidebar, SIDEBAR_QUESTION)
+        self.assertEqual((answer.sidebar, answer.text), (SIDEBAR_ANSWER, service.PRIVATE_NOTE))
+
+    async def test_a_player_saying_it_goes_the_normal_way(self) -> None:
+        self.sidebar.ask_at_table(self.table, PLAYER, self.SAID)
+        await self.settle()
+        self.assertEqual(getattr(self.host, "feedback_asked", []), [])
+
+    async def test_with_no_recap_waiting_it_is_an_ordinary_question(self) -> None:
+        self.host.feedback_handled = False  # type: ignore[attr-defined]
+        self.sidebar.ask_at_table(self.table, DM, self.SAID)
+        await self.settle()
+        self.assertEqual(len(self.answerer.asked), 1)
+
+    async def test_typed_feedback_is_the_buttons_not_the_sidebar(self) -> None:
+        self.sidebar.ask_in_chat(self.table, DM, "the recap was too long-winded")
+        await self.settle()
+        self.assertEqual(getattr(self.host, "feedback_asked", []), [])
+
+    async def test_a_question_about_the_recap_is_an_ordinary_question(self) -> None:
+        self.sidebar.ask_at_table(self.table, DM, "Hey DMbot, what was in the recap?")
+        await self.settle()
+        self.assertEqual(getattr(self.host, "feedback_asked", []), [])
+
+
+class GuideMe(unittest.IsolatedAsyncioTestCase):
+    """ "Hey DMbot, what's next?" from the DM (#1739): Guide me's answer, privately, and never in a
+    transcript."""
+
+    GUIDE = "🧭 Probably **Chapter 2** (heard: Bryn). SECRET STORY"
+    SAID = "Hey DMbot, what's next?"
+
+    def setUp(self) -> None:
+        self.host = FakeHost(
+            tables={GUILD: make_table(chat=555)},
+            agreed={(GUILD, DM), (GUILD, PLAYER), (GUILD, CO_DM)},
+            guide=self.GUIDE,
+        )
+        self.answerer = FakeAnswerer()
+        self.sidebar = SidebarService(self.host)
+        self.sidebar.answerer = self.answerer
+        self.table = self.host.tables[GUILD]
+
+    async def settle(self) -> None:
+        await asyncio.sleep(0)
+        await asyncio.gather(*self.sidebar._tasks)
+
+    async def test_the_dm_gets_the_guide_privately_even_with_a_table_chat(self) -> None:
+        self.assertTrue(self.sidebar.ask_at_table(self.table, DM, self.SAID))
+        await self.settle()
+        self.assertEqual(self.host.dms, [(DM, self.GUIDE)])
+        self.assertEqual(self.host.chat, [])  # nothing for the table
+        self.assertEqual(self.answerer.asked, [])  # no AI
+
+    async def test_no_transcript_line_holds_the_reply(self) -> None:
+        self.sidebar.ask_at_table(self.table, DM, self.SAID)
+        await self.settle()
+        question, answer = self.host.saved
+        self.assertEqual(question.sidebar, SIDEBAR_QUESTION)
+        self.assertEqual((answer.sidebar, answer.text), (SIDEBAR_ANSWER, service.PRIVATE_NOTE))
+        for line in self.host.saved:
+            self.assertNotIn("SECRET STORY", f"{line.heard} {line.text}")
+
+    async def test_a_players_whats_next_goes_the_normal_way(self) -> None:
+        self.sidebar.ask_at_table(self.table, PLAYER, self.SAID)
+        await self.settle()
+        self.assertEqual(self.host.guide_asked, [])
+        self.assertEqual(len(self.answerer.asked), 1)
+        self.assertTrue(all(self.GUIDE not in text for text in self.host.chat))
+
+    async def test_a_question_typed_in_the_table_chat_goes_the_normal_way(self) -> None:
+        self.sidebar.ask_in_chat(self.table, DM, "what's next in the adventure?")
+        await self.settle()
+        self.assertEqual(self.host.guide_asked, [])
+        self.assertEqual(len(self.answerer.asked), 1)
+
+    async def test_when_guide_me_is_not_on_the_usual_answer_comes(self) -> None:
+        self.host.guide = None  # watch, off, a restored confirmation, or no plan
+        self.sidebar.ask_at_table(self.table, DM, self.SAID)
+        await self.settle()
+        self.assertEqual(self.host.guide_asked, [DM])
+        self.assertEqual(len(self.answerer.asked), 1)
+        self.assertNotIn(self.GUIDE, [text for _, text in self.host.dms])
+
+    async def test_a_typed_private_message_is_answered_the_same_way(self) -> None:
+        message = dm_message(content="what's next?")
+        await self.sidebar.on_dm_message(message)
+        self.assertEqual(self.host.dms, [(DM, self.GUIDE)])
+        self.assertEqual(self.answerer.asked, [])
+
+    async def test_guide_me_works_when_the_answer_engine_is_missing(self) -> None:
+        self.sidebar.answerer = None  # no AI key: Guide me needs none (#1745)
+        self.assertTrue(self.sidebar.ask_at_table(self.table, DM, self.SAID))
+        await self.settle()
+        self.assertEqual(self.host.dms, [(DM, self.GUIDE)])
+        self.assertEqual(self.host.chat, [])
+
+    async def test_with_no_engine_anything_but_guide_me_is_still_quietly_nothing(self) -> None:
+        self.sidebar.answerer = None
+        self.assertFalse(self.sidebar.ask_at_table(self.table, DM, "Hey DMbot, what time is it?"))
+        self.assertFalse(self.sidebar.ask_at_table(self.table, PLAYER, self.SAID))  # not a DM's
+        self.assertFalse(self.sidebar.ask_in_chat(self.table, DM, "what's next in the adventure?"))
+        self.assertEqual((self.host.dms, self.host.guide_asked), ([], []))
+
+    async def test_with_no_engine_guide_me_off_says_nothing_and_asks_no_engine(self) -> None:
+        self.sidebar.answerer = None
+        self.host.guide = None  # Guide me can't be given
+        self.sidebar.ask_at_table(self.table, DM, self.SAID)
+        await self.settle()
+        self.assertEqual(self.host.dms, [])
+
+    async def test_a_typed_whats_next_works_without_an_engine_but_other_questions_wait(
+        self,
+    ) -> None:
+        self.sidebar.answerer = None
+        await self.sidebar.on_dm_message(dm_message(content="what's next?"))
+        self.assertEqual(self.host.dms, [(DM, self.GUIDE)])
+        other = dm_message(content="how does grappling work?")
+        await self.sidebar.on_dm_message(other)
+        other.channel.send.assert_awaited_once()  # the usual "not yet" note
+        self.assertEqual(len(self.host.dms), 1)
+
+    async def test_a_typed_whats_next_with_guide_me_off_and_no_engine_is_told_not_yet(self) -> None:
+        self.sidebar.answerer = None
+        self.host.guide = None  # Guide me can't be given
+        message = dm_message(content="what's next?")
+        await self.sidebar.on_dm_message(message)
+        self.assertEqual(self.host.dms, [])
+        message.channel.send.assert_awaited_once_with(service.NOT_YET, allowed_mentions=ANY)
+
+    async def test_other_questions_about_next_are_not_taken_for_it(self) -> None:
+        for said in (
+            "Hey DMbot, what's next in initiative?",
+            "Hey DMbot, what time is it?",
+            "Hey DMbot, if they go north, what's next?",
+        ):
+            self.host.guide_asked.clear()
+            self.sidebar.ask_at_table(self.table, DM, said)
+            await self.settle()
+            self.assertEqual(self.host.guide_asked, [], said)
+
+    async def test_a_failing_guide_falls_back_to_the_usual_answer_once(self) -> None:
+        self.host.guide_raises = True
+        self.sidebar.ask_at_table(self.table, DM, self.SAID)
+        await self.settle()
+        self.assertEqual(len(self.answerer.asked), 1)
+
+    async def test_consent_withdrawn_while_the_guide_is_made_sends_and_saves_nothing(self) -> None:
+        self.host.guide_withdraws = True
+        self.sidebar.ask_at_table(self.table, DM, self.SAID)
+        await self.settle()
+        self.assertEqual((self.host.dms, self.host.saved), ([], []))
+
+    async def test_the_private_path_without_a_table_chat_also_gets_it(self) -> None:
+        self.table.dmbchat_channel_id = None
+        self.sidebar.ask_at_table(self.table, DM, self.SAID)
+        await self.settle()
+        self.assertEqual(self.host.dms, [(DM, self.GUIDE)])
+
+    async def test_typed_in_the_tables_text_chat_goes_the_usual_way(self) -> None:
+        self.sidebar.ask_at_table(self.table, DM, self.SAID, typed=True)
+        await self.settle()
+        self.assertEqual(self.host.guide_asked, [])
+
+    async def test_a_message_that_could_not_be_sent_says_so_without_the_story(self) -> None:
+        self.host.can_dm = False
+        self.host.refusal = "failed"
+        self.sidebar.ask_at_table(self.table, DM, self.SAID)
+        await self.settle()
+        await asyncio.sleep(0)
+        for _, text in self.host.dms:
+            self.assertNotIn("SECRET STORY", text.replace(self.GUIDE, "") + "")
+        self.assertEqual(self.host.saved, [])  # nothing is kept for a reply that never arrived
+
+    async def test_nothing_public_or_in_a_test_session_holds_the_reply(self) -> None:
+        self.sidebar.ask_at_table(self.table, DM, self.SAID)
+        await self.settle()
+        self.assertNotIn("SECRET STORY", " ".join(self.host.chat))
+        self.assertNotIn("SECRET STORY", " ".join(self.host.screen))
+
+    async def test_a_dm_who_stops_being_recorded_gets_nothing(self) -> None:
+        self.host.agreed.discard((GUILD, DM))
+        self.sidebar.ask_at_table(self.table, DM, self.SAID)
+        await self.settle()
+        self.assertEqual((self.host.dms, self.host.saved), ([], []))
+
+
+class GuidePhrases(unittest.TestCase):
+    def test_what_counts_and_what_does_not(self) -> None:
+        from dmbot.sidebar.guide_phrase import is_whats_next
+
+        for yes in (
+            "what's next",
+            "What's next?",
+            "whats next",
+            "What’s next?",
+            "Hey DMbot, what's next?",
+            "DMbot what happens next in the adventure",
+            "what does the book have next",
+            "where are we in the adventure?",
+            "hey dm bot where are we in the book please",
+            "what's next, DMbot?",
+            "ok so tell me what's next now",
+            "um what's next in the story",
+            "Hey DMbot, can you tell me what comes next?",
+            "what's coming up",
+            "what chapter are we in",
+            "dmbot where are we in the story please",
+            "whats up next",
+        ):
+            self.assertTrue(is_whats_next(yes), yes)
+        for no in (
+            "what's next in initiative",
+            "what's next for the goblin",
+            "what time is it",
+            "if they go north, what's next",
+            "what's next if they go north",
+            "I wish I knew what's next",
+            "next",
+            "",
+            "where are we",
+            "what's next on the menu",
+            "what happens next if the fireball hits",
+            "what's next on the clock",
+            "where are we in the round",
+            "what's up",
+            "what's next in the round",
+        ):
+            self.assertFalse(is_whats_next(no), no)

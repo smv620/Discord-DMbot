@@ -122,6 +122,85 @@ class Picking(unittest.TestCase):
         self.assertEqual([x for x in labels if x], ["Save my picks"])
 
 
+def update_with_definitions() -> rule_sets.Update:
+    """One new rule and two relationship changes (#1456)."""
+    from dmbot.memory import set_definitions as sd
+    from tests.test_set_definitions import term
+
+    old: dict[str, Any] = {"rules": [], "link": None, "definitions": []}
+    defs = [sd.definition_of(term()), sd.definition_of(term("guards", "guards"))]
+    new = {
+        "rules": [{"number": 1, "rule": "R", "instead": None}],
+        "link": None,
+        "definitions": defs,
+    }
+    follow = rule_sets.Follow("s", "house_rules", "Red Table", "Red", 3, old, True, 1, None)
+    offer = rule_sets.Offer("s", "house_rules", "Red Table", "Red", 4, new, None)
+    return rule_sets.Update(
+        follow,
+        offer,
+        tuple(set_diff.diff(old, new)),
+        tuple(set_diff.diff_definitions(old, new)),
+    )
+
+
+class PickingRelationships(unittest.IsolatedAsyncioTestCase):
+    def test_the_sets_relationships_are_in_the_same_list_after_the_rules(self) -> None:
+        view = set_update.PickView(campaign(), update_with_definitions())
+        select = next(c for c in view.children if hasattr(c, "options"))
+        self.assertEqual([o.value for o in select.options], ["r:1", "d:guards", "d:vowed_to"])
+        self.assertTrue(all(o.default for o in select.options))
+        self.assertIn("New relationship: vows loyalty to", view.text())
+        self.assertIn("relationships you keep become yours", view.text())
+        labels = [o.label for o in select.options]
+        self.assertEqual(labels, ["1 Added", "New: guards", "New: vows loyalty to"])
+
+    async def test_a_long_mixed_list_pages_and_keeps_rule_numbers_and_keys_apart(self) -> None:
+        from dmbot.memory import set_definitions as sd
+        from tests.test_set_definitions import term
+
+        defs = [sd.definition_of(term(f"rel_{i:02d}", f"label {i}")) for i in range(5)]
+        old: dict[str, Any] = {"rules": [], "link": None, "definitions": []}
+        new = {
+            "rules": [{"number": i, "rule": f"Rule {i}", "instead": None} for i in range(1, 28)],
+            "link": None,
+            "definitions": defs,
+        }
+        follow = rule_sets.Follow("s", "house_rules", "Red", "Red", 3, old, True, 1, None)
+        offer = rule_sets.Offer("s", "house_rules", "Red", "Red", 4, new, None)
+        upd = rule_sets.Update(
+            follow,
+            offer,
+            tuple(set_diff.diff(old, new)),
+            tuple(set_diff.diff_definitions(old, new)),
+        )
+        view = set_update.PickView(campaign(), upd)
+        self.assertEqual(len(view.items), 32)
+        self.assertEqual(len(view._page_items()), 25)
+        view.page = 1
+        self.assertEqual([v for v, _l, _x in view._page_items()][-1], "d:rel_04")
+        self.assertEqual(len(view.accepted), 32)
+        self.assertTrue(all(v.startswith(("r:", "d:")) for v in view.accepted))
+
+    async def test_the_picks_go_to_the_store_as_numbers_and_keys(self) -> None:
+        bot = bot_with(
+            take_update=AsyncMock(side_effect=HouseRuleError(rule_sets.CHANGED_AGAIN)),
+            pending_update=AsyncMock(return_value=update(3)),
+        )
+        view = set_update.PickView(campaign(), update_with_definitions())
+        view.accepted = {"r:1", "d:guards"}  # the DM unticked one relationship
+        await view._apply(interaction(DM, bot))
+        call = bot.rule_sets.take_update.await_args
+        self.assertEqual((call.args[3], call.kwargs["accepted_defs"]), ({1}, {"guards"}))
+
+    def test_the_note_and_the_list_count_relationships_with_the_rules(self) -> None:
+        text = set_update.note_text("Red Table", 4, 1, relationships=2)
+        self.assertIn("1 rule and 2 relationships", text)
+        self.assertIn("2 relationships", set_update.note_text("Red", 4, 0, relationships=2))
+        seen = set_update.changes_text("Red", 4, [], False, update_with_definitions().def_changes)
+        self.assertIn("New relationship: guards", seen)
+
+
 class SavingPicks(unittest.IsolatedAsyncioTestCase):
     async def test_the_picks_are_applied_to_the_version_the_dm_was_shown(self) -> None:
         # The picker was opened on v4; whatever is newest now, the store is told v4 and
@@ -278,9 +357,9 @@ class SessionStart(unittest.IsolatedAsyncioTestCase):
             post_message=AsyncMock(return_value=None),
         )
         bot.post_message = AsyncMock(return_value=None)
-        with self.assertLogs("dmbot.dm_screen.set_update", level="WARNING") as logged:
+        with self.assertLogs("dmbot.dm_screen.shared_update", level="WARNING") as logged:
             await set_update.check_update(bot, campaign(), 99)
-        self.assertIn("couldn't post its note", logged.output[0])
+        self.assertIn("without a note", logged.output[0])
 
     async def test_a_failure_never_escapes_and_posts_nothing(self) -> None:
         bot = bot_with(pending_update=AsyncMock(side_effect=RuntimeError("down")))

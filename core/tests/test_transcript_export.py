@@ -9,6 +9,8 @@ from dmbot.transcript import export
 from dmbot.transcript.models import (
     MAX_UNSAVED,
     NO_LINEAGE,
+    OFF_RECORD,
+    OFF_RECORD_WORDS,
     SIDEBAR_ANSWER,
     SIDEBAR_QUESTION,
     SIDEBAR_TABLE_QUESTION,
@@ -32,6 +34,46 @@ def line(seconds: float, user: int, text: str) -> Line:
     return Line(int(START * 1000 + seconds * 1000), user, text, text)
 
 
+def gap(start: float, minutes: float, user: int) -> Line:
+    """The marker line the bot adds when a pause ends (#2466)."""
+    return Line(
+        int(START * 1000 + start * 1000),
+        user,
+        OFF_RECORD_WORDS,
+        OFF_RECORD_WORDS,
+        int(minutes * 60_000),
+        sidebar=OFF_RECORD,
+    )
+
+
+class OffTheRecordMarkers(unittest.TestCase):
+    def render(self, version: str) -> list[str]:
+        lines = [line(5, MIA, "I cast Shield."), gap(300, 5, MIA), line(900, DEE, "Run!")]
+        text = export.render("X", session(), lines, {MIA: "Mia", DEE: "Dee"}, version=version)
+        return text.split("\n\n", 1)[1].splitlines()
+
+    def test_both_versions_show_the_gap_on_purpose_and_when(self) -> None:
+        # 22:13:20 + 5 min = 22:18, to 22:23
+        want = [
+            "[0:00:05] (Mia): I cast Shield.",
+            "[0:05:00] (Mia was off the record, nothing recorded, 22:18\u201322:23 UTC)",
+            "[0:15:00] (Dee): Run!",
+        ]
+        self.assertEqual(self.render(export.AS_HEARD), want)
+        self.assertEqual(self.render(export.CLEANED), want)
+
+    def test_a_marker_is_no_speaker_and_no_sidebar_line(self) -> None:
+        only = [gap(10, 1, MIA), line(20, DEE, "hi")]
+        self.assertEqual(export.speaker_order(only), [DEE])
+        head = export.render("X", session(), only, {MIA: "Mia", DEE: "Dee"}).split("\n\n")[0]
+        self.assertNotIn("DM Sidebar", head)
+        self.assertNotIn("(typed)", head)
+
+    def test_a_dm_marker_carries_the_dm_label_like_other_lines(self) -> None:
+        text = export.render("X", session(), [gap(10, 1, MIA)], {MIA: "Mia"}, dms={MIA})
+        self.assertIn("(Mia, DM, was off the record, nothing recorded,", text)
+
+
 class Render(unittest.TestCase):
     def test_lines_show_time_since_start_and_the_speaker(self) -> None:
         text = export.render(
@@ -49,6 +91,104 @@ class Render(unittest.TestCase):
         self.assertEqual(
             body.splitlines(), ["[0:00:05] (Mia): I cast Shield.", "[0:42:10] (Dee): Run!"]
         )
+
+    def test_a_dm_is_marked_and_nobody_else_can_look_like_one(self) -> None:
+        # #2337: "(Name, DM)" for a DM of the campaign, on speech, typed chat and sidebar lines.
+        lines = [
+            line(5, MIA, "I cast Shield."),
+            line(6, DEE, "Roll for it."),
+            dataclasses.replace(
+                line(7, DEE, "is it optional"), sidebar=SIDEBAR_QUESTION, lineage=Lineage(ref="x")
+            ),
+        ]
+        text = export.render(
+            "X", session(), lines, {MIA: "Mia, DM", DEE: "Dee"}, dms={DEE}, version=export.AS_HEARD
+        )
+        self.assertIn("(Mia DM): I cast Shield.", text)  # a player's own ", DM" does not pass
+        self.assertIn("(Dee, DM): Roll for it.", text)
+        self.assertIn("(Dee, DM) [DM Sidebar", text)
+
+    def test_a_name_with_dm_in_it_never_looks_like_the_mark_even_when_told_apart(self) -> None:
+        names = export.distinct_names({MIA: "Eve, DM", DEE: "Eve, DM"})  # two players, one name
+        text = export.render(
+            "X", session(), [line(5, MIA, "a"), line(6, DEE, "b")], names, version=export.AS_HEARD
+        )
+        self.assertNotIn(", DM", text.split("\n\n", 1)[1])
+
+    def test_no_look_alike_of_the_dm_mark_passes(self) -> None:
+        names = {
+            MIA: "Bob\uff0c DM",  # full-width comma
+            DEE: "Bob\u201a DM",  # a low quotation mark
+            3: "Bob, \u1d05\u1d0d",  # small-capital letters
+            4: "Bob, DM_",
+            5: "Bob \u3001DM",
+            6: "Bob\u02cf DM",  # a modifier letter
+            7: "Bob\u0375 DM",  # the Greek numeral sign
+            8: "Bob\u00b8 DM",  # a cedilla (which folds to a combining one)
+        }
+        lines = [line(i, user, "hi") for i, user in enumerate(names)]
+        text = export.render("X", session(), lines, names, version=export.AS_HEARD)
+        body = text.split("\n\n", 1)[1]
+        self.assertNotIn(", DM", body)
+        self.assertNotIn("\uff0c", body)
+        self.assertNotIn("\u201a", body)
+        for gone in ("\u02cf", "\u0375", "\u00b8", "\u0327"):
+            self.assertNotIn(gone, body)
+        for user, who in ((MIA, "Bob DM"), (DEE, "Bob DM")):  # (a real DM is the only mark)
+            real = export.render("X", session(), [line(1, user, "hi")], names, dms={user})
+            self.assertIn(f"({who}, DM)", real)
+
+    def test_a_chosen_name_cannot_copy_the_duplicate_mark_or_collide_with_it(self) -> None:
+        names = export.distinct_names({1: "Sam", 2: "Sam", 3: "Sam (2)", 4: "sam [3]"})
+        self.assertEqual([str(v) for v in names.values()], ["Sam", "Sam (2)", "Sam 2", "sam 3"])
+        self.assertEqual(len({v.casefold() for v in names.values()}), 4)  # four people, four labels
+        text = export.render("X", session(), [line(1, 3, "hi")], names, version=export.AS_HEARD)
+        self.assertIn("(Sam 2): hi", text)  # brackets in a chosen name are gone, not kept
+        raw = export.render("X", session(), [line(1, 1, "hi")], {1: "Alice (2)"})
+        self.assertIn("(Alice 2): hi", raw)  # a name that was not made by distinct_names
+
+    def test_a_bracket_of_any_script_cannot_stand_in_for_the_duplicate_mark(self) -> None:
+        looks = ["Sam \u27ee2\u27ef", "Sam\u2768 2\u2769", "Sam \u27e82\u27e9", "Sam \u30102\u3011"]
+        names = export.distinct_names({1: "Sam", **{n + 2: raw for n, raw in enumerate(looks)}})
+        for label in names.values():
+            self.assertNotRegex(label, r"[\u27ee\u27ef\u2768\u2769\u27e8\u27e9\u3010\u3011]")
+        # five people, five different labels, and only the real mark is a bracket
+        self.assertEqual(len({v.casefold() for v in names.values()}), 5)
+        self.assertEqual(sum("(" in v for v in names.values()), 3)  # "Sam 2 (2)" .. "Sam 2 (4)"
+
+    def test_the_order_of_first_speaking_is_one_rule_for_every_version(self) -> None:
+        lines = [
+            dataclasses.replace(line(1, MIA, "typed"), typed=True),
+            line(2, DEE, "said"),
+            dataclasses.replace(
+                line(3, 3, "asked"), sidebar=SIDEBAR_QUESTION, lineage=Lineage(ref="x")
+            ),
+            line(4, MIA, "said"),
+        ]
+        self.assertEqual(export.speaker_order(lines, export.AS_HEARD), [MIA, DEE, 3])
+        self.assertEqual(
+            export.speaker_order(lines, export.CLEANED), [MIA, DEE]
+        )  # typed chat is in the cleaned version now (#2447); asking DMbot is not
+        hidden = [dataclasses.replace(lines[0], topic="off_topic"), *lines[1:]]
+        self.assertEqual(export.speaker_order(hidden, export.CLEANED), [DEE, MIA])
+
+    def test_two_people_with_one_name_tell_apart_and_keep_the_mark(self) -> None:
+        names = export.distinct_names({MIA: "Sam", DEE: "sam", 3: "Sam", 4: "Ann"})
+        self.assertEqual(names, {MIA: "Sam", DEE: "sam (2)", 3: "Sam (3)", 4: "Ann"})
+        text = export.render(
+            "X", session(), [line(5, DEE, "hi")], names, dms={DEE}, version=export.AS_HEARD
+        )
+        self.assertIn("(sam (2), DM): hi", text)
+
+    def test_the_how_to_read_line_explains_the_tags_in_plain_words(self) -> None:
+        for words in (
+            "{narrating} means the DM is describing the scene",
+            "{table_talk} is out-of-character talk about the rules or running the game",
+            '"roll initiative"',
+            "{non-game_content} is chat that isn't about the game",
+            "A person marked DM is the Dungeon Master",
+        ):
+            self.assertIn(words, export.HOW_TO_READ)
 
     def test_a_line_said_as_someone_shows_that_instead_of_the_character(self) -> None:
         # #53: the DM narrating or voicing an NPC; a topic tag still wins; brackets are stripped.
@@ -118,7 +258,7 @@ class Render(unittest.TestCase):
         self.assertIn(
             "(Mia) {table_talk}: is it my turn?", cleaned
         )  # table talk stays, tagged (#53)
-        self.assertIn("Chat clearly not about the game is left out", cleaned)
+        self.assertIn("chat clearly not about the game is left out", cleaned)
         heard = export.render("X", session(), lines, names)
         self.assertIn("my boss called", heard)
         self.assertIn("he wants me Monday", heard)
@@ -224,11 +364,13 @@ class DownloadButtons(unittest.TestCase):
         from dmbot.ui import transcripts as ui
 
         view = ui.download_view(1, "a" * 32)
-        ids = [item.custom_id for item in view.children]  # type: ignore[attr-defined]
+        every = [item.custom_id for item in view.children]  # type: ignore[attr-defined]
+        ids = every[:3]  # the downloads; the fourth is a player's suggested fix (#1491)
         self.assertEqual(
             ids,
             [f"dmbot:transcript:1:{'a' * 32}:{c}" for c in ("cleaned", "heard", "both")],
         )
+        self.assertEqual(every[3:], [f"dmbot:fixline:1:{'a' * 32}"])
         template = ui.DownloadButton.__discord_ui_compiled_template__
         for custom_id in [*ids, f"dmbot:transcript:1:{'a' * 32}"]:
             with self.subTest(custom_id=custom_id):
@@ -255,6 +397,64 @@ REPLIED = Lineage(
     prompt="sidebar-1",
     sources=("SRD 5.2.1 p. 241", "house rule 3"),
 )
+
+
+class TypedInTheCleanedVersion(unittest.TestCase):
+    """#2447, item 6: typed chat is in both versions, tagged (typed); typing clearly not about the
+    game is left out of the cleaned one, as talk like it is."""
+
+    def render(self, version: str, lines: list[Line]) -> list[str]:
+        text = export.render("X", session(), lines, {MIA: "Mia", DEE: "Dee"}, version=version)
+        return text.split("\n\n", 1)[1].splitlines()
+
+    def test_typed_game_chat_is_in_both_versions_under_the_writers_name(self) -> None:
+        lines = [
+            dataclasses.replace(line(5, MIA, "we take a long rest"), typed=True),
+            line(9, DEE, "Run!"),
+        ]
+        want = ["[0:00:05] (Mia) (typed): we take a long rest", "[0:00:09] (Dee): Run!"]
+        self.assertEqual(self.render(export.AS_HEARD, lines), want)
+        self.assertEqual(self.render(export.CLEANED, lines), want)
+
+    def test_off_topic_typing_is_hidden_from_the_cleaned_version_only(self) -> None:
+        lines = [
+            dataclasses.replace(line(5, MIA, "my cat"), typed=True, topic="off_topic"),
+            line(9, DEE, "Run!"),
+        ]
+        self.assertIn("(typed): my cat", "\n".join(self.render(export.AS_HEARD, lines)))
+        cleaned = "\n".join(self.render(export.CLEANED, lines))
+        self.assertNotIn("my cat", cleaned)
+        self.assertIn("Run!", cleaned)
+
+    def test_the_note_is_there_even_when_every_typed_line_is_hidden(self) -> None:
+        lines = [dataclasses.replace(line(5, MIA, "my cat"), typed=True, topic="off_topic")]
+        head = export.render("X", session(), lines, {MIA: "Mia"}, version=export.CLEANED)
+        self.assertIn("(typed) lines were typed", head.split("\n\n", 1)[0])
+        self.assertNotIn("my cat", head.split("\n\n", 1)[1])
+
+
+class ImageLines(unittest.TestCase):
+    """#2450: a described picture is tagged (image) in both versions, with its own note."""
+
+    def render(self, version: str, lines: list[Line]) -> str:
+        return export.render("X", session(), lines, {MIA: "Mia"}, version=version)
+
+    def test_tagged_in_both_versions_with_a_note_that_the_picture_is_not_kept(self) -> None:
+        lines = [dataclasses.replace(line(5, MIA, "a picture: a map"), typed=True, image=True)]
+        for version in (export.AS_HEARD, export.CLEANED):
+            text = self.render(version, lines)
+            self.assertIn("[0:00:05] (Mia) (image): a picture: a map", text)
+            self.assertIn(export.IMAGE_NOTE, text)
+            self.assertNotIn(export.TYPED_NOTE, text)  # no typed line, so no typed note
+
+    def test_both_notes_when_both_kinds_are_there(self) -> None:
+        lines = [
+            dataclasses.replace(line(5, MIA, "a picture: a map"), typed=True, image=True),
+            dataclasses.replace(line(6, MIA, "hello"), typed=True),
+        ]
+        text = self.render(export.AS_HEARD, lines)
+        self.assertIn(export.IMAGE_NOTE, text)
+        self.assertIn(export.TYPED_NOTE, text)
 
 
 class DmSidebarLines(unittest.TestCase):

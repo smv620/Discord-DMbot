@@ -10,10 +10,48 @@ from unittest import mock
 from dmbot.devtools.srd import build, monsters, monsters51, parse51
 from dmbot.devtools.srd.parse import SrdError
 from dmbot.devtools.srd.pdf import Line, Piece
-from tests.monster_fixtures import BOLD, PLAIN, TITLE, goblin, say
+from tests.monster_fixtures import (
+    BOLD,
+    BOLD_ITALIC,
+    ITALIC,
+    PLAIN,
+    SANS,
+    TITLE,
+    goblin,
+    labelled,
+    say,
+)
+
+
+def aboleth() -> list[Line]:
+    """The Aboleth's stat block as the PDF reader gives it (#1892): all six ability labels
+    are there, which pypdf and pdfminer.six left out. The SRD 5.2.1's own words."""
+    return [
+        say("Aboleth", TITLE),
+        say("Large Aberration, Lawful Evil", ITALIC),
+        say("AC 17 Initiative +7 (17)", BOLD),
+        say("HP 150 (20d10 + 40)", BOLD),
+        say("Speed 10 ft., Swim 40 ft.", BOLD),
+        say("MOD SAVE MOD SAVE MOD SAVE", SANS),
+        say("Str 21 +5 +5 Dex 9 −1 +3 Con 15 +2 +6", "GillSans-SemiBold-SC700"),
+        say("Int 18 +4 +8 Wis 15 +2 +6 Cha 18 +4 +4", "GillSans-SemiBold-SC700"),
+        labelled("Skills ", "History +12, Perception +10"),
+        labelled("Senses ", "Darkvision 120 ft.; Passive Perception 20"),
+        labelled("Languages ", "Deep Speech; telepathy 120 ft."),
+        say("CR 10 (XP 5,900, or 7,200 in lair; PB +4)", BOLD),
+        say("Traits", SANS),
+        say("Amphibious. The aboleth can breathe air and water.", BOLD_ITALIC),
+    ]
 
 
 class Newer(unittest.TestCase):
+    def test_the_aboleths_whole_ability_table_is_read(self) -> None:
+        (found,) = monsters.parse_monsters(aboleth())
+        self.assertEqual(
+            {name: score for name, score, _ in found.abilities},
+            {"str": 21, "dex": 9, "con": 15, "int": 18, "wis": 15, "cha": 18},
+        )
+
     def test_a_stat_block_is_read(self) -> None:
         (m,) = monsters.parse_monsters(goblin())
         self.assertEqual((m.name, m.section, m.page), ("Goblin Warrior", "Monsters A–Z", 290))
@@ -294,7 +332,14 @@ class Building(unittest.TestCase):
     def test_the_5_1_monsters_are_found_between_their_headings(self) -> None:
         document = {"title": "t", "url": "u", "sha256": "s", "pages": 17}
         files = build.build_files_51(
-            self.pages51(), document, set(), (document | {"word_list_sha256": "w"}, set(), set())
+            self.pages51(),
+            document,
+            set(),
+            (document | {"word_list_sha256": "w"}, set(), set()),
+            classes=False,
+            items_pages=False,
+            origins_pages=False,
+            rules_pages=False,
         )
         self.assertEqual(set(files), {"spells.json", "conditions.json", "monsters.json"})
         creatures = files["monsters.json"]
@@ -310,7 +355,15 @@ class Building(unittest.TestCase):
         self.assertEqual(creatures["entries"][0]["ac_note"], "(leather armor, shield)")
 
     def test_without_monster_input_the_5_1_files_are_the_two_old_ones(self) -> None:
-        files = build.build_files_51(self.pages51(), {"pages": 17}, set())
+        files = build.build_files_51(
+            self.pages51(),
+            {"pages": 17},
+            set(),
+            classes=False,
+            items_pages=False,
+            origins_pages=False,
+            rules_pages=False,
+        )
         self.assertEqual(set(files), {"spells.json", "conditions.json"})
 
     def test_the_monster_entry_has_the_fields_in_order(self) -> None:

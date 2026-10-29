@@ -8,12 +8,15 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from urllib.parse import urlsplit
 
-from dmbot.config import ConfigError
+from dmbot import imports_switch
+from dmbot.config import MODEL_NAME, ConfigError
 from dmbot.entitlements import parse_free_users
 from dmbot.mail import MailConfigError, MailSettings, load_mail_settings, one_address
+from dmbot.transcription.config import OUTSIDE_ENGINES
 from dmbot.web.admin_hash import decode_hash
 from dmbot.web.payments import paid_plan_ids
 from dmbot.web.stripe import StripeConfig
+from dmbot.web.support_mail import reply_domain
 
 REQUIRED = (
     "DATABASE_URL",
@@ -56,9 +59,35 @@ class WebSettings:
     # Account emails, such as sign-in links (#1231). Nothing is sent until SMTP is set up.
     mail: MailSettings = field(default_factory=MailSettings)
     feedback_repo: str = "smv620/Discord-DMbot"
+    # The monthly recap allowances (#1428), the same two settings the bot reads, so the page
+    # can say "N of M recaps this month".
+    recaps_per_month: int = 10
+    recap_audio_per_month: int = 8
     # Where "a support ticket is waiting" goes (#1340). Empty: tickets are still kept and shown on
     # the admin page, and nobody is emailed. The email never holds the ticket's words.
     support_team_email: str = ""
+    # The support helper (#1431): the AI account it answers with (the same key the bot uses), the
+    # strong tier's model for it (empty: the tier's default), and the secret that proves an
+    # inbound email really came from the mail service (empty: replies by email are off).
+    ai_key: str = field(default="", repr=False)
+    support_ai_model: str = ""
+    mail_inbound_secret: str = field(default="", repr=False)
+    # Search by meaning on the Names page (#2733): the same switch, key and models the bot reads
+    # (#2664), so the search words are turned into numbers with the model the kept numbers were
+    # made with. Off until the switch is 1 and a key is set.
+    meaning_search: bool = False
+    voyage_key: str = field(default="", repr=False)
+    voyage_embed_model: str = "voyage-3.5"
+    voyage_rerank_model: str = "rerank-2.5"
+    # Where people's emailed replies to a support ticket go (#1717): a subdomain only the mail
+    # service receives. Empty: the support sender's own domain.
+    mail_reply_domain: str = ""
+    # Where the bot keeps recap audio on disk, read here only (the volume is mounted read-only).
+    # Empty: the page shows no players and the file route answers not_found (#1418).
+    recap_audio_dir: str = ""
+    # The outside speech-to-text company the bot sends voices to (deepgram, cloud), or None: only
+    # consent given for it counts, as in the bot. From TRANSCRIBER, the bot's own setting.
+    outside_engine: str | None = None
     # Cloudflare Turnstile's secret key, the check that a person sent the form. Needed
     # whenever the forms are on, except when testing on localhost.
     turnstile_secret: str = field(default="", repr=False)
@@ -85,6 +114,57 @@ class WebSettings:
     # The same switch as the bot's: when on, the site's hand-over accept checks the campaign
     # cap too, so the two never disagree (#437 part 2c).
     enforce_plans: bool = False
+    # Importing older sessions (#2105): the routes answer 404 until dev1 has checked a real
+    # import (DMBOT_IMPORTS=1). Off by default so the API is not live before that.
+    imports_on: bool = False
+    # The same DMBOT_HANDOVER_EMAIL as the bot's (#2532): off, the email hand-over routes say 404.
+    handover_email_on: bool = False
+    # A line fixed from the Transcripts page (#2858; DMBOT_WEB_LINE_FIX): off, its routes answer
+    # 404, so nothing is queued before the bot can act on it.
+    line_fix_on: bool = False
+    # A person's own "Delete my transcripts" on the website (#2769; DMBOT_WEB_LINE_DELETE): off, its
+    # routes answer 404, so nothing is queued before the bot can run it.
+    line_delete_on: bool = False
+    # DMBOT_WEB_RESTORE (#2745): off, the Load a backup routes say 404, so nothing can be staged
+    # until the bot's half, which applies and sweeps staged restores (#2746), is live.
+    web_restore_on: bool = False
+    # Game masters added and removed on the website (#2768; DMBOT_WEB_CO_DMS): off, those routes and
+    # the queue's `co_dm` choice answer 404, so nothing is queued before the bot can apply it.
+    co_dms_on: bool = False
+    # "Make it again" on a session's report (#2661; DMBOT_WEB_REPORT_MAKE): off, the route that
+    # queues the request answers 404, so nothing is queued before the bot (#2805) takes it.
+    report_make_on: bool = False
+    # Sharing house rules from the website (#2783; DMBOT_WEB_RULE_SHARING): off, the routes that
+    # queue a choice answer 404, so nothing is queued before the bot can run it.
+    rule_sharing_on: bool = False
+    # Character sheets from the website (#2816; DMBOT_WEB_SHEETS): off, the routes that show
+    # or queue them answer 404, so nothing is queued before the bot that applies them is deployed.
+    sheets_on: bool = False
+    # Servers where it is on although DMBOT_IMPORTS is off (#2259): the owner's test servers. Never
+    # logged or shown.
+    imports_servers: frozenset[int] = field(default=frozenset(), repr=False)
+    # The same DMBOT_RECAPS as the bot's: off, nothing makes a recap's narration, so "make it
+    # again" is refused instead of promising it (#2183).
+    recaps_on: bool = False
+    # Whether the bot can make narration at all: DMBOT_RECAPS is on and the bot has a voice (the
+    # same rule as `Settings.recap_audio_on`). The web container is never given the speech key, so
+    # compose passes only whether each is set ("1" or empty), never the key itself (#2419).
+    recap_audio_on: bool = False
+    # PlotBot's check of each recap (#2122): the same DMBOT_PLOT_CHECK as the bot's, and only with
+    # recaps on. Off, the plot routes say "unavailable" and Approve waits for nothing.
+    plot_check_on: bool = False
+    # The bot's DMBOT_RECAP_VOICE_TAGS, to work out which paragraphs a change to the words would
+    # speak again (#2630): the tags are part of what the voice is sent. It changes nothing the
+    # bot does.
+    recap_voice_tags: bool = True
+
+    def imports_enabled_for(self, guild_id: int) -> bool:
+        """Whether importing is on for this server (#2259)."""
+        return imports_switch.enabled(self.imports_on, self.imports_servers, guild_id)
+
+    @property
+    def meaning_search_on(self) -> bool:
+        return self.meaning_search and bool(self.voyage_key)
 
     @property
     def site_origin(self) -> str:
@@ -114,6 +194,13 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
 
     def get(name: str) -> str:
         return env.get(name, "").strip()
+
+    monthly: dict[str, int] = {}
+    for name, default in (("DMBOT_RECAPS_PER_MONTH", "10"), ("DMBOT_RECAP_AUDIO_PER_MONTH", "8")):
+        raw = get(name) or default
+        if not (raw.isascii() and raw.isdigit()) or not 1 <= int(raw) <= 1000:
+            raise ConfigError(f'{name} must be a whole number from 1 to 1000, got "{raw}".')
+        monthly[name] = int(raw)
 
     missing = [name for name in REQUIRED if not get(name)]
     if missing:
@@ -168,9 +255,29 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
     feedback_repo = get("GITHUB_FEEDBACK_REPO") or "smv620/Discord-DMbot"
     if not re.fullmatch(r"[\w.-]+/[\w.-]+", feedback_repo):
         raise ConfigError("GITHUB_FEEDBACK_REPO must look like owner/name.")
+    meaning_raw = (get("DMBOT_MEANING_SEARCH") or "0").lower()
+    if meaning_raw not in ("0", "1", "true", "on", "false", "off"):
+        raise ConfigError(f'DMBOT_MEANING_SEARCH must be 1 (on) or 0 (off), got "{meaning_raw}".')
+    voyage_models = []
+    for model_name, default in (
+        ("VOYAGE_EMBED_MODEL", "voyage-3.5"),
+        ("VOYAGE_RERANK_MODEL", "rerank-2.5"),
+    ):
+        model = get(model_name) or default
+        if not (
+            model.isascii() and model.replace("-", "").replace(".", "").replace("_", "").isalnum()
+        ):
+            raise ConfigError(f"{model_name} must be a model name such as {default}.")
+        voyage_models.append(model)
     support_team_email = get("SUPPORT_TEAM_EMAIL")
     if support_team_email and not one_address(support_team_email):
         raise ConfigError("SUPPORT_TEAM_EMAIL must be one email address, like team@example.com.")
+    support_ai_model = get("SUPPORT_AI_MODEL").strip("\"' ")
+    if support_ai_model and not MODEL_NAME.match(support_ai_model):
+        raise ConfigError(
+            "SUPPORT_AI_MODEL isn't a Claude model name. Use the name as Anthropic lists it "
+            "(no quotes or spaces), or leave it empty to use the strong tier's default."
+        )
     turnstile_secret = get("TURNSTILE_SECRET_KEY")
     if (
         feedback_token
@@ -229,9 +336,70 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
     enforce_raw = (get("DMBOT_ENFORCE_PLANS") or "0").lower()
     if enforce_raw not in ("0", "1", "true", "false", "on", "off"):
         raise ConfigError(f'DMBOT_ENFORCE_PLANS must be 1 (on) or 0 (off), got "{enforce_raw}".')
+    imports_raw = (get("DMBOT_IMPORTS") or "0").lower()
+    if imports_raw not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError(f'DMBOT_IMPORTS must be 1 (on) or 0 (off), got "{imports_raw}".')
+    try:
+        imports_servers = imports_switch.parse_servers(get("DMBOT_IMPORTS_SERVERS"))
+    except ValueError as exc:
+        raise ConfigError(str(exc)) from exc
+    recaps_raw = (get("DMBOT_RECAPS") or "0").lower()
+    if recaps_raw not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError(f'DMBOT_RECAPS must be 1 (on) or 0 (off), got "{recaps_raw}".')
+    handover_email_raw = (get("DMBOT_HANDOVER_EMAIL") or "0").lower()
+    if handover_email_raw not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError(
+            f'DMBOT_HANDOVER_EMAIL must be 1 (on) or 0 (off), got "{handover_email_raw}".'
+        )
+    line_fix_raw = (get("DMBOT_WEB_LINE_FIX") or "0").lower()
+    if line_fix_raw not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError(f'DMBOT_WEB_LINE_FIX must be 1 (on) or 0 (off), got "{line_fix_raw}".')
+    line_delete_raw = (get("DMBOT_WEB_LINE_DELETE") or "0").lower()
+    if line_delete_raw not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError(
+            f'DMBOT_WEB_LINE_DELETE must be 1 (on) or 0 (off), got "{line_delete_raw}".'
+        )
+    restore_raw = (get("DMBOT_WEB_RESTORE") or "0").lower()
+    if restore_raw not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError(f'DMBOT_WEB_RESTORE must be 1 (on) or 0 (off), got "{restore_raw}".')
+    co_dms_raw = (get("DMBOT_WEB_CO_DMS") or "0").lower()
+    if co_dms_raw not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError(f'DMBOT_WEB_CO_DMS must be 1 (on) or 0 (off), got "{co_dms_raw}".')
+    report_make_raw = (get("DMBOT_WEB_REPORT_MAKE") or "0").lower()
+    if report_make_raw not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError(
+            f'DMBOT_WEB_REPORT_MAKE must be 1 (on) or 0 (off), got "{report_make_raw}".'
+        )
+    sheets_raw = (get("DMBOT_WEB_SHEETS") or "0").lower()
+    if sheets_raw not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError(f'DMBOT_WEB_SHEETS must be 1 (on) or 0 (off), got "{sheets_raw}".')
+    rule_sharing_raw = (get("DMBOT_WEB_RULE_SHARING") or "0").lower()
+    if rule_sharing_raw not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError(
+            f'DMBOT_WEB_RULE_SHARING must be 1 (on) or 0 (off), got "{rule_sharing_raw}".'
+        )
     return WebSettings(
         database_url=get("DATABASE_URL"),
+        rule_sharing_on=rule_sharing_raw in ("1", "true", "on"),
+        sheets_on=sheets_raw in ("1", "true", "on"),
+        handover_email_on=handover_email_raw in ("1", "true", "on"),
+        line_fix_on=line_fix_raw in ("1", "true", "on"),
+        line_delete_on=line_delete_raw in ("1", "true", "on"),
+        web_restore_on=restore_raw in ("1", "true", "on"),
+        co_dms_on=co_dms_raw in ("1", "true", "on"),
+        report_make_on=report_make_raw in ("1", "true", "on"),
+        recaps_on=recaps_raw in ("1", "true", "on"),
+        plot_check_on=recaps_raw in ("1", "true", "on")
+        and (get("DMBOT_PLOT_CHECK") or "0").lower() in ("1", "true", "on"),
+        recap_audio_on=(
+            recaps_raw in ("1", "true", "on")
+            and get("RECAP_AUDIO_KEY_SET") == "1"
+            and get("RECAP_AUDIO_VOICE_SET") == "1"
+        ),
+        recap_voice_tags=(get("DMBOT_RECAP_VOICE_TAGS") or "1").lower() in ("1", "true", "on"),
         enforce_plans=enforce_raw in ("1", "true", "on"),
+        imports_on=imports_raw in ("1", "true", "on"),
+        imports_servers=imports_servers,
         discord_client_id=get("DISCORD_CLIENT_ID"),
         discord_client_secret=get("DISCORD_CLIENT_SECRET"),
         secret_key=secret.encode("utf-8"),
@@ -249,7 +417,21 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
         link_token_secret=link_secret.encode("utf-8"),
         mail=mail,
         feedback_repo=feedback_repo,
+        recaps_per_month=monthly["DMBOT_RECAPS_PER_MONTH"],
+        recap_audio_per_month=monthly["DMBOT_RECAP_AUDIO_PER_MONTH"],
         support_team_email=support_team_email,
+        ai_key=get("ANTHROPIC_API_KEY"),
+        support_ai_model=support_ai_model,
+        mail_inbound_secret=get("MAIL_INBOUND_SECRET"),
+        meaning_search=meaning_raw in ("1", "true", "on"),
+        voyage_key=get("VOYAGE_API_KEY"),
+        voyage_embed_model=voyage_models[0],
+        voyage_rerank_model=voyage_models[1],
+        mail_reply_domain=reply_domain(get("MAIL_REPLY_DOMAIN")),
+        recap_audio_dir=get("WEB_RECAP_AUDIO_DIR"),
+        outside_engine=get("TRANSCRIBER").lower()
+        if get("TRANSCRIBER").lower() in OUTSIDE_ENGINES
+        else None,
         turnstile_secret=turnstile_secret,
         client_ip_header=client_ip_header,
         admin_emails=admin_emails,

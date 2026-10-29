@@ -16,6 +16,7 @@ Nothing here reads a secret: it works from the narration the DM already reviewed
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -83,12 +84,40 @@ def style_key(emotion: str) -> str:
     return word if word in STYLES else ""
 
 
+# How the piece ends (owner, 2026-10-24, #2629): never an abrupt stop. The final section is an
+# ending that fits the mood of the recap's last scene: a gentle fade down to silence for the quiet
+# moods, a rising swell that resolves on one held chord for the driving ones. The same kind tells
+# the mix how to fade the music, as a safety (a chord that rings past the cut never clicks off).
+DIMINUENDO, CRESCENDO = "diminuendo", "crescendo"
+ENDING_PROMPTS = {
+    DIMINUENDO: "a gentle diminuendo to silence on the final chord",
+    CRESCENDO: "a rising crescendo that resolves on one final held chord",
+}
+ENDINGS: dict[str, str] = {
+    "calm": DIMINUENDO, "somber": DIMINUENDO, "sorrowful": DIMINUENDO,
+    "melancholy": DIMINUENDO, "tender": DIMINUENDO, "mysterious": DIMINUENDO,
+    "eerie": DIMINUENDO, "dread": DIMINUENDO, "ominous": DIMINUENDO, "grim": DIMINUENDO,
+    "wonder": DIMINUENDO,
+    "triumphant": CRESCENDO, "tense": CRESCENDO, "urgent": CRESCENDO, "battle": CRESCENDO,
+    "defiant": CRESCENDO, "hopeful": CRESCENDO, "playful": CRESCENDO,
+}  # fmt: skip
+DEFAULT_ENDING = DIMINUENDO  # a mood with no entry (the default style) fades down
+CLOSING_SECONDS = 4.5  # the closing line, when its real length is not known
+ENDING_TAIL_SECONDS = 1.5  # the music runs this long after the last word (the render's tail)
+
+
+def ending_for(emotion: str) -> str:
+    """How a piece ending in this mood ends: `DIMINUENDO` or `CRESCENDO`."""
+    return ENDINGS.get(emotion, DEFAULT_ENDING)
+
+
 @dataclass(frozen=True, slots=True)
 class Section:
     emotion: str
     start_char: int  # where it begins in the plain spoken text
     chars: int  # how many spoken characters it covers
     duration_ms: int
+    ending: bool = False  # the last section: a composed ending (#2629)
 
 
 def total_seconds(spoken_chars: int) -> int:
@@ -106,15 +135,30 @@ def _merge_shortest(spans: list[tuple[str, int, int]]) -> None:
     del spans[i]
 
 
-def sections(script: Script, *, seconds: int | None = None) -> list[Section]:
+def sections(
+    script: Script,
+    *,
+    seconds: int | None = None,
+    starts: Mapping[int, float] | None = None,
+    closing_seconds: float | None = None,
+) -> list[Section]:
     """One section for each run of the same mood, from the cue map (two cues with the same style,
     such as "tense" and "tension", are one run). Text before the first cue is a calm opening.
     More than `MAX_SECTIONS` moods are merged, shortest first. A run longer than the provider's
     longest section is split into equal parts of the same style. The durations add up to exactly
-    the total (3 to 10 minutes), none under the provider's 3 seconds."""
+    the total (3 to 10 minutes), none under the provider's 3 seconds. `starts` maps a cue's place
+    in the spoken text to the second the voice reaches it (from the voice's timestamps); with it
+    each section is as long as the voice spends in it, and without it as long as its share of
+    the words. The last section is an ending (#2629): it covers the closing line and the 1.5
+    seconds after it (`closing_seconds` is the line's length, `CLOSING_SECONDS` when not known),
+    never under the provider's 3 seconds; a last section too short to hold both a body and an
+    ending is itself the ending."""
     spoken_len = max(1, len(script.spoken))
     total_ms = (seconds if seconds is not None else total_seconds(spoken_len)) * 1000
-    total_ms = max(MIN_SECONDS * 1000, min(MAX_SECONDS * 1000, total_ms))
+    # An estimate is held to 3 to 10 minutes; once the voice's real timings are known (`starts`)
+    # the music is exactly as long as the voice, only held to what the provider can make.
+    floor = MIN_SECTION_MS if starts is not None else MIN_SECONDS * 1000
+    total_ms = max(floor, min(MAX_SECONDS * 1000, total_ms))
     marks: list[tuple[int, str]] = []
     for cue in script.emotions:
         mood = style_key(cue.name) or "calm"
@@ -126,35 +170,70 @@ def sections(script: Script, *, seconds: int | None = None) -> list[Section]:
             marks.insert(0, (0, "calm"))
         else:
             marks[0] = (0, "calm")
-    spans: list[tuple[str, int, int]] = []
+    spans: list[tuple[str, int, int]] = []  # (mood, where it starts, its weight)
     for i, (start, name) in enumerate(marks):
-        end = marks[i + 1][0] if i + 1 < len(marks) else spoken_len
-        spans.append((name, start, max(1, end - start)))
-    while len(spans) > MAX_SECTIONS:
-        _merge_shortest(spans)
+        if starts is not None:
+            begin = 0.0 if start == 0 else starts.get(start, 0.0)
+            nxt = marks[i + 1][0] if i + 1 < len(marks) else None
+            end = total_ms / 1000 if nxt is None else starts.get(nxt, begin)
+            spans.append((name, start, max(1, round((end - begin) * 1000))))
+        else:
+            end_char = marks[i + 1][0] if i + 1 < len(marks) else spoken_len
+            spans.append((name, start, max(1, end_char - start)))
+    # one place is kept for the ending that may be split off the last run
+    while len(spans) > MAX_SECTIONS - 1 or (
+        len(spans) > 1 and len(spans) * MIN_SECTION_MS > total_ms
+    ):
+        _merge_shortest(spans)  # and a short piece can't hold more sections than 3 s each
     # Shares of the total in proportion to the words each covers, none under 3 s; the rounding
     # and the lifting of short ones are settled on the longest, so the sum is exact.
     sum_w = sum(c for _, _, c in spans)
     base = [max(MIN_SECTION_MS, total_ms * c // sum_w) for _, _, c in spans]
     longest = max(range(len(base)), key=lambda i: base[i])
-    base[longest] += total_ms - sum(base)  # MAX_SECTIONS * 3 s is far under the 3-minute floor
+    base[longest] += total_ms - sum(base)  # the merging above leaves room for 3 s each
     out: list[Section] = []
     for (name, start, chars), ms in zip(spans, base, strict=True):
         parts = -(-ms // MAX_SECTION_MS)
         each, left = divmod(ms, parts)
         for k in range(parts):
             out.append(Section(name, start, chars // parts, each + (left if k == parts - 1 else 0)))
+    return _with_ending(out, closing_seconds)
+
+
+def _with_ending(out: list[Section], closing_seconds: float | None) -> list[Section]:
+    """Make the last section an ending: split off its last stretch (the closing line and the tail
+    after it), or, when it is too short for a body and an ending, the whole of it."""
+    last = out[-1]
+    closing = CLOSING_SECONDS if closing_seconds is None else max(0.0, closing_seconds)
+    want = max(MIN_SECTION_MS, round((closing + ENDING_TAIL_SECONDS) * 1000))
+    if last.duration_ms >= want + MIN_SECTION_MS:
+        out[-1] = Section(last.emotion, last.start_char, last.chars, last.duration_ms - want)
+        out.append(Section(last.emotion, last.start_char + last.chars, 0, want, ending=True))
+    else:
+        out[-1] = Section(last.emotion, last.start_char, last.chars, last.duration_ms, ending=True)
     return out
 
 
-def composition_request(script: Script, *, seconds: int | None = None) -> dict[str, Any]:
-    """The music request: a composition plan with one section for each mood, instrumental."""
+def composition_request(
+    script: Script,
+    *,
+    seconds: int | None = None,
+    starts: Mapping[int, float] | None = None,
+    closing_seconds: float | None = None,
+) -> dict[str, Any]:
+    """The music request: a composition plan with one section for each mood, instrumental, the
+    last one a composed ending (#2629)."""
     plan_sections = []
-    for s in sections(script, seconds=seconds):
+    for s in sections(script, seconds=seconds, starts=starts, closing_seconds=closing_seconds):
         pos, neg = STYLES.get(s.emotion, DEFAULT_STYLE)
+        name = s.emotion.capitalize()
+        if s.ending:
+            pos = (*pos, ENDING_PROMPTS[ending_for(s.emotion)])
+            neg = (*neg, "abrupt stop", "cut off")
+            name = f"{name} ending"
         plan_sections.append(
             {
-                "section_name": s.emotion.capitalize(),
+                "section_name": name,
                 "positive_local_styles": list(pos),
                 "negative_local_styles": list(neg),
                 "duration_ms": s.duration_ms,
@@ -231,3 +310,8 @@ def ambience_requests(script: Script) -> list[Ambience]:
             hits.append((min(found), kind))
     hits.sort()
     return [Ambience(kind, SCENES[kind][1]) for _, kind in hits[:MAX_AMBIENCE]]
+
+
+def ending_of(script: Script, *, seconds: int | None = None) -> str:
+    """How this recap's music ends (`DIMINUENDO` or `CRESCENDO`), by the mood of its last scene."""
+    return ending_for(sections(script, seconds=seconds)[-1].emotion)

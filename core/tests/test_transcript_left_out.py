@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import unittest
 
+from dmbot.discord_limits import MESSAGE_MAX
 from dmbot.dm_screen.left_out import left_out_view
 from dmbot.transcript import left_out
 from dmbot.transcript.stream import EDIT_WINDOW_S, TranscriptStream, escape
@@ -38,6 +39,14 @@ class RunsTest(unittest.TestCase):
         runs = left_out.LeftOut().add([w(DEE, 1), w(DEE, 3)], [w(DEE, 1), kept, w(DEE, 3)])
         self.assertEqual(len(runs), 2)
         self.assertTrue(all(kept not in r.lines for r in runs))
+
+    def test_a_typed_line_and_a_spoken_one_at_the_same_moment_are_told_apart(self) -> None:
+        """Only the typed line is left out: the spoken line with the same start ends the run and
+        is not swept in with it (#2447)."""
+        typed = Waiting(DEE, 1000, "my boss called again", 3.0, typed=True)
+        spoken = w(DEE, 1, "I attack the goblin")
+        (run,) = left_out.LeftOut().add([typed], [spoken, typed])
+        self.assertEqual(run.lines, [typed])
 
     def test_two_people_are_two_runs_in_the_order_heard(self) -> None:
         runs = left_out.LeftOut().add([w(MIA, 2), w(DEE, 1)])
@@ -106,7 +115,7 @@ class MessageTest(unittest.TestCase):
             notes.add([w(DEE, at, "x" * 500)])
         name = {DEE: "N" * 300}
         text, shown = left_out.message_text(notes.runs, name, when)
-        self.assertLessEqual(len(text), left_out.MESSAGE_MAX)
+        self.assertLessEqual(len(text), MESSAGE_MAX)
         self.assertEqual(shown, notes.runs[-len(shown) :])  # the newest whole lines
         self.assertEqual(len(text.splitlines()), len(shown) + 1)
 

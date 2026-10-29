@@ -14,7 +14,6 @@ from dmbot.memory.models import (
     BACKGROUND,
     CLASS,
     CREATURE_TYPE,
-    GOD,
     NPC,
     PLAYER_CHARACTER,
     ROLE_LABELS,
@@ -31,14 +30,23 @@ KIND_LABELS = {
     "item": "item",
     "event": "event",
     "concept": "idea",
+    "clue": "clue",
+    "people": "people",
+    "thread": "story thread",
+    "quest": "quest",
+    "mystery": "mystery",
+    "hook": "hook",
+    "goal": "goal",
+    "promise": "promise",
+    "deed": "deed",
     "person": "player or DM",
 }
 # The older kinds, in the words people used for them.
 OLD_KIND_LABELS = {
-    "player_character": "player character",
+    "player_character": "PC",
     "npc": "NPC",
-    "deity": "god",
-    "creature": "creature",
+    "deity": "NPC",
+    "creature": "NPC",
     "spell": "spell",
 }
 LEGACY_TAG = "[Legacy 2014]"
@@ -46,12 +54,12 @@ NOT_IN_RULES = "not in DMbot's rules"
 
 # The key the lists and the kind menus use for a (kind, role): the older kind's name for a
 # character with a role, the kind itself otherwise.
-_ROLE_KEYS = {PLAYER_CHARACTER: "player_character", NPC: "npc", GOD: "deity"}
+_ROLE_KEYS = {PLAYER_CHARACTER: "player_character", NPC: "npc"}
 
 
 def kind_key(kind: str, role: str | None) -> str:
     """The key for a kind and role in lists and menus: a character with a role is
-    `npc`, `player_character` or `deity`; any other entry is its kind."""
+    `npc` or `player_character`; any other entry is its kind."""
     if kind == "character" and role in _ROLE_KEYS:
         return _ROLE_KEYS[role]
     return kind

@@ -51,6 +51,11 @@ scripts/set-key                    # pick from a list of keys and tokens
 scripts/set-key DEEPGRAM_API_KEY   # or name the one you want
 ```
 
+Every other ordinary setting (the sender addresses, a model name, a limit) works the same
+way with `scripts/set-variables`, which is for settings that are not secrets: it lists them
+with (set) or (empty), shows the value that is there now, and pressing Enter alone leaves it
+as it is. Type `-` to empty one. It keeps a private copy of the old `.env` before changing it.
+
 Paste the key when asked. You won't see it as you paste; that's normal. Paste once, then
 press Enter. The helper shows back only the key's length and last 4 characters, and
 keeps `.env` at `chmod 600`. If DMbot is running it offers to restart it, which drops the
@@ -62,8 +67,31 @@ Make both database passwords long, random, and letters and numbers only
 (`openssl rand -hex 24`). Compose runs Postgres for you and sets `DATABASE_URL`; the
 database is not reachable from outside the server.
 
-Leave `DISCORD_DEV_GUILD_ID` set to your server's ID — slash commands appear there
-instantly. (Without it, commands register globally, which can take up to an hour.)
+`DATABASE_POOL_MAX` (optional, default 10, from 1 to 100) is how many database connections
+one DMbot process may hold open. Leave it alone on the one-server setup. If you later run
+several shard processes against one Postgres, give each a smaller number so the total stays
+under Postgres's `max_connections` (or put PgBouncer in front). Changing it needs a restart.
+
+Slash commands are always registered globally, so every server that adds DMbot gets
+`/dmbot` (a new server can take a few minutes to show it). `DISCORD_DEV_GUILD_ID` is only for
+development: set to your test server's ID, the commands are also copied there so changes show up
+instantly. Customers' servers rely on the global commands. If you stop using a dev server, its
+old copy of the commands stays there unless you remove it once: put that server's ID in
+`DISCORD_CLEAR_GUILD_COMMANDS` (comma separated for several), restart DMbot once, then take the
+variable out again. It never clears the `DISCORD_DEV_GUILD_ID` server (a listed id equal to it is
+skipped with a warning). After the restart, check the log: it counts the global commands (`Slash
+commands: N global commands registered`) and names each server it cleared (`Clearing the old
+per-server commands in <id> (<name>)`). Make sure the name is the server you meant. For the owner's test
+server today: if `DISCORD_DEV_GUILD_ID` is still set to it, it keeps its copy and shows each
+command twice (expected); to stop that, unset `DISCORD_DEV_GUILD_ID` and list the server in
+`DISCORD_CLEAR_GUILD_COMMANDS` for one restart. With the variable set, the dev
+server lists each command twice (the global one and the copy); that is expected.
+
+After every restart, read the `Features:` line in the log (`docker compose logs dmbot | grep
+Features:`). It lists each switch with `on` or `off` (names only, never a value or a key), for
+example `Features: time suggestions off, recaps on, recap audio off, ...`. If a feature you
+meant to turn on says `off`, fix `.env` and restart before the live check, not at the table.
+DMs can see the same list, in plain words, from Settings, **What's switched on**.
 
 If you use `TRANSCRIBER=deepgram`, `cloud` or `none`, also add `CORE_EXTRAS=dev` to
 `.env` for a much smaller image.
@@ -161,6 +189,7 @@ in a volume, so restarts are fast.
 | Status | `docker compose ps` |
 | Update `.env` after an update changes `.env.example` | `scripts/update-env` (add `--check` to only look) |
 | Add or change a key | `scripts/set-key` |
+| Change any other setting (an address, a model, a limit) | `scripts/set-variables` |
 | Set the admin page's password (#772) | `scripts/set-admin-password` |
 | Put the admin API online (#836) | see "Put the admin API online" below |
 
@@ -250,6 +279,96 @@ Discord sign-in isn't set, because the API won't start without it):**
    Save. The Path is what keeps everything except the admin pages closed, so never leave
    it empty: if Cloudflare rejects it, stop and tell dev1. Cloudflare adds the DNS record
    itself: don't add one by hand.
+
+   **Stripe and the signed-in website (#1096; Supervisor's decision, 2026-10-17).** Stripe
+   delivers its payment events to `https://api.getdmbot.com/webhooks/stripe`, and the signed-in
+   site (sign-in, the account page, checkout, the billing portal) calls the paths below, so the
+   tunnel needs **one more route**, added the same way as the one above (Subdomain `api`,
+   Domain `getdmbot.com`, Service type HTTP, URL `web-api:8080`) with this Path, copied exactly:
+
+       ^/(webhooks/stripe$|auth/|me(/|$)|billing/)
+
+   Everything else stays closed until the website goes live (#498). Check it from outside with
+   an unsigned empty POST, which must be refused but not with a 404:
+   `curl -s -o /dev/null -w '%{http_code}\n' -X POST https://api.getdmbot.com/webhooks/stripe -d '{}'`
+   (400 or 401, not 404), and `https://api.getdmbot.com/health` must still answer 404.
+
+   **Support mail by email (#1431).** For people's emailed replies to reach their support
+   question, the mail service's inbound webhook must POST to `https://api.getdmbot.com/mail/inbound`,
+   so the tunnel needs one more route like the one above with the Path `^/mail/inbound$` (same
+   service and URL). That route is signed (the service's signing secret is `MAIL_INBOUND_SECRET`
+   in `.env`, set with `scripts/set-key`) and answers 404 while the secret is empty. The
+   senders are `MAIL_SUPPORT_FROM` (info@) and `MAIL_ALERTS_FROM` (the `<dmbot private>` email, docs/EMAIL.md); the helper needs
+   `ANTHROPIC_API_KEY` too. Until all of it is set, tickets are still kept and the team still
+   replies from the admin page.
+
+   **Replies go to a subdomain (#1717).** The main domain's mail (info@, support@, the `<dmbot private>` email and the
+   rest) goes to the team's inboxes through Cloudflare Email Routing, so the mail service must
+   not take it over. People's replies go to `reply.getdmbot.com`, which only the mail service
+   receives:
+   1. Open https://resend.com/domains, add `reply.getdmbot.com` (or turn on receiving for it) and
+      add the MX record Resend shows on the name `reply` in Cloudflare DNS
+      (https://dash.cloudflare.com, then the domain, then DNS). Leave the main domain's Email
+      Routing records alone.
+   2. Open https://resend.com/webhooks and add the endpoint
+      `https://api.getdmbot.com/mail/inbound` for the received-email event. Its signing secret
+      (it starts with `whsec_`) goes into `MAIL_INBOUND_SECRET` with `scripts/set-key`.
+   3. dev1 sets `MAIL_REPLY_DOMAIN=reply.getdmbot.com` with `scripts/set-variables`, adds the
+      tunnel route `^/mail/inbound$` (as above, only now, not before) and restarts the web API.
+   An older email's reply address (on the main domain) still reads, if it ever arrives: the
+   token proves the ticket, not the domain.
+
+   **Recap audio (#2616, #2625; added by the owner on 2026-10-24).** The recap page's audio player
+   and the Discord Listen link fetch the files from `https://api.getdmbot.com/recap-audio/…`, so the
+   tunnel has one more route like the ones above, with this Path, copied exactly:
+
+       ^/recap-audio/
+
+   It is safe to leave open: every audio link is signed and runs out, and the route checks that
+   signature and nothing else. Without this route, Cloudflare answers an empty 404 and the player
+   stays silent.
+   To check it from outside, run
+   `curl -s https://api.getdmbot.com/recap-audio/x/full`.
+   It must answer the app's own `{"detail":"not_found"}`, not an empty page.
+
+   **The routes the tunnel has today** (all Subdomain `api`, Domain `getdmbot.com`, Service type HTTP,
+   URL `web-api:8080`). Keep this list in step with Cloudflare:
+
+   | Path | What it is for | Added |
+   |---|---|---|
+   | `^/admin(/\|$)` | the admin page | at setup (#836) |
+   | `^/(webhooks/stripe$\|auth/\|me(/\|$)\|billing/)` | Stripe's events and the signed-in site | #1096 |
+   | `^/mail/inbound$` | people's emailed replies, from Resend (docs/EMAIL.md) | #1431, #1717 |
+   | `^/support(/\|$)` | the website's support pages (dev1 read it on 2026-10-24; the owner confirms it in the dashboard) | #1431 |
+   | `^/recap-audio/` | the recap audio player and the Discord Listen link | 2026-10-24 |
+
+   Any other path gets an empty 404 from Cloudflare before it reaches DMbot. #2625 replaces this
+   list with one route, `^/`, and a tested list of open paths in the code. Until dev1 deploys that,
+   a new public path needs its own route here (see the next paragraph for the change to one route).
+
+   **One route for the whole API (#2625; Supervisor's decision, 2026-10-24).** The routes above
+   (`^/admin…`, the Stripe, sign-in, `/me`, billing and support route, and `^/mail/inbound$`)
+   were the list of paths the outside world may reach, kept in the Cloudflare dashboard. That
+   list now lives in the code (`core/src/dmbot/web/public_paths.py`): a request that comes through
+   the tunnel to any other path gets the same empty 404 from the app itself, and a test fails
+   when a route has not been sorted. So the tunnel needs only **one** route. **Do this only after
+   dev1 has deployed this change and says so** (until then the old routes stay exactly as they
+   are, or the closed paths open up):
+   1. dev1 deploys, then runs `scripts/check-public-paths` from a computer outside the server.
+      Every line must say `ok`.
+   2. The owner adds one route as above (Subdomain `api`, Domain `getdmbot.com`, Service type
+      HTTP, URL `web-api:8080`) with the Path `^/` (copied exactly).
+   3. dev1 runs `scripts/check-public-paths` again. Every line must still say `ok`, and the three
+      "stays closed" lines (`/health`, `/personal`, a path that doesn't exist) must still be the
+      empty 404. If one of them isn't, the owner deletes the new route at once and tells dev1.
+   4. The owner removes the old routes one by one: every route in the table "The routes the tunnel
+      has today" except the new `^/` one. Nothing changes: the app now keeps what they kept.
+      dev1 then adds `^/` as the table's last row and removes the rows that are gone.
+   **Interim:** the owner added one route, Path `^/recap-audio/`, to `web-api:8080` on 2026-10-24,
+   so recap audio plays on the website until the single route is in. Don't ask for it again. It
+   is safe: each audio link is signed and expires.
+   A new public route is added in `public_paths.py` (with its reason) in the same change that
+   adds the route: no dashboard step.
 
 **You (the owner), on the server, once dev1 says the update is in:**
 

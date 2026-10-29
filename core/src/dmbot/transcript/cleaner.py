@@ -45,9 +45,12 @@ from dataclasses import dataclass, field, replace
 
 from dmbot.memory.lookup import CampaignLookup, NameEntry
 from dmbot.memory.models import CONFIRMED, PROPOSED, name_key
+from dmbot.memory.ontology import is_dm_word
 from dmbot.memory.scan import COMMON, GAME_TERMS
 from dmbot.memory.scene import WORD, find_mentions, group_sizes
 from dmbot.memory.sounds import sound_codes
+from dmbot.secrets_match import names_a_secret
+from dmbot.transcript.close_calls import CloseCalls
 
 log = logging.getLogger(__name__)
 
@@ -78,6 +81,12 @@ _POSSESSIVE = ("'s", "’s")
 _SENTENCE_END = re.compile(r"[.!?…]")
 
 SPELLING, DM_FIX, SOUND = "spelling", "dm", "sound"
+# A whole line the DM rewrote by hand (#1499): shown with Undo like a fix, but it is not a name, so
+# Undo saves no "keep as heard" rule for it.
+DM_EDIT = "edit"
+# The words in a picture of text, corrected by its poster or a DM (#2450): the same, but it is a
+# described picture's line, which is kept apart from speech.
+IMAGE_EDIT = "image_edit"
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,7 +96,7 @@ class Fix:
     heard: str
     written: str
     entity_id: str
-    how: str  # SPELLING, DM_FIX or SOUND
+    how: str  # SPELLING, DM_FIX, SOUND, DM_EDIT or IMAGE_EDIT
     # False: from a name DMbot only suggested, or a close look-alike of a confirmed name
     # (#573): the fix is made and the DM screen shows it with Undo (#296)
     sure: bool = True
@@ -222,6 +231,7 @@ def clean(
     people: Iterable[str] = (),
     scene: Collection[str] = (),
     unsure: bool = True,
+    close_calls: CloseCalls | None = None,
 ) -> Cleaned:
     """The line with the names it's sure were misheard fixed, and the fixes made.
     `vocabulary`: what this session's lines said about words (see `Vocabulary`), this
@@ -229,7 +239,10 @@ def clean(
     words), never changed; `scene`: entries said lately (see `SceneTracker.scene`);
     `unsure`: also the fixes the DM screen shows with Undo: from names DMbot only
     suggested, and close look-alikes (False when it won't show them: such a fix is never
-    silent, #504)."""
+    silent, #504). `close_calls`: counts the candidates that land within 0.05 of a likeness
+    threshold (#1577), counts only."""
+    if close_calls is not None:
+        close_calls.start_line()
     words = list(WORD.finditer(heard))
     keys = [name_key(_stem(w.group())) for w in words]
     person_keys = {name_key(p) for p in people} | {
@@ -251,11 +264,12 @@ def clean(
                 or key in lookup.fixes
                 or key in lookup.keep_keys
                 or key in person_keys
+                or is_dm_word(key)  # "DM", "Game Master"...: never fixed into a name (#1547)
             ):
                 known[start:end] = [True] * (end - start)
 
     near = _SecretChecks()
-    by_sound, asking = _by_sound(lookup, heard, words, known, vocabulary, scene)
+    by_sound, asking = _by_sound(lookup, heard, words, known, vocabulary, scene, close_calls)
     by_sound, asking = _not_a_second_person(lookup, heard, by_sound, asking)
     fixes = [
         fix
@@ -311,6 +325,35 @@ def safe_answer(
     return answer in kept and not near.ran_out
 
 
+def matcher_names(lookup: CampaignLookup) -> tuple[list[str], list[str]]:
+    """The campaign's secret names, and its confirmed names that are not secret and not someone at
+    the table, for the shared whole-name matcher (#2087)."""
+    secrets = [n.text for n in lookup.names if n.secret]
+    allowed = [n.text for n in lookup.names if n.confirmed and not n.secret and not n.person]
+    return secrets, allowed
+
+
+def text_names_a_secret(lookup: CampaignLookup, text: str) -> bool:
+    """Whether free text (a player's suggested words, #1491) is, holds, or sounds like a secret
+    name, anywhere in it: word for word, or a run of words about as long as a secret name that
+    sounds like one ("Silas Vain" for the secret "Silas Vane"). When the checks run out, the
+    answer is yes: unsure counts as a secret, since the cleaned transcript is open to the whole
+    server."""
+    if not lookup.secret_lengths:
+        return False
+    secrets, allowed = matcher_names(lookup)
+    if names_a_secret(text, secrets, allowed):  # the shared matcher: titles, plurals, run together
+        return True
+    words = list(WORD.finditer(text))
+    if _secret_spans(lookup, words):
+        return True
+    near = _SecretChecks(left=SECRET_CHECKS_PER_LINE * 8)  # a whole suggestion, not one fix
+    for word in words:
+        if _near_secret(lookup, words, word.start(), word.end(), near):
+            return True
+    return near.ran_out
+
+
 def _around(heard: str, start: int, end: int, reach: int = 30) -> str:
     """A few words either side of the heard words, so the DM sees what was said."""
     left = (
@@ -355,6 +398,13 @@ def _without_secrets(
             if any(begin < b and a < end for a, b in secret)
             or _near_secret(lookup, words, begin, end, checks)
         }
+        if not bad:  # the shared matcher, on the line as written: a fix that made one is taken back
+            secrets, allowed = matcher_names(lookup)
+            if names_a_secret(text, secrets, allowed) and any(
+                names_a_secret(text, [s], allowed) and not names_a_secret(heard, [s], allowed)
+                for s in secrets
+            ):  # secret by secret: a different one in the heard line doesn't excuse a new one
+                bad = set(range(len(fixes)))
         left, near.ran_out = checks.left, near.ran_out or checks.ran_out
         if not bad:
             return text, fixes
@@ -389,6 +439,8 @@ def _known_names(lookup: CampaignLookup, heard: str, person_keys: set[str]) -> l
         if any(span[0] < end and start < span[1] for start, end in taken):
             continue
         taken.append(span)
+        if is_dm_word(_stem(heard[span[0] : span[1]])):
+            continue  # "GM" is the person running the game, never rewritten, even by a DM's rule
         said_words = [name_key(_stem(w)) for w in heard[span[0] : span[1]].split()]
         if name_key(_stem(heard[span[0] : span[1]])) in person_keys or any(
             w in person_keys for w in said_words
@@ -437,6 +489,7 @@ def _by_sound(
     known: list[bool],
     vocabulary: Vocabulary | None,
     scene: Collection[str],
+    close_calls: CloseCalls | None = None,
 ) -> tuple[list[Fix], list[Question]]:
     """Unknown capitalized words (1 to MAX_JOINED in a row) that sound like exactly one
     confirmed name and are spelled much like it. A word starting a sentence has its
@@ -481,7 +534,7 @@ def _by_sound(
                 continue  # only words with a plain space between are one split name
             start, end = words[i].start(), words[run[-1]].end()
             said = _stem(heard[start:end])
-            found = _sounds_like(lookup, said, start)
+            found = _sounds_like(lookup, said, start, close_calls)
             if isinstance(found, Question):
                 # The DM is asked (no scene needed), unless fewer words make a sure fix.
                 asking = asking or (found, size)
@@ -519,7 +572,28 @@ def _stem(word: str) -> str:
     return word
 
 
-def _sounds_like(lookup: CampaignLookup, said: str, start: int) -> Fix | Question | None:
+def _weigh(
+    close_calls: CloseCalls | None,
+    score: float,
+    threshold: float,
+    *,
+    one_word: bool,
+    person: bool,
+    at: int,
+    heard: str,
+    candidate: str,
+) -> None:
+    """Count a candidate near a threshold (#1577), if anyone is counting."""
+    if close_calls is not None:
+        close_calls.note(
+            score, threshold, one_word=one_word, person=person, at=at, heard=heard,
+            candidate=candidate,
+        )  # fmt: skip
+
+
+def _sounds_like(
+    lookup: CampaignLookup, said: str, start: int, close_calls: CloseCalls | None = None
+) -> Fix | Question | None:
     """A fix when the words sound like one confirmed name; a question when they sound
     like two or three (each spelled much alike, none secret, none only suggested)."""
     joined = said.replace(" ", "")
@@ -540,7 +614,7 @@ def _sounds_like(lookup: CampaignLookup, said: str, start: int) -> Fix | Questio
         # A word that sounds like a table person is a person's spelling to fix, never a
         # character, and never both: where it could be either, it is left as heard, whatever
         # the score ("Mike" the player and "Mikal" the character stay apart, #1208).
-        return None if by_entity else _person_fix(people, said, start)
+        return None if by_entity else _person_fix(people, said, start, close_calls)
     if not by_entity:
         return None
     if len(by_entity) == 1:
@@ -548,7 +622,15 @@ def _sounds_like(lookup: CampaignLookup, said: str, start: int) -> Fix | Questio
         usable = [e for e in names if e.confirmed]
         if usable:
             best = max(usable, key=lambda e: (likeness(said, e.text), e.text))
-            if likeness(said, best.text) < MIN_LIKENESS or best.text == said:
+            score = likeness(said, best.text)
+            # One word alone must be spelled closer (`_one_word_ok`), so that is the bar that
+            # decides it; a joined name is decided by MIN_LIKENESS (#1577).
+            one_word = " " not in said
+            _weigh(
+                close_calls, score, MIN_LIKENESS_ONE_WORD if one_word else MIN_LIKENESS,
+                one_word=one_word, person=False, at=start, heard=said, candidate=best.text,
+            )  # fmt: skip
+            if score < MIN_LIKENESS or best.text == said:
                 return None
             return Fix(start, start + len(said), said, best.text, best.entity_id, SOUND)
         # Only a name DMbot suggested: never a silent fix. Spelled very alike, it's fixed
@@ -585,7 +667,12 @@ def _people_sounding_like(lookup: CampaignLookup, joined: str) -> dict[str, dict
     return found
 
 
-def _person_fix(people: dict[str, dict[str, NameEntry]], said: str, start: int) -> Fix | None:
+def _person_fix(
+    people: dict[str, dict[str, NameEntry]],
+    said: str,
+    start: int,
+    close_calls: CloseCalls | None = None,
+) -> Fix | None:
     """Fix a person's spelling when the words sound like exactly one person's confirmed name
     and are spelled much like it. Two people, or a poor likeness, leave the words alone (the
     Cleaner never asks the DM about people)."""
@@ -596,6 +683,12 @@ def _person_fix(people: dict[str, dict[str, NameEntry]], said: str, start: int) 
     # (A fix of several words below NEAR_CERTAIN is made unsure by the caller, like a
     # character's, so it shows with Undo.)
     score = likeness(said, best.text)
+    one_word = " " not in said
+    # The bar that decides: one word alone is held to MIN_LIKENESS_ONE_WORD (below).
+    _weigh(
+        close_calls, score, MIN_LIKENESS_ONE_WORD if one_word else MIN_LIKENESS,
+        one_word=one_word, person=True, at=start, heard=said, candidate=best.text,
+    )  # fmt: skip
     if score < MIN_LIKENESS or best.text == said:
         return None
     if " " not in said:

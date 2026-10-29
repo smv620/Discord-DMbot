@@ -21,11 +21,11 @@ import secrets
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 
+from dmbot.discord_limits import MESSAGE_MAX, fit_message
 from dmbot.transcript.topics import Waiting
 
 SHOWN = 10  # runs in the message (the newest); older ones can't be put back here
 WORDS_MAX = 60  # the first words shown for a run
-MESSAGE_MAX = 2000  # Discord's limit for one message
 HEADER = (
     "🙈 **Left out as off-topic**: kept out of the cleaned transcript. Game talk? Press "
     "its Put it back."
@@ -76,14 +76,14 @@ class Run:
         return self.lines[0].started_ms
 
 
-def runs_of(lines: Iterable[Waiting], hidden: set[tuple[int, int]]) -> list[list[Waiting]]:
-    """The `hidden` lines (speaker, start) of one check, split into runs: one person's
+def runs_of(lines: Iterable[Waiting], hidden: set[tuple[int, int, bool]]) -> list[list[Waiting]]:
+    """The `hidden` lines (speaker, start, typed) of one check, split into runs: one person's
     lines in a row. `lines`: all of that check's lines, in order; any other line ends a
     run, theirs or someone else's."""
     runs: list[list[Waiting]] = []
     in_run = False
     for line in lines:
-        if (line.speaker, line.started_ms) not in hidden:
+        if (line.speaker, line.started_ms, line.typed) not in hidden:
             in_run = False
         elif in_run and runs[-1][-1].speaker == line.speaker:
             runs[-1].append(line)
@@ -103,7 +103,8 @@ class LeftOut:
     def add(self, hidden: list[Waiting], checked: Iterable[Waiting] = ()) -> list[Run]:
         """The lines one check left out. `checked`: all of that check's lines (these
         included), so any other line said in between ends a run. The runs added."""
-        keys = {(w.speaker, w.started_ms) for w in hidden}
+        # typed too: a typed line and a spoken one can share a millisecond (#2447)
+        keys = {(w.speaker, w.started_ms, w.typed) for w in hidden}
         order = sorted(list(checked) or hidden, key=lambda w: w.started_ms)
         added = []
         for lines in runs_of(order, keys):
@@ -161,4 +162,4 @@ def message_text(
     while kept > 1 and len(HEADER) + sum(len(x) + 1 for x in lines[-kept:]) > MESSAGE_MAX:
         kept -= 1
     shown = runs[-(kept - len(footer)) :] if kept > len(footer) else []
-    return "\n".join([HEADER, *lines[-kept:]])[:MESSAGE_MAX], shown
+    return fit_message("\n".join([HEADER, *lines[-kept:]])), shown

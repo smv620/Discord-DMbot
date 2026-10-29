@@ -1,32 +1,65 @@
 ---
 import Base from "../layouts/Base.astro";
 import { RECAPS_LIVE, recapsHeading } from "../content/recap-words";
-import { recapSteps, accountSteps, dmSteps, quickAnswers, quickAnswersHeading, emailNote, emailSteps, gettingHelp, helpHeading, helpIntro, playerNote, playerSteps } from "../content/help";
+import { consentPromises, consentPromisesLead } from "../content/consent-promises";
+import { aliasesFor, sectionIds, stepCounter } from "../content/help-anchors";
+import { accountHeading, backToTop, dmHeading, emailsHeading, onThisPage, onThisPageHeading, playerHeading, recapSteps, accountSteps, dmSteps, quickAnswers, quickAnswersHeading, snags, snagsHeading, emailNote, emailSteps, gettingHelp, helpHeading, helpIntro, playerNote, playerSteps } from "../content/help";
+
+// Every section has an address made from its words, and every step one made from its section and its
+// place in it (game-master-3). Steps are numbered in the order they are drawn below (#1946).
+const dmStep = stepCounter(sectionIds.gameMaster);
+const playerStep = stepCounter(sectionIds.players);
+const accountStep = stepCounter(sectionIds.account);
+const emailStep = stepCounter(sectionIds.emails);
+const snagStep = stepCounter(sectionIds.snags);
+const helpStep = stepCounter(sectionIds.gettingHelp);
 ---
 
 <Base
   title="Help"
   description="How to use DMbot in Discord, step by step, for game masters and players."
 >
-  <h1>{helpHeading}</h1>
+  <h1 id="top">{helpHeading}</h1>
   <p class="lead muted">{helpIntro}</p>
   <p class="muted">
-    Looking for something new? See <a href="/whats-new">what's new</a>. Need more help? See{" "}
+    Want the big picture? See <a href="/how-it-works">how DMbot works</a>. Looking for something new? See <a href="/whats-new">what's new</a>. Need more help? See{" "}
     <a href={`#${gettingHelp.id}`}>getting help</a>.
   </p>
 
-  <section aria-labelledby="dm-heading">
-    <h2 id="dm-heading">For the game master</h2>
+  <!-- The search box needs JavaScript, so it stays hidden until the script below shows it: without
+       JavaScript the page is exactly the long page it was (#1939). -->
+  <form class="search" role="search" data-help-search hidden>
+    <label for="help-search">Search help</label>
+    <input id="help-search" type="search" autocomplete="off" />
+    <p id="help-search-status" role="status" aria-live="polite" class="muted"></p>
+    <button type="button" class="button" data-help-search-clear hidden>See all steps</button>
+  </form>
+
+  <!-- Speaks "Link copied" when a Copy link button is pressed; nothing to see until then. -->
+  <p id="help-copy-status" class="visually-hidden" role="status" aria-live="polite"></p>
+
+  <nav aria-labelledby="contents-heading">
+    <h2 id="contents-heading">{onThisPageHeading}</h2>
+    <ul>
+      {onThisPage(RECAPS_LIVE, recapsHeading).map((c) => <li><a href={`#${c.id}`}>{c.label}</a></li>)}
+    </ul>
+  </nav>
+
+  <section aria-labelledby="dm-heading" id={sectionIds.gameMaster}>
+    {aliasesFor(sectionIds.gameMaster).map((a) => <span id={a} />)}
+    <h2 id="dm-heading"><a href={`#${sectionIds.gameMaster}`}>{dmHeading}</a></h2>
+    <button type="button" class="copy-link" data-copy-link={sectionIds.gameMaster} aria-label={`Copy link to this section: ${dmHeading}`} hidden>Copy link</button>
     <ol>
       {
         dmSteps.map((s) => (
-          <li>
-            {s.text}
-            {s.text.startsWith("Add DMbot") && (
+          <li id={dmStep()}>
+            {s.text.startsWith("Add DMbot") ? (
               <>
-                {" "}
-                <a href="/install">Add to Discord</a>
+                Add DMbot to your Discord server from the <a href="/install">Add to Discord</a> page. Send your
+                players to <a href="/players">getdmbot.com/players</a>.
               </>
+            ) : (
+              s.text
             )}
           </li>
         ))
@@ -34,7 +67,7 @@ import { recapSteps, accountSteps, dmSteps, quickAnswers, quickAnswersHeading, e
     </ol>
     <h3 id="quick-heading">{quickAnswersHeading}</h3>
     <ul aria-labelledby="quick-heading">
-      {quickAnswers.map((s) => <li>{s.text}</li>)}
+      {quickAnswers.map((s) => <li id={dmStep()}>{s.text}</li>)}
     </ul>
     {
       RECAPS_LIVE && (
@@ -42,28 +75,50 @@ import { recapSteps, accountSteps, dmSteps, quickAnswers, quickAnswersHeading, e
           <h3 id="recaps-heading">{recapsHeading}</h3>
           <ul aria-labelledby="recaps-heading">
             {recapSteps.map((s) => (
-              <li>{s.text}</li>
+              <li id={dmStep()}>{s.text}</li>
             ))}
           </ul>
         </>
       )
     }
+    <p class="back"><a href="#top">{backToTop}</a></p>
   </section>
 
-  <section aria-labelledby="player-heading">
-    <h2 id="player-heading">For players</h2>
+  <section aria-labelledby="player-heading" id={sectionIds.players}>
+    {aliasesFor(sectionIds.players).map((a) => <span id={a} />)}
+    <h2 id="player-heading"><a href={`#${sectionIds.players}`}>{playerHeading}</a></h2>
+    <button type="button" class="copy-link" data-copy-link={sectionIds.players} aria-label={`Copy link to this section: ${playerHeading}`} hidden>Copy link</button>
+    <p>{consentPromisesLead}</p>
+    <ul>
+      {consentPromises.map((p) => <li id={playerStep()}>{p.text}</li>)}
+    </ul>
     <ol>
-      {playerSteps.map((s) => <li>{s.text}</li>)}
+      {
+        playerSteps.map((s) => (
+          <li id={playerStep()}>
+            {s.text}
+            {s.link && (
+              <>
+                {" "}
+                <a href={s.link.href}>{s.link.text}</a>
+              </>
+            )}
+          </li>
+        ))
+      }
     </ol>
     <p class="muted">{playerNote}</p>
+    <p class="back"><a href="#top">{backToTop}</a></p>
   </section>
 
-  <section aria-labelledby="account-heading">
-    <h2 id="account-heading">Your account</h2>
+  <section aria-labelledby="account-heading" id={sectionIds.account}>
+    {aliasesFor(sectionIds.account).map((a) => <span id={a} />)}
+    <h2 id="account-heading"><a href={`#${sectionIds.account}`}>{accountHeading}</a></h2>
+    <button type="button" class="copy-link" data-copy-link={sectionIds.account} aria-label={`Copy link to this section: ${accountHeading}`} hidden>Copy link</button>
     <ol>
       {
         accountSteps.map((s) => (
-          <li>
+          <li id={accountStep()}>
             {s.text.startsWith("Forgot") ? (
               <>
                 {s.text.split("open the Discord sign-in page")[0]}open the{" "}
@@ -79,26 +134,62 @@ import { recapSteps, accountSteps, dmSteps, quickAnswers, quickAnswersHeading, e
             ) : (
               s.text
             )}
+            {s.link && (
+              <>
+                {" "}
+                <a href={s.link.href} rel="noopener noreferrer">{s.link.text}</a>
+              </>
+            )}
           </li>
         ))
       }
     </ol>
+    <p class="back"><a href="#top">{backToTop}</a></p>
   </section>
 
-  <section aria-labelledby="emails-heading">
-    <h2 id="emails-heading">Emails from DMbot</h2>
+  <section aria-labelledby="emails-heading" id={sectionIds.emails}>
+    {aliasesFor(sectionIds.emails).map((a) => <span id={a} />)}
+    <h2 id="emails-heading"><a href={`#${sectionIds.emails}`}>{emailsHeading}</a></h2>
+    <button type="button" class="copy-link" data-copy-link={sectionIds.emails} aria-label={`Copy link to this section: ${emailsHeading}`} hidden>Copy link</button>
     <ol>
-      {emailSteps.map((s) => <li>{s.text}</li>)}
+      {emailSteps.map((s) => <li id={emailStep()}>{s.text}</li>)}
     </ol>
     <p class="muted">{emailNote}</p>
+    <p class="back"><a href="#top">{backToTop}</a></p>
+  </section>
+
+  <section aria-labelledby="snags-heading" id={sectionIds.snags}>
+    {aliasesFor(sectionIds.snags).map((a) => <span id={a} />)}
+    <h2 id="snags-heading"><a href={`#${sectionIds.snags}`}>{snagsHeading}</a></h2>
+    <button type="button" class="copy-link" data-copy-link={sectionIds.snags} aria-label={`Copy link to this section: ${snagsHeading}`} hidden>Copy link</button>
+    <ol>
+      {
+        snags.map((s) => (
+          <li id={snagStep()}>
+            <strong>{s.question}</strong>
+            <br />
+            {s.text}
+            {s.link && (
+              <>
+                {" "}
+                <a href={s.link.href}>{s.link.text}</a>.
+              </>
+            )}
+          </li>
+        ))
+      }
+    </ol>
+    <p class="back"><a href="#top">{backToTop}</a></p>
   </section>
 
   <section aria-labelledby="getting-help-heading" id={gettingHelp.id}>
-    <h2 id="getting-help-heading">{gettingHelp.heading}</h2>
+    {aliasesFor(gettingHelp.id).map((a) => <span id={a} />)}
+    <h2 id="getting-help-heading"><a href={`#${sectionIds.gettingHelp}`}>{gettingHelp.heading}</a></h2>
+    <button type="button" class="copy-link" data-copy-link={sectionIds.gettingHelp} aria-label={`Copy link to this section: ${gettingHelp.heading}`} hidden>Copy link</button>
     <ol>
       {
         gettingHelp.items.map((item) => (
-          <li>
+          <li id={helpStep()}>
             <strong>{item.lead}</strong>{" "}
             {item.parts.map((part) =>
               typeof part === "string" ? part : <a href={part.href}>{part.text}</a>,
@@ -114,6 +205,19 @@ import { recapSteps, accountSteps, dmSteps, quickAnswers, quickAnswersHeading, e
   </p>
 </Base>
 
+<script>
+  // Nothing typed here leaves the page: no request, no storage, no address change (#1939).
+  import { wire } from "../../scripts/helpsearch.mjs";
+
+  import { wireCopy } from "../../scripts/helplinks.mjs";
+
+  const form = document.querySelector<HTMLFormElement>("[data-help-search]");
+  const page = document.querySelector("main");
+  if (form && page) wire(form, page);
+  const copied = document.querySelector<HTMLElement>("#help-copy-status");
+  if (page && copied) wireCopy(page, copied, { clipboard: navigator.clipboard, location });
+</script>
+
 <style>
   ol {
     max-width: var(--text-width);
@@ -126,5 +230,127 @@ import { recapSteps, accountSteps, dmSteps, quickAnswers, quickAnswersHeading, e
 
   section {
     margin-top: var(--space-8);
+  }
+
+  nav ul {
+    max-width: var(--text-width);
+    padding-left: var(--space-6);
+  }
+
+  nav li {
+    margin-bottom: var(--space-2);
+  }
+
+  nav a {
+    display: inline-flex;
+    align-items: center;
+    min-height: var(--tap); /* a thumb-sized target for a DM tapping mid-session */
+  }
+
+  .back {
+    margin-top: var(--space-4);
+  }
+
+  .visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    border: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  /* The heading is a link to itself, so "/help#game-master" can be pasted into Discord. */
+  /* The Copy link button sits beside its heading; both are direct children of the section. */
+  section > h2 {
+    display: inline-block;
+    margin-right: var(--space-4);
+    vertical-align: middle;
+  }
+
+  section > h2 a {
+    color: inherit;
+    text-decoration: none;
+  }
+
+  section > h2 a:hover {
+    text-decoration: underline;
+  }
+
+  .copy-link {
+    vertical-align: middle;
+    min-height: var(--tap);
+    padding: var(--space-1) var(--space-3);
+    border: 1px solid var(--control-edge);
+    border-radius: var(--radius);
+    background: var(--bg);
+    color: var(--text);
+    font: inherit;
+    font-size: var(--text-sm);
+    cursor: pointer;
+  }
+
+  .copy-link[hidden] {
+    display: none;
+  }
+
+  /* The place a link led to. Typing in the search box clears it (data-quiet on main). */
+  section:target,
+  li:target {
+    scroll-margin-top: var(--space-6);
+  }
+
+  section:target > h2,
+  h2:target,
+  li:target {
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+    border-radius: var(--radius);
+  }
+
+  /* (main belongs to the page layout, not this file, so it is named as a global.) */
+  :global(main[data-quiet]) :target,
+  :global(main[data-quiet]) :target > h2 {
+    background: none;
+  }
+
+  .search {
+    display: grid;
+    gap: var(--space-2);
+    max-width: var(--text-width);
+    margin: var(--space-6) 0;
+  }
+
+  /* The grid and the button's own display would otherwise win over the hidden attribute. */
+  .search[hidden],
+  .search [hidden] {
+    display: none;
+  }
+
+  .search label {
+    font-weight: 600;
+  }
+
+  .search input {
+    width: 100%;
+    box-sizing: border-box;
+    min-height: var(--tap);
+    padding: var(--space-2) var(--space-3);
+    border: 1px solid var(--control-edge);
+    border-radius: var(--radius);
+    background: var(--bg);
+    color: var(--text);
+    font: inherit;
+  }
+
+  .search p {
+    margin: 0;
+    min-height: 1.5em; /* the page doesn't jump when the count appears */
+  }
+
+  .search .button {
+    justify-self: start;
   }
 </style>

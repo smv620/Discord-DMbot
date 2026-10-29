@@ -34,13 +34,18 @@ whisper = [
 # The session twin (python -m dmbot.devtools.replay, #299) reading m4a/mp3 recordings:
 # PyAV is a normal dependency now (the DM sidebar reads voice messages), so this adds nothing.
 twin = []
+# Rebuilding the SRD data files (python -m dmbot.devtools.srd, #1892): pypdfium2 reads the PDF's
+# text in full; pypdf and pdfminer.six leave parts of it out. Never needed to run the bot.
+srd = ["pypdfium2>=4.30"]
 dev = [
     "numpy>=1.26",
     "pytest>=8",
     "pytest-xdist>=3.5",  # CI runs the tests on every core (#1323); each test has its own schema
+    "pytest-cov>=5",  # coverage, reported in CI but not enforced (#1858)
     "ruff>=0.8",
     "mypy>=1.13",
     "httpx>=0.27",  # testing the web API in-process
+    "import-linter>=2.0",  # feature boundaries, checked in CI (#2130)
 ]
 
 [project.scripts]
@@ -52,7 +57,7 @@ where = ["src"]
 [tool.setuptools.package-data]
 # The plan facts (#432, #437): a copy of web/src/content/plans.json; a test keeps them equal.
 # The rules data (#866): the SRD 5.2.1's spells and conditions, and its attribution.
-dmbot = ["plans.json", "rules/data/srd52/*.json", "rules/data/srd52/*.md", "rules/data/srd51/*.json", "rules/data/srd51/*.md", "sidebar/*.md"]
+dmbot = ["plans.json", "rules/data/srd52/*.json", "rules/data/srd52/*.md", "rules/data/srd51/*.json", "rules/data/srd51/*.md", "sidebar/*.md", "recaps/style_examples/*.txt", "devtools/golden/story/*.txt", "devtools/golden/recap/*.json"]
 
 [tool.ruff]
 line-length = 100
@@ -70,8 +75,48 @@ files = ["src", "tests"]
 mypy_path = "src"
 
 [[tool.mypy.overrides]]
-module = ["dotenv", "faster_whisper", "av"]
+module = ["dotenv", "faster_whisper", "av", "pypdfium2", "pypdfium2.raw"]
 ignore_missing_imports = true
+
+# Feature boundaries (#2130, docs/PLAN.md "A worker container, and a smaller bot.py"). Run
+# `lint-imports` in core/. Each ignored import below is an exception that exists today; every one
+# cites #2827, which removes them, so the list only shrinks. A new forbidden import fails CI.
+[tool.importlinter]
+root_package = "dmbot"
+
+[[tool.importlinter.contracts]]
+name = "Features never import bot.py"
+type = "forbidden"
+source_modules = [
+    "dmbot.recaps", "dmbot.memory", "dmbot.rules", "dmbot.sidebar", "dmbot.transcript",
+    "dmbot.web", "dmbot.campaigns", "dmbot.names", "dmbot.timebot", "dmbot.dm_screen",
+    "dmbot.audio", "dmbot.transcription",
+]
+forbidden_modules = ["dmbot.bot"]
+allow_indirect_imports = true
+ignore_imports = [
+    "dmbot.recaps.discord -> dmbot.bot",  # type-only (#2827)
+]
+
+[[tool.importlinter.contracts]]
+name = "Domain packages never import the Discord screens (ui)"
+type = "forbidden"
+source_modules = [
+    "dmbot.memory", "dmbot.rules", "dmbot.transcript", "dmbot.campaigns", "dmbot.names",
+    "dmbot.timebot", "dmbot.sidebar", "dmbot.audio", "dmbot.transcription", "dmbot.web",
+]
+forbidden_modules = ["dmbot.ui"]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "Lower packages never import recaps or web"
+type = "forbidden"
+source_modules = [
+    "dmbot.memory", "dmbot.rules", "dmbot.transcript", "dmbot.campaigns", "dmbot.names",
+    "dmbot.timebot", "dmbot.audio", "dmbot.transcription",
+]
+forbidden_modules = ["dmbot.recaps", "dmbot.web"]
+allow_indirect_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

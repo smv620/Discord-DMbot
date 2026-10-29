@@ -6,22 +6,45 @@ never in a transcript and never shown to players. Grouped by who they are about,
 
 from __future__ import annotations
 
+import asyncio
+import logging
 import re
 from collections.abc import Mapping
 from typing import Any
 
 import discord
 
-from dmbot.memory.claims import GONE, ODD_NOW, PAGE, STOPPED_NOW, Claim, ClaimStore
-from dmbot.memory.models import HOW_DM, MemoryRuleError, name_key
+from dmbot.memory.claims import (
+    GONE,
+    ODD_NOW,
+    PAGE,
+    STOPPED_NOW,
+    Claim,
+    ClaimStore,
+    Extracted,
+    condition_of,
+)
+from dmbot.memory.models import DM, HOW_DM, MemoryRuleError, TooLateToUndo, name_key
 from dmbot.ui.dmbot_commands import _bot, _Button, _Menu, _replace, _send, _tell
 from dmbot.ui.name_card import FLAG_WHY
 from dmbot.ui.names import _campaign_for, _md, _memory
 
 NOTHING_WAITING = "✅ Nothing left to check. DMbot will ask again after the next session."
 ODD_PAIR = "DMbot noticed something odd about it"
-YES, NO = "✅", "❌"
+YES, NO, HIDE = "✅", "❌", "🤫"
 _FINAL = (GONE, STOPPED_NOW, ODD_NOW)  # answers that end a question without a yes or a no
+
+
+def _is_condition(claim: Claim) -> bool:
+    return (
+        condition_of(
+            Extracted(
+                claim.subject, claim.relationship, claim.object, claim.details, claim.lines,
+                claim.how,
+            )
+        )
+        is not None
+    )  # fmt: skip
 
 
 def waiting_text(count: int) -> str:
@@ -53,7 +76,7 @@ def page_text(page: list[Claim], total: int, answered: Mapping[str, str] | None 
     answered = answered or {}
     lines = [
         f"**What was said at the table.** Top row {YES}: true in your game. "
-        f"Bottom row {NO}: not true."
+        f"Middle row {HIDE}: true, but keep it secret from your players. Bottom row {NO}: not true."
     ]
     last = ""
     for number, claim in enumerate(page, 1):
@@ -65,6 +88,31 @@ def page_text(page: list[Claim], total: int, answered: Mapping[str, str] | None 
     if total > len(page):
         lines.append(f"\n_{total - len(page)} more. Answer these and the next ones appear._")
     return "\n".join(lines)
+
+
+log = logging.getLogger(__name__)
+_WATCHES: set[asyncio.Task[None]] = set()  # kept so a task isn't dropped while it runs
+
+
+async def _watch_story(
+    interaction: discord.Interaction, campaign: Any, fact_id: str | None
+) -> None:
+    """A condition the DM just confirmed may have left their adventure behind (#1729): the check
+    for that one condition. It never makes the answer fail."""
+    bot = _bot(interaction)
+
+    async def run() -> None:
+        try:
+            await bot.watch_story(
+                campaign.guild_id, campaign.id, campaign.dm_screen_channel_id, state_id=fact_id
+            )
+        except Exception:
+            log.exception("Story watch after a confirmed fact failed")
+
+    # In the background: the DM's answer must not wait on it (Discord gives three seconds).
+    task = asyncio.create_task(run())
+    _WATCHES.add(task)
+    task.add_done_callback(_WATCHES.discard)
 
 
 class ClaimsReviewButton(
@@ -130,6 +178,7 @@ class ClaimsReview(_Menu):
         self.page: list[Claim] = []
         self.total = 0
         self.answered: dict[str, str] = {}
+        self.undoable: dict[str, int] = {}  # claim → the batch its fact was written in
 
     async def current_text(self, interaction: discord.Interaction) -> str | None:
         """A fresh page (the oldest waiting questions), or None when none are left."""
@@ -140,6 +189,7 @@ class ClaimsReview(_Menu):
         agreed = await _bot(interaction).consent.consenting(guild.id)
         waiting = await ClaimStore(memory).waiting(guild.id, self.campaign_id, opted_in=agreed)
         self.page, self.total, self.answered = waiting[:PAGE], len(waiting), {}
+        self.undoable = {}
         if not self.page:
             self.clear_items()
             return None
@@ -158,24 +208,79 @@ class ClaimsReview(_Menu):
                     disabled=gone,
                 )
             )
+            if not _is_condition(claim):  # a state ("is dead") has no secret flag
+                self.add_item(
+                    _Button(
+                        self._answer(claim.id, yes=True, secret=True),
+                        label=f"{HIDE} {number}",
+                        style=discord.ButtonStyle.secondary,
+                        row=1,
+                        disabled=gone,
+                    )
+                )
             self.add_item(
                 _Button(
                     self._answer(claim.id, yes=False),
                     label=f"{NO} {number}",
                     style=discord.ButtonStyle.secondary,
-                    row=1,
+                    row=2,
                     disabled=gone,
                 )
             )
+        for number, claim in enumerate(self.page, 1):
+            if claim.id in self.undoable:  # a fact the players may now be shown can be taken back
+                self.add_item(
+                    _Button(
+                        self._undo(claim.id),
+                        label=f"↩️ {number}",
+                        style=discord.ButtonStyle.secondary,
+                        row=3,
+                    )
+                )
         return page_text(self.page, self.total, self.answered)
 
-    def _answer(self, claim_id: str, *, yes: bool) -> Any:
+    def _undo(self, claim_id: str) -> Any:
         async def handler(interaction: discord.Interaction) -> None:
-            await self._decide(interaction, claim_id, yes)
+            await self._take_back(interaction, claim_id)
 
         return handler
 
-    async def _decide(self, interaction: discord.Interaction, claim_id: str, yes: bool) -> None:
+    async def _take_back(self, interaction: discord.Interaction, claim_id: str) -> None:
+        """↩️ on a remembered fact: the change log's Undo for exactly that answer. The question
+        is asked again with the next ones."""
+        campaign = await _campaign_for(interaction, self.campaign_id)
+        memory = _memory(interaction)
+        batch = self.undoable.get(claim_id)
+        claim = next((c for c in self.page if c.id == claim_id), None)
+        if campaign is None or memory is None or batch is None or claim is None:
+            return
+        try:
+            await memory.undo(
+                campaign.guild_id,
+                campaign.id,
+                batch,
+                source=DM,
+                after=lambda w: ClaimStore.reopen_in(w, claim_id),
+            )
+        except (MemoryRuleError, TooLateToUndo) as exc:
+            await _tell(interaction, str(exc) or GONE)
+            return
+        del self.undoable[claim_id]
+        self.answered[claim_id] = f"↩️ Taken back: {statement(claim)}. DMbot will ask again."
+        lookup = getattr(_bot(interaction), "lookup", None)
+        if lookup is not None:
+            lookup.drop([campaign.id])
+        await _replace(interaction, self._render(), self)
+
+    def _answer(self, claim_id: str, *, yes: bool, secret: bool = False) -> Any:
+        async def handler(interaction: discord.Interaction) -> None:
+            await self._decide(interaction, claim_id, yes, secret=secret)
+
+        return handler
+
+    async def _decide(
+        self, interaction: discord.Interaction, claim_id: str, yes: bool, *, secret: bool = False
+    ) -> None:
         campaign = await _campaign_for(interaction, self.campaign_id)  # asked again each press
         memory = _memory(interaction)
         guild = interaction.guild
@@ -189,8 +294,17 @@ class ClaimsReview(_Menu):
             if yes:
                 # Who may be recorded is asked again now: someone may have stopped meanwhile.
                 agreed = await _bot(interaction).consent.consenting(guild.id)
-                result = await claims.confirm(guild.id, self.campaign_id, claim_id, opted_in=agreed)
-                done = f"{YES} Remembered: {saying}."
+                result = await claims.confirm(
+                    guild.id, self.campaign_id, claim_id, opted_in=agreed, secret=secret
+                )
+                if result.batch is not None:
+                    self.undoable[claim_id] = result.batch
+                done = (
+                    f"{HIDE} Remembered, and kept secret from your players: {saying}."
+                    if secret
+                    else f"{YES} Remembered: {saying}."
+                )
+                await _watch_story(interaction, campaign, result.claim.fact_id)
                 if result.flags:
                     why = FLAG_WHY.get(result.flags[0].kind) or ODD_PAIR
                     note = f"\n⚠️ {why}. It's saved, and DMbot will ask you about it."

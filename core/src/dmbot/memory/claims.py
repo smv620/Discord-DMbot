@@ -17,10 +17,10 @@ import json
 import re
 from collections import Counter
 from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
-from dataclasses import dataclass, field
-from typing import Any
+from dataclasses import dataclass, field, replace
+from typing import TYPE_CHECKING, Any
 
-from dmbot.memory import link
+from dmbot.memory import evidence, forget_readings, link
 from dmbot.memory._changes import ALIASES, CLAIMS, ENTITIES, Changes
 from dmbot.memory.models import (
     CLAIM_CONFIRMED,
@@ -59,6 +59,12 @@ from dmbot.memory.ontology import (
     resolve_kind,
 )
 from dmbot.memory.store import MemoryStore, _load_ontology, _new_alias
+from dmbot.memory.voice import EFFECT, EFFECT_NOTE, OWN, PARTY, PARTY_REASON, voice
+from dmbot.names import not_names
+from dmbot.word_end import at_word_end
+
+if TYPE_CHECKING:  # (placing builds on this module, so it is only named for the checker)
+    from dmbot.memory.placing import Recorded
 
 EXTRACTOR = "extractor"  # the memory source of everything this module writes on its own
 MAX_CLAIMS = 60  # for one call: the same cap as the draft extractor's answer check
@@ -70,6 +76,7 @@ PAGE = 5
 
 NOT_THE_DM = "Only the DM can answer that."
 GONE = "DMbot doesn't have that question any more."
+A_READING = "That is a belief to place, not a fact to keep."
 
 # Why a claim was dropped, in words the numbers (and a curious DM) can read.
 PLAN_REASON = "a plan, not something that happened"
@@ -116,6 +123,9 @@ class Extracted:
     details: str
     lines: tuple[str, ...]
     how: str
+    # A belief for the DM to place (#2412, `memory.readings`), as plain words and numbers, or None
+    # for a claim that is just something said.
+    reading: Mapping[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -139,6 +149,7 @@ class Claim:
     created_at: int
     decided_at: int | None
     fact_id: str | None
+    reading: Mapping[str, Any] | None = None
 
 
 def claim_of(r: Mapping[str, Any]) -> Claim:
@@ -147,7 +158,7 @@ def claim_of(r: Mapping[str, Any]) -> Claim:
         r["id"], r["subject"], r["relationship"], r["object"], r["details"], r["how"],
         tuple(r["lines"]), tuple(r["speaker_ids"]), r["source"], r["prompt_version"], r["model"],
         r["status"], r["reason"], r["session_started_at"], r["created_at"], r["decided_at"],
-        r["fact_id"],
+        r["fact_id"], r.get("reading"),
     )  # fmt: skip
 
 
@@ -171,15 +182,44 @@ class Proposed:
 class Confirmed:
     claim: Claim
     flags: tuple[Flag, ...]  # problems the store's checks raised for the DM
+    batch: int | None = None  # the change-log batch, for the ↩️ Undo of a fact (#2410)
 
 
-def _field(value: object) -> str | None:
+def _field(value: object, *, name: bool = False) -> str | None:
     """A short piece of the extractor's answer: one line of text within the limit, or None
     when it is not text or is empty."""
     if not isinstance(value, str):
         return None
     text = " ".join(value.split())
-    return text[:FIELD_MAX] if text else None
+    if name:  # a name is never shortened (#2607): a cut one is another name
+        return text if 0 < len(text) <= FIELD_MAX else None
+    return at_word_end(text, FIELD_MAX) if text else None
+
+
+_LIST_START = re.compile(r'\{\s*"claims"\s*:\s*\[')
+
+
+def _whole_items(text: str) -> list[object]:
+    """The complete claims at the start of an answer that was cut off in the middle of its list
+    (Haiku 5.5 writes longer, and a batch can end mid-claim): every item before the broken one is
+    as good as in a whole answer, so it is kept instead of losing the batch (#2152). Only an
+    answer whose first `{` opens the claims list and whose list never closes is read this way: a
+    list that ended properly in an answer that is broken elsewhere stays rejected, and words
+    before the JSON (which may quote a transcript) are never searched for a list."""
+    first = text.find("{")
+    found = _LIST_START.match(text, first) if first >= 0 else None
+    if found is None:
+        return []
+    decoder, at = json.JSONDecoder(), found.end()
+    items: list[object] = []
+    while True:
+        while at < len(text) and text[at] in " \t\r\n,":
+            at += 1
+        try:
+            item, at = decoder.raw_decode(text, at)
+        except ValueError:  # the cut item, or the end of the list
+            return [] if text[at:].lstrip().startswith("]") else items
+        items.append(item)
 
 
 def parse_answer(text: str, refs: Collection[str]) -> tuple[list[Extracted], int]:
@@ -192,19 +232,27 @@ def parse_answer(text: str, refs: Collection[str]) -> tuple[list[Extracted], int
     except ValueError:
         data = None
     items = data.get("claims") if isinstance(data, dict) else None
+    cut = 0
     if not isinstance(items, list):
-        return [], 1
+        items = _whole_items(text) if data is None else []
+        if not items:
+            return [], 1
+        cut = 1  # the item the answer broke off in counts as malformed
     known = set(refs)
     out: list[Extracted] = []
-    bad = max(0, len(items) - MAX_CLAIMS)
+    bad = cut + max(0, len(items) - MAX_CLAIMS)
     for item in items[:MAX_CLAIMS]:
         if not isinstance(item, dict):
             bad += 1
             continue
-        subject, relationship = _field(item.get("subject")), _field(item.get("relationship"))
-        obj = _field(item.get("object")) or ""
-        details = " ".join(str(item.get("details") or "").split())[:DETAIL_MAX]
+        subject = _field(item.get("subject"), name=True)
+        relationship = _field(item.get("relationship"))
+        obj = _field(item.get("object"), name=True) or ""
+        said = item.get("details")  # words only: a list or a number is no detail
+        details = at_word_end(" ".join(said.split()), DETAIL_MAX) if isinstance(said, str) else ""
         how = item.get("how")
+        if isinstance(how, str):  # "Heard", " heard " and "heard." all mean the same word
+            how = how.strip().rstrip(".").lower()
         cited = item.get("lines")
         lines = tuple(
             dict.fromkeys(
@@ -219,6 +267,12 @@ def parse_answer(text: str, refs: Collection[str]) -> tuple[list[Extracted], int
         assert isinstance(how, str)
         out.append(Extracted(subject, relationship, obj, details, lines, how))
     return out, bad
+
+
+def reads_like_instruction(text: str) -> bool:
+    """Is this text an instruction to DMbot in a story's clothes? (Also used on the story plan
+    read from an adventure, #1714: a book's text is data, as a transcript's is.)"""
+    return bool(_INSTRUCTION.search(text))
 
 
 def injection_like(claim: Extracted) -> bool:
@@ -304,6 +358,8 @@ class Names:
 
     by_key: Mapping[str, tuple[tuple[str, str], ...]]
     secret: frozenset[str] = frozenset()  # keys that only a secret name has
+    # Each character's (role, its player) by entry id, for who speaks for it (#2562)
+    roles: Mapping[str, tuple[str | None, int | None]] = field(default_factory=dict)
 
     def one(self, name: str) -> tuple[str, str] | str:
         """The entry (id, kind), or the reason there isn't exactly one."""
@@ -331,7 +387,12 @@ def names_of(entities: Sequence[Mapping[str, Any]], aliases: Sequence[Mapping[st
         for a in aliases
         if a.get("secret") and str(a["entity_id"]) in kinds and str(a["key"]) not in open_keys
     )
-    return Names({k: tuple(v.items()) for k, v in seen.items()}, hidden)
+    roles = {
+        str(e["id"]): (e.get("role"), e.get("played_by"))
+        for e in entities
+        if str(e["type"]) == "character"
+    }
+    return Names({k: tuple(v.items()) for k, v in seen.items()}, hidden, roles)
 
 
 def judge(
@@ -378,13 +439,64 @@ def judge(
         return f"{term.label} doesn't fit those two"
     if term.object_types and not onto.is_any(o_kind, term.object_types):
         return f"{term.label} doesn't fit those two"
+    # Who speaks for a character (#2562): a PC's own choice and feeling come from its player, an
+    # NPC's from the DM. A player's word about someone else's character is what they believe, never
+    # the character's own, so it is not offered to the DM as a truth.
+    if _voice_of(names, who, other, said_from_object, term, claim, speakers, dms) == PARTY:
+        return PARTY_REASON
     return ""
 
 
-def _repeat_key(subject: str, relationship: str, obj: str, how: str) -> tuple[Any, ...]:
+def _voice_of(
+    names: Names,
+    who: tuple[str, str],
+    other: tuple[str, str],
+    said_from_object: bool,
+    term: PredicateTerm,
+    claim: Extracted,
+    speakers: Sequence[int | None],
+    dms: Collection[int],
+) -> str:
+    """`own`, `effect` or `party` (`memory.voice`) for a claim about the character it is about."""
+    holder = other if said_from_object else who
+    if holder[1] != "character":
+        return OWN  # (a group's attitude stays the DM's)
+    role, plays = names.roles.get(holder[0], (None, None))
+    return voice(role, term.key, claim.how, speakers, plays, dms)
+
+
+def effect_note(
+    claim: Extracted, onto: Ontology, names: Names, speakers: Sequence[int | None],
+    dms: Collection[int],
+) -> str:  # fmt: skip
+    """The words to add to a claim's details when the DM said it of a player character: it is
+    something that happened to them, told by the DM, not their own choice (#2562). "" otherwise."""
+    who = names.one(claim.subject)
+    other = names.one(claim.object)
+    if isinstance(who, str) or isinstance(other, str):
+        return ""
+    term, said_from_object, _ = place_relationship(onto, claim.relationship, who[1], other[1])
+    if _voice_of(names, who, other, said_from_object, term, claim, speakers, dms) != EFFECT:
+        return ""
+    holder = other if said_from_object else who
+    return (
+        EFFECT_NOTE.format(name=claim.object if said_from_object else claim.subject)
+        if holder
+        else ""
+    )
+
+
+def _repeat_key(
+    subject: str, relationship: str, obj: str, how: str, reading: Mapping[str, Any] | None = None
+) -> tuple[Any, ...]:
     """What makes two questions the same: the words, not who said them. A plan is its own
-    question (it is never asked, so it must not hide the fact it resembles)."""
-    return name_key(subject), _phrase(relationship), name_key(obj), how == HOW_PLAN
+    question (it is never asked, so it must not hide the fact it resembles). A reading is its own
+    question too: the same words as a theory, a reveal and a plain claim are three things to place
+    (point of view and status tell them apart)."""
+    # (Only the point of view and the status: two readings of the same words that differ only in
+    # the clue they name are one question. Slice 2b may need the clue here.)
+    held = None if reading is None else (reading.get("view"), reading.get("status"))
+    return name_key(subject), _phrase(relationship), name_key(obj), how == HOW_PLAN, held
 
 
 async def _turned_down(scope: Any) -> set[str]:
@@ -442,6 +554,7 @@ class ClaimStore:
         claims: Sequence[Extracted],
         speakers: Mapping[str, int | None],
         *,
+        said: Mapping[str, str] | None = None,
         opted_in: Collection[int],
         prompt_version: str,
         model: str,
@@ -452,6 +565,7 @@ class ClaimStore:
         skip: Collection[str] = (),
         new_names: int = NEW_NAME_LIMIT,
         limit: int = MAX_CLAIMS,
+        make_names: bool = True,
     ) -> Proposed:
         """Store what the extractor said as proposals. `speakers` maps each transcript line
         the call was given to who spoke it; `opted_in` is who may be recorded *now*, read
@@ -466,7 +580,9 @@ class ClaimStore:
         is one proposal, and a spelling near a name already waiting joins it. Nothing is joined
         to a confirmed entry here: a likely match is shown to the DM by the names review. A name
         the DM said isn't a name (`skip` too: the people at the table) drops its claims for good.
-        `dms` are the campaign's DMs: only they can say a secret name."""
+        `dms` are the campaign's DMs: only they can say a secret name. `make_names` False: a claim
+        with a name DMbot does not know is dropped (nothing waits for the name), so it can never
+        become a new name later (a reading never makes one, #2412)."""
         waiting = dropped = repeated = 0
         why: Counter[str] = Counter()
         async with self._store._write(guild_id, campaign_id, EXTRACTOR) as w:
@@ -480,16 +596,19 @@ class ClaimStore:
             asked: set[tuple[Any, ...]] = set()  # what the DM has seen or is waiting on
             refused: set[tuple[Any, ...]] = set()  # what was dropped before, and why
             for r in await w.select(CLAIMS, ""):
-                key = _repeat_key(r["subject"], r["relationship"], r["object"], r["how"])
+                key = _repeat_key(
+                    r["subject"], r["relationship"], r["object"], r["how"], r.get("reading")
+                )
                 if r["status"] == CLAIM_DROPPED:
                     refused.add((*key, r["reason"]))
                 else:
                     asked.add(key)
 
             leftovers = [
-                r for r in await w.select(CLAIMS, " AND status = 'proposed'")
-                if r["reason"] == WAITING_NAME_REASON
-            ]  # fmt: skip
+                r
+                for r in await w.select(CLAIMS, " AND status = 'proposed'")
+                if r["reason"] == WAITING_NAME_REASON and make_names
+            ]  # fmt: skip  (a pass that makes no names leaves earlier waiting claims alone)
 
             def judged(claim: Extracted) -> str:
                 cited = [speakers.get(ref) for ref in claim.lines]
@@ -501,13 +620,19 @@ class ClaimStore:
             for claim in claims[:limit]:
                 reason = judged(claim)
                 unknown: list[str] = []
+                # A pronoun is a name only where a cited line plainly says so ("My name is We").
+                cued = not_names.cued_in("\n".join((said or {}).get(r, "") for r in claim.lines))
                 if reason == UNKNOWN_NAME_REASON:
                     unknown = _unknown_names(claim, names)
-                    if any(name_key(n) in refused_names for n in unknown):
+                    if not make_names:
+                        unknown = []  # dropped below with its reason, not kept waiting
+                    elif any(name_key(n) in refused_names for n in unknown):
                         reason = NAME_REJECTED_REASON
                         unknown = []  # never made into an entry again
                     elif any(name_key(n) in skip for n in unknown):
                         unknown = []  # a person at the table: not a story name
+                    elif not all(not_names.allowed(n, cued) for n in unknown):
+                        unknown = []  # a pronoun ("he", "we"): never made into a name (#2358)
                 work.append((claim, reason, unknown))
             # Claims kept from an earlier session for a name that was past its limit come first:
             # their names are proposed before this session's own (#1367).
@@ -515,7 +640,7 @@ class ClaimStore:
             for r in leftovers:
                 kept = Extracted(
                     r["subject"], r["relationship"], r["object"], r["details"],
-                    tuple(r["lines"]), r["how"],
+                    tuple(r["lines"]), r["how"], r.get("reading"),
                 )  # fmt: skip
                 if not r["speaker_ids"] or any(x not in opted_in for x in r["speaker_ids"]):
                     continue  # its speaker stopped: `purge_stopped` wipes it when it is read
@@ -524,7 +649,7 @@ class ClaimStore:
                     await w.update(
                         CLAIMS, r["id"], {"status": CLAIM_DROPPED, "reason": NAME_REJECTED_REASON}
                     )
-                elif any(name_key(n) in skip for n in unknown):
+                elif any(name_key(n) in skip or not_names.is_not_name(n) for n in unknown):
                     await w.update(
                         CLAIMS, r["id"], {"status": CLAIM_DROPPED, "reason": UNKNOWN_NAME_REASON}
                     )
@@ -562,7 +687,11 @@ class ClaimStore:
                         # Past the limit: kept waiting for its name, which is proposed in a later
                         # session (most-said first, before that session's own).
                         key = _repeat_key(
-                            claim.subject, claim.relationship, claim.object, claim.how
+                            claim.subject,
+                            claim.relationship,
+                            claim.object,
+                            claim.how,
+                            claim.reading,
                         )
                         if key in asked:
                             repeated += 1
@@ -580,7 +709,9 @@ class ClaimStore:
                             ))  # fmt: skip
                         continue
                     reason = judged(claim)
-                key = _repeat_key(claim.subject, claim.relationship, claim.object, claim.how)
+                key = _repeat_key(
+                    claim.subject, claim.relationship, claim.object, claim.how, claim.reading
+                )
                 cited = [speakers.get(ref) for ref in claim.lines]
                 if reason in (STOPPED_REASON, NO_SPEAKER_REASON):
                     dropped += 1  # counted, never kept
@@ -596,6 +727,8 @@ class ClaimStore:
                 else:
                     waiting += 1
                     asked.add(key)
+                if not reason and (note := effect_note(claim, onto, names, cited, dms)):
+                    claim = replace(claim, details=f"{claim.details} {note}".strip())
                 rows.append(
                     self._row(
                         claim, cited, prompt_version, model, session_started_at, w.now,
@@ -631,6 +764,7 @@ class ClaimStore:
             "created_at": now,
             "decided_at": None,
             "fact_id": None,
+            "reading": dict(claim.reading) if claim.reading is not None else None,
         }
 
     async def _link(
@@ -740,6 +874,7 @@ class ClaimStore:
                         "details": "",
                         "lines": [],
                         "speaker_ids": [],
+                        "reading": None,  # the clue, the act and the character it named go too
                     },
                 )
             return len(stale)
@@ -766,7 +901,9 @@ class ClaimStore:
         has not said yet what it is waits. One whose name is no longer anyone's (the DM said it
         isn't a name, or it was taken away) is dropped here for good, so it is never asked."""
         async with self._store._read(guild_id, campaign_id) as scope:
-            sql = " AND status = 'proposed' ORDER BY created_at, id"
+            # (A reading is a belief to place, not a fact to say yes to: it is not asked here until
+            # the DM can place it, #2412.)
+            sql = " AND status = 'proposed' AND reading IS NULL ORDER BY created_at, id"
             rows = await scope.select(CLAIMS, sql)
             if not rows:
                 return [], []
@@ -788,6 +925,7 @@ class ClaimStore:
                 claim.details,
                 claim.lines,
                 claim.how,
+                claim.reading,
             )
             said = (
                 [claim.subject]
@@ -820,6 +958,29 @@ class ClaimStore:
         async with self._store._read(guild_id, campaign_id) as scope:
             row = await scope.get(CLAIMS, claim_id, lock=False)
         return None if row is None else claim_of(row)
+
+    async def placed_batch(self, guild_id: int, campaign_id: str, claim_id: str) -> int | None:
+        """The change batch in which this reading was kept as a belief, if that keep has not been
+        undone: found from the change log itself (claims are not logged, but the belief a keep
+        writes is, and it carries the claim as its evidence, so another keep on the same
+        connection is never mistaken for this one), so it holds when the answer that made the keep
+        never got to record it (a retaken worker, #2412). None when it was never kept or was
+        undone."""
+        async with self._store._read(guild_id, campaign_id) as scope:
+            claim = await scope.get(CLAIMS, claim_id, lock=False)
+            if claim is None or claim["status"] != CLAIM_CONFIRMED:
+                return None
+            cur = await scope.conn.execute(
+                "SELECT c.batch FROM memory_changes c WHERE c.guild_id = %s AND c.campaign_id = %s"
+                " AND c.table_name = 'memory_beliefs' AND c.op = 'insert' AND c.source = 'dm'"
+                " AND c.undoes IS NULL AND c.after->'evidence_ids' @> to_jsonb(%s::text)"
+                " AND NOT EXISTS (SELECT 1 FROM memory_changes u WHERE u.guild_id = c.guild_id"
+                " AND u.campaign_id = c.campaign_id AND u.undoes = c.batch)"
+                " ORDER BY c.version DESC LIMIT 1",
+                (guild_id, campaign_id, claim_id),
+            )
+            row = await cur.fetchone()
+        return None if row is None else int(row["batch"])
 
     async def counts(
         self, guild_id: int, campaign_id: str, *, opted_in: Collection[int]
@@ -858,7 +1019,7 @@ class ClaimStore:
             cur = await scope.conn.execute(
                 "SELECT count(*) AS n FROM memory_claims WHERE guild_id = %s AND campaign_id = %s"
                 " AND status = 'proposed' AND reason <> %s AND cardinality(speaker_ids) > 0"
-                " AND speaker_ids <@ %s::bigint[]",
+                " AND speaker_ids <@ %s::bigint[] AND reading IS NULL",
                 (*scope.ids, WAITING_NAME_REASON, list(opted_in)),
             )
             row = await cur.fetchone()
@@ -867,14 +1028,21 @@ class ClaimStore:
     async def forget_speaker(self, guild_id: int, user_id: int) -> int:
         """Stop recording me: in every campaign of the server, delete the claims that cite
         this person's words and were not turned into a fact (waiting, turned down or dropped).
-        What the DM confirmed is the DM's fact and stays. Returns how many went."""
+        What the DM confirmed is the DM's fact and stays. A reading the DM placed is held to the
+        same line (`forget_readings`): what the DM kept stays, a guess that only this person's
+        words produced goes with what it made. Returns how many claims went."""
         async with self._store._db.guild(guild_id) as conn:
+            readings = await forget_readings.forget(conn, guild_id, user_id)
             cur = await conn.execute(
                 "DELETE FROM memory_claims WHERE guild_id = %s AND %s = ANY(speaker_ids)"
-                " AND status <> 'confirmed'",
+                " AND status <> 'confirmed' RETURNING id",
                 (guild_id, user_id),
             )
-            return int(cur.rowcount)
+            gone = [str(r["id"]) for r in await cur.fetchall()]
+            await evidence.placeholder_claims(conn, guild_id, gone)  # their links keep no target
+            # and what the DM confirmed stays, without this person's line references (#2676)
+            await evidence.scrub_claim_lines(conn, guild_id, user_id=user_id)
+            return len(gone) + readings
 
     async def reject(self, guild_id: int, campaign_id: str, claim_id: str) -> Claim:
         """The DM says no: it is not asked again, and nothing is written to memory."""
@@ -885,6 +1053,39 @@ class ClaimStore:
             row = await w.update(CLAIMS, claim_id, {"status": CLAIM_REJECTED, "decided_at": w.now})
             return claim_of(row)
 
+    @staticmethod
+    async def reopen_in(w: Changes, claim_id: str) -> None:
+        """The DM took its answer back (↩️ Undo on a remembered fact, #2410): the fact is gone, so
+        the question waits again. The claims are not in the change log, so the undo's own write
+        (`MemoryStore.undo(after=...)`) puts it back, and a failure rolls both back."""
+        row = await w.get(CLAIMS, claim_id)
+        if row is not None and row["status"] == CLAIM_CONFIRMED:
+            await w.update(
+                CLAIMS, claim_id, {"status": CLAIM_PROPOSED, "decided_at": None, "fact_id": None}
+            )
+            # A guess placed on a connection that other guesses share left a link from that
+            # connection to this claim (links are not in the change log, so the Undo did not take
+            # it): the connection no longer stands on a claim that waits again. Links on a belief
+            # went with the belief, and a connection the placing made went whole.
+            await w.conn.execute(
+                "DELETE FROM memory_evidence WHERE guild_id = %s AND campaign_id = %s"
+                " AND kind = 'claim' AND target_id = %s AND relation_id IS NOT NULL",
+                (*w.ids, claim_id),
+            )
+
+    async def place(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        claim_id: str,
+        *,
+        opted_in: Recorded,
+    ) -> Any:
+        """The DM places a reading as a belief (`placing.place`); `confirm` refuses a reading."""
+        from dmbot.memory import placing  # (it builds on this module, so it is read late)
+
+        return await placing.place(self, guild_id, campaign_id, claim_id, opted_in=opted_in)
+
     async def confirm(
         self,
         guild_id: int,
@@ -893,6 +1094,7 @@ class ClaimStore:
         *,
         opted_in: Collection[int],
         before: Callable[[Changes], Awaitable[None]] | None = None,
+        secret: bool = False,
     ) -> Confirmed:
         """The DM says yes: the fact is written as the DM's own, through the store (so every
         rule and check runs as for any fact), and the claim keeps which fact it became. A fact
@@ -900,10 +1102,17 @@ class ClaimStore:
         recorded now: if anyone whose words it holds has stopped, the claim is deleted instead
         (the stored row is untrusted too, so the plan and instruction checks run again).
         `before` runs first inside the same transaction (a continuity answer, #1320, ends the
-        fact it replaces or brings back what had ended): all of it happens, or none."""
+        fact it replaces or brings back what had ended): all of it happens, or none.
+        `secret`: the DM's "truth but secret" (#2410): The truth holds the connection and the
+        players are not shown it. A condition ("Roan is dead") has no secret flag, so it is
+        never written secret."""
         claim = await self.get(guild_id, campaign_id, claim_id)
         if claim is None or claim.status != CLAIM_PROPOSED:
             raise MemoryRuleError(GONE)
+        if claim.reading is not None:
+            # A theory said "yes" to as a fact would be a lie in the DM's own voice: a reading is
+            # placed as a belief, which is its own step (#2412).
+            raise MemoryRuleError(A_READING)
         wording = Extracted(
             claim.subject, claim.relationship, claim.object, claim.details, claim.lines, claim.how
         )
@@ -918,6 +1127,7 @@ class ClaimStore:
         if not claim.speaker_ids or any(s not in opted_in for s in claim.speaker_ids):
             async with self._store._write(guild_id, campaign_id, DM) as w:
                 await w.delete(CLAIMS, claim_id)
+                await evidence.placeholder_claims(w.conn, guild_id, [claim_id])  # (#2662)
             raise MemoryRuleError(STOPPED_NOW)
         async with self._store._read(guild_id, campaign_id) as scope:
             onto = await _load_ontology(scope)
@@ -968,6 +1178,7 @@ class ClaimStore:
                 relation, flags = await self._store.add_relation_in(
                     w, subject_id, term.key, object_id, confidence=1.0, status=CONFIRMED,
                     detail=label or claim.details, from_session_at=claim.session_started_at,
+                    secret=secret,
                 )  # fmt: skip
                 fact_id = relation.id
             row = await w.update(
@@ -975,4 +1186,5 @@ class ClaimStore:
                 claim_id,
                 {"status": CLAIM_CONFIRMED, "decided_at": w.now, "fact_id": fact_id},
             )
-        return Confirmed(claim_of(row), tuple(flags))
+            batch = w.batch
+        return Confirmed(claim_of(row), tuple(flags), batch)

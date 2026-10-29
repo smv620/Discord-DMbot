@@ -80,6 +80,20 @@ class Arithmetic(unittest.TestCase):
             (NOON4 + 480, NOON4 + 480, None),
         )
 
+    def test_a_skip_of_days_keeps_the_time_of_day_and_counts_as_rested(self) -> None:
+        c = Clock(NOON4 + 90, 0)
+        rested = game.skip_days(c, 3, rested=True)
+        self.assertEqual(rested.minute, NOON4 + 90 + 3 * 1440)
+        self.assertEqual((rested.last_long_rest, rested.tired_told_for), (rested.minute, None))
+        tired = game.skip_days(c, 3, rested=False)
+        self.assertEqual((tired.minute, tired.last_long_rest), (rested.minute, 0))
+        self.assertTrue(game.tired_due(tired))
+        self.assertFalse(game.tired_due(rested))
+
+    def test_a_skip_never_goes_past_the_limit(self) -> None:
+        c = Clock(game.MAX_MINUTE - 10, 0)
+        self.assertEqual(game.skip_days(c, 30, rested=True).minute, game.MAX_MINUTE)
+
     def test_twenty_four_hours_without_a_long_rest(self) -> None:
         c = Clock(NOON4, NOON4)
         self.assertFalse(game.tired_due(game.advance(c, 24 * 60 - 1)))
@@ -353,7 +367,9 @@ class AtTheTable(Clocks):
         )
         self.posted: list[str] = []
 
-        async def post_message(channel_id: int, text: str, view: Any = None) -> None:
+        async def post_message(
+            channel_id: int, text: str, view: Any = None, *, remember: Any = None
+        ) -> None:
             self.posted.append(text)
 
         self.bot.post_message = post_message  # type: ignore[method-assign]

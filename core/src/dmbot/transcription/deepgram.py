@@ -18,6 +18,7 @@ from typing import Any
 
 import aiohttp
 
+from dmbot.alerts import DEEPGRAM_DOWN_AFTER_S, Outage, Problem, raise_alert
 from dmbot.audio.segmenter import Utterance
 from dmbot.transcription.base import Transcript, TranscriptionProblem, clean_text, to_wav
 from dmbot.transcription.config import TranscriptionSettings
@@ -33,6 +34,19 @@ log = logging.getLogger(__name__)
 # requests; refusals come back fast, and the budget still cuts off the rare clip that is
 # refused slowly.
 REQUEST_TIMEOUT_S = 4
+LONG_CLIP_S = 20.0  # a clip longer than a live line: a spoken note on the recap page (#2113)
+LONG_REQUEST_MAX_S = 60.0
+
+
+def request_timeout_s(duration_s: float) -> float:
+    """How long one request may take. A live line is a few seconds of audio and keeps the short
+    limit; a long clip is megabytes of WAV and needs time to go up and be read (about half its
+    length, at most a minute)."""
+    if duration_s <= LONG_CLIP_S:
+        return float(REQUEST_TIMEOUT_S)
+    return min(LONG_REQUEST_MAX_S, REQUEST_TIMEOUT_S + duration_s * 0.45)
+
+
 CONNECT_TIMEOUT_S = 2
 RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
 RETRY_DELAY_S = 1.0  # when Deepgram doesn't say how long to wait (Retry-After)
@@ -187,6 +201,9 @@ class DeepgramTranscriber:
         # it; otherwise it expires on its own.
         self._busy_until = 0.0
         self._busy_set_at = 0.0
+        # Failures to reach Deepgram in a row; the owner hears after 10 minutes of them (#1907).
+        # An answer other than a 5xx means it is up.
+        self._outage = Outage(DEEPGRAM_DOWN_AFTER_S, clock=_clock)
 
     def _get_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
@@ -199,14 +216,24 @@ class DeepgramTranscriber:
     async def warm_up(self) -> None:
         return None
 
+    def _note_unreachable(self) -> None:
+        if self._outage.failed():
+            raise_alert(Problem.DEEPGRAM_DOWN)
+
     async def transcribe(self, utterance: Utterance, hints: list[str]) -> str | None:
         body = to_wav(utterance.pcm)
         key = (utterance.guild_id, utterance.session)
+        # Only a long clip overrides the session's own limit (a short line keeps it as built).
+        timeout_s = (
+            request_timeout_s(utterance.duration_s) if utterance.duration_s > LONG_CLIP_S else None
+        )
         terms = keyterms(hints, self._max_keyterm_chars.get(key, MAX_KEYTERM_CHARS))
         tries = fallbacks(terms) if not self._400_is_settings else [terms]
         for n, sent in enumerate(tries):
             try:
-                text = await self._request(body, sent, fallback=n < len(tries) - 1)
+                text = await self._request(
+                    body, sent, fallback=n < len(tries) - 1, timeout_s=timeout_s
+                )
             except _KeytermsRefused:
                 # Counts only: the keyterms are players' and characters' names.
                 log.warning(
@@ -236,7 +263,9 @@ class DeepgramTranscriber:
                 raise DeepgramError(f"{BUSY} (asked to wait {left:.0f} s more)", for_dm=BUSY)
             await _sleep(left)
 
-    async def _request(self, body: bytes, terms: list[str], *, fallback: bool) -> str | None:
+    async def _request(
+        self, body: bytes, terms: list[str], *, fallback: bool, timeout_s: float | None = None
+    ) -> str | None:
         """One request, retried once if Deepgram is busy: after the wait it asks for
         (Retry-After, up to MAX_RETRY_WAIT_S), or RETRY_DELAY_S. With `fallback`, a 400
         raises _KeytermsRefused so the caller can try fewer keyterms."""
@@ -245,14 +274,26 @@ class DeepgramTranscriber:
         params = request_params(s, terms)
         for attempt in (1, 2):
             await self._wait_if_busy()
+            session = self._get_session()
+            # Always passed: a short line keeps the session's own limit, a long clip gets its own.
+            limit = (
+                session.timeout
+                if timeout_s is None
+                else aiohttp.ClientTimeout(total=timeout_s, connect=CONNECT_TIMEOUT_S)
+            )
             sent_at = _clock()
             pause = 0.0  # before the second try, when Deepgram gave no Retry-After
             try:
-                async with self._get_session().post(
-                    s.deepgram_url, params=params, data=body, headers=headers
+                async with session.post(
+                    s.deepgram_url,
+                    params=params,
+                    data=body,
+                    headers=headers,
+                    timeout=limit,
                 ) as resp:
                     if resp.status == 200:
                         self._400_is_settings = False
+                        self._outage.worked()
                         if sent_at >= self._busy_set_at:
                             # Sent after the last "wait": it really is answering again.
                             # (An older request's 200 must not clear a newer window.)
@@ -276,6 +317,12 @@ class DeepgramTranscriber:
                             raise _KeytermsRefused
                         if resp.status == 400 and not terms:
                             self._400_is_settings = True
+                        if resp.status in (401, 403):
+                            raise_alert(Problem.DEEPGRAM_KEY_REFUSED)
+                        elif resp.status >= 500:
+                            self._note_unreachable()
+                        else:  # any other answer means Deepgram is up
+                            self._outage.worked()
                         # Status only: error bodies can echo request details.
                         reason = STATUS_REASONS.get(resp.status, "Deepgram had a problem")
                         raise DeepgramError(
@@ -287,6 +334,7 @@ class DeepgramTranscriber:
                 # A dropped or stale connection, or a slow connect: worth one more try.
                 if attempt == 1:
                     continue
+                self._note_unreachable()
                 raise DeepgramError(
                     f"couldn't reach Deepgram ({type(exc).__name__})",
                     for_dm="DMbot couldn't reach Deepgram",
@@ -295,6 +343,7 @@ class DeepgramTranscriber:
                 # The whole request took too long: not retried (a second wait would run
                 # past the clip budget). The pipeline's own budget cancels the task
                 # instead (CancelledError), which isn't caught here.
+                self._note_unreachable()
                 raise DeepgramError(
                     "Deepgram took too long to answer", for_dm="Deepgram took too long to answer"
                 ) from None

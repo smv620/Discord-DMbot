@@ -172,14 +172,14 @@ class Wiring(unittest.TestCase):
                 rows[row] = rows.get(row, 0) + 1
             self.assertTrue(all(n <= 5 for n in rows.values()))
 
-    def test_the_players_see_only_the_round(self) -> None:
-        out = ui.players_text(Clock(NOON4, 0))
-        self.assertNotIn("Combat", out)
+    def test_the_players_are_told_only_the_day_and_the_word_never_the_round(self) -> None:
         fight = game.combat_start(Clock(NOON4, 0))
         assert fight is not None
-        inside = ui.players_text(fight)
-        self.assertIn("⚔️ Combat, round 1", inside)
-        self.assertIn(game.short_label(NOON4), inside)
+        for clock in (Clock(NOON4, 0), fight):
+            out = ui.small(ui.players_view(SimpleNamespace(clock=clock, split=False, groups=())))  # type: ignore[arg-type]
+            self.assertNotIn("Combat", out)
+            self.assertNotIn("round", out)
+            self.assertEqual(out, f"-# 🕰️ {game.short_label(NOON4)}")
 
     def test_the_dm_message_has_the_round_too(self) -> None:
         c = game.combat_start(Clock(NOON4, 0))
@@ -408,7 +408,14 @@ class SessionStart(AtTheTable):
         table.screen_channel_id = 555
         sent: list[tuple[str, Any]] = []
 
-        async def post(channel_id: int, text: str, view: Any = None) -> bool:
+        async def post(
+            channel_id: int,
+            text: str,
+            view: Any = None,
+            *,
+            remember: Any = None,
+            secret_of: Any = None,
+        ) -> bool:
             sent.append((text, view))
             return True
 
@@ -596,16 +603,17 @@ class Setting(Clocks):
         with self.assertRaises(CampaignError):
             await self.campaigns.import_backup(GUILD_B, data, DM)
 
-    def test_the_button_id_matches_its_template(self) -> None:
-        from dmbot.dm_screen.settings import SideInitiativeButton
+    def test_settings_has_no_side_initiative_button_and_no_on_off_wording(self) -> None:
+        import inspect
 
-        cid = "0123456789abcdef0123456789abcdef"
-        for on in (True, False):
-            button = SideInitiativeButton(cid, on)
-            self.assertIsNotNone(
-                SideInitiativeButton.__discord_ui_compiled_template__.fullmatch(
-                    str(button.item.custom_id)
-                )
-            )
-            self.assertLessEqual(len(str(button.item.label)), 25)
-            self.assertIsInstance(button.item, discord.ui.Button)
+        from dmbot.dm_screen import settings
+
+        self.assertNotIn("SideInitiativeButton(", inspect.getsource(settings.settings_view))
+        self.assertFalse(hasattr(settings, "SideInitiativeButton"))  # retired for good (#1791)
+        from dmbot import bot as bot_module
+
+        self.assertNotIn("SideInitiativeButton", inspect.getsource(bot_module))
+        self.assertEqual(
+            settings._combat_line(object()),  # type: ignore[arg-type]
+            "• **Combat:** DMbot counts the rounds, never whose turn it is.",
+        )

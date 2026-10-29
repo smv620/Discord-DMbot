@@ -63,6 +63,10 @@ export const text = {
   // `who` is the person's name, or a shortened id when they haven't signed in lately.
   confirmRevoke: (who: string): string => `Revoke free access for ${who}?`,
   yesRevoke: "Yes, revoke",
+  // A grant for someone who is now on the server's free list (#2196): it changes nothing.
+  olderGrant: "They're always free anyway. An older free-access entry for them isn't needed.",
+  removeOlderGrant: "Remove old entry",
+  olderGrantRemoved: (who: string): string => `Done. The older entry for ${who} is removed. They are still always free.`,
   cancel: "Cancel",
   revoked: (who: string): string => `Done. ${who} no longer has free access.`,
   addHeading: "Add someone",
@@ -90,6 +94,33 @@ export const text = {
     `Done. Changed free access for ${who}: ${how}.`,
   historyHeading: "Recent changes",
   noHistory: "No changes yet.",
+  // The page bar under Recent changes (#2199).
+  historyList: "Recent changes, newest first",
+  pagesNav: "Pages of recent changes",
+  ticketPagesNav: "Pages of tickets",
+  // The tickets are not "newer" and "older" (Needs the team reads longest-waiting first), so their
+  // bar says where it goes in the list.
+  ticketPageFirst: "First",
+  ticketPagePrevious: "Previous",
+  ticketPageNext: "Next",
+  ticketPageLast: "Last",
+  // When the page the team was on has gone (its last ticket left): it shows the last page there is.
+  ticketPageGone: "That page isn't there any more, so here is the last one that is.",
+  pageNewest: "Newest",
+  pageNewer: "Newer",
+  pageOlder: "Older",
+  pageOldest: "Oldest",
+  // What a page-bar button is called to a screen reader: the move, and the page it goes to (a
+  // disabled one keeps just the move: it goes nowhere).
+  pageTo: (move: string, target: number): string => `${move}, page ${target}`,
+  pageBox: "Page",
+  pageGo: "Go",
+  pageOf: (pages: number): string => `of ${pages}`,
+  pageNow: (page: number, pages: number): string => `Page ${page} of ${pages}`,
+  pagePick: (pages: number): string => `Pick a page from 1 to ${pages}.`,
+  pageDown: "We couldn't load that page. Try again.",
+  pageGone: "That page isn't there any more, so here is the newest one.",
+  pageLoading: "Loading…",
   logLine: (when: string, by: string, action: string, who: string): string =>
     `${when}: ${by} ${
       action === "grant"
@@ -113,14 +144,15 @@ export const text = {
     "no-grant": "That person has no free access to revoke. We've updated the list.",
   } as Record<string, string | ((max: number) => string)>,
 
-  // Support tickets (#1340): private messages from people on paid plans.
+  // Support tickets (#1340): private messages from signed-in people (Try It too, #1435).
   ticketsHeading: "Support tickets",
   ticketsLead:
-    "Private messages from people on a paid plan, newest first. They are deleted after 12 months, or with the account.",
+    "Private messages from people with an account, Try It too, newest first. They are deleted after 12 months, or with the account.",
   ticketsNone: "No tickets yet.",
   // The filter above the list (#1375): what needs a reply first, and how many of each.
   ticketsFilterLabel: "Show tickets",
   ticketFilters: {
+    escalated: "Needs the team",
     new: "Needs a reply",
     answered: "Answered",
     closed: "Closed",
@@ -128,14 +160,25 @@ export const text = {
   } as Record<string, string>,
   // A non-breaking space, so the count never drops onto a line of its own on a phone.
   ticketFilterCount: (label: string, count: number): string => `${label}\u00a0(${count})`,
+  // How support went in the last seven days (#1480): counts only, zero-safe.
+  weekNone: "No questions this week.",
+  weekReasonWords: {
+    unhappy: "unhappy",
+    asked: "asked",
+    limit: "five answers used",
+    "no-email": "no email",
+    "helper-down": "helper down",
+  } as Record<string, string>,
   // The same words on a ticket as on the button that finds it ("New" and "Needs a reply" were one
   // state under two names).
   ticketRowStatuses: {
+    escalated: "Needs the team",
     new: "Needs a reply",
     answered: "Answered",
     closed: "Closed",
   } as Record<string, string>,
   ticketsNoneFor: {
+    escalated: "No ticket is waiting for the team.",
     new: "Nothing needs a reply. All caught up.",
     answered: "No answered tickets.",
     closed: "No closed tickets.",
@@ -146,10 +189,42 @@ export const text = {
   copyAddressFor: (subject: string): string => `Copy address for ${subject}`,
   addressCopied: "Address copied.",
   copyFailed: "Couldn't copy. Tap the address to open your email instead.",
-  ticketStatuses: { new: "New", answered: "Answered", closed: "Closed" } as Record<string, string>,
+  ticketStatuses: {
+    new: "New",
+    answered: "Answered",
+    closed: "Closed",
+    escalated: "Needs the team",
+  } as Record<string, string>,
   ticketFrom: (who: string, dmbotId: string, plan: string, when: string): string =>
     `${who} (DMbot ID ${dmbotId}), ${plan} plan, ${when}`,
   replyTo: "Reply to",
+  // The thread (#1432): who wrote each message after the first.
+  threadHeading: "Messages after the first",
+  threadWho: {
+    customer: "The customer",
+    ai: "DMbot's AI helper",
+    person: "The team",
+  } as Record<string, string>,
+  // Why it came to the team (a fixed code from the API); nothing is shown for a code we don't know.
+  escalationReasons: {
+    unhappy: "The customer said they are unhappy.",
+    asked: "The customer asked for a person.",
+    limit: "The helper has answered 5 times.",
+    "no-email": "No email on the account, so the helper could not answer.",
+    "helper-down": "The helper was down for a day, so it sent no answer.",
+  } as Record<string, string>,
+  escalationReasonLabel: "Why it came to the team",
+  // The reply box.
+  replyLabel: (subject: string): string => `Your reply to “${subject}”`,
+  replyHint: "It is emailed to the person from the support address, and kept on the ticket.",
+  replySend: "Send reply",
+  replySending: "Sending…",
+  replySent: "Reply sent. The ticket is now answered.",
+  replyNoEmail: "No email on this account, so a reply can't be sent. Use Mark answered once you have dealt with it another way.",
+  replyEmpty: "Write something first.",
+  replyTooLong: "That's too long. Keep it to 4,000 letters or fewer.",
+  replyOff: "Replies by email aren't set up yet, so nothing was sent.",
+  replyFailed: "That didn't send. Your words are still here. Try again in a minute.",
   noEmail: "No email on this account",
   markAnswered: "Mark answered",
   closeTicket: "Close",
@@ -162,8 +237,44 @@ export const text = {
   ticketsTryAgain: "Try again",
 } as const;
 
+/** How long a ticket has waited, as one short phrase (#1485): "waiting 10 min", "waiting 3 h",
+ * "waiting 2 days". Everything is rounded down, so "1 day" always means at
+ * least a day and nothing shows "60 min" or "24 h"; under a minute counts as 1 min; a clock a
+ * little behind the ticket's time never shows a negative. */
+export function waitingFor(seconds: number): string {
+  const s = Math.max(0, seconds);
+  if (s < 3600) return `waiting ${Math.max(1, Math.floor(s / 60))} min`;
+  const hours = Math.max(1, Math.floor(s / 3600));
+  if (s < 86_400) return `waiting ${hours} h`;
+  const days = Math.floor(s / 86_400);
+  return `waiting ${days} ${days === 1 ? "day" : "days"}`;
+}
+
 /** What a save did, in words: "Same as Guild, until Dec 31, 2026" or "No limits, no end
  * date". `date` is the already-formatted last day. */
+/** "This week: 12 questions, 9 answered by DMbot's helper, 2 by the team, 1 waiting. Helper handed
+ * over 2 (unhappy 1, asked 1)." (#1480). No questions: one plain line. A code we don't know is left
+ * out of the brackets (the count still includes it). */
+export function weekLine(week: {
+  questions: number;
+  helper: number;
+  team: number;
+  waiting: number;
+  reasons: Record<string, number>;
+}): string {
+  if (week.questions <= 0) return text.weekNone;
+  const noun = week.questions === 1 ? "question" : "questions";
+  let line = `This week: ${week.questions} ${noun}, ${week.helper} answered by DMbot's helper, ${week.team} by the team, ${week.waiting} waiting.`;
+  const handed = Object.values(week.reasons).reduce((sum, n) => sum + n, 0);
+  if (handed > 0) {
+    const parts = Object.entries(week.reasons)
+      .filter(([code, n]) => n > 0 && text.weekReasonWords[code])
+      .map(([code, n]) => `${text.weekReasonWords[code]} ${n}`);
+    line += ` Helper handed over ${handed}${parts.length ? ` (${parts.join(", ")})` : ""}.`;
+  }
+  return line;
+}
+
 export function saved(level: string, date: string | null): string {
   return `${text.levels[level] ?? level}, ${date ? `until ${date}` : "no end date"}`;
 }

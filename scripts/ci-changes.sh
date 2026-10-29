@@ -31,9 +31,17 @@ ears=false
 web=false
 while IFS= read -r f; do
   case "$f" in
+    # the website's button check reads the bot's labels from core's Python (web/test/button-labels.test.ts)
+    core/src/dmbot/*.py) core=true web=true ;;
+    # the Credits page and its tests read the rules data and its ATTRIBUTION.md files (#1923, #1932)
+    core/src/dmbot/rules/data/*) core=true web=true ;;
     core/*) core=true ;;
+    # the website's owner-check test reads this doc against the held What's new entries
+    docs/OWNER_CHECKS.md) web=true ;;
     # core's tests read the plans the website shows (core/tests/test_plans.py)
     web/src/content/plans.json) core=true web=true ;;
+    # core's test_consent_promises.py reads the consent promises the pages show (#1882)
+    web/src/content/consent-promises.ts) core=true web=true ;;
     web/*) web=true ;;
     # ears' tests read the protocol fixtures; core's read them too (test_protocol.py)
     protocol/*) core=true ears=true ;;
@@ -45,6 +53,8 @@ while IFS= read -r f; do
     # skips core.
     docs/DEPLOY.md | docs/LIVE_TEST.md | docs/next-test-step.md | LICENSE) ;;
     docs/testing-status.log | docs/testing-history.log) ;;
+    # the web check:golive step compares docs/GO_LIVE.md with the site's switches (#1881)
+    docs/GO_LIVE.md) core=true web=true ;;
     docs/* | CLAUDE.md) core=true ;;
     *) everything ;; # workflows, scripts/, compose files, .env.example, README.md, anything new
   esac

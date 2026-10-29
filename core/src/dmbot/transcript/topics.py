@@ -12,13 +12,15 @@ off-topic talk is hidden, and only in the cleaned transcript: "When unsure, keep
   `[1m 22s of off-topic chat skipped]`, `[8s of off-topic chat skipped]`.
 - `collapse`: a run of hidden lines from one person becomes one marker with the total
   time; anyone else speaking in between ends the run.
+- `lean_to_keeping`: the filter leans to keeping (#2567). A short stretch between game talk
+  stays, and the DM's lines are left out only when a whole long stretch is unrelated.
 """
 
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable, Iterator
-from dataclasses import dataclass, field
+from collections.abc import Collection, Iterable, Iterator, Sequence
+from dataclasses import dataclass, field, replace
 
 from dmbot.memory.scan import GAME_TERMS
 from dmbot.memory.scene import WORD
@@ -70,6 +72,9 @@ class Spoken:
     topic: str = GAME  # what the version hides (the as-heard one hides nothing)
     said_as: str = GAME  # what the line was, for its label (#53), whatever is hidden
     entity: str = ""  # who it was said as (#53; Line.entity)
+    # The DM decided this line (put it back, or left it out again) after the session (#2567):
+    # the filter never changes it.
+    decided: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,6 +87,11 @@ class Shown:
     skipped: bool = False
     said_as: str = GAME
     entity: str = ""
+    # For a marker: when its last line started and how many lines it holds, so the website can
+    # find the lines again without sending their words (#2567).
+    until_ms: int = 0
+    count: int = 0
+    seconds: float = 0.0  # how long the hidden talk lasted
 
 
 def collapse(lines: Iterable[Spoken]) -> Iterator[Shown]:
@@ -92,7 +102,15 @@ def collapse(lines: Iterable[Spoken]) -> Iterator[Shown]:
     def flush() -> Iterator[Shown]:
         if run:
             seconds = sum(s.seconds for s in run)
-            yield Shown(run[0].speaker, run[0].started_ms, marker(seconds), skipped=True)
+            yield Shown(
+                run[0].speaker,
+                run[0].started_ms,
+                marker(seconds),
+                skipped=True,
+                until_ms=run[-1].started_ms,
+                count=len(run),
+                seconds=seconds,
+            )
             run.clear()
 
     for line in lines:
@@ -106,6 +124,53 @@ def collapse(lines: Iterable[Spoken]) -> Iterator[Shown]:
             line.speaker, line.started_ms, line.text, said_as=line.said_as, entity=line.entity
         )
     yield from flush()
+
+
+# Lean to keeping (#2567; the owner's Test M, where a DM's lore about the mountains and the
+# dwarves was cut). A stretch of off-topic lines under this long, with game talk on both sides, is
+# kept whoever said it: a short aside is cheap to read and a lost line is not cheap to find.
+KEEP_STRETCH_S = 30.0
+# The DM's lines are the story, so they are left out only when the filter is very sure. A model's
+# label carries no confidence, so "very sure" is a long unbroken stretch of it: this many seconds.
+DM_LEAVE_OUT_S = 90.0
+
+
+def _stretches(lines: Sequence[Spoken]) -> Iterator[tuple[int, int]]:
+    """(first, end) positions of each run of consecutive off-topic lines, in spoken order."""
+    start: int | None = None
+    for i, line in enumerate(lines):
+        if line.topic == OFF_TOPIC:
+            if start is None:
+                start = i
+        elif start is not None:
+            yield start, i
+            start = None
+    if start is not None:
+        yield start, len(lines)
+
+
+def lean_to_keeping(lines: Sequence[Spoken], dm_ids: Collection[int] = ()) -> list[Spoken]:
+    """The lines (in spoken order) with what the filter was not sure enough about turned back
+    into game talk:
+    - a stretch of off-topic lines shorter than `KEEP_STRETCH_S`, with a line that is not
+      off-topic on both sides, whoever said it;
+    - the DM's lines in any stretch shorter than `DM_LEAVE_OUT_S`.
+    A line the DM decided (`decided`) is never changed. Pure, and the same lines give the same
+    answer, so it can be run again after a late line arrives."""
+    out = list(lines)
+    for first, end in _stretches(lines):
+        last = lines[end - 1]
+        length = (last.started_ms - lines[first].started_ms) / 1000 + last.seconds
+        between = first > 0 and end < len(lines)
+        for i in range(first, end):
+            line = lines[i]
+            if line.decided:
+                continue
+            if (between and length < KEEP_STRETCH_S) or (
+                line.speaker in dm_ids and length < DM_LEAVE_OUT_S
+            ):
+                out[i] = replace(line, topic=GAME)
+    return out
 
 
 # The AI is asked about a window of lines at once: this many, or as many as come in
@@ -122,6 +187,7 @@ class Waiting:
     started_ms: int
     text: str
     seconds: float = 0.0  # how long it was said (for the live marker)
+    typed: bool = False  # typed in the table's chat (#2447): its key can match a spoken line's
 
 
 @dataclass(slots=True)
@@ -151,6 +217,15 @@ class TopicWindow:
     def take(self) -> list[Waiting]:
         lines, self.lines, self.opened_at = self.lines, [], None
         return lines
+
+    def revise(self, speaker: int, started_ms: int, text: str) -> bool:
+        """A waiting line's words changed (a name fixed after the fact, #127): the AI is asked
+        about the new words. True if it was still waiting."""
+        for i, waiting in enumerate(self.lines):
+            if (waiting.speaker, waiting.started_ms) == (speaker, started_ms):
+                self.lines[i] = replace(waiting, text=text)
+                return True
+        return False
 
     def drop_speaker(self, speaker: int) -> None:
         """They stopped being recorded: their lines are never sent to the AI."""

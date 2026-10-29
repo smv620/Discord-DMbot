@@ -10,8 +10,10 @@ transcript line it comes from, and `check_citations` confirms an answer cites on
 Who may see what is decided here, before anything is returned (never by the prompt):
 
 - `dm_screen`: everything, secrets included.
-- `players`: no secret facts, no secret names, no entry notes (the DM's own description of an
-  entry), no conditions (alive, dead) and nothing from the story plan.
+- `players`: no secret facts, no secret names, no clue only some people know and no entry the DM
+  hasn't told the players of (#2321), no entry notes
+  (the DM's own description of an entry), no conditions (alive, dead) and nothing from the
+  story plan.
 - `transcript`: always empty. Nothing from here ever goes into a transcript.
 
 Evidence is quoted only from speakers who are recorded *now*: the caller passes who that is (or
@@ -36,10 +38,12 @@ from collections.abc import Awaitable, Callable, Collection, Iterable, Mapping, 
 from dataclasses import dataclass, field
 from typing import Any
 
+from dmbot.memory import kin
 from dmbot.memory._changes import Scope
+from dmbot.memory.beliefs import party_id, party_knows_by
 from dmbot.memory.continuity import _predicate_words
 from dmbot.memory.kinds import KIND_LABELS
-from dmbot.memory.models import ROLE_LABELS, name_key
+from dmbot.memory.models import DM_ONLY_TYPES, ROLE_LABELS, name_key
 from dmbot.memory.ontology import Ontology
 from dmbot.memory.store import MemoryStore, _load_ontology
 
@@ -74,6 +78,14 @@ _ID = re.compile(r"^[0-9a-f]{32}$")
 _LIVE = ("proposed", "confirmed")
 
 ENTRY, FACT = "entry", "fact"
+
+# The roster (a list of the people and groups the table may know, #1761): who is in a group, and
+# who is closely tied to whom.
+ROSTER_MAX = 1000  # entries read at most; the channel shows far fewer
+ROSTER_TIES_MAX = 5  # shown for each entry, then "+N more"
+ROSTER_GROUP_LINK = "member_of"
+ROSTER_TIES = ("kin_of", "ally_of", "enemy_of", "serves", "sworn_to")
+ROSTER_NAME_KINDS = ("full", "short", "nickname", "title")  # never "misheard": a matching aid
 
 
 @dataclass(frozen=True, slots=True)
@@ -203,6 +215,7 @@ class _Fact:
     hops: int
     near: str  # the end already reached when this fact was found
     far: str
+    directional: bool = False  # a family role that reads one way (#2457)
 
 
 def _fact_of(r: Mapping[str, Any], hops: int, near: str, far: str) -> _Fact:
@@ -210,6 +223,7 @@ def _fact_of(r: Mapping[str, Any], hops: int, near: str, far: str) -> _Fact:
         str(r["id"]), str(r["subject_id"]), str(r["object_id"]), str(r["predicate"]),
         str(r["detail"]), r["from_session_at"], bool(r["secret"]),
         tuple(str(m) for m in r["mention_ids"] or ()), hops, near, far,
+        bool(r.get("directional", False)),
     )  # fmt: skip
 
 
@@ -226,6 +240,22 @@ class _Walk:
 
 
 Sources = dict[str, list[tuple[str, int | None, tuple[int, ...] | None]]]
+
+
+@dataclass(frozen=True, slots=True)
+class RosterEntry:
+    """One confirmed NPC or group as the players may know it. No description (the players'
+    audience never reads the DM's note), no condition, no standing."""
+
+    id: str
+    name: str
+    kind: str  # "NPC", "god", "group", ...
+    is_group: bool
+    also_called: tuple[str, ...] = ()
+    groups: tuple[str, ...] = ()  # the groups it is in (names)
+    groups_more: int = 0
+    ties: tuple[str, ...] = ()  # closely tied (names)
+    ties_more: int = 0
 
 
 class RecallService:
@@ -249,10 +279,13 @@ class RecallService:
         budget: int = DEFAULT_BUDGET,
         opted_in: OptedIn = (),
         hops: int = MAX_HOPS,
+        confirmed_only: bool = False,
     ) -> Recall:
         """What may be said about `seeds` (entry ids or names) to `audience` at `as_of`, cut to
         `budget` characters. `opted_in` are the people recorded now (or a function that says,
-        asked again before any quote is attached): only they are quoted or counted."""
+        asked again before any quote is attached): only they are quoted or counted.
+        `confirmed_only`: for the DM screen, leave out the entries the DM has not confirmed yet
+        (a proposed one), as the players' view does; a recap rests on confirmed memory alone."""
         if audience not in AUDIENCES:
             raise ValueError(f"unknown audience {audience!r}")
         as_of = as_of or AsOf()
@@ -261,7 +294,7 @@ class RecallService:
         hops = max(0, min(hops, MAX_HOPS))
         agreed = await _agreed(opted_in)
         async with self._memory._read(guild_id, campaign_id, snapshot=True) as scope:
-            walk = await self._walk(scope, seeds, audience, as_of, hops)
+            walk = await self._walk(scope, seeds, audience, as_of, hops, confirmed_only)
             reached = sorted(walk.cost)
             heard = await self._heard(scope, reached, agreed)
             notes = await self._conditions(scope, reached, as_of) if audience == DM_SCREEN else {}
@@ -295,18 +328,123 @@ class RecallService:
         self._ontologies[key] = (scope.version, onto)
         return onto
 
+    async def roster(self, guild_id: int, campaign_id: str) -> list[RosterEntry]:
+        """The confirmed NPCs and groups the players may see, groups first, then by name. The
+        same rules as the players' audience, not a second copy: `_entries` drops an entry that is
+        not confirmed, whose own name is secret, a clue only some know, an entry the DM hasn't
+        told the players of (#2321), a story thread or a deed,
+        and a relation counts only when it is confirmed, true now, not secret and not from the
+        story plan. Never player characters or the party. Conditions (dead, missing) and standing
+        are other tables and never read here."""
+        async with self._memory._read(guild_id, campaign_id, snapshot=True) as scope:
+            onto = await self._ontology(scope)
+            kinds = [k for k in onto.types if onto.is_any(k, ("character", "faction"))]
+            cur = await scope.conn.execute(
+                "SELECT id FROM memory_entities WHERE guild_id = %s AND campaign_id = %s"
+                " AND status = 'confirmed' AND type = ANY(%s) AND NOT party"
+                " AND role IS DISTINCT FROM 'player_character' ORDER BY id",
+                (*scope.ids, kinds),
+            )
+            candidates = [str(r["id"]) for r in await cur.fetchall()]
+            shown = await self._entries(scope, candidates, PLAYERS)
+            if len(shown) > ROSTER_MAX:  # (cut after the filter: hidden entries use no slot)
+                shown = {i: shown[i] for i in sorted(shown)[:ROSTER_MAX]}
+            if not shown:
+                return []
+            ids = sorted(shown)
+            cur = await scope.conn.execute(
+                "SELECT entity_id, text, kind FROM memory_aliases WHERE guild_id = %s"
+                " AND campaign_id = %s AND entity_id = ANY(%s) AND status = 'confirmed'"
+                " AND NOT secret AND kind = ANY(%s) ORDER BY created_at, id",
+                (*scope.ids, ids, list(ROSTER_NAME_KINDS)),
+            )
+            aliases: dict[str, list[str]] = {}
+            for r in await cur.fetchall():
+                aliases.setdefault(str(r["entity_id"]), []).append(str(r["text"]))
+            party = await party_id(scope)
+            cur = await scope.conn.execute(
+                "SELECT subject_id, predicate, object_id, detail, directional, source"
+                " FROM memory_relations"
+                " WHERE guild_id = %s AND campaign_id = %s AND status = 'confirmed'"
+                f" AND to_session_at IS NULL AND {party_knows_by('memory_relations', party)}"
+                " AND predicate = ANY(%s)"
+                " AND subject_id = ANY(%s) AND object_id = ANY(%s)"
+                " ORDER BY from_session_at DESC NULLS LAST, id",
+                (*scope.ids, [ROSTER_GROUP_LINK, *ROSTER_TIES], ids, ids),
+            )
+            relations = [r for r in await cur.fetchall() if str(r["source"]) not in PLAN_SOURCES]
+        names = {i: str(e["name"]) for i, e in shown.items()}
+        groups: dict[str, list[str]] = {}
+        ties: dict[str, list[str]] = {}
+        for r in relations:
+            a, b, predicate = str(r["subject_id"]), str(r["object_id"]), str(r["predicate"])
+            if a == b:
+                continue
+            if predicate == ROSTER_GROUP_LINK:
+                if onto.is_a(str(shown[b]["type"]), "faction"):
+                    groups.setdefault(a, []).append(names[b])
+            elif (
+                predicate == "kin_of"
+                and r["directional"]
+                and kin.directional(str(r["detail"] or ""))
+            ):
+                family = kin.role_of(str(r["detail"])) or ""
+                # a family role is true of one name only (#2457): "is the niece of Aldric" on the
+                # one, "has a niece: Mira" on the other
+                ties.setdefault(a, []).append(f"{kin.forward(family)} {names[b]}")
+                ties.setdefault(b, []).append(f"{kin.backward(family)}: {names[a]}")
+            else:
+                ties.setdefault(a, []).append(names[b])
+                ties.setdefault(b, []).append(names[a])
+        out: list[RosterEntry] = []
+        for entity_id, e in shown.items():
+            kind_key = str(e["type"])
+            is_group = onto.is_a(kind_key, "faction")
+            role = e.get("role")
+            kind = (
+                "group" if is_group
+                else ROLE_LABELS.get(str(role), "") if role else ""
+            ) or onto.types[kind_key].label  # fmt: skip
+            own = names[entity_id]
+            others = [t for t in dict.fromkeys(aliases.get(entity_id, [])) if t != own]
+            g = list(dict.fromkeys(groups.get(entity_id, [])))
+            t = list(dict.fromkeys(ties.get(entity_id, [])))
+            out.append(
+                RosterEntry(
+                    id=entity_id,
+                    name=own,
+                    kind=kind,
+                    is_group=is_group,
+                    also_called=tuple(others),
+                    groups=tuple(g[:ROSTER_TIES_MAX]),
+                    groups_more=max(0, len(g) - ROSTER_TIES_MAX),
+                    ties=tuple(t[:ROSTER_TIES_MAX]),
+                    ties_more=max(0, len(t) - ROSTER_TIES_MAX),
+                )
+            )
+        out.sort(key=lambda x: (not x.is_group, name_key(x.name), x.id))
+        return out
+
     # ---- the walk --------------------------------------------------------------------
 
     async def _walk(
-        self, scope: Scope, seeds: Sequence[str], audience: str, as_of: AsOf, hops: int
+        self,
+        scope: Scope,
+        seeds: Sequence[str],
+        audience: str,
+        as_of: AsOf,
+        hops: int,
+        confirmed_only: bool = False,
     ) -> _Walk:
         walk = _Walk()
-        ids = await self._seed_ids(scope, seeds, audience)
-        walk.entities.update(await self._entries(scope, ids, audience))
+        ids = await self._seed_ids(scope, seeds, audience, confirmed_only)
+        walk.entities.update(await self._entries(scope, ids, audience, confirmed_only))
         walk.seeds = [i for i in ids if i in walk.entities]
         walk.cost = {i: 0 for i in walk.seeds}
         when, values = _true_at(as_of)
-        secret = " AND NOT secret" if audience == PLAYERS else ""
+        # The players read what The party believes (#2409), the DM everything.
+        party = await party_id(scope) if audience == PLAYERS else None
+        secret = f" AND {party_knows_by('memory_relations', party)}" if audience == PLAYERS else ""
         frontier = set(walk.seeds)
         for _ in range(MAX_ROUNDS):
             if not frontier:
@@ -319,7 +457,7 @@ class RecallService:
             ends = sorted(frontier)
             cur = await scope.conn.execute(
                 "SELECT id, subject_id, predicate, object_id, detail, from_session_at,"
-                " to_session_at, secret, source, mention_ids FROM memory_relations"
+                " to_session_at, secret, source, mention_ids, directional FROM memory_relations"
                 " WHERE guild_id = %s AND campaign_id = %s AND status = 'confirmed'"
                 f" AND (subject_id = ANY(%s) OR object_id = ANY(%s)) AND {when}{secret}"
                 " ORDER BY from_session_at DESC NULLS LAST, id LIMIT %s",
@@ -336,7 +474,9 @@ class RecallService:
                 for end in (str(r["subject_id"]), str(r["object_id"]))
                 if end not in walk.entities
             }
-            walk.entities.update(await self._entries(scope, sorted(unknown), audience))
+            walk.entities.update(
+                await self._entries(scope, sorted(unknown), audience, confirmed_only)
+            )
             frontier = self._step(walk, rows, frontier, hops)
         else:
             walk.truncated = walk.truncated or bool(frontier)
@@ -381,7 +521,9 @@ class RecallService:
                     walk.truncated = True
         return nxt
 
-    async def _seed_ids(self, scope: Scope, seeds: Sequence[str], audience: str) -> list[str]:
+    async def _seed_ids(
+        self, scope: Scope, seeds: Sequence[str], audience: str, confirmed_only: bool = False
+    ) -> list[str]:
         """The entries the seeds mean, in the order given: an id as it is, a name through the
         entries' names and the other names it goes by. The players' audience only trusts names
         the DM has confirmed and has not made secret."""
@@ -391,11 +533,12 @@ class RecallService:
         if keys:
             # Every entry's own name is its first alias, so one indexed lookup finds names and
             # other names alike.
-            hide = (
-                " AND NOT secret AND status = 'confirmed'"
-                if audience == PLAYERS
-                else " AND status <> 'rejected'"
-            )
+            if audience == PLAYERS:
+                hide = " AND NOT secret AND status = 'confirmed'"
+            elif confirmed_only:
+                hide = " AND status = 'confirmed'"
+            else:
+                hide = " AND status <> 'rejected'"
             cur = await scope.conn.execute(
                 "SELECT key, entity_id FROM memory_aliases WHERE guild_id = %s AND campaign_id = %s"
                 f" AND key = ANY(%s){hide}",
@@ -410,21 +553,31 @@ class RecallService:
         return list(ids)
 
     async def _entries(
-        self, scope: Scope, ids: Sequence[str], audience: str
+        self, scope: Scope, ids: Sequence[str], audience: str, confirmed_only: bool = False
     ) -> dict[str, dict[str, object]]:
         """The live entries among `ids`. For the players: confirmed ones only, and never an
         entry whose own name the DM has made secret (its identity is the secret), whether it
         came by name or by id."""
         if not ids:
             return {}
-        live = ["confirmed"] if audience == PLAYERS else list(_LIVE)
+        live = ["confirmed"] if audience == PLAYERS or confirmed_only else list(_LIVE)
         # An entry's note is the DM's own: the players' audience never even reads it.
         note = "description" if audience == DM_SCREEN else "'' AS description"
+        # A clue only some people know (#1649), or an entry the DM hasn't told the players of
+        # (#2321), is the DM's alone: the players' audience gets neither it nor, because a fact
+        # needs both ends, anyone's fact to it.
+        # Story threads (#1662) are the DM's plot notes, and so are deeds (#1732): the same.
+        hide_clue = (
+            " AND NOT audience_limited AND NOT hidden_from_players AND NOT unnamed"
+            " AND NOT type = ANY(%s)"
+            if audience == PLAYERS
+            else ""
+        )
         cur = await scope.conn.execute(
             f"SELECT id, type, name, {note}, role FROM memory_entities"
             " WHERE guild_id = %s AND campaign_id = %s AND id = ANY(%s)"
-            " AND status = ANY(%s) AND type <> 'person'",
-            (*scope.ids, list(ids), live),
+            f" AND status = ANY(%s) AND type <> 'person'{hide_clue}",
+            (*scope.ids, list(ids), live, *([list(DM_ONLY_TYPES)] if hide_clue else [])),
         )
         rows = {str(r["id"]): dict(r) for r in await cur.fetchall()}
         if audience == PLAYERS and rows:
@@ -470,28 +623,26 @@ class RecallService:
 
     async def _sources(self, scope: Scope, facts: Sequence[_Fact]) -> Sources:
         """For each fact, where it was said: (line reference, session, speakers who said it)
-        from its mentions and from the claim it was confirmed from."""
+        from its evidence links and from the claim it was confirmed from.
+        Today the quoted lines come only from the claim (the extractor path, off until #1282):
+        nothing writes `memory_mentions` (#1740), so a fact the DM typed in by hand has no links
+        and no quoted lines until the extractor is on."""
         out: Sources = {}
-        mention_ids = sorted({m for f in facts for m in f.mention_ids})
-        by_mention: dict[str, tuple[str, int | None]] = {}
-        if mention_ids:
-            cur = await scope.conn.execute(
-                "SELECT id, line_ref, session_started_at FROM memory_mentions"
-                " WHERE guild_id = %s AND campaign_id = %s AND id = ANY(%s)",
-                (*scope.ids, mention_ids),
+        # The lines each fact stands on: its typed evidence links (#2662). A placeholder (the line
+        # was removed) has no target and says nothing here.
+        cur = await scope.conn.execute(
+            "SELECT relation_id, target_id, session_started_at FROM memory_evidence"
+            " WHERE guild_id = %s AND campaign_id = %s AND relation_id = ANY(%s)"
+            " AND kind = 'line' AND target_id IS NOT NULL ORDER BY added_at, id",
+            (*scope.ids, [f.id for f in facts]),
+        )
+        for r in await cur.fetchall():
+            out.setdefault(str(r["relation_id"]), []).append(
+                (str(r["target_id"]), r["session_started_at"], None)
             )
-            by_mention = {
-                str(r["id"]): (str(r["line_ref"]), r["session_started_at"])
-                for r in await cur.fetchall()
-            }
-        for f in facts:
-            for m in f.mention_ids:
-                if m in by_mention:
-                    ref, session = by_mention[m]
-                    out.setdefault(f.id, []).append((ref, session, None))
         cur = await scope.conn.execute(
             "SELECT fact_id, lines, speaker_ids, session_started_at FROM memory_claims"
-            " WHERE guild_id = %s AND campaign_id = %s AND fact_id = ANY(%s)"
+            " WHERE guild_id = %s AND campaign_id = %s AND fact_id = ANY(%s) AND reading IS NULL"
             " AND status = 'confirmed'",
             (*scope.ids, [f.id for f in facts]),
         )
@@ -605,7 +756,7 @@ class _Found:
 
     def _fact_text(self, f: _Fact) -> str:
         walk = self.walk
-        what = _predicate_words(self.onto, f.predicate, f.detail)
+        what = _predicate_words(self.onto, f.predicate, f.detail, f.directional)
         return f"{walk.entities[f.subject_id]['name']} {what} {walk.entities[f.object_id]['name']}"
 
 

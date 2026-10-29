@@ -23,11 +23,12 @@ from typing import Any
 
 import discord
 
+from dmbot.discord_limits import MESSAGE_MAX, fit_message
 from dmbot.memory import sheet_view
 from dmbot.memory.sheet_store import CharacterSheet, PlayerCharacter, SheetRefused
+from dmbot.mentions import NO_PINGS
 from dmbot.ui import sheets as ui
 from dmbot.ui.dmbot_commands import (
-    NO_PINGS,
     VIEW_TIMEOUT_S,
     _answer_first,
     _Button,
@@ -50,7 +51,6 @@ SAVED = "✏️ Saved. Changed: {what}."
 SAME = "Nothing changed."
 CHANGED_SINCE = "Your sheet changed since you opened this. Press the part again to open it fresh."
 ONLY_YOU = "Only you see this."  # a sheet-view line: the link line in ui.sheets is about links
-MESSAGE_MAX = 2000  # Discord's limit for one message
 MORE = "… and more"
 DDB_NOTE = (
     "This sheet comes from D&D Beyond, so change it there. DMbot reads it again when a "
@@ -72,13 +72,13 @@ def view_text(character: PlayerCharacter, sheet: CharacterSheet, open_key: str |
             if sheet.url is not None
             else "Tap a part to see it. Tap Edit to change it."
         ]
-        return "\n".join([head, *middle, *tail])[:MESSAGE_MAX]
+        return fit_message("\n".join([head, *middle, *tail]))
     heading = f"**{section.label}**"
     room = MESSAGE_MAX - len("\n".join([head, heading, "", *tail])) - 1
     body = ui._md(section.show(snapshot))
     if len(body) > room:
         body = body[: max(room - len(MORE), 0)].rstrip("\\ ,\n") + MORE
-    return "\n".join([head, heading, body, *tail])[:MESSAGE_MAX]
+    return fit_message("\n".join([head, heading, body, *tail]))
 
 
 class SheetView(_Menu):

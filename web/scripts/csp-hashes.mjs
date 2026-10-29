@@ -1,7 +1,8 @@
 // After `astro build`: finish the Content-Security-Policy in dist/_headers.
 // - script-src: allow exactly the inline scripts Astro wrote (the island loader on
 //   /account) by their sha256 hashes, so scripts never need 'unsafe-inline'.
-// - connect-src: add the web API's origin when PUBLIC_API_BASE is a full address.
+// - connect-src and media-src: add the web API's origin when PUBLIC_API_BASE is a full address
+//   (media-src: the recap audio players, whose files the API serves, #1418).
 // - Cloudflare Turnstile (the "Say hello" forms' person check, #665): its script and its
 //   frame, only when PUBLIC_TURNSTILE_SITE_KEY is set.
 // - The development branch's build (#837) uses PUBLIC_DEV_API_BASE and gets noindex.
@@ -28,8 +29,14 @@ for (const page of htmlFiles(dist)) {
 }
 
 let headers = readFileSync(headersFile, "utf8");
-if (!headers.includes("script-src 'self';") || !headers.includes("connect-src 'self';")) {
-  console.error("dist/_headers must contain \"script-src 'self';\" and \"connect-src 'self';\"");
+if (
+  !headers.includes("script-src 'self';") ||
+  !headers.includes("connect-src 'self';") ||
+  !headers.includes("media-src 'self' blob:;")
+) {
+  console.error(
+    "dist/_headers must contain \"script-src 'self';\", \"connect-src 'self';\" and \"media-src 'self' blob:;\"",
+  );
   process.exit(1);
 }
 const turnstile = Boolean(process.env.PUBLIC_TURNSTILE_SITE_KEY?.trim());
@@ -39,7 +46,10 @@ if (turnstile) {
   headers = headers.replace("frame-ancestors", `frame-src ${TURNSTILE_ORIGIN}; frame-ancestors`);
 }
 const origin = apiOrigin(effectiveApiBase(process.env));
-if (origin) headers = headers.replace("connect-src 'self';", `connect-src 'self' ${origin};`);
+if (origin) {
+  headers = headers.replace("connect-src 'self';", `connect-src 'self' ${origin};`);
+  headers = headers.replace("media-src 'self' blob:;", `media-src 'self' blob: ${origin};`);
+}
 // The development site is a test copy: keep it out of search results (#837).
 try {
   headers = addDevHeaders(headers, process.env);
@@ -50,6 +60,6 @@ try {
 writeFileSync(headersFile, headers);
 console.log(
   `script-src allows ${hashes.size} inline script(s) by hash` +
-    (origin ? `; connect-src allows ${origin}` : "") +
+    (origin ? `; connect-src and media-src allow ${origin}` : "") +
     (turnstile ? "; Turnstile's script and frame allowed." : "."),
 );

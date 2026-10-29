@@ -159,7 +159,7 @@ class Settings(StoreTest):
             await self.store.remove_dm(GUILD_A, c.id, DM)  # the owner (#437)
         async with self.db.guild(GUILD_A) as conn:  # a campaign from before owners
             await conn.execute("UPDATE campaigns SET owner_user_id = NULL WHERE id = %s", (c.id,))
-        with self.assertRaisesRegex(CampaignError, "at least one DM"):
+        with self.assertRaisesRegex(CampaignError, "at least one game master"):
             await self.store.remove_dm(GUILD_A, c.id, DM)
 
     async def test_channels_and_played(self) -> None:

@@ -23,7 +23,7 @@ from html.parser import HTMLParser
 from pathlib import PurePath
 
 from dmbot.memory.models import name_key
-from dmbot.memory.name_list import MAX_PER_LINE, lines_for
+from dmbot.memory.name_list import MAX_PER_LINE, join_cell, lines_for, split_cell
 
 MAX_DOCUMENT_BYTES = 10 * 1024 * 1024
 MAX_DOCUMENT_CHARS = 200_000  # about a 100-page document
@@ -31,7 +31,7 @@ CHUNK_CHARS = 40_000  # one AI request
 MAX_XML_BYTES = 5 * 1024 * 1024  # a Word file's text, unpacked
 MAX_PDF_PAGES = 500
 TEXT_TYPES = (".txt", ".md", ".csv", ".text", "")  # also .doc, refused with its own words
-DOCUMENT_TYPES = (".pdf", ".docx", ".html", ".htm")
+DOCUMENT_TYPES = (".pdf", ".docx", ".xlsx", ".html", ".htm")
 log = logging.getLogger(__name__)
 
 
@@ -61,17 +61,21 @@ TYPES_HELP = (
 )
 
 
-def text_of(filename: str, raw: bytes) -> str:
+def text_of(filename: str, raw: bytes, *, max_chars: int = MAX_DOCUMENT_CHARS) -> str:
     """The text of a .txt, .pdf or .docx file. Raises DocumentError in plain words, for
-    any problem at all (a damaged or hostile file must never escape as another error)."""
+    any problem at all (a damaged or hostile file must never escape as another error).
+    `max_chars`: the longest text taken (the names screen's 200,000; an adventure's is more,
+    #1698)."""
     if len(raw) > MAX_DOCUMENT_BYTES:
         raise DocumentError("That file is too big (up to 10 MB). Split it into smaller files.")
     suffix = PurePath(filename).suffix.casefold()
     try:
         if suffix == ".pdf":
-            text = _pdf_text(raw)
+            text = _pdf_text(raw, max_chars)
         elif suffix == ".docx":
-            text = _docx_text(raw)
+            text = _docx_text(raw, max_chars)
+        elif suffix == ".xlsx":
+            text = _xlsx_text(raw, max_chars)
         elif suffix in (".html", ".htm"):
             text = html_text(decode_text(raw))
         elif suffix == ".doc":
@@ -91,10 +95,10 @@ def text_of(filename: str, raw: bytes) -> str:
     text = text.replace("\x00", "")
     if not text.strip():
         raise DocumentError(NO_TEXT)
-    if len(text) > MAX_DOCUMENT_CHARS:
+    if len(text) > max_chars:
         raise DocumentError(
-            "That document is too long for one go (about 100 pages at most). Split it into "
-            "parts and add them one at a time."
+            f"That document is too long for one go (about {max_chars // 2000} pages at most). "
+            "Split it into parts and add them one at a time."
         )
     return text
 
@@ -107,7 +111,7 @@ def decode_text(raw: bytes) -> str:
         return raw.decode("cp1252", errors="replace")
 
 
-def _pdf_text(raw: bytes) -> str:
+def _pdf_text(raw: bytes, max_chars: int = MAX_DOCUMENT_CHARS) -> str:
     from pypdf import PdfReader
 
     reader = PdfReader(io.BytesIO(raw))
@@ -126,7 +130,7 @@ def _pdf_text(raw: bytes) -> str:
         text = page.extract_text() or ""
         parts.append(text)
         size += len(text)
-        if size > MAX_DOCUMENT_CHARS:
+        if size > max_chars:
             break  # too long anyway: text_of says so
     text = "\n".join(parts)
     if not text.strip():
@@ -139,17 +143,20 @@ def _pdf_text(raw: bytes) -> str:
 _DOCX_PARTS = re.compile(r"<w:t(?:\s[^>]*)?>([^<]*)</w:t>|</w:p>")
 
 
-def _docx_text(raw: bytes) -> str:
+def _docx_text(raw: bytes, max_chars: int = MAX_DOCUMENT_CHARS) -> str:
     """A Word file is a zip with the text in word/document.xml. Read without an XML
-    parser (nothing in the file is run or fetched), in one pass."""
+    parser (nothing in the file is run or fetched), in one pass. A longer limit on the text
+    (an adventure's, #1698) allows a longer unpacked file too: the markup is several times the
+    words."""
+    xml_limit = max(MAX_XML_BYTES, max_chars * 6)
     try:
         with zipfile.ZipFile(io.BytesIO(raw)) as archive:
             info = archive.getinfo("word/document.xml")
-            if info.file_size > MAX_XML_BYTES:
+            if info.file_size > xml_limit:
                 raise DocumentError("That Word file is too big. Split it into smaller files.")
             with archive.open(info) as part:
-                data = part.read(MAX_XML_BYTES + 1)  # never trust the size it declares
-            if len(data) > MAX_XML_BYTES:
+                data = part.read(xml_limit + 1)  # never trust the size it declares
+            if len(data) > xml_limit:
                 raise DocumentError("That Word file is too big. Split it into smaller files.")
     except (zipfile.BadZipFile, KeyError) as exc:
         raise DocumentError(
@@ -166,10 +173,105 @@ def _docx_text(raw: bytes) -> str:
         else:
             current.append(match[1])
             size += len(match[1])
-            if size > MAX_DOCUMENT_CHARS:
+            if size > max_chars:
                 break
     paragraphs.append(html.unescape("".join(current)))
     return "\n".join(paragraphs)
+
+
+# One pass over a worksheet: a cell opens (`<c ...>`), holds a value (`<v>`) or inline text
+# (`<t>`), and a row ends. `[^<]*` can't run past a tag, so there is no slow matching.
+_XLSX_TOKENS = re.compile(
+    r"<c\b([^>]{0,300})>|<v>([^<]*)</v>|<t(?:\s[^>]{0,300})?>([^<]*)</t>|(</row>)|(</c>)"
+)
+_XLSX_TYPE = re.compile(r'\bt="([a-zA-Z]+)"')
+_XLSX_SHARED = re.compile(r"<t(?:\s[^>]{0,300})?>([^<]*)</t>|</si>")
+_XLSX_SHEET = re.compile(r"^xl/worksheets/sheet(\d+)\.xml$")
+MAX_SHEETS = 10
+CELL_JOIN = " | "
+
+
+def _xlsx_part(archive: zipfile.ZipFile, name: str, limit: int) -> str:
+    info = archive.getinfo(name)
+    if info.file_size > limit:
+        raise DocumentError(
+            "That Excel file is too big. Keep only the sheet with your rules, or split it into "
+            "smaller files."
+        )
+    with archive.open(info) as part:
+        data = part.read(limit + 1)  # never trust the size it declares
+    if len(data) > limit:
+        raise DocumentError(
+            "That Excel file is too big. Keep only the sheet with your rules, or split it into "
+            "smaller files."
+        )
+    return data.decode("utf-8", errors="replace")
+
+
+def _xlsx_text(raw: bytes, max_chars: int = MAX_DOCUMENT_CHARS) -> str:
+    """The text of an Excel file: each row's filled cells joined with `|`, one row a line, the
+    sheets one after another. Read as a zip with no XML parser (nothing in the file is run or
+    fetched), in one pass over each part, like a Word file. Numbers are shown as stored; formulas
+    show the value last saved."""
+    xml_limit = max(MAX_XML_BYTES, max_chars * 6)
+    try:
+        with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+            names = archive.namelist()
+            sheets = sorted((int(m[1]), n) for n in names if (m := _XLSX_SHEET.match(n)))[
+                :MAX_SHEETS
+            ]
+            if not sheets:
+                raise KeyError("no sheets")
+            shared: list[str] = []
+            if "xl/sharedStrings.xml" in names:
+                pieces: list[str] = []
+                for m in _XLSX_SHARED.finditer(
+                    _xlsx_part(archive, "xl/sharedStrings.xml", xml_limit)
+                ):
+                    if m[1] is None:  # </si>
+                        shared.append(html.unescape("".join(pieces)))
+                        pieces = []
+                    else:
+                        pieces.append(m[1])
+            lines: list[str] = []
+            size = 0
+            for _, name in sheets:
+                kind = ""
+                cell: list[str] = []
+                row: list[str] = []
+                for m in _XLSX_TOKENS.finditer(_xlsx_part(archive, name, xml_limit)):
+                    if m[1] is not None:  # a cell opens
+                        kind = (_XLSX_TYPE.search(m[1]) or [None, ""])[1] or ""
+                        cell = []
+                    elif m[2] is not None:  # a value
+                        value = html.unescape(m[2])
+                        if kind == "s":
+                            index = int(value) if value.isdigit() else -1
+                            value = shared[index] if 0 <= index < len(shared) else ""
+                        cell.append(value)
+                    elif m[3] is not None:  # inline text
+                        cell.append(html.unescape(m[3]))
+                    elif m[5] is not None:  # a cell closes
+                        text = " ".join("".join(cell).split())
+                        if text:
+                            row.append(text)
+                            size += len(text)
+                        cell = []
+                    elif m[4] is not None:  # a row ends
+                        if row:
+                            lines.append(CELL_JOIN.join(row))
+                        row = []
+                        if size > max_chars:
+                            break
+                if row:
+                    lines.append(CELL_JOIN.join(row))
+                if size > max_chars:
+                    break  # too long anyway: text_of says so
+    except (zipfile.BadZipFile, KeyError) as exc:
+        raise DocumentError(
+            "DMbot couldn't open that Excel file. Save it as .xlsx and try again."
+        ) from exc
+    return "\n".join(lines)
 
 
 _SPACES = re.compile(r"\s+")
@@ -289,8 +391,8 @@ def instructions(*, secrets: bool) -> str:
         "Rules:\n"
         "- name: the name as written in the document, at most 8 words. Never invent a "
         "name that isn't in the document.\n"
-        "- kind: exactly one of NPC, place, group, creature, item, god, event, other. A named "
-        "monster is a creature; a god is a god; a person is an NPC.\n"
+        "- kind: exactly one of NPC, place, group, item, event, other. A named character, a "
+        "named monster and a god are all NPC.\n"
         "- other names: nicknames, titles or short forms the document uses for the same "
         f"one, separated by ;, at most {MAX_PER_LINE}. Leave it empty if there are none.\n"
         f"{secret_rule}"
@@ -325,10 +427,9 @@ def merge_lists(lists: list[str]) -> str:
             row = merged[key]
             row[1] = row[1] or cells[1]
             for at in (2, 3):
-                seen = {name_key(x) for x in re.split(r"[;,]", row[at]) if x.strip()}
-                new = [x.strip() for x in re.split(r"[;,]", cells[at]) if x.strip()]
-                extra = [x for x in new if name_key(x) not in seen]
-                row[at] = "; ".join(p for p in [row[at], *extra] if p)
+                seen = {name_key(x) for x in _parts(row[at])}
+                extra = [x for x in _parts(cells[at]) if name_key(x) not in seen]
+                row[at] = join_cell([*_parts(row[at]), *extra])
     out: list[str] = []
     for key in order:
         name, kind, others, secrets = merged[key]
@@ -337,7 +438,7 @@ def merge_lists(lists: list[str]) -> str:
 
 
 def _parts(cell: str) -> list[str]:
-    return [x.strip() for x in re.split(r"[;,]", cell) if x.strip()]
+    return [x.strip() for x in split_cell(cell) if x.strip()]
 
 
 def clean_reply(reply: str) -> str:

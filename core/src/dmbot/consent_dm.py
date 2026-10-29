@@ -5,9 +5,9 @@ privately messages each person once per session:
 - not yet consented in this server: what DMbot does, with the consent button ("I'm 16 or
   older, record me") and [No thanks];
 - already consented (consent carries over per server): a reminder of when, with
-  [⚙️ Menu].
+  [🗂️ Menu].
 
-The ⚙️ Menu (#807) offers 📜 My character sheet, Stop recording me (or the consent button, for
+The 🗂️ Menu (#807) offers 📜 My character sheet, Stop recording me (or the consent button, for
 someone who stopped) and Close. Stop recording me first shows one warning, with [Yes,
 stop recording me] [Keep recording]; a 🛑 button on a message from before the menu shows
 that warning too. One warning, one tap: never a second ask, a wait or a reason box.
@@ -31,18 +31,28 @@ import discord
 from dmbot.consent import CONSENT_COMMAND, PRIVATE_MESSAGE, TERMS_VERSION, ConsentMethod
 from dmbot.consent_words import AGE_LINE, CONSENT_LABEL, UNDER_LINE
 from dmbot.logs import log_context
+from dmbot.mentions import NO_PINGS
+from dmbot.off_the_record import CHOICES, NOT_TOLD, Paused, paused_text, resumed_text
 
 log = logging.getLogger(__name__)
 
-NO_PINGS = discord.AllowedMentions.none()
 _GUILD = r"(?P<guild>[0-9]{1,20})"
 _CAMPAIGN = r"(?P<campaign>[0-9a-f]{32}|-)"
 
 DECLINE_LABEL = "No thanks"
 STOP_LABEL = "Stop recording me"
-MENU_LABEL = "Menu"  # with the ⚙️ emoji
+MENU_LABEL = "Menu"  # with the 🗂️ emoji (⚙️ is Settings)
+PAUSE_LABEL = "Pause recording me"  # with ⏸️: off the record for a while (#2466)
+RESUME_LABEL = "Resume now"  # with ▶️
 STOP_YES_LABEL = "Yes, stop recording me"
+DELETE_LABEL = "🗑 Delete my transcripts"  # in the 🗂️ Menu (#1532); the issue says "past"
+DELETE_YES_LABEL = "Yes, delete my lines"
+DELETE_NO_LABEL = "Cancel"
 KEEP_LABEL = "Keep recording"
+PAUSE_LENGTHS = {5: "5 minutes", 15: "15 minutes", None: "Until I resume"}
+PAUSE_ASK = "⏸️ How long should DMbot stop recording you? Only you. Others are still recorded."
+ALREADY_BACK = "You're already on the record."
+RESUMED_AFTER_BREAK = "▶️ You're back on when the table's break ends."
 CLOSE_LABEL = "Close"
 # Test recordings (#1019): only in a server listed in DMBOT_TEST_RECORDING_GUILDS.
 TEST_VOICE_LABEL = "Save my voice for tests"
@@ -93,6 +103,8 @@ REASK_INTRO = (
 ALREADY_RECORDED = (
     "What DMbot already wrote down stays, and anyone in this server can still read it."
 )
+# How to remove it (#1532): said with the stop message, whose buttons carry the 🗂️ Menu.
+HOW_TO_DELETE = f"Want it gone? Press 🗂️ {MENU_LABEL}, then **{DELETE_LABEL}**."
 
 
 def _plain(name: str) -> str:
@@ -192,21 +204,21 @@ def test_voice_note() -> str:
         "7 days unless it is kept as a lasting test.\n"
         "If you don't press it, you are still recorded and written down (if you said yes "
         "above), but DMbot keeps no recording of your voice.\n"
-        f"To stop and delete it any time: ⚙️ {MENU_LABEL}, then **{STOP_SAVING_LABEL}**."
+        f"To stop and delete it any time: 🗂️ {MENU_LABEL}, then **{STOP_SAVING_LABEL}**."
     )
 
 
 def test_voice_saved_text() -> str:
     return (
         "🧪 Done. DMbot is now also keeping your voice, in this server only. Stop any time: "
-        f"⚙️ {MENU_LABEL}, then **{STOP_SAVING_LABEL}**. That deletes it."
+        f"🗂️ {MENU_LABEL}, then **{STOP_SAVING_LABEL}**. That deletes it."
     )
 
 
 def test_voice_first_text() -> str:
     return (
         f"First say yes to being recorded (the **{CONSENT_LABEL}** button). After that, open "
-        f"⚙️ {MENU_LABEL} and press **{TEST_VOICE_LABEL}**."
+        f"🗂️ {MENU_LABEL} and press **{TEST_VOICE_LABEL}**."
     )
 
 
@@ -222,10 +234,10 @@ SHEET_LABEL = "📜 My character sheet"
 # Next to the 📜 button (#723). It explains an optional button and adds nothing anyone
 # agrees to, so it doesn't change the terms version (decided on #781).
 SHEET_NOTE = (
-    f"Optional: if you play on D&D Beyond, press ⚙️ {MENU_LABEL}, then {SHEET_LABEL}, so "
+    f"Optional: if you play on D&D Beyond, press 🗂️ {MENU_LABEL}, then {SHEET_LABEL}, so "
     "DMbot spells your spell names better. It doesn't change recording."
 )
-MENU_HINT = f"To stop being recorded, press ⚙️ {MENU_LABEL} below."
+MENU_HINT = f"To stop being recorded, press 🗂️ {MENU_LABEL} below."
 # What a reminder from before the menu said; given the menu's words when it's restored.
 OLD_STOP_HINT = "Press 🛑 below to stop any time."
 OLD_SHEET_NOTE = (
@@ -249,7 +261,7 @@ def confirmed_text(
     )
     if test_voice:  # a test server (#1019)
         text += (
-            f"\n🧪 Test server: you can also choose to save your voice. Press ⚙️ {MENU_LABEL}, "
+            f"\n🧪 Test server: you can also choose to save your voice. Press 🗂️ {MENU_LABEL}, "
             f"then **{TEST_VOICE_LABEL}**."
         )
     return text
@@ -292,9 +304,35 @@ def declined_text(server: str) -> str:
 def stopped_text(server: str) -> str:
     return (
         f"🛑 Stopped. DMbot won't record you anymore in **{_plain(server)}**. "
-        f"{ALREADY_RECORDED} "
+        f"{ALREADY_RECORDED} {HOW_TO_DELETE} "
         f"Changed your mind? Press **{CONSENT_LABEL}** below."
     )
+
+
+def delete_warning_text(server: str, lines: int, sessions: int) -> str:
+    """The one warning before deleting (#1532): plain facts, what it covers and that it can't be
+    undone. Others' lines stay, and so does anything already downloaded."""
+    return (
+        f"This deletes everything you said that DMbot wrote down in **{_plain(server)}**: "
+        f"{lines} line{'' if lines == 1 else 's'} in {sessions} session"
+        f"{'' if sessions == 1 else 's'}. Other people's lines and the DM's story notes stay. "
+        "Copies people already downloaded stay too. This can't be undone."
+    )
+
+
+def delete_done_text(server: str) -> str:
+    return f"🗑 Done. What you said is deleted from **{_plain(server)}**'s transcripts."
+
+
+def delete_nothing_text(server: str) -> str:
+    return (
+        f"DMbot has nothing written down from you in **{_plain(server)}**, "
+        "so there is nothing to delete."
+    )
+
+
+DELETE_FAILED = "Sorry, that didn't work and nothing was deleted. Please try again in a minute."
+DELETE_KEPT = "OK, nothing was deleted."
 
 
 def menu_text(server: str, *, saving: bool = False) -> str:
@@ -321,15 +359,15 @@ def warning_text(server: str, *, saving: bool = False) -> str:
 def kept_text(server: str) -> str:
     return (
         f"OK, DMbot keeps recording you in **{_plain(server)}**. To stop later, press "
-        f"⚙️ {MENU_LABEL} in DMbot's private message, or type `/consent revoke`."
+        f"🗂️ {MENU_LABEL} in DMbot's private message, or type `/consent revoke`."
     )
 
 
 def not_recorded_menu_text(server: str) -> str:
-    """A stale Keep recording on a lasting message, which keeps its ⚙️ Menu."""
+    """A stale Keep recording on a lasting message, which keeps its 🗂️ Menu."""
     return (
         f"DMbot isn't recording you in **{_plain(server)}**. To start again, press "
-        f"⚙️ {MENU_LABEL} below, then **{CONSENT_LABEL}**."
+        f"🗂️ {MENU_LABEL} below, then **{CONSENT_LABEL}**."
     )
 
 
@@ -419,6 +457,11 @@ class ConsentActions(Protocol):
 
     async def withdraw_consent(self, guild_id: int, user_id: int) -> bool: ...
 
+    # Delete my past transcripts (#1532): (lines, sessions) in this server
+    async def count_my_lines(self, guild_id: int, user_id: int) -> tuple[int, int]: ...
+
+    async def delete_my_lines(self, guild_id: int, user_id: int) -> tuple[int, int]: ...
+
     # Test recordings (#1019)
     def test_voice_listed(self, guild_id: int) -> bool: ...  # a test server
 
@@ -427,6 +470,15 @@ class ConsentActions(Protocol):
     async def grant_test_voice(self, guild_id: int, user_id: int) -> None: ...
 
     async def stop_saving_voice(self, guild_id: int, user_id: int) -> None: ...
+
+    # Off the record (#2466): a pause for a while, which ends by itself and changes no consent
+    async def pause_recording(self, guild_id: int, user_id: int, minutes: int | None) -> Paused: ...
+
+    async def resume_recording(self, guild_id: int, user_id: int) -> bool: ...
+
+    def is_paused(self, guild_id: int, user_id: int) -> bool: ...
+
+    def table_is_paused(self, guild_id: int) -> bool: ...
 
 
 def _test_voice_state(actions: ConsentActions, guild_id: int, user_id: int) -> str | None:
@@ -584,7 +636,11 @@ async def _stop(interaction: discord.Interaction, guild_id: int, button: str) ->
         done = stopped_text if had_consented else declined_text
         await interaction.edit_original_response(
             content=done(guild.name),
-            view=keep_invite(interaction, consent_view(guild_id), guild_id),
+            view=keep_invite(
+                interaction,
+                stopped_view(guild_id) if had_consented else consent_view(guild_id),
+                guild_id,
+            ),
         )
 
 
@@ -617,7 +673,7 @@ class StopButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
     template=rf"dmbot:consent:stop:{_GUILD}(?::{_CAMPAIGN})?",
 ):
-    """Stop recording me, in the ⚙️ Menu: shows the one warning, and stops nothing. The id
+    """Stop recording me, in the 🗂️ Menu: shows the one warning, and stops nothing. The id
     is the old red 🛑 button's (without a campaign), so a 🛑 on a message from before the
     menu warns too."""
 
@@ -660,6 +716,142 @@ class StopButton(
                 await interaction.response.edit_message(content=content, view=view)
             else:  # an only-you menu: it becomes the warning
                 await interaction.response.edit_message(content=text, view=view)
+
+
+class DeleteButton(
+    discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
+    template=rf"dmbot:consent:del:{_GUILD}",
+):
+    """🗑 Delete my past transcripts, in the 🗂️ Menu (#1532): shows the one warning with how many
+    lines and sessions it covers, and deletes nothing. It is the person's own lines in this one
+    server, whoever presses: the id used is the presser's."""
+
+    def __init__(self, guild_id: int) -> None:
+        super().__init__(
+            discord.ui.Button(
+                label=DELETE_LABEL,
+                style=discord.ButtonStyle.secondary,
+                custom_id=f"dmbot:consent:del:{guild_id}",
+            )
+        )
+        self.guild_id = guild_id
+
+    @classmethod
+    async def from_custom_id(
+        cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
+    ) -> DeleteButton:
+        return cls(int(match["guild"]))
+
+    async def callback(self, interaction: discord.Interaction) -> Any:
+        await ask_delete(interaction, self.guild_id)
+
+
+async def ask_delete(interaction: discord.Interaction, guild_id: int) -> None:
+    """The warning (or "nothing written down") as an only-you message, for the menu button and
+    the `/dmbot delete-my-lines` command alike. Membership is not checked: removing your own
+    words is a right, and the presser's own id is the only one ever used."""
+    with log_context(guild_id=guild_id):
+        guild = _served_here(interaction, guild_id)
+        if guild is None:
+            await interaction.response.send_message(NOT_HERE, ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        try:
+            lines, sessions = await _actions(interaction).count_my_lines(
+                guild_id, interaction.user.id
+            )
+        except Exception:
+            log.exception("Couldn't count a person's lines for the delete warning")
+            await interaction.followup.send(DELETE_FAILED, ephemeral=True)
+            return
+        if lines == 0:
+            await interaction.followup.send(
+                delete_nothing_text(guild.name), ephemeral=True, allowed_mentions=NO_PINGS
+            )
+            return
+        await interaction.followup.send(
+            delete_warning_text(guild.name, lines, sessions),
+            view=delete_view(guild_id),
+            ephemeral=True,
+            allowed_mentions=NO_PINGS,
+        )
+
+
+class DeleteYesButton(
+    discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
+    template=rf"dmbot:consent:delyes:{_GUILD}",
+):
+    """Delete my lines: deletes at once, in one step. A Yes on an old warning still deletes the
+    presser's own lines (and says how many went), never anyone else's."""
+
+    def __init__(self, guild_id: int) -> None:
+        super().__init__(
+            discord.ui.Button(
+                label=DELETE_YES_LABEL,
+                style=discord.ButtonStyle.danger,
+                custom_id=f"dmbot:consent:delyes:{guild_id}",
+            )
+        )
+        self.guild_id = guild_id
+
+    @classmethod
+    async def from_custom_id(
+        cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
+    ) -> DeleteYesButton:
+        return cls(int(match["guild"]))
+
+    async def callback(self, interaction: discord.Interaction) -> Any:
+        with log_context(guild_id=self.guild_id):
+            guild = _served_here(interaction, self.guild_id)
+            if guild is None:
+                await interaction.response.send_message(NOT_HERE, ephemeral=True)
+                return
+            await interaction.response.defer()
+            try:
+                lines, _ = await _actions(interaction).delete_my_lines(
+                    self.guild_id, interaction.user.id
+                )
+            except Exception:
+                log.exception("Couldn't delete a person's past transcripts")
+                await interaction.edit_original_response(content=DELETE_FAILED, view=None)
+                return
+            text = delete_done_text(guild.name) if lines else delete_nothing_text(guild.name)
+            await interaction.edit_original_response(
+                content=text, view=None, allowed_mentions=NO_PINGS
+            )
+
+
+class DeleteNoButton(
+    discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
+    template=rf"dmbot:consent:delno:{_GUILD}",
+):
+    """Cancel: changes nothing."""
+
+    def __init__(self, guild_id: int) -> None:
+        super().__init__(
+            discord.ui.Button(
+                label=DELETE_NO_LABEL,
+                style=discord.ButtonStyle.secondary,
+                custom_id=f"dmbot:consent:delno:{guild_id}",
+            )
+        )
+        self.guild_id = guild_id
+
+    @classmethod
+    async def from_custom_id(
+        cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
+    ) -> DeleteNoButton:
+        return cls(int(match["guild"]))
+
+    async def callback(self, interaction: discord.Interaction) -> Any:
+        await interaction.response.edit_message(content=DELETE_KEPT, view=None)
+
+
+def delete_view(guild_id: int) -> discord.ui.View:
+    view = discord.ui.View(timeout=None)
+    view.add_item(DeleteYesButton(guild_id))
+    view.add_item(DeleteNoButton(guild_id))
+    return view
 
 
 def _campaign(match: re.Match[str]) -> str | None:
@@ -707,7 +899,7 @@ class KeepButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
     template=rf"dmbot:consent:keep:{_GUILD}:{_CAMPAIGN}",
 ):
-    """Keep recording: changes nothing. On a lasting message, its text and ⚙️ Menu come
+    """Keep recording: changes nothing. On a lasting message, its text and 🗂️ Menu come
     back as they were."""
 
     def __init__(self, guild_id: int, campaign_id: str | None = None) -> None:
@@ -761,7 +953,7 @@ class MenuButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
     template=rf"dmbot:consent:menu:{_GUILD}:{_CAMPAIGN}",
 ):
-    """⚙️ Menu, on the yes confirmation, the session reminder and the /consent give answer.
+    """🗂️ Menu, on the yes confirmation, the session reminder and the /consent give answer.
     `campaign_id`: the session's campaign, for 📜 (or "-": any of the server's). On a
     lasting message the menu takes its buttons' place; otherwise it comes as an only-you
     message."""
@@ -770,7 +962,7 @@ class MenuButton(
         super().__init__(
             discord.ui.Button(
                 label=MENU_LABEL,
-                emoji="⚙️",
+                emoji="🗂️",
                 style=discord.ButtonStyle.secondary,
                 custom_id=f"dmbot:consent:menu:{guild_id}:{campaign_id or '-'}",
             )
@@ -799,6 +991,7 @@ class MenuButton(
                     recording=await actions.recorded(self.guild_id, interaction.user.id),
                     sheets=actions.sheets is not None,
                     test_voice=_test_voice_state(actions, self.guild_id, interaction.user.id),
+                    paused=actions.is_paused(self.guild_id, interaction.user.id),
                 ),
                 self.guild_id,
             )
@@ -816,11 +1009,148 @@ class MenuButton(
             )
 
 
+class OffRecordButton(
+    discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
+    template=rf"dmbot:consent:pause:{_GUILD}:{_CAMPAIGN}",
+):
+    """⏸️ Pause recording me, in the 🗂️ Menu and on the session's reminder (#2466): asks how long,
+    in one tap with no warning (a pause ends by itself), and pauses nothing until a length is
+    chosen. Only your own recording."""
+
+    def __init__(self, guild_id: int, campaign_id: str | None = None) -> None:
+        super().__init__(
+            discord.ui.Button(
+                label=PAUSE_LABEL,
+                emoji="⏸️",
+                style=discord.ButtonStyle.secondary,
+                custom_id=f"dmbot:consent:pause:{guild_id}:{campaign_id or '-'}",
+            )
+        )
+        self.guild_id = guild_id
+        self.campaign_id = campaign_id
+
+    @classmethod
+    async def from_custom_id(
+        cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
+    ) -> OffRecordButton:
+        return cls(int(match["guild"]), _campaign(match))
+
+    async def callback(self, interaction: discord.Interaction) -> Any:
+        with log_context(guild_id=self.guild_id):
+            if _served_here(interaction, self.guild_id) is None:
+                await interaction.response.send_message(NOT_HERE, ephemeral=True)
+                return
+            view = pause_choices_view(self.guild_id)
+            if _lasting(interaction):  # a message others may scroll past: the choice is only yours
+                await interaction.response.send_message(
+                    PAUSE_ASK, view=view, ephemeral=True, allowed_mentions=NO_PINGS
+                )
+                return
+            await interaction.response.edit_message(content=PAUSE_ASK, view=view)
+
+
+class OffRecordForButton(
+    discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
+    template=rf"dmbot:consent:pausefor:{_GUILD}:(?P<minutes>[0-9]{{1,3}})",
+):
+    """One of the lengths: 5 minutes, 15 minutes, or until you press Resume (0)."""
+
+    def __init__(self, guild_id: int, minutes: int | None) -> None:
+        super().__init__(
+            discord.ui.Button(
+                label=PAUSE_LENGTHS.get(minutes, "Until I resume"),
+                style=discord.ButtonStyle.primary
+                if minutes == 5
+                else discord.ButtonStyle.secondary,
+                custom_id=f"dmbot:consent:pausefor:{guild_id}:{minutes or 0}",
+            )
+        )  # fmt: skip
+        self.guild_id = guild_id
+        self.minutes = minutes
+
+    @classmethod
+    async def from_custom_id(
+        cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
+    ) -> OffRecordForButton:
+        return cls(int(match["guild"]), int(match["minutes"]) or None)
+
+    async def callback(self, interaction: discord.Interaction) -> Any:
+        with log_context(guild_id=self.guild_id):
+            if _served_here(interaction, self.guild_id) is None:
+                await interaction.response.send_message(NOT_HERE, ephemeral=True)
+                return
+            await interaction.response.defer()  # the pause is a quick call, but answer first
+            if self.minutes not in CHOICES:
+                await interaction.edit_original_response(content="Nothing was paused.", view=None)
+                return
+            done = await _actions(interaction).pause_recording(
+                self.guild_id, interaction.user.id, self.minutes
+            )
+            if not done.ok:
+                await interaction.edit_original_response(content=done.why, view=None)
+                return
+            await interaction.edit_original_response(
+                content=paused_text(done.until) + ("" if done.told else NOT_TOLD),
+                view=resume_view(self.guild_id),
+            )
+
+
+class ResumeButton(
+    discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
+    template=rf"dmbot:consent:resume:{_GUILD}",
+):
+    """▶️ Resume now: back on the record. Only your own."""
+
+    def __init__(self, guild_id: int) -> None:
+        super().__init__(
+            discord.ui.Button(
+                label=RESUME_LABEL,
+                emoji="▶️",
+                style=discord.ButtonStyle.primary,
+                custom_id=f"dmbot:consent:resume:{guild_id}",
+            )
+        )
+        self.guild_id = guild_id
+
+    @classmethod
+    async def from_custom_id(
+        cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
+    ) -> ResumeButton:
+        return cls(int(match["guild"]))
+
+    async def callback(self, interaction: discord.Interaction) -> Any:
+        with log_context(guild_id=self.guild_id):
+            if _served_here(interaction, self.guild_id) is None:
+                await interaction.response.send_message(NOT_HERE, ephemeral=True)
+                return
+            await interaction.response.defer()
+            actions = _actions(interaction)
+            was = await actions.resume_recording(self.guild_id, interaction.user.id)
+            if was and actions.table_is_paused(self.guild_id):  # the DM's break is still on
+                text = RESUMED_AFTER_BREAK
+            else:
+                text = resumed_text() if was else ALREADY_BACK
+            await interaction.edit_original_response(content=text, view=None)
+
+
+def pause_choices_view(guild_id: int) -> discord.ui.View:
+    view = discord.ui.View(timeout=None)
+    for minutes in CHOICES:
+        view.add_item(OffRecordForButton(guild_id, minutes))
+    return view
+
+
+def resume_view(guild_id: int) -> discord.ui.View:
+    view = discord.ui.View(timeout=None)
+    view.add_item(ResumeButton(guild_id))
+    return view
+
+
 class CloseButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
     template=rf"dmbot:consent:close:{_GUILD}:{_CAMPAIGN}",
 ):
-    """Close: a lasting message gets its ⚙️ Menu back; an only-you menu goes."""
+    """Close: a lasting message gets its 🗂️ Menu back; an only-you menu goes."""
 
     def __init__(self, guild_id: int, campaign_id: str | None = None) -> None:
         super().__init__(
@@ -965,7 +1295,7 @@ class StopSavingButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
     template=rf"dmbot:testvoice:stop:{_GUILD}",
 ):
-    """Stop saving my voice (#1019), in ⚙️ Menu: nothing more is saved, and what was saved
+    """Stop saving my voice (#1019), in 🗂️ Menu: nothing more is saved, and what was saved
     is deleted from every test session at once."""
 
     def __init__(self, guild_id: int) -> None:
@@ -975,6 +1305,7 @@ class StopSavingButton(
                 emoji="🧪",
                 style=discord.ButtonStyle.danger,
                 custom_id=f"dmbot:testvoice:stop:{guild_id}",
+                row=1,  # on its own row, so the menu's own five stay together on the first
             )
         )
         self.guild_id = guild_id
@@ -1005,8 +1336,14 @@ CONSENT_BUTTONS = (
     DeclineButton,
     StopButton,
     StopYesButton,
+    DeleteButton,
+    DeleteYesButton,
+    DeleteNoButton,
     KeepButton,
     MenuButton,
+    OffRecordButton,
+    OffRecordForButton,
+    ResumeButton,
     CloseButton,
 )
 
@@ -1072,6 +1409,15 @@ def consent_view(guild_id: int) -> discord.ui.View:
     return view
 
 
+def stopped_view(guild_id: int, campaign_id: str | None = None) -> discord.ui.View:
+    """What a stop message carries: the consent button to start again, and the 🗂️ Menu that
+    holds 🗑 Delete my past transcripts (#1532), which the message points at."""
+    view = discord.ui.View(timeout=None)
+    view.add_item(ConsentButton(guild_id))
+    view.add_item(MenuButton(guild_id, campaign_id))
+    return view
+
+
 def sheet_button(guild_id: int, campaign_id: str | None) -> discord.ui.Button[Any]:
     """The player's 📜 My character sheet (handled by dmbot.ui.sheets.MySheetButton, by
     its id): link a D&D Beyond sheet for their character (#723)."""
@@ -1085,10 +1431,11 @@ def sheet_button(guild_id: int, campaign_id: str | None) -> discord.ui.Button[An
 def menu_view(
     guild_id: int, campaign_id: str | None = None, *, invite: str | None = None
 ) -> discord.ui.View:
-    """Just ⚙️ Menu: what the messages that once had 🛑 carry (#807). The session's reminder
+    """Just 🗂️ Menu: what the messages that once had 🛑 carry (#807). The session's reminder
     adds the campaign's D&D Beyond Join button when the DM set one (#1119)."""
     view = discord.ui.View(timeout=None)
     view.add_item(MenuButton(guild_id, campaign_id))
+    view.add_item(OffRecordButton(guild_id, campaign_id))  # one tap from the reminder (#2466)
     if invite:
         view.add_item(invite_button(invite))
     return view
@@ -1101,6 +1448,7 @@ def options_view(
     recording: bool,
     sheets: bool,
     test_voice: str | None = None,
+    paused: bool = False,
 ) -> discord.ui.View:
     """The menu's buttons, only those that apply: 📜 (when sheets are on), Stop recording
     me (or the consent button, for someone who stopped), and Close. `test_voice`: in a test
@@ -1113,9 +1461,13 @@ def options_view(
     elif test_voice == "ask" and recording:
         view.add_item(SaveVoiceButton(guild_id))
     if recording:
+        # Off the record for a while (#2466), or back on it if they already are. In a test server's
+        # menu too: real people are recorded there. The test-voice button has its own row.
+        view.add_item(ResumeButton(guild_id) if paused else OffRecordButton(guild_id, campaign_id))
         view.add_item(StopButton(guild_id, campaign_id or "-"))
     else:
         view.add_item(StartButton(guild_id))
+    view.add_item(DeleteButton(guild_id))
     view.add_item(CloseButton(guild_id, campaign_id))
     return view
 

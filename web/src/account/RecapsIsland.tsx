@@ -4,6 +4,7 @@ import { useEffect, useState } from "preact/hooks";
 
 import { text } from "../content/recaps";
 import { httpApi, type AccountApi } from "./api";
+import SignedInLine from "./SignedInLine";
 import Recaps from "./Recaps";
 
 const base: string = import.meta.env.PUBLIC_API_BASE ?? "/api";
@@ -25,5 +26,10 @@ export default function RecapsIsland() {
         {text.loading}
       </p>
     );
-  return <Recaps api={api} path={window.location.pathname} />;
+  return (
+    <>
+      <SignedInLine api={api} />
+      <Recaps api={api} path={window.location.pathname} search={window.location.search} />
+    </>
+  );
 }

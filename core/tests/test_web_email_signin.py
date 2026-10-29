@@ -23,7 +23,7 @@ from dmbot.web.limits import LIMITS, RateLimit
 from dmbot.web.moving import MoveOutcome, can_move
 from dmbot.web.payments import FakeProvider
 from tests.pg import REQUIRE_DB, SUPERUSER_URL, DatabaseTest
-from tests.test_web_api import ALICE, API, SITE, THURSDAY, FakeDiscord, settings
+from tests.test_web_api import ALICE, SITE, THURSDAY, FakeDiscord, settings
 from tests.test_web_role import ensure_web_role, web_url
 
 BOB = DiscordUser(id=2002, name="Quillon", email="quillon@example.com")
@@ -178,7 +178,9 @@ class EmailSignIn(DatabaseTest):
 
     def browser(self) -> httpx.AsyncClient:
         return httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=self.app), base_url=API, follow_redirects=False
+            transport=httpx.ASGITransport(app=self.app),
+            base_url="https://web-api.internal.test",
+            follow_redirects=False,
         )
 
     async def account(self, user: DiscordUser) -> None:
@@ -233,7 +235,12 @@ class EmailSignIn(DatabaseTest):
 
     async def test_an_address_two_accounts_share_gets_no_link(self) -> None:
         await self.account(ALICE)
-        await self.account(DiscordUser(id=3003, name="Twin", email=email_of(ALICE)))
+        await self.account(DiscordUser(id=3003, name="Twin", email="twin@example.com"))
+        # (a Discord sign-in no longer brings in a taken address, #2366; this is an old shared one)
+        async with self.db.user(3003) as conn:
+            await conn.execute(
+                "UPDATE web_users SET email = %s WHERE user_id = 3003", (email_of(ALICE),)
+            )
         async with self.browser() as client:
             answer = await self.ask(client, email_of(ALICE))
         self.assertEqual(answer.json(), SAME_ANSWER)
@@ -269,7 +276,9 @@ class EmailSignIn(DatabaseTest):
             mailer=self.sender,
             clock=lambda: self.now,
         )
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=API) as c:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="https://web-api.internal.test"
+        ) as c:
             answer = await c.post(
                 "/auth/email/request", json={"email": email_of(ALICE)}, headers=HEADERS
             )
@@ -286,7 +295,9 @@ class EmailSignIn(DatabaseTest):
             payments=FakeProvider(b"h" * 32, SITE),
             clock=lambda: self.now,
         )
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=API) as c:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="https://web-api.internal.test"
+        ) as c:
             answer = await c.post(
                 "/auth/email/request", json={"email": email_of(ALICE)}, headers=HEADERS
             )
@@ -641,7 +652,9 @@ class EmailSignIn(DatabaseTest):
             await self.sign_in_by_email(signing_in, ALICE)  # a browser of the main app
             cookies = signing_in.cookies
         async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url=API, cookies=cookies
+            transport=httpx.ASGITransport(app=app),
+            base_url="https://web-api.internal.test",
+            cookies=cookies,
         ) as client:
             answer = await client.post("/me/move-code", headers=HEADERS)
         self.assertEqual((answer.status_code, answer.json()), (503, {"error": "move_off"}))

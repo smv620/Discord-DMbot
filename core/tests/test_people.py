@@ -82,6 +82,40 @@ class People(MemoryTest):
         self.assertEqual(len([e for e in found if e.type == "person"]), 1)
 
 
+class PeopleInTheLookup(MemoryTest):
+    """The Cleaner's copy of a campaign holds that campaign's people and nobody else's (#1547)."""
+
+    async def test_a_person_of_another_campaign_is_never_a_candidate(self) -> None:
+        other = (await self.campaigns.create(GUILD_A, "Other", DM)).id
+        await self.add("Testa", type="player_character", played_by=PLAYER, status="confirmed")
+        await self.add(
+            "Tosta", type="player_character", played_by=OTHER, status="confirmed", campaign=other
+        )
+
+        async def person(campaign: str) -> str:
+            found = await self.memory.entities(GUILD_A, campaign)
+            return next(e.id for e in found if e.type == "person")
+
+        await self.memory.add_alias(
+            GUILD_A, self.c, await person(self.c), "Mikael", kind="nickname", source=SRC,
+            status="confirmed",
+        )  # fmt: skip
+        await self.memory.add_alias(
+            GUILD_A, other, await person(other), "Brannoch", kind="nickname", source=SRC,
+            status="confirmed",
+        )  # fmt: skip
+        data = await self.memory.lookup_data(GUILD_A, self.c)
+        self.assertEqual([a.text for a in data.people], ["Mikael"])
+        from dmbot.memory.lookup import CampaignLookup
+
+        lookup = CampaignLookup.build(data)
+        self.assertIn("mikael", lookup.people_by_key)
+        self.assertNotIn("brannoch", lookup.people_by_key)
+        self.assertEqual(
+            [a.text for a in (await self.memory.lookup_data(GUILD_A, other)).people], ["Brannoch"]
+        )
+
+
 class Edges(MemoryTest):
     async def test_rejecting_a_character_ends_its_link_and_the_person_needs_a_look(self) -> None:
         pc = await self.add("Testa", type="player_character", played_by=PLAYER)

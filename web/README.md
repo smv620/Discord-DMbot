@@ -76,6 +76,18 @@ PUBLIC_TURNSTILE_SITE_KEY=0x4AAA... npm run build   # empty: no check (local tes
 
 With `PUBLIC_API_BASE=mock` every message pretends to send.
 
+### Stripe's billing login link
+
+Someone who has lost their Discord account can still reach billing with the email on their receipts
+(#1711). Stripe gives a portal login link for that (Stripe → Settings → Billing → Customer portal →
+Portal link); test mode and live mode have different links, so it is a build setting and is never
+written in the repository. It shows on Refunds, in Help (Your account) and on My Account. Only an
+`https://billing.stripe.com/` address counts; empty or anything else shows nothing.
+
+```bash
+PUBLIC_STRIPE_PORTAL_LOGIN_URL=https://billing.stripe.com/p/login/... npm run build
+```
+
 ### The admin page
 
 `/admin` (#772) is for the team only: never linked from the site, `noindex, nofollow` in

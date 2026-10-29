@@ -70,6 +70,38 @@ class SetupTests(DatabaseTest):
         )
         return next(ow for key, ow in overwrites.items() if key.id == target_id)
 
+    async def test_opening_the_screen_pulls_back_questions_that_show_a_secret_name(self) -> None:
+        from dmbot.dm_screen import channel as screen
+        from dmbot.dm_screen import secret_posts
+
+        secret_posts._posts.clear()
+        asked = MagicMock(edit=AsyncMock(), components=[object()])
+        secret_posts.remember(GUILD, self.campaign.id, asked)
+        events: list[str] = []
+        real_apply = screen._apply
+
+        async def apply(*args: Any, **kw: Any) -> Any:
+            events.append("apply")  # the permissions that open the screen
+            return await real_apply(*args, **kw)
+
+        asked.edit.side_effect = lambda **_: events.append("hide")
+        with (
+            patch.object(screen, "fresh_screen", AsyncMock(return_value=self.new)),
+            patch.object(screen, "_apply", apply),
+        ):
+            await setup_dm_screen(self.guild, self.campaign.id, self.store, visibility="private")
+            asked.edit.assert_not_awaited()  # still private: nothing changes
+            await setup_dm_screen(self.guild, self.campaign.id, self.store)
+            asked.edit.assert_not_awaited()  # still private, nothing asked for
+            # The screen is opened some other way (a restored backup): the state decides, not who
+            # asked, so the next set-up with no visibility given still pulls the question back.
+            await self.store.set_dm_screen_visibility(GUILD, self.campaign.id, "open")
+            events.clear()
+            await setup_dm_screen(self.guild, self.campaign.id, self.store)
+        asked.edit.assert_awaited_once()
+        self.assertEqual(asked.edit.await_args.kwargs["content"], secret_posts.HIDDEN)
+        self.assertEqual(events, ["hide", "apply"])  # pulled back BEFORE the screen is opened
+
     async def test_an_ordinary_saved_channel_is_never_taken_over(self) -> None:
         # A channel saved before DMbot made screens itself, e.g. #general.
         await self.store.set_dm_screen(GUILD, self.campaign.id, GENERAL)
@@ -321,15 +353,19 @@ class SetupTests(DatabaseTest):
         self.new.send.assert_not_called()
         assert result.warning == messages.CANT_PIN
 
-    async def test_a_card_missing_a_new_button_is_posted_again(self) -> None:
-        # #553: the same words, but from before ⚙️ Settings: compared by buttons too.
+    async def test_a_card_with_the_old_buttons_is_posted_again_without_them(self) -> None:
+        # #1666: the same words once, but from before Settings moved to the DM Bot channel: the
+        # card is compared by buttons too, so an old one is replaced, not kept.
         ids = [f"dmbot:vis:{self.campaign.id}:{v}" for v in ("private", "peek", "open")]
+        ids.append(f"dmbot:settings:{self.campaign.id}")
         card = self.current_card(pinned=True, buttons=ids)
         await self.with_screen(card)
         await setup_dm_screen(self.guild, self.campaign.id, self.store)
         card.delete.assert_awaited_once()
         sent = self.new.send.await_args.kwargs["view"]
-        assert f"dmbot:settings:{self.campaign.id}" in [i.custom_id for i in sent.children]
+        custom_ids = [i.custom_id for i in sent.children]
+        assert f"dmbot:settings:{self.campaign.id}" not in custom_ids
+        assert not any(c.startswith("dmbot:vis:") for c in custom_ids)
 
     async def test_a_pinned_current_card_is_left_alone(self) -> None:
         card = self.current_card(pinned=True)

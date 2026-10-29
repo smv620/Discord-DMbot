@@ -6,6 +6,8 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { parsePage } from "./dom";
 
 import { features, featuresHeading } from "../src/content/features";
+import { INITIATIVE_STYLE_LIVE } from "../src/content/help";
+import { RECAPS_LIVE } from "../src/content/recap-words";
 import Home from "../src/pages/index.astro";
 
 let home: Document;
@@ -18,8 +20,8 @@ beforeAll(async () => {
 });
 
 describe("What DMbot does", () => {
-  it("shows a card for every feature, at most nine (three rows of three)", () => {
-    expect(features.length).toBeLessThanOrEqual(9);
+  it("shows a card for every feature, at most twelve (four rows of three)", () => {
+    expect(features.length).toBeLessThanOrEqual(12);
     const cards = [...home.querySelectorAll(".does article")];
     expect(cards.map((c) => c.querySelector("h3")?.textContent)).toEqual(
       features.map((f) => f.title),
@@ -59,7 +61,18 @@ describe("What DMbot does", () => {
 
   it("promises nothing that isn't built", () => {
     const all = (home.querySelector("main")?.textContent ?? "").toLowerCase();
-    for (const notYet of ["fightbot", "typed", "import"]) expect(all).not.toContain(notYet);
+    for (const notYet of ["typed", "import"]) expect(all).not.toContain(notYet);
+  });
+
+  it("shows the recaps and who's who cards, and the initiative sentence, only with their switches (#1816)", () => {
+    const titles = features.map((f) => f.title);
+    expect(titles.includes("Recaps after each game")).toBe(RECAPS_LIVE);
+    expect(titles).not.toContain("A who's who list");
+    const fight = features.find((f) => f.title === "FightBot reminders in a fight");
+    expect(fight?.what.includes("how your table runs initiative")).toBe(INITIATIVE_STYLE_LIVE);
+    expect(titles).toContain("FightBot reminders in a fight");
+    expect(titles).toContain("Your own homebrew");
+    for (const f of features) expect(f.title.split(" ").length, f.title).toBeLessThanOrEqual(6);
   });
 
   it("uses no game trademark and no technical words", () => {

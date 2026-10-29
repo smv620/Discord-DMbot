@@ -9,6 +9,7 @@ import base64
 import json
 import subprocess
 import sys
+import threading
 import time
 import unittest
 import unittest.mock
@@ -103,7 +104,9 @@ class AdminTest(unittest.IsolatedAsyncioTestCase):
         )
         self.app = app
         self.client = httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url=API, follow_redirects=False
+            transport=httpx.ASGITransport(app=app),
+            base_url="https://web-api.internal.test",
+            follow_redirects=False,
         )
 
     async def asyncTearDown(self) -> None:
@@ -210,16 +213,25 @@ class AdminTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("__host-dmbot_admin=", out.headers["set-cookie"].lower())
 
     async def test_the_api_keeps_answering_while_a_password_is_checked(self) -> None:
-        def slow(_hash: str, _password: str) -> bool:
-            time.sleep(0.5)
+        # Proved by blocking on purpose, not by a clock (#1842): the check waits for `release`,
+        # and while it is stuck `/health` must still answer. If the check ran on the event loop,
+        # `/health` could not answer at all and the `wait_for` below would time out.
+        started, release = threading.Event(), threading.Event()
+
+        def blocked(_hash: str, _password: str) -> bool:
+            started.set()
+            release.wait(10)  # a bug can't hang CI: it lets go by itself
             return False
 
-        with unittest.mock.patch("dmbot.web.admin_api.password_matches", slow):
+        with unittest.mock.patch("dmbot.web.admin_api.password_matches", blocked):
             trying = asyncio.create_task(self.password())
-            await asyncio.sleep(0.05)
-            started = time.monotonic()
-            self.assertEqual((await self.client.get("/health")).status_code, 200)
-            self.assertLess(time.monotonic() - started, 0.45)  # the check takes 0.5
+            try:
+                self.assertTrue(await asyncio.to_thread(started.wait, 5), "the check never started")
+                health = await asyncio.wait_for(self.client.get("/health"), 5)
+                self.assertEqual(health.status_code, 200)
+                self.assertFalse(trying.done(), "the sign-in finished before it was released")
+            finally:
+                release.set()
             await trying
 
     async def test_checks_run_one_at_a_time_and_a_flood_is_refused_at_once(self) -> None:
@@ -320,7 +332,7 @@ class AdminTest(unittest.IsolatedAsyncioTestCase):
             FakeDiscord(),
         )
         async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url=API
+            transport=httpx.ASGITransport(app=app), base_url="https://web-api.internal.test"
         ) as client:
             answer = await client.post(
                 "/admin/auth/password",
@@ -430,7 +442,9 @@ class AdminTest(unittest.IsolatedAsyncioTestCase):
         state = parse_qs(urlsplit(start.headers["location"]).query)["state"][0]
         nonce = self.google.nonce
         async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=self.app), base_url=API, follow_redirects=False
+            transport=httpx.ASGITransport(app=self.app),
+            base_url="https://web-api.internal.test",
+            follow_redirects=False,
         ) as flood:
             # The start keeps nothing on the server, so any number does the same; the
             # table this once filled held 10,000.
@@ -458,7 +472,7 @@ class AdminTest(unittest.IsolatedAsyncioTestCase):
         async def callback(cookies: dict[str, str], state: str) -> httpx.Response:
             async with httpx.AsyncClient(
                 transport=httpx.ASGITransport(app=self.app),
-                base_url=API,
+                base_url="https://web-api.internal.test",
                 cookies=cookies,
                 follow_redirects=False,
             ) as one:
@@ -473,7 +487,7 @@ class AdminTest(unittest.IsolatedAsyncioTestCase):
         self.google.fail = False
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=self.app),
-            base_url=API,
+            base_url="https://web-api.internal.test",
             headers={"CF-Connecting-IP": "198.51.100.20"},
             follow_redirects=False,
         ) as owner:
@@ -525,7 +539,7 @@ class AdminTest(unittest.IsolatedAsyncioTestCase):
             google=None,
         )
         async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url=API
+            transport=httpx.ASGITransport(app=app), base_url="https://web-api.internal.test"
         ) as client:
             only = await client.get("/admin/auth/ways")
         self.assertEqual(only.json(), {"google": False, "password": True})
@@ -564,7 +578,9 @@ class AdminTest(unittest.IsolatedAsyncioTestCase):
             settings(admin_emails=(ADMIN,)), cast(Database, None), FakeDiscord(), google=None
         )
         async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url=API, follow_redirects=False
+            transport=httpx.ASGITransport(app=app),
+            base_url="https://web-api.internal.test",
+            follow_redirects=False,
         ) as client:
             answer = await client.get("/admin/auth/google/start")
         self.assertEqual(answer.headers["location"], f"{SITE}/admin?signin=off")
@@ -618,7 +634,7 @@ class AdminTest(unittest.IsolatedAsyncioTestCase):
     async def test_with_no_admin_emails_the_routes_are_not_there(self) -> None:
         app = create_app(settings(), cast(Database, None), FakeDiscord())
         async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url=API
+            transport=httpx.ASGITransport(app=app), base_url="https://web-api.internal.test"
         ) as client:
             for path in ("/admin/me", "/admin/auth/ways", "/admin/auth/google/start"):
                 self.assertEqual((await client.get(path)).status_code, 404, path)

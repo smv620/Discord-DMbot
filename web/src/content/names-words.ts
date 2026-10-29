@@ -1,0 +1,136 @@
+// The words of the Names page (#2295; docs/PLAN.md, "All names on the website"): every name DMbot
+// remembers in a campaign, searched, filtered and, for the campaign's DMs, fixed. Plain words: a
+// name's "kind" is what it is (an NPC, a PC, a place, a group, an item, an event), and nothing here
+// says DMbot decides: a DM changes what DMbot remembers, and Undo is on the name's card in Discord.
+// The kinds' own words come from the API, so a new kind needs no change here.
+// The longest a name may be: core's `NAME_MAX` (memory/models.py) and the Discord card's
+// `NAME_LIMIT` (ui/name_card.py). Keep the three equal, or a DM can't fix a long name here.
+export const NAME_LIMIT = 100;
+// How many names a page holds: what the page offers, and the usual. Core's `PAGE_SIZES` and
+// `PAGE_SIZE` (web/all_names.py) refuse any other size: keep them equal.
+export const NAMES_PAGE_SIZES = [20, 50, 200, 500] as const;
+export const NAMES_PAGE_SIZE = 50;
+// NAMES_SMART_LIVE is "Search by meaning" on the Names page (#2733): "ice goddess" finds the frost goddess,
+// "friend of Brannoc" finds who is connected. It needs the meaning search (core, after #2664's embeddings)
+// deployed and seen to work, and moves with the What's new entry "Search names by what they mean".
+export const NAMES_SMART_LIVE = false;
+
+export const namesPage = {
+  heading: "Names",
+  lead: "Everything DMbot remembers by name in this campaign: NPCs, PCs, places, groups and more. Search them, tick types to narrow the list, and (if you are the DM) fix them here.",
+  loading: "Loading…",
+  signedOut: "You were signed out. Sign in again.",
+  signIn: "Sign in with Discord",
+  // Someone who may not see the list gets the same line as a campaign that isn't there.
+  notYours:
+    "We can't show that list. Players can read about NPCs on the story graph.",
+  down: "We couldn't reach DMbot. Check your connection and try again.",
+  tryAgain: "Try again",
+  searchLabel: "Find a name",
+  searchHint: "Type part of a name or a nickname.",
+  kindLabel: "Type (none ticked shows all)",
+  allKinds: (n: number): string => `Show all types (${n})`,
+  perPageLabel: "Names per page",
+  perPageOption: (n: number): string => String(n),
+  kindOption: (label: string, n: number): string => `${label} (${n})`,
+  sortLabel: "Sort by",
+  sortName: "Name, A to Z",
+  sortNewest: "Newest first",
+  howMany: (n: number): string => (n === 1 ? "1 name" : `${n} names`),
+  noNames: "DMbot doesn't know any names here yet.",
+  noMatch: "No names match. Try fewer letters, or untick some types.",
+  listLabel: "Names",
+  secretMark: "🤫",
+  secretWords: "Secret (DM only)",
+  alsoCalled: "Also called",
+  npcLink: "NPC page",
+  webLink: "Open the relationship web",
+  npcLinkFor: (name: string): string => `Open the NPC page for ${name}`,
+  readOnly: "Only this campaign's DM can change names.",
+  undoNote: "A change made here can be undone with ↩️ Undo on the name's card in Discord.",
+  pressName: "Press a name to change it.",
+  spellLabel: "Spelling",
+  saveSpelling: "Save spelling",
+  // How to say it (#2317): the box the narrator reads from, with the buttons that fill it.
+  sayLabel: (name: string): string => `How to say “${name}”`,
+  sayHint: "Type it as it sounds, for example Kah-zeth. Leave it empty and DMbot says the name as spelled.",
+  saySave: "Save how to say it",
+  saySaving: "Saving…",
+  saySaved: "Saved. DMbot will say it this way.",
+  sayCleared: "Saved. DMbot will say it as spelled.",
+  sayFailed: "That didn't save, so DMbot still says it the old way. Press Save again.",
+  sayTooLong: "DMbot can't use that. Use 80 letters or fewer, with no odd characters.",
+  kindChange: "What it is",
+  saveKind: "Save what it is",
+  othersHeading: "Other names",
+  noOthers: "It has no other names.",
+  addOtherLabel: "Add another name for it",
+  addOther: "Add",
+  removeShort: "Remove",
+  removeOther: (other: string): string => `Remove the other name ${other}`,
+  hideCheck: "🙈 Hide from players",
+  hideHint: "Players don't know this one yet, so it stays off the story graph for players, and out of answers and recaps. Untick it (👀 Players know it now on its card in Discord) when they find out.",
+  waiting: "Waiting for DMbot…",
+  mergeHeading: "Same as another name",
+  mergeLead: "Two names for the same thing? Pick the one to keep. This name and its other names are added to it, and this name is removed. Undo is on the name's card in Discord.",
+  mergeSearch: "Find the other name",
+  mergeNone: "No other name matches.",
+  mergeSearchDown: "Search isn't working right now. Wait a moment and try again.",
+  mergeMore: "Showing the first few names. Type more letters to find the one you want.",
+  mergeChoose: "Keep this one",
+  mergeButton: "Merge them",
+  mergeAsk: (name: string, into: string): string => `${name} will be removed, and its other names go to ${into}. Merge them?`,
+  mergeYes: "Yes, merge them",
+  removeHeading: "Remove this name",
+  removeButton: "Remove this name",
+  removeAsk: (name: string): string => `Remove ${name}? DMbot will forget it. Undo is on its card in Discord.`,
+  removeYes: "Yes, remove it",
+  keep: "Keep it",
+  mergeKeep: "No, keep both",
+  // Ticking several names and merging them into one (#2427).
+  pickLabel: (name: string): string => `Select ${name}`,
+  selected: (n: number): string => `${n} names selected`,
+  selectedBar: "Names you ticked",
+  selectedOne: "1 name selected. Tick another to merge.",
+  mergeSelected: "🔗 Merge selected",
+  clearSelected: "Clear ticks",
+  mergeManyHeading: "Keep which name?",
+  mergeManyLead: "The other names come off the list and are added to the one you keep as other names it also goes by. You can undo it on the name's card in Discord.",
+  // Said only when the API sent how often each name was heard, so it is never claimed without it.
+  mergeManyOrder: "We put the most-mentioned first; change it if you like.",
+  mentionsOf: (n: number): string => `${n} ${n === 1 ? "mention" : "mentions"}`,
+  mergeManyKinds: (kinds: string, keepKind: string): string => `Check: these are different kinds (${kinds}). The one you keep stays ${keepKind}.`,
+  mergeManyAsk: (others: string, keep: string): string => `Merge ${others} into ${keep}? ${keep} will also go by their names.`,
+  mergeManyYes: "Yes, merge them",
+  mergeManyNo: "No, keep them",
+  mergeManyBusy: "Merging…",
+  // The bot refused the whole merge (all or nothing): a person at the table, two players' characters, or a
+  // secret name that would become the main name.
+  mergeManyRefused: "Nothing was merged. DMbot can't merge those names together: a person at the table can't be merged into a character, and a secret name can't become the main name. Try keeping a different name.",
+  mergedMany: (keep: string): string => `Merged into ${keep}. ↩️ Undo is on the Discord card.`,
+  saved: "Saved.",
+  removed: (name: string): string => `Removed ${name}.`,
+  merged: (name: string, into: string): string => `Merged ${name} into ${into}.`,
+  errors: {
+    "bad-name": "Type a name using letters, numbers or common marks.",
+    "bad-kind": "Pick a kind from the list.",
+    "name-exists": "A name like that already exists. Pick another spelling, or merge the two.",
+    // The API's "too_long" is shared with the support form's: for a name it means this.
+    "ticket-too-long": `That name is too long. Use ${NAME_LIMIT} letters or fewer.`,
+    "needs-confirm": "Press the Yes button to do that.",
+    "not-allowed": "Only this campaign's DM can change names.",
+    "not-found": "That name is gone. The list is up to date now.",
+    "bad-target": "DMbot can't do that to this name.",
+    "too-soon": "DMbot is busy with other changes. Wait a moment, then try again.",
+    "still-waiting": "DMbot hasn't finished that yet. It may still happen; the list will show it. Check before trying again.",
+    network: "We couldn't reach DMbot, so nothing was changed. Check your connection and try again.",
+  } as Record<string, string>,
+  errorFallback: "That didn't work. Try again in a minute.",
+  pagesNav: "Pages of names",
+  pageFirst: "First",
+  pagePrevious: "Previous",
+  pageNext: "Next",
+  pageLast: "Last",
+  pageGone: "That page isn't there any more, so here is the first one.",
+  pageDown: "We couldn't read that page. You are still on the one you were on.",
+} as const;

@@ -4,10 +4,12 @@ only; no AI call anywhere."""
 from __future__ import annotations
 
 import json
-from collections.abc import Collection
+import re
+from collections.abc import Collection, Sequence
 from typing import Any
 
 from dmbot.ai import Reply
+from dmbot.recaps import draft as rd
 from dmbot.transcript.models import Line
 
 DM, ALICE, BOB = 7, 8, 9
@@ -65,7 +67,7 @@ BEATS = {
 BEATS_ANSWER = json.dumps(BEATS)
 
 _PARAS = [
-    "《Tense》 ((slow)) Dusk settled over the road as Mira and Oskar came to Greywater Keep, and "
+    "《Tense》 ((pause)) Dusk settled over the road as Mira and Oskar came to Greywater Keep, and "
     "the great gate stood open with no guard to challenge them. The party had travelled for "
     "days, and every one of them felt the quiet press against their shoulders. Mira drew her "
     "blade without a word, and Oskar kindled a torch whose small flame shook in the cold air.",
@@ -74,7 +76,7 @@ _PARAS = [
     "above, a loose shutter knocked against its frame, and each knock made the two of them "
     "stop and listen before going on. Nothing answered. No voice called out. The silence "
     "seemed to be waiting for them to make a mistake.",
-    "《Uneasy》 At the far end they found a heavy door bound with a silver lock, bright and "
+    "《Ominous》 At the far end they found a heavy door bound with a silver lock, bright and "
     "clean in a place where everything else had gone grey. Mira studied it for a long moment, "
     "certain that it did not belong there, and said nothing of her doubts. Oskar knelt, set "
     "his torch against the wall and worked at the lock with patient fingers while the others "
@@ -96,26 +98,84 @@ MUSIC = (
     "1. Low strings and a distant wind, slow and sparse, quiet under a spoken voice.\n"
     "2. Soft, uneasy drones with faint wind ambience, sitting low under a spoken voice."
 )
-PROSE_ANSWER = f"SUMMARY:\n{SUMMARY}\nMUSIC:\n{MUSIC}\n"
-FINISH_ANSWER = "TITLE: The Silver Lock\nHOUSEKEEPING:\n- [2] Mira drew her blade.\n"
+
+
+def prose_answer(summary: str, music: str = MUSIC) -> str:
+    """A prose answer as the writer sends it now (#2039): the JSON of sections, built from the
+    text form the tests write (`《mood》` cues in the summary, numbered music lines)."""
+    prompts = tuple(
+        re.sub(r"^\s*\d+[.)]\s*", "", m).strip() for m in music.splitlines() if m.strip()
+    )
+    return rd.prose_json(rd.Prose(summary, prompts))
+
+
+def finish_answer(title: str = "The Silver Lock", *bullets: tuple[int, str]) -> str:
+    return json.dumps(
+        {"title": title, "housekeeping": [{"beat": b, "text": t} for b, t in bullets]},
+        ensure_ascii=False,
+    )
+
+
+PROSE_ANSWER = prose_answer(SUMMARY)
+FINISH_ANSWER = finish_answer("The Silver Lock", (2, "Mira drew her blade."))
 GRADE_ANSWER = '{"in_world":5,"no_quotes":5,"tension":4,"ending":4,"cues":4}'
 WEAK_GRADE = '{"in_world":5,"no_quotes":5,"tension":2,"ending":4,"cues":4}'
+
+
+CLEAN_FACTS = '{"unsupported":[],"missing":[]}'
+
+
+def facts_answer(unsupported: Sequence[tuple[int, str]] = (), missing: Sequence[int] = ()) -> str:
+    return json.dumps(
+        {
+            "unsupported": [{"sentence": n, "kind": k} for n, k in unsupported],
+            "missing": list(missing),
+        }
+    )
 
 
 class Canned:
     """An AI that returns the answers it was given, in order, and records what it was sent."""
 
-    def __init__(self, *answers: str | Exception) -> None:
+    def __init__(
+        self, *answers: str | Exception | Reply, facts: Sequence[str | Reply] = ()
+    ) -> None:
         self.answers = list(answers)
+        # The fact check (#2064) is a call of its own: it takes the next of `facts`, or finds
+        # nothing wrong, and is kept apart from `sent` so the tests that count the writer's calls
+        # need not know about it.
+        self.facts = list(facts)
+        self.fact_sent: list[str] = []
+        self.fact_tokens: list[int] = []  # the room each fact check was given (#2345)
+        self.tokens: list[int] = []  # the room each call was given
         self.sent: list[str] = []
         self.systems: list[str] = []
+        self.schemas: list[
+            dict[str, Any] | None
+        ] = []  # what each call asked the answer's shape to be
 
-    async def complete(self, system: str, text: str, *, max_tokens: int = 0) -> Reply:
+    async def complete(
+        self,
+        system: str,
+        text: str,
+        *,
+        max_tokens: int = 0,
+        schema: dict[str, Any] | None = None,
+    ) -> Reply:
+        if system in (rd.FACTS_SYSTEM, rd.FACTS_SYSTEM_TRANSCRIPT):
+            self.fact_sent.append(text)
+            self.fact_tokens.append(max_tokens)
+            given = self.facts.pop(0) if self.facts else CLEAN_FACTS
+            return given if isinstance(given, Reply) else Reply(given, False, 10, 10, "m")
         self.sent.append(text)
         self.systems.append(system)
+        self.schemas.append(schema)
+        self.tokens.append(max_tokens)
         answer = self.answers.pop(0)
         if isinstance(answer, Exception):
             raise answer
+        if isinstance(answer, Reply):
+            return answer
         return Reply(answer, False, 10, 10, "m")
 
 

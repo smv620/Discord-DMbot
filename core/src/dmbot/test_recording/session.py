@@ -98,6 +98,11 @@ class TestSession:
     def has(self, user_id: int) -> bool:
         return user_id in self._registered
 
+    def people(self) -> list[int]:
+        """Everyone with something saved in this session (for the improvement opt-out check
+        when it ends, #1609)."""
+        return sorted(self._registered)
+
     # ---- what ---------------------------------------------------------------------
 
     def clock(self, unix_ms: int) -> int:

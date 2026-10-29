@@ -15,6 +15,8 @@ import re
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from dmbot.rules.index import Entry
 
 _ORDINALS = {1: "1st", 2: "2nd", 3: "3rd"}
@@ -33,6 +35,88 @@ ASKED_FIELDS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("CR", ("challenge rating",)),
 )
 _WORDS = re.compile(r"[a-z']+")
+
+
+_RARITIES = re.compile(r"Very Rare|Uncommon|Common|Rare|Legendary|Artifact")
+
+
+def short_rarity(rarity: str) -> str:
+    """The rarity as a short heading word: "uncommon", or "uncommon to very rare" for an item
+    that comes in several ("Uncommon (+1), Rare (+2), or Very Rare (+3)"), and nothing for
+    "Rarity Varies", which is no rarity."""
+    found = _RARITIES.findall(rarity)
+    if not found:
+        return ""
+    low, high = found[0].lower(), found[-1].lower()
+    return low if low == high else f"{low} to {high}"
+
+
+def item_line(entry: Entry) -> str:
+    """ "Wondrous Item, uncommon, needs attunement by a Wizard": what the line under an item's
+    name says, in plain words."""
+    d = entry.details
+    kind = str(d.get("category", ""))
+    if d.get("subtype"):
+        kind += f" ({d['subtype']})"
+    parts = [kind, str(d.get("rarity", "")).lower()]
+    if d.get("attunement"):
+        by = str(d.get("attunement_by", ""))
+        parts.append(f"needs attunement by {by}" if by else "needs attunement")
+    return ", ".join(p for p in parts if p)
+
+
+def weapon_line(entry: Entry) -> str:
+    """ "Martial Melee, 1d8 Slashing, Versatile (1d10), mastery Sap": the Weapons table's row."""
+    d = entry.details
+    parts = [str(d.get("category", "")), f"{d.get('damage', '')} {d.get('damage_type', '')}"]
+    if d.get("properties"):
+        parts.append(str(d["properties"]))
+    if d.get("mastery"):  # (the SRD 5.1 has none)
+        parts.append(f"mastery {d['mastery']}")
+    return ", ".join(p.strip() for p in parts if p.strip())
+
+
+def armor_line(entry: Entry) -> str:
+    """ "Heavy armor, AC 18, needs Strength 15, Disadvantage on Stealth": the Armor table's row."""
+    d = entry.details
+    what = "Shield" if d.get("category") == "Shield" else f"{d.get('category', '')} armor"
+    parts = [what, f"AC {d.get('ac', '')}"]
+    if str(d.get("strength", "—")) != "—":
+        parts.append(f"needs Strength {str(d['strength']).removeprefix('Str ')}")
+    if str(d.get("stealth", "—")) != "—":
+        parts.append(f"{d['stealth']} on Stealth")
+    return ", ".join(parts)
+
+
+def _weight_words(d: Mapping[str, object]) -> str:
+    """ "3 lb.", or "weight varies"; nothing for a dash (it has none to say)."""
+    weight = str(d.get("weight", ""))
+    return "weight varies" if weight == "Varies" else "" if weight in ("", "—") else weight
+
+
+def gear_line(entry: Entry, *, card: bool) -> str:
+    """ "Adventuring Gear, 5 GP, 3 lb." for the AI. On the card the heading has the price, so only
+    the weight is left ("3 lb."); a mount's or a vehicle's words (its capacity, its weight, its
+    speed) are the entry's text, which the card shows, so it has no line."""
+    d = entry.details
+    weight = _weight_words(d)
+    if card:
+        return weight if d.get("group") == "Adventuring Gear" else ""
+    cost = str(d.get("cost", ""))
+    return ", ".join(p for p in (str(d.get("group", "")), cost, weight) if p)
+
+
+def tool_line(entry: Entry, *, card: bool) -> str:
+    """ "Other Tools, Dexterity, 25 GP, 1 lb." for the AI; "25 GP, 1 lb." on the card, whose
+    heading has the ability."""
+    d = entry.details
+    cost = str(d.get("cost", ""))
+    cost = "price varies" if cost == "Varies" else cost
+    if card:  # the heading has the ability, or (when there is none) the price
+        parts = [_weight_words(d)] if not d.get("ability") else [cost, _weight_words(d)]
+    else:
+        parts = [str(d.get("group", "")), str(d.get("ability", "")), cost, _weight_words(d)]
+    return ", ".join(p for p in parts if p)
 
 
 def level_words(entry: Entry) -> str:
@@ -92,6 +176,38 @@ def pairs(entry: Entry, *, card: bool = False) -> list[tuple[str, str]]:
                 ("Senses", str(d.get("senses", ""))),
                 ("Initiative", str(d.get("initiative", ""))),
             ]
+    elif entry.kind == "feature":
+        if card:  # the card's heading already says "(feature: Rogue 7)"
+            return []
+        who = f"{d.get('class', '')} level {d.get('level', '')}".strip()
+        found = [("", f"Class feature, {who}" + (f", {d['subclass']}" if has("subclass") else ""))]
+    elif entry.kind == "item":
+        if card:  # the card's heading already says "(item: Wondrous Item, uncommon)"
+            return []
+        found = [("", item_line(entry))]
+    elif entry.kind == "feat":  # the card's heading already says "(feat: Origin)"
+        found = [] if card else [("", f"{d['category']} feat" if has("category") else "Feat")]
+        found.append(("Prerequisite", str(d.get("prerequisite", ""))))
+    elif entry.kind == "weapon":  # the card shows the whole row as its text
+        found = [] if card else [("", weapon_line(entry))]
+    elif entry.kind == "armor":
+        found = [] if card else [("", armor_line(entry))]
+    elif entry.kind == "gear":
+        found = [("", gear_line(entry, card=card))]
+    elif entry.kind == "tool":
+        found = [("", tool_line(entry, card=card))]
+    elif entry.kind == "poison":  # the card's heading already says "(poison: Injury)"
+        found = [] if card else [("", f"{d.get('type', '')} poison")]
+        found.append(("Price", f"{d.get('price', '')} a dose" if has("price") else ""))
+    elif entry.kind == "trap":
+        found = [
+            # (the heading says "trap"; the 5.1 gives the kind, "Mechanical trap", not levels)
+            ("", str(d.get("severity") or d.get("type", "")).replace(" Trap", "")),
+            ("Trigger", str(d.get("trigger", ""))),
+            ("Duration", str(d.get("duration", ""))),
+        ]
+    elif entry.kind == "species":
+        found = [("", f"Size: {d.get('size', '')}"), ("", f"Speed: {d.get('speed', '')}")]
     else:
         return []
     return [(label, value) for label, value in found if value]
@@ -111,14 +227,16 @@ def card_parts(entry: Entry) -> list[str]:
     ]
 
 
-_CARD_COLONS = frozenset({"Casting time", "Range", "Components", "Duration"})
+_CARD_COLONS = frozenset(
+    {"Casting time", "Range", "Components", "Duration", "Prerequisite", "Trigger", "Price"}
+)
 
 
 def full_text(entry: Entry) -> str:
     """The facts and then the text: everything DMbot knows about the entry, to search, quote or
     check an answer against."""
     header = line(entry)
-    return f"{header}. {entry.text}" if header else entry.text
+    return f"{header.rstrip('.')}. {entry.text}" if header else entry.text
 
 
 def asked_field(entry: Entry, question: str) -> str | None:

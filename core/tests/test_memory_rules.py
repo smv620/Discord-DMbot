@@ -114,7 +114,7 @@ class CoreOntology(unittest.TestCase):
         self.assertFalse(onto.is_a("character", "horse"))
         self.assertFalse(onto.is_a("place", "character"))
 
-    def test_the_story_kinds_are_these_six_and_the_table_has_its_own(self) -> None:
+    def test_the_story_kinds_are_these_and_the_table_has_its_own(self) -> None:
         active = {t.key: t.label for t in CORE_TYPES if t.status == "active"}
         self.assertEqual(
             active,
@@ -125,6 +125,15 @@ class CoreOntology(unittest.TestCase):
                 "item": "item",
                 "event": "event",
                 "concept": "idea",
+                "clue": "clue or secret",  # a kind of idea (#1649)
+                "people": "people",  # a whole people or kind, a kind of idea (#1655)
+                "thread": "story thread",  # the DM's running threads (#1662)
+                "quest": "quest",
+                "mystery": "mystery",
+                "hook": "hook",
+                "goal": "goal",
+                "promise": "promise",
+                "deed": "deed",  # what a player character did (#1732)
                 "person": "player or DM",  # not part of the story (#1188)
             },
         )
@@ -167,9 +176,9 @@ class CoreOntology(unittest.TestCase):
     def test_the_older_kinds_are_read_as_a_character_with_a_role(self) -> None:
         self.assertEqual(resolve_kind("npc"), ("character", "npc"))
         self.assertEqual(resolve_kind("player_character"), ("character", "player_character"))
-        self.assertEqual(resolve_kind("deity"), ("character", "god"))
+        self.assertEqual(resolve_kind("deity"), ("character", "npc"))
         self.assertEqual(resolve_kind("creature"), ("character", "npc"))
-        self.assertEqual(resolve_kind("character", "god"), ("character", "god"))
+        self.assertEqual(resolve_kind("character", "npc"), ("character", "npc"))
         self.assertEqual(resolve_kind("place"), ("place", None))
         with self.assertRaises(MemoryRuleError):
             resolve_kind("npc", "god")  # one role at a time

@@ -222,3 +222,45 @@ class Reuse(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@needs_superuser
+class RoleSetupRace(unittest.TestCase):
+    """Two workers making the same role at the same instant (#1438, #1439): neither may fail."""
+
+    ROLE = "dmbot_race_check"
+
+    def tearDown(self) -> None:
+        with psycopg.connect(pg.SUPERUSER_URL, autocommit=True) as conn:
+            conn.execute(f"DROP ROLE IF EXISTS {self.ROLE}")
+
+    def test_many_connections_creating_one_role_at_once_all_succeed(self) -> None:
+        import threading
+
+        errors: list[BaseException] = []
+        start = threading.Barrier(6)
+
+        def make() -> None:
+            try:
+                with psycopg.connect(pg.SUPERUSER_URL, autocommit=True) as conn:
+                    start.wait(timeout=10)  # all six reach CREATE ROLE together
+                    conn.execute(pg.create_role_sql(self.ROLE, "race-check"))
+            except BaseException as exc:  # reported below, so the test names the failure
+                errors.append(exc)
+
+        for _round in range(3):
+            threads = [threading.Thread(target=make) for _ in range(6)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+            with psycopg.connect(pg.SUPERUSER_URL, autocommit=True) as conn:
+                conn.execute(f"DROP ROLE IF EXISTS {self.ROLE}")
+            start = threading.Barrier(6)
+        self.assertEqual(errors, [])
+
+    def test_the_helper_refuses_a_name_that_is_not_plain(self) -> None:
+        with self.assertRaises(ValueError):
+            pg.create_role_sql("x; DROP TABLE y", "pw")
+        with self.assertRaises(ValueError):
+            pg.create_role_sql("fine", "p'w")

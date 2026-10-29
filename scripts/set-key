@@ -6,7 +6,7 @@
 #   scripts/set-key                    pick from a numbered list
 #   scripts/set-key DEEPGRAM_API_KEY   set that one
 #
-# Only the keys, tokens and secrets listed in .env.example can be set (names ending in
+# Only the keys, tokens and secrets listed in .env.example (also as "# NAME=") can be set (names ending in
 # _KEY, _TOKEN or _SECRET), plus SMTP_APP_PASSWORD, named exactly. That one is a Resend API key (or
 # a Google app password) and is a key in all but name, and the owner can't type it into an
 # editor safely from a phone. No other _PASSWORD is allowed. Other settings are easy to read, so they belong
@@ -37,7 +37,16 @@ Get it back with: git checkout .env.example"
 scripts/set-key"
 
 # Every key, token and secret in .env.example, in file order.
-mapfile -t choices < <(sed -nE 's/^([A-Z][A-Z0-9_]*(_KEY|_TOKEN|_SECRET)|SMTP_APP_PASSWORD)=.*/\1/p' "$example")
+secret_name='[A-Z][A-Z0-9_]*(_KEY|_TOKEN|_SECRET)|SMTP_APP_PASSWORD'
+mapfile -t choices < <(sed -nE "s/^($secret_name)=.*/\\1/p" "$example")
+# A key left commented in .env.example ("# NAME=", only "#" and one space) is also one, when DMbot's
+# code reads that name (#1970): the same rule as scripts/set-variables, here over all of core/src
+# because a key is read where its service is. Prose comments and names nothing reads don't count.
+code_source=${DMBOT_CODE_SOURCE:-$root/core/src}
+while IFS= read -r k; do
+  if [[ ! -e $code_source ]] || ! grep -rqF "\"$k\"" "$code_source"; then continue; fi
+  printf '%s\n' "${choices[@]}" | grep -qxF -- "$k" || choices+=("$k")
+done < <(sed -nE "s/^# ($secret_name)=.*/\\1/p" "$example")
 
 is_choice() {
   local k

@@ -89,6 +89,17 @@ class Condition:
     page: int
 
 
+@dataclass(frozen=True, slots=True)
+class Rule:
+    """One Rules Definitions entry that is not a condition ("Cover", "Dash [Action]")."""
+
+    name: str
+    tag: str  # the bracket after the title ("Action", "Hazard"), or ""
+    text: str
+    page: int
+    see_also: tuple[str, ...]  # the entries its "See also" line points to
+
+
 class Mender:
     """Puts back together words that a line break cut (see the module's note)."""
 
@@ -114,6 +125,10 @@ class Mender:
         lead = WORD.findall(right)[:1] or [""]
         whole = (tail[0] + lead[0]).lower()
         hyphenated = f"{tail[0]}-{lead[0]}".lower()
+        if (
+            head[-1:].isdigit() and right[:1].isalpha()
+        ):  # "10-" / "foot": the hyphen is real (#1914)
+            return f"{head}-{right}"
         if right[:1].isdigit():  # "10-foot-by-" / "10-foot": a number goes with the hyphen
             return f"{head}-{right}"
         if hyphenated in self.hyphenated and whole not in self.whole:
@@ -270,3 +285,93 @@ def parse_conditions(lines: Sequence[Line]) -> list[Condition]:
             raise SrdError(f"Condition {match['name']!r} on page {line.page}: no description")
         conditions.append(Condition(match["name"], text, line.page))
     return conditions
+
+
+RULES_DEFINITIONS = "Rules Definitions"
+SANS_CELLS = "GillSans"  # the font of table cells and of bulleted lists (titles are cut earlier)
+CELL_GAP = 40.0  # pieces this far apart on one line are table columns, not a bullet and its text
+# The two text columns' left edges. An entry's title starts exactly at one; a table's caption or
+# its column heads are set in the same font but sit a few points in (found by dumping the
+# glossary's pages), which is how a title and a table's heading tell apart.
+COLUMN_EDGES = (63.0, 314.0)
+EDGE_SLACK = 3.0
+TAGGED = re.compile(r"^(?P<name>.+?) \[(?P<tag>[^\]]+)\]$")
+# A pointer to other entries closes a paragraph: `See also “Speed.”` (the full stop sits inside
+# the quotes) or `See also “Playing the Game” (“Combat”).`
+SEE_ALSO = re.compile(r"\s*See also (?P<names>[“\"].+)$")
+QUOTED = re.compile(r"[“\"]([^”\"]+)[”\"]")
+
+
+def _at_an_edge(line: Line) -> bool:
+    return any(abs(line.x - edge) <= EDGE_SLACK for edge in COLUMN_EDGES)
+
+
+def _is_table_row(line: Line) -> bool:
+    """A sans-font line whose pieces sit in separate columns. A bulleted list is sans too, but
+    its bullet and text are close together."""
+    return line.first_font.startswith(SANS_CELLS) and any(
+        piece.x - line.pieces[0].x > CELL_GAP for piece in line.pieces[1:]
+    )
+
+
+def _entry_titles(lines: Sequence[Line]) -> list[int]:
+    """Where each entry starts: a title at a column's edge that a table's column heads do not
+    follow. (A table's caption is a title at the edge too, but the heads under it are not.)"""
+    found = []
+    for i, line in enumerate(lines):
+        if not is_title(line) or not _at_an_edge(line):
+            continue
+        after = lines[i + 1] if i + 1 < len(lines) else None
+        if after is not None and is_title(after) and not _at_an_edge(after):
+            continue
+        found.append(i)
+    return found
+
+
+def parse_rules(lines: Sequence[Line]) -> list[Rule]:
+    """Every Rules Definitions entry that is not a `[Condition]` (those are conditions.json),
+    from the lines of the Rules Glossary. The text stops at the entry's first table: a table's
+    cells do not read as sentences, and a rule's sentences are what the DM needs."""
+    start = next((i for i, ln in enumerate(lines) if _clean(ln.text) == RULES_DEFINITIONS), None)
+    if start is None:
+        raise SrdError(f"No {RULES_DEFINITIONS!r} heading in the Rules Glossary")
+    lines = lines[start + 1 :]
+    mender = Mender(lines)
+    starts = _entry_titles(lines)
+    rules = []
+    for n, i in enumerate(starts):
+        title = _clean(lines[i].text)
+        end = starts[n + 1] if n + 1 < len(starts) else len(lines)
+        body = list(lines[i + 1 : end])
+        for k, ln in enumerate(body):  # the first table's caption or column heads end the text
+            if is_title(ln):
+                body = body[:k]
+                break
+        # A list laid out as a table in the sans font ("Attack  Dodge  Influence ...") has no
+        # title above it; its cells are not sentences either.
+        body = [ln for ln in body if not _is_table_row(ln)]
+        tagged = TAGGED.match(title)
+        name, tag = (tagged["name"], tagged["tag"]) if tagged else (title, "")
+        if tag == "Condition":
+            continue
+        text = _paragraphs(body, mender)
+        if not text:
+            raise SrdError(f"Rule {name!r} on page {lines[i].page}: no description")
+        see: list[str] = []
+        kept = []
+        for paragraph in text.split("\n"):
+            found = SEE_ALSO.search(paragraph)
+            if found:
+                # A word cut by a line's end can leave a lone "s" ("D20 Test s"): put it back.
+                see.extend(
+                    re.sub(r"(?<=\w) s$", "s", n.strip(" .,"))
+                    for n in QUOTED.findall(found["names"])
+                )
+                paragraph = paragraph[: found.start()]
+            if paragraph:
+                kept.append(paragraph)
+        # A wrapped bullet ("... of your size or" / "larger") comes out as two lines: a line
+        # that starts in lower case continues the one above it.
+        joined = re.sub(r"\n(?=[a-z])", " ", "\n".join(kept))
+        rules.append(Rule(name, tag, joined, lines[i].page, tuple(dict.fromkeys(see))))
+    return rules

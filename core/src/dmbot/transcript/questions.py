@@ -19,11 +19,12 @@ from __future__ import annotations
 
 import secrets
 from collections.abc import Collection
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 
 from dmbot.memory import name_list
 from dmbot.memory.models import name_key
+from dmbot.transcript import rank_options
 from dmbot.transcript.cleaner import Fix, Question
 
 KEEP = "keep"  # the button choice that keeps the words as heard
@@ -100,6 +101,17 @@ class Asked:
     fixes: tuple[Fix, ...] = ()
     start: int = 0
     end: int = 0
+    # A name split across two pieces of speech (the look-back pass, #127): the earlier piece,
+    # when it started, its fixes, and where the tail words are in it (as heard). Empty `prev_line`
+    # for an ordinary question, whose `start`/`end` are in `line`; for a split one they are the head
+    # words at the start of `line`.
+    prev_started_ms: int = 0
+    prev_line: str = ""
+    prev_fixes: tuple[Fix, ...] = ()
+    prev_start: int = 0
+    prev_end: int = 0
+    # The AI put the first option first, as the likely one (#2048); the DM still answers.
+    likely: bool = False
 
 
 class Begin(Enum):
@@ -137,6 +149,11 @@ class QuestionBook:
         started_ms: int = 0,
         line: str = "",
         fixes: tuple[Fix, ...] = (),
+        prev_started_ms: int = 0,
+        prev_line: str = "",
+        prev_fixes: tuple[Fix, ...] = (),
+        prev_start: int = 0,
+        prev_end: int = 0,
     ) -> Asked | None:
         """The question to post now, if any. Every question counts towards "heard a
         second time" even when none is asked. Call `expire` first. `started_ms`, `line`
@@ -168,9 +185,27 @@ class QuestionBook:
                 fixes=fixes,
                 start=question.start,
                 end=question.end,
+                prev_started_ms=prev_started_ms,
+                prev_line=prev_line,
+                prev_fixes=prev_fixes,
+                prev_start=prev_start,
+                prev_end=prev_end,
             )
             return self.open
         return None
+
+    def rank(self, question_id: str, name: str) -> Asked | None:
+        """Put the option called `name` first and mark it likely (#2048), if this question is
+        still open and not being answered. The buttons are made from the result, so a press
+        always means the option shown. Returns the question as it now stands."""
+        asked = self.open
+        if asked is None or asked.id != question_id:
+            return None
+        if self.answering or asked.likely or not any(o[1] == name for o in asked.options):
+            return asked
+        options = rank_options.first(asked.options, name)
+        self.open = replace(asked, options=options, likely=True)
+        return self.open
 
     def expire(self, now: float) -> Asked | None:
         """The open question, closed now if nobody answered it in time (returned, so its
@@ -231,8 +266,31 @@ def question_text(speaker: str, heard: str, context: str = "") -> str:
     )
 
 
-def option_label(name: str) -> str:
-    return _short(name, LABEL_MAX)
+def last_words(text: str, count: int) -> str:
+    """The last few words of `text`, kept whole (a long tail is never cut off at its end)."""
+    return " ".join(text.split()[-count:])
+
+
+def first_words(text: str, count: int) -> str:
+    return " ".join(text.split()[:count])
+
+
+def seam_text(speaker: str, before: str, after: str) -> str:
+    """The question for a name split across two pieces of speech (#127); `speaker`, `before` (the
+    end of the earlier piece) and `after` (the start of this one) must already be safe to show.
+    It shows both pieces, so the DM sees that the answer joins two lines."""
+    return (
+        f'❓ **DMbot heard {speaker} say "…{_short(before, CONTEXT_MAX)}" and then '
+        f'"{_short(after, CONTEXT_MAX)}…"**. Is that one name? Did they mean…\n'
+        "This joins two lines. Not sure? Ignore this and it stays as heard."
+    )
+
+
+def option_label(name: str, likely: bool = False) -> str:
+    """A button's name; the likely one says so, still within `LABEL_MAX`."""
+    if not likely:
+        return _short(name, LABEL_MAX)
+    return f"{_short(name, LABEL_MAX - len(rank_options.LIKELY) - 1)} {rank_options.LIKELY}"
 
 
 def keep_label(heard: str) -> str:
@@ -240,20 +298,35 @@ def keep_label(heard: str) -> str:
 
 
 def fixed_text(
-    heard: str, name: str, *, line_fixed: bool = False, line_kept: bool = False, new: bool = False
+    heard: str,
+    name: str,
+    *,
+    line_fixed: bool = False,
+    line_kept: bool = False,
+    new: bool = False,
+    earlier: int = 0,
 ) -> str:
     """After the DM picked or typed a name (both already escaped). `line_fixed`: the line
     that was asked about was fixed too; `line_kept`: it couldn't be (it would have put a
-    secret name there, or saving failed); `new`: a typed name DMbot didn't know."""
+    secret name there, or saving failed); `new`: a typed name DMbot didn't know;
+    `earlier`: how many earlier lines of this session were written the same way (#127)."""
+    if earlier:
+        tail = (
+            " 1 earlier line was fixed too."
+            if earlier == 1
+            else f" {earlier} earlier lines were fixed too."
+        )
+    else:
+        tail = " Earlier lines stay as heard."
     if line_fixed:
         text = (
             f'✅ Got it: "{_short(heard)}" is now written **{_short(name)}**, in that line '
-            "and from now on in this campaign. Earlier lines stay as heard."
+            f"and from now on in this campaign.{tail}"
         )
     else:
         text = (
             f'✅ Got it: from now on, "{_short(heard)}" is written **{_short(name)}** in '
-            "this campaign. Earlier lines stay as heard."
+            f"this campaign.{tail}"
         )
         if line_kept:
             text += " That line stays as heard."

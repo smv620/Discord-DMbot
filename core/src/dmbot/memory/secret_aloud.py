@@ -16,7 +16,7 @@ import re
 from collections.abc import Collection, Iterable, Sequence
 from dataclasses import dataclass
 
-from dmbot.memory.models import name_key
+from dmbot.memory.models import name_key, spelling_key
 from dmbot.memory.store import MemoryStore
 from dmbot.transcript.models import Line
 
@@ -32,20 +32,26 @@ class SecretName:
 
 @dataclass(frozen=True, slots=True)
 class Said:
-    alias_id: str
+    alias_id: str  # the first entry with this spelling: what the question's buttons carry
     text: str
     times: int
+    alias_ids: tuple[str, ...] = ()  # every entry sharing the spelling (the first one included)
+
+    @property
+    def entries(self) -> int:
+        return max(1, len(self.alias_ids))
 
 
-def players_lines(lines: Iterable[Line], *, players: Collection[int]) -> list[str]:
-    """The words players said at the table: lines by someone in `players` (the people recorded now
-    who are not the campaign's DMs), leaving out the sidebar (the DM's questions to DMbot and its
-    answers). Off-topic lines are kept: the raw transcript shows them too, so a secret muttered
-    there is just as out. Both the cleaned and the as-heard words are read, since the cleaner may
-    have respelled a name; a line where they differ counts as two, which only affects the order."""
+def said_lines(lines: Iterable[Line], *, people: Collection[int]) -> list[str]:
+    """The words said at the table: lines by someone in `people` (the people recorded now; the
+    caller leaves the campaign's DMs out or keeps them in), leaving out the sidebar (the DM's
+    questions to DMbot and its answers). Off-topic lines are kept: the raw transcript shows them
+    too, so a secret muttered there is just as out. Both the cleaned and the as-heard words are
+    read, since the cleaner may have respelled a name; a line where they differ counts as two,
+    which only affects the order."""
     out: list[str] = []
     for line in lines:
-        if line.user_id not in players or line.sidebar:
+        if line.user_id not in people or line.sidebar:
             continue
         if line.text:
             out.append(line.text)
@@ -54,26 +60,24 @@ def players_lines(lines: Iterable[Line], *, players: Collection[int]) -> list[st
     return out
 
 
-_POSSESSIVE = re.compile(r"['’]s\b")
-
-
-def _key(text: str) -> str:
-    """A name or a stretch of speech as compared here: "Auril's frost" is Auril too, so a
-    possessive goes before the usual `name_key` (on both sides, or "Dragon's Rest" never meets
-    itself)."""
-    return name_key(_POSSESSIVE.sub("", text))
+_key = spelling_key  # (kept in models.py: the store clears every entry with the same key)
 
 
 def spoken(secrets: Sequence[SecretName], texts: Iterable[str]) -> list[Said]:
     """The secret names found in the players' words, most said first (ties by name). A name counts
     once for each time it appears as whole words."""
     wanted: list[tuple[SecretName, str, re.Pattern[str]]] = []
-    seen: set[str] = set()
-    for secret in secrets:  # one question for a name, however many entries or spellings share it
+    # One question for a name, however many entries share it; every entry's id is kept behind the
+    # spelling, so pressing "Not secret any more" clears all of them (#1429).
+    ids_by_key: dict[str, list[str]] = {}
+    for secret in secrets:
         key = _key(secret.text)
-        if len(key) >= MIN_KEY and key not in seen:
-            seen.add(key)
+        if len(key) < MIN_KEY:
+            continue
+        if key not in ids_by_key:
+            ids_by_key[key] = []
             wanted.append((secret, key, re.compile(rf"(?<=\s){re.escape(key)}(?=\s)")))
+        ids_by_key[key].append(secret.alias_id)
     counts: dict[str, int] = {}
     for text in texts:
         padded = f" {_key(text)} "
@@ -83,8 +87,8 @@ def spoken(secrets: Sequence[SecretName], texts: Iterable[str]) -> list[Said]:
             found = len(pattern.findall(padded))
             if found:
                 counts[secret.alias_id] = counts.get(secret.alias_id, 0) + found
-    by_id = {s.alias_id: s for s, _, _ in wanted}
-    out = [Said(a, by_id[a].text, n) for a, n in counts.items()]
+    by_id = {s.alias_id: (s, key) for s, key, _ in wanted}
+    out = [Said(a, by_id[a][0].text, n, tuple(ids_by_key[by_id[a][1]])) for a, n in counts.items()]
     out.sort(key=lambda s: (-s.times, name_key(s.text), s.alias_id))
     return out  # all of them; the caller asks about the first `MAX_ASKED` and says there are more
 

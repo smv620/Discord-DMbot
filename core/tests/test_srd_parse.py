@@ -5,10 +5,14 @@ from __future__ import annotations
 
 import unittest
 from typing import Any
+from unittest.mock import patch
 
-from dmbot.devtools.srd import build, parse
+from dmbot.devtools.srd import build, parse, toolbox
+from dmbot.devtools.srd import equipment as equipment_reader
 from dmbot.devtools.srd.pdf import COLUMN_SPLIT, FOOTER_Y, Line, Piece, lines_of
 from tests.monster_fixtures import goblin
+from tests.test_srd_toolbox import FIXTURE_LEFT_OUT, encounters, magic_items
+from tests.test_srd_toolbox import chapter as toolbox_chapter
 
 TITLE, ITALIC, BODY = "GillSans-SemiBold", "Cambria-Italic", "Cambria"
 BOLD_LEAD = "Cambria-BoldItalic"
@@ -380,7 +384,120 @@ class Reading(unittest.TestCase):
         )
 
 
+def at(x: float, text: str, font: str = TITLE, page: int = 180) -> Line:
+    return line(piece(text, font, x=x), page=page)
+
+
+class RulesGlossary(unittest.TestCase):
+    """The Rules Definitions (#1884): which title lines start an entry, and what is kept."""
+
+    def test_a_title_at_a_column_edge_starts_an_entry_in_either_column(self) -> None:
+        lines = [
+            say("Rules Definitions", TITLE),
+            at(63, "Cover"),
+            at(63, "Cover protects.", BODY),
+            at(314, "Darkness"),
+            at(314, "It is dark.", BODY),
+        ]
+        self.assertEqual(
+            [(r.name, r.text) for r in parse.parse_rules(lines)],
+            [("Cover", "Cover protects."), ("Darkness", "It is dark.")],
+        )
+
+    def test_a_tag_is_split_from_the_name_and_a_condition_is_left_to_conditions(self) -> None:
+        lines = [
+            say("Rules Definitions", TITLE),
+            at(63, "Dash [Action]"),
+            at(63, "You gain movement.", BODY),
+            at(63, "Blinded [Condition]"),
+            at(63, "You can’t see.", BODY),
+        ]
+        (dash,) = parse.parse_rules(lines)
+        self.assertEqual((dash.name, dash.tag, dash.page), ("Dash", "Action", 180))
+
+    def test_a_table_caption_is_not_an_entry_and_ends_the_text(self) -> None:
+        lines = [
+            say("Rules Definitions", TITLE),
+            at(63, "Carrying Capacity"),
+            at(63, "You can carry a lot.", BODY),
+            at(63, "Carrying Capacity"),  # the table's caption: a title at the edge...
+            at(67, "Creature Size"),  # ...whose column heads sit a few points in
+            at(67, "Tiny 30 lb.", BODY),
+            at(63, "Cover"),
+            at(63, "Cover protects.", BODY),
+        ]
+        rules = parse.parse_rules(lines)
+        self.assertEqual([r.name for r in rules], ["Carrying Capacity", "Cover"])
+        self.assertEqual(rules[0].text, "You can carry a lot.")
+
+    def test_table_rows_in_the_sans_font_go_but_a_bullet_and_its_wrapped_line_stay(self) -> None:
+        row = line(
+            piece("Attack", "GillSans", x=314.0), piece("Dodge", "GillSans", x=372.0), page=180
+        )
+        bullet = line(piece("• Furniture of your size or", "GillSans", x=314.0), page=180)
+        lines = [
+            say("Rules Definitions", TITLE),
+            at(314, "Difficult Terrain"),
+            at(314, "It counts if it has:", BODY),
+            bullet,
+            at(314, "larger", "GillSans"),
+            row,
+        ]
+        (rule,) = parse.parse_rules(lines)
+        self.assertEqual(rule.text, "It counts if it has:\n• Furniture of your size or larger")
+
+    def test_the_see_also_line_is_kept_apart_as_names(self) -> None:
+        lines = [
+            say("Rules Definitions", TITLE),
+            at(63, "Dash [Action]"),
+            at(63, "You gain movement. See also “Speed.”", BODY),
+            at(63, "Expertise"),
+            at(63, "Double it. See also “Playing the Game” (“Proficiency”).", BODY),
+        ]
+        dash, expertise = parse.parse_rules(lines)
+        self.assertEqual((dash.text, dash.see_also), ("You gain movement.", ("Speed",)))
+        self.assertEqual(expertise.see_also, ("Playing the Game", "Proficiency"))
+        twice = [
+            say("Rules Definitions", TITLE),
+            at(63, "Hit"),
+            at(63, "See also “Hit.” See also “Hit.”", BODY),
+        ]
+        self.assertEqual(parse.parse_rules(twice)[0].see_also, ("Hit",))
+
+    def test_a_pdf_without_the_heading_or_an_entry_without_words_stops_the_tool(self) -> None:
+        with self.assertRaisesRegex(parse.SrdError, "Rules Definitions"):
+            parse.parse_rules([at(63, "Cover")])
+        with self.assertRaisesRegex(parse.SrdError, "Cover"):
+            parse.parse_rules([say("Rules Definitions", TITLE), at(63, "Cover")])
+
+
+class MendingACutAfterANumber(unittest.TestCase):
+    """A line that ends "10-" and goes on "foot" is "10-foot", not "10foot" (#1914)."""
+
+    def test_the_hyphen_after_a_number_stays(self) -> None:
+        mender = parse.Mender([])
+        self.assertEqual(mender.join("in a 10-", "foot Emanation"), "in a 10-foot Emanation")
+        self.assertEqual(mender.join("a 100 -", "foot high"), "a 100-foot high")
+
+    def test_a_word_cut_in_two_is_still_one_word(self) -> None:
+        mender = parse.Mender([say("The spell ignites.")])
+        self.assertEqual(mender.join("It ig-", "nites"), "It ignites")
+
+    def test_no_shipped_text_has_a_number_glued_to_foot(self) -> None:
+        from dmbot.rules import index
+
+        for entry in index.srd().entries:
+            with self.subTest(entry.name):
+                self.assertNotRegex(entry.text, r"\d(?:foot|feet)\b")
+
+
 class Building(unittest.TestCase):
+    def setUp(self) -> None:
+        # the made-up Gameplay Toolbox has its own left-out counts, not the real chapter's
+        patcher = patch.dict(toolbox.EXPECTED_LEFT_OUT, FIXTURE_LEFT_OUT, clear=True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def pages(self) -> list[list[Line]]:
         contents = [say("Spell Descriptions", "Cambria")]  # the contents page: not a heading
         spells = [
@@ -388,18 +505,134 @@ class Building(unittest.TestCase):
             *header("Fireball")[:6],
             say("Boom.", BODY, 11),
         ]
-        glossary = [say("Rules Glossary", TITLE, 12), say("Blinded [Condition]", TITLE, 12),
-                    say("You can’t see.", BODY, 12)]  # fmt: skip
-        toolbox = [say("Gameplay Toolbox", TITLE, 13)]
-        creatures = [say("Monsters A–Z", TITLE, 14), *goblin()]
-        return [contents, *[[]] * 9, spells, glossary, toolbox, creatures]
+        glossary = [say("Rules Glossary", TITLE, 12), say("Rules Definitions", TITLE, 12),
+                    say("Blinded [Condition]", TITLE, 12), say("You can’t see.", BODY, 12),
+                    say("Cover", TITLE, 12), say("Cover protects a target.", BODY, 12)]  # fmt: skip
+        # the chapter as the toolbox reader's own tests have it, with its Combat Encounters and
+        # Magic Items sections after it (the items' own heading ends them)
+        toolbox = toolbox_chapter()
+        combat = [*encounters(), *magic_items()]
+        classes = [
+            say("Classes", TITLE, 20),
+            say("Barbarian", TITLE, 20),
+            say("Level 1: Rage", TITLE, 20),
+            say("You can enter a Rage.", BODY, 20),
+        ]
+        origins = [
+            say("Character Origins", TITLE, 21),
+            say("Sage", TITLE, 21),
+            say("Ability Scores: Constitution, Intelligence, Wisdom", TITLE, 21),
+            say("Feat: Alert (see “Feats”)", TITLE, 21),
+            say("Skill Proficiencies: Arcana and History", TITLE, 21),
+            say("Tool Proficiency: Calligrapher’s Supplies", TITLE, 21),
+            say("Equipment: Choose A or B: (A) Robe; or (B) 50 GP", TITLE, 21),
+            say("Goliath", TITLE, 21),
+            say("Creature Type: Humanoid", TITLE, 21),
+            say("Size: Medium (about 7–8 feet tall)", TITLE, 21),
+            say("Speed: 35 feet", TITLE, 21),
+            say("As a Goliath, you have these special traits.", BODY, 21),
+            # the three tables the chapter's species have (named in origins.SPECIES_TABLES)
+            *[
+                line
+                for table in ("Draconic Ancestors", "Elven Lineages", "Fiendish Legacies")
+                for line in (say(table, TITLE, 21), say("Some cells", "GillSans", 21))
+            ],
+        ]
+        feats = [
+            say("Feats", TITLE, 21),
+            say("Origin Feats", TITLE, 21),
+            say("Alert", TITLE, 21),
+            say("Origin Feat", ITALIC, 21),
+            say("You gain the following benefits.", BODY, 21),
+        ]
+        equipment = [say("Equipment", TITLE, 21), say("Properties", TITLE, 21)] + [
+            line
+            for name in (*equipment_reader.PROPERTIES, *equipment_reader.MASTERIES)
+            for line in (say(name, TITLE, 21), say(f"What {name} does.", BODY, 21))
+        ]
+        weapons = [
+            Line(49.9, 751.0, [piece("Weapons", TITLE, 49.9, 751.0)], 21),
+            Line(53.4, 721.0, [piece("Simple Melee Weapons", "GillSans-Italic", 53.4, 721.0)], 21),
+            Line(
+                61.4,
+                706.0,
+                [piece("Club 1d4 Bludgeoning Light Slow 2 lb. 1 SP", "GillSans", 61.4, 706.0)],
+                21,
+            ),
+        ]
+        armor = [
+            say("Armor", TITLE, 21),
+            Line(
+                67.0,
+                438.0,
+                [piece("Armor Armor Class (AC) Strength Stealth Weight Cost", TITLE, 67.0, 438.0)],
+                21,
+            ),
+            Line(
+                66.6,
+                423.0,
+                [piece("Shield (Utilize Action to Don or Doff)", "GillSans-Italic", 66.6, 423.0)],
+                21,
+            ),
+            Line(74.6, 408.0, [piece("Shield +2 — — 6 lb. 10 GP", "GillSans", 74.6, 408.0)], 21),
+        ]
+        tools = [
+            say("Tools", TITLE, 24),
+            say("Artisan’s Tools", TITLE, 24),
+            say("Alchemist’s Supplies (50 GP)", TITLE, 24),
+            say("Ability: Intelligence Weight: 8 lb.", TITLE, 24),
+            say("Utilize: Identify a substance (DC 15)", TITLE, 24),
+            say("Adventuring Gear", TITLE, 24),
+            say("Backpack (2 GP)", TITLE, 24),
+            say("A Backpack holds up to 30 pounds.", BODY, 24),
+        ]
+        gear_table = [  # a page of its own: the weights
+            say("Adventuring Gear", TITLE, 25),
+            say("Item Weight Cost", TITLE, 25),
+            say("Backpack 5 lb. 2 GP", "GillSans", 25),
+        ]
+        mounts = [
+            say("Mounts and Vehicles", TITLE, 26),
+            say("Mounts and Other Animals", TITLE, 26),
+            say("Item Carrying Capacity Cost", TITLE, 26),
+            say("Horse, Riding 480 lb. 75 GP", "GillSans", 26),
+            say("Tack, Harness, and Drawn Vehicles", TITLE, 26),
+            say("Cart 200 lb. 15 GP", "GillSans", 26),
+            say("Lifestyle Expenses", TITLE, 26),
+        ]
+        items = [
+            say("Magic Items A–Z", TITLE, 22),
+            say("Bag of Holding", TITLE, 22),
+            say("Wondrous Item, Uncommon", ITALIC, 22),
+            say("It holds more than it should.", BODY, 22),
+        ]
+        monsters = [say("Monsters", TITLE, 23)]
+        creatures = [say("Monsters A–Z", TITLE, 24), *goblin()]
+        return [
+            contents, *[[]] * 9, classes, origins, feats, equipment, weapons, armor, tools,
+            gear_table, mounts, spells, glossary, toolbox, combat, items, monsters, creatures,
+        ]  # fmt: skip
 
     def document(self) -> dict[str, Any]:
         return {"title": "t", "url": "u", "sha256": "s", "pages": 13}
 
     def test_the_files_are_made_from_the_sections(self) -> None:
         files = build.build_files(self.pages(), self.document())
-        self.assertEqual(set(files), {"spells.json", "conditions.json", "monsters.json"})
+        self.assertEqual(
+            set(files),
+            {
+                "spells.json",
+                "conditions.json",
+                "rules.json",
+                "features.json",
+                "feats.json",
+                "equipment.json",
+                "origins.json",
+                "items.json",
+                "monsters.json",
+                "toolbox.json",
+            },
+        )
         creatures = files["monsters.json"]
         self.assertEqual([e["name"] for e in creatures["entries"]], ["Goblin Warrior"])
         self.assertNotIn("section", creatures)  # each creature names its own
@@ -415,10 +648,88 @@ class Building(unittest.TestCase):
         self.assertEqual((spells["kind"], spells["section"]), ("spell", "Spell Descriptions"))
         self.assertEqual([e["name"] for e in conditions["entries"]], ["Blinded"])
         self.assertEqual(conditions["entries"][0]["page"], 12)
+        features = files["features.json"]
+        self.assertEqual((features["kind"], features["section"]), ("feature", "Classes"))
+        self.assertEqual(
+            features["entries"],
+            [
+                {
+                    "name": "Rage",
+                    "class": "Barbarian",
+                    "level": 1,
+                    "subclass": "",
+                    "text": "You can enter a Rage.",
+                    "page": 20,
+                }
+            ],
+        )
+        feats = files["feats.json"]
+        self.assertEqual((feats["kind"], feats["section"]), ("feat", "Feats"))
+        self.assertEqual(
+            feats["entries"],
+            [
+                {
+                    "name": "Alert",
+                    "category": "Origin",
+                    "prerequisite": "",
+                    "text": "You gain the following benefits.",
+                    "page": 21,
+                }
+            ],
+        )
+        entries = files["origins.json"]["entries"]  # two kinds in one file
+        self.assertEqual(
+            [(e["kind"], e["name"]) for e in entries],
+            [("species", "Goliath"), ("background", "Sage")],
+        )
+        self.assertEqual(entries[0]["speed"], "35 feet")
+        self.assertEqual(entries[1]["feat"], "Alert")
+        gear = files["equipment.json"]["entries"]
+        self.assertEqual(
+            [(e["kind"], e["name"]) for e in gear if e["kind"] != "rule"],
+            [
+                ("weapon", "Club"),
+                ("armor", "Shield"),
+                ("tool", "Alchemist’s Supplies"),
+                ("gear", "Backpack"),
+                ("gear", "Horse, Riding"),
+                ("gear", "Cart"),
+            ],
+        )
+        self.assertEqual(sum(e["kind"] == "rule" for e in gear), 18)
+        club = gear[0]
+        self.assertEqual(
+            (club["category"], club["damage"], club["mastery"], club["cost"]),
+            ("Simple Melee", "1d4", "Slow", "1 SP"),
+        )
+        magic = files["items.json"]
+        self.assertEqual((magic["kind"], magic["section"]), ("item", "Magic Items"))
+        self.assertEqual(
+            magic["entries"],
+            [
+                {
+                    "name": "Bag of Holding",
+                    "category": "Wondrous Item",
+                    "subtype": "",
+                    "rarity": "Uncommon",
+                    "attunement": False,
+                    "attunement_by": "",
+                    "text": "It holds more than it should.",
+                    "page": 22,
+                }
+            ],
+        )
+        rules = files["rules.json"]
+        self.assertEqual((rules["kind"], rules["section"]), ("rule", "Rules Glossary"))
+        self.assertEqual([e["name"] for e in rules["entries"]], ["Cover"])  # not the condition
+        self.assertEqual(rules["entries"][0]["see_also"], [])
 
     def test_a_different_document_stops_the_tool(self) -> None:
         pages = self.pages()
-        pages[11] = [say("Something else", TITLE, 12)]  # no Rules Glossary
+        glossary = next(
+            i for i, page in enumerate(pages) if page and page[0].text == "Rules Glossary"
+        )
+        pages[glossary] = [say("Something else", TITLE, 12)]  # no Rules Glossary
         with self.assertRaisesRegex(parse.SrdError, "Rules Glossary"):
             build.build_files(pages, self.document())
 

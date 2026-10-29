@@ -346,13 +346,15 @@ class Command(unittest.TestCase):
         self.assertIn("at 240 calls", out)
 
     def test_a_model_with_no_price_is_never_guessed(self) -> None:
-        code, out, _ = self.go("--tier", "careful")
+        # An invented model: the real default careful model has a price on file now (#1969).
+        unpriced = {"AI_MODEL_CAREFUL": "claude-unpriced-test-1"}
+        code, out, _ = self.go("--tier", "careful", env=unpriced)
         self.assertEqual(code, 0)
-        self.assertIn("price unknown (give --price claude-sonnet-5-5=IN,OUT)", out)
+        self.assertIn("price unknown (give --price claude-unpriced-test-1=IN,OUT)", out)
         code, _, err = self.go("--tier", "careful", "--extractor", "anthropic",
-                               env={"ANTHROPIC_API_KEY": "k"})  # fmt: skip
+                               env={"ANTHROPIC_API_KEY": "k", **unpriced})  # fmt: skip
         self.assertEqual(code, 2)
-        self.assertIn("no price for claude-sonnet-5-5", err)
+        self.assertIn("no price for claude-unpriced-test-1", err)
 
     def test_paid_calls_need_a_key_and_stay_under_the_cap(self) -> None:
         code, _, err = self.go("--extractor", "anthropic")

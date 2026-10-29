@@ -21,6 +21,7 @@ from typing import Any
 import discord
 
 from dmbot.campaigns import Campaign
+from dmbot.discord_limits import MESSAGE_MAX, fit_message
 from dmbot.logs import set_log_context
 from dmbot.rules import rule_sets, set_diff
 from dmbot.rules.house import HouseRuleError
@@ -33,7 +34,7 @@ GONE = "That campaign isn't here any more."
 COULDNT = "That didn't work, and nothing changed. Press the button again in a moment."
 ANSWERED = "Someone already answered this suggestion."
 EXPIRED = "That suggestion is too old to add. The table was told it can send it again."
-TEXT_MAX = 1800
+TEXT_MAX = MESSAGE_MAX - 200  # margin kept from before: room for the words a sender adds around it
 SHOWN_MAX = 120  # a rule quoted in a one-line message
 
 _LABELS = {
@@ -173,7 +174,7 @@ async def _see(
     await _tell(
         interaction,
         f"If you press Add to set, **{name}** becomes version {mine.version + 1}:\n"
-        + "\n".join(lines)[:TEXT_MAX],
+        + fit_message("\n".join(lines), limit=TEXT_MAX),
     )
 
 

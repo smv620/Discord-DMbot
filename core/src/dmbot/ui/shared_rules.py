@@ -17,8 +17,9 @@ from typing import Any
 import discord
 
 from dmbot.campaigns import Campaign
-from dmbot.rules import rule_sets
+from dmbot.rules import rule_sets, set_sync
 from dmbot.rules.house import HouseRuleError
+from dmbot.ui import shared_rules_defs as defs_ui
 from dmbot.ui.dmbot_commands import _answer_first, _bot, _Button, _Menu, _send, _tell
 
 log = logging.getLogger(__name__)
@@ -31,6 +32,7 @@ UNFOLLOW_LABEL = "Stop using shared rules"
 UNDO_LABEL = "↩️ Undo"
 PUBLISH_LABEL = "🔄 Publish my changes"
 HISTORY_LABEL = "📜 Version history"
+PACKS_LABEL = "📦 Homebrew packs"
 CONFIRM_LABEL = "Yes, use this set"
 CANCEL_LABEL = "Cancel"
 
@@ -67,6 +69,15 @@ def _guarded[F: Callable[..., Awaitable[None]]](handler: F) -> F:
             await _tell(interaction, COULDNT)
 
     return run  # type: ignore[return-value]
+
+
+async def _settle(interaction: discord.Interaction, current: Campaign, store: Any) -> Any:
+    """After a follow changed: the relationship definitions borrowed from the set match it again
+    (#1456). A failure here never undoes the follow; the next session start tries again."""
+    memory = getattr(_bot(interaction), "memory", None)
+    if memory is None:
+        return None
+    return await set_sync.safely(set_sync.reconcile(memory, store, current.guild_id, current.id))
 
 
 async def _dm_campaign(interaction: discord.Interaction, campaign: Campaign) -> Campaign | None:
@@ -206,6 +217,27 @@ async def share(interaction: discord.Interaction, campaign: Campaign, name: str)
         await _tell(interaction, NOT_READY)
         return
     rules = await bot.house_rules.list(current.guild_id, current.id)
+    offered = await defs_ui.offered_for(bot, current)
+    if not offered:
+        await _publish_set(interaction, current, store, name, rules, [])
+        return
+
+    @_guarded
+    async def chosen(i: discord.Interaction, picked: list[dict[str, Any]]) -> None:
+        await _publish_set(i, current, store, name, rules, picked)
+
+    await _send(interaction, defs_ui.tick_list_text(offered), defs_ui.ShareChoose(offered, chosen))
+
+
+async def _publish_set(
+    interaction: discord.Interaction,
+    current: Campaign,
+    store: Any,
+    name: str,
+    rules: list[Any],
+    definitions: list[dict[str, Any]],
+) -> None:
+    bot = _bot(interaction)
     links = getattr(bot, "house_file_links", None)
     link = await links.get(current.guild_id, current.id) if links is not None else None
     # The DM's rules document link travels with the set, as docs/PLAN.md says; CODE_NOTE
@@ -217,11 +249,16 @@ async def share(interaction: discord.Interaction, campaign: Campaign, name: str)
         name,
         rules,
         getattr(link, "link", None),
+        definitions,
     )
     code = await store.make_code(current.guild_id, current.id, interaction.user.id)
+    names = defs_ui.labels([d["label"] for d in definitions])
+    extra = (
+        f"\nShared with it: {defs_ui._plural(len(definitions))} ({names})." if definitions else ""
+    )
     await _tell(
         interaction,
-        f"✅ Sharing **{_escape(shared.name)}**.\n`{code}`\n{CODE_NOTE}",
+        f"✅ Sharing **{_escape(shared.name)}**.{extra}\n`{code}`\n{CODE_NOTE}",
     )
 
 
@@ -275,12 +312,16 @@ async def look_up(interaction: discord.Interaction, campaign: Campaign, code: st
         return
     current, store = ready
     offer = await store.by_code(current.guild_id, interaction.user.id, code)
+    if offer.kind != rule_sets.HOUSE_RULES:  # a homebrew pack's code (#1527)
+        await _tell(interaction, rule_sets.WRONG_KIND)
+        return
     preview = _preview(offer.content)
     await _send(
         interaction,
         f"**{_escape(offer.name)}** from {_escape(offer.publisher)}: "
         f"{_rules(_count(offer.content))} (version {offer.version}).\n"
         + (f"{preview}\n" if preview else "")
+        + defs_ui.offer_line(offer.content)
         + "If you use it, DMbot will check these rules too. Your own rules win if they "
         "disagree. You can stop any time.",
         ConfirmFollow(current, offer),
@@ -303,9 +344,11 @@ class ConfirmFollow(_Menu):
         current, store = ready
         follow = await store.follow(current.guild_id, current.id, interaction.user.id, self.offer)
         self.stop()  # one press only
+        done = await _settle(interaction, current, store)
         await _tell(
             interaction,
-            f"✅ Now using **{_escape(follow.name)}**. DMbot checks it along with your own rules.",
+            f"✅ Now using **{_escape(follow.name)}**. DMbot checks it along with your own rules."
+            + defs_ui.followed_note(done),
         )
 
     async def _no(self, interaction: discord.Interaction) -> None:
@@ -346,7 +389,11 @@ class UndoUnfollow(_Menu):
         current, store = ready
         await store.restore(current.guild_id, current.id, interaction.user.id, self.follow)
         self.stop()
-        await _tell(interaction, f"Back to using **{_escape(self.follow.name)}**.")
+        done = await _settle(interaction, current, store)
+        await _tell(
+            interaction,
+            f"Back to using **{_escape(self.follow.name)}**." + defs_ui.followed_note(done),
+        )
 
 
 class SharedMenu(_Menu):
@@ -368,6 +415,12 @@ class SharedMenu(_Menu):
             )
         else:
             self.add_item(_Button(self._follow, label=FOLLOW_LABEL))
+        self.add_item(_Button(self._packs, label=PACKS_LABEL))  # homebrew packs (#1527)
+
+    async def _packs(self, interaction: discord.Interaction) -> None:
+        from dmbot.ui import shared_packs
+
+        await shared_packs.open_menu(interaction, self.campaign)
 
     async def _share(self, interaction: discord.Interaction) -> None:
         # Ask about the plan before the form, so nobody types a name only to be refused.
@@ -414,9 +467,10 @@ class SharedMenu(_Menu):
             return
         current, store = ready
         follow = await store.unfollow(current.guild_id, current.id, interaction.user.id)
+        done = await _settle(interaction, current, store)
         await _send(
             interaction,
             f"Stopped using **{_escape(follow.name)}**. Your own rules are unchanged. "
-            "Open 📚 Shared rules again to use a new code.",
+            "Open 📚 Shared rules again to use a new code." + defs_ui.stopped_note(done),
             UndoUnfollow(current, follow),
         )

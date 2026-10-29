@@ -25,7 +25,9 @@ from collections.abc import Iterable
 from dataclasses import dataclass, replace
 
 from dmbot.memory.models import NAME_MAX, name_key
+from dmbot.memory.name_longer import widened
 from dmbot.memory.sounds import sound_codes
+from dmbot.names import not_names
 
 MIN_TIMES = 2
 MAX_SUGGESTIONS = 10
@@ -152,6 +154,13 @@ def _candidates(
         j = i
         while j < len(words) and name_like(j):
             j += 1
+        # A pronoun is never offered as a name (#2358), unless this sentence plainly names
+        # someone by it ("My name is We"). A run led by one ("We Should") goes with it.
+        if not_names.is_not_name(" ".join(words[i:j]), sentence_start=i == 0) and not (
+            not_names.keep(" ".join(words[i:j]), " ".join(words), sentence_start=i == 0)
+        ):
+            i = j
+            continue
         if j - i <= MAX_WORDS:
             out.append((" ".join(words[i:j]), i > 0))
             if i == 0 and j - i > 1:
@@ -170,6 +179,7 @@ def find_new_names(
     """Names in these lines (cleaned, so names fixed live are known) worth asking the DM
     about, most heard first: at most MAX_SUGGESTIONS (read when called), or all of them
     with `unlimited` (to group them, then cap)."""
+    lines = list(lines)
     sentences = _sentences(lines)
     skip = frozenset({name_key(k) for k in skip_keys} | COMMON | GAME_TERMS)
     lower_words = {w.casefold() for words in sentences for w in words if w[:1].islower()}
@@ -186,11 +196,19 @@ def find_new_names(
             spellings.setdefault(key, Counter())[text] += 1
             if mid:
                 mid_sentence.add(key)
-    found = [
-        Suggestion(spellings[key].most_common(1)[0][0], times)
-        for key, times in counts.items()
-        if times >= min_times and key in mid_sentence
-    ]
+    found = []
+    for key, times in counts.items():
+        if times >= min_times and key in mid_sentence:
+            name = spellings[key].most_common(1)[0][0]
+            # A place's last word is often lower case in the transcript ("Harrow's keep"): when the
+            # same word is followed by the same place word often enough, the longer name is what is
+            # offered (#2570). Still only a suggestion; "Harrow" said alone elsewhere is not lost.
+            longer = widened(lines, name, min_times)
+            if longer and len(longer) <= NAME_MAX:
+                if name_key(longer) in skip:
+                    continue  # the DM already answered for the longer name: not its first word
+                name = longer
+            found.append(Suggestion(name, times))
     found.sort(key=lambda s: (-s.times, s.name))
     return found if unlimited else found[:MAX_SUGGESTIONS]
 
@@ -205,6 +223,8 @@ def _alike(a: str, b: str, need: float = 0.0) -> float:
         return 0.0
     return matcher.ratio()
 
+
+alike = _alike  # (public: how alike two spellings are, 0 to 1)
 
 Candidate = tuple[str, str, str]  # (entity ID, a name of it as written, its own name)
 

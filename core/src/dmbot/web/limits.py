@@ -91,6 +91,23 @@ class RateLimit:
                 del self._turns[address]
 
 
+# Free accounts (Try It, lapsed) may write to the team (#1435), but a free account costs nothing
+# to make, so it gets a tighter guard than a paid one: this many new tickets in 24 hours and
+# one waiting for an answer at a time. Counted from the database (support.recent), not memory,
+# so a restart doesn't forget them. A paid plan keeps only the 10-minute limit.
+FREE_TICKETS_PER_DAY = 3
+
+
+def free_ticket_refusal(waiting: int, today: int) -> Literal["one_waiting", "daily"] | None:
+    """Why a free account may not send another ticket now, or None. `waiting` is its tickets
+    the team has not answered yet; `today` is those it sent in the last 24 hours."""
+    if waiting >= 1:
+        return "one_waiting"
+    if today >= FREE_TICKETS_PER_DAY:
+        return "daily"
+    return None
+
+
 @dataclass(frozen=True)
 class Group:
     """One limit shared by several routes."""
@@ -122,6 +139,7 @@ LIMITS: dict[str, Group] = {
         (
             "/billing/checkout",
             "/billing/portal",
+            "/billing/renew",
             "/billing/extra-hours",
             "/billing/recap-audio",
         ),

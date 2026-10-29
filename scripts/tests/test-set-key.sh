@@ -10,6 +10,10 @@ work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 export DMBOT_ENV_FILE="$work/.env" DMBOT_ENV_EXAMPLE="$work/.env.example"
 export DMBOT_TEST_NO_TERMINAL=1
+# A stand-in for core/src: the names the code reads (#1970).
+export DMBOT_CODE_SOURCE="$work/code"
+mkdir -p "$DMBOT_CODE_SOURCE"
+printf 'get("COMMENTED_API_KEY")\nget("DISCORD_TOKEN")\n' >"$DMBOT_CODE_SOURCE/config.py"
 
 # The docker stand-in logs every call, and "ps" lists the services in $FAKE_RUNNING.
 export DMBOT_DOCKER="$work/docker" FAKE_LOG="$work/docker.log" FAKE_RUNNING=""
@@ -292,6 +296,34 @@ reset
 run "owner@example.com"$'\n' ADMIN_EMAILS
 check "refuses ADMIN_EMAILS: a setting, not a key" refused
 check "ADMIN_EMAILS refusal changes nothing" unchanged
+
+# The real .env.example must list the ElevenLabs key as an active line, or set-key refuses it
+# (#1440: the owner could not set the key while the line was commented out).
+reset
+cp "$(dirname "$script")/../.env.example" "$DMBOT_ENV_EXAMPLE"
+run "$key"$'\n' ELEVENLABS_API_KEY
+check "the real .env.example lets set-key set ELEVENLABS_API_KEY" ok
+check "the ElevenLabs key is saved" has_line "ELEVENLABS_API_KEY=$key"
+check "the ElevenLabs key is never printed" never_says "$key"
+
+# A key left commented in .env.example (#1970)
+reset
+printf '# COMMENTED_API_KEY=\n# UNREAD_API_KEY=\n# COMPOSE_TOKEN=web. prose that names a thing\n#NO_SPACE_KEY=\n' >>"$DMBOT_ENV_EXAMPLE"
+run $'the-commented-key\n' COMMENTED_API_KEY
+check "a commented key the code reads is accepted by name" ok
+check "it is saved" has_line "COMMENTED_API_KEY=the-commented-key"
+check "it is never printed" never_says "the-commented-key"
+reset
+printf '# COMMENTED_API_KEY=\n# UNREAD_API_KEY=\n#NO_SPACE_KEY=\n' >>"$DMBOT_ENV_EXAMPLE"
+run $'\n'
+check "the list shows the commented key" says "COMMENTED_API_KEY"
+check "but not one the code doesn't read" never_says "UNREAD_API_KEY"
+check "nor one with no space after #" never_says "NO_SPACE_KEY"
+reset
+printf '# UNREAD_API_KEY=\n' >>"$DMBOT_ENV_EXAMPLE"
+run $'x\n' UNREAD_API_KEY
+check "a commented name the code doesn't read is refused" refused
+check "and nothing is saved" unchanged
 
 printf '%d passed, %d failed\n' "$passed" "$failed"
 ((failed == 0))

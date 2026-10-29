@@ -98,8 +98,15 @@ class StateRules(unittest.TestCase):
             set(conditions_for(ONTO, "character") or ()),
             set(conditions_for(ONTO, "item") or ()),
         )
+        threads = set(conditions_for(ONTO, "quest") or ())
         for old, news in STATE_CHANGES.items():
-            home = beings if old in beings and not news - beings else things
+            home = (
+                threads
+                if old in threads
+                else beings
+                if old in beings and not news - beings
+                else things
+            )
             self.assertLessEqual(news, home | {"unknown"}, old)
         self.assertLessEqual(
             DM_ONLY_CHANGES, {(o, n) for o, ns in STATE_CHANGES.items() for n in ns}

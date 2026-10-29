@@ -44,8 +44,24 @@ DEFAULT_DM_SCREEN_LEVEL = NORMAL
 # What a DM confirmed the right to use shared material for (CLAUDE.md, IP rule; #252).
 # The database checks the same list (schema.SHARED_CONFIRMATIONS): a new purpose needs a
 # migration too (a test compares them).
+# (NAMES_LIST is no longer asked for since #2447, but old rows keep it, so it stays in the list.)
 NAMES_LIST, SHARED_STORY, RULEBOOK = "names_list", "shared_story", "rulebook"
-CONFIRMATION_PURPOSES = (NAMES_LIST, SHARED_STORY, RULEBOOK)
+OWN_WRITING = "own_writing"  # a DM's own background or notes, read for names (#2167)
+CONFIRMATION_PURPOSES = (NAMES_LIST, SHARED_STORY, RULEBOOK, OWN_WRITING)
+
+
+# The Shared story switch (#1692; docs/STORY_MEMORY.md, section 6). Nothing reads it yet: the
+# story-plan reader, the divergence warnings ("Watch the story") and "Guide me" are the later
+# slices of Phase 5d. The database checks the same list (schema.STORY_MODE).
+STORY_OFF, STORY_WATCH, STORY_GUIDE = "off", "watch", "guide"
+STORY_MODES = (STORY_OFF, STORY_WATCH, STORY_GUIDE)
+DEFAULT_STORY_MODE = STORY_OFF
+# What the DM is shown before the first time it is turned on (docs/PLAN.md, "Shared story
+# switch"; CLAUDE.md, IP rule). The confirmation records its fingerprint, not the words.
+STORY_RIGHT_WARNING = (
+    "Only give DMbot material you have the right to use. DMbot doesn't check this."
+)
+STORY_NEEDS_CONFIRM = "Confirm that you have the right to use the material first."
 
 
 def fingerprint(text: str) -> str:
@@ -91,13 +107,24 @@ class HandoverOffer:
     # ran out of days (#690).
     message_id: int | None = None
     end_told_at: int | None = None
+    # Made by email (#2532): to whoever opens its link on the website; `to_name` is empty.
+    via_email: bool = False
+    # The person accepted and chose another server (#2532, slice C): the bot moves the campaign
+    # there. Until it has, the offer is neither open to answer nor allowed to run out or be taken
+    # back. (`moved_campaign_id` is from an earlier design that copied it; nothing writes it.)
+    move_to_guild_id: int | None = None
+    moved_campaign_id: str | None = None  # (unused since the move changes the campaign's server)
+    move_claimed_at: int | None = None  # the bot's lease on the move that is under way
+    move_asked_at: int | None = None
+    move_failed_for: int | None = None  # who had accepted when a move did not happen,
+    move_failed_reason: str | None = None  # and the plain reason, for that person only
 
     @property
     def expires_at(self) -> int:
         return self.created_at + HANDOVER_SECONDS
 
     def is_open(self, now: int) -> bool:
-        return self.status == "open" and now < self.expires_at
+        return self.status == "open" and now < self.expires_at and self.move_to_guild_id is None
 
 
 class CampaignError(ValueError):
@@ -125,6 +152,10 @@ class Campaign:
     transcript_channel_id: int | None = None
     gametime_channel_id: int | None = None  # the players' game-time channel (#1116)
     dmbchat_channel_id: int | None = None  # where the table asks DMbot questions (#1187)
+    dm_bot_channel_id: int | None = None  # the DM Bot channel: settings by role (#1666)
+    rules_channel_id: int | None = None  # the rules archive: house rules, read only (#1752)
+    npcs_channel_id: int | None = None  # the NPC roster: people and groups, read only (#1761)
+    dm_bot_message_id: int | None = None  # ...and its one panel message
     # The DM's D&D Beyond campaign invite link, shown to players on a button (#1119).
     dndbeyond_invite: str | None = None
     # Typed chat at the table (#1118): whether DMbot reads it, and the one extra text channel
@@ -138,7 +169,27 @@ class Campaign:
     owner_user_id: int | None = None
     # Rules cards on the DM screen when a spell or creature is named (#931); off by default.
     rules_cards: bool = False
+    # Kept, unused, for a later turn-order feature (#1769): nothing reads it today and the
+    # Settings screen no longer offers it. It stays in backups so none is lost.
+    # Folded into `initiative_style` ("side") by migration 0130 (#1791) and not read any more. It
+    # is kept, and still written to backups, only so an older DMbot can read a new backup.
     side_initiative: bool = False  # combat tracks rounds only either way (#1127)
+    # How long the campaign keeps its transcripts (#1533): None is forever; else 30, 90 or 365
+    # days after a session ended. `transcript_deleted_noted`: the DM screen has said so once.
+    transcript_keep_days: int | None = None
+    transcript_deleted_noted: bool = False
+    # Minutes with nobody speaking before DMbot stops a session by itself (#2034): 5, 10, 15 or
+    # 30, never off (#2288). The empty-channel stop is always on and has no setting.
+    quiet_stop_minutes: int = 10
+    # The DM's recap choices (#1421): write a recap after each session, make the narration and
+    # music, email when it is ready. They only ever turn things off: the plan decides the rest.
+    recaps_text: bool = True
+    recaps_audio: bool = True
+    recaps_email: bool = True
+    # The Shared story switch (#1692): "off", "watch" or "guide". Nothing reads it yet.
+    story_mode: str = DEFAULT_STORY_MODE
+    # The initiative style the DM last set, kept for the next session (#1784): see fight_style.
+    initiative_style: str | None = None
     # Paused by its owner, or by DMbot when the owner's plan shrank (#957): it keeps all its
     # data and downloads, can't start, and doesn't count toward the owner's campaign cap.
     paused: bool = False

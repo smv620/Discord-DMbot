@@ -4,7 +4,7 @@ import unittest
 
 from dmbot.audio.segmenter import Utterance
 from dmbot.capture_log import SessionTotals
-from dmbot.dm_screen.messages import Spoke, session_summary, summary_problems
+from dmbot.dm_screen.messages import Spoke, names_line, session_summary, summary_problems
 
 START = 1_700_000_000
 
@@ -57,6 +57,42 @@ class Summary(unittest.TestCase):
 
     def test_a_mention_stays_a_mention(self) -> None:
         self.assertIn("<@8> 1 min", summary([Spoke("<@8>", 60, None, False)]))
+
+
+class NamesLine(unittest.TestCase):
+    def test_mixed_counts_make_one_plain_sentence(self) -> None:
+        self.assertEqual(
+            names_line(3, 2, 1, 1, 2, 1),
+            "✏️ Names: DMbot fixed 3 by itself, asked you about 2 (1 not answered), "
+            "you corrected 1, players suggested 2 (1 still waiting).",
+        )
+
+    def test_parts_at_zero_are_left_out(self) -> None:
+        self.assertEqual(names_line(4, 0, 0, 0, 0, 0), "✏️ Names: DMbot fixed 4 by itself.")
+        self.assertEqual(
+            names_line(0, 2, 0, 0, 1, 0), "✏️ Names: asked you about 2, players suggested 1."
+        )
+
+    def test_all_zeros_say_nothing(self) -> None:
+        self.assertEqual(names_line(0, 0, 0, 0, 0, 0), "")
+
+    def test_the_summary_is_otherwise_unchanged(self) -> None:
+        spoke = [Spoke("Mia", 60, 99, False)]
+        plain = session_summary("F", START, START + 60, spoke, [], downloads_sent=1)
+        line = names_line(1, 0, 0, 0, 0, 0)
+        with_names = session_summary(
+            "F", START, START + 60, spoke, [], downloads_sent=1, names=line
+        )
+        self.assertEqual(
+            session_summary("F", START, START + 60, spoke, [], downloads_sent=1, names=""), plain
+        )
+        self.assertEqual(with_names.splitlines().count(line), 1)
+        self.assertEqual([x for x in with_names.splitlines() if x != line], plain.splitlines())
+        # under the all-clear, above the download note
+        lines = with_names.splitlines()
+        self.assertEqual(
+            lines.index(line), lines.index("✅ Everything DMbot heard was written down.") + 1
+        )
 
 
 class Totals(unittest.TestCase):

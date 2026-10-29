@@ -1,0 +1,98 @@
+---
+import { resolve } from "node:path";
+
+import Base from "../layouts/Base.astro";
+import { lookupList, readFolder } from "../../scripts/lookup-counts.mjs";
+import {
+  creditsHeading,
+  creditsIntro,
+  creditsNotAffiliated,
+  lookupHeading,
+  lookupIntro,
+  sources,
+  whatDmbotDid,
+} from "../content/credits";
+
+// Counted from the data files when the page is built, so the numbers can't drift from the data.
+// (From the folder the build runs in, `web/`: the page's own file moves when the site is built.)
+const dataDir = (folder: string): string =>
+  resolve(process.cwd(), "..", "core", "src", "dmbot", "rules", "data", folder);
+const lists = sources.map((s) => lookupList(readFolder(dataDir(s.folder))));
+
+// The statements are shown word for word; only the web addresses inside them become links.
+const parts = (text: string): { text: string; href?: string }[] =>
+  text
+    .split(/(https?:\/\/[^\s]+?)(?=[.,;)]*(?:\s|$))/)
+    .filter((p) => p !== "")
+    .map((p) => (p.startsWith("http") ? { text: p, href: p } : { text: p }));
+---
+
+<Base
+  title={creditsHeading}
+  description="Where DMbot's rules text comes from, and the licence it is shared under."
+>
+  <h1>{creditsHeading}</h1>
+  <p class="lead muted">{creditsIntro}</p>
+  <p>{whatDmbotDid}</p>
+
+  {
+    sources.map((s, i) => (
+      <section class="surface source">
+        <h2>{s.name}</h2>
+        <p>
+          {parts(s.statement).map((p) =>
+            p.href ? <a href={p.href}>{p.text}</a> : p.text,
+          )}
+        </p>
+        <h3>{lookupHeading}</h3>
+        <p class="muted">{lookupIntro}</p>
+        <ul class="counts">
+          {lists[i]?.map((k) => (
+            <li>
+              {k.label}: {k.count}
+            </li>
+          ))}
+        </ul>
+        <p class="muted">
+          The changes DMbot made are listed in <a href={s.file}>the attribution file on GitHub</a>.
+        </p>
+      </section>
+    ))
+  }
+
+  <p class="muted">{creditsNotAffiliated}</p>
+</Base>
+
+<style>
+  .source {
+    padding: var(--space-6);
+    margin: var(--space-4) 0;
+  }
+
+  .source h2 {
+    font-size: var(--text-lg);
+    margin: 0 0 var(--space-2);
+  }
+
+  .source h3 {
+    font-size: var(--text-base);
+    margin: var(--space-4) 0 var(--space-1);
+  }
+
+  .counts {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(10.5rem, 1fr));
+    gap: var(--space-1) var(--space-4);
+    list-style: none;
+    padding: 0;
+    margin: var(--space-2) 0;
+  }
+
+  .counts li {
+    white-space: nowrap;
+  }
+
+  .source p {
+    overflow-wrap: anywhere;
+  }
+</style>

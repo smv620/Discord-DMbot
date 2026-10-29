@@ -2,3 +2,4 @@ node_modules/
 dist/
 .astro/
 install.log
+dist-smoke/

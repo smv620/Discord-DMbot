@@ -12,6 +12,9 @@ mass"), and nothing here runs during play. Pure functions first (they need no da
 `ContinuityStore`, which reads one campaign at a time and writes only when the DM presses a
 button, in one transaction (like #1301).
 
+Not here: contradictions between beliefs of one point of view (`memory/contradictions.py`, the
+after-session grading and the DM-screen line).
+
 Isolation and consent: every read is scoped to one campaign by the memory store. A line is
 quoted only when every speaker it came from is recorded now (`opted_in`, read just before);
 otherwise the conflict is still shown, with the fact in DMbot's own words and no quote.
@@ -19,10 +22,12 @@ otherwise the conflict is still shown, with the fact in DMbot's own words and no
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 
+from dmbot.memory import beliefs, kin
 from dmbot.memory._changes import ALIASES, CLAIMS, ENTITIES, RELATIONS, STATES, Changes
 from dmbot.memory.checks import (
     ACTS_AFTER_END,
@@ -44,6 +49,7 @@ from dmbot.memory.claims import (
     names_of,
     place_relationship,
 )
+from dmbot.memory.clues import KNOWS, outside_audience, says_they_acted_on_it
 from dmbot.memory.models import (
     ALIVE,
     CLAIM_PROPOSED,
@@ -75,6 +81,10 @@ LIKELY, PROBABLE, POSSIBLE = "likely", "probable", "possible"
 # `checks.py` rules; BACK_FROM_THE_END is a claim that a dead or destroyed entry is something
 # else again, which only the DM can say (`states.py`).
 BACK_FROM_THE_END = "back_from_the_end"
+# A character outside a limited clue's list speaks of or uses the clue (#1649). Its number is
+# per claim: possible by default, likely when the claim says they told it or used it.
+KNOWS_A_SECRET = "knows_a_secret"
+KNOWS_A_SECRET_DEFAULT, KNOWS_A_SECRET_ACTED = 0.40, 0.85
 
 # How sure each rule is, set here and not guessed by an AI: a direct contradiction of a
 # confirmed fact is likely; a dead or destroyed entry acting later is probable (it may be a
@@ -142,6 +152,10 @@ class World:
     nesting: Nesting
     states: Mapping[str, State]  # current conditions
     said: Mapping[str, Said] = field(default_factory=dict)  # fact or state id -> where from
+    # Each clue only some people know -> who the DM listed as knowing it (#1649)
+    limited: Mapping[str, frozenset[str]] = field(default_factory=dict)
+    # The connections the DM pinned as 100% truth (#2447): a claim against one is "off the rails"
+    pinned: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True, slots=True)
@@ -158,6 +172,11 @@ class Conflict:
     clash_ids: tuple[str, ...]  # the earlier facts a "that changed" answer ends
     revive_id: str | None  # the dead or destroyed entry a "that changed" answer brings back
     condition: str | None  # the condition the claim itself says, for a state claim
+    # For KNOWS_A_SECRET (#1649): the character who is outside the list, and who is on it.
+    learner_id: str | None = None
+    learner_name: str | None = None
+    # The earlier fact is one the DM pinned as 100% truth (#2447)
+    pinned: bool = False
 
     @property
     def pair(self) -> tuple[str, str]:
@@ -184,10 +203,15 @@ def _is_ended(world: World, entity_id: str) -> State | None:
     return state if state is not None and state.condition in ENDED else None
 
 
-def conflicts_in(claims: Sequence[Claim], world: World, levels: Levels) -> list[Conflict]:
-    """The possible conflicts between these claims and the confirmed story. Pure. A claim that
-    names nothing DMbot knows, or fits no rule, makes none. At most one conflict for each claim
-    and rule; the surest first."""
+def claim_conflicts_in(claims: Sequence[Claim], world: World, levels: Levels) -> list[Conflict]:
+    """The possible conflicts between these waiting CLAIMS (what the extractor heard and the DM has
+    not answered) and the confirmed story. Pure. A claim that names nothing DMbot knows, or fits no
+    rule, makes none. At most one conflict for each claim and rule; the surest first.
+
+    This is the only question it answers: "does this new claim clash with what the DM confirmed?".
+    Whether two things a point of view BELIEVES clash with each other is a different question, kept
+    in `memory/contradictions.py` (#2660); nothing here reads beliefs, so there is one answer to
+    each question and not two (Supervisor, #2660)."""
     found: list[Conflict | None] = []
     ended = {
         eid: Ended(state.from_session_at, state.created_at)
@@ -224,6 +248,9 @@ def conflicts_in(claims: Sequence[Claim], world: World, levels: Levels) -> list[
         subject_id, object_id = (other[0], who[0]) if from_object else (who[0], other[0])
         if subject_id == object_id:
             continue
+        outsider = _outside_a_limited_clue(world, levels, claim, who[0], other[0])
+        if outsider is not None:
+            found.append(outsider)
         s, o = ordered(term, subject_id, object_id)
         candidate = Relation(
             id=new_id(), subject_id=s, predicate=term.key, object_id=o, detail="", confidence=1.0,
@@ -260,10 +287,57 @@ def conflicts_in(claims: Sequence[Claim], world: World, levels: Levels) -> list[
         if item is not None and item.pair not in seen:
             seen.add(item.pair)
             unique.append(item)
-    unique.sort(
-        key=lambda c: (_ORDER[c.level], -c.probability, name_key(c.entity_name), c.claim.id)
+    unique.sort(  # what goes against a pinned truth first
+        key=lambda c: (
+            not c.pinned,
+            _ORDER[c.level],
+            -c.probability,
+            name_key(c.entity_name),
+            c.claim.id,
+        )
     )
     return unique
+
+
+def _outside_a_limited_clue(
+    world: World, levels: Levels, claim: Claim, one: str, other: str
+) -> Conflict | None:
+    """A claim that ties a confirmed character to a clue only some people know, when the DM did
+    not list that character (#1649). Possible by default; likely when the claim says they told
+    it or used it. Nothing for a clue with the switch off, for a name still waiting to be
+    confirmed, or for a character who is listed."""
+    for character_id, clue_id in ((one, other), (other, one)):
+        audience = world.limited.get(clue_id)
+        character = world.entities.get(character_id)
+        clue = world.entities.get(clue_id)
+        if audience is None or character is None or clue is None:
+            continue
+        if character.type != "character" or character.status != CONFIRMED:
+            continue
+        if not outside_audience(character_id, audience):
+            continue
+        probability = (
+            KNOWS_A_SECRET_ACTED
+            if says_they_acted_on_it(claim.relationship)
+            else KNOWS_A_SECRET_DEFAULT
+        )
+        level = levels.level_of(probability)
+        if level is None:
+            return None
+        return Conflict(
+            claim=claim, kind=KNOWS_A_SECRET, probability=probability, level=level,
+            entity_id=clue_id, entity_name=clue.name, ended_condition=None,
+            earlier_words=_names(world, audience), earlier=None, clash_ids=(),
+            revive_id=None, condition=None, learner_id=character_id,
+            learner_name=character.name,
+        )  # fmt: skip
+    return None
+
+
+def _names(world: World, ids: frozenset[str]) -> str:
+    """The people the DM listed, by name: "Belleros, Cerric"."""
+    named = sorted((world.entities[i].name for i in ids if i in world.entities), key=name_key)
+    return ", ".join(named)
 
 
 def _make(
@@ -319,11 +393,14 @@ def _make(
         clash_ids=clash_ids,
         revive_id=revive,
         condition=condition,
+        pinned=clash is not None and clash.id in world.pinned,
     )
 
 
-def _predicate_words(onto: Ontology, key: str, detail: str) -> str:
+def _predicate_words(onto: Ontology, key: str, detail: str, directional: bool = False) -> str:
     term = onto.predicates.get(key)
+    if key == "kin_of" and directional and (role := kin.role_of(detail)):
+        return kin.forward(role)  # "is the niece of", not "is family of" (#2457)
     return detail if key == "associated_with" and detail else (term.label if term else key)
 
 
@@ -357,12 +434,24 @@ class ContinuityStore:
                 "Continuity warnings are on for a campaign: %d confirmed facts, %d sessions",
                 facts, sessions,
             )  # fmt: skip
-        if not ready or not waiting:
-            return Report((), facts, sessions, ready, len(waiting))  # the story is not read
-        world = await self._world(guild_id, campaign_id, opted_in)
-        return Report(
-            tuple(conflicts_in(waiting, world, levels)), facts, sessions, ready, len(waiting)
-        )
+        if not waiting:
+            return Report((), facts, sessions, ready, 0)  # the story is not read
+        # A 📌 truth the DM pinned is checked even before the critical mass: the DM asked for it
+        # (#2447). Nothing pinned, nothing read, so a campaign with none pays nothing.
+        pinned = await self._memory.pinned_connections(guild_id, campaign_id)
+        if not ready and not pinned:
+            return Report((), facts, sessions, ready, len(waiting))
+        world = await self._world(guild_id, campaign_id, opted_in, pinned)
+        found = claim_conflicts_in(waiting, world, levels)
+        if not ready:
+            found = [c for c in found if c.pinned]
+        return Report(tuple(found), facts, sessions, ready, len(waiting))
+
+    async def is_ready(self, guild_id: int, campaign_id: str, levels: Levels) -> bool:
+        """Whether the campaign has reached the critical mass (two counts, no rows): the live
+        heads-up reads this once a session (#2068)."""
+        facts, sessions = await self._counts(guild_id, campaign_id)
+        return reached_critical_mass(facts, sessions, levels)
 
     async def _counts(self, guild_id: int, campaign_id: str) -> tuple[int, int]:
         """How many confirmed facts the campaign has and how many sessions they come from:
@@ -377,7 +466,13 @@ class ContinuityStore:
             row = await cur.fetchone()
         return (int(row["facts"]), int(row["sessions"])) if row else (0, 0)
 
-    async def _world(self, guild_id: int, campaign_id: str, opted_in: Collection[int]) -> World:
+    async def _world(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        opted_in: Collection[int],
+        pinned: Collection[str] = (),
+    ) -> World:
         async with self._memory._read(guild_id, campaign_id, snapshot=True) as scope:
             onto = await _load_ontology(scope)
             entity_rows = await scope.select(
@@ -385,14 +480,27 @@ class ContinuityStore:
             )
             alias_rows = await scope.select(ALIASES, " AND status <> 'rejected'")
             # Secret facts are left out: the DM keeps them from the table on purpose, so a
-            # clash with one is not a slip to point at.
+            # clash with one is not a slip to point at. Unless the DM pinned it as 100% truth:
+            # then a clash is just what the pin is for (the list is the DM's alone).
             relation_rows = await scope.select(
-                RELATIONS, " AND status = 'confirmed' AND NOT secret ORDER BY created_at, id"
+                RELATIONS,
+                " AND status = 'confirmed' AND (NOT secret OR id = ANY(%s))"
+                " ORDER BY created_at, id",
+                [list(pinned)],
             )
             nesting = await place_nesting(scope, onto)
             state_rows = await scope.select(STATES, " AND closed_at IS NULL")
             claim_rows = await scope.select(
-                CLAIMS, " AND status = 'confirmed' AND fact_id IS NOT NULL"
+                CLAIMS, " AND status = 'confirmed' AND fact_id IS NOT NULL AND reading IS NULL"
+            )
+            # Who the DM listed for each clue only some people know (#1649). Read apart from
+            # the facts above: a listed fact the DM marked secret still counts as listed.
+            knows_rows = await scope.select(
+                RELATIONS,
+                " AND predicate = %s AND status = 'confirmed' AND to_session_at IS NULL"
+                " AND object_id IN (SELECT id FROM memory_entities WHERE audience_limited"
+                " AND guild_id = %s AND campaign_id = %s)",
+                [KNOWS, *scope.ids],
             )
         entities = {e.id: e for e in (_entity(r) for r in entity_rows)}
         relations = [
@@ -412,6 +520,15 @@ class ContinuityStore:
         unique = frozenset(
             e.id for e in entities.values() if onto.is_a(e.type, "item") and e.is_unique
         )
+        limited: dict[str, set[str]] = {
+            e.id: set() for e in entities.values() if e.audience_limited
+        }
+        for row in knows_rows:
+            if row["object_id"] in limited:
+                limited[row["object_id"]].add(row["subject_id"])
+        # A switch on with nobody left on the list (the connection was removed elsewhere) means
+        # DMbot doesn't know who knows it, so it says nothing: an empty list is never "nobody".
+        limited = {clue: who for clue, who in limited.items() if who}
         return World(
             onto,
             names_of(entity_rows, alias_rows),
@@ -421,6 +538,8 @@ class ContinuityStore:
             nesting,
             states,
             said,
+            {clue: frozenset(who) for clue, who in limited.items()},
+            frozenset(pinned),
         )
 
     async def answer(
@@ -448,10 +567,13 @@ class ContinuityStore:
             return "Not remembered. DMbot won't ask again."
         if action != CHANGED:
             raise MemoryRuleError("DMbot doesn't know that button any more.")
-        world = await self._world(guild_id, campaign_id, opted_in)
-        mine = [c for c in conflicts_in([claim], world, levels) if c.claim.id == claim_id]
+        pinned = await self._memory.pinned_connections(guild_id, campaign_id)
+        world = await self._world(guild_id, campaign_id, opted_in, pinned)
+        mine = [c for c in claim_conflicts_in([claim], world, levels) if c.claim.id == claim_id]
         clash_ids = tuple(dict.fromkeys(i for c in mine for i in c.clash_ids))
         revive = {c.revive_id: c.ended_condition for c in mine if c.revive_id is not None}
+        # "They learned it" (#1649): the character joins the clue's list, dated to the session.
+        learners = {(c.entity_id, c.learner_id) for c in mine if c.learner_id is not None}
 
         async def before(w: Changes) -> None:
             # Everything an answer changes is checked again here, under the campaign's lock,
@@ -465,10 +587,22 @@ class ContinuityStore:
                     await self._memory.set_condition_in(
                         w, entity_id, back, claim.session_started_at
                     )
+            for clue_id, character_id in sorted(learners):
+                try:
+                    await self._memory.add_knower_in(
+                        w, clue_id, character_id, claim.session_started_at
+                    )
+                except MemoryRuleError:
+                    continue  # the clue or the character changed meanwhile; the claim still counts
             for fact_id in clash_ids:  # the earlier fact ends where the new one starts
                 row = await w.get(RELATIONS, fact_id)
                 if row is not None and row["to_session_at"] is None and claim.session_started_at:
                     await w.update(RELATIONS, fact_id, {"to_session_at": claim.session_started_at})
+                if (
+                    fact_id in world.pinned
+                ):  # "Story changed" takes the DM's pin off, in this change
+                    with contextlib.suppress(MemoryRuleError):  # (already unpinned meanwhile)
+                        await beliefs.set_pin(w, fact_id, False)
 
         await self._claims.confirm(
             guild_id, campaign_id, claim_id, opted_in=opted_in, before=before

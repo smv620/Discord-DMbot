@@ -45,7 +45,7 @@ describe("Getting help", () => {
     expect(leads).toEqual([
       "Look here first.",
       "Ask in public.",
-      "On a paid plan?",
+      "Have an account?",
       "Anyone, on any plan.",
     ]);
   });
@@ -101,7 +101,9 @@ describe("Getting help", () => {
       }
     };
     walk(fileURLToPath(new URL("../src/", import.meta.url)));
-    expect([...addresses].sort()).toEqual(["admin@getdmbot.com", "support@getdmbot.com"]);
+    // info@ is the sender of the "we got your question" email, named on the privacy page while
+    // the support helper is on (#1432); support@ is where people get help (this page).
+    expect([...addresses].sort()).toEqual(["admin@getdmbot.com", "info@getdmbot.com", "support@getdmbot.com"]);
   });
 
   it("uses none of the banned technical terms, no trademark, and makes no privacy promise of its own", () => {

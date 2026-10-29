@@ -18,19 +18,19 @@ import discord
 from dmbot.campaigns import Campaign
 from dmbot.dm_screen import messages
 from dmbot.logs import set_log_context
+from dmbot.mentions import NO_PINGS
 
 log = logging.getLogger(__name__)
 
 _ID = r"(?P<campaign>[0-9a-f]{32})"
-NO_PINGS = discord.AllowedMentions.none()
 ONLY_DM = (
     "Only this campaign's DM (or a server manager) can change table chat. "
     "Ask them to open ⚙️ Settings."
 )
 FAILED = "Sorry, that didn't save. Please try again."
 NOT_THAT_ONE = (
-    "DMbot won't read the DM screen, the transcript or the game-time channel as chat. "
-    "Pick another channel."
+    "That channel is for the DM screen or the transcript, so it can't be table chat. "
+    "Pick a different text channel."
 )
 TEXT_TYPES = [discord.ChannelType.text]
 
@@ -155,7 +155,7 @@ class TableChatPanel(discord.ui.View):
                 await interaction.response.send_message(FAILED, ephemeral=True)
                 return
             # DM-screen content never goes into transcripts, so no campaign's DM screen,
-            # transcript or game-time channel in this server is ever read as chat.
+            # transcript channel in this server is ever read as chat.
             try:
                 special = await store.special_channel_ids(guild.id)
             except Exception:

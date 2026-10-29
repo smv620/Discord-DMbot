@@ -73,6 +73,12 @@ FightBot is the one AI job that scales with players, not with speech. Its limit 
 
 Per call: 700 tokens in at $1.0 per million is $0.0007, and 60 tokens out at $5.0 per million is $0.0003, so about $0.001 a call. The prompt is the instructions (about 230 tokens), the player's sheet facts (about 150, up to 300 for a caster), the round, and at most 8 short table lines (at most 1200 characters, about 340 tokens). Tokens are estimates (size by about 3.5 characters each), like the rest of this file; the usage line in the log gives the real ones. It is counted in the AI cost like every other job: every call goes through the same client and watch.
 
+## Time suggestions from narration (#1758)
+
+Off by default (`DMBOT_TIME_SUGGESTIONS`). When on, one FAST-tier call for a DM's line that holds a time cue and that the strict phrases did not match: at most one a minute, 20 a session for a campaign, none on an unpaid plan, none in a fight or while the party is split.
+
+Per call: the instructions (about 150 tokens), the one line (at most 300 characters, about 90 tokens) and the game time (about 15) is about 260 tokens in at $1.0 per million, and a small JSON answer of about 25 tokens out at $5.0 per million: about $0.0004 a call. **At the cap, 20 calls cost about $0.008 a session** for a campaign (counted in memory with the running session, so a restart in the middle starts the count again); a typical table that says a few vague things gets a handful of calls, under a cent. Tokens are estimates (about 3.5 characters each); the log line "Time suggestions: N calls, … tokens in, … out" at the session's end gives the real ones. Counted in the AI cost like every other job.
+
 ## Story memory (5a extractor)
 
 For the live claim extractor of docs/STORY_MEMORY.md (section 3, and "Cost" in section 8): how many tokens one call takes, what a 4-hour session costs at 240 and at 480 calls (one call every 30 to 60 seconds), and how well a cheap model tells **how a claim was said** (the DM, a player, or a plan). Built in #1268 as a repeatable tool, so anyone with a key can run it.
@@ -158,8 +164,151 @@ Written by dev1 from the numbers above; Supervisor decides and records it in PLA
 - **Cost:** even STRONG is under $3 a 4-hour session. Caching the repeated instructions (the earlier estimate: most of each call's input) is worth looking at before the tier is.
 - **Limits:** one run, 60 invented scenes, wide intervals; the "appears abandoned" wording is not scored yet (see above).
 
+## Story-plan reader (#1714)
+
+The first AI step of Shared story (docs/STORY_MEMORY.md, section 6, "5d slice 3"): the AI reads a DM's adventure **once per file, only when a DM presses Read it now and says yes**, never by itself, and keeps its chapters, places and people and the "depends on" links between them as the story plan.
+
+**Decision (Supervisor, 2026-10-17):**
+
+- **Tier:** CAREFUL (`dmbot.ai`; today Sonnet 5.5, $2 in and $10 out per million tokens, read 2026-10-15 from https://platform.claude.com/docs/en/about-claude/pricing). It goes through the same client, spend watch and key rules as every other AI job.
+- **Expected cost:** a 300-page adventure is about 170k tokens in. A structured answer is about a fifth of that (34k out). That is **$0.34 + $0.34, about $0.70 per 300 pages, paid once**.
+- **Hard caps:** **$3 per file** and **$10 per campaign per calendar month (UTC)**. Before every call the reader works out the most the call could cost (its text at 3 characters a token for ASCII, and an answer as long as the 4,000-token limit), **reserves** that much (at the dearest input price and the dearest output price known, whichever model answers) on a ledger (`plan_spend`) while the campaign's row is locked, so two reads in one campaign cannot both spend the same last dollars, and stops if the reservation would cross a cap. It then says why on the card, and a later press carries on from the first part not stored (except at the file cap, which is final). When the call returns, the reservation is settled to what it really cost. A call that fails keeps its input cost on the ledger (the AI service may have billed it) and is tried again after 5 and then 20 seconds, at most three times in a row and six in a whole read; a call cut off by a restart keeps its whole reservation. The ledger is kept by the file's fingerprint (a SHA-256 of its text), not its id, so removing a file and giving it again cannot get round either cap. It goes with the campaign. A model with no checked price (an override in `.env`, or the strongest tier) is priced at $15 in and $75 out per million tokens, so the caps bite early, never late. If a dearer model than the expected one answers (a fallback), what it cost is recorded and the read stops (it can be carried on later), even when its answer was cut short. Text that is not ASCII (Chinese, Japanese, accents, symbols) is counted at a token a character, not three characters a token. The ledger is in a backup as amounts only by file fingerprint and month, so replacing a campaign from an old backup never lowers what it spent. Restoring a backup **as a new campaign** starts that campaign from the backup's ledger, which is no worse than a new campaign, since caps are per campaign.
+- **Cut answers:** an answer that is cut short at the length limit is read again in two halves instead of being lost.
+
+- **Injection check:** `python -m dmbot.devtools.plan_measure --golden --reader anthropic` reads an invented book with five injection lines (three phrased as orders that the code recognises and drops whatever the AI does, two plain sentences that only the prompt keeps out) and prints how many were obeyed and how many of those the code could not catch. CI proves the code half with a canned AI that obeys every line.
+- **The same key as the extractor:** whose key pays follows docs/PLAN.md, as for the extractor: until bring-your-own keys (#50) it is the owner's bill.
+
+**Estimate, free (2026-10-17, `python -m dmbot.devtools.plan_measure PATH`):** an invented 300-page text of 680,000 characters (so no real text is in this repository) cuts into 20 calls of about 36,000 characters. At the cautious 3 characters a token and answers at a fifth of the input, it estimates 250,000 tokens in and 47,000 out, **$0.97**, and **$1.30 at most** if every answer ran to its limit: under the $3 cap with room. Real text runs nearer 4 characters a token, which is where the $0.70 comes from. The estimate is not a measurement.
+
+**Measure it (paid, needs the key; run by dev1 or the owner on the server):**
+
+```
+cd core
+python -m dmbot.devtools.plan_measure PATH_TO_AN_OPEN_LICENCE_TEXT --reader anthropic --max-usd 3
+```
+
+Use an **open-licence** text only (SRD 5.2, CC-BY-4.0, and the like), never a sourcebook or adventure, and never put one in the repository. It uses the bot's own prompt and checks, in memory (no database), prints counts and dollars only, and stops before `--max-usd`. The numbers of that run go in this section when someone has made it.
+
+## Speech-to-text: Deepgram (actual) against Speechmatics (estimated)
+
+Added 2026-10-15 (Supervisor, at the owner's request). **Deepgram is what DMbot uses today**, so its column is the actual list price applied to the measured speech. **Speechmatics is an estimate**: the same measured speech priced at Speechmatics' list prices. Nothing below has been billed by Speechmatics; its only real use was the 2026-10-05 quick comparison in `docs/testing-history.log` (two recordings, under 2 minutes).
+
+### Prices used
+
+| What | Price per hour | Per minute | Source | Checked |
+|---|---|---|---|---|
+| Deepgram Nova-3, pre-recorded (in use) | $0.258 | $0.0043 (billed per second) | https://deepgram.com/pricing (pay as you go; Growth plan $0.0036) | 2026-10-15 |
+| Speechmatics batch, Standard accuracy | $0.23 | $0.00383 | https://www.speechmatics.com/pricing | 2026-10-15 |
+| Speechmatics batch, Enhanced accuracy (the one compared on 2026-10-05) | $0.38 | $0.00633 | https://www.speechmatics.com/pricing | 2026-10-15 |
+| Speechmatics batch, Melia 1 (cheapest; never tested by DMbot) | $0.121 | $0.00202 | https://www.speechmatics.com/pricing | 2026-10-15 |
+| Speechmatics real-time, Enhanced (for comparison only) | about $0.40 | about $0.0067 | https://www.speechmatics.com/pricing (worked out from its credits, see below) | 2026-10-15 |
+
+How these were read: both price pages were read directly on 2026-10-15. Speechmatics shows its pre-recorded (batch) prices per hour: Melia 1 $0.12 (the page title gives $0.121), Standard $0.23 and Enhanced $0.38. Its real-time prices only appear behind a switch on the page. The page's own data gives every model in credits per hour, and the batch prices above work out at about $0.50 a credit. At that rate real-time Enhanced is about $0.40 an hour, an estimate rather than a price the page states. **Billing:** Speechmatics bills to the second, like Deepgram, so short pieces cost no more than their length. Batch is the like-for-like price, because core sends each piece of speech as a short file.
+
+Not counted:
+
+- Speechmatics' volume discount (up to 25% off) and its one-time $100 credit for new accounts.
+- Its model-training discount (33% off). That discount means letting Speechmatics train on the audio, which players have not agreed to.
+- Deepgram's Growth plan ($0.0036 a minute, about 16% off).
+
+### What the measured speech costs
+
+The real test data: the twin's four sessions (4.8 speech-minutes sent, "What was measured" above) and the dev1 bake-off recording on Deepgram (175 s of speech, `docs/testing-history.log`, 2026-10-07).
+
+| Measured | Speech | Deepgram (actual) | Speechmatics Standard | Speechmatics Enhanced | Speechmatics Melia 1 |
+|---|---|---|---|---|---|
+| Twin, four sessions | 4.8 min | $0.0206 | $0.0184 | $0.0304 | $0.0097 |
+| Bake-off recording | 2.9 min | $0.0125 | $0.0112 | $0.0185 | $0.0059 |
+
+### Per table-hour
+
+These are the same three cases as "Cost per table-hour" above. The AI parts are unchanged: the off-topic filter plus the DM sidebar come to $0.049, $0.063 and $0.077 an hour. Hosting is not included.
+
+| Case | Speech (min/hour) | Deepgram speech / total | Speechmatics Standard speech / total | Speechmatics Enhanced speech / total | Speechmatics Melia 1 speech / total |
+|---|---|---|---|---|---|
+| low | 36 | $0.155 / **$0.203** | $0.138 / **$0.187** | $0.228 / **$0.277** | $0.073 / **$0.122** |
+| typical | 48 | $0.206 / **$0.269** | $0.184 / **$0.247** | $0.304 / **$0.367** | $0.097 / **$0.160** |
+| high | 60 | $0.258 / **$0.335** | $0.230 / **$0.307** | $0.380 / **$0.457** | $0.121 / **$0.198** |
+
+### A 4-hour session and a month of each plan (typical case, speech-to-text only)
+
+Hours are the plan allowances in docs/PLAN.md (Table 18, Two Tables 43, Guild 87).
+
+| | Deepgram | Speechmatics Standard | Speechmatics Enhanced | Speechmatics Melia 1 |
+|---|---|---|---|---|
+| One 4-hour session | $0.83 | $0.74 | $1.22 | $0.39 |
+| Table, 18 hours | $3.72 | $3.31 | $5.47 | $1.74 |
+| Two Tables, 43 hours | $8.88 | $7.91 | $13.07 | $4.16 |
+| Guild, 87 hours | $17.96 | $16.01 | $26.45 | $8.42 |
+
+### What it means
+
+- **Price:** Speechmatics Standard is about 11% cheaper than Deepgram. Enhanced, the tier that was actually tested, is about 47% dearer. Melia 1 is about half Deepgram's price, but DMbot has never tested it.
+- **Accuracy, from the only real comparison (2026-10-05):**
+  - With names hinted, Deepgram and Speechmatics Enhanced tied: 23 of 24 D&D terms each.
+  - On the everyday script, Enhanced made 0 errors and Deepgram 2.
+  - Standard and Melia 1 were not tested.
+  - It was two recordings, under 2 minutes, so it settles nothing.
+- **Speed:** Speechmatics took 2.77 s to connect in that test, against Deepgram's 0.14 s. Live advice needs speed, and nothing has measured Speechmatics batch delay per short piece.
+- **So:** price alone doesn't justify a switch. A switch would be worth measuring only for Standard (cheaper, untested) or Melia 1 (much cheaper, untested). That needs the twin on Speechmatics for accuracy and delay per piece. That is a developer's issue, not a decision made here.
+
 ## The story extractor's system prompt is marked for caching (#1367)
 
 Each extractor call sends the same instructions (about 1,130 tokens by the measuring tool's cautious count of 3 characters a token; nearer 850 at the usual 4) and 5 to 15 lines of talk (about 196 tokens on the golden set). The instructions are about **85%** of every call's input. They are now sent marked for caching (`cache_system`, only for this feature). The service charges about a tenth to read a cached prompt again and a quarter more to write it, so while the cache holds (calls follow each other within a few minutes) the **input** would cost about **a quarter** of what it did (1,326 token-prices a call down to about 309). Output is not cheaper, so the whole bill falls by much less than that.
 
 **Not measured, and it may not apply to the default tier.** A real measurement needs paid calls (`python -m dmbot.devtools.claims --extractor anthropic`, about $0.04 on the golden set). The service only caches a prompt above a minimum length that depends on the model; for some models it is about 1,024 tokens and for others 2,048 or more, and this prompt (850 to 1,130) is below some of them. Below the minimum nothing is cached and nothing extra is charged: the call is the same. The log line of every AI call shows `cache_read=` and `cache_write=`, so the first live session says whether it works for the tier chosen. The spend watch counts a cache write in full and a read at a tenth.
+
+
+## Recap narration and music (#1383, ElevenLabs)
+
+Read from the provider's pricing page for the design (#1381, review 2, 2026-10-16); the live run on the server (dev1) is the check that these still hold, and this table is then updated with the real figures.
+
+| What | Price | Used for |
+|---|---|---|
+| Text to speech | 1 credit per character | the narration: about 3,000 characters |
+| Music | 900 credits per minute | about 4 minutes of music |
+| Sound effects | 200 credits per generation | one ambience loop, made once for each campaign and scene kind, then kept |
+| Plans | Creator $22 for 121,000 credits; Pro $99 for 600,000 | commercial use of the music is listed from Creator |
+
+One recap is about 3,000 + 3,600 (+ 200 for a new ambience loop) = **about 7,000 credits, roughly $1.30 on Creator**, plus about $0.05 of DMbot's own AI for the text. `DMBOT_RECAP_AUDIO_MAX_CREDITS` (default 15,000, about $3) is the most one recap may use: a recap whose estimate is over it is not made, and its text goes out as usual. The credits each make used are kept on the recap (`audio_credits`), counts only.
+
+**Monthly allowance per campaign** (#1428): `DMBOT_RECAPS_PER_MONTH` (default 10) written recaps and `DMBOT_RECAP_AUDIO_PER_MONTH` (default 8) narrated ones, counted from the job rows for the calendar month in UTC; each Try again counts again, a job that never got written does not, and free access and grants are not limited. Worst case for one paid campaign in a month at the defaults: 10 x $0.05 = **$0.50 of text** plus 8 x $1.30 = **about $10.40 of narration and music**, so **about $11 a month** (Creator prices). A count that can't be read spends nothing.
+
+### Disk space for recap audio (owner, 2026-10-20)
+
+**What one recap stores today** (`recaps/audio/files.py`, `mix.py`): three MP3 files: the voice, the music bed and the mix. `mix.py` sets no bitrate, so ffmpeg's MP3 default applies: 128 kbit/s, about **0.96 MB per minute** each, or **about 2.9 MB per minute of recap**. Each campaign also keeps a few ambience loops (one per scene kind, about 10 MB at most). The text is a few kilobytes.
+
+**What to reserve per campaign:** the owner's case is a long-running game of **100 sessions** with recaps of **at most 3 minutes**. That is 300 minutes, 5 hours of audio:
+
+| Encoding | MB per recap-minute | 100 recaps of 3 min |
+|---|---|---|
+| Today (3 files at 128 kbit/s) | 2.9 | **about 865 MB** |
+| Voice 64 kbit/s mono + music 128 kbit/s + mix 128 kbit/s | 2.4 | about 720 MB |
+| Voice 64 kbit/s mono + music 128 kbit/s, no mix file | 1.4 | about 430 MB |
+
+**Reserve 1 GB per campaign.** That holds the worst case in today's format with room for the ambience loops. Most campaigns will use far less: recaps are often under 3 minutes, and a weekly game takes about two years to reach 100 sessions.
+
+**What it costs:** the server's own disk, or an attached volume, is priced per GB per month. Hetzner's volumes are listed at about €0.044 to €0.052 per GB a month (third-party price guides, 2026; dev1 confirms the actual provider, plan and price, see #2117). That is **about $0.05 to $0.06 per campaign a month** at the full 1 GB. If audio is in the server backups, that doubles to about $0.10 to $0.12.
+
+**In the margins:** a fully grown paid campaign with narration costs about $11 a month in narration and music (above) and **about $0.06 to $0.12 a month** in storage. So storage is under 1% of a narrated campaign's monthly cost and doesn't change the plan margins. For a whole server: 100 campaigns at the full reserve is 100 GB, about $5 to $6 a month, or $10 to $12 with backups. That goes on top of the $11 a month server (PLAN, "Hosting cost") once the disk outgrows what the server includes.
+
+### One recap test run (#1424)
+
+`python -m dmbot.devtools.recap_run --session GUILD CAMPAIGN SESSION_AT --yes` costs what one live recap's text costs: up to nine AI calls (more for a very long session, one for each extra window of the transcript), about 12,000 to 20,000 input tokens and 3,000 to 5,000 output tokens for a normal session, so a few cents on the fast tier plus a little on the careful tier when a check makes it retry. It prints its own estimate first and does nothing without `--yes`. `--audio` adds the narration and music: about 7,000 provider credits (see above). `--golden` runs the three invented sessions: about three times one recap's text cost. Record the real figures here after dev1's first run.
+
+**On a transcript file (#1969):** `recap_run --transcript FILE --dm NAME [--names FILE] [--audio] [--out DIR] --yes` costs the same as `--session` for a file of the same length (it prints the estimate first, and nothing runs without `--yes`). Before any paid call it asks once whether everyone in the file agreed to be recorded and to the test; `--yes` never answers that. Nothing is stored. The file and the outputs stay on the server, so paste nothing from the output into GitHub but the scores, counts and credits.
+
+## PlotBot's check of a recap (#2122)
+One careful-tier call per ready recap text, and one more each time the text changes. The call carries
+the recap's sentences (at most 120) and the newest earlier accepted recaps (at most 40, 1,800
+characters each), so about 10,000 to 25,000 input tokens late in a long campaign and at most
+1,500 output tokens. A recap with no earlier accepted recap makes no call. At most 6 checks begin for
+a campaign in an hour, and a check that never finished is tried at most 3 times. The chat about each
+issue (#2123) is counted separately. Not measured on a live campaign yet; the feature is off
+(`DMBOT_PLOT_CHECK=0`) until it is.
+
+## PlotBot's talk about an issue (#2123)
+One careful-tier call for each message the DM sends about an issue: the issue, the recap (at most 3,000
+characters), the earlier turns (at most 8, 500 characters each) and at most 12 campaign entries, so about 2,000 to
+3,500 input tokens, and at most 700 output tokens. A talk has at most 15 messages from a DM on an issue, one at a time, and a campaign's DMs may send at most 30 messages an hour in all, so one campaign costs at most 30 careful-tier calls of this size an hour (about 100,000 input tokens). A
+request to invent story makes no call. Not measured on a live campaign yet; off with `DMBOT_PLOT_CHECK=0`.

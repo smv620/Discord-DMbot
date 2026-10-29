@@ -8,11 +8,13 @@ import tempfile
 import unittest
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from dmbot import entitlements, plans, retention
 from dmbot.campaigns import CampaignStore
 from dmbot.db import Database, drop_schema
 from dmbot.retention import DAY, RetentionJob, Standing
+from dmbot.retention_channels import ChannelCounts
 from dmbot.schema import MIGRATIONS
 from tests.pg import TEST_URL, DatabaseTest
 
@@ -81,6 +83,8 @@ class Job(DatabaseTest):
         self.standings: dict[int, Standing] = {}
         self.running: set[str] = set()
         self.enforce = True
+        self.retired: list[tuple[Any, bool]] = []
+        self.retire_fails = False
 
     async def standing_of(self, guild_id: int, owner: int, now: int) -> Standing:
         return self.standings.get(owner, retention.UNKNOWN)
@@ -88,6 +92,14 @@ class Job(DatabaseTest):
     async def send(self, user_id: int, text: str) -> bool:
         self.sent.append((user_id, text))
         return True
+
+    async def retire(self, campaign: Any, now: int) -> ChannelCounts:
+        """Stands in for the Discord work (#1598): records the campaign it was given and whether
+        the campaign was already gone when it was called."""
+        self.retired.append((campaign, await self.exists(campaign.guild_id, campaign.id)))
+        if self.retire_fails:
+            raise RuntimeError("discord is down")
+        return ChannelCounts(deleted=2, closed=2, skipped=0)
 
     def job(self, guilds: tuple[int, ...] | None = None) -> RetentionJob:
         """`guilds` limits the servers asked about; None takes them from the database."""
@@ -102,6 +114,7 @@ class Job(DatabaseTest):
             forget_guild=self.store.forget_guild_if_empty,
             running=lambda: self.running,
             send=self.send,
+            retire_channels=self.retire,
             enforce=self.enforce,
         )
 
@@ -174,6 +187,49 @@ class Job(DatabaseTest):
             cur = await conn.execute("SELECT campaign_id FROM owner_campaigns")
             self.assertEqual(await cur.fetchall(), [])
         self.assertEqual((await self.job().run_once(now)).deleted, 0)  # twice is safe
+
+    async def old_campaign_ready_to_go(self) -> str:
+        old = await self.make(GUILD_A, "Old", ALICE, T0)
+        for n in range(9):
+            await self.make(GUILD_B, f"x{n}", BOB, T0 + 300 * DAY)
+        await self.job().run_once(T0 + 57 * DAY)  # the 3-day warning
+        return old
+
+    async def test_the_channels_are_dealt_with_after_the_delete_and_counted(self) -> None:
+        old = await self.old_campaign_ready_to_go()
+        await self.store.set_dm_screen(GUILD_A, old, 777)
+        before = await self.store.get(GUILD_A, old)
+        assert before is not None
+        with self.assertLogs("dmbot.retention", "INFO") as logged:
+            out = await self.job().run_once(T0 + 61 * DAY)
+        self.assertEqual(out.deleted, 1)
+        ((got, existed),) = self.retired
+        self.assertEqual((got.id, got.dm_screen_channel_id), (old, 777))  # read before the delete
+        self.assertFalse(existed)  # the campaign was already gone: a failed delete touches nothing
+        self.assertEqual((out.channels.deleted, out.channels.closed), (2, 2))
+        self.assertIn("channels: 2 deleted, 2 closed, 0 skipped", logged.output[-1])
+
+    async def test_nothing_is_done_to_channels_when_the_delete_does_not_happen(self) -> None:
+        old = await self.old_campaign_ready_to_go()
+        self.running = {old}  # a session is running: not deleted
+        out = await self.job().run_once(T0 + 61 * DAY)
+        self.assertEqual(out.deleted, 0)
+        self.assertEqual(self.retired, [])
+
+    async def test_a_dry_run_touches_no_channel(self) -> None:
+        await self.old_campaign_ready_to_go()
+        self.enforce = False
+        await self.job().run_once(T0 + 61 * DAY)
+        self.assertEqual(self.retired, [])
+
+    async def test_a_channel_job_that_fails_never_stops_the_run_or_the_notice(self) -> None:
+        old = await self.old_campaign_ready_to_go()
+        self.retire_fails = True
+        with self.assertLogs("dmbot.retention", "ERROR"):
+            out = await self.job().run_once(T0 + 61 * DAY)
+        self.assertEqual(out.deleted, 1)
+        self.assertFalse(await self.exists(GUILD_A, old))
+        self.assertEqual(len([m for _u, m in self.sent if "was deleted" in m]), 1)
 
     async def test_the_plan_decides_how_long(self) -> None:
         self.standings[ALICE] = Standing("pro", None, True)

@@ -1,0 +1,1910 @@
+{
+ "readme": [
+  "Golden questions for the rules index (#1952). Each case is a question as typed, the campaign's",
+  "target and fallback rulesets, a mode and the entries the sidebar cites, as [kind, name, edition].",
+  "mode: 'dm' (the DM's sidebar), 'table' (a question from the table: never the DM's chapter),",
+  "or either with ' both' (a comparison across editions). 'expect' is in citing order; [] is nothing.",
+  "To add a case: append an object with question, target, fallback, mode and expect; run",
+  "`pytest tests/test_rules_golden.py` to see what is actually cited, and only then write expect, after",
+  "checking it is what a DM should see. 'note' says why a surprising result is right. Never edit",
+  "an expect just to turn the test green: a change here means a cue list moved, so decide it was meant.",
+  "known_gap: true marks a result pinned as it is today but that could be better (none at the moment)."
+ ],
+ "cases": [
+  {
+   "question": "how much AC does shield give",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "note": "the spell and the armor both answer 'shield' with a cue",
+   "expect": [
+    [
+     "spell",
+     "Shield",
+     "2024"
+    ],
+    [
+     "armor",
+     "Shield",
+     "2024"
+    ]
+   ]
+  },
+  {
+   "question": "how much AC does shield give",
+   "target": "2014",
+   "fallback": "2024",
+   "mode": "dm",
+   "expect": [
+    [
+     "spell",
+     "Shield",
+     "2014"
+    ],
+    [
+     "armor",
+     "Shield",
+     "2014"
+    ]
+   ]
+  },
+  {
+   "question": "cast shield",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "expect": [
+    [
+     "spell",
+     "Shield",
+     "2024"
+    ]
+   ]
+  },
+  {
+   "question": "cast shield",
+   "target": "2014",
+   "fallback": "2024",
+   "mode": "dm",
+   "expect": [
+    [
+     "spell",
+     "Shield",
+     "2014"
+    ]
+   ]
+  },
+  {
+   "question": "the guard swings a club",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "note": "Guard is a creature, so it is cited; Club is an everyday word and is not",
+   "expect": [
+    [
+     "monster",
+     "Guard",
+     "2024"
+    ]
+   ]
+  },
+  {
+   "question": "what's the damage of a longsword",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "expect": [
+    [
+     "weapon",
+     "Longsword",
+     "2024"
+    ]
+   ]
+  },
+  {
+   "question": "what's the damage of a longsword",
+   "target": "2014",
+   "fallback": "2024",
+   "mode": "dm",
+   "expect": [
+    [
+     "weapon",
+     "Longsword",
+     "2014"
+    ]
+   ]
+  },
+  {
+   "question": "what's the damage of a longsword",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "table",
+   "note": "weapons are rules information, fine for the table",
+   "expect": [
+    [
+     "weapon",
+     "Longsword",
+     "2024"
+    ]
+   ]
+  },
+  {
+   "question": "dagger damage",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "expect": [
+    [
+     "weapon",
+     "Dagger",
+     "2024"
+    ]
+   ]
+  },
+  {
+   "question": "dagger damage",
+   "target": "2014",
+   "fallback": "2024",
+   "mode": "dm",
+   "expect": [
+    [
+     "weapon",
+     "Dagger",
+     "2014"
+    ]
+   ]
+  },
+  {
+   "question": "what is a dagger",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "note": "an everyday weapon name needs a cue word",
+   "expect": []
+  },
+  {
+   "question": "half-orc traits",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "note": "2024 has no Half-Orc, so the 2014 species is found, not the Orc creature",
+   "expect": [
+    [
+     "species",
+     "Half-Orc",
+     "2014"
+    ]
+   ]
+  },
+  {
+   "question": "half-orc traits",
+   "target": "2014",
+   "fallback": "2024",
+   "mode": "dm",
+   "expect": [
+    [
+     "species",
+     "Half-Orc",
+     "2014"
+    ]
+   ]
+  },
+  {
+   "question": "dwarf traits",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "note": "'traits' cues a species",
+   "expect": [
+    [
+     "species",
+     "Dwarf",
+     "2024"
+    ]
+   ]
+  },
+  {
+   "question": "dwarf traits",
+   "target": "2014",
+   "fallback": "2024",
+   "mode": "dm",
+   "expect": [
+    [
+     "species",
+     "Dwarf",
+     "2014"
+    ]
+   ]
+  },
+  {
+   "question": "what traits does a human have",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "expect": [
+    [
+     "species",
+     "Human",
+     "2024"
+    ]
+   ]
+  },
+  {
+   "question": "elf traits",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "table",
+   "expect": [
+    [
+     "species",
+     "Elf",
+     "2024"
+    ]
+   ]
+  },
+  {
+   "question": "the dwarf bartender",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "note": "no cue: nothing",
+   "expect": []
+  },
+  {
+   "question": "the dwarf bartender",
+   "target": "2014",
+   "fallback": "2024",
+   "mode": "dm",
+   "expect": []
+  },
+  {
+   "question": "a sage walks in",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "note": "Sage is a background but needs a cue",
+   "expect": []
+  },
+  {
+   "question": "a sage walks in",
+   "target": "2014",
+   "fallback": "2024",
+   "mode": "dm",
+   "expect": []
+  },
+  {
+   "question": "a dwarf walks in",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "expect": []
+  },
+  {
+   "question": "the orc warrior",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "note": "Orc is a 2014 creature; the 2024 SRD has none",
+   "expect": [
+    [
+     "monster",
+     "Orc",
+     "2014"
+    ]
+   ]
+  },
+  {
+   "question": "what does the alert feat do",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "expect": [
+    [
+     "feat",
+     "Alert",
+     "2024"
+    ]
+   ]
+  },
+  {
+   "question": "what does the alert feat do",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "table",
+   "expect": [
+    [
+     "feat",
+     "Alert",
+     "2024"
+    ]
+   ]
+  },
+  {
+   "question": "what does the alert feat do",
+   "target": "2014",
+   "fallback": "2024",
+   "mode": "dm",
+   "expect": [
+    [
+     "feat",
+     "Alert",
+     "2024"
+    ]
+   ]
+  },
+  {
+   "question": "what does the alert feat do",
+   "target": "2014",
+   "fallback": "2024",
+   "mode": "table",
+   "expect": [
+    [
+     "feat",
+     "Alert",
+     "2024"
+    ]
+   ]
+  },
+  {
+   "question": "what does the grappler feat do",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "note": "the feat is in both editions",
+   "expect": [
+    [
+     "feat",
+     "Grappler",
+     "2024"
+    ]
+   ]
+  },
+  {
+   "question": "what does the grappler feat do",
+   "target": "2014",
+   "fallback": "2024",
+   "mode": "dm",
+   "expect": [
+    [
+     "feat",
+     "Grappler",
+     "2014"
+    ]
+   ]
+  },
+  {
+   "question": "rogue evasion",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "expect": [
+    [
+     "feature",
+     "Evasion",
+     "2024"
+    ]
+   ]
+  },
+  {
+   "question": "rogue evasion",
+   "target": "2014",
+   "fallback": "2024",
+   "mode": "dm",
+   "expect": [
+    [
+     "feature",
+     "Evasion",
+     "2014"
+    ]
+   ]
+  },
+  {
+   "question": "what does the acolyte background give",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "expect": [
+    [
+     "background",
+     "Acolyte",
+     "2024"
+    ],
+    [
+     "feat",
+     "Magic Initiate",
+     "2024"
+    ]
+   ]
+  },
+  {
+   "question": "acolyte background",
+   "target": "2014",
+   "fallback": "2024",
+   "mode": "dm",
+   "expect": [
+    [
+     "background",
+     "Acolyte",
+     "2014"
+    ]
+   ]
+  },
+  {
+   "question": "how much AC does plate give",
+   "target": "2014",
+   "fallback": "2024",
+   "mode": "dm",
+   "note": "the 2024 short-name case waits for #1937",
+   "expect": [
+    [
+     "armor",
+     "Plate",
+     "2014"
+    ]
+   ]
+  },
+  {
+   "question": "plate",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "note": "a bare armor name needs a cue",
+   "expect": []
+  },
+  {
+   "question": "plate",
+   "target": "2014",
+   "fallback": "2024",
+   "mode": "dm",
+   "expect": []
+  },
+  {
+   "question": "wearing plate armor",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "note": "2024 calls it Plate Armor, 2014 calls it Plate",
+   "expect": [
+    [
+     "armor",
+     "Plate Armor",
+     "2024"
+    ]
+   ]
+  },
+  {
+   "question": "wearing plate armor",
+   "target": "2014",
+   "fallback": "2024",
+   "mode": "dm",
+   "expect": [
+    [
+     "armor",
+     "Plate",
+     "2014"
+    ]
+   ]
+  },
+  {
+   "question": "chain shirt",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "expect": [
+    [
+     "armor",
+     "Chain Shirt",
+     "2024"
+    ]
+   ]
+  },
+  {
+   "question": "what are the chain mail rules",
+   "target": "2014",
+   "fallback": "2024",
+   "mode": "dm",
+   "expect": [
+    [
+     "armor",
+     "Chain Mail",
+     "2014"
+    ]
+   ]
+  },
+  {
+   "question": "how does grappling work",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "expect": [
+    [
+     "rule",
+     "Grappling",
+     "2024"
+    ]
+   ]
+  },
+  {
+   "question": "how does grappling work",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "table",
+   "expect": [
+    [
+     "rule",
+     "Grappling",
+     "2024"
+    ]
+   ]
+  },
+  {
+   "question": "how does grappling work",
+   "target": "2014",
+   "fallback": "2024",
+   "mode": "dm",
+   "expect": [
+    [
+     "rule",
+     "Grappling",
+     "2014"
+    ]
+   ]
+  },
+  {
+   "question": "how does grappling work",
+   "target": "2014",
+   "fallback": "2024",
+   "mode": "table",
+   "expect": [
+    [
+     "rule",
+     "Grappling",
+     "2014"
+    ]
+   ]
+  },
+  {
+   "question": "how does cover work",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "expect": [
+    [
+     "rule",
+     "Cover",
+     "2024"
+    ]
+   ]
+  },
+  {
+   "question": "how does cover work",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "table",
+   "expect": [
+    [
+     "rule",
+     "Cover",
+     "2024"
+    ]
+   ]
+  },
+  {
+   "question": "how does cover work",
+   "target": "2014",
+   "fallback": "2024",
+   "mode": "dm",
+   "expect": [
+    [
+     "rule",
+     "Cover",
+     "2014"
+    ]
+   ]
+  },
+  {
+   "question": "how does cover work",
+   "target": "2014",
+   "fallback": "2024",
+   "mode": "table",
+   "expect": [
+    [
+     "rule",
+     "Cover",
+     "2014"
+    ]
+   ]
+  },
+  {
+   "question": "how does concentration work",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "expect": [
+    [
+     "rule",
+     "Concentration",
+     "2024"
+    ]
+   ]
+  },
+  {
+   "question": "how does concentration work",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "table",
+   "expect": [
+    [
+     "rule",
+     "Concentration",
+     "2024"
+    ]
+   ]
+  },
+  {
+   "question": "how does concentration work",
+   "target": "2014",
+   "fallback": "2024",
+   "mode": "dm",
+   "expect": [
+    [
+     "rule",
+     "Concentration",
+     "2014"
+    ]
+   ]
+  },
+  {
+   "question": "how does concentration work",
+   "target": "2014",
+   "fallback": "2024",
+   "mode": "table",
+   "expect": [
+    [
+     "rule",
+     "Concentration",
+     "2014"
+    ]
+   ]
+  },
+  {
+   "question": "what does a long rest do",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "expect": [
+    [
+     "rule",
+     "Long Rest",
+     "2024"
+    ]
+   ]
+  },
+  {
+   "question": "what does a long rest do",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "table",
+   "expect": [
+    [
+     "rule",
+     "Long Rest",
+     "2024"
+    ]
+   ]
+  },
+  {
+   "question": "what does a long rest do",
+   "target": "2014",
+   "fallback": "2024",
+   "mode": "dm",
+   "expect": [
+    [
+     "rule",
+     "Long Rest",
+     "2014"
+    ]
+   ]
+  },
+  {
+   "question": "what does a long rest do",
+   "target": "2014",
+   "fallback": "2024",
+   "mode": "table",
+   "expect": [
+    [
+     "rule",
+     "Long Rest",
+     "2014"
+    ]
+   ]
+  },
+  {
+   "question": "lightly obscured",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "expect": [
+    [
+     "rule",
+     "Lightly Obscured",
+     "2024"
+    ]
+   ]
+  },
+  {
+   "question": "two-weapon fighting",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "note": "the 2024 feat versus the 2014 rule",
+   "expect": [
+    [
+     "feat",
+     "Two-Weapon Fighting",
+     "2024"
+    ]
+   ]
+  },
+  {
+   "question": "two-weapon fighting",
+   "target": "2014",
+   "fallback": "2024",
+   "mode": "dm",
+   "expect": [
+    [
+     "rule",
+     "Two-Weapon Fighting",
+     "2014"
+    ]
+   ]
+  },
+  {
+   "question": "two-weapon fighting",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "table",
+   "expect": [
+    [
+     "feat",
+     "Two-Weapon Fighting",
+     "2024"
+    ]
+   ]
+  },
+  {
+   "question": "how do I disarm the hidden pit",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "note": "the DM's chapter: never for the table",
+   "expect": [
+    [
+     "trap",
+     "Hidden Pit",
+     "2024"
+    ]
+   ]
+  },
+  {
+   "question": "how do I disarm the hidden pit",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "table",
+   "expect": []
+  },
+  {
+   "question": "how do I disarm the hidden pit",
+   "target": "2014",
+   "fallback": "2024",
+   "mode": "dm",
+   "expect": [
+    [
+     "trap",
+     "Hidden Pit",
+     "2014"
+    ]
+   ]
+  },
+  {
+   "question": "how do I disarm the hidden pit",
+   "target": "2014",
+   "fallback": "2024",
+   "mode": "table",
+   "expect": []
+  },
+  {
+   "question": "hidden pit",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "table",
+   "expect": []
+  },
+  {
+   "question": "pit trap",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "expect": [
+    [
+     "trap",
+     "Hidden Pit",
+     "2024"
+    ],
+    [
+     "trap",
+     "Spiked Pit",
+     "2024"
+    ]
+   ]
+  },
+  {
+   "question": "pit trap",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "table",
+   "expect": []
+  },
+  {
+   "question": "what is purple worm poison",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "expect": [
+    [
+     "poison",
+     "Purple Worm Poison",
+     "2024"
+    ]
+   ]
+  },
+  {
+   "question": "what is purple worm poison",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "table",
+   "expect": []
+  },
+  {
+   "question": "what is the DC for extreme cold",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "expect": [
+    [
+     "rule",
+     "Extreme Cold",
+     "2024"
+    ]
+   ]
+  },
+  {
+   "question": "what is the DC for extreme cold",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "table",
+   "expect": []
+  },
+  {
+   "question": "extreme cold",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "expect": [
+    [
+     "rule",
+     "Extreme Cold",
+     "2024"
+    ]
+   ]
+  },
+  {
+   "question": "extreme cold",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "table",
+   "expect": []
+  },
+  {
+   "question": "how does sight rot work",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "note": "a rule in 2024, a disease in 2014",
+   "expect": [
+    [
+     "rule",
+     "Sight Rot",
+     "2024"
+    ]
+   ]
+  },
+  {
+   "question": "how does sight rot work",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "table",
+   "expect": []
+  },
+  {
+   "question": "how does sight rot work",
+   "target": "2014",
+   "fallback": "2024",
+   "mode": "dm",
+   "expect": [
+    [
+     "disease",
+     "Sight Rot",
+     "2014"
+    ]
+   ]
+  },
+  {
+   "question": "how does sight rot work",
+   "target": "2014",
+   "fallback": "2024",
+   "mode": "table",
+   "expect": []
+  },
+  {
+   "question": "what does cackle fever do",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "expect": [
+    [
+     "rule",
+     "Cackle Fever",
+     "2024"
+    ]
+   ]
+  },
+  {
+   "question": "what does cackle fever do",
+   "target": "2014",
+   "fallback": "2024",
+   "mode": "dm",
+   "expect": [
+    [
+     "disease",
+     "Cackle Fever",
+     "2014"
+    ]
+   ]
+  },
+  {
+   "question": "what does a sewer plague do",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "expect": [
+    [
+     "rule",
+     "Sewer Plague",
+     "2024"
+    ]
+   ]
+  },
+  {
+   "question": "what does a sewer plague do",
+   "target": "2014",
+   "fallback": "2024",
+   "mode": "dm",
+   "expect": [
+    [
+     "disease",
+     "Sewer Plague",
+     "2014"
+    ]
+   ]
+  },
+  {
+   "question": "madness",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "expect": []
+  },
+  {
+   "question": "madness",
+   "target": "2014",
+   "fallback": "2024",
+   "mode": "dm",
+   "expect": [
+    [
+     "rule",
+     "Madness",
+     "2014"
+    ]
+   ]
+  },
+  {
+   "question": "travel pace",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "expect": [
+    [
+     "rule",
+     "Travel Pace",
+     "2024"
+    ]
+   ]
+  },
+  {
+   "question": "travel pace",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "table",
+   "expect": []
+  },
+  {
+   "question": "travel pace",
+   "target": "2014",
+   "fallback": "2024",
+   "mode": "dm",
+   "expect": [
+    [
+     "rule",
+     "Travel Pace",
+     "2014"
+    ]
+   ]
+  },
+  {
+   "question": "travel pace",
+   "target": "2014",
+   "fallback": "2024",
+   "mode": "table",
+   "expect": [
+    [
+     "rule",
+     "Travel Pace",
+     "2014"
+    ]
+   ]
+  },
+  {
+   "question": "travel pace 2014 vs 2024",
+   "target": "2014",
+   "fallback": "2024",
+   "mode": "dm both",
+   "note": "a comparison adds the other edition; never the DM's chapter to the table",
+   "expect": [
+    [
+     "rule",
+     "Travel Pace",
+     "2014"
+    ],
+    [
+     "rule",
+     "Travel Pace",
+     "2024"
+    ]
+   ]
+  },
+  {
+   "question": "travel pace 2014 vs 2024",
+   "target": "2014",
+   "fallback": "2024",
+   "mode": "table both",
+   "expect": [
+    [
+     "rule",
+     "Travel Pace",
+     "2014"
+    ]
+   ]
+  },
+  {
+   "question": "what does a bag of holding do",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "expect": [
+    [
+     "item",
+     "Bag of Holding",
+     "2024"
+    ]
+   ]
+  },
+  {
+   "question": "what does a bag of holding do",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "table",
+   "expect": [
+    [
+     "item",
+     "Bag of Holding",
+     "2024"
+    ]
+   ]
+  },
+  {
+   "question": "what does a bag of holding do",
+   "target": "2014",
+   "fallback": "2024",
+   "mode": "dm",
+   "expect": [
+    [
+     "item",
+     "Bag of Holding",
+     "2014"
+    ]
+   ]
+  },
+  {
+   "question": "what does a bag of holding do",
+   "target": "2014",
+   "fallback": "2024",
+   "mode": "table",
+   "expect": [
+    [
+     "item",
+     "Bag of Holding",
+     "2014"
+    ]
+   ]
+  },
+  {
+   "question": "what does an arrow of slaying do",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "expect": [
+    [
+     "item",
+     "Arrow of Slaying",
+     "2014"
+    ]
+   ]
+  },
+  {
+   "question": "what does an arrow of slaying do",
+   "target": "2014",
+   "fallback": "2024",
+   "mode": "dm",
+   "expect": [
+    [
+     "item",
+     "Arrow of Slaying",
+     "2014"
+    ]
+   ]
+  },
+  {
+   "question": "rope of climbing",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "expect": [
+    [
+     "item",
+     "Rope of Climbing",
+     "2024"
+    ]
+   ]
+  },
+  {
+   "question": "healer's kit",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "expect": [
+    [
+     "gear",
+     "Healer’s Kit",
+     "2024"
+    ]
+   ]
+  },
+  {
+   "question": "healer's kit",
+   "target": "2014",
+   "fallback": "2024",
+   "mode": "dm",
+   "expect": [
+    [
+     "gear",
+     "Healer’s Kit",
+     "2014"
+    ]
+   ]
+  },
+  {
+   "question": "thieves' tools",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "expect": [
+    [
+     "tool",
+     "Thieves’ Tools",
+     "2024"
+    ]
+   ]
+  },
+  {
+   "question": "thieves' tools",
+   "target": "2014",
+   "fallback": "2024",
+   "mode": "dm",
+   "expect": [
+    [
+     "tool",
+     "Thieves’ Tools",
+     "2014"
+    ]
+   ]
+  },
+  {
+   "question": "a rope and a lantern",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "note": "everyday gear needs a cue",
+   "expect": []
+  },
+  {
+   "question": "riding horse price",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "expect": [
+    [
+     "gear",
+     "Horse, Riding",
+     "2024"
+    ]
+   ]
+  },
+  {
+   "question": "they light a torch",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "note": "fixed in #1956: a spell with an everyday name needs cast, spell or cantrip",
+   "expect": []
+  },
+  {
+   "question": "I cast fireball",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "expect": [
+    [
+     "spell",
+     "Fireball",
+     "2024"
+    ]
+   ]
+  },
+  {
+   "question": "I cast fireball",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "table",
+   "expect": [
+    [
+     "spell",
+     "Fireball",
+     "2024"
+    ]
+   ]
+  },
+  {
+   "question": "I cast fireball",
+   "target": "2014",
+   "fallback": "2024",
+   "mode": "dm",
+   "expect": [
+    [
+     "spell",
+     "Fireball",
+     "2014"
+    ]
+   ]
+  },
+  {
+   "question": "I cast fireball",
+   "target": "2014",
+   "fallback": "2024",
+   "mode": "table",
+   "expect": [
+    [
+     "spell",
+     "Fireball",
+     "2014"
+    ]
+   ]
+  },
+  {
+   "question": "what is a goblin AC",
+   "target": "2014",
+   "fallback": "none",
+   "mode": "dm",
+   "expect": [
+    [
+     "monster",
+     "Goblin",
+     "2014"
+    ]
+   ]
+  },
+  {
+   "question": "what is a goblin AC",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "expect": [
+    [
+     "monster",
+     "Goblin Warrior",
+     "2024"
+    ]
+   ]
+  },
+  {
+   "question": "the dragon attacks the party",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "note": "Dragon alone is not one creature",
+   "expect": []
+  },
+  {
+   "question": "the party walks down the road",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "expect": []
+  },
+  {
+   "question": "we take a short rest",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "expect": [
+    [
+     "rule",
+     "Short Rest",
+     "2024"
+    ]
+   ]
+  },
+  {
+   "question": "we take a short rest",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "table",
+   "expect": [
+    [
+     "rule",
+     "Short Rest",
+     "2024"
+    ]
+   ]
+  },
+  {
+   "question": "we take a short rest",
+   "target": "2014",
+   "fallback": "2024",
+   "mode": "dm",
+   "expect": [
+    [
+     "rule",
+     "Short Rest",
+     "2014"
+    ]
+   ]
+  },
+  {
+   "question": "we take a short rest",
+   "target": "2014",
+   "fallback": "2024",
+   "mode": "table",
+   "expect": [
+    [
+     "rule",
+     "Short Rest",
+     "2014"
+    ]
+   ]
+  },
+  {
+   "question": "is the goblin prone",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "expect": [
+    [
+     "monster",
+     "Goblin Warrior",
+     "2024"
+    ],
+    [
+     "condition",
+     "Prone",
+     "2024"
+    ]
+   ]
+  },
+  {
+   "question": "how does opportunity attack work",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "note": "fixed in #1956: the singular of a rule title finds the rule",
+   "expect": [
+    [
+     "rule",
+     "Opportunity Attacks",
+     "2024"
+    ]
+   ]
+  },
+  {
+   "question": "how does opportunity attack work",
+   "target": "2014",
+   "fallback": "2024",
+   "mode": "dm",
+   "expect": [
+    [
+     "rule",
+     "Opportunity Attacks",
+     "2014"
+    ]
+   ],
+   "note": "fixed in #1956: the singular of a rule title finds the rule"
+  },
+  {
+   "question": "what is a potion of healing",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "expect": [
+    [
+     "item",
+     "Potions of Healing",
+     "2024"
+    ]
+   ]
+  },
+  {
+   "question": "the wizard casts fire bolt",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "expect": [
+    [
+     "spell",
+     "Fire Bolt",
+     "2024"
+    ]
+   ]
+  },
+  {
+   "question": "how do I use a fighter's second wind",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "expect": [
+    [
+     "feature",
+     "Second Wind",
+     "2024"
+    ]
+   ]
+  },
+  {
+   "question": "barbarian rage",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "expect": [
+    [
+     "feature",
+     "Rage",
+     "2024"
+    ]
+   ]
+  },
+  {
+   "question": "barbarian rage",
+   "target": "2014",
+   "fallback": "2024",
+   "mode": "dm",
+   "expect": [
+    [
+     "feature",
+     "Rage",
+     "2014"
+    ]
+   ]
+  },
+  {
+   "question": "the criminal has traits of a thief",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "note": "'traits' opens species only, not backgrounds or the feat they give",
+   "expect": []
+  },
+  {
+   "question": "soldier traits for my npc",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "table",
+   "expect": []
+  },
+  {
+   "question": "the sage has odd character traits",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "expect": []
+  },
+  {
+   "question": "alert traits",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "expect": []
+  },
+  {
+   "question": "the villain is human with strange traits",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "note": "Human is a species, so 'traits' cites it",
+   "expect": [
+    [
+     "species",
+     "Human",
+     "2024"
+    ]
+   ]
+  },
+  {
+   "question": "purple worm poison",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "table",
+   "note": "a poison is the DM's chapter",
+   "expect": []
+  },
+  {
+   "question": "purple worm poison",
+   "target": "2014",
+   "fallback": "2024",
+   "mode": "table",
+   "expect": []
+  },
+  {
+   "question": "sight rot",
+   "target": "2014",
+   "fallback": "2024",
+   "mode": "table",
+   "expect": []
+  },
+  {
+   "question": "cackle fever",
+   "target": "2014",
+   "fallback": "2024",
+   "mode": "table",
+   "expect": []
+  },
+  {
+   "question": "demonic possession",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "table",
+   "expect": []
+  },
+  {
+   "question": "extreme cold",
+   "target": "2014",
+   "fallback": "2024",
+   "mode": "table",
+   "expect": []
+  },
+  {
+   "question": "travel pace",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "table both",
+   "expect": []
+  },
+  {
+   "question": "opportunity attacks",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "expect": [
+    [
+     "rule",
+     "Opportunity Attacks",
+     "2024"
+    ]
+   ]
+  },
+  {
+   "question": "opportunity attacks",
+   "target": "2014",
+   "fallback": "2024",
+   "mode": "dm",
+   "expect": [
+    [
+     "rule",
+     "Opportunity Attacks",
+     "2014"
+    ]
+   ]
+  },
+  {
+   "question": "an opportunity attack",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "expect": [
+    [
+     "rule",
+     "Opportunity Attacks",
+     "2024"
+    ]
+   ]
+  },
+  {
+   "question": "an opportunity attack",
+   "target": "2014",
+   "fallback": "2024",
+   "mode": "dm",
+   "expect": [
+    [
+     "rule",
+     "Opportunity Attacks",
+     "2014"
+    ]
+   ]
+  },
+  {
+   "question": "a torch costs",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "expect": [
+    [
+     "gear",
+     "Torch",
+     "2024"
+    ]
+   ]
+  },
+  {
+   "question": "a torch costs",
+   "target": "2014",
+   "fallback": "2024",
+   "mode": "dm",
+   "expect": [
+    [
+     "gear",
+     "Torch",
+     "2014"
+    ]
+   ]
+  },
+  {
+   "question": "they light the lantern",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "expect": []
+  },
+  {
+   "question": "they light the lantern",
+   "target": "2014",
+   "fallback": "2024",
+   "mode": "dm",
+   "expect": []
+  },
+  {
+   "question": "I cast light on the torch",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "expect": [
+    [
+     "spell",
+     "Light",
+     "2024"
+    ]
+   ]
+  },
+  {
+   "question": "send a message to the guard",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "expect": [
+    [
+     "monster",
+     "Guard",
+     "2024"
+    ]
+   ]
+  },
+  {
+   "question": "how does command work",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "note": "#1989: a question about the word is a cue",
+   "expect": [
+    [
+     "spell",
+     "Command",
+     "2024"
+    ]
+   ]
+  },
+  {
+   "question": "what does sleep do",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "expect": [
+    [
+     "spell",
+     "Sleep",
+     "2024"
+    ]
+   ]
+  },
+  {
+   "question": "how long does fly last",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "expect": [
+    [
+     "spell",
+     "Fly",
+     "2024"
+    ]
+   ]
+  },
+  {
+   "question": "what's the range of message",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "expect": [
+    [
+     "spell",
+     "Message",
+     "2024"
+    ]
+   ]
+  },
+  {
+   "question": "can sleep affect undead",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "expect": [
+    [
+     "spell",
+     "Sleep",
+     "2024"
+    ]
+   ]
+  },
+  {
+   "question": "sleep level",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "expect": [
+    [
+     "spell",
+     "Sleep",
+     "2024"
+    ]
+   ]
+  },
+  {
+   "question": "the guard gives a command",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "expect": [
+    [
+     "monster",
+     "Guard",
+     "2024"
+    ]
+   ],
+   "note": "no Command spell (#1989); the Guard is cited as it is for any 'guard' (like 'send a message to the guard')"
+  },
+  {
+   "question": "we sleep at the inn",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "expect": []
+  },
+  {
+   "question": "can we sleep at the inn",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "note": "'can' with a person in between is not a cue: someone sleeping",
+   "expect": []
+  },
+  {
+   "question": "how does the command work",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "expect": [
+    [
+     "spell",
+     "Command",
+     "2024"
+    ]
+   ]
+  },
+  {
+   "question": "does sleep work on elves",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "expect": [
+    [
+     "spell",
+     "Sleep",
+     "2024"
+    ]
+   ]
+  },
+  {
+   "question": "the light level in the room",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "note": "'level' after light is an everyday phrase (#1989)",
+   "expect": []
+  },
+  {
+   "question": "range of light from a torch",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "expect": []
+  },
+  {
+   "question": "the party can sleep",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "expect": []
+  },
+  {
+   "question": "he can fly",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "expect": []
+  },
+  {
+   "question": "can sleep at the inn",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "note": "a person sleeping, not one of the asking words",
+   "expect": []
+  }
+ ]
+}

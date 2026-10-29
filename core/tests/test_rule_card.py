@@ -7,10 +7,9 @@ from __future__ import annotations
 import re
 import unittest
 
-from dmbot.rules import index
+from dmbot.rules import index, rule_card
 from dmbot.rules.house import HouseRule
-from dmbot.ui import rule_card
-from dmbot.ui.rule_card import PART_MAX
+from dmbot.rules.rule_card import PART_MAX
 
 NOW = 1_700_000_000
 
@@ -205,7 +204,11 @@ class Splitting(unittest.TestCase):
         srd = index.srd()
         longest = 0
         for e in srd.entries:
-            found = srd.lookup(e.name, e.edition, "none")
+            found = srd.lookup(e.name, e.edition, "none", kind=e.kind)
+            if e.kind == "feature":  # a name several classes (or levels) share: this entry's own
+                found = next(
+                    h for h in srd.lookup_all(e.name, e.edition, kind=e.kind) if h.entry is e
+                )
             assert found is not None
             parts = rule_card.card_parts(found, e.name, [rule(1, f"{e.name} is loud")])
             with self.subTest(e.name, edition=e.edition):

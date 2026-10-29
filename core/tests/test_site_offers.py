@@ -18,6 +18,7 @@ from dmbot.campaigns.models import HANDOVER_DAYS, HandoverOffer, HandoverStatus
 from dmbot.dm_screen import handover, site_offers
 from dmbot.dm_screen.handover import TOLD_EXPIRED, TOLD_EXPIRED_UNSENT, deliver_offer
 from dmbot.dm_screen.site_offers import NOT_SENT, SiteOffers
+from dmbot.mentions import NO_PINGS
 
 GUILD, OTHER_GUILD = 111, 222
 OWNER, BUYER = 7, 9
@@ -160,6 +161,13 @@ class Harness(unittest.IsolatedAsyncioTestCase):
         self.tasks: list[asyncio.Task[None]] = []
         self.slept: list[float] = []
         self.clock = 0.0
+        self.emails: list[tuple[int, str, str, str]] = []  # (owner, kind, subject, body)
+        self.email_error: Exception | None = None
+
+        async def owner_mail(owner: int, kind: str, subject: str, body: str) -> None:
+            if self.email_error is not None:
+                raise self.email_error
+            self.emails.append((owner, kind, subject, body))
 
         async def deliver(
             guild: discord.Guild, campaign: Campaign, o: HandoverOffer
@@ -187,6 +195,7 @@ class Harness(unittest.IsolatedAsyncioTestCase):
             spawn=spawn,
             deliver=deliver,
             post=self.post,
+            owner_mail=owner_mail,
             sleep=sleep,
             now=lambda: NOW,
             clock=lambda: self.clock,
@@ -380,7 +389,7 @@ class Expiring(Harness):
         (edit,) = guild.buyer.edits
         self.assertEqual(edit[0], 4242)
         self.assertIsNone(edit[1]["view"])
-        self.assertEqual(edit[1]["allowed_mentions"], handover.NO_PINGS)  # never pings
+        self.assertEqual(edit[1]["allowed_mentions"], NO_PINGS)  # never pings
         self.assertIn("**Oskar**'s offer of **Frost\\*maiden** has ended", edit[1]["content"])
         await self.offers.sweep_server(GUILD)  # announced once
         self.assertEqual(len(guild.owner.sent), 1)
@@ -537,6 +546,81 @@ class Decisions(Harness):
             handover.ACCEPTED.format(campaign="Frost\\*maiden", server="The Table", owner="Oskar"),
         )
         self.assertEqual(guild.buyer.sent, [])
+
+    async def test_an_email_offer_tells_the_owner_and_sends_the_person_nothing(self) -> None:
+        # #2532: the person answered on the website, not through a Discord message.
+        self.decided("accepted", message_id=None)
+        self.store.offers[(GUILD, 1)] = replace(
+            self.store.offers[(GUILD, 1)], via_email=True, to_name=""
+        )
+        await self.decide_quietly(GUILD, 1)
+        guild = self.guilds[GUILD]
+        self.assertEqual(
+            guild.owner.sent,
+            [
+                handover.TOLD_ACCEPTED.format(
+                    name="The person you emailed", campaign="Frost\\*maiden"
+                )
+            ],
+        )
+
+    async def test_an_expired_email_offer_tells_the_owner_in_plans_words(self) -> None:
+        # #2532: no name to show, and the campaign never moved.
+        guild = self.guilds[GUILD]
+        by_email = replace(offer(), via_email=True, to_user_id=0, to_name="", delivered_at=NOW)
+        await site_offers._tell_expired(guild, by_email, self.store.campaign)  # type: ignore[arg-type]
+        [text] = guild.owner.sent
+        self.assertEqual(
+            text,
+            "They didn't answer within 7 days, so the offer ended. The campaign is still yours. "
+            "You can offer it again from ⚙️ Settings → 🗂️ Campaign management → 🤝 Hand over, or "
+            "from your account page.",
+        )
+        self.assertNotIn("****", text)
+        self.assertIn("didn't answer", text)
+        self.assertEqual((guild.buyer.sent, guild.buyer.edits), ([], []))
+
+    async def test_a_moved_campaign_tells_both_people_and_a_failed_move_tells_the_owner(
+        self,
+    ) -> None:
+        # #2532 slice C: the old owner hears where it went; the new owner hears to run /dmbot start.
+        from dmbot.campaigns.moves import Moved
+
+        self.guilds[OTHER_GUILD] = FakeGuild(OTHER_GUILD)
+        by_email = replace(
+            offer(), via_email=True, to_name="Bea", move_to_guild_id=OTHER_GUILD, delivered_at=NOW
+        )
+        await self.offers._tell_moved(Moved("moved", by_email, "Frost*maiden"))
+        self.assertEqual(
+            self.guilds[GUILD].owner.sent,
+            [
+                handover.MOVED_OLD_OWNER.format(
+                    campaign="Frost\\*maiden", server="The Table", name="Bea"
+                )
+            ],
+        )
+        self.assertEqual(
+            self.guilds[OTHER_GUILD].buyer.sent,
+            [
+                handover.MOVED_NEW_OWNER.format(
+                    campaign="Frost\\*maiden", server="The Table", owner="Oskar"
+                )
+            ],
+        )
+        self.guilds[GUILD].owner.sent.clear()
+        self.guilds[OTHER_GUILD].buyer.sent.clear()
+        failed = replace(by_email, to_user_id=BUYER)
+        await self.offers._tell_moved(
+            Moved(
+                "reopened", failed, "Frost*maiden", "Your plan has no room for one more campaign."
+            )
+        )
+        # The owner is told it did not happen, never why; the person who accepted is told why.
+        [text] = self.guilds[GUILD].owner.sent
+        self.assertEqual(text, handover.MOVE_FAILED.format(campaign="Frost\\*maiden"))
+        self.assertNotIn("plan", text)
+        [theirs] = self.guilds[OTHER_GUILD].buyer.sent
+        self.assertIn("Your plan has no room for one more campaign.", theirs)
 
     async def test_declined_tells_the_owner(self) -> None:
         self.decided("declined")
@@ -855,6 +939,266 @@ class Following(Harness):
         follow.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await follow
+
+
+class OwnerEmail(Harness):
+    """The owner is told by email too (#2532, slice D), once, in plain text, without the address."""
+
+    def answered(self, status: HandoverStatus, *, to_name: str = "Bea") -> None:
+        self.store.offers[(GUILD, 1)] = replace(
+            offer(),
+            status=status,
+            decided_at=NOW,
+            delivered_at=NOW,
+            message_id=4242,
+            to_name=to_name,
+        )
+
+    async def test_an_accept_and_a_no_thanks_are_emailed_to_the_owner(self) -> None:
+        cases: list[tuple[HandoverStatus, str]] = [
+            ("accepted", "accepted"),
+            ("declined", "no thanks"),
+        ]
+        for status, word in cases:
+            self.emails.clear()
+            self.answered(status)
+            await self.decide_quietly(GUILD, 1)
+            [(owner, kind, subject, body)] = self.emails
+            self.assertEqual((owner, kind), (OWNER, f"handover-{status}:{GUILD}-1"))
+            self.assertIn("Frost*maiden", subject + body)  # plain text: no Discord escapes
+            self.assertNotIn("\\", body)
+            self.assertNotIn("**", body)
+            self.assertIn("Bea", body)
+            self.assertTrue(word in body or word in subject)
+
+    async def test_a_take_back_is_not_emailed(self) -> None:
+        self.answered("withdrawn")
+        await self.decide_quietly(GUILD, 1)
+        self.assertEqual(self.emails, [])
+
+    async def test_an_offer_by_email_has_no_name_and_the_email_says_so(self) -> None:
+        self.answered("accepted", to_name="")
+        await self.decide_quietly(GUILD, 1)
+        [(_o, _k, _s, body)] = self.emails
+        self.assertIn("The person you emailed", body)
+
+    async def test_seven_days_unanswered_is_emailed_once(self) -> None:
+        self.store.waiting = {}
+        self.store.to_end = [
+            replace(offer(), status="expired", decided_at=NOW, delivered_at=NOW, via_email=True)
+        ]
+        await self.offers.sweep_server(GUILD)
+        await self.offers.sweep_server(GUILD)  # announced once
+        [(owner, kind, _subject, body)] = self.emails
+        self.assertEqual((owner, kind), (OWNER, f"handover-expired:{GUILD}-1"))
+        self.assertIn("didn't answer within 7 days", body)
+        self.assertIn("still yours", body)
+
+    async def test_the_expired_email_gives_the_full_account_address(self) -> None:
+        self.offers._site_url = "https://dmbot.example.com/"
+        self.store.to_end = [replace(offer(), status="expired", delivered_at=NOW)]
+        await self.offers.sweep_server(GUILD)
+        [(_o, _k, _s, body)] = self.emails
+        self.assertIn("https://dmbot.example.com/account", body)
+
+    async def test_an_offer_that_never_reached_them_is_emailed_as_not_delivered(self) -> None:
+        self.store.to_end = [replace(offer(), status="expired", delivered_at=None)]
+        await self.offers.sweep_server(GUILD)
+        [(_o, _k, _s, body)] = self.emails
+        self.assertIn("couldn't get the offer to Bea", body)
+        self.assertNotIn("didn't answer", body)
+
+    async def test_a_cancel_during_the_email_does_not_send_the_notice_twice(self) -> None:
+        self.store.to_end = [replace(offer(), status="expired", delivered_at=NOW)]
+
+        async def stuck(*_: Any) -> None:
+            raise asyncio.CancelledError
+
+        self.offers._owner_mail = stuck
+        with contextlib.suppress(asyncio.CancelledError):
+            await self.offers.sweep_server(GUILD)
+        self.offers._owner_mail = None
+        await self.offers.sweep_server(GUILD)
+        self.assertEqual(len(self.guilds[GUILD].owner.sent), 1)  # the notice was kept
+
+    async def test_the_accept_email_comes_after_the_screen_note(self) -> None:
+        order: list[str] = []
+        self.answered("accepted")
+        self.store.campaign.dm_screen_channel_id = 55
+
+        async def post(channel_id: int, text: str) -> bool:
+            order.append("screen")
+            return True
+
+        async def mail(*_: Any) -> None:
+            order.append("email")
+
+        self.offers._post = post
+        self.offers._owner_mail = mail
+        await self.decide_quietly(GUILD, 1)
+        self.assertEqual(order, ["screen", "email"])
+
+    async def test_a_move_to_another_server_is_emailed_with_the_servers_name(self) -> None:
+        from dmbot.campaigns.moves import Moved
+
+        self.guilds[OTHER_GUILD] = FakeGuild(OTHER_GUILD)
+        moved = replace(offer(), via_email=True, to_name="Bea", move_to_guild_id=OTHER_GUILD)
+        await self.offers._tell_moved(Moved("moved", moved, "Frost*maiden"))
+        [(owner, kind, _subject, body)] = self.emails
+        self.assertEqual((owner, kind), (OWNER, f"handover-moved:{GUILD}-1"))
+        self.assertIn('"The Table"', body)
+        failed = replace(moved, id=2)
+        self.emails.clear()
+        await self.offers._tell_moved(Moved("reopened", failed, "Frost*maiden", "no room"))
+        self.assertEqual(self.emails, [])  # a move that did not happen is not emailed
+
+    async def test_a_failed_email_never_stops_the_private_message_and_logs_only_its_type(
+        self,
+    ) -> None:
+        self.email_error = RuntimeError("smtp said to ann@example.com")
+        self.answered("accepted")
+        with self.assertLogs("dmbot.dm_screen.handover", "WARNING") as logged:
+            await self.offers.decided(GUILD, 1)
+        self.assertEqual(len(self.guilds[GUILD].owner.sent), 1)  # still told in Discord
+        text = "\n".join(logged.output)
+        self.assertIn("RuntimeError", text)
+        self.assertNotIn("example.com", text)
+
+    async def test_without_a_mailer_nothing_is_emailed_and_nothing_breaks(self) -> None:
+        self.offers._owner_mail = None
+        self.answered("accepted")
+        await self.decide_quietly(GUILD, 1)
+        self.assertEqual(len(self.guilds[GUILD].owner.sent), 1)
+        self.assertEqual(self.emails, [])
+
+    async def test_a_move_with_a_server_this_process_does_not_serve_is_still_emailed(self) -> None:
+        from dmbot.campaigns.moves import Moved
+
+        moved = replace(offer(), via_email=True, to_name="Bea", move_to_guild_id=OTHER_GUILD)
+        await self.offers._tell_moved(Moved("moved", moved, "Frost*maiden"))  # no such guild here
+        [(_o, _k, _s, body)] = self.emails
+        self.assertIn("another Discord server", body)
+
+    async def test_the_move_email_goes_after_the_private_messages(self) -> None:
+        from dmbot.campaigns.moves import Moved
+
+        self.guilds[OTHER_GUILD] = FakeGuild(OTHER_GUILD)
+        seen: list[str] = []
+        original = self.offers._owner_mail
+
+        async def slow(owner: int, kind: str, subject: str, body: str) -> None:
+            seen.append(f"email after {len(self.guilds[GUILD].owner.sent)} owner messages")
+            assert original is not None
+            await original(owner, kind, subject, body)
+
+        self.offers._owner_mail = slow
+        moved = replace(offer(), via_email=True, to_name="Bea", move_to_guild_id=OTHER_GUILD)
+        await self.offers._tell_moved(Moved("moved", moved, "Frost*maiden"))
+        self.assertEqual(seen, ["email after 1 owner messages"])
+
+    async def test_an_expiry_whose_discord_message_failed_emails_once_after_the_retry(self) -> None:
+        self.store.waiting = {}
+        self.store.to_end = [
+            replace(offer(), status="expired", decided_at=NOW, delivered_at=NOW, via_email=True)
+        ]
+        guild = self.guilds[GUILD]
+        real_send = guild.owner.send
+
+        async def hiccup(text: str, **_: Any) -> None:
+            raise http_error(503)
+
+        guild.owner.send = hiccup  # type: ignore[method-assign]
+        with self.assertLogs("dmbot.dm_screen.site_offers", "WARNING"):
+            await self.offers.sweep_server(GUILD)
+        self.assertEqual(self.emails, [])  # not told yet: nothing is emailed for a failed attempt
+        guild.owner.send = real_send  # type: ignore[method-assign]
+        await self.offers.sweep_server(GUILD)
+        self.assertEqual(len(self.emails), 1)
+
+    async def test_the_same_answer_heard_twice_asks_for_one_email_each_time_and_the_log_dedupes(
+        self,
+    ) -> None:
+        """The once-only guarantee is the mail log's (kind per offer), so both hearings use the
+        same kind; the bot's helper sends and the second send is refused by the log."""
+        self.answered("accepted")
+        await self.decide_quietly(GUILD, 1)
+        await self.decide_quietly(GUILD, 1)
+        kinds = {kind for _o, kind, _s, _b in self.emails}
+        self.assertEqual(kinds, {f"handover-accepted:{GUILD}-1"})
+
+
+class TheEmailText(unittest.TestCase):
+    def test_every_kind_is_plain_and_names_no_address(self) -> None:
+        for kind in ("accepted", "declined", "expired", "moved"):
+            subject, body = handover.owner_email(
+                kind, name="Bea", campaign="Frostmaiden", server="The Table"
+            )
+            for text in (subject, body):
+                self.assertNotIn("**", text)
+                self.assertNotIn("@", text)
+            self.assertIn("Frostmaiden", subject + body)
+
+    def test_a_hostile_name_cannot_reorder_or_hide_the_words_around_it(self) -> None:
+        hostile = "Bea\u202e\n\x00 see http://x.example/y\u200b now"
+        subject, body = handover.owner_email("accepted", name=hostile, campaign="Frost\u202emaiden")
+        for text in (subject, body):
+            self.assertNotIn("\u202e", text)
+            self.assertNotIn("\u200b", text)
+            self.assertNotIn("\x00", text)
+        self.assertNotIn("\n\n", body.split("accepted")[0])  # the name stays on one line
+        self.assertIn("Frostmaiden", subject + body)
+
+    def test_a_move_without_a_server_name_says_another_server(self) -> None:
+        _s, body = handover.owner_email("moved", name="Bea", campaign="Frostmaiden")
+        self.assertIn("another Discord server", body)
+
+    def test_an_unknown_kind_is_a_mistake_not_a_blank_email(self) -> None:
+        with self.assertRaises(ValueError):
+            handover.owner_email("withdrawn", name="Bea", campaign="Frostmaiden")
+
+
+class TheBotsEmailToTheOwner(unittest.IsolatedAsyncioTestCase):
+    """`DMBot.email_hand_over_owner`: the address comes from the owner's account, the mail log
+    keeps one row for each kind, and without an address or a mailer nothing happens."""
+
+    def bot(self, *, mailer: Any = "mailer", meter: Any = "meter") -> Any:
+        from types import SimpleNamespace
+
+        return SimpleNamespace(
+            mailer=mock.AsyncMock() if mailer == "mailer" else mailer,
+            meter=SimpleNamespace(db=object()) if meter == "meter" else meter,
+        )
+
+    async def test_it_sends_to_the_accounts_address_once_per_kind(self) -> None:
+        from dmbot.bot import DMBot
+
+        bot = self.bot()
+        bot.mailer.send.return_value = "sent"
+        with mock.patch(
+            "dmbot.bot.accounts.account_email", mock.AsyncMock(return_value="owner@example.com")
+        ):
+            await DMBot.email_hand_over_owner(bot, OWNER, "handover-accepted:1-1", "S", "B")
+        bot.mailer.send.assert_awaited_once_with(
+            user_id=OWNER,
+            kind="handover-accepted:1-1",
+            to="owner@example.com",
+            subject="S",
+            body="B",
+        )
+
+    async def test_no_address_means_no_email(self) -> None:
+        from dmbot.bot import DMBot
+
+        bot = self.bot()
+        with mock.patch("dmbot.bot.accounts.account_email", mock.AsyncMock(return_value=None)):
+            await DMBot.email_hand_over_owner(bot, OWNER, "handover-accepted:1-1", "S", "B")
+        bot.mailer.send.assert_not_awaited()
+
+    async def test_no_mailer_or_no_database_means_no_email(self) -> None:
+        from dmbot.bot import DMBot
+
+        await DMBot.email_hand_over_owner(self.bot(mailer=None), OWNER, "k", "S", "B")
+        await DMBot.email_hand_over_owner(self.bot(meter=None), OWNER, "k", "S", "B")
 
 
 if __name__ == "__main__":

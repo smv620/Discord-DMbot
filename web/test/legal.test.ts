@@ -1,6 +1,6 @@
 // The legal drafts (#433): each has the short version, the draft notice, and facts that
 // match the plan file, so the pages and the pricing never disagree.
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 
 import { experimental_AstroContainer as AstroContainer } from "astro/container";
 import type { AstroComponentFactory } from "astro/runtime/server/index.js";
@@ -9,8 +9,10 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { parsePage } from "./dom";
 
 import facts from "../src/content/plans.json";
-import { deletionWarnings, notAffiliated, operator, retentionRows } from "../src/content/legal";
+import { aiTrainingSentence, deletionWarnings, notAffiliated, operator, retentionRows } from "../src/content/legal";
 import { QABOT_LIVE } from "../src/content/qabot";
+import { RECAPS_LIVE } from "../src/content/recap-words";
+import { initiativeLine, storyStatesLine } from "../src/content/privacy-channels";
 import { byId, formatPeriod } from "../src/content/pricing";
 import Privacy from "../src/pages/legal/privacy.astro";
 import Refunds from "../src/pages/legal/refunds.astro";
@@ -121,6 +123,9 @@ describe("the facts #433 asks for", () => {
 
   it("says DMbot learns the names people are called, from people who said yes, and what stop removes (#1210)", () => {
     expect(privacy()).toContain("Names at the table.");
+    // The initiative and story-state lines show only while their features are live (#1810).
+    expect(privacy().includes(initiativeLine.lead)).toBe(initiativeLine.live);
+    expect(privacy().includes(storyStatesLine.lead)).toBe(storyStatesLine.live);
     expect(privacy()).toContain("only from people who said yes to being recorded");
     expect(privacy()).toContain("Names your game master typed in themselves stay.");
   });
@@ -149,12 +154,39 @@ describe("the facts #433 asks for", () => {
     }
   });
 
+  it("names Voyage AI as a processor, with what it gets and what is deleted (#2664)", () => {
+    const voyage = privacy().slice(privacy().indexOf("MongoDB, Inc.)"));
+    expect(voyage.slice(0, 900)).toContain("the campaign's own text");
+    expect(voyage.slice(0, 900)).toContain("never sound");
+    expect(voyage.slice(0, 900)).toContain("only while it keeps that text, and deletes it when the text, or the campaign, is deleted");
+    expect(voyage.slice(0, 900)).toContain("Voyage AI does not use your campaign's text to train its models");
+    expect(privacy()).toContain("Voyage AI (part of MongoDB, Inc.)");
+  });
+
   it("names OVH US as the host and the US companies, with Stripe as seller of record", () => {
     expect(privacy()).toContain("OVH US LLC (OVHcloud, U.S.A.)");
     expect(privacy()).toContain("Its servers are in the United States");
-    expect(privacy()).toMatch(/Deepgram, Anthropic, OVH US, Cloudflare, GitHub, Resend and Stripe/);
+    expect(privacy()).toMatch(/Deepgram, Anthropic, ElevenLabs, Voyage AI \(MongoDB\), OVH US, Cloudflare, GitHub, Resend and Stripe/);
     expect(privacy()).toContain("Stripe is the seller of record and handles withdrawal rights, invoices and tax");
     expect(privacy()).not.toContain("HOSTING PROVIDER");
+  });
+
+  it("lists Google (Gemini) as the recap writer only if switched on, says what it is sent, and links its terms (#2583)", () => {
+    const p = privacy();
+    expect(p).toContain("Google (Gemini): only if switched on.");
+    expect(p).toContain("It is off unless DMbot LLC turns it on.");
+    // what the writer is sent (owner decision 2026-10-23, #2590): the cleaned transcript, the list of what happened,
+    // the names, the last recap, style notes and fixes; never sound, the as-heard transcript or the DM screen
+    expect(p).toContain("the session's cleaned transcript (what was said at the table by people who agreed to be recorded, with the off-topic chat left out)");
+    expect(p).toContain("a short list of what happened (and who and where)");
+    expect(p).toContain("It never gets sound, the as-heard transcript, or anything from the DM screen.");
+    expect(p).not.toContain("full transcript"); // the earlier wording, which stopped being true with #2590
+    expect(p).toContain("Google's paid terms say it doesn't use that text to train its AI.");
+    expect(p).toContain("Google is a company in the United States.");
+    const link = doc("privacy").querySelector('a[href="https://ai.google.dev/gemini-api/terms"]');
+    expect(link?.textContent).toBe("Google's terms for paid use");
+    // the Anthropic line keeps its own training sentence
+    expect(p).toContain(aiTrainingSentence);
   });
 
   it("states the owner's choices on prices, closing, Try It, takedowns and service level", () => {
@@ -246,7 +278,7 @@ describe("the facts #433 asks for", () => {
 
   it("describes the three DM-screen settings and that peeks are seen", () => {
     expect(privacy()).toMatch(/players who choose to peek \(the usual setting/);
-    expect(privacy()).toContain("the game master can see who peeked");
+    expect(privacy()).toContain("the game masters can see who peeked");
   });
 
   it("tells people a failed payment has a short grace period, with no number of days", () => {
@@ -268,14 +300,14 @@ describe("the facts #433 asks for", () => {
     expect(privacy()).toContain("no tracking or ad cookies");
   });
 
-  // Stopping now goes through the ⚙️ Menu (#807, #830): no page may send people to a
+  // Stopping now goes through the 🗂️ Menu (#807, #830): no page may send people to a
   // "Stop recording me" button that isn't there.
-  it.each(["terms", "privacy"])("%s: stopping is explained through the ⚙️ Menu", (name) => {
+  it.each(["terms", "privacy"])("%s: stopping is explained through the 🗂️ Menu", (name) => {
     const body = text(rendered.get(name)?.querySelector("main") ?? rendered.get(name) ?? null);
     const stops = [...body.matchAll(/Stop recording me/g)];
     expect(stops.length).toBeGreaterThan(0);
     for (const stop of stops) {
-      expect(body.slice(Math.max(0, stop.index - 80), stop.index)).toContain("⚙️ Menu");
+      expect(body.slice(Math.max(0, stop.index - 80), stop.index)).toContain("🗂️ Menu");
     }
   });
 
@@ -330,7 +362,11 @@ describe("what the AI company does with the text (#1328)", () => {
     // Not copied to another company or to the short summary (which has no such promise to make).
     // The public Q&A section (#1356) repeats the same sentence once it is switched on, so it counts
     // there too; qabot-privacy.test.ts checks that it is the same sentence.
-    expect(privacy().match(/train/gi)).toHaveLength(QABOT_LIVE ? 2 : 1);
+    // The Recaps section (#1384) repeats it too once recaps are live: it says the same of the recap writer.
+    // The Google (Gemini) line (#2583) has its own paid-terms sentence, which is about Google's AI.
+    // Voyage AI's line makes its own promise (#2664): it counts once, and the owner's opt-out in
+    // Voyage's settings must be done before that line is merged.
+    expect(privacy().match(/train/gi)).toHaveLength(3 + (QABOT_LIVE ? 1 : 0) + (RECAPS_LIVE ? 1 : 0));
   });
 
   it("makes no such promise for the speech company: it depends on that company's own setting", () => {
@@ -357,7 +393,12 @@ describe("shared house rules (#1254)", () => {
     expect(t).toContain("keeps no record of the sender");
   });
   it("is true: the publisher's table of suggestions has no column for who sent one (#1313)", () => {
-    const schema = readFileSync(new URL("../../core/src/dmbot/schema.py", import.meta.url), "utf8");
+    // (the migrations are one file each since #2127: read them all)
+    const dir = new URL("../../core/src/dmbot/migrations/", import.meta.url);
+    const schema = readdirSync(dir)
+      .filter((f) => f.endsWith(".py"))
+      .map((f) => readFileSync(new URL(f, dir), "utf8"))
+      .join("\n");
     const table = /CREATE TABLE rule_set_suggestions \(([\s\S]*?)\n    \);/.exec(schema)?.[1] ?? "";
     expect(table).toContain("set_id");
     expect(table).not.toMatch(/sent_by|follower|sender|from_guild|from_campaign/);
@@ -370,6 +411,11 @@ describe("story state (#1284)", () => {
     expect(t).toContain("which items are the only one of their kind and who carries what, and whether the game master or the bot said so");
     expect(t).toContain("A backup holds it, and it is deleted when the campaign is deleted");
   });
+
+  it("says an adventure file's text is kept for that campaign only and is not in a backup (#1720)", () => {
+    const t = text(doc("privacy").querySelector("main"));
+    expect(t).toContain("An adventure file is the one exception. DMbot keeps its text, not the file, for that campaign only. It stays until the game master removes it or the campaign is deleted. A backup holds only its name");
+  });
 });
 
 describe("writing to the team (#1340)", () => {
@@ -381,10 +427,12 @@ describe("writing to the team (#1340)", () => {
     expect(t).toContain("goes only to the team, privately, and is not posted anywhere public");
     expect(t).toContain("We keep it for 12 months, then delete it");
     expect(t).toContain("The team replies by email to the address on your account");
-    // #1373: the account page lists the person's own questions, never the words.
+    // #1373: the account page lists the person's own questions; #2193: each opens to its whole
+    // conversation, which only the person and the team can read.
     expect(t).toContain(
-      "your account page shows you its subject, when you sent it and whether it was answered, never the message itself",
+      "your account page shows you its subject, when you sent it and whether it was answered. You can open it there to read the whole conversation: your message and the replies. On our website, only you and the team can read it",
     );
+    expect(t).not.toContain("never the message itself");
     expect(t).not.toContain("does not show it to you again");
     expect(t).toContain("If you delete your account, we delete your messages too");
   });
@@ -419,35 +467,58 @@ describe("generated content belongs to the campaign (#1388)", () => {
     for (const page of [privacy(), terms()]) {
       expect(page).toContain("What DMbot makes from a session belongs to the campaign");
       expect(page).toContain("a recap, story facts, notes for the game master, and anything else DMbot writes from what was said");
-      expect(page).toMatch(/campaign belongs to its game master/);
+      expect(page).toMatch(/deleted only with the campaign/);
     }
   });
 
   it("says stopping or deleting your own data does not remove it, on both pages", () => {
     const privacyPage = privacy();
     expect(privacyPage).toContain(
-      "What DMbot already made from sessions you took part in, such as a recap or the story facts your game master kept, stays with the campaign. Your voice was never kept.",
+      "What DMbot already made from sessions you took part in, such as a recap or the story facts your game master kept, stays with the campaign. Your voice was not kept.",
     );
     expect(privacyPage).toContain("What DMbot made from those sessions stays with the campaign too: deleting your account does not remove it.");
     const termsPage = terms();
     expect(termsPage).toContain("If you stop being recorded, take back your yes or delete your account");
-    expect(termsPage).toContain("What it already made from sessions you took part in stays with the campaign.");
+    expect(termsPage).toContain("What DMbot already made from sessions you took part in stays with the campaign, and so do copies other people downloaded.");
     // The terms point to the privacy page for what is removed, rather than repeating it.
     const link = doc("terms").querySelector('main a[href="/legal/privacy"]');
     expect(text(link)).toBe("Privacy page");
   });
 
-  it("says only deleting the campaign removes it, and only its game master can", () => {
+  it("says only deleting the campaign removes it, and only the game master whose plan it uses can (#1610)", () => {
     expect(privacy()).toContain(
-      "Only the campaign's game master can. Deleting it is the only thing that removes what DMbot made for it, such as its recaps, story facts and notes. A player who wants something removed can ask their game master.",
+      "Only the game master whose plan the campaign uses can (for a free campaign, the one who started it). Deleting it is the only thing that removes what DMbot made for it, such as its recaps, story facts and notes. A player who wants something removed can ask their game master.",
     );
-    expect(terms()).toContain("Only deleting the campaign removes it, and only the campaign's game master can delete a campaign.");
+    expect(terms()).toContain(
+      "Only deleting the campaign removes what DMbot made, and only the game master whose plan the campaign uses can delete it.",
+    );
   });
 
-  it("says who owns the campaign and who runs it, so the table and the game master do not disagree", () => {
-    expect(terms()).toContain(
-      "Your campaign, notes and what your table says belong to you and your table, not to us. You let us store and process them only to run DMbot for you. Within the table, the campaign is the game master's: they run it, and only they can delete it.",
+  it("says who owns the campaign, the licence DMbot gets, and who runs and deletes it (#1610)", () => {
+    const page = terms();
+    expect(page).toContain(
+      "You keep what you and your table make. Your campaign, notes and what your table says belong to you and your table, not to us. You give DMbot a worldwide, royalty-free licence to store, process and show them, to run DMbot and to improve it (you can turn the improving off in My Account).",
     );
+    expect(page).toContain(
+      "Within the table, the game masters run the campaign. Only the game master whose plan it uses can delete it (for a free campaign, the one who started it).",
+    );
+    expect(page).not.toContain("only to run DMbot for you");
+  });
+
+  it("says the improvement choice on the privacy page: where it is, and that it is not recording (#1610)", () => {
+    const page = privacy();
+    expect(page).toContain("DMbot uses transcripts and what people type in the table's chat to get better.");
+    expect(page).toContain("You can turn this off in My Account. It covers every server.");
+    expect(page).toContain("Account details (Discord account numbers, emails and payment records) are never published.");
+    expect(page).toContain('unless you give a separate yes to "Save my voice for tests"');
+    const link = doc("privacy").querySelector('main a[href="/account"]');
+    expect(link).toBeTruthy();
+  });
+
+  it("says deletion is separable on the terms page (#1610)", () => {
+    const page = terms();
+    expect(page).toContain("as far as they can be separated from the rest");
+    expect(page).toContain("If we can't delete something, it stays, and everything else you asked for still happens.");
   });
 
   it("keeps the retention and 120-day wording as it was", () => {
@@ -486,5 +557,14 @@ describe("the mail goes through Resend (#1402)", () => {
       const t = text(doc(name).querySelector("main"));
       expect(t, name).not.toMatch(/gmail|so Google carries|through Google/i);
     }
+  });
+});
+
+describe("privacy lines for new features (#1810)", () => {
+  it("say what they hear and keep, in plain words, with no AI claim for initiative", () => {
+    expect(initiativeLine.text).toContain("uses no AI");
+    expect(initiativeLine.text).toContain("only people who said yes");
+    expect(initiativeLine.text).toContain("not tied to any person");
+    for (const line of [initiativeLine, storyStatesLine]) expect(line.text).not.toMatch(/\bNPC\b|\bAPI\b|database/i);
   });
 });

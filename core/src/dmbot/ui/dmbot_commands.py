@@ -28,6 +28,7 @@ from dmbot.campaigns.models import (
     clean_name,
     name_key,
 )
+from dmbot.campaigns.parts import PART_READ_BYTES, TOO_MANY_PARTS, LeftOut
 from dmbot.campaigns.store import (
     MAX_BACKUP_BYTES,
     NOT_A_BACKUP,
@@ -37,8 +38,11 @@ from dmbot.campaigns.store import (
     encode_backup,
 )
 from dmbot.dm_screen import handover
+from dmbot.dm_screen.settings import SettingsButton
 from dmbot.logs import set_log_context
+from dmbot.mentions import NO_PINGS
 from dmbot.ui import logic
+from dmbot.waiting import WaitingMessage, message_is_gone
 
 if TYPE_CHECKING:
     from dmbot.bot import DMBot
@@ -46,13 +50,22 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 VIEW_TIMEOUT_S = 600  # under Discord's 15-minute limit for editing a reply
-NO_PINGS = discord.AllowedMentions.none()
 VOICE_TYPES = [discord.ChannelType.voice, discord.ChannelType.stage_voice]
 TIMED_OUT = "This menu timed out. Run the command again."
 
 Handler = Callable[[discord.Interaction], Awaitable[None]]
 
 
+RESTORING = "Restoring… a big copy can take a few minutes. If it fails, nothing is changed."
+RESTORE_STALL_S = 600.0  # one transcripts file loads far faster than this
+RESTORE_STALL_NOTE = (
+    "DMbot may be stuck on it. Ask whoever runs DMbot to look: starting a session in this "
+    "server waits until the restore ends."
+)
+RESTORED_TIDY_FAILED = (
+    "\n(The copy is restored, but tidying up afterwards didn't finish. That does not change "
+    "what was restored.)"
+)
 RESTORE_FAILED = "Something went wrong, so nothing was restored. Run `/dmbot restore` again."
 START_FAILED = (
     "Couldn't start. If this message doesn't say Listening, press ▶ Start listening again."
@@ -207,6 +220,7 @@ async def _failed(
 
 
 NOT_IN_SERVER = "Use this in a server."
+SETTINGS_HINT = "Settings: press ⚙️ Settings here, or use the DM Bot channel."
 
 
 # ---- /dmbot start: welcome, then which campaign? ---------------------------------------
@@ -462,6 +476,9 @@ class VoicePicker(_Menu):
             row=1,
         )
         self.add_item(self.start_button)
+        # ⚙️ Settings where the DM is looking (#1619). Only those who can start this campaign
+        # reach this step, and the button checks again on every press.
+        self.add_item(SettingsButton(campaign.id, row=2))
 
     async def _picked(self, interaction: discord.Interaction) -> None:
         self.channel_id = self.pick.values[0].id
@@ -570,6 +587,7 @@ async def show_voice_step(
     text = f"{heading}\n**Which voice channel is the table in?**"
     if default_id is not None:
         text += f"\nReady to use <#{default_id}>. Pick a different one below if needed."
+    text += f"\n{SETTINGS_HINT}"
     view = VoicePicker(campaign, default_id)
     view.text = text
     if interaction.type is discord.InteractionType.component:
@@ -605,13 +623,17 @@ async def send_backup(interaction: discord.Interaction, campaign_id: str) -> Non
         return
     dm = interaction.user.id in campaign.dm_user_ids
     name = discord.utils.escape_markdown(campaign.name)
-    data = await bot.campaigns.export(guild.id, campaign.id)
-    try:
-        raw = await asyncio.to_thread(encode_backup, data)
-    except BackupTooBig:
-        raw = None  # bigger than a restore takes: no copy that can't come back
     limit = logic.upload_limit(guild.filesize_limit)
-    if raw is None or len(raw) > limit:  # no copy a restore takes, or none this server takes
+    why = ""
+    try:
+        data, parts = await bot.campaigns.export_set(guild.id, campaign.id)
+        raw: bytes | None = await asyncio.to_thread(encode_backup, data)
+    except BackupTooBig as exc:
+        raw, parts = None, []  # bigger than a restore takes: no copy that can't come back
+        why = TOO_MANY_PARTS if str(exc) == TOO_MANY_PARTS else ""  # (the one reason said plainly)
+    # The transcripts come in extra files (#2552); a copy none of the files of which this server
+    # takes is not made.
+    if raw is None or len(raw) > limit or any(len(p) > limit for p in parts):
         log.warning(
             "Backup of campaign %s is too big to %s",
             campaign.id,
@@ -619,14 +641,27 @@ async def send_backup(interaction: discord.Interaction, campaign_id: str) -> Non
         )
         await _tell(
             interaction,
-            f"💾 **{name}** is too big for DMbot to copy yet. Nothing was lost: the campaign "
-            "is still here. Tell whoever runs DMbot so they can save a copy for you.",
+            f"💾 **{name}** is too big for DMbot to copy yet. "
+            + (
+                f"{why}"
+                if why
+                else "Nothing was lost: the campaign is still here. Tell whoever runs DMbot so "
+                "they can save a copy for you."
+            ),
         )
         return
     file = discord.File(io.BytesIO(raw), filename=logic.backup_filename(campaign.name, _now()))
+    extra = (
+        f" Its transcripts come in {len(parts)} more file{'' if len(parts) == 1 else 's'} "
+        "just below. Keep them all together with this one, and attach them in the "
+        "`transcripts_1`, `transcripts_2`… boxes when you restore."
+        if parts
+        else ""
+    )
     await interaction.followup.send(
         f"💾 Here's a complete copy of **{name}**. Keep it somewhere safe, and don't "
         "share it publicly: it holds the DM's secret names and notes."
+        + extra
         + (
             ""
             if dm
@@ -646,6 +681,21 @@ async def send_backup(interaction: discord.Interaction, campaign_id: str) -> Non
         ephemeral=True,
         allowed_mentions=NO_PINGS,
     )
+    total = len(parts)
+    for batch in logic.part_batches([len(p) for p in parts], limit):
+        await interaction.followup.send(
+            f"📜 Transcripts of **{name}**, file{'' if len(batch) == 1 else 's'} "
+            f"{', '.join(str(i + 1) for i in batch)} of {total}.",
+            files=[
+                discord.File(
+                    io.BytesIO(parts[i]),
+                    filename=logic.part_filename(campaign.name, _now(), i + 1, total),
+                )
+                for i in batch
+            ],
+            ephemeral=True,
+            allowed_mentions=NO_PINGS,
+        )
 
 
 class BackupPicker(_Menu):
@@ -671,9 +721,20 @@ class BackupPicker(_Menu):
 
 
 class RestoreChoice(_Menu):
-    def __init__(self, data: object, name: str, replaceable: list[Campaign]) -> None:
+    _landed: str | None = None  # the result, once the copy is in, for a cancel to still tell
+
+    def __init__(
+        self,
+        data: object,
+        name: str,
+        replaceable: list[Campaign],
+        parts: list[bytes] | None = None,
+        wanted: int = 0,
+    ) -> None:
         super().__init__()
         self.data = data
+        self.parts = parts or []
+        self.wanted = wanted  # the transcripts files the copy came with
         self.name = name
         self.replaceable_ids = [c.id for c in replaceable]
         self.add_item(
@@ -727,11 +788,69 @@ class RestoreChoice(_Menu):
         if guild is None:
             await _tell(interaction, NOT_IN_SERVER)
             return
-        bot = _bot(interaction)
+        pressed = time.monotonic()
         # Answer first (#88, as #351): the session lock may be held for a few seconds
         # by a /dmbot start setting up the DM screen, and the plan check is a database read.
-        await _replace(interaction, "Restoring…", None)
+        await _replace(interaction, RESTORING, None)
         self.stop()  # its buttons are gone; its timeout mustn't cover the outcome
+
+        async def show(text: str) -> None:
+            await _replace(interaction, text, None)
+
+        # The wait keeps itself current (#2564): the step, the transcripts file it is on, how long,
+        # and a stall line (a hung restore holds the server's session lock). Its result is written
+        # after the wait ends, so nothing overwrites the last word.
+        self._landed = None
+        done = RESTORE_FAILED
+        try:
+            async with WaitingMessage(
+                show,
+                RESTORING,
+                stall_after_s=RESTORE_STALL_S,
+                stall_note=RESTORE_STALL_NOTE,
+                gone=message_is_gone,
+                started=pressed,
+            ) as waiting:
+                try:
+                    done = await self._restore_steps(interaction, guild, replace_id, waiting)
+                except Exception:
+                    log.exception("Restoring a backup failed")
+        except asyncio.CancelledError:
+            if self._landed is not None:  # the copy is in: the person is told, whatever stopped us
+                await asyncio.shield(
+                    self._deliver(interaction, self._landed + RESTORED_TIDY_FAILED)
+                )
+            raise
+        await self._deliver(interaction, done)
+
+    @staticmethod
+    async def _deliver(interaction: discord.Interaction, done: str) -> None:
+        """The result, in the message; if that fails, once more; if that fails (the message ran
+        out, was dismissed, or Discord is struggling), privately. A restore that landed is never
+        left unknown (#2564). Never raises."""
+        for attempt in range(2):
+            try:
+                await _replace(interaction, done, None)
+                return
+            except discord.HTTPException as exc:
+                if message_is_gone(exc):
+                    break
+                log.warning("The restore result could not be shown (try %d)", attempt + 1)
+                await asyncio.sleep(1.0)
+        log.info("Telling the person the restore result privately")
+        with contextlib.suppress(discord.HTTPException):
+            await interaction.user.send(done, allowed_mentions=NO_PINGS)
+
+    async def _restore_steps(
+        self,
+        interaction: discord.Interaction,
+        guild: discord.Guild,
+        replace_id: str | None,
+        waiting: WaitingMessage,
+    ) -> str:
+        """The restore itself; the words for the DM at the end, whatever happened."""
+        bot = _bot(interaction)
+        waiting.step("Step 1 of 3: checking the plan")
         # Judged here, once it is known whether a campaign is being replaced: that keeps its
         # owner, so it is the owner's plan that counts; a new campaign makes this person its
         # owner, so it is theirs (#437 part 3). Asked now, not only at /dmbot restore: the
@@ -741,8 +860,8 @@ class RestoreChoice(_Menu):
         )
         refused = await bot.restore_gate(guild.id, interaction.user.id, replacing)
         if refused is not None:
-            await _replace(interaction, refused, None)
-            return
+            return str(refused)
+        waiting.step("Step 2 of 3: restoring the copy")
         # The session lock stops a campaign being replaced while it's starting up.
         async with bot.session_lock(guild.id):
             try:
@@ -751,31 +870,62 @@ class RestoreChoice(_Menu):
                 )
             except Exception:
                 log.exception("Couldn't check whether the campaign is playing")
-                await _replace(interaction, RESTORE_FAILED, None)
-                return
+                return RESTORE_FAILED
             if playing:
-                playing_now = (
+                return (
                     "That campaign is playing right now. Use `/dmbot stop` first, then "
                     "`/dmbot restore` again."
                 )
-                await _replace(interaction, playing_now, None)
-                return
+            erased_lines = LeftOut()
             try:
                 campaign = await bot.campaigns.import_backup(
-                    guild.id, self.data, interaction.user.id, replace_campaign_id=replace_id
+                    guild.id,
+                    self.data,
+                    interaction.user.id,
+                    replace_campaign_id=replace_id,
+                    parts=self.parts,
+                    left_out=erased_lines,
+                    progress=lambda done, total: waiting.step(
+                        "Step 2 of 3: restoring the copy, transcripts files", done, total
+                    ),
                 )
             except CampaignError as exc:
-                await _replace(interaction, str(exc), None)
-                return
+                return str(exc)
             except Exception:
                 log.exception("Restoring a backup failed")
-                await _replace(interaction, RESTORE_FAILED, None)
-                return
+                return RESTORE_FAILED
         if replace_id is None:
             done = f"✅ Restored **{campaign.name}**."
         else:
             done = f"✅ **{campaign.name}** now holds everything from the copy of **{self.name}**."
-        await _replace(interaction, f"{done} Use `/dmbot start` to play it.", None)
+        left_out = (
+            "\n⚠️ The transcripts weren't restored: the copy came with its transcripts in extra "
+            f"files, and none were given. Run `/dmbot restore` again with all {self.wanted} to "
+            "bring them back."
+            if self.wanted and not self.parts
+            else ""
+        )
+        erased = (
+            f" {erased_lines.lines} line{'' if erased_lines.lines == 1 else 's'} of people who "
+            "have since deleted their transcripts "
+            f"{'was' if erased_lines.lines == 1 else 'were'} left out, as they asked."
+            if erased_lines.lines
+            else ""
+        )
+        result = f"{done}{erased} Use `/dmbot start` to play it.{left_out}"
+        self._landed = result  # from here the person is always told it landed, even on a cancel
+        waiting.step("Step 3 of 3: tidying up")
+        # The restore has landed; from here a problem must never be told as "nothing was
+        # restored" (running `/dmbot restore` again would make a second copy).
+        tidy_failed = False
+        memory = getattr(bot, "memory", None)
+        if memory is not None:
+            try:  # a big restore adds thousands of rows at once: refresh the planner (#2376)
+                await memory.analyze(guild.id)
+            except Exception:
+                log.exception("Refreshing statistics after a restore failed")
+                tidy_failed = True
+        return result + (RESTORED_TIDY_FAILED if tidy_failed else "")
 
 
 class ConfirmReplace(_Menu):
@@ -841,6 +991,28 @@ async def dmbot_start(interaction: discord.Interaction) -> None:
     await _send(interaction, picker_text(campaigns[0]), CampaignPicker(campaigns))
 
 
+@dmbot_group.command(name="settings", description="Open this campaign's settings (for its DM)")
+async def dmbot_settings(interaction: discord.Interaction) -> None:
+    """The same ⚙️ Settings card as the button, for a DM who can't find it (#1619): the campaign
+    running in this server, else the last one played. Private; the button's own check decides
+    who may see it (the campaign's DMs and server managers)."""
+    guild = interaction.guild
+    if guild is None:
+        await _tell(interaction, NOT_IN_SERVER)
+        return
+    bot = _bot(interaction)
+    campaign_id = bot.active_campaign_id(guild.id)
+    if campaign_id is None:
+        campaigns = await bot.campaigns.list_campaigns(guild.id)  # most recently played first
+        if not campaigns:
+            await _tell(
+                interaction, "There are no campaigns here yet. Use `/dmbot start` to set one up."
+            )
+            return
+        campaign_id = campaigns[0].id
+    await SettingsButton(campaign_id).callback(interaction)
+
+
 @dmbot_group.command(name="stop", description="Stop listening")
 async def dmbot_stop(interaction: discord.Interaction) -> None:
     guild = interaction.guild
@@ -865,6 +1037,21 @@ async def dmbot_help(interaction: discord.Interaction) -> None:
     await _send(interaction, logic.HELP_TEXT, HelpButtons())
 
 
+@dmbot_group.command(
+    name="delete-my-lines",
+    description="Delete what DMbot wrote down from you in this server",
+)
+async def delete_my_lines_command(interaction: discord.Interaction) -> None:
+    """The same as 🗑 Delete my past transcripts in the 🗂️ Menu (#1532): one warning with the
+    numbers, one confirmation. Only the person's own lines in this one server."""
+    from dmbot.consent_dm import ask_delete
+
+    if interaction.guild is None:
+        await interaction.response.send_message("Use this in a server.", ephemeral=True)
+        return
+    await ask_delete(interaction, interaction.guild.id)
+
+
 @dmbot_group.command(name="backup", description="Download a copy of a campaign")
 async def dmbot_backup(interaction: discord.Interaction) -> None:
     guild = interaction.guild
@@ -883,19 +1070,81 @@ async def dmbot_backup(interaction: discord.Interaction) -> None:
 
 
 @dmbot_group.command(name="restore", description="Bring back a campaign from a copy")
-@app_commands.describe(file="The file you got from /dmbot backup")
-async def dmbot_restore(interaction: discord.Interaction, file: discord.Attachment) -> None:
+@app_commands.describe(
+    file="The file you got from /dmbot backup",
+    transcripts_1="The first transcripts file that came with it, if it had any",
+    transcripts_2="The second transcripts file",
+    transcripts_3="The third transcripts file",
+    transcripts_4="The fourth transcripts file",
+    transcripts_5="The fifth transcripts file",
+    transcripts_6="The sixth transcripts file",
+    transcripts_7="The seventh transcripts file",
+    transcripts_8="The eighth transcripts file",
+    transcripts_9="The ninth transcripts file",
+    transcripts_10="The tenth transcripts file",
+    transcripts_11="The 11th transcripts file",
+    transcripts_12="The 12th transcripts file",
+    transcripts_13="The 13th transcripts file",
+    transcripts_14="The 14th transcripts file",
+    transcripts_15="The 15th transcripts file",
+    transcripts_16="The 16th transcripts file",
+    transcripts_17="The 17th transcripts file",
+    transcripts_18="The 18th transcripts file",
+    transcripts_19="The 19th transcripts file",
+    transcripts_20="The 20th transcripts file",
+    transcripts_21="The 21st transcripts file",
+    transcripts_22="The 22nd transcripts file",
+    transcripts_23="The 23rd transcripts file",
+    transcripts_24="The 24th transcripts file",
+)
+async def dmbot_restore(
+    interaction: discord.Interaction,
+    file: discord.Attachment,
+    transcripts_1: discord.Attachment | None = None,
+    transcripts_2: discord.Attachment | None = None,
+    transcripts_3: discord.Attachment | None = None,
+    transcripts_4: discord.Attachment | None = None,
+    transcripts_5: discord.Attachment | None = None,
+    transcripts_6: discord.Attachment | None = None,
+    transcripts_7: discord.Attachment | None = None,
+    transcripts_8: discord.Attachment | None = None,
+    transcripts_9: discord.Attachment | None = None,
+    transcripts_10: discord.Attachment | None = None,
+    transcripts_11: discord.Attachment | None = None,
+    transcripts_12: discord.Attachment | None = None,
+    transcripts_13: discord.Attachment | None = None,
+    transcripts_14: discord.Attachment | None = None,
+    transcripts_15: discord.Attachment | None = None,
+    transcripts_16: discord.Attachment | None = None,
+    transcripts_17: discord.Attachment | None = None,
+    transcripts_18: discord.Attachment | None = None,
+    transcripts_19: discord.Attachment | None = None,
+    transcripts_20: discord.Attachment | None = None,
+    transcripts_21: discord.Attachment | None = None,
+    transcripts_22: discord.Attachment | None = None,
+    transcripts_23: discord.Attachment | None = None,
+    transcripts_24: discord.Attachment | None = None,
+) -> None:
+    boxes = (
+        transcripts_1, transcripts_2, transcripts_3, transcripts_4, transcripts_5, transcripts_6,
+        transcripts_7, transcripts_8, transcripts_9, transcripts_10, transcripts_11,
+        transcripts_12, transcripts_13, transcripts_14, transcripts_15, transcripts_16,
+        transcripts_17, transcripts_18, transcripts_19, transcripts_20, transcripts_21,
+        transcripts_22, transcripts_23, transcripts_24,
+    )  # fmt: skip
+    extra = [a for a in boxes if a is not None]
     guild = interaction.guild
     if guild is None:
         await _tell(interaction, NOT_IN_SERVER)
         return
-    if file.size > MAX_BACKUP_BYTES:
+    if file.size > MAX_BACKUP_BYTES or any(a.size > PART_READ_BYTES for a in extra):
         await _tell(interaction, TOO_BIG)
         return
     await interaction.response.defer(ephemeral=True, thinking=True)
     try:
         raw = await file.read()
         data = await asyncio.to_thread(decode_backup, raw)
+        parts = [await a.read() for a in extra]  # (checked one at a time when restoring)
     except CampaignError as exc:
         await _tell(interaction, str(exc))
         return
@@ -905,6 +1154,16 @@ async def dmbot_restore(interaction: discord.Interaction, file: discord.Attachme
     name = logic.backup_campaign_name(data)
     if name is None:
         await _tell(interaction, NOT_A_BACKUP)
+        return
+    # The copy says how many transcripts files it came with (#2552): all of them, or none.
+    wanted = logic.backup_parts(data)
+    if parts and len(parts) != wanted:
+        await _tell(
+            interaction,
+            f"This copy came with {wanted} transcripts file{'' if wanted == 1 else 's'}, and "
+            f"you gave {len(parts)}. Give all of them, or none to restore without the "
+            "transcripts.",
+        )
         return
     campaigns = await _bot(interaction).campaigns.list_campaigns(guild.id)
     # Only a campaign's own DM may replace it (the store enforces this too).
@@ -922,10 +1181,16 @@ async def dmbot_restore(interaction: discord.Interaction, file: discord.Attachme
         f"**Restore the copy of {name}?**\n"
         "You'll be its DM. `/dmbot start` will ask which voice channel to use."
         + (
+            f"\nThis copy has its transcripts in {wanted} more file{'' if wanted == 1 else 's'}, "
+            "and you gave none, so it comes back without them."
+            if wanted and not parts
+            else ""
+        )
+        + (
             "\nOr pick one of your campaigns below to swap it for this copy. DMbot asks "
             "before replacing anything."
             if replaceable
             else ""
         ),
-        RestoreChoice(data, name, replaceable),
+        RestoreChoice(data, name, replaceable, parts, wanted),
     )

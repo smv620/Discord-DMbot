@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import time
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
@@ -21,8 +22,8 @@ from dmbot.web.app import create_app
 from dmbot.web.discord import DiscordGuild, DiscordUser
 from dmbot.web.me import build_me
 from dmbot.web.payments import FakeProvider
-from tests.pg import REQUIRE_DB, SUPERUSER_URL, TEST_URL, DatabaseTest
-from tests.test_web_api import ALICE, API, GORRAK, QUILLON, SITE, THURSDAY, FakeDiscord, settings
+from tests.pg import REQUIRE_DB, SUPERUSER_URL, TEST_URL, DatabaseTest, create_role_sql
+from tests.test_web_api import ALICE, GORRAK, QUILLON, SITE, THURSDAY, FakeDiscord, settings
 from tests.test_web_feedback import FakeDiscussions
 
 WEB_PASSWORD = "dmbot_web"
@@ -37,8 +38,7 @@ async def ensure_web_role() -> None:
         cur = await conn.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (schema.WEB_ROLE,))
         if await cur.fetchone() is None:
             # Another test worker may make it between the check and here (pytest -n 4).
-            with contextlib.suppress(errors.DuplicateObject):
-                await conn.execute(f"CREATE ROLE {schema.WEB_ROLE} LOGIN PASSWORD '{WEB_PASSWORD}'")
+            await conn.execute(create_role_sql(schema.WEB_ROLE, WEB_PASSWORD))
     finally:
         await conn.close()
 
@@ -138,7 +138,12 @@ class WebRole(DatabaseTest):
     async def test_me_works_through_it(self) -> None:
         session = await self.alice()
         me = await build_me(self.web, session, now=self.now)
-        self.assertEqual([c["name"] for c in me["campaigns"]], [self.mine.name])
+        # The owner's campaign in a server the session does not have is listed too, flagged as
+        # unreachable (#2554), through the owner's own door; the website role still sees no more.
+        self.assertEqual(
+            [(c["name"], c["serverReachable"]) for c in me["campaigns"]],
+            [(self.mine.name, True), (self.hidden.name, False)],
+        )
 
     async def test_it_can_record_an_install_only_for_a_listed_server(self) -> None:
         session = await self.alice()
@@ -260,16 +265,21 @@ class WebRole(DatabaseTest):
             await admin.close()
 
     async def _offer_insert(self, conn: Any, from_user: int, **extra: object) -> None:
-        """Insert an offer for Alice's campaign as the website's role would."""
+        """Insert an offer by email for Alice's campaign as the website's role would (#2532):
+        addressed to nobody, holding a link's hash, born delivered."""
         await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(THURSDAY.id),))
+        made = int(time.time())  # (the rule holds the time to the database's clock)
         columns = {
             "guild_id": THURSDAY.id,
             "campaign_id": self.mine.id,
             "from_user_id": from_user,
-            "to_user_id": OTHER_USER,
-            "created_at": self.now,
+            "to_user_id": 0,
+            "created_at": made,
+            "delivered_at": made,
             "from_name": "Alice",
-            "to_name": "Bob",
+            "to_name": "",
+            "via_email": True,
+            "token_hash": "a" * 64,
             **extra,
         }
         names = ", ".join(columns)
@@ -279,42 +289,70 @@ class WebRole(DatabaseTest):
             tuple(columns.values()),
         )
 
-    async def test_the_website_cannot_create_offers_today(self) -> None:
-        session = await self.alice()
-        with self.assertRaises(errors.InsufficientPrivilege):
-            async with self.web.user(ALICE.id, session=session.id_hash) as conn:
-                await self._offer_insert(conn, ALICE.id)
+    async def refused(self, session: Any, who: int = ALICE.id, **extra: object) -> None:
+        with self.assertRaises(errors.InsufficientPrivilege, msg=str(extra)):
+            async with self.web.user(who, session=session.id_hash) as conn:
+                await self._offer_insert(conn, who, **extra)
 
-    async def test_when_it_may_create_offers_it_cannot_mark_them_sent(self) -> None:
-        # #728: the grant a future route needs is column-limited, and a restrictive rule backs it.
+    async def test_the_default_grant_lets_the_owner_make_an_email_offer(self) -> None:
+        session = await self.alice()
+        async with self.web.user(ALICE.id, session=session.id_hash) as conn:
+            await self._offer_insert(conn, ALICE.id)
+        async with self.db.guild(THURSDAY.id) as conn:
+            cur = await conn.execute("SELECT count(*) AS n FROM campaign_handover_offers")
+            self.assertEqual((await cur.fetchone() or {})["n"], 1)
+
+    async def test_the_owner_creates_an_offer_by_email_and_nothing_else(self) -> None:
+        # The grant is column-limited and a restrictive rule backs it (#728, #2532).
         columns = ", ".join(schema.OFFER_INSERT_COLUMNS)
         await self._grant(f"INSERT ({columns})")
         session = await self.alice()
-        # Her own, open, unsent offer goes in.
         async with self.web.user(ALICE.id, session=session.id_hash) as conn:
             await self._offer_insert(conn, ALICE.id)
-        # Columns outside the grant are refused outright.
-        for column in ("delivered_at", "claimed_at", "message_id", "end_told_at", "status"):
-            with self.assertRaises(errors.InsufficientPrivilege, msg=column):
-                async with self.web.user(ALICE.id, session=session.id_hash) as conn:
-                    await self._offer_insert(conn, ALICE.id, **{column: 1})
-        # Someone else's name as the sender is refused by the rule.
-        with self.assertRaises(errors.InsufficientPrivilege):
-            async with self.web.user(ALICE.id, session=session.id_hash) as conn:
-                await self._offer_insert(conn, OTHER_USER)
+        for column in ("claimed_at", "message_id", "end_told_at", "status"):  # no grant
+            await self.refused(session, **{column: 1})
+        await self.refused(session, who=ALICE.id, from_user_id=OTHER_USER)  # not hers to name
 
-    async def test_a_wider_grant_is_still_held_by_the_rule(self) -> None:
-        # If someone granted INSERT on the whole table by mistake, marking an offer sent is
-        # still refused by the restrictive rule (#728).
+    async def test_a_discord_offer_cannot_come_from_the_website(self) -> None:
+        # PLAN point 6: no new Discord offers; the bot would send a person buttons for one.
         await self._grant("INSERT")
         session = await self.alice()
-        for column in ("delivered_at", "claimed_at", "message_id", "end_told_at"):
-            with self.assertRaises(errors.InsufficientPrivilege, msg=column):
-                async with self.web.user(ALICE.id, session=session.id_hash) as conn:
-                    await self._offer_insert(conn, ALICE.id, **{column: 1})
-        with self.assertRaises(errors.InsufficientPrivilege):
-            async with self.web.user(ALICE.id, session=session.id_hash) as conn:
-                await self._offer_insert(conn, ALICE.id, status="accepted")
+        await self.refused(session, via_email=False, token_hash=None, to_user_id=OTHER_USER,
+                           delivered_at=None)  # fmt: skip
+        await self.refused(session, via_email=False, to_user_id=0)
+
+    async def test_an_offer_can_only_be_made_on_a_campaign_the_sender_owns(self) -> None:
+        # #2532: anyone in the server could otherwise write themselves an offer and accept it.
+        columns = ", ".join(schema.OFFER_INSERT_COLUMNS)
+        await self._grant(f"INSERT ({columns})")
+        bobs = await CampaignStore(self.db, clock=lambda: self.now).create(
+            THURSDAY.id, "Not hers", OTHER_USER
+        )
+        await self.refused(await self.alice(), campaign_id=bobs.id, to_user_id=ALICE.id)
+        await self.refused(await self.alice(), campaign_id=bobs.id)
+
+    async def test_an_email_offer_holds_no_one_and_carries_a_link_hash(self) -> None:
+        columns = ", ".join(schema.OFFER_INSERT_COLUMNS)
+        await self._grant(f"INSERT ({columns})")
+        session = await self.alice()
+        now = int(time.time())
+        for bad in (
+            {"to_user_id": ALICE.id},  # already addressed to someone
+            {"token_hash": None},  # no link
+            {"delivered_at": now + 60},  # "delivered" at some other time
+            {"delivered_at": None},
+            {"created_at": now + 10_000_000, "delivered_at": now + 10_000_000},  # never expires
+            {"created_at": now - 100_000, "delivered_at": now - 100_000},  # born expired
+        ):
+            await self.refused(session, **bad)
+
+    async def test_a_wider_grant_is_still_held_by_the_rule(self) -> None:
+        # If someone granted INSERT on the whole table by mistake, the rule still holds (#728).
+        await self._grant("INSERT")
+        session = await self.alice()
+        for column in ("claimed_at", "message_id", "end_told_at"):
+            await self.refused(session, **{column: 1})
+        await self.refused(session, status="accepted")
 
     async def test_its_limits_apply_to_it_and_never_to_the_bot(self) -> None:
         async with self.db.unscoped() as conn:
@@ -431,7 +469,7 @@ class WebRole(DatabaseTest):
         discussions = FakeDiscussions()
         app = create_app(settings(), self.web, FakeDiscord(), discussions=discussions)
         async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url=API
+            transport=httpx.ASGITransport(app=app), base_url="https://web-api.internal.test"
         ) as client:
             sent = await client.post(
                 "/feedback",
@@ -460,13 +498,17 @@ class WebRole(DatabaseTest):
             settings(), self.web, FakeDiscord(), payments=provider, clock=lambda: self.now
         )
         async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url=API, follow_redirects=False
+            transport=httpx.ASGITransport(app=app),
+            base_url="https://web-api.internal.test",
+            follow_redirects=False,
         ) as client:
             start = await client.get("/auth/discord/start")
             state = parse_qs(urlsplit(start.headers["location"]).query)["state"][0]
             await client.get("/auth/discord/callback", params={"state": state, "code": "good-code"})
             me = (await client.get("/me")).json()
-            self.assertEqual([c["name"] for c in me["campaigns"]], [self.mine.name])
+            self.assertEqual(
+                [c["name"] for c in me["campaigns"]], [self.mine.name, self.hidden.name]
+            )
             body = json.dumps(
                 {
                     "id": "evt-1",

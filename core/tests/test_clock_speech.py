@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock
 from dmbot.dm_screen import clock as ui
 from dmbot.timebot import clock as game
 from dmbot.timebot import phrases
+from dmbot.timebot.clock import Clock
 from dmbot.timebot.phrases import Said
 from tests.test_timebot import (
     DM,
@@ -75,6 +76,74 @@ class DmWords(unittest.TestCase):
                 self.assertIsNone(said, line)
             else:
                 self.assertEqual(said, Said("advance", minutes), line)
+
+    def test_a_skip_of_days_in_words_and_digits(self) -> None:
+        days = {
+            "Three days later, you reach the city.": 3,
+            "Two days later.": 2,
+            "3 days later, you arrive": 3,
+            "A day later, the party rests": 1,
+            "One day later.": 1,
+            "The next day, you wake early.": 1,
+            "Next day, you set out": 1,
+            "Twenty-five days later, you all return": 25,
+            "Thirty days later, you arrive": 30,
+            "A week later, the party arrives.": 7,
+            "Two weeks later, you all return": 14,
+            "And then, three days later, the party reaches the pass": 3,
+            "Okay, so, three days later.": 3,
+        }
+        for line, count in days.items():
+            self.assertEqual(phrases.find_clock(line), Said("days", count * 1440), line)
+
+    def test_without_rest_the_days_are_not_counted_as_rested(self) -> None:
+        for line in (
+            "Three days later, you arrive without resting.",
+            "Three days later, you arrive without any rest.",
+            "A week later, you arrive with no rest.",
+        ):
+            found = phrases.find_clock(line)
+            assert found is not None
+            self.assertEqual(found.action, "days_norest", line)
+        self.assertEqual(phrases.find_clock("Two days later, you rest well.").action, "days")  # type: ignore[union-attr]
+
+    def test_the_same_skip_has_one_key_rested_or_not(self) -> None:
+        a, b = Said("days", 3 * 1440), Said("days_norest", 3 * 1440)
+        self.assertEqual(a.key, b.key)
+        self.assertNotEqual(a.key, Said("days", 4 * 1440).key)
+
+    def test_days_that_are_not_the_clock_moving_are_ignored(self) -> None:
+        for line in (
+            "He arrived three days later.",  # story, not the scene cut
+            "The guards left the next day.",
+            "In three days you arrive.",
+            "For three days you walk.",
+            "Three days ago, you left.",
+            "Three days from now, you arrive.",
+            "Within three days we leave.",
+            "Three days later, meet me at the gate.",  # an NPC talking
+            "The next day, meet me at the gate.",
+            '"Three days later, you reach it," he says.',  # quoted speech
+            "\u201cThree days later, you reach it.\u201d",
+            "Thirty-one days later, you arrive.",  # more than 30: set it with the buttons
+            "Forty days later, you arrive.",
+            "Zero days later, you arrive.",
+            "Three days later, the guards come.",
+            "Can it be three days later, you arrive?",
+            "Maybe three days later, you arrive",
+            "If it is three days later, you arrive",
+            "Three weeks and a day later, you arrive",
+            "Five weeks later, you arrive",
+            "A few days later, you arrive",
+            "Several days later, you arrive",
+            "Three days later, you will hang, says the king",  # a maybe/said later in the line
+            "Three days later, you can't go on",
+            "The next day, we should",
+            "Three days later, you hear what he said",
+            "A days later, you arrive",
+            "2 weeks later, you arrive",  # weeks are in words, one to four
+        ):
+            self.assertIsNone(phrases.find_clock(line), line)
 
     def test_more_than_a_day_or_nothing_is_not_moved_by_itself(self) -> None:
         for line in (
@@ -218,7 +287,9 @@ class AtTheTableMore(AtTheTable):
         await super().asyncSetUp()
         plain = self.bot.post_message
 
-        async def post_message(channel_id: int, text: str, view: Any = None) -> Any:
+        async def post_message(
+            channel_id: int, text: str, view: Any = None, *, remember: Any = None
+        ) -> Any:
             await plain(channel_id, text, view)
             # A suggestion that was posted is a message; a failed post is None (and frees the
             # slot for the next ask). Everything else keeps the harness's plain None.
@@ -294,6 +365,85 @@ class AtTheTableMore(AtTheTable):
         await self.say(DM, "ten minutes later")
         self.assertEqual(await self.minute(), NOON4 + 130)
 
+    async def skip_ids(self) -> tuple[int, int]:
+        stored = await self.clocks.get(GUILD_A, self.a.id)
+        assert stored is not None
+        return stored.clock.minute, stored.clock.last_long_rest
+
+    async def test_days_land_at_the_same_time_of_day_and_count_as_rested(self) -> None:
+        await self.press("set", set_to=NOON4 + 90)  # 13:30 on day 4
+        await self.say(DM, "Three days later, you reach Neverwinter.")
+        minute, rested = await self.skip_ids()
+        self.assertEqual(minute, NOON4 + 90 + 3 * 1440)
+        self.assertEqual(rested, minute)  # a journey of days includes sleep
+        note = next(t for t in self.posted if "3 days later" in t)
+        self.assertIn("⏩ 3 days later (counted as rested). Now Day 7, afternoon.", note)
+        self.assertIn("(heard: “Three days later, you reach Neverwinter.”)", note)
+
+    async def test_without_rest_the_rest_record_stays(self) -> None:
+        await self.press("set", set_to=NOON4)
+        await self.say(DM, "Two days later, you arrive without resting.")
+        minute, rested = await self.skip_ids()
+        self.assertEqual((minute, rested), (NOON4 + 2 * 1440, NOON4))
+        self.assertTrue(any("2 days later (no rest counted)" in t for t in self.posted))
+        # More than 24 hours without a long rest: said once, as for any move.
+        self.assertEqual(sum("24 hours since" in t for t in self.posted), 1)
+
+    async def test_the_24_hour_note_is_not_said_after_a_rested_skip(self) -> None:
+        await self.press("set", set_to=NOON4)
+        await self.say(DM, "A week later, you reach the pass.")
+        self.assertFalse(any("24 hours since" in t for t in self.posted))
+
+    async def test_undo_brings_back_the_clock_and_the_rest_record(self) -> None:
+        await self.press("set", set_to=NOON4)
+        before = await self.skip_ids()
+        await self.say(DM, "Three days later, you reach the city.")
+        after = await self.skip_ids()
+        self.assertNotEqual(before, after)
+        button = ui.ClockUndoButton(
+            self.a.id, ui.undo_id(Clock(*before), Clock(after[0], after[1]))
+        )
+        interaction = SimpleNamespace(
+            guild=SimpleNamespace(id=GUILD_A),
+            user=SimpleNamespace(id=DM),
+            client=self.client(),
+            response=SimpleNamespace(defer=AsyncMock(), is_done=lambda: True),
+            followup=SimpleNamespace(send=AsyncMock()),
+            edit_original_response=AsyncMock(),
+        )
+        interaction.client.post_message = AsyncMock(return_value=None)
+        await button.callback(cast(Any, interaction))
+        self.assertEqual(await self.skip_ids(), before)
+
+    async def test_days_end_a_fight_like_a_long_rest_does(self) -> None:
+        await self.press("set", set_to=NOON4)
+        await self.press("cstart")
+        await self.say(DM, "Three days later, you reach the city.")
+        stored = await self.clocks.get(GUILD_A, self.a.id)
+        assert stored is not None
+        self.assertIsNone(stored.clock.combat_round)
+        self.assertTrue(any("Combat is over" in t for t in self.posted))
+
+    async def test_the_note_says_one_day_in_the_singular_and_marks_are_not_listed(self) -> None:
+        await self.press("set", set_to=game.from_day_and_time(4, 11))
+        await self.say(DM, "A day later, you reach the city.")
+        self.assertTrue(any("⏩ 1 day later (counted as rested)" in t for t in self.posted))
+        self.assertFalse(any("Noon" in t or "Dusk" in t or "Dawn" in t for t in self.posted))
+
+    async def test_the_same_skip_said_twice_in_five_minutes_counts_once(self) -> None:
+        await self.press("set", set_to=NOON4)
+        await self.say(DM, "Three days later, you reach the city.")
+        await self.say(DM, "Three days later, you reach the city.")
+        minute, _ = await self.skip_ids()
+        self.assertEqual(minute, NOON4 + 3 * 1440)
+
+    async def test_a_players_skip_and_a_story_skip_move_nothing(self) -> None:
+        await self.press("set", set_to=NOON4)
+        await self.say(PLAYER, "Three days later, you reach Neverwinter.")
+        await self.say(DM, "He arrived three days later.")
+        await self.say(DM, "In three days you arrive.")
+        self.assertEqual((await self.skip_ids())[0], NOON4)
+
     async def test_noon_and_dusk_are_said_as_an_amount_passes_them(self) -> None:
         await self.press("set", set_to=game.from_day_and_time(4, 11))
         await self.say(DM, "two hours later")
@@ -322,7 +472,9 @@ class AtTheTableMore(AtTheTable):
         views: list[Any] = []
         original = self.bot.post_message
 
-        async def record(channel_id: int, text: str, view: Any = None) -> Any:
+        async def record(
+            channel_id: int, text: str, view: Any = None, *, remember: Any = None
+        ) -> Any:
             views.append(view)
             return await original(channel_id, text, view)
 
@@ -347,7 +499,9 @@ class AtTheTableMore(AtTheTable):
     async def test_a_suggestion_that_could_not_be_posted_frees_the_slot(self) -> None:
         await self.press("set", set_to=NOON4)
 
-        async def failing(channel_id: int, text: str, view: Any = None) -> None:
+        async def failing(
+            channel_id: int, text: str, view: Any = None, *, remember: Any = None
+        ) -> None:
             return None
 
         self.bot.post_message = failing  # type: ignore[method-assign]

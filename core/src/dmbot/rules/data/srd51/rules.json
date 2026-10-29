@@ -1,0 +1,1164 @@
+{
+ "source": "SRD 5.1",
+ "edition": "2014",
+ "licence": "CC-BY-4.0",
+ "document": {
+  "title": "System Reference Document 5.1",
+  "url": "https://media.dndbeyond.com/compendium-images/srd/5.1/SRD_CC_v5.1.pdf",
+  "sha256": "2504d2a0abb0a4d491a939be4f17910a2dde0312570ab8d208080225ccf0a1f0",
+  "pages": 403,
+  "word_list_sha256": "e29a1c1cb7c00d6a44d25b7e71f996b43ca4200a15792fa25d5d1231e104fa72"
+ },
+ "kind": "rule",
+ "section": "Rules",
+ "entries": [
+  {
+   "name": "Ability Scores and Modifiers",
+   "tag": "",
+   "text": "Each of a creature’s abilities has a score, a number that defines the magnitude of that ability. An ability score is not just a measure of innate capabilities, but also encompasses a creature’s training and competence in activities related to that ability.\nA score of 10 or 11 is the normal human average, but adventurers and many monsters are a cut above average in most abilities. A score of 18 is the highest that a person usually reaches. Adventurers can have scores as high as 20, and monsters and divine beings can have scores as high as 30.\nEach ability also has a modifier, derived from the score and ranging from −5 (for an ability score of 1) to +10 (for a score of 30). The Ability Scores and Modifiers table notes the ability modifiers for the range of possible ability scores, from 1 to 30.\nTo determine an ability modifier without consulting the table, subtract 10 from the ability score and then divide the total by 2 (round down).\nBecause ability modifiers affect almost every attack roll, ability check, and saving throw, ability modifiers come up in play more often than their associated scores.",
+   "page": 76,
+   "see_also": []
+  },
+  {
+   "name": "Advantage and Disadvantage",
+   "tag": "",
+   "text": "Sometimes a special ability or spell tells you that you have advantage or disadvantage on an ability check, a saving throw, or an attack roll. When that happens, you roll a second d20 when you make the roll. Use the higher of the two rolls if you have advantage, and use the lower roll if you have disadvantage. For example, if you have disadvantage and roll a 17 and a 5, you use the 5. If you instead have advantage and roll those numbers, you use the 17.\nIf multiple situations affect a roll and each one grants advantage or imposes disadvantage on it, you don’t roll more than one additional d20. If two favorable situations grant advantage, for example, you still roll only one additional d20.\nIf circumstances cause a roll to have both advantage and disadvantage, you are considered to have neither of them, and you roll one d20. This is true even if multiple circumstances impose disadvantage and only one grants advantage or vice versa. In such a situation, you have neither advantage nor disadvantage.\nWhen you have advantage or disadvantage and something in the game, such as the halfling’s Lucky trait, lets you reroll the d20, you can reroll only one of the dice. You choose which one. For example, if a halfling has advantage or disadvantage on an ability check and rolls a 1 and a 13, the halfling could use the Lucky trait to reroll the 1.\nYou usually gain advantage or disadvantage through the use of special abilities, actions, or spells. Inspiration can also give a character advantage. The GM can also decide that circumstances influence a roll in one direction or the other and grant advantage or impose disadvantage as a result.",
+   "page": 76,
+   "see_also": []
+  },
+  {
+   "name": "Proficiency Bonus",
+   "tag": "",
+   "text": "Characters have a proficiency bonus determined by level. Monsters also have this bonus, which is incorporated in their stat blocks. The bonus is used in the rules on ability checks, saving throws, and attack rolls.\nYour proficiency bonus can’t be added to a single die roll or other number more than once. For example, if two different rules say you can add your proficiency bonus to a Wisdom saving throw, you nevertheless add the bonus only once when you make the save.\nOccasionally, your proficiency bonus might be multiplied or divided (doubled or halved, for example) before you apply it. For example, the rogue’s Expertise feature doubles the proficiency bonus for certain ability checks. If a circumstance suggests that your proficiency bonus applies more than once to the same roll, you still add it only once and multiply or divide it only once.\nBy the same token, if a feature or effect allows you to multiply your proficiency bonus when making an ability check that wouldn’t normally benefit from your proficiency bonus, you still don’t add the bonus to the check. For that check your proficiency bonus is 0, given the fact that multiplying 0 by any number is still 0. For instance, if you lack proficiency in the History skill, you gain no benefit from a feature that lets you double your proficiency bonus when you make Intelligence (History) checks.\nIn general, you don’t multiply your proficiency bonus for attack rolls or saving throws. If a feature or effect allows you to do so, these same rules apply.",
+   "page": 77,
+   "see_also": []
+  },
+  {
+   "name": "Ability Checks",
+   "tag": "",
+   "text": "An ability check tests a character’s or monster’s innate talent and training in an effort to overcome a challenge. The GM calls for an ability check when a character or monster attempts an action (other than an attack) that has a chance of failure. When the outcome is uncertain, the dice determine the results.\nFor every ability check, the GM decides which of the six abilities is relevant to the task at hand and the difficulty of the task, represented by a Difficulty Class. The more difficult a task, the higher its DC. The Typical Difficulty Classes table shows the most common DCs.\nTo make an ability check, roll a d20 and add the relevant ability modifier. As with other d20 rolls, apply bonuses and penalties, and compare the total to the DC. If the total equals or exceeds the DC, the ability check is a success—the creature overcomes the challenge at hand. Otherwise, it’s a failure, which means the character or monster makes no progress toward the objective or makes progress combined with a setback determined by the GM.",
+   "page": 77,
+   "see_also": []
+  },
+  {
+   "name": "Contests",
+   "tag": "",
+   "text": "Sometimes one character’s or monster’s efforts are directly opposed to another’s. This can occur when both of them are trying to do the same thing and only one can succeed, such as attempting to snatch up a magic ring that has fallen on the floor. This situation also applies when one of them is trying to prevent the other one from accomplishing a goal—for example, when a monster tries to force open a door that an adventurer is holding closed. In situations like these, the outcome is determined by a special form of ability check, called a contest.\nBoth participants in a contest make ability checks appropriate to their efforts. They apply all appropriate bonuses and penalties, but instead of comparing the total to a DC, they compare the totals of their two checks. The participant with the higher check total wins the contest. That character or monster either succeeds at the action or prevents the other one from succeeding.\nIf the contest results in a tie, the situation remains the same as it was before the contest. Thus, one contestant might win the contest by default. If two characters tie in a contest to snatch a ring off the floor, neither character grabs it. In a contest between a monster trying to open a door and an adventurer trying to keep the door closed, a tie means that the door remains shut.",
+   "page": 77,
+   "see_also": []
+  },
+  {
+   "name": "Skills",
+   "tag": "",
+   "text": "Each ability covers a broad range of capabilities, including skills that a character or a monster can be proficient in. A skill represents a specific aspect of an ability score, and an individual’s proficiency in a skill demonstrates a focus on that aspect. (A character’s starting skill proficiencies are determined at character creation, and a monster’s skill proficiencies appear in the monster’s stat block.)\nFor example, a Dexterity check might reflect a character’s attempt to pull off an acrobatic stunt, to palm an object, or to stay hidden. Each of these aspects of Dexterity has an associated skill: Acrobatics, Sleight of Hand, and Stealth, respectively. So a character who has proficiency in the Stealth skill is particularly good at Dexterity checks related to sneaking and hiding.\nThe skills related to each ability score are shown in the following list. (No skills are related to Constitution.) See an ability’s description in the later sections of this section for examples of how to use a skill associated with an ability.\nStrength: Athletics\nDexterity: Acrobatics, Sleight of Hand, Stealth\nIntelligence: Arcana, History, Investigation, Nature, Religion\nWisdom: Animal Handling, Insight, Medicine, Perception, Survival\nCharisma: Deception, Intimidation, Performance, Persuasion\nSometimes, the GM might ask for an ability check using a specific skill—for example, “Make a Wisdom (Perception) check.” At other times, a player might ask the GM if proficiency in a particular skill applies to a check. In either case, proficiency in a skill means an individual can add his or her proficiency bonus to ability checks that involve that skill. Without proficiency in the skill, the individual makes a normal ability check.\nFor example, if a character attempts to climb up a dangerous cliff, the GM might ask for a Strength (Athletics) check. If the character is proficient in Athletics, the character’s proficiency bonus is added to the Strength check. If the character lacks that proficiency, he or she just makes a Strength check.",
+   "page": 77,
+   "see_also": []
+  },
+  {
+   "name": "Variant: Skills with Different Abilities",
+   "tag": "",
+   "text": "Normally, your proficiency in a skill applies only to a specific kind of ability check. Proficiency in Athletics, for example, usually applies to Strength checks. In some situations, though, your proficiency might reasonably apply to a different kind of check. In such cases, the GM might ask for a check using an unusual combination of ability and skill, or you might ask your GM if you can apply a proficiency to a different check. For example, if you have to swim from an offshore island to the mainland, your GM might call for a Constitution check to see if you have the stamina to make it that far. In this case, your GM might allow you to apply your proficiency in Athletics and ask for a Constitution (Athletics) check. So if you’re proficient in Athletics, you apply your proficiency bonus to the Constitution check just as you would normally do for a Strength (Athletics) check. Similarly, when your half-orc barbarian uses a display of raw strength to intimidate an enemy, your GM might ask for a Strength (Intimidation) check, even though Intimidation is normally associated with Charisma.",
+   "page": 78,
+   "see_also": []
+  },
+  {
+   "name": "Passive Checks",
+   "tag": "",
+   "text": "A passive check is a special kind of ability check that doesn’t involve any die rolls. Such a check can represent the average result for a task done repeatedly, such as searching for secret doors over and over again, or can be used when the GM wants to secretly determine whether the characters succeed at something without rolling dice, such as noticing a hidden monster.\nHere’s how to determine a character’s total for a passive check:\n10 + all modifiers that normally apply to the check If the character has advantage on the check, add 5. For disadvantage, subtract 5. The game refers to a passive check total as a score.\nFor example, if a 1st-level character has a Wisdom of 15 and proficiency in Perception, he or she has a passive Wisdom (Perception) score of 14.\nThe rules on hiding in the “Dexterity” section below rely on passive checks, as do the exploration rules.",
+   "page": 78,
+   "see_also": []
+  },
+  {
+   "name": "Working Together",
+   "tag": "",
+   "text": "Sometimes two or more characters team up to attempt a task. The character who’s leading the effort—or the one with the highest ability modifier—can make an ability check with advantage, reflecting the help provided by the other characters. In combat, this requires the Help action.\nA character can only provide help if the task is one that he or she could attempt alone. For example, trying to open a lock requires proficiency with thieves’ tools, so a character who lacks that proficiency can’t help another character in that task. Moreover, a character can help only when two or more individuals working together would actually be productive. Some tasks, such as threading a needle, are no easier with help.",
+   "page": 79,
+   "see_also": []
+  },
+  {
+   "name": "Group Checks",
+   "tag": "",
+   "text": "When a number of individuals are trying to accomplish something as a group, the GM might ask for a group ability check. In such a situation, the characters who are skilled at a particular task help cover those who aren’t.\nTo make a group ability check, everyone in the group makes the ability check. If at least half the group succeeds, the whole group succeeds. Otherwise, the group fails.\nGroup checks don’t come up very often, and they’re most useful when all the characters succeed or fail as a group. For example, when adventurers are navigating a swamp, the GM might call for a group Wisdom (Survival) check to see if the characters can avoid the quicksand, sinkholes, and other natural hazards of the environment. If at least half the group succeeds, the successful characters are able to guide their companions out of danger. Otherwise, the group stumbles into one of these hazards.",
+   "page": 79,
+   "see_also": []
+  },
+  {
+   "name": "Using Each Ability",
+   "tag": "",
+   "text": "Every task that a character or monster might attempt in the game is covered by one of the six abilities. This section explains in more detail what those abilities mean and the ways they are used in the game.",
+   "page": 79,
+   "see_also": []
+  },
+  {
+   "name": "Strength",
+   "tag": "",
+   "text": "Strength measures bodily power, athletic training, and the extent to which you can exert raw physical force.",
+   "page": 79,
+   "see_also": []
+  },
+  {
+   "name": "Strength Checks",
+   "tag": "",
+   "text": "A Strength check can model any attempt to lift, push, pull, or break something, to force your body through a space, or to otherwise apply brute force to a situation. The Athletics skill reflects aptitude in certain kinds of Strength checks.\nAthletics. Your Strength (Athletics) check covers difficult situations you encounter while climbing, jumping, or swimming. Examples include the following activities:\n• You attempt to climb a sheer or slippery cliff, avoid hazards while scaling a wall, or cling to a surface while something is trying to knock you off.\n• You try to jump an unusually long distance or pull off a stunt midjump.\n• You struggle to swim or stay afloat in treacherous currents, storm-tossed waves, or areas of thick seaweed. Or another creature tries to push or pull you underwater or otherwise interfere with your swimming.\nOther Strength Checks. The GM might also call for a Strength check when you try to accomplish tasks like the following:\n• Force open a stuck, locked, or barred door\n• Break free of bonds\n• Push through a tunnel that is too small\n• Hang on to a wagon while being dragged behind it\n• Tip over a statue\n• Keep a boulder from rolling",
+   "page": 79,
+   "see_also": []
+  },
+  {
+   "name": "Attack Rolls and Damage (Strength)",
+   "tag": "",
+   "text": "You add your Strength modifier to your attack roll and your damage roll when attacking with a melee weapon such as a mace, a battleaxe, or a javelin. You use melee weapons to make melee attacks in hand-to-hand combat, and some of them can be thrown to make a ranged attack.",
+   "page": 79,
+   "see_also": []
+  },
+  {
+   "name": "Lifting and Carrying",
+   "tag": "",
+   "text": "Your Strength score determines the amount of weight you can bear. The following terms define what you can lift or carry.\nCarrying Capacity. Your carrying capacity is your Strength score multiplied by 15. This is the weight (in pounds) that you can carry, which is high enough that most characters don’t usually have to worry about it.\nPush, Drag, or Lift. You can push, drag, or lift a weight in pounds up to twice your carrying capacity (or 30 times your Strength score). While pushing or dragging weight in excess of your carrying capacity, your speed drops to 5 feet.\nSize and Strength. Larger creatures can bear more weight, whereas Tiny creatures can carry less. For each size category above Medium, double the creature’s carrying capacity and the amount it can push, drag, or lift. For a Tiny creature, halve these weights.",
+   "page": 79,
+   "see_also": []
+  },
+  {
+   "name": "Variant: Encumbrance",
+   "tag": "",
+   "text": "The rules for lifting and carrying are intentionally simple. Here is a variant if you are looking for more detailed rules for determining how a character is hindered by the weight of equipment. When you use this variant, ignore the Strength column of the Armor table.\nIf you carry weight in excess of 5 times your Strength score, you are encumbered, which means your speed drops by 10 feet.\nIf you carry weight in excess of 10 times your Strength score, up to your maximum carrying capacity, you are instead heavily encumbered, which means your speed drops by 20 feet and you have disadvantage on ability checks, attack rolls, and saving throws that use Strength, Dexterity, or Constitution.",
+   "page": 80,
+   "see_also": []
+  },
+  {
+   "name": "Dexterity",
+   "tag": "",
+   "text": "Dexterity measures agility, reflexes, and balance.",
+   "page": 80,
+   "see_also": []
+  },
+  {
+   "name": "Dexterity Checks",
+   "tag": "",
+   "text": "A Dexterity check can model any attempt to move nimbly, quickly, or quietly, or to keep from falling on tricky footing. The Acrobatics, Sleight of Hand, and Stealth skills reflect aptitude in certain kinds of Dexterity checks.\nAcrobatics. Your Dexterity (Acrobatics) check covers your attempt to stay on your feet in a tricky situation, such as when you’re trying to run across a sheet of ice, balance on a tightrope, or stay upright on a rocking ship’s deck. The GM might also call for a Dexterity (Acrobatics) check to see if you can perform acrobatic stunts, including dives, rolls, somersaults, and flips.\nSleight of Hand. Whenever you attempt an act of legerdemain or manual trickery, such as planting something on someone else or concealing an object on your person, make a Dexterity (Sleight of Hand) check. The GM might also call for a Dexterity (Sleight of Hand) check to determine whether you can lift a coin purse off another person or slip something out of another person’s pocket.\nStealth. Make a Dexterity (Stealth) check when you attempt to conceal yourself from enemies, slink past guards, slip away without being noticed, or sneak up on someone without being seen or heard.\nOther Dexterity Checks. The GM might call for a Dexterity check when you try to accomplish tasks like the following:\n• Control a heavily laden cart on a steep descent\n• Steer a chariot around a tight turn\n• Pick a lock\n• Disable a trap\n• Securely tie up a prisoner\n• Wriggle free of bonds\n• Play a stringed instrument\n• Craft a small or detailed object",
+   "page": 80,
+   "see_also": []
+  },
+  {
+   "name": "Attack Rolls and Damage (Dexterity)",
+   "tag": "",
+   "text": "You add your Dexterity modifier to your attack roll and your damage roll when attacking with a ranged weapon, such as a sling or a longbow. You can also add your Dexterity modifier to your attack roll and your damage roll when attacking with a melee weapon that has the finesse property, such as a dagger or a rapier.",
+   "page": 80,
+   "see_also": []
+  },
+  {
+   "name": "Armor Class",
+   "tag": "",
+   "text": "Depending on the armor you wear, you might add some or all of your Dexterity modifier to your Armor Class.",
+   "page": 80,
+   "see_also": []
+  },
+  {
+   "name": "Initiative (Dexterity)",
+   "tag": "",
+   "text": "At the beginning of every combat, you roll initiative by making a Dexterity check. Initiative determines the order of creatures’ turns in combat.",
+   "page": 80,
+   "see_also": []
+  },
+  {
+   "name": "Hiding",
+   "tag": "",
+   "text": "The GM decides when circumstances are appropriate for hiding. When you try to hide, make a Dexterity (Stealth) check. Until you are discovered or you stop hiding, that check’s total is contested by the Wisdom (Perception) check of any creature that actively searches for signs of your presence.\nYou can’t hide from a creature that can see you clearly, and you give away your position if you make noise, such as shouting a warning or knocking over a vase.\nAn invisible creature can always try to hide. Signs of its passage might still be noticed, and it does have to stay quiet.\nIn combat, most creatures stay alert for signs of danger all around, so if you come out of hiding and approach a creature, it usually sees you. However, under certain circumstances, the GM might allow you to stay hidden as you approach a creature that is distracted, allowing you to gain advantage on an attack roll before you are seen.\nPassive Perception. When you hide, there’s a chance someone will notice you even if they aren’t searching. To determine whether such a creature notices you, the GM compares your Dexterity (Stealth) check with that creature’s passive Wisdom (Perception) score, which equals 10 + the creature’s Wisdom modifier, as well as any other bonuses or penalties. If the creature has advantage, add 5. For disadvantage, subtract 5. For example, if a 1st-level character (with a proficiency bonus of +2) has a Wisdom of 15 (a +2 modifier) and proficiency in Perception, he or she has a passive Wisdom (Perception) of 14.\nWhat Can You See? One of the main factors in determining whether you can find a hidden creature or object is how well you can see in an area, which might be lightly or heavily obscured, as explained in \"The Environment.”",
+   "page": 80,
+   "see_also": []
+  },
+  {
+   "name": "Constitution",
+   "tag": "",
+   "text": "Constitution measures health, stamina, and vital force.",
+   "page": 81,
+   "see_also": []
+  },
+  {
+   "name": "Constitution Checks",
+   "tag": "",
+   "text": "Constitution checks are uncommon, and no skills apply to Constitution checks, because the endurance this ability represents is largely passive rather than involving a specific effort on the part of a character or monster. A Constitution check can model your attempt to push beyond normal limits, however.\nThe GM might call for a Constitution check when you try to accomplish tasks like the following:\n• Hold your breath\n• March or labor for hours without rest\n• Go without sleep\n• Survive without food or water\n• Quaff an entire stein of ale in one go",
+   "page": 81,
+   "see_also": []
+  },
+  {
+   "name": "Hit Points (Constitution)",
+   "tag": "",
+   "text": "Your Constitution modifier contributes to your hit points. Typically, you add your Constitution modifier to each Hit Die you roll for your hit points.\nIf your Constitution modifier changes, your hit point maximum changes as well, as though you had the new modifier from 1st level. For example, if you raise your Constitution score when you reach 4th level and your Constitution modifier increases from +1 to +2, you adjust your hit point maximum as though the modifier had always been +2. So you add 3 hit points for your first three levels, and then roll your hit points for 4th level using your new modifier. Or if you’re 7th level and some effect lowers your Constitution score so as to reduce your Constitution modifier by 1, your hit point maximum is reduced by 7.",
+   "page": 81,
+   "see_also": []
+  },
+  {
+   "name": "Intelligence",
+   "tag": "",
+   "text": "Intelligence measures mental acuity, accuracy of recall, and the ability to reason.",
+   "page": 81,
+   "see_also": []
+  },
+  {
+   "name": "Intelligence Checks",
+   "tag": "",
+   "text": "An Intelligence check comes into play when you need to draw on logic, education, memory, or deductive reasoning. The Arcana, History, Investigation, Nature, and Religion skills reflect aptitude in certain kinds of Intelligence checks.\nArcana. Your Intelligence (Arcana) check measures your ability to recall lore about spells, magic items, eldritch symbols, magical traditions, the planes of existence, and the inhabitants of those planes.\nHistory. Your Intelligence (History) check measures your ability to recall lore about historical events, legendary people, ancient kingdoms, past disputes, recent wars, and lost civilizations.\nInvestigation. When you look around for clues and make deductions based on those clues, you make an Intelligence (Investigation) check. You might deduce the location of a hidden object, discern from the appearance of a wound what kind of weapon dealt it, or determine the weakest point in a tunnel that could cause it to collapse. Poring through ancient scrolls in search of a hidden fragment of knowledge might also call for an Intelligence (Investigation) check.\nNature. Your Intelligence (Nature) check measures your ability to recall lore about terrain, plants and animals, the weather, and natural cycles.\nReligion. Your Intelligence (Religion) check measures your ability to recall lore about deities, rites and prayers, religious hierarchies, holy symbols, and the practices of secret cults.\nOther Intelligence Checks. The GM might call for an Intelligence check when you try to accomplish tasks like the following:\n• Communicate with a creature without using words\n• Estimate the value of a precious item\n• Pull together a disguise to pass as a city guard\n• Forge a document\n• Recall lore about a craft or trade\n• Win a game of skill",
+   "page": 81,
+   "see_also": []
+  },
+  {
+   "name": "Spellcasting Ability (Intelligence)",
+   "tag": "",
+   "text": "Wizards use Intelligence as their spellcasting ability, which helps determine the saving throw DCs of spells they cast.",
+   "page": 82,
+   "see_also": []
+  },
+  {
+   "name": "Wisdom",
+   "tag": "",
+   "text": "Wisdom reflects how attuned you are to the world around you and represents perceptiveness and intuition.",
+   "page": 82,
+   "see_also": []
+  },
+  {
+   "name": "Wisdom Checks",
+   "tag": "",
+   "text": "A Wisdom check might reflect an effort to read body language, understand someone’s feelings, notice things about the environment, or care for an injured person. The Animal Handling, Insight, Medicine, Perception, and Survival skills reflect aptitude in certain kinds of Wisdom checks.\nAnimal Handling. When there is any question whether you can calm down a domesticated animal, keep a mount from getting spooked, or intuit an animal’s intentions, the GM might call for a Wisdom (Animal Handling) check. You also make a Wisdom (Animal Handling) check to control your mount when you attempt a risky maneuver.\nInsight. Your Wisdom (Insight) check decides whether you can determine the true intentions of a creature, such as when searching out a lie or predicting someone’s next move. Doing so involves gleaning clues from body language, speech habits, and changes in mannerisms.\nMedicine. A Wisdom (Medicine) check lets you try to stabilize a dying companion or diagnose an illness.\nPerception. Your Wisdom (Perception) check lets you spot, hear, or otherwise detect the presence of something. It measures your general awareness of your surroundings and the keenness of your senses. For example, you might try to hear a conversation through a closed door, eavesdrop under an open window, or hear monsters moving stealthily in the forest. Or you might try to spot things that are obscured or easy to miss, whether they are orcs lying in ambush on a road, thugs hiding in the shadows of an alley, or candlelight under a closed secret door.\nSurvival. The GM might ask you to make a Wisdom (Survival) check to follow tracks, hunt wild game, guide your group through frozen wastelands, identify signs that owlbears live nearby, predict the weather, or avoid quicksand and other natural hazards.\nOther Wisdom Checks. The GM might call for a Wisdom check when you try to accomplish tasks like the following:\n• Get a gut feeling about what course of action to follow\n• Discern whether a seemingly dead or living creature is undead",
+   "page": 82,
+   "see_also": []
+  },
+  {
+   "name": "Spellcasting Ability (Wisdom)",
+   "tag": "",
+   "text": "Clerics, druids, and rangers use Wisdom as their spellcasting ability, which helps determine the saving throw DCs of spells they cast.",
+   "page": 82,
+   "see_also": []
+  },
+  {
+   "name": "Charisma",
+   "tag": "",
+   "text": "Charisma measures your ability to interact effectively with others. It includes such factors as confidence and eloquence, and it can represent a charming or commanding personality.",
+   "page": 82,
+   "see_also": []
+  },
+  {
+   "name": "Charisma Checks",
+   "tag": "",
+   "text": "A Charisma check might arise when you try to influence or entertain others, when you try to make an impression or tell a convincing lie, or when you are navigating a tricky social situation. The Deception, Intimidation, Performance, and Persuasion skills reflect aptitude in certain kinds of Charisma checks.\nDeception. Your Charisma (Deception) check determines whether you can convincingly hide the truth, either verbally or through your actions. This deception can encompass everything from misleading others through ambiguity to telling outright lies. Typical situations include trying to fast-talk a guard, con a merchant, earn money through gambling, pass yourself off in a disguise, dull someone’s suspicions with false assurances, or maintain a straight face while telling a blatant lie.\nIntimidation. When you attempt to influence someone through overt threats, hostile actions, and physical violence, the GM might ask you to make a Charisma (Intimidation) check. Examples include trying to pry information out of a prisoner, convincing street thugs to back down from a confrontation, or using the edge of a broken bottle to convince a sneering vizier to reconsider a decision.\nPerformance. Your Charisma (Performance) check determines how well you can delight an audience with music, dance, acting, storytelling, or some other form of entertainment.\nPersuasion. When you attempt to influence someone or a group of people with tact, social graces, or good nature, the GM might ask you to make a Charisma (Persuasion) check. Typically, you use persuasion when acting in good faith, to foster friendships, make cordial requests, or exhibit proper etiquette. Examples of persuading others include convincing a chamberlain to let your party see the king, negotiating peace between warring tribes, or inspiring a crowd of townsfolk.\nOther Charisma Checks. The GM might call for a Charisma check when you try to accomplish tasks like the following:\n• Find the best person to talk to for news, rumors, and gossip\n• Blend into a crowd to get the sense of key topics of conversation",
+   "page": 82,
+   "see_also": []
+  },
+  {
+   "name": "Spellcasting Ability (Charisma)",
+   "tag": "",
+   "text": "Bards, paladins, sorcerers, and warlocks use Charisma as their spellcasting ability, which helps determine the saving throw DCs of spells they cast.",
+   "page": 83,
+   "see_also": []
+  },
+  {
+   "name": "Saving Throws",
+   "tag": "",
+   "text": "A saving throw—also called a save—represents an attempt to resist a spell, a trap, a poison, a disease, or a similar threat. You don’t normally decide to make a saving throw; you are forced to make one because your character or monster is at risk of harm.\nTo make a saving throw, roll a d20 and add the appropriate ability modifier. For example, you use your Dexterity modifier for a Dexterity saving throw.\nA saving throw can be modified by a situational bonus or penalty and can be affected by advantage and disadvantage, as determined by the GM.\nEach class gives proficiency in at least two saving throws. The wizard, for example, is proficient in Intelligence saves. As with skill proficiencies, proficiency in a saving throw lets a character add his or her proficiency bonus to saving throws made using a particular ability score. Some monsters have saving throw proficiencies as well.\nThe Difficulty Class for a saving throw is determined by the effect that causes it. For example, the DC for a saving throw allowed by a spell is determined by the caster’s spellcasting ability and proficiency bonus.\nThe result of a successful or failed saving throw is also detailed in the effect that allows the save. Usually, a successful save means that a creature suffers no harm, or reduced harm, from an effect.",
+   "page": 83,
+   "see_also": []
+  },
+  {
+   "name": "Time",
+   "tag": "",
+   "text": "In situations where keeping track of the passage of time is important, the GM determines the time a task requires. The GM might use a different time scale depending on the context of the situation at hand. In a dungeon environment, the adventurers’ movement happens on a scale of minutes. It takes them about a minute to creep down a long hallway, another minute to check for traps on the door at the end of the hall, and a good ten minutes to search the chamber beyond for anything interesting or valuable.\nIn a city or wilderness, a scale of hours is often more appropriate. Adventurers eager to reach the lonely tower at the heart of the forest hurry across those fifteen miles in just under four hours’ time.\nFor long journeys, a scale of days works best. Following the road from Baldur’s Gate to Waterdeep, the adventurers spend four uneventful days before a goblin ambush interrupts their journey.\nIn combat and other fast-paced situations, the game relies on rounds, a 6-second span of time.",
+   "page": 84,
+   "see_also": []
+  },
+  {
+   "name": "Movement",
+   "tag": "",
+   "text": "Swimming across a rushing river, sneaking down a dungeon corridor, scaling a treacherous mountain slope—all sorts of movement play a key role in fantasy gaming adventures.\nThe GM can summarize the adventurers’ movement without calculating exact distances or travel times: “You travel through the forest and find the dungeon entrance late in the evening of the third day.” Even in a dungeon, particularly a large dungeon or a cave network, the GM can summarize movement between encounters: “After killing the guardian at the entrance to the ancient dwarven stronghold, you consult your map, which leads you through miles of echoing corridors to a chasm bridged by a narrow stone arch.”\nSometimes it’s important, though, to know how long it takes to get from one spot to another, whether the answer is in days, hours, or minutes. The rules for determining travel time depend on two factors: the speed and travel pace of the creatures moving and the terrain they’re moving over.",
+   "page": 84,
+   "see_also": []
+  },
+  {
+   "name": "Speed",
+   "tag": "",
+   "text": "Every character and monster has a speed, which is the distance in feet that the character or monster can walk in 1 round. This number assumes short bursts of energetic movement in the midst of a life-threatening situation.\nThe following rules determine how far a character or monster can move in a minute, an hour, or a day.",
+   "page": 84,
+   "see_also": []
+  },
+  {
+   "name": "Travel Pace",
+   "tag": "",
+   "text": "While traveling, a group of adventurers can move at a normal, fast, or slow pace, as shown on the Travel Pace table. The table states how far the party can move in a period of time and whether the pace has any effect. A fast pace makes characters less perceptive, while a slow pace makes it possible to sneak around and to search an area more carefully.\nForced March. The Travel Pace table assumes that characters travel for 8 hours in day. They can push on beyond that limit, at the risk of exhaustion.\nFor each additional hour of travel beyond 8 hours, the characters cover the distance shown in the Hour column for their pace, and each character must make a Constitution saving throw at the end of the hour. The DC is 10 + 1 for each hour past 8 hours. On a failed saving throw, a character suffers one level of exhaustion (see appendix PH-A).\nMounts and Vehicles. For short spans of time (up to an hour), many animals move much faster than humanoids. A mounted character can ride at a gallop for about an hour, covering twice the usual distance for a fast pace. If fresh mounts are available every 8 to 10 miles, characters can cover larger distances at this pace, but this is very rare except in densely populated areas.\nCharacters in wagons, carriages, or other land vehicles choose a pace as normal. Characters in a waterborne vessel are limited to the speed of the vessel, and they don’t suffer penalties for a fast pace or gain benefits from a slow pace. Depending on the vessel and the size of the crew, ships might be able to travel for up to 24 hours per day.\nCertain special mounts, such as a pegasus or griffon, or special vehicles, such as a carpet of flying, allow you to travel more swiftly.",
+   "page": 84,
+   "see_also": []
+  },
+  {
+   "name": "Difficult Terrain",
+   "tag": "",
+   "text": "The travel speeds given in the Travel Pace table assume relatively simple terrain: roads, open plains, or clear dungeon corridors. But adventurers often face dense forests, deep swamps, rubble-filled ruins, steep mountains, and ice-covered ground—all considered difficult terrain.\nYou move at half speed in difficult terrain—moving 1 foot in difficult terrain costs 2 feet of speed—so you can cover only half the normal distance in a minute, an hour, or a day.",
+   "page": 85,
+   "see_also": []
+  },
+  {
+   "name": "Special Types of Movement",
+   "tag": "",
+   "text": "Movement through dangerous dungeons or wilderness areas often involves more than simply walking. Adventurers might have to climb, crawl, swim, or jump to get where they need to go.",
+   "page": 85,
+   "see_also": []
+  },
+  {
+   "name": "Climbing, Swimming, and Crawling",
+   "tag": "",
+   "text": "While climbing or swimming, each foot of movement costs 1 extra foot (2 extra feet in difficult terrain), unless a creature has a climbing or swimming speed. At the GM’s option, climbing a slippery vertical surface or one with few handholds requires a successful Strength (Athletics) check. Similarly, gaining any distance in rough water might require a successful Strength (Athletics) check.",
+   "page": 85,
+   "see_also": []
+  },
+  {
+   "name": "Jumping",
+   "tag": "",
+   "text": "Your Strength determines how far you can jump.\nLong Jump. When you make a long jump, you cover a number of feet up to your Strength score if you move at least 10 feet on foot immediately before the jump. When you make a standing long jump, you can leap only half that distance. Either way, each foot you clear on the jump costs a foot of movement.\nThis rule assumes that the height of your jump doesn’t matter, such as a jump across a stream or chasm. At your GM’s option, you must succeed on a DC 10 Strength (Athletics) check to clear a low obstacle (no taller than a quarter of the jump’s distance), such as a hedge or low wall. Otherwise, you hit it.\nWhen you land in difficult terrain, you must succeed on a DC 10 Dexterity (Acrobatics) check to land on your feet. Otherwise, you land prone.\nHigh Jump. When you make a high jump, you leap into the air a number of feet equal to 3 + your Strength modifier if you move at least 10 feet on foot immediately before the jump. When you make a standing high jump, you can jump only half that distance. Either way, each foot you clear on the jump costs a foot of movement. In some circumstances, your GM might allow you to make a Strength (Athletics) check to jump higher than you normally can.\nYou can extend your arms half your height above yourself during the jump. Thus, you can reach above you a distance equal to the height of the jump plus 1½ times your height.",
+   "page": 85,
+   "see_also": []
+  },
+  {
+   "name": "The Environment",
+   "tag": "",
+   "text": "By its nature, adventuring involves delving into places that are dark, dangerous, and full of mysteries to be explored. The rules in this section cover some of the most important ways in which adventurers interact with the environment in such places.",
+   "page": 86,
+   "see_also": []
+  },
+  {
+   "name": "Falling",
+   "tag": "",
+   "text": "A fall from a great height is one of the most common hazards facing an adventurer. At the end of a fall, a creature takes 1d6 bludgeoning damage for every 10 feet it fell, to a maximum of 20d6. The creature lands prone, unless it avoids taking damage from the fall.",
+   "page": 86,
+   "see_also": []
+  },
+  {
+   "name": "Suffocating",
+   "tag": "",
+   "text": "A creature can hold its breath for a number of minutes equal to 1 + its Constitution modifier (minimum of 30 seconds).\nWhen a creature runs out of breath or is choking, it can survive for a number of rounds equal to its Constitution modifier (minimum of 1 round). At the start of its next turn, it drops to 0 hit points and is dying, and it can’t regain hit points or be stabilized until it can breathe again.\nFor example, a creature with a Constitution of 14 can hold its breath for 3 minutes. If it starts suffocating, it has 2 rounds to reach air before it drops to 0 hit points.",
+   "page": 86,
+   "see_also": []
+  },
+  {
+   "name": "Vision and Light",
+   "tag": "",
+   "text": "The most fundamental tasks of adventuring—noticing danger, finding hidden objects, hitting an enemy in combat, and targeting a spell, to name just a few—rely heavily on a character’s ability to see. Darkness and other effects that obscure vision can prove a significant hindrance.\nA given area might be lightly or heavily obscured. In a lightly obscured area, such as dim light, patchy fog, or moderate foliage, creatures have disadvantage on Wisdom (Perception) checks that rely on sight.\nA heavily obscured area—such as darkness, opaque fog, or dense foliage—blocks vision entirely. A creature effectively suffers from the blinded condition (see appendix PH-A) when trying to see something in that area.\nThe presence or absence of light in an environment creates three categories of illumination: bright light, dim light, and darkness.\nBright light lets most creatures see normally. Even gloomy days provide bright light, as do torches, lanterns, fires, and other sources of illumination within a specific radius.\nDim light, also called shadows, creates a lightly obscured area. An area of dim light is usually a boundary between a source of bright light, such as a torch, and surrounding darkness. The soft light of twilight and dawn also counts as dim light. A particularly brilliant full moon might bathe the land in dim light.\nDarkness creates a heavily obscured area. Characters face darkness outdoors at night (even most moonlit nights), within the confines of an unlit dungeon or a subterranean vault, or in an area of magical darkness.",
+   "page": 86,
+   "see_also": []
+  },
+  {
+   "name": "Blindsight",
+   "tag": "",
+   "text": "A creature with blindsight can perceive its surroundings without relying on sight, within a specific radius. Creatures without eyes, such as oozes, and creatures with echolocation or heightened senses, such as bats and true dragons, have this sense.",
+   "page": 86,
+   "see_also": []
+  },
+  {
+   "name": "Darkvision",
+   "tag": "",
+   "text": "Many creatures in fantasy gaming worlds, especially those that dwell underground, have darkvision. Within a specified range, a creature with darkvision can see in darkness as if the darkness were dim light, so areas of darkness are only lightly obscured as far as that creature is concerned. However, the creature can’t discern color in darkness, only shades of gray.",
+   "page": 86,
+   "see_also": []
+  },
+  {
+   "name": "Truesight",
+   "tag": "",
+   "text": "A creature with truesight can, out to a specific range, see in normal and magical darkness, see invisible creatures and objects, automatically detect visual illusions and succeed on saving throws against them, and perceives the original form of a shapechanger or a creature that is transformed by magic. Furthermore, the creature can see into the Ethereal Plane.",
+   "page": 86,
+   "see_also": []
+  },
+  {
+   "name": "Food and Water",
+   "tag": "",
+   "text": "Characters who don’t eat or drink suffer the effects of exhaustion (see appendix PH-A). Exhaustion caused by lack of food or water can’t be removed until the character eats and drinks the full required amount.",
+   "page": 86,
+   "see_also": []
+  },
+  {
+   "name": "Food",
+   "tag": "",
+   "text": "A character needs one pound of food per day and can make food last longer by subsisting on half rations. Eating half a pound of food in a day counts as half a day without food.\nA character can go without food for a number of days equal to 3 + his or her Constitution modifier (minimum 1). At the end of each day beyond that limit, a character automatically suffers one level of exhaustion.\nA normal day of eating resets the count of days without food to zero.",
+   "page": 86,
+   "see_also": []
+  },
+  {
+   "name": "Water",
+   "tag": "",
+   "text": "A character needs one gallon of water per day, or two gallons per day if the weather is hot. A character who drinks only half that much water must succeed on a DC 15 Constitution saving throw or suffer one level of exhaustion at the end of the day. A character with access to even less water automatically suffers one level of exhaustion at the end of the day.\nIf the character already has one or more levels of exhaustion, the character takes two levels in either case.",
+   "page": 87,
+   "see_also": []
+  },
+  {
+   "name": "Interacting with Objects",
+   "tag": "",
+   "text": "A character’s interaction with objects in an environment is often simple to resolve in the game. The player tells the GM that his or her character is doing something, such as moving a lever, and the GM describes what, if anything, happens.\nFor example, a character might decide to pull a lever, which might, in turn, raise a portcullis, cause a room to flood with water, or open a secret door in a nearby wall. If the lever is rusted in position, though, a character might need to force it. In such a situation, the GM might call for a Strength check to see whether the character can wrench the lever into place. The GM sets the DC for any such check based on the difficulty of the task.\nCharacters can also damage objects with their weapons and spells. Objects are immune to poison and psychic damage, but otherwise they can be affected by physical and magical attacks much like creatures can. The GM determines an object’s Armor Class and hit points, and might decide that certain objects have resistance or immunity to certain kinds of attacks. (It’s hard to cut a rope with a club, for example.) Objects always fail Strength and Dexterity saving throws, and they are immune to effects that require other saves. When an object drops to 0 hit points, it breaks.\nA character can also attempt a Strength check to break an object. The GM sets the DC for any such check.",
+   "page": 87,
+   "see_also": []
+  },
+  {
+   "name": "Resting",
+   "tag": "",
+   "text": "Heroic though they might be, adventurers can’t spend every hour of the day in the thick of exploration, social interaction, and combat. They need rest—time to sleep and eat, tend their wounds, refresh their minds and spirits for spellcasting, and brace themselves for further adventure.\nAdventurers can take short rests in the midst of an adventuring day and a long rest to end the day.",
+   "page": 87,
+   "see_also": []
+  },
+  {
+   "name": "Short Rest",
+   "tag": "",
+   "text": "A short rest is a period of downtime, at least 1 hour long, during which a character does nothing more strenuous than eating, drinking, reading, and tending to wounds.\nA character can spend one or more Hit Dice at the end of a short rest, up to the character’s maximum number of Hit Dice, which is equal to the character’s level. For each Hit Die spent in this way, the player rolls the die and adds the character’s Constitution modifier to it. The character regains hit points equal to the total. The player can decide to spend an additional Hit Die after each roll. A character regains some spent Hit Dice upon finishing a long rest, as explained below.",
+   "page": 87,
+   "see_also": []
+  },
+  {
+   "name": "Long Rest",
+   "tag": "",
+   "text": "A long rest is a period of extended downtime, at least 8 hours long, during which a character sleeps or performs light activity: reading, talking, eating, or standing watch for no more than 2 hours. If the rest is interrupted by a period of strenuous activity—at least 1 hour of walking, fighting, casting spells, or similar adventuring activity—the characters must begin the rest again to gain any benefit from it.\nAt the end of a long rest, a character regains all lost hit points. The character also regains spent Hit Dice, up to a number of dice equal to half of the character’s total number of them (minimum of one die). For example, if a character has eight Hit Dice, he or she can regain four spent Hit Dice upon finishing a long rest.\nA character can’t benefit from more than one long rest in a 24-hour period, and a character must have at least 1 hit point at the start of the rest to gain its benefits.",
+   "page": 87,
+   "see_also": []
+  },
+  {
+   "name": "Between Adventures",
+   "tag": "",
+   "text": "Between trips to dungeons and battles against ancient evils, adventurers need time to rest, recuperate, and prepare for their next adventure. Many adventurers also use this time to perform other tasks, such as crafting arms and armor, performing research, or spending their hard-earned gold.\nIn some cases, the passage of time is something that occurs with little fanfare or description. When starting a new adventure, the GM might simply declare that a certain amount of time has passed and allow you to describe in general terms what your character has been doing. At other times, the GM might want to keep track of just how much time is passing as events beyond your perception stay in motion.",
+   "page": 88,
+   "see_also": []
+  },
+  {
+   "name": "Lifestyle Expenses",
+   "tag": "",
+   "text": "Between adventures, you choose a particular quality of life and pay the cost of maintaining that lifestyle.\nLiving a particular lifestyle doesn’t have a huge effect on your character, but your lifestyle can affect the way other individuals and groups react to you. For example, when you lead an aristocratic lifestyle, it might be easier for you to influence the nobles of the city than if you live in poverty.",
+   "page": 88,
+   "see_also": []
+  },
+  {
+   "name": "Downtime Activities",
+   "tag": "",
+   "text": "Between adventures, the GM might ask you what your character is doing during his or her downtime. Periods of downtime can vary in duration, but each downtime activity requires a certain number of days to complete before you gain any benefit, and at least 8 hours of each day must be spent on the downtime activity for the day to count. The days do not need to be consecutive. If you have more than the minimum amount of days to spend, you can keep doing the same thing for a longer period of time, or switch to a new downtime activity.\nDowntime activities other than the ones presented below are possible. If you want your character to spend his or her downtime performing an activity not covered here, discuss it with your GM.",
+   "page": 88,
+   "see_also": []
+  },
+  {
+   "name": "Crafting",
+   "tag": "",
+   "text": "You can craft nonmagical objects, including adventuring equipment and works of art. You must be proficient with tools related to the object you are trying to create (typically artisan’s tools). You might also need access to special materials or locations necessary to create it. For example, someone proficient with smith’s tools needs a forge in order to craft a sword or suit of armor.\nFor every day of downtime you spend crafting, you can craft one or more items with a total market value not exceeding 5 gp, and you must expend raw materials worth half the total market value. If something you want to craft has a market value greater than 5 gp, you make progress every day in 5-gp increments until you reach the market value of the item. For example, a suit of plate armor (market value 1,500 gp) takes 300 days to craft by yourself.\nMultiple characters can combine their efforts toward the crafting of a single item, provided that the characters all have proficiency with the requisite tools and are working together in the same place. Each character contributes 5 gp worth of effort for every day spent helping to craft the item. For example, three characters with the requisite tool proficiency and the proper facilities can craft a suit of plate armor in 100 days, at a total cost of 750 gp.\nWhile crafting, you can maintain a modest lifestyle without having to pay 1 gp per day, or a comfortable lifestyle at half the normal cost.",
+   "page": 88,
+   "see_also": []
+  },
+  {
+   "name": "Practicing a Profession",
+   "tag": "",
+   "text": "You can work between adventures, allowing you to maintain a modest lifestyle without having to pay 1 gp per day. This benefit lasts as long you continue to practice your profession.\nIf you are a member of an organization that can provide gainful employment, such as a temple or a thieves’ guild, you earn enough to support a comfortable lifestyle instead.\nIf you have proficiency in the Performance skill and put your performance skill to use during your downtime, you earn enough to support a wealthy lifestyle instead.",
+   "page": 88,
+   "see_also": []
+  },
+  {
+   "name": "Recuperating",
+   "tag": "",
+   "text": "You can use downtime between adventures to recover from a debilitating injury, disease, or poison.\nAfter three days of downtime spent recuperating, you can make a DC 15 Constitution saving throw. On a successful save, you can choose one of the following results:\n• End one effect on you that prevents you from regaining hit points.\n• For the next 24 hours, gain advantage on saving throws against one disease or poison currently affecting you.",
+   "page": 88,
+   "see_also": []
+  },
+  {
+   "name": "Researching",
+   "tag": "",
+   "text": "The time between adventures is a great chance to perform research, gaining insight into mysteries that have unfurled over the course of the campaign. Research can include poring over dusty tomes and crumbling scrolls in a library or buying drinks for the locals to pry rumors and gossip from their lips.\nWhen you begin your research, the GM determines whether the information is available, how many days of downtime it will take to find it, and whether there are any restrictions on your research (such as needing to seek out a specific individual, tome, or location). The GM might also require you to make one or more ability checks, such as an Intelligence (Investigation) check to find clues pointing toward the information you seek, or a Charisma (Persuasion) check to secure someone’s aid. Once those conditions are met, you learn the information if it is available.\nFor each day of research, you must spend 1 gp to cover your expenses. This cost is in addition to your normal lifestyle expenses.",
+   "page": 89,
+   "see_also": []
+  },
+  {
+   "name": "Training",
+   "tag": "",
+   "text": "You can spend time between adventures learning a new language or training with a set of tools. Your GM might allow additional training options.\nFirst, you must find an instructor willing to teach you. The GM determines how long it takes, and whether one or more ability checks are required.\nThe training lasts for 250 days and costs 1 gp per day. After you spend the requisite amount of time and money, you learn the new language or gain proficiency with the new tool.",
+   "page": 89,
+   "see_also": []
+  },
+  {
+   "name": "The Order of Combat",
+   "tag": "",
+   "text": "A typical combat encounter is a clash between two sides, a flurry of weapon swings, feints, parries, footwork, and spellcasting. The game organizes the chaos of combat into a cycle of rounds and turns. A round represents about 6 seconds in the game world. During a round, each participant in a battle takes a turn. The order of turns is determined at the beginning of a combat encounter, when everyone rolls initiative. Once everyone has taken a turn, the fight continues to the next round if neither side has defeated the other.",
+   "page": 90,
+   "see_also": []
+  },
+  {
+   "name": "Combat Step by Step",
+   "tag": "",
+   "text": "1. Determine surprise. The GM determines whether anyone involved in the combat encounter is surprised.\n2. Establish positions. The GM decides where all the characters and monsters are located. Given the adventurers’ marching order or their stated positions in the room or other location, the GM figures out where the adversaries are—how far away and in what direction.\n3. Roll initiative. Everyone involved in the combat encounter rolls initiative, determining the order of combatants’ turns.\n4. Take turns. Each participant in the battle takes a turn in initiative order.\n5. Begin the next round. When everyone involved in the combat has had a turn, the round ends. Repeat step 4 until the fighting stops.",
+   "page": 90,
+   "see_also": []
+  },
+  {
+   "name": "Surprise",
+   "tag": "",
+   "text": "A band of adventurers sneaks up on a bandit camp, springing from the trees to attack them. A gelatinous cube glides down a dungeon passage, unnoticed by the adventurers until the cube engulfs one of them. In these situations, one side of the battle gains surprise over the other.\nThe GM determines who might be surprised. If neither side tries to be stealthy, they automatically notice each other. Otherwise, the GM compares the Dexterity (Stealth) checks of anyone hiding with the passive Wisdom (Perception) score of each creature on the opposing side. Any character or monster that doesn’t notice a threat is surprised at the start of the encounter.\nIf you’re surprised, you can’t move or take an action on your first turn of the combat, and you can’t take a reaction until that turn ends. A member of a group can be surprised even if the other members aren’t.",
+   "page": 90,
+   "see_also": []
+  },
+  {
+   "name": "Initiative",
+   "tag": "",
+   "text": "Initiative determines the order of turns during combat. When combat starts, every participant makes a Dexterity check to determine their place in the initiative order. The GM makes one roll for an entire group of identical creatures, so each member of the group acts at the same time.\nThe GM ranks the combatants in order from the one with the highest Dexterity check total to the one with the lowest. This is the order (called the initiative order) in which they act during each round. The initiative order remains the same from round to round.\nIf a tie occurs, the GM decides the order among tied GM-controlled creatures, and the players decide the order among their tied characters. The GM can decide the order if the tie is between a monster and a player character. Optionally, the GM can have the tied characters and monsters each roll a d20 to determine the order, highest roll going first.",
+   "page": 90,
+   "see_also": []
+  },
+  {
+   "name": "Your Turn",
+   "tag": "",
+   "text": "On your turn, you can move a distance up to your speed and take one action. You decide whether to move first or take your action first. Your speed—sometimes called your walking speed—is noted on your character sheet.\nThe most common actions you can take are described in the “Actions in Combat” section. Many class features and other abilities provide additional options for your action.\nThe “Movement and Position” section gives the rules for your move.\nYou can forgo moving, taking an action, or doing anything at all on your turn. If you can’t decide what to do on your turn, consider taking the Dodge or Ready action, as described in “Actions in Combat.”",
+   "page": 90,
+   "see_also": []
+  },
+  {
+   "name": "Bonus Actions",
+   "tag": "",
+   "text": "Various class features, spells, and other abilities let you take an additional action on your turn called a bonus action. The Cunning Action feature, for example, allows a rogue to take a bonus action. You can take a bonus action only when a special ability, spell, or other feature of the game states that you can do something as a bonus action. You otherwise don’t have a bonus action to take.\nYou can take only one bonus action on your turn, so you must choose which bonus action to use when you have more than one available.\nYou choose when to take a bonus action during your turn, unless the bonus action’s timing is specified, and anything that deprives you of your ability to take actions also prevents you from taking a bonus action.",
+   "page": 90,
+   "see_also": []
+  },
+  {
+   "name": "Other Activity on Your Turn",
+   "tag": "",
+   "text": "Your turn can include a variety of flourishes that require neither your action nor your move.\nYou can communicate however you are able, through brief utterances and gestures, as you take your turn.\nYou can also interact with one object or feature of the environment for free, during either your move or your action. For example, you could open a door during your move as you stride toward a foe, or you could draw your weapon as part of the same action you use to attack.\nIf you want to interact with a second object, you need to use your action. Some magic items and other special objects always require an action to use, as stated in their descriptions.\nThe GM might require you to use an action for any of these activities when it needs special care or when it presents an unusual obstacle. For instance, the GM could reasonably expect you to use an action to open a stuck door or turn a crank to lower a drawbridge.",
+   "page": 91,
+   "see_also": []
+  },
+  {
+   "name": "Reactions",
+   "tag": "",
+   "text": "Certain special abilities, spells, and situations allow you to take a special action called a reaction. A reaction is an instant response to a trigger of some kind, which can occur on your turn or on someone else’s. The opportunity attack is the most common type of reaction.\nWhen you take a reaction, you can’t take another one until the start of your next turn. If the reaction interrupts another creature’s turn, that creature can continue its turn right after the reaction.",
+   "page": 91,
+   "see_also": []
+  },
+  {
+   "name": "Movement and Position",
+   "tag": "",
+   "text": "In combat, characters and monsters are in constant motion, often using movement and position to gain the upper hand.\nOn your turn, you can move a distance up to your speed. You can use as much or as little of your speed as you like on your turn, following the rules here.\nYour movement can include jumping, climbing, and swimming. These different modes of movement can be combined with walking, or they can constitute your entire move. However you’re moving, you deduct the distance of each part of your move from your speed until it is used up or until you are done moving.",
+   "page": 91,
+   "see_also": []
+  },
+  {
+   "name": "Breaking Up Your Move",
+   "tag": "",
+   "text": "You can break up your movement on your turn, using some of your speed before and after your action. For example, if you have a speed of 30 feet, you can move 10 feet, take your action, and then move 20 feet.",
+   "page": 91,
+   "see_also": []
+  },
+  {
+   "name": "Moving between Attacks",
+   "tag": "",
+   "text": "If you take an action that includes more than one weapon attack, you can break up your movement even further by moving between those attacks. For example, a fighter who can make two attacks with the Extra Attack feature and who has a speed of 25 feet could move 10 feet, make an attack, move 15 feet, and then attack again.",
+   "page": 91,
+   "see_also": []
+  },
+  {
+   "name": "Using Different Speeds",
+   "tag": "",
+   "text": "If you have more than one speed, such as your walking speed and a flying speed, you can switch back and forth between your speeds during your move. Whenever you switch, subtract the distance you’ve already moved from the new speed. The result determines how much farther you can move. If the result is 0 or less, you can’t use the new speed during the current move.\nFor example, if you have a speed of 30 and a flying speed of 60 because a wizard cast the fly spell on you, you could fly 20 feet, then walk 10 feet, and then leap into the air to fly 30 feet more.",
+   "page": 91,
+   "see_also": []
+  },
+  {
+   "name": "Difficult Terrain (Combat)",
+   "tag": "",
+   "text": "Combat rarely takes place in bare rooms or on featureless plains. Boulder-strewn caverns, briar-choked forests, treacherous staircases—the setting of a typical fight contains difficult terrain.\nEvery foot of movement in difficult terrain costs 1 extra foot. This rule is true even if multiple things in a space count as difficult terrain.\nLow furniture, rubble, undergrowth, steep stairs, snow, and shallow bogs are examples of difficult terrain. The space of another creature, whether hostile or not, also counts as difficult terrain.",
+   "page": 91,
+   "see_also": []
+  },
+  {
+   "name": "Being Prone",
+   "tag": "",
+   "text": "Combatants often find themselves lying on the ground, either because they are knocked down or because they throw themselves down. In the game, they are prone, a condition described in appendix PH-A.\nYou can drop prone without using any of your speed. Standing up takes more effort; doing so costs an amount of movement equal to half your speed. For example, if your speed is 30 feet, you must spend 15 feet of movement to stand up. You can’t stand up if you don’t have enough movement left or if your speed is 0.\nTo move while prone, you must crawl or use magic such as teleportation. Every foot of movement while crawling costs 1 extra foot. Crawling 1 foot in difficult terrain, therefore, costs 3 feet of movement.",
+   "page": 91,
+   "see_also": []
+  },
+  {
+   "name": "Interacting with Objects Around You",
+   "tag": "",
+   "text": "Here are a few examples of the sorts of thing you can do in tandem with your movement and action:\n• draw or sheathe a sword\n• open or close a door\n• withdraw a potion from your backpack\n• pick up a dropped axe\n• take a bauble from a table\n• remove a ring from your finger\n• stuff some food into your mouth\n• plant a banner in the ground\n• fish a few coins from your belt pouch\n• drink all the ale in a flagon\n• throw a lever or a switch\n• pull a torch from a sconce\n• take a book from a shelf you can reach\n• extinguish a small flame\n• don a mask\n• pull the hood of your cloak up and over your head\n• put your ear to a door\n• kick a small stone\n• turn a key in a lock\n• tap the floor with a 10-foot pole\n• hand an item to another character",
+   "page": 92,
+   "see_also": []
+  },
+  {
+   "name": "Moving Around Other Creatures",
+   "tag": "",
+   "text": "You can move through a nonhostile creature’s space. In contrast, you can move through a hostile creature’s space only if the creature is at least two sizes larger or smaller than you. Remember that another creature’s space is difficult terrain for you.\nWhether a creature is a friend or an enemy, you can’t willingly end your move in its space.\nIf you leave a hostile creature’s reach during your move, you provoke an opportunity attack.",
+   "page": 92,
+   "see_also": []
+  },
+  {
+   "name": "Flying Movement",
+   "tag": "",
+   "text": "Flying creatures enjoy many benefits of mobility, but they must also deal with the danger of falling. If a flying creature is knocked prone, has its speed reduced to 0, or is otherwise deprived of the ability to move, the creature falls, unless it has the ability to hover or it is being held aloft by magic, such as by the fly spell.",
+   "page": 92,
+   "see_also": []
+  },
+  {
+   "name": "Creature Size",
+   "tag": "",
+   "text": "Each creature takes up a different amount of space. The Size Categories table shows how much space a creature of a particular size controls in combat. Objects sometimes use the same size categories.",
+   "page": 92,
+   "see_also": []
+  },
+  {
+   "name": "Space",
+   "tag": "",
+   "text": "A creature’s space is the area in feet that it effectively controls in combat, not an expression of its physical dimensions. A typical Medium creature isn’t 5 feet wide, for example, but it does control a space that wide. If a Medium hobgoblin stands in a 5-foot-wide doorway, other creatures can’t get through unless the hobgoblin lets them.\nA creature’s space also reflects the area it needs to fight effectively. For that reason, there’s a limit to the number of creatures that can surround another creature in combat. Assuming Medium combatants, eight creatures can fit in a 5-foot radius around another one.\nBecause larger creatures take up more space, fewer of them can surround a creature. If five Large creatures crowd around a Medium or smaller one, there’s little room for anyone else. In contrast, as many as twenty Medium creatures can surround a Gargantuan one.",
+   "page": 92,
+   "see_also": []
+  },
+  {
+   "name": "Squeezing into a Smaller Space",
+   "tag": "",
+   "text": "A creature can squeeze through a space that is large enough for a creature one size smaller than it. Thus, a Large creature can squeeze through a passage that’s only 5 feet wide. While squeezing through a space, a creature must spend 1 extra foot for every foot it moves there, and it has disadvantage on attack rolls and Dexterity saving throws. Attack rolls against the creature have advantage while it’s in the smaller space.",
+   "page": 92,
+   "see_also": []
+  },
+  {
+   "name": "Actions in Combat",
+   "tag": "",
+   "text": "When you take your action on your turn, you can take one of the actions presented here, an action you gained from your class or a special feature, or an action that you improvise. Many monsters have action options of their own in their stat blocks.\nWhen you describe an action not detailed elsewhere in the rules, the GM tells you whether that action is possible and what kind of roll you need to make, if any, to determine success or failure.",
+   "page": 93,
+   "see_also": []
+  },
+  {
+   "name": "Attack",
+   "tag": "",
+   "text": "The most common action to take in combat is the Attack action, whether you are swinging a sword, firing an arrow from a bow, or brawling with your fists.\nWith this action, you make one melee or ranged attack. See the “Making an Attack” section for the rules that govern attacks.\nCertain features, such as the Extra Attack feature of the fighter, allow you to make more than one attack with this action.",
+   "page": 93,
+   "see_also": []
+  },
+  {
+   "name": "Cast a Spell",
+   "tag": "",
+   "text": "Spellcasters such as wizards and clerics, as well as many monsters, have access to spells and can use them to great effect in combat. Each spell has a casting time, which specifies whether the caster must use an action, a reaction, minutes, or even hours to cast the spell. Casting a spell is, therefore, not necessarily an action. Most spells do have a casting time of 1 action, so a spellcaster often uses his or her action in combat to cast such a spell.",
+   "page": 93,
+   "see_also": []
+  },
+  {
+   "name": "Dash",
+   "tag": "",
+   "text": "When you take the Dash action, you gain extra movement for the current turn. The increase equals your speed, after applying any modifiers. With a speed of 30 feet, for example, you can move up to 60 feet on your turn if you dash.\nAny increase or decrease to your speed changes this additional movement by the same amount. If your speed of 30 feet is reduced to 15 feet, for instance, you can move up to 30 feet this turn if you dash.",
+   "page": 93,
+   "see_also": []
+  },
+  {
+   "name": "Disengage",
+   "tag": "",
+   "text": "If you take the Disengage action, your movement doesn’t provoke opportunity attacks for the rest of the turn.",
+   "page": 93,
+   "see_also": []
+  },
+  {
+   "name": "Dodge",
+   "tag": "",
+   "text": "When you take the Dodge action, you focus entirely on avoiding attacks. Until the start of your next turn, any attack roll made against you has disadvantage if you can see the attacker, and you make Dexterity saving throws with advantage. You lose this benefit if you are incapacitated (as explained in appendix PH-A) or if your speed drops to 0.",
+   "page": 93,
+   "see_also": []
+  },
+  {
+   "name": "Help",
+   "tag": "",
+   "text": "You can lend your aid to another creature in the completion of a task. When you take the Help action, the creature you aid gains advantage on the next ability check it makes to perform the task you are helping with, provided that it makes the check before the start of your next turn.\nAlternatively, you can aid a friendly creature in attacking a creature within 5 feet of you. You feint, distract the target, or in some other way team up to make your ally’s attack more effective. If your ally attacks the target before your next turn, the first attack roll is made with advantage.",
+   "page": 93,
+   "see_also": []
+  },
+  {
+   "name": "Hide",
+   "tag": "",
+   "text": "When you take the Hide action, you make a Dexterity (Stealth) check in an attempt to hide, following the rules for hiding. If you succeed, you gain certain benefits, as described in the “Unseen Attackers and Targets” section.",
+   "page": 93,
+   "see_also": []
+  },
+  {
+   "name": "Ready",
+   "tag": "",
+   "text": "Sometimes you want to get the jump on a foe or wait for a particular circumstance before you act. To do so, you can take the Ready action on your turn, which lets you act using your reaction before the start of your next turn.\nFirst, you decide what perceivable circumstance will trigger your reaction. Then, you choose the action you will take in response to that trigger, or you choose to move up to your speed in response to it. Examples include “If the cultist steps on the trapdoor, I’ll pull the lever that opens it,” and “If the goblin steps next to me, I move away.”\nWhen the trigger occurs, you can either take your reaction right after the trigger finishes or ignore the trigger. Remember that you can take only one reaction per round.\nWhen you ready a spell, you cast it as normal but hold its energy, which you release with your reaction when the trigger occurs. To be readied, a spell must have a casting time of 1 action, and holding onto the spell’s magic requires concentration. If your concentration is broken, the spell dissipates without taking effect. For example, if you are concentrating on the web spell and ready magic missile, your web spell ends, and if you take damage before you release magic missile with your reaction, your concentration might be broken.",
+   "page": 93,
+   "see_also": []
+  },
+  {
+   "name": "Search",
+   "tag": "",
+   "text": "When you take the Search action, you devote your attention to finding something. Depending on the nature of your search, the GM might have you make a Wisdom (Perception) check or an Intelligence (Investigation) check.",
+   "page": 94,
+   "see_also": []
+  },
+  {
+   "name": "Use an Object",
+   "tag": "",
+   "text": "You normally interact with an object while doing something else, such as when you draw a sword as part of an attack. When an object requires your action for its use, you take the Use an Object action. This action is also useful when you want to interact with more than one object on your turn.",
+   "page": 94,
+   "see_also": []
+  },
+  {
+   "name": "Making an Attack",
+   "tag": "",
+   "text": "Whether you’re striking with a melee weapon, firing a weapon at range, or making an attack roll as part of a spell, an attack has a simple structure.\n1. Choose a target. Pick a target within your attack’s range: a creature, an object, or a location.\n2. Determine modifiers. The GM determines whether the target has cover and whether you have advantage or disadvantage against the target.\nIn addition, spells, special abilities, and other effects can apply penalties or bonuses to your attack roll.\n3. Resolve the attack. You make the attack roll. On a hit, you roll damage, unless the particular attack has rules that specify otherwise. Some attacks cause special effects in addition to or instead of damage.\nIf there’s ever any question whether something you’re doing counts as an attack, the rule is simple: if you’re making an attack roll, you’re making an attack.",
+   "page": 94,
+   "see_also": []
+  },
+  {
+   "name": "Attack Rolls",
+   "tag": "",
+   "text": "When you make an attack, your attack roll determines whether the attack hits or misses. To make an attack roll, roll a d20 and add the appropriate modifiers. If the total of the roll plus modifiers equals or exceeds the target’s Armor Class (AC), the attack hits. The AC of a character is determined at character creation, whereas the AC of a monster is in its stat block.",
+   "page": 94,
+   "see_also": []
+  },
+  {
+   "name": "Modifiers to the Roll",
+   "tag": "",
+   "text": "When a character makes an attack roll, the two most common modifiers to the roll are an ability modifier and the character’s proficiency bonus. When a monster makes an attack roll, it uses whatever modifier is provided in its stat block.\nAbility Modifier. The ability modifier used for a melee weapon attack is Strength, and the ability modifier used for a ranged weapon attack is Dexterity. Weapons that have the finesse or thrown property break this rule.\nSome spells also require an attack roll. The ability modifier used for a spell attack depends on the spellcasting ability of the spellcaster.\nProficiency Bonus. You add your proficiency bonus to your attack roll when you attack using a weapon with which you have proficiency, as well as when you attack with a spell.",
+   "page": 94,
+   "see_also": []
+  },
+  {
+   "name": "Rolling 1 or 20",
+   "tag": "",
+   "text": "Sometimes fate blesses or curses a combatant, causing the novice to hit and the veteran to miss.\nIf the d20 roll for an attack is a 20, the attack hits regardless of any modifiers or the target’s AC. This is called a critical hit.\nIf the d20 roll for an attack is a 1, the attack misses regardless of any modifiers or the target’s AC.",
+   "page": 94,
+   "see_also": []
+  },
+  {
+   "name": "Unseen Attackers and Targets",
+   "tag": "",
+   "text": "Combatants often try to escape their foes’ notice by hiding, casting the invisibility spell, or lurking in darkness.\nWhen you attack a target that you can’t see, you have disadvantage on the attack roll. This is true whether you’re guessing the target’s location or you’re targeting a creature you can hear but not see. If the target isn’t in the location you targeted, you automatically miss, but the GM typically just says that the attack missed, not whether you guessed the target’s location correctly.\nWhen a creature can’t see you, you have advantage on attack rolls against it. If you are hidden—both unseen and unheard—when you make an attack, you give away your location when the attack hits or misses.",
+   "page": 94,
+   "see_also": []
+  },
+  {
+   "name": "Ranged Attacks",
+   "tag": "",
+   "text": "When you make a ranged attack, you fire a bow or a crossbow, hurl a handaxe, or otherwise send projectiles to strike a foe at a distance. A monster might shoot spines from its tail. Many spells also involve making a ranged attack.",
+   "page": 95,
+   "see_also": []
+  },
+  {
+   "name": "Range (Attacks)",
+   "tag": "",
+   "text": "You can make ranged attacks only against targets within a specified range.\nIf a ranged attack, such as one made with a spell, has a single range, you can’t attack a target beyond this range.\nSome ranged attacks, such as those made with a longbow or a shortbow, have two ranges. The smaller number is the normal range, and the larger number is the long range. Your attack roll has disadvantage when your target is beyond normal range, and you can’t attack a target beyond the long range.",
+   "page": 95,
+   "see_also": []
+  },
+  {
+   "name": "Ranged Attacks in Close Combat",
+   "tag": "",
+   "text": "Aiming a ranged attack is more difficult when a foe is next to you. When you make a ranged attack with a weapon, a spell, or some other means, you have disadvantage on the attack roll if you are within 5 feet of a hostile creature who can see you and who isn’t incapacitated.",
+   "page": 95,
+   "see_also": []
+  },
+  {
+   "name": "Melee Attacks",
+   "tag": "",
+   "text": "Used in hand-to-hand combat, a melee attack allows you to attack a foe within your reach. A melee attack typically uses a handheld weapon such as a sword, a warhammer, or an axe. A typical monster makes a melee attack when it strikes with its claws, horns, teeth, tentacles, or other body part. A few spells also involve making a melee attack.\nMost creatures have a 5-foot reach and can thus attack targets within 5 feet of them when making a melee attack. Certain creatures (typically those larger than Medium) have melee attacks with a greater reach than 5 feet, as noted in their descriptions.\nInstead of using a weapon to make a melee weapon attack, you can use an unarmed strike: a punch, kick, head-butt, or similar forceful blow (none of which count as weapons). On a hit, an unarmed strike deals bludgeoning damage equal to 1 + your Strength modifier. You are proficient with your unarmed strikes.",
+   "page": 95,
+   "see_also": []
+  },
+  {
+   "name": "Opportunity Attacks",
+   "tag": "",
+   "text": "In a fight, everyone is constantly watching for a chance to strike an enemy who is fleeing or passing by. Such a strike is called an opportunity attack.\nYou can make an opportunity attack when a hostile creature that you can see moves out of your reach. To make the opportunity attack, you use your reaction to make one melee attack against the provoking creature. The attack occurs right before the creature leaves your reach.\nYou can avoid provoking an opportunity attack by taking the Disengage action. You also don’t provoke an opportunity attack when you teleport or when someone or something moves you without using your movement, action, or reaction. For example, you don’t provoke an opportunity attack if an explosion hurls you out of a foe’s reach or if gravity causes you to fall past an enemy.",
+   "page": 95,
+   "see_also": []
+  },
+  {
+   "name": "Two-Weapon Fighting",
+   "tag": "",
+   "text": "When you take the Attack action and attack with a light melee weapon that you’re holding in one hand, you can use a bonus action to attack with a different light melee weapon that you’re holding in the other hand. You don’t add your ability modifier to the damage of the bonus attack, unless that modifier is negative.\nIf either weapon has the thrown property, you can throw the weapon, instead of making a melee attack with it.",
+   "page": 95,
+   "see_also": []
+  },
+  {
+   "name": "Grappling",
+   "tag": "",
+   "text": "When you want to grab a creature or wrestle with it, you can use the Attack action to make a special melee attack, a grapple. If you’re able to make multiple attacks with the Attack action, this attack replaces one of them.\nThe target of your grapple must be no more than one size larger than you and must be within your reach. Using at least one free hand, you try to seize the target by making a grapple check instead of an attack roll: a Strength (Athletics) check contested by the target’s Strength (Athletics) or Dexterity (Acrobatics) check (the target chooses the ability to use). If you succeed, you subject the target to the grappled condition (see appendix PH-A). The condition specifies the things that end it, and you can release the target whenever you like (no action required).\nEscaping a Grapple. A grappled creature can use its action to escape. To do so, it must succeed on a Strength (Athletics) or Dexterity (Acrobatics) check contested by your Strength (Athletics) check.\nMoving a Grappled Creature. When you move, you can drag or carry the grappled creature with you, but your speed is halved, unless the creature is two or more sizes smaller than you.",
+   "page": 95,
+   "see_also": []
+  },
+  {
+   "name": "Contests in Combat",
+   "tag": "",
+   "text": "Battle often involves pitting your prowess against that of your foe. Such a challenge is represented by a contest. This section includes the most common contests that require an action in combat: grappling and shoving a creature. The GM can use these contests as models for improvising others.",
+   "page": 96,
+   "see_also": []
+  },
+  {
+   "name": "Shoving a Creature",
+   "tag": "",
+   "text": "Using the Attack action, you can make a special melee attack to shove a creature, either to knock it prone or push it away from you. If you’re able to make multiple attacks with the Attack action, this attack replaces one of them.\nThe target must be no more than one size larger than you and must be within your reach. Instead of making an attack roll, you make a Strength (Athletics) check contested by the target’s Strength (Athletics) or Dexterity (Acrobatics) check (the target chooses the ability to use). If you win the contest, you either knock the target prone or push it 5 feet away from you.",
+   "page": 96,
+   "see_also": []
+  },
+  {
+   "name": "Cover",
+   "tag": "",
+   "text": "Walls, trees, creatures, and other obstacles can provide cover during combat, making a target more difficult to harm. A target can benefit from cover only when an attack or other effect originates on the opposite side of the cover.\nThere are three degrees of cover. If a target is behind multiple sources of cover, only the most protective degree of cover applies; the degrees aren’t added together. For example, if a target is behind a creature that gives half cover and a tree trunk that gives three-quarters cover, the target has three-quarters cover.\nA target with half cover has a +2 bonus to AC and Dexterity saving throws. A target has half cover if an obstacle blocks at least half of its body. The obstacle might be a low wall, a large piece of furniture, a narrow tree trunk, or a creature, whether that creature is an enemy or a friend.\nA target with three-quarters cover has a +5 bonus to AC and Dexterity saving throws. A target has three-quarters cover if about three-quarters of it is covered by an obstacle. The obstacle might be a portcullis, an arrow slit, or a thick tree trunk.\nA target with total cover can’t be targeted directly by an attack or a spell, although some spells can reach such a target by including it in an area of effect. A target has total cover if it is completely concealed by an obstacle.",
+   "page": 96,
+   "see_also": []
+  },
+  {
+   "name": "Damage and Healing",
+   "tag": "",
+   "text": "Injury and the risk of death are constant companions of those who explore fantasy gaming worlds. The thrust of a sword, a well-placed arrow, or a blast of flame from a fireball spell all have the potential to damage, or even kill, the hardiest of creatures.",
+   "page": 96,
+   "see_also": []
+  },
+  {
+   "name": "Hit Points",
+   "tag": "",
+   "text": "Hit points represent a combination of physical and mental durability, the will to live, and luck. Creatures with more hit points are more difficult to kill. Those with fewer hit points are more fragile.\nA creature’s current hit points (usually just called hit points) can be any number from the creature’s hit point maximum down to 0. This number changes frequently as a creature takes damage or receives healing.\nWhenever a creature takes damage, that damage is subtracted from its hit points. The loss of hit points has no effect on a creature’s capabilities until the creature drops to 0 hit points.",
+   "page": 96,
+   "see_also": []
+  },
+  {
+   "name": "Damage Rolls",
+   "tag": "",
+   "text": "Each weapon, spell, and harmful monster ability specifies the damage it deals. You roll the damage die or dice, add any modifiers, and apply the damage to your target. Magic weapons, special abilities, and other factors can grant a bonus to damage. With a penalty, it is possible to deal 0 damage, but never negative damage.\nWhen attacking with a weapon, you add your ability modifier—the same modifier used for the attack roll—to the damage. A spell tells you which dice to roll for damage and whether to add any modifiers.\nIf a spell or other effect deals damage to more than one target at the same time, roll the damage once for all of them. For example, when a wizard casts fireball or a cleric casts flame strike, the spell’s damage is rolled once for all creatures caught in the blast.",
+   "page": 96,
+   "see_also": []
+  },
+  {
+   "name": "Critical Hits",
+   "tag": "",
+   "text": "When you score a critical hit, you get to roll extra dice for the attack’s damage against the target. Roll all of the attack’s damage dice twice and add them together. Then add any relevant modifiers as normal. To speed up play, you can roll all the damage dice at once.\nFor example, if you score a critical hit with a dagger, roll 2d4 for the damage, rather than 1d4, and then add your relevant ability modifier. If the attack involves other damage dice, such as from the rogue’s Sneak Attack feature, you roll those dice twice as well.",
+   "page": 96,
+   "see_also": []
+  },
+  {
+   "name": "Damage Types",
+   "tag": "",
+   "text": "Different attacks, damaging spells, and other harmful effects deal different types of damage. Damage types have no rules of their own, but other rules, such as damage resistance, rely on the types.\nThe damage types follow, with examples to help a GM assign a damage type to a new effect.\nAcid. The corrosive spray of a black dragon’s breath and the dissolving enzymes secreted by a black pudding deal acid damage.\nBludgeoning. Blunt force attacks—hammers, falling, constriction, and the like—deal bludgeoning damage.\nCold. The infernal chill radiating from an ice devil’s spear and the frigid blast of a white dragon’s breath deal cold damage.\nFire. Red dragons breathe fire, and many spells conjure flames to deal fire damage.\nForce. Force is pure magical energy focused into a damaging form. Most effects that deal force damage are spells, including magic missile and spiritual weapon.\nLightning. A lightning bolt spell and a blue dragon’s breath deal lightning damage.\nNecrotic. Necrotic damage, dealt by certain undead and a spell such as chill touch, withers matter and even the soul.\nPiercing. Puncturing and impaling attacks, including spears and monsters’ bites, deal piercing damage.\nPoison. Venomous stings and the toxic gas of a green dragon’s breath deal poison damage.\nPsychic. Mental abilities such as a mind flayer’s psionic blast deal psychic damage.\nRadiant. Radiant damage, dealt by a cleric’s flame strike spell or an angel’s smiting weapon, sears the flesh like fire and overloads the spirit with power.\nSlashing. Swords, axes, and monsters’ claws deal slashing damage.\nThunder. A concussive burst of sound, such as the effect of the thunderwave spell, deals thunder damage.",
+   "page": 97,
+   "see_also": []
+  },
+  {
+   "name": "Damage Resistance and Vulnerability",
+   "tag": "",
+   "text": "Some creatures and objects are exceedingly difficult or unusually easy to hurt with certain types of damage.\nIf a creature or an object has resistance to a damage type, damage of that type is halved against it. If a creature or an object has vulnerability to a damage type, damage of that type is doubled against it.\nResistance and then vulnerability are applied after all other modifiers to damage. For example, a creature has resistance to bludgeoning damage and is hit by an attack that deals 25 bludgeoning damage. The creature is also within a magical aura that reduces all damage by 5. The 25 damage is first reduced by 5 and then halved, so the creature takes 10 damage.\nMultiple instances of resistance or vulnerability that affect the same damage type count as only one instance. For example, if a creature has resistance to fire damage as well as resistance to all nonmagical damage, the damage of a nonmagical fire is reduced by half against the creature, not reduced by three-quarters.",
+   "page": 97,
+   "see_also": []
+  },
+  {
+   "name": "Healing",
+   "tag": "",
+   "text": "Unless it results in death, damage isn’t permanent. Even death is reversible through powerful magic. Rest can restore a creature’s hit points, and magical methods such as a cure wounds spell or a potion of healing can remove damage in an instant.\nWhen a creature receives healing of any kind, hit points regained are added to its current hit points. A creature’s hit points can’t exceed its hit point maximum, so any hit points regained in excess of this number are lost. For example, a druid grants a ranger 8 hit points of healing. If the ranger has 14 current hit points and has a hit point maximum of 20, the ranger regains 6 hit points from the druid, not 8.\nA creature that has died can’t regain hit points until magic such as the revivify spell has restored it to life.",
+   "page": 97,
+   "see_also": []
+  },
+  {
+   "name": "Dropping to 0 Hit Points",
+   "tag": "",
+   "text": "When you drop to 0 hit points, you either die outright or fall unconscious, as explained in the following sections.",
+   "page": 97,
+   "see_also": []
+  },
+  {
+   "name": "Instant Death",
+   "tag": "",
+   "text": "Massive damage can kill you instantly. When damage reduces you to 0 hit points and there is damage remaining, you die if the remaining damage equals or exceeds your hit point maximum.\nFor example, a cleric with a maximum of 12 hit points currently has 6 hit points. If she takes 18 damage from an attack, she is reduced to 0 hit points, but 12 damage remains. Because the remaining damage equals her hit point maximum, the cleric dies.",
+   "page": 98,
+   "see_also": []
+  },
+  {
+   "name": "Falling Unconscious",
+   "tag": "",
+   "text": "If damage reduces you to 0 hit points and fails to kill you, you fall unconscious (see appendix PH-A). This unconsciousness ends if you regain any hit points.",
+   "page": 98,
+   "see_also": []
+  },
+  {
+   "name": "Death Saving Throws",
+   "tag": "",
+   "text": "Whenever you start your turn with 0 hit points, you must make a special saving throw, called a death saving throw, to determine whether you creep closer to death or hang onto life. Unlike other saving throws, this one isn’t tied to any ability score. You are in the hands of fate now, aided only by spells and features that improve your chances of succeeding on a saving throw.\nRoll a d20. If the roll is 10 or higher, you succeed. Otherwise, you fail. A success or failure has no effect by itself. On your third success, you become stable (see below). On your third failure, you die. The successes and failures don’t need to be consecutive; keep track of both until you collect three of a kind. The number of both is reset to zero when you regain any hit points or become stable.\nRolling 1 or 20. When you make a death saving throw and roll a 1 on the d20, it counts as two failures. If you roll a 20 on the d20, you regain 1 hit point.\nDamage at 0 Hit Points. If you take any damage while you have 0 hit points, you suffer a death saving throw failure. If the damage is from a critical hit, you suffer two failures instead. If the damage equals or exceeds your hit point maximum, you suffer instant death.",
+   "page": 98,
+   "see_also": []
+  },
+  {
+   "name": "Stabilizing a Creature",
+   "tag": "",
+   "text": "The best way to save a creature with 0 hit points is to heal it. If healing is unavailable, the creature can at least be stabilized so that it isn’t killed by a failed death saving throw.\nYou can use your action to administer first aid to an unconscious creature and attempt to stabilize it, which requires a successful DC 10 Wisdom (Medicine) check.\nA stable creature doesn’t make death saving throws, even though it has 0 hit points, but it does remain unconscious. The creature stops being stable, and must start making death saving throws again, if it takes any damage. A stable creature that isn’t healed regains 1 hit point after 1d4 hours.",
+   "page": 98,
+   "see_also": []
+  },
+  {
+   "name": "Monsters and Death",
+   "tag": "",
+   "text": "Most GMs have a monster die the instant it drops to 0 hit points, rather than having it fall unconscious and make death saving throws.\nMighty villains and special nonplayer characters are common exceptions; the GM might have them fall unconscious and follow the same rules as player characters.",
+   "page": 98,
+   "see_also": []
+  },
+  {
+   "name": "Knocking a Creature Out",
+   "tag": "",
+   "text": "Sometimes an attacker wants to incapacitate a foe, rather than deal a killing blow. When an attacker reduces a creature to 0 hit points with a melee attack, the attacker can knock the creature out. The attacker can make this choice the instant the damage is dealt. The creature falls unconscious and is stable.",
+   "page": 98,
+   "see_also": []
+  },
+  {
+   "name": "Temporary Hit Points",
+   "tag": "",
+   "text": "Some spells and special abilities confer temporary hit points to a creature. Temporary hit points aren’t actual hit points; they are a buffer against damage, a pool of hit points that protect you from injury.\nWhen you have temporary hit points and take damage, the temporary hit points are lost first, and any leftover damage carries over to your normal hit points. For example, if you have 5 temporary hit points and take 7 damage, you lose the temporary hit points and then take 2 damage.\nBecause temporary hit points are separate from your actual hit points, they can exceed your hit point maximum. A character can, therefore, be at full hit points and receive temporary hit points.\nHealing can’t restore temporary hit points, and they can’t be added together. If you have temporary hit points and receive more of them, you decide whether to keep the ones you have or to gain the new ones. For example, if a spell grants you 12 temporary hit points when you already have 10, you can have 12 or 10, not 22.\nIf you have 0 hit points, receiving temporary hit points doesn’t restore you to consciousness or stabilize you. They can still absorb damage directed at you while you’re in that state, but only true healing can save you.\nUnless a feature that grants you temporary hit points has a duration, they last until they’re depleted or you finish a long rest.",
+   "page": 98,
+   "see_also": []
+  },
+  {
+   "name": "Mounted Combat",
+   "tag": "",
+   "text": "A knight charging into battle on a warhorse, a wizard casting spells from the back of a griffon, or a cleric soaring through the sky on a pegasus all enjoy the benefits of speed and mobility that a mount can provide.\nA willing creature that is at least one size larger than you and that has an appropriate anatomy can serve as a mount, using the following rules.",
+   "page": 99,
+   "see_also": []
+  },
+  {
+   "name": "Mounting and Dismounting",
+   "tag": "",
+   "text": "Once during your move, you can mount a creature that is within 5 feet of you or dismount. Doing so costs an amount of movement equal to half your speed. For example, if your speed is 30 feet, you must spend 15 feet of movement to mount a horse. Therefore, you can’t mount it if you don’t have 15 feet of movement left or if your speed is 0.\nIf an effect moves your mount against its will while you’re on it, you must succeed on a DC 10 Dexterity saving throw or fall off the mount, landing prone in a space within 5 feet of it. If you’re knocked prone while mounted, you must make the same saving throw.\nIf your mount is knocked prone, you can use your reaction to dismount it as it falls and land on your feet. Otherwise, you are dismounted and fall prone in a space within 5 feet it.",
+   "page": 99,
+   "see_also": []
+  },
+  {
+   "name": "Controlling a Mount",
+   "tag": "",
+   "text": "While you’re mounted, you have two options. You can either control the mount or allow it to act independently. Intelligent creatures, such as dragons, act independently.\nYou can control a mount only if it has been trained to accept a rider. Domesticated horses, donkeys, and similar creatures are assumed to have such training. The initiative of a controlled mount changes to match yours when you mount it. It moves as you direct it, and it has only three action options: Dash, Disengage, and Dodge. A controlled mount can move and act even on the turn that you mount it.\nAn independent mount retains its place in the initiative order. Bearing a rider puts no restrictions on the actions the mount can take, and it moves and acts as it wishes. It might flee from combat, rush to attack and devour a badly injured foe, or otherwise act against your wishes.\nIn either case, if the mount provokes an opportunity attack while you’re on it, the attacker can target you or the mount.",
+   "page": 99,
+   "see_also": []
+  },
+  {
+   "name": "Underwater Combat",
+   "tag": "",
+   "text": "When adventurers pursue sahuagin back to their undersea homes, fight off sharks in an ancient shipwreck, or find themselves in a flooded dungeon room, they must fight in a challenging environment. Underwater the following rules apply.\nWhen making a melee weapon attack, a creature that doesn’t have a swimming speed (either natural or granted by magic) has disadvantage on the attack roll unless the weapon is a dagger, javelin, shortsword, spear, or trident.\nA ranged weapon attack automatically misses a target beyond the weapon’s normal range. Even against a target within normal range, the attack roll has disadvantage unless the weapon is a crossbow, a net, or a weapon that is thrown like a javelin (including a spear, trident, or dart).\nCreatures and objects that are fully immersed in water have resistance to fire damage.",
+   "page": 99,
+   "see_also": []
+  },
+  {
+   "name": "What Is a Spell?",
+   "tag": "",
+   "text": "A spell is a discrete magical effect, a single shaping of the magical energies that suffuse the multiverse into a specific, limited expression. In casting a spell, a character carefully plucks at the invisible strands of raw magic suffusing the world, pins them in place in a particular pattern, sets them vibrating in a specific way, and then releases them to unleash the desired effect—in most cases, all in the span of seconds.\nSpells can be versatile tools, weapons, or protective wards. They can deal damage or undo it, impose or remove conditions (see appendix PH-A), drain life energy away, and restore life to the dead.\nUncounted thousands of spells have been created over the course of the multiverse’s history, and many of them are long forgotten. Some might yet lie recorded in crumbling spellbooks hidden in ancient ruins or trapped in the minds of dead gods. Or they might someday be reinvented by a character who has amassed enough power and wisdom to do so.",
+   "page": 100,
+   "see_also": []
+  },
+  {
+   "name": "Spell Level",
+   "tag": "",
+   "text": "Every spell has a level from 0 to 9. A spell’s level is a general indicator of how powerful it is, with the lowly (but still impressive) magic missile at 1st level and the earth-shaking wish at 9th. Cantrips—simple but powerful spells that characters can cast almost by rote—are level 0. The higher a spell’s level, the higher level a spellcaster must be to use that spell.\nSpell level and character level don’t correspond directly. Typically, a character has to be at least 17th level, not 9th level, to cast a 9th-level spell.",
+   "page": 100,
+   "see_also": []
+  },
+  {
+   "name": "Known and Prepared Spells",
+   "tag": "",
+   "text": "Before a spellcaster can use a spell, he or she must have the spell firmly fixed in mind, or must have access to the spell in a magic item. Members of a few classes, including bards and sorcerers, have a limited list of spells they know that are always fixed in mind. The same thing is true of many magic-using monsters. Other spellcasters, such as clerics and wizards, undergo a process of preparing spells. This process varies for different classes, as detailed in their descriptions.\nIn every case, the number of spells a caster can have fixed in mind at any given time depends on the character’s level.",
+   "page": 100,
+   "see_also": []
+  },
+  {
+   "name": "Spell Slots",
+   "tag": "",
+   "text": "Regardless of how many spells a caster knows or prepares, he or she can cast only a limited number of spells before resting. Manipulating the fabric of magic and channeling its energy into even a simple spell is physically and mentally taxing, and higher-level spells are even more so. Thus, each spellcasting class’s description (except that of the warlock) includes a table showing how many spell slots of each spell level a character can use at each character level. For example, the 3rd-level wizard Umara has four 1st-level spell slots and two 2nd-level slots.\nWhen a character casts a spell, he or she expends a slot of that spell’s level or higher, effectively “filling” a slot with the spell. You can think of a spell slot as a groove of a certain size—small for a 1st-level slot, larger for a spell of higher level. A 1st-level spell fits into a slot of any size, but a 9th-level spell fits only in a 9th-level slot. So when Umara casts magic missile, a 1st-level spell, she spends one of her four 1st-level slots and has three remaining.\nFinishing a long rest restores any expended spell slots.\nSome characters and monsters have special abilities that let them cast spells without using spell slots. For example, a monk who follows the Way of the Four Elements, a warlock who chooses certain eldritch invocations, and a pit fiend from the Nine Hells can all cast spells in such a way.",
+   "page": 100,
+   "see_also": []
+  },
+  {
+   "name": "Casting a Spell at a Higher Level",
+   "tag": "",
+   "text": "When a spellcaster casts a spell using a slot that is of a higher level than the spell, the spell assumes the higher level for that casting. For instance, if Umara casts magic missile using one of her 2nd-level slots, that magic missile is 2nd level. Effectively, the spell expands to fill the slot it is put into.\nSome spells, such as magic missile and cure wounds, have more powerful effects when cast at a higher level, as detailed in a spell’s description.",
+   "page": 100,
+   "see_also": []
+  },
+  {
+   "name": "Casting in Armor",
+   "tag": "",
+   "text": "Because of the mental focus and precise gestures required for spellcasting, you must be proficient with the armor you are wearing to cast a spell. You are otherwise too distracted and physically hampered by your armor for spellcasting.",
+   "page": 100,
+   "see_also": []
+  },
+  {
+   "name": "Cantrips",
+   "tag": "",
+   "text": "A cantrip is a spell that can be cast at will, without using a spell slot and without being prepared in advance. Repeated practice has fixed the spell in the caster’s mind and infused the caster with the magic needed to produce the effect over and over. A cantrip’s spell level is 0.",
+   "page": 101,
+   "see_also": []
+  },
+  {
+   "name": "Rituals",
+   "tag": "",
+   "text": "Certain spells have a special tag: ritual. Such a spell can be cast following the normal rules for spellcasting, or the spell can be cast as a ritual. The ritual version of a spell takes 10 minutes longer to cast than normal. It also doesn’t expend a spell slot, which means the ritual version of a spell can’t be cast at a higher level.\nTo cast a spell as a ritual, a spellcaster must have a feature that grants the ability to do so. The cleric and the druid, for example, have such a feature. The caster must also have the spell prepared or on his or her list of spells known, unless the character’s ritual feature specifies otherwise, as the wizard’s does.",
+   "page": 101,
+   "see_also": []
+  },
+  {
+   "name": "Casting a Spell",
+   "tag": "",
+   "text": "When a character casts any spell, the same basic rules are followed, regardless of the character’s class or the spell’s effects.\nEach spell description begins with a block of information, including the spell’s name, level, school of magic, casting time, range, components, and duration. The rest of a spell entry describes the spell’s effect.",
+   "page": 101,
+   "see_also": []
+  },
+  {
+   "name": "Casting Time",
+   "tag": "",
+   "text": "Most spells require a single action to cast, but some spells require a bonus action, a reaction, or much more time to cast.",
+   "page": 101,
+   "see_also": []
+  },
+  {
+   "name": "Bonus Action",
+   "tag": "",
+   "text": "A spell cast with a bonus action is especially swift. You must use a bonus action on your turn to cast the spell, provided that you haven’t already taken a bonus action this turn. You can’t cast another spell during the same turn, except for a cantrip with a casting time of 1 action.",
+   "page": 101,
+   "see_also": []
+  },
+  {
+   "name": "Reactions (Casting Time)",
+   "tag": "",
+   "text": "Some spells can be cast as reactions. These spells take a fraction of a second to bring about and are cast in response to some event. If a spell can be cast as a reaction, the spell description tells you exactly when you can do so.",
+   "page": 101,
+   "see_also": []
+  },
+  {
+   "name": "Longer Casting Times",
+   "tag": "",
+   "text": "Certain spells (including spells cast as rituals) require more time to cast: minutes or even hours. When you cast a spell with a casting time longer than a single action or reaction, you must spend your action each turn casting the spell, and you must maintain your concentration while you do so (see “Concentration” below). If your concentration is broken, the spell fails, but you don’t expend a spell slot. If you want to try casting the spell again, you must start over.",
+   "page": 101,
+   "see_also": []
+  },
+  {
+   "name": "Range (Spells)",
+   "tag": "",
+   "text": "The target of a spell must be within the spell’s range. For a spell like magic missile, the target is a creature. For a spell like fireball, the target is the point in space where the ball of fire erupts.\nMost spells have ranges expressed in feet. Some spells can target only a creature (including you) that you touch. Other spells, such as the shield spell, affect only you. These spells have a range of self.\nSpells that create cones or lines of effect that originate from you also have a range of self, indicating that the origin point of the spell’s effect must be you (see “Areas of Effect”).\nOnce a spell is cast, its effects aren’t limited by its range, unless the spell’s description says otherwise.",
+   "page": 101,
+   "see_also": []
+  },
+  {
+   "name": "Components",
+   "tag": "",
+   "text": "A spell’s components are the physical requirements you must meet in order to cast it. Each spell’s description indicates whether it requires verbal (V), somatic (S), or material (M) components. If you can’t provide one or more of a spell’s components, you are unable to cast the spell.",
+   "page": 101,
+   "see_also": []
+  },
+  {
+   "name": "Verbal (V)",
+   "tag": "",
+   "text": "Most spells require the chanting of mystic words. The words themselves aren’t the source of the spell’s power; rather, the particular combination of sounds, with specific pitch and resonance, sets the threads of magic in motion. Thus, a character who is gagged or in an area of silence, such as one created by the silence spell, can’t cast a spell with a verbal component.",
+   "page": 101,
+   "see_also": []
+  },
+  {
+   "name": "Somatic (S)",
+   "tag": "",
+   "text": "Spellcasting gestures might include a forceful gesticulation or an intricate set of gestures. If a spell requires a somatic component, the caster must have free use of at least one hand to perform these gestures.",
+   "page": 101,
+   "see_also": []
+  },
+  {
+   "name": "Material (M)",
+   "tag": "",
+   "text": "Casting some spells requires particular objects, specified in parentheses in the component entry. A character can use a component pouch or a spellcasting focus (found in “Equipment”) in place of the components specified for a spell. But if a cost is indicated for a component, a character must have that specific component before he or she can cast the spell.\nIf a spell states that a material component is consumed by the spell, the caster must provide this component for each casting of the spell.\nA spellcaster must have a hand free to access a spell’s material components—or to hold a spellcasting focus—but it can be the same hand that he or she uses to perform somatic components.",
+   "page": 102,
+   "see_also": []
+  },
+  {
+   "name": "Duration",
+   "tag": "",
+   "text": "A spell’s duration is the length of time the spell persists. A duration can be expressed in rounds, minutes, hours, or even years. Some spells specify that their effects last until the spells are dispelled or destroyed.",
+   "page": 102,
+   "see_also": []
+  },
+  {
+   "name": "Instantaneous",
+   "tag": "",
+   "text": "Many spells are instantaneous. The spell harms, heals, creates, or alters a creature or an object in a way that can’t be dispelled, because its magic exists only for an instant.",
+   "page": 102,
+   "see_also": []
+  },
+  {
+   "name": "Concentration",
+   "tag": "",
+   "text": "Some spells require you to maintain concentration in order to keep their magic active. If you lose concentration, such a spell ends.\nIf a spell must be maintained with concentration, that fact appears in its Duration entry, and the spell specifies how long you can concentrate on it. You can end concentration at any time (no action required).\nNormal activity, such as moving and attacking, doesn’t interfere with concentration. The following factors can break concentration:\n• Casting another spell that requires concentration. You lose concentration on a spell if you cast another spell that requires concentration. You can’t concentrate on two spells at once.\n• Taking damage. Whenever you take damage while you are concentrating on a spell, you must make a Constitution saving throw to maintain your concentration. The DC equals 10 or half the damage you take, whichever number is higher. If you take damage from multiple sources, such as an arrow and a dragon’s breath, you make a separate saving throw for each source of damage.\n• Being incapacitated or killed. You lose concentration on a spell if you are incapacitated or if you die.\nThe GM might also decide that certain environmental phenomena, such as a wave crashing over you while you’re on a storm-tossed ship, require you to succeed on a DC 10 Constitution saving throw to maintain concentration on a spell.",
+   "page": 102,
+   "see_also": []
+  },
+  {
+   "name": "Targets",
+   "tag": "",
+   "text": "A typical spell requires you to pick one or more targets to be affected by the spell’s magic. A spell’s description tells you whether the spell targets creatures, objects, or a point of origin for an area of effect (described below).\nUnless a spell has a perceptible effect, a creature might not know it was targeted by a spell at all. An effect like crackling lightning is obvious, but a more subtle effect, such as an attempt to read a creature’s thoughts, typically goes unnoticed, unless a spell says otherwise.",
+   "page": 102,
+   "see_also": []
+  },
+  {
+   "name": "A Clear Path to the Target",
+   "tag": "",
+   "text": "To target something, you must have a clear path to it, so it can’t be behind total cover.\nIf you place an area of effect at a point that you can’t see and an obstruction, such as a wall, is between you and that point, the point of origin comes into being on the near side of that obstruction.",
+   "page": 102,
+   "see_also": []
+  },
+  {
+   "name": "Targeting Yourself",
+   "tag": "",
+   "text": "If a spell targets a creature of your choice, you can choose yourself, unless the creature must be hostile or specifically a creature other than you. If you are in the area of effect of a spell you cast, you can target yourself.",
+   "page": 102,
+   "see_also": []
+  },
+  {
+   "name": "Areas of Effect",
+   "tag": "",
+   "text": "Spells such as burning hands and cone of cold cover an area, allowing them to affect multiple creatures at once.\nA spell’s description specifies its area of effect, which typically has one of five different shapes: cone, cube, cylinder, line, or sphere. Every area of effect has a point of origin, a location from which the spell’s energy erupts. The rules for each shape specify how you position its point of origin. Typically, a point of origin is a point in space, but some spells have an area whose origin is a creature or an object.\nA spell’s effect expands in straight lines from the point of origin. If no unblocked straight line extends from the point of origin to a location within the area of effect, that location isn’t included in the spell’s area. To block one of these imaginary lines, an obstruction must provide total cover.",
+   "page": 102,
+   "see_also": []
+  },
+  {
+   "name": "Cone",
+   "tag": "",
+   "text": "A cone extends in a direction you choose from its point of origin. A cone’s width at a given point along its length is equal to that point’s distance from the point of origin. A cone’s area of effect specifies its maximum length.\nA cone’s point of origin is not included in the cone’s area of effect, unless you decide otherwise.",
+   "page": 103,
+   "see_also": []
+  },
+  {
+   "name": "Cube",
+   "tag": "",
+   "text": "You select a cube’s point of origin, which lies anywhere on a face of the cubic effect. The cube’s size is expressed as the length of each side.\nA cube’s point of origin is not included in the cube’s area of effect, unless you decide otherwise.",
+   "page": 103,
+   "see_also": []
+  },
+  {
+   "name": "Cylinder",
+   "tag": "",
+   "text": "A cylinder’s point of origin is the center of a circle of a particular radius, as given in the spell description. The circle must either be on the ground or at the height of the spell effect. The energy in a cylinder expands in straight lines from the point of origin to the perimeter of the circle, forming the base of the cylinder. The spell’s effect then shoots up from the base or down from the top, to a distance equal to the height of the cylinder.\nA cylinder’s point of origin is included in the cylinder’s area of effect.",
+   "page": 103,
+   "see_also": []
+  },
+  {
+   "name": "Line",
+   "tag": "",
+   "text": "A line extends from its point of origin in a straight path up to its length and covers an area defined by its width.\nA line’s point of origin is not included in the line’s area of effect, unless you decide otherwise.",
+   "page": 103,
+   "see_also": []
+  },
+  {
+   "name": "Sphere",
+   "tag": "",
+   "text": "You select a sphere’s point of origin, and the sphere extends outward from that point. The sphere’s size is expressed as a radius in feet that extends from the point.\nA sphere’s point of origin is included in the sphere’s area of effect.",
+   "page": 103,
+   "see_also": []
+  },
+  {
+   "name": "Saving Throws (Spells)",
+   "tag": "",
+   "text": "Many spells specify that a target can make a saving throw to avoid some or all of a spell’s effects. The spell specifies the ability that the target uses for the save and what happens on a success or failure.\nThe DC to resist one of your spells equals 8 + your spellcasting ability modifier + your proficiency bonus + any special modifiers.",
+   "page": 103,
+   "see_also": []
+  },
+  {
+   "name": "Attack Rolls (Spells)",
+   "tag": "",
+   "text": "Some spells require the caster to make an attack roll to determine whether the spell effect hits the intended target. Your attack bonus with a spell attack equals your spellcasting ability modifier + your proficiency bonus.\nMost spells that require attack rolls involve ranged attacks. Remember that you have disadvantage on a ranged attack roll if you are within 5 feet of a hostile creature that can see you and that isn’t incapacitated.",
+   "page": 103,
+   "see_also": []
+  },
+  {
+   "name": "The Schools of Magic",
+   "tag": "",
+   "text": "Academies of magic group spells into eight categories called schools of magic. Scholars, particularly wizards, apply these categories to all spells, believing that all magic functions in essentially the same way, whether it derives from rigorous study or is bestowed by a deity.\nThe schools of magic help describe spells; they have no rules of their own, although some rules refer to the schools.\nAbjuration spells are protective in nature, though some of them have aggressive uses. They create magical barriers, negate harmful effects, harm trespassers, or banish creatures to other planes of existence.\nConjuration spells involve the transportation of objects and creatures from one location to another. Some spells summon creatures or objects to the caster’s side, whereas others allow the caster to teleport to another location. Some conjurations create objects or effects out of nothing.\nDivination spells reveal information, whether in the form of secrets long forgotten, glimpses of the future, the locations of hidden things, the truth behind illusions, or visions of distant people or places.\nEnchantment spells affect the minds of others, influencing or controlling their behavior. Such spells can make enemies see the caster as a friend, force creatures to take a course of action, or even control another creature like a puppet.\nEvocation spells manipulate magical energy to produce a desired effect. Some call up blasts of fire or lightning. Others channel positive energy to heal wounds.\nIllusion spells deceive the senses or minds of others. They cause people to see things that are not there, to miss things that are there, to hear phantom noises, or to remember things that never happened. Some illusions create phantom images that any creature can see, but the most insidious illusions plant an image directly in the mind of a creature.\nNecromancy spells manipulate the energies of life and death. Such spells can grant an extra reserve of life force, drain the life energy from another creature, create the undead, or even bring the dead back to life.\nCreating the undead through the use of necromancy spells such as animate dead is not a good act, and only evil casters use such spells frequently.\nTransmutation spells change the properties of a creature, object, or environment. They might turn an enemy into a harmless creature, bolster the strength of an ally, make an object move at the caster’s command, or enhance a creature’s innate healing abilities to rapidly recover from injury.",
+   "page": 103,
+   "see_also": []
+  },
+  {
+   "name": "Combining Magical Effects",
+   "tag": "",
+   "text": "The effects of different spells add together while the durations of those spells overlap. The effects of the same spell cast multiple times don’t combine, however. Instead, the most potent effect—such as the highest bonus—from those castings applies while their durations overlap.\nFor example, if two clerics cast bless on the same target, that character gains the spell’s benefit only once; he or she doesn’t get to roll two bonus dice.",
+   "page": 104,
+   "see_also": []
+  }
+ ]
+}

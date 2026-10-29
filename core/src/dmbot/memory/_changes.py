@@ -6,18 +6,20 @@ its before and after values under one batch number. `undo_batch` reverses a batc
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from dataclasses import dataclass
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
 from typing import Any, LiteralString
 
 from psycopg import errors, sql
 from psycopg.types.json import Jsonb
 
 from dmbot.db import Conn
+from dmbot.memory import merge_restore
 from dmbot.memory.models import MemoryRuleError, TooLateToUndo
-from dmbot.memory.ontology import MIGRATED_KINDS
+from dmbot.memory.ontology import MIGRATED_KINDS, god_is_an_npc
 
 NOT_FOUND = "DMbot doesn't remember that any more."
+ALREADY_UNDONE = "That was already undone."
 CHANGED_SINCE = "That was changed again since, so it can't be undone on its own."
 
 
@@ -29,6 +31,17 @@ class Table:
     # False: kept out of the change log, so Undo can't reach it (the extractor's claims are
     # answered once; a fact written from one is undone as a fact, not by flipping the claim).
     logged: bool = True
+    # A column added later: a row built without it gets this (code that predates the column
+    # keeps working, and no other column is ever filled in silently).
+    defaults: Mapping[str, Any] = field(default_factory=dict, hash=False, compare=False)
+
+
+def _cell(table: Table, row: Mapping[str, Any], column: str) -> Any:
+    """A row's value for a column, or the column's default when it was added after the code that
+    built the row."""
+    if column in row or column not in table.defaults:
+        return row[column]
+    return table.defaults[column]
 
 
 TYPES = Table(
@@ -43,7 +56,8 @@ PREDICATES = Table(
     ("key", "parent", "label", "description", "examples", "reason", "subject_types",
      "object_types", "is_symmetric", "max_per_subject", "conflicts_with", "status",
      "replaced_by", "created_at", "covers", "not_this", "inverse_label", "synonyms",
-     "version"),
+     "version", "from_set"),
+    defaults={"from_set": None},  # the set a relationship was borrowed from (#1456), if any
 )  # fmt: skip
 ENTITIES = Table(
     "memory_entities",
@@ -61,7 +75,30 @@ ENTITIES = Table(
         "role",
         "needs_look",
         "unique_item",
+        "audience_limited",
+        "party",
+        "hidden_from_players",
+        "made_before_name_gate",
+        "manipulated_by",
+        "unnamed",
+        "unnamed_anchor",
+        "unnamed_role",
+        "unnamed_what",
     ),
+    # a clue's switch (#1649), the party, "players don't know this one yet" (#2321); a row written
+    # now is after the pronoun gate (#2358)
+    defaults={
+        "audience_limited": False,
+        "party": False,
+        "hidden_from_players": False,
+        "made_before_name_gate": False,
+        "manipulated_by": None,  # the evidence this one faked (#2409)
+        # a person the story describes but never names (#2790); a row written now is a named one
+        "unnamed": False,
+        "unnamed_anchor": None,
+        "unnamed_role": None,
+        "unnamed_what": None,
+    },
 )
 # What a being or thing is now, with the history of what it was (#1267): one current row for
 # each entry, a new condition closes it.
@@ -79,8 +116,9 @@ CLAIMS = Table(
     "id",
     ("id", "subject", "relationship", "object", "details", "how", "lines", "speaker_ids",
      "source", "prompt_version", "model", "status", "reason", "session_started_at",
-     "created_at", "decided_at", "fact_id"),
+     "created_at", "decided_at", "fact_id", "reading"),
     logged=False,
+    defaults={"reading": None},  # a claim that is a belief for the DM to place (#2412)
 )  # fmt: skip
 # A character's links to the rules (#1034): species, creature type, stat block, class,
 # background.
@@ -100,7 +138,8 @@ ALIASES = Table(
     "memory_aliases",
     "id",
     ("id", "entity_id", "text", "key", "kind", "used_by", "secret", "status", "sound_codes",
-     "source", "created_at"),
+     "source", "created_at", "said_as"),
+    defaults={"said_as": None},
 )  # fmt: skip
 MENTIONS = Table(
     "memory_mentions",
@@ -113,7 +152,10 @@ RELATIONS = Table(
     "id",
     ("id", "subject_id", "predicate", "object_id", "detail", "confidence", "status", "source",
      "mention_ids", "from_session_at", "to_session_at", "from_game_time", "to_game_time",
-     "secret", "created_at", "definition_version"),
+     "secret", "created_at", "definition_version", "unrevealed", "directional", "decided"),
+    # unrevealed: held back from the players until said at the table (#2404). directional: an
+    # older row's role has no direction (#2457)
+    defaults={"unrevealed": False, "directional": False, "decided": None},
 )  # fmt: skip
 CORRECTIONS = Table(
     "memory_corrections",
@@ -125,8 +167,62 @@ FLAGS = Table(
     "id",
     ("id", "kind", "relation_id", "other_id", "status", "created_at"),
 )
+# How a viewer feels about a subject, and how a group or place feels about a whole people (#1655):
+# a new one for a pair closes the old, so the history stays.
+IMPRESSIONS = Table(
+    "memory_impressions",
+    "id",
+    ("id", "viewer_id", "subject_id", "score", "weight", "source", "from_session_at",
+     "created_at", "closed_at"),
+)  # fmt: skip
+ATTITUDES = Table(
+    "memory_attitudes",
+    "id",
+    ("id", "holder_id", "toward_id", "score", "weight", "source", "from_session_at",
+     "created_at", "closed_at"),
+)  # fmt: skip
+# Who holds beliefs (The truth, The party, a character) and what each believes of a connection
+# (#2409). A belief is never edited: a new row is the new belief, the highest `seq` wins.
+# Perspectives are unlogged: The truth and The party are made with the campaign, not by a DM's
+# change, so an Undo can never take them away from the beliefs resting on them.
+PERSPECTIVES = Table(
+    "memory_perspectives", "id", ("id", "kind", "entity_id", "created_at"), logged=False
+)
+# Which characters know an other name the DM keeps from the table (#2935): one row for each (name,
+# character). Logged, so Undo takes a change of who knows back, and an Undo of removing a name
+# brings who knew it back with it. Gone with its name or its character by the database.
+ALIAS_KNOWERS = Table(
+    "memory_alias_knowers", "id", ("id", "alias_id", "perspective_id", "created_at")
+)
+BELIEFS = Table(
+    "memory_beliefs",
+    "id",
+    ("id", "perspective_id", "relation_id", "confidence", "status", "session_at",
+     "evidence_ids", "seq", "recorded_at", "pinned"),
+    defaults={"pinned": False},  # the DM's 📌 100% truth (#2447)
+)  # fmt: skip
+# What a connection or a belief stands on, one typed link each (#2662): unlogged, because an
+# Undo must not bring back a line's reference once the line's words were removed (the link is
+# then a placeholder). Deleted with its connection or belief by the database.
+EVIDENCE = Table(
+    "memory_evidence",
+    "id",
+    ("id", "relation_id", "belief_id", "kind", "target_id", "session_started_at", "added_at"),
+    logged=False,
+)
+# The DM's word that a book entry and a table entry are one, or are not (#1715).
+PLAN_SAME_AS = Table(
+    "plan_same_as",
+    "id",
+    ("id", "plan_id", "document_id", "entity_id", "status", "decided_by", "created_at"),
+)
+# The chapter the DM says the table is in, for each adventure file (#1731).
+PLAN_POSITION = Table(
+    "plan_position", "id", ("id", "document_id", "chapter_id", "set_by", "created_at")
+)
 ALL = (TYPES, PREDICATES, ENTITIES, ALIASES, MENTIONS, RELATIONS, CORRECTIONS, FLAGS, RULE_LINKS,
-       STATES, CLAIMS)  # fmt: skip
+       STATES, CLAIMS, IMPRESSIONS, ATTITUDES, PLAN_SAME_AS, PLAN_POSITION, PERSPECTIVES,
+       BELIEFS, EVIDENCE, ALIAS_KNOWERS)  # fmt: skip
 BY_NAME = {t.name: t for t in ALL}
 
 # What links to a row (table, column, is the column a list), checked before deleting it,
@@ -155,11 +251,26 @@ DEPENDENTS: dict[str, tuple[tuple[str, str, bool], ...]] = {
         ("memory_corrections", "entity_id", False),
         ("memory_rule_links", "entity_id", False),
         ("memory_states", "entity_id", False),
+        ("memory_impressions", "viewer_id", False),
+        ("memory_impressions", "subject_id", False),
+        ("memory_attitudes", "holder_id", False),
+        ("memory_attitudes", "toward_id", False),
+        ("plan_same_as", "entity_id", False),
+        ("memory_perspectives", "entity_id", False),
+        ("memory_entities", "manipulated_by", False),
+        ("memory_entities", "unnamed_anchor", False),
+        # (`plan_divergences` is not listed on purpose: it is derived from the plan and the table
+        # and unlogged, so it simply goes with the entry and is worked out again when needed.)
     ),
     "memory_mentions": (("memory_relations", "mention_ids", True),),
     "memory_relations": (
         ("memory_flags", "relation_id", False),
         ("memory_flags", "other_id", False),
+        ("memory_beliefs", "relation_id", False),
+    ),
+    "memory_perspectives": (
+        ("memory_beliefs", "perspective_id", False),
+        ("memory_alias_knowers", "perspective_id", False),
     ),
 }
 
@@ -226,6 +337,21 @@ class Changes(Scope):
         self.undoes = undoes
         self.batch: int | None = None
         self.tables: set[str] = set()  # tables this write changed
+        # The DM's own writes to connections, (op, before, after): what the after-session report
+        # reads to mark an item "fixed" (#2661). Not an Undo's, not another source's.
+        self.relation_changes: list[tuple[str, dict[str, Any] | None, dict[str, Any] | None]] = []
+        # Beliefs the DM's write added, (point of view, connection): The truth taking up a
+        # connection is how the DM fixes a "denied" difference (#2661).
+        self.belief_additions: list[tuple[str, str]] = []
+        # Items that name a connection the DM deleted, found before the delete takes them with it
+        # (the database cascades them away), and connections an Undo brought back (#2661).
+        self.deleted_items: set[tuple[str, str]] = set()
+        self.restored: set[str] = set()  # connections an Undo gave back their old meaning
+        # (point of view, connection) beliefs an Undo took away
+        self.unbelieved: set[tuple[str, str]] = set()
+        self.perspectives: dict[str, str] | None = (
+            None  # The truth's and The party's ids, once known
+        )
 
     async def insert(self, table: Table, row: dict[str, Any]) -> dict[str, Any]:
         cols = ("guild_id", "campaign_id", *table.columns)
@@ -235,11 +361,15 @@ class Changes(Scope):
             sql.SQL(", ").join(sql.Placeholder() * len(cols)),
             sql.SQL(", ").join(sql.Identifier(c) for c in table.columns),
         )
-        cur = await self.conn.execute(query, (*self.ids, *(row[c] for c in table.columns)))
+        cur = await self.conn.execute(
+            query, (*self.ids, *(_cell(table, row, c) for c in table.columns))
+        )
         raw = await cur.fetchone()
         assert raw is not None
         after = row_of(raw, table)
         await self._log(table, after[table.key], "insert", None, after)
+        if table is RELATIONS and self.undoes is None:
+            await self._beliefs_follow(after)
         return after
 
     async def update(self, table: Table, row_id: str, changes: dict[str, Any]) -> dict[str, Any]:
@@ -267,13 +397,39 @@ class Changes(Scope):
         assert raw is not None
         after = row_of(raw, table)
         await self._log(table, row_id, "update", before, after)
+        if "status" in changes:
+            await self._forget_later(table, [after])
+        if (
+            table is RELATIONS
+            and self.undoes is None
+            and ("status" in changes or "secret" in changes or "unrevealed" in changes)
+        ):
+            await self._beliefs_follow(after)
         return after
+
+    async def _beliefs_follow(self, relation: dict[str, Any]) -> None:
+        """A connection was written: keep The truth's and The party's belief in step with it, in the
+        same change (#2409). Imported here: the module needs the tables above."""
+        from dmbot.memory import beliefs
+
+        await beliefs.follow(self, relation)
 
     async def delete(self, table: Table, row_id: str) -> None:
         """Delete one row. Refused while anything still links to it (see DEPENDENTS)."""
         before = await self.get(table, row_id)
         if before is None:
             return
+        if table is RELATIONS and self.source == "dm" and self.undoes is None:
+            from dmbot.memory import report_fixed
+
+            self.deleted_items |= await report_fixed.names(self.conn, *self.ids, [row_id])
+        if table is RELATIONS and self.undoes is None:
+            # its beliefs go with it, each logged, so an Undo brings the connection back whole
+            for belief in await self.select(BELIEFS, " AND relation_id = %s", [row_id]):
+                await self.delete(BELIEFS, belief["id"])
+        if table is ALIASES:  # who knows an other name goes with it (#2935)
+            for knower in await self.select(ALIAS_KNOWERS, " AND alias_id = %s", [row_id]):
+                await self.delete(ALIAS_KNOWERS, knower["id"])
         for dep_table, column, is_list in DEPENDENTS.get(table.name, ()):
             test = "%s = ANY({})" if is_list else "{} = %s"
             query = sql.SQL(
@@ -307,7 +463,7 @@ class Changes(Scope):
                 "INSERT INTO {} (guild_id, campaign_id, {}) SELECT %s, %s, {}"
                 " FROM jsonb_populate_recordset(NULL::{}, %s) RETURNING {}"
             ).format(sql.Identifier(table.name), cols, cols, sql.Identifier(table.name), cols),
-            (*self.ids, Jsonb([{c: row[c] for c in table.columns} for row in rows])),
+            (*self.ids, Jsonb([{c: _cell(table, row, c) for c in table.columns} for row in rows])),
         )
         written = {r[table.key]: row_of(r, table) for r in await cur.fetchall()}
         after = [written[row[table.key]] for row in rows]
@@ -400,7 +556,25 @@ class Changes(Scope):
         await self._log_many(
             table, "update", [(after[table.key], before, after) for before, after in logged]
         )
+        if "status" in columns:
+            await self._forget_later(table, [after for _, after in logged])
         return [after for _, after in logged]
+
+    async def _forget_later(self, table: Table, rows: list[dict[str, Any]]) -> None:
+        """A name decided on is no longer left "for later" (#2174): if it is ever undone back to
+        a suggestion it asks again, rather than staying quiet for an answer nobody gave. Every
+        path that changes a status comes through here (one change, many, and undo)."""
+        ids = [
+            r[table.key]
+            for r in rows
+            if table.name == "memory_entities" and r["status"] != "proposed"
+        ]
+        if ids:
+            await self.conn.execute(
+                "DELETE FROM name_later"
+                " WHERE guild_id = %s AND campaign_id = %s AND entity_id = ANY(%s)",
+                (*self.ids, ids),
+            )
 
     def _check_columns(self, table: Table, changes: dict[str, Any]) -> None:
         unknown = set(changes) - set(table.columns)
@@ -440,6 +614,11 @@ class Changes(Scope):
                 }
             )
         self.tables.add(table.name)
+        if table.name == "memory_relations" and self.source == "dm" and self.undoes is None:
+            self.relation_changes += [(op, b, a) for _, b, a in rows]
+        if self.undoes is not None:
+            for _, before, after in rows:
+                self._note_undone(table, op, before, after)
         await self.conn.execute(
             "INSERT INTO memory_changes (guild_id, campaign_id, version, batch, table_name,"
             " row_id, op, before, after, source, undoes, made_at)"
@@ -447,6 +626,23 @@ class Changes(Scope):
             " undoes, made_at FROM jsonb_populate_recordset(NULL::memory_changes, %s)",
             (*self.ids, Jsonb(entries)),
         )
+
+    def _note_undone(
+        self, table: Table, op: str, before: dict[str, Any] | None, after: dict[str, Any] | None
+    ) -> None:
+        """An Undo wrote this row. What matters to the after-session report (#2661) is a
+        connection given back its old meaning (the undo of a reject, an end, a reword or a delete:
+        not of a pin, a secret flag or a reveal) and a belief taken away. The check reads the undo's
+        own row backwards: the change it undid went from `after` to `before`."""
+        from dmbot.memory import report_fixed
+
+        if table.name == "memory_relations":
+            if op == "insert" and after is not None:  # a deleted connection is back
+                self.restored.add(str(after["id"]))
+            elif report_fixed.changed_meaning("update", after, before) and before is not None:
+                self.restored.add(str(before["id"]))
+        elif table.name == "memory_beliefs" and op == "delete" and before is not None:
+            self.unbelieved.add((str(before["perspective_id"]), str(before["relation_id"])))
 
     async def _log(
         self,
@@ -460,6 +656,15 @@ class Changes(Scope):
             return
         self.version += 1
         self.tables.add(table.name)
+        if self.source == "dm" and self.undoes is None:
+            if table.name == "memory_relations":
+                self.relation_changes.append((op, before, after))
+            elif table.name == "memory_beliefs" and op == "insert" and after is not None:
+                self.belief_additions.append(
+                    (str(after["perspective_id"]), str(after["relation_id"]))
+                )
+        if self.undoes is not None:
+            self._note_undone(table, op, before, after)
         if self.batch is None:
             self.batch = self.version
         await self.conn.execute(
@@ -485,10 +690,30 @@ class Changes(Scope):
 # Columns added after change-log rows were written, with the value an older snapshot reads as
 # (#1189): a fact written before definitions were versioned was written under version 1.
 _ADDED_LATER: dict[str, dict[str, Any]] = {
-    "memory_relations": {"definition_version": 1},
-    "memory_entities": {"unique_item": None},  # nobody said: the name decides (#1267)
+    "memory_relations": {
+        "definition_version": 1,
+        "unrevealed": False,
+        "directional": False,
+        "decided": None,
+    },
+    # unique_item: nobody said, the name decides (#1267). audience_limited: off (#1649).
+    # made_before_name_gate: a snapshot from before the column is a row from before it (#2358)
+    "memory_entities": {
+        "unique_item": None,
+        "audience_limited": False,
+        "party": False,
+        "hidden_from_players": False,
+        "made_before_name_gate": True,
+        "manipulated_by": None,  # nothing was faked before beliefs (#2409)
+        "unnamed": False,  # everyone was named before #2790
+        "unnamed_anchor": None,
+        "unnamed_role": None,
+        "unnamed_what": None,
+    },
+    "memory_beliefs": {"pinned": False},  # nothing was pinned before the pin (#2447)
     "memory_predicates": {
         "covers": [], "not_this": [], "inverse_label": "", "synonyms": [], "version": 1,
+        "from_set": None,
     },
 }  # fmt: skip
 
@@ -502,6 +727,13 @@ def _filled(table: Table, snapshot: Any) -> Any:
         return snapshot
     if table.name in _ADDED_LATER:
         snapshot = {**_ADDED_LATER[table.name], **snapshot}
+    if table.name == "memory_entities" and snapshot.get("role") == "god":
+        # a god is an NPC now (#2562), with the word kept in its description
+        return {
+            **snapshot,
+            "role": "npc",
+            "description": god_is_an_npc(str(snapshot.get("description") or "")),
+        }
     if table.name != "memory_entities" or "role" in snapshot:
         return snapshot
     kind, role, look = MIGRATED_KINDS.get(
@@ -548,7 +780,7 @@ async def undo_batch(changes: Changes, batch: int) -> None:
         (*ids, batch),
     )
     if await cur.fetchone() is not None:
-        raise MemoryRuleError("That was already undone.")
+        raise MemoryRuleError(ALREADY_UNDONE)
     cur = await conn.execute(
         "SELECT table_name, row_id, op, before, after FROM memory_changes"
         " WHERE guild_id = %s AND campaign_id = %s AND batch = %s ORDER BY version DESC",
@@ -567,6 +799,9 @@ async def undo_batch(changes: Changes, batch: int) -> None:
         if len(run) == 1 or not await _undo_run_or_not(changes, run):
             await _undo_rows(changes, run)
         start = end
+    # a merge's notes and sheet live outside the log: they come back with the name (#2438)
+    await merge_restore.restore(conn, ids, batch, changes.batch)
+    await merge_restore.redo(conn, ids, batch, changes.batch)
 
 
 async def _undo_rows(changes: Changes, run: Sequence[dict[str, Any]]) -> None:

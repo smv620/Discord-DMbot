@@ -180,7 +180,7 @@ describe("the words match the numbers", () => {
     );
     expect(answer("Do unused hours carry over?")).toMatch(/^No\. Your hours are for the month\./);
     expect(answer("What's different between the plans?")).toMatch(
-      /^Only the hours and how many campaigns you can run\. The free Try It has no backups or downloads; everything else is the same on every plan/,
+      /^Every plan has the same DMbot\. Plans differ only in hours and campaigns \(the free Try It has no backups or downloads\)/,
     );
     expect(answer("Can I change my plan?")).toMatch(/any time/);
     const failed = answer("What if a payment doesn't go through?");
@@ -201,6 +201,10 @@ describe("the words match the numbers", () => {
     );
     // The owner is never told to judge whether someone pays (#437).
     expect(answer("Can I give a campaign to someone else?")).not.toMatch(/plan|room/);
+    // The owner is told when an offer runs out (#2535).
+    expect(answer("Can I give a campaign to someone else?")).toContain(
+      "the offer ends by itself, the campaign stays yours, and DMbot tells you so you can offer it again",
+    );
     expect(answer("Can I delete everything?")).toMatch(
       /^Yes, from My Account\. Your account and the campaigns you run go straight away\./,
     );

@@ -8,17 +8,20 @@ import logging
 import os
 import sys
 import time
+from dataclasses import replace
 from urllib.parse import urlsplit
 
 import uvicorn
 
-from dmbot import entitlements, mail
+from dmbot import alerts, entitlements, mail
+from dmbot.ai import DEFAULT_MODELS, AIModelTier, AnthropicClient, Feature
 from dmbot.config import ConfigError
 from dmbot.db import Database, DatabaseError
 from dmbot.logs import LOG_FORMATS, LOG_LEVELS, configure_logging
+from dmbot.memory import meaning, voyage
 from dmbot.schema import WEB_ROLE
 from dmbot.sharding import ShardSettings
-from dmbot.web import feedback, move_sync, sessions, strays, support
+from dmbot.web import feedback, move_sync, names_smart, sessions, strays, support
 from dmbot.web.admin import HttpGoogle
 from dmbot.web.app import create_app
 from dmbot.web.discord import HttpDiscord
@@ -27,6 +30,7 @@ from dmbot.web.moving import EmailedMoveCodes, forget_old_asks
 from dmbot.web.payments import FakeProvider, PaymentProvider
 from dmbot.web.settings import WebSettings, load_web_settings
 from dmbot.web.stripe import StripeProvider
+from dmbot.web.support_ai import SupportHelper, SupportSpend
 
 log = logging.getLogger("dmbot.web")
 CLEANUP_SECONDS = 3600
@@ -34,9 +38,9 @@ MOVE_SYNC_SECONDS = 60
 STRAY_SWEEP_SECONDS = 600  # the database hands each one out at most once an hour
 
 
-async def _sweep(db: Database) -> None:
-    """Hourly: expired sign-in sessions, "Say hello" messages over a year old, and support
-    tickets over 12 months old."""
+async def _sweep(db: Database, helper: SupportHelper) -> None:
+    """Hourly: expired sign-in sessions, "Say hello" messages over a year old, support tickets
+    over 12 months old, and answered support tickets quiet for two weeks (closed)."""
     while True:
         try:
             removed = await sessions.delete_expired(db, now=int(time.time()))
@@ -64,6 +68,23 @@ async def _sweep(db: Database) -> None:
                 log.info("Removed %d support tickets older than 12 months", expired)
         except Exception as exc:
             log.error("Removing old support tickets failed (%s); trying again", type(exc).__name__)
+        try:
+            # Answered tickets nobody has written to for two weeks are finished (#1505).
+            closed = await support.close_stale(db, int(time.time()))
+            if closed:
+                log.info(
+                    "Closed %d answered support tickets after %d quiet days",
+                    closed,
+                    support.SUPPORT_AUTO_CLOSE_DAYS,
+                )
+        except Exception as exc:
+            log.error("Closing old answered tickets failed (%s); trying again", type(exc).__name__)
+        try:
+            # The team's weekly count of support questions, once a week (#1514).
+            if await helper.weekly_report() == "sent":
+                log.info("Sent the weekly support email to the team")
+        except Exception as exc:
+            log.error("The weekly support email failed (%s); trying again", type(exc).__name__)
         await asyncio.sleep(CLEANUP_SECONDS)
 
 
@@ -78,6 +99,16 @@ async def _sync_moves(db: Database, payments: PaymentProvider) -> None:
         except Exception:
             log.exception("Updating moved accounts' payment records failed; trying again")
         await asyncio.sleep(MOVE_SYNC_SECONDS)
+
+
+async def _help_with_tickets(helper: SupportHelper) -> None:
+    """The support helper's pass (#1431), every minute: tickets waiting for DMbot's helper."""
+    while True:
+        try:
+            await helper.run_once()
+        except Exception:
+            log.exception("The support helper's pass failed")
+        await asyncio.sleep(60)
 
 
 async def _sweep_strays(db: Database, payments: PaymentProvider) -> None:
@@ -95,6 +126,11 @@ async def serve(settings: WebSettings) -> None:
     # A small pool of its own, and no query may run longer than 5 seconds: a busy website
     # can never hold many of the database's connections for long. It never changes the
     # schema (its role, dmbot_web, can't): the bot does, so it only checks it's current.
+    # Owner alerts (#1907) by email: the website has no Discord login, so a mail failure is
+    # only logged here (the bot's own process sends the private message).
+    alerter = alerts.Alerter(settings.mail)
+    alerts.install(alerter)
+    alerter.say_if_off()
     db = await Database.open(
         settings.database_url,
         options="-c statement_timeout=5000",
@@ -138,6 +174,35 @@ async def serve(settings: WebSettings) -> None:
     )
     # A move code is mailed like a sign-in link, so it needs the same mailer (#1246).
     move_codes = EmailedMoveCodes(db, mailer) if mailer is not None else None
+    # DMbot's support helper (#1431): needs the AI key to answer; without it tickets still get their
+    # thank-you and the team's replies work, and nothing is answered by the AI.
+    ai_client: AnthropicClient | None = None
+    if settings.ai_key:
+        models = replace(DEFAULT_MODELS, deep=settings.support_ai_model or DEFAULT_MODELS.deep)
+        ai_client = AnthropicClient(settings.ai_key, models, watch=SupportSpend())
+    helper = SupportHelper(
+        db,
+        ai_client.tier(AIModelTier.DEEP, Feature.SUPPORT) if ai_client is not None else None,
+        mailer,
+        team_email=settings.support_team_email,
+        site_url=settings.site_url,
+        link_secret=settings.link_token_secret,
+        reply_domain=settings.mail_reply_domain,
+    )
+    # Search by meaning on the Names page (#2733): only with the switch on and the Voyage key set.
+    voyage_http: voyage.HttpTransport | None = None
+    smart_names: names_smart.SmartNames | None = None
+    if settings.meaning_search_on:
+        voyage_http = voyage.HttpTransport(settings.voyage_key)
+        smart_names = names_smart.SmartNames(
+            voyage.Voyage(
+                voyage_http,
+                embed_model=settings.voyage_embed_model,
+                rerank_model=settings.voyage_rerank_model,
+            ),
+            settings.voyage_embed_model,
+            meaning.CallCounter(time.time).count,
+        )
     app = create_app(
         settings,
         db,
@@ -148,8 +213,11 @@ async def serve(settings: WebSettings) -> None:
         google=google,
         mailer=mailer,
         move_codes=move_codes,
+        helper=helper,
+        smart_names=smart_names,
     )
-    sweeper = asyncio.create_task(_sweep(db))
+    sweeper = asyncio.create_task(_sweep(db, helper))
+    helping = asyncio.create_task(_help_with_tickets(helper)) if ai_client is not None else None
     syncer = asyncio.create_task(_sync_moves(db, payments)) if payments is not None else None
     stray_sweeper = (
         asyncio.create_task(_sweep_strays(db, payments)) if payments is not None else None
@@ -168,6 +236,12 @@ async def serve(settings: WebSettings) -> None:
         sweeper.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await sweeper
+        if helping is not None:
+            helping.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await helping
+        if ai_client is not None:
+            await ai_client.close()
         if syncer is not None:
             syncer.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -176,6 +250,8 @@ async def serve(settings: WebSettings) -> None:
             stray_sweeper.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await stray_sweeper
+        if voyage_http is not None:
+            await voyage_http.close()
         await discord.close()
         if discussions is not None:
             await discussions.close()

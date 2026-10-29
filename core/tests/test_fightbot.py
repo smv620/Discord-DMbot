@@ -19,6 +19,7 @@ from dmbot.ai import AIError, Reply
 from dmbot.memory import fight_prompt
 from dmbot.memory.sheet_store import CharacterSheet, FightPlayer
 from dmbot.timebot.clock import Clock
+from tests.answer_first import Timeline
 from tests.test_memory_store import GUILD_A
 from tests.test_sheet_reread import base
 from tests.test_sheet_store import PLAYER, SheetTest
@@ -76,7 +77,8 @@ class Prompt(unittest.TestCase):
         self.assertIsNone(fight_prompt.clean_reply("NOTHING", names))
         self.assertIsNone(fight_prompt.clean_reply("nothing to add", names))
         self.assertIsNone(fight_prompt.clean_reply("", names))
-        self.assertIsNone(fight_prompt.clean_reply("Cure Wounds " + "x" * 400, names))
+        # a long reminder is used as it comes: its length is an instruction, never a check (#2597)
+        self.assertIsNotNone(fight_prompt.clean_reply("Cure Wounds " + "x" * 400, names))
         # Not from the sheet (or steered by the table talk): never sent.
         self.assertIsNone(fight_prompt.clean_reply("Tell Bob to flee from the dragon.", names))
         self.assertIsNone(fight_prompt.clean_reply("You have Fireball.", names))
@@ -109,7 +111,11 @@ class Prompt(unittest.TestCase):
         )
 
 
-class Runner(unittest.IsolatedAsyncioTestCase):
+class Harness(unittest.IsolatedAsyncioTestCase):
+    """The pieces a FightBot test needs (a clock, a table, a fake bot); no tests of its own."""
+
+    now: float
+
     def setUp(self) -> None:
         self.now = 1000.0
         # One clock for both: the persisted times are wall time, the table's are monotonic.
@@ -194,6 +200,8 @@ class Runner(unittest.IsolatedAsyncioTestCase):
             user=user,
         )
 
+
+class Runner(Harness):
     async def test_a_reminder_is_a_private_message_with_the_three_silences(self) -> None:
         table = self.table()
         bot = self.bot(table)
@@ -435,6 +443,31 @@ class Runner(unittest.IsolatedAsyncioTestCase):
             await fightbot.tick(bot, table)
             bot.user.send.assert_not_awaited()
 
+    async def test_consent_withdrawn_or_a_session_ended_while_the_plan_is_checked_sends_nothing(
+        self,
+    ) -> None:
+        # The re-check before the AI call (the plan look-up is an await); the test above covers
+        # the one after it.
+        for what in ("consent", "ended", "paused"):
+            table = self.table()
+            bot = self.bot(table)
+
+            async def during(
+                *_: Any, _w: str = what, _b: Any = bot, _t: Any = table, **__: Any
+            ) -> bool:
+                if _w == "consent":
+                    _b.consent = SimpleNamespace(has_consent=lambda g, u: False)
+                elif _w == "ended":
+                    _b.tables.clear()
+                else:
+                    _t.listening = False
+                return True
+
+            bot.plan_allows = during
+            await fightbot.tick(bot, table)
+            bot.fight_ai.complete.assert_not_awaited()
+            bot.user.send.assert_not_awaited()
+
     async def test_a_reply_that_names_nothing_on_the_sheet_or_gives_advice_is_not_sent(
         self,
     ) -> None:
@@ -465,7 +498,9 @@ class Buttons(unittest.IsolatedAsyncioTestCase):
             client=bot,
             user=SimpleNamespace(id=user),
             message=SimpleNamespace(content="⚔️ You still have Hunter's Mark."),
-            response=SimpleNamespace(edit_message=AsyncMock(), send_message=AsyncMock()),
+            response=SimpleNamespace(defer=AsyncMock()),
+            followup=SimpleNamespace(send=AsyncMock()),
+            edit_original_response=AsyncMock(),
         )
 
     def table(self) -> Any:
@@ -482,13 +517,29 @@ class Buttons(unittest.IsolatedAsyncioTestCase):
         it = self.interaction(table, user=9)
         await fightbot.FightButton(GUILD, CAMPAIGN, "quiet").callback(it)
         it.client.sheets.fight_quiet.assert_awaited_once_with(GUILD, CAMPAIGN, 9, 500)
-        edited = it.response.edit_message.await_args.kwargs
+        edited = it.edit_original_response.await_args.kwargs
         self.assertIn("Hunter's Mark", edited["content"])  # the reminder stays, the buttons go
         self.assertIsNone(edited["view"])
         it = self.interaction(table)
         await fightbot.FightButton(GUILD, CAMPAIGN, "never").callback(it)
         it.client.sheets.set_fightbot.assert_awaited_once_with(GUILD, CAMPAIGN, PLAYER, False)
-        self.assertIn("FightBot is off", it.response.edit_message.await_args.kwargs["content"])
+        self.assertIn("FightBot is off", it.edit_original_response.await_args.kwargs["content"])
+
+    async def test_a_silence_button_answers_discord_before_the_database(self) -> None:
+        for action in ("snooze", "quiet", "never"):
+            line = Timeline()
+            it = self.interaction(self.table())
+            it.response, it.followup = line.response, line.followup
+            it.edit_original_response = line.edit_original_response
+            sheets_ = it.client.sheets
+            sheets_.sheets = line.slow(
+                "sheets", [CharacterSheet("e1", "Mira", PLAYER, None, base(), 1)]
+            )
+            for name in ("set_fightbot", "fight_snooze", "fight_quiet"):
+                setattr(sheets_, name, line.slow(name))
+            await fightbot.FightButton(GUILD, CAMPAIGN, action).callback(it)
+            line.assert_answered_first()
+            self.assertIn("slow:sheets", line.events)
 
     async def test_snooze_and_never_are_saved_even_with_no_session_running(self) -> None:
         for action in ("snooze", "never"):
@@ -501,7 +552,7 @@ class Buttons(unittest.IsolatedAsyncioTestCase):
         it = self.interaction(None)
         await fightbot.FightButton(GUILD, CAMPAIGN, "quiet").callback(it)
         it.client.sheets.fight_quiet.assert_not_awaited()
-        self.assertIn("no game running", it.response.edit_message.await_args.kwargs["content"])
+        self.assertIn("no game running", it.edit_original_response.await_args.kwargs["content"])
 
     async def test_another_campaigns_session_does_not_take_a_quiet(self) -> None:
         it = self.interaction(self.table())
@@ -523,13 +574,13 @@ class Buttons(unittest.IsolatedAsyncioTestCase):
                 0,
                 action,
             )
-            self.assertEqual(it.response.send_message.await_args.args[0], fightbot.NOT_PLAYING)
+            self.assertEqual(it.followup.send.await_args.args[0], fightbot.NOT_PLAYING)
 
     async def test_a_save_that_fails_says_so(self) -> None:
         it = self.interaction(self.table())
         it.client.sheets.set_fightbot = AsyncMock(side_effect=RuntimeError("down"))
         await fightbot.FightButton(GUILD, CAMPAIGN, "never").callback(it)
-        self.assertIn("didn't save", it.response.send_message.await_args.args[0])
+        self.assertIn("didn't save", it.followup.send.await_args.args[0])
 
     def test_the_ids_fit_and_match(self) -> None:
         for action in ("snooze", "quiet", "never"):

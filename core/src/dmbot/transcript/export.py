@@ -15,15 +15,17 @@ from __future__ import annotations
 import re
 import time
 import unicodedata
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Collection, Iterable, Mapping, Sequence
+from dataclasses import dataclass
 
 from dmbot.transcript.models import (
+    OFF_RECORD,
     QUESTION_KINDS,
     SIDEBAR_TABLE_QUESTION,
     Line,
     TranscriptSession,
 )
-from dmbot.transcript.topics import GAME, OFF_TOPIC, TABLE_TALK, Spoken, collapse
+from dmbot.transcript.topics import GAME, OFF_TOPIC, TABLE_TALK, Shown, Spoken, collapse
 
 UNKNOWN_SPEAKER = "Someone"
 _BRACKETS = str.maketrans("", "", "()[]{}")
@@ -38,8 +40,9 @@ AS_HEARD_NOTE = (
 )
 CLEANED_NOTE = (
     "Cleaned: DMbot fixed the spelling of names it was sure about; a few may still be "
-    "wrong. Chat clearly not about the game is left out, and a short note says how long "
-    'it was spoken. The "As heard" version (/transcript) still has every word. Only people '
+    "wrong. Long chat clearly not about the game is left out, and a short note says how long "
+    "it was spoken; when DMbot is unsure, it keeps the line. The DM can put left-out chat back "
+    'on the website. The "As heard" version (/transcript) still has every word. Only people '
     "who agreed were recorded."
 )
 SIDEBAR_NOTE = (
@@ -50,21 +53,52 @@ DMBOT_NAME = "DMbot"
 TABLE_Q_NAME = "Table Q"  # a player's question to DMbot (#1187), apart from the DM's sidebar
 TYPED_TAG = "(typed)"
 TYPED_NOTE = (
-    "(typed) lines were typed in the table's chat, not said. They are left out of the Cleaned "
-    "version."
+    "(typed) lines were typed in the table's chat, not said. In the Cleaned version, DMbot leaves "
+    "out chat that is clearly not about the game."
+)
+IMAGE_TAG = "(image)"
+IMAGE_NOTE = (
+    "(image) lines describe a picture someone posted in the table's chat. An AI looked at it once "
+    "and wrote what it showed. The picture itself is not kept, only these words."
 )
 HOW_TO_READ = (
-    "Each line: [time since start] (person) {their character}: what they said. "
-    "{narrating} means the DM is describing the scene; an NPC's name in braces means the DM "
-    "is speaking as that character. {table_talk} is talk about the rules or running the "
-    "game; {non-game_content} is chat that isn't about the game (these are not characters). "
+    "Each line: [time since start] (person) {their character}: what they said. A person marked "
+    "DM is the Dungeon Master. {narrating} means the DM is describing the scene; an NPC's name "
+    "in braces means the DM is speaking as that character. {table_talk} is out-of-character talk "
+    'about the rules or running the game, like "roll initiative" or "what\'s my AC?"; '
+    "{non-game_content} is chat that isn't about the game (these two are not characters). "
     "The cleaned file replaces off-topic chat with a note of how long it lasted; the "
-    "as-heard file keeps every word."
+    "as-heard file keeps every word, and a DM can put the chat back in the cleaned file."
 )
 # What a line is when it is not the person's character speaking (#53).
 TOPIC_TAGS = {TABLE_TALK: "table_talk", OFF_TOPIC: "non-game_content"}
 
 AS_HEARD, CLEANED = "as-heard", "cleaned"
+
+
+@dataclass(frozen=True, slots=True)
+class Skip:
+    """Where a "[… of off-topic chat skipped]" note is in a cleaned file, and which lines it stands
+    for, without their words (#2567): the website finds them again from the speaker and times."""
+
+    index: int  # the note's place among the file's lines (after the header)
+    speaker: int
+    from_ms: int
+    to_ms: int
+    seconds: int
+    lines: int
+
+
+@dataclass(frozen=True, slots=True)
+class SpokenAt:
+    """Where a spoken line is in a file and whose it is, without its words (#2858): the website
+    offers "Fix this line" on it and names the line again by its speaker and start time."""
+
+    index: int  # the line's place among the file's lines (after the header)
+    speaker: int
+    started_ms: int
+
+
 VERSIONS = (CLEANED, AS_HEARD)
 
 
@@ -76,10 +110,91 @@ def clean_name(raw: str | None) -> str:
     return name.strip()[:NAME_MAX] or UNKNOWN_SPEAKER
 
 
+class Label(str):
+    """A speaker's label made by `distinct_names`: already safe, so its "(2)" is kept as it is."""
+
+
+def _is_comma(char: str) -> bool:
+    # every comma there is (full-width, small, Arabic…) and the look-alikes that read as one: the
+    # low quotation marks U+201A and U+201E, the ideographic comma U+3001, the low accent U+02CF,
+    # the Greek numeral sign U+0375 and the cedilla (U+00B8, which folds to a combining U+0327)
+    return (
+        "COMMA" in unicodedata.name(char, "")
+        or char in "\u201a\u201e\u3001\u02cf\u0375\u00b8\u0327"
+    )
+
+
+def _is_bracket(char: str) -> bool:
+    # every opening and closing bracket of any script (Unicode Ps and Pe), not only ()[]{}: the
+    # medium and flattened ornament parentheses and the angle brackets read as the "(2)" that tells
+    # two people with one name apart
+    return unicodedata.category(char) in ("Ps", "Pe")
+
+
+def person_name(raw: str | None) -> str:
+    """A speaker's name as a file shows it, made safe to stand in a "(Name, DM)" label (#2337): no
+    brackets (so it cannot look like another line's label or the "(2)" that tells two people with
+    one name apart) and no comma of any look (so only the DM path ever writes ", DM"). Compatible
+    forms are folded first, so a full-width look-alike goes the same way."""
+    name = unicodedata.normalize("NFKC", clean_name(raw))
+    name = "".join(" " if _is_comma(c) else c for c in name if not _is_bracket(c))
+    return " ".join(name.split()) or UNKNOWN_SPEAKER
+
+
+def distinct_names(names: Mapping[int, str | None]) -> dict[int, Label]:
+    """Labels for these people, in the order given: a name safe for a label (`person_name`), and
+    for a second person with the same name (any case) " (2)", a third " (3)" (#2337). The
+    brackets are taken out of every name first, so no chosen name can be, or collide with, a
+    suffix made here."""
+    seen: dict[str, int] = {}
+    out: dict[int, Label] = {}
+    for user_id, raw in names.items():
+        name = person_name(raw)
+        key = name.casefold()
+        seen[key] = seen.get(key, 0) + 1
+        out[user_id] = Label(name if seen[key] == 1 else f"{name} ({seen[key]})")
+    return out
+
+
+def _hidden_typing(line: Line) -> bool:
+    """Typed chat clearly not about the game: left out of the Cleaned version, as talk like it is
+    (#2447, item 6)."""
+    return line.typed and line.topic == OFF_TOPIC
+
+
+def speaker_order(lines: Iterable[Line], version: str = AS_HEARD) -> list[int]:
+    """The people a file of this version names, in the order each first speaks in it. DMbot's own
+    answers are not a person; the cleaned version leaves out sidebar lines and typing clearly not
+    about the game, so someone who only asked DMbot, or whose typing was all hidden, is not
+    listed there (a gap in the numbers or a "(2)" would hint at a hidden person). One order for
+    the website and the Discord download, so a person has the same label in both."""
+    order: list[int] = []
+    for line in sorted(lines, key=lambda x: x.started_ms):
+        if line.sidebar == OFF_RECORD:
+            continue  # a gap's marker is not someone speaking
+        if line.sidebar and line.sidebar not in QUESTION_KINDS:
+            continue
+        if version == CLEANED and (line.sidebar or _hidden_typing(line)):
+            continue
+        if line.user_id not in order:
+            order.append(line.user_id)
+    return order
+
+
 def clock(seconds: float) -> str:
     """Time since the session started: 0:42:10."""
     s = max(0, int(seconds))
     return f"{s // 3600}:{s // 60 % 60:02d}:{s % 60:02d}"
+
+
+OFF_RECORD_TEXT = (
+    "was off the record, nothing recorded"  # the same words as the buttons and the chat lines
+)
+
+
+def _hhmm(unix_ms: int) -> str:
+    """A time of day in UTC, like the "Started … UTC" line of the file: 20:14."""
+    return time.strftime("%H:%M", time.gmtime(unix_ms / 1000))
 
 
 def duration(seconds: int) -> str:
@@ -179,12 +294,16 @@ def label(
     character: str | None = None,
     topic: str = GAME,
     entity: str = "",
+    *,
+    safe: bool = False,
 ) -> str:
     """`[0:42:10] (Mia) {Cerric}`, or `[0:42:10] (Sam)` without a character. Table talk and
     off-topic talk say so instead of the character: `[0:42:10] (Mia) {table_talk}`. A line
     said as someone else (the DM narrating, or voicing an NPC, #53) shows that instead of
-    the speaker's own character: `[0:42:10] (Sam) {narrating}`, `(Sam) {Brother Hiro}`."""
-    speaker, character = _plain(speaker), _plain(character) if character else None
+    the speaker's own character: `[0:42:10] (Sam) {narrating}`, `(Sam) {Brother Hiro}`. `safe`: the
+    speaker is a label `render` made (it may hold the "(2)" and ", DM" it wrote)."""
+    speaker = speaker if safe else _plain(speaker)
+    character = _plain(character) if character else None
     if entity:
         character = _plain(entity)
     character = TOPIC_TAGS.get(topic, character)
@@ -203,28 +322,47 @@ def render(
     names: Mapping[int, str],
     *,
     characters: Mapping[int, str] | None = None,
+    dms: Collection[int] = (),
     running: bool = False,
     version: str = AS_HEARD,
+    skips: list[Skip] | None = None,
+    spoken_at: list[SpokenAt] | None = None,
 ) -> str:
     """The whole file. `names`: speaker ID → display name (missing ones show as
-    'Someone'); `characters`: speaker ID → the character they play. `running`: DMbot
+    'Someone'); `characters`: speaker ID → the character they play; `dms`: the speakers who are
+    DMs of the campaign, shown as "(Name, DM)" (#2337). `running`: DMbot
     is still recording this session. `version`: CLEANED or AS_HEARD. The DM sidebar lines
     (#935) are in the as-heard version, for everyone who may read it, and never in the
     cleaned one (owner, #933)."""
     _check(version)
     start_ms = session.started_at * 1000
     playing = characters or {}
+
+    def person(user_id: int) -> str:
+        raw = names.get(user_id)
+        # A label from `distinct_names` is safe as it is; any other name is made safe here, with
+        # no comma left in it: only a DM is marked, and nobody can pass as one by their name.
+        name = str(raw) if isinstance(raw, Label) else person_name(raw)
+        return f"{name}, DM" if user_id in dms else name
+
     shown: dict[int, tuple[str, str | None]] = {}  # each name cleaned once
-    timed: list[tuple[int, str]] = []  # (when it started, the line)
+    # (when it started, the line, what a skipped note stands for, whose spoken line it is)
+    timed: list[tuple[int, str, Shown | None, tuple[int, int] | None]] = []
     # The cleaned version hides clearly off-topic talk (#52): each run of it becomes one
     # marker with how long it lasted. The as-heard version keeps everything.
     everything = list(lines)
-    # Typed chat (#1118) is only in the as-heard version, tagged "(typed)"; the cleaned one is
-    # what was said.
+    # Typed chat (#1118) is in both versions, tagged "(typed)"; the cleaned one leaves out typing
+    # clearly not about the game, as it does talk (#2447, item 6).
     typed_lines = [line for line in everything if line.typed and not line.sidebar]
     table_lines = [line for line in everything if not line.sidebar and not line.typed]
-    shown_typed = typed_lines if version == AS_HEARD else []
-    shown_sidebar = [line for line in everything if line.sidebar] if version == AS_HEARD else []
+    shown_typed = (
+        typed_lines if version == AS_HEARD else [x for x in typed_lines if not _hidden_typing(x)]
+    )
+    shown_sidebar = (
+        [line for line in everything if line.sidebar and line.sidebar != OFF_RECORD]
+        if version == AS_HEARD
+        else []
+    )
     spoken = [
         Spoken(
             line.user_id,
@@ -241,40 +379,64 @@ def render(
         if item.speaker not in shown:
             character = playing.get(item.speaker)
             shown[item.speaker] = (
-                clean_name(names.get(item.speaker)),
+                person(item.speaker),
                 clean_name(character) if character else None,
             )
         when = clock((item.started_ms - start_ms) / 1000)
         who = (
-            label(when, shown[item.speaker][0])
+            label(when, shown[item.speaker][0], safe=True)
             if item.skipped
-            else label(when, *shown[item.speaker], item.said_as, item.entity)
+            else label(when, *shown[item.speaker], item.said_as, item.entity, safe=True)
         )  # a skipped note says what it is, with no character
         if item.skipped:  # "[0:12:04] (Mia) [1m 22s of off-topic chat skipped]"
-            timed.append((item.started_ms, f"{who} {item.text}"))
+            timed.append((item.started_ms, f"{who} {item.text}", item, None))
         else:
-            timed.append((item.started_ms, f"{who}: {' '.join(item.text.split())}"))
+            timed.append(
+                (
+                    item.started_ms,
+                    f"{who}: {' '.join(item.text.split())}",
+                    None,
+                    (item.speaker, item.started_ms),
+                )
+            )
     for line in shown_sidebar:  # "[0:12:04] (Sam) [DM Sidebar]: …", "[0:12:09] (DMbot) …"
-        asker = (
-            DMBOT_NAME
-            if line.sidebar not in QUESTION_KINDS
-            else clean_name(names.get(line.user_id))
-        )
+        asker = DMBOT_NAME if line.sidebar not in QUESTION_KINDS else person(line.user_id)
         when = clock((line.started_ms - start_ms) / 1000)
         said = " ".join(line.heard.split())
         tag = sidebar_tag(line)
-        timed.append((line.started_ms, f"[{when}] ({_plain(asker)}) {tag}: {said}"))
+        timed.append((line.started_ms, f"[{when}] ({asker}) {tag}: {said}", None, None))
     for line in shown_typed:  # "[0:12:06] (Mia) {Cerric} (typed): we take a long rest"
         when = clock((line.started_ms - start_ms) / 1000)
-        said = " ".join(line.heard.split())
+        said = " ".join((line.text if version == CLEANED else line.heard).split())
         who = label(
             when,
-            clean_name(names.get(line.user_id)),
+            person(line.user_id),
             clean_name(playing[line.user_id]) if line.user_id in playing else None,
+            safe=True,
         )
-        timed.append((line.started_ms, f"{who} {TYPED_TAG}: {said}"))
+        tag = IMAGE_TAG if line.image else TYPED_TAG
+        timed.append((line.started_ms, f"{who} {tag}: {said}", None, None))
+    for line in everything:  # "[0:12:04] (Mia was off the record, 20:14 to 20:19)", both versions
+        if line.sidebar == OFF_RECORD:
+            when = clock((line.started_ms - start_ms) / 1000)
+            span = f"{_hhmm(line.started_ms)}\u2013{_hhmm(line.started_ms + line.duration_ms)} UTC"
+            who = person(line.user_id)
+            who += "," if who.endswith(", DM") else ""  # "(Mia, DM, was off the record, …)"
+            timed.append(
+                (line.started_ms, f"[{when}] ({who} {OFF_RECORD_TEXT}, {span})", None, None)
+            )
     timed.sort(key=lambda t: t[0])  # stable: a sidebar line follows table speech at the same ms
-    body = [text for _, text in timed]
+    body = [text for _, text, _, _ in timed]
+    if skips is not None:
+        skips.extend(
+            Skip(n, note.speaker, note.started_ms, note.until_ms, round(note.seconds), note.count)
+            for n, (_, _, note, _) in enumerate(timed)
+            if note is not None
+        )
+    if spoken_at is not None:
+        spoken_at.extend(
+            SpokenAt(n, line[0], line[1]) for n, (_, _, _, line) in enumerate(timed) if line
+        )
     started = time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(session.started_at))
     ran = (
         f", ran {duration(session.ended_at - session.started_at)}"
@@ -288,7 +450,9 @@ def render(
         CLEANED_NOTE if version == CLEANED else AS_HEARD_NOTE,
         HOW_TO_READ,
         *([SIDEBAR_NOTE] if shown_sidebar else []),
-        *([TYPED_NOTE] if shown_typed else []),
+        *([TYPED_NOTE] if any(not x.image for x in typed_lines) else []),
+        *([IMAGE_NOTE] if any(x.image for x in typed_lines) else []),
+        # (the notes show also when the Cleaned version hides every such line)
     ]
     if running:
         header.append(

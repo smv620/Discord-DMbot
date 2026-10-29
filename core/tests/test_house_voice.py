@@ -16,8 +16,9 @@ from unittest.mock import AsyncMock, MagicMock
 import discord
 
 from dmbot import bot as bot_module
+from dmbot.ai import Reply
 from dmbot.audio.segmenter import Segmenter, Utterance
-from dmbot.bot import DMBot, Table
+from dmbot.bot import DMBot
 from dmbot.campaigns import Campaign
 from dmbot.config import Settings
 from dmbot.dm_screen import house_voice as screen
@@ -25,6 +26,7 @@ from dmbot.dm_screen.house_voice import HouseVoiceButton
 from dmbot.rules import house
 from dmbot.rules.house import HouseRule, HouseRuleError
 from dmbot.rules.house_voice import GAP_S, Clash, HouseVoice, Proposal, Said, find
+from dmbot.table import Table
 from dmbot.ui import house_rules as house_ui
 from tests.test_memory_names import FakeResponse
 
@@ -138,7 +140,7 @@ class FakeStore:
 
     async def add(self, guild_id: int, cid: str, user_id: int, text: str,
                   instead: str | None = None, *, scenario: str | None = None,
-                  session_id: str | None = None) -> HouseRule:  # fmt: skip
+                  session_id: str | None = None, source: str = "typed") -> HouseRule:  # fmt: skip
         if user_id != DM:
             raise HouseRuleError(house.NOT_DM)
         self.made += 1
@@ -146,7 +148,9 @@ class FakeStore:
                          house.clean_optional(instead, house.INSTEAD_BOX), scenario, session_id,
                          user_id, NOW, NOW)  # fmt: skip
         self.rules.append(rule)
-        self.added.append({"rule": rule, "scenario": scenario, "session_id": session_id})
+        self.added.append(
+            {"rule": rule, "scenario": scenario, "session_id": session_id, "source": source}
+        )
         return rule
 
     async def edit(
@@ -179,7 +183,9 @@ class TableTest(unittest.IsolatedAsyncioTestCase):
         self.bot.house_rules = self.store  # type: ignore[assignment]
         self.posts: list[tuple[int, str, Any]] = []
 
-        async def post_message(channel_id: int, text: str, view: Any = None) -> object:
+        async def post_message(
+            channel_id: int, text: str, view: Any = None, *, remember: Any = None
+        ) -> object:
             self.posts.append((channel_id, text, view))
             return object()
 
@@ -263,7 +269,9 @@ class Proposing(TableTest):
         self.assertEqual(self.table.house_voice.seen, set())  # given back
 
     async def test_a_failed_post_gives_back_the_words(self) -> None:
-        async def nowhere(channel_id: int, text: str, view: Any = None) -> None:
+        async def nowhere(
+            channel_id: int, text: str, view: Any = None, *, remember: Any = None
+        ) -> None:
             return None
 
         self.bot.post_message = nowhere  # type: ignore[method-assign]
@@ -302,11 +310,82 @@ class Pressing(TableTest):
         self.assertEqual(added["rule"].rule, "Potions are a bonus action")
         self.assertRegex(added["scenario"], r"^Said at the table, \d{4}-\d{2}-\d{2}$")
         self.assertEqual(added["session_id"], "session-1")
+        self.assertEqual(added["source"], "voice")
         content, new_view = it.response.edited[0]
         self.assertIsNone(new_view)
         self.assertIn("✅ Saved as house rule 1.", content)
         self.assertTrue(content.startswith("🏠 **Save as a house rule?**"))
         self.assertEqual(self.table.house_voice.proposals, {})
+
+    async def disagreeing(self) -> tuple[Any, Any, Any]:
+        """A proposal that the check says disagrees with rule 1: the press, and the question."""
+        self.store.seed("Potions take an item interaction")
+        reply = '{"checks":[{"new":1,"disagrees_with":[1]}]}'
+        self.bot.rule_conflict_ai = SimpleNamespace(  # type: ignore[assignment]
+            complete=AsyncMock(return_value=Reply(reply, cut=False))
+        )
+        self.bot.house_wins = SimpleNamespace(record=AsyncMock())  # type: ignore[assignment]
+        view = await self.proposal()
+        it = self.interaction(content=self.posts[0][1])
+        it.message.edit = AsyncMock()
+        await self.button(view, "Save rule").callback(it)
+        question = it.followup.send.await_args
+        return it, question.args[0], question.kwargs["view"]
+
+    async def test_a_rule_that_disagrees_waits_for_the_dms_choice(self) -> None:
+        it, text, view = await self.disagreeing()
+        self.assertEqual(self.store.added, [])  # nothing saved yet
+        self.assertIn("rule 1", text)
+        self.assertEqual(self.table.house_voice.proposals, {})  # nobody else can save it meanwhile
+        press = self.interaction()
+        await next(b for b in view.children if b.label == "New rule wins").callback(press)
+        (added,) = self.store.added
+        self.assertEqual(added["rule"].rule, "Potions are a bonus action")
+        self.assertIn("✅ Saved as house rule 2.", press.response.edited[0][0])
+        self.assertIn("✅ Saved as house rule 2.", it.message.edit.await_args.kwargs["content"])
+        self.bot.house_wins.record.assert_awaited_once()  # type: ignore[union-attr]
+
+    async def test_the_questions_timeout_edits_the_question_not_the_offer(self) -> None:
+        it, _, view = await self.disagreeing()
+        # the press was answered with a deferred update, so the question is a follow-up of its own
+        self.assertIs(view.question, it.followup.send.return_value)
+        view.question = SimpleNamespace(edit=AsyncMock())
+        await view.on_timeout()
+        view.question.edit.assert_awaited_once()
+        self.assertIsNone(view.question.edit.await_args.kwargs["view"])
+        it.edit_original_response.assert_not_awaited()  # the offer's own message is left alone
+
+    async def test_the_edit_forms_question_times_out_on_the_question_too(self) -> None:
+        self.store.seed("Potions take an item interaction")
+        reply = '{"checks":[{"new":1,"disagrees_with":[1]}]}'
+        self.bot.rule_conflict_ai = SimpleNamespace(  # type: ignore[assignment]
+            complete=AsyncMock(return_value=Reply(reply, cut=False))
+        )
+        self.bot.house_wins = SimpleNamespace(record=AsyncMock())  # type: ignore[assignment]
+        view = await self.proposal()
+        opened = self.interaction()
+        opened.response.send_modal = AsyncMock()
+        await self.button(view, "Edit").callback(opened)
+        form = opened.response.send_modal.await_args.args[0]
+        form.rule._value = "Potions are a free action"
+        submit = self.interaction(content=self.posts[0][1])
+        submit.type = discord.InteractionType.modal_submit
+        submit.message.edit = AsyncMock()
+        await form.on_submit(submit)
+        question = submit.followup.send.await_args.kwargs["view"]
+        self.assertIs(question.question, submit.followup.send.return_value)
+        question.question = SimpleNamespace(edit=AsyncMock())
+        await question.on_timeout()
+        question.question.edit.assert_awaited_once()
+        self.assertIsNone(question.question.edit.await_args.kwargs["view"])
+        submit.edit_original_response.assert_not_awaited()
+
+    async def test_cancelling_the_question_gives_the_offer_back(self) -> None:
+        _, _, view = await self.disagreeing()
+        press = self.interaction()
+        await next(b for b in view.children if b.label == "Cancel").callback(press)
+        self.assertEqual(self.store.added, [])
+        self.assertEqual(len(self.table.house_voice.proposals), 1)  # it can be pressed again
 
     async def test_cancel_saves_nothing_and_takes_the_buttons_away(self) -> None:
         view = await self.proposal()
@@ -333,6 +412,7 @@ class Pressing(TableTest):
         (added,) = self.store.added
         self.assertEqual(added["rule"].rule, "Potions are a free action")
         self.assertEqual(added["session_id"], "session-1")
+        self.assertEqual(added["source"], "voice")  # the edit form too
         self.assertIn("✅ Saved as house rule 1.", submit.response.edited[0][0])
         self.assertIsNone(submit.response.edited[0][1])
 
@@ -603,7 +683,9 @@ class Trouble(TableTest):
         self.assertIn(screen.UNCHECKED, self.posts[0][1])
 
     async def test_a_post_that_raises_gives_back_the_words(self) -> None:
-        async def broken(channel_id: int, text: str, view: Any = None) -> None:
+        async def broken(
+            channel_id: int, text: str, view: Any = None, *, remember: Any = None
+        ) -> None:
             raise RuntimeError("boom")
 
         self.bot.post_message = broken  # type: ignore[method-assign]

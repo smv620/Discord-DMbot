@@ -30,3 +30,15 @@ def fresh_sheet_gate() -> Iterator[None]:
     sheets.GATE = sheets._Gate()
     yield
     sheets.GATE = sheets._Gate()
+
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """CI runs the suite as parts side by side (#1984, `tests/shard.py`); each keeps its files'
+    tests. Without DMBOT_TEST_SHARD every test runs, as always."""
+    from tests import shard
+
+    chosen = shard.wanted()
+    if chosen is None:
+        return
+    part, total = chosen
+    items[:] = [i for i in items if shard.part_of(str(i.path.name), total) == part]

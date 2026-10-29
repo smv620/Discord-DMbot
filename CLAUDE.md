@@ -47,21 +47,59 @@ CI runs all of the above on every pull request. Never merge red CI.
   since the PR's last CI run, RepoManager merges `development` into the PR's branch and
   waits for green CI on that head; Supervisor's approval stands for a merge-of-development
   push that changes nothing else.
+  **The Cloudflare Pages check is a preview, not CI** (Supervisor, 2026-10-21, after it sat "in
+  progress" for over 20 minutes on #2267 and #2269): when every CI job (`core`, `ears`, `web`,
+  `scripts`, `docker images`) is green on the exact head and Cloudflare Pages has been in progress for
+  more than 20 minutes without failing, RepoManager merges without it. A Cloudflare Pages failure
+  still blocks.
   **RepoManager does that refresh itself** (2026-10-08, #516): when the merge of
   `development` into an approved PR's branch is clean and the PR's own change is unchanged
   (same patch-id), RepoManager pushes it and merges on green CI with no new approval or
   author round-trip. A conflict whose resolution touches the PR's own logic goes back to
   the author and needs a fresh "approved".
+  **Migrations are one file each** (Supervisor, 2026-10-16; one file per migration since 2026-10-28,
+  #2127): a migration is `core/src/dmbot/migrations/NNNN_name.py` with its `SQL` and, if it adds
+  them, the web role functions, isolated tables and routing tables it registers, so two PRs that
+  each add a migration no longer touch the same lines and no union is needed. Two files with one
+  number fail a test (claim the number on #2475). A PR written before the split moves its
+  constant and registrations into a new file when it merges `development`. The approval carries
+  over when that file's `SQL` and registrations are byte-for-byte the approved head's constant and
+  entries (RepoManager compares them), and the PR changes nothing else. Any other difference needs
+  a fresh review. **The same union for What's new** (Supervisor, 2026-10-21, after #2273 and #2280
+  were held by it): when both sides only add entries to `web/src/content/whats-new.ts` (`entries` or
+  `held`) and its test's expected lists, RepoManager resolves it as the union, keeping every entry
+  whole in the file's order, and the approval carries over the same way. Since #2469 (2026-10-23)
+  each entry is its own file in `web/src/content/whats-new/`, so two new entries no longer conflict;
+  a branch from before it moves its entry into a file, word for word, at its next merge of
+  `development`, and that move carries the approval over too. An edit to an existing entry
+  on either side is not a union. A conflict in any other file goes to the author and needs a fresh
+  "approved".
+  **A tests-only push keeps the approval** (Supervisor, 2026-10-16, #1526 onward): a push after
+  "approved" that changes only files under `tests/` (a CI fix, a typing fix in a stand-in) needs
+  no new design review; Supervisor records the approval again as a review on the new head so the
+  rule above ("its commit is the PR's head") still holds. Any application-code line, PLAN wording
+  included, needs a fresh review.
   **A stacked PR whose base has merged** (2026-10-13, Supervisor, after #1139 merged under
   #1152/#1166/#1168): its patch-id against `development` changes only because the merged
   PR's commits drop out of its diff. The approval still carries over when `git range-diff`
   shows the PR's **own commits** unchanged and every line that left the diff is in the merged
   PR's diff. RepoManager notes "approval carried over from <sha> (stacked base merged)".
   Anything else in the range-diff needs a fresh "approved".
+  **A hand-resolved merge that changes nothing of the PR's own** (owner, 2026-10-28, to stop a
+  fresh review for every resolved conflict): RepoManager carries the approval over itself when the
+  head has no commits of its own since the approved one (`git log --no-merges OLD..NEW
+  ^origin/development` is empty) and the PR's own +/- lines against `development` are identical to
+  the approved head's (`git diff $(git merge-base OLD origin/development) OLD` against `git diff
+  origin/development...NEW`, both sorted). It notes "approval carried over from <sha> (net diff
+  identical)". Any difference, a renumbered migration included, goes to Supervisor for a fresh
+  review.
   **Merging a batch** (2026-10-13, Supervisor, to stop one merge per CI cycle): RepoManager
   may merge up to four approved PRs back to back when one CI run is green on a single branch
   of `development` plus all of them merged in the planned order, and each PR's own patch is
   unchanged. That run is the "CI on the combination". If it fails, merge one at a time again.
+  RepoManager pushes that branch itself as `batch/<date>-<n>` (Supervisor, 2026-10-18: the rule
+  had no branch to run on, so merges went one per CI cycle). It is never merged or deployed: it
+  only carries the CI run, and the PRs then merge as themselves.
   **Supervisor's own docs-only PRs** (owner, 2026-10-10): a PR by Supervisor that changes
   only `docs/PLAN.md`, `docs/STORY_MEMORY.md` or `CLAUDE.md` merges on Supervisor's
   "Supervisor review: approved" on its current head, plus RepoManager's compliance check
@@ -103,13 +141,13 @@ CI runs all of the above on every pull request. Never merge red CI.
   ux-critic, perf-qa) on the diff and address their findings or explain why not.
 - Update `docs/PLAN.md` when a decision changes scope or architecture.
 - A PR that ships something users can see adds its line to the site's What's new page
-  (`web/src/content/whats-new.ts`), or to its `held` list with the reason while something known
+  (one file per entry in `web/src/content/whats-new/`, #2469), or marks it `held` with the reason while something known
   stops it working (Supervisor, 2026-10-15; docs/PLAN.md, "What's new page").
 
 ## Claude sessions and who does what (owner decision, 2026-10-05, updated 2026-10-12)
 DMbot runs on the cloud test server (VPS), not on the owner's PC. Several Claude
 sessions work on this repo. **Each one has a name, and its name is its issue label:**
-`session: dev1`, `session: CloudDev`, `session: WebDev`,
+`session: dev1`, `session: CloudDev` (CloudDev-lead), `session: CloudDev-assistant`, `session: WebDev` (WebDev-lead), `session: WebDev-assistant`,
 `session: RepoManager`, `session: Supervisor` (and `session: pycharm` when the owner's PC is used;
 **pycharm is offline from 2026-10-08 until the owner says otherwise: assign nothing to it**). **Assignments come from the issue
 list:** an open issue labelled with your name is yours; take them lowest number first
@@ -135,12 +173,23 @@ dev1 as a note on the issue.
   no live server. Cloud limits: no server access at all, GitHub only through `gh api`
   (REST; GraphQL is blocked), no deleting branches, and CI is its test runner
   (discord.py, psycopg and pytest aren't installed locally).
+  **Split in two (owner, 2026-10-28, to cut costs):** **CloudDev-lead** (the existing session,
+  still labelled `session: CloudDev`, on the larger model) keeps the design and every judgement
+  call, and hands simple, fully specified building work to **CloudDev-assistant**
+  (`session: CloudDev-assistant`, a cloud session on the smaller model). See "Leads hand off to
+  assistants" below.
 - **WebDev** (Claude Code, its own clone or worktree): the customer website in `web/` and the
   web API in `core/src/dmbot/web/`. Same rules as the other coding sessions: PRs into
   `development`, never deploys the bot, never touches the live server; dev1 deploys the
   API container. It owns the site's words with the ux-critic, never the plan prices or
   rules: those are owner decisions recorded in docs/PLAN.md, and a change to them is a
   question on the issue, not a commit.
+  **Split in two (owner, 2026-10-28, to cut costs):** **WebDev-lead** (the existing session,
+  still labelled `session: WebDev`, on the larger model) keeps everything above: design, words,
+  the web API's SQL doors and migrations, merge conflicts, and specifying tests. It hands simple,
+  fully specified building work to **WebDev-assistant** (`session: WebDev-assistant`, a cloud
+  session on the smaller model). See "Leads hand off to assistants" below.
+
 - **Supervisor** (Claude Code in the cloud; took over from the Master Web Session,
   `session: web`, on 2026-10-08): **runs the project and is the owner's point of
   contact.** It owns the architecture, the design, `docs/PLAN.md` and this file, the
@@ -181,8 +230,111 @@ dev1 as a note on the issue.
   check) or comments on the PR, then takes its next issue. dev1 deploys, checks, and
   records it in `docs/testing-history.log`. The log is the queue; nobody waits in chat.
 
+### Leads hand off to assistants (owner, 2026-10-28)
+To cut costs, each coding role is two sessions: a **lead** on the larger model and an **assistant**
+on the smaller one. **WebDev-lead** (label `session: WebDev`) hands off to **WebDev-assistant**
+(`session: WebDev-assistant`). **CloudDev-lead** (label `session: CloudDev`) hands off to
+**CloudDev-assistant** (`session: CloudDev-assistant`). The assistant builds; it never decides. The
+lead decides everything before handing off, so the assistant never has to guess.
+- **What may go to WebDev-assistant:** a change to `web/` that follows a pattern already in the code
+  (a page section like an existing one, a button wired to an API call that already exists, its
+  `mock.ts` entry, `api.ts` types), tests whose cases the lead lists, words the lead gives exactly,
+  What's new entries, renames, and small follow-ups from a review.
+- **What may go to CloudDev-assistant:** a change in `core/` that copies a pattern already in the
+  code, with the pattern named: a loop or sweep wired like its neighbours (`_track`, its own `try`,
+  counts-only logs), a store method like an existing one in the same file, a type-only import moved
+  under `TYPE_CHECKING` or to the module the lead names (#2827), a setting read like the others,
+  tests whose cases the lead lists (including adding cases to an existing test file), docstrings and
+  comments the lead words, What's new entries, renames, and small follow-ups from a review (an
+  optional finding, a plainly correct nit).
+- **What stays with the lead:** design and choosing words. Anything that needs a judgement:
+  - migrations, `schema.py`, SQL, row-level security and the web doors;
+  - consent, privacy, campaign isolation, plan rules, keys and sign-in;
+  - the ears ↔ core protocol, AI prompts and AI output handling;
+  - async and concurrency design (locks, leases, retries, what runs once);
+  - a new feature or flow with no pattern yet;
+  - resolving merge conflicts.
+- **How to hand off:** the lead opens one issue per task, labelled with the assistant's name,
+  linking the parent issue, with these sections:
+  1. **Goal:** one sentence.
+  2. **Files:** each file to change, and the existing code to copy the pattern from (path and
+     function).
+  3. **Exact behaviour:** what the user sees and does, or what the code does, every word given in
+     quotes, and what each error or failure does.
+  4. **Tests:** the test file, and each test by name with what it checks.
+  5. **Commands:** the checks to run before pushing (web: `cd web && npm ci && npm run typecheck &&
+     npm test`; core: `cd core && ruff check . && ruff format --check . && mypy && pytest <the test
+     files>`, with CI's core job as the proof for database tests).
+  6. **Out of scope:** what not to touch.
+  7. **Done when:** the PR is open into `development` with `Fixes #N`, those checks pass, and CI is green.
+
+  A task the lead can't write down this way isn't ready to hand off: the lead does it or splits it.
+- **The assistant's rules:** work only from its own issues, lowest number first, exactly as
+  written. If anything is unclear, missing or contradicts the code, ask on the issue (one comment,
+  starting "Question for <lead>", for example "Question for CloudDev-lead") and take the next issue;
+  never guess. Run the `reviewer` agent on the diff before opening the PR. Never add a migration,
+  touch `schema.py` or SQL, resolve a merge conflict, or push to anyone else's branch;
+  WebDev-assistant also never changes `core/`. Merging `development` into its own branch is fine
+  when it merges cleanly; a conflict goes to the lead as a comment on the PR.
+- **Review:** the lead checks each assistant PR against the issue's spec and posts one comment
+  starting "<lead> check: matches the spec" or "<lead> check: changes needed" with a numbered list
+  (for example "CloudDev-lead check: matches the spec"). Supervisor's design review and
+  RepoManager's merge follow as for any PR, and Supervisor reviews only after the lead's check says
+  it matches. A PR sent back twice goes to the lead to finish.
+
 Only one copy of DMbot may be logged in to Discord at a time: they share the bot token.
 On the server that copy is the one in Docker Compose, run by dev1.
+
+## Rounds: how every session finds work and wakes up (owner, 2026-10-16)
+Tasks live only in GitHub: an open issue labelled with your session's name is yours, lowest number
+first; a PR comment or review on your own PR is yours too. Nothing waits on chat memory, so a new
+session of a role works from this file and GitHub alone. **Messages move the work; one scheduled
+round an hour is the safety net** (owner, 2026-10-28, to cut costs; it was four an hour from 2026-10-16).
+Each role is woken once an hour by a scheduled task (dev1 twice), at staggered minutes:
+
+| Role | Minutes past the hour | Kind |
+|---|---|---|
+| CloudDev (CloudDev-lead) | :01 (hourly check) | long-lived cloud session |
+| WebDev (WebDev-lead) | :02 (hourly check) | long-lived cloud session |
+| Supervisor | :04 (hourly summary) | long-lived cloud session |
+| WebDev-assistant | :06 (hourly check) | long-lived cloud session (smaller model, from 2026-10-28) |
+| CloudDev-assistant | :07 (hourly check) | long-lived cloud session (smaller model, from 2026-10-28) |
+| RepoManager | :54 (hourly check) | long-lived cloud session (moved off the owner's computer, 2026-10-16) |
+| dev1 | :12 (hourly check), :42 (twice an hour, owner 2026-10-24) | long-lived, on the server |
+
+**Messages between sessions** (owner, 2026-10-28): every message wakes the session it goes to, so a
+message is sent only when the other session has something to do now. Each handoff sends one:
+- a developer who pushes a PR, or a fix to one, tells Supervisor (an assistant tells its lead);
+- a lead who files a handoff issue tells its assistant, and its check on an assistant PR tells
+  Supervisor when it matches;
+- Supervisor's approval or send-back tells RepoManager or the author;
+- RepoManager's send-back tells the author.
+
+Message with the session's id (`send_message`); the ids are in the latest "<role> online" notes on
+#516. **No acknowledgements** ("noted", "checked", "confirmed") unless Supervisor asks for one in
+that message. Reports still go on #516 or the issue, where nobody is woken by them.
+
+**Every round, whatever the role:** read your open issues and your PRs (send-backs first), read #516's
+last comments, act on what is yours, and stop. A round that finds nothing to do ends in one line.
+- **Developers (CloudDev-lead, CloudDev-assistant, WebDev-lead, WebDev-assistant):** fix send-backs
+  and red CI on your PRs first; then the next issue. If your queue is empty, say so to Supervisor
+  once (an assistant tells its lead instead).
+- **Leads (CloudDev-lead, WebDev-lead), every round:** first answer any "Question for <lead>" and
+  check any assistant PR waiting for its check, then hand off what is ready, so the assistant always
+  has two issues; then its own work.
+- **dev1:** deploy what Supervisor handed over (dry run, backup, bot before web-api), check it, write the
+  testing logs; then live checks.
+- **RepoManager:** for every open PR, check compliance and the approval record, refresh stale bases,
+  merge what is approved on green CI in the order Supervisor's latest list on #516 gives, and post one
+  report on #516. **Supervisor's merge lists on #516 are standing instructions**: act on them without
+  asking the owner again, within the rules in "Workflow".
+- **Supervisor:** reviews, queues, #516, the owner's questions; on the :04 round, also check that every
+  role above has its scheduled task bound to a live session, and rebind any that died.
+
+**The hourly check** (the first minute in the table): even mid-task, stop at a safe point and post one
+status line on the issue you are working on (done, next, blocked on whom), then carry on.
+**A session that restarts** (a new session id) posts "<role> online, session <id>" on #516 at once, so
+Supervisor can rebind its scheduled tasks; until then it gets no wake-ups.
 
 ## Issue log: shared memory between Claude sessions
 - **Decisions only the owner can make** (owner, 2026-10-09) carry the label `needs: owner`,
@@ -232,9 +384,10 @@ terminal output or Discord screenshots copied to it.
   before planning test-related work.
 - Same privacy rule as issues: no tokens, `.env` contents, or players' personal data.
 - **Log-only PRs may be merged by any Claude session** once CI passes (owner decision,
-  2026-10-04). A PR counts as log-only when it changes nothing but
-  `docs/testing-status.log` and/or `docs/testing-history.log`. Every other PR is merged
-  by RepoManager (see "Workflow").
+  2026-10-04). A PR counts as log-only when it changes nothing but the three testing logs:
+  `docs/testing-status.log`, `docs/testing-history.log` and/or `docs/next-test-step.md`
+  (Supervisor, 2026-10-16, after #1554: the next-step page is one of the logs dev1 keeps).
+  Every other PR is merged by RepoManager (see "Workflow").
 
 ## Hard rules
 - **Simple enough for a child:** user-facing text uses plain words, never technical terms
@@ -247,7 +400,8 @@ terminal output or Discord screenshots copied to it.
   campaign's DMs may publish their own homebrew or house rules as a set, and another
   campaign's DM may choose to follow it (in the same server, or another one with a share
   code). Only rules cross, never story memory, names, transcripts, notes or sheets, and never
-  content from a shared rulebook or adventure. Only the publisher changes a set; a follower's
+  content from a shared rulebook or adventure. Published homebrew imported by link is stored once and
+  pointed to by each campaign that imported or follows it (owner, 2026-10-16). Only the publisher changes a set; a follower's
   changes stay its own. See docs/PLAN.md, "Shared rulesets".
 - **API keys:** customers' keys are entered through private forms, stored encrypted, never
   logged, and never shown back in full.
@@ -257,10 +411,18 @@ terminal output or Discord screenshots copied to it.
   not opted in. Bots are never captured. This is enforced in ears (allowlist) and
   re-checked in core, including after every async step. Consent is given with a DM
   button (slash command as fallback), carries over per server, and every join triggers
-  a reminder with the consent date and a **⚙️ Menu** button whose menu holds **Stop
-  recording me** (owner decision, 2026-10-08). Stopping shows one short, factual warning
+  a reminder with the consent date and a **🗂️ Menu** button whose menu holds **Stop
+  recording me** (owner decision, 2026-10-08; the icon changed from ⚙️ at the owner's Test K
+  on 2026-10-18, #1966, so it no longer looks like ⚙️ Settings). Stopping shows one short, factual warning
   and one confirmation, never more. See docs/PLAN.md.
 - **One voice channel:** the bot listens only to the configured table channel.
+- **Every wait shows that DMbot is still working** (owner, 2026-10-23, #2564): whenever someone waits
+  for DMbot to process something, on the website or in Discord (an import, a long document, a recap, a
+  backup, a move, an AI answer that takes more than a few seconds), DMbot shows **what stage it is at**,
+  **how far along** where it knows (part 1 of 2, 3 of 10), **how long it has been running**, and **when it
+  last moved forward**, updated while it runs. A wait that stops making progress says so, and a failure
+  says what happened and what to do next. Progress shows counts and stages only, never the words of a
+  transcript or document. A new feature with a wait ships with this, or the reviewer sends it back.
 - **Quick, short and on topic** (owner, 2026-10-09): DMbot is there to help the game move
   quickly, never to bog it down or distract. AI answers to the DM are as short as possible
   ("yes" when yes answers it), elaborate only when asked, and stay on the campaign, the
@@ -315,11 +477,19 @@ terminal output or Discord screenshots copied to it.
     data, with short quotes as evidence and citations. Record who confirmed and when. It stays in that one campaign (never shared
     between campaigns or servers), and the DM can delete it; it goes when the campaign is
     deleted. It can never go into a shared ruleset.
+  - **Published homebrew by link** (owner, 2026-10-16): a DM may import a homebrew page that its
+    author has published on an approved site (dndbeyond.com first) by pasting its address. DMbot
+    fetches that one page, once, when that one DM asks for it: never a crawl. The DM confirms the
+    right to use content once per site per campaign, and who confirmed and when is recorded.
+    DMbot keeps one copy per address, and campaigns point to it. A pack may carry these pointers; a
+    following campaign must approve each site first. Every entry records its source. See
+    docs/PLAN.md, "Homebrew (part 2)".
   - **Everything else:** without that confirmation, nothing is bulk-copied into the
     database or prompts; send only short, relevant excerpts per query (rules lookups
     without a shared rulebook, D&D Beyond).
 - **D&D Beyond:** no server-side storage of the user's D&D Beyond password or session
-  cookies. Use public character links; campaign access comes later via a browser
+  cookies. Use public character links and published homebrew links (see IP above); campaign
+  access comes later via a browser
   extension running in the DM's own session.
 - **Least privilege:** request the narrowest Discord intents and OAuth scopes
   (Google: `drive.file`). Every access must be visible and revocable via slash command.
@@ -340,6 +510,27 @@ terminal output or Discord screenshots copied to it.
   a table holding rows. Open **every** table the statement reads, not only the one it
   writes (a `FROM` or join on a hidden table matches nothing; found in #781's 0029, whose
   backfill would have deleted every row it meant to fill).
+- **A foreign key that carries `guild_id` is `ON UPDATE CASCADE`** (Supervisor, 2026-10-23, #2550):
+  moving a campaign to another server changes its `guild_id` in one statement and lets the database
+  carry the change into every row that hangs off it. A new table whose foreign key includes
+  `guild_id` declares `ON UPDATE CASCADE`, or the catalog test (`test_campaign_move_cascade`) fails.
+  A new table with a `campaign_id` also goes on the list in `campaigns/tables.py`, in a backup
+  section or on the written "not in a backup, because…" list (#2552).
+- **Claim the migration number on #2475 before pushing** (Supervisor, 2026-10-16; one place since
+  2026-10-23, after four more collisions in one night when claims sat on separate issues): read
+  #2475's last comment, post `NNNN_name, #<issue>, <session>` with the next number, then push. If two
+  comments claim the same number, the earlier keeps it and the later renumbers. Names order the
+  list, so a gap is fine.
+- **AI output limits are generous** (owner, 2026-10-24, #2596, after #2086, #2341, #2345, #2365,
+  #2454, #2563 and #2594 were all answers cut off at a hand-sized `max_tokens`): background calls
+  never send less than the tier's floor in `ai.py` (about 16,000 tokens); the service charges for
+  what is written, not the limit. Only live table answers keep short caps, at least 4 times what they
+  need. A cut answer (`reply.cut`) is retried in smaller parts or reported as stopped early, never
+  as "nothing found". Bring limits down later only with logged numbers.
+  **Lengths are targets in the instructions, never checks** (owner, 2026-10-24, #2597): whatever
+  comes back is used in full. Never fail, retry, rewrite or cut an answer for being longer or shorter
+  than a target; only an empty or unreadable one is retried, and a platform's hard limit (Discord's
+  2,000 characters) splits a message into parts.
 - **Database-backed tests run only where Postgres is:** core's session and store tests
   are skipped when no database is available, so a green local `pytest` proves little
   for that code. Read the CI core job on the PR's head commit before writing "tests

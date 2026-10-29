@@ -14,7 +14,9 @@ DMbot never writes or decides a house rule: it only keeps what the DM typed.
 
 from __future__ import annotations
 
+import contextlib
 import logging
+from collections.abc import Awaitable, Callable, Collection
 from functools import partial
 from typing import TYPE_CHECKING
 
@@ -25,12 +27,13 @@ from dmbot.campaigns import Campaign
 from dmbot.dm_screen import set_suggestion
 from dmbot.logs import set_log_context
 from dmbot.rules import house
+from dmbot.rules.conflicts import Checked
 from dmbot.rules.house import RULE_MAX, HouseRule, HouseRuleError, HouseRuleStore
 
 if TYPE_CHECKING:
     from dmbot.rules.house_voice import Proposal
+from dmbot.ui import house_conflicts, house_sources, logic
 from dmbot.ui import house_file as file_ui
-from dmbot.ui import logic
 from dmbot.ui.dmbot_commands import (
     NOT_IN_SERVER,
     VIEW_TIMEOUT_S,
@@ -187,6 +190,7 @@ async def show_list(
         page,
         is_dm=is_dm,
         suggest_to=await _suggest_target(interaction, campaign, is_dm),
+        follows=await _follows_a_set(interaction, campaign),
     )
     view = menu if menu.children else None
     if first:
@@ -208,6 +212,20 @@ async def _suggest_target(
         log.warning("Couldn't look up the followed set for the house rules list", exc_info=True)
         return None
     return next((f.name for f in follows if f.kind == "house_rules" and f.updating), None)
+
+
+async def _follows_a_set(interaction: discord.Interaction, campaign: Campaign) -> bool:
+    """Does the campaign follow a set of house rules? Its rules are a source too (#2285), so
+    📂 Sources is offered even before the campaign has a rule of its own."""
+    sets = getattr(_bot(interaction), "rule_sets", None)
+    if sets is None:
+        return False
+    try:
+        follows = await sets.following(campaign.guild_id, campaign.id)
+    except Exception:
+        log.warning("Couldn't look up the followed sets for the house rules list", exc_info=True)
+        return False
+    return any(f.kind == "house_rules" for f in follows)
 
 
 async def _show(interaction: discord.Interaction, text: str, view: _Menu | None) -> None:
@@ -245,6 +263,7 @@ class ListMenu(_Menu):
         *,
         is_dm: bool,
         suggest_to: str | None = None,
+        follows: bool = False,
     ) -> None:
         super().__init__()
         self.campaign, self.rules, self.page = campaign, rules, page
@@ -258,6 +277,8 @@ class ListMenu(_Menu):
             self.add_item(_Button(self._older, label=OLDER_LABEL))
         if rules:  # nothing to download before the first rule
             self.add_item(_Button(self._download, label=file_ui.DOWNLOAD_LABEL))
+        if rules or follows:  # where they came from (#2285): anyone who may read the list
+            self.add_item(_Button(self._sources, label=house_sources.SOURCES_LABEL))
         if is_dm:
             self.add_item(_Button(self._file, label=file_ui.FILE_LABEL))
         if not is_dm or not rules:
@@ -309,6 +330,9 @@ class ListMenu(_Menu):
 
     async def _file(self, interaction: discord.Interaction) -> None:
         await file_ui.open_menu(interaction, self.campaign)
+
+    async def _sources(self, interaction: discord.Interaction) -> None:
+        await house_sources.open_sources(interaction, self.campaign)
 
     async def _newer(self, interaction: discord.Interaction) -> None:
         await _redraw(interaction, self.campaign, page=self.page - 1)
@@ -510,6 +534,22 @@ class _RuleForm(discord.ui.Modal):
         if store is None:
             await _tell(interaction, NOT_READY)
             return
+        bot = _bot(interaction)
+        found = await house_conflicts.look(bot, self.campaign, [self.rule.value], skip=self.skip)
+        if found.disagreements:
+            # Nothing is saved until the DM picks which rule wins (#2284).
+            await house_conflicts.ask(
+                interaction,
+                bot,
+                self.campaign,
+                self.rule.value,
+                found,
+                save=partial(self.store_rule, store, interaction.user.id),
+                saved_note=self.saved_note,
+                replace=self.replacer(store, interaction.user.id),
+                done=self.shown,
+            )
+            return
         try:
             note = await self.save(store, interaction.user.id)
         except HouseRuleError as exc:
@@ -519,8 +559,27 @@ class _RuleForm(discord.ui.Modal):
                 # and be refused again): draw it as it is now.
                 await _redraw(interaction, self.campaign, page=self.page)
             return
+        if found.unchecked:
+            note += house_conflicts.UNCHECKED
+        await self.shown(interaction, note)
+
+    async def shown(self, interaction: discord.Interaction, note: str) -> None:
         await _redraw(interaction, self.campaign, note=note, page=self.page)
         await file_ui.send_after_change(interaction, self.campaign, note)
+
+    skip: Collection[int] = ()  # the own rule being edited: not compared with itself
+
+    async def store_rule(self, store: HouseRuleStore, user_id: int) -> HouseRule:
+        raise NotImplementedError
+
+    def saved_note(self, rule: HouseRule) -> str:
+        raise NotImplementedError
+
+    def replacer(
+        self, store: HouseRuleStore, user_id: int
+    ) -> Callable[[int], Awaitable[str]] | None:
+        """Replace an own rule with these words; only when adding (an edit has its own rule)."""
+        return None
 
     def typed(self) -> str:
         """The form is closed by the time a refusal comes: give both boxes back, whole
@@ -536,14 +595,43 @@ class _RuleForm(discord.ui.Modal):
         return message
 
     async def save(self, store: HouseRuleStore, user_id: int) -> str:
-        raise NotImplementedError
+        return self.saved_note(await self.store_rule(store, user_id))
 
 
 class AddForm(_RuleForm, title="Add a house rule"):
-    async def save(self, store: HouseRuleStore, user_id: int) -> str:
+    source = "typed"  # where the rule says it came from (#2285)
+
+    async def store_rule(self, store: HouseRuleStore, user_id: int) -> HouseRule:
         c = self.campaign
-        saved = await store.add(c.guild_id, c.id, user_id, self.rule.value, self.instead.value)
-        return f"➕ Added house rule {saved.number}."
+        return await store.add(
+            c.guild_id, c.id, user_id, self.rule.value, self.instead.value, source=self.source
+        )
+
+    def saved_note(self, rule: HouseRule) -> str:
+        return f"➕ Added house rule {rule.number}."
+
+    def replacer(
+        self, store: HouseRuleStore, user_id: int
+    ) -> Callable[[int], Awaitable[str]] | None:
+        async def replace(number: int) -> str:
+            c = self.campaign
+            current = next(
+                (r for r in await store.list(c.guild_id, c.id) if r.number == number), None
+            )
+            if current is None:
+                raise HouseRuleError(house.GONE)
+            changed = await store.edit(
+                c.guild_id,
+                c.id,
+                user_id,
+                number,
+                self.rule.value,
+                self.instead.value or current.supersedes,
+                unchanged_since=current.version,
+            )
+            return f"🔁 House rule {changed.number} now says this."
+
+        return replace
 
     def refusal(self, message: str) -> str:
         if message == house.EMPTY:
@@ -556,6 +644,8 @@ class OverrideForm(AddForm, title="Add a house rule"):
     holding the name on the card. The card is in the DM screen, which this must not turn into
     the list, so the answer is a private message."""
 
+    source = "alert"  # made from a rules card
+
     def __init__(self, campaign: Campaign, name: str) -> None:
         super().__init__(campaign)
         self.instead.default = name[:RULE_MAX]
@@ -563,15 +653,9 @@ class OverrideForm(AddForm, title="Add a house rule"):
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
         await _answer_first(interaction)  # a new private message, not a change to the card
-        store = _store(interaction)
-        if store is None:
-            await _tell(interaction, NOT_READY)
-            return
-        try:
-            note = await self.save(store, interaction.user.id)
-        except HouseRuleError as exc:
-            await _tell(interaction, self.refusal(str(exc)) + self.typed())
-            return
+        await super().on_submit(interaction)
+
+    async def shown(self, interaction: discord.Interaction, note: str) -> None:
         await _tell(
             interaction, f"{note} Everyone in the server can read it. See all: `/dmbot houserules`."
         )
@@ -606,8 +690,15 @@ class ProposalForm(AddForm, title="Edit before saving"):
                 NOT_READY if store is None else CLOSED, ephemeral=True
             )
             return
-        try:
-            saved = await store.add(
+        bot = _bot(interaction)
+        found = Checked()
+        if getattr(bot, "rule_conflict_ai", None) is not None:
+            await _answer_first(interaction, in_place=True)  # the check can take a moment
+            found = await house_conflicts.look(bot, c, [self.rule.value])
+        message = interaction.message
+
+        async def save() -> HouseRule:
+            return await store.add(
                 c.guild_id,
                 c.id,
                 interaction.user.id,  # the store checks again that this is one of the DMs
@@ -615,35 +706,80 @@ class ProposalForm(AddForm, title="Edit before saving"):
                 self.instead.value,
                 scenario=self.proposal.scenario,
                 session_id=self.proposal.session_id,
+                source="voice",
             )
-        except BaseException as exc:
+
+        async def shown(where: discord.Interaction, note: str) -> None:
+            # `where` is the button on the private question: close it, then the offer itself.
+            await where.response.edit_message(content=note, view=None)
+            if message is not None:
+                with contextlib.suppress(discord.HTTPException):
+                    await message.edit(content=f"{message.content}\n{note}", view=None)
+            await file_ui.send_after_change(where, c, note)
+
+        def give_back() -> None:
             proposals[self.proposal_id] = self.proposal
+
+        if found.disagreements:
+            await house_conflicts.ask(
+                interaction,
+                bot,
+                c,
+                self.rule.value,
+                found,
+                save=save,
+                saved_note=lambda r: f"✅ Saved as house rule {r.number}.",
+                replace=None,
+                done=shown,
+                cancelled=give_back,
+            )
+            return
+        try:
+            saved = await save()
+        except BaseException as exc:
+            give_back()
             if isinstance(exc, HouseRuleError):
-                await interaction.response.send_message(
-                    self.refusal(str(exc)) + self.typed(), ephemeral=True
-                )
+                text = self.refusal(str(exc)) + self.typed()
+                if interaction.response.is_done():
+                    await interaction.followup.send(text, ephemeral=True)
+                else:
+                    await interaction.response.send_message(text, ephemeral=True)
                 return
             raise
         note = f"✅ Saved as house rule {saved.number}."
-        if interaction.message is None:
-            await interaction.response.send_message(note, ephemeral=True)
-        else:
-            await interaction.response.edit_message(
-                content=f"{interaction.message.content}\n{note}", view=None
-            )
+        if found.unchecked:
+            note += house_conflicts.UNCHECKED
+        await self._show(interaction, message, note)
         await file_ui.send_after_change(interaction, c, note)
+
+    async def _show(
+        self, interaction: discord.Interaction, message: discord.Message | None, note: str
+    ) -> None:
+        """Say what was saved on the offer, and take its buttons away (the form's own answer)."""
+        if message is None:
+            await _tell(interaction, note)
+        elif interaction.response.is_done():  # answered first, while the check ran
+            await interaction.edit_original_response(
+                content=f"{message.content}\n{note}", view=None
+            )
+        else:
+            await interaction.response.edit_message(content=f"{message.content}\n{note}", view=None)
 
 
 class EditForm(_RuleForm, title="Edit a house rule"):
     def __init__(self, campaign: Campaign, rule: HouseRule, page: int) -> None:
         super().__init__(campaign)
         self.existing, self.page = rule, page
+        self.skip = (rule.number,)
         self.rule.default = rule.rule
         self.instead.default = rule.supersedes
 
-    async def save(self, store: HouseRuleStore, user_id: int) -> str:
+    def saved_note(self, rule: HouseRule) -> str:
+        return f"✏️ Changed house rule {rule.number}."
+
+    async def store_rule(self, store: HouseRuleStore, user_id: int) -> HouseRule:
         c = self.campaign
-        changed = await store.edit(
+        return await store.edit(
             c.guild_id,
             c.id,
             user_id,
@@ -652,7 +788,6 @@ class EditForm(_RuleForm, title="Edit a house rule"):
             self.instead.value,
             unchanged_since=self.existing.version,
         )
-        return f"✏️ Changed house rule {changed.number}."
 
     def refusal(self, message: str) -> str:
         n = self.existing.number

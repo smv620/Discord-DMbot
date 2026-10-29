@@ -2,13 +2,13 @@
 # Nothing loads from other sites. Inline scripts (Astro's island loader) are allowed by
 # hash: scripts/csp-hashes.mjs adds them to script-src after the build. Astro inlines small
 # stylesheets, hence 'unsafe-inline' for styles only. The build adds the web API's address
-# to connect-src when PUBLIC_API_BASE is a full address, and Cloudflare Turnstile's script
+# to connect-src and media-src (the recap audio players; blob: is a recording played back in the page before it is sent, #2317) when PUBLIC_API_BASE is a full address, and Cloudflare Turnstile's script
 # and frame (the "Say hello" forms' person check, #665) when PUBLIC_TURNSTILE_SITE_KEY is set.
 # Payments: checkout and billing are pages on the payment company's site (a redirect), so
 # they need nothing here. An embedded checkout (Stripe.js) would need its
 # script in script-src and its checkout frame in frame-src: add them only if we embed.
 /*
-  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; media-src 'self' blob:; form-action 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'
   X-Frame-Options: DENY
   X-Content-Type-Options: nosniff
   Referrer-Policy: strict-origin-when-cross-origin
@@ -25,6 +25,60 @@
 /art/*
   Cache-Control: public, max-age=86400, stale-while-revalidate=604800
 
+# The one page that may ask for the microphone: "Speak instead" on a recap (#2114). Cloudflare
+# adds a matching rule's headers to the ones from /*, so the sitewide value is detached first;
+# every other page keeps microphone=(). A test pins this.
 /account/recaps*
   Cache-Control: no-store
   X-Robots-Tag: noindex, nofollow
+  ! Permissions-Policy
+  Permissions-Policy: camera=(), microphone=(self), geolocation=(), payment=()
+
+/account/house-rules*
+  Cache-Control: no-store
+  X-Robots-Tag: noindex, nofollow
+
+/account/homebrew*
+  Cache-Control: no-store
+  X-Robots-Tag: noindex, nofollow
+
+/account/transcripts*
+  Cache-Control: no-store
+  X-Robots-Tag: noindex, nofollow
+
+/account/import*
+  Cache-Control: no-store
+  X-Robots-Tag: noindex, nofollow
+
+/account/names*
+  Cache-Control: no-store
+  X-Robots-Tag: noindex, nofollow
+
+/account/web*
+  Cache-Control: no-store
+  X-Robots-Tag: noindex, nofollow
+
+/account/sharing*
+  Cache-Control: no-store
+  X-Robots-Tag: noindex, nofollow
+
+/account/timeline*
+  Cache-Control: no-store
+  X-Robots-Tag: noindex, nofollow
+
+/account/campaigns*
+  Cache-Control: no-store
+  X-Robots-Tag: noindex, nofollow
+
+/account/npc*
+  Cache-Control: no-store
+  X-Robots-Tag: noindex, nofollow
+
+# A shared recap's address holds its secret (#2119): never cached, never listed, and never sent on to
+# another site as a referrer. Cloudflare adds a matching rule's headers to the sitewide ones, so the
+# sitewide Referrer-Policy is detached first.
+/r/*
+  Cache-Control: no-store
+  X-Robots-Tag: noindex, nofollow
+  ! Referrer-Policy
+  Referrer-Policy: no-referrer

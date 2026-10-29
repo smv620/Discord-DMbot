@@ -1,0 +1,20 @@
+---
+import HomebrewIsland from "../../account/HomebrewIsland";
+import { text } from "../../content/homebrew";
+import Base from "../../layouts/Base.astro";
+import "../../styles/account.css";
+---
+
+<Base
+  title="Homebrew"
+  description="Read and download the homebrew your DM shared with the table."
+  noindex
+>
+  <div class="account">
+    <h1>{text.heading}</h1>
+    <HomebrewIsland client:load />
+    <noscript>
+      <p>This page needs JavaScript to show your homebrew. Turn it on, then reload the page.</p>
+    </noscript>
+  </div>
+</Base>

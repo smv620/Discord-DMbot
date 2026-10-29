@@ -44,6 +44,8 @@ PEEK_WARNING = (
     "You'll see the DM's private notes, old ones too. They may spoil surprises.\n"
     "Your DM will see that you peeked. You can hide it again any time."
 )
+
+
 PEEK_CANCELLED = "OK, the DM screen stays hidden."
 PEEK_EXPIRED = (
     "This expired. Press 👀 **Peek behind the DM screen** again if you still want to look."
@@ -56,6 +58,7 @@ HIDE_IS_DM = "You're a DM of this campaign, so the DM screen stays visible to yo
 HIDE_OPEN = "The DM screen is open to everyone, so it can't be hidden just for you."
 PLAYER_FAILED = "Sorry, DMbot couldn't change the DM screen for you. Let your DM know."
 STOP_LISTENING_LABEL = "Stop listening"
+PAUSE_TABLE_LABEL = "Pause the table"  # with ⏸️: the DM's off the record (#2466)
 NOT_LISTENING_NOW = (
     "DMbot isn't listening to this campaign right now. To start, run `/dmbot start`."
 )
@@ -71,7 +74,7 @@ STOP_STALE = (
 )
 STOPPING = "Stopping…"
 ONLY_DM_STOPS = (
-    "Only the DM can stop the session. To stop recording *you*, press **⚙️ Menu** in "
+    "Only the DM can stop the session. To stop recording *you*, press **🗂️ Menu** in "
     "DMbot's private message, then **Stop recording me**, then **Yes**, or type "
     "`/consent revoke`."
 )
@@ -133,7 +136,7 @@ def topic(campaign_name: str, visibility: str) -> str:
     return f"DM screen for {campaign_name}. {who}"
 
 
-def help_card(campaign_name: str, visibility: str) -> str:
+def help_card(campaign_name: str, visibility: str, dm_bot_channel_id: int | None = None) -> str:
     lines = [
         f"{HELP_CARD_TITLE}{campaign_name}**",
         "DMbot writes notes for the DM here. It never makes rulings or story. "
@@ -144,9 +147,11 @@ def help_card(campaign_name: str, visibility: str) -> str:
     ]
     if visibility != "open":
         lines.append("Server owners and admins can always see every channel.")
+    # Settings and options live in the DM Bot channel (#1666); /dmbot settings still works.
+    where = f"in <#{dm_bot_channel_id}>" if dm_bot_channel_id else "with `/dmbot settings`"
     lines.append(
-        "**DM:** press a button below to change who can see this, or ⚙️ **Settings** for "
-        "how much DMbot says."
+        f"**DM:** who can see this and how much DMbot says are in ⚙️ **Settings** (under 👤 "
+        f"**DMbot Main Menu**), {where}."
     )
     if visibility == "peek":
         lines.append(f"**Peeking?** Press 🙈 **{HIDE_LABEL}** below to stop.")
@@ -246,7 +251,7 @@ def transcript_card(campaign_name: str) -> str:
             "Chat that's clearly not about the game may be shortened to a note like \"[8s of "
             'off-topic chat skipped]"; every word is still saved in the "As heard" transcript.',
             "**Who is recorded:** only people who said yes in DMbot's private message. "
-            "Changed your mind? Press **⚙️ Menu** in that message, then **Stop recording me**, "
+            "Changed your mind? Press **🗂️ Menu** in that message, then **Stop recording me**, "
             "then **Yes**, "
             "or type `/consent revoke` here or in any channel. Only you see the answer. "
             "What's already here stays.",
@@ -312,9 +317,10 @@ def session_summary(
     problems: list[str],
     *,
     downloads_sent: int,
+    names: str = "",
 ) -> str:
     """One plain summary for the DM screen when a session ends. Names and numbers only:
-    never anything that was said."""
+    never anything that was said. `names`: the one line of counts from `names_line`."""
     lines = [
         f"📋 **Session ended: {discord.utils.escape_markdown(campaign_name)}**",
         f"Started <t:{started_at}:t>, ran {duration(ended_at - started_at)}.",
@@ -339,6 +345,8 @@ def session_summary(
         lines.append("If this happens often, tell whoever runs DMbot for your server.")
     elif people and not any(p.flagged for p in people):  # no all-clear under a ⚠️
         lines.append("✅ Everything DMbot heard was written down.")
+    if names:
+        lines.append(names)
     if downloads_sent:
         lines.append(
             "📄 DMbot sent each recorded player a private message to download the "
@@ -347,6 +355,29 @@ def session_summary(
     elif people:
         lines.append("📄 Anyone in the server can get the transcript with `/transcript`.")
     return "\n".join(lines)
+
+
+def names_line(
+    fixed: int, asked: int, unanswered: int, edited: int, suggested: int, waiting: int
+) -> str:
+    """One sentence of counts on what happened with names (#1510), so a DM can tell whether it is
+    worth a look: "Names: DMbot fixed 3 by itself, asked you about 2 (1 not answered), you
+    corrected 1, players suggested 2 (1 still waiting)." Plain verbs say who did what; only the
+    parts above zero; empty when there is nothing to say."""
+    parts = []
+    if fixed:
+        parts.append(f"DMbot fixed {fixed} by itself")
+    if asked:
+        parts.append(
+            f"asked you about {asked}" + (f" ({unanswered} not answered)" if unanswered else "")
+        )
+    if edited:
+        parts.append(f"you corrected {edited}")
+    if suggested:
+        parts.append(
+            f"players suggested {suggested}" + (f" ({waiting} still waiting)" if waiting else "")
+        )
+    return f"✏️ Names: {', '.join(parts)}." if parts else ""
 
 
 def summary_problems(missed: int, failed: int, caught_up: bool) -> list[str]:
@@ -422,27 +453,31 @@ def joined_not_recorded_message(name: str) -> str:
     return f"✉️ **{_who(name)}** joined. Not recorded unless they say yes."
 
 
+def joined_off_the_record_message(name: str) -> str:
+    return f"⏸️ **{_who(name)}** joined and is off the record."
+
+
 # A test server (#1019): said once at /dmbot start, in the DM screen.
 TEST_SESSION = (
     '🧪 Test session. Only players who chose "Save my voice for tests" have their voice kept. '
-    "Everyone else is still written down as usual. Players can stop any time in ⚙️ Menu."
+    "Everyone else is still written down as usual. Players can stop any time in 🗂️ Menu."
 )
 
 
-# ---- the players' game-time channel (#1116) ----------------------------------------
+# ---- the DM Bot channel (#1666) ---------------------------------------------------------
 
-GAMETIME_FAILED = (
-    "⚠️ **Couldn't make the game-time channel** ({cause}). The game goes on; players just "
-    "have no clock channel yet. To retry, fix that and run `/dmbot start`."
+DM_BOT_FAILED = (
+    "⚠️ **Couldn't make the DM Bot channel** ({cause}). The game goes on. For settings, type "
+    "`/dmbot settings`. To retry: fix that, then run `/dmbot start`."
 )
 
 
-def gametime_failed(cause: str) -> str:
-    return GAMETIME_FAILED.format(cause=cause)
+def dm_bot_failed(cause: str) -> str:
+    return DM_BOT_FAILED.format(cause=cause)
 
 
-def gametime_topic(campaign_name: str) -> str:
-    return f"{campaign_name}: the day and a rough time of day. Posted by DMbot, view only."
+def dm_bot_topic(campaign_name: str) -> str:
+    return f"{campaign_name}: your buttons for settings and help. Only you see the answers."
 
 
 # ---- the table's DMbot chat channel (#1187) -------------------------------------------
@@ -452,7 +487,6 @@ DMBCHAT_FAILED = (
     'say "Hey DMbot" at the table. To retry, fix that and run `/dmbot start`.'
 )
 
-# Plain words for the channel's description (CLAUDE.md, "Simple enough for a child").
 DMBCHAT_TOPIC = "Ask DMbot a quick rules question. Your DM has the final say."
 
 

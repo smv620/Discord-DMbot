@@ -1,0 +1,186 @@
+"""Where a recap's audio lives on the server's disk (#1383), and the signed links that fetch it.
+
+Audio is not in Postgres or in backups (it is made again from the text). It sits under the
+campaign's own directory, so nothing crosses between campaigns or servers, for 180 days or until
+the campaign is deleted. A name taken from a request is checked before it becomes a path: only
+the fixed file kinds, and only numbers and the campaign's own id characters, ever reach the disk.
+
+A link is a short-lived signature over the campaign, the session, the kind and the expiry; the
+web API (a later change) hands one to the signed-in DM only.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import hmac
+import re
+import shutil
+import time
+from collections.abc import Callable, Iterable, Mapping
+from pathlib import Path
+
+COPYING = ".copying"  # a copy in progress (a campaign move) ends so; never swept
+KEEP_DAYS = 180
+LINK_SECONDS = 15 * 60
+VOICE = "voice"
+MUSIC = "music"  # the background: music and ambience together
+MIX = "mix"
+KINDS = (VOICE, MUSIC, MIX)
+FILE_NAMES = {VOICE: "recap-voice.mp3", MUSIC: "recap-music.mp3", MIX: "recap-mix.mp3"}
+_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+_SCENE = re.compile(r"^[a-z]{1,20}$")
+
+
+class AudioFiles:
+    def __init__(self, root: Path, *, clock: Callable[[], float] = time.time) -> None:
+        self._root = Path(root)
+        self._now = clock
+
+    def _campaign(self, guild_id: int, campaign_id: str) -> Path:
+        if guild_id <= 0 or not _ID.match(campaign_id):
+            raise ValueError("not a campaign")
+        return self._root / str(int(guild_id)) / campaign_id
+
+    def recap_dir(self, guild_id: int, campaign_id: str, session_at: int) -> Path:
+        if session_at <= 0:
+            raise ValueError("not a session")
+        return self._campaign(guild_id, campaign_id) / "recaps" / str(int(session_at))
+
+    def path(self, guild_id: int, campaign_id: str, session_at: int, kind: str) -> Path:
+        if kind not in FILE_NAMES:
+            raise ValueError("not a kind of file")
+        return self.recap_dir(guild_id, campaign_id, session_at) / FILE_NAMES[kind]
+
+    def present(self, guild_id: int, campaign_id: str, session_at: int) -> dict[str, Path]:
+        """The files that exist for this recap, by kind."""
+        return {
+            kind: p
+            for kind in KINDS
+            if (p := self.path(guild_id, campaign_id, session_at, kind)).is_file()
+        }
+
+    def ambience_path(self, guild_id: int, campaign_id: str, scene: str) -> Path:
+        """A cached ambience loop: one for each campaign and scene kind."""
+        if not _SCENE.match(scene):
+            raise ValueError("not a scene kind")
+        return self._campaign(guild_id, campaign_id) / "ambience" / f"{scene}.mp3"
+
+    def copy_campaign(self, from_guild: int, to_guild: int, campaign_id: str) -> None:
+        """Copy a campaign's audio to another server's folder (a move, #2532), made whole in a
+        side folder and then put in place, so a failure leaves nothing half-copied. The old files
+        stay until the caller removes them."""
+        source = self._campaign(from_guild, campaign_id)
+        target = self._campaign(to_guild, campaign_id)
+        if not source.is_dir():
+            return
+        side = target.with_name(f"{campaign_id}.copying")
+        shutil.rmtree(side, ignore_errors=True)
+        try:
+            shutil.copytree(source, side)
+            shutil.rmtree(target, ignore_errors=True)  # (a leftover of an earlier try)
+            side.rename(target)
+        except BaseException:
+            shutil.rmtree(side, ignore_errors=True)
+            raise
+
+    def catch_up(self, from_guild: int, to_guild: int, campaign_id: str) -> None:
+        """After a move has committed: copy what is newer in the old folder (a file finished
+        after the first copy) or missing from the new one, so removing the old folder loses none."""
+        source = self._campaign(from_guild, campaign_id)
+        target = self._campaign(to_guild, campaign_id)
+        if not source.is_dir():
+            return
+        for path in source.rglob("*"):
+            if not path.is_file():
+                continue
+            there = target / path.relative_to(source)
+            if there.exists() and there.stat().st_mtime >= path.stat().st_mtime:
+                continue
+            there.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(path, there)
+
+    def forget_campaign(self, guild_id: int, campaign_id: str) -> None:
+        shutil.rmtree(self._campaign(guild_id, campaign_id), ignore_errors=True)
+
+    def strays(self, keep: Mapping[int, Iterable[str]]) -> list[tuple[int, str]]:
+        """(server, campaign) of every campaign folder that `keep` (every campaign that exists, by
+        server) does not list (#2554). Only candidates: a campaign moved to another server a moment
+        ago has its folder there before `keep` could know it, so the caller checks each one again
+        (`remove_stray`) right before removing it. Symlinks and odd names are never listed."""
+        found: list[tuple[int, str]] = []
+        for guild_dir in self._root.glob("*"):
+            if guild_dir.is_symlink() or not guild_dir.is_dir() or not guild_dir.name.isdigit():
+                continue
+            alive = set(keep.get(int(guild_dir.name), ()))
+            for folder in guild_dir.glob("*"):
+                if (
+                    not folder.is_symlink()
+                    and folder.is_dir()
+                    and _ID.match(folder.name)
+                    and folder.name not in alive
+                ):
+                    found.append((int(guild_dir.name), folder.name))
+        return found
+
+    def remove_stray(self, guild_id: int, campaign_id: str) -> bool:
+        """Delete one campaign's folder, unless it is a symlink or holds a copy in progress (a
+        `*.copying` file or folder: a move is filling it). The caller has just checked that no
+        server has the campaign. Returns whether it was removed."""
+        folder = self._campaign(guild_id, campaign_id)
+        if folder.is_symlink() or not folder.is_dir():
+            return False
+        if any(p.name.endswith(COPYING) for p in folder.rglob("*")):
+            return False
+        shutil.rmtree(folder, ignore_errors=True)
+        return True
+
+    def sweep(self) -> int:
+        """Delete the recaps' audio older than the retention. Returns how many recaps' folders
+        went. Cached ambience stays (it is reused); the campaign's deletion removes it."""
+        cutoff = self._now() - KEEP_DAYS * 86400
+        gone = 0
+        for folder in self._root.glob("*/*/recaps/*"):
+            try:
+                if folder.is_dir() and folder.stat().st_mtime < cutoff:
+                    shutil.rmtree(folder, ignore_errors=True)
+                    gone += 1
+            except OSError:
+                continue
+        return gone
+
+    # --- signed links ---
+
+    def sign(
+        self, secret: bytes, guild_id: int, campaign_id: str, session_at: int, kind: str
+    ) -> tuple[int, str]:
+        """(expiry, signature) for a short-lived link to one file."""
+        self.path(guild_id, campaign_id, session_at, kind)  # the same checks as the path
+        expires = int(self._now()) + LINK_SECONDS
+        return expires, _mac(secret, guild_id, campaign_id, session_at, kind, expires)
+
+    def verify(
+        self,
+        secret: bytes,
+        guild_id: int,
+        campaign_id: str,
+        session_at: int,
+        kind: str,
+        expires: int,
+        signature: str,
+    ) -> Path | None:
+        """The file's path if the link is genuine and not expired; None otherwise."""
+        try:
+            path = self.path(guild_id, campaign_id, session_at, kind)
+        except ValueError:
+            return None
+        if expires < self._now():
+            return None
+        good = _mac(secret, guild_id, campaign_id, session_at, kind, expires)
+        return path if hmac.compare_digest(good, signature) and path.is_file() else None
+
+
+def _mac(
+    secret: bytes, guild_id: int, campaign_id: str, session_at: int, kind: str, expires: int
+) -> str:
+    message = f"recap-audio/{guild_id}/{campaign_id}/{session_at}/{kind}/{expires}".encode()
+    return hmac.new(secret, message, hashlib.sha256).hexdigest()

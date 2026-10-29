@@ -16,6 +16,8 @@ import re
 from collections import deque
 from dataclasses import dataclass
 
+from dmbot.transcript.models import NARRATING
+
 # Said first, so the DM is clearly stepping out of the game for a moment.
 _LEAD = (
     r"(?:hold on|hang on|hold up|one (?:sec|second|moment|minute)|just (?:a )?"
@@ -88,6 +90,12 @@ class Request:
         return f"{self.verb} {self.rest}".strip()
 
 
+def voiced_by_npc(entity: str) -> bool:
+    """A line's `entity` (#53) names an NPC the DM was voicing: then it is in character and never
+    asks DMbot anything (#1624). "" (not known, or not sure) and narrating are the DM talking."""
+    return entity not in ("", NARRATING)
+
+
 def request_in(text: str, *, in_character: bool = False) -> Request | None:
     """The look-up the DM asked for in this line, or None. `in_character`: the line is an
     NPC's or a character's (the Cleaner tagged it so): never a request."""
@@ -110,6 +118,28 @@ def request_in(text: str, *, in_character: bool = False) -> Request | None:
     if len(rest) > MAX_QUESTION_CHARS:
         rest = rest[:MAX_QUESTION_CHARS].rsplit(" ", 1)[0]
     return Request(found.group("verb").casefold(), rest)
+
+
+# "Hey DMbot, off the record": said to DMbot, so an NPC's "this is off the record" can't trip it
+# (#2466). The call must have its "hey" (or hi, okay), and "off the record" must be what follows it,
+# up to the end of the sentence; "please" and "go" may come first.
+_OFF_LEAD = r"(?:please|can you|could you|let's|lets|i'm|i am|going|go|we're|we are|to)"
+_OFF_RECORD = re.compile(
+    rf"^(?:{_OFF_LEAD}[\s,]{{1,3}}){{0,4}}off(?: the)? record\b",
+    re.IGNORECASE,
+)
+
+
+def asks_off_record(text: str) -> bool:
+    """The line calls DMbot ("Hey DMbot") and asks to go off the record. A plain "off the record"
+    never does, and neither does a bare "DMbot" (a story about it). Pure."""
+    line = text[:MAX_LINE_CHARS]
+    for match in _CALL.finditer(line):
+        if not match.group("greeting"):
+            continue
+        if _OFF_RECORD.match(line[match.end() :].strip(" ,;:-.!?")):
+            return True
+    return False
 
 
 def _called(line: str) -> Request | None:

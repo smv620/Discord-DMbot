@@ -38,8 +38,9 @@ function stub(over: Partial<AdminApi> = {}): AdminApi {
     grants: vi.fn(async () => ({ free: [], grants: [], log: [] })),
     give: vi.fn(async () => ({ action: "grant" as const, name: null })),
     revoke: vi.fn(async () => undefined),
-    tickets: vi.fn(async () => ({ tickets: [], counts: { new: 0, answered: 0, closed: 0 } })),
+    tickets: vi.fn(async () => ({ tickets: [], counts: { new: 0, answered: 0, closed: 0, escalated: 0 } })),
     setTicketStatus: vi.fn(async () => undefined),
+    replyToTicket: vi.fn(async () => undefined),
     ...over,
   };
 }
@@ -324,6 +325,65 @@ describe("free access (#773)", () => {
     expect(
       screen.getByText(text.logLine("Jan 15, 2027", "owner@example.com", "grant", "Sam")),
     ).toBeTruthy();
+  });
+
+  it("lists someone on the free list who also has an older grant once, with a way to remove it (#2196)", async () => {
+    const both: GrantsView = {
+      ...view(),
+      free: [{ discordId: FRIEND, name: "Sam" }],
+      grants: [{ ...view().grants[0]!, alsoFree: true }],
+    };
+    const api = signedIn({ grants: vi.fn(async () => both) });
+    const free = (await screen.findByText(text.alwaysFree)).closest("li") as HTMLElement;
+    // One entry: no second row for the same person, and no "nobody" note for the empty rest.
+    expect(screen.getAllByText("Sam")).toHaveLength(1);
+    expect(document.querySelector(`[data-grant="${FRIEND}"]`)).toBeNull();
+    expect(screen.queryByText(text.nobody)).toBeNull();
+    expect(within(free).getByText(text.olderGrant)).toBeTruthy();
+    fireEvent.click(within(free).getByRole("button", { name: `${text.removeOlderGrant}: Sam` }));
+    expect(await screen.findByText(text.olderGrantRemoved("Sam"))).toBeTruthy();
+    expect(api.revoke).toHaveBeenCalledWith("csrf-1", FRIEND);
+  });
+
+  it("keeps ordinary grants listed beside an older one, and lists everything as before on an older API (#2196)", async () => {
+    const mixed: GrantsView = {
+      ...view(),
+      free: [{ discordId: LATE, name: "Pat" }],
+      grants: [{ ...view().grants[0]!, discordId: LATE, name: "Pat", alsoFree: true }, view().grants[0]!],
+    };
+    signedIn({ grants: vi.fn(async () => mixed) });
+    await screen.findByText(text.alwaysFree);
+    expect(document.querySelector(`[data-grant="${FRIEND}"]`)).toBeTruthy();
+    expect(document.querySelector(`[data-grant="${LATE}"]`)).toBeNull();
+    expect(screen.queryByText(text.nobody)).toBeNull();
+    cleanup();
+    // An API without the flag lists the grant as it always did.
+    const old: GrantsView = { ...view(), free: [{ discordId: LATE, name: "Pat" }], grants: [{ ...view().grants[0]!, discordId: LATE, name: "Pat" }] };
+    signedIn({ grants: vi.fn(async () => old) });
+    await screen.findByText(text.alwaysFree);
+    expect(document.querySelector(`[data-grant="${LATE}"]`)).toBeTruthy();
+    expect(screen.queryByText(text.olderGrant)).toBeNull();
+  });
+
+  it("says so, and keeps the entry, when removing an older grant fails", async () => {
+    const both: GrantsView = {
+      ...view(),
+      free: [{ discordId: FRIEND, name: "Sam" }],
+      grants: [{ ...view().grants[0]!, alsoFree: true }],
+    };
+    const revoke = vi.fn(async () => Promise.reject(new AdminApiError("down")));
+    signedIn({ grants: vi.fn(async () => both), revoke });
+    fireEvent.click(await screen.findByRole("button", { name: `${text.removeOlderGrant}: Sam` }));
+    await waitFor(() => expect(revoke).toHaveBeenCalled());
+    expect(await screen.findByRole("alert")).toBeTruthy();
+    expect(screen.getByText(text.olderGrant)).toBeTruthy();
+  });
+
+  it("shows a free-list person with no older grant exactly as before", async () => {
+    signedIn();
+    const free = (await screen.findByText(text.alwaysFree)).closest("li") as HTMLElement;
+    expect(within(free).queryByRole("button")).toBeNull();
+    expect(within(free).queryByText(text.olderGrant)).toBeNull();
   });
 
   it("someone with no name shows by id, and shortened in sentences", async () => {

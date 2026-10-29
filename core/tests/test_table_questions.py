@@ -83,6 +83,22 @@ class TheTablePrompt(unittest.TestCase):
         self.assertEqual((got.text, got.one_for_dm), (ONE_FOR_DM, True))
         self.assertNotIn("(", got.text)  # no source, no "sure"
 
+    def test_a_players_trap_question_gets_the_line_for_the_dm_and_the_trap_stays_unsent(
+        self,
+    ) -> None:
+        # The Gameplay Toolbox is the DM's chapter (#1935): a trap's detection DCs would spoil it.
+        question = "how do I disarm the pit trap"
+        ai = FakeAI([reply("That's one for your DM.", "none"), reply("DC 15.", "SRD 5.2.1 p. 200")])
+        table = run(engine(ai).answer(campaign(), question, asker_id=1, table=True))
+        self.assertEqual((table.text, table.one_for_dm), (ONE_FOR_DM, True))
+        self.assertNotIn("Hidden Pit", ai.prompts[0])
+        self.assertNotIn("DC 15 Intelligence (Investigation)", ai.prompts[0])
+        self.assertNotIn("Trigger", ai.prompts[0])
+        # The DM's own chat gets the trap, with its DCs.
+        run(engine(ai).answer(campaign(), question, asker_id=1))
+        self.assertIn("Hidden Pit (trap)", ai.prompts[1])
+        self.assertIn("DC 15 Intelligence (Investigation) check", ai.prompts[1])
+
     def test_that_line_means_nothing_in_the_dms_private_chat(self) -> None:
         ai = FakeAI([reply("That's one for your DM.", "none", "uncertain")])
         got = run(engine(ai).answer(campaign(), "what is behind the door", asker_id=1))
@@ -146,7 +162,7 @@ class TheRestatedQuestion(unittest.TestCase):
         from dmbot.sidebar import answer
 
         self.assertIn("QUESTION:", answer.SYSTEM)
-        self.assertEqual(answer.PROMPT_VERSION, "sidebar-11")
+        self.assertEqual(answer.PROMPT_VERSION, "sidebar-13")
 
 
 class LinkAllowlist(unittest.TestCase):

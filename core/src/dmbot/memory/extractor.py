@@ -42,13 +42,16 @@ from dmbot.memory.claims import (
     parse_answer,
 )
 from dmbot.memory.ontology import Tally
+from dmbot.memory.readings import READING_SYSTEM, as_claim, parse_readings, proposals
 from dmbot.transcript.models import Line
 from dmbot.transcript.topics import OFF_TOPIC
 
 log = logging.getLogger(__name__)
 
 PROMPT_VERSION = "extractor-1"  # bump when SYSTEM changes (it is recorded with every claim)
-MAX_TOKENS = 1500  # per batch: a minute of talk gives a few dozen claims at most
+READING_PROMPT_VERSION = "readings-1"  # bump when readings.READING_SYSTEM changes
+MAX_TOKENS = 3000  # per batch: a minute of talk gives a few dozen claims. Haiku 5.5 writes about
+# three times what Haiku 4.5 did (9 of the story answers were cut off at 1500, #2152)
 BATCH_LINES = 10  # about 30 to 60 seconds of talk, as in the golden set (docs/costs.md)
 MIN_BATCH_LINES = 5  # a shorter tail joins the batch before it (at most 14 lines then)
 DEFAULT_MAX_CALLS = 480  # one session: the cost ceiling in docs/STORY_MEMORY.md, section 8
@@ -105,7 +108,8 @@ For each claim say how it was said:
 Answer with JSON only, in this shape:
 {"claims": [{"subject": "...", "relationship": "...", "object": "...", "details": "...",
 "lines": [1], "how": "dm_said"}]}
-Use short names for subject and object, as said in the transcript. "lines" are the line
+Use short names for subject and object, as said in the transcript, and never a pronoun (I, we,
+he, she, they) unless the line says it is someone's name. "lines" are the line
 numbers the claim comes from. Answer {"claims": []} if there are none."""
 
 
@@ -197,6 +201,11 @@ class Report:
     joined: int = 0  # spellings joined to a name already waiting
     deferred: int = 0  # claims left for next time (their name was past the limit)
     unsent: int = 0  # lines never sent: the call cap, or the run stopped
+    readings: int = 0  # beliefs found (theories, reveals, frame-ups, divinations), kept as claims
+    readings_refused: int = 0  # answers or items the reading rules turned down
+    readings_failed: int = 0  # reading calls that failed (the claims pass is not affected)
+    cut: int = 0  # claims answers that stopped at the length limit (the whole items were kept)
+    readings_cut: int = 0  # the same for the readings answers
     stopped: str = ""  # why it ended early, if it did
     through_ms: int = 0  # every line that began up to this was read and its claims stored
 
@@ -207,6 +216,16 @@ class Report:
             f"{self.proposed} proposed, dropped: {why}, {self.repeated} repeated, "
             f"{self.malformed} malformed, {self.named} new name(s), {self.joined} joined, "
             f"{self.deferred} deferred, {self.unsent} line(s) not sent"
+            + (f", {self.cut} answer(s) cut short" if self.cut else "")
+            + (
+                f", readings: {self.readings} found, {self.readings_refused} refused,"
+                f" {self.readings_failed} failed, {self.readings_cut} cut short"
+                if self.readings
+                or self.readings_refused
+                or self.readings_failed
+                or self.readings_cut
+                else ""
+            )
             + (f", stopped: {self.stopped}" if self.stopped else "")
         )
 
@@ -239,6 +258,7 @@ async def run(
     new_names: int = NEW_NAME_LIMIT,
     after_ms: int = 0,
     count_call: Callable[[], Awaitable[None]] | None = None,
+    readings: bool = False,
 ) -> Report:
     """Read the session's lines and store what the AI found as proposals, all at once at the end
     (the linker picks the most-said new names across the whole session). `consenting` is asked
@@ -251,10 +271,18 @@ async def run(
     `Report.through_ms`), so a restart never sends the same lines twice (#1367). A claim's lines
     are numbered by their place in the stored session; they are not looked up anywhere yet, so if
     a stop-recording clean-up removes lines, whatever resolves them later must key on more than
-    the position."""
+    the position.
+
+    `readings`: after each batch's claims, ask the second question of the same lines (theories,
+    reveals, frame-ups, divinations; `readings.py`), inside the same ceilings: it is a call like
+    any other, counted before it is made and held to `max_calls`, so turning it on does not raise
+    what a session may spend. Its answers wait as claims that carry a reading and are placed by
+    the DM, never written."""
     report = Report()
     collected: list[Extracted] = []
+    believed: list[Extracted] = []
     everyone: dict[str, int | None] = {}  # every line sent, to who said it
+    heard: dict[str, str] = {}  # every line sent, as said: where a naming cue is looked for
     answered_by = ""  # the model that answered last (it can change on a fallback)
     work = batches([s for s in readable(lines) if s.started_ms > after_ms])
     report.through_ms = after_ms
@@ -312,9 +340,55 @@ async def run(
         collected.extend(found)
         answered_by = reply.model or answered_by
         everyone.update(speakers)
+        heard.update((number, text) for number, _who, text in rows)
         report.malformed += bad
+        if reply.cut:  # stopped at the length limit: the whole items before it are kept
+            report.cut += 1
         if not broken:
-            reached = end_ms
+            reached = end_ms  # (the claims of this batch are in hand: a restart need not redo it)
+        if not readings or report.calls >= max_calls:
+            continue
+        # The second question. Asked again who is recorded: the first call took seconds, and
+        # someone may have stopped since (CLAUDE.md: re-check after every async step).
+        agreed = await consenting()
+        batch = [s for s in batch if s.user_id in agreed]
+        if not batch:
+            continue
+        rows = [(str(s.number), "DM" if s.user_id in dm_ids else "Player", s.text) for s in batch]
+        speakers = {str(s.number): s.user_id for s in batch}
+        dm_lines = {str(s.number) for s in batch if s.user_id in dm_ids}
+        report.calls += 1
+        if count_call is not None:
+            try:
+                await count_call()
+            except Exception as exc:
+                log.warning("Story extractor: couldn't count a call (%s)", type(exc).__name__)
+        try:
+            second = await asyncio.wait_for(
+                client.complete(READING_SYSTEM, transcript_of(rows), max_tokens=MAX_TOKENS),
+                CALL_TIMEOUT_S,
+            )
+        except AIOutOfFunds:
+            report.failed += 1
+            report.stopped = "out of funds"
+            report.unsent += sum(len(b) for b in work[index + 1 :])
+            break
+        except Exception as exc:  # never fatal, and the claims above stand
+            log.warning("Story extractor: a reading call failed (%s)", type(exc).__name__)
+            report.readings_failed += 1
+            continue
+        kept, refused = parse_readings(
+            second.text, speakers.keys(), dm_lines=dm_lines, cut=second.cut
+        )
+        report.readings_refused += refused
+        report.readings += len(kept)
+        if second.cut:
+            report.readings_cut += 1
+        for belief in proposals(kept).beliefs:
+            how = "dm_said" if any(n in dm_lines for n in belief.lines) else "player_said"
+            believed.append(as_claim(belief, how))
+        everyone.update(speakers)
+        heard.update((number, text) for number, _who, text in rows)
     # One hand-over for the whole session: the linker picks the most-said new names across all of
     # it, and the campaign's memory is read once, not once a batch. Consent is asked again here,
     # after the last answer (CLAUDE.md: after every async step), and `propose` checks it per claim.
@@ -326,6 +400,7 @@ async def run(
                 campaign_id,
                 collected,
                 everyone,
+                said=heard,
                 opted_in=agreed,
                 prompt_version=PROMPT_VERSION,
                 model=answered_by or model(),
@@ -352,6 +427,35 @@ async def run(
             report.joined += done.joined
             report.deferred += done.deferred
             for reason, n in done.reasons.items():
+                report.dropped[_LOGGED_REASONS.get(reason, "other")] += n
+    if believed:
+        agreed = await consenting()
+        try:
+            stored = await claims.propose(
+                guild_id,
+                campaign_id,
+                believed,
+                everyone,
+                said=heard,
+                opted_in=agreed,
+                prompt_version=READING_PROMPT_VERSION,
+                model=answered_by or model(),
+                session_started_at=session_started_at,
+                malformed=0,
+                tally=tally,
+                dms=dm_ids,
+                skip=skip,
+                make_names=False,  # a reading never makes a new name, now or a session later
+                new_names=0,
+                limit=SESSION_CLAIMS,
+            )
+        except Exception as exc:
+            log.warning("Story extractor: storing the readings failed (%s)", type(exc).__name__)
+            report.failed += 1
+        else:
+            report.repeated += stored.repeated
+            report.deferred += stored.deferred
+            for reason, n in stored.reasons.items():
                 report.dropped[_LOGGED_REASONS.get(reason, "other")] += n
     report.through_ms = reached
     return report

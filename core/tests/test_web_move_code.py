@@ -21,7 +21,7 @@ from dmbot.web.discord import DiscordUser
 from dmbot.web.moving import EmailedMoveCodes, forget_old_asks
 from dmbot.web.payments import FakeProvider
 from tests.pg import REQUIRE_DB, SUPERUSER_URL, DatabaseTest
-from tests.test_web_api import ALICE, API, SITE, THURSDAY, FakeDiscord, settings
+from tests.test_web_api import ALICE, SITE, THURSDAY, FakeDiscord, settings
 from tests.test_web_email_signin import LINK_SECRET, SMTP
 from tests.test_web_role import ensure_web_role, web_url
 
@@ -223,6 +223,7 @@ class WebMoveCode(DatabaseTest):
         async with self.db.unscoped() as conn:
             cur = await conn.execute(
                 "SELECT prosrc FROM pg_proc WHERE proname = 'dmbot_web_move_code'"
+                " AND pronamespace = current_schema()::regnamespace"
             )
             row = await cur.fetchone()
         assert row is not None
@@ -302,9 +303,11 @@ class MoveCodeRoute(WebMoveCode):
     async def signed_in(self) -> httpx.AsyncClient:
         token = await sessions.sign_in_by_email(self.web, ALICE.id, now=self.now, days=30)
         client = httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=self.app), base_url=API, follow_redirects=False
+            transport=httpx.ASGITransport(app=self.app),
+            base_url="https://web-api.internal.test",
+            follow_redirects=False,
         )
-        client.cookies.set("__Host-dmbot_session", token, domain="api.dmbot.example")
+        client.cookies.set("__Host-dmbot_session", token, domain="web-api.internal.test")
         return client
 
     async def test_the_route_emails_the_code_and_never_shows_it(self) -> None:

@@ -6,7 +6,7 @@ from __future__ import annotations
 import unittest
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from dmbot.rules import rule_sets
 from dmbot.ui import shared_rules
@@ -74,6 +74,48 @@ class Sharing(unittest.IsolatedAsyncioTestCase):
         it = interaction(7, bot_with(store))
         await shared_rules.share(it, campaign(), "Mine")
         self.assertIn("`ABCDEFGHJK`", it.sent[0][0])
+
+    async def test_with_relationships_to_offer_the_dm_ticks_before_anything_is_shared(self) -> None:
+        from dmbot.memory import set_definitions as sd
+        from tests.test_set_definitions import term
+
+        offered = [sd.definition_of(term()), sd.definition_of(term("guards", "guards"))]
+        store = MagicMock()
+        store.publish = AsyncMock(return_value=rule_sets.SharedSet("s", "Mine", True, 1))
+        store.make_code = AsyncMock(return_value="ABCDEFGHJK")
+        bot = bot_with(store)
+        bot.memory = object()
+        with patch("dmbot.memory.set_definitions.own_definitions", AsyncMock(return_value=offered)):
+            it = interaction(7, bot)
+            await shared_rules.share(it, campaign(), "Mine")
+        text, menu = it.sent[0]
+        self.assertIn("Pick the relationships to share", text)
+        self.assertIn("vows loyalty to", text)  # what each says is shown
+        store.publish.assert_not_called()  # nothing leaves until the DM presses Share
+        menu.ticked = {"guards"}  # the DM unticks one
+        it2 = interaction(7, bot)
+        await menu._share(it2)
+        args = store.publish.await_args.args
+        self.assertEqual([d["key"] for d in args[-1]], ["guards"])
+        self.assertIn("Shared with it: 1 relationship", it2.sent[0][0])
+
+    async def test_sharing_the_rules_only_sends_no_relationship(self) -> None:
+        from dmbot.memory import set_definitions as sd
+        from tests.test_set_definitions import term
+
+        store = MagicMock()
+        store.publish = AsyncMock(return_value=rule_sets.SharedSet("s", "Mine", True, 1))
+        store.make_code = AsyncMock(return_value="ABCDEFGHJK")
+        bot = bot_with(store)
+        bot.memory = object()
+        with patch(
+            "dmbot.memory.set_definitions.own_definitions",
+            AsyncMock(return_value=[sd.definition_of(term())]),
+        ):
+            it = interaction(7, bot)
+            await shared_rules.share(it, campaign(), "Mine")
+        await it.sent[0][1]._none(interaction(7, bot))
+        self.assertEqual(store.publish.await_args.args[-1], [])
 
     async def test_a_store_problem_is_told_in_its_words(self) -> None:
         store = MagicMock()

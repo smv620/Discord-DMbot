@@ -21,6 +21,30 @@ class ConfigTests(unittest.TestCase):
             load_settings({**BASE, "EARS_WS_PORT": "x"})
         with self.assertRaises(ConfigError):
             load_settings({**BASE, "DISCORD_DEV_GUILD_ID": "abc"})
+        with self.assertRaises(ConfigError):
+            load_settings({**BASE, "DISCORD_CLEAR_GUILD_COMMANDS": "1,abc"})
+
+    def test_the_servers_to_clear_are_listed_with_commas(self) -> None:
+        self.assertEqual(load_settings(BASE).clear_guild_commands, ())
+        got = load_settings({**BASE, "DISCORD_CLEAR_GUILD_COMMANDS": "11, 22,"})
+        self.assertEqual(got.clear_guild_commands, (11, 22))
+
+
+class PoolSize(unittest.TestCase):
+    def test_ten_unless_set_so_nothing_changes_for_a_deployment_that_sets_nothing(self) -> None:
+        self.assertEqual(load_settings(BASE).database_pool_max, 10)
+        self.assertEqual(load_settings({**BASE, "DATABASE_POOL_MAX": ""}).database_pool_max, 10)
+
+    def test_a_pod_can_take_a_smaller_or_larger_pool(self) -> None:
+        for raw, want in (("4", 4), ("1", 1), ("100", 100)):
+            self.assertEqual(
+                load_settings({**BASE, "DATABASE_POOL_MAX": raw}).database_pool_max, want
+            )
+
+    def test_nonsense_is_refused_with_a_plain_message(self) -> None:
+        for raw in ("0", "101", "-2", "ten", "4.5", "1000", "\u00b2"):
+            with self.assertRaisesRegex(ConfigError, "DATABASE_POOL_MAX must be a number"):
+                load_settings({**BASE, "DATABASE_POOL_MAX": raw})
 
 
 class SidebarRecall(unittest.TestCase):
@@ -118,6 +142,18 @@ class PlanChecksSetting(unittest.TestCase):
         self.assertFalse(load_settings({**BASE, "DMBOT_SIDEBAR": "off"}).sidebar_on)
         self.assertFalse(load_settings(BASE).story_extractor_on)  # off unless asked for
         self.assertTrue(load_settings({**BASE, "DMBOT_STORY_EXTRACTOR": "1"}).story_extractor_on)
+        self.assertFalse(load_settings(BASE).story_readings_on)  # off unless asked
+        self.assertTrue(load_settings({**BASE, "DMBOT_STORY_READINGS": "1"}).story_readings_on)
+        with self.assertRaisesRegex(ConfigError, "DMBOT_STORY_READINGS must be 1"):
+            load_settings({**BASE, "DMBOT_STORY_READINGS": "maybe"})
+
+    def test_grading_contradictions_is_off_unless_asked(self) -> None:
+        self.assertFalse(load_settings(BASE).story_contradictions_on)
+        self.assertTrue(
+            load_settings({**BASE, "DMBOT_STORY_CONTRADICTIONS": "1"}).story_contradictions_on
+        )
+        with self.assertRaisesRegex(ConfigError, "DMBOT_STORY_CONTRADICTIONS must be 1"):
+            load_settings({**BASE, "DMBOT_STORY_CONTRADICTIONS": "maybe"})
         with self.assertRaisesRegex(ConfigError, "DMBOT_STORY_EXTRACTOR must be 1"):
             load_settings({**BASE, "DMBOT_STORY_EXTRACTOR": "maybe"})
 
@@ -126,6 +162,29 @@ class PlanChecksSetting(unittest.TestCase):
         self.assertTrue(load_settings({**BASE, "DMBOT_RECAPS": "1"}).recaps_on)
         with self.assertRaisesRegex(ConfigError, "DMBOT_RECAPS must be 1"):
             load_settings({**BASE, "DMBOT_RECAPS": "sometimes"})
+
+    def test_recap_audio_needs_the_switch_a_key_and_a_voice_and_is_checked(self) -> None:
+        on = {**BASE, "DMBOT_RECAPS": "1"}
+        self.assertFalse(load_settings(on).recap_audio_on)  # no key: text-only
+        self.assertFalse(
+            load_settings({**on, "ELEVENLABS_API_KEY": "k"}).recap_audio_on
+        )  # no voice
+        both = {**on, "ELEVENLABS_API_KEY": "k", "ELEVENLABS_VOICE_ID": "abc123"}
+        self.assertTrue(load_settings(both).recap_audio_on)
+        self.assertFalse(load_settings({**both, "DMBOT_RECAPS": "0"}).recap_audio_on)
+        self.assertNotIn("elevenlabs_key", repr(load_settings(both)))  # the key is never shown
+        self.assertEqual(load_settings(BASE).recap_audio_max_credits, 15000)
+        self.assertEqual(load_settings(BASE).elevenlabs_speech_model, "eleven_v3")
+        self.assertEqual(
+            load_settings({**BASE, "ELEVENLABS_SPEECH_MODEL": "eleven_v4"}).elevenlabs_speech_model,
+            "eleven_v4",
+        )
+        with self.assertRaisesRegex(ConfigError, "ELEVENLABS_SPEECH_MODEL"):
+            load_settings({**BASE, "ELEVENLABS_SPEECH_MODEL": "../x"})
+        with self.assertRaisesRegex(ConfigError, "DMBOT_RECAP_AUDIO_MAX_CREDITS"):
+            load_settings({**BASE, "DMBOT_RECAP_AUDIO_MAX_CREDITS": "5"})
+        with self.assertRaisesRegex(ConfigError, "ELEVENLABS_VOICE_ID"):
+            load_settings({**BASE, "ELEVENLABS_VOICE_ID": "../x"})
 
     def test_the_recall_budget_has_a_default_and_is_checked(self) -> None:
         self.assertEqual(load_settings(BASE).recall_budget, 4000)

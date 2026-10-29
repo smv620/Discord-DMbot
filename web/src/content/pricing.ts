@@ -6,6 +6,8 @@
  * Keep this free of page markup: the bot and the web API's /me will reuse the wording.
  */
 import facts from "./plans.json";
+import { RECAP_AUDIO_PRICE_CENTS } from "./recap-audio-price";
+import { RECAP_AUDIO_LIVE, RECAPS_LIVE, allowanceSentence } from "./recap-words";
 
 export type PlanId = "try-it" | "table" | "two-tables" | "guild" | "pro";
 
@@ -73,6 +75,13 @@ function hoursLine(p: PlanFacts): string {
 function campaignsLine(p: PlanFacts): string {
   return p.campaigns === 1 ? "1 campaign" : `Up to ${p.campaigns} campaigns`;
 }
+
+/** The plans question's answer while the audio add-on is live: "everything" stays true. Lives here,
+ * not in recap-audio.ts, which imports this file (a cycle would crash the page once it is on). */
+export const plansAnswer = (featureList: string, tryItName: string): string =>
+  `Every plan has the same DMbot. Plans differ only in hours and campaigns (the free ${tryItName} has no backups or downloads): it ${featureList}. Narrated recaps with music are an extra: Guild and Pro include them${
+    RECAP_AUDIO_PRICE_CENTS === null ? "; the other plans do not have them." : ", and you can add them to the other paid plans."
+  }`;
 
 const tryItName = data.plans["try-it"].name;
 
@@ -171,7 +180,14 @@ export const questions: readonly Question[] = [
   },
   {
     question: "What's different between the plans?",
-    answer: `Only the hours and how many campaigns you can run. The free ${tryItName} has no backups or downloads; everything else is the same on every plan: it ${featureList}.`,
+    answer: [
+      RECAP_AUDIO_LIVE
+        ? plansAnswer(featureList, tryItName)
+        : `Only the hours and how many campaigns you can run. The free ${tryItName} has no backups or downloads; everything else is the same on every plan: it ${featureList}.`,
+      allowanceSentence(RECAPS_LIVE, RECAP_AUDIO_LIVE),
+    ]
+      .filter(Boolean)
+      .join(" "),
   },
   {
     question: "Can I change my plan?",
@@ -196,7 +212,7 @@ export const questions: readonly Question[] = [
     answer:
       // In Discord for now: the site's own Hand over waits on its API route (#704's
       // follow-up). Never "pick someone with room": the owner can't know who pays (#437).
-      "Yes. In Discord, open ⚙️ Settings and tap 🤝 Hand over, then pick who should take it. They have 7 days to say yes. Nothing changes until they do; then it uses their hours, not yours.",
+      "Yes. In Discord, open ⚙️ Settings → 🗂️ Campaign management → 🤝 Hand over, then pick who should take it. They have 7 days to say yes. Nothing changes until they do; then it uses their hours, not yours. If they don't answer within 7 days, the offer ends by itself, the campaign stays yours, and DMbot tells you so you can offer it again.",
   },
   {
     question: "Can I delete everything?",

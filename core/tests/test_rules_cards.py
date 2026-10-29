@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock
 import discord
 
 from dmbot.audio.segmenter import Segmenter
-from dmbot.bot import DMBot, Table
+from dmbot.bot import DMBot
 from dmbot.campaigns import Campaign
 from dmbot.config import Settings
 from dmbot.dm_screen import rules_cards
@@ -22,6 +22,7 @@ from dmbot.dm_screen.settings import RulesCardsButton, settings_text, settings_v
 from dmbot.rules import index
 from dmbot.rules.house import HouseRule
 from dmbot.rules.spotter import Spotter
+from dmbot.table import Table
 from dmbot.ui import house_rules as house_ui
 from tests.test_memory_names import FakeResponse
 
@@ -53,7 +54,7 @@ class Limits(unittest.TestCase):
         self.assertIsNone(cards.pick(mentions("another Fireball"), 1000.0 + GAP_S + 1))
         other = cards.pick(mentions("and Hold Person"), 1000.0 + GAP_S + 1)
         assert other is not None
-        self.assertEqual(other.entry.name, "Hold Person")
+        self.assertEqual(other.name, "Hold Person")
 
     def test_one_card_a_minute_and_the_rest_are_dropped(self) -> None:
         cards = RulesCards()
@@ -64,7 +65,7 @@ class Limits(unittest.TestCase):
         # the dropped name was not kept for later and was not counted as shown
         again = cards.pick(mentions("Hold Person"), 1000.0 + GAP_S)
         assert again is not None
-        self.assertEqual(again.entry.name, "Hold Person")
+        self.assertEqual(again.name, "Hold Person")
 
     def test_the_first_card_needs_no_wait(self) -> None:
         self.assertIsNotNone(RulesCards().pick(mentions("Fireball"), 0.0))
@@ -87,7 +88,7 @@ class Limits(unittest.TestCase):
         cards.remember(first, 1000.0)
         second = cards.pick(mentions("Fireball then Hold Person"), 2000.0)
         assert second is not None
-        self.assertEqual(second.entry.name, "Hold Person")
+        self.assertEqual(second.name, "Hold Person")
 
 
 class FakeStore:
@@ -102,7 +103,14 @@ class FakeStore:
         return list(self.rules.get(cid, []))
 
     async def add(
-        self, guild_id: int, cid: str, user_id: int, text: str, instead: str | None = None
+        self,
+        guild_id: int,
+        cid: str,
+        user_id: int,
+        text: str,
+        instead: str | None = None,
+        *,
+        source: str = "typed",
     ) -> HouseRule:
         if user_id != DM:
             from dmbot.rules import house
@@ -136,7 +144,9 @@ class TableTest(unittest.IsolatedAsyncioTestCase):
         self.bot.house_rules = self.store  # type: ignore[assignment]
         self.posts: list[tuple[int, str, Any]] = []
 
-        async def post_message(channel_id: int, text: str, view: Any = None) -> object:
+        async def post_message(
+            channel_id: int, text: str, view: Any = None, *, remember: Any = None
+        ) -> object:
             self.posts.append((channel_id, text, view))
             return object()
 
@@ -268,7 +278,9 @@ class WhenThingsGoWrong(TableTest):
         self.assertEqual(self.posts, [])
 
     async def test_a_card_that_could_not_be_posted_gives_back_its_name_and_its_minute(self) -> None:
-        async def nowhere(channel_id: int, text: str, view: Any = None) -> None:
+        async def nowhere(
+            channel_id: int, text: str, view: Any = None, *, remember: Any = None
+        ) -> None:
             return None
 
         self.bot.post_message = nowhere  # type: ignore[method-assign]
@@ -316,7 +328,9 @@ class WhenThingsGoWrong(TableTest):
         self.table.rules_on = False
         with patch.object(self.bot, "_warm_rules") as warm:
             await self.bot.set_rules_cards(GUILD, C1, True)
-            warm.assert_called_once_with(self.table.rules_rulesets)
+            warm.assert_called_once_with(
+                self.table.rules_rulesets, self.table
+            )  # (and the homebrew names)
             warm.reset_mock()
             await self.bot.set_rules_cards(GUILD, C1, False)
             warm.assert_not_called()

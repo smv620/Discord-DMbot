@@ -20,9 +20,9 @@ from typing import Any, cast
 import discord
 
 from dmbot import fetch
-from dmbot.ai import AIError, Reply, TierClient
 from dmbot.campaigns import Campaign
-from dmbot.campaigns.models import NAMES_LIST, CampaignError, fingerprint
+from dmbot.discord_limits import MESSAGE_MAX
+from dmbot.memory import unnamed as unnamed_mod
 from dmbot.memory.document_reader import READING, read_document
 from dmbot.memory.lookup import CampaignLookup, NameEntry
 from dmbot.memory.models import (
@@ -39,28 +39,26 @@ from dmbot.memory.name_documents import (
     MAX_DOCUMENT_BYTES,
     TYPES_HELP,
     DocumentError,
-    chunks,
-    clean_reply,
     decode_text,
-    instructions,
     kind_of_file,
-    merge_lists,
-    request_text,
 )
 from dmbot.memory.name_list import (
     MAX_FILE_BYTES,
     MAX_LINES,
     MAX_NAMES,
+    MAX_WORDS,
     OutName,
+    OutPerson,
     Parsed,
-    header,
+    check_name,
     parse,
     render_files,
     template,
 )
-from dmbot.ui import logic
+from dmbot.memory.store import placeholder_name
+from dmbot.mentions import NO_PINGS
+from dmbot.ui import all_names, logic, name_unnamed
 from dmbot.ui.dmbot_commands import (
-    NO_PINGS,
     _answer_first,
     _bot,
     _Button,
@@ -71,7 +69,7 @@ from dmbot.ui.dmbot_commands import (
     _send,
     _tell,
 )
-from dmbot.ui.list_matches import UNKNOWN_KIND, KindDiffers, Near, plan, too_many
+from dmbot.ui.list_matches import UNKNOWN_KIND, KindDiffers, Near, SoundAsk, plan, too_many
 from dmbot.ui.names import (
     KIND_SHORT,
     KINDS,
@@ -88,7 +86,9 @@ from dmbot.ui.names import (
 log = logging.getLogger(__name__)
 
 PER_PAGE = 20
-PAGE_MAX = 1800  # the page's text, under Discord's 2,000 characters
+PAGE_MAX = (
+    MESSAGE_MAX - 200
+)  # the page's text; margin kept from before: room for the words a sender adds around it
 SHOWN_PROBLEMS = 5
 SHOWN_SWAPPED = 3
 PASTE_MAX = 4000  # what a form field holds
@@ -114,8 +114,10 @@ async def _names(interaction: discord.Interaction, campaign: Campaign) -> Campai
     if cache is None:
         await _tell(interaction, NOT_AVAILABLE)
         return None
-    try:
-        return await cache.get(campaign.guild_id, campaign.id)
+    try:  # (without the clues only some people know, unless this person is a DM, #1649)
+        return (await cache.get(campaign.guild_id, campaign.id)).for_viewer(
+            sees_secrets(campaign, interaction.user.id)
+        )
     except Exception:
         log.exception("Couldn't load the campaign's names")
         await _tell(interaction, "DMbot couldn't load the names just now. Try again in a moment.")
@@ -129,14 +131,23 @@ def kinds_in(names: CampaignLookup) -> list[tuple[str, int]]:
     """(kind, how many confirmed names), most first."""
     counts: dict[str, int] = {}
     for e in names.entities.values():
-        if e.status == CONFIRMED:
+        if e.status == CONFIRMED and not e.unnamed:
             counts[e.kind_key] = counts.get(e.kind_key, 0) + 1
-    return sorted(counts.items(), key=lambda kv: (-kv[1], KIND_SHORT.get(kv[0], kv[0])))
+    out = sorted(counts.items(), key=lambda kv: (-kv[1], KIND_SHORT.get(kv[0], kv[0])))
+    waiting = len(name_unnamed.unnamed_ids(names))  # (only a DM's view holds any: #2790)
+    # first, so a long list of kinds never cuts it off the menu
+    return [(name_unnamed.NOT_NAMED, waiting), *out] if waiting else out
 
 
 def browse_order(names: CampaignLookup, kind: str, by_heard: bool) -> list[str]:
     """Confirmed entries of one kind: last heard first (never heard last), or A to Z."""
-    ids = [e.id for e in names.entities.values() if e.status == CONFIRMED and e.kind_key == kind]
+    if kind == name_unnamed.NOT_NAMED:
+        return name_unnamed.unnamed_ids(names)  # never heard, so one order: A to Z
+    ids = [
+        e.id
+        for e in names.entities.values()
+        if e.status == CONFIRMED and e.kind_key == kind and not e.unnamed
+    ]
 
     def az(entity_id: str) -> str:
         return name_key(names.entities[entity_id].name)
@@ -167,9 +178,16 @@ def pages(names: CampaignLookup, ids: list[str]) -> list[list[str]]:
 
 def _line(names: CampaignLookup, entity_id: str) -> str:
     entity = names.entities[entity_id]
+    if entity.unnamed:
+        label = logic.shorten(name_unnamed.shown(names, entity_id), 100)
+        return f"**{_md(label)}** · not named yet"
     h = names.heard.get(entity_id)
     when = f"heard <t:{h.last_session_at}:R>" if h and h.last_session_at else "not heard yet"
     return f"**{_md(logic.shorten(entity.name, 100))}** · {when}"
+
+
+def _kind_name(kind: str) -> str:
+    return unnamed_mod.GROUP if kind == name_unnamed.NOT_NAMED else KIND_SHORT.get(kind, kind)
 
 
 class Browse(_Menu):
@@ -194,9 +212,7 @@ class Browse(_Menu):
             self._kind_picked,
             placeholder="Pick a kind…",
             options=[
-                discord.SelectOption(
-                    label=f"{KIND_SHORT.get(k, k)} ({n})", value=k, default=k == kind
-                )
+                discord.SelectOption(label=f"{_kind_name(k)} ({n})", value=k, default=k == kind)
                 for k, n in counts[: logic.SELECT_OPTIONS_MAX]
             ],
         )
@@ -204,22 +220,44 @@ class Browse(_Menu):
             self.add_item(self.pick)
         self.shown: list[str] = []
         self.total = 0
+        self.labels: dict[str, str] = {}  # the unnamed people's labels, for the form's title
         if kind is not None:
             book = pages(names, browse_order(names, kind, by_heard))
             self.total = len(book)
             self.page = max(0, min(page, self.total - 1))
             self.shown = book[self.page]
-            if self.shown:
+            if kind == name_unnamed.NOT_NAMED:
+                self.labels = {e: name_unnamed.shown(names, e) for e in self.shown}
+            if self.shown and kind == name_unnamed.NOT_NAMED:
                 self.open = _Select(
-                    self._open,
-                    placeholder="✏️ Fix, change or remove a name…",
+                    self._give_name,
+                    placeholder="✏️ Give them a name…",
                     options=[
                         discord.SelectOption(
-                            label=logic.shorten(names.entities[e].name, logic.OPTION_LABEL_MAX),
+                            label=logic.shorten(
+                                name_unnamed.shown(names, e), logic.OPTION_LABEL_MAX
+                            ),
                             value=e,
                         )
                         for e in self.shown
                     ],
+                    row=1,
+                )
+                self.add_item(self.open)
+            elif self.shown:
+                self.open = _Select(
+                    self._open,
+                    placeholder="✏️ Fix, change or remove a name…",
+                    options=all_names.with_choice(
+                        [
+                            discord.SelectOption(
+                                label=logic.shorten(names.entities[e].name, logic.OPTION_LABEL_MAX),
+                                value=e,
+                            )
+                            for e in self.shown
+                        ],
+                        left_out=self.total > 1,  # the other pages' names are not in this menu
+                    ),
                     row=1,
                 )
                 self.add_item(self.open)
@@ -236,14 +274,15 @@ class Browse(_Menu):
                     disabled=self.page >= self.total - 1,
                 )
             )
-            self.add_item(
-                _Button(
-                    self._sort,
-                    label="Show A to Z" if by_heard else "Show last heard first",
-                    style=grey,
-                    row=2,
+            if kind != name_unnamed.NOT_NAMED:  # (their one order is A to Z)
+                self.add_item(
+                    _Button(
+                        self._sort,
+                        label="Show A to Z" if by_heard else "Show last heard first",
+                        style=grey,
+                        row=2,
+                    )
                 )
-            )
 
     def text(self, names: CampaignLookup, campaign: Campaign) -> str:
         if self.kind is None:
@@ -253,8 +292,12 @@ class Browse(_Menu):
                     "📥 Add many."
                 )
             return f"📚 **Names for {_md(campaign.name)}:** pick a kind."
-        kind = KIND_SHORT.get(self.kind, self.kind)
-        order = "last heard first" if self.by_heard else "A to Z"
+        kind = _kind_name(self.kind)
+        order = (
+            "A to Z"
+            if self.kind == name_unnamed.NOT_NAMED
+            else ("last heard first" if self.by_heard else "A to Z")
+        )
         lines = [f"📚 **{kind}** · {order} · page {self.page + 1} of {max(self.total, 1)}"]
         lines += [_line(names, e) for e in self.shown]
         return "\n".join(lines)
@@ -290,10 +333,25 @@ class Browse(_Menu):
     async def _sort(self, interaction: discord.Interaction) -> None:
         await self._redraw(interaction, by_heard=not self.by_heard, page=0)
 
+    async def _give_name(self, interaction: discord.Interaction) -> None:
+        """Opens the form straight away (a form must be the first answer)."""
+        if self.open is None:
+            return
+        entity_id = self.open.values[0]
+        await interaction.response.send_modal(
+            name_unnamed.GiveNameForm(self.campaign_id, entity_id, self._label_of(entity_id))
+        )
+
+    def _label_of(self, entity_id: str) -> str:
+        return self.labels.get(entity_id, "this person")
+
     async def _open(self, interaction: discord.Interaction) -> None:
         from dmbot.ui.name_card import show_card
 
         if self.open is not None:
+            if all_names.chosen(self.open.values):
+                await all_names.reply(interaction, self.campaign_id)
+                return
             await show_card(interaction, self.campaign_id, self.open.values[0])
 
 
@@ -322,11 +380,12 @@ def format_help(*, secrets: bool) -> str:
     return (
         "📥 **Add many names at once.** Paste a list, paste a link, or upload a file (PDF, "
         "Word, text or web page).\n"
-        "A list written like the template is added straight away. For anything else, "
-        "DMbot's AI finds the names and shows you the list first: nothing is added until "
-        "you press **Add these names**.\n"
+        "A list written like the template is added straight away. For anything else (a "
+        "document, or lines that are prose), a DM can have DMbot's AI read it as campaign lore: "
+        "it suggests the names and the connections your text states, and nothing is added "
+        "until you say yes.\n"
         f"Template: one name per line, `{parts}`. Only the name is needed. Separate other "
-        "names with `,` or `;`. Kinds: NPC, place, group, creature, item, god, event, "
+        "names with `,` or `;`. Kinds: NPC, PC, place, group, item, event, "
         "other. Names with no kind wait in 📝 Check new names.\n"
         "If 📎 Upload a file shows no place to pick a file, type `/dmbot names` and add the "
         "file in its **file** box."
@@ -345,6 +404,9 @@ class AddMany(_Menu):
         self.add_item(_Button(self._upload, label="📎 Upload a file", style=grey))
         # On its own row, so four buttons never get squeezed on a phone.
         self.add_item(_Button(self._template, label="📄 Get the template", style=grey, row=1))
+        self.add_item(
+            _Button(self._background, label="📜 Upload campaign lore", style=grey, row=1)
+        )  # (#2167)
 
     async def _paste(self, interaction: discord.Interaction) -> None:
         campaign = await _campaign_for(interaction, self.campaign_id)
@@ -363,6 +425,12 @@ class AddMany(_Menu):
         if await _campaign_for(interaction, self.campaign_id):
             self.origin = None
             await interaction.response.send_modal(UploadForm(self.campaign_id))
+
+    async def _background(self, interaction: discord.Interaction) -> None:
+        from dmbot.ui.name_background import open_background
+
+        self.origin = None
+        await open_background(interaction, self.campaign_id)
 
     async def _template(self, interaction: discord.Interaction) -> None:
         campaign = await _campaign_for(interaction, self.campaign_id)
@@ -469,7 +537,10 @@ async def take_link(interaction: discord.Interaction, campaign_id: str, link: st
     campaign = await _campaign_for(interaction, campaign_id)
     if campaign is None:
         return
-    if _bot(interaction).ai is None:
+    if interaction.user.id not in campaign.dm_user_ids:  # the lore read is the DM's: fetch nothing
+        await _tell(interaction, "Only a DM of this campaign can add names from a link.")
+        return
+    if _bot(interaction).background_ai is None:
         await _tell(interaction, NO_AI_FOR_DOCUMENTS)
         return
     if campaign.guild_id in _link_busy:
@@ -551,277 +622,67 @@ _ai_busy: set[int] = set()  # servers with an AI read running
 _ai_reads: dict[tuple[int, str], int] = {}  # (server, day) → reads
 
 
+AI_AT_ONCE = asyncio.Semaphore(3)  # AI requests running at once, across all servers
+
+
 async def take_list(interaction: discord.Interaction, campaign_id: str, upload: Upload) -> None:
-    """A list DMbot can read all of is added straight away. Anything else (a document, or
-    a list with any line that doesn't fit) goes to the AI, which writes the list for the
-    DM to check first (owner's decision, 2026-10-06)."""
+    """One process for whatever arrives (#2447, owner 2026-10-22): the lines of a strict names list
+    (`name (pronunciation) | kind | other names`) are added straight away, with no AI. Anything
+    else, a document or the lines that are prose, goes through the campaign-lore read
+    (`name_background.offer`): the names and the connections the text states, each with its quote,
+    for the DM to check. Nothing the AI says is added without the DM's press."""
+    # (imported here: name_background imports this module)
+    from dmbot.ui.name_background import offer
+
     campaign = await _campaign_for(interaction, campaign_id)
     if campaign is None:
         return
-    parsed = None
-    if not upload.document:
-        # Pure CPU, up to a fraction of a second on a full file: off the event loop.
+    if upload.document:  # a document is prose, never read as a names list (#264)
+        await offer(interaction, campaign.id, upload)
+        return
+    rows = upload.text.splitlines()
+    # A bare line (no `|`) that reads as a sentence makes the upload lore. Without one, every line
+    # is a list line, even a wrong one: the list's own answer says why a line wasn't added (a
+    # spell, a monster, too many parts), instead of an AI read.
+    prose = [row for row in rows if _is_content(row) and "|" not in row and _sentence(row)]
+    if not prose:
         secrets_ok = sees_secrets(campaign, interaction.user.id)
+        # Pure CPU, up to a fraction of a second on a full file: off the event loop.
         parsed = await asyncio.to_thread(parse, upload.text, secrets=secrets_ok)
-        if not parsed.lines and not parsed.refused:
+        if not parsed.lines and not parsed.refused and not parsed.people:
             await _tell(
                 interaction,
                 f"There are no names in {_md(upload.label)}. Lines starting with # are "
                 "skipped. Put one name per line and try again.",
             )
             return
-        # Every line fits, or the only problem is secret names from someone who may not
-        # add them (the AI must never turn those into names everyone sees).
-        if all(why.startswith(ONLY_DM_SECRETS) for _, why in parsed.refused):
-            await import_list(interaction, campaign.id, upload.text)
-            return
-    if _bot(interaction).ai is None:
-        if upload.document:
-            await _tell(interaction, NO_AI_FOR_DOCUMENTS)
-        else:
-            await import_list(interaction, campaign.id, upload.text)  # what fits, and why not
+        await import_list(interaction, campaign.id, upload.text)
         return
-    fits = len(parsed.lines) if parsed else 0
-    await _send(
-        interaction,
-        _ai_offer_text(upload, parsed),
-        AIOffer(campaign.id, upload, fits, fits > len(parsed.refused) if parsed else False),
-    )
+    # Prose is in it. Each line is decided on its own: a line with a `|`, and a bare line that is a
+    # name (not a sentence), are list lines and go in now; the sentences are read as campaign
+    # lore, in order, so a connection's quote is still there to be found. A bare "Tavin" beside
+    # a sentence is a name for anyone to add, so it must not wait on the DM-only lore read.
+    strict = [row for row in rows if not _is_content(row) or "|" in row or not _sentence(row)]
+    lore = "\n".join(row for row in rows if _is_content(row) and "|" not in row and _sentence(row))
+    if any(_is_content(row) for row in strict):
+        await import_list(interaction, campaign.id, "\n".join(strict))
+    await offer(interaction, campaign.id, Upload(lore, upload.label))
 
 
-def _ai_offer_text(upload: Upload, parsed: Parsed | None) -> str:
-    rights = (
-        "**Pressing 🤖 Find names confirms you have the right to use this material.** DMbot "
-        "doesn't check this. Its text goes to Anthropic (an AI company) to be read."
-    )
-    if parsed is None:
-        return (
-            f"📄 **Find the names in {_md(upload.label)}?** DMbot's AI reads it and makes a "
-            f"list for you to check. Nothing is added until you say so.\n{rights}"
-        )
-    bad = len(parsed.refused)
-    shown = "; ".join(f"line {n}: {why}" for n, why in parsed.refused[:2])
-    more = " …" if bad > 2 else ""
-    return (
-        f"📄 **{bad} line{'' if bad == 1 else 's'} in {_md(upload.label)} "
-        f"{'doesn' if bad == 1 else 'don'}'t fit** ({shown}{more}). DMbot's AI can read the "
-        "whole list and make a clean one for you to check first"
-        + (f". Or add just the {len(parsed.lines)} that fit." if parsed.lines else ".")
-        + f"\n{rights}"
-    )
+def _is_content(row: str) -> bool:
+    return bool(row.strip()) and not row.lstrip().startswith("#")
 
 
-class AIOffer(_Menu):
-    def __init__(self, campaign_id: str, upload: Upload, fits: int, fits_first: bool) -> None:
-        super().__init__()
-        self.campaign_id = campaign_id
-        self.upload = upload
-        blue, grey = discord.ButtonStyle.primary, discord.ButtonStyle.secondary
-        self.add_item(
-            _Button(
-                self._read,
-                label="🤖 Find names",  # the message says what pressing it confirms
-                style=grey if fits_first else blue,
-            )
-        )
-        if fits:
-            self.add_item(
-                _Button(
-                    self._as_is,
-                    label=f"Add the {fits} that fit",
-                    style=blue if fits_first else grey,
-                )
-            )
-        self.add_item(_Button(self._cancel, label="Cancel", style=grey))
-
-    async def _read(self, interaction: discord.Interaction) -> None:
-        # Answer Discord first (#88, #351): the plan check below is a database read with a
-        # limit of its own, and the three seconds Discord gives are not ours to spend. Every
-        # reply after this is a private follow-up or an edit of this message.
-        await interaction.response.defer()
-        campaign = await _campaign_for(interaction, self.campaign_id)
-        if campaign is None:
-            return
-        ai = _bot(interaction).ai
-        if ai is None:
-            await _tell(interaction, "DMbot's AI was switched off. Nothing was added.")
-            return
-        # The one place the AI spends tokens on a names list: the campaign's owner's plan
-        # has to allow it (#437 part 3). The menu stays, so "Add the lines that fit" works.
-        refused = await _bot(interaction).plan_gate(
-            "ai", campaign.guild_id, campaign, interaction.user.id
-        )
-        if refused is not None:
-            await _tell(interaction, refused)
-            return
-        guild = campaign.guild_id
-        day = datetime.fromtimestamp(time.time(), UTC).strftime("%Y-%m-%d")
-        if guild in _ai_busy:
-            await _tell(interaction, "DMbot is already reading a document for this server. "
-                        "Try again when it's done.")  # fmt: skip
-            return
-        if _ai_reads.get((guild, day), 0) >= AI_READS_PER_DAY:
-            await _tell(interaction, "This server has used today's document reads. Try "
-                        "again tomorrow, or use the template.")  # fmt: skip
-            return
-        self.stop()
-        _ai_busy.add(guild)
-        for old in [k for k in _ai_reads if k[1] != day]:
-            del _ai_reads[old]  # only today counts
-        _ai_reads[(guild, day)] = _ai_reads.get((guild, day), 0) + 1
-        try:
-            await interaction.edit_original_response(
-                content=f"🤖 Reading {_md(self.upload.label)}… this can take a few minutes for "
-                "a long document.",
-                view=None,
-                allowed_mentions=NO_PINGS,
-            )
-            # The IP rule (CLAUDE.md): who confirmed the right to use it, and when. The
-            # file's name stays out of the log and the record (it may hold names); a
-            # fingerprint tells documents apart.
-            document = fingerprint(self.upload.text)
-            # A lasting record, kept with the campaign (#252). Before the AI reads
-            # anything: if it can't be saved, nothing is read (and nothing is logged as
-            # confirmed, so the log and the record agree).
-            await _bot(interaction).campaigns.record_confirmation(
-                guild, campaign.id, interaction.user.id, NAMES_LIST, document
-            )
-            log.info(
-                "Shared material confirmed for AI reading: user=%s campaign=%s doc=%s",
-                interaction.user.id,
-                campaign.id,
-                document[:12],
-            )
-            secrets = sees_secrets(campaign, interaction.user.id)
-            async with asyncio.timeout(AI_TIME_LIMIT_S):
-                listed, cut = await ai_names_list(ai, self.upload.text, secrets=secrets)
-            await show_ai_list(interaction, campaign, self.upload, listed, cut, secrets=secrets)
-        except (AIError, CampaignError) as exc:  # CampaignError: the campaign is gone
-            with contextlib.suppress(discord.HTTPException):
-                await interaction.edit_original_response(content=str(exc))
-        except TimeoutError:
-            with contextlib.suppress(discord.HTTPException):
-                await interaction.edit_original_response(
-                    content="Reading took too long. Nothing was added. Split the document into "
-                    "smaller parts and try again."
-                )
-        except Exception:
-            log.exception("Reading a document with the AI failed")
-            with contextlib.suppress(discord.HTTPException):
-                await interaction.edit_original_response(
-                    content="Something went wrong. Nothing was added. Try again later."
-                )
-        finally:
-            _ai_busy.discard(guild)
-
-    async def _as_is(self, interaction: discord.Interaction) -> None:
-        self.stop()
-        await interaction.response.edit_message(
-            content="Adding the lines that fit…", view=None, allowed_mentions=NO_PINGS
-        )
-        await import_list(interaction, self.campaign_id, self.upload.text)
-
-    async def _cancel(self, interaction: discord.Interaction) -> None:
-        self.stop()
-        await interaction.response.edit_message(
-            content="Cancelled. Nothing was sent or added.", view=None
-        )
+def _sentence(row: str) -> bool:
+    """A bare line that reads as prose, not as a name: too many words for a name, or it ends the
+    way a sentence does."""
+    text = row.strip()
+    return len(text.split()) > MAX_WORDS or text.endswith((".", "!", "?"))
 
 
-AI_AT_ONCE = asyncio.Semaphore(3)  # AI requests running at once, across all servers
-
-
-async def ai_names_list(ai: TierClient, text: str, *, secrets: bool) -> tuple[str, bool]:
-    """The AI's names list for a document (pieces read side by side, merged so each name
-    appears once), and whether any answer was cut off."""
-    system = instructions(secrets=secrets)
-
-    async def one(piece: str) -> Reply:
-        async with AI_AT_ONCE:
-            return await ai.complete(system, request_text(piece))
-
-    replies = await asyncio.gather(*(one(piece) for piece in chunks(text)))
-    merged = merge_lists([clean_reply(r.text) for r in replies])
-    return merged, any(r.cut for r in replies)
-
-
-PREVIEW_LINES = 15
-
-
-async def show_ai_list(
-    interaction: discord.Interaction,
-    campaign: Campaign,
-    upload: Upload,
-    listed: str,
-    cut: bool,
-    *,
-    secrets: bool,
+async def import_list(
+    interaction: discord.Interaction, campaign_id: str, text: str, *, people: bool = True
 ) -> None:
-    """The AI's list, in full as a file and the start in the message, with Add and Cancel.
-    Nothing is saved until the DM presses Add."""
-    parsed = parse(listed, secrets=secrets)
-    if not parsed.lines:
-        await interaction.edit_original_response(
-            content=f"🤖 DMbot's AI found no names in {_md(upload.label)}. Nothing was added."
-        )
-        return
-    lines = [line for line in listed.splitlines() if line.strip()]
-    shown = "\n".join(logic.shorten(line, 90) for line in lines[:PREVIEW_LINES]).replace("`", "'")
-    extra = len(lines) - PREVIEW_LINES
-    count = len(parsed.lines)
-    hidden = sum(1 for line in parsed.lines if line.secrets)
-    notes = []
-    if hidden:
-        notes.append(f"Includes {hidden} with secret names (only you see them).")
-    if cut:
-        notes.append("The document was long, so the list may be missing some names.")
-    text = (
-        f"🤖 **DMbot's AI found {count} name{'' if count == 1 else 's'} in "
-        f"{_md(upload.label)}.** It only lists names written there, but it can miss some or "
-        "get a kind wrong. Nothing is added until you press **Add these names**. To change "
-        f"many, edit the attached file and add it with {UPLOAD}; or add them and fix "
-        "single names on their cards (or **Undo**)."
-        + (" " + " ".join(notes) if notes else "")
-        + f"\n```\n{shown}\n```"
-        + (f"… and {extra} more in the file." if extra > 0 else "")
-    )
-    body = (
-        header(secrets=secrets)
-        + f"###\n### Made by DMbot's AI from {' '.join(upload.label.split())}. Check it, then "
-        "add it with Add many > Upload a file.\n" + "\n".join(lines) + "\n"
-    )
-    view = AIPreview(campaign.id, listed, count)
-    await interaction.edit_original_response(
-        content=text[:2000],
-        attachments=[_file(body, f"names-from-{_slug(upload.label)}.txt")],
-        view=view,
-        allowed_mentions=NO_PINGS,
-    )
-    view.origin = interaction
-
-
-class AIPreview(_Menu):
-    def __init__(self, campaign_id: str, listed: str, count: int) -> None:
-        super().__init__()
-        self.campaign_id = campaign_id
-        self.listed = listed
-        label = f"✅ Add these {count} names" if count != 1 else "✅ Add this name"
-        self.add_item(_Button(self._add, label=label, style=discord.ButtonStyle.success))
-        self.add_item(_Button(self._cancel, label="Cancel", style=discord.ButtonStyle.secondary))
-
-    async def _add(self, interaction: discord.Interaction) -> None:
-        self.stop()
-        await interaction.response.edit_message(view=None)
-        await import_list(interaction, self.campaign_id, self.listed)
-
-    async def _cancel(self, interaction: discord.Interaction) -> None:
-        self.stop()
-        await interaction.response.edit_message(
-            content="Cancelled. Nothing was added.", view=None, attachments=[]
-        )
-
-
-async def import_list(interaction: discord.Interaction, campaign_id: str, text: str) -> None:
     """Save a list of names in one go, then say what happened, with one Undo for all."""
     campaign = await _campaign_for(interaction, campaign_id)
     memory = _memory(interaction)
@@ -833,7 +694,7 @@ async def import_list(interaction: discord.Interaction, campaign_id: str, text: 
     if names is None:
         return
     secrets_ok = sees_secrets(campaign, interaction.user.id)
-    parsed = await asyncio.to_thread(parse, text, secrets=secrets_ok)
+    parsed = await asyncio.to_thread(parse, text, secrets=secrets_ok, people=people)
     # Same names fold in, near names are asked about (#369). For anyone but the campaign's
     # DMs, a clash with a secret name looks exactly like no clash: they never learn one
     # exists.
@@ -898,14 +759,122 @@ async def import_list(interaction: discord.Interaction, campaign_id: str, text: 
         for word, positions in p.groups.items()
         if (ids := [i for pos in positions if (i := saved[pos]) is not None])
     }
+    await _keep_pronunciations(memory, campaign, p.sounds, saved)
+    sound_asks = [
+        (entity_id, a)
+        for a in p.asks
+        if a.position < len(saved) and (entity_id := saved[a.position]) is not None
+    ]
     counts = Counts(added, look, known, p.dropped, enriched, p.swapped, p.repeated)
+    people_lines = await _add_people(interaction, campaign, parsed) if parsed.people else []
     await _send_summary(
-        interaction, campaign, parsed, counts, batch, kinds, near, p.kinds, memory.keep_days
-    )
+        interaction, campaign, parsed, counts, batch, kinds, near, p.kinds, memory.keep_days,
+        extra=people_lines,
+    )  # fmt: skip
     if near:
         await NearQuestions.send(interaction, campaign.id, near, saved)
     if p.kinds:
         await KindDiffQuestions.send(interaction, campaign.id, p.kinds)
+    if sound_asks:
+        await SoundQuestions.send(interaction, campaign.id, sound_asks)
+
+
+async def _keep_pronunciations(
+    memory: Any, campaign: Campaign, sounds: dict[int, str], saved: list[str | None]
+) -> None:
+    """A bracket that is clearly a respelling ("Tavin (TAV-in)") is the name's said-as (#1451,
+    #2447). A failure is logged and the name stays: the DM can set it on the card."""
+    for position, spelling in sounds.items():
+        entity_id = saved[position] if position < len(saved) else None
+        if entity_id is None:
+            continue
+        try:
+            await memory.set_said_as(campaign.guild_id, campaign.id, entity_id, spelling, source=DM)
+        except Exception as exc:  # never the spelling: it is the DM's text
+            log.warning("Couldn't keep a pronunciation from a list (%s)", type(exc).__name__)
+
+
+PEOPLE_SHOWN = 5  # refused player or DM rows named in the summary, then "and N more"
+
+
+def _and_more(items: Sequence[str], shown: int) -> str:
+    return f" and {len(items) - shown} more" if len(items) > shown else ""
+
+
+async def _add_people(
+    interaction: discord.Interaction, campaign: Campaign, parsed: Parsed
+) -> list[str]:
+    """The player or DM rows of a list from a campaign DM (#1559): each id must be a person
+    in this server (not a bot); their names are added as table names, never replacing, and the
+    characters they play are linked where that is clear. A row that can't be used is named, and
+    the rest still load. Returns the lines for the summary."""
+    memory = _memory(interaction)
+    guild = interaction.guild
+    if memory is None or guild is None or not sees_secrets(campaign, interaction.user.id):
+        return []
+    done = names_added = 0
+    linked: list[str] = []
+    flagged: list[str] = []
+    refused: list[str] = []
+    for row in parsed.people:
+        # Checked again before every row: this loop waits on Discord between them.
+        now = await _bot(interaction).campaigns.get(campaign.guild_id, campaign.id)
+        if now is None or not sees_secrets(now, interaction.user.id):
+            refused.append(f"line {row.number}: only the campaign's DM can add players and DMs")
+            break
+        try:
+            member = guild.get_member(row.who) or await guild.fetch_member(row.who)
+        except discord.NotFound:
+            refused.append(f"line {row.number}: that Discord id isn't in this server")
+            continue
+        except discord.HTTPException:
+            refused.append(f"line {row.number}: DMbot couldn't check that Discord id just now")
+            continue
+        if member.bot:
+            refused.append(f"line {row.number}: that is a bot, not a person")
+            continue
+        try:
+            written = await memory.add_person_names(
+                campaign.guild_id, campaign.id, row.who, row.names, row.plays
+            )
+        except MemoryRuleError as exc:
+            refused.append(f"line {row.number}: {exc}")
+            continue
+        except Exception as exc:
+            # (the type only: the text of a database error can hold the Discord id)
+            log.error("Adding a player's names from a list failed (%s)", type(exc).__name__)
+            refused.append(
+                f"line {row.number}: something went wrong, so nothing was added for this row. "
+                "Try uploading again"
+            )
+            continue
+        done += 1
+        names_added += written.value.names_added
+        linked += written.value.linked
+        flagged += written.value.flagged
+    if done:
+        changed(interaction, campaign)
+    lines = []
+    if done:
+        lines.append(
+            f"🧑 **Players and DMs:** {done} updated, {names_added} table "
+            f"name{'' if names_added == 1 else 's'} added. (Undo doesn't take these back.)"
+            + (f" Linked to {_md(', '.join(linked[:5]))}{_and_more(linked, 5)}." if linked else "")
+        )
+    if flagged:
+        lines.append(
+            f"❓ Not linked: {_md(', '.join(flagged[:5]))}{_and_more(flagged, 5)}. Someone else "
+            "already plays them, or DMbot doesn't know them yet. Open 🧑 Check who is who to "
+            "fix this."
+        )
+    for why in refused[:PEOPLE_SHOWN]:
+        lines.append(f"⚠️ {_md(why)}")
+    if len(refused) > PEOPLE_SHOWN:
+        lines.append(
+            f"…and {len(refused) - PEOPLE_SHOWN} more player or DM rows had problems and were "
+            "left out."
+        )
+    return lines
 
 
 @dataclass(frozen=True, slots=True)
@@ -929,6 +898,7 @@ async def _send_summary(
     near: list[Near],
     differ: list[KindDiffers],
     undo_days: int,
+    extra: Sequence[str] = (),
 ) -> None:
     lines = [
         summary_text(
@@ -937,6 +907,7 @@ async def _send_summary(
             undo_days=undo_days,
         )
     ]  # fmt: skip
+    lines.extend(extra)
     asked = sorted(kinds.items(), key=lambda kv: (-len(kv[1]), kv[0]))[:KIND_QUESTIONS]
     if asked:
         words = ", ".join(
@@ -1097,7 +1068,8 @@ class KindQuestions(discord.ui.View):
             # At once, before the campaign is even read: saving many takes a while and
             # Discord waits 3 s (#537). If it can't be used, the menus come back below.
             await interaction.response.edit_message(
-                content=_fit(self.text().split("\n"), 1990 - len(SAVING)) + SAVING, view=None,
+                content=_fit(self.text().split("\n"), MESSAGE_MAX - 10 - len(SAVING)) + SAVING,
+                view=None,
                 allowed_mentions=NO_PINGS,
             )  # fmt: skip
             campaign = await _campaign_for(interaction, self.campaign_id)
@@ -1149,9 +1121,10 @@ def _short(name: str) -> str:
     return _md(logic.shorten(name, SHORT))
 
 
-def _fit(lines: list[str], limit: int = 1990) -> str:
-    """At most `limit` characters (under Discord's 2,000), cut between lines, never
-    inside one; the "…" line that says so counts too."""
+def _fit(lines: list[str], limit: int = MESSAGE_MAX - 10) -> str:
+    """At most `limit` characters, cut between lines, never inside one; the "…" line that
+    says so counts too. (Kept beside `fit_message`: it works on a list of lines and ends
+    with a line of its own, so no line is ever cut in half.)"""
     out: list[str] = []
     size = 0
     for line in lines:
@@ -1198,7 +1171,8 @@ class _Questions(discord.ui.View):
         self.busy = True
         try:
             await interaction.response.edit_message(
-                content=_fit(self.text().split("\n"), 1990 - len(SAVING)) + SAVING, view=None,
+                content=_fit(self.text().split("\n"), MESSAGE_MAX - 10 - len(SAVING)) + SAVING,
+                view=None,
                 allowed_mentions=NO_PINGS,
             )  # fmt: skip
             await work(interaction, campaign, memory)
@@ -1547,6 +1521,97 @@ class KindDiffQuestions(_Questions):
         return handler
 
 
+class SoundQuestions(_Questions):
+    """ "Is (TAH-veen) how to say Tavin?" once for each bracket the list gave that may be a
+    respelling (#2447): [It's how to say it] keeps it as the name's said-as, [It's another name]
+    keeps "Tavin TAH-veen" as another name. Unanswered ones change nothing."""
+
+    def __init__(self, campaign_id: str, items: list[tuple[str, SoundAsk]]) -> None:
+        super().__init__(campaign_id)
+        self.items = items[:QUESTION_ROWS]
+        self.later = len(items) - len(self.items)
+        self.answers: dict[int, str] = {}
+        self.build()
+
+    @classmethod
+    async def send(
+        cls, interaction: discord.Interaction, campaign_id: str, items: list[tuple[str, SoundAsk]]
+    ) -> None:
+        view = cls(campaign_id, items)
+        await interaction.followup.send(
+            view.text(), view=view, ephemeral=True, allowed_mentions=NO_PINGS
+        )
+
+    def done(self) -> bool:
+        return len(self.answers) == len(self.items)
+
+    def text(self) -> str:
+        lines = ["🗣️ **How to say a name?** You can ignore this. Nothing changes unless you press."]
+        for i, (_, ask) in enumerate(self.items):
+            line = (
+                f"{i + 1}. Is ({_md(ask.text)}) how to say **{_md(_short(ask.name))}**? "
+                f"Yes: DMbot says it that way. No: it is saved as another name, "
+                f"“{_md(_short(ask.name))} {_md(ask.text)}”."
+            )
+            lines.append(line + (f" {self.answers[i]}" if i in self.answers else ""))
+        if self.later:
+            lines.append(
+                f"{self.later} more were not asked, so nothing was kept for them. "
+                "Set them on the name's card."
+            )
+        if self.done():
+            lines.append("All checked.")
+        return _fit(lines)
+
+    def build(self) -> None:
+        self.clear_items()
+        for i, _ in enumerate(self.items):
+            if i in self.answers:
+                continue
+            self.add_item(
+                _Button(
+                    self._answer(i, True), label=f"{i + 1}. It's how to say it",
+                    style=discord.ButtonStyle.primary, row=i,
+                )
+            )  # fmt: skip
+            self.add_item(
+                _Button(self._answer(i, False), label=f"{i + 1}. It's another name", row=i)
+            )
+
+    def _answer(self, i: int, sound: bool) -> Any:
+        async def handler(interaction: discord.Interaction) -> None:
+            async def work(it: discord.Interaction, campaign: Campaign, memory: Any) -> None:
+                if i in self.answers:
+                    return
+                self.answers[i] = "⏳"  # taken now, so a second press can't answer it twice
+                entity_id, ask = self.items[i]
+                try:
+                    if sound:
+                        await memory.set_said_as(
+                            campaign.guild_id, campaign.id, entity_id, ask.text, source=DM
+                        )
+                        self.answers[i] = f"✅ Said as {_md(ask.text)}."
+                    else:
+                        another = f"{ask.name} {ask.text}"
+                        if check_name(another) is not None:  # the list's own limits
+                            self.answers[i] = "Not kept: too long for a name. Set it on the card."
+                            return
+                        await memory.add_alias(
+                            campaign.guild_id, campaign.id, entity_id, another,
+                            kind="short", source=DM, status=CONFIRMED,
+                        )  # fmt: skip
+                        self.answers[i] = f"✅ Also called “{_md(ask.name)} {_md(ask.text)}”."
+                except MemoryRuleError as exc:
+                    self.answers[i] = f"Not kept. {exc} Open the name's card to set it."
+                except Exception:
+                    log.exception("Answering a pronunciation question failed")
+                    self.answers[i] = "That didn't work. Open the name's card to set it."
+
+            await self.run(interaction, work)
+
+        return handler
+
+
 class UndoListButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
     template=r"dmbot:undolist:(?P<campaign>[0-9a-f]{32}):(?P<batch>[0-9]{1,18})",
@@ -1601,15 +1666,21 @@ class UndoListButton(
 
 
 def download_files(
-    names: CampaignLookup, campaign: Campaign, *, secrets: bool
+    names: CampaignLookup,
+    campaign: Campaign,
+    *,
+    secrets: bool,
+    people: Sequence[tuple[int, list[str], list[str]]] = (),
 ) -> tuple[list[str], int]:
     """The campaign's confirmed names as list files (the same format Add many reads), and
-    how many names they hold. Misheard spellings DMbot learned aren't other names, so
-    they're left out. A big campaign comes as several files, each small enough to add again
-    (#685)."""
+    how many names they hold. Misheard spellings DMbot learned and old spellings the DM fixed
+    aren't other names (adding them again would make DMbot listen for them), so they're left
+    out. A big campaign comes as several files, each small enough to add again (#685).
+    `people`: who is who at the table (Discord id, characters, table names), listed for the
+    campaign's DMs only, as secret names are (#1559)."""
     by_entity: dict[str, list[NameEntry]] = {}
     for a in names.names:
-        if a.confirmed and a.kind != "misheard":
+        if a.confirmed and a.kind not in ("misheard", "old"):
             by_entity.setdefault(a.entity_id, []).append(a)
     out: list[OutName] = []
     for e in names.entities.values():
@@ -1618,13 +1689,43 @@ def download_files(
         own = name_key(e.name)
         mine = by_entity.get(e.id, [])
         others = tuple(a.text for a in mine if not a.secret and a.key != own)
-        hidden = tuple(a.text for a in mine if a.secret) if secrets else ()
+        hidden = (
+            tuple(a.text for a in mine if a.secret and not (e.unseen_by_players and a.key == own))
+            if secrets
+            else ()
+        )
         out.append(OutName(e.name, e.kind_key, others, hidden))
-    return render_files(out, campaign=campaign.name, secrets=secrets), len(out)
+    listed = (
+        [
+            # (a stable order: the names were saved in the same second)
+            OutPerson(u, tuple(sorted(also, key=name_key)), tuple(chars), placeholder_name(u))
+            for u, chars, also in people
+        ]
+        if secrets
+        else []
+    )
+    return (
+        render_files(out, campaign=campaign.name, secrets=secrets, people=listed),
+        len(out) + len(listed),
+    )
 
 
 # Discord takes this many files in one message.
 FILES_PER_MESSAGE = 10
+
+
+async def _people(
+    interaction: discord.Interaction, campaign: Campaign
+) -> list[tuple[int, list[str], list[str]]]:
+    """Who is who, for a DM's download. If it can't be read the names still download."""
+    memory = _memory(interaction)
+    if memory is None:
+        return []
+    try:
+        return await memory.table_people(campaign.guild_id, campaign.id)
+    except Exception:
+        log.exception("Couldn't read the players for a names download")
+        return []
 
 
 async def send_download(interaction: discord.Interaction, campaign_id: str) -> None:
@@ -1636,7 +1737,10 @@ async def send_download(interaction: discord.Interaction, campaign_id: str) -> N
     if names is None:
         return
     secrets = sees_secrets(campaign, interaction.user.id)
-    texts, count = await asyncio.to_thread(download_files, names, campaign, secrets=secrets)
+    people = await _people(interaction, campaign) if secrets else []
+    texts, count = await asyncio.to_thread(
+        download_files, names, campaign, secrets=secrets, people=people
+    )
     if not count:
         await _tell(
             interaction,

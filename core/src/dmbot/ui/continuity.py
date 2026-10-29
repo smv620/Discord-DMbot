@@ -23,6 +23,7 @@ from dmbot.memory.continuity import (
     BACK_FROM_THE_END,
     CHANGED,
     IGNORE,
+    KNOWS_A_SECRET,
     NOT_TRUE,
     Conflict,
     ContinuityStore,
@@ -48,12 +49,14 @@ NOTHING_LEFT = "✅ Nothing left to check. DMbot looks again after your next ses
 _FINAL = (GONE, STOPPED_NOW, ODD_NOW)  # answers that end a heads-up without a choice
 
 
-def waiting_text(count: int) -> str:
-    """For the DM screen after a session: how many, never what."""
+def waiting_text(count: int, pinned: int = 0) -> str:
+    """For the DM screen after a session: how many, never what. `pinned`: how many of them go
+    against something the DM pinned as 100% truth (#2447), said as a number only."""
     what = "heads-up" if count == 1 else "heads-ups"
+    off = f" 📌 {pinned} {'goes' if pinned == 1 else 'go'} against a pin." if pinned else ""
     return (
-        f"⚠️ **{count} {what} from this session.** Something said at the table may clash with "
-        "your story. Nothing changes until you decide. Only you can see the list."
+        f"⚠️ **{count} {what} from this session.**{off} Something said at the table may clash "
+        "with your story. Nothing changes until you decide. Only you can see the list."
     )
 
 
@@ -74,16 +77,29 @@ def line_text(conflict: Conflict, numbers: Mapping[int, int]) -> str:
         else ""
     )
     now = f"At the table: {statement(conflict.claim)}."
+    if conflict.kind == KNOWS_A_SECRET:
+        # The clue is the entry; the list is the people the DM said know it. Nobody is told
+        # they are wrong: a missing name may only mean DMbot was never told.
+        who = _md(conflict.learner_name or "Someone")
+        listed = _md(conflict.earlier_words) or "the list is empty"
+        return (
+            f"⚠️ **Check: {who}** spoke of **{_md(conflict.entity_name)}** and isn't on its list "
+            f"({listed}). {now} ({conflict.level})"
+        )
     if conflict.kind in (ACTS_AFTER_END, BACK_FROM_THE_END):
         ended = "was destroyed" if conflict.ended_condition == DESTROYED else "died"
         return f"⚠️ **{level}:** {name} {ended}{when}{quote}. {now}"
     before = _md(conflict.earlier_words) or "earlier in your story"
+    if conflict.pinned:  # the DM's own 100% truth: said plainly, as a question and not a ruling
+        return f"📌 **Check: {name}.** You pinned: {before}{quote}. {now} ({conflict.level})"
     return f"⚠️ **{level}: {name}.** Before{when}: {before}{quote}. {now}"
 
 
 def changed_label(conflict: Conflict) -> str:
     """Short, because a number goes in front and Discord cuts a button at 25 characters on a
     phone: what the DM is saying is true now."""
+    if conflict.kind == KNOWS_A_SECRET:
+        return "They learned it"
     if conflict.ended_condition == DESTROYED:
         return "Still here"
     if conflict.ended_condition is not None:
@@ -96,9 +112,12 @@ def page_text(
 ) -> str:
     lines = [
         "**Heads-ups from this session.** Pick what is true in your story.\n"
-        "**Story changed:** the new thing is true now. **Wasn't real:** a joke or a mistake; "
-        "DMbot forgets it. **Ignore:** leave it for now."
+        "**Story changed:** the new thing is true now. **They learned it:** add them to the list. "
+        "**Wasn't real:** a joke or a mistake; DMbot forgets it. "
+        "**Ignore:** leave it for now."
     ]
+    if any(c.pinned for c in page):
+        lines[0] += " **Story changed** on a 📌 line takes the pin off."
     for number, conflict in enumerate(page, 1):
         done = answered.get(conflict.claim.id)
         lines.append(f"{number}. {line_text(conflict, numbers) if done is None else done}")
@@ -258,6 +277,10 @@ class ContinuityReview(_Menu):
             action = ""
         if action == IGNORE:
             self.ignored.add(claim_id)
+        elif action == CHANGED:  # the answer may set a condition: Watch the story looks (#1729)
+            from dmbot.ui.claims_review import _watch_story
+
+            await _watch_story(interaction, campaign, None)
         log.info("Continuity heads-up answered: %s", action or "gone")  # a count, never words
         # The whole list is read again after every answer, with consent asked again: a line that
         # someone who has stopped being recorded said must leave the screen now, not when the

@@ -1,0 +1,23 @@
+{
+ "source": "SRD 5.1",
+ "edition": "2014",
+ "licence": "CC-BY-4.0",
+ "document": {
+  "title": "System Reference Document 5.1",
+  "url": "https://media.dndbeyond.com/compendium-images/srd/5.1/SRD_CC_v5.1.pdf",
+  "sha256": "2504d2a0abb0a4d491a939be4f17910a2dde0312570ab8d208080225ccf0a1f0",
+  "pages": 403,
+  "word_list_sha256": "e29a1c1cb7c00d6a44d25b7e71f996b43ca4200a15792fa25d5d1231e104fa72"
+ },
+ "kind": "feat",
+ "section": "Feats",
+ "entries": [
+  {
+   "category": "",
+   "name": "Grappler",
+   "prerequisite": "Strength 13 or higher",
+   "text": "You’ve developed the skills necessary to hold your own in close-quarters grappling. You gain the following benefits:\n• You have advantage on attack rolls against a creature you are grappling.\n• You can use your action to try to pin a creature grappled by you. To do so, make another grapple check. If you succeed, you and the creature are both restrained until the grapple ends.",
+   "page": 75
+  }
+ ]
+}

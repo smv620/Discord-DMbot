@@ -6,10 +6,11 @@ from __future__ import annotations
 import unittest
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from dmbot.rules import rule_sets
 from dmbot.rules.house import HouseRule
+from dmbot.ui import shared_rules_defs as defs_ui
 from dmbot.ui import shared_rules_publish as pub
 from tests.test_shared_rules_ui import bot_with, campaign, interaction
 
@@ -17,6 +18,7 @@ SET = rule_sets.SharedSet("s", "Red Table rules", True, 4)
 BEFORE = {
     "rules": [{"number": 1, "rule": "Flanking gives advantage", "instead": None}],
     "link": None,
+    "definitions": [],
 }
 
 
@@ -212,6 +214,206 @@ class UndoingAPublish(unittest.IsolatedAsyncioTestCase):
         await pub.ConfirmPublish(campaign(), 4, BEFORE)._yes(it)
         self.assertIn("Only this campaign's DMs", it.sent[0][0])
         s.publish_changes.assert_not_called()
+
+
+def definition(key: str, label: str = "", text: str = "A plain meaning.") -> dict[str, Any]:
+    return {
+        "key": key,
+        "label": label or key,
+        "inverse_label": "",
+        "description": text,
+        "subject_types": ["person"],
+        "object_types": ["person"],
+        "symmetric": False,
+        "version": 1,
+    }
+
+
+def with_memory(bot: Any, own: list[dict[str, Any]]) -> Any:
+    bot.memory = object()  # only passed to the (patched) reader
+    return patch("dmbot.memory.set_definitions.own_definitions", AsyncMock(return_value=own))
+
+
+class TickListAtPublish(unittest.IsolatedAsyncioTestCase):
+    """Publish my changes: the set's relationships start ticked, a new one does not (#1475);
+    unticking one takes it out of the set (#1479)."""
+
+    def shared(self, *held: dict[str, Any]) -> Any:
+        return store(
+            current_content=AsyncMock(return_value=(SET, {**BEFORE, "definitions": list(held)}))
+        )
+
+    async def open_list(self, s: Any, own: list[dict[str, Any]]) -> tuple[Any, Any, Any]:
+        bot = rules_bot(s)
+        it = interaction(7, bot)
+        with with_memory(bot, own):
+            await pub.show_changes(it, campaign())
+        return bot, it, it.sent[0][1]
+
+    async def test_no_relationships_anywhere_shows_no_list(self) -> None:
+        s = self.shared()
+        bot = rules_bot(s)
+        it = interaction(7, bot)
+        with with_memory(bot, []):
+            await pub.show_changes(it, campaign())
+        self.assertEqual(it.sent[0][0], pub.NOTHING_NEW)
+
+    async def test_the_sets_ones_start_ticked_and_a_new_one_does_not(self) -> None:
+        s = self.shared(definition("vowed_to"))
+        _, it, view = await self.open_list(s, [definition("vowed_to"), definition("guards")])
+        self.assertIsInstance(view, defs_ui.ShareChoose)
+        self.assertEqual([d["key"] for d in view.offered], ["vowed_to", "guards"])
+        self.assertEqual(view.ticked, {"vowed_to"})
+        self.assertIn("Untick one to stop sharing it", it.sent[0][0])
+        s.publish_changes.assert_not_called()
+
+    async def test_keep_as_it_is_changes_nothing(self) -> None:
+        carried = definition("vowed_to")
+        s = self.shared(carried)
+        bot, it, view = await self.open_list(s, [carried, definition("guards")])
+        view.ticked = set()  # the select was changed first: "Keep as it is" still keeps the start
+        with with_memory(bot, [carried, definition("guards")]):
+            await view._none(it)
+        self.assertEqual(it.sent[1][0], pub.NOTHING_NEW)
+
+    async def test_a_ticked_new_one_is_carried_and_shown_as_new(self) -> None:
+        s = self.shared(definition("vowed_to"))
+        made = rule_sets.SharedSet("s", "Red Table rules", True, 5)
+        s.publish_changes = AsyncMock(return_value=made)
+        own = [definition("vowed_to"), definition("guards", "guards")]
+        bot, it, view = await self.open_list(s, own)
+        with with_memory(bot, own):
+            view.ticked = {"vowed_to", "guards"}
+            await view._share(it)
+            text, confirm = it.sent[1]
+            self.assertIn("New relationship: guards", text)
+            self.assertIsInstance(confirm, pub.ConfirmPublish)
+            await confirm._yes(it)
+        sent = s.publish_changes.await_args.kwargs["definitions"]
+        self.assertEqual([d["key"] for d in sent], ["vowed_to", "guards"])
+
+    async def test_an_unticked_one_is_taken_out_of_the_version_and_listed_as_removed(self) -> None:
+        s = self.shared(definition("vowed_to"), definition("guards"))
+        made = rule_sets.SharedSet("s", "Red Table rules", True, 5)
+        s.publish_changes = AsyncMock(return_value=made)
+        own = [definition("vowed_to"), definition("guards")]
+        bot, it, view = await self.open_list(s, own)
+        with with_memory(bot, own):
+            view.ticked = {"vowed_to"}
+            await view._share(it)
+            text, confirm = it.sent[1]
+            self.assertIn("Removed from the set: guards", text)
+            await confirm._yes(it)
+        sent = s.publish_changes.await_args.kwargs["definitions"]
+        self.assertEqual([d["key"] for d in sent], ["vowed_to"])
+
+    async def test_unticking_every_one_empties_the_sets_relationships(self) -> None:
+        s = self.shared(definition("vowed_to"))
+        s.publish_changes = AsyncMock(return_value=rule_sets.SharedSet("s", "R", True, 5))
+        own = [definition("vowed_to")]
+        bot, it, view = await self.open_list(s, own)
+        with with_memory(bot, own):
+            view.ticked = set()
+            await view._share(it)
+            confirm = it.sent[1][1]
+            self.assertEqual(confirm.shown["definitions"], [])
+            await confirm._yes(it)
+        self.assertEqual(s.publish_changes.await_args.kwargs["definitions"], [])
+
+    async def test_the_publishers_own_relationship_is_not_touched(self) -> None:
+        s = self.shared(definition("vowed_to"))
+        own = [definition("vowed_to")]
+        bot, it, view = await self.open_list(s, own)
+        reader = with_memory(bot, own)
+        bot.memory = MagicMock()  # replaces the stand-in: any call on it is recorded
+        with reader:
+            view.ticked = set()
+            await view._share(it)
+        # Publishing only reads the memory (through the patched reader); it writes nothing.
+        self.assertEqual(bot.memory.mock_calls, [])
+
+    async def test_an_unreadable_memory_stops_a_publish_that_unticks(self) -> None:
+        s = self.shared(definition("vowed_to"), definition("guards"))
+        own = [definition("vowed_to"), definition("guards")]
+        _, it, view = await self.open_list(s, own)
+        view.ticked = {"vowed_to"}
+        failing = AsyncMock(side_effect=RuntimeError("down"))
+        with patch("dmbot.memory.set_definitions.own_definitions", failing):
+            await view._share(it)
+        self.assertEqual(it.sent[1][0], pub.COULD_NOT_CHANGE)
+        s.publish_changes.assert_not_called()
+
+    async def test_a_set_one_the_campaign_no_longer_has_drops_out_of_the_list(self) -> None:
+        s = self.shared(definition("vowed_to"), definition("gone"))
+        _, _, view = await self.open_list(s, [definition("vowed_to")])
+        self.assertEqual([d["key"] for d in view.offered], ["vowed_to"])
+        self.assertEqual(view.ticked, {"vowed_to"})
+
+    async def test_a_carried_one_is_refreshed_with_the_campaigns_current_words(self) -> None:
+        s = self.shared(definition("vowed_to"))
+        edited = definition("vowed_to", text="Swore a binding oath.")
+        bot, it, view = await self.open_list(s, [edited])
+        with with_memory(bot, [edited]):
+            await view._share(it)
+        text, confirm = it.sent[1]
+        self.assertIn("meaning changed", text)
+        self.assertEqual(confirm.shown["definitions"][0]["description"], "Swore a binding oath.")
+
+    async def test_the_press_publishes_what_was_shown_and_stops_if_it_changed(self) -> None:
+        s = self.shared(definition("vowed_to"))
+        own = [definition("vowed_to"), definition("guards")]
+        bot, it, view = await self.open_list(s, own)
+        with with_memory(bot, own):
+            view.ticked = {"vowed_to", "guards"}
+            await view._share(it)
+            confirm = it.sent[1][1]
+        # The relationship was edited after the DM looked: nothing is published unseen.
+        with with_memory(bot, [definition("vowed_to"), definition("guards", text="New words.")]):
+            await confirm._yes(it)
+        self.assertEqual(it.sent[2][0], pub.YOUR_RULES_CHANGED)
+        s.publish_changes.assert_not_called()
+
+    async def test_a_full_set_offers_what_it_has_and_nothing_new(self) -> None:
+        held = [definition(f"rel_{i:02d}") for i in range(20)]
+        s = self.shared(*held)
+        _, _, view = await self.open_list(s, [*held, definition("one_more")])
+        self.assertEqual(len(view.offered), 20)
+        self.assertNotIn("one_more", [d["key"] for d in view.offered])
+
+    async def test_one_slot_left_offers_one_new_and_the_plan_is_asked_before_the_list(self) -> None:
+        held = [definition(f"rel_{i:02d}") for i in range(19)]
+        s = self.shared(*held)
+        own = [*held, definition("one_more"), definition("two_more")]
+        _, _, view = await self.open_list(s, own)
+        self.assertEqual(len(view.offered), 20)
+        self.assertEqual(view.offered[-1]["key"], "one_more")
+        refused = rules_bot(s, refusal="Sharing house rules needs a paid plan.")
+        it2 = interaction(7, refused)
+        with with_memory(refused, own):
+            await pub.show_changes(it2, campaign())
+        self.assertEqual(it2.sent[0][0], "Sharing house rules needs a paid plan.")
+
+    async def test_a_press_on_the_list_checks_the_plan_again(self) -> None:
+        s = self.shared(definition("vowed_to"))
+        bot, it, view = await self.open_list(s, [definition("vowed_to")])
+        bot.plan_gate = AsyncMock(return_value="Sharing house rules needs a paid plan.")
+        await view._none(it)
+        self.assertEqual(it.sent[1][0], "Sharing house rules needs a paid plan.")
+
+    async def test_a_ticked_one_that_is_gone_is_said_and_nothing_is_shown_for_publish(self) -> None:
+        s = self.shared(definition("vowed_to"))
+        own = [definition("vowed_to"), definition("guards")]
+        bot, it, view = await self.open_list(s, own)
+        view.ticked = {"vowed_to", "guards"}
+        with with_memory(bot, [definition("vowed_to")]):  # deleted before the press
+            await view._share(it)
+        self.assertEqual(it.sent[1][0], pub.COULD_NOT_CHANGE)
+
+    async def test_no_memory_means_no_list(self) -> None:
+        s = self.shared(definition("vowed_to"))
+        it = interaction(7, rules_bot(s))
+        await pub.show_changes(it, campaign())
+        self.assertEqual(it.sent[0][0], pub.NOTHING_NEW)
 
 
 if __name__ == "__main__":

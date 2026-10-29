@@ -20,7 +20,7 @@ LINES_MAX = 8  # table lines in the prompt, newest last
 LINE_CHARS = 200
 LINES_CHARS = 1200
 LIST_SHOWN = 15  # names of one kind in the prompt
-REPLY_MAX = 280  # characters: short, on topic, a reminder
+REPLY_MAX = 280  # characters the prompt asks for; an instruction, never a check (#2597)
 NOTHING = "NOTHING"
 
 PROMPT = f"""You help one player in a fight in a tabletop D&D game. You are given that player's \
@@ -42,6 +42,8 @@ rule.
 - Never rule on anything, never say what the player must do, never describe the enemy, the map, \
 the story or what the dungeon master will do. You advise; the player decides.
 - Do not repeat the table talk back. Do not guess hidden things.
+- A "Right now:" line is context only and may be wrong. Use it only to pick what matters; do not \
+repeat it, and never say whose turn it is.
 - If nothing on the sheet clearly helps now, answer exactly {NOTHING}.
 - No greeting, no lists, no markdown, at most {REPLY_MAX} characters."""
 
@@ -98,10 +100,16 @@ def safe_lines(lines: Iterable[tuple[str, str]], secrets: Iterable[str]) -> list
     return list(reversed(out))
 
 
-def build(snapshot: Mapping[str, Any], round_number: int, said: list[str]) -> str:
-    """The user message for one reminder."""
+def build(
+    snapshot: Mapping[str, Any], round_number: int, said: list[str], moment: str | None = None
+) -> str:
+    """The user message for one reminder. `moment` (#1771) is one plain line from a fixed list
+    ("It is your turn next"), never anything the table said."""
     talk = "\n".join(said) if said else "(nothing said lately)"
-    return f"Round: {round_number}\n{sheet_facts(snapshot)}\n\nSaid at the table lately:\n{talk}"
+    now = f"Right now: {moment}\n" if moment else ""
+    return (
+        f"Round: {round_number}\n{now}{sheet_facts(snapshot)}\n\nSaid at the table lately:\n{talk}"
+    )
 
 
 def fingerprint(snapshot: Mapping[str, Any], round_number: int) -> tuple[Any, ...]:
@@ -143,13 +151,14 @@ def _name_in(text: str, name: str) -> bool:
 
 def clean_reply(text: str, names: Iterable[str]) -> str | None:
     """The reminder to send, or None when the AI had nothing or something unfit: NOTHING, an
-    empty answer, one too long to be a quick reminder, one that names no whole name from the
+    empty answer, one that names no whole name from the
     player's own sheet, or one that gives advice or a ruling ("should", "try", "use"...). Links
     are taken out first. (A name on the sheet may itself contain such a word: names are not
-    counted when the advice words are looked for.)"""
+    counted when the advice words are looked for.) How long it is is never checked: the prompt
+    asks for two short sentences and what comes back is used (#2597)."""
     reply = _MD_LINK.sub(r"\1", text)
     reply = " ".join(_URL.sub("", reply).split())
-    if not reply or reply.upper().startswith(NOTHING) or len(reply) > REPLY_MAX:
+    if not reply or reply.upper().startswith(NOTHING):
         return None
     known = [n for n in names if n.strip()]
     mentioned = [n for n in known if _name_in(reply, n)]

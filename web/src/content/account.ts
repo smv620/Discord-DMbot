@@ -1,6 +1,7 @@
 /**
  * Every word on the account page (#434). Plain words; every message says what to do next.
  */
+import { SUPPORT_AI_LIVE, supportNote } from "./support-words";
 import { byId, data, formatPeriod, formatPrice, type PlanId } from "./pricing";
 
 const extraHours = data.extraHours.hours;
@@ -59,13 +60,14 @@ export const text = {
   loading: "Loading your account…",
 
   // Signed out
-  signInLead: "Sign in with Discord to see your plan, your hours and your campaigns.",
+  signedOutHeading: "You're not signed in.",
+  signedOutLead: "Sign in to see your plan, your hours and your campaigns.",
+  newHeading: "New to DMbot?",
   signIn: "Sign in with Discord",
   signInNote: "DMbot only asks Discord for your name, your email and your list of servers.",
   startTryItFree: "Start Try It, free",
   startTryItSignIn:
     "Free for 30 days. No card needed. You'll sign in with Discord first, then confirm your plan.",
-  haveAccount: "Already have a plan?",
   seePrices: "See the plans",
   signInFailed: "You didn't finish signing in. Tap Sign in with Discord to try again.",
   signInMoved:
@@ -93,8 +95,13 @@ export const text = {
   actionFailed: "That didn't work. Try again in a minute.",
   signInAgain: "For your safety, sign in again first. Tap Sign in with Discord.",
   errors: {
+    "in-use": "Another DMbot account already uses that address. Use a different one.",
+    "bad-email": "That doesn't look like an email address. It should look like name@example.com. Check it and try again.",
     "try-it-used": "You've already used Try It. Pick a plan to keep playing.",
     "has-plan": "You already have a plan. Tap Change plan to switch.",
+    "not-ending": "This plan isn't ending, or has already ended. The page now shows how things are.",
+    "use-billing-page":
+      "We can't renew it from here. Tap Change plan and renew on our payment company's page.",
     "payments-off": "Paying for a plan isn't open yet. Please try again soon.",
     "already-linked":
       "Someone else already said they added DMbot here. If that's wrong, ask your server's owner for help.",
@@ -113,7 +120,7 @@ export const text = {
       "Your plan has changed since this page opened, so we've updated it. If nothing looks different, write to us for help.",
   } as Record<string, string>,
   install: {
-    done: "Done! DMbot is in your server. In Discord, type /dmbot start to begin.",
+    done: "Done! DMbot is in your server. In Discord, type /dmbot start and pick it from the list.",
     failed: "DMbot wasn't added. Tap Add DMbot to try again.",
     slow: "Too many tries. Wait about 10 minutes, then tap Add DMbot again.",
     not_allowed: "You can only add DMbot to a server you run. Ask its owner to add DMbot.",
@@ -135,7 +142,7 @@ export const text = {
   signOutEverywhereWait: "Wait a minute, then try again.",
 
   // Plan
-  planHeading: "Your plan",
+  planHeading: "My plan and billing",
   noPlan: "You don't have a plan yet.",
   startTryIt: "Start Try It",
   startTryItNote: "Free for 30 days. No card needed.",
@@ -144,6 +151,25 @@ export const text = {
   addHours: `Add ${extraHours} hours (${extraPrice})`,
   addHoursNote: `You pay once, on our payment company's page. These ${extraHours} hours are for this month only and don't roll over.`,
   changePlan: "Change plan",
+  // The plan line says what the plan is doing, not only its name (#2165). Dates are the site's usual words.
+  planRenews: (plan: string, iso: string): string => `${plan} (renews on ${shortDate(iso)})`,
+  planEndsLine: (plan: string, iso: string): string => `${plan} (ends on ${shortDate(iso)})`,
+  planChanging: (plan: string, next: string, iso: string): string =>
+    `${plan} (new plan: ${next} starts on ${shortDate(iso)})`,
+  planExpired: (plan: string, iso: string): string => `Your ${plan} plan ended on ${shortDate(iso)}.`,
+  planExpiredNoDate: (plan: string): string => `Your ${plan} plan has ended.`,
+  // Renew undoes a cancellation that hasn't taken effect, after one plain question.
+  renew: "Renew",
+  renewAsk: (plan: string, iso: string): string =>
+    `Keep your ${plan} plan? It renews on ${shortDate(iso)}, as before. Nothing is charged before then.`,
+  renewAskNoDate: (plan: string): string =>
+    `Keep your ${plan} plan? It renews as before. Nothing is charged before the renewal date.`,
+  renewYes: "Yes, renew",
+  renewNo: "Not now",
+  renewed: (plan: string, iso: string | null): string =>
+    iso ? `Done. Your ${plan} plan renews on ${shortDate(iso)}.` : `Done. Your ${plan} plan will renew as before.`,
+  endingNote: "You won't be charged again unless you tap Renew.",
+  changePlanNote: "Opens our payment company's page, on the plans.",
   pickPlan: "Pick a plan",
   hoursBarLabel: "Hours used this month",
   grace: (date: string | null): string =>
@@ -178,23 +204,40 @@ export const text = {
       : "You're out of hours for now. Write to us if you need more.";
   },
   stopPaying: "Stop paying",
-  freeNext: "In Discord, type /dmbot start to play.",
+  freeNext: "In Discord, type /dmbot start and pick it from the list to play.",
   // Only without a paid plan: with one, the plan's own date is above, and what happens
   // after the grant ends depends on whether they stop paying.
   freeEnds: (iso: string): string => `After ${shortDate(iso)}, pick a plan to keep playing.`,
-  lapsed: `Your plan has stopped. Your campaigns are kept for ${formatPeriod(data.keepAfterPlanStopsPaying)}. Pick a plan to play again.`,
+  lapsed: `Your campaigns are kept for ${formatPeriod(data.keepAfterPlanStopsPaying)}. Pick a plan to play again.`,
 
   // Campaigns
-  campaignsHeading: "Your campaigns",
+  campaignsHeading: "My campaigns",
   noCampaigns: "No campaigns yet. Start one in Discord with /dmbot start.",
+  /** The button under a long list (#1991): the real count, one or many. */
+  showOlder: (n: number) => (n === 1 ? "Show 1 older campaign" : `Show ${n} older campaigns`),
+  showFewer: "Show fewer",
   lastPlayed: (iso: string): string => `Last played ${shortDate(iso)}`,
   notPlayed: "Not played yet",
   active: "Active",
   paused: "Paused",
-  youRunIt: "Uses your hours",
-  // Free access with no limits has no hours to use (#824).
-  youRunItFree: "You run it",
+  // The three roles, same words on every card (#2460).
+  youRunIt: "You run it",
   youHelp: "You help run it",
+  youPlay: "You play in it",
+  // The card's facts (#2460). Keep these words equal to the Discord campaign list's; where Discord has
+  // no such line yet, it should get this one.
+  listeningNow: "Listening now",
+  factsLabel: (name: string): string => `About ${name}`,
+  sessionsFact: (n: number): string => (n === 1 ? "1 session" : `${n} sessions`),
+  hoursFact: (h: number): string => {
+    const whole = Math.round(h);
+    return h < 1 ? "Under 1 hour played" : `${whole} ${whole === 1 ? "hour" : "hours"} played`;
+  },
+  playersFact: (n: number): string => (n === 1 ? "1 player" : `${n} players`),
+  npcsFact: (n: number): string => (n === 1 ? "1 NPC" : `${n} NPCs`),
+  startedFact: (iso: string): string => `Started ${shortDate(iso)}`,
+  // The heading over the sections about the person and their account (#2460).
+  myAccountHeading: "My Account",
   handOver: "Hand over",
 
   // Hand over
@@ -267,17 +310,19 @@ export const text = {
   characterChange: "Change a character in Discord with 📜 My character sheet.",
   // Where DMbot may record you (#1151). The warning is the bot's own wording.
   recordingHeading: "Where DMbot may record you",
+  /** Under the list once "Delete my transcripts" is on (#2769): a server the person has left is not listed. */
+  recordingLeft: "Left a server? Use the 🗂️ Menu in DMbot's private message from that server to delete your transcripts there.",
   recordingLine: (server: string, date: string): string =>
     `${server}: DMbot may record you. You said yes on ${shortDate(date)}.`,
   recordingOld: (server: string): string =>
-    `${server}: not recording you. To allow it, press ⚙️ Menu in DMbot's private message in Discord.`,
+    `${server}: not recording you. To allow it, press 🗂️ Menu in DMbot's private message in Discord.`,
   stopRecording: "Stop recording me",
   stopWarning: (server: string): string =>
     `Stop recording you in ${server}? DMbot won't write down anything you say from now on. The campaign's record will have gaps wherever you speak, so its summaries can miss things and plot holes can appear. You can start again any time in Discord.`,
   stopYes: "Yes, stop recording me",
   stopKeep: "Keep recording",
   stoppedRecording: (server: string): string =>
-    `Stopped. DMbot is not recording you in ${server}. To start again, press ⚙️ Menu in DMbot's private message in Discord.`,
+    `Stopped. DMbot is not recording you in ${server}. To start again, press 🗂️ Menu in DMbot's private message in Discord.`,
 
   // My DMbot ID and experience points, and moving to a new Discord account (#1231)
   idHeading: "Your DMbot ID",
@@ -299,11 +344,42 @@ export const text = {
     "You can move once every 30 days, and this account moved less than 30 days ago. Try again after 30 days, or tell us on the Say hello page.",
   moveEmailFailed: "The code couldn't be emailed just now. Try again in a few minutes.",
 
-  // Write to the team, for people on a paid plan (#1340)
+  // The email DMbot uses (#2349)
+  myEmailHeading: "Your email",
+  emailNow: (address: string): string => `DMbot emails you at ${address}.`,
+  emailNone: "DMbot has no email for you yet, so it can't email you.",
+  emailPayment: "That's the email on your payment account.",
+  emailPaymentButton: "Change your email in Stripe",
+  emailPaymentHelp: "You will leave this page. In Stripe, open Billing information, then change your email. It shows here once DMbot has the new one.",
+  emailChange: "Change your email",
+  emailAdd: "Add an email",
+  emailNewLabel: "New email address",
+  emailSend: "Send a confirmation link",
+  emailPending: (address: string, old: string | null): string =>
+    old
+      ? `We sent a link to ${address}. Nothing changes until you open it. Until then DMbot keeps emailing ${old}. Sending a new link replaces this one.`
+      : `We sent a link to ${address}. Your email is saved when you open it. Until then DMbot has no email for you. Sending a new link replaces this one.`,
+  emailLinkNote: "We'll send a link to this address. Your email changes when you open it.",
+  emailSendAgain: "Send a new link",
+  emailAlready: "That's already your email.",
+  emailSendFailed: "The link couldn't be emailed just now. Try again in a few minutes.",
+  emailCancel: "Cancel this change",
+  emailCancelled: "Cancelled. DMbot keeps using the email it had.",
+  emailConfirmed: (address: string): string => `Done. DMbot now emails ${address}.`,
+  emailConfirmBad:
+    "That link is wrong, was already used, has ended (they last 15 minutes), or was asked for from another account. Sign in with the account that asked for the change, or send a new link from here.",
+  emailConfirmSignIn: "Sign in with the account that asked for the change. We'll finish it when you're back.",
+  emailLoadFailed: "Your email didn't load. Reload the page.",
+  emailSaved: "If that address can be used, we've sent a link to it. Check the inbox (and spam).",
+  emailTypeFirst: "Type your new email address first.",
+  emailPortalOff: "The payment page isn't available right now. Try again later.",
+
+  // Write to the team, for everyone with an account, Try It too (#1340, #1435)
   supportHeading: "Write to the DMbot team",
   supportIntro: "Something wrong with your plan, an invoice or DMbot itself? Write to us here.",
-  supportPrivacy:
-    "Your message goes privately to the DMbot team, and is not posted anywhere public. We keep it for 12 months, then delete it. Deleting your account deletes it too.",
+  // Only for Try It (#1435).
+  supportIntroTryIt: "Questions about buying a plan are welcome too.",
+  supportPrivacy: supportNote(SUPPORT_AI_LIVE),
   supportPublicLead: "A question anyone could answer? Ask it in the public",
   supportSubjectLabel: "Subject",
   supportMessageLabel: "What can we help with?",
@@ -316,21 +392,47 @@ export const text = {
   supportSentNoEmail:
     "Sent. Thanks, the team will read it. But we don't have an email for your account, so we can't reply. Add and confirm an email in your Discord settings, sign in here again, and write to us again.",
   supportAnother: "Write another",
-  // The person's own questions under the form (#1373): what they sent and where it stands. No
-  // words of the message come back; the team answers by email.
+  // The person's own questions under the form (#1373): what they sent and where it stands; each
+  // opens to its whole conversation (#2193).
   questionsHeading: "Your questions",
-  questionsLead: "What you have sent the team. Replies come by email.",
+  questionsLead:
+    "What you have sent the team. Replies come by email, and you can read the whole conversation here.",
   // No email on the account: the team can't write back, so say what to do (as the thank-you does).
   questionsLeadNoEmail:
-    "What you have sent the team. We have no email for your account, so the team can't write back. Add and confirm an email in your Discord settings, then sign in here again.",
+    "What you have sent the team. You can read the whole conversation here. We have no email for your account, so the team can't write back. Add and confirm an email in your Discord settings, then sign in here again.",
   questionSent: (date: string) => `Sent ${date}`,
+  // The first line of the last reply from DMbot's AI helper or the team, under the question (#1432).
+  questionLatest: (line: string) => `Last reply: ${line}`,
+  // Opening a question shows the whole conversation (#2193): yours, DMbot's helper's and the team's.
+  conversationOpen: "Read the conversation",
+  conversationClose: "Hide the conversation",
+  conversationLoading: "Loading the conversation…",
+  conversationLoaded: "The conversation is shown below.",
+  conversationError: "We couldn't load this conversation. Try again in a minute.",
+  conversationRetry: "Try again",
+  conversationOrder: "Oldest first.",
+  conversationNoReply: "No reply yet. Replies come by email.",
+  conversationNoReplyNoEmail: "No reply yet.",
+  conversationLabel: (subject: string) => `Conversation: ${subject}`,
+  conversationWho: {
+    you: "You",
+    helper: "DMbot's helper (a program)",
+    team: "DMbot team",
+  },
   questionStatus: {
     new: "Waiting",
     answered: "Answered — check your email",
     // An account with no email gets no email: say only what the team did.
     answeredNoEmail: "Answered",
+    // Who answered (#1432): DMbot's AI helper or a person on the team.
+    answeredHelper: "Answered by DMbot's AI helper — check your email",
+    answeredHelperNoEmail: "Answered by DMbot's AI helper",
+    answeredTeam: "Answered by the team — check your email",
+    answeredTeamNoEmail: "Answered by the team",
+    // A person on the team has it and will write back.
+    escalated: "With the team",
     closed: "Closed",
-    // For someone who can write again (a paid plan); others just see "Closed".
+    // For someone who can write again; others just see "Closed".
     closedWriteAgain: "Closed — you can write again",
   },
   supportErrors: {
@@ -341,8 +443,13 @@ export const text = {
       "Too many messages right now. You can send one every 10 minutes. Try again in a few minutes. Your words are still here.",
     "not-human":
       "Tick the box that says you're a person, then press Send again. Your words are still here.",
+    // No account yet (#1435): everyone with a plan, Try It too, may write.
     "not-paying":
-      "Writing to the team is for paid plans, and your plan doesn't look active right now. Use the public Q&A for DMbot instead. If you think this is wrong, tell us on the Say hello page.",
+      "We can't find a DMbot account for you, so we can't send this. Sign in again, or ask in the public Q&A for DMbot. Your words are still here.",
+    "one-waiting":
+      "You already have a question waiting for the team. You can send another once it's answered. Your words are still here.",
+    "daily-limit":
+      "Free accounts can send 3 questions a day, and you've sent 3. Try again in a day, or ask in the public Q&A for DMbot. Your words are still here.",
     "signed-out": "You were signed out. Sign in again, then send it. Your words are still here.",
     network: "No connection. Check your internet, then press Send again. Your words are still here.",
     server:
@@ -351,7 +458,7 @@ export const text = {
   supportCheckAgain: "Try the check again",
   supportCheckFailed:
     "The “are you a person?” check didn't load. Reload the page or try another browser. Reloading clears what you typed, so copy it first.",
-  // For everyone who can't write privately (no paid plan, or an API older than #1340)
+  // For everyone who can't write privately (no account yet, or an API older than #1340)
   qaHeading: "Questions about DMbot?",
   qaText:
     "Ask in the public Q&A, where anyone can read the answers. Don't post private details there. Or tell us what you think on the Say hello page.",
@@ -394,5 +501,5 @@ export const text = {
     "Last check: your account is deleted for good and this can't be undone. Your campaigns are kept 120 days, then deleted unless another DM takes them on.",
   deleteConfirm: "Yes, delete it all now",
   deleted:
-    "Done. Your account is deleted. Your campaigns stay for 120 days. To save one, one of its DMs presses 🤝 Take it on in ⚙️ Settings, in that Discord server. You can close this page.",
+    "Done. Your account is deleted. Your campaigns stay for 120 days. To save one, one of its DMs presses 🤝 Take it on in ⚙️ Settings → 🗂️ Campaign management, in that Discord server. You can close this page.",
 };

@@ -7,10 +7,9 @@ import unittest
 from pathlib import Path
 from typing import ClassVar
 
-from dmbot.rules import facts
+from dmbot.rules import facts, rule_card
 from dmbot.rules.index import Entry, srd
 from dmbot.sidebar import answer as sidebar
-from dmbot.ui import rule_card
 from tests.sidebar_brevity_cases import reply
 from tests.test_sidebar_answer import FakeAI, campaign, engine, run
 
@@ -129,12 +128,25 @@ class NoReaderSkipsTheMetadata(unittest.TestCase):
 
     # file -> (reads of `.text` on a rules entry, why the text alone is right there)
     READS: ClassVar[dict[str, tuple[int, str]]] = {
-        "ui/rule_card.py": (1, "shows the facts on their own line above the text"),
+        "rules/rule_card.py": (1, "shows the facts on their own line above the text"),
         "sidebar/context.py": (1, "sends the facts in front of the text as FACTS:"),
         "sidebar/answer.py": (1, "the fallback's first sentences; a field question uses facts"),
+        "recaps/draft.py": (1, "takes lower-case words for a vocabulary (#2013); shows nothing"),
     }
     # Where the entry is made and its words are indexed or matched.
-    OWN: ClassVar[set[str]] = {"rules/index.py", "rules/facts.py"}
+    # (and the campaign's own homebrew, whose entries have a `.text` but are not rules entries)
+    OWN: ClassVar[set[str]] = {
+        "rules/index.py",
+        "rules/facts.py",
+        "rules/homebrew.py",
+        "rules/homebrew_file.py",
+        "rules/homebrew_packs.py",
+        "rules/pack_content.py",
+        "ui/homebrew.py",
+        "rules/pack_suggestions.py",  # a suggested homebrew entry, not a rules entry
+        "dm_screen/pack_suggestion.py",
+        "ui/rule_lookup.py",  # Make it my own copies a homebrew entry's text (#1541)
+    }
 
     def test_only_the_known_readers_use_entry_text(self) -> None:
         root = Path(__file__).resolve().parents[1] / "src" / "dmbot"

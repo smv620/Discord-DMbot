@@ -25,10 +25,10 @@ from dmbot.dm_screen.channel import (
     setup_dm_screen,
 )
 from dmbot.dm_screen.rules import READ_ONLY, Target, is_peeker, missing_required, restrict
+from dmbot.mentions import NO_PINGS
 
 log = logging.getLogger(__name__)
 
-NO_PINGS = discord.AllowedMentions.none()
 CONFIRM_TIMEOUT_S = 120
 _ID = r"(?P<campaign>[0-9a-f]{32})"
 
@@ -46,6 +46,16 @@ async def _campaign(interaction: discord.Interaction, campaign_id: str) -> Campa
     return await store.get(guild.id, campaign_id) if store and guild else None
 
 
+async def _answer(interaction: discord.Interaction, text: str, **kwargs: Any) -> None:
+    """Say something only the presser sees: as the reply, or as a follow-up once the press was
+    deferred (the peek and hide buttons defer first, because they change up to three channels'
+    permissions, which can take longer than Discord's three seconds to answer)."""
+    if interaction.response.is_done():
+        await interaction.followup.send(text, ephemeral=True, **kwargs)
+    else:
+        await interaction.response.send_message(text, ephemeral=True, **kwargs)
+
+
 async def _load(
     interaction: discord.Interaction, campaign_id: str
 ) -> tuple[Campaign, discord.TextChannel, discord.Member] | None:
@@ -54,11 +64,11 @@ async def _load(
     guild = interaction.guild
     member = interaction.user
     if campaign is None or guild is None or not isinstance(member, discord.Member):
-        await interaction.response.send_message(messages.CAMPAIGN_GONE, ephemeral=True)
+        await _answer(interaction, messages.CAMPAIGN_GONE)
         return None
     channel = await fresh_screen(guild, campaign)
     if channel is None:
-        await interaction.response.send_message(messages.SCREEN_GONE, ephemeral=True)
+        await _answer(interaction, messages.SCREEN_GONE)
         return None
     return campaign, channel, member
 
@@ -97,22 +107,22 @@ class PeekButton(
         return cls(match["campaign"])
 
     async def callback(self, interaction: discord.Interaction) -> Any:
+        await interaction.response.defer(ephemeral=True)  # looking up the screen takes time
         loaded = await _load(interaction, self.campaign_id)
         if loaded is None:
             return
         campaign, channel, member = loaded
-        reply = interaction.response.send_message
         if member.id in campaign.dm_user_ids:
-            await reply(messages.peek_is_dm(channel.mention), ephemeral=True)
+            await _answer(interaction, messages.peek_is_dm(channel.mention))
         elif campaign.dm_screen_visibility == "private":
-            await reply(messages.PEEK_PRIVATE, ephemeral=True)
+            await _answer(interaction, messages.PEEK_PRIVATE)
         elif campaign.dm_screen_visibility == "open":
-            await reply(messages.peek_open(channel.mention), ephemeral=True)
+            await _answer(interaction, messages.peek_open(channel.mention))
         elif _peeking(channel, member):
-            await reply(messages.ALREADY_PEEKING, view=hide_view(campaign.id), ephemeral=True)
+            await _answer(interaction, messages.ALREADY_PEEKING, view=hide_view(campaign.id))
         else:
             confirm = ConfirmPeek(self.campaign_id, interaction)
-            await reply(messages.PEEK_WARNING, view=confirm, ephemeral=True)
+            await _answer(interaction, messages.PEEK_WARNING, view=confirm)
 
 
 class ConfirmPeek(discord.ui.View):
@@ -132,11 +142,12 @@ class ConfirmPeek(discord.ui.View):
         self, interaction: discord.Interaction, button: discord.ui.Button[ConfirmPeek]
     ) -> None:
         self.stop()
+        await interaction.response.defer()  # the screen's permissions are changed
         loaded = await _load(interaction, self.campaign_id)
         if loaded is None:
             return
         _, channel, member = loaded
-        edit = interaction.response.edit_message
+        edit = interaction.edit_original_response
         async with campaign_lock(self.campaign_id):
             # Re-read under the lock: the DM may have changed the setting meanwhile.
             campaign = await _campaign(interaction, self.campaign_id)
@@ -196,11 +207,15 @@ class HideButton(
         return cls(match["campaign"])
 
     async def callback(self, interaction: discord.Interaction) -> Any:
+        await interaction.response.defer(ephemeral=True)  # up to three channels are changed
         loaded = await _load(interaction, self.campaign_id)
         if loaded is None:
             return
         campaign, channel, member = loaded
-        reply = interaction.response.send_message
+
+        async def reply(text: str, **_: Any) -> None:
+            await _answer(interaction, text)
+
         if member.id in campaign.dm_user_ids:
             await reply(messages.HIDE_IS_DM, ephemeral=True)
             return
@@ -349,15 +364,10 @@ def hide_view(campaign_id: str) -> discord.ui.View:
 
 
 def card_view(campaign: Campaign) -> discord.ui.View:
-    """The help card's buttons: who can see the screen and ⚙️ Settings (for the DM), and
-    Hide (peekers)."""
-    from dmbot.dm_screen.settings import SettingsButton  # settings imports this module
-
+    """The help card's buttons: only Hide, for peekers. Who can see the screen and ⚙️ Settings
+    moved to the DM Bot channel (#1666), so the DM screen holds only in-game things. (Cards posted
+    before that keep working: their buttons are still registered.)"""
     view = discord.ui.View(timeout=None)
-    for visibility in messages.VISIBILITY_BUTTONS:
-        current = visibility == campaign.dm_screen_visibility
-        view.add_item(VisibilityButton(campaign.id, visibility, current=current))
-    view.add_item(SettingsButton(campaign.id))  # there between sessions too (#515)
     if campaign.dm_screen_visibility == "peek":
         view.add_item(HideButton(campaign.id))
     return view

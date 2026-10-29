@@ -27,7 +27,7 @@ NAMES = CampaignLookup.build(
         1,
         (
             entity(BELL, "Belleros", "npc"),
-            entity(AURIL, "Auril", "deity"),
+            entity(AURIL, "Auril", "npc"),
             entity(TOWN, "Bryn Shander", "place"),
             entity(ULF, "Ulfgar", "npc"),
         ),
@@ -48,6 +48,58 @@ NAMES = CampaignLookup.build(
 
 def run(text: str, *, secrets: bool = True) -> Plan:
     return plan(parse(text, secrets=secrets).lines, NAMES, secrets=secrets)
+
+
+class Brackets(unittest.TestCase):
+    """The bracket after a name in the plan (#2447)."""
+
+    def test_a_respelling_and_a_question_are_carried_by_place(self) -> None:
+        got = plan(
+            parse("Tavin (TAV-in) | npc\nJorvik (YOR-vick) | npc", secrets=True).lines,
+            NAMES,
+            secrets=True,
+        )
+        self.assertEqual([n.name for n in got.new], ["Tavin", "Jorvik"])
+        self.assertEqual(got.sounds, {0: "TAV-in"})
+        self.assertEqual(
+            [(a.position, a.name, a.text) for a in got.asks], [(1, "Jorvik", "YOR-vick")]
+        )
+
+    def test_an_aside_is_another_name_of_a_new_entry(self) -> None:
+        got = run("Tavin (the rogue) | npc")
+        self.assertEqual((got.new[0].name, got.new[0].others), ("Tavin", ("Tavin the rogue",)))
+
+    def test_a_name_the_campaign_already_has_with_its_bracket_stays_whole(self) -> None:
+        """A Download all writes "Fenn (Lower Quay)"; uploading it back changes nothing."""
+        fenn = "e" * 32
+        known = CampaignLookup.build(
+            LookupData(
+                1,
+                (entity(fenn, "Fenn (Lower Quay)", "place"),),
+                (alias(fenn, "Fenn (Lower Quay)"),),
+                (),
+                (),
+            )
+        )
+        got = plan(parse("Fenn (Lower Quay) | place", secrets=True).lines, known, secrets=True)
+        self.assertEqual((got.new, got.more, got.known), ([], [], 1))  # no stray "Fenn" alias
+
+    def test_a_known_name_with_a_respelling_or_look_alike_bracket_stays_whole(self) -> None:
+        """Whatever the bracket turns out to be, a name the campaign holds with it is that name:
+        no new "Sera", no question about a pronunciation (#2447)."""
+        for text in ("Sera (SEH-rah)", "Sera (Sara)", "Sera (the old one)"):
+            with self.subTest(text):
+                sera = "d" * 32
+                known = CampaignLookup.build(
+                    LookupData(1, (entity(sera, text, "npc"),), (alias(sera, text),), (), ())
+                )
+                got = plan(parse(f"{text} | npc", secrets=True).lines, known, secrets=True)
+                self.assertEqual((got.new, got.more, got.known), ([], [], 1))
+                self.assertEqual((got.asks, got.sounds), ([], {}))
+
+    def test_a_name_new_to_the_campaign_with_a_bracket_is_split(self) -> None:
+        got = run("Fenn (Lower Quay) | place")
+        self.assertEqual((got.new[0].name, got.new[0].others), ("Fenn", ("Fenn Lower Quay",)))
 
 
 class SameName(unittest.TestCase):
@@ -74,7 +126,7 @@ class SameName(unittest.TestCase):
 
     def test_a_kind_that_differs_is_asked_never_changed(self) -> None:
         p = run("Auril | place\nAuril | town")
-        self.assertEqual(p.kinds, [KindDiffers(AURIL, "Auril", "deity", "place")])
+        self.assertEqual(p.kinds, [KindDiffers(AURIL, "Auril", "npc", "place")])
         self.assertEqual((p.new, p.more), ([], []))
 
     def test_other_or_no_kind_never_counts_as_different(self) -> None:
@@ -238,7 +290,7 @@ class Caps(unittest.TestCase):
         # "Frostmaiden" is Auril's: her new names count for Auril, and the message says
         # Auril (never the name the list used, which could be one a player can't see).
         others = [f"Frost{i}" for i in range(51)]
-        text = "\n".join(lines_for("Frostmaiden", "deity", others, []))
+        text = "\n".join(lines_for("Frostmaiden", "npc", others, []))
         self.assertIn("Auril has more than 50 other names", too_many(run(text), NAMES) or "")
 
     def test_five_thousand_in_one_list_is_fine_five_thousand_and_one_is_not(self) -> None:

@@ -26,6 +26,8 @@ export type AdminProblem =
   | "bad-note"
   | "already-free"
   | "no-grant"
+  | "bad-reply" // the reply is empty or too long (#1432)
+  | "reply-off" // the mail side is not set up, so a reply cannot be sent (#1432)
   | "no-ticket" // support ticket list: it is gone (the 12-month sweep, or the person deleted their account)
   | "stale"; // refused for a reason a reload fixes (an old CSRF token, a bad body)
 
@@ -42,6 +44,9 @@ export interface AdminGrant {
   note: string;
   grantedBy: string;
   grantedAt: number;
+  /** Also on the server's free list, so the grant adds nothing (#2196). Missing from an older
+   * API: then the grant is listed as before. */
+  alsoFree?: boolean;
 }
 
 export interface AdminLogEntry {
@@ -61,7 +66,18 @@ export interface FreePerson {
 export interface GrantsView {
   free: FreePerson[];
   grants: AdminGrant[];
+  /** Page 1 of Recent changes, newest first (#2199). */
   log: AdminLogEntry[];
+  /** How many pages the log has. Missing from an API older than #2199: then there is only
+   * the one list, and no page bar. */
+  logPages?: number;
+}
+
+/** One page of Recent changes (#2199). */
+export interface LogPage {
+  log: AdminLogEntry[];
+  page: number;
+  pages: number;
 }
 
 export interface GrantRequest {
@@ -72,17 +88,40 @@ export interface GrantRequest {
   note: string;
 }
 
-export type TicketStatus = "new" | "answered" | "closed";
+/** "escalated": waiting for a person on the team (the helper gave it up, or the person asked). */
+export type TicketStatus = "new" | "answered" | "closed" | "escalated";
 /** What the Tickets list shows: one status, or all (#1375). */
 export type TicketFilter = TicketStatus | "all";
 /** How many tickets have each status, over all of them, for the filter buttons (#1375). */
 export type TicketCounts = Record<TicketStatus, number>;
+/** How support went in the last seven days (#1480): counts only. Missing from an older API. */
+export interface TicketWeek {
+  questions: number;
+  helper: number;
+  team: number;
+  waiting: number;
+  reasons: Record<string, number>;
+}
 export interface TicketList {
   tickets: SupportTicketRow[];
   counts: TicketCounts;
+  week?: TicketWeek;
+  /** Which page this is and how many there are in the filtered list (#2211). Missing from an API
+   * older than that: then it is one list, and there is no page bar. */
+  page?: number;
+  pages?: number;
 }
 
-/** A private support ticket from a paying person (#1340). Only the admin sees the words. */
+/** One message after the first, in the order they came (#1432): the person's emailed reply, DMbot's
+ * helper's answer, or the team's. `at` is Unix seconds. */
+export interface TicketReply {
+  id: number;
+  who: "customer" | "ai" | "person";
+  text: string;
+  at: number;
+}
+
+/** A private support ticket from a signed-in person (#1340). Only the admin sees the words. */
 export interface SupportTicketRow {
   id: number;
   /** Unix seconds. */
@@ -99,6 +138,14 @@ export interface SupportTicketRow {
   status: TicketStatus;
   /** Where the team replies: the account's email, read for this page only. Null: it has none. */
   email: string | null;
+  /** The thread after the first message (#1432). Missing from an API older than that. */
+  replies?: TicketReply[];
+  /** Why a person has it, when the API says (a fixed code, #1432): "unhappy", "asked",
+   * "limit", "no-email" or "helper-down". Missing: nothing is shown. */
+  reason?: string | null;
+  /** When it was handed to the team, Unix seconds (#1494); null when never handed over. Missing
+   * from an API older than that: the wait counts from `at`. */
+  handedOverAt?: number | null;
 }
 
 export class AdminApiError extends Error {
@@ -124,14 +171,19 @@ export interface AdminApi {
   signOut(csrf: string): Promise<void>;
   /** Free access (#773). */
   grants(): Promise<GrantsView>;
+  /** One page of Recent changes, from 1; a page that isn't there is a "stale" refusal. */
+  grantsLog?(page: number): Promise<LogPage>;
   give(
     csrf: string,
     request: GrantRequest,
   ): Promise<{ action: "grant" | "change"; name: string | null }>;
   revoke(csrf: string, discordId: string): Promise<void>;
   /** Support tickets, newest first, with the count for each status (#1340, #1375). */
-  tickets(filter?: TicketFilter): Promise<TicketList>;
+  tickets(filter?: TicketFilter, page?: number): Promise<TicketList>;
   setTicketStatus(csrf: string, id: number, status: TicketStatus): Promise<void>;
+  /** The team's reply: emailed to the person and kept on the ticket, which becomes answered
+   * (#1432). */
+  replyToTicket(csrf: string, id: number, text: string): Promise<void>;
 }
 
 const grantProblems: Record<string, AdminProblem> = {
@@ -143,7 +195,10 @@ const grantProblems: Record<string, AdminProblem> = {
   bad_note: "bad-note",
   already_free: "already-free",
   no_grant: "no-grant",
+  bad_page: "stale", // a page that was there is gone: the page goes back to the first
   no_ticket: "no-ticket",
+  bad_text: "bad-reply",
+  reply_off: "reply-off",
   bad_status: "stale",
   // The grant writer's own refusals, worded by the site.
   sign_in_again: "signed-out",
@@ -223,6 +278,11 @@ export function httpAdminApi(base: string, fetcher: typeof fetch = fetch): Admin
       if (!response.ok) throw new AdminApiError(await grantProblem(response));
       return (await response.json()) as GrantsView;
     },
+    async grantsLog(page) {
+      const response = await call(`/admin/grants/log?page=${encodeURIComponent(String(page))}`);
+      if (!response.ok) throw new AdminApiError(await grantProblem(response));
+      return (await response.json()) as LogPage;
+    },
     async give(csrf, request) {
       const response = await call("/admin/grants", {
         method: "POST",
@@ -239,23 +299,52 @@ export function httpAdminApi(base: string, fetcher: typeof fetch = fetch): Admin
       });
       if (!response.ok) throw new AdminApiError(await grantProblem(response));
     },
-    async tickets(filter = "all") {
-      const response = await call(`/admin/support?status=${encodeURIComponent(filter)}`);
+    async tickets(filter = "all", page = 1) {
+      const response = await call(
+        `/admin/support?status=${encodeURIComponent(filter)}&page=${encodeURIComponent(String(page))}`,
+      );
       if (!response.ok) throw new AdminApiError(await grantProblem(response));
-      const body = (await response.json()) as { tickets: SupportTicketRow[]; counts?: TicketCounts };
+      const body = (await response.json()) as {
+        tickets: SupportTicketRow[];
+        counts?: TicketCounts;
+        week?: TicketWeek;
+        page?: unknown;
+        pages?: unknown;
+      };
+      const week = readWeek(body.week);
+      // Only whole numbers from the API count; anything else is an API without pages.
+      const paging =
+        Number.isInteger(body.page) && Number.isInteger(body.pages)
+          ? { page: body.page as number, pages: body.pages as number }
+          : {};
       const c = body.counts;
       if (c && [c.new, c.answered, c.closed].every((n) => typeof n === "number")) {
-        return { tickets: body.tickets, counts: c };
+        // An API older than #1431 has no escalated count: none.
+        return {
+          tickets: body.tickets,
+          counts: { ...c, escalated: c.escalated ?? 0 },
+          ...(week ? { week } : {}),
+          ...paging,
+        };
       }
       // An API older than #1375 sends every ticket and no counts: count and filter here, so the
       // buttons still work until it is deployed. (It sends only its newest tickets, so until then
       // the counts and an old "Needs a reply" ticket past that limit can be missing.)
-      const counts: TicketCounts = { new: 0, answered: 0, closed: 0 };
+      const counts: TicketCounts = { new: 0, answered: 0, closed: 0, escalated: 0 };
       for (const t of body.tickets) counts[t.status] += 1;
       return {
         tickets: filter === "all" ? body.tickets : body.tickets.filter((t) => t.status === filter),
         counts,
+        ...(week ? { week } : {}),
       };
+    },
+    async replyToTicket(csrf, id, text) {
+      const response = await call(`/admin/support/${encodeURIComponent(String(id))}/reply`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Admin-CSRF": csrf },
+        body: JSON.stringify({ text }),
+      });
+      if (!response.ok) throw new AdminApiError(await grantProblem(response));
     },
     async setTicketStatus(csrf, id, status) {
       const response = await call(`/admin/support/${encodeURIComponent(String(id))}/status`, {
@@ -267,6 +356,22 @@ export function httpAdminApi(base: string, fetcher: typeof fetch = fetch): Admin
     },
   };
 }
+
+/** The week's numbers if the API sent them and they are all numbers; otherwise none (an older API). */
+function readWeek(raw: TicketWeek | undefined): TicketWeek | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const numbers = [raw.questions, raw.helper, raw.team, raw.waiting];
+  if (!numbers.every((n) => typeof n === "number" && Number.isFinite(n))) return undefined;
+  const reasons: Record<string, number> = {};
+  for (const [code, n] of Object.entries(raw.reasons ?? {})) {
+    if (typeof n === "number" && Number.isFinite(n)) reasons[code] = n;
+  }
+  return { questions: raw.questions, helper: raw.helper, team: raw.team, waiting: raw.waiting, reasons };
+}
+
+/** Entries on a page of Recent changes and of tickets in the preview, as on the real API
+ * (#2199, #2211). */
+const MOCK_PAGE = 20;
 
 /** The pretend API for preview builds (PUBLIC_API_BASE=mock): any password works. */
 export function pretendAdminApi(): AdminApi {
@@ -288,8 +393,13 @@ export function pretendAdminApi(): AdminApi {
       subject: "My invoice shows the wrong plan",
       message: "Hello,\nthe last invoice says Guild but I'm on Table.",
       source: "website",
-      status: "new",
+      status: "escalated",
       email: "player@example.com",
+      reason: "unhappy",
+      replies: [
+        { id: 1, who: "ai", text: "Try the Billing page, then tell us if it still looks wrong.", at: now() - 3000 },
+        { id: 2, who: "customer", text: "That did not help, I want a person.", at: now() - 1800 },
+      ],
     },
     {
       id: 1,
@@ -306,18 +416,48 @@ export function pretendAdminApi(): AdminApi {
     },
   ];
   return {
-    tickets: async (filter = "all") => {
-      const counts: TicketCounts = { new: 0, answered: 0, closed: 0 };
+    tickets: async (filter = "all", page = 1) => {
+      const counts: TicketCounts = { new: 0, answered: 0, closed: 0, escalated: 0 };
       for (const t of tickets) counts[t.status] += 1;
-      const shown = tickets.filter((t) => filter === "all" || t.status === filter);
-      return { tickets: structuredClone(shown), counts };
+      const filtered = tickets.filter((t) => filter === "all" || t.status === filter);
+      const pages = Math.max(1, Math.ceil(filtered.length / MOCK_PAGE));
+      if (!Number.isInteger(page) || page < 1 || page > pages) throw new AdminApiError("stale");
+      const shown = filtered.slice((page - 1) * MOCK_PAGE, page * MOCK_PAGE);
+      const week: TicketWeek = {
+        questions: tickets.length,
+        helper: 0,
+        team: 0,
+        waiting: counts.new + counts.escalated,
+        reasons: { unhappy: 1 },
+      };
+      return { tickets: structuredClone(shown), counts, week, page, pages };
+    },
+    replyToTicket: async (_csrf, id, text) => {
+      const ticket = tickets.find((t) => t.id === id);
+      if (!ticket) throw new AdminApiError("no-ticket");
+      ticket.replies = [...(ticket.replies ?? []), { id: Date.now(), who: "person", text, at: now() }];
+      ticket.status = "answered";
     },
     setTicketStatus: async (_csrf, id, status) => {
       const ticket = tickets.find((t) => t.id === id);
       if (!ticket) throw new AdminApiError("no-ticket");
       ticket.status = status;
     },
-    grants: async () => structuredClone(view),
+    grants: async () => {
+      const first = structuredClone(view);
+      first.log = first.log.slice(0, MOCK_PAGE);
+      first.logPages = Math.max(1, Math.ceil(view.log.length / MOCK_PAGE));
+      return first;
+    },
+    grantsLog: async (page) => {
+      const pages = Math.max(1, Math.ceil(view.log.length / MOCK_PAGE));
+      if (!Number.isInteger(page) || page < 1 || page > pages) throw new AdminApiError("stale");
+      return {
+        log: structuredClone(view.log.slice((page - 1) * MOCK_PAGE, page * MOCK_PAGE)),
+        page,
+        pages,
+      };
+    },
     give: async (_csrf, request) => {
       if (!/^[0-9]{17,20}$/.test(request.discordId)) throw new AdminApiError("bad-id");
       const action = view.grants.some((g) => g.discordId === request.discordId)

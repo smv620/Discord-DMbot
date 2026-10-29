@@ -49,6 +49,9 @@ services:
         condition: service_healthy
     volumes:
       - dmbot-data:/data       # local files (campaign data itself is in Postgres)
+      # The recaps' narration and music (#1383). Its own volume so the website's API can read it
+      # (read-only, below) without seeing anything else in /data. Mounted over /data/recap-audio.
+      - recap-audio:/data/recap-audio
       - whisper-models:/models # downloaded Whisper models, kept across updates
       - test-recordings:/var/lib/dmbot/test-recordings   # saved test sessions (#1019), test server only
       # Read at start-up to warn when .env is missing newer settings (#31). Names only.
@@ -108,6 +111,17 @@ services:
       WEB_API_URL: ${WEB_API_URL:-}
       WEB_API_PORT: ${WEB_API_PORT:-8080}
       WEB_SESSION_DAYS: ${WEB_SESSION_DAYS:-30}
+      # Which speech-to-text the bot uses, so the approval check counts only the consent that
+      # holds for it (the same setting as the bot's; no key).
+      TRANSCRIBER: ${TRANSCRIBER:-whisper-local}
+      # Whether the bot has a voice for recap narration, so the recap page greys its audio button
+      # when it does not (#2419). `:+1` passes "1" when the setting exists and never the value:
+      # the speech key stays out of this container.
+      RECAP_AUDIO_KEY_SET: ${ELEVENLABS_API_KEY:+1}
+      RECAP_AUDIO_VOICE_SET: ${ELEVENLABS_VOICE_ID:+1}
+      # The bot's setting for mood tags in the narration, so the page can tell which paragraphs a
+      # change would speak again (#2630). It changes nothing the bot does.
+      DMBOT_RECAP_VOICE_TAGS: ${DMBOT_RECAP_VOICE_TAGS:-1}
       PAYMENT_PROVIDER: ${PAYMENT_PROVIDER:-}
       PAYMENT_WEBHOOK_SECRET: ${PAYMENT_WEBHOOK_SECRET:-}
       # Stripe (#1110): used when PAYMENT_PROVIDER=stripe. The webhook secret above is its
@@ -119,6 +133,9 @@ services:
       STRIPE_PRICE_EXTRA_HOURS: ${STRIPE_PRICE_EXTRA_HOURS:-}
       STRIPE_PRICE_RECAP_AUDIO: ${STRIPE_PRICE_RECAP_AUDIO:-}
       STRIPE_MANAGED_PAYMENTS: ${STRIPE_MANAGED_PAYMENTS:-}
+      # The monthly recap allowances (#1428), so the page can say "N of M this month".
+      DMBOT_RECAPS_PER_MONTH: ${DMBOT_RECAPS_PER_MONTH:-}
+      DMBOT_RECAP_AUDIO_PER_MONTH: ${DMBOT_RECAP_AUDIO_PER_MONTH:-}
       # The "Say hello" forms (#665).
       GITHUB_FEEDBACK_TOKEN: ${GITHUB_FEEDBACK_TOKEN:-}
       LINK_TOKEN_SECRET: ${LINK_TOKEN_SECRET:-}
@@ -128,6 +145,27 @@ services:
       SMTP_USER: ${SMTP_USER:-}
       SMTP_APP_PASSWORD: ${SMTP_APP_PASSWORD:-}
       MAIL_FROM: ${MAIL_FROM:-}
+      # The support flow (#1431): who writes to people, who alerts the team, the AI that answers,
+      # and the secret that proves an emailed reply came from the mail service.
+      MAIL_SUPPORT_FROM: ${MAIL_SUPPORT_FROM:-}
+      MAIL_ALERTS_FROM: ${MAIL_ALERTS_FROM:-}
+      OWNER_ALERT_EMAIL: ${OWNER_ALERT_EMAIL:-}
+      MAIL_ALERTS_REPLY_TO: ${MAIL_ALERTS_REPLY_TO:-}
+      MAIL_INBOUND_SECRET: ${MAIL_INBOUND_SECRET:-}
+      MAIL_REPLY_DOMAIN: ${MAIL_REPLY_DOMAIN:-}
+      SUPPORT_AI_MODEL: ${SUPPORT_AI_MODEL:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # Sharing house rules from the website (#2783): off, the routes that queue a choice are 404.
+      DMBOT_WEB_RULE_SHARING: ${DMBOT_WEB_RULE_SHARING:-0}
+      # Character sheets on the website (#2816): off, the routes that show or queue them are 404.
+      DMBOT_WEB_SHEETS: ${DMBOT_WEB_SHEETS:-0}
+      # "Make it again" on a session's report (#2661): off, the route that queues the request is 404.
+      DMBOT_WEB_REPORT_MAKE: ${DMBOT_WEB_REPORT_MAKE:-0}
+      # Search by meaning on the Names page (#2733): the same switch, key and models as the bot.
+      DMBOT_MEANING_SEARCH: ${DMBOT_MEANING_SEARCH:-0}
+      VOYAGE_API_KEY: ${VOYAGE_API_KEY:-}
+      VOYAGE_EMBED_MODEL: ${VOYAGE_EMBED_MODEL:-}
+      VOYAGE_RERANK_MODEL: ${VOYAGE_RERANK_MODEL:-}
       MAIL_POSTAL_ADDRESS: ${MAIL_POSTAL_ADDRESS:-}
       MAIL_DAILY_CAP: ${MAIL_DAILY_CAP:-400}
       GITHUB_FEEDBACK_REPO: ${GITHUB_FEEDBACK_REPO:-}
@@ -143,8 +181,30 @@ services:
       DMBOT_FREE_USERS: ${DMBOT_FREE_USERS:-}
       # The same switch as the bot's: the site's hand-over accept checks the campaign cap too.
       DMBOT_ENFORCE_PLANS: ${DMBOT_ENFORCE_PLANS:-0}
+      # Importing older sessions (#2105): off until dev1 has checked a real import.
+      DMBOT_IMPORTS: ${DMBOT_IMPORTS:-0}
+      # Servers where importing is on although the line above is off (#2259): test servers only.
+      DMBOT_IMPORTS_SERVERS: ${DMBOT_IMPORTS_SERVERS:-}
+      # The same switch as the bot's: with recaps off, "make the narration again" is refused (#2183).
+      DMBOT_RECAPS: ${DMBOT_RECAPS:-0}
+      # The same switch as the bot's (#2532): off, the email hand-over routes answer 404.
+      DMBOT_HANDOVER_EMAIL: ${DMBOT_HANDOVER_EMAIL:-0}
+      # A person's own "Delete my transcripts" on the website (#2769): off, its routes answer 404.
+      DMBOT_WEB_LINE_DELETE: ${DMBOT_WEB_LINE_DELETE:-0}
+      # Load a backup from the website (#2745): off, its routes answer 404, until the bot's half is live.
+      DMBOT_WEB_RESTORE: ${DMBOT_WEB_RESTORE:-0}
+      # Fix a line from the Transcripts page (#2858): off, its routes answer 404, until the bot's half is live.
+      DMBOT_WEB_LINE_FIX: ${DMBOT_WEB_LINE_FIX:-0}
+      # Game masters added and removed on the website (#2768): off, those routes answer 404.
+      DMBOT_WEB_CO_DMS: ${DMBOT_WEB_CO_DMS:-0}
+      DMBOT_PLOT_CHECK: ${DMBOT_PLOT_CHECK:-0}
       LOG_FORMAT: ${LOG_FORMAT:-json}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      # Where it finds the recap audio (#1418): the volume below, read-only. A path inside the
+      # container, so not an .env setting.
+      WEB_RECAP_AUDIO_DIR: /recap-audio
+    volumes:
+      - recap-audio:/recap-audio:ro
     expose:
       - "${WEB_API_PORT:-8080}"
     healthcheck:
@@ -180,5 +240,6 @@ services:
 volumes:
   postgres-data:
   dmbot-data:
+  recap-audio:   # the bot writes it; the website API reads it (#1418)
   whisper-models:
   test-recordings:

@@ -139,6 +139,16 @@ class Edges(unittest.TestCase):
         script.build("T", None, "《Calm》 Quiet.", secret_names=[SECRET])  # absent: fine
 
 
+class SpacedCues(unittest.TestCase):
+    def test_spaces_inside_a_pacing_cue_are_folded(self) -> None:
+        tagged = script.build(
+            "T", None, "《Calm》 One ((long   pause)) two ((Short\tPause)) three."
+        )
+        text = " ".join(p.tagged for p in tagged.paragraphs)
+        self.assertIn("[long pause]", text)
+        self.assertIn("[short pause]", text)
+
+
 class Pronunciation(unittest.TestCase):
     def test_a_rule_for_each_confirmed_name_with_a_spelling_and_none_for_the_rest(self) -> None:
         got = names.rules(
@@ -208,7 +218,8 @@ class Music(unittest.TestCase):
         sections = plan["composition_plan"]["sections"]
         # The title is read before the first cue: a calm opening, then the three moods.
         self.assertEqual(
-            [x["section_name"] for x in sections], ["Calm", "Tense", "Calm", "Hopeful"]
+            [x["section_name"] for x in sections],
+            ["Calm", "Tense", "Calm", "Hopeful", "Hopeful ending"],
         )  # "whisper" has no table entry: the default style
         total = sum(x["duration_ms"] for x in sections)
         self.assertEqual(total, music.total_seconds(len(s.spoken)) * 1000)
@@ -221,7 +232,9 @@ class Music(unittest.TestCase):
         names_ = [
             x["section_name"] for x in music.composition_request(s)["composition_plan"]["sections"]
         ]
-        self.assertEqual(names_, ["Calm", "Tense"])  # the title, then one run of Tense
+        self.assertEqual(
+            names_, ["Calm", "Tense", "Tense ending"]
+        )  # the title, one run of Tense, its ending
 
     def test_text_before_the_first_cue_is_a_calm_opening(self) -> None:
         s = script.build("T", None, "Before any cue. 《Battle》 Then swords.")
@@ -237,7 +250,9 @@ class Music(unittest.TestCase):
 
     def test_synonyms_are_one_run_and_too_many_moods_keep_the_first_and_the_last(self) -> None:
         s = script.build("T", None, "《Tense》 One two three.\n\n《tension》 Four five six.")
-        self.assertEqual([p.emotion for p in music.sections(s)], ["calm", "tense"])
+        self.assertEqual(
+            [p.emotion for p in music.sections(s)], ["calm", "tense", "tense"]
+        )  # the last is its ending
         moods = ["tense", "somber", "hopeful", "eerie", "urgent", "tender", "dread", "wonder",
                  "playful", "battle", "grim", "defiant"]  # fmt: skip
         text = "\n\n".join(f"《{m}》 " + "word " * (5 + i) for i, m in enumerate(moods))
@@ -324,9 +339,9 @@ class Mixing(unittest.TestCase):
     def test_the_graph_names_the_three_levels_the_duck_and_the_length(self) -> None:
         graph = mix.plan(215.5).filter_complex
         self.assertIn("loudnorm=I=-16:TP=-1", graph)
-        self.assertIn("loudnorm=I=-22", graph)
+        self.assertIn("loudnorm=I=-32", graph)
         self.assertEqual(graph.count("aresample=44100"), 4)  # loudnorm's 192 kHz is brought down
-        self.assertIn("loudnorm=I=-28", graph)
+        self.assertIn("loudnorm=I=-38", graph)
         self.assertIn("sidechaincompress", graph)
         self.assertIn("ratio=4", graph)
         self.assertEqual(graph.count("atrim=0:215.500"), 3)  # all three are the voice's length
@@ -352,7 +367,7 @@ class Mixing(unittest.TestCase):
 
     def test_without_music_or_ambience_the_inputs_are_numbered_to_match(self) -> None:
         no_music = mix.plan(60, with_music=False).filter_complex
-        self.assertIn("[1:a]loudnorm=I=-28", no_music)  # the ambience is now input 1
+        self.assertIn("[1:a]loudnorm=I=-38", no_music)  # the ambience is now input 1
         self.assertNotIn("sidechaincompress", no_music)
         voice_only = mix.plan(60, with_music=False, with_ambience=False).filter_complex
         self.assertIn("anullsrc", voice_only)
@@ -399,6 +414,99 @@ class Mixing(unittest.TestCase):
                     seconds = float(probe.stdout.split("duration=")[1].split()[0])
                     self.assertAlmostEqual(seconds, 3.0, delta=0.1)
 
+    def test_the_music_and_the_ambience_close_with_a_fade_to_the_voices_end(self) -> None:
+        graph = mix.plan(20).filter_complex
+        self.assertEqual(graph.count("afade=t=out:st=18.500:d=1.500"), 2)  # music and ambience
+        crescendo = mix.plan(20, ending="crescendo").filter_complex
+        self.assertEqual(crescendo.count("afade=t=out:st=19.700:d=0.300"), 2)
+
+    def test_the_last_music_section_is_an_ending_in_the_style_of_the_last_mood(self) -> None:
+        for mood, how in (("somber", music.DIMINUENDO), ("battle", music.CRESCENDO)):
+            built_ = script.build("T", None, f"Before. 《{mood}》 " + "word " * 60)
+            last = music.sections(built_)[-1]
+            self.assertTrue(last.ending)
+            self.assertEqual(music.ending_of(built_), how)
+            asked = music.composition_request(built_)["composition_plan"]
+            self.assertTrue(asked["sections"][-1]["section_name"].endswith("ending"))
+            self.assertIn("abrupt stop", asked["sections"][-1]["negative_local_styles"])
+
+    @unittest.skipUnless(shutil.which("ffmpeg"), "ffmpeg is not installed")
+    def test_the_bed_is_far_quieter_in_its_last_moments_than_in_its_loudest(self) -> None:
+        def rms(raw: bytes) -> float:
+            samples = [
+                int.from_bytes(raw[i : i + 2], "little", signed=True) for i in range(0, len(raw), 2)
+            ]
+            return float((sum(x * x for x in samples) / max(1, len(samples))) ** 0.5)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            p = mix.plan(6, with_ambience=False)
+            args = mix.command(
+                p, voice="", music="m", ambience=None,
+                out_voice=f"{tmp}/v.wav", out_bed=f"{tmp}/b.wav", out_mix=f"{tmp}/x.wav",
+            )  # fmt: skip
+            lavfi = ["-f", "lavfi", "-i"]
+            inputs = [*lavfi, "sine=f=220:d=6", *lavfi, "anoisesrc=d=8:c=pink:a=0.3"]
+            cut = args.index("-filter_complex")
+            argv = [*args[:2], "-loglevel", "error", *inputs, *args[cut:]]
+            done = subprocess.run(argv, capture_output=True, text=True, check=False)
+            self.assertEqual(done.returncode, 0, done.stderr)
+            pcm = subprocess.run(
+                ["ffmpeg", "-loglevel", "error", "-i", f"{tmp}/b.wav", "-f", "s16le",
+                 "-ac", "1", "-ar", "8000", "-"],
+                capture_output=True, check=True,
+            ).stdout  # fmt: skip
+            window = 800  # 0.1 s of samples at 8 kHz
+            loud = max(
+                rms(pcm[i : i + window * 2]) for i in range(0, len(pcm) - window * 2, window * 2)
+            )
+            self.assertLess(rms(pcm[-window * 2 :]), loud / 4)
+
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheClosingLine(unittest.TestCase):
+    """#2627: the closing line is its own paragraph, asked for after a long pause."""
+
+    CLOSING = "And so we continue, the epic adventure of The Ember Road."
+
+    def test_the_closing_paragraph_starts_with_the_long_pause(self) -> None:
+        built = script.build("T", None, f"《Tense》 One two three.\n\n{self.CLOSING}")
+        *rest, last = built.paragraphs
+        self.assertTrue(last.closing)
+        self.assertEqual(last.tagged, f"[long pause] {self.CLOSING}")
+        self.assertEqual(last.spoken, self.CLOSING)  # (never read as words: it is a tag)
+        self.assertFalse(any(p.closing for p in rest))
+        self.assertNotIn("[long pause]", rest[-1].tagged)
+
+    def test_the_bare_closing_line_counts_and_other_last_paragraphs_do_not(self) -> None:
+        bare = script.build("T", None, "One two three.\n\nAnd so we continue, the epic tale.")
+        self.assertTrue(bare.paragraphs[-1].closing)
+        plain = script.build("T", None, "One two three.\n\nThe door closed.")
+        self.assertFalse(any(p.closing for p in plain.paragraphs))
+        only = script.build("T", None, self.CLOSING)  # (after the title, still the last)
+        self.assertTrue(only.paragraphs[-1].closing)
+
+    def test_the_voices_timestamps_still_find_a_cue_in_the_closing_paragraph(self) -> None:
+        built = script.build("T", None, "One two.\n\nAnd so we continue, ((pause)) the epic tale.")
+        last = built.paragraphs[-1]
+        [cue] = last.cues
+        self.assertEqual(last.tagged[cue.tagged_offset :].split()[0], "[short")
+
+    def test_a_long_pause_the_dm_wrote_before_it_is_not_doubled(self) -> None:
+        built = script.build("T", None, f"One two.\n\n---\n\n{self.CLOSING}")
+        self.assertEqual(built.paragraphs[-1].tagged.count("[long pause]"), 1)
+        self.assertEqual(built.paragraphs[-2].tagged.count("[long pause]"), 1)  # the scene break
+
+
+class TheShortestRecap(unittest.TestCase):
+    """A recap of a short session (180 words, #2013) still has music: at least one section, each
+    at least the provider's shortest."""
+
+    def test_a_180_word_recap_makes_at_least_one_music_section(self) -> None:
+        summary = "《Tense》 " + " ".join(["calm"] * 90) + " ((slow)) " + " ".join(["calm"] * 90)
+        built_script = script.build("A Short One", None, summary)
+        plan = music.composition_request(built_script)["composition_plan"]["sections"]
+        self.assertGreaterEqual(len(plan), 1)
+        self.assertTrue(all(s["duration_ms"] >= 3000 for s in plan))

@@ -1,0 +1,21 @@
+---
+import ImportIsland from "../../account/ImportIsland";
+import { importPage } from "../../content/import-words";
+import Base from "../../layouts/Base.astro";
+import "../../styles/account.css";
+---
+
+<Base
+  title="Import sessions"
+  description="Bring in sessions DMbot didn't record, from text files."
+  noindex
+>
+  <div class="account">
+    <h1>{importPage.heading}</h1>
+    {/* Whether it is open is decided in the page: the site switch, or the campaign's server (#2260). */}
+    <ImportIsland client:load />
+    <noscript>
+      <p>This page needs JavaScript to import sessions. Turn it on, then reload the page.</p>
+    </noscript>
+  </div>
+</Base>

@@ -5,8 +5,6 @@ the plan check, off-topic, the full text only when asked, one retry only, and th
 from __future__ import annotations
 
 import asyncio
-import re
-import time
 import unittest
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -132,10 +130,6 @@ class BrevityCases(unittest.TestCase):
         self.assertEqual(len(ai.prompts), case.calls, case.question)
         self.assertEqual(ai.replies, [], case.question)  # every fake reply was used
         text = got.text
-        body = answer_part(text)
-        self.assertLessEqual(len(body), brevity.MAX_CHARS, text)
-        counted = len(re.split(r"(?<=[.!?])\s+", body.strip()))  # by hand, not brevity's
-        self.assertLessEqual(counted, brevity.MAX_SENTENCES, text)
         self.assertTrue(
             any(word.lower() in text.lower() for word in case.must_any),
             f"{case.question!r} → {text!r} lacks any of {case.must_any}",
@@ -392,7 +386,7 @@ class AccuracyPart3(unittest.TestCase):
         self.assertIn("not in DMbot's rules", got.text)
 
     def test_the_prompt_version_moved_on(self) -> None:
-        self.assertEqual(sidebar.PROMPT_VERSION, "sidebar-11")
+        self.assertEqual(sidebar.PROMPT_VERSION, "sidebar-13")  # the CONFLICT field (#2284)
 
 
 class CarefulSecondTry(unittest.TestCase):
@@ -456,36 +450,71 @@ class CarefulSecondTry(unittest.TestCase):
     def test_a_slow_careful_try_is_cut_off_inside_the_budget_and_the_quick_answer_stands(
         self,
     ) -> None:
+        # Proved by blocking on purpose, not by a clock (#1847): the careful try waits on an event
+        # that nothing sets, the budget is small, and the call is wrapped in `wait_for` so "it gave
+        # up" is shown without a tight wall-clock margin on a busy runner.
         class Slow(FakeAI):
+            started: asyncio.Event
+            release: asyncio.Event
+
             async def complete(self, system: str, text: str, *, max_tokens: int = 8000) -> Any:
-                await asyncio.sleep(10)
+                self.started.set()
+                await asyncio.wait_for(self.release.wait(), 30)  # a bug can't hang CI
                 return await super().complete(system, text, max_tokens=max_tokens)
 
-        slow = Slow([self.GOOD], model="fake-careful-model")
-        fast = FakeAI([self.BAD])
-        started = time.monotonic()
-        with (
-            patch.object(sidebar, "TOTAL_BUDGET_S", 2.0),
-            patch.object(sidebar, "SECOND_TRY_NEEDS_S", 0.1),
-        ):
-            got = run(engine(fast, second=slow).answer(campaign(), self.QUESTION))
-        self.assertLess(time.monotonic() - started, 2.0)  # the answer came back in time
+        async def attempt() -> tuple[Any, bool]:
+            # A first answer in a fresh process loads the rules data (seconds, not milliseconds):
+            # do it before the small budget starts, so the budget measures the stand-in alone.
+            await engine(FakeAI([self.GOOD])).answer(campaign(), self.QUESTION)
+            slow = Slow([self.GOOD], model="fake-careful-model")
+            slow.started, slow.release = asyncio.Event(), asyncio.Event()
+            fast = FakeAI([self.BAD])
+            try:
+                with (
+                    patch.object(sidebar, "TOTAL_BUDGET_S", 2.0),
+                    patch.object(sidebar, "SECOND_TRY_NEEDS_S", 0.1),
+                ):
+                    got = await asyncio.wait_for(
+                        engine(fast, second=slow).answer(campaign(), self.QUESTION), 5
+                    )
+            finally:
+                slow.release.set()
+            return got, slow.started.is_set()
+
+        got, tried = run(attempt())
+        self.assertTrue(tried, "the careful try never started, so nothing was cut off")
         self.assertEqual(got.model, "fake-fast-model")  # no TOO_SLOW error, no lost answer
         self.assertIn("not in DMbot's rules", got.text)
 
     def test_the_same_model_repeat_is_also_held_inside_the_budget(self) -> None:
         class Slow(FakeAI):
+            started: asyncio.Event
+            release: asyncio.Event
+
             async def complete(self, system: str, text: str, *, max_tokens: int = 8000) -> Any:
                 if self.prompts:  # the repeat is slow; the first call is quick
-                    await asyncio.sleep(10)
+                    self.started.set()
+                    await asyncio.wait_for(self.release.wait(), 30)
                 return await super().complete(system, text, max_tokens=max_tokens)
 
-        empty = reply("The rules don't say.", "none")
-        fast = Slow([empty, self.GOOD])
-        started = time.monotonic()
-        with patch.object(sidebar, "TOTAL_BUDGET_S", 2.5):
-            got = run(engine(fast).answer(campaign(), "how does fireball work"))
-        self.assertLess(time.monotonic() - started, 2.5)
+        async def attempt() -> tuple[Any, bool]:
+            await engine(FakeAI([self.GOOD])).answer(
+                campaign(), "how does fireball work"
+            )  # warm up
+            empty = reply("The rules don't say.", "none")
+            fast = Slow([empty, self.GOOD])
+            fast.started, fast.release = asyncio.Event(), asyncio.Event()
+            try:
+                with patch.object(sidebar, "TOTAL_BUDGET_S", 2.5):
+                    got = await asyncio.wait_for(
+                        engine(fast).answer(campaign(), "how does fireball work"), 5
+                    )
+            finally:
+                fast.release.set()
+            return got, fast.started.is_set()
+
+        got, tried = run(attempt())
+        self.assertTrue(tried, "the repeat never started, so nothing was held")
         self.assertTrue(got.text)  # an answer, not a TOO_SLOW error
 
     def test_an_empty_careful_answer_leaves_the_quick_answer_alone(self) -> None:
@@ -563,20 +592,28 @@ class FireballExample(unittest.TestCase):
 
 class Retry(unittest.TestCase):
     def test_a_bad_answer_gets_one_retry_naming_the_problem(self) -> None:
-        long_first = reply("Yes. " + "It really does. " * 20, "SRD 5.2.1 p. 131")
-        ai = FakeAI([long_first, reply("Yes. It does.", "SRD 5.2.1 p. 131")])
+        no_yes = reply("It does hurt.", "SRD 5.2.1 p. 131")  # (a yes-or-no question, no Yes first)
+        ai = FakeAI([no_yes, reply("Yes. It does.", "SRD 5.2.1 p. 131")])
         got = run(engine(ai).answer(campaign(), "does fireball hurt"))
         self.assertEqual(len(ai.prompts), 2)
         self.assertIn("Fix it:", ai.prompts[1])
-        self.assertIn("at most 2 sentences", ai.prompts[1])
+        self.assertIn('start with "Yes." or "No."', ai.prompts[1])
         self.assertEqual(got.text, "Yes. It does. (SRD 5.2.1 p. 131, confident)")
 
-    def test_never_a_third_call_and_never_a_paragraph(self) -> None:
-        wall = reply("Yes. " + "Sentence number. " * 40)
+    def test_a_long_answer_is_never_sent_back_and_never_cut(self) -> None:
+        """Length is an instruction, not a check (owner, 2026-10-24, #2597)."""
+        three = reply("Yes. It does. And it spreads out.", "SRD 5.2.1 p. 131")
+        ai = FakeAI([three])
+        got = run(engine(ai).answer(campaign(), "does fireball hurt"))
+        self.assertEqual(len(ai.prompts), 1)
+        self.assertTrue(got.text.startswith("Yes. It does. And it spreads out."))
+
+    def test_never_a_third_call_and_a_long_answer_is_used_whole(self) -> None:
+        wall = reply("It works. " + "Sentence number. " * 40)  # (no Yes first: one retry)
         ai = FakeAI([wall, wall])
         got = run(engine(ai).answer(campaign(), "does it work"))
         self.assertEqual(len(ai.prompts), 2)
-        self.assertTrue(brevity.within_limit(answer_part(got.text)))
+        self.assertEqual(got.text.count("Sentence number."), 40)
 
     def test_a_good_first_answer_makes_one_call(self) -> None:
         ai = FakeAI([reply("Yes.")])
@@ -743,7 +780,7 @@ class Lineage(unittest.TestCase):
         ai = FakeAI([reply("No.", "SRD 5.2.1 p. 131")])
         got = run(engine(ai).answer(campaign(), "do you need line of sight for fireball"))
         self.assertEqual(got.model, "fake-fast-model")
-        self.assertEqual(got.prompt_version, "sidebar-11")
+        self.assertEqual(got.prompt_version, "sidebar-13")
         self.assertEqual(got.sources, ("SRD 5.2.1 p. 131",))
         self.assertGreaterEqual(got.seconds, 0)
 
@@ -820,7 +857,7 @@ class Timing(unittest.TestCase):
         )
         got = run(built.answer(campaign(), "how does it hurt"))
         self.assertEqual(len(ai.prompts), 1)
-        self.assertTrue(brevity.within_limit(answer_part(got.text)))
+        self.assertEqual(got.text.count("It really does hurt a lot."), 12)
 
     def test_max_tokens_is_the_small_one(self) -> None:
         ai = FakeAI([reply("Yes.")])
@@ -829,7 +866,7 @@ class Timing(unittest.TestCase):
 
 
 class FailedRetry(unittest.TestCase):
-    def test_a_second_call_that_fails_keeps_the_first_answer_cut_short(self) -> None:
+    def test_a_second_call_that_fails_keeps_the_first_answer_whole(self) -> None:
         class Flaky:
             model = "m"
             calls = 0
@@ -838,12 +875,12 @@ class FailedRetry(unittest.TestCase):
                 Flaky.calls += 1
                 if Flaky.calls == 2:
                     raise AIError("busy")
-                return Reply(reply("Yes. " + "It really does. " * 20, "none"), cut=False)
+                return Reply(reply("It does hurt. " + "It really does. " * 20, "none"), cut=False)
 
         with self.assertLogs("dmbot.sidebar.answer", "WARNING"):
             got = run(engine(Flaky()).answer(campaign(), "does it hurt"))
-        self.assertTrue(brevity.within_limit(answer_part(got.text)))
-        self.assertTrue(got.text.startswith("Yes."))
+        self.assertEqual(got.text.count("It really does."), 20)
+        self.assertTrue(got.text.startswith("It does hurt."))
 
 
 class ReadsThatFail(unittest.TestCase):
@@ -924,11 +961,11 @@ class Sources(unittest.TestCase):
 
 
 class FullTextWithoutAHit(unittest.TestCase):
-    def test_the_whole_text_of_something_unknown_is_still_short(self) -> None:
+    def test_the_whole_text_of_something_unknown_is_used_as_the_model_wrote_it(self) -> None:
         wall = reply("It is a long story. " * 30, "none")
         ai = FakeAI([wall, wall])
         got = run(engine(ai).answer(campaign(), "give me the full text of the Blorp spell"))
-        self.assertTrue(brevity.within_limit(answer_part(got.text)))
+        self.assertEqual(got.text.count("It is a long story."), 30)
 
     def test_the_word_description_alone_is_an_ordinary_question(self) -> None:
         self.assertFalse(brevity.asks_for_full_text("what's the description of the room"))

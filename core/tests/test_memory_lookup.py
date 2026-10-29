@@ -439,3 +439,207 @@ class Cache(unittest.IsolatedAsyncioTestCase):
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await task
+
+
+class Eviction(unittest.IsolatedAsyncioTestCase):
+    """Idle copies of campaigns with no table running are dropped (#1883): a long-running bot that
+    serves searches for many campaigns must not keep every one of them. A fake clock moves time."""
+
+    async def asyncSetUp(self) -> None:
+        from dmbot.memory import lookup
+
+        self.lookup = lookup
+        self.now = [1000.0]
+        patcher = patch.object(lookup, "_clock", lambda: self.now[0])
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.source = FakeSource()
+        self.live: set[tuple[int, str]] = set()
+        self.cache = LookupCache(self.source, in_use=lambda g, c: (g, c) in self.live)
+
+    def later(self, seconds: float) -> None:
+        self.now[0] += seconds
+
+    def kept(self) -> set[tuple[int, str]]:
+        return set(self.cache._slots)
+
+    async def test_an_idle_copy_with_no_live_session_is_evicted(self) -> None:
+        await self.cache.get(1, "camp")
+        self.later(self.lookup.IDLE_EVICT_S + self.lookup.SWEEP_EVERY_S)
+        await self.cache.get(1, "other")  # any ask runs the sweep
+        self.assertEqual(self.kept(), {(1, "other")})
+
+    async def test_a_copy_with_a_live_session_is_kept_however_long_it_has_idled(self) -> None:
+        await self.cache.get(1, "camp")
+        self.live.add((1, "camp"))
+        self.later(10 * self.lookup.IDLE_EVICT_S)
+        await self.cache.get(1, "other")
+        self.assertIn((1, "camp"), self.kept())
+        self.live.clear()  # the session ended: now it can go, once another sweep runs
+        self.later(self.lookup.SWEEP_EVERY_S)
+        await self.cache.get(1, "other")
+        self.assertNotIn((1, "camp"), self.kept())
+
+    async def test_a_copy_used_just_under_the_limit_is_kept(self) -> None:
+        await self.cache.get(1, "camp")
+        self.later(self.lookup.IDLE_EVICT_S - 1)
+        await self.cache.get(1, "other")  # the sweep runs; camp is one second short of idle
+        self.assertIn((1, "camp"), self.kept())
+
+    async def test_using_a_copy_resets_its_idle_time(self) -> None:
+        await self.cache.get(1, "camp")
+        for _ in range(4):  # in all longer than the limit, but never idle that long
+            self.later(self.lookup.IDLE_EVICT_S * 0.6)
+            await self.cache.get(1, "camp")
+        self.assertIn((1, "camp"), self.kept())
+        self.assertEqual(self.source.calls, 1)  # and never reloaded
+
+    async def test_the_type_ahead_path_counts_as_use_too(self) -> None:
+        await self.cache.get(1, "camp")
+        self.later(self.lookup.IDLE_EVICT_S * 0.6)
+        self.assertIsNotNone(await self.cache.get_within(1, "camp", 1.0))
+        self.later(self.lookup.IDLE_EVICT_S * 0.6)
+        await self.cache.get(1, "other")
+        self.assertIn((1, "camp"), self.kept())
+
+    async def test_a_copy_whose_load_is_still_running_is_not_evicted(self) -> None:
+        self.source.gate = asyncio.Event()
+        loading = asyncio.create_task(self.cache.get_within(1, "camp", 5.0))
+        await asyncio.sleep(0)
+        await asyncio.sleep(
+            0
+        )  # the load itself has now taken its lock and is waiting on the source
+        self.assertTrue(self.cache._slots[(1, "camp")].lock.locked())
+        self.later(self.lookup.IDLE_EVICT_S + self.lookup.SWEEP_EVERY_S)
+        self.cache._sweep()
+        self.assertIn((1, "camp"), self.kept())  # its lock is held and a load is in _loading
+        self.source.gate.set()
+        self.assertIsNotNone(await loading)
+
+    async def test_a_plain_get_that_is_loading_holds_its_copy_by_its_lock(self) -> None:
+        # No `get_within` here, so nothing is in `_loading`: only the lock says it is busy.
+        self.source.gate = asyncio.Event()
+        loading = asyncio.create_task(self.cache.get(1, "camp"))
+        await asyncio.sleep(0)
+        self.assertTrue(self.cache._slots[(1, "camp")].lock.locked())
+        self.assertNotIn((1, "camp"), self.cache._loading)
+        self.later(self.lookup.IDLE_EVICT_S + self.lookup.SWEEP_EVERY_S)
+        self.cache._sweep()
+        self.assertIn((1, "camp"), self.kept())
+        self.source.gate.set()
+        await loading
+
+    async def test_a_slot_with_a_load_registered_for_it_is_kept(self) -> None:
+        # The guard on its own (white box): a slot that is idle and unlocked but has a load under
+        # way for its key. The sweep runs from `get`/`get_within`, which register a load only
+        # after their own sweep, so this is a safety net more than a reachable state.
+        await self.cache.get(1, "camp")
+        self.later(self.lookup.IDLE_EVICT_S + self.lookup.SWEEP_EVERY_S)
+        pending = asyncio.create_task(asyncio.sleep(60), name="names copy")
+        self.cache._loading[(1, "camp")] = pending  # type: ignore[assignment]
+        try:
+            self.cache._sweep()
+            self.assertIn((1, "camp"), self.kept())
+        finally:
+            del self.cache._loading[(1, "camp")]
+            pending.cancel()
+        self.later(self.lookup.SWEEP_EVERY_S)
+        self.cache._sweep()  # with no load registered it goes
+        self.assertNotIn((1, "camp"), self.kept())
+
+    async def test_a_failing_in_use_check_keeps_the_copy_and_never_breaks_a_lookup(self) -> None:
+        def broken(guild: int, campaign: str) -> bool:
+            raise RuntimeError("bot is half started")
+
+        cache = LookupCache(self.source, in_use=broken)
+        await cache.get(1, "camp")
+        self.later(self.lookup.IDLE_EVICT_S + self.lookup.SWEEP_EVERY_S)
+        with self.assertLogs("dmbot.memory.lookup", "ERROR"):
+            again = await cache.get(1, "other")  # the sweep runs; the lookup still works
+        self.assertIsNotNone(again)
+        self.assertIn((1, "camp"), cache._slots)
+
+    async def test_an_evicted_campaign_is_loaded_again_on_its_next_ask(self) -> None:
+        first = await self.cache.get(1, "camp")
+        self.later(self.lookup.IDLE_EVICT_S + self.lookup.SWEEP_EVERY_S)
+        await self.cache.get(1, "other")
+        self.assertNotIn((1, "camp"), self.kept())
+        again = await self.cache.get(1, "camp")
+        self.assertIsNot(again, first)
+        self.assertEqual(self.source.calls, 3)  # camp, other, camp again
+        self.assertEqual({n.text for n in again.names}, {n.text for n in first.names})
+
+    async def test_evicting_one_campaign_never_touches_another_in_the_same_server(self) -> None:
+        await self.cache.get(1, "idle")
+        await self.cache.get(2, "busy")  # the same campaign id as below, in another server
+        self.later(self.lookup.IDLE_EVICT_S * 0.6)
+        busy = await self.cache.get(1, "busy")  # same server as "idle", used recently
+        self.later(self.lookup.IDLE_EVICT_S * 0.6)
+        busy_again = await self.cache.get(1, "busy")  # keeps it fresh across the whole span
+        await self.cache.get(
+            1, "other"
+        )  # the sweep runs: "idle" and (2, "busy") are past the limit
+        self.assertEqual(self.kept(), {(1, "busy"), (1, "other")})
+        self.assertIs(busy_again, busy)  # the very same copy, never reloaded
+        self.assertNotIn((2, "busy"), self.kept())  # evicted by (server, campaign), not by id
+
+    async def test_evicting_forgets_the_failure_log_entry_too(self) -> None:
+        self.source.fail = True
+        with self.assertLogs("dmbot.memory.lookup", "WARNING"):
+            self.assertIsNone(await self.cache.get_within(1, "camp", 1.0))
+        self.assertIn((1, "camp"), self.cache._failed_at)
+        self.source.fail = False
+        self.later(self.lookup.IDLE_EVICT_S + self.lookup.SWEEP_EVERY_S)
+        await self.cache.get(1, "other")
+        self.assertNotIn((1, "camp"), self.cache._failed_at)
+
+    async def test_the_sweep_runs_at_most_once_a_minute(self) -> None:
+        await self.cache.get(1, "camp")
+        self.later(self.lookup.IDLE_EVICT_S + 1)  # idle, but the cache was built a moment ago
+        self.cache._swept_at = self.now[0] - 1  # the last sweep was one second ago
+        self.cache._sweep()
+        self.assertIn((1, "camp"), self.kept())
+        self.later(self.lookup.SWEEP_EVERY_S)
+        self.cache._sweep()
+        self.assertNotIn((1, "camp"), self.kept())
+
+
+class TheBotsLiveCheck(unittest.TestCase):
+    """What the bot passes as `in_use`: a campaign counts while its table runs or is finishing."""
+
+    def test_a_running_or_finishing_table_counts_and_no_other_does(self) -> None:
+        from types import SimpleNamespace
+
+        from dmbot.bot import DMBot
+
+        running = SimpleNamespace(campaign_id="live")
+        finishing = SimpleNamespace(campaign_id="ending")
+        fake = SimpleNamespace(tables={1: running}, _ending={1: [finishing]})
+        asks = [
+            ((1, "live"), True),
+            ((1, "ending"), True),
+            ((1, "idle"), False),
+            ((2, "live"), False),  # the same campaign id in another server is not this table
+        ]
+        for (guild, campaign), expected in asks:
+            got = DMBot._campaign_has_a_table(fake, guild, campaign)  # type: ignore[arg-type]
+            self.assertEqual(got, expected, (guild, campaign))
+
+    def test_the_cache_is_given_it(self) -> None:
+        from unittest.mock import MagicMock
+
+        from dmbot.bot import DMBot
+        from dmbot.config import Settings
+
+        bot = DMBot(
+            Settings(discord_token="t", ears_secret="s"),
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+            memory=MagicMock(),
+        )
+        assert bot.lookup is not None
+        # The cache asks the bot: a table of this campaign makes its copy "in use".
+        bot.tables = {1: __import__("types").SimpleNamespace(campaign_id="live")}  # type: ignore[assignment,unused-ignore]
+        self.assertTrue(bot.lookup._in_use(1, "live"))
+        self.assertFalse(bot.lookup._in_use(1, "idle"))

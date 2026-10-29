@@ -12,14 +12,15 @@ import unittest
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, ClassVar
+from typing import Any, ClassVar, cast
 from unittest.mock import AsyncMock, MagicMock
 
 from dmbot import consent_dm as c
 from dmbot.audio.segmenter import Segmenter, Utterance
-from dmbot.bot import DMBot, Table
+from dmbot.bot import DMBot
 from dmbot.config import ConfigError, Settings, load_settings, parse_server_ids
 from dmbot.devtools import test_library as cli
+from dmbot.table import Table
 from dmbot.test_recording import files, flac, library
 from dmbot.test_recording.session import TestSession
 from dmbot.test_recording.store import TestVoiceStore
@@ -397,6 +398,13 @@ class InTheBot(unittest.IsolatedAsyncioTestCase):
             MagicMock(),
             MagicMock(),
             test_voice=self.voice,
+            improvement=cast(  # nobody has opted out here (tests/test_improvement_opt_out.py)
+                Any,
+                SimpleNamespace(
+                    is_opted_out=AsyncMock(return_value=False),
+                    is_opted_out_recently=AsyncMock(return_value=False),
+                ),
+            ),
         )
         self.agreed: set[int] = {DM, ALEX}
         bot.consent.has_consent = lambda g, u: u in self.agreed  # type: ignore[method-assign,assignment]
@@ -503,7 +511,7 @@ class InTheBot(unittest.IsolatedAsyncioTestCase):
         table = self.table()
         await bot._start_test_session(table)
         assert table.test_session is not None
-        bot._finish_test_session(table, True)
+        await bot._finish_test_session(table, True)
         table.test_session.flush()
         manifest = files.read_json(table.test_session.folder / files.MANIFEST)
         assert manifest is not None
@@ -971,7 +979,7 @@ class TheSecondQuestion(unittest.IsolatedAsyncioTestCase):
         await c.SaveVoiceButton(GUILD).callback(interaction)
         self.assertEqual(actions.saving, set())
         self.assertIn("First say yes to being recorded", said(interaction))
-        self.assertIn("open ⚙️ Menu and press", said(interaction))
+        self.assertIn("open 🗂️ Menu and press", said(interaction))
 
     async def test_saving_is_refused_outside_a_test_server(self) -> None:
         actions = FakeActions(listed=False)

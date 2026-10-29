@@ -39,6 +39,125 @@ class Names(unittest.TestCase):
         self.assertFalse(is_answer("The door creaks open"))
 
 
+SAM, KIM = 10, 11  # two DMs; Mia and Ben are players
+
+
+class DmAddressed(unittest.TestCase):
+    """DM words and a DM's own name resolve to the DM who is here (#1547). Made-up names."""
+
+    def tracker(self, dms: dict[int, str]) -> NameThenAnswer:
+        t = NameThenAnswer()
+        t.set_dms(dms)
+        return t
+
+    def test_a_dm_word_means_the_one_dm_who_has_spoken(self) -> None:
+        t = self.tracker({SAM: "Sam"})
+        t.feed(SAM, 0, "Okay, what do you do?", consented=True)
+        t.feed(MIA, 2000, "DM, can I roll?", consented=True)
+        self.assertEqual(t.dm_addressed(), {SAM: 1})
+
+    def test_every_dm_word_counts(self) -> None:
+        t = self.tracker({SAM: "Sam"})
+        t.feed(SAM, 0, "Go ahead.", consented=True)
+        for at, text in enumerate(("DM, hi", "Hey, GM", "Dungeon Master, wait", "Ok, Game Master")):
+            t.feed(MIA, 1000 * (at + 1), text, consented=True)
+        self.assertEqual(t.dm_addressed(), {SAM: 4})
+
+    def test_a_dms_own_name_means_that_dm_and_is_never_learned(self) -> None:
+        t = self.tracker({SAM: "Sam"})
+        t.feed(MIA, 0, "Sam, what do I see?", consented=True)
+        t.feed(SAM, 3000, "I describe the room", consented=True)
+        t.feed(MIA, 20_000, "Sam, is it dark?", consented=True)
+        t.feed(SAM, 22_000, "Yes, it is", consented=True)
+        self.assertEqual(t.dm_addressed(), {SAM: 1})  # the first call came before Sam had spoken
+        self.assertEqual(t.answered(), [])  # not a nickname to ask the DM about
+
+    def test_with_two_dms_the_one_who_spoke_last_is_meant(self) -> None:
+        t = self.tracker({SAM: "Sam", KIM: "Kim"})
+        t.feed(SAM, 0, "Welcome.", consented=True)
+        t.feed(KIM, 4000, "And the door opens.", consented=True)
+        t.feed(MIA, 6000, "DM, what is that?", consented=True)
+        self.assertEqual(t.dm_addressed(), {KIM: 1})
+        t.feed(SAM, 7000, "A statue.", consented=True)
+        t.feed(MIA, 8000, "GM, can I touch it?", consented=True)
+        self.assertEqual(t.dm_addressed(), {KIM: 1, SAM: 1})
+
+    def test_with_two_dms_and_neither_recent_it_means_no_one(self) -> None:
+        t = self.tracker({SAM: "Sam", KIM: "Kim"})
+        t.feed(SAM, 0, "Welcome.", consented=True)
+        t.feed(KIM, 1000, "Sit down.", consented=True)
+        t.feed(MIA, 60_000, "DM, can I roll?", consented=True)
+        self.assertEqual(t.dm_addressed(), {})
+
+    def test_no_dm_has_spoken_means_no_one(self) -> None:
+        t = self.tracker({SAM: "Sam"})
+        t.feed(MIA, 0, "DM, can I roll?", consented=True)
+        self.assertEqual(t.dm_addressed(), {})
+
+    def test_a_dm_calling_for_the_dm_is_not_counted_for_themselves(self) -> None:
+        t = self.tracker({SAM: "Sam"})
+        t.feed(SAM, 0, "Sam, you are rambling", consented=True)
+        self.assertEqual(t.dm_addressed(), {})
+
+    def test_a_line_from_someone_who_did_not_agree_is_never_read(self) -> None:
+        t = self.tracker({SAM: "Sam"})
+        t.feed(SAM, 0, "Go on.", consented=True)
+        t.feed(MIA, 1000, "DM, can I roll?", consented=False)
+        self.assertEqual(t.dm_addressed(), {})
+
+    def test_stop_recording_me_forgets_a_dm_too(self) -> None:
+        t = self.tracker({SAM: "Sam"})
+        t.feed(SAM, 0, "Go on.", consented=True)
+        t.feed(MIA, 1000, "DM, can I roll?", consented=True)
+        t.drop_speaker(SAM)
+        self.assertEqual(t.dm_addressed(), {})
+        t.feed(MIA, 2000, "DM, hello?", consented=True)
+        self.assertEqual(t.dm_addressed(), {})  # and they no longer count as here
+
+    def test_a_dms_name_does_not_count_after_they_stopped_recording_or_before_they_spoke(
+        self,
+    ) -> None:
+        t = self.tracker({SAM: "Sam"})
+        t.feed(MIA, 0, "Sam, can I roll?", consented=True)  # Sam has not spoken: not counted
+        self.assertEqual(t.dm_addressed(), {})
+        t.feed(SAM, 1000, "Go on.", consented=True)
+        t.drop_speaker(SAM)
+        t.feed(MIA, 2000, "Sam, can I roll?", consented=True)
+        self.assertEqual(t.dm_addressed(), {})
+
+    def test_a_single_dm_who_spoke_long_ago_is_still_here_and_a_tie_goes_to_the_lower_id(
+        self,
+    ) -> None:
+        one = self.tracker({SAM: "Sam"})
+        one.feed(SAM, 0, "Go on.", consented=True)
+        self.assertEqual(one.session_dm(MIA, 3_600_000), SAM)
+        two = self.tracker({SAM: "Sam", KIM: "Kim"})
+        two.feed(SAM, 5000, "Hm.", consented=True)
+        two.feed(KIM, 5000, "Hm.", consented=True)
+        self.assertEqual(two.session_dm(MIA, 6000), SAM)
+
+    def test_two_dms_with_the_same_name_are_not_told_apart_by_it(self) -> None:
+        t = self.tracker({SAM: "Alex", KIM: "alex"})
+        t.feed(SAM, 0, "Hm.", consented=True)
+        t.feed(KIM, 1000, "Hm.", consented=True)
+        t.feed(MIA, 2000, "Alex, can I roll?", consented=True)
+        self.assertEqual(t.dm_addressed(), {})
+        self.assertEqual(
+            t.answered(), []
+        )  # (it is not learned as a nickname either: one DM answered)
+
+    def test_ordinary_names_are_learned_as_before(self) -> None:
+        t = self.tracker({SAM: "Sam"})
+        for at, who, text in (
+            (0, SAM, "Mike, what do you do?"),
+            (2000, MIA, "I run"),
+            (20_000, SAM, "Mike, you're up"),
+            (22_000, MIA, "ok, I'll go"),
+        ):
+            t.feed(who, at, text, consented=True)
+        self.assertEqual([(a.name, a.speaker) for a in t.answered()], [("Mike", MIA)])
+
+
 class Pairs(unittest.TestCase):
     TWICE = (
         (DM, 0, "Mike, what do you do?"),

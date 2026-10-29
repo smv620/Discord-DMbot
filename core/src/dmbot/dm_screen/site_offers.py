@@ -28,21 +28,29 @@ import discord
 
 from dmbot.campaigns import Campaign, offer_notify
 from dmbot.campaigns.models import HANDOVER_DAYS, HandoverOffer
+from dmbot.campaigns.moves import HandoverMover, Moved
 from dmbot.dm_screen.handover import (
     ACCEPTED,
     DECLINED,
-    NO_PINGS,
+    MOVE_ENDED_NEW_OWNER,
+    MOVE_FAILED,
+    MOVE_FAILED_NEW_OWNER,
+    MOVED_NEW_OWNER,
+    MOVED_OLD_OWNER,
     OFFER_EXPIRED,
     SCREEN_ACCEPTED,
     TOLD_ACCEPTED,
     TOLD_DECLINED,
     TOLD_EXPIRED,
+    TOLD_EXPIRED_EMAIL,
     TOLD_EXPIRED_UNSENT,
     TOLD_WITHDRAWN,
     deliver_offer,
+    email_owner,
     md,
 )
 from dmbot.logs import log_context
+from dmbot.mentions import NO_PINGS
 
 log = logging.getLogger(__name__)
 
@@ -94,6 +102,9 @@ Listen = Callable[[str, Callable[[], None]], AsyncGenerator[str, None]]
 # The message sent, or None when the person can't be reached. Raises
 # discord.HTTPException when Discord failed for another reason (try again later).
 Deliver = Callable[[discord.Guild, Campaign, HandoverOffer], Awaitable[discord.Message | None]]
+# Email the owner (user ID, once-only kind, subject, body): sends nothing when DMbot has no address
+# for them. Never raises (#2532, slice D).
+OwnerMail = Callable[[int, str, str, str], Awaitable[object]]
 
 
 async def _deliver(
@@ -116,6 +127,9 @@ class SiteOffers:
         spawn: Callable[[Awaitable[None], str], object],
         deliver: Deliver = _deliver,
         post: Callable[[int, str], Awaitable[object]] | None = None,
+        mover: HandoverMover | None = None,
+        owner_mail: OwnerMail | None = None,
+        site_url: str = "",
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         now: Callable[[], int] = lambda: int(time.time()),
         clock: Callable[[], float] = time.monotonic,
@@ -127,6 +141,11 @@ class SiteOffers:
         self._spawn = spawn
         self._deliver = deliver
         self._post = post  # a message in a channel: the #dm-screen note on an accept
+        self._site_url = site_url
+        self._owner_mail = owner_mail  # the owner is also told by email, when there is an address
+        self._mover = mover  # moves a campaign to the new owner's other server (#2532, slice C)
+        if mover is not None:
+            mover.told = self._tell_moved
         self._sleep = sleep
         self._now = now
         self._clock = clock
@@ -142,6 +161,94 @@ class SiteOffers:
             lambda: self._spawn(self.sweep(), "offer-sweep"),
             lambda ids: self._spawn(self.send(*ids), "site-offer"),
         )
+
+    async def follow_moves(self, listen: Listen) -> None:
+        """Move a campaign when its new owner chose another server (#2532, slice C), until
+        cancelled. On every (re)connection a sweep takes up the ones announced meanwhile."""
+        await self._follow(
+            listen,
+            offer_notify.MOVE,
+            lambda: self._spawn(self.sweep_moves(), "move-sweep"),
+            lambda ids: self._spawn(self.move(*ids), "campaign-move"),
+        )
+
+    async def move(self, guild_id: int, offer_id: int) -> None:
+        """Move one campaign (the bot process of its server does it). Never raises."""
+        if self._mover is None:
+            return
+        await self._wait_until_ready()
+        try:
+            await self._mover.move(guild_id, offer_id)
+        except Exception as exc:  # the type only
+            log.warning("A campaign move failed to start: %s", type(exc).__name__)
+
+    async def sweep_moves(self) -> None:
+        """Take up every move that waits in this process's servers. Never raises."""
+        if self._mover is None:
+            return
+        await self._wait_until_ready()
+        for guild_id in list(self._guild_ids()):
+            try:
+                waiting = await self._mover.waiting(guild_id)
+            except Exception as exc:
+                log.warning("Couldn't look for campaign moves: %s", type(exc).__name__)
+                continue
+            for offer_id in waiting:
+                await self.move(guild_id, offer_id)
+
+    async def _tell_moved(self, moved: Moved) -> None:
+        """Tell the two people how the move went (best effort, after it is all over)."""
+        offer = moved.offer
+        old = self._get_guild(offer.guild_id)
+        target = offer.move_to_guild_id
+        new = None if target is None else self._get_guild(target)
+        name = md(moved.campaign_name)
+        if moved.result == "reopened" and old is not None:
+            with contextlib.suppress(discord.HTTPException):
+                member = await _member(old, offer.from_user_id)
+                await member.send(MOVE_FAILED.format(campaign=name), allowed_mentions=NO_PINGS)
+            if new is not None and offer.to_user_id:
+                with contextlib.suppress(discord.HTTPException):
+                    member = await _member(new, offer.to_user_id)
+                    await member.send(
+                        MOVE_FAILED_NEW_OWNER.format(campaign=name, reason=moved.reason),
+                        allowed_mentions=NO_PINGS,
+                    )
+        elif moved.result == "ended" and new is not None and offer.to_user_id:
+            # The owner changed meanwhile, so the former owner has nothing to hear: only the person
+            # who accepted is told, and the offer is over.
+            with contextlib.suppress(discord.HTTPException):
+                member = await _member(new, offer.to_user_id)
+                await member.send(
+                    MOVE_ENDED_NEW_OWNER.format(campaign=name, reason=moved.reason),
+                    allowed_mentions=NO_PINGS,
+                )
+        elif moved.result == "moved":
+            if old is not None and new is not None:
+                with contextlib.suppress(discord.HTTPException):
+                    member = await _member(old, offer.from_user_id)
+                    await member.send(
+                        MOVED_OLD_OWNER.format(
+                            campaign=name,
+                            server=md(new.name),
+                            name=md(offer.to_name or "The new owner"),
+                        ),
+                        allowed_mentions=NO_PINGS,
+                    )
+            if new is not None:
+                with contextlib.suppress(discord.HTTPException):
+                    member = await _member(new, offer.to_user_id)
+                    await member.send(
+                        MOVED_NEW_OWNER.format(
+                            campaign=name, server=md(new.name), owner=md(offer.from_name)
+                        ),
+                        allowed_mentions=NO_PINGS,
+                    )
+            # Last, so a slow mail server never delays the two private messages. A process that
+            # does not serve the new server still emails, with a generic server name.
+            await self._email_owner(
+                offer, moved.campaign_name, "moved", server=new.name if new is not None else ""
+            )
 
     async def follow_decided(self, listen: Listen) -> None:
         """Tell the other person when an offer is answered or taken back on the website
@@ -221,6 +328,8 @@ class SiteOffers:
                 await _tell_decision(guild, offer, campaign)
                 if offer.status == "accepted":  # as the Discord Accept button does
                     await self._screen_note(campaign, offer)
+                if offer.status in ("accepted", "declined"):  # last: a slow mail server waits
+                    await self._email_owner(offer, campaign.name, offer.status)
             except Exception as exc:
                 # Only the error's kind: a database error's text can quote the row (names).
                 log.error(
@@ -229,12 +338,20 @@ class SiteOffers:
                     type(exc).__name__,
                 )
 
+    async def _email_owner(
+        self, offer: HandoverOffer, campaign_name: str, kind: str, *, server: str = ""
+    ) -> None:
+        """The owner's email about the offer (see `handover.email_owner`)."""
+        await email_owner(
+            self._owner_mail, offer, campaign_name, kind, server=server, site=self._site_url
+        )
+
     async def _screen_note(self, campaign: Campaign, offer: HandoverOffer) -> None:
         """The accept noted in the campaign's #dm-screen, as for the Discord button (it
         changes whose plan the table uses). Best effort."""
         if self._post is None or campaign.dm_screen_channel_id is None:
             return
-        names = {"name": md(offer.to_name), "campaign": md(campaign.name)}
+        names = {"name": _who(offer), "campaign": md(campaign.name)}
         try:
             await self._post(campaign.dm_screen_channel_id, SCREEN_ACCEPTED.format(**names))
         except Exception as exc:
@@ -277,6 +394,9 @@ class SiteOffers:
         for offer_id in offer_ids:
             await self.send(guild_id, offer_id)
         await self.end_expired(guild_id)
+        if self._mover is not None:  # a move whose announcement was missed
+            for offer_id in await self._mover.waiting(guild_id):
+                await self.move(guild_id, offer_id)
 
     async def end_expired(self, guild_id: int) -> None:
         """Tell the owner of each offer whose days are up, and take the buttons off the
@@ -318,6 +438,11 @@ class SiteOffers:
                 log.warning("Discord failed announcing offer %s's end (%s)", offer.id, exc)
             else:
                 log.exception("Couldn't announce the end of hand-over offer %s", offer.id)
+            return
+        # Only once the notice is kept: a cancel during the email must not release it, or the
+        # next sweep would send the Discord message again.
+        if campaign is not None:
+            await self._email_owner(offer, campaign.name, "expired")
 
     async def send(self, guild_id: int, offer_id: int) -> None:
         """Send one offer's private message, if this process serves its server and nobody
@@ -374,6 +499,12 @@ class SiteOffers:
             await _tell_owner(guild, offer, campaign)
 
 
+def _who(offer: HandoverOffer) -> str:
+    """Who answered, for the owner: the name they signed in with (an offer sent by email has no
+    one else's name), or "The person you emailed"."""
+    return md(offer.to_name) if offer.to_name else "The person you emailed"
+
+
 async def _tell_decision(
     guild: discord.Guild, offer: HandoverOffer, campaign: Campaign, *, tell_owner: bool = True
 ) -> None:
@@ -382,7 +513,7 @@ async def _tell_decision(
     sent: edited to say what happened (its buttons go); if it can't be edited, a new
     message only for a take-back (they chose an accept or a no thanks themselves, so the
     site told them)."""
-    owner, person = md(offer.from_name), md(offer.to_name)
+    owner, person = md(offer.from_name), _who(offer)
     name = md(campaign.name)
     if offer.status == "accepted":
         to_owner: str | None = TOLD_ACCEPTED.format(name=person, campaign=name)
@@ -399,8 +530,8 @@ async def _tell_decision(
         with contextlib.suppress(discord.HTTPException):
             member = await _member(guild, offer.from_user_id)
             await member.send(to_owner, allowed_mentions=NO_PINGS)
-    if offer.delivered_at is None:  # never sent to them: nothing of theirs to change
-        return
+    if offer.via_email or offer.delivered_at is None:
+        return  # an email offer has no Discord message; or it was never sent: nothing to change
     with contextlib.suppress(discord.HTTPException):
         member = await _member(guild, offer.to_user_id)
         if offer.message_id is not None:  # the offer message: its buttons go
@@ -426,7 +557,10 @@ async def _tell_expired(guild: discord.Guild, offer: HandoverOffer, campaign: Ca
     who left the server or closed their messages counts as told; any other Discord error
     is raised (try again later). The buttons are best effort: pressing them after the
     end only says it ended."""
-    told = TOLD_EXPIRED if offer.delivered_at is not None else TOLD_EXPIRED_UNSENT
+    if offer.via_email:
+        told = TOLD_EXPIRED_EMAIL
+    else:
+        told = TOLD_EXPIRED if offer.delivered_at is not None else TOLD_EXPIRED_UNSENT
     try:
         owner = await _member(guild, offer.from_user_id)
         await owner.send(
@@ -435,7 +569,7 @@ async def _tell_expired(guild: discord.Guild, offer: HandoverOffer, campaign: Ca
         )
     except (discord.Forbidden, discord.NotFound):
         pass
-    if offer.message_id is None:  # sent before messages were kept
+    if offer.via_email or offer.message_id is None:  # no Discord message to change
         return
     with contextlib.suppress(discord.HTTPException):
         person = await _member(guild, offer.to_user_id)

@@ -56,11 +56,26 @@ EventKind = Literal[
     "recap_audio_renewed",  # the add-on was paid for the next period
     "recap_audio_ended",  # the add-on's subscription ended (cancelled and run out, or stopped)
     "email_updated",  # the payer changed their address at the company (no plan change)
+    # A plan change set for the end of the period (plan, and period_start = when it starts), or
+    # undone. The company's schedule has no user of ours: the app finds them from the
+    # subscription (user_id 0 until then, #2165).
+    "plan_scheduled",
+    "plan_unscheduled",
 ]
 
 
 class PaymentError(RuntimeError):
     """The payment company refused or couldn't be reached. No personal data inside."""
+
+
+class NotResumable(PaymentError):
+    """The subscription is not one that can be resumed (it has ended, or its payment is
+    overdue): Renew answers "not ending" (#2165)."""
+
+
+class ResumeRefused(PaymentError):
+    """The company would not undo a cancellation by a direct update (a plan change is scheduled
+    for the period's end, say): the person renews on its billing page instead (#2165)."""
 
 
 @dataclass(frozen=True)
@@ -131,7 +146,24 @@ class PaymentProvider(Protocol):
         monthly subscription, marked so its events are never taken for the plan's."""
         ...
 
-    async def billing_url(self, *, customer_id: str, return_url: str) -> str: ...
+    async def billing_url(
+        self, *, customer_id: str, return_url: str, subscription_id: str | None = None
+    ) -> str:
+        """The company's billing page. With a subscription id it opens straight on choosing a
+        plan (#2165); the company may refuse that for an account, and then the ordinary page
+        opens instead."""
+        ...
+
+    async def resume(self, *, subscription_id: str) -> None:
+        """Undo a cancellation that has not taken effect yet (#2165): the plan renews on its date
+        as before, with no new charge. Succeeds if it was not cancelled."""
+        ...
+
+    async def subscription_owner(self, *, subscription_id: str) -> int | None:
+        """Our Discord user id for a subscription of the plan, or None for one that is not a
+        plan's (the recap audio add-on, or one made outside DMbot). Only for a company event
+        that does not name the person (a plan schedule, #2165)."""
+        ...
 
     async def cancel(self, *, subscription_id: str) -> None:
         """Stop the subscription at the end of the period already paid for: the person is
@@ -167,6 +199,10 @@ class FakeProvider:
         self._secret = secret
         self._site_url = site_url.rstrip("/")
         self.cancelled: list[str] = []
+        self.refuse_resume = False  # a test can have the company refuse a direct resume
+        self.cannot_resume = False  # ...or say the subscription has ended
+        self.resumed: list[str] = []  # subscriptions whose cancellation was undone (#2165)
+        self.owners: dict[str, int] = {}  # a subscription's person, for the events that lack one
         # What each checkout was given, so tests can see the DMbot ID and customer travel.
         self.checkouts: list[dict[str, object]] = []
         self.retargeted: list[tuple[str | None, str | None, int]] = []
@@ -224,8 +260,21 @@ class FakeProvider:
         )
         return f"{return_url}?{urlencode({'fake_recap_audio': '1'})}"
 
-    async def billing_url(self, *, customer_id: str, return_url: str) -> str:
-        return f"{return_url}?{urlencode({'fake_billing': '1'})}"
+    async def billing_url(
+        self, *, customer_id: str, return_url: str, subscription_id: str | None = None
+    ) -> str:
+        flow = {"fake_billing": "1"} | ({"flow": "plans"} if subscription_id else {})
+        return f"{return_url}?{urlencode(flow)}"
+
+    async def resume(self, *, subscription_id: str) -> None:
+        if self.refuse_resume:
+            raise ResumeRefused("the fake company will not resume")
+        if self.cannot_resume:
+            raise NotResumable("the fake subscription has ended")
+        self.resumed.append(subscription_id)
+
+    async def subscription_owner(self, *, subscription_id: str) -> int | None:
+        return self.owners.get(subscription_id)
 
     async def cancel(self, *, subscription_id: str) -> None:
         self.cancelled.append(subscription_id)
@@ -253,6 +302,8 @@ class FakeProvider:
             "payment_failed",
             "subscription_cancelled",
             "subscription_ended",
+            "plan_scheduled",
+            "plan_unscheduled",
             "extra_hours_bought",
             "recap_audio_started",
             "recap_audio_renewed",

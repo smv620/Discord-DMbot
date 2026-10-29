@@ -10,6 +10,7 @@ import aiohttp
 from aiohttp import web
 from aiohttp.test_utils import TestServer
 
+from dmbot.alerts import DEEPGRAM_DOWN_AFTER_S, Problem
 from dmbot.audio.segmenter import Utterance
 from dmbot.transcription import deepgram as dg
 from dmbot.transcription.config import TranscriptionSettings
@@ -130,6 +131,32 @@ class DeepgramTranscriberTests(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self) -> None:
         await self.t.close()
         await self.server.close()
+
+    async def test_a_refused_key_tells_the_owner(self) -> None:
+        self.reply = (401, {"err_msg": "Invalid credentials"})
+        with patch.object(dg, "raise_alert") as alert, self.assertRaises(DeepgramError):
+            await self.t.transcribe(clip(), [])
+        alert.assert_called_once_with(Problem.DEEPGRAM_KEY_REFUSED)
+
+    async def test_ten_minutes_of_no_answer_tells_the_owner_once_per_failure_and_an_answer_resets(
+        self,
+    ) -> None:
+        self.reply = (500, {"err_msg": "down"})
+        with patch.object(dg, "raise_alert") as alert:
+            with self.assertRaises(DeepgramError):
+                await self.t.transcribe(clip(), [])
+            alert.assert_not_called()  # the first failure only starts the count
+            self.now[0] += DEEPGRAM_DOWN_AFTER_S
+            with self.assertRaises(DeepgramError):
+                await self.t.transcribe(clip(), [])
+            alert.assert_called_once_with(Problem.DEEPGRAM_DOWN)
+            self.reply = (200, reply("Back again."))
+            self.assertEqual(await self.t.transcribe(clip(), []), "Back again.")
+            self.reply = (500, {"err_msg": "down"})
+            self.now[0] += DEEPGRAM_DOWN_AFTER_S
+            with self.assertRaises(DeepgramError):
+                await self.t.transcribe(clip(), [])
+            alert.assert_called_once()  # the 200 started the count over
 
     async def test_sends_wav_key_and_keyterms(self) -> None:
         text = await self.t.transcribe(clip(), ["Bryn Shander", "Auril"])

@@ -18,13 +18,13 @@ import discord
 
 from dmbot.campaigns import Campaign
 from dmbot.campaigns.models import CampaignError
+from dmbot.mentions import NO_PINGS
 from dmbot.rules import index
-from dmbot.timebot import durations
+from dmbot.timebot import durations, where_are_we
 from dmbot.timebot.effects import EXTRA_MINUTES, Effect
 
 log = logging.getLogger(__name__)
 
-NO_PINGS = discord.AllowedMentions.none()
 _ID = r"(?P<campaign>[0-9a-f]{32})"
 FAILED = "Sorry, that didn't save. Please try again."
 NEED_LENGTH = "No length found for {name}. Type one, like 10 minutes or 1 hour. No timer started."
@@ -129,7 +129,8 @@ async def start_timer(
     try:
         stored = await client.clocks.get(campaign.guild_id, campaign.id)
         if stored is not None:
-            line = effect.line(stored.clock.minute)
+            acting = stored.picked_group  # (#1607) while split, the timer is for this group
+            line = effect.line(stored.clock.minute, acting.name if acting else None)
             await _show_clock(client, campaign, stored)
     except Exception:
         log.exception("The timer started but the clock message couldn't be redrawn")
@@ -155,14 +156,25 @@ async def announce_due(client: Any, campaign: Campaign, minute: int) -> None:
     except Exception:
         log.exception("Couldn't look for timers that have ended")
         return
+    names: dict[int, str] = {}
+    if due:
+        try:  # while the party is split each ended timer says which group it was for (#1607)
+            stored = await client.clocks.get(campaign.guild_id, campaign.id)
+            if stored is not None and stored.split:
+                names = {g.position: g.name for g in stored.groups}
+        except Exception:
+            log.exception("Couldn't read the groups for a timer that ended")
     for effect in due:
         view = discord.ui.View(timeout=None)
         view.add_item(EffectButton(campaign.id, effect.number, "end"))
         view.add_item(EffectButton(campaign.id, effect.number, "more"))
-        posted = await client.post_message(campaign.dm_screen_channel_id, effect.ended_line(), view)
+        said = effect.ended_line(names.get(effect.group or 1) if names else None)
+        posted = await client.post_message(campaign.dm_screen_channel_id, said, view)
         if posted is None:  # it was not said: say it next time rather than lose it
             with contextlib.suppress(Exception):
                 await store.untell(campaign.guild_id, campaign.id, effect.number)
+        else:  # a line about the clock on the DM screen: no "where are we" right after it (#1738)
+            where_are_we.shown(client, campaign)
 
 
 class EffectButton(

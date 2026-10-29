@@ -122,6 +122,16 @@ def long_rest(clock: Clock) -> Clock:
     return replace(clock, minute=end, last_long_rest=end, tired_told_for=None)
 
 
+def skip_days(clock: Clock, days: int, *, rested: bool) -> Clock:
+    """Whole days pass (a journey, downtime): the same time of day, `days` on. A journey of days
+    includes nights' sleep, so the party counts as rested from the end of the skip unless the DM
+    said it was without rest (#1594)."""
+    moved = advance(clock, days * MINUTES_PER_DAY)
+    if not rested:
+        return moved
+    return replace(moved, last_long_rest=moved.minute, tired_told_for=None)
+
+
 def next_dawn(minute: int) -> int:
     """The next 06:00 at or after `minute` (today's if it hasn't come yet)."""
     today = minute - time_of_day(minute) + DAWN

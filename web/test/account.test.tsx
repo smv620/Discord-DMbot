@@ -6,7 +6,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import Account from "../src/account/Account";
-import { type Access, type AccountApi, ApiError, httpApi, type Me } from "../src/account/api";
+import { type Access, type AccountApi, ApiError, httpApi, type Me, type MyPlan } from "../src/account/api";
 import {
   candidates,
   incomingOffers,
@@ -40,6 +40,56 @@ describe("states", () => {
     expect(screen.getByRole("link", { name: text.seePrices }).getAttribute("href")).toBe(
       "/pricing",
     );
+  });
+
+  it("signed out: says so first, then Discord, then the email link, and the plans last (#2003)", async () => {
+    show("signed-out");
+    await screen.findByRole("heading", { name: text.signedOutHeading });
+    const order = [
+      document.getElementById("signed-out-heading"),
+      screen.getByText(text.signedOutLead),
+      screen.getByRole("link", { name: text.signIn }),
+      document.getElementById("email-heading"),
+      screen.getByLabelText(text.emailLabel),
+      screen.getByRole("button", { name: text.emailButton }),
+      document.getElementById("new-heading"),
+      screen.getByRole("link", { name: text.startTryItFree }),
+      screen.getAllByRole("link", { name: /^Choose / })[0]!,
+    ];
+    for (let i = 1; i < order.length; i++) {
+      expect(
+        order[i - 1]!.compareDocumentPosition(order[i]!) & Node.DOCUMENT_POSITION_FOLLOWING,
+        `step ${i}`,
+      ).toBeTruthy();
+    }
+    expect(screen.getByRole("heading", { name: text.newHeading })).toBeTruthy();
+    // Every way in goes through the same Discord sign-in, and there is one sign-in button before the plans.
+    expect(screen.getAllByRole("link", { name: text.signIn })).toHaveLength(1);
+  });
+
+  it("signed out, an API older than the email link: no email heading, Discord still first (#2003)", async () => {
+    const api = mockApi("signed-out");
+    delete api.emailSignInRequest;
+    render(<Account api={api} go={vi.fn()} search="" />);
+    await screen.findByRole("heading", { name: text.signedOutHeading });
+    expect(document.getElementById("email-heading")).toBeNull();
+    expect(
+      screen.getByRole("link", { name: text.signIn }).compareDocumentPosition(
+        document.getElementById("new-heading")!,
+      ) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("signed out: a notice shows inside the sign-in panel, above the heading (#2003)", async () => {
+    show("signed-out", "?signin=failed");
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toBe(text.signInFailed);
+    const panel = document.querySelector("[aria-labelledby='signed-out-heading']")!;
+    expect(panel.contains(alert)).toBe(true);
+    expect(
+      alert.compareDocumentPosition(document.getElementById("signed-out-heading")!) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
   });
 
   it("signed out after a failed sign-in: says so and what to do", async () => {
@@ -83,7 +133,7 @@ describe("states", () => {
   it("Table: hours as words and a bar, campaigns, servers", async () => {
     show("table");
     expect(await screen.findByText("Hi, Belleros.")).toBeTruthy();
-    expect(screen.getByText("Table")).toBeTruthy();
+    expect(screen.getByText(text.planRenews("Table", "2026-10-14"))).toBeTruthy();
     expect(screen.getByText("About 11 of 18 hours used")).toBeTruthy();
     const bar = screen.getByLabelText(text.hoursBarLabel) as HTMLProgressElement;
     expect([bar.value, bar.max]).toEqual([11.2, 18]);
@@ -262,7 +312,7 @@ describe("actions", () => {
     const { api } = show("table");
     await screen.findByText("The Brynwater Crossing");
     const row = document.querySelector('[data-campaign="cmp-brynwater"]') as HTMLElement;
-    fireEvent.click(row.querySelector("button") as HTMLButtonElement);
+    fireEvent.click(within(row).getByRole("button", { name: text.handOver }));
 
     const confirm = await screen.findByRole("button", { name: text.handOverConfirm });
     expect((confirm as HTMLButtonElement).disabled).toBe(true);
@@ -282,7 +332,7 @@ describe("actions", () => {
     show("table");
     await screen.findByText("Ashen Crown");
     const row = document.querySelector('[data-campaign="cmp-ashen"]') as HTMLElement;
-    fireEvent.click(row.querySelector("button") as HTMLButtonElement);
+    fireEvent.click(within(row).getByRole("button", { name: text.handOver }));
     expect(await screen.findByText(text.handOverNobody)).toBeTruthy();
     expect(screen.queryByRole("button", { name: text.handOverConfirm })).toBeNull();
   });
@@ -293,7 +343,7 @@ describe("actions", () => {
     render(<Account api={api} go={vi.fn()} />);
     await screen.findByText("The Brynwater Crossing");
     const row = document.querySelector('[data-campaign="cmp-brynwater"]') as HTMLElement;
-    fireEvent.click(row.querySelector("button") as HTMLButtonElement);
+    fireEvent.click(within(row).getByRole("button", { name: text.handOver }));
     fireEvent.click(await screen.findByLabelText("Mirelle"));
     fireEvent.click(screen.getByRole("button", { name: text.handOverConfirm }));
     const alert = (await screen.findByRole("alert")).textContent ?? "";
@@ -1154,18 +1204,16 @@ describe("free access (#806)", () => {
     expect(text.freeHoursLeft(1, 87, null)).toBe("");
   });
 
-  it("no limits: no hours line, and campaigns say 'You run it', not 'Uses your hours'", async () => {
+  it("no limits: no hours line, and campaigns say 'You run it'", async () => {
     showFree("table", { kind: "free", unlimited: true });
     await screen.findByText(text.freeAccess);
     expect(screen.queryByRole("progressbar")).toBeNull();
-    expect((await screen.findAllByText(text.youRunItFree)).length).toBeGreaterThan(0);
-    expect(screen.queryByText(text.youRunIt)).toBeNull();
+    expect((await screen.findAllByText("You run it")).length).toBeGreaterThan(0);
   });
 
-  it("a capped grant keeps the hours wording on its campaigns", async () => {
+  it("a capped grant says 'You run it' too", async () => {
     showFree("table", { kind: "free", hours: { used: 1, cap: 87, renewsOn: null } });
-    expect((await screen.findAllByText(text.youRunIt)).length).toBeGreaterThan(0);
-    expect(screen.queryByText(text.youRunItFree)).toBeNull();
+    expect((await screen.findAllByText("You run it")).length).toBeGreaterThan(0);
   });
 
   it("an offer to a no-limits person doesn't talk about slots or hours", async () => {
@@ -1205,11 +1253,165 @@ describe("free access (#806)", () => {
       plan: { ...plan, endsOn: "2026-10-14" },
     }));
     render(<Account api={api} go={vi.fn()} search="" />);
-    expect(await screen.findByText(text.planEnds("Table", "2026-10-14"))).toBeTruthy();
+    expect(await screen.findByText(text.planEndsLine("Table", "2026-10-14"))).toBeTruthy();
+    // The hours don't "start again" on a plan that is ending, and the date isn't said twice.
+    expect(screen.queryByText(/Your hours start again/)).toBeNull();
+    expect(screen.queryByText(text.planEnds("Table", "2026-10-14"))).toBeNull();
+  });
+});
+
+describe("the plan line says what the plan is doing (#2165)", () => {
+  function withPlan(change: Partial<MyPlan>, status?: MyPlan["status"]) {
+    const api = mockApi("table");
+    const base = scenarioMe("table");
+    const plan = base?.plan;
+    if (!base || !plan) throw new Error("the table scenario has a plan");
+    const me: Me = { ...base, plan: { ...plan, ...change, ...(status ? { status } : {}) } };
+    api.me = vi.fn(async (): Promise<Me | null> => me);
+    return api;
+  }
+  const open = (api: ReturnType<typeof mockApi>) =>
+    render(<Account api={api} go={vi.fn()} search="" />);
+
+  it("active: renews on the date", async () => {
+    open(withPlan({ state: "active", renewsOn: "2026-11-18" }));
+    expect(await screen.findByText("Table (renews on Nov 18)")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: text.renew })).toBeNull();
+  });
+
+  it("cancelled but still running: ends on the date, with Renew beside Change plan", async () => {
+    open(withPlan({ state: "ending", endsOn: "2026-11-18", renewsOn: "2026-11-18" }));
+    expect(await screen.findByText("Table (ends on Nov 18)")).toBeTruthy();
+    expect(screen.getByRole("button", { name: text.changePlan })).toBeTruthy();
+    expect(screen.getByRole("button", { name: text.renew })).toBeTruthy();
+  });
+
+  it("another plan starts at the end of the period", async () => {
+    open(withPlan({ state: "changing", nextPlan: "guild", nextPlanOn: "2026-11-18" }));
+    expect(await screen.findByText("Table (new plan: Guild starts on Nov 18)")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: text.renew })).toBeNull();
+  });
+
+  it("expired: says when it ended and links to the plans", async () => {
+    open(withPlan({ state: "expired", endedOn: "2026-10-01" }, "lapsed"));
+    expect(await screen.findByText("Your Table plan ended on Oct 1.")).toBeTruthy();
+    // The plans to pick from are right there, with the link to the page that has them all.
+    const link = screen.getByRole("link", { name: text.seePrices }) as HTMLAnchorElement;
+    expect(link.getAttribute("href")).toBe("/pricing");
+    expect(screen.getByRole("button", { name: text.choose("table") })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: text.renew })).toBeNull();
+  });
+
+  it("an API without a state still shows a cancel date, but offers no Renew it can't do", async () => {
+    open(withPlan({ endsOn: "2026-11-18" }));
+    expect(await screen.findByText("Table (ends on Nov 18)")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: text.renew })).toBeNull();
+  });
+
+  it("a payment still being fixed keeps the plain name", async () => {
+    open(withPlan({ state: "active", graceEndsOn: "2026-10-20" }, "grace"));
+    expect(await screen.findByText("Table")).toBeTruthy();
+  });
+
+  it("Renew asks once, then undoes the cancellation and shows the plan renewing", async () => {
+    const api = withPlan({ state: "ending", endsOn: "2026-11-18", renewsOn: "2026-11-18" });
+    api.renewPlan = vi.fn(async () => undefined);
+    open(api);
+    fireEvent.click(await screen.findByRole("button", { name: text.renew }));
+    expect(screen.getByText(text.renewAsk("Table", "2026-11-18"))).toBeTruthy();
+    expect(api.renewPlan).not.toHaveBeenCalled(); // asked, not done
+    fireEvent.click(screen.getByRole("button", { name: text.renewYes }));
+    expect(await screen.findByText(text.renewed("Table", "2026-11-18"))).toBeTruthy();
+    expect(api.renewPlan).toHaveBeenCalledTimes(1);
+  });
+
+  it("Not now leaves everything as it was", async () => {
+    const api = withPlan({ state: "ending", endsOn: "2026-11-18" });
+    api.renewPlan = vi.fn(async () => undefined);
+    open(api);
+    fireEvent.click(await screen.findByRole("button", { name: text.renew }));
+    fireEvent.click(screen.getByRole("button", { name: text.renewNo }));
+    expect(screen.getByRole("button", { name: text.renew })).toBeTruthy();
+    expect(api.renewPlan).not.toHaveBeenCalled();
+  });
+
+  it("a plan that is no longer ending is refreshed, in words", async () => {
+    const api = withPlan({ state: "ending", endsOn: "2026-11-18" });
+    api.renewPlan = vi.fn(async () => {
+      throw new ApiError("not-ending");
+    });
+    open(api);
+    fireEvent.click(await screen.findByRole("button", { name: text.renew }));
+    fireEvent.click(screen.getByRole("button", { name: text.renewYes }));
+    expect((await screen.findByRole("alert")).textContent).toBe(text.errors["not-ending"]);
+  });
+
+  it("Renew moves focus to the question, and Not now gives it back to Renew", async () => {
+    const api = withPlan({ state: "ending", endsOn: "2026-11-18", renewsOn: "2026-11-18" });
+    open(api);
+    fireEvent.click(await screen.findByRole("button", { name: text.renew }));
+    const ask = screen.getByText(text.renewAsk("Table", "2026-11-18"));
+    await waitFor(() => expect(document.activeElement).toBe(ask));
+    fireEvent.click(screen.getByRole("button", { name: text.renewNo }));
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole("button", { name: text.renew })),
+    );
+  });
+
+  it("Change plan asks for the plan list; Fix my payment and Stop paying do not", async () => {
+    const api = withPlan({ state: "active" });
+    const portal = vi.fn(async (_flow?: "plans") => "#demo-billing");
+    api.billingPortalUrl = portal;
+    open(api);
+    fireEvent.click(await screen.findByRole("button", { name: text.changePlan }));
+    await waitFor(() => expect(portal).toHaveBeenCalledWith("plans"));
+    expect(screen.getByText(text.changePlanNote)).toBeTruthy();
+  });
+
+  it("the Change plan call sends the flow only when it is asked for", async () => {
+    const bodies: string[] = [];
+    const reply = httpApi("https://api.example.test", (async (_url: string, init: RequestInit) => {
+      bodies.push(String(init.body ?? ""));
+      return new Response(JSON.stringify({ url: "https://billing.stripe.com/p/x" }), { status: 200 });
+    }) as unknown as typeof fetch);
+    await reply.billingPortalUrl("plans");
+    await reply.billingPortalUrl();
+    expect(bodies).toEqual([JSON.stringify({ flow: "plans" }), ""]);
+  });
+
+  it("a company that won't renew from here sends the person to its page, in words", async () => {
+    const api = withPlan({ state: "ending", endsOn: "2026-11-18" });
+    api.renewPlan = vi.fn(async () => {
+      throw new ApiError("use-billing-page");
+    });
+    open(api);
+    fireEvent.click(await screen.findByRole("button", { name: text.renew }));
+    fireEvent.click(screen.getByRole("button", { name: text.renewYes }));
+    expect((await screen.findByRole("alert")).textContent).toBe(text.errors["use-billing-page"]);
+  });
+
+  it("Renew is one POST on the wire and a not_ending answer is read as such", async () => {
+    const seen: { url: string; method: string }[] = [];
+    const reply = (status: number, body: unknown) =>
+      httpApi("https://api.example.test", (async (url: string, init: RequestInit) => {
+        seen.push({ url, method: String(init.method) });
+        return new Response(JSON.stringify(body), { status });
+      }) as unknown as typeof fetch);
+    await reply(200, { ok: true }).renewPlan!();
+    expect(seen).toEqual([{ url: "https://api.example.test/billing/renew", method: "POST" }]);
+    await expect(reply(409, { error: "not_ending" }).renewPlan!()).rejects.toMatchObject({
+      kind: "not-ending",
+    });
   });
 });
 
 describe("sign in by email, DMbot ID, experience points and move code (#1231)", () => {
+  it("the email field has a grey hint and keeps its real label (#1778)", async () => {
+    render(<Account api={mockApi("signed-out")} go={vi.fn()} />);
+    const field = (await screen.findByLabelText(text.emailLabel)) as HTMLInputElement;
+    expect(field.placeholder).toBe("your@email.here");
+  });
+
   it("signed out: an email form that always answers in the same words", async () => {
     const api = mockApi("signed-out");
     render(<Account api={api} go={vi.fn()} />);
@@ -1348,5 +1550,83 @@ describe("sign in by email, DMbot ID, experience points and move code (#1231)", 
     show("try-it");
     await screen.findByText(text.greeting("Belleros"));
     expect(screen.queryByRole("button", { name: text.moveButton })).toBeNull();
+  });
+});
+
+describe("a long campaigns list folds (#1991)", () => {
+  // Invented campaigns on the pretend API's first signed-in account.
+  function showMany(count: number, extra: Partial<Me> = {}) {
+    const api = mockApi("table");
+    const base = scenarioMe("table")!;
+    const campaigns = Array.from({ length: count }, (_, i) => ({
+      id: `cmp-test-${i}`,
+      name: `Test Campaign ${String(i).padStart(2, "0")}`,
+      serverName: "Test Table",
+      lastPlayedAt: `2026-09-${String(i + 1).padStart(2, "0")}T19:00:00Z`,
+      status: "active" as const,
+      role: "owner" as const,
+    }));
+    api.me = vi.fn(async (): Promise<Me | null> => ({ ...base, campaigns, ...extra }));
+    render(<Account api={api} go={vi.fn()} search="" />);
+  }
+  const rows = () => document.querySelectorAll("#campaigns-list > li").length;
+
+  it("three campaigns: no button", async () => {
+    showMany(3);
+    await screen.findByText("Test Campaign 02");
+    expect(rows()).toBe(3);
+    expect(screen.queryByRole("button", { name: /older campaign/ })).toBeNull();
+  });
+
+  it("twelve: five shown and a button for seven; pressing it shows all, Show fewer folds again", async () => {
+    showMany(12);
+    await screen.findByText("Test Campaign 11");
+    expect(rows()).toBe(5);
+    const more = screen.getByRole("button", { name: text.showOlder(7) });
+    expect(more.getAttribute("aria-expanded")).toBe("false");
+    expect(more.getAttribute("aria-controls")).toBe("campaigns-list");
+    expect(document.getElementById("campaigns-list")).toBeTruthy();
+    fireEvent.click(more);
+    await waitFor(() => expect(rows()).toBe(12));
+    const fewer = screen.getByRole("button", { name: text.showFewer });
+    expect(fewer.getAttribute("aria-expanded")).toBe("true");
+    fireEvent.click(fewer);
+    await waitFor(() => expect(rows()).toBe(5));
+    expect(document.activeElement?.id).toBe("campaigns-heading");
+  });
+
+  it("says one older campaign in the singular", () => {
+    expect(text.showOlder(1)).toBe("Show 1 older campaign");
+    expect(text.showOlder(7)).toBe("Show 7 older campaigns");
+  });
+
+  it("an old paused campaign shows first too", async () => {
+    const base = scenarioMe("table")!;
+    const api = mockApi("table");
+    const campaigns = Array.from({ length: 12 }, (_, i) => ({
+      id: `cmp-test-${i}`,
+      name: `Test Campaign ${String(i).padStart(2, "0")}`,
+      serverName: "Test Table",
+      lastPlayedAt: `2026-09-${String(i + 1).padStart(2, "0")}T19:00:00Z`,
+      status: i === 0 ? ("paused" as const) : ("active" as const),
+      role: "owner" as const,
+    }));
+    api.me = vi.fn(async (): Promise<Me | null> => ({ ...base, campaigns }));
+    render(<Account api={api} go={vi.fn()} search="" />);
+    await screen.findByText("Test Campaign 00");
+    expect(rows()).toBe(6);
+  });
+
+  it("an old campaign with an unanswered hand-over offer shows first", async () => {
+    const base = scenarioMe("table")!;
+    showMany(12, {
+      offers: {
+        incoming: base.offers.incoming,
+        outgoing: [{ id: "off-test", campaignId: "cmp-test-0", campaignName: "Test Campaign 00", serverName: "Test Table", personName: "Test Person", expiresAt: "2026-12-01T00:00:00Z" }],
+      },
+    });
+    await screen.findByText("Test Campaign 00");
+    expect(rows()).toBe(6);
+    expect(screen.getByRole("button", { name: text.showOlder(6) })).toBeTruthy();
   });
 });

@@ -28,7 +28,78 @@ beforeAll(async () => {
   home = await render(Home, "/");
 });
 
+// The live list as it read when the entries moved into one file each (#2468), newest first. Later
+// entries may appear anywhere; these must stay, in this order.
+const liveWhenSplit = [
+  "Recaps for your table",
+  "Recaps fit your session",
+  "Recaps stick to what happened",
+  "Choose what recaps do",
+  "When you say a secret name",
+  "My Account puts sign-in first",
+  "Campaign labels look like labels",
+  "A shorter campaigns list",
+  "Search and link Help steps",
+  "DMbot works on any new server",
+  "Add homebrew from a link",
+  "Share imported homebrew in a pack",
+  "See the sites you approved",
+  "Which rules is a book for?",
+  "Check names after a session",
+  "Keep a connection secret",
+  "Homebrew for your campaign",
+  "Copy a pack's entry to edit",
+  "Players can look up rules",
+  "Keep transcripts for a set time",
+  "Delete my transcripts",
+  "See how long transcripts are kept",
+  "Deleted transcripts show in the list",
+  "Read shared homebrew on the website",
+  "Read house rules on the website",
+  "Read transcripts on the website",
+  "Your questions to the team",
+  "Quick answers use your facts",
+  "Check what DMbot noticed",
+  "Fight reminders for players",
+  "Stop recording me on the website",
+  "Sign in with an emailed link",
+  "Your DMbot ID",
+  "Share house rules with other tables",
+  "Suggest a rule back",
+  "One-of-a-kind items",
+  "Ask DMbot by typing",
+  "Link your character sheet",
+  "See when your plan ends",
+  "The game clock",
+];
+
 describe("What's new", () => {
+  it("keeps the live list as it was when the entries moved into files (#2468)", () => {
+    const now = entries.map((e) => e.title);
+    expect(now.filter((t) => liveWhenSplit.includes(t))).toEqual(liveWhenSplit);
+    expect(page.querySelectorAll(".entry").length).toBe(entries.length);
+  });
+
+  it("gives every file the same shape, with a name that starts with its date (#2468)", () => {
+    const names = Object.keys(import.meta.glob("../src/content/whats-new/*.ts"));
+    expect(names.length).toBe(entries.length + held.length);
+    const titles = [...entries, ...held].map((e) => e.title);
+    expect(new Set(titles).size, "two files share a title").toBe(titles.length);
+    for (const name of names) {
+      const file = name.split("/").pop() ?? "";
+      const e = [...entries, ...held].find((x) => file.startsWith(x.date));
+      expect(e, `${file} starts with a date some entry has`).toBeDefined();
+      expect(file, file).toMatch(/^\d{4}-\d{2}-\d{2}-[a-z0-9-]+\.ts$/);
+    }
+  });
+
+  it("says style notes are kept for this campaign's later recaps and where to remove them", () => {
+    const fix = [...entries, ...held].find((e) => e.title === "Tell DMbot what to fix");
+    expect(fix?.what).toContain("this campaign's later recaps");
+    expect(fix?.what).toContain("newest 10");
+    expect(fix?.what).toContain("⚙️ Settings → 📜 Recaps → ✍️ Recap style");
+  });
+
   it("lists every entry, newest first, with the day it went live", () => {
     expect(page.querySelector("h1")?.textContent).toBe(whatsNewHeading);
     const shown = [...page.querySelectorAll(".entry")];
@@ -38,34 +109,44 @@ describe("What's new", () => {
     );
   });
 
+  it("shows the two things dev1 deployed as 4d7aea9b (#1373, #1370)", () => {
+    const titles = entries.map((e) => e.title);
+    expect(titles).toEqual(
+      expect.arrayContaining(["Your questions to the team", "Quick answers use your facts"]),
+    );
+  });
+
+  it("shows what Test J saw working on the live bot (#1532, #1533, #1527), and the rule lookups (#1552)", () => {
+    const titles = entries.map((e) => e.title);
+    for (const t of [
+      "Delete my transcripts",
+      "Keep transcripts for a set time",
+      "Homebrew for your campaign",
+      "Copy a pack's entry to edit",
+      "Players can look up rules",
+    ])
+      expect(titles, t).toContain(t);
+    expect(held.map((h) => h.title)).not.toContain("Delete my past transcripts");
+    expect(held.map((h) => h.title)).not.toContain("Your own homebrew");
+  });
+
   it("holds back what people can't use yet, with the reason, and shows none of it (#1322)", () => {
-    expect(held.map((h) => h.title)).toEqual([
-      "Recaps for your table", // until dev1 has checked a real recap (#1382, #1384)
-      "Quick answers use your facts",
-      "Your questions to the team", // until the API with the list route is deployed (#1373)
-      "Ask a question in public", // until QAbot is live (#1352)
-      "Move to a new Discord account",
-      "A recap of last session",
-      "New names from what was said",
-      "A note before tonight's session",
-      "When a player says a secret name",
-    ]);
+    expect(held.length).toBeGreaterThan(0);
     for (const h of held) {
+      expect(h.reason.trim(), h.title).not.toBe("");
       expect(h.reason.length, h.title).toBeGreaterThan(20);
       expect(entries.map((e) => e.title)).not.toContain(h.title);
     }
     const shown = page.querySelector("main")?.textContent ?? "";
     expect(shown).not.toContain("Move to a new Discord account");
-    expect(shown).not.toContain("Quick answers use your facts");
     expect(shown).not.toContain("New names from what was said");
     expect(shown).not.toContain("A note before tonight");
     expect(shown).not.toContain("When a player says a secret name");
-    expect(shown).not.toContain("A recap of last session");
     expect(shown).not.toContain("move code");
     expect(shown).not.toContain("Ask a question in public"); // not until QAbot is live
     expect(shown).not.toContain("QAbot");
     expect(page.querySelectorAll(".entry")).toHaveLength(entries.length);
-    expect(entries).toHaveLength(7);
+    expect(entries.length).toBeGreaterThanOrEqual(10); // each live entry is shown (#1521)
   });
 
   it("has dates in order, newest first, and real days", () => {
@@ -98,9 +179,14 @@ describe("What's new", () => {
 
   it("claims nothing that isn't live, and uses no hard-rule banned term", () => {
     const all = [...entries, ...held].map((e) => `${e.title} ${e.what}`).join(" ");
-    // Alive-or-dead is stored but nothing records it yet, and who-carries-what is merged but not
-    // deployed (#1319; docs/STORY_MEMORY.md, 5a): they wait for their own entries.
-    expect(all).not.toMatch(/alive|\bdead\b|destroyed|carries|carried/i);
+    // Alive-or-dead is stored but nothing records it until the extractor is on (#1284), and
+    // who-carries-what likewise (#1319; docs/STORY_MEMORY.md, 5a): they wait for their own entry,
+    // which stays held (help.test.ts ties it to STORY_STATES_LIVE), so nothing else may say them.
+    const others = [...entries, ...held]
+      .filter((e) => e.title !== "Who is alive, who carries what")
+      .map((e) => `${e.title} ${e.what}`)
+      .join(" ");
+    expect(others).not.toMatch(/alive|\bdead\b|destroyed|carries|carried/i);
     expect(all).not.toMatch(/knowledge graph|ontology|claims|extractor/i);
     expect(all).not.toMatch(/D&D|Dungeons|Wizards|Beyond/);
     expect(all).not.toMatch(/database|API|LLM|transcription/i);

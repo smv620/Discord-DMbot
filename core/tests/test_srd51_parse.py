@@ -267,7 +267,15 @@ class Building(unittest.TestCase):
         return {"title": "t", "url": "u", "sha256": "s", "pages": 14}
 
     def test_the_files_are_made_in_the_2014_shape(self) -> None:
-        files = build.build_files_51(self.pages(), self.document(), {"pointing", "finger"})
+        files = build.build_files_51(
+            self.pages(),
+            self.document(),
+            {"pointing", "finger"},
+            classes=False,
+            items_pages=False,
+            origins_pages=False,
+            rules_pages=False,
+        )
         for data in files.values():
             self.assertEqual(
                 (data["source"], data["edition"], data["licence"]),
@@ -278,7 +286,15 @@ class Building(unittest.TestCase):
         self.assertEqual(files["conditions.json"]["entries"][0]["page"], 13)
 
     def test_the_edition_picks_the_folder(self) -> None:
-        files = build.build_files_51(self.pages(), self.document(), set())
+        files = build.build_files_51(
+            self.pages(),
+            self.document(),
+            set(),
+            classes=False,
+            items_pages=False,
+            origins_pages=False,
+            rules_pages=False,
+        )
         self.assertEqual(build.folder_for(files), build.OUT_51)
         self.assertEqual(build.folder_for({"spells.json": {"edition": "2024"}}), build.OUT)
         self.assertNotEqual(build.OUT, build.OUT_51)

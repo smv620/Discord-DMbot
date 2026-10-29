@@ -1,0 +1,185 @@
+/* The relationship web map's free layout (#2934). Kept apart from account.css so only the web page
+   loads it: the other account pages are close to their weight budget. */
+/* The map's free layout (#2934): names fade when the pointer is on another name, a moved name shows a dot,
+   and the layout switch sits in the tools row. The fade is the drawing only: the words stay readable in the list. */
+.account .web-faded {
+  opacity: 0.15;
+}
+
+.account .web-edge,
+.account .web-node {
+  transition: opacity 0.15s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .account .web-edge,
+  .account .web-node {
+    transition: none;
+  }
+}
+
+.account .web-node {
+  touch-action: none;
+}
+
+.account .web-node:active {
+  cursor: grabbing;
+}
+
+.account .web-node:focus-visible,
+.account .web-hit:focus-visible {
+  outline: 3px solid var(--accent, currentColor);
+  outline-offset: 2px;
+}
+
+.account .web-pin {
+  fill: var(--accent, currentColor);
+  stroke: none;
+}
+
+.account .web-edge-text {
+  stroke: var(--surface, transparent);
+  stroke-width: 5px;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+
+.account .web-area circle {
+  fill: var(--accent, currentColor);
+  fill-opacity: 0.06;
+  stroke: var(--accent, currentColor);
+  stroke-opacity: 0.4;
+  stroke-dasharray: 5 5;
+}
+
+.account .web-area-text {
+  fill: var(--muted, currentColor);
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.account .web-seg {
+  display: inline-flex;
+  gap: var(--space-2, 0.5rem);
+}
+
+.account .web-seg .button[aria-pressed="true"] {
+  background: var(--accent, currentColor);
+  color: var(--bg, #fff);
+}
+
+/* The map with the chosen name's details beside it; one column on a phone. */
+.account .web-stage {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 17rem;
+  gap: var(--space-3, 0.75rem);
+  align-items: start;
+}
+
+.account .web-side {
+  min-width: 0;
+}
+
+@media (max-width: 52rem) {
+  .account .web-stage {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.account .web-sides {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-4, 1rem);
+}
+
+@media (max-width: 40rem) {
+  .account .web-sides {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Kinds of connection (#2934, core #2942): a colour and a line style for each, so colour is never the only
+   signal; the legend and the chips use the same classes. "other" is a neutral, thinner, plain line. */
+.account {
+  --link-family: #a8650a;
+  --link-ally: #0d7d6a;
+  --link-group: #6b4fc0;
+  --link-work: #2a68b0;
+  --link-other: var(--text-muted, #6b7770);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .account {
+    --link-family: #e6b450;
+    --link-ally: #4fd1b6;
+    --link-group: #a78bfa;
+    --link-work: #63b3ed;
+  }
+}
+
+:root[data-theme="dark"] .account {
+  --link-family: #e6b450;
+  --link-ally: #4fd1b6;
+  --link-group: #a78bfa;
+  --link-work: #63b3ed;
+}
+
+.account .web-link-family { --link: var(--link-family); }
+.account .web-link-ally { --link: var(--link-ally); }
+.account .web-link-group { --link: var(--link-group); }
+.account .web-link-work { --link: var(--link-work); }
+.account .web-link-other { --link: var(--link-other); }
+
+.account .web-edge.web-link-family .web-line { stroke: var(--link); }
+.account .web-edge.web-link-ally .web-line { stroke: var(--link); stroke-dasharray: 10 5; }
+.account .web-edge.web-link-group .web-line { stroke: var(--link); stroke-dasharray: 14 4 3 4; }
+.account .web-edge.web-link-work .web-line { stroke: var(--link); stroke-dasharray: 4 4; }
+.account .web-edge.web-link-other .web-line { stroke: var(--link); stroke-width: 1.5; }
+/* The chosen line keeps its accent colour over its kind colour, as well as being thicker. */
+.account .web-edge.chosen .web-line { stroke: var(--accent, currentColor); stroke-width: 4; }
+/* A theory keeps its own dotted look on top of its colour. */
+.account .web-edge.web-theory .web-line { stroke-dasharray: 2 6; }
+
+.account .web-legend .web-line { stroke: var(--link); }
+.account .web-legend .web-link-ally .web-line { stroke-dasharray: 10 5; }
+.account .web-legend .web-link-group .web-line { stroke-dasharray: 14 4 3 4; }
+.account .web-legend .web-link-work .web-line { stroke-dasharray: 4 4; }
+
+.account .web-dot {
+  display: inline-block;
+  width: 0.7em;
+  height: 0.7em;
+  border-radius: 50%;
+  background: var(--link);
+}
+
+.account .web-area.web-link-family circle,
+.account .web-area.web-link-ally circle,
+.account .web-area.web-link-group circle,
+.account .web-area.web-link-work circle,
+.account .web-area.web-link-other circle {
+  fill: var(--link);
+  stroke: var(--link);
+}
+
+.account .web-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2, 0.5rem);
+  margin: var(--space-2, 0.5rem) 0;
+}
+
+/* Off: the words keep full contrast and stay struck through; only the dot empties to a ring. */
+.account .web-chip[aria-pressed="false"] {
+  text-decoration: line-through;
+}
+
+.account .web-chip[aria-pressed="false"] .web-dot {
+  background: transparent;
+  border: 2px solid var(--link);
+}
+
+.account .web-kindmark {
+  color: inherit;
+}

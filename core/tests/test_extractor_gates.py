@@ -13,8 +13,9 @@ from unittest.mock import AsyncMock, patch
 from dmbot.ai import AIError
 from dmbot.bot import DMBot
 from dmbot.campaigns.store import CampaignStore
-from dmbot.memory import extractor
+from dmbot.memory import contradiction_run, extractor
 from dmbot.memory.claims import ClaimStore
+from dmbot.memory.contradiction_grades import GradeStore
 from dmbot.memory.store import MemoryStore
 from dmbot.transcript.models import Line
 from dmbot.transcript.store import TranscriptStore
@@ -172,7 +173,7 @@ class Gates(unittest.IsolatedAsyncioTestCase):
         )
         return SimpleNamespace(
             settings=SimpleNamespace(
-                story_extractor_on=True, story_extractor_max_calls=480,
+                story_extractor_on=True, story_readings_on=False, story_extractor_max_calls=480,
                 story_extractor_max_calls_day=960,
             ),
             extractor_ai=object(),
@@ -243,6 +244,210 @@ class Gates(unittest.IsolatedAsyncioTestCase):
         with patch.object(extractor, "run", AsyncMock()) as run:
             await DMBot.extract_claims(me, self.table(), 0)
         run.assert_not_called()
+
+
+class Contradictions(unittest.IsolatedAsyncioTestCase):
+    """`DMBot.grade_contradictions`, with the parts it asks canned (#2660)."""
+
+    def fake(self, *, on: bool = True, allowed: bool = True, used: int = 0, day: int = 0) -> Any:
+        transcripts = SimpleNamespace(
+            session=AsyncMock(return_value=SimpleNamespace(lines=3, started_at=9)),
+            extraction=AsyncMock(return_value=(0, used)),
+            extractor_calls_since=AsyncMock(return_value=day),
+            record_extraction=AsyncMock(),
+        )
+        return SimpleNamespace(
+            settings=SimpleNamespace(
+                story_extractor_on=True, story_contradictions_on=on,
+                story_extractor_max_calls=480, story_extractor_max_calls_day=960,
+            ),
+            extractor_ai=object(),
+            memory=SimpleNamespace(_db=object()),
+            transcripts=transcripts,
+            campaigns=SimpleNamespace(get=AsyncMock(return_value=SimpleNamespace(id="c"))),
+            plan_allows=AsyncMock(return_value=allowed),
+        )  # fmt: skip
+
+    def table(self) -> Any:
+        return SimpleNamespace(campaign_id="c", transcript_session_id="s", guild_id=1)
+
+    async def test_off_by_default_runs_nothing_and_reads_nothing(self) -> None:
+        me = self.fake(on=False)
+        with patch.object(contradiction_run, "run", AsyncMock()) as run:
+            await DMBot.grade_contradictions(me, self.table())
+        run.assert_not_called()
+        me.plan_allows.assert_not_called()
+
+    async def test_without_the_extractor_it_runs_nothing(self) -> None:
+        me = self.fake()
+        me.settings.story_extractor_on = False
+        with patch.object(contradiction_run, "run", AsyncMock()) as run:
+            await DMBot.grade_contradictions(me, self.table())
+        run.assert_not_called()
+
+    async def test_a_plan_without_story_memory_runs_nothing(self) -> None:
+        me = self.fake(allowed=False)
+        with patch.object(contradiction_run, "run", AsyncMock()) as run:
+            await DMBot.grade_contradictions(me, self.table())
+        run.assert_not_called()
+        self.assertEqual(me.plan_allows.await_args.args[0], "story")
+
+    async def test_it_runs_with_at_most_three_calls_and_counts_each(self) -> None:
+        me = self.fake(used=10, day=100)
+        done = contradiction_run.Report(found=2, calls=1)
+        with patch.object(contradiction_run, "run", AsyncMock(return_value=done)) as run:
+            await DMBot.grade_contradictions(me, self.table())
+        assert run.await_args is not None
+        kw = run.await_args.kwargs
+        self.assertEqual((kw["max_calls"], kw["session_started_at"]), (3, 9))
+        await kw["count_call"]()
+        me.transcripts.record_extraction.assert_awaited_once()
+        self.assertEqual(me.transcripts.record_extraction.await_args.kwargs["calls"], 1)
+
+    async def test_it_makes_only_the_calls_the_extractors_limits_have_left(self) -> None:
+        me = self.fake(used=479, day=500)
+        with patch.object(
+            contradiction_run, "run", AsyncMock(return_value=contradiction_run.Report())
+        ) as run:
+            await DMBot.grade_contradictions(me, self.table())
+        assert run.await_args is not None
+        self.assertEqual(run.await_args.kwargs["max_calls"], 1)
+
+    async def test_the_limit_used_up_runs_nothing(self) -> None:
+        for me in (self.fake(used=480), self.fake(day=960)):
+            with patch.object(contradiction_run, "run", AsyncMock()) as run:
+                await DMBot.grade_contradictions(me, self.table())
+            run.assert_not_called()
+
+
+class TellingContradictions(unittest.IsolatedAsyncioTestCase):
+    """`DMBot.tell_contradictions` (#2660): the big ones to the DM screen, three at most."""
+
+    def stored(self, n: int, *, grade: str = "major") -> Any:
+        return SimpleNamespace(
+            perspective_id="p", kind="k", first_relation_id=f"a{n}", second_relation_id=f"b{n}",
+            grade=grade, reason=f"Clash {n}", times_unknown=False, involves_guess=False,
+        )  # fmt: skip
+
+    def fake(
+        self,
+        rows: list[Any],
+        *,
+        on: bool = True,
+        allowed: bool = True,
+        sent: bool = True,
+        visibility: str = "private",
+        dm: list[str] | None = None,
+    ) -> Any:
+        campaign = SimpleNamespace(id="c", dm_screen_visibility=visibility, dm_user_ids=[7, 8])
+        return SimpleNamespace(
+            settings=SimpleNamespace(story_extractor_on=True, story_contradictions_on=on),
+            memory=SimpleNamespace(_db=object()),
+            campaigns=SimpleNamespace(get=AsyncMock(return_value=campaign)),
+            plan_allows=AsyncMock(return_value=allowed),
+            post=AsyncMock(return_value=sent),
+            sidebar_send_dm=AsyncMock(side_effect=dm or ["sent", "sent"]),
+            rows=rows,
+        )  # fmt: skip
+
+    def table(self, channel: int | None = 55) -> Any:
+        return SimpleNamespace(campaign_id="c", guild_id=1, screen_channel_id=channel)
+
+    async def tell(self, me: Any, table: Any = None) -> Any:
+        grades = SimpleNamespace(
+            rows=AsyncMock(return_value=me.rows), mark_said=AsyncMock(return_value=0)
+        )
+        with patch.object(GradeStore, "of", return_value=grades):
+            await DMBot.tell_contradictions(me, table or self.table())
+        return grades
+
+    async def test_three_of_five_are_told_in_one_private_message_and_marked(self) -> None:
+        me = self.fake([self.stored(n) for n in range(5)])
+        grades = await self.tell(me)
+        me.post.assert_awaited_once()
+        args = me.post.await_args
+        self.assertEqual(args.args[0], 55)
+        self.assertEqual(args.kwargs["secret_of"], (1, "c"))  # pulled back if the screen opens
+        self.assertEqual(args.args[1].count("•"), 3)
+        self.assertNotIn("Clash 3", args.args[1])  # the rest wait for the report
+        told = grades.mark_said.await_args.args[2]
+        self.assertEqual([t[2] for t in told], ["a0", "a1", "a2"])
+        self.assertEqual(grades.rows.await_args.kwargs, {"grade": "major", "unsaid": True})
+
+    async def test_a_screen_players_may_peek_at_gets_nothing_named_and_the_dms_are_messaged(
+        self,
+    ) -> None:
+        for visibility in ("peek", "open"):
+            me = self.fake([self.stored(1)], visibility=visibility)
+            grades = await self.tell(me)
+            me.post.assert_not_called()  # no clash on the screen the players can open
+            self.assertEqual(me.sidebar_send_dm.await_count, 2)  # each DM, privately
+            self.assertIn("Clash 1", me.sidebar_send_dm.await_args.args[1])
+            grades.mark_said.assert_awaited_once()
+
+    async def test_one_dm_reached_is_enough_to_mark_the_clashes_told(self) -> None:
+        me = self.fake([self.stored(1)], visibility="peek", dm=["forbidden", "sent"])
+        grades = await self.tell(me)
+        grades.mark_said.assert_awaited_once()
+        me.post.assert_not_called()
+
+    async def test_closed_private_messages_leave_a_number_on_the_screen_and_tell_nothing(
+        self,
+    ) -> None:
+        me = self.fake([self.stored(1), self.stored(2)], visibility="peek", dm=["forbidden"] * 2)
+        grades = await self.tell(me)
+        grades.mark_said.assert_not_called()  # tried again next session
+        me.post.assert_awaited_once()
+        shown = me.post.await_args.args[1]
+        self.assertEqual(
+            shown, "DMbot has something for you. Open your private messages from DMbot."
+        )  # on a screen players may peek at: not even a number
+
+    async def test_long_reasons_go_out_in_parts_and_are_told_only_when_every_part_arrived(
+        self,
+    ) -> None:
+        long = [self.stored(n) for n in range(3)]
+        for row in long:
+            row.reason = "word " * 380
+        me = self.fake(long, visibility="peek", dm=["sent"] * 40)
+        grades = await self.tell(me)
+        sent = [c.args[1] for c in me.sidebar_send_dm.await_args_list]
+        self.assertGreater(len(sent) // 2, 1)  # more than one part for each of the two DMs
+        self.assertTrue(all(len(t) <= 2000 for t in sent))
+        me = self.fake(long, visibility="private", sent=True)
+        grades = await self.tell(me)
+        self.assertGreater(me.post.await_count, 1)
+        grades.mark_said.assert_awaited_once()
+        me = self.fake(long, visibility="private", sent=False)
+        grades = await self.tell(me)
+        grades.mark_said.assert_not_called()  # a part that did not arrive: not marked told
+
+    async def test_a_send_that_failed_posts_nothing_and_marks_nothing(self) -> None:
+        me = self.fake([self.stored(1)], visibility="peek", dm=["failed", "failed"])
+        grades = await self.tell(me)
+        me.post.assert_not_called()
+        grades.mark_said.assert_not_called()
+
+    async def test_nothing_waiting_posts_nothing(self) -> None:
+        me = self.fake([])
+        grades = await self.tell(me)
+        me.post.assert_not_called()
+        grades.mark_said.assert_not_called()
+
+    async def test_a_post_that_failed_marks_nothing_so_it_is_tried_again(self) -> None:
+        me = self.fake([self.stored(1)], sent=False)
+        grades = await self.tell(me)
+        me.post.assert_awaited_once()
+        grades.mark_said.assert_not_called()
+
+    async def test_off_by_default_closed_plan_or_no_screen_say_nothing(self) -> None:
+        for me, table in (
+            (self.fake([self.stored(1)], on=False), None),
+            (self.fake([self.stored(1)], allowed=False), None),
+            (self.fake([self.stored(1)]), self.table(channel=None)),
+        ):
+            await self.tell(me, table)
+            me.post.assert_not_called()
 
 
 if __name__ == "__main__":

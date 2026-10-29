@@ -279,7 +279,7 @@
    "range": "Touch",
    "components": "V, S, M (a small square of silk)",
    "duration": "24 hours",
-   "text": "With a touch, you place an illusion on a willing creature or an object that isn’t being worn or carried. A creature gains the Mask effect below, and an object gains the False Aura effect below. The effect lasts for the duration. If you cast the spell on the same target every day for 30 days, the illusion lasts until dispelled.\nMask (Creature). Choose a creature type other than the target’s actual type. Spells and other magical effects treat the target as if it were a creature of the chosen type.\nFalse Aura (Object). You change the way the target appears to spells and magical effects that detect magical auras, such as Detect Magic . You can make a nonmagical object appear magical, make a magic item appear nonmagical, or change the object’s aura so that it appears to belong to a school of magic you choose.",
+   "text": "With a touch, you place an illusion on a willing creature or an object that isn’t being worn or carried. A creature gains the Mask effect below, and an object gains the False Aura effect below. The effect lasts for the duration. If you cast the spell on the same target every day for 30 days, the illusion lasts until dispelled.\nMask (Creature). Choose a creature type other than the target’s actual type. Spells and other magical effects treat the target as if it were a creature of the chosen type.\nFalse Aura (Object). You change the way the target appears to spells and magical effects that detect magical auras, such as Detect Magic. You can make a nonmagical object appear magical, make a magic item appear nonmagical, or change the object’s aura so that it appears to belong to a school of magic you choose.",
    "page": 110
   },
   {
@@ -421,7 +421,7 @@
    "range": "150 feet",
    "components": "V, S, M (a key ring with no keys)",
    "duration": "Instantaneous",
-   "text": "You blast the mind of a creature that you can see within range. The target makes an Intelligence saving throw.\nOn a failed save, the target takes 10d12 Psychic damage and can’t cast spells or take the Magic action. At the end of every 30 days, the target repeats the save, ending the effect on a success. The effect can also be ended by the Greater Restoration , Heal, or Wish spell.\nOn a successful save, the target takes half as much damage only.",
+   "text": "You blast the mind of a creature that you can see within range. The target makes an Intelligence saving throw.\nOn a failed save, the target takes 10d12 Psychic damage and can’t cast spells or take the Magic action. At the end of every 30 days, the target repeats the save, ending the effect on a success. The effect can also be ended by the Greater Restoration, Heal, or Wish spell.\nOn a successful save, the target takes half as much damage only.",
    "page": 112
   },
   {
@@ -732,7 +732,7 @@
    "range": "120 feet",
    "components": "V, S",
    "duration": "Concentration, up to 10 minutes",
-   "text": "You create a 20-foot-radius Sphere of yellow-green fog centered on a point within range. The fog lasts for the duration or until strong wind (such as the one created by Gust of Wind ) disperses it, ending the spell. Its area is Heavily Obscured.\nEach creature in the Sphere makes a Constitution saving throw, taking 5d8 Poison damage on a failed save or half as much damage on a successful one. A creature must also make this save when the Sphere moves into its space and when it enters the Sphere or ends its turn there. A creature makes this save only once per turn.\nThe Sphere moves 10 feet away from you at the start of each of your turns.\nUsing a Higher-Level Spell Slot. The damage increases by 1d8 for each spell slot level above 5.",
+   "text": "You create a 20-foot-radius Sphere of yellow-green fog centered on a point within range. The fog lasts for the duration or until strong wind (such as the one created by Gust of Wind) disperses it, ending the spell. Its area is Heavily Obscured.\nEach creature in the Sphere makes a Constitution saving throw, taking 5d8 Poison damage on a failed save or half as much damage on a successful one. A creature must also make this save when the Sphere moves into its space and when it enters the Sphere or ends its turn there. A creature makes this save only once per turn.\nThe Sphere moves 10 feet away from you at the start of each of your turns.\nUsing a Higher-Level Spell Slot. The damage increases by 1d8 for each spell slot level above 5.",
    "page": 116
   },
   {
@@ -989,7 +989,7 @@
    "range": "Self",
    "components": "V, S, M (a gem-encrusted statuette of yourself worth 1,500+ GP)",
    "duration": "10 days",
-   "text": "Choose a spell of level 5 or lower that you can cast, that has a casting time of an action, and that can target you. You cast that spell—called the contingent spell—as part of casting Contingency , expending spell slots for both, but the contingent spell doesn’t come into effect. Instead, it takes effect when a certain trigger occurs. You describe that trigger when you cast the two spells. For example, a Contingency cast with Water Breathing might stipulate that Water Breathing comes into effect when you are engulfed in water or a similar liquid.\nThe contingent spell takes effect immediately after the trigger occurs for the first time, whether or not you want it to, and then Contingency ends.\nThe contingent spell takes effect only on you, even if it can normally target others. You can use only one Contingency spell at a time. If you cast this spell again, the effect of another Contingency spell on you ends. Also, Contingency ends on you if its material component is ever not on your person.",
+   "text": "Choose a spell of level 5 or lower that you can cast, that has a casting time of an action, and that can target you. You cast that spell—called the contingent spell—as part of casting Contingency, expending spell slots for both, but the contingent spell doesn’t come into effect. Instead, it takes effect when a certain trigger occurs. You describe that trigger when you cast the two spells. For example, a Contingency cast with Water Breathing might stipulate that Water Breathing comes into effect when you are engulfed in water or a similar liquid.\nThe contingent spell takes effect immediately after the trigger occurs for the first time, whether or not you want it to, and then Contingency ends.\nThe contingent spell takes effect only on you, even if it can normally target others. You can use only one Contingency spell at a time. If you cast this spell again, the effect of another Contingency spell on you ends. Also, Contingency ends on you if its material component is ever not on your person.",
    "page": 119
   },
   {
@@ -1099,7 +1099,7 @@
    "range": "10 feet",
    "components": "V, S, M (one 150+ GP black onyx stone for each corpse)",
    "duration": "Instantaneous",
-   "text": "You can cast this spell only at night. Choose up to three corpses of Medium or Small Humanoids within range. Each one becomes a Ghoul under your control (see “Monsters” for its stat block).\nAs a Bonus Action on each of your turns, you can mentally command any creature you animated with this spell if the creature is within 120 feet of you (if you control multiple creatures, you can command any of them at the same time, issuing the same command to them). You decide what action the creature will take and where it will move on its next turn, or you can issue a general command, such as to guard a particular place. If you issue no commands, the creature takes the Dodge action and moves only to avoid harm. Once given an order, the creature continues to follow the order until its task is complete.\nThe creature is under your control for 24 hours, after which it stops obeying any command you’ve given it. To maintain control of the creature for another 24 hours, you must cast this spell on the creature before the current 24-hour period ends. This use of the spell reasserts your control over up to three creatures you have animated with this spell rather than animating new ones.\nUsing a Higher-Level Spell Slot. If you use a level 7 spell slot, you can animate or reassert control over four Ghouls. If you use a level 8 spell slot, you can animate or reassert control over five Ghouls or two Ghasts or Wights. If you use a level 9 spell slot, you can animate or reassert control over six Ghouls, three Ghasts or Wights, or two Mummies . See “Monsters” for these stat blocks.",
+   "text": "You can cast this spell only at night. Choose up to three corpses of Medium or Small Humanoids within range. Each one becomes a Ghoul under your control (see “Monsters” for its stat block).\nAs a Bonus Action on each of your turns, you can mentally command any creature you animated with this spell if the creature is within 120 feet of you (if you control multiple creatures, you can command any of them at the same time, issuing the same command to them). You decide what action the creature will take and where it will move on its next turn, or you can issue a general command, such as to guard a particular place. If you issue no commands, the creature takes the Dodge action and moves only to avoid harm. Once given an order, the creature continues to follow the order until its task is complete.\nThe creature is under your control for 24 hours, after which it stops obeying any command you’ve given it. To maintain control of the creature for another 24 hours, you must cast this spell on the creature before the current 24-hour period ends. This use of the spell reasserts your control over up to three creatures you have animated with this spell rather than animating new ones.\nUsing a Higher-Level Spell Slot. If you use a level 7 spell slot, you can animate or reassert control over four Ghouls. If you use a level 8 spell slot, you can animate or reassert control over five Ghouls or two Ghasts or Wights. If you use a level 9 spell slot, you can animate or reassert control over six Ghouls, three Ghasts or Wights, or two Mummies. See “Monsters” for these stat blocks.",
    "page": 121
   },
   {
@@ -1148,7 +1148,7 @@
    "range": "120 feet",
    "components": "V, S, M (a bit of phosphorus)",
    "duration": "Concentration, up to 1 minute",
-   "text": "You create up to four torch-size lights within range, making them appear as torches, lanterns, or glowing orbs that hover for the duration. Alternatively, you combine the four lights into one glowing Medium form that is vaguely humanlike. Whichever form you choose, each light sheds Dim Light in a 10foot radius.\nAs a Bonus Action, you can move the lights up to 60 feet to a space within range. A light must be within 20 feet of another light created by this spell, and a light vanishes if it exceeds the spell’s range.",
+   "text": "You create up to four torch-size lights within range, making them appear as torches, lanterns, or glowing orbs that hover for the duration. Alternatively, you combine the four lights into one glowing Medium form that is vaguely humanlike. Whichever form you choose, each light sheds Dim Light in a 10-foot radius.\nAs a Bonus Action, you can move the lights up to 60 feet to a space within range. A light must be within 20 feet of another light created by this spell, and a light vanishes if it exceeds the spell’s range.",
    "page": 121
   },
   {
@@ -1452,7 +1452,7 @@
    "classes": [
     "Paladin"
    ],
-   "casting_time": "Bonus Action, which you take immedi - ately after hitting a target with a Melee weapon or an Unarmed Strike",
+   "casting_time": "Bonus Action, which you take immedi- ately after hitting a target with a Melee weapon or an Unarmed Strike",
    "range": "Self",
    "components": "V",
    "duration": "Instantaneous",
@@ -1656,7 +1656,7 @@
    "classes": [
     "Ranger"
    ],
-   "casting_time": "Bonus Action, which you take immedi - ately after hitting a creature with a weapon",
+   "casting_time": "Bonus Action, which you take immedi- ately after hitting a creature with a weapon",
    "range": "Self",
    "components": "V",
    "duration": "Concentration, up to 1 minute",
@@ -2078,7 +2078,7 @@
    "range": "120 feet",
    "components": "V, S",
    "duration": "Concentration, up to 1 hour",
-   "text": "You create a 20-foot-radius Sphere of fog centered on a point within range. The Sphere is Heavily Obscured. It lasts for the duration or until a strong wind (such as one created by Gust of Wind ) disperses it.\nUsing a Higher-Level Spell Slot. The fog’s radius increases by 20 feet for each spell slot level above 1.",
+   "text": "You create a 20-foot-radius Sphere of fog centered on a point within range. The Sphere is Heavily Obscured. It lasts for the duration or until a strong wind (such as one created by Gust of Wind) disperses it.\nUsing a Higher-Level Spell Slot. The fog’s radius increases by 20 feet for each spell slot level above 1.",
    "page": 133
   },
   {
@@ -2108,7 +2108,7 @@
    "range": "100 feet",
    "components": "V, S, M (ruby dust worth 1,500+ GP, which the spell consumes)",
    "duration": "Concentration, up to 1 hour",
-   "text": "An immobile, Invisible, Cube-shaped prison composed of magical force springs into existence around an area you choose within range. The prison can be a cage or a solid box, as you choose.\nA prison in the shape of a cage can be up to 20 feet on a side and is made from 1/2-inch diameter bars spaced 1/2 inch apart. A prison in the shape of a box can be up to 10 feet on a side, creating a solid barrier that prevents any matter from passing through it and blocking any spells cast into or out from the area.\nWhen you cast the spell, any creature that is completely inside the cage’s area is trapped. Creatures only partially within the area, or those too large to fit inside it, are pushed away from the center of the area until they are completely outside it.\nA creature inside the cage can’t leave it by nonmagical means. If the creature tries to use teleportation or interplanar travel to leave, it must first make a Charisma saving throw. On a successful save, the creature can use that magic to exit the cage. On a failed save, the creature doesn’t exit the cage and wastes the spell or effect. The cage also extends into the Ethereal Plane, blocking ethereal travel.\nThis spell can’t be dispelled by Dispel Magic .",
+   "text": "An immobile, Invisible, Cube-shaped prison composed of magical force springs into existence around an area you choose within range. The prison can be a cage or a solid box, as you choose.\nA prison in the shape of a cage can be up to 20 feet on a side and is made from 1/2-inch diameter bars spaced 1/2 inch apart. A prison in the shape of a box can be up to 10 feet on a side, creating a solid barrier that prevents any matter from passing through it and blocking any spells cast into or out from the area.\nWhen you cast the spell, any creature that is completely inside the cage’s area is trapped. Creatures only partially within the area, or those too large to fit inside it, are pushed away from the center of the area until they are completely outside it.\nA creature inside the cage can’t leave it by nonmagical means. If the creature tries to use teleportation or interplanar travel to leave, it must first make a Charisma saving throw. On a successful save, the creature can use that magic to exit the cage. On a failed save, the creature doesn’t exit the cage and wastes the spell or effect. The cage also extends into the Ethereal Plane, blocking ethereal travel.\nThis spell can’t be dispelled by Dispel Magic.",
    "page": 134
   },
   {
@@ -2224,7 +2224,7 @@
    "range": "Touch",
    "components": "V, S, M (2 Copper Pieces, which the spell consumes)",
    "duration": "10 days",
-   "text": "You touch a corpse or other remains. For the duration, the target is protected from decay and can’t become Undead.\nThe spell also effectively extends the time limit on raising the target from the dead, since days spent under the influence of this spell don’t count against the time limit of spells such as Raise Dead .",
+   "text": "You touch a corpse or other remains. For the duration, the target is protected from decay and can’t become Undead.\nThe spell also effectively extends the time limit on raising the target from the dead, since days spent under the influence of this spell don’t count against the time limit of spells such as Raise Dead.",
    "page": 135
   },
   {
@@ -2268,7 +2268,7 @@
    "range": "Self",
    "components": "V, S, M (a glass bead)",
    "duration": "Concentration, up to 1 minute",
-   "text": "An immobile, shimmering barrier appears in a 10foot Emanation around you and remains for the duration.\nAny spell of level 5 or lower cast from outside the barrier can’t affect anything within it. Such a spell can target creatures and objects within the barrier, but the spell has no effect on them. Similarly, the area within the barrier is excluded from areas of effect created by such spells.\nUsing a Higher-Level Spell Slot. The barrier blocks spells of 1 level higher for each spell slot level above 6.",
+   "text": "An immobile, shimmering barrier appears in a 10-foot Emanation around you and remains for the duration.\nAny spell of level 5 or lower cast from outside the barrier can’t affect anything within it. Such a spell can target creatures and objects within the barrier, but the spell has no effect on them. Similarly, the area within the barrier is excluded from areas of effect created by such spells.\nUsing a Higher-Level Spell Slot. The barrier blocks spells of 1 level higher for each spell slot level above 6.",
    "page": 136
   },
   {
@@ -2314,7 +2314,7 @@
    "range": "60 feet",
    "components": "V, S, M (a bit of pork rind or butter)",
    "duration": "1 minute",
-   "text": "Nonflammable grease covers the ground in a 10foot square centered on a point within range and turns it into Difficult Terrain for the duration.\nWhen the grease appears, each creature standing in its area must succeed on a Dexterity saving throw or have the Prone condition. A creature that enters the area or ends its turn there must also succeed on that save or fall Prone.",
+   "text": "Nonflammable grease covers the ground in a 10-foot square centered on a point within range and turns it into Difficult Terrain for the duration.\nWhen the grease appears, each creature standing in its area must succeed on a Dexterity saving throw or have the Prone condition. A creature that enters the area or ends its turn there must also succeed on that save or fall Prone.",
    "page": 137
   },
   {
@@ -2437,7 +2437,7 @@
    "range": "Touch",
    "components": "V, S, M (incense worth 1,000+ GP, which the spell consumes)",
    "duration": "Until dispelled",
-   "text": "You touch a point and infuse an area around it with holy or unholy power. The area can have a radius up to 60 feet, and the spell fails if the radius includes an area already under the effect of Hallow . The affected area has the following effects.\nHallowed Ward. Choose any of these creature types: Aberration, Celestial, Elemental, Fey, Fiend, or Undead. Creatures of the chosen types can’t willingly enter the area, and any creature that is possessed by or that has the Charmed or Frightened condition from such creatures isn’t possessed, Charmed, or Frightened by them while in the area.\nExtra Effect. You bind an extra effect to the area from the list below:\nCourage. Creatures of any types you choose can’t gain the Frightened condition while in the area.\nDarkness. Darkness fills the area. Normal light, as well as magical light created by spells of a level lower than this spell, can’t illuminate the area.\nDaylight. Bright light fills the area. Magical Darkness created by spells of a level lower than this spell can’t extinguish the light.\nPeaceful Rest. Dead bodies interred in the area can’t be turned into Undead.\nExtradimensional Interference. Creatures of any types you choose can’t enter or exit the area using teleportation or interplanar travel.\nFear. Creatures of any types you choose have the Frightened condition while in the area.\nResistance. Creatures of any types you choose have Resistance to one damage type of your choice while in the area.\nSilence. No sound can emanate from within the area, and no sound can reach into it.\nTongues. Creatures of any types you choose can communicate with any other creature in the area even if they don’t share a common language.\nVulnerability. Creatures of any types you choose have Vulnerability to one damage type of your choice while in the area.",
+   "text": "You touch a point and infuse an area around it with holy or unholy power. The area can have a radius up to 60 feet, and the spell fails if the radius includes an area already under the effect of Hallow. The affected area has the following effects.\nHallowed Ward. Choose any of these creature types: Aberration, Celestial, Elemental, Fey, Fiend, or Undead. Creatures of the chosen types can’t willingly enter the area, and any creature that is possessed by or that has the Charmed or Frightened condition from such creatures isn’t possessed, Charmed, or Frightened by them while in the area.\nExtra Effect. You bind an extra effect to the area from the list below:\nCourage. Creatures of any types you choose can’t gain the Frightened condition while in the area.\nDarkness. Darkness fills the area. Normal light, as well as magical light created by spells of a level lower than this spell, can’t illuminate the area.\nDaylight. Bright light fills the area. Magical Darkness created by spells of a level lower than this spell can’t extinguish the light.\nPeaceful Rest. Dead bodies interred in the area can’t be turned into Undead.\nExtradimensional Interference. Creatures of any types you choose can’t enter or exit the area using teleportation or interplanar travel.\nFear. Creatures of any types you choose have the Frightened condition while in the area.\nResistance. Creatures of any types you choose have Resistance to one damage type of your choice while in the area.\nSilence. No sound can emanate from within the area, and no sound can reach into it.\nTongues. Creatures of any types you choose can communicate with any other creature in the area even if they don’t share a common language.\nVulnerability. Creatures of any types you choose have Vulnerability to one damage type of your choice while in the area.",
    "page": 138
   },
   {
@@ -2779,7 +2779,7 @@
    "range": "150 feet",
    "components": "V, S",
    "duration": "Concentration, up to 1 minute",
-   "text": "A swirling cloud of embers and smoke fills a 20-foot-radius Sphere centered on a point within range. The cloud’s area is Heavily Obscured. It lasts for the duration or until a strong wind (like that created by Gust of Wind ) disperses it.\nWhen the cloud appears, each creature in it makes a Dexterity saving throw, taking 10d8 Fire damage on a failed save or half as much damage on a successful one. A creature must also make this save when the Sphere moves into its space and when it enters the Sphere or ends its turn there. A creature makes this save only once per turn.\nThe cloud moves 10 feet away from you in a direction you choose at the start of each of your turns.",
+   "text": "A swirling cloud of embers and smoke fills a 20-foot-radius Sphere centered on a point within range. The cloud’s area is Heavily Obscured. It lasts for the duration or until a strong wind (like that created by Gust of Wind) disperses it.\nWhen the cloud appears, each creature in it makes a Dexterity saving throw, taking 10d8 Fire damage on a failed save or half as much damage on a successful one. A creature must also make this save when the Sphere moves into its space and when it enters the Sphere or ends its turn there. A creature makes this save only once per turn.\nThe cloud moves 10 feet away from you in a direction you choose at the start of each of your turns.",
    "page": 142
   },
   {
@@ -2888,7 +2888,7 @@
    "range": "60 feet",
    "components": "V",
    "duration": "Instantaneous",
-   "text": "Choose an object that you can see within range. The object can be a door, a box, a chest, a set of manacles, a padlock, or another object that contains a mundane or magical means that prevents access.\nA target that is held shut by a mundane lock or that is stuck or barred becomes unlocked, unstuck, or unbarred. If the object has multiple locks, only one of them is unlocked.\nIf the target is held shut by Arcane Lock , that spell is suppressed for 10 minutes, during which time the target can be opened and closed.\nWhen you cast the spell, a loud knock, audible up to 300 feet away, emanates from the target.",
+   "text": "Choose an object that you can see within range. The object can be a door, a box, a chest, a set of manacles, a padlock, or another object that contains a mundane or magical means that prevents access.\nA target that is held shut by a mundane lock or that is stuck or barred becomes unlocked, unstuck, or unbarred. If the object has multiple locks, only one of them is unlocked.\nIf the target is held shut by Arcane Lock, that spell is suppressed for 10 minutes, during which time the target can be opened and closed.\nWhen you cast the spell, a loud knock, audible up to 300 feet away, emanates from the target.",
    "page": 143
   },
   {
@@ -3783,7 +3783,7 @@
    "range": "60 feet",
    "components": "V, S",
    "duration": "10 minutes",
-   "text": "A shimmering, multicolored plane of light forms a vertical opaque wall—up to 90 feet long, 30 feet high, and 1 inch thick—centered on a point within range. Alternatively, you shape the wall into a globe up to 30 feet in diameter centered on a point within range. The wall lasts for the duration. If you position the wall in a space occupied by a creature, the spell ends instantly without effect.\nThe wall sheds Bright Light within 100 feet and Dim Light for an additional 100 feet. You and creatures you designate when you cast the spell can pass through and be near the wall without harm. If another creature that can see the wall moves within 20 feet of it or starts its turn there, the creature must succeed on a Constitution saving throw or have the Blinded condition for 1 minute.\nThe wall consists of seven layers, each with a different color. When a creature reaches into or passes through the wall, it does so one layer at a time through all the layers. Each layer forces the creature to make a Dexterity saving throw or be affected by that layer’s properties as described in the Prismatic Layers table.\nThe wall, which has AC 10, can be destroyed one layer at a time, in order from red to violet, by means specific to each layer. If a layer is destroyed, it is gone for the duration. Antimagic Field has no effect on the wall, and Dispel Magic can affect only the violet layer.\nPrismatic Layers\nOrder Effects\n1 Red. Failed Save: 12d6 Fire damage. Successful\nSave: Half as much damage. Additional Effects :\nNonmagical ranged attacks can’t pass through\nthis layer, which is destroyed if it takes at\nleast 25 Cold damage.\n2 Orange. Failed Save: 12d6 Acid damage. Successful Save: Half as much damage. Additional\nEffects: Magical ranged attacks can’t pass\nthrough this layer, which is destroyed by a\nstrong wind (such as the one created by Gust\nof Wind).\n3 Yellow. Failed Save: 12d6 Lightning damage.\nSuccessful Save: Half as much damage. Additional Effects: The layer is destroyed if it takes\nat least 60 Force damage.\n4 Green. Failed Save: 12d6 Poison damage. Successful Save: Half as much damage. Additional\nEffects: A Passwall spell, or another spell of\nequal or greater level that can open a portal\non a solid surface, destroys this layer.\n5 Blue. Failed Save: 12d6 Cold damage. Successful Save: Half as much damage. Additional Effects: The layer is destroyed if it takes at least\n25 Fire damage.\n6 Indigo. Failed Save: The target has the Restrained condition and makes a Constitution\nsaving throw at the end of each of its turns. If\nit successfully saves three times, the condition\nends. If it fails three times, it has the Petrified\ncondition until it is freed by an effect like the\nGreater Restoration spell. The successes and\nfailures needn’t be consecutive; keep track of\nboth until the target collects three of a kind.\nAdditional Effects: Spells can’t be cast through\nthis layer, which is destroyed by Bright Light\nshed by the Daylight spell.\n7 Violet. Failed Save: The target has the Blinded\ncondition and makes a Wisdom saving throw\nat the start of your next turn. On a successful\nsave, the condition ends. On a failed save, the\ncondition ends, and the creature teleports\nto another plane of existence (GM’s choice).\nAdditional Effects: This layer is destroyed by\nDispel Magic.",
+   "text": "A shimmering, multicolored plane of light forms a vertical opaque wall—up to 90 feet long, 30 feet high, and 1 inch thick—centered on a point within range. Alternatively, you shape the wall into a globe up to 30 feet in diameter centered on a point within range. The wall lasts for the duration. If you position the wall in a space occupied by a creature, the spell ends instantly without effect.\nThe wall sheds Bright Light within 100 feet and Dim Light for an additional 100 feet. You and creatures you designate when you cast the spell can pass through and be near the wall without harm. If another creature that can see the wall moves within 20 feet of it or starts its turn there, the creature must succeed on a Constitution saving throw or have the Blinded condition for 1 minute.\nThe wall consists of seven layers, each with a different color. When a creature reaches into or passes through the wall, it does so one layer at a time through all the layers. Each layer forces the creature to make a Dexterity saving throw or be affected by that layer’s properties as described in the Prismatic Layers table.\nThe wall, which has AC 10, can be destroyed one layer at a time, in order from red to violet, by means specific to each layer. If a layer is destroyed, it is gone for the duration. Antimagic Field has no effect on the wall, and Dispel Magic can affect only the violet layer.\nPrismatic Layers\nOrder Effects\n1 Red. Failed Save: 12d6 Fire damage. Successful\nSave: Half as much damage. Additional Effects:\nNonmagical ranged attacks can’t pass through\nthis layer, which is destroyed if it takes at\nleast 25 Cold damage.\n2 Orange. Failed Save: 12d6 Acid damage. Successful Save: Half as much damage. Additional\nEffects: Magical ranged attacks can’t pass\nthrough this layer, which is destroyed by a\nstrong wind (such as the one created by Gust\nof Wind).\n3 Yellow. Failed Save: 12d6 Lightning damage.\nSuccessful Save: Half as much damage. Additional Effects: The layer is destroyed if it takes\nat least 60 Force damage.\n4 Green. Failed Save: 12d6 Poison damage. Successful Save: Half as much damage. Additional\nEffects: A Passwall spell, or another spell of\nequal or greater level that can open a portal\non a solid surface, destroys this layer.\n5 Blue. Failed Save: 12d6 Cold damage. Successful Save: Half as much damage. Additional Effects: The layer is destroyed if it takes at least\n25 Fire damage.\n6 Indigo. Failed Save: The target has the Restrained condition and makes a Constitution\nsaving throw at the end of each of its turns. If\nit successfully saves three times, the condition\nends. If it fails three times, it has the Petrified\ncondition until it is freed by an effect like the\nGreater Restoration spell. The successes and\nfailures needn’t be consecutive; keep track of\nboth until the target collects three of a kind.\nAdditional Effects: Spells can’t be cast through\nthis layer, which is destroyed by Bright Light\nshed by the Daylight spell.\n7 Violet. Failed Save: The target has the Blinded\ncondition and makes a Wisdom saving throw\nat the start of your next turn. On a successful\nsave, the condition ends. On a failed save, the\ncondition ends, and the creature teleports\nto another plane of existence (GM’s choice).\nAdditional Effects: This layer is destroyed by\nDispel Magic.",
    "page": 155
   },
   {
@@ -4078,7 +4078,7 @@
    "range": "100 feet",
    "components": "V, S, M (a lodestone and iron filings)",
    "duration": "Concentration, up to 1 minute",
-   "text": "This spell reverses gravity in a 50-foot-radius, 100foot high Cylinder centered on a point within range. All creatures and objects in that area that aren’t anchored to the ground fall upward and reach the top of the Cylinder. A creature can make a Dexterity saving throw to grab a fixed object it can reach, thus avoiding the fall upward.\nIf a ceiling or an anchored object is encountered in this upward fall, creatures and objects strike it just as they would during a downward fall. If an affected creature or object reaches the Cylinder’s top without striking anything, it hovers there for the duration. When the spell ends, affected objects and creatures fall downward.",
+   "text": "This spell reverses gravity in a 50-foot-radius, 100-foot high Cylinder centered on a point within range. All creatures and objects in that area that aren’t anchored to the ground fall upward and reach the top of the Cylinder. A creature can make a Dexterity saving throw to grab a fixed object it can reach, thus avoiding the fall upward.\nIf a ceiling or an anchored object is encountered in this upward fall, creatures and objects strike it just as they would during a downward fall. If an affected creature or object reaches the Cylinder’s top without striking anything, it hovers there for the duration. When the spell ends, affected objects and creatures fall downward.",
    "page": 159
   },
   {
@@ -4180,7 +4180,7 @@
    "classes": [
     "Paladin"
    ],
-   "casting_time": "Bonus Action, which you take immedi - ately after hitting a target with a Melee weapon or an Unarmed Strike",
+   "casting_time": "Bonus Action, which you take immedi- ately after hitting a target with a Melee weapon or an Unarmed Strike",
    "range": "Self",
    "components": "V",
    "duration": "1 minute",
@@ -4196,7 +4196,7 @@
    ],
    "casting_time": "Action",
    "range": "Touch",
-   "components": "V, S, M (a chest, 3 feet by 2 feet by 2 feet, constructed from rare materials worth 5,000+ GP, and a Tiny replica of the chest made from the same materi - als worth 50+ GP)",
+   "components": "V, S, M (a chest, 3 feet by 2 feet by 2 feet, constructed from rare materials worth 5,000+ GP, and a Tiny replica of the chest made from the same materi- als worth 50+ GP)",
    "duration": "Until dispelled",
    "text": "You hide a chest and all its contents on the Ethereal Plane. You must touch the chest and the miniature replica that serve as Material components for the spell. The chest can contain up to 12 cubic feet of nonliving material (3 feet by 2 feet by 2 feet).\nWhile the chest remains on the Ethereal Plane, you can take a Magic action and touch the replica to recall the chest. It appears in an unoccupied space on the ground within 5 feet of you. You can send the chest back to the Ethereal Plane by taking a Magic action to touch the chest and the replica.\nAfter 60 days, there is a cumulative 5 percent chance at the end of each day that the spell ends. The spell also ends if you cast this spell again or if the Tiny replica chest is destroyed. If the spell ends and the larger chest is on the Ethereal Plane, the chest remains there for you or someone else to find.",
    "page": 160
@@ -4306,7 +4306,7 @@
    "range": "Self",
    "components": "V, S",
    "duration": "1 round",
-   "text": "An imperceptible barrier of magical force protects you. Until the start of your next turn, you have a +5 bonus to AC, including against the triggering attack, and you take no damage from Magic Missile .",
+   "text": "An imperceptible barrier of magical force protects you. Until the start of your next turn, you have a +5 bonus to AC, including against the triggering attack, and you take no damage from Magic Missile.",
    "page": 161
   },
   {
@@ -4345,7 +4345,7 @@
    "classes": [
     "Paladin"
    ],
-   "casting_time": "Bonus Action, which you take immedi - ately after hitting a creature with a Melee weapon or an Unarmed Strike",
+   "casting_time": "Bonus Action, which you take immedi- ately after hitting a creature with a Melee weapon or an Unarmed Strike",
    "range": "Self",
    "components": "V",
    "duration": "Concentration, up to 1 minute",
@@ -4626,7 +4626,7 @@
    "range": "90 feet",
    "components": "V, S, M (a rotten egg)",
    "duration": "Concentration, up to 1 minute",
-   "text": "You create a 20-foot-radius Sphere of yellow, nauseating gas centered on a point within range. The cloud is Heavily Obscured. The cloud lingers in the air for the duration or until a strong wind (such as the one created by Gust of Wind ) disperses it.\nEach creature that starts its turn in the Sphere must succeed on a Constitution saving throw or have the Poisoned condition until the end of the current turn. While Poisoned in this way, the creature can’t take an action or a Bonus Action.",
+   "text": "You create a 20-foot-radius Sphere of yellow, nauseating gas centered on a point within range. The cloud is Heavily Obscured. The cloud lingers in the air for the duration or until a strong wind (such as the one created by Gust of Wind) disperses it.\nEach creature that starts its turn in the Sphere must succeed on a Constitution saving throw or have the Poisoned condition until the end of the current turn. While Poisoned in this way, the creature can’t take an action or a Bonus Action.",
    "page": 165
   },
   {
@@ -4990,7 +4990,7 @@
    ],
    "casting_time": "Action",
    "range": "Self",
-   "components": "S, M (a weapon with which you have profi - ciency and that is worth 1+ CP)",
+   "components": "S, M (a weapon with which you have profi- ciency and that is worth 1+ CP)",
    "duration": "Instantaneous",
    "text": "Guided by a flash of magical insight, you make one attack with the weapon used in the spell’s casting. The attack uses your spellcasting ability for the attack and damage rolls instead of using Strength or Dexterity. If the attack deals damage, it can be Radiant damage or the weapon’s normal damage type (your choice).\nCantrip Upgrade. Whether you deal Radiant damage or the weapon’s normal damage type, the attack deals extra Radiant damage when you reach levels 5 (1d6), 11 (2d6), and 17 (3d6).",
    "page": 171

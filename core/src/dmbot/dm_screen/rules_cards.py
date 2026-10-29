@@ -29,11 +29,11 @@ from typing import Any
 import discord
 
 from dmbot.rules import index
+from dmbot.rules.homebrew_spotter import HomebrewMention
 from dmbot.rules.spotter import Mention, Spotter
 
 log = logging.getLogger(__name__)
 
-NO_PINGS = discord.AllowedMentions.none()
 GAP_S = 60.0  # at most one card in this many seconds, whichever names are said
 CLOSED = (
     "These buttons stopped working (the session ended or DMbot restarted). To look "
@@ -72,7 +72,9 @@ class RulesCards:
     last_at: float | None = None
     shown: dict[str, Shown] = field(default_factory=dict)
 
-    def pick(self, mentions: Iterable[Mention], now: float) -> Mention | None:
+    def pick(
+        self, mentions: Iterable[Mention | HomebrewMention], now: float
+    ) -> Mention | HomebrewMention | None:
         """The one name to show a card for, if any: not within a minute of the last card
         (the rest are dropped, never queued), and not a name shown or ignored already."""
         if self.last_at is not None and now - self.last_at < GAP_S:
@@ -82,12 +84,12 @@ class RulesCards:
                 return mention
         return None
 
-    def remember(self, mention: Mention, now: float) -> str:
+    def remember(self, mention: Mention | HomebrewMention, now: float) -> str:
         """The card is going up: count it, and give it an id for its buttons."""
         self.seen.add(mention.key)
         self.last_at = now
         card_id = uuid.uuid4().hex[:8]
-        self.shown[card_id] = Shown(mention.entry.kind, mention.entry.name, mention.said, now)
+        self.shown[card_id] = Shown(mention.kind, mention.name, mention.said, now)
         return card_id
 
     def forget(self, card_id: str, last_at: float | None) -> None:

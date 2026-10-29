@@ -21,8 +21,31 @@ QUESTION = "question"  # "Did they mean…?" and other questions during play
 FIX_NOTE = "fix_note"  # ✏️ Name fixes to check (fixes DMbot isn't sure of, with Undo)
 ALERT = "alert"  # something the DM must know: always shown
 NOTICE = "notice"  # things DMbot noticed: chatty only (nothing uses it yet)
+# A quiet reminder, not a warning (TimeBot's "where are we", #1738): unlike the rules cards it
+# is governed by the level, because nothing is wrong if it is missed. None on Quiet, every
+# half hour on Normal, every quarter hour on Chatty.
+REMINDER = "reminder"
+# A live heads-up (a character confirmed dead is voiced, #2068): none on Quiet, which means "only
+# what you ask for" (docs/STORY_MEMORY.md, section 4).
+WARNING = "warning"
+REMINDER_GAP_S: dict[str, float | None] = {QUIET: None, NORMAL: 1800.0, CHATTY: 900.0}
 
-_LOWEST = {ALERT: QUIET, QUESTION: NORMAL, FIX_NOTE: NORMAL, NOTICE: CHATTY}
+_LOWEST = {
+    ALERT: QUIET,
+    QUESTION: NORMAL,
+    FIX_NOTE: NORMAL,
+    NOTICE: CHATTY,
+    REMINDER: NORMAL,
+    WARNING: NORMAL,
+}
+
+
+def reminder_gap_s(level: str) -> float | None:
+    """Real seconds between reminders at this level, or None for no reminders. An unknown
+    level counts as Normal, like `allows`."""
+    return REMINDER_GAP_S.get(level, REMINDER_GAP_S[NORMAL])
+
+
 _ORDER = (QUIET, NORMAL, CHATTY)
 
 

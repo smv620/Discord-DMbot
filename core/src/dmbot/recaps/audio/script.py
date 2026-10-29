@@ -18,8 +18,9 @@ import re
 from collections.abc import Collection
 from dataclasses import dataclass
 
-from dmbot.memory.models import name_key
+from dmbot.recaps import fixed_lines
 from dmbot.recaps.text import CUE, PERFORMANCE
+from dmbot.secrets_match import secret_rule as matcher
 
 MAX_CHARS = 4000  # one request's limit for the voice
 NEIGHBOUR_CHARS = 300  # how much of the next or the last paragraph the voice is shown
@@ -38,8 +39,39 @@ _PERFORMANCE_TAGS = {
     "hushed": "[whispers]",
     "whisper": "[whispers]",
     "sigh": "[sighs]",
+    "whispered": "[whispers]",
 }
+PERFORMANCE_WORDS = tuple(_PERFORMANCE_TAGS)  # the pacing words the cue check allows
 SCENE_BREAK_TAG = "[long pause]"
+CLOSING_PAUSE_TAG = "[long pause]"  # before the closing line (owner, 2026-10-24, #2627)
+
+# The voice's delivery tag for each mood the music has a style for (#1983), keyed by the music
+# table's own words (`music.style_key` maps a cue's word, synonyms included, to them). Fixed on
+# purpose, as the music table is: only a value from this table is ever sent to the voice, never
+# a word a model or a player wrote. "" is an explicit "music only" (the voice stays as it is).
+# The tags are Eleven v3's square-bracket audio tags. NOT checked against ElevenLabs' tag list
+# from the build machine (no network there): the starting map is the issue's, and the switch
+# `DMBOT_RECAP_VOICE_TAGS=0` exists so dev1 can compare by ear and correct a tag the model ignores.
+EMOTION_VOICE: dict[str, str] = {
+    "tense": "[urgently]",
+    "urgent": "[urgently]",
+    "battle": "[urgently]",
+    "somber": "[sadly]",
+    "sorrowful": "[sadly]",
+    "melancholy": "[sadly]",
+    "hopeful": "[softly]",
+    "tender": "[softly]",
+    "triumphant": "[confidently]",
+    "defiant": "[confidently]",
+    "mysterious": "[quietly]",
+    "eerie": "[quietly]",
+    "ominous": "[quietly]",
+    "dread": "[quietly]",
+    "playful": "[playfully]",
+    "wonder": "[in awe]",
+    "calm": "",  # the narrator's own voice is calm already
+    "grim": "",  # no tag chosen for it yet: music only
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,6 +91,7 @@ class Paragraph:
     previous_text: str
     next_text: str
     cues: tuple[Cue, ...]
+    closing: bool = False  # the recap's closing line: said after a long pause (#2627)
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,15 +114,36 @@ def title_line(title: str, day: int | None) -> str:
     return f"Session Summary: {clean}" + (f", Day {day}" if day else "")
 
 
-def _walk(block: str) -> tuple[str, str, list[tuple[int, int, str, str, str]]]:
-    """One block of the summary as (spoken, tagged, cues). A cue is (spoken offset, tagged
-    offset, kind, name, tag); offsets are within this block. Taking a cue out never leaves a
-    double space or a space before a comma or full stop, and the offsets are counted on the
-    text as it ends up."""
+def _mood_tag(name: str, mood: str, emotion_tags: bool) -> tuple[str, str]:
+    """(the voice tag for an emotion cue, the mood the narration is now in). Whisper and sigh are
+    always tags. Another mood's tag (`EMOTION_VOICE`) is sent when `emotion_tags` is on, and only
+    where the mood changes: a cue that repeats the mood the narration is already in ("tense" then
+    "tension") adds none, so the voice is not overdone. An unknown word has no mood and no tag."""
+    from dmbot.recaps.audio import music  # (music imports this module: late)
+
+    fixed = _EMOTION_TAGS.get(name, "")
+    if fixed:
+        return fixed, mood
+    key = music.style_key(name)
+    if not key:
+        return "", mood
+    if not emotion_tags or key == mood:
+        return "", key
+    return EMOTION_VOICE.get(key, ""), key
+
+
+def _walk(
+    block: str, mood: str = "", emotion_tags: bool = True
+) -> tuple[str, str, list[tuple[int, int, str, str, str]], str]:
+    """One block of the summary as (spoken, tagged, cues, the mood it ends in). A cue is (spoken
+    offset, tagged offset, kind, name, tag); offsets are within this block. Taking a cue out
+    never leaves a double space or a space before a comma or full stop, and the offsets are
+    counted on the text as it ends up. `mood` is the one the narration was in before this block."""
     block = re.sub(r"\s+", " ", block).strip()
     spoken = ""
     tagged = ""
     cues: list[list[object]] = []
+    before = mood  # the mood before the latest cue, to undo a tag with nothing after it
     pos = 0
     pattern = re.compile(f"{CUE.pattern}|{PERFORMANCE.pattern}")
     for match in [*pattern.finditer(block), None]:
@@ -110,14 +164,23 @@ def _walk(block: str) -> tuple[str, str, list[tuple[int, int, str, str, str]]]:
         raw = match.group(0)
         if raw.startswith("《"):
             kind, name = EMOTION, raw[1:-1].strip().lower()
-            tag = _EMOTION_TAGS.get(name, "")
+            before = mood
+            tag, mood = _mood_tag(name, mood, emotion_tags)
         else:
-            kind, name = PERFORMANCE_KIND, raw[2:-2].strip().lower()
+            kind, name = PERFORMANCE_KIND, " ".join(raw[2:-2].lower().split())  # (spaces folded)
             tag = _PERFORMANCE_TAGS.get(name, "")
         cues.append([len(spoken), len(tagged), kind, name, tag])
         if tag:
             tagged += tag + " "
         pos = match.end()
+    if cues and cues[-1][2] == EMOTION and cues[-1][4] in EMOTION_VOICE.values():
+        tail = str(cues[-1][4])
+        if tagged.endswith(tail + " "):
+            # A mood tag with no words after it would be read to nothing, and would count as sent:
+            # leave it out and leave the mood as it was, so the next cue of that mood sends it.
+            tagged = tagged[: -len(tail) - 1]
+            cues[-1][4] = ""
+            mood = before
     spoken, tagged = spoken.strip(), tagged.strip()
     return (  # a cue at the very end sits at the end of the trimmed text, not past it
         spoken,
@@ -132,6 +195,7 @@ def _walk(block: str) -> tuple[str, str, list[tuple[int, int, str, str, str]]]:
             )
             for c in cues
         ],
+        mood,
     )
 
 
@@ -151,14 +215,22 @@ def _blocks(summary: str) -> list[tuple[str, bool]]:
 
 
 class SecretInScript(ValueError):
-    """A secret name stands in the text meant for the voice (the caller must not send it)."""
+    """A secret name stands in the text meant for the voice (the caller must not send it).
+    `rule` says which check found it, as a fixed word and never the name: `whole-name`, `word`
+    or `run-together`."""
+
+    def __init__(self, message: str, rule: str = "") -> None:
+        super().__init__(message)
+        self.rule = rule
 
 
-def _holds(text: str, secret_keys: Collection[str]) -> bool:
-    """Whether a secret name is in the text, however it is joined to other letters (a possessive,
-    a plural, a hyphen): a leak costs far more than a false alarm."""
-    compact = name_key(text).replace(" ", "")
-    return any(key and key in compact for key in secret_keys)
+def secret_rule(text: str, secret_names: Collection[str], allowed_names: Collection[str]) -> str:
+    """Which rule finds a secret name in the text meant for the voice, or "" for none. It is the
+    one shared matcher (`dmbot.secrets_match`), the very one the recap text's own check uses, so
+    the two locks can never disagree about a name (#2050, #2087): the whole name with its
+    differences (case, articles, endings, titles, accents, hyphens), the name run together at
+    word edges ("WhiteDeath"), or several secret names glued into one word ("RaeAegis")."""
+    return matcher(text, secret_names, allowed_names)
 
 
 def _chunks(block: str, room: int) -> list[str]:
@@ -199,25 +271,36 @@ def _chunks(block: str, room: int) -> list[str]:
 
 
 def build(
-    title: str, day: int | None, summary: str, *, secret_names: Collection[str] = ()
+    title: str,
+    day: int | None,
+    summary: str,
+    *,
+    secret_names: Collection[str] = (),
+    allowed_names: Collection[str] = (),
+    emotion_tags: bool = True,
 ) -> Script:
     """The script for one recap: the title line, then each paragraph of the summary. Housekeeping
     is not an input, so it can never be read. `secret_names`: if any stands in the title, the
     summary or a cue, `SecretInScript` is raised (the recap's own checks already refuse such a
-    summary; this is the second lock, because what is built here goes to a provider)."""
-    keys = {k for n in secret_names if len(k := name_key(n).replace(" ", "")) >= 3}
-    if keys and _holds(f"{title} {summary}", keys):
-        raise SecretInScript("a secret name is in the recap text")
+    summary; this is the second lock, because what is built here goes to a provider).
+    `allowed_names`: the confirmed names, which a secret name's word may share, as in the recap's
+    own check, so the two locks agree.
+    `emotion_tags`: send the voice a delivery tag where the mood changes (`EMOTION_VOICE`, #1983);
+    False sends only whisper, sigh and the pauses, for comparing by ear."""
+    if rule := secret_rule(f"{title} {summary}", secret_names, allowed_names):
+        raise SecretInScript("a secret name is in the recap text", rule)
     pieces: list[tuple[str, str, list[tuple[int, int, str, str, str]]]] = []
     head = title_line(title, day)
     pieces.append((head, head, []))
     room = MAX_CHARS - len(SCENE_BREAK_TAG) - 1  # a scene break's tag is added to the last part
+    mood = ""  # the mood the narration is in; a tag is sent where it changes
     for block, scene_break in _blocks(summary):
         parts = _chunks(block, room)
         for i, part in enumerate(parts):
-            spoken, tagged, cues = _walk(part)
+            spoken, tagged, cues, after = _walk(part, mood, emotion_tags)
             if not spoken.strip():
-                continue
+                continue  # (a cue alone in a paragraph says nothing: its mood is not taken)
+            mood = after
             if i == len(parts) - 1 and scene_break:
                 tagged = f"{tagged} {SCENE_BREAK_TAG}"
             pieces.append((spoken, tagged, cues))
@@ -227,8 +310,15 @@ def build(
     for i, (sp, tg, cs) in enumerate(pieces):
         prev_text = pieces[i - 1][0][-NEIGHBOUR_CHARS:] if i > 0 else ""
         next_text = pieces[i + 1][0][:NEIGHBOUR_CHARS] if i + 1 < len(pieces) else ""
-        cue_tuple = tuple(Cue(cursor + o, to, k, n, t) for o, to, k, n, t in cs)
-        paragraphs.append(Paragraph(sp, tg, cursor, prev_text, next_text, cue_tuple))
+        shift = 0
+        closing = i == len(pieces) - 1 and i > 0 and fixed_lines.is_closing(sp)
+        if closing:
+            # The closing line is said after a dramatic pause (#2627): the tag asks the voice for
+            # it, and the render adds silence before it (`CLOSING_GAP_SECONDS`).
+            tg = f"{CLOSING_PAUSE_TAG} {tg}"
+            shift = len(CLOSING_PAUSE_TAG) + 1  # (the voice's timestamps count the tag)
+        cue_tuple = tuple(Cue(cursor + o, to + shift, k, n, t) for o, to, k, n, t in cs)
+        paragraphs.append(Paragraph(sp, tg, cursor, prev_text, next_text, cue_tuple, closing))
         spoken_all.append(sp)
         cursor += len(sp) + 2  # the blank line between paragraphs
     return Script(tuple(paragraphs), "\n\n".join(spoken_all))

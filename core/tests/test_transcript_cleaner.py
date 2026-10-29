@@ -722,6 +722,51 @@ class CharactersTest(unittest.TestCase):
         self.assertIsNone(own_name(names, MARRON))
 
 
+class DmWords(unittest.TestCase):
+    """DM, GM, Dungeon Master and Game Master are never a target or a source of a fix (#1547)."""
+
+    def test_an_old_name_row_of_a_dm_word_is_never_a_target(self) -> None:
+        old = CampaignLookup.build(
+            LookupData(
+                1,
+                (entity(CERRIC, "Cerric"),),
+                (alias(CERRIC, "Cerric"), alias(CERRIC, "Dungeon Master")),
+                (),
+                (),
+            )
+        )
+        self.assertNotIn("dungeon master", old.by_key)
+        for line in ("Then Dungeon Master spoke.", "Then Dungeon Masters spoke."):
+            self.assertEqual(clean(old, line, scene=(CERRIC,)).fixes, ())
+
+    def test_a_dms_rule_never_turns_a_dm_word_into_a_name(self) -> None:
+        rule = CampaignLookup.build(
+            LookupData(
+                1,
+                (entity(CERRIC, "Cerric"),),
+                (alias(CERRIC, "Cerric"),),
+                (correction("GM", CERRIC, FIX),),
+                (),
+            )
+        )
+        for line in ("Then the GM spoke.", "Then GM spoke."):
+            self.assertEqual(clean(rule, line, scene=(CERRIC,)).fixes, ())
+
+    def test_a_dm_word_is_left_as_heard_even_next_to_a_name_it_sounds_like(self) -> None:
+        look = CampaignLookup.build(
+            LookupData(
+                1,
+                (entity(CERRIC, "Dungeon Marsh"),),
+                (alias(CERRIC, "Dungeon Marsh"),),
+                (),
+                (),
+            )
+        )
+        for line in ("Then Dungeon Master spoke.", "Then Game Master spoke.", "Then GM spoke."):
+            got = clean(look, line, scene=(CERRIC,))
+            self.assertEqual((got.text, got.fixes), (line, ()))
+
+
 class TablePeople(unittest.TestCase):
     """People at the table are in the lookup for the Cleaner only (#1208): it fixes a
     person's spelling and never maps between a person and a character."""

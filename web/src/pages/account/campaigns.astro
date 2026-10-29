@@ -1,0 +1,19 @@
+---
+import CampaignIsland from "../../account/CampaignIsland";
+import Base from "../../layouts/Base.astro";
+import "../../styles/account.css";
+---
+
+<Base
+  title="Campaign"
+  description="One campaign: its recaps, house rules, homebrew, story map, names and transcripts in one place."
+  noindex
+>
+  <div class="account">
+    <h1>Campaign</h1>
+    <CampaignIsland client:load />
+    <noscript>
+      <p>This page needs JavaScript to show the campaign. Turn it on, then reload the page.</p>
+    </noscript>
+  </div>
+</Base>

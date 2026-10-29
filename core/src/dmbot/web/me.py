@@ -8,6 +8,7 @@ other campaigns, and servers the person isn't in, are never read.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 
@@ -46,10 +47,51 @@ def _recap_audio_view(
     )
 
 
+def _facts_of(fact: dict[str, Any] | None) -> dict[str, Any]:
+    """The card's facts (#2460) as the page reads them; a fact that is missing or zero is left out,
+    so the card does not say "0 sessions" for a campaign nobody has played yet."""
+    if fact is None:
+        return {}
+    out: dict[str, Any] = {}
+    if fact.get("live"):
+        out["live"] = True
+    if fact.get("sessions"):
+        out["sessions"] = int(fact["sessions"])
+    seconds = int(fact.get("secondsPlayed") or 0)
+    if seconds > 0:
+        # Two decimals, so a short test session is not rounded away to nothing; the page says
+        # "Under 1 hour played" for it and rounds the rest.
+        out["hoursPlayed"] = round(seconds / 3600, 2)
+    if fact.get("players"):
+        out["players"] = int(fact["players"])
+    if fact.get("npcs"):
+        out["npcs"] = int(fact["npcs"])
+    if fact.get("startedAt"):
+        out["startedAt"] = _iso_time(int(fact["startedAt"]))
+    return out
+
+
 def _iso_time(seconds: int | None) -> str | None:
     if seconds is None:
         return None
     return datetime.fromtimestamp(seconds, UTC).isoformat().replace("+00:00", "Z")
+
+
+def _plan_state(plan: entitlements.Entitlement, now: int) -> dict[str, Any]:
+    """The plan line's state and its dates (#2165). Dates are ISO days; the page words them."""
+    expired = plan.status == "lapsed" or (plan.status == "active" and not plan.usable(now))
+    if expired:
+        ended = plan.lapsed_at or plan.ends_at or plan.period_end
+        return {"state": "expired", "endedOn": _iso_date(ended)}
+    if plan.ends_at is not None:
+        return {"state": "ending"}
+    if plan.next_plan and plan.next_plan != plan.plan and plan.next_plan_on is not None:
+        return {
+            "state": "changing",
+            "nextPlan": plan.next_plan,
+            "nextPlanOn": _iso_date(plan.next_plan_on),
+        }
+    return {"state": "active"}
 
 
 def _iso_date(seconds: int | None) -> str | None:
@@ -59,7 +101,12 @@ def _iso_date(seconds: int | None) -> str | None:
 
 
 async def build_me(
-    db: Database, session: Session, *, now: int, recap_audio_for_sale: bool = False
+    db: Database,
+    session: Session,
+    *,
+    now: int,
+    recap_audio_for_sale: bool = False,
+    imports_for: Callable[[int], bool] = lambda guild_id: False,
 ) -> dict[str, Any]:
     plan, grant, access = await entitlements.plan_grant_access(db, session.user_id, now)
     # The month whose hours count now (None: no meter), and the minutes used in it, read through
@@ -71,6 +118,7 @@ async def build_me(
     incoming: list[dict[str, Any]] = []
     recording: list[dict[str, Any]] = []
     outgoing: list[dict[str, Any]] = []
+    emailed: dict[str, dict[str, Any]] = {}  # campaign ref -> its open offer by email (#2532)
     names = {g.id: g.name for g in session.guilds}  # for the installs list below
     plan_works = plan is not None and plan.usable(now) and plan.status != "lapsed"
 
@@ -97,7 +145,7 @@ async def build_me(
                 # next time anyone touches it, but has already ended.
                 offered = await conn.execute(
                     "SELECT o.id, o.campaign_id, c.name, o.to_user_id, o.from_name,"
-                    " o.to_name, o.created_at FROM campaign_handover_offers o"
+                    " o.to_name, o.created_at, o.via_email FROM campaign_handover_offers o"
                     " JOIN campaigns c ON c.id = o.campaign_id AND c.guild_id = o.guild_id"
                     " WHERE o.guild_id = %(g)s AND o.status = 'open'"
                     "   AND o.created_at + %(days)s > %(now)s"
@@ -122,12 +170,28 @@ async def build_me(
                         " EXISTS (SELECT 1 FROM campaigns WHERE guild_id = %(g)s) AS played",
                         {"g": guild.id},
                     )
-                pending.append((guild, mine, offered, here, agreed))
-        for guild, mine, offered, here, agreed in pending:
+                # The facts on each card (#2460): one read for the whole server.
+                facts = await conn.execute("SELECT dmbot_web_campaign_facts(%s) AS f", (guild.id,))
+                # Whether DMbot is still in the server (#2554): a left server keeps its campaigns
+                # but nothing in Discord can be done there. No record of an install counts as in.
+                reach = await conn.execute(
+                    "SELECT (EXISTS (SELECT 1 FROM installs WHERE guild_id = %(g)s"
+                    "           AND left_at IS NULL)"
+                    "        OR NOT EXISTS (SELECT 1 FROM installs WHERE guild_id = %(g)s))"
+                    " AS reachable",
+                    {"g": guild.id},
+                )
+                pending.append((guild, mine, offered, here, agreed, facts, reach))
+        for guild, mine, offered, here, agreed, facts, reach in pending:
+            reachable = bool((await reach.fetchone() or {}).get("reachable", True))
+            found_facts = {str(f["id"]): f for f in ((await facts.fetchone() or {}).get("f") or [])}
             for row in await mine.fetchall():
                 campaigns.append(
                     {
                         "id": str(row["id"]),
+                        # The campaign's address, as the other pages' (`<server>.<campaign>`), so
+                        # the account page can link to the campaign's own page (#2416).
+                        "ref": f"{guild.id}.{row['id']}",
                         "name": row["name"],
                         "serverName": guild.name,
                         "lastPlayedAt": _iso_time(row["last_played_at"]),
@@ -137,10 +201,47 @@ async def build_me(
                         # before owners were recorded) is "co-dm" for everyone.
                         "status": "active",
                         "role": "owner" if row["owner_user_id"] == session.user_id else "co-dm",
+                        # Whether importing older sessions works in its server (#2259), so the
+                        # page shows the importer only where it does.
+                        "importsOn": imports_for(guild.id),
+                        "serverReachable": reachable,
+                        # The same rule as Discord's Delete (#1608, #2556): the owner, or any
+                        # game master while the campaign has no owner.
+                        "canDelete": row["owner_user_id"] in (session.user_id, None),
+                        **_facts_of(found_facts.get(str(row["id"]))),
+                    }
+                )
+            # Campaigns this person plays in but does not run (#2460): a card, no DM tools.
+            for fact in found_facts.values():
+                if fact["dm"]:
+                    continue
+                campaigns.append(
+                    {
+                        "id": str(fact["id"]),
+                        "ref": f"{guild.id}.{fact['id']}",
+                        "name": fact["name"],
+                        "serverName": guild.name,
+                        "lastPlayedAt": _iso_time(fact["lastPlayedAt"]),
+                        # (a paused state arrives with #437 part 2; the door does not carry it yet)
+                        "status": "active",
+                        "role": "player",
+                        "importsOn": False,
+                        "serverReachable": reachable,
+                        "canDelete": False,
+                        **_facts_of(fact),
                     }
                 )
             for row in await offered.fetchall():
                 to_me = row["to_user_id"] == session.user_id
+                if row["via_email"]:
+                    # Never the address (it is not stored), and never in the offer lists: it has no
+                    # name to wait on. Only the owner's own card carries it (`handover`).
+                    if not to_me:
+                        emailed[f"{guild.id}.{row['campaign_id']}"] = {
+                            "sentAt": _iso_time(row["created_at"]),
+                            "expiresAt": _iso_time(row["created_at"] + HANDOVER_SECONDS),
+                        }
+                    continue
                 (incoming if to_me else outgoing).append(
                     {
                         "id": offer_ref(guild.id, row["id"]),
@@ -184,6 +285,32 @@ async def build_me(
                         "installedByYou": installer == session.user_id,
                     }
                 )
+
+        # The owner's own campaigns in servers the session's list does not have (left, removed,
+        # the server gone, DMbot out of it): a card each, so they can still be seen and deleted
+        # (#2554). A door keyed by the account; the policy that limits the website to the
+        # session's servers is not widened.
+        cur = await conn.execute("SELECT dmbot_web_owned_campaigns() AS found")
+        owned_row = await cur.fetchone()
+        shown = {c["ref"] for c in campaigns}
+        for item in (owned_row["found"] if owned_row else None) or []:
+            ref = f"{item['guildId']}.{item['id']}"
+            if ref in shown:
+                continue
+            campaigns.append(
+                {
+                    "id": str(item["id"]),
+                    "ref": ref,
+                    "name": item["name"],
+                    "serverName": "",  # not known: the page says DMbot can't reach this server
+                    "lastPlayedAt": _iso_time(item["lastPlayedAt"]),
+                    "status": "active",
+                    "role": "owner",
+                    "importsOn": False,
+                    "serverReachable": False,
+                    "canDelete": True,
+                }
+            )
 
         # "Experience points": every minute DMbot has run for this account, all time, through the
         # one door the website's role has to the hours meter (#1228, #1231).
@@ -230,6 +357,9 @@ async def build_me(
     # The account's stored DMbot ID, kept for life (a move to a new Discord account keeps it).
     account_number = await dmbot_id(db, session.user_id)
 
+    for card in campaigns:  # (only the owner's own card can carry an offer)
+        card["handover"] = emailed.get(card["ref"]) if card["role"] == "owner" else None
+
     return {
         "user": {"id": str(session.user_id), "name": session.display_name},
         # The account number (the Discord ID in base 36) and the minutes DMbot has run (#1231).
@@ -237,8 +367,9 @@ async def build_me(
         **({"dmbotId": account_number} if account_number else {}),
         "experiencePoints": experience,
         "canMove": can_move(plan, now),
-        # The Support form is for paying accounts; others see the public Q&A link (#1340).
-        "canSupport": support.is_paying(plan, now),
+        # The Support form is for every account with a plan row, Try It too (#1435), and for free
+        # access without one (#2190); someone with no account yet sees the public Q&A link (#1340).
+        "canSupport": support.may_write(plan, access),
         # A first payment that failed and no payment since: the page says "try again" (#922).
         # Left out otherwise, so the common reply is unchanged.
         **({"firstPaymentFailed": True} if first_failed else {}),
@@ -258,7 +389,12 @@ async def build_me(
             "graceEndsOn": _iso_date(plan.grace_ends_at),
         }
         # Cancelled on the payment page: it works to this date and then ends (#824).
-        | ({"endsOn": _iso_date(plan.ends_at)} if plan.ends_at is not None else {}),
+        | ({"endsOn": _iso_date(plan.ends_at)} if plan.ends_at is not None else {})
+        # What the plan is doing, for the account page's plan line (#2165): "active" (renews),
+        # "ending" (cancelled, still works), "changing" (another plan starts at the period's end)
+        # or "expired" (it has stopped). Read from what the payment company's events stored; the
+        # page load never asks the company.
+        | _plan_state(plan, now),
         # Free access (#771): "free" (the owner's list or the admin's grant: people see
         # "Free access", never why), "paid" or "none". endsOn: a grant's end date.
         # stillPaying: covered while a paid plan still works, so the page offers to stop

@@ -27,6 +27,7 @@ from pathlib import Path
 from dmbot import plans
 from dmbot.campaigns import Campaign, CampaignStore
 from dmbot.plans import PlanId
+from dmbot.retention_channels import ChannelCounts
 
 log = logging.getLogger(__name__)
 
@@ -156,7 +157,10 @@ def warning_text(
     if owner_left(campaign):
         # A fixed date, not a clock a session restarts: only taking it on keeps it.
         why = "the DM who ran it deleted their account and no one has taken it on"
-        keep = [f"any of its DMs can open ⚙️ Settings {where} and press 🤝 **{TAKE_ON}**"]
+        keep = [
+            f"any of its DMs can open ⚙️ Settings → 🗂️ Campaign management {where} and "
+            f"press 🤝 **{TAKE_ON}**"
+        ]
     if standing.backups:
         keep.append(f"download a backup with `/dmbot backup` {where}")
     if campaign.owner_user_id is not None and standing.lapsed_at is not None:
@@ -207,7 +211,8 @@ def grouped_warning_text(
         keep.append("play a session in that campaign's server (it is then safe for a while)")
     if any(owner_left(c) for c, _s, _a in items):
         keep.append(
-            "for one whose DM left, any of its DMs can open ⚙️ Settings in its server and "
+            "for one whose DM left, any of its DMs can open ⚙️ Settings → 🗂️ Campaign "
+            "management in its server and "
             f"press 🤝 **{TAKE_ON}** (a session doesn't keep it)"
         )
     if any(s.backups for _c, s, _a in items):
@@ -280,10 +285,14 @@ class Result:
     guard_stopped: bool = False
     dry_run: bool = False
     stages: dict[int, int] = field(default_factory=dict)
+    channels: ChannelCounts = field(default_factory=ChannelCounts)  # of the campaigns deleted
 
 
 StandingOf = Callable[[int, int, int], Awaitable[Standing]]
 Send = Callable[[int, str], Awaitable[bool]]
+# Called with a campaign that was just deleted (its row read before the delete): deletes or
+# closes the Discord channels it recorded (#1598) and says how many.
+RetireChannels = Callable[[Campaign, int], Awaitable[ChannelCounts]]
 
 
 class RetentionJob:
@@ -296,6 +305,7 @@ class RetentionJob:
         forget_guild: Callable[[int], Awaitable[bool]] | None = None,
         running: Callable[[], set[str]],
         send: Send,
+        retire_channels: RetireChannels | None = None,
         enforce: bool,
         server_name: Callable[[int], str] = lambda guild_id: "your server",
         site_url: str = "",
@@ -311,6 +321,7 @@ class RetentionJob:
         self._forget_guild = forget_guild
         self._running = running
         self._send = send
+        self._retire_channels = retire_channels
         self._enforce = enforce
         self._server_name = server_name
         self._site_url = site_url
@@ -395,7 +406,7 @@ class RetentionJob:
             result.warnings += 1
             result.stages[stage] = result.stages.get(stage, 0) + 1
         for campaign, _at in due:
-            if await self._delete(campaign, now, owners):
+            if await self._delete(campaign, now, owners, result):
                 result.deleted += 1
         self._log(result)
         return result
@@ -454,7 +465,13 @@ class RetentionJob:
                 done.append((campaign, stage))
         return done
 
-    async def _delete(self, stale: Campaign, now: int, owners: dict[int, Standing]) -> bool:
+    async def _delete(
+        self,
+        stale: Campaign,
+        now: int,
+        owners: dict[int, Standing],
+        result: Result | None = None,
+    ) -> bool:
         """Delete one campaign, after looking again: a session may have started, it may
         have been played, or the owner's plan may have changed since the scan."""
         if stale.id in self._running():
@@ -470,6 +487,15 @@ class RetentionJob:
         except Exception:
             log.exception("Retention: couldn't delete a campaign")
             return False
+        # After the delete went through (a failed delete leaves everything as it was), and read
+        # from the row as it was before it: the channel ids are gone with the row.
+        if self._retire_channels is not None:
+            try:
+                counts = await self._retire_channels(campaign, now)
+                if result is not None:
+                    result.channels.add(counts)
+            except Exception:  # the campaign is gone either way; this is only the tidy-up
+                log.exception("Retention: couldn't tidy a deleted campaign's channels")
         text = deleted_text(campaign, self._server_name(campaign.guild_id))
         for user_id in self._recipients(campaign):
             await self._send(user_id, text)
@@ -478,7 +504,8 @@ class RetentionJob:
     @staticmethod
     def _log(result: Result) -> None:
         log.info(
-            "Retention %s: campaigns=%d past_keep_date=%d deleted=%d warned=%d skipped=%d%s",
+            "Retention %s: campaigns=%d past_keep_date=%d deleted=%d warned=%d skipped=%d%s"
+            " channels: %d deleted, %d closed, %d skipped",
             "dry run" if result.dry_run else "run",
             result.scanned,
             result.to_delete,
@@ -486,4 +513,7 @@ class RetentionJob:
             result.warnings,
             result.skipped,
             " guard_stopped=yes" if result.guard_stopped else "",
+            result.channels.deleted,
+            result.channels.closed,
+            result.channels.skipped,
         )

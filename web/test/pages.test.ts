@@ -28,13 +28,29 @@ function page(file: string): AstroComponentFactory {
 const pages: [path: string, file: string, title: string, noindex: boolean][] = [
   ["/", "index.astro", "DMbot", false],
   ["/pricing", "pricing.astro", "Prices · DMbot", false],
+  ["/how-it-works", "how-it-works.astro", "How DMbot works · DMbot", false],
+  ["/handover", "handover.astro", "A campaign for you · DMbot", true],
   ["/install", "install.astro", "Add to Discord · DMbot", false],
   ["/account", "account.astro", "My Account · DMbot", true],
   ["/account/recaps", "account/recaps.astro", "Your recaps · DMbot", true],
+  ["/account/homebrew", "account/homebrew.astro", "Homebrew · DMbot", true],
+  ["/account/house-rules", "account/house-rules.astro", "House rules · DMbot", true],
+  ["/account/sharing", "account/sharing.astro", "Shared rules · DMbot", true],
+  ["/account/restore", "account/restore.astro", "Load a backup · DMbot", true],
+  ["/account/timeline", "account/timeline.astro", "Story timeline · DMbot", true],
+  ["/account/transcripts", "account/transcripts.astro", "Session transcripts · DMbot", true],
+  ["/account/import", "account/import.astro", "Import sessions · DMbot", true],
+  ["/account/names", "account/names.astro", "Names · DMbot", true],
+  ["/account/web", "account/web.astro", "Relationship web · DMbot", true],
+  ["/account/campaigns", "account/campaigns.astro", "Campaign · DMbot", true],
+  ["/account/npc", "account/npc.astro", "NPC · DMbot", true],
+  ["/r", "r.astro", "A shared recap · DMbot", true],
   ["/legal/terms", "legal/terms.astro", "Terms of use · DMbot", false],
   ["/legal/privacy", "legal/privacy.astro", "Privacy · DMbot", false],
   ["/legal/refunds", "legal/refunds.astro", "Refunds · DMbot", false],
+  ["/credits", "credits.astro", "Credits · DMbot", false],
   ["/help", "help.astro", "Help · DMbot", false],
+  ["/players", "players.astro", "Playing at a table · DMbot", false],
   ["/whats-new", "whats-new.astro", "What&#39;s new · DMbot", false],
   ["/hello", "hello.astro", "Say hello · DMbot", false],
   ["/admin", "admin.astro", "Admin · DMbot", true],
@@ -96,6 +112,9 @@ describe("rendered pages", () => {
       request: new Request(`https://dmbot.example${path}`),
     });
     if (path === "/legal/terms") html = html.replace(notAffiliated, "");
+    // The SRD licence asks for the publisher's name in its attribution statements (#1923), so the
+    // Credits page may say "by Wizards of the Coast LLC" there, and the not-affiliated sentence.
+    if (path === "/credits") html = html.replaceAll(licenceName, "").replace(notAffiliated, "");
     for (const pattern of trademarks) {
       expect(html, `found ${pattern}`).not.toMatch(pattern);
     }
@@ -158,6 +177,8 @@ const trademarks = [
   /Monster Manual/i,
 ];
 
+const licenceName = "Wizards of the Coast LLC";
+
 describe("no trademarks", () => {
   const banned = trademarks;
   const root = fileURLToPath(new URL("..", import.meta.url));
@@ -189,7 +210,9 @@ describe("no trademarks", () => {
   });
 
   it.each(sources.map((file) => [file.slice(root.length)]))("%s is clean", (relative) => {
-    const text = readFileSync(join(root, relative), "utf8");
+    let text = readFileSync(join(root, relative), "utf8");
+    // The same one allowance as the rendered page: the name inside the licence's attribution statements.
+    if (relative === join("src", "content", "credits.ts")) text = text.replaceAll(licenceName, "");
     for (const pattern of banned) {
       expect(text, `found ${pattern}`).not.toMatch(pattern);
     }

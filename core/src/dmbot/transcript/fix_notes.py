@@ -24,13 +24,14 @@ import secrets
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 
+from dmbot.discord_limits import MESSAGE_MAX, fit_message
 from dmbot.memory.models import name_key
-from dmbot.transcript.cleaner import Fix
+from dmbot.transcript.cleaner import IMAGE_EDIT, Fix
 
 SHOWN = 10  # lines in the message (the newest); older ones are no longer undoable here
-ANSWERS_KEPT = 20  # answers whose line can still be put back by their Undo
+ANSWERS_KEPT = 20  # answers (a batch is one answer, with the earlier lines it wrote, #127) whose
+# lines can still be put back by their Undo
 NAME_MAX = 60
-MESSAGE_MAX = 2000  # Discord's limit for one message
 HEADER = (
     "✏️ **Name fixes to check**: DMbot changed these words in the transcript but isn't "
     "sure. Wrong? Press its Undo to put back what was heard."
@@ -57,6 +58,7 @@ class Note:
     fixes: tuple[Fix, ...]  # every fix made in that line
     index: int  # which of them this note is about
     undone: bool = False
+    by: int = 0  # who made the fix when a person did (a picture's words, #2450); 0: the bot
 
     @property
     def fix(self) -> Fix:
@@ -79,6 +81,9 @@ class Answer:
     start: int  # where the words are, as heard
     end: int
     written: str
+    # True for an earlier line an answer was written into afterwards (#127), False for the
+    # line the question was about; Undo reports only on the line that was asked about.
+    earlier: bool = False
 
     @property
     def line(self) -> tuple[int, int]:
@@ -98,6 +103,17 @@ def rewrite(heard: str, edits: list[tuple[int, int, str]]) -> str:
 def _short(text: str) -> str:
     text = " ".join(text.split())
     return text if len(text) <= NAME_MAX else text[: NAME_MAX - 1].rstrip() + "…"
+
+
+def edit_done_text(*, line_kept: bool = False) -> str:
+    """After an Undo of a line the DM rewrote by hand (#1499): no name was learned or forbidden,
+    so it only says the line is back. `line_kept`: it couldn't be put back."""
+    if line_kept:
+        return (
+            "↩️ I couldn't put that line back, so it still says your words. "
+            "Press ✏️ Fix a line to change it."
+        )
+    return "↩️ Undone. That line is back as it was before your change."
 
 
 def done_text(heard: str, written: str, *, line_kept: bool = False) -> str:
@@ -121,15 +137,18 @@ class FixNotes:
     count: int = 0  # numbers handed out this session
     answers: list[Answer] = field(default_factory=list)  # oldest first
 
-    def add(self, speaker: int, started_ms: int, heard: str, fixes: tuple[Fix, ...]) -> list[Note]:
-        """A note for each unsure fix in this line (none for sure ones)."""
+    def add(
+        self, speaker: int, started_ms: int, heard: str, fixes: tuple[Fix, ...], by: int = 0
+    ) -> list[Note]:
+        """A note for each unsure fix in this line (none for sure ones). `by`: the person who made
+        the fix, when one did."""
         added = []
         for i, fix in enumerate(fixes):
             if fix.sure:
                 continue
             self.count += 1
             added.append(
-                Note(secrets.token_hex(4), self.count, speaker, started_ms, heard, fixes, i)
+                Note(secrets.token_hex(4), self.count, speaker, started_ms, heard, fixes, i, by=by)
             )
         self.notes.extend(added)
         self._trim()
@@ -192,12 +211,42 @@ class FixNotes:
         return rewrite(heard, edits)
 
     def answered(self, answer: Answer) -> None:
-        """Keep the newest answers, and any on a line that still has notes (its text
-        needs them)."""
+        """Keep the newest `ANSWERS_KEPT` answers, a batch (an answer and the earlier lines it
+        wrote) always whole, and any on a line that still has notes (its text needs them)."""
         answers = [*self.answers, answer]
         lines = {n.line for n in self.notes}
-        newest = answers[-ANSWERS_KEPT:]
-        self.answers = [a for a in answers[:-ANSWERS_KEPT] if a.line in lines] + newest
+
+        def key(i: int) -> object:  # an answer with no batch is its own
+            batch = answers[i].batch
+            return batch if batch is not None else ("alone", i)
+
+        newest: list[object] = []
+        for i in range(len(answers) - 1, -1, -1):
+            if key(i) not in newest:
+                newest.append(key(i))
+            if len(newest) == ANSWERS_KEPT:
+                break
+        self.answers = [a for i, a in enumerate(answers) if key(i) in newest or a.line in lines]
+
+    def on_line(self, speaker: int, started_ms: int) -> bool:
+        """Whether any fix note or answer is already on this line (so it isn't written again)."""
+        line = (speaker, started_ms)
+        return any(n.line == line for n in self.notes) or any(a.line == line for a in self.answers)
+
+    def picture_edits(
+        self, speaker: int, started_ms: int, fixer: int, fixer_is_dm: bool
+    ) -> list[Note] | None:
+        """The earlier corrections of a picture's words on this line that this person may replace
+        (#2450): a DM may replace any, the poster only their own. None: the line holds something
+        that is not theirs to replace (a name fix, an answer, or a correction by someone else), so
+        nothing is written. An empty list: no earlier correction."""
+        line = (speaker, started_ms)
+        on = [n for n in self.notes if n.line == line]
+        if any(a.line == line for a in self.answers) or any(n.fix.how != IMAGE_EDIT for n in on):
+            return None
+        if not fixer_is_dm and any(n.by != fixer for n in on):
+            return None
+        return on
 
     def take_back(self, batch: int) -> Answer | None:
         """Its Undo was pressed: the answer no longer fixes its line (returned, so the
@@ -239,4 +288,4 @@ def message_text(
     shown = notes[-kept:]
     # The cut below is only a safety net: one line is at most ~350 characters (names
     # are cut to NAME_MAX first), so whole lines always fit.
-    return "\n".join([HEADER, *lines[-kept:]])[:MESSAGE_MAX], shown
+    return fit_message("\n".join([HEADER, *lines[-kept:]])), shown

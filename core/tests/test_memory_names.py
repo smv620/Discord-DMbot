@@ -11,17 +11,18 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import discord
 
-from dmbot.ai import Reply
 from dmbot.audio.segmenter import Segmenter
-from dmbot.bot import DMBot, Table
+from dmbot.bot import DMBot
 from dmbot.campaigns import CampaignStore
 from dmbot.config import Settings
 from dmbot.consent import ConsentStore
+from dmbot.discord_limits import MESSAGE_MAX
 from dmbot.memory.backup import MemorySection
-from dmbot.memory.models import CONFIRMED, PROPOSED, REJECTED, MemoryRuleError
+from dmbot.memory.models import CONFIRMED, NAME_MAX, PROPOSED, REJECTED, MemoryRuleError
 from dmbot.memory.models import DM as DM_SOURCE
 from dmbot.memory.store import MemoryStore
 from dmbot.sessions import SessionStore
+from dmbot.table import Table
 from dmbot.ui import logic
 from dmbot.ui import names as ui
 from tests.pg import DatabaseTest
@@ -154,6 +155,12 @@ class Panel(NamesTest):
         names = CampaignLookup.build(await self.memory.lookup_data(GUILD, self.campaign.id))
         waiting = len(await self.memory.entities(GUILD, self.campaign.id, statuses=[PROPOSED]))
         return ui.home_text(names, self.campaign, waiting)
+
+    async def test_the_overview_stays_inside_one_message(self) -> None:
+        for n in range(30):
+            await ui.save_name(self.memory, self.campaign, f"{n:02d}" + "N" * 98, "npc", [], [])
+        text, _ = await self.overview()
+        self.assertLessEqual(len(text), MESSAGE_MAX)
 
     async def test_the_overview_counts_kinds_and_never_shows_secrets(self) -> None:
         await ui.save_name(
@@ -316,7 +323,9 @@ class NameCards(NamesTest):
     async def test_only_an_item_card_has_that_button(self) -> None:
         from dmbot.ui import name_card
 
-        card = name_card.NameCard(self.campaign.id, self.bell.id, others=True, longer=True)
+        card = name_card.NameCard(
+            self.campaign.id, self.bell.id, others=True, cut=[("names", "Other names (5)")]
+        )
         self.assertFalse([c for c in card.children if c.row == 3])
         self.assertTrue(
             all(
@@ -335,9 +344,136 @@ class NameCards(NamesTest):
         text = it.response.edited[0][0]  # the card, redrawn in place, read fresh
         self.assertIn("Now spelled **Bellaros**", text)
         self.assertIn("🪪 **Bellaros**", text)
+        self.assertIn("Belleros (old spelling)", text)  # the card says what it is
         keys = {a.key for a in await self.memory.aliases(GUILD, self.campaign.id)}
         self.assertIn("bellaros", keys)
-        self.assertNotIn("belleros", keys)
+        self.assertIn("belleros", keys)  # kept as an "old spelling" (#2170)
+        old = [a for a in await self.memory.aliases(GUILD, self.campaign.id) if a.key == "belleros"]
+        self.assertEqual([a.kind for a in old], ["old"])
+
+    async def test_the_narrators_spelling_is_asked_only_when_spoken_recaps_are_on(self) -> None:
+        from dmbot.ui import name_card
+
+        plain = name_card.FixSpellingForm(self.campaign.id, self.bell.id, "Belleros")
+        self.assertNotIn(plain.said_as, plain.children)  # not in the campaign's plan: no field
+        spoken = name_card.FixSpellingForm(
+            self.campaign.id, self.bell.id, "Belleros", spoken=True, said_as="Bell-air-os"
+        )
+        self.assertIn(spoken.said_as, spoken.children)
+        self.assertEqual(spoken.said_as.default, "Bell-air-os")
+        self.assertIn("narration", spoken.said_as.label or "")
+
+    async def test_a_spelling_for_the_narrator_is_saved_changed_and_cleared_on_the_card(
+        self,
+    ) -> None:
+        from dmbot.ui import name_card
+
+        before: str | None = None
+        for typed, told in (
+            ("Bell-air-os", "say it as **Bell-air-os**"),
+            ("", "say it as written"),
+        ):
+            form = name_card.FixSpellingForm(
+                self.campaign.id, self.bell.id, "Belleros", spoken=True, said_as=before
+            )
+            form.name = SimpleNamespace(value="Belleros")  # type: ignore[assignment]
+            form.said_as = SimpleNamespace(value=typed)  # type: ignore[assignment]
+            it = self.it()
+            await form.on_submit(it)
+            self.assertIn(told, it.response.edited[0][0])
+            self.assertEqual(
+                await self.memory.said_as(GUILD, self.campaign.id, self.bell.id), typed or None
+            )
+            before = typed or None
+
+    async def card_labels(self, user: int = DM, *, spoken: bool = True, name: Any = None) -> Any:
+        from dmbot.ui import name_card
+
+        self.fresh()
+        it = self.it(user)
+        with patch.object(name_card, "_spoken_recaps", AsyncMock(return_value=spoken)):
+            await name_card.show_card(it, self.campaign.id, (name or self.bell).id)
+        return [getattr(c, "label", "") for c in it.response.sent[0][1]["view"].children]
+
+    async def test_the_say_button_is_for_dms_with_spoken_recaps(self) -> None:
+        from dmbot.ui import name_card
+
+        self.assertIn(name_card.SAY_BUTTON, await self.card_labels())
+        self.assertNotIn(name_card.SAY_BUTTON, await self.card_labels(MANAGER))  # not a DM
+        self.assertNotIn(name_card.SAY_BUTTON, await self.card_labels(spoken=False))
+
+    async def test_the_say_button_is_hidden_for_a_secret_main_name(self) -> None:
+        from dmbot.ui import name_card
+
+        async with self.db.guild(GUILD) as conn:  # (the store refuses to make a main name secret)
+            await conn.execute(
+                "UPDATE memory_aliases SET secret = true WHERE guild_id = %s AND campaign_id = %s"
+                " AND entity_id = %s AND key = 'belleros'",
+                (GUILD, self.campaign.id, self.bell.id),
+            )
+        self.assertNotIn(name_card.SAY_BUTTON, await self.card_labels())
+
+    async def test_the_say_form_sets_and_clears_how_the_narrator_says_a_name(self) -> None:
+        from dmbot.ui import name_card
+
+        for typed, told in (("Bell-air-os", "say it as **Bell-air-os**"), ("", "as written")):
+            form = name_card.SayForm(self.campaign.id, self.bell.id, "Belleros", None)
+            form.said_as = SimpleNamespace(value=typed)  # type: ignore[assignment]
+            it = self.it()
+            with patch.object(name_card, "_spoken_recaps", AsyncMock(return_value=True)):
+                await form.on_submit(it)
+            self.assertIn(told, it.response.edited[0][0])
+            self.assertEqual(
+                await self.memory.said_as(GUILD, self.campaign.id, self.bell.id), typed or None
+            )
+
+    async def test_the_say_form_rechecks_the_dm_and_the_plan_after_its_waits(self) -> None:
+        from dmbot.ui import name_card
+
+        form = name_card.SayForm(self.campaign.id, self.bell.id, "Belleros", None)
+        form.said_as = SimpleNamespace(value="Bell-air-os")  # type: ignore[assignment]
+        it = self.it()
+        with patch.object(name_card, "_spoken_recaps", AsyncMock(return_value=False)):
+            await form.on_submit(it)  # a DM, but spoken recaps lapsed since the press
+        self.assertIn("Spoken recaps aren't on", it.response.sent[0][0])
+        gone = SimpleNamespace(dm_user_ids=frozenset({999}), guild_id=GUILD, id=self.campaign.id)
+        it = self.it()
+        with (
+            patch.object(name_card, "_current", AsyncMock(return_value=(gone, "Belleros"))),
+            patch.object(name_card, "_spoken_recaps", AsyncMock(return_value=True)),
+        ):
+            await form.on_submit(it)  # no longer a DM of the campaign
+        self.assertIn("Only a DM", it.response.sent[0][0])
+        self.assertIsNone(await self.memory.said_as(GUILD, self.campaign.id, self.bell.id))
+
+    async def test_the_say_form_refuses_a_non_dm_and_says_when_spoken_recaps_are_off(self) -> None:
+        from dmbot.ui import name_card
+
+        form = name_card.SayForm(self.campaign.id, self.bell.id, "Belleros", None)
+        form.said_as = SimpleNamespace(value="Bell-air-os")  # type: ignore[assignment]
+        card = name_card.NameCard(self.campaign.id, self.bell.id, say=True)
+        manager_press = self.it(MANAGER)
+        await card._say(manager_press)
+        self.assertIn("Only a DM", manager_press.response.sent[0][0])
+        # The manager's submit too, with spoken recaps on: refused for who they are.
+        manager_submit = self.it(MANAGER)
+        with patch.object(name_card, "_spoken_recaps", AsyncMock(return_value=True)):
+            await form.on_submit(manager_submit)
+        self.assertIn("Only a DM", manager_submit.response.sent[0][0])
+        self.assertIsNone(await self.memory.said_as(GUILD, self.campaign.id, self.bell.id))
+
+    async def test_a_form_without_the_field_never_touches_the_spelling(self) -> None:
+        from dmbot.ui import name_card
+
+        await self.memory.set_said_as(
+            GUILD, self.campaign.id, self.bell.id, "Bell-air-os", source="dm"
+        )
+        form = name_card.FixSpellingForm(self.campaign.id, self.bell.id, "Belleros")
+        form.name = SimpleNamespace(value="Belleros")  # type: ignore[assignment]
+        await form.on_submit(self.it())
+        self.assertEqual(
+            await self.memory.said_as(GUILD, self.campaign.id, self.bell.id), "Bell-air-os"
+        )
 
     async def test_another_name_and_a_secret_one(self) -> None:
         from dmbot.ui import name_card
@@ -370,13 +506,17 @@ class NameCards(NamesTest):
         first_row = [getattr(c, "label", "") for c in card.children if c.row in (None, 0)]
         # The three edits the panel names, in its words (#353).
         self.assertEqual(first_row, ["✏️ Fix spelling", "Change what it is", "🗑 Remove this name"])
-        longer = name_card.NameCard(self.campaign.id, self.bell.id, others=True, longer=True)
+        longer = name_card.NameCard(
+            self.campaign.id, self.bell.id, others=True, cut=[("names", "Other names (5)")]
+        )
         rows: dict[int, list[str]] = {}
         for c in longer.children:
             rows.setdefault(c.row or 0, []).append(getattr(c, "label", ""))
         # Three short buttons a row at most, so nothing clips on a phone (#393).
         self.assertEqual(rows[1], [name_card.ALSO_CALLED, "Edit other names", "🔗 Same as…"])
-        self.assertEqual(rows[2], ["🧭 Connect to…", "Show all"])
+        self.assertEqual(rows[2], ["🧭 Connect to…"])
+        (picker,) = [c for c in longer.children if c.row == 4]  # one select, on the last row
+        self.assertEqual(getattr(picker, "placeholder", None), name_card.SHOW_ALL)
         self.assertTrue(all(len(getattr(c, "label", "")) <= 25 for c in card.children))
         (remove,) = [c for c in card.children if getattr(c, "label", "") == "🗑 Remove this name"]
         it = self.it()
@@ -492,8 +632,10 @@ class NameCards(NamesTest):
 
         bell = await self.alias("Bell")
         view = name_card.OneName(self.campaign.id, self.bell.id, bell, secrets=True)
+        opened = self.it()
+        await view._who(opened)
         it = self.it()
-        await view._secret(it)
+        await opened.response.edited[0][1]._only_me(it)
         self.assertIn("🤫 **Bell** is secret now", it.response.edited[0][0])
         self.assertTrue((await self.alias("Bell")).secret)
         it = self.it(MANAGER)  # may be at the table: the secret name is "gone" for them
@@ -610,11 +752,11 @@ class NameCards(NamesTest):
         self.fresh()
         it = self.it()
         await name_card.show_card(it, self.campaign.id, bram.id)
-        self.assertIn("**Connections:** carries **Heartseeker**", it.response.sent[0][0])
+        self.assertIn("**Connections:**\n• carries **Heartseeker**", it.response.sent[0][0])
         self.fresh()
         it = self.it()
         await name_card.show_card(it, self.campaign.id, bow.id)
-        self.assertIn("**Connections:** is carried by **Bram**", it.response.sent[0][0])
+        self.assertIn("**Connections:**\n• is carried by **Bram**", it.response.sent[0][0])
         self.assertNotIn("is connected to", it.response.sent[0][0])
 
     async def test_a_second_holder_of_a_one_of_a_kind_item_gets_the_plain_note(self) -> None:
@@ -647,20 +789,511 @@ class NameCards(NamesTest):
         self.fresh()
         it = self.it()
         await name_card.show_card(it, self.campaign.id, tribe.id)
-        self.assertIn("**Connections:** members include **Ulfgar**", it.response.sent[0][0])
+        self.assertIn("**Connections:**\n• members include **Ulfgar**", it.response.sent[0][0])
         self.fresh()
         it = self.it()
         await name_card.show_card(it, self.campaign.id, ulfgar.id)
-        self.assertIn("**Connections:** is a member of **Frostwolf tribe**", it.response.sent[0][0])
+        self.assertIn(
+            "**Connections:**\n• is a member of **Frostwolf tribe**", it.response.sent[0][0]
+        )
         (relation,) = await self.memory.relations(GUILD, self.campaign.id, entity_id=ulfgar.id)
-        view = name_card.Connect(self.campaign.id, ulfgar.id, "Ulfgar", [(relation.id, "x")])
-        view.remove = SimpleNamespace(values=[relation.id])  # type: ignore[assignment]
-        it = self.it()
-        await view._remove_picked(it)
+        it = await self.remove_by_menu(ulfgar.id, relation.id)
         self.assertIn("Removed: Ulfgar is a member of Frostwolf tribe.", it.response.edited[0][0])
         self.assertEqual(
             await self.memory.relations(GUILD, self.campaign.id, entity_id=ulfgar.id), []
         )
+
+    async def remove_by_menu(self, entity_id: str, relation_id: str, who: int = DM) -> Any:
+        """The DM's Remove on a connection's page, then Yes (the one question)."""
+        from dmbot.ui import connection_edit
+
+        it = self.it(who)
+        await connection_edit.ConfirmRemove(self.campaign.id, entity_id, relation_id)._yes(it)
+        return it
+
+    async def page_of(self, entity_id: str, relation_id: str, who: int = DM) -> Any:
+        """A connection's page as `who` would be shown it (None if they can't see it)."""
+        from dmbot.ui import connection_edit
+
+        found = await connection_edit._find(self.it(who), self.campaign.id, entity_id, relation_id)
+        return connection_edit.OneConnection(self.campaign.id, entity_id, found) if found else None
+
+    async def removed_connection(self, *, secret: bool) -> tuple[Any, Any, Any]:
+        """Ulfgar is a member of the tribe (secret or not); the DM removes it. Returns the
+        relation as it was, the entry, and the Undo button on the redrawn card."""
+        from dmbot.ui import name_card
+
+        tribe = await ui.save_name(self.memory, self.campaign, "Frostwolf tribe", "faction", [], [])
+        ulfgar = await ui.save_name(self.memory, self.campaign, "Ulfgar", "npc", [], [])
+        await name_card.connect(
+            self.it(), self.campaign.id, tribe.id, "member_of" + name_card.BACK, ulfgar.id,
+            secret=secret,
+        )  # fmt: skip
+        self.fresh()
+        (before,) = await self.memory.relations(
+            GUILD, self.campaign.id, entity_id=ulfgar.id, include_secret=True
+        )
+        it = await self.remove_by_menu(ulfgar.id, before.id)
+        note, card = it.response.edited[0]
+        self.assertIn("Removed: Ulfgar is a member of Frostwolf tribe. Wrong? Press **Undo**", note)
+        (undo,) = [c for c in card.children if isinstance(c, name_card.UndoConnectionButton)]
+        return before, ulfgar, undo
+
+    async def test_undo_puts_a_removed_connection_back_exactly_as_it_was(self) -> None:
+        before, ulfgar, undo = await self.removed_connection(secret=False)
+        it = self.it()
+        await undo.callback(it)
+        self.assertIn("Put back: Ulfgar is a member of Frostwolf tribe.", it.response.edited[0][0])
+        (after,) = await self.memory.relations(GUILD, self.campaign.id, entity_id=ulfgar.id)
+        self.assertEqual(after, before)
+
+    async def test_a_secret_connection_comes_back_secret_and_only_a_dm_can_undo_it(self) -> None:
+        before, ulfgar, undo = await self.removed_connection(secret=True)
+        self.assertTrue(before.secret)
+        manager = self.it(MANAGER)
+        await undo.callback(manager)
+        from dmbot.ui import name_card
+
+        self.assertEqual(manager.response.sent[0][0], f"Not undone. {name_card.NOTHING_MORE}")
+        self.assertEqual(  # nothing written
+            await self.memory.relations(
+                GUILD, self.campaign.id, entity_id=ulfgar.id, include_secret=True
+            ),
+            [],
+        )
+        await undo.callback(self.it())
+        (after,) = await self.memory.relations(
+            GUILD, self.campaign.id, entity_id=ulfgar.id, include_secret=True
+        )
+        self.assertEqual(after, before)
+        self.assertTrue(after.secret)
+
+    async def test_undo_after_the_connection_changed_says_so_and_does_nothing(self) -> None:
+        from dmbot.ui import name_card
+
+        before, ulfgar, undo = await self.removed_connection(secret=False)
+        await self.memory.update_relation(
+            GUILD, self.campaign.id, before.id, status=CONFIRMED, source=DM_SOURCE
+        )
+        await self.memory.update_relation(
+            GUILD, self.campaign.id, before.id, secret=True, source=DM_SOURCE
+        )
+        it = self.it()
+        await undo.callback(it)
+        self.assertEqual(it.response.sent[0][0], f"Not undone. {name_card.NOTHING_MORE}")
+        (now,) = await self.memory.relations(
+            GUILD, self.campaign.id, entity_id=ulfgar.id, include_secret=True
+        )
+        self.assertTrue(now.secret)  # the later change stands
+
+    async def test_someone_who_cannot_manage_names_cannot_undo(self) -> None:
+        _, ulfgar, undo = await self.removed_connection(secret=False)
+        it = self.it(PLAYER)
+        await undo.callback(it)
+        self.assertEqual(
+            await self.memory.relations(GUILD, self.campaign.id, entity_id=ulfgar.id), []
+        )  # refused, nothing put back
+
+    async def test_the_store_only_undoes_one_removal_by_the_dm(self) -> None:
+        from dmbot.memory.models import TooLateToUndo
+
+        before, _ulfgar, _ = await self.removed_connection(secret=False)
+        # The removal's batch is the newest change: find it, then try other kinds of batch.
+        async with self.db.guild(GUILD) as conn:
+            cur = await conn.execute(
+                "SELECT batch, op FROM memory_changes WHERE table_name = 'memory_relations'"
+                " ORDER BY version"
+            )
+            rows = await cur.fetchall()
+        insert_batch = rows[0]["batch"]  # the connection being saved: an insert, not a removal
+        with self.assertRaises(MemoryRuleError):
+            await self.memory.undo_connection(
+                GUILD, self.campaign.id, insert_batch, within=600, secrets=True
+            )
+        with self.assertRaises(TooLateToUndo):  # a batch number that is not there
+            await self.memory.undo_connection(
+                GUILD, self.campaign.id, 10**9, within=600, secrets=True
+            )
+        other = await self.campaigns.create(GUILD, "Other", DM)
+        with self.assertRaises(TooLateToUndo):  # another campaign's log has no such batch
+            await self.memory.undo_connection(
+                GUILD, other.id, rows[-1]["batch"], within=600, secrets=True
+            )
+        self.memory._clock = lambda: time.time() + 590  # just inside the window
+        back = await self.memory.undo_connection(
+            GUILD, self.campaign.id, rows[-1]["batch"], within=600, secrets=True
+        )
+        self.assertEqual(back.value, before)
+
+    async def test_undo_stops_after_ten_minutes(self) -> None:
+        _, ulfgar, undo = await self.removed_connection(secret=False)
+        self.memory._clock = lambda: time.time() + 601
+        it = self.it()
+        await undo.callback(it)
+        self.assertIn("Too late to undo", it.response.sent[0][0])
+        self.assertEqual(
+            await self.memory.relations(GUILD, self.campaign.id, entity_id=ulfgar.id), []
+        )
+
+    async def test_undo_cannot_be_pressed_twice(self) -> None:
+        from dmbot.ui import name_card
+
+        _, ulfgar, undo = await self.removed_connection(secret=False)
+        await undo.callback(self.it())
+        again = self.it()
+        await undo.callback(again)
+        self.assertEqual(again.response.sent[0][0], f"Not undone. {name_card.NOTHING_MORE}")
+        self.assertEqual(
+            len(await self.memory.relations(GUILD, self.campaign.id, entity_id=ulfgar.id)), 1
+        )
+
+    async def test_the_undo_button_survives_a_restart(self) -> None:
+        import re
+
+        from dmbot.ui import name_card
+
+        _, _, undo = await self.removed_connection(secret=False)
+        cid = undo.item.custom_id
+        assert cid is not None
+        self.assertLess(len(cid), 100)
+        match = name_card.UndoConnectionButton.__discord_ui_compiled_template__.fullmatch(cid)
+        assert isinstance(match, re.Match)
+        again = await name_card.UndoConnectionButton.from_custom_id(self.it(), undo.item, match)
+        self.assertEqual(again.batch, undo.batch)
+
+    async def two_names(self) -> tuple[Any, Any]:
+        brother = await ui.save_name(self.memory, self.campaign, "Corin", "npc", [], [])
+        stranger = await ui.save_name(
+            self.memory, self.campaign, "Vessa", "npc", [], ["the veiled one"]
+        )
+        return brother, stranger
+
+    async def who_view(self, entity_id: str, relation_id: str, who: int = DM) -> Any:
+        """The "Who knows this?" page of one connection, as the DM (or another) opens it."""
+        page = await self.page_of(entity_id, relation_id, who)
+        it = self.it(who)
+        await page._who(it)
+        return it.response.edited[0][1]
+
+    async def test_the_secret_toggle_is_for_dms_only_and_flips(self) -> None:
+        from dmbot.ui import name_card
+
+        dm_view = name_card.Connect(self.campaign.id, self.bell.id, "Belleros", [], secrets=True)
+        toggle = dm_view.toggle
+        it = self.it()
+        await dm_view._toggle_secret(it)
+        self.assertTrue(dm_view.secret)
+        self.assertEqual(toggle.label, name_card.SECRET_ON)
+        self.assertEqual(toggle.style, discord.ButtonStyle.success)
+        await dm_view._toggle_secret(self.it())
+        self.assertFalse(dm_view.secret)
+        self.assertEqual(toggle.label, name_card.SECRET_OFF)
+        manager_view = name_card.Connect(self.campaign.id, self.bell.id, "Belleros", [])
+        self.assertFalse([c for c in manager_view.children if "secret" in getattr(c, "label", "")])
+
+    async def test_a_dm_flips_a_connection_between_secret_and_public_on_the_card(self) -> None:
+        from dmbot.ui import name_card
+
+        corin, _ = await self.two_names()
+        await name_card.connect(self.it(), self.campaign.id, self.bell.id, "kin_of", corin.id)
+        (rel,) = await self.memory.relations(GUILD, self.campaign.id, entity_id=corin.id)
+        self.assertFalse(rel.secret)
+        view = await self.who_view(corin.id, rel.id)
+        it = self.it()
+        await view._only_me(it)
+        self.assertIn("Hidden from players", it.response.edited[0][0])
+        (now,) = await self.memory.relations(
+            GUILD, self.campaign.id, entity_id=corin.id, include_secret=True
+        )
+        self.assertTrue(now.secret)
+        view = await self.who_view(corin.id, rel.id)
+        again = self.it()
+        await view._everyone(again)
+        self.assertIn("Players can see it now", again.response.edited[0][0])
+        (shown,) = await self.memory.relations(GUILD, self.campaign.id, entity_id=corin.id)
+        self.assertFalse(shown.secret)
+
+    async def test_a_second_press_or_a_stale_page_never_makes_a_secret_public(self) -> None:
+        from dmbot.ui import name_card
+
+        corin, _ = await self.two_names()
+        await name_card.connect(self.it(), self.campaign.id, self.bell.id, "kin_of", corin.id)
+        (rel,) = await self.memory.relations(GUILD, self.campaign.id, entity_id=corin.id)
+        view = await self.who_view(corin.id, rel.id)  # one page, pressed twice (a double tap)
+        for _ in range(2):
+            it = self.it()
+            await view._only_me(it)
+        (now,) = await self.memory.relations(
+            GUILD, self.campaign.id, entity_id=corin.id, include_secret=True
+        )
+        self.assertTrue(now.secret)
+        self.assertIn(
+            "Already like that",
+            it.response.sent[0][0] if it.response.sent else str(it.followup.send.await_args),
+        )
+
+    async def test_same_as_retires_the_card_so_it_cannot_time_out_over_the_dropdown(self) -> None:
+        from dmbot.ui import name_card
+
+        await self.two_names()
+        card = name_card.NameCard(self.campaign.id, self.bell.id)
+        await card._same(self.it())
+        self.assertTrue(card.is_finished())
+
+    async def test_the_page_offers_who_knows_and_says_where_it_stands(self) -> None:
+        from dmbot.ui import connection_edit, name_card
+
+        corin, _ = await self.two_names()
+        await name_card.connect(self.it(), self.campaign.id, self.bell.id, "kin_of", corin.id)
+        (rel,) = await self.memory.relations(GUILD, self.campaign.id, entity_id=corin.id)
+
+        def labels(view: Any) -> list[str]:
+            return [getattr(c, "label", "") for c in view.children]
+
+        self.assertIn(connection_edit.WHO_BUTTON, labels(await self.page_of(corin.id, rel.id)))
+        page = await self.page_of(corin.id, rel.id)
+        it = self.it()
+        await page._who(it)
+        self.assertIn("Players can see this connection.", it.response.edited[0][0])
+        await self.memory.update_relation(
+            GUILD, self.campaign.id, rel.id, secret=True, source=DM_SOURCE
+        )
+        self.fresh()
+        page = await self.page_of(corin.id, rel.id)
+        again = self.it()
+        await page._who(again)
+        self.assertIn("Only the DM can see it.", again.response.edited[0][0])
+
+    async def test_a_secret_connection_moves_a_name_up_for_a_dm_and_not_for_anyone_else(
+        self,
+    ) -> None:
+        from dmbot.ui import name_card, name_dropdown
+
+        corin, vessa = await self.two_names()  # (Belleros is not connected to either yet)
+        await name_card.connect(
+            self.it(), self.campaign.id, self.bell.id, "kin_of", vessa.id, secret=True
+        )
+        self.fresh()
+        for who, first in ((DM, vessa.id), (MANAGER, corin.id)):
+            it = self.it(who)
+            await name_dropdown.show_dropdown(it, self.campaign.id, self.bell.id, "member_of")
+            options = it.response.edited[0][1].pick.options
+            order = [o.value for o in options]
+            self.assertEqual(order[0], first, who)  # (Corin sorts before Vessa, A to Z)
+
+    async def test_secret_connections_stay_out_of_every_viewer_but_a_dm(self) -> None:
+        from dmbot.memory.lookup import CampaignLookup
+        from dmbot.ui import name_card
+
+        _, vessa = await self.two_names()
+        await name_card.connect(
+            self.it(), self.campaign.id, self.bell.id, "kin_of", vessa.id, secret=True
+        )
+        full = CampaignLookup.build(await self.memory.lookup_data(GUILD, self.campaign.id))
+        self.assertTrue(full.secret_neighbours)  # the DM's view has the secret link
+        self.assertEqual(full.for_viewer(True).secret_neighbours, full.secret_neighbours)
+        # Nothing here is DM-only, so this is the early-return path that must still blank it.
+        self.assertFalse(full.hidden)
+        self.assertEqual(full.for_viewer(False).secret_neighbours, {})
+        self.assertNotIn(
+            vessa.id, full.for_viewer(False).confirmed_neighbours.get(self.bell.id, ())
+        )
+
+    async def test_the_dropdown_pages_at_25_names(self) -> None:
+        from dmbot.ui import name_dropdown
+
+        for n in range(26):
+            await ui.save_name(self.memory, self.campaign, f"Extra {n:02}", "npc", [], [])
+        self.fresh()
+        it = self.it()
+        await name_dropdown.show_dropdown(
+            it, self.campaign.id, self.bell.id, "member_of", mode=name_dropdown.AZ
+        )
+        self.assertEqual(len(it.response.edited[0][1].pick.options), 25)
+        later = self.it()
+        await name_dropdown.show_dropdown(
+            later, self.campaign.id, self.bell.id, "member_of", mode=name_dropdown.AZ, page=99
+        )  # past the last page: the last one
+        self.assertGreaterEqual(len(later.response.edited[0][1].pick.options), 1)
+
+    async def test_only_a_dm_is_offered_who_knows_and_a_manager_pressing_it_changes_nothing(
+        self,
+    ) -> None:
+        from dmbot.ui import name_card
+
+        corin, _ = await self.two_names()
+        await name_card.connect(self.it(), self.campaign.id, self.bell.id, "kin_of", corin.id)
+        (rel,) = await self.memory.relations(GUILD, self.campaign.id, entity_id=corin.id)
+        plain = await self.page_of(corin.id, rel.id, MANAGER)
+        from dmbot.ui import connection_edit
+
+        self.assertNotIn(
+            connection_edit.WHO_BUTTON, [getattr(c, "label", "") for c in plain.children]
+        )
+        view = await self.who_view(corin.id, rel.id)  # the DM's page, pressed by a manager
+        await view._only_me(self.it(MANAGER))
+        (same,) = await self.memory.relations(GUILD, self.campaign.id, entity_id=corin.id)
+        self.assertFalse(same.secret)
+
+    async def test_connect_to_offers_the_toggle_only_to_a_dm(self) -> None:
+        from dmbot.ui import name_card
+
+        for who, expect in ((DM, True), (MANAGER, False)):
+            it = self.it(who)
+            card = name_card.NameCard(self.campaign.id, self.bell.id)
+            await card._connect(it)
+            view = it.response.edited[0][1]
+            labels = [getattr(c, "label", "") for c in view.children]
+            self.assertEqual(name_card.SECRET_OFF in labels, expect)
+
+    async def test_a_secret_connection_is_saved_secret_and_says_so(self) -> None:
+        from dmbot.ui import name_card
+
+        corin, _ = await self.two_names()
+        it = self.it()
+        await name_card.connect(it, self.campaign.id, self.bell.id, "kin_of", corin.id, secret=True)
+        note = it.response.edited[0][0]
+        self.assertIn(
+            "🧭 Saved: **Belleros** is family of **Corin** 🤫 Secret: players can't see it.", note
+        )
+        (rel,) = await self.memory.relations(
+            GUILD, self.campaign.id, entity_id=corin.id, include_secret=True
+        )
+        self.assertTrue(rel.secret)
+        self.assertEqual(
+            await self.memory.relations(GUILD, self.campaign.id, entity_id=corin.id), []
+        )  # the default read, which everything else uses, never sees it
+
+    async def test_a_press_by_someone_who_is_no_longer_a_dm_saves_it_not_secret(self) -> None:
+        from dmbot.ui import name_card
+
+        corin, _ = await self.two_names()
+        it = self.it(MANAGER)
+        await name_card.connect(it, self.campaign.id, self.bell.id, "kin_of", corin.id, secret=True)
+        self.assertIn(name_card.SECRET_DENIED_SAVE, it.response.edited[0][0])
+        (rel,) = await self.memory.relations(GUILD, self.campaign.id, entity_id=corin.id)
+        self.assertFalse(rel.secret)
+
+    async def test_a_secret_connection_saved_again_as_not_secret_stays_secret_and_says_so(
+        self,
+    ) -> None:
+        from dmbot.ui import name_card
+
+        corin, _ = await self.two_names()
+        await name_card.connect(
+            self.it(), self.campaign.id, self.bell.id, "kin_of", corin.id, secret=True
+        )
+        it = self.it()
+        await name_card.connect(it, self.campaign.id, self.bell.id, "kin_of", corin.id)
+        self.assertIn(name_card.SECRET_ALREADY, it.response.edited[0][0])
+        (rel,) = await self.memory.relations(
+            GUILD, self.campaign.id, entity_id=corin.id, include_secret=True
+        )
+        self.assertTrue(rel.secret)
+
+    async def test_a_forced_secret_is_not_saved_in_the_open_by_someone_no_longer_a_dm(
+        self,
+    ) -> None:
+        from dmbot.ui import name_card
+
+        _, vessa = await self.two_names()
+        it = self.it(MANAGER)
+        await name_card.connect(
+            it, self.campaign.id, self.bell.id, "kin_of", vessa.id, secret=True, forced=True
+        )
+        self.assertEqual(it.response.sent[0][0], name_card.SECRET_DENIED_PRESS)
+        self.assertEqual(
+            await self.memory.relations(
+                GUILD, self.campaign.id, entity_id=vessa.id, include_secret=True
+            ),
+            [],
+        )
+
+    async def test_the_toggle_comes_after_back(self) -> None:
+        from dmbot.ui import name_card
+
+        view = name_card.Connect(self.campaign.id, self.bell.id, "Belleros", [], secrets=True)
+        row = [getattr(c, "label", "") for c in view.children if c.row == 3]
+        self.assertEqual(row, ["Back", name_card.SECRET_OFF])
+
+    async def test_a_name_found_through_a_secret_name_makes_it_secret_by_itself(self) -> None:
+        from dmbot.ui import name_card
+
+        _, vessa = await self.two_names()
+        it = self.it()
+        await name_card.show_picks(it, self.campaign.id, self.bell.id, "kin_of", "veiled")
+        view = it.response.edited[0][1]
+        self.assertEqual(view.hidden, frozenset({vessa.id}))
+        view.pick = SimpleNamespace(values=[vessa.id])
+        it = self.it()
+        await view._picked(it)
+        self.assertIn(name_card.SECRET_FORCED, it.response.edited[0][0])
+        (rel,) = await self.memory.relations(
+            GUILD, self.campaign.id, entity_id=vessa.id, include_secret=True
+        )
+        self.assertTrue(rel.secret)
+
+    async def test_the_toggle_state_travels_through_the_steps(self) -> None:
+        from dmbot.ui import name_card
+
+        view = name_card.Connect(self.campaign.id, self.bell.id, "Belleros", [], secrets=True)
+        await view._toggle_secret(self.it())
+        view.how = SimpleNamespace(values=["kin_of"])  # type: ignore[assignment]
+        it = self.it()
+        await view._how_picked(it)
+        dropdown = it.response.edited[0][1]  # the name dropdown, not the typing form (#2321)
+        self.assertTrue(dropdown.secret)
+
+    async def test_picking_from_the_dropdown_connects_and_the_order_switch_works(self) -> None:
+        from dmbot.ui import name_card
+
+        corin, vessa = await self.two_names()
+        view = name_card.Connect(self.campaign.id, self.bell.id, "Belleros", [], secrets=True)
+        view.how = SimpleNamespace(values=["kin_of"])  # type: ignore[assignment]
+        it = self.it()
+        await view._how_picked(it)
+        dropdown = it.response.edited[0][1]
+        shown = {o.value for o in dropdown.pick.options}
+        self.assertEqual(shown, {corin.id, vessa.id})  # every other name; not Belleros
+        self.assertEqual(dropdown.mode, "closest")
+        again = self.it()
+        await dropdown._switch(again)
+        self.assertEqual(again.response.edited[0][1].mode, "az")
+        picked = SimpleNamespace(values=[corin.id])
+        dropdown.pick = picked
+        done = self.it()
+        await dropdown._picked(done)
+        self.assertIn("🧭 Saved:", done.response.edited[0][0])
+        (rel,) = await self.memory.relations(GUILD, self.campaign.id, entity_id=corin.id)
+        self.assertEqual({rel.subject_id, rel.object_id}, {self.bell.id, corin.id})
+
+    async def test_only_a_dm_sees_secret_connections_to_remove_and_nothing_else_reads_them(
+        self,
+    ) -> None:
+        from dmbot.ui import name_card
+
+        corin, _ = await self.two_names()
+        await name_card.connect(
+            self.it(), self.campaign.id, self.bell.id, "kin_of", corin.id, secret=True
+        )
+        for who, listed in ((DM, True), (MANAGER, False)):
+            it = self.it(who)
+            await name_card.NameCard(self.campaign.id, self.bell.id)._connect(it)
+            view = it.response.edited[0][1]
+            options = [o.label for o in view.edit.options] if hasattr(view, "edit") else []
+            self.assertEqual(any("🤫" in label for label in options), listed)
+        # and a manager who asks for the secret one by its id is told it isn't there
+        (rel,) = await self.memory.relations(
+            GUILD, self.campaign.id, entity_id=corin.id, include_secret=True
+        )
+        self.assertIsNone(await self.page_of(corin.id, rel.id, MANAGER))
+        # The copy the overview, the type-ahead, the scans and the recall read leaves secret
+        # connections out altogether.
+        data = await self.memory.lookup_data(GUILD, self.campaign.id)
+        self.assertEqual(data.relations, ())
+        player_card = self.it(PLAYER)
+        await name_card.show_card(player_card, self.campaign.id, corin.id)
+        self.assertNotIn("Belleros", player_card.response.sent[0][0])
 
     async def test_a_long_note_and_card_fit_one_message(self) -> None:
         from dmbot.ui import name_card
@@ -673,7 +1306,7 @@ class NameCards(NamesTest):
         self.fresh()
         it = self.it()
         note = "✅ " + "y" * 1500
-        await name_card.show_card(it, self.campaign.id, self.bell.id, full=True, note=note)
+        await name_card.show_card(it, self.campaign.id, self.bell.id, note=note)
         self.assertLessEqual(len(it.response.sent[0][0]), 2000)
 
     async def test_a_manager_never_gets_the_secret_button(self) -> None:
@@ -685,31 +1318,193 @@ class NameCards(NamesTest):
         labels = [b.label or "" for b in view.children if isinstance(b, discord.ui.Button)]
         self.assertFalse(any("secret" in label for label in labels))
         it = self.it(MANAGER)
-        await view._secret(it)
+        await view._who(it)
         self.assertIn("Only the campaign's DMs", it.response.sent[0][0])
         self.assertFalse((await self.alias("Bell")).secret)
 
-    async def test_show_all_lists_every_other_name(self) -> None:
-        from dmbot.ui import name_card
-
-        for n in range(5):
+    async def add_names(self, n: int, *, secret: bool = False) -> None:
+        for k in range(n):
             await self.memory.add_alias(
-                GUILD, self.campaign.id, self.bell.id, f"Bell {n}", kind="nickname",
-                source="dm", status=CONFIRMED,
+                GUILD, self.campaign.id, self.bell.id, f"{'Hush' if secret else 'Bell'} {k:02d}",
+                kind="nickname", source="dm", status=CONFIRMED, secret=secret,
             )  # fmt: skip
         self.fresh()
+
+    @staticmethod
+    def select(kw: dict[str, Any]) -> Any:
+        found = [c for c in kw["view"].children if isinstance(c, discord.ui.Select)]
+        return found[0] if found else None
+
+    async def test_show_all_is_one_select_with_a_choice_for_each_cut_section(self) -> None:
+        from dmbot.ui import name_card
+
+        await self.add_names(5)  # and the name's own "Bell": six in all
         it = self.it()
         await name_card.show_card(it, self.campaign.id, self.bell.id)
         text, kw = it.response.sent[0]
         self.assertIn("… and 3 more", text)
-        labels = [getattr(c, "label", None) for c in kw["view"].children]
-        self.assertIn("Show all", labels)
+        select = self.select(kw)
+        self.assertEqual(select.placeholder, name_card.SHOW_ALL)
+        self.assertEqual([(o.value, o.label) for o in select.options],
+                         [("names", "Other names (6)")])  # fmt: skip
+        self.assertFalse(
+            [c for c in kw["view"].children if getattr(c, "label", None) == "Show all"]
+        )  # no button any more
+
+    async def test_nothing_cut_means_no_select(self) -> None:
+        from dmbot.ui import name_card
+
+        await self.add_names(2)  # with its own "Bell", three: exactly what the card shows
         it = self.it()
-        await name_card.show_card(it, self.campaign.id, self.bell.id, full=True)
+        await name_card.show_card(it, self.campaign.id, self.bell.id)
+        self.assertIsNone(self.select(it.response.sent[0][1]))
+
+    async def test_choosing_a_section_sends_every_entry_in_order_and_leaves_the_card(self) -> None:
+        from dmbot.ui import name_card
+
+        await self.add_names(5)
+        it = self.it()
+        await name_card.show_section(it, self.campaign.id, self.bell.id, "names")
         text, kw = it.response.sent[0]
-        self.assertNotIn("… and", text)
-        self.assertIn("Bell 4", text)
-        self.assertNotIn("Show all", [getattr(c, "label", None) for c in kw["view"].children])
+        self.assertIn("other names (6)", text)
+        lines = text.splitlines()[1:]
+        self.assertEqual(sorted(lines), sorted(["Bell", *[f"Bell {k:02d}" for k in range(5)]]))
+        card = self.it()
+        await name_card.show_card(card, self.campaign.id, self.bell.id)
+        shown = card.response.sent[0][0].split("**Also called:** ")[1].split(" …")[0].split(", ")
+        self.assertEqual(lines[:3], shown)  # the card's first three, then the rest, same order
+        self.assertIsNone(kw.get("view"))  # one page: no Older / Newer
+        self.assertEqual(it.response.edited, [])  # the card is not changed
+
+    async def test_a_long_section_is_paged_by_25_lines(self) -> None:
+        from dmbot.ui import name_card
+
+        await self.add_names(60)
+        it = self.it()
+        await name_card.show_section(it, self.campaign.id, self.bell.id, "names")
+        text, kw = it.response.sent[0]
+        self.assertEqual(len(text.splitlines()), 1 + 25 + 1)  # head, 25 lines, the page line
+        self.assertIn("Page 1 of 3", text)
+        view = kw["view"]
+        self.assertEqual([c.label for c in view.children], ["Later ▶"])
+        it = self.it()
+        await view._later(it)
+        text, kw = it.response.edited[0]
+        self.assertIn("Page 2 of 3", text)
+        self.assertEqual(len(text.splitlines()), 1 + 25 + 1)
+        self.assertEqual([c.label for c in kw.children], ["◀ Earlier", "Later ▶"])
+        it = self.it()
+        await name_card.show_section(it, self.campaign.id, self.bell.id, "names", page=9)
+        self.assertIn("Page 3 of 3", it.response.sent[0][0])  # past the end: the last page
+
+    async def test_a_player_or_manager_never_gets_the_secret_names(self) -> None:
+        from dmbot.ui import name_card
+
+        await self.add_names(5, secret=True)
+        dm_it = self.it()
+        await name_card.show_card(dm_it, self.campaign.id, self.bell.id)
+        values = [o.value for o in self.select(dm_it.response.sent[0][1]).options]
+        self.assertIn("secret", values)
+        asked = self.it(MANAGER)
+        await name_card.show_card(asked, self.campaign.id, self.bell.id)
+        text, kw = asked.response.sent[0]
+        self.assertNotIn("Hush", text)
+        self.assertIsNone(self.select(kw))  # nothing visible is cut
+        sneaky = self.it(MANAGER)  # an old card, or a made-up press
+        await name_card.show_section(sneaky, self.campaign.id, self.bell.id, "secret")
+        self.assertEqual(sneaky.response.sent[0][0], name_card.NOTHING_MORE)
+        self.assertNotIn("Hush", str(sneaky.response.sent))
+
+    async def test_connections_are_listed_in_full_and_nothing_is_written(self) -> None:
+        from dmbot.ui import name_card
+
+        for k in range(5):
+            other = await ui.save_name(self.memory, self.campaign, f"Friend {k}", "npc", [], [])
+            await self.memory.add_relation(
+                GUILD, self.campaign.id, self.bell.id, "knows", other.id,
+                source="dm", confidence=1.0, status=CONFIRMED,
+            )  # fmt: skip
+        self.fresh()
+        before = await self.memory.aliases(GUILD, self.campaign.id, include_secret=True)
+        it = self.it()
+        await name_card.show_card(it, self.campaign.id, self.bell.id)
+        for k in range(5):  # one line each, all on the card: nothing is cut, so no Show all
+            self.assertIn(f"• knows **Friend {k}**", it.response.sent[0][0])
+        self.assertIsNone(self.select(it.response.sent[0][1]))
+        it = self.it()
+        await name_card.show_section(it, self.campaign.id, self.bell.id, "links")
+        text = it.response.sent[0][0]
+        for k in range(5):
+            self.assertIn(f"knows **Friend {k}**", text)
+        after = await self.memory.aliases(GUILD, self.campaign.id, include_secret=True)
+        self.assertEqual(len(before), len(after))
+
+    async def friends(self, n: int, *, secret: bool = False, predicate: str = "knows") -> None:
+        for k in range(n):
+            other = await ui.save_name(
+                self.memory,
+                self.campaign,
+                f"{'Hidden' if secret else 'Pal'} {predicate} {k}",
+                "npc",
+                [],
+                [],
+            )
+            await self.memory.add_relation(
+                GUILD, self.campaign.id, self.bell.id, predicate, other.id,
+                source="dm", confidence=1.0, status=CONFIRMED, secret=secret,
+            )  # fmt: skip
+        self.fresh()
+
+    async def test_a_secret_connection_is_listed_for_a_dm_and_never_for_anyone_else(self) -> None:
+        from dmbot.ui import name_card
+
+        await self.friends(5, secret=True)
+        dm_it = self.it()
+        await name_card.show_section(dm_it, self.campaign.id, self.bell.id, "links")
+        self.assertIn("🤫", dm_it.response.sent[0][0])
+        for who in (MANAGER, STRANGER):
+            it = self.it(who)
+            await name_card.show_section(it, self.campaign.id, self.bell.id, "links")
+            self.assertNotIn("Hidden", str(it.response.sent))
+
+    async def test_connections_are_one_line_each_and_never_cut_by_group(self) -> None:
+        from dmbot.ui import name_card
+
+        await self.friends(4)  # four of one reading used to be "cut" into a Show all
+        await self.friends(1, predicate="serves")
+        names = await self.bot.lookup.get(GUILD, self.campaign.id)  # type: ignore[union-attr]
+        rel = await self.memory.relations(GUILD, self.campaign.id, entity_id=self.bell.id)
+        self.assertEqual(name_card.cut_sections(names, self.bell.id, rel, secrets=False), [])
+        text = name_card.card_text(names, self.bell.id, rel, secrets=False)
+        assert text is not None
+        lines = text.split("\n")
+        self.assertIn("**Connections:**", lines)
+        self.assertEqual(len([ln for ln in lines if ln.startswith("• ")]), 5)
+        self.assertNotIn("🤫", text)  # a known connection carries no icon
+
+    async def test_an_unknown_section_or_a_gone_name_says_so(self) -> None:
+        from dmbot.ui import name_card
+
+        it = self.it()
+        await name_card.show_section(it, self.campaign.id, self.bell.id, "bogus")
+        self.assertEqual(it.response.sent[0][0], name_card.NOTHING_MORE)
+        it = self.it()
+        await name_card.show_section(it, self.campaign.id, "no-such-name", "names")
+        self.assertEqual(it.response.sent[0][0], ui.GONE)
+
+    async def test_the_earlier_button_goes_back(
+        self,
+    ) -> None:
+        from dmbot.ui import name_card
+
+        await self.add_names(30)
+        it = self.it()
+        await name_card.show_section(it, self.campaign.id, self.bell.id, "names", page=1)
+        view = it.response.sent[0][1]["view"]
+        self.assertEqual([c.label for c in view.children], ["◀ Earlier"])  # the last page
+        back = self.it()
+        await view._earlier(back)
+        self.assertIn("Page 1 of 2", back.response.edited[0][0])
 
     async def test_the_type_ahead_suggests_nothing_to_strangers(self) -> None:
         from dmbot.ui import name_card
@@ -789,6 +1584,35 @@ class Lists(NamesTest):
             "Took the whole list back", it.edit_original_response.call_args.kwargs["content"]
         )
         self.assertNotIn("Bryn Shander", await self.names())
+
+    async def test_a_bracket_after_a_name_is_how_to_say_it_or_another_name_or_asked(self) -> None:
+        """#2447: Tavin (TAV-in) is said-as; Sera (the rogue) is another name; Jorvik (YOR-vick)
+        is asked once and changes nothing until answered."""
+        sent = await self.add_many(
+            "Tavin (TAV-in) | npc\nSera (the rogue) | npc\nJorvik (YOR-vick) | npc"
+        )
+        names = await self.names()
+        self.assertTrue({"Tavin", "Sera", "Jorvik"} <= set(names))  # the brackets are not in names
+        self.assertEqual(
+            await self.memory.said_as(GUILD, self.campaign.id, names["Tavin"].id), "TAV-in"
+        )
+        self.assertIsNone(await self.memory.said_as(GUILD, self.campaign.id, names["Jorvik"].id))
+        aliases = await self.memory.aliases(GUILD, self.campaign.id)
+        self.assertIn("Sera the rogue", {a.text for a in aliases})
+        question = sent[-1]
+        self.assertIn("Is (YOR-vick) how to say **Jorvik**?", question.args[0])
+        await self.press(question.kwargs["view"], "1. It's how to say it")
+        self.assertEqual(
+            await self.memory.said_as(GUILD, self.campaign.id, names["Jorvik"].id), "YOR-vick"
+        )
+
+    async def test_the_other_answer_keeps_the_bracket_as_another_name(self) -> None:
+        sent = await self.add_many("Jorvik (YOR-vick) | npc")
+        await self.press(sent[-1].kwargs["view"], "1. It's another name")
+        aliases = await self.memory.aliases(GUILD, self.campaign.id)
+        self.assertIn("Jorvik YOR-vick", {a.text for a in aliases})
+        names = await self.names()
+        self.assertIsNone(await self.memory.said_as(GUILD, self.campaign.id, names["Jorvik"].id))
 
     async def test_undo_for_a_list_says_when_it_is_too_late(self) -> None:
         from dmbot.ui import name_lists
@@ -914,11 +1738,11 @@ class Lists(NamesTest):
     async def test_keep_all_and_change_all(self) -> None:
         from dmbot.ui import names as panel
 
-        await panel.save_name(self.memory, self.campaign, "Auril", "deity", [], [])
+        await panel.save_name(self.memory, self.campaign, "Auril", "item", [], [])
         await panel.save_name(self.memory, self.campaign, "Ulfgar", "npc", [], [])
         sent = await self.add_many("Auril | place\nUlfgar | place")
         view = sent[1].kwargs["view"]
-        self.assertIn(panel.KIND_SHORT["deity"], sent[1].args[0])
+        self.assertIn(panel.KIND_SHORT["item"], sent[1].args[0])
         it = await self.press(view, "Change all")
         content = it.edit_original_response.call_args.kwargs["content"]
         self.assertEqual(content.count("✅ Changed 1 to place."), 2)
@@ -976,7 +1800,7 @@ class Lists(NamesTest):
         for question in ("**Quilon** → **Quillon**?", "**Brynnwater** → **Brynwater**?",
                          "**Gorrack** → **Gorrak**?"):  # fmt: skip
             self.assertIn(question, near)
-        self.assertIn("**Varrow**: DMbot has god, your list says place.", sent[2].args[0])
+        self.assertIn("**Varrow**: DMbot has NPC, your list says place.", sent[2].args[0])
         self.assertIn("**Ashen Crown**: DMbot has group, your list says place.", sent[2].args[0])
 
     async def test_an_unknown_kind_is_asked_once_for_all_its_names(self) -> None:
@@ -1016,120 +1840,100 @@ class Lists(NamesTest):
         self.assertIn("Added 1 name", it.followup.send.call_args.args[0])
         fake.complete.assert_not_called()
 
-    async def test_a_document_goes_to_the_ai_and_the_dm_sees_the_list_first(self) -> None:
-        from dmbot.ui import name_lists
+    async def test_a_document_goes_through_the_campaign_lore_read_and_only_for_a_dm(self) -> None:
+        from dmbot.ui import name_background, name_lists
 
-        reply = (
-            "Here you go:\nUlfgar | NPC | Ulf\nBryn Shander | place\nKesh | NPC | | the stranger"
-        )
-        fake: Any = SimpleNamespace(complete=AsyncMock(return_value=Reply(reply, cut=False)))
-        self.bot.ai = fake
+        fake: Any = SimpleNamespace(complete=AsyncMock())
+        self.bot.background_ai = fake
         self.fresh()
-        it = self.it(MANAGER)  # not one of the campaign's DMs: no secret names
         upload = name_lists.Upload(
             "Ulfgar, chief of the Frostwolves, lives in Bryn Shander.", "npcs.pdf", True
         )
+        it = self.it(MANAGER)  # not one of the campaign's DMs
+        await name_lists.take_list(it, self.campaign.id, upload)
+        self.assertEqual(it.response.sent[0][0], name_background.ONLY_DMS)
+        it = self.it()
         await name_lists.take_list(it, self.campaign.id, upload)
         text, kw = it.response.sent[0]
-        self.assertIn("goes to Anthropic", text)
-        self.assertIn("right to use", text)
-        offer = kw["view"]
-        store = self.bot.campaigns
-        self.assertEqual(await store.confirmations(GUILD, self.campaign.id), [])  # not yet
-        it = self.it(MANAGER)
-        it.edit_original_response = AsyncMock()
-        await offer._read(it)
-        # #252: who confirmed the right to use it, when, and what for, kept with the
-        # campaign; a fingerprint of the text, never the text or the file's name.
-        from dmbot.campaigns.models import fingerprint
+        self.assertIn("connections your text states", text)
+        self.assertIn("you may use it", text)
+        self.assertIsInstance(kw["view"], name_background.BackgroundOffer)
+        self.assertEqual(await self.bot.campaigns.confirmations(GUILD, self.campaign.id), [])
+        fake.complete.assert_not_called()  # only after the DM presses Find names
+        self.assertNotIn("Ulfgar", await self.names())
 
-        (row,) = await store.confirmations(GUILD, self.campaign.id)
-        self.assertEqual(
-            (row["user"], row["purpose"], row["fingerprint"]),
-            (str(MANAGER), "names_list", fingerprint(upload.text)),
-        )
-        self.assertNotIn("npcs", str(row))
-        elsewhere = await store.create(GUILD, "Strahd", DM)
-        self.assertEqual(await store.confirmations(GUILD, elsewhere.id), [])  # this one only
-        system, sent = fake.complete.call_args.args
-        self.assertIn("<document>", sent)
-        self.assertIn("Leave out disguises", system)
-        preview = it.edit_original_response.call_args.kwargs
-        self.assertIn("found 2 names", preview["content"])  # the secret line was refused
-        self.assertIn("Nothing is added until you press", preview["content"])
-        self.assertNotIn("Ulfgar", await self.names())  # nothing saved yet
-        it = self.it(MANAGER)
-        await preview["view"]._add(it)
-        self.assertIn("Added 2 names", it.followup.send.call_args.args[0])
+    async def test_a_list_with_prose_lines_adds_the_strict_ones_and_reads_the_rest(self) -> None:
+        from dmbot.ui import name_background, name_lists
+
+        self.bot.background_ai = SimpleNamespace(complete=AsyncMock())  # type: ignore[assignment]
+        self.fresh()
+        text = "Ulfgar | NPC\nBryn Shander is a town in the far north, ruled by nine speakers."
+        it = self.it()
+        await name_lists.take_list(it, self.campaign.id, name_lists.Upload(text, "your list"))
+        self.assertIn("Added 1 name", it.followup.send.call_args_list[0].args[0])
         self.assertIn("Ulfgar", await self.names())
+        offer = it.followup.send.call_args_list[-1].kwargs["view"]
+        self.assertIsInstance(offer, name_background.BackgroundOffer)
+        self.assertEqual(offer.upload.text, text.splitlines()[1])
+        self.bot.background_ai = None  # no AI: what fits is added, and the prose is said to wait
+        it = self.it()
+        await name_lists.take_list(it, self.campaign.id, name_lists.Upload(text, "your list"))
+        self.assertIn("can't read documents or links here", it.followup.send.call_args.args[0])
 
-    async def test_nothing_is_recorded_without_the_press(self) -> None:
+    async def test_a_bare_name_beside_a_sentence_is_added_even_when_the_lore_read_is_refused(
+        self,
+    ) -> None:
+        """Decided line by line: "Tavin" is a name for anyone to add; only the sentence waits for
+        the DM-only lore read (the manager is refused it, but still gets the name)."""
         from dmbot.ui import name_lists
 
-        self.bot.ai = SimpleNamespace(complete=AsyncMock())  # type: ignore[assignment]
+        self.bot.background_ai = SimpleNamespace(complete=AsyncMock())  # type: ignore[assignment]
         self.fresh()
-        upload = name_lists.Upload("Ulfgar lives here.", "npcs.pdf", True)
-        for way_out in ("_cancel", "_as_is"):
-            with self.subTest(way_out=way_out):
-                it = self.it()
-                await name_lists.take_list(it, self.campaign.id, upload)
-                offer = it.response.sent[0][1]["view"]
-                it = self.it()
-                await getattr(offer, way_out)(it)
-        self.assertEqual(await self.bot.campaigns.confirmations(GUILD, self.campaign.id), [])
+        text = "Tavin\nBryn Shander is a town in the far north, ruled by nine speakers."
+        it = self.it(MANAGER)
+        await name_lists.take_list(it, self.campaign.id, name_lists.Upload(text, "your list"))
+        self.assertIn("Added 1 name", it.followup.send.call_args_list[0].args[0])
+        self.assertIn("Tavin", await self.names((CONFIRMED, "proposed")))
 
-    async def test_no_ai_reading_without_a_saved_confirmation(self) -> None:
+    async def test_hard_wrapped_prose_is_never_added_as_names(self) -> None:
+        from dmbot.ui import name_background, name_lists
+
+        self.bot.background_ai = SimpleNamespace(complete=AsyncMock())  # type: ignore[assignment]
+        self.fresh()
+        before = await self.names()
+        text = "Bob runs the Rusty Nail.\nHe hates orcs.\nThe Nail stands in Vale Keep."
+        it = self.it()
+        await name_lists.take_list(it, self.campaign.id, name_lists.Upload(text, "notes"))
+        self.assertEqual(await self.names(), before)  # no junk names from short lines
+        offer = it.response.sent[0][1]["view"]
+        self.assertIsInstance(offer, name_background.BackgroundOffer)
+        self.assertEqual(offer.upload.text, text)  # all of it, in order
+
+    async def test_a_line_the_list_refuses_on_purpose_is_explained_not_sent_to_the_ai(self) -> None:
         from dmbot.ui import name_lists
 
         fake: Any = SimpleNamespace(complete=AsyncMock())
-        self.bot.ai = fake
+        self.bot.background_ai = fake
         self.fresh()
-        it = self.it()
-        upload = name_lists.Upload("Ulfgar lives here.", "npcs.pdf", True)
-        await name_lists.take_list(it, self.campaign.id, upload)
-        offer = it.response.sent[0][1]["view"]
-        it = self.it()
-        it.edit_original_response = AsyncMock()
-        with (
-            patch.object(
-                self.bot.campaigns, "record_confirmation", AsyncMock(side_effect=OSError("db"))
-            ),
-            self.assertLogs("dmbot.ui.name_lists", "INFO") as logs,
-        ):
-            await offer._read(it)
-        fake.complete.assert_not_called()  # the IP rule: no record, no reading
-        self.assertIn("Nothing was added", it.edit_original_response.call_args.kwargs["content"])
-        self.assertFalse(any("confirmed" in line for line in logs.output))  # log agrees
-        # The campaign was deleted meanwhile: its own words, and still no reading.
-        from dmbot.campaigns.models import CampaignError
-
-        it = self.it()
-        await name_lists.take_list(it, self.campaign.id, upload)
-        offer = it.response.sent[0][1]["view"]
-        it = self.it()
-        it.edit_original_response = AsyncMock()
-        gone = CampaignError("That campaign doesn't exist in this server.")
-        with patch.object(self.bot.campaigns, "record_confirmation", AsyncMock(side_effect=gone)):
-            await offer._read(it)
+        it = self.it(MANAGER)
+        await name_lists.take_list(
+            it, self.campaign.id, name_lists.Upload("Fireball | spell\nKesh | NPC", "x")
+        )
+        summary = it.followup.send.call_args.args[0]
+        self.assertIn("Added 1 name", summary)
+        self.assertIn("1 line wasn't added", summary)
+        self.assertEqual(it.followup.send.call_count, 1)  # no offer, no cost
         fake.complete.assert_not_called()
-        self.assertEqual(it.edit_original_response.call_args.kwargs["content"], str(gone))
 
-    async def test_ai_problems_say_nothing_was_added(self) -> None:
-        from dmbot.ai import BUSY, AIError
+    async def test_a_link_is_not_fetched_for_someone_who_is_not_a_dm(self) -> None:
         from dmbot.ui import name_lists
 
-        fake: Any = SimpleNamespace(complete=AsyncMock(side_effect=AIError(BUSY)))
-        self.bot.ai = fake
+        self.bot.background_ai = SimpleNamespace(complete=AsyncMock())  # type: ignore[assignment]
         self.fresh()
-        it = self.it()
-        upload = name_lists.Upload("Ulfgar lives here.", "npcs.pdf", True)
-        await name_lists.take_list(it, self.campaign.id, upload)
-        offer = it.response.sent[0][1]["view"]
-        it = self.it()
-        it.edit_original_response = AsyncMock()
-        await offer._read(it)
-        self.assertIn("Nothing was added", it.edit_original_response.call_args.kwargs["content"])
-        self.assertEqual(name_lists._ai_busy, set())  # free for the next one
+        it = self.it(MANAGER)
+        with patch("dmbot.fetch.fetch", AsyncMock()) as fetched:
+            await name_lists.take_link(it, self.campaign.id, "https://example.com/lore")
+        fetched.assert_not_called()
 
     async def test_an_empty_list_or_a_managers_secret_line_never_goes_to_the_ai(self) -> None:
         from dmbot.ui import name_lists
@@ -1145,24 +1949,6 @@ class Lists(NamesTest):
         await name_lists.take_list(it, self.campaign.id, name_lists.Upload(text, "x"))
         self.assertIn("Added 1 name", it.followup.send.call_args.args[0])
         fake.complete.assert_not_called()
-
-    async def test_a_list_with_errors_goes_to_the_ai_with_the_option_to_add_what_fits(self) -> None:
-        from dmbot.ui import name_lists
-
-        fake: Any = SimpleNamespace(complete=AsyncMock())
-        self.bot.ai = fake
-        self.fresh()
-        it = self.it()
-        text = "Ulfgar | NPC\nBryn Shander | place | Bryn | x | notes about the town"
-        await name_lists.take_list(it, self.campaign.id, name_lists.Upload(text, "your list"))
-        message, kw = it.response.sent[0]
-        self.assertIn("1 line in your list doesn't fit", message)
-        labels = [getattr(c, "label", "") for c in kw["view"].children]
-        self.assertIn("Add the 1 that fit", labels)
-        self.bot.ai = None
-        it = self.it()  # no AI switched on: what fits is added, the rest explained
-        await name_lists.take_list(it, self.campaign.id, name_lists.Upload(text, "your list"))
-        self.assertIn("1 line wasn't added", it.followup.send.call_args.args[0])
 
     async def test_a_manager_never_learns_of_or_adds_secret_names(self) -> None:
         from dmbot.ui import name_lists
@@ -1199,6 +1985,193 @@ class Lists(NamesTest):
         body = it.followup.send.call_args.kwargs["files"][0].fp.getvalue().decode()
         (line,) = parse(body, secrets=True).lines
         self.assertEqual((line.name, line.secrets), ("Belleros", ("the stranger",)))
+
+    # ---- players and DMs in lists (#1559) -------------------------------------------------
+
+    MIA_ID = 111111111111111234
+    BEN_ID = 222222222222225678
+
+    def with_members(self, it: Any, members: dict[int, bool]) -> Any:
+        """A guild where these ids are members (True: a bot)."""
+        import discord as d
+
+        async def fetch_member(user_id: int) -> Any:
+            if user_id not in members:
+                raise d.NotFound(MagicMock(status=404, reason="x"), "Unknown Member")
+            return SimpleNamespace(id=user_id, bot=members[user_id])
+
+        it.guild = SimpleNamespace(id=GUILD, fetch_member=fetch_member, get_member=lambda _id: None)
+        return it
+
+    async def person_names(self, user_id: int) -> list[str]:
+        rows = await self.memory.table_people(GUILD, self.campaign.id)
+        return next((also for u, _, also in rows if u == user_id), [])
+
+    async def test_a_dms_download_lists_people_with_ids_and_a_players_does_not(self) -> None:
+        from dmbot.memory.name_list import parse
+        from dmbot.ui import name_lists
+
+        cerric = await ui.save_name(self.memory, self.campaign, "Cerric", "npc", [], [])
+        await self.memory.confirm_entity(
+            GUILD, self.campaign.id, cerric.id, "player_character", source="dm",
+            played_by=self.MIA_ID,
+        )  # fmt: skip
+        await self.memory.add_person_names(GUILD, self.campaign.id, self.MIA_ID, ["Mike", "Mikey"])
+        self.fresh()
+        it = self.it()
+        await name_lists.send_download(it, self.campaign.id)
+        body = it.followup.send.call_args.kwargs["files"][0].fp.getvalue().decode()
+        self.assertIn(f"Mike | player or DM | Mikey |  | {self.MIA_ID} | Cerric", body)
+        self.assertIn(
+            "who: their Discord id, a long number", body
+        )  # the header says what the column is
+        parsed = parse(body, secrets=True)
+        self.assertEqual(
+            [(r.who, r.names, r.plays) for r in parsed.people],
+            [(self.MIA_ID, ("Mike", "Mikey"), ("Cerric",))],
+        )
+        self.assertEqual(parsed.refused, [])
+        player = self.it(MANAGER)  # someone who may download but is not a DM
+        await name_lists.send_download(player, self.campaign.id)
+        text = player.followup.send.call_args.kwargs["files"][0].fp.getvalue().decode()
+        self.assertNotIn(str(self.MIA_ID), text)
+        self.assertNotIn("player or DM", text)
+        self.assertNotIn("who: their Discord", text)
+
+    async def test_a_reloaded_file_round_trips_a_person_without_doubling_names(self) -> None:
+        from dmbot.ui import name_lists
+
+        await self.memory.add_person_names(GUILD, self.campaign.id, self.MIA_ID, ["Mike"])
+        self.fresh()
+        it = self.it()
+        await name_lists.send_download(it, self.campaign.id)
+        body = it.followup.send.call_args.kwargs["files"][0].fp.getvalue().decode()
+        again = self.with_members(self.it(), {self.MIA_ID: False})
+        await name_lists.import_list(
+            again, self.campaign.id, body + f"\nMike | player or DM | Mikey | | {self.MIA_ID}\n"
+        )
+        self.assertEqual(sorted(await self.person_names(self.MIA_ID)), ["Mike", "Mikey"])
+        again = self.with_members(self.it(), {self.MIA_ID: False})
+        await name_lists.import_list(again, self.campaign.id, body)
+        self.assertEqual(
+            sorted(await self.person_names(self.MIA_ID)), ["Mike", "Mikey"]
+        )  # no doubles
+
+    async def test_a_bot_an_outsider_and_a_row_without_who_are_refused_by_row(self) -> None:
+        from dmbot.ui import name_lists
+
+        bot_id, outsider = 333333333333339999, 444444444444448888
+        text = (
+            f"Mike | player or DM | | | {self.MIA_ID}\n"
+            f"Robo | player or DM | | | {bot_id}\n"
+            f"Ghost | player or DM | | | {outsider}\n"
+            "Nobody | player or DM\n"
+            "Bryn Shander | place\n"
+        )
+        it = self.with_members(self.it(), {self.MIA_ID: False, bot_id: True})
+        await name_lists.import_list(it, self.campaign.id, text)
+        summary = it.followup.send.call_args_list[0].args[0]
+        self.assertIn("Players and DMs:** 1 updated", summary)
+        self.assertIn("line 2: that is a bot, not a person", summary)
+        self.assertIn("line 3: that Discord id isn't in this server", summary)
+        self.assertIn("line 4: a player or DM needs their Discord id", summary)
+        self.assertEqual(await self.person_names(self.MIA_ID), ["Mike"])
+        self.assertIn("Bryn Shander", await self.names())  # the rest still loaded
+
+    async def test_people_rows_from_someone_who_is_not_a_dm_are_refused(self) -> None:
+        from dmbot.ui import name_lists
+
+        it = self.with_members(self.it(MANAGER), {self.MIA_ID: False})
+        await name_lists.import_list(
+            it, self.campaign.id, f"Mike | player or DM | | | {self.MIA_ID}"
+        )
+        self.assertEqual(await self.person_names(self.MIA_ID), [])
+
+    async def test_a_character_without_a_player_is_linked_and_others_are_flagged(self) -> None:
+        from dmbot.ui import name_lists
+
+        cerric = await ui.save_name(
+            self.memory, self.campaign, "Cerric", "player_character", [], []
+        )
+        taken = await ui.save_name(self.memory, self.campaign, "Maren", "npc", [], [])
+        await self.memory.confirm_entity(
+            GUILD, self.campaign.id, taken.id, "player_character", source="dm",
+            played_by=self.BEN_ID,
+        )  # fmt: skip
+        it = self.with_members(self.it(), {self.MIA_ID: False})
+        await name_lists.import_list(
+            it,
+            self.campaign.id,
+            f"Mike | player or DM | | | {self.MIA_ID} | Cerric; Maren; Nobody Known",
+        )
+        summary = it.followup.send.call_args_list[0].args[0]
+        self.assertIn("Linked to Cerric", summary)
+        self.assertIn("Not linked", summary)
+        self.assertIn("Maren, Nobody Known", summary)
+        rows = await self.memory.table_people(GUILD, self.campaign.id)
+        self.assertEqual([c for u, c, _ in rows if u == self.MIA_ID], [["Cerric"]])
+        ben = await self.memory.entity(GUILD, self.campaign.id, taken.id)
+        self.assertEqual(ben.played_by if ben else None, self.BEN_ID)  # not taken from Ben
+        mia = next(
+            e for e in await self.memory.entities(GUILD, self.campaign.id)
+            if e.type == "person" and e.played_by == self.MIA_ID
+        )  # fmt: skip
+        self.assertTrue(mia.needs_look)  # the flag the learner uses
+        self.assertIsNotNone(cerric)
+
+    async def test_an_npc_is_never_turned_into_a_player_character_by_a_list(self) -> None:
+        from dmbot.ui import name_lists
+
+        bell = await ui.save_name(self.memory, self.campaign, "Kesh", "npc", [], [])
+        it = self.with_members(self.it(), {self.MIA_ID: False})
+        await name_lists.import_list(
+            it, self.campaign.id, f"Mike | player or DM | | | {self.MIA_ID} | Kesh"
+        )
+        self.assertIn("Not linked: Kesh", it.followup.send.call_args_list[0].args[0])
+        entity = await self.memory.entity(GUILD, self.campaign.id, bell.id)
+        self.assertEqual((entity.role, entity.played_by), ("npc", None))  # type: ignore[union-attr]
+
+    async def test_a_name_dmbot_only_guessed_is_confirmed_when_the_dm_lists_it(self) -> None:
+        from dmbot.memory.models import PROPOSED
+
+        written = await self.memory.add_person_names(GUILD, self.campaign.id, self.MIA_ID, ["Mike"])
+        self.assertEqual(written.value.names_added, 1)
+        person = next(
+            e for e in await self.memory.entities(GUILD, self.campaign.id) if e.type == "person"
+        )
+        alias = await self.memory.add_alias(
+            GUILD, self.campaign.id, person.id, "Mikey", kind="nickname", source="scan",
+            status=PROPOSED,
+        )  # fmt: skip
+        self.assertIsNotNone(alias)
+        again = await self.memory.add_person_names(
+            GUILD, self.campaign.id, self.MIA_ID, ["Mike", "Mikey"]
+        )
+        self.assertEqual(again.value.names_added, 1)  # Mikey, now the DM's word
+        self.assertEqual(sorted(await self.person_names(self.MIA_ID)), ["Mike", "Mikey"])
+
+    async def test_a_list_with_people_never_goes_to_the_ai(self) -> None:
+        from dmbot.ui import name_lists
+
+        self.bot.ai = MagicMock()
+        it = self.with_members(self.it(), {self.MIA_ID: False})
+        upload = name_lists.Upload(
+            f"Mike | player or DM | | | {self.MIA_ID}\n"
+            "this line | has | too | many | parts | here | now",
+            "names.txt",
+        )
+        await name_lists.take_list(it, self.campaign.id, upload)
+        self.bot.ai.complete.assert_not_called()
+        summary = it.followup.send.call_args_list[0].args[0]
+        self.assertIn("Players and DMs", summary)
+        self.assertNotIn(str(self.MIA_ID), summary)
+
+    async def test_player_rows_in_an_ai_reply_are_not_read(self) -> None:
+        from dmbot.memory.name_list import parse
+
+        parsed = parse(f"Mike | player or DM | | | {self.MIA_ID}", secrets=True, people=False)
+        self.assertEqual(parsed.people, [])
+        self.assertEqual(len(parsed.refused), 1)
 
     async def test_too_many_other_names_for_one_name_adds_nothing(self) -> None:
         from dmbot.memory.name_list import lines_for
@@ -1438,7 +2411,13 @@ class Lists(NamesTest):
         labels = [getattr(c, "label", "") for c in menu.children]
         self.assertEqual(
             labels,
-            ["📋 Paste a list", "🔗 Paste a link", "📎 Upload a file", "📄 Get the template"],
+            [
+                "📋 Paste a list",
+                "🔗 Paste a link",
+                "📎 Upload a file",
+                "📄 Get the template",
+                "📜 Upload campaign lore",
+            ],
         )
         it = self.it()
         await menu._link(it)
@@ -1450,10 +2429,10 @@ class Lists(NamesTest):
 
     async def test_a_link_pasted_as_a_list_is_read_and_offered_to_the_ai(self) -> None:
         from dmbot.fetch import Fetched
-        from dmbot.ui import name_lists
+        from dmbot.ui import name_background, name_lists
 
         fake: Any = SimpleNamespace(complete=AsyncMock())
-        self.bot.ai = fake
+        self.bot.background_ai = fake
         self.fresh()
         before = await self.names()
         link = "https://docs.google.com/document/d/1lHeFJAheOyz-suXZS644R86dLMt/edit?usp=drivesdk"
@@ -1466,8 +2445,10 @@ class Lists(NamesTest):
         fetched.assert_awaited_once_with(link)
         message = it.followup.send.call_args.args[0]
         self.assertIn("Find the names in the linked page or file", message)
-        self.assertIn("right to use", message)
-        self.assertIsInstance(it.followup.send.call_args.kwargs["view"], name_lists.AIOffer)
+        self.assertIn("you may use it", message)
+        self.assertIsInstance(
+            it.followup.send.call_args.kwargs["view"], name_background.BackgroundOffer
+        )
         self.assertEqual(await self.names(), before)  # nothing added: never one long name
         fake.complete.assert_not_called()  # only after the DM presses Find names
 
@@ -1475,7 +2456,7 @@ class Lists(NamesTest):
         from dmbot import fetch
         from dmbot.ui import name_lists
 
-        self.bot.ai = SimpleNamespace(complete=AsyncMock())  # type: ignore[assignment]
+        self.bot.background_ai = SimpleNamespace(complete=AsyncMock())  # type: ignore[assignment]
         self.fresh()
         before = await self.names()
         form = name_lists.LinkForm(self.campaign.id)
@@ -1490,7 +2471,7 @@ class Lists(NamesTest):
     async def test_a_link_without_the_ai_is_refused_before_fetching(self) -> None:
         from dmbot.ui import name_lists
 
-        self.bot.ai = None
+        self.bot.background_ai = None
         self.fresh()
         before = await self.names()
         it = self.it()
@@ -1503,7 +2484,7 @@ class Lists(NamesTest):
     async def test_one_link_at_a_time_per_server(self) -> None:
         from dmbot.ui import name_lists
 
-        self.bot.ai = SimpleNamespace(complete=AsyncMock())  # type: ignore[assignment]
+        self.bot.background_ai = SimpleNamespace(complete=AsyncMock())  # type: ignore[assignment]
         self.fresh()
         name_lists._link_busy.add(GUILD)
         self.addCleanup(name_lists._link_busy.discard, GUILD)
@@ -1530,7 +2511,7 @@ class Lists(NamesTest):
         from dmbot.fetch import Fetched
         from dmbot.ui import name_lists
 
-        self.bot.ai = SimpleNamespace(complete=AsyncMock())  # type: ignore[assignment]
+        self.bot.background_ai = SimpleNamespace(complete=AsyncMock())  # type: ignore[assignment]
         self.fresh()
         it = self.it()
         page = Fetched(b"<html><script>x</script><body><p>Auril the Frostmaiden</p>", "link.html")
@@ -1658,6 +2639,59 @@ class Review(NamesTest):
         self.assertIn("Is this a name in your game?", text)
         return kw["view"], it
 
+    async def scan_guess(self, name: str, kind: str) -> str:
+        written = await self.memory.add_entity(
+            GUILD,
+            self.campaign.id,
+            type=kind,
+            name=name,
+            source="scan",
+            description="Heard 3 times",
+        )
+        return written.value.id
+
+    def labels_of(self, view: Any) -> list[str]:
+        return [str(getattr(c, "label", "") or "") for c in view.children]
+
+    async def test_check_new_names_offers_add_all_for_the_scans_guessed_kinds(self) -> None:
+        await self.scan_guess("Greyfen", "place")
+        await self.scan_guess("Oakvale", "place")
+        await self.suggest("Kazeth")  # no kind guessed: checked on its own card
+        it = self.it()
+        await ui.start_review(it, self.campaign.id)
+        text, kw = it.response.sent[0]
+        self.assertIn("Nothing is added until you press a button", text)
+        self.assertIn("✅ Add all 2 places", self.labels_of(kw["view"]))
+        again = self.it()  # "Check them one by one" opens the cards, not this offer again
+        await kw["view"]._open(again)
+        self.assertIsInstance(again.response.sent[0][1]["view"], ui.SuggestionReview)
+
+    async def test_add_all_adds_the_guessed_places_as_places(self) -> None:
+        await self.scan_guess("Greyfen", "place")
+        await self.scan_guess("Oakvale", "place")
+        it = self.it()
+        await ui.start_review(it, self.campaign.id)
+        await it.response.sent[0][1]["view"]._all("place", self.it())
+        known = await self.names()
+        self.assertEqual({known["Greyfen"].kind_key, known["Oakvale"].kind_key}, {"place"})
+
+    async def test_a_name_that_sounds_like_a_known_one_is_checked_on_its_own_card(self) -> None:
+        await ui.save_name(self.memory, self.campaign, "Hrothgar", "npc", [], [])
+        await self.scan_guess("Rothgar", "npc")
+        await self.scan_guess("Greyfen", "place")
+        await self.scan_guess("Oakvale", "place")
+        it = self.it()
+        await ui.start_review(it, self.campaign.id)
+        labels = self.labels_of(it.response.sent[0][1]["view"])
+        self.assertIn("✅ Add all 2 places", labels)
+        self.assertFalse(any("NPC" in label for label in labels))
+
+    async def test_one_guessed_name_alone_is_just_its_card(self) -> None:
+        await self.scan_guess("Greyfen", "place")
+        view, _ = await self.review()
+        self.assertIn("✅ Yes, a place", self.labels_of(view))
+        self.assertIn("✏️ Something else", self.labels_of(view))
+
     async def test_yes_asks_what_it_is_then_adds_it(self) -> None:
         await self.suggest("Hrothgar")
         view, _ = await self.review()
@@ -1686,6 +2720,258 @@ class Review(NamesTest):
         aliases = await self.memory.aliases(GUILD, self.campaign.id, entity_id=belleros.id)
         self.assertIn(("Bellaros", CONFIRMED), {(a.text, a.status) for a in aliases})
 
+    # ---- ✏️ Change the words (#2570) ----
+
+    async def change_words(self, name: str, heard: str, words: str) -> tuple[Any, str]:
+        entity_id = await self.suggest(name)
+        view, _ = await self.review()
+        it = self.it()
+        await view.apply_words(it, entity_id, heard, words)
+        return it, entity_id
+
+    async def test_every_new_name_card_has_the_change_the_words_button(self) -> None:
+        await self.suggest("Harrow")
+        view, _ = await self.review()
+        labels = [getattr(b, "label", "") for b in view.children]
+        self.assertIn("✏️ Change the words", labels)
+        self.assertTrue(all(len(label or "") <= 80 for label in labels))
+
+    async def test_a_place_widened_to_its_whole_name_keeps_the_card_going(self) -> None:
+        it, entity_id = await self.change_words("Harrow", "Harrow's keep", "Harrow's Keep")
+        entity = await self.memory.entity(GUILD, self.campaign.id, entity_id)
+        assert entity is not None
+        self.assertEqual((entity.name, entity.status), ("Harrow's Keep", PROPOSED))
+        self.assertIn("Saved as **Harrow's Keep**", it.response.edited[-1][0])
+        keys = {
+            a.key: a
+            for a in await self.memory.aliases(GUILD, self.campaign.id, entity_id=entity_id)
+        }
+        # the single word is not kept as a way to say the longer name, nor marked "not a name"
+        self.assertNotIn("harrow", {k for k, a in keys.items() if a.status != REJECTED})
+        self.assertNotEqual(entity.status, REJECTED)
+
+    async def test_a_misheard_longer_form_becomes_a_way_it_is_said(self) -> None:
+        _, entity_id = await self.change_words("Harrow", "Harrow's car", "Harrow's Caer")
+        aliases = await self.memory.aliases(GUILD, self.campaign.id, entity_id=entity_id)
+        found = {a.key: a for a in aliases}
+        self.assertIn("harrows car", found)
+        self.assertEqual(
+            (found["harrows car"].kind, found["harrows car"].status), ("old", CONFIRMED)
+        )
+
+    async def test_an_empty_or_too_long_name_is_refused(self) -> None:
+        it, entity_id = await self.change_words("Harrow", "", "   ")
+        self.assertIn("The name was empty", it.response.sent[0][0])
+        it = self.it()
+        view, _ = await self.review()
+        await view.apply_words(it, entity_id, "", "x" * (NAME_MAX + 1))
+        self.assertIn("is too long", it.response.sent[0][0])
+        entity = await self.memory.entity(GUILD, self.campaign.id, entity_id)
+        assert entity is not None
+        self.assertEqual(entity.name, "Harrow")
+
+    async def test_a_name_that_is_already_known_is_refused(self) -> None:
+        await ui.save_name(self.memory, self.campaign, "Harrow's Keep", "place", [], [])
+        it, entity_id = await self.change_words("Harrow", "", "Harrow's Keep")
+        self.assertIn("already knows", it.response.sent[0][0])
+        entity = await self.memory.entity(GUILD, self.campaign.id, entity_id)
+        assert entity is not None
+        self.assertEqual(entity.name, "Harrow")
+
+    async def test_the_new_name_and_how_it_was_heard_are_one_change_with_one_undo(self) -> None:
+        entity_id = await self.suggest("Harrow")
+        written = await self.memory.rename_entity(
+            GUILD, self.campaign.id, entity_id, "Harrow's Caer", source="dm",
+            keep_old=False, also_known_as="Harrow's car",
+        )  # fmt: skip
+        assert written.batch is not None
+        await self.memory.undo(GUILD, self.campaign.id, written.batch)
+        entity = await self.memory.entity(GUILD, self.campaign.id, entity_id)
+        assert entity is not None
+        self.assertEqual(entity.name, "Harrow")
+        keys = {
+            a.key
+            for a in await self.memory.aliases(GUILD, self.campaign.id, entity_id=entity_id)
+            if a.status != REJECTED
+        }
+        self.assertEqual(keys, {"harrow"})
+
+    async def test_a_plain_typo_fix_keeps_the_old_spelling_but_a_widened_name_does_not(
+        self,
+    ) -> None:
+        typo = await self.suggest("Brenoch")
+        await self.memory.rename_entity(GUILD, self.campaign.id, typo, "Brannoch", source="dm")
+        keys = {
+            a.key
+            for a in await self.memory.aliases(GUILD, self.campaign.id, entity_id=typo)
+            if a.status != REJECTED
+        }
+        self.assertIn("brenoch", keys)  # still matched, so the cleaner fixes it
+        wide = await self.suggest("Harrow")
+        await self.memory.rename_entity(
+            GUILD, self.campaign.id, wide, "Harrow's Keep", source="dm", keep_old=False
+        )
+        keys = {
+            a.key
+            for a in await self.memory.aliases(GUILD, self.campaign.id, entity_id=wide)
+            if a.status != REJECTED
+        }
+        self.assertNotIn("harrow", keys)
+
+    async def test_a_name_that_is_another_entrys_secret_name_is_refused(self) -> None:
+        await ui.save_name(self.memory, self.campaign, "The Stranger", "npc", [], ["Harrow's Keep"])
+        it, entity_id = await self.change_words("Harrow", "", "Harrow's Keep")
+        self.assertIn("Pick another spelling", it.response.sent[0][0])
+        entity = await self.memory.entity(GUILD, self.campaign.id, entity_id)
+        assert entity is not None
+        self.assertEqual(entity.name, "Harrow")
+
+    async def test_a_server_manager_who_is_not_a_dm_cannot_change_a_name(self) -> None:
+        entity_id = await self.suggest("Harrow")
+        view, _ = await self.review()
+        it = self.it(MANAGER)
+        await view.apply_words(it, entity_id, "", "Harrow's Keep")
+        entity = await self.memory.entity(GUILD, self.campaign.id, entity_id)
+        assert entity is not None
+        self.assertEqual(entity.name, "Harrow")
+        it = self.it(MANAGER)
+        await view._change_words(it)
+        self.assertIn("Only the DM", it.response.sent[0][0])
+
+    async def test_a_card_that_moved_on_answers_gone(self) -> None:
+        await self.suggest("Harrow")
+        view, _ = await self.review()
+        it = self.it()
+        await view.apply_words(it, "f" * 32, "", "Harrow's Keep")
+        self.assertIn("just changed or removed", it.response.sent[0][0])
+
+    async def test_a_person_followed_by_a_verb_is_not_widened_by_the_scan(self) -> None:
+        from dmbot.memory.scan import find_new_names
+
+        lines = ["Kira falls back from the door", "Then Kira falls again in the hall"]
+        self.assertEqual([s.name for s in find_new_names(lines)], ["Kira"])
+
+    async def test_a_longer_name_the_dm_refused_does_not_bring_the_short_word_back(self) -> None:
+        from dmbot.memory.scan import find_new_names
+
+        lines = ["We ride to Harrow's keep at dawn", "Back at Harrow's keep the gate is shut"]
+        self.assertEqual(find_new_names(lines, skip_keys=["Harrow's Keep"]), [])
+
+    async def test_the_scan_offers_the_longer_place_name(self) -> None:
+        from dmbot.memory.scan import find_new_names
+
+        lines = ["We ride to Harrow's keep at dawn", "Back at Harrow's keep the gate is shut"]
+        self.assertEqual([s.name for s in find_new_names(lines)], ["Harrow's Keep"])
+
+    async def test_the_cards_quotes_give_the_longer_names_to_pick_from(self) -> None:
+        from dmbot.memory.name_longer import longer_names
+
+        quotes = ["Session 3: …to **Harrow**'s keep and", "…the foothills of **Harrow**'s keep"]
+        self.assertEqual(longer_names(quotes, "Harrow"), ["Harrow's keep"])
+
+    async def spelled(self, name: str) -> str:
+        written = await self.memory.add_entity(
+            GUILD, self.campaign.id, type="concept", name=name, source="scan",
+            description=ui.SPELLED_OUT,
+        )  # fmt: skip
+        return written.value.id
+
+    async def test_a_spelled_out_name_says_so_and_offers_to_fix_the_known_spelling(self) -> None:
+        await ui.save_name(self.memory, self.campaign, "Hrothgar", "npc", [], [])
+        await self.spelled("Rothgar")
+        it = self.it()
+        await ui.start_review(it, self.campaign.id)
+        text, kw = it.response.sent[0]
+        self.assertIn("· spelled out at the table", text)
+        self.assertIn("Same name, spelled **Rothgar**? Or a new name?", text)
+        labels = [b.label for b in kw["view"].children]
+        self.assertIn("✏️ Fix spelling", labels)
+        self.assertTrue(all(len(label) <= ui.REVIEW_LABEL_MAX for label in labels))
+
+    async def test_fixing_the_spelling_makes_the_spelled_name_the_main_name(self) -> None:
+        hrothgar = await ui.save_name(self.memory, self.campaign, "Hrothgar", "npc", [], [])
+        await self.spelled("Rothgar")
+        it0 = self.it()
+        await ui.start_review(it0, self.campaign.id)
+        view = it0.response.sent[0][1]["view"]
+        await view._fix_spelling(self.it())
+        entity = await self.memory.entity(GUILD, self.campaign.id, hrothgar.id)
+        assert entity is not None
+        self.assertEqual(entity.name, "Rothgar")
+        aliases = await self.memory.aliases(GUILD, self.campaign.id, entity_id=hrothgar.id)
+        self.assertIn("hrothgar", {a.key for a in aliases})  # the old spelling is still a name
+
+    async def test_a_pending_suggestion_someone_spelled_out_offers_to_fix_its_spelling(
+        self,
+    ) -> None:
+        brenoch = await self.suggest("Brenoch")
+        await self.memory.set_note(
+            GUILD, self.campaign.id, brenoch, f"{ui.SPELLED_OUT}: Brannoch", source="scan"
+        )
+        it = self.it()
+        await ui.start_review(it, self.campaign.id)
+        text, kw = it.response.sent[0]
+        self.assertIn("Someone spelled it out: **Brannoch**", text)
+        labels = [b.label for b in kw["view"].children]
+        self.assertEqual(labels[0], "✏️ Fix spelling")
+        await kw["view"]._fix_pending(self.it())
+        entity = await self.memory.entity(GUILD, self.campaign.id, brenoch)
+        assert entity is not None
+        self.assertEqual((entity.name, entity.status), ("Brannoch", PROPOSED))  # still the DM's
+
+    async def test_a_spelling_said_at_the_table_reaches_the_pending_suggestion(self) -> None:
+        from dmbot.transcript.spelled import SpellingWatcher
+
+        brenoch = await self.suggest("Brenoch")
+        speller = 7
+        bot: Any = SimpleNamespace(
+            memory=self.memory,
+            consent=SimpleNamespace(consenting=AsyncMock(return_value={speller})),
+        )
+        for name in ("_note_spelling", "_record_spelled", "suggest_spelled"):
+            setattr(bot, name, getattr(DMBot, name).__get__(bot))
+        table = SimpleNamespace(
+            spelling=SpellingWatcher(),
+            spelled=[],
+            spelled_hints=(),
+            held_spelled={},
+            hint_parts=None,
+            guild_id=GUILD,
+            campaign_id=self.campaign.id,
+        )
+        for who, line in (
+            (1, "ask Brenoch"),
+            (1, "how do you spell that"),
+            (speller, "B R A N N O C H"),
+        ):
+            bot._note_spelling(table, who, line)
+        await bot.suggest_spelled(table)
+        waiting = await self.memory.entities(GUILD, self.campaign.id, statuses=[PROPOSED])
+        names = [e.name for e in waiting]
+        self.assertEqual(names, ["Brenoch"])  # no second entry
+        it = self.it()
+        await ui.start_review(it, self.campaign.id)
+        text, kw = it.response.sent[0]
+        self.assertIn("Someone spelled it out: **Brannoch**", text)
+        self.assertEqual(text.count("Brannoch"), 1)  # shown once, not also as a "heard" note
+        self.assertEqual(kw["view"].children[0].label, "✏️ Fix spelling")
+        self.assertEqual(brenoch, waiting[0].id)
+
+    async def test_a_note_cannot_be_set_on_a_confirmed_name(self) -> None:
+        saved = await ui.save_name(self.memory, self.campaign, "Hrothgar", "npc", [], [])
+        entity_id = saved.id
+        with self.assertRaises(MemoryRuleError):
+            await self.memory.set_note(
+                GUILD, self.campaign.id, entity_id, "Spelled out at the table: X", source="scan"
+            )
+
+    async def test_a_spelled_out_name_that_sounds_like_nothing_has_no_fix_button(self) -> None:
+        await self.spelled("Zorgul")
+        it = self.it()
+        await ui.start_review(it, self.campaign.id)
+        labels = [getattr(b, "label", "") or "" for b in it.response.sent[0][1]["view"].children]
+        self.assertFalse(any("Fix spelling" in label for label in labels))
+
     async def test_a_near_match_comes_pre_filled_and_one_press_adds_it(self) -> None:
         # #394: "Rothgar" sounds like the known Hrothgar
         hrothgar = await ui.save_name(self.memory, self.campaign, "Hrothgar", "npc", [], [])
@@ -1705,6 +2991,7 @@ class Review(NamesTest):
                 "🔗 Another known name…",
                 "🚫 Not a name",
                 "⏳ Later",
+                "✏️ Change the words",
             ],
         )
         self.assertTrue(all(len(label) <= ui.REVIEW_LABEL_MAX for label in labels))
@@ -1833,6 +3120,128 @@ class Review(NamesTest):
         self.assertIsNone(it.response.edited[0][1])  # the menu is finished
         self.assertTrue(view.is_finished())
         self.assertIn("Hrothgar", await self.names((PROPOSED,)))
+
+    async def test_later_is_remembered_so_the_name_stays_listed_but_stops_holding_a_recap(
+        self,
+    ) -> None:
+        await self.suggest("Hrothgar")
+        found = (await self.names((PROPOSED,)))["Hrothgar"]
+        self.assertEqual(await self.memory.deferred_names(GUILD, self.campaign.id), set())
+        view, _ = await self.review()
+        await view._later(self.it())
+        self.assertEqual(await self.memory.deferred_names(GUILD, self.campaign.id), {found.id})
+        self.assertIn("Hrothgar", await self.names((PROPOSED,)))  # still waiting in the list
+        again, _ = await self.review()  # and offered again at the next check
+        self.assertEqual(again.queue, [found.id])
+
+    async def test_a_name_left_for_later_no_longer_counts_as_a_question_a_recap_waits_on(
+        self,
+    ) -> None:
+        await self.suggest("Hrothgar")
+        await self.suggest("Belleros")
+        self.bot._next_session_start = AsyncMock(return_value=None)  # type: ignore[method-assign]
+        self.bot.import_job = None
+        self.bot.heard_questions = None
+
+        async def waiting() -> int:
+            return await self.bot._open_name_questions(GUILD, self.campaign.id, "live", 0)
+
+        self.assertEqual(await waiting(), 2)
+        found = (await self.names((PROPOSED,)))["Hrothgar"]
+        await self.memory.defer_name(GUILD, self.campaign.id, found.id)
+        self.assertEqual(await waiting(), 1)  # only the other one holds a recap back
+        self.assertEqual(len(await self.names((PROPOSED,))), 2)  # both still wait in the list
+
+    async def test_the_later_button_changes_what_a_recap_waits_on(self) -> None:
+        await self.suggest("Hrothgar")
+        self.bot._next_session_start = AsyncMock(return_value=None)  # type: ignore[method-assign]
+        self.bot.import_job = None
+        self.bot.heard_questions = None
+        self.assertEqual(await self.bot._open_name_questions(GUILD, self.campaign.id, "s", 0), 1)
+        view, _ = await self.review()
+        await view._later(self.it())
+        self.assertEqual(await self.bot._open_name_questions(GUILD, self.campaign.id, "s", 0), 0)
+
+    async def test_a_name_decided_on_forgets_its_later_and_asks_again_if_undone(self) -> None:
+        await self.suggest("Hrothgar")
+        found = (await self.names((PROPOSED,)))["Hrothgar"]
+        await self.memory.defer_name(GUILD, self.campaign.id, found.id)
+        for status in ("confirmed", "rejected"):
+            await self.memory.set_entity_status(
+                GUILD, self.campaign.id, found.id, status, source="dm"
+            )
+            self.assertEqual(
+                await self.memory.deferred_names(GUILD, self.campaign.id), set(), status
+            )
+            async with self.db.guild(GUILD) as conn:  # (back to a suggestion, as an undo does)
+                await conn.execute(
+                    "UPDATE memory_entities SET status = 'proposed' WHERE id = %s", (found.id,)
+                )
+            await self.memory.defer_name(GUILD, self.campaign.id, found.id)
+
+    async def test_add_many_forgets_the_later_and_an_undo_asks_again(self) -> None:
+        await self.suggest("Hrothgar")
+        found = (await self.names((PROPOSED,)))["Hrothgar"]
+        await self.memory.defer_name(GUILD, self.campaign.id, found.id)
+        written = await self.memory.confirm_kinds(
+            GUILD, self.campaign.id, [found.id], "npc", source="dm"
+        )
+        assert written.batch is not None
+        self.assertEqual(await self.memory.deferred_names(GUILD, self.campaign.id), set())
+        await self.memory.undo(GUILD, self.campaign.id, written.batch)
+        self.assertIn("Hrothgar", await self.names((PROPOSED,)))  # a suggestion again
+        self.assertEqual(await self.memory.deferred_names(GUILD, self.campaign.id), set())
+
+    async def test_a_deferral_goes_with_its_campaign_and_one_campaign_cannot_see_anothers(
+        self,
+    ) -> None:
+        await self.suggest("Hrothgar")
+        found = (await self.names((PROPOSED,)))["Hrothgar"]
+        other = await self.campaigns.create(GUILD, "Other", DM)
+        theirs = await self.memory.add_entity(
+            GUILD, other.id, type="concept", name="Zanthe", source="scan", description="Heard"
+        )
+        await self.memory.defer_name(GUILD, self.campaign.id, found.id)
+        await self.memory.defer_name(GUILD, other.id, found.id)  # not hers: nothing is stored
+        await self.memory.defer_name(GUILD, other.id, theirs.value.id)
+        self.assertEqual(await self.memory.deferred_names(GUILD, self.campaign.id), {found.id})
+        self.assertEqual(await self.memory.deferred_names(GUILD, other.id), {theirs.value.id})
+        async with self.db.guild(GUILD) as conn:
+            await conn.execute("DELETE FROM campaigns WHERE id = %s", (other.id,))
+        self.assertEqual(await self.memory.deferred_names(GUILD, other.id), set())
+        self.assertEqual(await self.memory.deferred_names(GUILD, self.campaign.id), {found.id})
+
+    async def test_a_later_that_cannot_be_saved_still_moves_the_review_on(self) -> None:
+        await self.suggest("Hrothgar")
+        await self.suggest("Belleros")
+        view, _ = await self.review()
+        self.memory.defer_name = AsyncMock(side_effect=RuntimeError("down"))  # type: ignore[method-assign]
+        it = self.it()
+        with self.assertLogs("dmbot.ui.names", level="ERROR"):
+            await view._later(it)
+        self.assertTrue(it.response.edited or it.response.sent)  # the DM sees the next step
+
+    async def test_a_name_that_goes_takes_its_later_with_it(self) -> None:
+        await self.suggest("Hrothgar")
+        found = (await self.names((PROPOSED,)))["Hrothgar"]
+        await self.memory.defer_name(GUILD, self.campaign.id, found.id)
+        await self.memory.defer_name(GUILD, self.campaign.id, found.id)  # a repeat does nothing
+        self.assertEqual(await self.memory.deferred_names(GUILD, self.campaign.id), {found.id})
+        async with self.db.guild(GUILD) as conn:  # the name goes (a forgotten suggestion, say)
+            await conn.execute(
+                "DELETE FROM memory_entities WHERE guild_id = %s AND campaign_id = %s AND id = %s",
+                (GUILD, self.campaign.id, found.id),
+            )
+        self.assertEqual(await self.memory.deferred_names(GUILD, self.campaign.id), set())
+
+    async def test_only_a_suggestion_can_be_left_for_later_and_only_in_its_own_campaign(
+        self,
+    ) -> None:
+        known = await ui.save_name(self.memory, self.campaign, "Belleros", "npc", [], [])
+        await self.memory.defer_name(GUILD, self.campaign.id, known.id)  # confirmed: not a wait
+        await self.memory.defer_name(GUILD, "e" * 32, known.id)  # another campaign's id
+        self.assertEqual(await self.memory.deferred_names(GUILD, self.campaign.id), set())
+        self.assertEqual(await self.memory.deferred_names(GUILD, "e" * 32), set())
 
     async def test_a_stranger_cannot_press_any_button(self) -> None:
         await self.suggest("Hrothgar")
@@ -1965,6 +3374,10 @@ class AfterSession(NamesTest):
         await self.bot.suggest_names(table)
         waiting = await self.names((PROPOSED,))
         self.assertEqual(set(waiting), {"Bryn Shander"})  # not a known name, not a stranger's
+        posted.assert_not_awaited()  # the summary tells it (#2410); the "new names" step is the net
+        self.assertEqual(table.new_names, ["Bryn Shander"])
+        await self.bot.post_new_names(table)
+        self.assertEqual(table.new_names, [])  # told once
         text = posted.await_args.args[1]  # type: ignore[union-attr]
         self.assertIn("1 new name to check** from this session: **Bryn Shander**", text)
         self.assertIsInstance(posted.await_args.kwargs["view"], discord.ui.View)  # type: ignore[union-attr]
