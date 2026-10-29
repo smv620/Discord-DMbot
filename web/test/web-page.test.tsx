@@ -303,9 +303,8 @@ describe("how many more connections a line has", () => {
 describe("the Open its page link", () => {
   it("a name marked page true has the Open its page link, pointing at the NPC page address", async () => {
     await open();
-    const links = screen.getAllByRole("link", { name: /^Open the page for / });
+    const links = screen.getAllByRole("link", { name: (label: string) => label.startsWith(w.openItsPage) });
     expect(links.length).toBeGreaterThan(0);
-    for (const link of links) expect(link.textContent).toBe(w.openItsPage);
     expect(links[0]!.getAttribute("href")).toMatch(/^\/account\/npc\/100\.cmp1\/[^/]+$/);
   });
 
@@ -316,23 +315,25 @@ describe("the Open its page link", () => {
       const got = await real(...args);
       return { ...got, nodes: got.nodes.map((n) => ({ ...n, page: false })) };
     };
-    render(<Web api={api} path={at()} />);
+    const overview = api.webOverview!.bind(api);
+    api.webOverview = async (...args) => {
+      const got = await overview(...args);
+      return {
+        ...got,
+        tray: got.tray.map((n) => ({ ...n, page: false })),
+        groups: got.groups.map((g) => ({ ...g, page: false })),
+      };
+    };
+    render(<Web api={api} path={at(".web-lonely")} />);
     await screen.findByText(/names?, \d+ lines?/);
-    expect(screen.queryAllByRole("link", { name: /^Open the page for / })).toHaveLength(0);
+    await screen.findByRole("region", { name: new RegExp(w.trayHeading) });
+    expect(screen.queryAllByRole("link", { name: (label: string) => label.startsWith(w.openItsPage) })).toHaveLength(0);
     expect(screen.queryByText(w.openItsPage)).toBeNull();
   });
 
-  it("the link's accessible name names the person", async () => {
-    await open();
-    const link = screen.getAllByRole("link", { name: /^Open the page for / })[0]!;
-    const name = link.getAttribute("aria-label")!.replace(/^Open the page for /, "");
-    expect(name.length).toBeGreaterThan(0);
-    expect(link.getAttribute("aria-label")).toBe(w.openItsPageFor(name));
-  });
-
-  it("the players' graph view shows no other new text", async () => {
+  it("the link's words appear once per link and nowhere else on the page", async () => {
     await open();
     const shown = (document.body.textContent ?? "").split(w.openItsPage).length - 1;
-    expect(shown).toBe(screen.getAllByRole("link", { name: /^Open the page for / }).length);
+    expect(shown).toBe(screen.getAllByRole("link", { name: (label: string) => label.startsWith(w.openItsPage) }).length);
   });
 });

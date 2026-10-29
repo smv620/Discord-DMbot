@@ -64,8 +64,9 @@ export default function WebOverview({
                 {g.page === true && (
                   <>
                     {" "}
-                    <a class="small" href={`/account/npc/${encodeURIComponent(refId)}/${encodeURIComponent(g.center)}`} aria-label={words.openItsPageFor(g.centerName)}>
+                    <a class="small" href={`/account/npc/${encodeURIComponent(refId)}/${encodeURIComponent(g.center)}`}>
                       {words.openItsPage}
+                      <span class="visually-hidden">{words.openItsPageFor(g.centerName)}</span>
                     </a>
                   </>
                 )}
@@ -104,8 +105,9 @@ export default function WebOverview({
                     {n.page === true && (
                       <>
                         {" "}
-                        <a class="small" href={`/account/npc/${encodeURIComponent(refId)}/${encodeURIComponent(n.id)}`} aria-label={words.openItsPageFor(n.name)}>
+                        <a class="small" href={`/account/npc/${encodeURIComponent(refId)}/${encodeURIComponent(n.id)}`}>
                           {words.openItsPage}
+                          <span class="visually-hidden">{words.openItsPageFor(n.name)}</span>
                         </a>
                       </>
                     )}

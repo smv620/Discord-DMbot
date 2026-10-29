@@ -494,8 +494,9 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
               {n.page === true && (
                 <>
                   {" "}
-                  <a class="small" href={`/account/npc/${encodeURIComponent(ref)}/${encodeURIComponent(n.id)}`} aria-label={words.openItsPageFor(n.name)}>
+                  <a class="small" href={`/account/npc/${encodeURIComponent(ref)}/${encodeURIComponent(n.id)}`}>
                     {words.openItsPage}
+                    <span class="visually-hidden">{words.openItsPageFor(n.name)}</span>
                   </a>
                 </>
               )}

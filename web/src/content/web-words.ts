@@ -36,7 +36,7 @@ export const webPage = {
   groupsLead: "Names linked to each other form a group. Tap a group to put it in the middle of the map.",
   groupButton: (centre: string, size: number): string => `${centre}'s group (${size} names)`,
   openItsPage: "📖 Open its page",
-  openItsPageFor: (name: string): string => `Open the page for ${name}`,
+  openItsPageFor: (name: string): string => ` for ${name}`,
   groupHere: "shown now",
   howMany: (names: number, lines: number): string =>
     `${names} ${names === 1 ? "name" : "names"}, ${lines} ${lines === 1 ? "line" : "lines"}`,
