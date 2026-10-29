@@ -770,6 +770,11 @@ function LinkRow({
   const run = async (change: WebLinkChange, ok: string): Promise<void> => setProblem(await act(change, ok));
   return (
     <li class={link.revealed === false ? "stack web-dim" : "stack"}>
+      {link.kind && (
+        <p class={`small web-kindmark web-link-${link.kind}`}>
+          <span class="web-dot" aria-hidden="true" /> {words.linkKind[link.kind]}
+        </p>
+      )}
       <p>
         {link.secret && <span aria-hidden="true">{words.secretMark} </span>}
         {link.belief && <span aria-hidden="true">{words.theoryMark} </span>}

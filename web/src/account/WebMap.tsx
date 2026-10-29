@@ -17,6 +17,9 @@ import {
   COOLING,
   extentOf,
   forceStep,
+  LINK_KINDS,
+  connectionGroups,
+  edgeKind,
   kindAnchors,
   linkPairs,
   settle,
@@ -89,6 +92,8 @@ export default function WebMap({
   const [extent, setExtent] = useState(260);
   // The name the pointer or the keyboard is on: everything not joined to it fades.
   const [focus, setFocus] = useState<string | null>(null);
+  // Kinds of connection the person turned off with the chips: their lines are not drawn.
+  const [off, setOff] = useState<Set<string>>(new Set());
   const sim = useRef<SimNode[]>([]);
   const heat = useRef({ alpha: 0, steps: 0 });
   const loop = useRef(0);
@@ -175,11 +180,12 @@ export default function WebMap({
   // still here keeps where it is, so choosing another middle does not shuffle the whole map.
   // The parent builds fresh arrays on every render; only a real change to the names or lines may re-place them,
   // or choosing a line would shake the whole map.
-  const sig = `${nodes.map((n) => n.id).join(",")}|${edges.map((x) => `${x.a}>${x.b}:${x.links.length}`).join(",")}`;
+  const sig = `${nodes.map((n) => n.id).join(",")}|${edges.map((x) => `${x.a}>${x.b}:${x.links.length}:${edgeKind(x)}`).join(",")}`;
   useEffect(() => {
     setFocus((f) => (f !== null && nodes.some((n) => n.id === f) ? f : null));
     const before = new Map(sim.current.map((n) => [n.id, n]));
-    const next = startNodes(nodes, edges, center, places.current);
+    const groups = connectionGroups(edges, center);
+    const next = startNodes(nodes, edges, center, places.current, groups);
     for (const n of next) {
       const old = before.get(n.id);
       if (old && !n.pinned) {
@@ -189,7 +195,7 @@ export default function WebMap({
     }
     sim.current = next;
     linksRef.current = linkPairs(next, edges);
-    anchorsRef.current = kindAnchors([...new Set(next.map((n) => n.kind))].sort());
+    anchorsRef.current = kindAnchors([...new Set(next.filter((n) => n.id !== center).map((n) => n.group))].sort());
     if (loop.current) cancelAnimationFrame(loop.current);
     loop.current = 0;
     if (reducedMotion() || next.length > MAX_SIM_NAMES) {
@@ -334,6 +340,7 @@ export default function WebMap({
   if (focus) {
     near.add(focus);
     for (const e of edges) {
+      if (off.has(edgeKind(e))) continue; // a line that is not drawn lights nothing
       if (e.a === focus) near.add(e.b);
       if (e.b === focus) near.add(e.a);
     }
@@ -342,16 +349,18 @@ export default function WebMap({
   const kindsHere = KIND_ORDER.filter((k) => nodes.some((n) => n.kind === k));
   const otherKinds = [...new Set(nodes.map((n) => n.kind))].filter((k) => !KIND_ORDER.includes(k));
   const anyPinned = sim.current.some((n) => n.pinned);
+  const kindsPresent = LINK_KINDS.filter((k) => edges.some((e) => edgeKind(e) === k));
   const tooBig = nodes.length > MAX_SIM_NAMES;
   // The side panel: the name in focus, or the middle name, with its connections in words.
   const detail = byId.get(focus ?? center) ?? null;
   const detailPinned = detail ? (at.get(detail.id)?.pinned ?? false) : false;
   const sideLines = detail
     ? edges
-        .filter((x) => x.a === detail.id || x.b === detail.id)
+        .filter((x) => (x.a === detail.id || x.b === detail.id) && !off.has(edgeKind(x)))
         .flatMap((x) =>
           x.links.map((l) => ({
             id: l.id,
+            kind: l.kind,
             secret: l.secret,
             belief: l.belief,
             text: words.linkText(byId.get(x.a)?.name ?? "", byId.get(x.b)?.name ?? "", l.words, l.direction),
@@ -384,6 +393,30 @@ export default function WebMap({
           {words.letGo}
         </button>
       </div>
+      {kindsPresent.length > 0 && (
+        <div class="web-chips" role="group" aria-label={words.kindLabel}>
+          {kindsPresent.map((k) => (
+            <button
+              key={k}
+              type="button"
+              class={`button secondary web-chip web-link-${k}`}
+              aria-pressed={!off.has(k)}
+              onClick={() =>
+                setOff((was) => {
+                  const next = new Set(was);
+                  if (next.has(k)) next.delete(k);
+                  else next.add(k);
+                  return next;
+                })
+              }
+            >
+              <span class="web-dot" aria-hidden="true" /> {words.linkKind[k]}
+              {off.has(k) && <span class="visually-hidden"> {words.hiddenMark}</span>}
+            </button>
+          ))}
+        </div>
+      )}
+      {kindsPresent.length > 0 && <p class="small muted">{words.kindHint}</p>}
       <p class="small muted">{tooBig ? words.layoutTooBig : words.panHint}</p>
       <div class="web-stage">
       <svg
@@ -401,17 +434,17 @@ export default function WebMap({
       >
         <g transform={`translate(${view.x} ${view.y}) scale(${view.k})`}>
           {mode === "groups" &&
-            [...kindsHere, ...otherKinds].map((k) => {
-              const members = sim.current.filter((n) => n.kind === k && n.id !== center);
+            LINK_KINDS.map((k) => {
+              const members = sim.current.filter((n) => n.group === k && n.id !== center);
               if (members.length === 0) return null;
               const cx = members.reduce((t, n) => t + n.x, 0) / members.length;
               const cy = members.reduce((t, n) => t + n.y, 0) / members.length;
               const r = members.reduce((t, n) => Math.max(t, Math.hypot(n.x - cx, n.y - cy) + 60), 64);
               return (
-                <g key={k} class="web-area" aria-hidden="true">
+                <g key={k} class={`web-area web-link-${k}`} aria-hidden="true">
                   <circle cx={cx} cy={cy} r={r} />
                   <text x={cx} y={cy - r - 6} text-anchor="middle" class="web-area-text">
-                    {kindWords(k)}
+                    {words.linkKind[k]}
                   </text>
                 </g>
               );
@@ -420,6 +453,8 @@ export default function WebMap({
             const p = at.get(edge.a);
             const q = at.get(edge.b);
             if (!p || !q) return null;
+            const kind = edgeKind(edge);
+            if (off.has(kind)) return null;
             const chosen = selected !== null && ((selected.a === edge.a && selected.b === edge.b) || (selected.a === edge.b && selected.b === edge.a));
             const theory = isTheory(edge);
             const dim = edge.links.length > 0 && edge.links.every((l) => l.revealed === false);
@@ -438,7 +473,7 @@ export default function WebMap({
             return (
               <g
                 key={`${edge.a}|${edge.b}`}
-                class={`web-edge${chosen ? " chosen" : ""}${theory ? " web-theory" : ""}${dim ? " web-dim" : ""}${focus && !touches ? " web-faded" : ""}`}
+                class={`web-edge web-link-${kind}${chosen ? " chosen" : ""}${theory ? " web-theory" : ""}${dim ? " web-dim" : ""}${focus && !touches ? " web-faded" : ""}`}
               >
                 <line x1={p.x} y1={p.y} x2={q.x} y2={q.y} class="web-line" />
                 {/* A fat invisible line: easy to hit with a finger, and reachable by keyboard. */}
@@ -531,6 +566,11 @@ export default function WebMap({
             <ul class="stack small">
               {sideLines.map((l) => (
                 <li key={l.id}>
+                  {l.kind && (
+                    <span class={`web-kindmark web-link-${l.kind}`}>
+                      <span class="web-dot" aria-hidden="true" /> {words.linkKind[l.kind]}:{" "}
+                    </span>
+                  )}
                   {l.secret && <span aria-hidden="true">{words.secretMark} </span>}
                   {l.belief && <span aria-hidden="true">{words.theoryMark} </span>}
                   {l.text}
@@ -572,6 +612,14 @@ export default function WebMap({
                 <Shape kind={k} r={9} />
               </svg>{" "}
               {kindWords(k)}
+            </li>
+          ))}
+          {kindsPresent.map((k) => (
+            <li key={`kind-${k}`} class={`web-link-${k}`}>
+              <svg width="34" height="12" viewBox="0 0 34 12" aria-hidden="true">
+                <line x1="1" y1="6" x2="33" y2="6" class="web-line" />
+              </svg>{" "}
+              {words.linkKind[k]}
             </li>
           ))}
           {nodes.some((n) => n.revealed === false) && <li>{words.legendNotRevealed}</li>}
