@@ -1468,7 +1468,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             RecapsButton,
             GameMastersButton,  # who the DMs are (#1600)
         )
-        # Hand-over (#437): on ⚙️ Settings, in private messages, and after /dmbot start.
+        # Hand-over (#437): on ⚙️ Manage DMbot, in private messages, and after /dmbot start.
         self.add_dynamic_items(
             HandoverButton,
             WithdrawOfferButton,
@@ -10686,7 +10686,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
 
     async def run_web_settings(self) -> None:
         """What DMs chose on the website's Settings page (#2463), applied the way Discord's
-        ⚙️ Settings buttons apply it. Each sender must still be a DM of the campaign; only the
+        ⚙️ Manage DMbot buttons apply it. Each sender must still be a DM of the campaign; only the
         outcome word is logged, never the choice."""
         store = self.web_settings
         if store is None:
@@ -11469,7 +11469,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         return channel.id, None
 
     async def upgrade_dm_bot_channel(self, campaign: Campaign) -> int | None:
-        """A campaign made before the DM Bot channel (#1666) gets one when its ⚙️ Settings is
+        """A campaign made before the DM Bot channel (#1666) gets one when its ⚙️ Manage DMbot is
         pressed, not only at the next session start. Returns the new channel's id, or None
         (it already had one, or it couldn't be made: the start-time note says why). The
         campaign is read again first, so two quick presses make one channel."""

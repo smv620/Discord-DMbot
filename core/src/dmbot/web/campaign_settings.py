@@ -3,7 +3,7 @@ the DM screen, how much DMbot says, and how long transcripts are kept.
 
 The website's database role has no right on the campaign tables, so a choice is queued through one
 database door (`dmbot_web_setting_add`, schema.py), which checks the signed-in person is a DM of the
-campaign; the bot applies it the way Discord's ⚙️ Settings buttons do (dm_screen/web_settings.py)
+campaign; the bot applies it the way Discord's ⚙️ Manage DMbot buttons do (dm_screen/web_settings.py)
 and the page reads where it stands. A server manager who is not a DM, a player and anyone else get
 "not allowed" or "not found", the same as for the other pages. Optional rules (#2753) and game
 masters (#2768) go through the same queue. Not here: hand over, pause and delete (the page sends the
