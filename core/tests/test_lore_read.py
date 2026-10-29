@@ -15,7 +15,7 @@ from typing import Any, cast
 from unittest import mock
 from unittest.mock import AsyncMock
 
-from dmbot.ai import AIError, AIOutOfFunds, Reply, max_output
+from dmbot.ai import BUSY, OUT_OF_FUNDS, AIError, AIOutOfFunds, Reply, max_output
 from dmbot.memory import background as bg
 from dmbot.memory import lore_read as lr
 from dmbot.memory.ontology import FALLBACK_PREDICATE
@@ -1346,3 +1346,62 @@ class TheSecondLookProgress(unittest.IsolatedAsyncioTestCase):
         )
         first_look = next(i for i, t in enumerate(told) if t[0] == "looking")
         self.assertTrue(all(t == ("reading", 0, 0) for t in told[:first_look]))
+
+
+FIRST_THIN = (
+    'NAMES\n- Brother Aldric | person | quote: "Brother Aldric"\n'
+    '- Greyfen Abbey | place | quote: "Greyfen Abbey"\n'
+    '- Mira | person | quote: "Mira, called the Fox"\n'
+    '- Ravenhold | place | quote: "Ravenhold"\n'
+)
+THIN_PARAGRAPHS = [
+    "Brother Aldric rode to Greyfen Abbey at dawn.",
+    "Mira, called the Fox, and Brother Aldric waited by the gate.",
+    "Ravenhold and Greyfen Abbey stood empty on the hill.",
+]
+LONG_THIN = "\n\n".join([*THIN_PARAGRAPHS, "Filler about nothing. " * 100])
+LINKS = {
+    "rode to Greyfen": (
+        'RELATIONSHIPS\n- Brother Aldric — leads — Greyfen Abbey | quote: "Greyfen Abbey"\n'
+    ),
+    "waited by the gate": (
+        'RELATIONSHIPS\n- Mira — is related to — Brother Aldric | quote: "Mira, called the Fox"\n'
+    ),
+    "stood empty": 'RELATIONSHIPS\n- Ravenhold — is near — Greyfen Abbey | quote: "Ravenhold"\n',
+}
+
+
+class TheSecondLookFailures(unittest.IsolatedAsyncioTestCase):
+    """#2948: one paragraph's busy or failed answer does not cancel the others."""
+
+    def _fake(self, failure: BaseException | None) -> Any:
+        async def complete(system: str, text: str, *, max_tokens: int, schema: Any = None) -> Reply:
+            if schema is not None:
+                return Reply(json.dumps({"names": [], "connections": []}), False)
+            if "SECOND LOOK" not in system:
+                return Reply(FIRST_THIN, False)
+            for key, answer in LINKS.items():
+                if key in text:
+                    if key == "rode to Greyfen" and failure is not None:
+                        raise failure
+                    await asyncio.sleep(0.05)  # the others are still running when the first fails
+                    return Reply(answer, False)
+            raise AssertionError("an unexpected paragraph was asked about")
+
+        return SimpleNamespace(complete=AsyncMock(side_effect=complete), model="claude-sonnet-5-5")
+
+    async def test_one_paragraph_failing_does_not_stop_the_others(self) -> None:
+        fake = self._fake(AIError(BUSY))
+        done = await lr.read_lore(fake, fake, LONG_THIN, {}, Gate())
+        self.assertEqual(done.stats.second_calls, 2)  # the two that answered are used
+        self.assertEqual(done.stats.extra_links, 2)
+
+    async def test_out_of_funds_still_stops_the_rest(self) -> None:
+        fake = self._fake(AIOutOfFunds(OUT_OF_FUNDS))
+        with self.assertRaises(AIOutOfFunds):
+            await lr.read_lore(fake, fake, LONG_THIN, {}, Gate())
+
+    async def test_a_bug_is_still_raised(self) -> None:
+        fake = self._fake(RuntimeError("boom"))
+        with self.assertRaises(RuntimeError):
+            await lr.read_lore(fake, fake, LONG_THIN, {}, Gate())
