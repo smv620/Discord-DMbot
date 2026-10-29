@@ -21,7 +21,7 @@ export const webPage = {
   hopsLabel: "Steps out from the middle",
   hopsLess: "One step fewer",
   hopsMore: "One step more",
-  hopsHint: (max: number): string => `1 shows only names joined straight to it. Up to ${max}.`,
+  hopsHint: (max: number): string => `Start at 1 to see only the names joined directly to the middle one. Up to ${max}.`,
   bigAsk: (n: number): string => `This will draw ${n} names and may be slow. Show it anyway, or pick a smaller number above.`,
   bigYes: "Show it anyway",
   bigNo: "Not now",
@@ -47,15 +47,14 @@ export const webPage = {
   zoomIn: "Zoom in",
   zoomOut: "Zoom out",
   resetView: "Reset the view",
-  panHint:
-    "Drag a name to move it; it stays where you drop it (arrow keys do the same). Drag the background to move around. Pinch, or use the buttons, to zoom.",
+  panHint: "Drag a name to move it. It stays where you drop it. Drag the empty space to look around. Pinch or use the zoom buttons to zoom.",
   layoutLabel: "How the names are laid out",
   layoutFree: "Spread out",
   layoutGroups: "Group by kind",
   letGo: "Let everything move again",
   nConnections: (n: number): string => `${n} connections`,
   lineBetween: (a: string, b: string): string => `Open the connections between ${a} and ${b}`,
-  nameButton: (name: string): string => `${name}. Press Enter to put it in the middle.`,
+  nameButton: (name: string): string => `${name}. Activate to put it in the middle.`,
   legendHeading: "What the shapes mean",
   // Kinds the API may send; any other key is shown as it comes.
   kinds: {
