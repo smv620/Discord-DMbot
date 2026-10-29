@@ -187,6 +187,7 @@ from dmbot.dm_screen.quiet_stop import (
     stopped_text,
 )
 from dmbot.dm_screen.recap_panel import RecapsButton
+from dmbot.dm_screen.recap_style import RecapStyleButton
 from dmbot.dm_screen.retired_channels import remove_old_channels
 from dmbot.dm_screen.settings import (
     BackToSettingsButton,
@@ -1466,6 +1467,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             InviteButton,
             TableChatButton,
             RecapsButton,
+            RecapStyleButton,  # the one recap choice left in Discord (#2986)
             GameMastersButton,  # who the DMs are (#1600)
         )
         # Hand-over (#437): on ⚙️ Manage DMbot, in private messages, and after /dmbot start.
