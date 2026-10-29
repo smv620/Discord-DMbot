@@ -61,7 +61,7 @@
 
 .account .web-seg {
   display: inline-flex;
-  gap: 0;
+  gap: var(--space-2, 0.5rem);
 }
 
 .account .web-seg .button[aria-pressed="true"] {
