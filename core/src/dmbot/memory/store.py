@@ -3831,6 +3831,14 @@ class MemoryStore:
         async with self._read(guild_id, campaign_id, snapshot=True) as scope:
             return await knowers.alias_knowers(scope, alias_ids)
 
+    async def what_my_characters_know(
+        self, guild_id: int, campaign_id: str, user_id: int
+    ) -> knowers.Mine:
+        """What this person's own characters know that the table does not (#2935): the one reader
+        a player's page asks for it. Nothing of anyone else's, and nothing public."""
+        async with self._read(guild_id, campaign_id, snapshot=True) as scope:
+            return await knowers.what_my_characters_know(scope, user_id)
+
     async def characters_of(self, guild_id: int, campaign_id: str, user_id: int) -> list[str]:
         """The player characters this person plays (entry ids)."""
         async with self._read(guild_id, campaign_id, snapshot=True) as scope:

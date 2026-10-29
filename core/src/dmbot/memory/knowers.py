@@ -13,6 +13,7 @@ character knows) are separate and ask `characters_of` for who a viewer plays.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Any
 
 from dmbot.memory import beliefs
@@ -148,11 +149,19 @@ async def connection_knowers(scope: Scope, relation_ids: Sequence[str]) -> dict[
     }
     if not views:
         return out
+    held_back = {
+        r["id"]
+        for r in await scope.select(
+            RELATIONS,
+            " AND id = ANY(%s) AND status = %s AND (secret OR unrevealed)",
+            [list(relation_ids), CONFIRMED],
+        )
+    }  # (a connection everyone now knows, or one turned down, has no knowers: it is public)
     newest: dict[tuple[str, str], dict[str, Any]] = {}
     for row in await scope.select(
         BELIEFS,
         " AND relation_id = ANY(%s) AND perspective_id = ANY(%s) ORDER BY seq",
-        [list(relation_ids), list(views)],
+        [list(held_back), list(views)],
     ):
         newest[(row["relation_id"], row["perspective_id"])] = row
     for (relation_id, view_id), row in newest.items():
@@ -191,3 +200,93 @@ async def characters_of(scope: Scope, user_id: int) -> list[str]:
         [PLAYER_CHARACTER, CONFIRMED, user_id],
     )
     return [str(r["id"]) for r in rows]
+
+
+@dataclass(frozen=True, slots=True)
+class MineConnection:
+    """A hidden connection one of this player's characters knows: the two names and the words
+    between them as stored (the display layer turns them into the card's words), and the other
+    characters who know it, for "You and Mara know this"."""
+
+    relation_id: str
+    subject: str
+    predicate: str
+    detail: str
+    object: str
+    directional: bool
+    also: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class MineName:
+    """A secret other name one of this player's characters knows, whose it is, who else knows."""
+
+    alias_id: str
+    text: str
+    of: str
+    also: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class Mine:
+    """What a player's own characters know that the table does not (#2935): their view and nobody
+    else's. Empty for someone who plays no character here."""
+
+    characters: tuple[str, ...] = ()
+    connections: tuple[MineConnection, ...] = ()
+    names: tuple[MineName, ...] = ()
+
+
+async def what_my_characters_know(scope: Scope, user_id: int) -> Mine:
+    """The hidden connections and secret other names that the characters this person plays know,
+    and nothing else. A connection or name everyone now knows is public (not here), one the DM took
+    back from them is gone, and another campaign's never shows. The characters named as also
+    knowing are named by their entry, so the player's page can say "You and Mara's player"."""
+    mine = await characters_of(scope, user_id)
+    if not mine:
+        return Mine()
+    hidden = await scope.select(
+        RELATIONS,
+        " AND status = %s AND (secret OR unrevealed) AND to_session_at IS NULL ORDER BY id",
+        [CONFIRMED],
+    )
+    who = await connection_knowers(scope, [r["id"] for r in hidden])
+    mine_set = set(mine)
+    shown = [r for r in hidden if mine_set & set(who.get(r["id"], []))]
+    alias_rows = await scope.select(ALIAS_KNOWERS, "", [])
+    alias_ids = sorted({r["alias_id"] for r in alias_rows})
+    a_who = await alias_knowers(scope, alias_ids)
+    kept = [a for a in alias_ids if mine_set & set(a_who.get(a, []))]
+    aliases = await scope.select(ALIASES, " AND id = ANY(%s) ORDER BY id", [kept]) if kept else []
+    ids = {x for r in shown for x in (r["subject_id"], r["object_id"])}
+    ids |= {a["entity_id"] for a in aliases}
+    ids |= {x for v in who.values() for x in v} | {x for v in a_who.values() for x in v}
+    names = (
+        {
+            r["id"]: str(r["name"])
+            for r in await scope.select(ENTITIES, " AND id = ANY(%s)", [sorted(ids)])
+        }
+        if ids
+        else {}
+    )
+
+    def others(knowing: Sequence[str]) -> tuple[str, ...]:
+        return tuple(sorted(names.get(c, "") for c in knowing if c not in mine_set and c in names))
+
+    return Mine(
+        characters=tuple(sorted(names.get(c, "") or c for c in mine)),
+        connections=tuple(
+            MineConnection(
+                r["id"], names.get(r["subject_id"], ""), r["predicate"], r["detail"] or "",
+                names.get(r["object_id"], ""), bool(r.get("directional")),
+                others(who.get(r["id"], [])),
+            )
+            for r in shown
+        ),
+        names=tuple(
+            MineName(
+                a["id"], a["text"], names.get(a["entity_id"], ""), others(a_who.get(a["id"], []))
+            )
+            for a in aliases
+        ),
+    )  # fmt: skip
