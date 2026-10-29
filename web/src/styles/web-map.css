@@ -90,8 +90,7 @@ body:has(.account-wide) .wrap {
   max-height: none;
 }
 
-/* The chosen name's details go under the map, and beside it only when the page is wide enough
-   for the map to stay big. */
+/* The chosen name's details always go under the map, so the map keeps the whole width (owner, #2984). */
 .account .web-stage {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -104,10 +103,6 @@ body:has(.account-wide) .wrap {
 }
 
 @container (min-width: 64rem) {
-  .account .web-stage {
-    grid-template-columns: minmax(0, 1fr) 19rem;
-  }
-
   .account .web-svg {
     height: 78vh;
   }
@@ -283,4 +278,67 @@ body:has(.account-wide) .wrap {
     flex-basis: 100%;
     margin: 0;
   }
+}
+
+/* The list at the bottom: one tight line per name, the buttons only once a name is opened. */
+.account .web-list-box > summary {
+  margin-bottom: 0.5rem;
+  cursor: pointer;
+  font-weight: 600;
+  min-height: var(--tap, 2.75rem);
+  display: flex;
+  align-items: center;
+}
+
+.account .web-list-tools {
+  align-items: center;
+  gap: var(--space-2, 0.5rem);
+}
+
+.account .web-list-tools h3 {
+  margin-right: auto;
+}
+
+.account .web-names {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  /* 8 px between the name buttons, so a thumb never hits the wrong one (the phone check). */
+  gap: 0.5rem;
+}
+
+.account .web-name {
+  border-bottom: 1px solid var(--border);
+}
+
+.account .web-name-toggle {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2, 0.5rem);
+  width: 100%;
+  min-height: var(--tap, 2.75rem);
+  padding: 0 var(--space-2, 0.5rem);
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.account .web-name-more {
+  padding: var(--space-2, 0.5rem) var(--space-4, 1rem);
+  gap: var(--space-2, 0.5rem);
+}
+
+/* Tighter spacing on this page so the map starts as high as it can (owner, #2984). */
+.account .web-page {
+  gap: var(--space-2, 0.5rem);
+}
+
+.account .web-page #web-hops-hint {
+  margin: 0;
 }

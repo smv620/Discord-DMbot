@@ -81,6 +81,8 @@ export const webPage = {
   secretWords: "Secret: only the DM sees this",
   listHeading: "The same web, as a list",
   namesHeading: "Names",
+  expandAll: "Expand all",
+  collapseAll: "Collapse all",
   linesHeading: "Connections",
   makeMiddleShort: "Make middle",
   seeLineShort: "Open",
