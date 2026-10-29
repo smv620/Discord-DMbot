@@ -239,54 +239,106 @@ class Mine:
 
 async def what_my_characters_know(scope: Scope, user_id: int) -> Mine:
     """The hidden connections and secret other names that the characters this person plays know,
-    and nothing else. A connection or name everyone now knows is public (not here), one the DM took
-    back from them is gone, and another campaign's never shows. The characters named as also
-    knowing are named by their entry, so the player's page can say "You and Mara's player"."""
+    and nothing else. Started from this person's own characters' points of view, so it reads
+    nothing of anyone else's. Only confirmed items show: a connection or name everyone now knows
+    is public (not here), one the DM took back is gone, one still only proposed, rejected or ended
+    is not shown, and neither is one whose names are not confirmed entries. Another campaign's
+    never shows. `user_id` must be the signed-in person's own (never a command option or a request
+    parameter): this trusts it. The other characters who know an item are named by their entry so
+    the page can say "You and Mara's player"; only confirmed player characters are named."""
     mine = await characters_of(scope, user_id)
     if not mine:
         return Mine()
-    hidden = await scope.select(
-        RELATIONS,
-        " AND status = %s AND (secret OR unrevealed) AND to_session_at IS NULL ORDER BY id",
-        [CONFIRMED],
+    views = {
+        r["id"]: r["entity_id"]
+        for r in await scope.select(
+            PERSPECTIVES, " AND kind = %s AND entity_id = ANY(%s)", [PC_VIEW, mine]
+        )
+    }
+    knows: set[str] = set()
+    if views:
+        newest: dict[tuple[str, str], float] = {}
+        for row in await scope.select(
+            BELIEFS, " AND perspective_id = ANY(%s) ORDER BY seq", [list(views)]
+        ):
+            newest[(row["relation_id"], row["perspective_id"])] = row["confidence"]
+        knows = {rel for (rel, _), c in newest.items() if c >= KNOWN}
+    hidden = (
+        await scope.select(
+            RELATIONS,
+            " AND id = ANY(%s) AND status = %s AND (secret OR unrevealed)"
+            " AND to_session_at IS NULL ORDER BY id",
+            [sorted(knows), CONFIRMED],
+        )
+        if knows
+        else []
+    )
+    alias_ids = (
+        sorted(
+            {
+                r["alias_id"]
+                for r in await scope.select(
+                    ALIAS_KNOWERS, " AND perspective_id = ANY(%s)", [list(views)]
+                )
+            }
+        )
+        if views
+        else []
+    )
+    aliases = (
+        await scope.select(
+            ALIASES,
+            " AND id = ANY(%s) AND secret AND status = %s ORDER BY id",
+            [alias_ids, CONFIRMED],
+        )
+        if alias_ids
+        else []
     )
     who = await connection_knowers(scope, [r["id"] for r in hidden])
+    a_who = await alias_knowers(scope, [a["id"] for a in aliases])
+    wanted = {*mine}
+    for r in hidden:
+        wanted |= {r["subject_id"], r["object_id"], *who.get(r["id"], [])}
+    for a in aliases:
+        wanted |= {a["entity_id"], *a_who.get(a["id"], [])}
+    entries = {
+        r["id"]: r
+        for r in await scope.select(ENTITIES, " AND id = ANY(%s)", [sorted(wanted)])
+        if r["status"] == CONFIRMED
+    }
     mine_set = set(mine)
-    shown = [r for r in hidden if mine_set & set(who.get(r["id"], []))]
-    alias_rows = await scope.select(ALIAS_KNOWERS, "", [])
-    alias_ids = sorted({r["alias_id"] for r in alias_rows})
-    a_who = await alias_knowers(scope, alias_ids)
-    kept = [a for a in alias_ids if mine_set & set(a_who.get(a, []))]
-    aliases = await scope.select(ALIASES, " AND id = ANY(%s) ORDER BY id", [kept]) if kept else []
-    ids = {x for r in shown for x in (r["subject_id"], r["object_id"])}
-    ids |= {a["entity_id"] for a in aliases}
-    ids |= {x for v in who.values() for x in v} | {x for v in a_who.values() for x in v}
-    names = (
-        {
-            r["id"]: str(r["name"])
-            for r in await scope.select(ENTITIES, " AND id = ANY(%s)", [sorted(ids)])
-        }
-        if ids
-        else {}
-    )
 
     def others(knowing: Sequence[str]) -> tuple[str, ...]:
-        return tuple(sorted(names.get(c, "") for c in knowing if c not in mine_set and c in names))
+        return tuple(
+            sorted(
+                str(entries[c]["name"])
+                for c in knowing
+                if c not in mine_set and c in entries and entries[c]["role"] == PLAYER_CHARACTER
+            )
+        )
 
-    return Mine(
-        characters=tuple(sorted(names.get(c, "") or c for c in mine)),
-        connections=tuple(
+    def name(entity_id: str) -> str | None:
+        found = entries.get(entity_id)
+        return None if found is None else str(found["name"])
+
+    connections = []
+    for r in hidden:
+        subject, target = name(r["subject_id"]), name(r["object_id"])
+        if subject is None or target is None:
+            continue
+        connections.append(
             MineConnection(
-                r["id"], names.get(r["subject_id"], ""), r["predicate"], r["detail"] or "",
-                names.get(r["object_id"], ""), bool(r.get("directional")),
-                others(who.get(r["id"], [])),
+                r["id"], subject, r["predicate"], r["detail"] or "", target,
+                bool(r.get("directional")), others(who.get(r["id"], [])),
             )
-            for r in shown
-        ),
-        names=tuple(
-            MineName(
-                a["id"], a["text"], names.get(a["entity_id"], ""), others(a_who.get(a["id"], []))
-            )
-            for a in aliases
-        ),
-    )  # fmt: skip
+        )  # fmt: skip
+    names = []
+    for a in aliases:
+        owner = name(a["entity_id"])
+        if owner is not None:
+            names.append(MineName(a["id"], a["text"], owner, others(a_who.get(a["id"], []))))
+    return Mine(
+        characters=tuple(sorted(str(entries[c]["name"]) for c in mine if c in entries)),
+        connections=tuple(connections),
+        names=tuple(names),
+    )

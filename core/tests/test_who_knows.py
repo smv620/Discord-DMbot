@@ -131,7 +131,7 @@ class WhoKnows(MemoryTest):
 
     async def secret_name(self, entity: str, text: str = "Rook") -> str:
         made = await self.memory.add_alias(
-            GUILD_A, self.c, entity, text, kind="title", secret=True, source=DM
+            GUILD_A, self.c, entity, text, kind="title", secret=True, source=DM, status=CONFIRMED
         )
         return str(made.value.id)
 
@@ -339,6 +339,35 @@ class WhoKnows(MemoryTest):
             GUILD_A, self.c, spellings=[spelling_key("Rook")], relation_ids=[]
         )
         self.assertEqual((await self.mine(TAVIN_PLAYER)).names, ())
+
+    async def test_a_proposed_name_a_merged_owner_and_a_proposed_link_never_show(self) -> None:
+        ids = await self.setup_table()
+        made = await self.memory.add_alias(
+            GUILD_A, self.c, ids["tavin"], "Rook", kind="nickname", source=DM, secret=True
+        )  # (not confirmed: it is still only proposed)
+        await self.memory.set_alias_knowers(
+            GUILD_A, self.c, str(made.value.id), [ids["tavin"]], source=DM
+        )
+        self.assertEqual((await self.mine(TAVIN_PLAYER)).names, ())
+        # a character who knows nothing still gets their name in the line
+        seen = await self.mine(MARA_PLAYER)
+        self.assertEqual(seen.characters, ("Mara",))
+
+    async def test_a_player_with_two_characters_sees_what_either_knows(self) -> None:
+        ids = await self.setup_table()
+        second = await self.pc("Brann", TAVIN_PLAYER)
+        link = await self.hidden_link(ids["voss"], ids["council"])
+        await self.memory.set_connection_knowers(GUILD_A, self.c, link, [second], source=DM)
+        seen = await self.mine(TAVIN_PLAYER)
+        self.assertEqual(seen.characters, ("Brann", "Tavin"))
+        self.assertEqual(len(seen.connections), 1)
+
+    async def test_an_ended_connection_is_not_shown(self) -> None:
+        ids = await self.setup_table()
+        link = await self.hidden_link(ids["voss"], ids["council"])
+        await self.memory.set_connection_knowers(GUILD_A, self.c, link, [ids["tavin"]], source=DM)
+        await self.memory.update_relation(GUILD_A, self.c, link, source=DM, status="rejected")
+        self.assertEqual((await self.mine(TAVIN_PLAYER)).connections, ())
 
     async def test_what_the_dm_took_back_is_gone_from_the_players_view(self) -> None:
         ids = await self.setup_table()
