@@ -530,7 +530,12 @@ class BackgroundOffer(_Menu):
                     rules=(campaign.target_ruleset, campaign.fallback_ruleset),
                 )
                 stored = await store(
-                    memory, campaign, found, getattr(bot, "lore_context", None), self.upload.text
+                    memory,
+                    campaign,
+                    found,
+                    getattr(bot, "lore_context", None),
+                    self.upload.text,
+                    known_by,
                 )
                 questions: list[str] = []
                 keys: set[tuple[str, str, str]] = set()
@@ -610,12 +615,17 @@ async def store(
     found: list[bg.Found],
     held: lore_context.Held | None = None,
     text: str = "",
+    known_by: str = "",
 ) -> dict[str, list[str]]:
     """Each name as a suggestion with its quote (never confirmed), its other spellings with it and
     a disguise kept as a secret name. One change for the whole list: one reload of the live names,
     one Undo. Returns the new suggestions' IDs for each kind. What is stored stays the short quote
     (the text is never kept, #2167); `held` gets the sentence around each name, cut from `text`
-    while it is still in memory, for the review card to show (#2561): memory only, never stored."""
+    while it is still in memory, for the review card to show (#2561): memory only, never stored.
+    `known_by` (the uploader's player character, #2935): a secret name the upload gives starts as
+    known by that character, as a kept connection does; with none, it is the DM's alone. That is
+    set after the names, in changes of its own: Undo of the names removes the name and, with it,
+    who knew it."""
     names: list[NewName] = []
     items: list[bg.Found] = []
     for item in found:
@@ -652,7 +662,31 @@ async def store(
                     entity_id,
                     lore_context.around(text, item.quote, item.name),
                 )
+            if known_by and item.secret:
+                await _secret_names_known_by(memory, campaign, entity_id, item.secret, known_by)
     return stored
+
+
+async def _secret_names_known_by(
+    memory: MemoryStore, campaign: Campaign, entity_id: str, secrets: Sequence[str], known_by: str
+) -> None:
+    """The secret spellings this upload gave one entry start as known by the uploader's character
+    (#2935). A refusal (a character since demoted) leaves the name with the DM alone, as before."""
+    wanted = {name_key(s) for s in secrets}
+    found = await memory.aliases(
+        campaign.guild_id, campaign.id, entity_id=entity_id, include_secret=True
+    )
+    for alias in found:
+        if not alias.secret or name_key(alias.text) not in wanted:
+            continue
+        try:
+            await memory.set_alias_knowers(
+                campaign.guild_id, campaign.id, alias.id, [known_by], source=DM
+            )
+        except MemoryRuleError:
+            log.info("A secret name's first knowers were refused")
+        except Exception:  # the names are stored: this only leaves the name with the DM alone
+            log.exception("A secret name's first knowers could not be set")
 
 
 def _plural(kind: str, count: int) -> str:
