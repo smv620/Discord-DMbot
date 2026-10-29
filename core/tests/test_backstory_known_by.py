@@ -9,7 +9,7 @@ from dmbot.memory.models import CONFIRMED
 from tests.test_memory_names import GUILD, NamesTest
 
 
-class KnownBy(NamesTest):
+class _Table(NamesTest):
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
         self.store = BackstoryLinks(self.db)
@@ -38,6 +38,8 @@ class KnownBy(NamesTest):
     async def knowers(self, ids: list[str]) -> dict[str, list[str]]:
         return await self.memory.connection_knowers(GUILD, self.campaign.id, ids)
 
+
+class KnownBy(_Table):
     async def test_the_waiting_row_keeps_the_character_and_keep_all_passes_it_on(self) -> None:
         ids = await self.ids()
         await self.store.add(
@@ -125,10 +127,8 @@ class KnownBy(NamesTest):
         self.assertEqual(sorted(got[rid]), sorted([mara.value.id, ids["Tavin"]]))
 
 
-class SecretNames(NamesTest):
+class SecretNames(_Table):
     """The secret names an upload gives start as known by its character too (C2c)."""
-
-    ids = KnownBy.ids
 
     async def stored(self, known_by: str) -> tuple[str, list[str]]:
         from dmbot.memory import background as bg
