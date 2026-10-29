@@ -98,3 +98,82 @@
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* Kinds of connection (#2934, core #2942): a colour and a line style for each, so colour is never the only
+   signal; the legend and the chips use the same classes. "other" is a neutral, thinner, plain line. */
+.account {
+  --link-family: #a8650a;
+  --link-ally: #0d7d6a;
+  --link-group: #6b4fc0;
+  --link-work: #2a68b0;
+  --link-other: var(--muted, #6b7770);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .account {
+    --link-family: #e6b450;
+    --link-ally: #4fd1b6;
+    --link-group: #a78bfa;
+    --link-work: #63b3ed;
+  }
+}
+
+:root[data-theme="dark"] .account {
+  --link-family: #e6b450;
+  --link-ally: #4fd1b6;
+  --link-group: #a78bfa;
+  --link-work: #63b3ed;
+}
+
+.account .web-link-family { --link: var(--link-family); }
+.account .web-link-ally { --link: var(--link-ally); }
+.account .web-link-group { --link: var(--link-group); }
+.account .web-link-work { --link: var(--link-work); }
+.account .web-link-other { --link: var(--link-other); }
+
+.account .web-edge.web-link-family .web-line { stroke: var(--link); }
+.account .web-edge.web-link-ally .web-line { stroke: var(--link); stroke-dasharray: 10 5; }
+.account .web-edge.web-link-group .web-line { stroke: var(--link); stroke-dasharray: 14 4 3 4; }
+.account .web-edge.web-link-work .web-line { stroke: var(--link); stroke-dasharray: 4 4; }
+.account .web-edge.web-link-other .web-line { stroke: var(--link); stroke-width: 1.5; }
+.account .web-edge.chosen .web-line { stroke-width: 4; }
+/* A theory keeps its own dotted look on top of its colour. */
+.account .web-edge.web-theory .web-line { stroke-dasharray: 2 6; }
+
+.account .web-legend .web-line { stroke: var(--link); }
+.account .web-legend .web-link-ally .web-line { stroke-dasharray: 10 5; }
+.account .web-legend .web-link-group .web-line { stroke-dasharray: 14 4 3 4; }
+.account .web-legend .web-link-work .web-line { stroke-dasharray: 4 4; }
+
+.account .web-dot {
+  display: inline-block;
+  width: 0.7em;
+  height: 0.7em;
+  border-radius: 50%;
+  background: var(--link);
+}
+
+.account .web-area.web-link-family circle,
+.account .web-area.web-link-ally circle,
+.account .web-area.web-link-group circle,
+.account .web-area.web-link-work circle,
+.account .web-area.web-link-other circle {
+  fill: var(--link);
+  stroke: var(--link);
+}
+
+.account .web-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2, 0.5rem);
+  margin: var(--space-2, 0.5rem) 0;
+}
+
+.account .web-chip[aria-pressed="false"] {
+  opacity: 0.55;
+  text-decoration: line-through;
+}
+
+.account .web-kindmark {
+  color: inherit;
+}
