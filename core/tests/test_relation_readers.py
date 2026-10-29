@@ -110,6 +110,7 @@ class WhoReadsConnections(unittest.TestCase):
             str(path.relative_to(SRC))
             for path in SRC.rglob("*.py")
             if re.search(r"memory_relations|\bRELATIONS\b", path.read_text())
+            and "migrations" not in path.relative_to(SRC).parts  # (the SQL files, #2127)
         } - {"memory/store.py", "schema.py"}  # (store.py by function below; schema.py by door)
         self.assertEqual(
             sorted(found),
