@@ -525,6 +525,7 @@ class Documents(Base):
         cases = [
             (AIError(BUSY), ws.SERVER),
             (AIError(FAILED), ws.SERVER),
+            (AIError(sheet_import.UNCLEAR), ws.SERVER),
             (AIError("The AI service didn't accept DMbot's key."), ws.NO_AI),
             (AIOutOfFunds(OUT_OF_FUNDS), ws.NO_AI),
         ]
