@@ -488,8 +488,15 @@ class BackgroundOffer(_Menu):
 
                 def on_step(stage: str, done: int, total: int) -> None:
                     if stage == "reading":
-                        again = f", try {done}" if done > 1 else ""
-                        waiting.step(f"Step 1 of {steps}: reading it through{again}", keeps=False)
+                        # Same words for every pass-1 call: each call is movement, not a new step.
+                        waiting.step(f"Step 1 of {steps}: reading it through", keeps=False)
+                        waiting.moved()
+                    elif stage == "looking":
+                        waiting.step(
+                            f"Step 1 of {steps}: looking again at passages it may have skipped",
+                            done,
+                            total,
+                        )
                     else:
                         waiting.step(f"Step 2 of {steps}: picking out names and links", done, total)
 
