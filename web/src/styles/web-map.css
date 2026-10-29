@@ -333,3 +333,81 @@ body:has(.account-wide) .wrap {
 .account .web-page #web-hops-hint {
   margin: 0;
 }
+
+/* Kinds of name (#2992): a saturated fill for each, with a shape and a word besides, so colour is never the only
+   signal. The lines of the connections are thinner and softer, so a name's colour and a line's colour are not
+   read as the same thing. */
+.account {
+  --kind-npc: #c62828;
+  --kind-player_character: #1565c0;
+  --kind-place: #2e7d32;
+  --kind-group: #8e24aa;
+  --kind-item: #ef6c00;
+  --kind-event: #00838f;
+  --kind-creature: #6d4c41;
+  --kind-quest: #f9a825;
+  --kind-other: #607d8b;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .account {
+    --kind-npc: #ff6b6b;
+    --kind-player_character: #64b5f6;
+    --kind-place: #81c784;
+    --kind-group: #ce93d8;
+    --kind-item: #ffb74d;
+    --kind-event: #4dd0e1;
+    --kind-creature: #bcaaa4;
+    --kind-quest: #ffd54f;
+    --kind-other: #b0bec5;
+  }
+}
+
+:root[data-theme="dark"] .account {
+  --kind-npc: #ff6b6b;
+  --kind-player_character: #64b5f6;
+  --kind-place: #81c784;
+  --kind-group: #ce93d8;
+  --kind-item: #ffb74d;
+  --kind-event: #4dd0e1;
+  --kind-creature: #bcaaa4;
+  --kind-quest: #ffd54f;
+  --kind-other: #b0bec5;
+}
+
+.account .web-kind-npc { --kind: var(--kind-npc); }
+.account .web-kind-player_character { --kind: var(--kind-player_character); }
+.account .web-kind-place { --kind: var(--kind-place); }
+.account .web-kind-group { --kind: var(--kind-group); }
+.account .web-kind-item { --kind: var(--kind-item); }
+.account .web-kind-event { --kind: var(--kind-event); }
+.account .web-kind-creature { --kind: var(--kind-creature); }
+.account .web-kind-quest { --kind: var(--kind-quest); }
+.account .web-kind-other { --kind: var(--kind-other); }
+
+.account .web-node :where(circle, rect, polygon),
+.account .web-legend svg[class^="web-kind-"] :where(circle, rect, polygon) {
+  fill: var(--kind);
+}
+
+.account .web-legend svg[class^="web-kind-"] :where(circle, rect, polygon) {
+  stroke: var(--text, currentColor);
+  stroke-width: 1.5;
+}
+
+/* In Cluster by kind each area is a light wash of its kind's colour. */
+.account .web-area[class*="web-kind-"] circle {
+  fill: var(--kind);
+  fill-opacity: 0.14;
+  stroke: var(--kind);
+  stroke-opacity: 0.6;
+}
+
+.account .web-edge .web-line {
+  stroke-width: 1.5;
+  stroke-opacity: 0.8;
+}
+
+.account .web-edge.chosen .web-line {
+  stroke-opacity: 1;
+}

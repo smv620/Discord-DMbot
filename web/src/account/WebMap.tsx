@@ -10,6 +10,7 @@ import type { ComponentChildren } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import { kindWords, webPage as words } from "../content/web-words";
+import { kindStyle } from "./webKinds";
 import type { WebEdge, WebNode } from "./api";
 import {
   MAX_SIM_NAMES,
@@ -35,26 +36,38 @@ const SHAPE_R = 24; // half the width of a name's shape: 48 px across at normal 
 const STEPS_PER_FRAME = 2; // the settle runs a couple of steps each frame: calm, and quick to finish
 const NUDGE = 24; // how far an arrow key moves the name it is on
 
-/** Kinds with a drawn shape; any other kind is a circle with a dashed edge. */
-const KIND_ORDER = ["npc", "place", "group", "item", "event"];
-
+/** Each style has its own shape (and the plain ones a dashed edge), so a name is known by shape and word as
+ * well as by its colour. */
 function Shape({ kind, r }: { kind: string; r: number }) {
-  switch (kind) {
+  const poly = (pts: [number, number][]): string => pts.map(([x, y]) => `${x * r},${y * r}`).join(" ");
+  const ring = (n: number, k: number, turn = 0): string =>
+    poly(Array.from({ length: n }, (_, i) => [Math.cos(turn + (2 * Math.PI * i) / n) * k, Math.sin(turn + (2 * Math.PI * i) / n) * k]));
+  switch (kindStyle(kind)) {
     case "place":
       return <rect x={-r} y={-r} width={2 * r} height={2 * r} rx={5} />;
     case "group":
-      return <polygon points={`0,${-r * 1.2} ${r * 1.2},0 0,${r * 1.2} ${-r * 1.2},0`} />;
+      return <polygon points={poly([[0, -1.2], [1.2, 0], [0, 1.2], [-1.2, 0]])} />;
     case "item":
-      return <polygon points={`0,${-r * 1.15} ${r * 1.1},${r * 0.85} ${-r * 1.1},${r * 0.85}`} />;
-    case "event": {
-      const pts = [0, 1, 2, 3, 4, 5].map((i) => {
-        const a = (Math.PI / 3) * i;
-        return `${Math.cos(a) * r * 1.1},${Math.sin(a) * r * 1.1}`;
+      return <polygon points={poly([[0, -1.15], [1.1, 0.85], [-1.1, 0.85]])} />;
+    case "event":
+      return <polygon points={ring(6, 1.1)} />;
+    case "creature":
+      return <polygon points={ring(8, 1.1, Math.PI / 8)} />;
+    case "quest": {
+      // a five-pointed star: the long and the short points take turns
+      const pts: [number, number][] = Array.from({ length: 10 }, (_, i) => {
+        const k = i % 2 === 0 ? 1.3 : 0.55;
+        const a = -Math.PI / 2 + (Math.PI * i) / 5;
+        return [Math.cos(a) * k, Math.sin(a) * k];
       });
-      return <polygon points={pts.join(" ")} />;
+      return <polygon points={poly(pts)} />;
     }
+    case "player_character":
+      return <circle r={r} stroke-dasharray="4 3" />;
+    case "other":
+      return <circle r={r} stroke-dasharray="1 3" />;
     default:
-      return <circle r={r} stroke-dasharray={KIND_ORDER.includes(kind) ? undefined : "4 3"} />;
+      return <circle r={r} />;
   }
 }
 
@@ -366,8 +379,8 @@ export default function WebMap({
     }
   }
   const e = extent;
-  const kindsHere = KIND_ORDER.filter((k) => nodes.some((n) => n.kind === k));
-  const otherKinds = [...new Set(nodes.map((n) => n.kind))].filter((k) => !KIND_ORDER.includes(k));
+  // Every kind drawn, people first, each once (the legend shows its colour, shape and word).
+  const kindsHere = orderedKinds(nodes.map((n) => n.kind));
   const anyPinned = sim.current.some((n) => n.pinned);
   const kindsPresent = LINK_KINDS.filter((k) => edges.some((e) => edgeKind(e) === k));
   const tooBig = nodes.length > MAX_SIM_NAMES;
@@ -464,7 +477,7 @@ export default function WebMap({
               const cy = members.reduce((t, n) => t + n.y, 0) / members.length;
               const r = members.reduce((t, n) => Math.max(t, Math.hypot(n.x - cx, n.y - cy) + 60), 64);
               return (
-                <g key={k} class="web-area" aria-hidden="true">
+                <g key={k} class={`web-area web-kind-${kindStyle(k)}`} aria-hidden="true">
                   <circle cx={cx} cy={cy} r={r} />
                   <text x={cx} y={cy - r - 6} text-anchor="middle" class="web-area-text">
                     {kindWords(k)}
@@ -533,7 +546,7 @@ export default function WebMap({
             return (
               <g
                 key={n.id}
-                class={`web-node web-kind-${KIND_ORDER.includes(n.kind) ? n.kind : "other"}${n.id === center ? " centre" : ""}${n.revealed === false ? " web-dim" : ""}${faded ? " web-faded" : ""}`}
+                class={`web-node web-kind-${kindStyle(n.kind)}${n.id === center ? " centre" : ""}${n.revealed === false ? " web-dim" : ""}${faded ? " web-faded" : ""}`}
                 transform={`translate(${place.x.toFixed(1)} ${place.y.toFixed(1)})`}
                 tabIndex={0}
                 role="button"
@@ -630,9 +643,9 @@ export default function WebMap({
           {words.legendHeading}
         </h3>
         <ul class="row small">
-          {[...kindsHere, ...otherKinds].map((k) => (
+          {kindsHere.map((k) => (
             <li key={k}>
-              <svg width="26" height="26" viewBox="-15 -15 30 30" aria-hidden="true" class={`web-kind-${KIND_ORDER.includes(k) ? k : "other"}`}>
+              <svg width="26" height="26" viewBox="-15 -15 30 30" aria-hidden="true" class={`web-kind-${kindStyle(k)}`}>
                 <Shape kind={k} r={9} />
               </svg>{" "}
               {kindWords(k)}
