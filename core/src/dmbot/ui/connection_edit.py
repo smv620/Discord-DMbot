@@ -10,6 +10,7 @@ the campaign, the DM and the connection again; only the campaign's DMs deal in s
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 import discord
@@ -18,7 +19,7 @@ from dmbot.campaigns import Campaign
 from dmbot.memory import link_edits
 from dmbot.memory.link_words import CONNECTION_WORDS, link_words, predicate_for
 from dmbot.memory.lookup import CampaignLookup
-from dmbot.memory.models import CONFIRMED, DM, MemoryRuleError, Relation
+from dmbot.memory.models import CONFIRMED, DM, PLAYER_CHARACTER, MemoryRuleError, Relation
 from dmbot.memory.store import MemoryStore
 from dmbot.memory.who_resolve import checked_line
 from dmbot.mentions import NO_PINGS
@@ -44,6 +45,7 @@ from dmbot.ui.name_card import (
 )
 from dmbot.ui.names import _campaign_for, _md, _memory, changed, sees_secrets
 
+WHO_BUTTON = "👁️ Who knows this?"
 EDIT_BUTTON = "✏️ Edit a connection…"  # (the site's help names it: web/test/button-labels)
 ALL_VALUE = "dmbot:all-links"  # no connection's id looks like this
 ALL_LABEL = "🌐 All connections on the website…"
@@ -199,14 +201,7 @@ class OneConnection(_Menu):
         grey = discord.ButtonStyle.secondary
         self.add_item(_Button(self._other_words, label="Other words…", style=grey, row=1))
         if found.secrets:  # only the campaign's DMs deal in secrets
-            self.add_item(
-                _Button(
-                    self._flip,
-                    label="👁️ Show to players" if self.secret else "🤫 Hide from players",
-                    style=grey,
-                    row=1,
-                )
-            )
+            self.add_item(_Button(self._who, label=WHO_BUTTON, style=grey, row=1))
         if found.secrets:  # the DM's word that it is true in the story (#2447)
             self.pinned = found.pinned
             self.add_item(
@@ -288,7 +283,9 @@ class OneConnection(_Menu):
             OtherWords(self.campaign_id, self.entity_id, self.relation_id, self)
         )
 
-    async def _flip(self, interaction: discord.Interaction) -> None:
+    async def _who(self, interaction: discord.Interaction) -> None:
+        """Open the three-way answer for this connection (#2935): the old 🤫 Hide and 👁️ Show,
+        and the middle one between them, some player characters."""
         await _answer_first(interaction, in_place=True)
         found = await _find(interaction, self.campaign_id, self.entity_id, self.relation_id)
         if found is None:
@@ -296,24 +293,17 @@ class OneConnection(_Menu):
         if not found.secrets:  # checked on every press
             await _tell(interaction, SECRET_DENIED_PRESS)
             return
-        target = not self.secret  # from what the page showed: a double press never flips back
-        if (found.relation.secret or found.relation.unrevealed) == target:
-            await _tell(interaction, "It's already like that. Press Back to see the card.")
-            return
-        c = found.campaign
-        try:
-            written = await link_edits.set_secret(
-                found.memory, c.guild_id, c.id, found.relation, target
-            )
-        except MemoryRuleError as exc:
-            await _tell(interaction, f"Couldn't change that. {exc}")
-            return
-        note = (
-            f"🤫 Hidden from players: {_said(found)}. Not right? Edit it again."
-            if target
-            else f"👁️ Players can see it now: {_said(found)}. {UNDO_NOTE}"
+        pcs = await player_characters(found.memory, found.campaign)
+        knowing = await found.memory.connection_knowers(
+            found.campaign.guild_id, found.campaign.id, [found.relation.id]
         )
-        await self._changed(interaction, found, note, undo=written.batch)
+        who = link_edits.who_knows_now(found.relation, knowing.get(found.relation.id, []))
+        names = dict(pcs)
+        view = WhoKnows(
+            self.campaign_id, self.entity_id, found.relation.id, pcs,
+            chosen=[c for c in knowing.get(found.relation.id, []) if c in names],
+        )  # fmt: skip
+        await _replace(interaction, who_text(_said(found), who, knowing, names), view)
 
     async def _pin(self, interaction: discord.Interaction) -> None:
         await _answer_first(interaction, in_place=True)
@@ -420,3 +410,128 @@ class OtherWords(discord.ui.Modal, title="Other words"):
             return
         predicate, detail = predicate_for(text)
         await self.page._new_words(interaction, predicate, detail)
+
+
+async def player_characters(memory: MemoryStore, campaign: Campaign) -> list[tuple[str, str]]:
+    """The campaign's confirmed player characters (id, name), by name, at most one menu's worth:
+    the only ones the DM may say know something (#2935)."""
+    lookup = CampaignLookup.build(await memory.lookup_data(campaign.guild_id, campaign.id))
+    found = {
+        e.id: e.name
+        for e in lookup.entities.values()
+        if e.role == PLAYER_CHARACTER and e.status == CONFIRMED and not e.merged_into
+    }
+    ordered = sorted(found.items(), key=lambda item: item[1].casefold())
+    return ordered[:MAX_PICK]
+
+
+MAX_PICK = 25  # one Discord menu holds this many; a table's characters are far fewer
+
+
+def who_text(said: str, who: str, knowing: dict[str, list[str]], names: dict[str, str]) -> str:
+    """The page for "Who knows this?": the connection, who knows it now, and the three answers."""
+    if who == link_edits.EVERYONE:
+        now = "Everyone at the table knows this."
+    elif who == link_edits.SOME_CHARACTERS:
+        called = sorted(names.get(c, "") for ids in knowing.values() for c in ids if c in names)
+        now = "Only " + ", ".join(_md(n) for n in called) + " know this (and you)."
+    else:
+        now = "Only you know this."
+    return f"**{said}**\n{now}\nWho should know it?"
+
+
+class WhoKnows(_Menu):
+    """🤫 Only me, 👥 Only some characters (a menu to pick them), 👁️ Everyone at the table. Each
+    press checks the campaign, the DM and the connection again; the three keep the meaning of the
+    old Hide and Show buttons (#2935)."""
+
+    def __init__(
+        self,
+        campaign_id: str,
+        entity_id: str,
+        relation_id: str,
+        pcs: Sequence[tuple[str, str]],
+        *,
+        chosen: Sequence[str] = (),
+    ) -> None:
+        super().__init__()
+        self.campaign_id, self.entity_id, self.relation_id = campaign_id, entity_id, relation_id
+        self.names = dict(pcs)
+        self.picked: list[str] = list(chosen)
+        grey = discord.ButtonStyle.secondary
+        if self.names:
+            self.pick = _Select(
+                self._picked,
+                placeholder="Pick the characters who know it…",
+                min_values=1,
+                max_values=len(self.names),
+                options=[
+                    discord.SelectOption(
+                        label=logic.shorten(name, logic.OPTION_LABEL_MAX),
+                        value=entity_id,
+                        default=entity_id in self.picked,
+                    )
+                    for entity_id, name in self.names.items()
+                ],
+                row=0,
+            )
+            self.add_item(self.pick)
+        self.add_item(_Button(self._only_me, label="🤫 Only me", style=grey, row=1))
+        if self.names:
+            self.add_item(_Button(self._some, label="👥 Only these characters", style=grey, row=1))
+        self.add_item(_Button(self._everyone, label="👁️ Everyone", style=grey, row=1))
+        self.add_item(_Button(self._back, label="Back", style=grey, row=2))
+
+    async def _picked(self, interaction: discord.Interaction) -> None:
+        self.picked = list(self.pick.values)
+        for option in self.pick.options:  # the page shows what is picked until Save
+            option.default = option.value in self.picked
+        await interaction.response.edit_message(view=self)
+
+    async def _only_me(self, interaction: discord.Interaction) -> None:
+        await self._set(interaction, link_edits.ONLY_THE_DM)
+
+    async def _some(self, interaction: discord.Interaction) -> None:
+        await self._set(interaction, link_edits.SOME_CHARACTERS)
+
+    async def _everyone(self, interaction: discord.Interaction) -> None:
+        await self._set(interaction, link_edits.EVERYONE)
+
+    async def _back(self, interaction: discord.Interaction) -> None:
+        await _answer_first(interaction, in_place=True)
+        found = await _find(interaction, self.campaign_id, self.entity_id, self.relation_id)
+        if found is None:
+            return
+        self.stop()
+        await show_one(interaction, self.campaign_id, self.entity_id, self.relation_id)
+
+    async def _set(self, interaction: discord.Interaction, who: str) -> None:
+        await _answer_first(interaction, in_place=True)
+        found = await _find(interaction, self.campaign_id, self.entity_id, self.relation_id)
+        if found is None:
+            return
+        if not found.secrets:  # checked on every press
+            await _tell(interaction, SECRET_DENIED_PRESS)
+            return
+        c = found.campaign
+        try:
+            written = await link_edits.set_who_knows(
+                found.memory, c.guild_id, c.id, found.relation, who, self.picked
+            )
+        except MemoryRuleError as exc:
+            await _tell(interaction, f"Couldn't change that. {exc}")
+            return
+        said = _said(found)
+        if who == link_edits.EVERYONE:
+            note = f"👁️ Everyone at the table can see it now: {said}. {UNDO_NOTE}"
+        elif who == link_edits.SOME_CHARACTERS:
+            called = ", ".join(_md(self.names[x]) for x in self.picked if x in self.names)
+            note = f"👥 Only {called} know it now (and you): {said}. {UNDO_NOTE}"
+        else:
+            note = f"🤫 Only you know it now: {said}. {UNDO_NOTE}"
+        changed(interaction, c)
+        self.stop()
+        await show_card(
+            interaction, c.id, self.entity_id, replace=True, note=note,
+            undo_connection=written.batch,
+        )  # fmt: skip
