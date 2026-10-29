@@ -5,6 +5,7 @@
 export const campaignPage = {
   loading: "Loading…",
   signedOut: "You were signed out. Sign in again.",
+  signIn: "Sign in with Discord",
   notFound: "We couldn't find that campaign. Open it from My Campaigns.",
   down: "We couldn't reach DMbot. Check your connection and try again.",
   tryAgain: "Try again",
