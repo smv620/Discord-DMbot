@@ -326,7 +326,7 @@ class Cards(base.NamesTest):
         # only me: the old "Hide from players"
         it = self.it()
         await view._only_me(it)
-        self.assertIn("Only you can see it now", it.response.edited[0][0])
+        self.assertIn("Only the DM can see it now", it.response.edited[0][0])
         (hidden,) = await self.relations()
         self.assertTrue(hidden.secret)
         self.assertEqual(
@@ -334,7 +334,7 @@ class Cards(base.NamesTest):
         )
         # everyone: the old "Show to players", with the usual Undo
         text, view = await self.who_page()
-        self.assertIn("Only you can see it.", text)
+        self.assertIn("Only the DM can see it.", text)
         it = self.it()
         await view._everyone(it)
         self.assertIn("Players can see it now", it.response.edited[0][0])
@@ -353,7 +353,7 @@ class Cards(base.NamesTest):
         await view._picked(self.it())
         it = self.it()
         await view._some(it)
-        self.assertIn("Only Mara knows it now (besides you)", it.response.edited[0][0])
+        self.assertIn("Only Mara knows it now (and the DM)", it.response.edited[0][0])
         (link,) = await self.relations()
         self.assertTrue(link.secret)  # hidden from the party, and:
         self.assertEqual(
@@ -361,7 +361,7 @@ class Cards(base.NamesTest):
             {link.id: [mara.id]},
         )
         text, again = await self.who_page()  # the page shows who knows it now
-        self.assertIn("Only Mara knows it (besides you)", text)
+        self.assertIn("Only Mara knows it (and the DM)", text)
         self.assertEqual([o.default for o in again.pick.options if o.label == "Mara"], [True])
 
     async def test_some_with_nobody_picked_is_refused_and_changes_nothing(self) -> None:
@@ -413,7 +413,7 @@ class Cards(base.NamesTest):
                 for c in view.children
                 if getattr(c, "style", None) == discord.ButtonStyle.success
             ],
-            ["🤫 Only me"],
+            ["🤫 Only the DM"],
         )
         it = self.it()
         await view._only_me(it)
@@ -470,7 +470,7 @@ class Cards(base.NamesTest):
         )  # fmt: skip
         self.fresh()
         text, view = await self.who_page()
-        self.assertIn("Only you can see it.", text)
+        self.assertIn("Only the DM can see it.", text)
         it = self.it()
         await view._everyone(it)
         (shown,) = await self.relations()

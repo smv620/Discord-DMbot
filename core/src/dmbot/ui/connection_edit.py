@@ -457,22 +457,22 @@ def who_text(
         mine = sorted(names[c] for c in knowing if c in names)
         now = (
             f"**Hidden from the party. Only {called(mine)} {'knows' if len(mine) == 1 else 'know'}"
-            " it (besides you).**"
+            " it (and the DM).**"
             if mine
-            else "**Hidden from the party. Only some characters know it (besides you).**"
+            else "**Hidden from the party. Only some characters know it (and the DM).**"
         )
     else:
-        now = "**Hidden from players. Only you can see it.**"
+        now = "**Hidden from players. Only the DM can see it.**"
     how = (
-        "To pick characters, choose them in the list, then press 👥 Some characters."
+        "To pick characters, choose them in the list, then press 👥 Only some characters."
         if has_characters
         else "There are no player characters yet, so only 🤫 and 👁️ are offered."
     )
-    return f"{now}\n{said}\nWho should see it? 🤫 Only me · 👁️ Everyone. {how}"
+    return f"{now}\n{said}\nWho should see it? 🤫 Only the DM · 👁️ Everyone at the table. {how}"
 
 
 class WhoKnows(_Menu):
-    """🤫 Only me, 👥 Only some characters (a menu to pick them), 👁️ Everyone at the table. Each
+    """🤫 Only the DM, 👥 Only some characters (a menu to pick them), 👁️ Everyone at the table. Each
     press checks the campaign, the DM and the connection again; the three keep the meaning of the
     old Hide and Show buttons (#2935)."""
 
@@ -513,20 +513,20 @@ class WhoKnows(_Menu):
         green = discord.ButtonStyle.success  # where it stands now
         self.add_item(
             _Button(
-                self._only_me, label="🤫 Only me", row=1,
+                self._only_me, label="🤫 Only the DM", row=1,
                 style=green if now == link_edits.ONLY_THE_DM else grey,
             )
         )  # fmt: skip
         if self.names:
             self.some = _Button(
-                self._some, label="👥 Some characters", row=1,
+                self._some, label="👥 Only some characters", row=1,
                 style=green if now == link_edits.SOME_CHARACTERS else grey,
             )  # fmt: skip
             self.some.disabled = not self.picked  # nothing to save until someone is picked
             self.add_item(self.some)
         self.add_item(
             _Button(
-                self._everyone, label="👁️ Everyone", row=1,
+                self._everyone, label="👁️ Everyone at the table", row=1,
                 style=green if now == link_edits.EVERYONE else grey,
             )
         )  # fmt: skip
@@ -582,7 +582,7 @@ class WhoKnows(_Menu):
                 await _tell(
                     interaction,
                     "Nothing changed. Choose at least one character in the list, "
-                    "then press 👥 Some characters.",
+                    "then press 👥 Only some characters.",
                 )
             else:
                 await _tell(interaction, f"Couldn't change that. {exc}")
@@ -596,12 +596,12 @@ class WhoKnows(_Menu):
             mine = [self.names[x] for x in self.picked if x in self.names]
             verb = "knows" if len(mine) == 1 else "know"
             note = (
-                f"👥 Only {called(mine)} {verb} it now (besides you): {said}. "
+                f"👥 Only {called(mine)} {verb} it now (and the DM): {said}. "
                 "Not right? Change it again."
             )
         else:
             note = (
-                f"🤫 Hidden from players. Only you can see it now: {said}. "
+                f"🤫 Hidden from players. Only the DM can see it now: {said}. "
                 "Not right? Change it again."
             )
         changed(interaction, c)
