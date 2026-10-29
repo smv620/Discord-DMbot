@@ -56,7 +56,14 @@ from dmbot import (
     usage,
 )
 from dmbot.account_move import AccountMoves
-from dmbot.ai import FEATURE_TIERS, AIModelTier, AnthropicClient, Feature, GeminiClient
+from dmbot.ai import (
+    FEATURE_TIERS,
+    OUTPUT_FLOOR,
+    AIModelTier,
+    AnthropicClient,
+    Feature,
+    GeminiClient,
+)
 from dmbot.ai_watch import AIWatch
 from dmbot.audio.segmenter import Segmenter, Utterance
 from dmbot.audio_check import Verdict
@@ -147,7 +154,6 @@ from dmbot.dm_screen.channel import setup_dm_screen, update_help_card
 from dmbot.dm_screen.dm_bot_channel import DmBotChannelError, setup_dm_bot_channel
 from dmbot.dm_screen.dmbchat_channel import DmbchatChannelError, setup_dmbchat_channel
 from dmbot.dm_screen.game_masters import GameMastersButton
-from dmbot.dm_screen.gametime_channel import GametimeChannelError, setup_gametime_channel
 from dmbot.dm_screen.handover import (
     AcceptOfferButton,
     DeclineOfferButton,
@@ -251,6 +257,7 @@ from dmbot.memory import (
     meaning,
     plan_reader,
     report_make,
+    scan_kinds,
     voyage,
     web_actions,
     web_report_requests,
@@ -352,6 +359,7 @@ from dmbot.rules.spotter import Mention
 from dmbot.rules.wins import RuleRef, Win, WinsSection, WinsStore
 from dmbot.sessions import SavedSession, SessionStore
 from dmbot.sidebar import knowledge
+from dmbot.sidebar import rule_clash as sidebar_rule_clash
 from dmbot.sidebar.answer import PROMPT_VERSION as SIDEBAR_PROMPT_VERSION
 from dmbot.sidebar.answer import Sidebar
 from dmbot.sidebar.ask import asks_off_record, request_in
@@ -506,6 +514,7 @@ from dmbot.ui.recap_again import (
 )
 from dmbot.ui.recap_upload import recap_upload_command  # noqa: F401 (registers it)
 from dmbot.ui.revealed_report import UndoRevealedButton, report_text, revealed_view
+from dmbot.ui.rule_clash import ClashView
 from dmbot.ui.rule_lookup import dmbot_rule  # noqa: F401 (registers it)
 from dmbot.ui.secret_aloud import (
     SecretAloudButton,
@@ -3400,6 +3409,24 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             settled=settled,
         )
 
+    def sidebar_clash_view(
+        self,
+        campaign: Campaign,
+        clash: tuple[sidebar_rule_clash.Side, sidebar_rule_clash.Side],
+        retry: Callable[[], Awaitable[None]],
+    ) -> discord.ui.View:
+        """The two buttons under the DM's "which one applies?" (#2284); built here so the sidebar
+        imports nothing from `ui` (#2827)."""
+
+        async def record(winner: RuleRef, loser: RuleRef, by: int) -> bool:
+            return await self.sidebar_record_win(campaign, winner, loser, by)
+
+        return ClashView(clash, dm_ids=campaign.dm_user_ids, record=record, retry=retry)
+
+    def sidebar_looked_view(self, key: str) -> discord.ui.View:
+        """The DM's "📖 What I looked at" under a rules answer, for the list kept under `key`."""
+        return looked_at.view(key)
+
     async def sidebar_record_win(
         self, campaign: Campaign, winner: RuleRef, loser: RuleRef, by: int
     ) -> bool:
@@ -3611,10 +3638,12 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         if problems:
             return False, join_blocked_message(problems)
         transcript_id, transcript_problem = await self._transcript_channel(guild, campaign, screen)
-        gametime_problem = await self._gametime_channel(guild, campaign, screen)
         dmbchat_id, dmbchat_problem = await self._dmbchat_channel(guild, campaign, screen)
         dm_bot_problem = await self._dm_bot_channel(guild, campaign, screen)
         await self._retire_old_channels(guild, campaign)
+        await self._tell_players_the_clock(
+            guild.id, campaign.id
+        )  # (only if they would see a change)
         self._npcs_guilds[campaign.id] = guild.id
         self._npcs_changed(campaign.id)  # the pages' view is brought up to date at every start
 
@@ -3669,8 +3698,6 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             return False, SAVE_FAILED
         if transcript_problem:
             await self.post(screen_id, transcript_problem)
-        if gametime_problem:
-            await self.post(screen_id, gametime_problem)
         if dmbchat_problem:
             await self.post(screen_id, dmbchat_problem)
         if dm_bot_problem:
@@ -9822,18 +9849,28 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             if name_key(name) not in skip and name_key(name) not in have:
                 found.append(Suggestion(name, times))
         added: list[str] = []
+        kinds = await self._scan_kinds(gid, cid, [f.name for f in found], lines)
+        log.info(  # counts only
+            "Name scan: %d name(s) suggested, %d with a kind, %d without",
+            len(found), len(kinds), len(found) - len(kinds),
+        )  # fmt: skip
         for suggestion in found:
-            try:
-                written = await self.memory.add_entity(
-                    gid,
-                    cid,
-                    type="concept",
-                    name=suggestion.name,
-                    source="scan",
-                    description=f"Heard {suggestion.times} times",
-                )
-            except MemoryRuleError as exc:
-                log.info("Skipped a suggested name: %s", exc)
+            written = None
+            # (a kind the campaign's ontology does not allow falls back to none: the card asks)
+            for kind in dict.fromkeys((kinds.get(suggestion.name, "concept"), "concept")):
+                try:
+                    written = await self.memory.add_entity(
+                        gid,
+                        cid,
+                        type=kind,
+                        name=suggestion.name,
+                        source="scan",
+                        description=f"Heard {suggestion.times} times",
+                    )
+                    break
+                except MemoryRuleError as exc:
+                    log.info("Skipped a suggested name: %s", exc)
+            if written is None:
                 continue
             added.append(suggestion.name)
             if heard_in and session_id is not None:
@@ -9855,6 +9892,44 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 except MemoryRuleError as exc:
                     log.info("Skipped a name heard with a suggestion: %s", exc)
         return added
+
+    async def _scan_kinds(
+        self, gid: int, cid: str, names: Sequence[str], lines: Sequence[str]
+    ) -> dict[str, str]:
+        """What each suggested name is (npc, place, faction, item, event), asked of the AI from the
+        sentence it was said in, so the review card can say "Yes, a place" (#2937). Never raises:
+        no AI, a plan without it, or a failed call mean no kind for those names, and the card
+        shows its own picker. Counts only in the log."""
+        ai = self.name_pass_ai
+        if ai is None or not names:
+            return {}
+        try:
+            campaign = await self.campaigns.get(gid, cid)
+            if campaign is None or not await self.plan_allows("ai", gid, campaign, fail_open=False):
+                return {}
+            kinds: dict[str, str] = {}
+
+            async def ask_batch(batch: Sequence[str]) -> None:
+                ask = [(n, scan_kinds.context_for(n, lines)) for n in batch]
+                reply = await ai.complete(
+                    scan_kinds.SYSTEM,
+                    scan_kinds.request(ask),
+                    max_tokens=OUTPUT_FLOOR,  # (background calls never send less, #2596)
+                    schema=scan_kinds.SCHEMA,
+                )
+                if reply.cut and len(batch) > 1:  # cut off: ask again in smaller parts
+                    half = len(batch) // 2
+                    await ask_batch(batch[:half])
+                    await ask_batch(batch[half:])
+                    return
+                kinds.update(scan_kinds.read_answer(reply.text, batch))
+
+            for batch in scan_kinds.batches(names):
+                await ask_batch(batch)
+            return kinds
+        except Exception as exc:  # the kinds are a nicety: the suggestions are made without them
+            log.warning("Couldn't ask for the kinds of suggested names: %s", type(exc).__name__)
+            return {}
 
     async def _keep_places(
         self,
@@ -10439,6 +10514,11 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     )
                 )
                 if transcripts is not None
+                else None
+            ),
+            progress=(
+                (lambda action, done, total: actions.progress(guild_id, action, done, total))
+                if actions is not None
                 else None
             ),
         )
@@ -11387,36 +11467,6 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             return None, screen_messages.transcript_failed(screen_messages.TRANSCRIPT_NO_ANSWER)
         return channel.id, None
 
-    async def _gametime_channel(
-        self, guild: discord.Guild, campaign: Campaign, screen: object
-    ) -> str | None:
-        """The players' game-time channel (#1116), made or repaired at every start, with the
-        players' pinned clock in it if the game clock is set. Returns a note for the DM if it
-        couldn't be set up; a failure here never stops a session."""
-        category = getattr(screen, "category", None)
-        try:
-            channel = await setup_gametime_channel(
-                guild,
-                campaign.id,
-                self.campaigns,
-                category=category if isinstance(category, discord.CategoryChannel) else None,
-            )
-        except GametimeChannelError as exc:
-            return screen_messages.gametime_failed(str(exc))
-        except Exception:
-            log.exception("Couldn't set up the game-time channel")
-            return screen_messages.gametime_failed(screen_messages.TRANSCRIPT_NO_ANSWER)
-        try:
-            stored = await self.clocks.get(guild.id, campaign.id) if self.clocks else None
-            fresh = await self.campaigns.get(guild.id, campaign.id)
-            if stored is not None and fresh is not None and fresh.gametime_channel_id == channel.id:
-                await clock_screen.show_players(self, fresh, stored)
-                # Redraws the DM's pinned clock too, so an older one loses its rest buttons.
-                await clock_screen.show(self, fresh, stored)
-        except Exception:
-            log.exception("Couldn't put the players' clock in the game-time channel")
-        return None
-
     async def upgrade_dm_bot_channel(self, campaign: Campaign) -> int | None:
         """A campaign made before the DM Bot channel (#1666) gets one when its ⚙️ Settings is
         pressed, not only at the next session start. Returns the new channel's id, or None
@@ -11467,6 +11517,19 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             log.exception("Couldn't set up the DM Bot channel")
             return screen_messages.dm_bot_failed(screen_messages.TRANSCRIPT_NO_ANSWER)
         return None
+
+    async def _tell_players_the_clock(self, guild_id: int, campaign_id: str) -> None:
+        """At a start: if the game clock is set and the players' view of it differs from DMbot's
+        last clock line in the chat channel, post it (#2877). Best effort, never blocks a start."""
+        try:
+            stored = await self.clocks.get(guild_id, campaign_id) if self.clocks else None
+            fresh = await self.campaigns.get(guild_id, campaign_id)
+            if stored is not None and fresh is not None:
+                await clock_screen.show_players(self, fresh, stored)
+                # Redraws the DM's pinned clock too, so an older one loses its rest buttons.
+                await clock_screen.show(self, fresh, stored)
+        except Exception as exc:
+            log.warning("Couldn't show the clock at the start: %s", type(exc).__name__)
 
     async def _retire_old_channels(self, guild: discord.Guild, campaign: Campaign) -> None:
         """Delete the rules and NPC channels DMbot made before #2874 (only its own, by id and

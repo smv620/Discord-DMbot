@@ -324,5 +324,7 @@ class TheSecondLookStops(unittest.IsolatedAsyncioTestCase):
         await lr.read_lore(
             fake, fake, DOCUMENT, {}, Gate(), progress=lambda s, d, t: told.append((s, d, t))
         )
-        reading = [d for s, d, _ in told if s == "reading"]
-        self.assertGreater(len(reading), 2)  # (the first call, then one beat per paragraph back)
+        looking = [d for s, d, _ in told if s == "looking"]
+        self.assertGreater(
+            len(looking), 2
+        )  # (the start of the second look, then one beat per paragraph back)

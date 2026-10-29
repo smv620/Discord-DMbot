@@ -1,6 +1,6 @@
-"""The rules and NPC channels DMbot no longer makes (#2874): the ones it made before are deleted
-once, only when they are its own (stored id and DMbot's name), and the ids are cleared. Channels
-here are stand-ins; names and numbers are made up."""
+"""The rules, NPC and game-time channels DMbot no longer makes (#2874, #2877): the ones it made
+before are deleted once, only when they are its own (stored id and DMbot's name), and the ids are
+cleared. Channels here are stand-ins; names and numbers are made up."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from dmbot.dm_screen import buttons, messages
 from dmbot.dm_screen import retired_channels as rc
 
 GUILD = 5
-RULES, NPCS = 601, 602
+RULES, NPCS, GAMETIME = 601, 602, 603
 
 
 def channel(channel_id: int, name: str, *, guild_id: int = GUILD, fail: bool = False) -> Any:
@@ -47,12 +47,20 @@ def guild_with(*chans: Any) -> Any:
     return guild
 
 
-def campaign(rules: int | None = RULES, npcs: int | None = NPCS) -> Any:
-    return SimpleNamespace(id="c" * 32, rules_channel_id=rules, npcs_channel_id=npcs)
+def campaign(
+    rules: int | None = RULES, npcs: int | None = NPCS, gametime: int | None = None
+) -> Any:
+    return SimpleNamespace(
+        id="c" * 32, rules_channel_id=rules, npcs_channel_id=npcs, gametime_channel_id=gametime
+    )
 
 
 def store() -> Any:
-    return SimpleNamespace(set_rules_channel=AsyncMock(), set_npcs_channel=AsyncMock())
+    return SimpleNamespace(
+        set_rules_channel=AsyncMock(),
+        set_npcs_channel=AsyncMock(),
+        set_gametime_channel=AsyncMock(),
+    )
 
 
 class Removing(unittest.IsolatedAsyncioTestCase):
@@ -65,6 +73,23 @@ class Removing(unittest.IsolatedAsyncioTestCase):
         npcs.delete.assert_awaited_once_with(reason=rc.REASON)
         campaigns.set_rules_channel.assert_awaited_once_with(GUILD, "c" * 32, None)
         campaigns.set_npcs_channel.assert_awaited_once_with(GUILD, "c" * 32, None)
+
+    async def test_the_stored_game_time_channel_is_deleted_and_a_renamed_one_kept(self) -> None:
+        own, other = channel(GAMETIME, "dmb-gametime-frostmaiden"), channel(604, "table-clock")
+        campaigns = store()
+        got = await rc.remove_old_channels(
+            guild_with(own, other), campaign(None, None, GAMETIME), campaigns
+        )
+        self.assertEqual((got.deleted, got.kept), (1, 0))
+        own.delete.assert_awaited_once_with(reason=rc.REASON)
+        campaigns.set_gametime_channel.assert_awaited_once_with(GUILD, "c" * 32, None)
+        campaigns = store()
+        got = await rc.remove_old_channels(
+            guild_with(own, other), campaign(None, None, 604), campaigns
+        )
+        self.assertEqual((got.deleted, got.kept), (0, 1))
+        other.delete.assert_not_awaited()
+        campaigns.set_gametime_channel.assert_awaited_once_with(GUILD, "c" * 32, None)
 
     async def test_a_renamed_channel_is_kept_and_its_id_cleared(self) -> None:
         rules, npcs = channel(RULES, "house-rules-talk"), channel(NPCS, "npc-talk")
@@ -102,7 +127,7 @@ class Removing(unittest.IsolatedAsyncioTestCase):
         campaigns.set_rules_channel.assert_awaited_once()
         self.assertEqual(
             logged.records[0].getMessage(),
-            "Old rules and NPC channels: 1 deleted, 0 kept, 1 failed",
+            "Old rules, NPC and game-time channels: 1 deleted, 0 kept, 1 failed",
         )
 
     async def test_nothing_is_deleted_by_name_alone(self) -> None:
@@ -124,19 +149,23 @@ class TheBot(unittest.IsolatedAsyncioTestCase):
     def test_a_start_no_longer_makes_either_channel(self) -> None:
         self.assertFalse(hasattr(DMBot, "_rules_channel"))
         self.assertFalse(hasattr(DMBot, "_npcs_channel"))
+        self.assertFalse(hasattr(DMBot, "_gametime_channel"))
         source = inspect.getsource(DMBot)  # nothing in the bot sets either one up
         self.assertNotIn("setup_rules_channel", source)
         self.assertNotIn("setup_npcs_channel", source)
+        self.assertNotIn("setup_gametime_channel", source)
         root = Path(__file__).resolve().parents[1] / "src" / "dmbot" / "dm_screen"
         self.assertFalse((root / "rules_channel.py").exists())
         self.assertFalse((root / "npcs_channel.py").exists())
+        self.assertFalse((root / "gametime_channel.py").exists())
 
     def test_nothing_follows_the_screen_into_a_rules_or_npc_channel_any_more(self) -> None:
         src = Path(__file__).resolve().parents[1] / "src" / "dmbot" / "dm_screen"
-        for name in ("channel.py", "buttons.py"):
+        for name in ("channel.py", "buttons.py", "game_masters.py"):
             text = (src / name).read_text()
             self.assertNotIn("rules_channel", text, name)
             self.assertNotIn("npcs_channel", text, name)
+            self.assertNotIn("gametime_channel", text, name)
 
     async def test_the_peek_warning_names_no_other_channel(self) -> None:
         self.assertFalse(hasattr(messages, "peek_warning"))

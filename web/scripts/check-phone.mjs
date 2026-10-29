@@ -112,7 +112,11 @@ function measure(vw) {
     if ((r.right > vw + 1 || r.left < -1) && !inOwnScrollBox(el)) out.over.push(`${label(el)} ends at ${Math.round(r.right)}`);
   }
   // A checkbox or radio is tapped through its label; the box the thumb has is that label's.
+  // The relationship map's drawing (names and lines you can drag, tab to and press) is a pan-and-zoom picture:
+  // its shapes are as big as the zoom makes them, and a thumb-sized path to every name and connection is the
+  // list under it ("Make ... the middle", "See the connections between ..."), which this check does count.
   const targets = [...document.body.querySelectorAll("button, a.button, input:not([type=hidden]), select, textarea, summary, [role=button]")]
+    .filter((el) => !el.closest("svg.web-svg"))
     .filter(shown)
     .map((el) => ({ el, r: (el.matches("input[type=checkbox], input[type=radio]") ? el.closest("label") : null)?.getBoundingClientRect() ?? el.getBoundingClientRect() }));
   for (const { el, r } of targets) if (r.height < 43.5 || r.width < 43.5) out.small.push(`${label(el)} ${Math.round(r.width)}x${Math.round(r.height)}`);

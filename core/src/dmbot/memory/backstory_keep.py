@@ -12,7 +12,7 @@ in the waiting list, so Undo is whole. The same functions serve the website's do
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 
 from dmbot.memory import kin
@@ -35,10 +35,16 @@ async def keep_all(
     guild_id: int,
     campaign_id: str,
     links: Sequence[Waiting],
+    progress: Callable[[int, int], Awaitable[None]] | None = None,
 ) -> KeptAll:
-    """Keep each of these ready connections. A refused one stays in the list."""
+    """Keep each of these ready connections. A refused one stays in the list. `progress(done,
+    total)` is told before the first and after each one (kept or refused: tried), for the
+    website's "12 of 50" (#2924); counts only."""
     done = KeptAll()
-    for c in links:
+    total = len(links)
+    if progress is not None:
+        await progress(0, total)
+    for tried, c in enumerate(links, 1):
         try:
             written = await memory.add_relation(
                 guild_id, campaign_id, c.subject_id, c.predicate, c.object_id,
@@ -48,6 +54,8 @@ async def keep_all(
             )  # fmt: skip
         except MemoryRuleError:
             done.refused += 1
+            if progress is not None:
+                await progress(tried, total)
             continue
         if c.truth:
             try:
@@ -56,6 +64,8 @@ async def keep_all(
                 log.info("A kept connection could not be pinned")
         await store.remove(guild_id, campaign_id, c)
         done.kept.append((c, written.batch))
+        if progress is not None:
+            await progress(tried, total)
     return done
 
 

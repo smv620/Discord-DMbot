@@ -172,14 +172,14 @@ class Wiring(unittest.TestCase):
                 rows[row] = rows.get(row, 0) + 1
             self.assertTrue(all(n <= 5 for n in rows.values()))
 
-    def test_the_players_see_only_the_round(self) -> None:
-        out = ui.players_text(Clock(NOON4, 0))
-        self.assertNotIn("Combat", out)
+    def test_the_players_are_told_only_the_day_and_the_word_never_the_round(self) -> None:
         fight = game.combat_start(Clock(NOON4, 0))
         assert fight is not None
-        inside = ui.players_text(fight)
-        self.assertIn("⚔️ Combat, round 1", inside)
-        self.assertIn(game.short_label(NOON4), inside)
+        for clock in (Clock(NOON4, 0), fight):
+            out = ui.small(ui.players_view(SimpleNamespace(clock=clock, split=False, groups=())))  # type: ignore[arg-type]
+            self.assertNotIn("Combat", out)
+            self.assertNotIn("round", out)
+            self.assertEqual(out, f"-# 🕰️ {game.short_label(NOON4)}")
 
     def test_the_dm_message_has_the_round_too(self) -> None:
         c = game.combat_start(Clock(NOON4, 0))

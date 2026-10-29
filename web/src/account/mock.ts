@@ -62,7 +62,7 @@ import type {
   RuleSharingAnswer,
   RuleSharingChoice,
 } from "./api";
-import { ApiError, type FixAnswer, type FixMode, type PlotIssue, type PlotMessage, type PlotProposal } from "./api";
+import { ApiError, type FixAnswer, type FixMode, type PlotIssue, type PlotMessage, type PlotProposal, type WaitingLook } from "./api";
 import { NAME_LIMIT } from "../content/names-words";
 
 /** Found in the built files only if the pretend API was included; check-csp fails a real
@@ -866,7 +866,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       nodes,
       edges,
       truncated: false,
-      maxHops: 6,
+      maxHops: 8,
       canEdit: dm && all,
       view: all ? "full" : "players",
       ...(dm ? {} : { visibility, canPeek: visibility !== "private" }),
@@ -1558,7 +1558,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         },
       });
     },
-    async answerWaiting(ref, answer) {
+    async answerWaiting(ref, answer, onLook) {
       calls.push(
         `answerWaiting:${ref}:${answer.kind}:${answer.action}:${"ids" in answer ? answer.ids.join(",") : answer.id}${"entity" in answer ? `:${answer.entity}` : ""}${"secret" in answer && answer.secret ? ":secret" : ""}`,
       );
@@ -1571,6 +1571,12 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         const q = waiting.which.find((x) => x.id === answer.id);
         if (!q?.candidates.some((c) => c.id === answer.entity)) throw new ApiError("gone");
       }
+      // The pretend bot queues the answer, works on it, and (for Keep all) counts the connections as it goes (#2921).
+      const look = (stage: string, extra: WaitingLook = {}): void =>
+        onLook?.({ waits: { stage, waitedSeconds: 0, lastMovedAt: Math.floor(Date.now() / 1000), stalled: false, now: Math.floor(Date.now() / 1000) }, ...extra });
+      look("queued");
+      look("working");
+      if (answer.action === "keep_all") for (let k = 1; k <= ids.length; k += 1) look("working", { progress: { done: k, total: ids.length } });
       const before = waiting.claims.length + waiting.backstory.length + waiting.which.length;
       waiting.claims = waiting.claims.filter((c) => !ids.includes(c.id));
       waiting.backstory = waiting.backstory.filter((b) => !(ids.includes(b.id) && (b.ready || answer.action === "skip")));

@@ -22,6 +22,7 @@ from typing import Any
 from dmbot.db import Database
 from dmbot.memory import kin
 from dmbot.memory.claims import Extracted, condition_of
+from dmbot.memory.link_kinds import link_kind
 from dmbot.memory.link_words import back_words, link_words, reads_both_ways
 from dmbot.memory.web_actions import RETAKE_AFTER_S
 from dmbot.memory.who_resolve import checked_line
@@ -30,7 +31,8 @@ from dmbot.web.names import _parse
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
 from dmbot.web.sessions import Session
 
-MAX_HOPS = 4
+# The website's steps spinner goes 1 to 8 (owner, #2934); MAX_NODES still bounds the work.
+MAX_HOPS = 8
 MAX_NODES = 1000  # the most names one answer draws, then `truncated`
 OVERVIEW_NAMES = 5000  # the most names the overview lists, then `truncated` (the tray is not drawn)
 OVERVIEW_PAIRS = 20000  # the most connected pairs it reads, in a fixed order, then `truncated`
@@ -57,10 +59,10 @@ def check_words(decided: object) -> str:
 def edges_from(rows: list[dict[str, Any]], *, can_edit: bool) -> list[dict[str, Any]]:
     """The door's connections grouped one edge for each pair of names (`a` the smaller ID), each
     with its `label` (the words of the label connection), `more` (how many others there are) and
-    every connection as `links`: {id, words, secret, revealed, direction}. `direction` says which
-    way the words read between the pair: "a-b", "b-a", or "both" for the ones that read the same
-    either way. A connection's `secret` (and whether it is `revealed` yet) is only sent to a DM
-    (the door sends none to anyone else)."""
+    every connection as `links`: {id, words, secret, revealed, direction, kind}. `direction` says
+    which way the words read between the pair: "a-b", "b-a", or "both" for the ones that read
+    the same either way. A connection's `secret` (and whether it is `revealed` yet) is only sent
+    to a DM (the door sends none to anyone else). `kind` is for the map's colours (#2942)."""
     pairs: dict[tuple[str, str], list[dict[str, Any]]] = {}
     for row in rows:
         a, b = sorted((str(row["a"]), str(row["b"])))
@@ -83,6 +85,7 @@ def edges_from(rows: list[dict[str, Any]], *, can_edit: bool) -> list[dict[str, 
                 # DMbot's check, in words; the door sends the note to a DM only (#2859)
                 "check": check_words(row.get("decided")),
                 "direction": direction,
+                "kind": link_kind(str(row["predicate"])),  # for the map's colours (#2942)
                 "at": int(row["at"]),
             }
         )
@@ -106,6 +109,7 @@ def edges_from(rows: list[dict[str, Any]], *, can_edit: bool) -> list[dict[str, 
                         "pinned": x["pinned"] if can_edit else False,
                         "check": x["check"] if can_edit else "",
                         "direction": x["direction"],
+                        "kind": x["kind"],
                     }
                     for x in links
                 ],
@@ -563,7 +567,9 @@ async def queue_reveal(db: Database, session: Session, ref: str, body: object) -
 async def read_answer(db: Database, session: Session, ref: str, answer: str) -> dict[str, Any]:
     """Where one of the caller's own connection edits stands: `state` (waiting, working, done,
     failed), the `error` word when it failed, and, when it is done, the pair's `edge` as it now
-    stands (or `removed` when its last connection went)."""
+    stands (or `removed` when its last connection went). An answer to a waiting fact, connection or
+    question (`claim-*`, `backstory-*`) also carries `waits` (stage, how long, when it last moved)
+    and, for Keep all, `progress` (`{done, total}`), counts and times only (#2921)."""
     guild_id, campaign_id = _parse(ref)
     _guild_of(session, guild_id)
     if not ID_PATTERN.match(answer):
@@ -594,14 +600,19 @@ async def read_answer(db: Database, session: Session, ref: str, answer: str) -> 
         }
     edge = None
     if str(got["action"]).startswith(("claim-", "backstory-")):
-        # a waiting connection answered: how it ended, and for Keep all how many were kept
+        # a waiting connection answered: how it ended, and for Keep all how many were kept, and
+        # how far it has got while it works (#2921: the stage, the wait and "12 of 50")
+        total = int(got.get("progressTotal") or 0)
+        keeping = got["action"] == "backstory-keep-all"
         return {
             "state": got["state"],
             "error": got["error"],
             "edge": None,
             "removed": False,
-            "kept": int(got["resultId"])
-            if got["action"] == "backstory-keep-all" and got["resultId"]
+            "kept": int(got["resultId"]) if keeping and got["resultId"] else None,
+            "waits": _reading_answer(got)["waits"],
+            "progress": {"done": int(got.get("progressDone") or 0), "total": total}
+            if keeping and total > 0
             else None,
         }
     if got["state"] == "done" and got["resultId"] and got["resultOther"]:
@@ -715,6 +726,8 @@ def _reading_answer(got: dict[str, Any]) -> dict[str, Any]:
     state = str(got["state"])
     created = int(got.get("createdAt") or 0)
     claimed = int(got.get("claimedAt") or 0) // 1000  # (the queue marks pickups in milliseconds)
+    # The bot also stamps its progress as it goes (Keep all, one connection at a time, #2921).
+    moved = max(claimed, int(got.get("progressAt") or 0))
     now = int(got.get("now") or created)
     stage = {"waiting": "queued", "working": "working"}.get(state, state)
     return {
@@ -726,11 +739,11 @@ def _reading_answer(got: dict[str, Any]) -> dict[str, Any]:
         "waits": {
             "stage": stage,
             "waitedSeconds": max(0, now - created) if created else 0,
-            "lastMovedAt": claimed or created,
+            "lastMovedAt": moved or created,
             "now": now,  # the server's clock, so the page need not guess it (seconds)
             # nothing has moved for longer than a stalled worker is given before it is retaken
             "stalled": state in ("waiting", "working")
-            and now - (claimed or created) > RETAKE_AFTER_S,
+            and now - (moved or created) > RETAKE_AFTER_S,
         },
     }
 

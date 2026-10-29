@@ -9,8 +9,8 @@
   touches their consent to be recorded.
 - **Remove:** pick one, then one confirmation. Never whose plan the campaign uses (hand it over
   first) and never the last game master. A game master may remove themselves.
-- **Access follows at once:** after either change the DM screen's permissions (and an existing
-  game-time channel's) are applied again, and a running session's DM set is updated
+- **Access follows at once:** after either change the DM screen's permissions are applied
+  again, and a running session's DM set is updated
   (`DMBot.after_screen_change`), so a removed game master loses the screen mid-session and a new
   one gets it.
 
@@ -34,7 +34,6 @@ from dmbot.campaigns import Campaign, CampaignError, CampaignStore
 from dmbot.campaigns.store import LAST_DM, MAX_DMS, OWNER_STAYS, TOO_MANY_DMS
 from dmbot.dm_screen import messages
 from dmbot.dm_screen.channel import DMScreenError, setup_dm_screen
-from dmbot.dm_screen.gametime_channel import setup_gametime_channel
 from dmbot.logs import log_context
 from dmbot.mentions import NO_PINGS
 
@@ -470,7 +469,7 @@ async def follow_access(
 
 async def follow_access_on(client: Any, guild: discord.Guild, campaign: Campaign) -> str:
     """After the game masters changed: a running session takes the new set at once, then the DM
-    screen's permissions (and an existing game-time channel's) are applied again (this creates the
+    screen's permissions are applied again (this creates the
     screen if the campaign has none yet, as a session start would).
     "" when it worked, else the words to add to the reply; the change itself is saved either
     way."""
@@ -491,11 +490,6 @@ async def follow_access_on(client: Any, guild: discord.Guild, campaign: Campaign
     except Exception:
         log.exception("Game masters changed but the DM screen could not be updated")
         return ACCESS_LATE
-    if campaign.gametime_channel_id is not None:
-        try:
-            await setup_gametime_channel(guild, campaign.id, store)
-        except Exception:
-            log.exception("The game-time channel could not be updated after a game master change")
     hook = getattr(client, "after_screen_change", None)
     if hook is not None:
         try:

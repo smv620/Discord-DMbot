@@ -377,12 +377,6 @@ class GameMasters(DatabaseTest):
         self.assertEqual(sum(isinstance(r, Exception) for r in results), 1)
         self.assertEqual(len(await self.dms()), MAX_DMS)
 
-    async def test_an_existing_game_time_channel_is_updated_too(self) -> None:
-        await self.campaigns.set_gametime_channel(GUILD, self.campaign.id, 600)
-        with patch.object(gm, "setup_gametime_channel", AsyncMock()) as gametime:
-            await self.add()
-        gametime.assert_awaited_once()
-
 
 class Names(unittest.IsolatedAsyncioTestCase):
     """A game master is "someone who left the server" only when Discord says so (#2556)."""
