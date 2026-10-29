@@ -60,7 +60,7 @@ from dmbot.ai import FEATURE_TIERS, AIModelTier, AnthropicClient, Feature, Gemin
 from dmbot.ai_watch import AIWatch
 from dmbot.audio.segmenter import Segmenter, Utterance
 from dmbot.audio_check import Verdict
-from dmbot.campaigns import Campaign, CampaignStore, web_backup, web_restore
+from dmbot.campaigns import Campaign, CampaignStore, web_backup, web_line_delete, web_restore
 from dmbot.campaigns.models import (
     SHARED_STORY,
     STORY_GUIDE,
@@ -917,6 +917,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self.peek_notices = PeekNotices(recaps.db) if recaps is not None else None
         self.web_delete_notices = WebDeleteNotices(recaps.db) if recaps is not None else None
         self.web_backups = web_backup.WebBackups(recaps.db) if recaps is not None else None
+        self.web_line_deletions = (
+            web_line_delete.WebLineDeletions(recaps.db) if recaps is not None else None
+        )
         # Copies restored from the website, waiting for the bot to apply them (#2746).
         self.web_restores = web_restore.WebRestores(recaps.db) if recaps is not None else None
         self._clip_sweep_rounds = 0
@@ -10335,6 +10338,26 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 with log_context(guild_id=guild_id, campaign_id=item.campaign_id):
                     why = await web_backup.build(self, guild_id, item, store)
                     log.info("Website backup: %s", why or "done")  # the word only
+
+    async def run_web_line_deletions(self) -> None:
+        """Carry out the "Delete my transcripts" asked for on the website (#2780): the same call
+        as Discord's 🗑 button, for the person who asked and nobody else. Only servers the bot is
+        in now, so a request for a server it has left waits (the page says it may still happen).
+        Counts only are logged."""
+        store = self.web_line_deletions
+        if store is None or self.transcripts is None:
+            return
+        for guild in list(self.guilds):
+            try:  # one server's trouble must not starve the others
+                for _ in range(web_line_delete.PER_ROUND):
+                    item = await store.claim_next(guild.id)
+                    if item is None:
+                        break
+                    with log_context(guild_id=guild.id):
+                        why = await web_line_delete.carry_out(self, guild.id, item, store)
+                        log.info("Website line deletion: %s", why or "done")  # the word only
+            except Exception as exc:
+                log.warning("The website line deletions of a server failed: %s", type(exc).__name__)
 
     async def run_web_restores(self) -> None:
         """Apply the copies DMs uploaded on the website (#2746), one at a time per server, with
