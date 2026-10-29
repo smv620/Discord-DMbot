@@ -12,7 +12,7 @@ character knows) are separate and ask `characters_of` for who a viewer plays.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -88,6 +88,7 @@ async def _view_of(w: Changes, entity_id: str) -> str:
 
 NOT_A_CHARACTER = "Pick characters from this campaign."
 NO_SUCH_STATEMENT = "That is gone or was never here."
+BAD_CERTAINTY = "How sure someone is goes from 0 to 1."
 _COLUMNS = {
     "entry": ("about_entity_id", ENTITIES),
     "property": ("state_id", STATES),
@@ -109,7 +110,7 @@ async def _known_characters(w: Scope, character_ids: Sequence[str]) -> dict[str,
         r["id"]: r["role"] == PLAYER_CHARACTER
         for r in await w.select(
             ENTITIES,
-            " AND id = ANY(%s) AND type = 'character' AND status = %s",
+            " AND id = ANY(%s) AND type IN ('character', 'faction') AND status = %s",
             [chosen, CONFIRMED],
         )
     }
@@ -133,12 +134,14 @@ async def _view_for(w: Changes, entity_id: str, player: bool) -> str:
 
 
 async def set_statement_knowers(
-    w: Changes, kind: str, statement_id: str, character_ids: Sequence[str]
+    w: Changes, kind: str, statement_id: str, character_ids: Sequence[str] | Mapping[str, float]
 ) -> list[str]:
     """Exactly these characters know this statement (none: only the DM) (#2995, §9b). `kind` is
-    entry, property, connection or alias. Only the DM; the statement must exist and not be
-    rejected; each character must be a confirmed character of this campaign (a player's or an
-    NPC's). A group is never a knower. Returns the characters now knowing."""
+    entry, property, connection or alias. A list means each is sure (1.0); a mapping gives each
+    one's certainty, 0.0 (knows of it, believes it false) to 1.0. Only the DM; the statement must
+    exist and not be rejected; each knower must be a confirmed character or group of this
+    campaign (a group's row is what its members commonly know, #2995: the gate gives a member the
+    group's certainty unless the member has a row of their own). Returns who now knows."""
     if w.source != DM:
         raise MemoryRuleError(ONLY_THE_DM)
     if kind not in _COLUMNS:
@@ -147,23 +150,32 @@ async def set_statement_knowers(
     statement = await w.get(table, statement_id)
     if statement is None or statement.get("status") in ("rejected", "merged"):
         raise MemoryRuleError(NO_SUCH_STATEMENT)
-    chosen = await _known_characters(w, character_ids)
+    sure = (
+        dict(character_ids)
+        if isinstance(character_ids, Mapping)
+        else dict.fromkeys(character_ids, 1.0)
+    )
+    if any(not 0.0 <= c <= 1.0 for c in sure.values()):
+        raise MemoryRuleError(BAD_CERTAINTY)
+    chosen = await _known_characters(w, list(sure))
     views = {i: await _view_for(w, i, player) for i, player in chosen.items()}
     have = {
-        r["perspective_id"]: r["id"]
+        r["perspective_id"]: r
         for r in await w.select(KNOWERS, f" AND {column} = %s", [statement_id])
     }
-    for view_id in views.values():
+    for entity_id, view_id in views.items():
         if view_id not in have:
             await w.insert(
                 KNOWERS,
                 {"id": new_id(), "perspective_id": view_id, "about_entity_id": None,
                  "state_id": None, "relation_id": None, "alias_id": None,
-                 column: statement_id, "created_at": w.now},
+                 column: statement_id, "created_at": w.now, "confidence": sure[entity_id]},
             )  # fmt: skip
-    for view_id, row_id in have.items():
+        elif have[view_id]["confidence"] != sure[entity_id]:
+            await w.update(KNOWERS, have[view_id]["id"], {"confidence": sure[entity_id]})
+    for view_id, row in have.items():
         if view_id not in views.values():
-            await w.delete(KNOWERS, row_id)
+            await w.delete(KNOWERS, row["id"])
     return list(chosen)
 
 

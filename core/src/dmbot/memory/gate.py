@@ -87,7 +87,12 @@ class Viewer:
 class Statements:
     """What the loader read: who knows each statement, and what each one names."""
 
-    knowers: Mapping[tuple[str, str], frozenset[str]]  # (kind, id) -> character entry ids
+    # (kind, id) -> who knows it: character or group entry ids, each with how sure they are (0.0
+    # to 1.0, no row = does not know of it). A plain set of ids means everyone is sure (1.0).
+    knowers: Mapping[tuple[str, str], Collection[str] | Mapping[str, float]]
+    # member -> the groups it belongs to (a confirmed member_of connection): a group's row is what
+    # its members commonly know, unless the member has a row of their own (#2995).
+    groups: Mapping[str, frozenset[str]] = field(default_factory=dict)
     states: Mapping[str, str] = field(default_factory=dict)  # property id -> its entry
     connections: Mapping[str, tuple[str, str]] = field(default_factory=dict)  # id -> its two ends
     aliases: Mapping[str, tuple[str, ...]] = field(default_factory=dict)  # name id -> its entries
@@ -103,6 +108,14 @@ class Visible:
     connections: frozenset[str] = frozenset()
     aliases: frozenset[str] = frozenset()
     everything: bool = False
+    # How sure the viewer is of each statement it knows (the player's own characters' highest; the
+    # table's lowest, since each must know it). Not set for the DM, who knows the truth.
+    sureness: Mapping[tuple[str, str], float] = field(default_factory=dict)
+
+    def how_sure(self, kind: str, statement_id: str) -> float | None:
+        """The viewer's certainty (0.0 to 1.0) in a statement, or None when the viewer does not
+        know of it (the DM: None as well; the DM is never asked how sure they are)."""
+        return self.sureness.get((kind, statement_id))
 
     def knows(self, kind: str, statement_id: str) -> bool:
         if self.everything:
@@ -131,23 +144,43 @@ def word_of(knowers: Collection[str], player_characters: Collection[str]) -> str
     return PARTLY_REVEALED
 
 
+def _sure(listed: Collection[str] | Mapping[str, float]) -> Mapping[str, float]:
+    return listed if isinstance(listed, Mapping) else dict.fromkeys(listed, 1.0)
+
+
+def reach(
+    character: str, listed: Mapping[str, float], groups: Mapping[str, frozenset[str]]
+) -> float | None:
+    """How sure one character is of a statement, or None when they do not know of it. Their own
+    row wins; otherwise a group they belong to gives its row's certainty (the highest of them).
+    A friend is not a member, so what Tran knows tells Clyde nothing."""
+    if character in listed:
+        return listed[character]
+    found = [listed[g] for g in groups.get(character, ()) if g in listed]
+    return max(found) if found else None
+
+
 def visible(viewer: Viewer, data: Statements) -> Visible:
     """What `viewer` may know, from the lists alone."""
     if viewer.dm:
         return Visible(everything=True)
     who = data.player_characters if viewer.party else viewer.characters
 
-    def knows(kind: str, statement_id: str) -> bool:
-        listed = data.knowers.get((kind, statement_id), frozenset())
+    sureness: dict[tuple[str, str], float] = {}
+    for key, listed in data.knowers.items():
+        sure = [reach(c, _sure(listed), data.groups) for c in who]
+        known = [x for x in sure if x is not None]
         if viewer.mode == "any":
-            return bool(listed & who)
-        return bool(who) and who <= listed
+            if known:
+                sureness[key] = max(known)
+        elif who and len(known) == len(who):  # every one of them must know it
+            sureness[key] = min(known)
 
-    entries: set[str] = set()
-    properties = {i for k, i in data.knowers if k == PROPERTY and knows(k, i)}
-    connections = {i for k, i in data.knowers if k == CONNECTION and knows(k, i)}
-    aliases = {i for k, i in data.knowers if k == ALIAS and knows(k, i)}
-    entries |= {i for k, i in data.knowers if k == ENTRY and knows(k, i)}
+    def of(kind: str) -> set[str]:
+        return {i for (k, i) in sureness if k == kind}
+
+    entries = of(ENTRY)
+    properties, connections, aliases = of(PROPERTY), of(CONNECTION), of(ALIAS)
     # Learning a statement is learning that the entries it names exist (§9b item 4).
     for state in properties:
         if state in data.states:
@@ -157,7 +190,11 @@ def visible(viewer: Viewer, data: Statements) -> Visible:
     for alias in aliases:
         entries.update(data.aliases.get(alias, ()))
     return Visible(
-        frozenset(entries), frozenset(properties), frozenset(connections), frozenset(aliases)
+        frozenset(entries),
+        frozenset(properties),
+        frozenset(connections),
+        frozenset(aliases),
+        sureness=sureness,
     )
 
 
@@ -167,7 +204,7 @@ async def load(scope: Scope) -> Statements:
         r["id"]: r["entity_id"]
         for r in await scope.select(PERSPECTIVES, " AND entity_id IS NOT NULL")
     }
-    knowers: dict[tuple[str, str], set[str]] = {}
+    knowers: dict[tuple[str, str], dict[str, float]] = {}
     for row in await scope.select(KNOWERS):
         character = views.get(row["perspective_id"])
         if character is None:
@@ -179,7 +216,7 @@ async def load(scope: Scope) -> Statements:
             (ALIAS, "alias_id"),
         ):
             if row[column] is not None:
-                knowers.setdefault((kind, row[column]), set()).add(character)
+                knowers.setdefault((kind, row[column]), {})[character] = float(row["confidence"])
     pcs = frozenset(
         r["id"]
         for r in await scope.select(
@@ -207,8 +244,20 @@ async def load(scope: Scope) -> Statements:
         r["id"]: tuple(i for i in (r["entity_id"], r["used_by"]) if i is not None)
         for r in await _by_id(scope, ALIASES, wanted_aliases, " AND status <> 'rejected'")
     }
+    # Groups: whoever is a member of a group that has a row has the group's certainty unless they
+    # have a row of their own (#2995). A member is a confirmed `member_of` connection.
+    listed = {c for who in knowers.values() for c in who}
+    groups: dict[str, set[str]] = {}
+    if listed:
+        members = await scope.select(
+            RELATIONS,
+            " AND predicate = 'member_of' AND status = 'confirmed' AND object_id = ANY(%s)",
+            [sorted(listed)],
+        )
+        for r in members:
+            groups.setdefault(r["subject_id"], set()).add(r["object_id"])
     kept = {
-        key: frozenset(value)
+        key: value
         for key, value in knowers.items()
         if (key[0] == ENTRY and key[1] in live)
         or (key[0] == PROPERTY and key[1] in states)
@@ -216,7 +265,12 @@ async def load(scope: Scope) -> Statements:
         or (key[0] == ALIAS and key[1] in aliases)
     }
     return Statements(
-        knowers=kept, states=states, connections=relations, aliases=aliases, player_characters=pcs
+        knowers=kept,
+        groups={m: frozenset(g) for m, g in groups.items()},
+        states=states,
+        connections=relations,
+        aliases=aliases,
+        player_characters=pcs,
     )
 
 
