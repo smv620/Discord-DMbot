@@ -1316,6 +1316,9 @@ export interface WebNode {
   revealed?: boolean;
   /** True when this name has an NPC page (#2887; core #2893). Absent from an older API. */
   page?: boolean;
+  /** The quests this name is joined to directly, the most-connected first, even a quest outside the steps drawn
+   * (#2992). Only for a DM in Full View: nobody else is told of a quest or a tie to one. */
+  quests?: { id: string; name: string; links: number }[];
 }
 
 /** How sure the party is of a connection it only suspects (#2405, docs/STORY_MEMORY.md). */
