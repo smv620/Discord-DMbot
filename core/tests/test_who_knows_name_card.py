@@ -3,7 +3,7 @@ page, in the same words as a connection's, and the checks every press makes. Inv
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from dmbot.memory.models import CONFIRMED
 from dmbot.ui import name_card
@@ -47,7 +47,7 @@ class NameWho(base.NamesTest):
         view = name_card.OneName(self.campaign.id, self.bell.id, alias, secrets=True)
         it = self.it(who)
         await view._who(it)
-        return it.response.edited[0]
+        return cast("tuple[str, Any]", it.response.edited[0])
 
     async def current(self, text: str = "Bell") -> Any:
         found = await self.memory.aliases(
