@@ -239,13 +239,21 @@ def _arguments(body: object) -> tuple[str, str, str, str, bool]:
             raise RecapError("bad_kind")
         player = body.get("player")
         if player is not None and player != "":
-            # Who plays a player character: a Discord ID, digits only (a name is not one).
-            # The door and the bot check it again; the bot also checks the person is in the server.
-            if kind != "player_character" or not isinstance(player, str):
+            # Who plays a player character: a Discord ID, digits only (a name is not one). Asking
+            # who an ID is (`player_lookup`) writes nothing; saving it needs the DM's confirmation
+            # of the name Discord showed (`confirmed`, sent only after "That's them", #3004).
+            # The door and the bot check it again, and the bot asks Discord again before linking.
+            if kind not in ("player_character", "player_lookup") or not isinstance(player, str):
                 raise RecapError("bad_player")
             text = player.strip()
             if not PLAYER_ID.match(text):
                 raise RecapError("bad_player")
+            if kind == "player_character":
+                if body.get("confirmed") is not True:
+                    raise RecapError("bad_player")
+                flag = True
+        elif kind == "player_lookup":
+            raise RecapError("bad_player")
     elif action in ("add-other", "remove-other"):
         text = _text(body.get("other"))
     elif action == "secret":  # one other name; the main name can't be secret (as on the card)
@@ -342,9 +350,15 @@ async def read_action(db: Database, session: Session, ref: str, action_id: str) 
         shown = await read_page(db, session, ref, only=got["resultId"])
         if shown["names"]:
             other = {"id": shown["names"][0]["id"], "name": shown["names"][0]["name"]}
+    # Who an ID is (#3004): a `kind` action that wrote nothing and left the answer in `resultOther`,
+    # a letter for "in this server" or not, then the name Discord shows. Shown once, never kept.
+    asked = None
+    if got["state"] == "done" and got["action"] == "kind" and got["resultOther"]:
+        asked = {"name": got["resultOther"][1:], "inServer": got["resultOther"][0] == "i"}
     return {
         "state": got["state"],
         "row": row,
+        "player": asked,
         "removed": got["state"] == "done" and got["action"] == "remove",
         "error": got["error"],
         "other": other,
