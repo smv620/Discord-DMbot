@@ -299,6 +299,65 @@ class TheAliasEdges(unittest.TestCase):
         )
         self.assertEqual(got, "Sarek Dawnbringer opened the gate.")
 
+    def familiar(self, text: str, alias: str = "Doran") -> str:
+        return canonical(
+            text,
+            {alias: "Doran Ashvale"},
+            names=["Doran Ashvale", "Tavin"],
+            secret_names=[],
+            sound_names=["Doran Ashvale"],
+        )
+
+    def test_the_familiar_first_name_stays_and_the_full_name_is_never_doubled(self) -> None:
+        for text in (
+            "Doran Ashvale stood at the gate.",
+            "Doran stood at the gate.",
+            "Then Doran Ashvale and Doran walked on. Doran spoke.",
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(self.familiar(text), text)
+
+    def test_the_familiar_surname_stays_too(self) -> None:
+        for text in ("Ashvale stood at the gate.", "Doran Ashvale and Ashvale walked on."):
+            with self.subTest(text=text):
+                self.assertEqual(self.familiar(text, alias="Ashvale"), text)
+
+    def test_a_misheard_spelling_of_the_same_character_is_still_put_right(self) -> None:
+        got = canonical(
+            "Dorin stood. Doran Ashvale spoke. Doran nodded.",
+            {"Doran": "Doran Ashvale", "Dorin": "Doran Ashvale"},
+            names=["Doran Ashvale", "Tavin"],
+            secret_names=[],
+        )
+        self.assertEqual(got, "Doran Ashvale stood. Doran Ashvale spoke. Doran nodded.")
+
+    def test_a_rewrite_never_leaves_a_name_followed_by_its_own_last_word(self) -> None:
+        got = canonical(
+            "Sarek Ashvale arrived. Then Sarek spoke.",
+            {"Sarek": "Tavin Ashvale"},
+            names=["Tavin Ashvale", "Tavin"],
+            secret_names=[],
+        )
+        self.assertNotIn("Ashvale Ashvale", got)
+
+    def test_a_doubling_the_writer_made_itself_is_left_alone(self) -> None:
+        self.assertEqual(
+            put("Bora Bora lay ahead and Sarek nodded."), "Bora Bora lay ahead and Tavin nodded."
+        )
+
+    def test_the_whole_path_keeps_a_familiar_name(self) -> None:
+        beat = bt.Beat(1, "Doran stood.", ("Doran Ashvale",), (1,), "event")
+        prose = rd.Prose("《Calm》 Doran Ashvale stood. Doran spoke. Doran nodded.", ("strings",))
+        fixed, _ = rd.respelled(
+            prose,
+            beats=[beat],
+            allowed_names=["Doran Ashvale"],
+            secret_names=[],
+            transcript="doran stood",
+            aliases={"Doran": "Doran Ashvale"},
+        )
+        self.assertEqual(fixed.summary, "《Calm》 Doran Ashvale stood. Doran spoke. Doran nodded.")
+
     def test_a_new_name_is_never_turned_into_an_npc(self) -> None:
         got = canonical(
             "Brandy lit the lamp.",

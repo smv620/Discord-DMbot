@@ -139,6 +139,13 @@ def canonical(
     Dawnbringer") is left alone. Pure."""
     # `names` holds every spelling the recap may use, the other spellings among them: a spelling
     # that is another name's alias is not a name of its own to match against.
+    # An alias that is a part of its own name (the first name, the surname) is the familiar form of
+    # it, not a misheard one: the writer is told to use it (#2627), so it is never rewritten, and
+    # no other spelling is sounded against it (#2949).
+    familiar = {
+        _letters(a) for a, c in aliases.items() if words(a) and set(words(a)) <= set(words(c))
+    }
+    aliases = {a: c for a, c in aliases.items() if _letters(a) not in familiar}
     alias_letters = {_letters(a) for a in aliases}
     targets = {_letters(n): n for n in names if _letters(n) and _letters(n) not in alias_letters}
     real = set(targets.values())
@@ -181,7 +188,13 @@ def canonical(
                 found = run.group()[tokens[i][0] : tokens[i + size - 1][1]]
                 bare = _POSSESSIVE.sub("", found).strip(".,;:!?")
                 joined = _letters(bare)
-                if len(words(bare)) != size or not joined or bare in seen or joined in targets:
+                if (
+                    len(words(bare)) != size
+                    or not joined
+                    or bare in seen
+                    or joined in targets
+                    or joined in familiar
+                ):
                     continue
                 target = exact.get(joined)
                 if target is None and size == 1 and len(joined) >= MIN_LETTERS:
@@ -206,7 +219,19 @@ def canonical(
                     seen.add(bare)
                     flexible = r"\s+".join(re.escape(w) for w in bare.split())
                     out = re.sub(rf"(?<![\w'’-]){flexible}(?![\w-])", _put(target), out)
-    return out
+    return _undoubled(text, out)
+
+
+_DOUBLED = re.compile(r"\b([A-ZÀ-Þ][\w'’-]*)([ ]+)\1\b")
+
+
+def _undoubled(before: str, after: str) -> str:
+    """A rewrite must never leave a name followed by its own last word ("Doran Ashvale
+    Ashvale", #2949): a word doubled in the result that was not doubled in the text it came from
+    is put back to one. A doubling the writer made itself ("Bora Bora") is left alone."""
+    if after == before:
+        return after
+    return _DOUBLED.sub(lambda m: m.group(0) if m.group(0) in before else m.group(1), after)
 
 
 def to_confirm(*groups: Sequence[str]) -> list[str]:
