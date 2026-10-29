@@ -570,7 +570,7 @@ describe("each kind of name has its own colour, shape and word (#2992)", () => {
     ]);
     const shape = (name: string) => {
       const el = nodeOf(name).querySelector("circle:not(.web-hit), rect, polygon")!;
-      return `${el.tagName}:${el.getAttribute("points")?.split(" ").length ?? ""}:${el.getAttribute("stroke-dasharray") ?? ""}`;
+      return `${el.tagName}:${el.getAttribute("points")?.split(" ").length ?? ""}:${el.getAttribute("stroke-dasharray") ?? ""}:${nodeOf(name).querySelectorAll(".web-pc-ring").length}`;
     };
     const shapes = kinds.map((k) => shape(k === "npc" ? "Centre" : `Name ${k}`));
     expect(new Set(shapes).size).toBe(kinds.length); // colour is never the only signal
