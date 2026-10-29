@@ -16,9 +16,10 @@ WHO_KNOWS = r"""
     -- is a belief of theirs in `memory_beliefs`, and a name has no confidence or history, so here
     -- it is one row for each (other name, character). The name stays secret for every public
     -- reader (table answers, recaps, the cleaner's hints for others): this table is read only for
-    -- the DM and for a player whose own character is listed. Not in the undo log, left to the
-    -- database to remove with its name or its character. ON UPDATE CASCADE like the tables a
-    -- move rewrites (#2550).
+    -- the DM and for a player whose own character is listed. In the undo log (an Undo takes a
+    -- change of who knows back, and an Undo of removing a name brings its knowers back); the
+    -- database also removes a row with its name or its character. ON UPDATE CASCADE like the
+    -- tables a move rewrites (#2550).
     CREATE TABLE memory_alias_knowers (
         guild_id       BIGINT NOT NULL,
         campaign_id    TEXT NOT NULL,
