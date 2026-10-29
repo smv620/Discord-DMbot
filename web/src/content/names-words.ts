@@ -62,6 +62,12 @@ export const namesPage = {
   sayTooLong: "DMbot can't use that. Use 80 letters or fewer, with no odd characters.",
   kindChange: "What it is",
   saveKind: "Save what it is",
+  // Making a name a player character (#2985): who plays it can be added now or later, in Discord or here.
+  playerLabel: "Player's Discord ID (optional)",
+  playerNote: "Leave it empty to say it's a player character now and add who plays it later.",
+  playerInfoLabel: "How to find a Discord ID",
+  playerInfo: "In Discord, open User Settings, then Advanced, and turn on Developer Mode. Then right-click the player's name and choose Copy User ID. Paste it here.",
+  playerInfoClose: "Hide the hint",
   othersHeading: "Other names",
   noOthers: "It has no other names.",
   addOtherLabel: "Add another name for it",
@@ -114,6 +120,8 @@ export const namesPage = {
   errors: {
     "bad-name": "Type a name using letters, numbers or common marks.",
     "bad-kind": "Pick a kind from the list.",
+    "bad-player": "That isn't a player's ID. An ID is 17 to 19 numbers, and a bot can't play a character.",
+    "not-member": "That person isn't in this Discord server. Check the ID, or ask them to join first.",
     "name-exists": "A name like that already exists. Pick another spelling, or merge the two.",
     // The API's "too_long" is shared with the support form's: for a name it means this.
     "ticket-too-long": `That name is too long. Use ${NAME_LIMIT} letters or fewer.`,

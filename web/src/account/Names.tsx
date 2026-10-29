@@ -22,6 +22,7 @@ import {
   type NameSort,
 } from "./api";
 import CampaignNav from "./CampaignNav";
+import { InfoButton, InfoText } from "./InfoTip";
 import NameThem, { type NamedInfo } from "./NameThem";
 import { useObservedWait } from "./useObservedWait";
 import WorkProgress from "./WorkProgress";
@@ -42,6 +43,14 @@ export function namesRefFromPath(path: string): string | null {
 type View = "loading" | "ok" | "none" | "down" | "signed-out";
 
 const SEARCH_MS = 250;
+/** The kind key of a player character, the one that can say who plays it (#2985). */
+const PLAYER = "player_character";
+/** Kinds a DM can always choose, even when the campaign has no name of that kind yet: the list the API
+ * sends holds only kinds that have names, so a campaign with no player character could never make one. */
+const ALWAYS_OFFERED: NameKind[] = [
+  { key: "npc", label: "NPCs", count: 0 },
+  { key: PLAYER, label: "PCs", count: 0 },
+];
 
 /** The words for a refusal, or null when it means the page should react instead (signed out). */
 function refusal(error: unknown): string | null {
@@ -749,7 +758,12 @@ interface EditorProps {
 function NameEditor({ id, row, kinds, act, api, refId, focusSaid }: EditorProps) {
   const [spelling, setSpelling] = useState(row.name);
   const [kindKey, setKindKey] = useState(row.kind);
+  // Who plays it, for a player character: a Discord ID, or empty for "not yet" (#2985).
+  const [player, setPlayer] = useState("");
+  const [playerInfo, setPlayerInfo] = useState(false);
   const [other, setOther] = useState("");
+  // Saving is for a new kind, or (for a player character already) a Discord ID to attach.
+  const kindChanged = kindKey !== row.kind || (kindKey === PLAYER && player.trim() !== "");
   const [mergeQ, setMergeQ] = useState("");
   const [mergeFound, setMergeFound] = useState<NameRow[] | null>(null);
   // The search itself failed (not "nothing matches"), or has more matches than the first page.
@@ -937,20 +951,51 @@ function NameEditor({ id, row, kinds, act, api, refId, focusSaid }: EditorProps)
         class="name-form"
         onSubmit={(e) => {
           e.preventDefault();
-          if (kindKey !== row.kind) void run({ action: "kind", kind: kindKey }, words.saved);
+          if (!kindChanged) return;
+          const id = kindKey === PLAYER ? player.trim() : "";
+          void run(id === "" ? { action: "kind", kind: kindKey } : { action: "kind", kind: kindKey, player: id }, words.saved);
         }}
       >
         <label class="field">
           {words.kindChange}
           <select value={kindKey} onChange={(e) => setKindKey((e.target as HTMLSelectElement).value)}>
-            {kinds.map((k) => (
+            {[...kinds, ...ALWAYS_OFFERED.filter((a) => !kinds.some((k) => k.key === a.key))].map((k) => (
               <option key={k.key} value={k.key}>
                 {k.label}
               </option>
             ))}
           </select>
         </label>
-        <button type="submit" class="button secondary" disabled={working || kindKey === row.kind}>
+        {kindKey === PLAYER && (
+          <div class="field">
+            <label for={`${id}-player`}>{words.playerLabel}</label>
+            <span class="row info-tip-row">
+              <input
+                id={`${id}-player`}
+                type="text"
+                inputMode="numeric"
+                autocomplete="off"
+                value={player}
+                aria-describedby={`${id}-player-note`}
+                onInput={(e) => setPlayer((e.target as HTMLInputElement).value)}
+              />
+              <InfoButton
+                id={`${id}-player-info`}
+                open={playerInfo}
+                label={words.playerInfoLabel}
+                closeLabel={words.playerInfoClose}
+                onToggle={() => setPlayerInfo(!playerInfo)}
+              />
+            </span>
+            <InfoText id={`${id}-player-info`} open={playerInfo}>
+              {words.playerInfo}
+            </InfoText>
+            <span id={`${id}-player-note`} class="small muted">
+              {words.playerNote}
+            </span>
+          </div>
+        )}
+        <button type="submit" class="button secondary" disabled={working || !kindChanged}>
           {words.saveKind}
         </button>
       </form>

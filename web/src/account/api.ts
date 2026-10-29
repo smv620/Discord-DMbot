@@ -1513,7 +1513,8 @@ export interface NamesQuery {
 /** What a DM can do to one name: the same actions as the name card in Discord (#2295). */
 export type NameChange =
   | { action: "spell"; name: string }
-  | { action: "kind"; kind: string }
+  // `player`: for a player character, the Discord ID of who plays it (#2985); the bot checks the person is in the server.
+  | { action: "kind"; kind: string; player?: string }
   | { action: "add-other"; other: string }
   | { action: "remove-other"; other: string }
   // "Players don't know this one yet" on the whole entry; `secret` is one other name (#2294).
@@ -1846,6 +1847,8 @@ export type ApiErrorKind =
   | "bad-email" // an address that is not an email address (#2349)
   | "bad-name" // a name that is empty or has a letter DMbot can't keep (#2295)
   | "bad-kind" // a kind the campaign doesn't have (#2295)
+  | "bad-player" // a Discord ID that is not an ID, or is a bot's (#2985)
+  | "not-member" // that person is not in this Discord server (#2985)
   | "name-exists" // another name already goes by that (#2295)
   | "needs-confirm" // a removal sent without its confirmation (#2295)
   | "bad-page" // a page of the Names list that isn't there any more (#2295)
@@ -2474,6 +2477,8 @@ const errorKinds: Record<string, ApiErrorKind> = {
   not_in_server: "not-in-server",
   bad_name: "bad-name",
   bad_kind: "bad-kind",
+  bad_player: "bad-player",
+  not_member: "not-member",
   exists: "name-exists",
   needs_confirm: "needs-confirm",
   bad_page: "bad-page",

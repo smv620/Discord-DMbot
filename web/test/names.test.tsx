@@ -3,7 +3,7 @@
 // The Names page (#2295) against the pretend API: search as you type, the filter by kind with its
 // counts, sorting, paging, what each action sends, and the views for someone who may not change
 // names (a server manager who isn't a DM) or may not see the list at all.
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError } from "../src/account/api";
@@ -239,6 +239,81 @@ describe("what a DM can do", () => {
     fireEvent.click(row.getByRole("button", { name: w.saveKind }));
     await waitFor(() => expect(calls(api, "changeName").pop()).toBe('changeName:100.cmp1:n7:{"action":"kind","kind":"group"}'));
     await waitFor(() => expect(within(rowOf("Gorrak")).getByText("Groups")).toBeTruthy());
+  });
+
+  describe("making a name a player character (#2985)", () => {
+    const PLAYER_ID = "123456789012345678";
+    const pick = async () => {
+      const api = open();
+      await ready();
+      const row = await edit("Gorrak");
+      fireEvent.change(row.getByLabelText(w.kindChange), { target: { value: "player_character" } });
+      await row.findByLabelText(w.playerLabel);
+      return { api, row };
+    };
+
+    it("offers the Discord ID box only for a player character, saying it can wait", async () => {
+      const api = open();
+      await ready();
+      const row = await edit("Gorrak");
+      expect(row.queryByLabelText(w.playerLabel)).toBeNull();
+      fireEvent.change(row.getByLabelText(w.kindChange), { target: { value: "player_character" } });
+      expect(await row.findByLabelText(w.playerLabel)).toBeTruthy();
+      expect(row.getByText(w.playerNote)).toBeTruthy();
+      fireEvent.click(row.getByRole("button", { name: w.saveKind }));
+      // No ID: the same message as before, no `player` in it.
+      await waitFor(() => expect(calls(api, "changeName").pop()).toBe('changeName:100.cmp1:n7:{"action":"kind","kind":"player_character"}'));
+      await waitFor(() => expect(within(rowOf("Gorrak")).getByText("PCs")).toBeTruthy());
+    });
+
+    it("is offered even when the campaign has no player character yet", async () => {
+      // The API lists only kinds that have names, so without this a first player character could never be made.
+      const api = mockApi("table");
+      const all = api.allNames!.bind(api);
+      api.allNames = async (ref, query) => {
+        const page = await all(ref, query);
+        return { ...page, kinds: page.kinds.filter((k) => k.key !== "player_character") };
+      };
+      open(DM, api);
+      await ready();
+      const row = await edit("Gorrak");
+      const options = [...(row.getByLabelText(w.kindChange) as HTMLSelectElement).options].map((o) => o.value);
+      expect(options).toContain("player_character");
+      expect(options).toContain("npc");
+    });
+
+    it("sends the Discord ID with it", async () => {
+      const { api, row } = await pick();
+      fireEvent.input(row.getByLabelText(w.playerLabel), { target: { value: ` ${PLAYER_ID} ` } });
+      await act(async () => {});
+      fireEvent.click(row.getByRole("button", { name: w.saveKind }));
+      await waitFor(() =>
+        expect(calls(api, "changeName").pop()).toBe(`changeName:100.cmp1:n7:{"action":"kind","kind":"player_character","player":"${PLAYER_ID}"}`),
+      );
+    });
+
+    it("has an (i) that opens and closes the hint on how to find an ID", async () => {
+      const { row } = await pick();
+      const hint = () => row.getByText(w.playerInfo);
+      expect(hint().hasAttribute("hidden")).toBe(true);
+      const button = row.getByRole("button", { name: w.playerInfoLabel });
+      expect(button.getAttribute("aria-expanded")).toBe("false");
+      fireEvent.click(button);
+      expect(hint().hasAttribute("hidden")).toBe(false);
+      expect(row.getByRole("button", { name: w.playerInfoClose }).getAttribute("aria-expanded")).toBe("true");
+      fireEvent.click(row.getByRole("button", { name: w.playerInfoClose }));
+      expect(hint().hasAttribute("hidden")).toBe(true);
+    });
+
+    it("says so in plain words when the ID is not an ID, or nobody in the server has it", async () => {
+      const { row } = await pick();
+      fireEvent.input(row.getByLabelText(w.playerLabel), { target: { value: "Mira" } });
+      fireEvent.click(row.getByRole("button", { name: w.saveKind }));
+      expect(await row.findByText(w.errors["bad-player"] ?? "")).toBeTruthy();
+      fireEvent.input(row.getByLabelText(w.playerLabel), { target: { value: "123456789012340000" } });
+      fireEvent.click(row.getByRole("button", { name: w.saveKind }));
+      expect(await row.findByText(w.errors["not-member"] ?? "")).toBeTruthy();
+    });
   });
 
   it("adds and removes another name", async () => {
