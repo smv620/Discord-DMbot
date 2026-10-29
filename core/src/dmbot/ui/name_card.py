@@ -16,6 +16,7 @@ import asyncio
 import logging
 import re
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -24,6 +25,7 @@ from discord import app_commands
 
 from dmbot.campaigns import Campaign
 from dmbot.discord_limits import MESSAGE_MAX
+from dmbot.memory import link_edits, name_edits
 from dmbot.memory.kinds import kind_phrase
 from dmbot.memory.link_words import (
     CARD_BACK,
@@ -87,8 +89,10 @@ from dmbot.ui.names import (
     sees_secrets,
     split_names,
 )
+from dmbot.ui.who_knows import WhoKnowsMenu, called, player_characters, who_text
 
 log = logging.getLogger(__name__)
+WHO_BUTTON = "👁️ Who knows this?"
 THREAD_KINDS = ("thread", "quest", "mystery", "hook", "goal", "promise")  # story threads (#1662)
 ITEM = "item"  # only an item, or a kind under item, can be one of a kind
 CORE_KINDS = frozenset(t.key for t in CORE_TYPES)
@@ -2078,8 +2082,7 @@ class OneName(_Menu):
             )
         )
         if secrets:  # only the campaign's DMs deal in secret names
-            label = "👁️ Stop keeping it secret" if alias.secret else "🤫 Keep it secret"
-            self.add_item(_Button(self._secret, label=label, style=grey))
+            self.add_item(_Button(self._who, label=WHO_BUTTON, style=grey))
         self.add_item(_Button(self._not_this, label="✖ Not this name", style=grey))
         self.add_item(_Button(self._back, label="Back", style=grey))
 
@@ -2105,7 +2108,9 @@ class OneName(_Menu):
         )
         await show_card(interaction, campaign.id, self.entity_id, replace=True, note=note)
 
-    async def _secret(self, interaction: discord.Interaction) -> None:
+    async def _who(self, interaction: discord.Interaction) -> None:
+        """Open the three-way answer for this other name (#2935): the old keep-it-secret and stop
+        keeping it secret, and the middle one between them, some player characters."""
         await _answer_first(interaction, in_place=True)
         found = await _one_name(interaction, self.campaign_id, self.entity_id, self.alias_id)
         memory = _memory(interaction)
@@ -2115,22 +2120,28 @@ class OneName(_Menu):
         if not sees_secrets(campaign, interaction.user.id):
             await _tell(interaction, "Only the campaign's DMs can change secret names.")
             return
-        try:
-            await memory.update_alias(
-                campaign.guild_id, campaign.id, alias.id, secret=not alias.secret, source=DM
-            )
-        except MemoryRuleError:
-            await _tell(interaction, "That name isn't there any more.")
-            return
-        changed(interaction, campaign)
-        self.stop()
-        note = (
-            f"👁️ **{_md(alias.text)}** isn't secret any more. Players can see it."
-            if alias.secret
-            else f"🤫 **{_md(alias.text)}** is secret now: hidden from players from now on, "
-            "and DMbot leaves it out of new transcripts. Past transcripts don't change."
+        pcs = await player_characters(memory, campaign)
+        knowing = (await memory.alias_knowers(campaign.guild_id, campaign.id, [alias.id])).get(
+            alias.id, []
         )
-        await show_card(interaction, campaign.id, self.entity_id, replace=True, note=note)
+        who = name_edits.who_knows_now(alias, knowing)
+        names = dict(pcs)
+        view = WhoKnowsName(
+            self.campaign_id, self.entity_id, alias.id, pcs,
+            chosen=[c for c in knowing if c in names], now=who,
+        )  # fmt: skip
+        await _replace(
+            interaction,
+            who_text(
+                f"**{_md(alias.text)}**",
+                who,
+                knowing,
+                names,
+                has_characters=bool(names),
+                thing="name",
+            ),
+            view,
+        )
 
     async def _not_this(self, interaction: discord.Interaction) -> None:
         await _answer_first(interaction, in_place=True)
@@ -2157,6 +2168,82 @@ class OneName(_Menu):
     async def _back(self, interaction: discord.Interaction) -> None:
         self.stop()
         await show_card(interaction, self.campaign_id, self.entity_id, replace=True)
+
+
+class WhoKnowsName(WhoKnowsMenu):
+    """The other name's page (#2935): 🤫 Only the DM, 👥 Only some characters, 👁️ Everyone at the
+    table. Every press checks the campaign, the DM and the name again, and reads where it stands
+    now, so a double press or a stale page writes nothing."""
+
+    def __init__(
+        self,
+        campaign_id: str,
+        entity_id: str,
+        alias_id: str,
+        pcs: Sequence[tuple[str, str]],
+        *,
+        chosen: Sequence[str] = (),
+        now: str = "",
+    ) -> None:
+        super().__init__(pcs, chosen=chosen, now=now)
+        self.campaign_id, self.entity_id, self.alias_id = campaign_id, entity_id, alias_id
+
+    async def _back(self, interaction: discord.Interaction) -> None:
+        self.stop()
+        await show_card(interaction, self.campaign_id, self.entity_id, replace=True)
+
+    async def _set(self, interaction: discord.Interaction, who: str) -> None:
+        await _answer_first(interaction, in_place=True)
+        found = await _one_name(interaction, self.campaign_id, self.entity_id, self.alias_id)
+        memory = _memory(interaction)
+        if found is None or memory is None:
+            return
+        campaign, alias, _ = found
+        if not sees_secrets(campaign, interaction.user.id):  # checked on every press
+            await _tell(interaction, "Only the campaign's DMs can change secret names.")
+            return
+        live = (await memory.alias_knowers(campaign.guild_id, campaign.id, [alias.id])).get(
+            alias.id, []
+        )
+        if who == name_edits.who_knows_now(alias, live) and (
+            who != link_edits.SOME_CHARACTERS or sorted(self.picked) == sorted(live)
+        ):
+            await _tell(
+                interaction, "Already like that. Nothing changed. Press Back to see the card."
+            )
+            return
+        try:
+            await name_edits.set_who_knows(
+                memory, campaign.guild_id, campaign.id, alias, who, self.picked
+            )
+        except MemoryRuleError as exc:
+            if str(exc) == name_edits.PICK_ONE:
+                await _tell(
+                    interaction,
+                    "Nothing changed. Choose at least one character in the list, "
+                    "then press 👥 Only some characters.",
+                )
+            else:
+                await _tell(interaction, f"Couldn't change that. {exc}")
+            return
+        text = f"**{_md(alias.text)}**"
+        if who == link_edits.EVERYONE:
+            note = f"👁️ {text} isn't secret any more. Players can see it."
+        elif who == link_edits.SOME_CHARACTERS:
+            mine = [self.names[x] for x in self.picked if x in self.names]
+            verb = "knows" if len(mine) == 1 else "know"
+            note = (
+                f"👥 {text}: only {called(mine)} {verb} it now (and the DM). Hidden from the "
+                "party, and DMbot leaves it out of new transcripts. Not right? Change it again."
+            )
+        else:
+            note = (
+                f"🤫 {text} is secret now: only the DM knows it. Hidden from players from now on, "
+                "and DMbot leaves it out of new transcripts. Past transcripts don't change."
+            )
+        changed(interaction, campaign)
+        self.stop()
+        await show_card(interaction, campaign.id, self.entity_id, replace=True, note=note)
 
 
 # ---- 🔗 Same as… and 🧭 Connect to…: pick the other name --------------------------------

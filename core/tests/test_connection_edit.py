@@ -12,7 +12,7 @@ import discord
 from dmbot.memory.models import CONFIRMED
 from dmbot.memory.models import DM as DM_SOURCE
 from dmbot.memory.ontology import FALLBACK_PREDICATE
-from dmbot.ui import connection_edit, name_card
+from dmbot.ui import connection_edit, name_card, who_knows
 from dmbot.ui import names as ui
 from tests import test_memory_names as base
 
@@ -393,15 +393,15 @@ class Cards(base.NamesTest):
         )
 
     async def test_the_names_read_right_for_one_or_several_and_the_state_is_first(self) -> None:
-        self.assertEqual(connection_edit.called(["Mara"]), "Mara")
-        self.assertEqual(connection_edit.called(["Mara", "Tavin"]), "Mara and Tavin")
-        self.assertEqual(connection_edit.called(["A", "B", "C"]), "A, B and C")
+        self.assertEqual(who_knows.called(["Mara"]), "Mara")
+        self.assertEqual(who_knows.called(["Mara", "Tavin"]), "Mara and Tavin")
+        self.assertEqual(who_knows.called(["A", "B", "C"]), "A, B and C")
         names = {"1": "Mara", "2": "Tavin"}
-        text = connection_edit.who_text("Kesh", "some", ["1", "2"], names, has_characters=True)
+        text = who_knows.who_text("Kesh", "some", ["1", "2"], names, has_characters=True)
         self.assertTrue(text.startswith("**Hidden from the party. Only Mara and Tavin know it"))
-        lost = connection_edit.who_text("Kesh", "some", ["9"], names, has_characters=True)
+        lost = who_knows.who_text("Kesh", "some", ["9"], names, has_characters=True)
         self.assertIn("Only some characters know it", lost)  # a knower the menu cannot name
-        bare = connection_edit.who_text("Kesh", "dm", [], {}, has_characters=False)
+        bare = who_knows.who_text("Kesh", "dm", [], {}, has_characters=False)
         self.assertIn("no player characters yet", bare)
 
     async def test_the_answer_it_is_already_at_changes_nothing_and_is_marked(self) -> None:

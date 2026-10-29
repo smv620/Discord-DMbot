@@ -632,8 +632,10 @@ class NameCards(NamesTest):
 
         bell = await self.alias("Bell")
         view = name_card.OneName(self.campaign.id, self.bell.id, bell, secrets=True)
+        opened = self.it()
+        await view._who(opened)
         it = self.it()
-        await view._secret(it)
+        await opened.response.edited[0][1]._only_me(it)
         self.assertIn("🤫 **Bell** is secret now", it.response.edited[0][0])
         self.assertTrue((await self.alias("Bell")).secret)
         it = self.it(MANAGER)  # may be at the table: the secret name is "gone" for them
@@ -1316,7 +1318,7 @@ class NameCards(NamesTest):
         labels = [b.label or "" for b in view.children if isinstance(b, discord.ui.Button)]
         self.assertFalse(any("secret" in label for label in labels))
         it = self.it(MANAGER)
-        await view._secret(it)
+        await view._who(it)
         self.assertIn("Only the campaign's DMs", it.response.sent[0][0])
         self.assertFalse((await self.alias("Bell")).secret)
 
