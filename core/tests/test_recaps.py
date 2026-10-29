@@ -340,45 +340,39 @@ class TheProse(unittest.TestCase):
         empty = prose_problems("《Tense》", "1. Quiet strings.")
         self.assertTrue(any("empty" in p for p in empty), empty)
 
-    def test_the_target_is_75_words_and_75_an_hour_to_the_nearest_10_and_at_most_450(
+    def test_the_target_is_150_words_and_100_an_hour_to_the_nearest_10_and_at_most_600(
         self,
     ) -> None:
         for hours, target in (
-            (0.5, 110),
-            (1, 150),
-            (2, 230),  # a half rounds up: 225 is 230, not 220
-            (2.5, 260),
-            (3, 300),
-            (4, 380),
-            (5, 450),
-            (6, 450),
-            (8, 450),
-            (20, 450),
+            (0.5, 200),
+            (1, 250),
+            (2.25, 380),  # a half rounds up: 375 is 380, not 370
+            (3, 450),
+            (4, 550),
+            (4.5, 600),
+            (6, 600),
+            (20, 600),
         ):
             self.assertEqual(rd.length_for(hours).target, target, hours)
 
     def test_a_draft_at_40_percent_and_one_at_160_percent_both_pass(self) -> None:
         three = rd.length_for(3)
-        self.assertEqual(three.target, 300)
+        self.assertEqual(three.target, 450)
 
         def problems(n: int) -> list[str]:
             text = "《Tense》 " + " ".join(["calm"] * (n - 1)) + " Oskar"
             return prose_problems(text, "1. Strings.", length=three)
 
-        self.assertEqual((problems(120), problems(480), problems(300)), ([], [], []))
-        self.assertEqual(rd.length_for(1).target, 150)
-        self.assertEqual(rd.length_for(6).target, 450)
+        self.assertEqual((problems(180), problems(720), problems(450)), ([], [], []))
+        self.assertEqual(rd.length_for(1).target, 250)
+        self.assertEqual(rd.length_for(6).target, 600)
 
     def test_every_limit_scales_with_the_target(self) -> None:
-        for hours, beats, sections, paragraphs in (
-            (0.5, 3, 1, 2), (1, 3, 2, 2), (3, 9, 4, 3), (4, 10, 5, 4), (8, 10, 6, 4),
+        for hours, beats, sections in (
+            (0.5, 3, 2), (1, 3, 3), (3, 9, 6), (4, 10, 6), (8, 10, 6),
         ):  # fmt: skip
             length = rd.length_for(hours)
-            self.assertEqual(
-                (length.beats, length.sections, length.paragraphs),
-                (beats, sections, paragraphs),
-                hours,
-            )
+            self.assertEqual((length.beats, length.sections), (beats, sections), hours)
             self.assertGreater(length.room, length.target)  # the room is a ceiling above the target
             self.assertGreater(length.max_tokens, length.room)
         # the database's cap on the whole text; the story's share leaves the fixed lines their room
@@ -461,8 +455,8 @@ class TheProse(unittest.TestCase):
 
     def test_the_prompt_budget_and_the_names_are_in_the_message(self) -> None:
         system = rd.prose_system(None, rd.length_for(3.5))
-        self.assertIn("about 3.5 hours, so write about 340 words in all, in about", system)
-        self.assertIn("about 3 paragraphs", system)
+        self.assertIn("this session ran about 3.5 hours, so aim for about 500 words in all", system)
+        self.assertIn("at most 6 sections", system)
         self.assertIn("Never repeat 6 words in a row", system)
         message = rd.prose_message(beats(), "", ["Alder"], None)
         self.assertIn("Alder", message)  # the campaign's names

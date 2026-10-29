@@ -60,6 +60,7 @@ from dmbot.recaps import feedback as recap_feedback
 from dmbot.recaps import hold as recap_hold
 from dmbot.recaps import post as recap_post
 from dmbot.recaps import requests as recap_requests
+from dmbot.recaps.accepted import AcceptedStore
 from dmbot.recaps.approval import text_hash
 from dmbot.recaps.audio import names as audio_names
 from dmbot.recaps.audio.files import FILE_NAMES, MUSIC, VOICE, AudioFiles
@@ -70,6 +71,7 @@ from dmbot.recaps.inputs import (
     recap_name_sets,
     recap_recanted,
     recap_said,
+    story_so_far,
 )
 from dmbot.recaps.notify import page_link, remind_the_dm, tell_the_dm
 from dmbot.recaps.pipeline import Inputs
@@ -1169,12 +1171,10 @@ class RecapFeatures:
         # What the DM corrected in this one recap, for this try only (#2076).
         if found is None:
             return None
-        threads = (
-            await self._open_threads(gid, cid)
-            if self.settings.recap_writer_reads == "transcript"
-            else ()
-        )
-        return dataclasses.replace(found, corrections=job.corrections, threads=threads)
+        # The open threads and the earlier accepted recaps are context for the writer (#2954).
+        threads = await self._open_threads(gid, cid)
+        story = await story_so_far(AcceptedStore(self.recaps.db), gid, cid, job.session_at)
+        return dataclasses.replace(found, corrections=job.corrections, threads=threads, story=story)
 
     async def recap_story(self, gid: int, cid: str, job: Job, seeds: Sequence[str]) -> list[Memory]:
         """The confirmed story memory around the beats' names for PlotBot's notes (#2254). Two
@@ -2390,8 +2390,15 @@ class RecapFeatures:
             log.exception("Recap: couldn't read the open story threads")
             return ()
         live = (OPEN, GOING, HINTED)
+        # Only threads the players may know: one hidden from them or limited to some of them is the
+        # DM's own plot and never goes to the writer (a recap is read aloud to the table).
         return tuple(
-            t.thread.name for t in found if t.state is not None and t.state.condition in live
+            t.thread.name
+            for t in found
+            if t.state is not None
+            and t.state.condition in live
+            and not t.thread.hidden_from_players
+            and not t.thread.audience_limited
         )
 
     async def run_audio_notices(self) -> None:
