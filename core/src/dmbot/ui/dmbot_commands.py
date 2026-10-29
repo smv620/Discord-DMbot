@@ -916,8 +916,7 @@ class RestoreChoice(_Menu):
         self._landed = result  # from here the person is always told it landed, even on a cancel
         waiting.step("Step 3 of 3: tidying up")
         # The restore has landed; from here a problem must never be told as "nothing was
-        # restored" (running `/dmbot restore` again would make a second copy). Each tidy-up step
-        # on its own, so one failing doesn't skip the other.
+        # restored" (running `/dmbot restore` again would make a second copy).
         tidy_failed = False
         memory = getattr(bot, "memory", None)
         if memory is not None:
@@ -925,13 +924,6 @@ class RestoreChoice(_Menu):
                 await memory.analyze(guild.id)
             except Exception:
                 log.exception("Refreshing statistics after a restore failed")
-                tidy_failed = True
-        changed = getattr(bot, "_rules_archive_changed", None)
-        if changed is not None and replace_id is not None:
-            try:  # the restored campaign's rules channel shows the new rules
-                changed(guild.id, campaign.id)
-            except Exception:
-                log.exception("Refreshing the rules channel after a restore failed")
                 tidy_failed = True
         return result + (RESTORED_TIDY_FAILED if tidy_failed else "")
 

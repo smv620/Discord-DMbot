@@ -857,8 +857,8 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       .filter((n) => near.has(n.id))
       .map((n) =>
         all
-          ? { ...current(n), revealed: n.revealed !== false }
-          : { id: n.id, name: current(n).name, kind: current(n).kind },
+          ? { ...current(n), revealed: n.revealed !== false, page: current(n).kind === "npc" }
+          : { id: n.id, name: current(n).name, kind: current(n).kind, page: current(n).kind === "npc" },
       );
     const edges = edgesOf(usable.filter((l) => near.has(l.a) && near.has(l.b)), all, all, view === "dm" && all);
     return {
@@ -1500,7 +1500,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         degree.set(l.b, (degree.get(l.b) ?? 0) + 1);
       }
       const nodeOf = (n: WebNode): WebNode =>
-        all ? { ...n, revealed: n.revealed !== false } : { id: n.id, name: n.name, kind: n.kind };
+        all ? { ...n, revealed: n.revealed !== false, page: n.kind === "npc" } : { id: n.id, name: n.name, kind: n.kind, page: n.kind === "npc" };
       const left = new Set(seen.filter((n) => (degree.get(n.id) ?? 0) > 0).map((n) => n.id));
       const groups: WebGroup[] = [];
       while (left.size > 0) {
@@ -1518,7 +1518,8 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         }
         part.forEach((id) => left.delete(id));
         const centre = [...part].sort((x, y) => (degree.get(y) ?? 0) - (degree.get(x) ?? 0))[0]!;
-        groups.push({ center: centre, centerName: state.nodes.find((n) => n.id === centre)!.name, size: part.size });
+        const centreNode = state.nodes.find((n) => n.id === centre)!;
+        groups.push({ center: centre, centerName: centreNode.name, size: part.size, page: centreNode.kind === "npc" });
       }
       groups.sort((x, y) => y.size - x.size);
       const tray = seen.filter((n) => (degree.get(n.id) ?? 0) === 0).map(nodeOf);

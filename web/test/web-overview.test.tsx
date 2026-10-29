@@ -94,3 +94,14 @@ describe("who sees what", () => {
     expect(screen.queryByText(w.trayHeading, { exact: false })).toBeNull();
   });
 });
+
+describe("the Open its page link on the overview", () => {
+  it("a tray name and a group's centre get the link when marked", async () => {
+    await open();
+    const tray = await screen.findByRole("region", { name: new RegExp(w.trayHeading) });
+    expect(within(tray).getByRole("link", { name: `${w.openItsPage}${w.openItsPageFor("Brother Venn")}` })).toBeTruthy();
+    const groups = document.querySelector(".web-groups");
+    expect(groups).toBeTruthy();
+    expect(within(groups as HTMLElement).getAllByRole("link", { name: (label: string) => label.startsWith(w.openItsPage) }).length).toBeGreaterThan(0);
+  });
+});
