@@ -1,9 +1,9 @@
-// "What people believe" on the Story graph (#2412 slice 3b; core PR 2693): the theories, accusations, reveals
+// "What people believe" on the Story Graph (#2412 slice 3b; core PR 2693): the theories, accusations, reveals
 // and tricks DMbot noticed, which the DM may keep as what someone believes (never as a fact). Plain words;
 // the DM decides, DMbot only lists. Only a DM of the campaign gets the list from the API; a player or
 // someone peeking behind the DM screen gets nothing and sees nothing. Switched off until CloudDev's door
 // (PR 2693) is merged and deployed: WEB_READINGS_LIVE moves with the What's new entry "What people believe,
-// on the Story graph".
+// on the Story Graph".
 export const WEB_READINGS_LIVE = false;
 
 export const readingWords = {
