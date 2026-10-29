@@ -285,7 +285,7 @@ describe("how many more connections a line has", () => {
     render(<Web api={stub(true)} path={at()} />);
     await screen.findByText("3 names, 2 lines");
     for (const w of ["Mira serves Garrick", "Mira owes Garrick", "Mira fears Garrick", "Mira hunts Garrick"]) {
-      expect(screen.getByText(new RegExp(w))).toBeTruthy();
+      expect(within(document.getElementById("web-list")!.parentElement!).getByText(new RegExp(w))).toBeTruthy();
     }
     expect(document.body.textContent).not.toContain("↔");
     // At rest a line with several connections says how many; hovering a name shows that name's lines in words.
@@ -298,7 +298,7 @@ describe("how many more connections a line has", () => {
   it("recounts for someone who is not a DM, and drops a secret name", async () => {
     render(<Web api={stub(false)} path={at()} />);
     await screen.findByText("2 names, 1 line");
-    expect(screen.getByText(/Mira owes Garrick/)).toBeTruthy();
+    expect(within(document.getElementById("web-list")!.parentElement!).getByText(/Mira owes Garrick/)).toBeTruthy();
     expect(document.body.textContent).not.toMatch(/Hidden Heir/);
     expect(document.body.textContent).not.toMatch(/fears|hunts/);
   });
@@ -339,5 +339,48 @@ describe("the Open its page link", () => {
     await open();
     const shown = (document.body.textContent ?? "").split(w.openItsPage).length - 1;
     expect(shown).toBe(screen.getAllByRole("link", { name: (label: string) => label.startsWith(w.openItsPage) }).length);
+  });
+});
+
+describe("every connection between two names, in both directions (#2934)", () => {
+  it("groups them as Both ways, then one column for each way", async () => {
+    const api = mockApi("table");
+    api.webSize = async () => ({ names: 2 });
+    api.webGraph = async () => ({
+      center: "a",
+      nodes: [
+        { id: "a", name: "Mira", kind: "npc" },
+        { id: "b", name: "Garrick", kind: "npc" },
+      ],
+      edges: [
+        {
+          a: "a",
+          b: "b",
+          label: "serves",
+          more: 2,
+          links: [
+            { id: "l1", words: "married to", secret: false, direction: "both" },
+            { id: "l2", words: "serves", secret: false, direction: "a-b" },
+            { id: "l3", words: "owes", secret: false, direction: "b-a" },
+          ],
+        },
+      ],
+      truncated: false,
+      maxHops: 3,
+      canEdit: true,
+    });
+    render(<Web api={api} path={at()} />);
+    await screen.findByText("2 names, 1 line");
+    fireEvent.click((await screen.findAllByRole("button", { name: /^See the connections between/ }))[0] as HTMLElement);
+    const panel = (await screen.findByRole("heading", { level: 2, name: /.+ and .+/ })).closest("section") as HTMLElement;
+    const both = within(panel).getByRole("region", { name: "Both ways" });
+    expect(within(both).getByText(/married to/)).toBeTruthy();
+    const forward = within(panel).getByRole("region", { name: "Mira → Garrick" });
+    expect(within(forward).getByText(/Mira serves Garrick/)).toBeTruthy();
+    expect(within(forward).queryByText(/owes/)).toBeNull();
+    const back = within(panel).getByRole("region", { name: "Garrick → Mira" });
+    expect(within(back).getByText(/Garrick owes Mira/)).toBeTruthy();
+    // Each connection keeps its own number, so its words box is still found by "connection N".
+    expect(within(panel).getByLabelText("Words for connection 3")).toBeTruthy();
   });
 });

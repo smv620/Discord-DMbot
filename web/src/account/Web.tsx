@@ -705,11 +705,38 @@ function LinePanel({
   return (
     <section class="panel stack" aria-labelledby="web-line-h" tabIndex={-1} ref={box}>
       <h2 id="web-line-h">{words.edgePanel(a, b)}</h2>
-      <ol class="stack">
-        {edge.links.map((l, i) => (
-          <LinkRow key={l.id} n={i + 1} link={l} a={a} b={b} canEdit={canEdit} act={act} reveal={reveal} revealing={revealing} />
-        ))}
-      </ol>
+      {/* Every connection between the two names, in both directions (#2934): the two-way ones first, then
+          one column for each way. The numbers stay the same in every group so "Words for connection 2" is unique. */}
+      <div class="stack">
+        {edge.links.some((l) => l.direction === "both") && (
+          <section class="stack" aria-label={words.bothWays}>
+            <h3 class="small">{words.bothWays}</h3>
+            <ol class="stack">
+              {edge.links.map((l, i) =>
+                l.direction === "both" ? (
+                  <LinkRow key={l.id} n={i + 1} link={l} a={a} b={b} canEdit={canEdit} act={act} reveal={reveal} revealing={revealing} />
+                ) : null,
+              )}
+            </ol>
+          </section>
+        )}
+        {edge.links.some((l) => l.direction !== "both") && (
+          <div class="web-sides">
+            {(["a-b", "b-a"] as const).map((way) => (
+              <section key={way} class="stack" aria-label={way === "a-b" ? words.oneWay(a, b) : words.oneWay(b, a)}>
+                <h3 class="small">{way === "a-b" ? words.oneWay(a, b) : words.oneWay(b, a)}</h3>
+                <ol class="stack">
+                  {edge.links.map((l, i) =>
+                    l.direction === way ? (
+                      <LinkRow key={l.id} n={i + 1} link={l} a={a} b={b} canEdit={canEdit} act={act} reveal={reveal} revealing={revealing} />
+                    ) : null,
+                  )}
+                </ol>
+              </section>
+            ))}
+          </div>
+        )}
+      </div>
       {canEdit && <AddLink edge={edge} act={act} />}
       <button type="button" class="button secondary" onClick={onClose}>
         {words.close}
