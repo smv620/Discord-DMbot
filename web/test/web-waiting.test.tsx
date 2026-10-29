@@ -7,10 +7,11 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ApiError, httpApi, type AccountApi, type ApiErrorKind } from "../src/account/api";
+import { ApiError, httpApi, type AccountApi, type ApiErrorKind, type WaitingLook } from "../src/account/api";
 import { mockApi } from "../src/account/mock";
 import Web from "../src/account/Web";
 import WebWaiting from "../src/account/WebWaiting";
+import { workWords } from "../src/content/work-progress";
 import { waitingWords as w } from "../src/content/web-waiting";
 
 const live = vi.hoisted(() => ({ on: false }));
@@ -569,3 +570,161 @@ describe("over the wire", () => {
     expect((error as ApiError).kind).toBe(kind);
   });
 });
+
+/** The answer on the way: the looks the bot sends are shown before the answer is let go. */
+function holdAnswers(api: AccountApi) {
+  const real = api.answerWaiting!.bind(api);
+  const hold: { looks: WaitingLook[]; wait: Promise<void> | null; open: () => void } = { looks: [], wait: null, open: () => {} };
+  api.answerWaiting = async (ref, answer, onLook) => {
+    hold.looks.forEach((look) => onLook?.(look));
+    if (hold.wait) await hold.wait;
+    return real(ref, answer, onLook);
+  };
+  const next = (looks: WaitingLook[]) => {
+    hold.looks = looks;
+    hold.wait = new Promise<void>((r) => (hold.open = r));
+  };
+  return { next, open: () => hold.open() };
+}
+
+const now = () => Math.floor(Date.now() / 1000);
+const look = (stage: string, extra: Partial<WaitingLook> = {}): WaitingLook => ({
+  waits: { stage, waitedSeconds: 3, lastMovedAt: now(), stalled: false, now: now() },
+  ...extra,
+});
+
+describe("the wait says what DMbot is doing (#2921)", () => {
+  it("a queued answer says Waiting for DMbot", async () => {
+    live.on = true;
+    const api = mockApi("table");
+    const hold = holdAnswers(api);
+    hold.next([look("queued")]);
+    await open(api);
+    press(w.confirm, screen.getByText("Mira Voss knows Far Hall").closest(".panel") as HTMLElement);
+    expect(await screen.findByText(w.queuedStage)).toBeTruthy();
+    hold.open();
+    await settled();
+  });
+
+  it("a working answer says Saving your answer; Keep all says Keeping connections", async () => {
+    live.on = true;
+    const api = mockApi("table");
+    const hold = holdAnswers(api);
+    hold.next([look("working")]);
+    await open(api);
+    press(w.confirm, screen.getByText("Mira Voss knows Far Hall").closest(".panel") as HTMLElement);
+    expect(await screen.findByText(w.savingStage)).toBeTruthy();
+    hold.open();
+    await settled();
+    hold.next([look("working", { progress: { done: 1, total: 2 } })]);
+    press(w.keepAll(2));
+    expect(await screen.findByText(w.keepingConnections)).toBeTruthy();
+    hold.open();
+    await settled();
+  });
+
+  it("Keep all shows 12 of 50 connections from the answer's progress", async () => {
+    live.on = true;
+    const api = mockApi("table");
+    const hold = holdAnswers(api);
+    hold.next([look("working", { progress: { done: 12, total: 50 } })]);
+    await open(api);
+    press(w.keepAll(2));
+    expect(await screen.findByText(workWords.progress(12, 50, "connections"))).toBeTruthy();
+    hold.open();
+    await settled();
+  });
+
+  it("an answer with no waits or progress keeps the old words", async () => {
+    live.on = true;
+    const api = mockApi("table");
+    const hold = holdAnswers(api);
+    hold.next([{}]);
+    await open(api);
+    press(w.confirm, screen.getByText("Mira Voss knows Far Hall").closest(".panel") as HTMLElement);
+    expect(await screen.findByText(w.savingStage)).toBeTruthy();
+    expect(screen.queryByText(w.queuedStage)).toBeNull();
+    hold.open();
+    await settled();
+  });
+
+  it("a stalled answer shows the stalled words", async () => {
+    live.on = true;
+    const api = mockApi("table");
+    const hold = holdAnswers(api);
+    hold.next([look("working", { waits: { stage: "working", waitedSeconds: 200, lastMovedAt: now() - 200, stalled: true, now: now() } })]);
+    await open(api);
+    press(w.confirm, screen.getByText("Mira Voss knows Far Hall").closest(".panel") as HTMLElement);
+    expect(await screen.findByText(workWords.stalled)).toBeTruthy();
+    hold.open();
+    await settled();
+  });
+
+  it("the panel never shows a connection's words", async () => {
+    live.on = true;
+    const api = mockApi("table");
+    const hold = holdAnswers(api);
+    hold.next([look("working", { progress: { done: 1, total: 2 } })]);
+    await open(api);
+    press(w.keepAll(2));
+    const panel = (await screen.findByText(w.keepingConnections)).closest(".work-progress") as HTMLElement;
+    expect(panel.textContent).not.toMatch(/knows|grew up|Rook|Newcomer|Far Hall/);
+    hold.open();
+    await settled();
+  });
+});
+
+describe("the wait's words and times (#2921)", () => {
+  it("Keep all says Keeping connections before its first count, not Saving your answer", async () => {
+    live.on = true;
+    const api = mockApi("table");
+    const hold = holdAnswers(api);
+    hold.next([look("working")]);
+    await open(api);
+    press(w.keepAll(2));
+    expect(await screen.findByText(w.keepingConnections)).toBeTruthy();
+    expect(screen.queryByText(w.savingStage)).toBeNull();
+    hold.open();
+    await settled();
+  });
+
+  it("the elapsed time comes from the server's wait, so a browser clock an hour out shows the same", async () => {
+    live.on = true;
+    const api = mockApi("table");
+    const hold = holdAnswers(api);
+    hold.next([look("working", { waits: { stage: "working", waitedSeconds: 125, lastMovedAt: now() - 10, stalled: false, now: now() } })]);
+    await open(api);
+    const real = Date.now();
+    const skewed = vi.spyOn(Date, "now").mockReturnValue(real + 3600 * 1000);
+    try {
+      press(w.confirm, screen.getByText("Mira Voss knows Far Hall").closest(".panel") as HTMLElement);
+      expect(await screen.findByText(/Running for 2 min/)).toBeTruthy();
+      expect(screen.queryByText(/Running for 62 min/)).toBeNull();
+    } finally {
+      skewed.mockRestore();
+      hold.open();
+    }
+    await settled();
+  }, 15000);
+});
+
+describe("over the wire: the wait's looks (#2921)", () => {
+  it("the answer's looks reach the page in order, and a done answer returns how many were kept", async () => {
+    const answers: unknown[] = [
+      { state: "working", waits: { stage: "working", waitedSeconds: 1, lastMovedAt: 5, stalled: false, now: 6 }, progress: { done: 1, total: 2 } },
+      { state: "done", kept: 2 },
+    ];
+    const api = httpApi("https://api.example.test", (async (url: string) => {
+      if (url.endsWith("/waiting")) return new Response(JSON.stringify({ answer: "a1" }), { status: 200 });
+      return new Response(JSON.stringify(answers.shift()), { status: 200 });
+    }) as unknown as typeof fetch);
+    const looks: WaitingLook[] = [];
+    const got = await api.answerWaiting!("1.a", { kind: "backstory", action: "keep_all", ids: ["b1", "b2"] }, (look) => looks.push(look));
+    expect(got).toEqual({ kept: 2 });
+    expect(looks[0]).toEqual({
+      waits: { stage: "working", waitedSeconds: 1, lastMovedAt: 5, stalled: false, now: 6 },
+      progress: { done: 1, total: 2 },
+    });
+  }, 15000);
+});
+

@@ -1559,7 +1559,9 @@ interface WebAnswer {
   putBack?: number | null;
   /** An answer about a reading (#2412): whether it can be undone, and where the wait stands. */
   undoable?: boolean;
-  waits?: ReadingWaits;
+  waits?: WaitingWaits;
+  /** A Keep all on "Waiting for you" (#2921): how many connections are done of how many. */
+  progress?: { done: number; total: number } | null;
 }
 
 /** The changed row, or `{ removed: true }` after a removal. */
@@ -1726,6 +1728,20 @@ export type ReadingAnswer = { action: "place" | "no"; id: string } | { action: "
 /** What the page hears while an answer about a reading waits (once a second). */
 export interface ReadingLook {
   waits: ReadingWaits | null;
+}
+/** Where an answer on "Waiting for you" stands (#2921; core #2923): counts and stages only, never a connection's words. */
+export interface WaitingWaits {
+  stage: string;
+  waitedSeconds: number;
+  lastMovedAt: number;
+  stalled: boolean;
+  /** The server's clock when it was read (Unix seconds), so a wrong clock on the computer shows no wrong age. */
+  now?: number;
+}
+/** What the page hears while an answer on "Waiting for you" waits, each time it looks. */
+export interface WaitingLook {
+  waits?: WaitingWaits | null;
+  progress?: { done: number; total: number } | null;
 }
 /** One answer to a waiting item; the API queues it for the bot and the page waits for it. */
 export type WaitingAnswer =
@@ -2120,7 +2136,8 @@ export interface AccountApi {
   /** What waits for the DM, and one answer to it (#2635, #2652). `answerWaiting` resolves with how many
    * connections a Keep all kept, when the API says. Missing from an API older than that. */
   webWaiting?(ref: string): Promise<Waiting>;
-  answerWaiting?(ref: string, answer: WaitingAnswer): Promise<{ kept?: number }>;
+  /** `onLook` hears how the wait stands each time the page looks (#2921). */
+  answerWaiting?(ref: string, answer: WaitingAnswer, onLook?: (look: WaitingLook) => void): Promise<{ kept?: number }>;
   /** What people believe, waiting for the DM, and one answer to it (#2412; DM only: anyone else gets
    * `not-found`). `answerReading` queues the answer for the bot and waits for it, telling `onLook` how the
    * wait stands each time it looks; it resolves with the answer's id and whether it can be undone. */
@@ -3342,7 +3359,7 @@ export function httpApi(
     webWaiting: async (ref) =>
       (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/web/waiting`)) as Waiting,
     // The answer is queued for the bot (202 {answer}) like every other edit; this waits for it.
-    answerWaiting: async (ref, answer) => {
+    answerWaiting: async (ref, answer, onLook) => {
       const base = `/me/campaigns/${encodeURIComponent(ref)}/web`;
       const body =
         answer.action === "keep_all"
@@ -3350,7 +3367,9 @@ export function httpApi(
           : answer;
       const queued = (await call("POST", `${base}/waiting`, body)) as { answer: string };
       if (!queued?.answer) throw new ApiError("server");
-      const got = await waitForAnswer(`${base}/answers/${encodeURIComponent(queued.answer)}`);
+      const got = await waitForAnswer(`${base}/answers/${encodeURIComponent(queued.answer)}`, (look) =>
+        onLook?.({ waits: look.waits ?? null, progress: look.progress ?? null }),
+      );
       const kept = (got as { kept?: unknown }).kept;
       return typeof kept === "number" ? { kept } : {};
     },
