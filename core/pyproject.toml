@@ -107,11 +107,6 @@ source_modules = [
 ]
 forbidden_modules = ["dmbot.ui"]
 allow_indirect_imports = true
-ignore_imports = [  # all #2827
-    "dmbot.sidebar.looked -> dmbot.ui.rule_lookup",
-    "dmbot.sidebar.service -> dmbot.ui.looked_at",
-    "dmbot.sidebar.service -> dmbot.ui.rule_clash",
-]
 
 [[tool.importlinter.contracts]]
 name = "Lower packages never import recaps or web"

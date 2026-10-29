@@ -488,8 +488,15 @@ class BackgroundOffer(_Menu):
 
                 def on_step(stage: str, done: int, total: int) -> None:
                     if stage == "reading":
-                        again = f", try {done}" if done > 1 else ""
-                        waiting.step(f"Step 1 of {steps}: reading it through{again}", keeps=False)
+                        # Same words for every pass-1 call: each call is movement, not a new step.
+                        waiting.step(f"Step 1 of {steps}: reading it through", keeps=False)
+                        waiting.moved()
+                    elif stage == "looking":
+                        waiting.step(
+                            f"Step 1 of {steps}: looking again at passages it may have skipped",
+                            done,
+                            total,
+                        )
                     else:
                         waiting.step(f"Step 2 of {steps}: picking out names and links", done, total)
 
@@ -1641,7 +1648,7 @@ class BulkConfirm(_Menu):
     async def _open(self, interaction: discord.Interaction) -> None:
         self.stop()
         await interaction.response.edit_message(view=None)
-        await start_review(interaction, self.campaign_id)
+        await start_review(interaction, self.campaign_id, bulk=False)
 
     async def _connections(self, interaction: discord.Interaction) -> None:
         await ask_connections(interaction, self.campaign_id)

@@ -2717,3 +2717,14 @@ DEPLOY 6f29673f (2026-10-29, dev1, owner's OK through the prompt "Deploy now"; S
 - Live: 270 migration rows, last 0274_web_sheet_typed_document. Bot connected to 2 servers, ears connected, 0 errors since start. Features line: handover email off, who is he off, recaps on, structured split and beats on, meaning search off, plot checks off, test recordings off. Website restore switch (DMBOT_WEB_RESTORE) stays 0.
 - web-api healthy. Not yet checked: /dmbot in the test server (owner), the lore re-read on #2757, and the website routes behind the off switches.
 - The bot logged two warnings at start-up: .env is missing 13 settings that .env.example has (optional, see the start-up warning), and .env has both AI_MODEL and AI_MODEL_FAST (only AI_MODEL_FAST is used). Both are for the owner to tidy; no change made.
+
+WEBSITE DELETE TEST (2026-10-29, dev1, the owner's run on dev.getdmbot.com, #2838). Counts only.
+- The owner deleted test campaigns from the website ("Delete this campaign", backup taken first, name typed). The owner reports it worked.
+- Database check after the delete: the three recent campaigns from the session (the lore test campaign included) are gone; the campaign table holds 1 row. The owner confirmed the summary.
+- Not yet reported: the backup file count, the restored campaign's session, transcript-line and name counts, and the unreachable-server check (steps 1 and 3 of #2838).
+
+LORE TEST (2026-10-29, dev1, owner's live test on the new test campaign, build 6f29673f). Counts only.
+- Re-run of the owner's lore document, same campaign, after #2846 and #2855 went live. Earlier run (14:47 UTC, build 6fe8344c): 23 relationship lines found, 12 not_in_text, 2 word_not_allowed, 9 kept.
+- Re-run (03:09 UTC): 40 relationship lines found (25 from pass 1 alone), 9 not_in_text, 4 same_pair, 1 word_not_allowed; 26 kept in the background line (the pass-2 line reports 30); names kept 48 in both runs.
+- The owner's verdict: "vastly improved". The owner's next need (middle knowledge, names known only by some characters) is #2935.
+- Open for the code side: the 26 vs 30 kept-connection difference between the background line and the pass-2 line (#2757).

@@ -22,6 +22,7 @@ from typing import Any
 from dmbot.db import Database
 from dmbot.memory import kin
 from dmbot.memory.claims import Extracted, condition_of
+from dmbot.memory.link_kinds import link_kind
 from dmbot.memory.link_words import back_words, link_words, reads_both_ways
 from dmbot.memory.web_actions import RETAKE_AFTER_S
 from dmbot.memory.who_resolve import checked_line
@@ -30,7 +31,8 @@ from dmbot.web.names import _parse
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
 from dmbot.web.sessions import Session
 
-MAX_HOPS = 4
+# The website's steps spinner goes 1 to 8 (owner, #2934); MAX_NODES still bounds the work.
+MAX_HOPS = 8
 MAX_NODES = 1000  # the most names one answer draws, then `truncated`
 OVERVIEW_NAMES = 5000  # the most names the overview lists, then `truncated` (the tray is not drawn)
 OVERVIEW_PAIRS = 20000  # the most connected pairs it reads, in a fixed order, then `truncated`
@@ -57,10 +59,10 @@ def check_words(decided: object) -> str:
 def edges_from(rows: list[dict[str, Any]], *, can_edit: bool) -> list[dict[str, Any]]:
     """The door's connections grouped one edge for each pair of names (`a` the smaller ID), each
     with its `label` (the words of the label connection), `more` (how many others there are) and
-    every connection as `links`: {id, words, secret, revealed, direction}. `direction` says which
-    way the words read between the pair: "a-b", "b-a", or "both" for the ones that read the same
-    either way. A connection's `secret` (and whether it is `revealed` yet) is only sent to a DM
-    (the door sends none to anyone else)."""
+    every connection as `links`: {id, words, secret, revealed, direction, kind}. `direction` says
+    which way the words read between the pair: "a-b", "b-a", or "both" for the ones that read
+    the same either way. A connection's `secret` (and whether it is `revealed` yet) is only sent
+    to a DM (the door sends none to anyone else). `kind` is for the map's colours (#2942)."""
     pairs: dict[tuple[str, str], list[dict[str, Any]]] = {}
     for row in rows:
         a, b = sorted((str(row["a"]), str(row["b"])))
@@ -83,6 +85,7 @@ def edges_from(rows: list[dict[str, Any]], *, can_edit: bool) -> list[dict[str, 
                 # DMbot's check, in words; the door sends the note to a DM only (#2859)
                 "check": check_words(row.get("decided")),
                 "direction": direction,
+                "kind": link_kind(str(row["predicate"])),  # for the map's colours (#2942)
                 "at": int(row["at"]),
             }
         )
@@ -106,6 +109,7 @@ def edges_from(rows: list[dict[str, Any]], *, can_edit: bool) -> list[dict[str, 
                         "pinned": x["pinned"] if can_edit else False,
                         "check": x["check"] if can_edit else "",
                         "direction": x["direction"],
+                        "kind": x["kind"],
                     }
                     for x in links
                 ],

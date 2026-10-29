@@ -178,6 +178,16 @@ class Host(Protocol):
     async def sidebar_record_win(
         self, campaign: Campaign, winner: RuleRef, loser: RuleRef, by: int
     ) -> bool: ...
+    # The Discord screens under an answer, built by the bot so no sidebar module imports `ui`
+    # (#2827): the two buttons of "which house rule applies?" (#2284), and "📖 What I looked at"
+    # for the list kept under `key` (#1957).
+    def sidebar_clash_view(
+        self,
+        campaign: Campaign,
+        clash: tuple[rule_clash.Side, rule_clash.Side],
+        retry: Callable[[], Awaitable[None]],
+    ) -> discord.ui.View: ...
+    def sidebar_looked_view(self, key: str) -> discord.ui.View: ...
     # The DM's spoken feedback on a waiting recap (#2076); False when there is none to talk about.
     async def sidebar_recap_feedback(self, table: Table, user_id: int, text: str) -> bool: ...
     def sidebar_house_rule(self, table: Table, user_id: int, text: str) -> str: ...
@@ -829,12 +839,7 @@ class SidebarService:
         retry: Callable[[], Awaitable[None]],
     ) -> discord.ui.View:
         """The two buttons under the DM's "which one applies?" (#2284)."""
-        from dmbot.ui.rule_clash import ClashView  # (the UI imports the sidebar: late)
-
-        async def record(winner: RuleRef, loser: RuleRef, by: int) -> bool:
-            return await self.host.sidebar_record_win(campaign, winner, loser, by)
-
-        return ClashView(clash, dm_ids=campaign.dm_user_ids, record=record, retry=retry)
+        return self.host.sidebar_clash_view(campaign, clash, retry)
 
     def _looked_view(
         self, table: Table, user_id: int, campaign: Campaign, answer: Answer
@@ -844,12 +849,10 @@ class SidebarService:
         for a refusal or an off-topic reply."""
         if answer.refused or not answer.in_game:
             return None
-        from dmbot.ui import looked_at  # (the UI imports the sidebar: late)
-
         kept = looked.Kept(
             user_id, table.guild_id, campaign.id, tuple(getattr(answer, "looked_at", ()))
         )
-        return looked_at.view(self.looked.remember(kept))
+        return self.host.sidebar_looked_view(self.looked.remember(kept))
 
     async def _guide_answer(
         self,

@@ -1019,7 +1019,7 @@ class FeatureLookup(LookupTest):
                 continue
             if e.edition == "2014" and e.details["class"] in newer:
                 continue  # never offered while the newer version of that class is the target
-            value = ui._choice_value(srd, e)
+            value = rule_card.choice_value(srd, e)
             found = ui._features(srd, value, "2024", "2014")
             with self.subTest(value=value):
                 self.assertTrue(any(h.entry is e for h in found), value)
