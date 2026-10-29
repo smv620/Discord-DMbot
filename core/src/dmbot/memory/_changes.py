@@ -188,6 +188,12 @@ ATTITUDES = Table(
 PERSPECTIVES = Table(
     "memory_perspectives", "id", ("id", "kind", "entity_id", "created_at"), logged=False
 )
+# Which characters know an other name the DM keeps from the table (#2935): one row for each (name,
+# character). Logged, so Undo takes a change of who knows back, and an Undo of removing a name
+# brings who knew it back with it. Gone with its name or its character by the database.
+ALIAS_KNOWERS = Table(
+    "memory_alias_knowers", "id", ("id", "alias_id", "perspective_id", "created_at")
+)
 BELIEFS = Table(
     "memory_beliefs",
     "id",
@@ -216,7 +222,7 @@ PLAN_POSITION = Table(
 )
 ALL = (TYPES, PREDICATES, ENTITIES, ALIASES, MENTIONS, RELATIONS, CORRECTIONS, FLAGS, RULE_LINKS,
        STATES, CLAIMS, IMPRESSIONS, ATTITUDES, PLAN_SAME_AS, PLAN_POSITION, PERSPECTIVES,
-       BELIEFS, EVIDENCE)  # fmt: skip
+       BELIEFS, EVIDENCE, ALIAS_KNOWERS)  # fmt: skip
 BY_NAME = {t.name: t for t in ALL}
 
 # What links to a row (table, column, is the column a list), checked before deleting it,
@@ -262,7 +268,10 @@ DEPENDENTS: dict[str, tuple[tuple[str, str, bool], ...]] = {
         ("memory_flags", "other_id", False),
         ("memory_beliefs", "relation_id", False),
     ),
-    "memory_perspectives": (("memory_beliefs", "perspective_id", False),),
+    "memory_perspectives": (
+        ("memory_beliefs", "perspective_id", False),
+        ("memory_alias_knowers", "perspective_id", False),
+    ),
 }
 
 
@@ -418,6 +427,9 @@ class Changes(Scope):
             # its beliefs go with it, each logged, so an Undo brings the connection back whole
             for belief in await self.select(BELIEFS, " AND relation_id = %s", [row_id]):
                 await self.delete(BELIEFS, belief["id"])
+        if table is ALIASES:  # who knows an other name goes with it (#2935)
+            for knower in await self.select(ALIAS_KNOWERS, " AND alias_id = %s", [row_id]):
+                await self.delete(ALIAS_KNOWERS, knower["id"])
         for dep_table, column, is_list in DEPENDENTS.get(table.name, ()):
             test = "%s = ANY({})" if is_list else "{} = %s"
             query = sql.SQL(

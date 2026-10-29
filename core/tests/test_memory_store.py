@@ -16,7 +16,7 @@ from psycopg import errors as pg_errors
 
 from dmbot.campaigns import CampaignError, CampaignStore
 from dmbot.campaigns.store import decode_backup, encode_backup
-from dmbot.memory import evidence
+from dmbot.memory import evidence, knowers
 from dmbot.memory._changes import ALIASES, ALL, Changes, scoped_select
 from dmbot.memory._changes import ENTITIES as ENTITIES_TABLE
 from dmbot.memory._changes import FLAGS as FLAGS_TABLE
@@ -135,6 +135,15 @@ class Isolation(MemoryTest):
             GUILD_A, self.c, a, "species", "goblin", source="dm", rules_source="srd52", known=True
         )
         await self.memory.add_alias(GUILD_A, self.c, a, "Bell", kind="nickname", source="dm")
+        # and a character who knows a secret other name (#2935)
+        shade = await self.memory.add_alias(
+            GUILD_A, self.c, a, "Shade", kind="title", secret=True, source="dm"
+        )
+        view = await self.add(
+            "Tavin", type="character", role="player_character", played_by=DM, status="confirmed"
+        )
+        async with self.memory._write(GUILD_A, self.c, "dm") as w:
+            await knowers.set_alias_knowers(w, shade.value.id, [view])
         await self.relate(a, "located_in", b)  # flagged: Cerric isn't a place
         known = await self.relate(a, "knows", b, status="confirmed")  # and its beliefs (#2409)
         clue = await self.add("A map", type="clue")

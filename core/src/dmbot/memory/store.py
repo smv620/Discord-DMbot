@@ -37,6 +37,7 @@ from dmbot.memory import (
     beliefs,
     evidence,
     kin,
+    knowers,
     merge_restore,
     notify,
     report_fixed,
@@ -3784,6 +3785,56 @@ class MemoryStore:
                 evidence=evidence, session_at=session_at,
             )  # fmt: skip
             return Written(belief, w.batch)
+
+    async def set_connection_knowers(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        relation_id: str,
+        character_ids: Sequence[str],
+        *,
+        source: str,
+    ) -> Written[list[str]]:
+        """ "Who knows this?" for a hidden connection (#2935): exactly these player characters know
+        it, or only the DM when none. One change, so Undo takes it back. Only the DM."""
+        async with self._write(guild_id, campaign_id, source) as w:
+            await beliefs.perspective_ids(w)
+            chosen = await knowers.set_connection_knowers(w, relation_id, character_ids)
+            return Written(chosen, w.batch)
+
+    async def set_alias_knowers(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        alias_id: str,
+        character_ids: Sequence[str],
+        *,
+        source: str,
+    ) -> Written[list[str]]:
+        """ "Who knows this?" for a secret other name (#2935). Only the DM."""
+        async with self._write(guild_id, campaign_id, source) as w:
+            chosen = await knowers.set_alias_knowers(w, alias_id, character_ids)
+            return Written(chosen, w.batch)
+
+    async def connection_knowers(
+        self, guild_id: int, campaign_id: str, relation_ids: Sequence[str]
+    ) -> dict[str, list[str]]:
+        """Which player characters (entry ids) know each of these hidden connections. For the
+        DM's views and a player's own; no public reader asks."""
+        async with self._read(guild_id, campaign_id, snapshot=True) as scope:
+            return await knowers.connection_knowers(scope, relation_ids)
+
+    async def alias_knowers(
+        self, guild_id: int, campaign_id: str, alias_ids: Sequence[str]
+    ) -> dict[str, list[str]]:
+        """Which player characters (entry ids) know each of these secret other names."""
+        async with self._read(guild_id, campaign_id, snapshot=True) as scope:
+            return await knowers.alias_knowers(scope, alias_ids)
+
+    async def characters_of(self, guild_id: int, campaign_id: str, user_id: int) -> list[str]:
+        """The player characters this person plays (entry ids)."""
+        async with self._read(guild_id, campaign_id, snapshot=True) as scope:
+            return await knowers.characters_of(scope, user_id)
 
     async def pin(
         self, guild_id: int, campaign_id: str, relation_id: str, pinned: bool, *, source: str
