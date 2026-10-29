@@ -62,7 +62,7 @@ import type {
   RuleSharingAnswer,
   RuleSharingChoice,
 } from "./api";
-import { ApiError, type PlotIssue, type PlotMessage, type PlotProposal } from "./api";
+import { ApiError, type FixAnswer, type FixMode, type PlotIssue, type PlotMessage, type PlotProposal } from "./api";
 import { NAME_LIMIT } from "../content/names-words";
 
 /** Found in the built files only if the pretend API was included; check-csp fails a real
@@ -593,6 +593,7 @@ interface WebState {
     revealed?: boolean;
     belief?: WebLink["belief"];
     pinned?: boolean;
+    check?: string;
   }[];
   nextLink: number;
 }
@@ -625,6 +626,9 @@ function startWeb(big: boolean, lonely = false): WebState {
   // One connection the DM pinned as 100% truth (#2448).
   const l2 = byId("l2");
   if (l2) l2.pinned = true;
+  // DMbot's check on one connection (#2859): the DM's full view only.
+  const l3 = byId("l3");
+  if (l3) l3.check = "DMbot matched this name from your text.";
   const l4 = byId("l4");
   if (l4) l4.revealed = false;
   // Theories the party holds: one it is unsure of, one it is wrong about (full view marks that).
@@ -688,7 +692,7 @@ function pretendWaiting(): Waiting {
     ],
     backstory: [
       { id: "b1", subject: "Rook", object: "Far Hall", how: "knows", secret: false, upload: "Lore, 24 Oct", ready: true, waitingOn: [], quote: "Rook has been to Far Hall." },
-      { id: "b2", subject: "Rook", object: "Mira Voss", how: "grew up with", secret: true, upload: "Lore, 24 Oct", ready: true, waitingOn: [] },
+      { id: "b2", subject: "Rook", object: "Mira Voss", how: "grew up with", secret: true, upload: "Lore, 24 Oct", ready: true, waitingOn: [], check: "DMbot wasn't sure who the text means. Please check." },
       { id: "b3", subject: "Rook", object: "Newcomer", how: "knows", secret: false, upload: "Lore, 24 Oct", ready: false, waitingOn: ["Newcomer"] },
       { id: "b4", subject: "Mira Voss", object: "Harrow's Keep", how: "grew up in", secret: false, upload: "", ready: true, waitingOn: [] },
     ],
@@ -715,12 +719,15 @@ function pronounWaiting(): Waiting {
         id: "w2", word: "she", pronoun: true, other: "Rook", otherIsSubject: false, how: "grew up with", secret: false, upload: "Lore, 24 Oct",
         candidates: [{ id: "e3", name: "Mara Ashgrove", limited: false }],
         quote: "She grew up with Rook",
+        check: "You chose someone else for this one.",
       },
       { id: "w3", word: "he", pronoun: true, other: "Rook", otherIsSubject: true, how: "knows", secret: false, upload: "Lore, 24 Oct", candidates: [] },
     ],
     counts: { claims: 0, backstory: 0, ready: 0, which: 0, all: 0 },
   };
 }
+/** The pretend "Fix this line" answers' modes, by answer (#2858). */
+const fixes = new Map<string, FixMode>();
 export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   const waitingState: Record<string, Waiting> = {}; // (fresh for each pretend API)
   const readingState: Record<string, { list: Reading[]; kept: Map<string, Reading> }> = {}; // (#2412) by campaign
@@ -803,6 +810,8 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
           ...(full ? { revealed: l.revealed !== false } : {}),
           // The DM's alone (#2448): sent to a DM in the full view, never to a player or a peeker.
           ...(pins && l.pinned ? { pinned: true } : {}),
+          // DMbot's check is the DM's alone, like a pin: never to a player or a peeker (#2859).
+          ...(pins && l.check ? { check: l.check } : {}),
           ...(l.belief ? { belief: full ? l.belief : { confidence: l.belief.confidence, status: l.belief.status } } : {}),
         })),
       };
@@ -848,8 +857,8 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       .filter((n) => near.has(n.id))
       .map((n) =>
         all
-          ? { ...current(n), revealed: n.revealed !== false }
-          : { id: n.id, name: current(n).name, kind: current(n).kind },
+          ? { ...current(n), revealed: n.revealed !== false, page: current(n).kind === "npc" }
+          : { id: n.id, name: current(n).name, kind: current(n).kind, page: current(n).kind === "npc" },
       );
     const edges = edgesOf(usable.filter((l) => near.has(l.a) && near.has(l.b)), all, all, view === "dm" && all);
     return {
@@ -869,6 +878,8 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   let improve = true;
   const calls: string[] = [];
   const lateLooks = new Map<string, number>();
+  const lineDeletions: { id: string; serverId: string; looks: number }[] = [];
+  const deletedLines = new Set<string>();
   // The pretend rule sharing's memory, per campaign ref (#2783).
 const sharingState = new Map<string, RuleSharing>();
 const sharingChoices = new Map<string, { ref: string; choice: RuleSharingChoice; looks: number }>();
@@ -1489,7 +1500,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         degree.set(l.b, (degree.get(l.b) ?? 0) + 1);
       }
       const nodeOf = (n: WebNode): WebNode =>
-        all ? { ...n, revealed: n.revealed !== false } : { id: n.id, name: n.name, kind: n.kind };
+        all ? { ...n, revealed: n.revealed !== false, page: n.kind === "npc" } : { id: n.id, name: n.name, kind: n.kind, page: n.kind === "npc" };
       const left = new Set(seen.filter((n) => (degree.get(n.id) ?? 0) > 0).map((n) => n.id));
       const groups: WebGroup[] = [];
       while (left.size > 0) {
@@ -1507,7 +1518,8 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         }
         part.forEach((id) => left.delete(id));
         const centre = [...part].sort((x, y) => (degree.get(y) ?? 0) - (degree.get(x) ?? 0))[0]!;
-        groups.push({ center: centre, centerName: state.nodes.find((n) => n.id === centre)!.name, size: part.size });
+        const centreNode = state.nodes.find((n) => n.id === centre)!;
+        groups.push({ center: centre, centerName: centreNode.name, size: part.size, page: centreNode.kind === "npc" });
       }
       groups.sort((x, y) => y.size - x.size);
       const tray = seen.filter((n) => (degree.get(n.id) ?? 0) === 0).map(nodeOf);
@@ -1733,6 +1745,25 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       if (choice.action === "document" && !/^https:\/\/[^\s/]+/i.test(choice.url)) throw new ApiError("bad-document-link");
       if (/\.sheets-slow(\.|$)/.test(ref)) throw new ApiError("too-soon");
       return "sheet-answer";
+    },
+    async fixTranscriptLine(ref, number, line, text) {
+      calls.push(`fixTranscriptLine:${ref}:${number}:${line.speaker}:${line.startedMs}:${text}`);
+      await reachable();
+      signedIn();
+      if (!text.trim() || [...text].length > 200) throw new ApiError("bad-text");
+      // The mock's own rule: a fix ending in "!" is a rewrite made at once, any other is a suggestion to the DM.
+      const mode: FixMode = text.endsWith("!") ? "rewrite" : "suggest";
+      const answer = `fix-${number}-${line.startedMs}-${fixes.size + 1}`;
+      fixes.set(answer, mode);
+      return { answer, mode };
+    },
+    async fixAnswer(ref, number, answer): Promise<FixAnswer> {
+      calls.push(`fixAnswer:${ref}:${number}:${answer}`);
+      await reachable();
+      signedIn();
+      const mode: FixMode = fixes.get(answer) ?? "suggest";
+      if (mode === "rewrite") return { stage: "done", state: "done", mode, result: "changed", undo: true, reason: null };
+      return { stage: "done", state: "done", mode, result: "sent", undo: false, reason: null };
     },
     async sheetAnswer(ref, answer): Promise<SheetAnswer> {
       calls.push(`sheetAnswer:${ref}:${answer}`);
@@ -3101,6 +3132,46 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         },
       };
     },
+    // The pretend "Delete my transcripts" (#2769): "srv-thursday" has 12 lines in 3 sessions, "srv-gorrak" none. The bot
+    // answers on the second look; `.myLinesFail` is set by a test that wants a failure. Deleted lines stay deleted.
+    async myLines(serverId: string) {
+      calls.push(`myLines:${serverId}`);
+      await reachable();
+      signedIn();
+      if (!(me?.recording ?? []).some((r) => r.serverId === serverId)) throw new ApiError("not-found");
+      const open = lineDeletions.find((d) => d.serverId === serverId && d.looks < 3);
+      const gone = deletedLines.has(serverId);
+      return {
+        lines: serverId === "srv-thursday" && !gone ? 12 : 0,
+        sessions: serverId === "srv-thursday" && !gone ? 3 : 0,
+        open: open ? { id: open.id, state: "waiting" as const } : null,
+      };
+    },
+    async deleteMyLines(serverId: string) {
+      calls.push(`deleteMyLines:${serverId}`);
+      await reachable();
+      signedIn();
+      if (serverId !== "srv-thursday" || deletedLines.has(serverId)) throw new ApiError("nothing-to-delete");
+      const open = lineDeletions.find((d) => d.serverId === serverId && d.looks < 3);
+      if (open) return open.id;
+      const id = `d${lineDeletions.length + 1}`.padEnd(32, "0");
+      lineDeletions.push({ id, serverId, looks: 0 });
+      return id;
+    },
+    async myLinesStatus(serverId: string, id: string) {
+      calls.push(`myLinesStatus:${serverId}:${id}`);
+      await reachable();
+      signedIn();
+      const found = lineDeletions.find((d) => d.id === id && d.serverId === serverId);
+      if (!found) throw new ApiError("not-found");
+      found.looks += 1;
+      const now = Math.floor(Date.now() / 1000);
+      const base = { startedAt: now, updatedAt: now, serverNow: now, reason: null };
+      if (found.looks === 1) return { ...base, stage: "waiting", state: "running" as const, lines: null, sessions: null };
+      if (found.looks === 2) return { ...base, stage: "deleting", state: "running" as const, lines: null, sessions: null };
+      deletedLines.add(serverId);
+      return { ...base, stage: "done", state: "done" as const, lines: 12, sessions: 3 };
+    },
     async stopRecording(serverId: string) {
       calls.push(`stop-recording:${serverId}`);
       const now = signedIn();
@@ -3159,6 +3230,9 @@ function mockTranscript(number: number, version: TranscriptVersion, putBack = fa
       ...(skipped && putBack ? ["[0:01:02] (Speaker 1): did you see the match"] : []),
     ],
     ...(skipped ? { skips: [{ ...MOCK_SKIP, putBack }], filter: { kept: 412, leftOut: putBack ? 6 : 9, putBack: putBack ? 3 : 0 } } : {}),
+    // The DM may fix any spoken line of the cleaned reading (#2858); the as-heard reading has no fixes.
+    // (only the spoken line; the off-topic marker has no words to fix)
+    ...(heard ? {} : { viewer: { id: "pretend-dm", isDm: true }, fixable: [{ line: 1, speaker: "Speaker 2", startedMs: 40_000 }] }),
   };
 }
 

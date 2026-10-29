@@ -329,6 +329,19 @@ export interface Character {
 
 /** A server where this person said yes to recording (#1151). `on` is false when their yes was
  * given under older wording: DMbot records nobody until they say yes again in Discord. */
+/** How many lines of theirs DMbot holds in a server and in how many sessions, and their "Delete my transcripts" that
+ * is still open (#2769; core web/my_lines.py). Counts only. */
+export interface MyLines {
+  lines: number;
+  sessions: number;
+  open: { id: string; state: "waiting" | "working" } | null;
+}
+/** Where such a deletion stands: the shared progress shape, plus what it removed once done. */
+export interface MyLinesStatus extends JobProgress {
+  lines: number | null;
+  sessions: number | null;
+}
+
 export interface RecordingEntry {
   serverId: string;
   serverName: string;
@@ -1106,6 +1119,32 @@ export interface TranscriptView {
   skips?: TranscriptSkip[];
   /** Lines kept, left out, and put back by a DM and still in force (cleaned reading). */
   filter?: { kept: number; leftOut: number; putBack: number };
+  /** Who is reading, for a line fix (#2858; core #2882): a DM, or the player whose lines these are. */
+  viewer?: { id: string; isDm: boolean };
+  /** The lines this viewer may fix, by their index in THIS page's `lines`, with the speaker and start to name them to
+   * the API (#2858). Only the cleaned reading has them. */
+  fixable?: FixableLine[];
+}
+
+/** A line the viewer may fix: its index in the page's lines, and the speaker and start that name it (#2858). */
+export interface FixableLine {
+  line: number;
+  speaker: string;
+  startedMs: number;
+}
+
+/** A line fix's answer: a suggestion to the DM, or a change made at once (#2858). */
+export type FixMode = "suggest" | "rewrite";
+
+/** A line fix as the bot reports it (#2858): the shared progress shape, plus what was done. */
+export interface FixAnswer extends JobProgress {
+  mode: FixMode;
+  /** "sent" for a suggestion to the DM, "changed" for a rewrite; null while it is still going. */
+  result: "sent" | "changed" | null;
+  /** True when a rewrite can be undone from the fix notes in Discord. */
+  undo: boolean;
+  /** Why it failed, as the words key it (`line_changed`, `secret`, …); null otherwise. */
+  reason?: string | null;
 }
 
 /** One stretch of off-topic chat left out of the cleaned transcript. `line` is its marker's index in the
@@ -1275,6 +1314,8 @@ export interface WebNode {
   /** False: the story hasn't revealed it to the players yet (#2405). Only in a view that shows
    * unrevealed things: a DM's full view, or a player's peek. */
   revealed?: boolean;
+  /** True when this name has an NPC page (#2887; core #2893). Absent from an older API. */
+  page?: boolean;
 }
 
 /** How sure the party is of a connection it only suspects (#2405, docs/STORY_MEMORY.md). */
@@ -1297,6 +1338,8 @@ export interface WebLink {
   /** How it reads from the second name when that differs ("has as a member"); null or missing
    * when it reads the same either way or has no fixed reading back (#2666). */
   back?: string | null;
+  /** DMbot's check of a pronoun, in plain words, for a DM only (#2859). */
+  check?: string;
   /** False: not revealed to the players yet (#2405). */
   revealed?: boolean;
   /** A theory the party holds rather than a fact (#2405). */
@@ -1340,6 +1383,8 @@ export interface WebGroup {
   center: string;
   centerName: string;
   size: number;
+  /** The centre name has a page. */
+  page?: boolean;
 }
 
 /** Every name the person may see, with the ones that have no connection yet and the groups of linked
@@ -1620,6 +1665,8 @@ export interface WaitingBackstory {
   /** False while a name in it is not confirmed yet; `waitingOn` says which. */
   ready: boolean;
   waitingOn: string[];
+  /** DMbot's check of a pronoun, in plain words, for a DM only (#2859). */
+  check?: string;
 }
 export interface WaitingWhich {
   id: string;
@@ -1634,6 +1681,8 @@ export interface WaitingWhich {
   secret: boolean;
   upload: string;
   candidates: { id: string; name: string; limited: boolean }[];
+  /** DMbot's check of a pronoun, in plain words, for a DM only (#2859). */
+  check?: string;
 }
 export interface Waiting {
   claims: WaitingClaim[];
@@ -1740,6 +1789,21 @@ export type ApiErrorKind =
   | "free-access" // free access: there's nothing to pay for
   | "slow-down" // too many tries from this address (the API limits sign-in, billing, delete)
   | "bad-link" // an emailed sign-in link that is wrong, used or ended (#1231)
+  | "bad-text" // a fix must be between 1 and 200 characters (#2858)
+  | "same" // a fix that is what the line already says (#2858)
+  | "not-yours" // only the speaker or the DM may fix a line (#2858)
+  | "not-recorded" // the speaker has stopped being recorded, so the line can't be changed (#2858)
+  | "line-changed" // the line was changed by someone else since the page was read (#2858)
+  | "line-gone" // the line is gone (#2858)
+  | "not-written" // DMbot could not save the change (#2858)
+  | "not-available" // fixing lines is not on right now (#2858)
+  | "fix-open" // this line already has a fix waiting for the DM (#2858)
+  | "fix-many" // the person already has three fixes waiting for the DM (#2858)
+  | "no-dm-screen" // the campaign has no DM screen to send a fix to (#2858)
+  | "fix-queue-full" // too many fixes are waiting in this campaign (#2858)
+  | "fix-bad-choice" // a fix choice the bot does not know (#2858)
+  | "player-stopped" // the speaker has stopped being recorded (#2858)
+  | "secret" // the change would reveal a secret, so it can't be made (#2858)
   | "bad-document-link" // a document link the bot can't read (#2843); its own words, not the character link's
   | "not-ready" // the API has no move codes yet (#1231)
   | "no-email" // no payment email is stored yet, so a move code has nowhere to go (#1246)
@@ -1805,6 +1869,7 @@ export type ApiErrorKind =
   | "name-mismatch" // the typed name isn't the campaign's (#2555)
   | "no-backup" // a Try It campaign has no backup (#2555)
   | "backup-failed" // the copy could not be made, or was not ready in time (#2751)
+  | "nothing-to-delete" // the person has no lines of theirs in that server to delete (#2769)
   | "backup-too-many-files" // more transcripts files than one backup carries (#2772)
   | "backup-part" // one file of a backup did not come through, so the set is not complete (#2772)
   | "backup-unfinished" // a copy that can never be a whole backup (its main file already taken, or files missing)
@@ -2118,6 +2183,15 @@ export interface AccountApi {
   campaignSheets?(campaignRef: string): Promise<CharacterSheets>;
   /** One sheet choice (#2816), queued for the bot: returns the answer's id to poll. `entity` is "-" for a DM's read again. */
   chooseSheet?(campaignRef: string, entity: string, choice: SheetChoice): Promise<string>;
+  /** Asks to fix one line of a session's cleaned transcript; the answer comes back through `fixAnswer` (#2858). */
+  fixTranscriptLine?(
+    campaignRef: string,
+    number: number,
+    line: { speaker: string; startedMs: number },
+    text: string,
+  ): Promise<{ answer: string; mode: FixMode }>;
+  /** Where one line fix stands (#2858). */
+  fixAnswer?(campaignRef: string, number: number, answer: string): Promise<FixAnswer>;
   /** Where one of the person's own sheet choices stands (#2816). */
   sheetAnswer?(campaignRef: string, answer: string): Promise<SheetAnswer>;
   /** Who can be offered as a game master, searched by name (#2768): at most 25, members who agreed to be recorded. */
@@ -2238,6 +2312,14 @@ export interface AccountApi {
   characters?(): Promise<Character[]>;
   /** Stop recording me in one server (#1151). Starting again stays in Discord. */
   stopRecording(serverId: string): Promise<void>;
+  /** The person's own line counts in a server, and a deletion of theirs that is open (#2769). Missing from an older
+   * API, and answering `not-found` while the server has it switched off. */
+  myLines?(serverId: string): Promise<MyLines>;
+  /** Ask the bot to delete the person's own lines in the server, as Discord's 🗑 button does; the id of the request
+   * (the same one again while it is open). Refusals: `nothing-to-delete`, `too-soon`, `not-found`. */
+  deleteMyLines?(serverId: string): Promise<string>;
+  /** Where that deletion stands. */
+  myLinesStatus?(serverId: string, id: string): Promise<MyLinesStatus>;
   /** Where "Add DMbot" goes: the API, which sends the browser on to Discord. */
   installUrl(serverId: string): string;
   /** Say you added DMbot to a server it joined through a plain link. */
@@ -2259,6 +2341,26 @@ export interface AccountApi {
   /** Step 2: delete the account and its data now. */
   confirmDelete(token: string): Promise<void>;
 }
+
+/** The fix routes' own codes (#2858). Kept apart from the shared table so a bare `open` or `many` from any other
+ * route can never show the fix words. Only the two fix calls read it. */
+const fixErrorKinds: Record<string, ApiErrorKind> = {
+  bad_text: "bad-text",
+  same: "same",
+  not_yours: "not-yours",
+  not_recorded: "not-recorded",
+  line_changed: "line-changed",
+  line_gone: "line-gone",
+  not_written: "not-written",
+  not_available: "not-available",
+  open: "fix-open",
+  many: "fix-many",
+  no_dm_screen: "no-dm-screen",
+  queue_full: "queue-full",
+  bad_choice: "bad-choice",
+  player_stopped: "player-stopped",
+  secret: "secret",
+};
 
 const errorKinds: Record<string, ApiErrorKind> = {
   plan: "plan-needed",
@@ -2383,6 +2485,7 @@ const errorKinds: Record<string, ApiErrorKind> = {
   bad_action: "bad-action",
   bad_setting: "bad-setting",
   bad_value: "bad-value",
+  nothing_to_delete: "nothing-to-delete",
   plan_holder: "plan-holder",
   too_many: "too-many-masters",
   unknown_person: "unknown-person",
@@ -2421,6 +2524,7 @@ export function httpApi(
     asFile = false,
     raw?: Blob,
     anonymous = false,
+    kinds: Record<string, ApiErrorKind> = errorKinds,
   ): Promise<unknown> {
     let response: Response;
     try {
@@ -2469,7 +2573,7 @@ export function httpApi(
       // FastAPI's own answer is {"detail":"Not Found"}; or the proxy's page): that is "not found", not
       // an outage. A 404 with a known code keeps what the code says (errorKinds is read first).
       const kind =
-        errorKinds[code] ??
+        kinds[code] ??
         (response.status === 403
           ? "not-allowed"
           : response.status === 404
@@ -2851,6 +2955,29 @@ export function httpApi(
         "GET",
         `/me/campaigns/${encodeURIComponent(campaignRef)}/sheets/answers/${encodeURIComponent(answer)}`,
       )) as SheetAnswer,
+    fixTranscriptLine: async (campaignRef, number, line, text) => {
+      const queued = (await call(
+        "POST",
+        `/me/campaigns/${encodeURIComponent(campaignRef)}/transcripts/${number}/fix`,
+        { speaker: line.speaker, startedMs: line.startedMs, text },
+        false,
+        undefined,
+        false,
+        fixErrorKinds,
+      )) as { answer: string; mode: FixMode };
+      if (!queued?.answer) throw new ApiError("server");
+      return queued;
+    },
+    fixAnswer: async (campaignRef, number, answer) =>
+      (await call(
+        "GET",
+        `/me/campaigns/${encodeURIComponent(campaignRef)}/transcripts/${number}/fix/${encodeURIComponent(answer)}`,
+        undefined,
+        false,
+        undefined,
+        false,
+        fixErrorKinds,
+      )) as FixAnswer,
     campaignGameMasterCandidates: async (campaignRef, query) =>
       (
         (await call(
@@ -3316,6 +3443,11 @@ export function httpApi(
     stopRecording: async (serverId) => {
       await call("POST", `/me/recording/${encodeURIComponent(serverId)}/stop`);
     },
+    myLines: async (serverId) => (await call("GET", `/me/transcripts/${encodeURIComponent(serverId)}/mine`)) as MyLines,
+    deleteMyLines: async (serverId) =>
+      ((await call("POST", `/me/transcripts/${encodeURIComponent(serverId)}/delete`)) as { id: string }).id,
+    myLinesStatus: async (serverId, id) =>
+      (await call("GET", `/me/transcripts/${encodeURIComponent(serverId)}/delete/${encodeURIComponent(id)}`)) as MyLinesStatus,
     requestDelete: async () =>
       (
         (await call("POST", "/account/delete/request")) as {

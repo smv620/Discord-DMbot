@@ -50,6 +50,8 @@ from dmbot.web import (
     handover_accept,
     handover_offer,
     imports,
+    line_fixes,
+    my_lines,
     names_smart,
     npc_pages,
     offers,
@@ -1801,6 +1803,11 @@ def create_app(
         "unknown_person": (400, "unknown_person"),
     }
 
+    line_delete_refusals = {
+        "nothing_to_delete": (409, "nothing_to_delete"),  # no lines of theirs in that server
+        "too_soon": (429, "too_soon"),
+    }
+
     delete_refusals = {
         "not_found": (404, "not_found"),
         "not_the_owner": (403, "not_the_owner"),
@@ -2447,6 +2454,72 @@ def create_app(
             status, detail = recap_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 
+    line_fix_refusals = {
+        "bad_text": (400, "bad_text"),
+        "same": (400, "same"),
+        "bad_choice": (422, "bad_choice"),
+        "not_yours": (403, "not_yours"),
+        "not_recorded": (403, "not_recorded"),
+        "not_found": (404, "not_found"),
+        "open": (409, "open"),  # this line already has a fix waiting for the DM
+        "many": (409, "many"),  # three of this person's fixes are waiting
+        "no_dm_screen": (409, "no_dm_screen"),
+        "queue_full": (429, "queue_full"),  # twenty waiting in the campaign: a flood guard only
+    }
+
+    @app.post("/me/campaigns/{ref}/transcripts/{number}/fix", status_code=202)
+    async def me_transcript_fix(
+        ref: str, number: int, request: Request, signed: Signed
+    ) -> dict[str, str]:
+        """Fix one spoken line (#2858): the line's own speaker suggests new words for the DM to
+        check, a DM of the campaign rewrites any spoken line. `{answer, mode}`; poll
+        `.../fix/{answer}`. 404 while DMBOT_WEB_LINE_FIX is off."""
+        session, _token = signed
+        if not settings.line_fix_on:
+            raise HTTPException(status_code=404, detail="not_found")
+        body = await small_json(request)
+        speaker, started, text = body.get("speaker"), body.get("startedMs"), body.get("text")
+        if not isinstance(speaker, str) or type(started) is not int or not isinstance(text, str):
+            raise HTTPException(status_code=422, detail="bad_choice")
+        try:
+            made = await line_fixes.request(
+                db,
+                session,
+                ref,
+                number,
+                speaker,
+                started,
+                text,
+                now=clock(),
+                enforce_plans=settings.enforce_plans,
+            )
+        except RecapError as err:
+            status, detail = line_fix_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+        return {"answer": made["id"], "mode": made["mode"]}
+
+    @app.get("/me/campaigns/{ref}/transcripts/{number}/fix/{answer}")
+    async def me_transcript_fix_status(
+        ref: str, number: int, answer: str, signed: Signed
+    ) -> dict[str, Any]:
+        """Where the person's own fix stands, in the shared progress shape (#2858), with `result`
+        ("sent" or "changed") once it is done."""
+        session, _token = signed
+        if not settings.line_fix_on:
+            raise HTTPException(status_code=404, detail="not_found")
+        try:
+            return await line_fixes.status(
+                db,
+                session,
+                ref,
+                number,
+                answer,
+                now=clock(),
+                enforce_plans=settings.enforce_plans,
+            )
+        except RecapError:
+            raise HTTPException(status_code=404, detail="not_found") from None
+
     @app.get("/me/campaigns/{ref}/transcripts/{number}/download")
     async def me_transcript_download(
         ref: str, number: int, signed: Signed, version: str = "cleaned"
@@ -2748,6 +2821,45 @@ def create_app(
                 )
             status, detail = recap_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/transcripts/{server_id}/mine")
+    async def my_lines_counts(server_id: str, signed: Signed) -> dict[str, Any]:
+        """How many lines the signed-in person has in one of their servers, in how many sessions,
+        and their "Delete my transcripts" that is open, if any (#2769). Their own lines only;
+        counts, never words. 404 while DMBOT_WEB_LINE_DELETE is off."""
+        session, _token = signed
+        if not settings.line_delete_on:
+            raise HTTPException(status_code=404, detail="not_found")
+        try:
+            return await my_lines.counts(db, session, server_id)
+        except RecapError:
+            raise HTTPException(status_code=404, detail="not_found") from None
+
+    @app.post("/me/transcripts/{server_id}/delete", status_code=202)
+    async def my_lines_delete(server_id: str, signed: Signed) -> dict[str, str]:
+        """Ask the bot to delete the signed-in person's own lines in one of their servers, as
+        Discord's 🗑 button does (#2769): `{id}`, the same one again while a request is open.
+        409 `nothing` when they have no lines there, 429 `too_soon` past ten requests an hour."""
+        session, _token = signed
+        if not settings.line_delete_on:
+            raise HTTPException(status_code=404, detail="not_found")
+        try:
+            return {"id": await my_lines.request(db, session, server_id)}
+        except RecapError as err:
+            status, detail = line_delete_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/transcripts/{server_id}/delete/{deletion_id}")
+    async def my_lines_status(server_id: str, deletion_id: str, signed: Signed) -> dict[str, Any]:
+        """Where the person's own deletion stands, in the shared progress shape, with the counts it
+        removed once done (#2769)."""
+        session, _token = signed
+        if not settings.line_delete_on:
+            raise HTTPException(status_code=404, detail="not_found")
+        try:
+            return await my_lines.status(db, session, server_id, deletion_id)
+        except RecapError:
+            raise HTTPException(status_code=404, detail="not_found") from None
 
     @app.post("/me/recording/{server_id}/stop", status_code=204)
     async def stop_recording(server_id: str, signed: Signed) -> Response:

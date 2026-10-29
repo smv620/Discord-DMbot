@@ -220,11 +220,10 @@ class Drift(DatabaseTest):
         """The leads' filter and the website's reading doors hide the same kinds from members; if
         one list changes and not the other, a player-facing answer could start from a plot note."""
         import re
-        from pathlib import Path
 
         from dmbot import schema
 
-        source = Path(schema.__file__).read_text()
+        source = "\n".join(sql for _, sql in schema.MIGRATIONS)  # (the SQL the migrations run)
         found = {
             tuple(re.findall(r"'(\w+)'", m))
             for m in re.findall(r"e\.type NOT IN \(([^)]*)\)", source)

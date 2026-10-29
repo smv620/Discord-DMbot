@@ -40,6 +40,7 @@ export const waitingWords = {
   whichHeading: "Same name, which one?",
   whichNote: "A name in your backstory matches more than one entry.",
   whichQuestion: (word: string): string => `Which ${word} is this?`,
+  checkLine: (check: string): string => `DMbot's check: ${check}`,
   whichLine: (other: string, how: string, word: string, otherIsSubject: boolean): string =>
     otherIsSubject ? `${other} ${how} ${word}` : `${word} ${how} ${other}`,
   neither: "Neither",

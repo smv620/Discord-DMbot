@@ -37,6 +37,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from dmbot import (
+    accounts,
     alerts,
     campaign_cap,
     entitlements,
@@ -59,7 +60,7 @@ from dmbot.ai import FEATURE_TIERS, AIModelTier, AnthropicClient, Feature, Gemin
 from dmbot.ai_watch import AIWatch
 from dmbot.audio.segmenter import Segmenter, Utterance
 from dmbot.audio_check import Verdict
-from dmbot.campaigns import Campaign, CampaignStore, web_backup, web_restore
+from dmbot.campaigns import Campaign, CampaignStore, web_backup, web_line_delete, web_restore
 from dmbot.campaigns.models import (
     SHARED_STORY,
     STORY_GUIDE,
@@ -374,6 +375,7 @@ from dmbot.transcript import (
     rank_options,
     refix,
     speaker_ai,
+    web_line_fixes,
 )
 from dmbot.transcript import name_pass as name_pass_logic
 from dmbot.transcript import pronounced as pronounced_aloud
@@ -392,6 +394,7 @@ from dmbot.transcript.cleaner import (
     matcher_names,
     own_name,
     safe_answer,
+    text_names_a_secret,
     with_ending,
 )
 from dmbot.transcript.close_calls import CloseCalls
@@ -524,7 +527,6 @@ from dmbot.ui.transcripts import (
     lookup_members,
     transcript_command,
 )
-from dmbot.web import accounts
 
 REPORT_CALLS = 8  # AI calls a session may spend on the after-session report (grading and sorting)
 MEANING_RUN_CALLS = 50  # Voyage AI calls one after-session run may make (64 texts each)
@@ -613,6 +615,7 @@ MEANING_WAIT_S = (
 RECALL_WAIT_S = 0.5  # and this long for the confirmed facts around them (#1370): optional context
 NAMES_WAIT_S = 1.0  # the sidebar waits this long for a campaign's names, then answers without
 PLAN_READS_AT_ONCE = 2  # adventures read at the same time, bot-wide: the AI and the bill are shared
+WEB_DOCUMENT_COOLDOWN_S = 60  # per person and campaign: each website document read is an AI read
 GATE_TIMEOUT_S = 2  # a button press must be answered within Discord's 3 s: fail open sooner
 CHAT_BLOCKED_TTL_S = 60  # how long the list of channels never read as chat is kept (#1118)
 CLOCK_PHRASE_GAP_S = 300  # the same rest said twice within this is counted once (#965)
@@ -881,15 +884,23 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self._rule_tasks: dict[int, asyncio.Task[None]] = {}  # one running choice a server
         self._report_tasks: dict[int, asyncio.Task[None]] = {}  # one running report a server
         self._put_back_tasks: dict[int, asyncio.Task[None]] = {}  # one read a server (#2587)
+        self._sheet_tasks: dict[int, asyncio.Task[None]] = {}  # one running choice a server (#2817)
+        self._web_document_last: dict[tuple[int, int, str], float] = {}  # website document reads
         # "Make the report again", asked for on the website (#2805).
         self.report_requests = (
             web_report_requests.RequestStore(recaps.db) if recaps is not None else None
         )
         # What players and DMs chose on the website's character sheets page (#2817).
         self.web_sheets = web_sheets.ActionStore(recaps.db) if recaps is not None else None
+        # A line fixed from the website's Transcripts page (#2883).
+        self.web_line_fixes = web_line_fixes.ActionStore(recaps.db) if recaps is not None else None
+        self._fix_tasks: dict[int, asyncio.Task[None]] = {}  # one running fix a server
         self.peek_notices = PeekNotices(recaps.db) if recaps is not None else None
         self.web_delete_notices = WebDeleteNotices(recaps.db) if recaps is not None else None
         self.web_backups = web_backup.WebBackups(recaps.db) if recaps is not None else None
+        self.web_line_deletions = (
+            web_line_delete.WebLineDeletions(recaps.db) if recaps is not None else None
+        )
         # Copies restored from the website, waiting for the bot to apply them (#2746).
         self.web_restores = web_restore.WebRestores(recaps.db) if recaps is not None else None
         self._clip_sweep_rounds = 0
@@ -1359,7 +1370,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         # recorded()'s database lookups still running, one per person: a press while one
         # runs waits on it rather than starting another (a stalled database would pile up).
         self._lookups: dict[tuple[int, int], asyncio.Task[ConsentStatus]] = {}
-        self._asking: set[asyncio.Task[None]] = set()  # private-message rounds in flight
+        # Private-message rounds and the website's background work in flight.
+        self._asking: set[asyncio.Task[None]] = set()
         # Loops that last as long as a session (#1128, #1129): kept apart from `_asking`, which
         # tests and `close()` wait on until it is empty.
         self._loops: set[asyncio.Task[None]] = set()
@@ -10280,12 +10292,35 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             return
         for guild_id in await self.campaigns.guilds_with_campaigns():
             for _ in range(web_backup.PER_ROUND):
+                # Shutting down: the row is still waiting, so the next start takes it.
+                if self._closing:
+                    return
                 item = await store.claim_next(guild_id)
                 if item is None:
                     break
                 with log_context(guild_id=guild_id, campaign_id=item.campaign_id):
                     why = await web_backup.build(self, guild_id, item, store)
                     log.info("Website backup: %s", why or "done")  # the word only
+
+    async def run_web_line_deletions(self) -> None:
+        """Carry out the "Delete my transcripts" asked for on the website (#2780): the same call
+        as Discord's 🗑 button, for the person who asked and nobody else. Only servers the bot is
+        in now, so a request for a server it has left waits (the page says it may still happen).
+        Counts only are logged."""
+        store = self.web_line_deletions
+        if store is None or self.transcripts is None:
+            return
+        for guild in list(self.guilds):
+            try:  # one server's trouble must not starve the others
+                for _ in range(web_line_delete.PER_ROUND):
+                    item = await store.claim_next(guild.id)
+                    if item is None:
+                        break
+                    with log_context(guild_id=guild.id):
+                        why = await web_line_delete.carry_out(self, guild.id, item, store)
+                        log.info("Website line deletion: %s", why or "done")  # the word only
+            except Exception as exc:
+                log.warning("The website line deletions of a server failed: %s", type(exc).__name__)
 
     async def run_web_restores(self) -> None:
         """Apply the copies DMs uploaded on the website (#2746), one at a time per server, with
@@ -10297,6 +10332,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         store.beat()  # a round began: the worker is alive
         for guild in list(self.guilds):
             for _ in range(web_restore.PER_ROUND):
+                # Shutting down: the row is still waiting, so the next start takes it.
+                if self._closing:
+                    return
                 item = await store.claim_next(guild.id)
                 if item is None:
                     break
@@ -10429,6 +10467,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             return
         for guild in list(self.guilds):
             for _ in range(NAME_ANSWERS_PER_ROUND):
+                # Shutting down: the row is still waiting, so the next start takes it.
+                if self._closing:
+                    return
                 action = await store.claim_next(guild.id)
                 if action is None:
                     break
@@ -10571,6 +10612,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             return
         for guild in list(self.guilds):
             for _ in range(web_settings.SETTINGS_PER_ROUND):
+                # Shutting down: the row is still waiting, so the next start takes it.
+                if self._closing:
+                    return
                 item = await store.claim_next(guild.id)
                 if item is None:
                     break
@@ -10591,13 +10635,18 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             task = running.get(guild.id)
             if task is not None and not task.done():
                 continue  # one report at a time for a server; the loop does not wait for it
+            # Shutting down: the row is still waiting, so the next start takes it.
+            if self._closing:
+                return
             req = await store.claim_next(guild.id)
             if req is None:
                 continue
             gid = guild.id
             task = self._track(self._run_report_request(store, gid, req), "web-report-request")
             if task is None:
-                continue  # shutting down: the row is retaken after the door's ten minutes
+                # Shutting down: the row stays working and is retaken after RETAKE_AFTER_S
+                # (core/src/dmbot/memory/web_report_requests.py).
+                continue
             running[gid] = task
 
             def forget(done: asyncio.Task[None], gid: int = gid) -> None:
@@ -10658,6 +10707,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             task = running.get(guild.id)
             if task is not None and not task.done():
                 continue  # one at a time for a server; the loop does not wait for it
+            # Shutting down: the row is still waiting, so the next start takes it.
+            if self._closing:
+                return
             item = await store.claim_next(guild.id)
             if item is None:
                 continue
@@ -10703,6 +10755,13 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             sheets_ui.last_link, (guild_id, user_id), sheets_ui.LINK_COOLDOWN_S
         )
 
+    def document_too_soon(self, guild_id: int, user_id: int, campaign_id: str) -> bool:
+        """The website's document reads: 60 s a person for a campaign (the door's own limit, so
+        this is only a second check). Each one costs an AI read, so it has its own count."""
+        return sheets_ui.too_soon(
+            self._web_document_last, (guild_id, user_id, campaign_id), WEB_DOCUMENT_COOLDOWN_S
+        )
+
     def read_too_soon(self, guild_id: int, campaign_id: str) -> bool:
         return sheets_ui.too_soon(
             sheets_ui.last_refresh, (guild_id, campaign_id), sheets_ui.REFRESH_COOLDOWN_S
@@ -10717,16 +10776,23 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         store = self.web_sheets
         if store is None or self.sheets is None:
             return
-        running: dict[int, asyncio.Task[None]] = self.__dict__.setdefault("_sheet_tasks", {})
+        running = self._sheet_tasks
         for guild in list(self.guilds):
             task = running.get(guild.id)
             if task is not None and not task.done():
                 continue  # one at a time for a server; the loop does not wait for it
+            # Shutting down: the row is still waiting, so the next start takes it.
+            if self._closing:
+                return
             item = await store.claim_next(guild.id)
             if item is None:
                 continue
             gid = guild.id
-            task = asyncio.create_task(self._run_sheet_choice(store, gid, item))
+            task = self._track(self._run_sheet_choice(store, gid, item), "web-sheet-choice")
+            if task is None:
+                # Shutting down: the row stays working and is retaken after RETAKE_AFTER_S
+                # (core/src/dmbot/memory/web_sheets.py).
+                continue
             running[gid] = task
 
             def forget(done: asyncio.Task[None], gid: int = gid) -> None:
@@ -10740,6 +10806,74 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
     ) -> None:
         with log_context(guild_id=guild_id, campaign_id=item.campaign_id):
             await web_sheets.run_one(self, store, guild_id, item)
+
+    # ---- a line fixed from the website (#2883): the Host of transcript.web_line_fixes ----
+
+    def fix_has_consent(self, guild_id: int, user_id: int) -> bool:
+        return self.consent.has_consent(guild_id, user_id)
+
+    async def fix_names_a_secret(self, guild_id: int, campaign_id: str, text: str) -> bool:
+        lookup = await self.lookup.get(guild_id, campaign_id) if self.lookup else None
+        return lookup is None or text_names_a_secret(lookup, text)
+
+    def fix_session_running(self, guild_id: int, session_id: str) -> bool:
+        table = self.tables.get(guild_id)
+        return table is not None and table.transcript_session_id == session_id
+
+    async def fix_post_suggestion(
+        self,
+        guild_id: int,
+        channel_id: int,
+        made: line_suggestions.Suggestion,
+        line: line_suggestions.Own,
+        text: str,
+    ) -> bool:
+        """The DM-screen question, worded and buttoned exactly as `/dmbot fix` posts it."""
+        try:
+            member = await self.find_member(guild_id, made.user_id)
+        except Exception:  # the name is only for the DM's line: don't lose the question for it
+            member = None
+        who = member.name if member is not None else "Someone"
+        posted = await self.post_message(
+            channel_id,
+            dm_text(who, line.heard, line.text, text),
+            suggestion_view(made.id),
+            remember=("fix", made.id),
+        )
+        return posted is not None
+
+    async def run_web_line_fixes(self) -> None:
+        """Fixes asked for on the Transcripts page. Each runs as a tracked background task, at
+        most one a server, so the poll loop's other website actions do not wait for it (a
+        suggestion posts to Discord, a rewrite touches the helpers' copies). Only outcome words
+        are logged, never the person's words."""
+        store = self.web_line_fixes
+        if store is None:
+            return
+        for guild in list(self.guilds):
+            task = self._fix_tasks.get(guild.id)
+            if task is not None and not task.done():
+                continue
+            item = await store.claim_next(guild.id)
+            if item is None:
+                continue
+            gid = guild.id
+            started = self._track(self._run_line_fix(store, gid, item), f"line-fix-{gid}")
+            if started is None:  # shutting down: the row is taken again after a restart
+                return
+            self._fix_tasks[gid] = started
+
+            def forget(done: asyncio.Task[None], gid: int = gid) -> None:
+                if self._fix_tasks.get(gid) is done:
+                    del self._fix_tasks[gid]
+
+            started.add_done_callback(forget)
+
+    async def _run_line_fix(
+        self, store: web_line_fixes.ActionStore, guild_id: int, item: web_line_fixes.Fix
+    ) -> None:
+        with log_context(guild_id=guild_id, campaign_id=item.campaign_id):
+            await web_line_fixes.run_one(self, store, guild_id, item)
 
     async def _trial_loop(self) -> None:
         """Every hour: the last-day messages and the automatic extensions (#1229). Waits a

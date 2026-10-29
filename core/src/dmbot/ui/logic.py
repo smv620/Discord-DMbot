@@ -19,6 +19,7 @@ from dmbot.campaigns.models import (
     DM_SCREEN_LEVELS_OFFERED,
 )
 from dmbot.consent_words import CONSENT_LABEL, MIN_AGE
+from dmbot.discord_limits import PHONE_LABEL_MAX as PHONE_LABEL_MAX
 from dmbot.discord_limits import shorten as shorten
 from dmbot.transcription.config import Engine
 
@@ -28,10 +29,8 @@ FILE_MAX = 10 * 1024 * 1024  # the biggest file a bot may send
 OPTION_LABEL_MAX = 100
 DESCRIPTION_MAX = 100  # a menu choice's second line
 SELECT_OPTIONS_MAX = 25
-# What a phone shows of a button or menu choice before cutting it off (#112). Labels
-# DMbot writes itself stay within this. Names people chose (a campaign's) are cut to
-# NAME_LABEL_MAX, only in menu lists, which open full-width; never in buttons.
-PHONE_LABEL_MAX = 25
+# Names people chose (a campaign's) are cut to NAME_LABEL_MAX, only in menu lists, which open
+# full-width; never in buttons. PHONE_LABEL_MAX (the phone's limit) is in discord_limits.
 NAME_LABEL_MAX = 32
 
 NO_CAMPAIGN_ACCESS = "Only this campaign's DM (or a server manager) can do that."

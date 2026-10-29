@@ -32,6 +32,8 @@ STALL_AFTER_S: Final[Mapping[str, int | None]] = {
     "writing_recap": 30 * 60,
     "recap_not_written": None,  # the recap was held, declined or removed: a resting end
     "waiting": 2 * 60,  # a copy asked for on the website: the bot takes it within seconds
+    "fixing": 5 * 60,  # a line fixed at a person's asking (#2858)
+    "deleting": 10 * 60,  # a person's lines being deleted at their asking (#2769)
     "reading": 5 * 60,  # ... then reads the campaign
     "packing": 5 * 60,  # ... and packs it
     # A backup loaded on the website (#2745): the person's own files arriving (waits for them),
