@@ -250,6 +250,7 @@ from dmbot.memory import (
     meaning,
     plan_reader,
     report_make,
+    scan_kinds,
     voyage,
     web_actions,
     web_report_requests,
@@ -481,6 +482,7 @@ from dmbot.ui.line_fix import (
 )
 from dmbot.ui.live_heads_up import LiveHeadsUpButton, heads_up_text, heads_up_view
 from dmbot.ui.migrate import dmbot_migrate  # noqa: F401 (registers it)
+from dmbot.ui.name_background import scan_view
 from dmbot.ui.name_card import (
     FinishPastButton,
     UndoButton,
@@ -9821,12 +9823,17 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             if name_key(name) not in skip and name_key(name) not in have:
                 found.append(Suggestion(name, times))
         added: list[str] = []
+        kinds = await self._scan_kinds(gid, cid, [f.name for f in found], lines)
+        log.info(  # counts only
+            "Name scan: %d name(s) suggested, %d with a kind, %d without",
+            len(found), len(kinds), len(found) - len(kinds),
+        )  # fmt: skip
         for suggestion in found:
             try:
                 written = await self.memory.add_entity(
                     gid,
                     cid,
-                    type="concept",
+                    type=kinds.get(suggestion.name, "concept"),  # (the card asks when none)
                     name=suggestion.name,
                     source="scan",
                     description=f"Heard {suggestion.times} times",
@@ -9854,6 +9861,35 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 except MemoryRuleError as exc:
                     log.info("Skipped a name heard with a suggestion: %s", exc)
         return added
+
+    async def _scan_kinds(
+        self, gid: int, cid: str, names: Sequence[str], lines: Sequence[str]
+    ) -> dict[str, str]:
+        """What each suggested name is (npc, place, faction, item, event), asked of the AI from the
+        sentence it was said in, so the review card can say "Yes, a place" (#2937). Never raises:
+        no AI, a plan without it, or a failed call mean no kind for those names, and the card
+        shows its own picker. Counts only in the log."""
+        ai = self.name_pass_ai
+        if ai is None or not names:
+            return {}
+        try:
+            campaign = await self.campaigns.get(gid, cid)
+            if campaign is None or not await self.plan_allows("ai", gid, campaign, fail_open=False):
+                return {}
+            kinds: dict[str, str] = {}
+            for batch in scan_kinds.batches(names):
+                ask = [(n, scan_kinds.context_for(n, lines)) for n in batch]
+                reply = await ai.complete(
+                    scan_kinds.SYSTEM,
+                    scan_kinds.request(ask),
+                    max_tokens=4000,
+                    schema=scan_kinds.SCHEMA,
+                )
+                kinds.update(scan_kinds.read_answer(reply.text, batch))
+            return kinds
+        except Exception as exc:  # the kinds are a nicety: the suggestions are made without them
+            log.warning("Couldn't ask for the kinds of suggested names: %s", type(exc).__name__)
+            return {}
 
     async def _keep_places(
         self,
@@ -9965,11 +10001,21 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         summary tells them when it is sent, and then empties the list)."""
         names, table.new_names = table.new_names, []
         if names and table.campaign_id is not None:
-            await self.post(
-                table.screen_channel_id,
-                after_session_text(names),
-                view=review_view(table.campaign_id),
-            )
+            view = review_view(table.campaign_id)
+            if self.memory is not None:
+                try:  # "Add all 4 places" for the names the scan gave a kind (#2937)
+                    asked = set(names)
+                    waiting = [
+                        e
+                        for e in await self.memory.entities(
+                            table.guild_id, table.campaign_id, statuses=[PROPOSED]
+                        )
+                        if e.name in asked
+                    ]
+                    view = scan_view(table.campaign_id, waiting)
+                except Exception:  # only the extra buttons are lost
+                    log.exception("Couldn't group the new names by kind")
+            await self.post(table.screen_channel_id, after_session_text(names), view=view)
 
     async def _dm_trial_user(self, user_id: int, text: str) -> trial_jobs.DmResult:
         """A private message to a person who is not at a table now. "closed" when Discord

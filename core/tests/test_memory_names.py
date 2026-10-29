@@ -2896,7 +2896,7 @@ class Review(NamesTest):
         await self.spelled("Zorgul")
         it = self.it()
         await ui.start_review(it, self.campaign.id)
-        labels = [b.label for b in it.response.sent[0][1]["view"].children]
+        labels = [getattr(b, "label", "") or "" for b in it.response.sent[0][1]["view"].children]
         self.assertFalse(any("Fix spelling" in label for label in labels))
 
     async def test_a_near_match_comes_pre_filled_and_one_press_adds_it(self) -> None:

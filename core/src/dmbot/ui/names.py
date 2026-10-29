@@ -986,9 +986,10 @@ def _heard(entity: Entity) -> str:
 
 
 def background_kind(entity: Entity) -> str:
-    """The kind a suggestion read from the DM's background was given (npc, place…), or "" when
-    it has none to confirm as (an idea, or not from a background)."""
-    if entity.source != BACKGROUND_SOURCE:  # marked by where it came from, not by its words
+    """The kind a suggestion was given when it was read (npc, place…), or "" when it has none to
+    confirm as (an idea, or nothing guessed). From the DM's background (#2167) or from the name
+    scan, whose AI guesses a kind from the sentence (#2937)."""
+    if entity.source not in (BACKGROUND_SOURCE, "scan"):  # marked by where it came from
         return ""
     if entity.type == "character":
         return "npc" if entity.role == "npc" else ""
@@ -1200,6 +1201,7 @@ class SuggestionReview(_Menu):
         self.later = 0  # left for another time this round
         self.match: Match | None = None  # the known name the current one sounds like
         self.known_kind = ""  # the kind a name from the DM's background already has (#2167)
+        self.name = ""  # the current suggestion's name, for the picker on its card (#2937)
         self.spelled = ""  # the spelling, when the current one was spelled out at the table (#2168)
         self.fix_to = ""  # how someone spelled this pending suggestion, when it differs (#2168)
         self.also: list[str] = []  # names heard with the current one
@@ -1223,6 +1225,7 @@ class SuggestionReview(_Menu):
         self.match = await _review_match(memory, campaign, entity)
         # A name read from the DM's background already has its kind; "Yes" confirms it as that.
         self.known_kind = background_kind(entity)
+        self.name = entity.name
         self.spelled = entity.name if entity.description.startswith(SPELLED_OUT) else ""
         self.fix_to = spelled_fix(entity)
         own = name_key(entity.name)
@@ -1341,10 +1344,26 @@ class SuggestionReview(_Menu):
                 (self._same, "🔗 Same as a known name…", discord.ButtonStyle.secondary),
             ]
         else:
-            buttons = [
-                (self._yes, "✅ Yes, add it", discord.ButtonStyle.success),
-                (self._same, "🔗 Same as a known name…", discord.ButtonStyle.primary),
-            ]
+            # No kind was guessed: the picker is on the card itself, so one press still adds it
+            # (#2937). "Same as a known name" waits beside the "not now" answers below.
+            buttons = []
+            self.kind = _Select(
+                self._kind_picked,
+                placeholder=logic.shorten(f"What is {self.name or 'it'}? Pick to add it", 150),
+                options=[
+                    discord.SelectOption(label=label, value=kind) for kind, label in KINDS.items()
+                ],
+                row=0,
+            )
+            self.add_item(self.kind)
+            self.add_item(
+                _Button(
+                    self._same,
+                    label="🔗 Same as a known name…",
+                    style=discord.ButtonStyle.primary,
+                    row=1,
+                )
+            )
         for handler, label, style in buttons:
             self.add_item(_Button(handler, label=label, style=style, row=0))
         # The two "not now" answers on their own row, so a phone never cuts the labels.
