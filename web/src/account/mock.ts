@@ -2005,6 +2005,12 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         }
         case "kind":
           if (!NAME_KINDS.some((k) => k.key === change.kind)) throw new ApiError("bad-kind");
+          if (change.player !== undefined) {
+            // The bot's two refusals: not an ID (or not for a player character), and an ID nobody in the server has.
+            if (change.kind !== "player_character" || !/^[1-9][0-9]{14,18}$/.test(change.player)) throw new ApiError("bad-player");
+            if (change.player.endsWith("0000")) throw new ApiError("not-member");
+            if (change.player.endsWith("9999")) throw new ApiError("bot-player");
+          }
           row.kind = change.kind;
           if (change.kind !== "npc") row.npcId = null;
           break;

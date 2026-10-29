@@ -191,6 +191,7 @@ async def _add_said_as(
 NAME_MAX = 100  # a name or another name: the same limit as the bot's
 KIND_PATTERN = re.compile(r"^[a-z][a-z _-]{0,39}$")
 ID_PATTERN = re.compile(r"^[0-9a-f]{32}$")
+PLAYER_ID = re.compile(r"^[1-9][0-9]{14,18}$")  # a Discord user ID (a snowflake)
 ACTIONS = (
     "spell",
     "kind",
@@ -236,6 +237,15 @@ def _arguments(body: object) -> tuple[str, str, str, str, bool]:
         kind = str(body.get("kind") or "")
         if not KIND_PATTERN.match(kind):
             raise RecapError("bad_kind")
+        player = body.get("player")
+        if player is not None and player != "":
+            # Who plays a player character: a Discord ID, digits only (a name is not one).
+            # The door and the bot check it again; the bot also checks the person is in the server.
+            if kind != "player_character" or not isinstance(player, str):
+                raise RecapError("bad_player")
+            text = player.strip()
+            if not PLAYER_ID.match(text):
+                raise RecapError("bad_player")
     elif action in ("add-other", "remove-other"):
         text = _text(body.get("other"))
     elif action == "secret":  # one other name; the main name can't be secret (as on the card)

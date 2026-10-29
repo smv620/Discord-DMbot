@@ -34,12 +34,12 @@ class Acting(Listing):
     async def queue(self, entity: str, **body: Any) -> str:
         return await all_names.queue_action(self.web, self.session, self.cref, entity, body)
 
-    async def apply_all(self, dms: Any = None) -> list[wa.Outcome]:
+    async def apply_all(self, dms: Any = None, member_of: Any = None) -> list[wa.Outcome]:
         """The bot's loop for the queue: claim, apply, finish, until it is empty."""
         done = []
         while (action := await self.actions.claim_next(self.g)) is not None:
             outcome = await wa.apply(
-                self.memory, self.g, {ALICE.id} if dms is None else dms, action
+                self.memory, self.g, {ALICE.id} if dms is None else dms, action, member_of=member_of
             )
             await self.actions.finish(
                 self.g, action, error=outcome.error, result_id=outcome.result_id
@@ -82,14 +82,94 @@ class TheActions(Acting):
         names = [n["name"] for n in (await self.page())["names"]]
         self.assertIn("Mira Voss", names)
 
-    async def test_kind_changes_the_kind_and_refuses_a_players_character(self) -> None:
+    async def test_kind_changes_the_kind(self) -> None:
         answer = await self.queue(self.keep, action="kind", kind="faction")
         await self.apply_all()
         self.assertEqual((await self.poll(answer))["row"]["kind"], "faction")
-        bad = await self.queue(self.keep, action="kind", kind="player_character")
+
+    async def test_a_name_becomes_a_player_character_with_no_player_yet(self) -> None:
+        answer = await self.queue(self.mira, action="kind", kind="player_character")
         await self.apply_all()
-        self.assertEqual((await self.poll(bad))["error"], "bad_kind")
-        self.assertEqual((await self.poll(bad))["state"], "failed")
+        done = await self.poll(answer)
+        self.assertEqual((done["state"], done["error"]), ("done", ""))
+        self.assertEqual(done["row"]["kind"], "player_character")
+        entity = await self.memory.entity(self.g, self.one.id, self.mira)
+        assert entity is not None
+        self.assertTrue(entity.is_player_character)
+        self.assertIsNone(entity.played_by)
+
+    async def test_a_player_character_made_with_a_discord_id_is_played_by_that_person(self) -> None:
+        asked: list[int] = []
+
+        async def member_of(user_id: int) -> bool | None:
+            asked.append(user_id)
+            return True
+
+        answer = await self.queue(
+            self.mira, action="kind", kind="player_character", player="123456789012345678"
+        )
+        await self.apply_all(member_of=member_of)
+        self.assertEqual((await self.poll(answer))["state"], "done")
+        self.assertEqual(asked, [123456789012345678])
+        entity = await self.memory.entity(self.g, self.one.id, self.mira)
+        assert entity is not None
+        self.assertTrue(entity.is_player_character)
+        self.assertEqual(entity.played_by, 123456789012345678)
+
+    async def test_a_discord_id_of_someone_not_in_the_server_or_a_bot_is_refused(self) -> None:
+        for found, error in ((None, "not_member"), (False, "bot_player")):
+
+            async def member_of(_user_id: int, found: bool | None = found) -> bool | None:
+                return found
+
+            answer = await self.queue(
+                self.mira, action="kind", kind="player_character", player="123456789012345678"
+            )
+            await self.apply_all(member_of=member_of)
+            done = await self.poll(answer)
+            self.assertEqual((done["state"], done["error"]), ("failed", error))
+            entity = await self.memory.entity(self.g, self.one.id, self.mira)
+            assert entity is not None
+            self.assertFalse(entity.is_player_character)
+
+    async def test_without_a_way_to_look_the_person_up_nobody_is_attached(self) -> None:
+        answer = await self.queue(
+            self.mira, action="kind", kind="player_character", player="123456789012345678"
+        )
+        await self.apply_all()
+        self.assertEqual((await self.poll(answer))["error"], "failed")
+
+    async def test_a_player_needs_a_player_character_and_a_real_looking_id(self) -> None:
+        for body in (
+            {"kind": "faction", "player": "123456789012345678"},
+            {"kind": "player_character", "player": "Mira"},
+            {"kind": "player_character", "player": "<@123456789012345678>"},
+            {"kind": "player_character", "player": "12345"},
+            {"kind": "player_character", "player": 123456789012345678},
+        ):
+            self.assertEqual(
+                await self.refused_action(self.mira, action="kind", **body), "bad_player"
+            )
+
+    async def test_the_door_itself_takes_text_only_for_a_player_character_and_only_digits(
+        self,
+    ) -> None:
+        async with self.db.user(self.session.user_id, session=self.session.id_hash) as conn:
+            await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(self.g),))
+            for kind, text, status in (
+                ("player_character", "123456789012345678", "ok"),
+                ("player_character", "", "ok"),
+                ("player_character", "Mira", "bad_text"),
+                ("player_character", "0123456789012345", "bad_text"),
+                ("faction", "123456789012345678", "bad_text"),
+            ):
+                cur = await conn.execute(
+                    "SELECT dmbot_web_name_action_add(%s, %s, %s, 'kind', %s, '', %s, false) AS r",
+                    (self.g, self.one.id, self.mira, kind, text),
+                )
+                row = await cur.fetchone()
+                assert row is not None
+                self.assertEqual(row["r"]["status"], status, (kind, text))
 
     async def test_other_names_are_added_and_removed_and_a_taken_one_is_refused(self) -> None:
         added = await self.queue(self.keep, action="add-other", other="the Old Keep")
@@ -450,6 +530,7 @@ class TheRoutes(Acting):
             ({"action": "remove"}, 400, "needs_confirm"),
             ({"action": "spell", "name": "x" * 101}, 400, "too_long"),
             ({"action": "kind", "kind": "!"}, 400, "bad_kind"),
+            ({"action": "kind", "kind": "player_character", "player": "Mira"}, 400, "bad_player"),
             ({"action": "nope"}, 400, "bad_action"),
         ):
             got = await self.client.post(url, json=body, headers=HEADERS)
