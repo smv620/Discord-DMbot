@@ -2300,6 +2300,25 @@ names panel nor the speech-to-text hints can be a fixed list.
   from before it restores as false) and in the website's door; no row is updated. With no role,
   or any detail that is not one of these words, it reads "is family of" both ways. The lore read's
   pass 2 is not changed (follow-up).
+  **What a lore or backstory read keeps** (owner, 2026-10-29, the five lore questions after the lore test,
+  #2757; built in #2959, the import side in #2960):
+  1. **Two names for one person** ("X is now Y", "X is really Y"): one entry, the other name kept on it.
+     That other name is **secret only when the document was uploaded as containing spoilers**; otherwise
+     everyone at the table knows it. (The DM can still narrow it to some characters, #2935.)
+  2. **Family, and what follows from it:** every family role the text states (parent, child, sibling,
+     uncle or aunt, and the rest of `memory/kin.py`) is kept, and DMbot works out, from confirmed family links, the ones that follow
+     ("a mother has a son, and he has a sister, so she is the mother's daughter too"). A worked-out link
+     says which two it came from, goes when either of them goes, and is never more open than they are:
+     secret if either is, and known only by the characters who know both.
+  3. **Class and lineage are properties of a character**, not connections. The word the users see is
+     **lineage** (owner's choice over race or species), everywhere DMbot says it.
+  4. **Unnamed people and things get entries** ("Torvin's tome (name unknown)", "the ringmaster"), so
+     their connections are kept; the DM can rename one later.
+  5. **Obvious inferences are included**, each marked as worked out by DMbot and offered to the DM like
+     every other suggestion, never kept without the DM's press. This is the one place a read goes past
+     what the text states outright: it still never adds an event, and the DM decides.
+  **Relationship mining from imported and live sessions** (same day): family connections only, by the same
+  rules; allies, enemies and other kinds are not mined from sessions yet.
 - **Hints follow the scene** (replacing the fixed order). Hints go with every piece of
   speech sent to speech-to-text, so they can change clip by clip. Up to 50 per clip
   for Deepgram (fewer when names are long; local Whisper keeps about 600 characters),
