@@ -1,11 +1,11 @@
-// The relationship web's free layout (#2934): names push each other apart, lines pull their two ends
+// The Story Graph's free layout (#2934): names push each other apart, lines pull their two ends
 // together, and the names settle by themselves so a crowded spot opens up. Written in plain code so the page
 // needs no graph library (the site's weight budget, #1947). Pure, with no clock and no random numbers: the
 // same names and lines always settle in the same places, which keeps the tests exact and a redraw calm.
 import { radialLayout } from "./webLayout";
 
-/** "free": names settle anywhere. "groups": names gather by the kind of connection that joins them to the
- * middle name (family, friends and allies, groups, work). */
+/** "free": names settle anywhere. "groups": names gather by what each one is (player characters, NPCs, places,
+ * items, groups, events...: the kinds the Names page uses), not by how it is connected (#2990). */
 export type LayoutMode = "free" | "groups";
 
 /** More names than this keep their rings and are only movable by hand: pushing every pair apart is
@@ -17,7 +17,7 @@ export const MAX_SIM_STEPS = 300;
 export interface SimNode {
   id: string;
   kind: string;
-  /** The group it gathers with in the grouped layout (see `connectionGroups`). */
+  /** The group it gathers with in the grouped layout: what it is (its kind). */
   group: string;
   x: number;
   y: number;
@@ -48,7 +48,6 @@ export function startNodes(
   edges: { a: string; b: string }[],
   center: string,
   saved: SavedPlaces = {},
-  groups: Map<string, string> = new Map(),
 ): SimNode[] {
   const rings = radialLayout(nodes, edges, center);
   return nodes.map((n) => {
@@ -57,7 +56,7 @@ export function startNodes(
     return {
       id: n.id,
       kind: n.kind,
-      group: groups.get(n.id) ?? "other",
+      group: n.kind,
       x: kept ? kept[0] : (at?.x ?? 0),
       y: kept ? kept[1] : (at?.y ?? 0),
       vx: 0,
@@ -77,31 +76,16 @@ export function edgeKind(edge: { links: { kind?: string | undefined }[] }): stri
   return kinds.size === 1 ? [...kinds][0]! : "other";
 }
 
-/** Which group each name gathers with: the kind of the line it is reached by, walking out from the middle
- * name, so a name two steps out follows the one it hangs from. The middle name has none. */
-export function connectionGroups(
-  edges: { a: string; b: string; links: { kind?: string | undefined }[] }[],
-  center: string,
-): Map<string, string> {
-  const next = new Map<string, { to: string; kind: string }[]>();
-  for (const e of edges) {
-    const kind = edgeKind(e);
-    (next.get(e.a) ?? next.set(e.a, []).get(e.a)!).push({ to: e.b, kind });
-    (next.get(e.b) ?? next.set(e.b, []).get(e.b)!).push({ to: e.a, kind });
-  }
-  const out = new Map<string, string>();
-  const seen = new Set([center]);
-  const queue = [center];
-  for (let i = 0; i < queue.length; i += 1) {
-    const here = queue[i]!;
-    for (const step of next.get(here) ?? []) {
-      if (seen.has(step.to)) continue;
-      seen.add(step.to);
-      out.set(step.to, here === center ? step.kind : (out.get(here) ?? step.kind));
-      queue.push(step.to);
-    }
-  }
-  return out;
+/** The kinds of name in the order their areas are given: the people first, then places and things. A kind this
+ * page has no place for follows, by its key, so a new kind still gets an area. */
+const AREA_ORDER = ["player_character", "npc", "deity", "character", "creature", "faction", "group", "place", "item", "event"];
+
+export function orderedKinds(kinds: Iterable<string>): string[] {
+  const rank = (k: string): number => {
+    const i = AREA_ORDER.indexOf(k);
+    return i === -1 ? AREA_ORDER.length : i;
+  };
+  return [...new Set(kinds)].sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
 }
 
 /** Where each group gathers in the grouped layout: the groups spread evenly around the middle. */

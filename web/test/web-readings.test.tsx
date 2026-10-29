@@ -1,6 +1,6 @@
 /** @jsxImportSource preact */
 // @vitest-environment happy-dom
-// "What people believe" on the Story graph (#2412 slice 3b), against the shapes of core PR 2693: the list in
+// "What people believe" on the Story Graph (#2412 slice 3b), against the shapes of core PR 2693: the list in
 // DMbot's own words, Keep as a belief / Not right / Undo through the bot, the wait shown with its stage, the
 // refusals in plain words, and nothing at all for a player or a peek viewer.
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
