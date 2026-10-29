@@ -722,7 +722,7 @@ export function readCueWords(body: unknown): CueWords | undefined {
 }
 
 /** A recap as the API sent it, with its cue words in the one spelling the page reads. */
-function recapFrom(body: unknown): Recap {
+export function recapFrom(body: unknown): Recap {
   const recap = body as Recap;
   const cueWords = readCueWords(body);
   return cueWords ? { ...recap, cueWords } : recap;
@@ -1540,7 +1540,7 @@ export type NameThemResult =
   | { state: "question"; other: { id: string; name: string } };
 
 /** What the bot says about a queued name change (#2294). */
-interface NameAnswer {
+export interface NameAnswer {
   state: "waiting" | "working" | "done" | "failed";
   row: NameRow | null;
   removed?: boolean;
@@ -1551,9 +1551,9 @@ interface NameAnswer {
   /** True while the step can still be undone (#2803). */
   undo?: boolean;
 }
-const NAME_POLL_MS = 1000;
-const NAME_POLLS = 60;
-const READING_POLLS = 150;
+export const NAME_POLL_MS = 1000;
+export const NAME_POLLS = 60;
+export const READING_POLLS = 150;
 /** What the web's answers say about one queued edit of a connection or a reveal (#2323, #2405). */
 interface WebAnswer {
   state: "waiting" | "working" | "done" | "failed";
@@ -1927,13 +1927,13 @@ export interface RestoreStatus extends JobProgress {
 }
 
 /** How the page asks for a copy being made on DMbot's side (#2751): first after 1.5 s, then slower, to 10 s. */
-const BACKUP_POLL_MS = 1500;
-const BACKUP_POLL_MAX_MS = 10_000;
-const BACKUP_GIVE_UP_MS = 16 * 60_000;
+export const BACKUP_POLL_MS = 1500;
+export const BACKUP_POLL_MAX_MS = 10_000;
+export const BACKUP_GIVE_UP_MS = 16 * 60_000;
 /** One file that has not arrived in this long is a download that is stuck (DMbot keeps the copy 15 minutes). */
-const BACKUP_FILE_TIMEOUT_MS = 3 * 60_000;
+export const BACKUP_FILE_TIMEOUT_MS = 3 * 60_000;
 /** What a failed copy's `reason` means to the page (core web/campaign_backup.py REASONS). */
-const backupReasons: Record<string, ApiErrorKind> = {
+export const backupReasons: Record<string, ApiErrorKind> = {
   plan: "no-backup",
   too_big: "too-big",
   too_many_files: "backup-too-many-files",
@@ -1951,7 +1951,7 @@ export interface BackupSet {
   files: BackupFile[];
 }
 /** A name safe to save under: letters, digits, dots, dashes and underscores. */
-const safeBackupName = (name: string, fallback: string): string => name.replace(/[^A-Za-z0-9._-]+/g, "-").slice(0, 160) || fallback;
+export const safeBackupName = (name: string, fallback: string): string => name.replace(/[^A-Za-z0-9._-]+/g, "-").slice(0, 160) || fallback;
 
 export class ApiError extends Error {
   constructor(
@@ -2369,7 +2369,7 @@ export interface AccountApi {
 
 /** The fix routes' own codes (#2858). Kept apart from the shared table so a bare `open` or `many` from any other
  * route can never show the fix words. Only the two fix calls read it. */
-const fixErrorKinds: Record<string, ApiErrorKind> = {
+export const fixErrorKinds: Record<string, ApiErrorKind> = {
   bad_text: "bad-text",
   same: "same",
   not_yours: "not-yours",
@@ -2387,7 +2387,7 @@ const fixErrorKinds: Record<string, ApiErrorKind> = {
   secret: "secret",
 };
 
-const errorKinds: Record<string, ApiErrorKind> = {
+export const errorKinds: Record<string, ApiErrorKind> = {
   plan: "plan-needed",
   no_rules: "no-rules",
   bad_arg: "bad-choice",
@@ -2518,7 +2518,7 @@ const errorKinds: Record<string, ApiErrorKind> = {
 
 /** The recap routes answer 409 `busy` ("being written or sent now"), which the shared code table reads as
  * "slow down" for the sign-in and billing routes; here it means the recap is busy. */
-async function busyAsBusy<T>(run: () => Promise<T>): Promise<T> {
+export async function busyAsBusy<T>(run: () => Promise<T>): Promise<T> {
   try {
     return await run();
   } catch (error) {
@@ -2528,11 +2528,35 @@ async function busyAsBusy<T>(run: () => Promise<T>): Promise<T> {
 }
 
 /** An import request's body with its Google Doc links, only when there are any (#2140). */
-function withLinks<T extends object>(
+export function withLinks<T extends object>(
   body: T,
   links: string[] | undefined,
 ): T & { links?: string[] } {
   return links && links.length > 0 ? { ...body, links } : body;
+}
+
+/** What the calls in the on-demand areas share with `httpApi` (#3010). */
+export interface ApiHelpers {
+  call: (method: "GET" | "POST" | "PUT" | "DELETE", path: string, body?: unknown, asFile?: boolean, raw?: Blob, anonymous?: boolean, kinds?: Record<string, ApiErrorKind>) => Promise<unknown>;
+  restoreCall: ApiHelpers["call"];
+  waitForAnswer: (path: string, onLook?: (got: WebAnswer) => void, polls?: number) => Promise<WebAnswer>;
+  root: string;
+  url: (path: string, body?: unknown) => Promise<string>;
+}
+
+/** The calls of each area, by name: what `httpApi` stands in for until the area's file is loaded. */
+export const ACCOUNT_METHODS = ["emailSignInRequest", "emailSignInUse", "offerHandover", "deleteCampaign", "restoreStage", "restorePart", "restoreGo", "restoreStatus", "restoreCancel", "campaignBackup", "takeBackHandover", "handoverLook", "handoverAccept", "handoverDecline", "removeDiscordAccount", "getMoveCode", "myEmail", "changeEmail", "confirmEmail", "cancelEmailChange", "sendSupport", "mySupport", "supportThread", "signOutEverywhere", "startTryIt", "checkoutUrl", "billingPortalUrl", "renewPlan", "extraHoursUrl", "downloadExport", "characters", "linkServer", "acceptOffer", "declineOffer", "withdrawOffer", "stopRecording", "myLines", "deleteMyLines", "myLinesStatus", "requestDelete", "confirmDelete"] as const satisfies readonly (keyof AccountApi)[];
+export const RECAPS_METHODS = ["recapAudioUrl", "recaps", "pastSessions", "sessionReport", "makeSessionReport", "answerReport", "setBeatPresent", "makeRecap", "addRecap", "recapList", "recap", "saveRecap", "approveRecap", "approveUnchecked", "recapAudioLinks", "recapChoices", "setRecapChoice", "askRecapAudioAgain", "plotCheck", "answerPlotIssue", "plotChatSend", "plotChat", "decidePlotProposal", "recapAudioRemake", "sendFix", "fixResult", "sendVoice", "voiceResult", "rewriteWith", "importPreview", "importMembers", "importCheck", "importStart", "importProgress", "shareRecap", "publicRecap", "decideRecap"] as const satisfies readonly (keyof AccountApi)[];
+export const NAMES_METHODS = ["namesFixed", "undoNameFix", "campaignNames", "suggestSaidAs", "respellFromVoice", "saveSaidAs", "nameChecks", "answerNameCheck", "npcPage", "saveNpcNote", "myNpcNotes", "deleteMyNpcNotes", "allNames", "smartNames", "changeName", "nameThem", "webGraph", "webSize", "webOverview", "webFind", "webWaiting", "answerWaiting", "webReadings", "answerReading", "webPeek", "webReveal", "changeWebLink"] as const satisfies readonly (keyof AccountApi)[];
+export const CAMPAIGN_METHODS = ["transcriptCampaigns", "transcriptSessions", "transcript", "transcriptFile", "transcriptStretch", "transcriptPutBack", "transcriptLeaveOut", "setCampaignSetting", "campaignOptionalRules", "campaignGameMasters", "campaignSheets", "chooseSheet", "sheetAnswer", "fixTranscriptLine", "fixAnswer", "campaignGameMasterCandidates", "campaignSettingAnswer", "timeline", "sharedRules", "houseRuleCampaigns", "houseRules", "ruleSharing", "chooseRuleSharing", "ruleSharingAnswer", "houseRulesFile", "improvement", "setImprovement", "homebrewCampaigns", "homebrew", "homebrewFile", "campaignPage"] as const satisfies readonly (keyof AccountApi)[];
+
+/** A stand-in for each call of an area: the first use loads the area's file (once), and every call goes to it. */
+function lazyArea<K extends keyof AccountApi>(names: readonly K[], load: () => Promise<{ default: (h: ApiHelpers) => Record<string, unknown> }>, h: ApiHelpers): Pick<AccountApi, K> {
+  let area: Promise<Record<string, unknown>> | null = null;
+  return Object.fromEntries(
+    names.map((name) => [name, (...args: unknown[]) => (area ??= load().then((m) => m.default(h)))
+      .then((a) => (a[name] as (...a: unknown[]) => unknown)(...args))]),
+  ) as Pick<AccountApi, K>;
 }
 
 /** The real API over HTTP. `base` is the API's address, e.g. "https://api.example". */
@@ -2652,6 +2676,9 @@ export function httpApi(
   const url = async (path: string, body?: unknown): Promise<string> =>
     ((await call("POST", path, body)) as { url: string }).url;
 
+  // The rest of the calls load when a page first uses them (#3010): each area is its own file, fetched on demand,
+  // so a page does not carry the calls of the other pages. Every call is still there to ask for (`api.x?.(...)`).
+  const helpers: ApiHelpers = { call, restoreCall, waitForAnswer, root, url };
   return {
     async me() {
       try {
@@ -2671,813 +2698,12 @@ export function httpApi(
     signOut: async () => {
       await call("POST", "/auth/logout");
     },
-    emailSignInRequest: async (email) => {
-      await call("POST", "/auth/email/request", { email });
-    },
-    emailSignInUse: async (token) => {
-      await call("POST", "/auth/email/verify", { token });
-    },
-    offerHandover: async (ref, email) => {
-      await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/handover`, { email });
-    },
-    deleteCampaign: async (ref, name) =>
-      (await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/delete`, { name })) as { channelsLeft: boolean },
-    restoreStage: async (serverId, file, replaceRef) => {
-      const query = replaceRef === undefined ? "" : `?replace=${encodeURIComponent(replaceRef)}`;
-      // The file goes as it is, not as JSON: it can be 25 MB, and the API reads it with a running cap.
-      const raw = new Blob([file], { type: "application/octet-stream" });
-      return (await restoreCall("POST", `/me/restores/${encodeURIComponent(serverId)}${query}`, undefined, false, raw)) as {
-        id: string;
-        name: string;
-        partsWanted: number;
-      };
-    },
-    restorePart: async (serverId, id, number, file) => {
-      const raw = new Blob([file], { type: "application/octet-stream" });
-      await restoreCall(
-        "PUT",
-        `/me/restores/${encodeURIComponent(serverId)}/${encodeURIComponent(id)}/parts/${number}`,
-        undefined,
-        false,
-        raw,
-      );
-    },
-    restoreGo: async (serverId, id, without) => {
-      await restoreCall("POST", `/me/restores/${encodeURIComponent(serverId)}/${encodeURIComponent(id)}/go`, { without });
-    },
-    restoreStatus: async (serverId, id) => {
-      try {
-        const tail = id === undefined ? "" : `/${encodeURIComponent(id)}`;
-        return (await restoreCall("GET", `/me/restores/${encodeURIComponent(serverId)}${tail}`)) as RestoreStatus;
-      } catch (error) {
-        if (error instanceof ApiError && error.kind === "not-found") return null;
-        throw error;
-      }
-    },
-    restoreCancel: async (serverId, id) => {
-      await restoreCall("DELETE", `/me/restores/${encodeURIComponent(serverId)}/${encodeURIComponent(id)}`);
-    },
-        campaignBackup: async (ref, onProgress, onFile) => {
-      const base = `/me/campaigns/${encodeURIComponent(ref)}/backup`;
-      const asked = (await call("POST", base)) as { id: string };
-      const copy = `${base}/${encodeURIComponent(asked.id)}`;
-      const began = Date.now();
-      let wait = BACKUP_POLL_MS;
-      type Status = JobProgress & {
-        ready: boolean;
-        fileName?: string | null;
-        fileWaiting?: boolean;
-        parts?: { n: number }[];
-        partsTotal?: number;
-      };
-      let got: Status;
-      for (;;) {
-        got = (await call("GET", copy)) as Status;
-        onProgress?.(got);
-        if (got.state === "failed") throw new ApiError(backupReasons[got.reason ?? ""] ?? "backup-failed");
-        if (got.ready) break;
-        // DMbot keeps a copy 15 minutes; a copy not ready by then is not coming.
-        if (Date.now() - began > BACKUP_GIVE_UP_MS) throw new ApiError("backup-failed");
-        await new Promise((resolve) => setTimeout(resolve, wait));
-        wait = Math.min(wait * 1.5, BACKUP_POLL_MAX_MS);
-      }
-      // The main file, then each transcripts file still waiting, each fetched once (DMbot deletes a file as it
-      // sends it). The names are Discord's own, made from the main file's name. One that fails fails the set:
-      // a backup with a file missing would restore without part of the story.
-      const main = safeBackupName(got.fileName ?? "", "campaign.dmbot.json.gz");
-      const stem = main.replace(/\.dmbot\.json\.gz$/, "") || "campaign";
-      // An API without the transcripts files says nothing of them (no `fileWaiting`, no `partsTotal`): a main file
-      // alone would look complete, so it is refused.
-      if (typeof got.partsTotal !== "number" || typeof got.fileWaiting !== "boolean") throw new ApiError("backup-failed");
-      const parts = (got.parts ?? []).map((p) => p.n);
-      // A broken set is never resumed: files are handed over once, so a copy whose main file was already taken, or
-      // that lists fewer files than it had, can never be a whole backup. Refused before anything is fetched.
-      if (!got.fileWaiting || parts.length !== got.partsTotal) throw new ApiError("backup-unfinished");
-      const total = 1 + parts.length;
-      const files: BackupFile[] = [];
-      onFile?.(0, total);
-      const take = async (path: string, name: string, first: boolean): Promise<void> => {
-        try {
-          // A file that does not arrive in time is a stuck download, said as one (the page keeps its clock running).
-          const arrives = call("GET", `${copy}${path}`, undefined, true) as Promise<Blob>;
-          const late = new Promise<never>((_, reject) => setTimeout(() => reject(new ApiError(first ? "backup-failed" : "backup-part")), BACKUP_FILE_TIMEOUT_MS));
-          arrives.catch(() => undefined); // (a file that arrives after the wait is over is dropped, not an unhandled error)
-          files.push({ name, blob: await Promise.race([arrives, late]) });
-        } catch (error) {
-          // The main file keeps its own refusals (not yours, gone); a later file that fails is a broken set,
-          // unless the trouble is the connection or the sign-in, which are what they are.
-          if (first || (error instanceof ApiError && ["network", "signed-out", "slow-down"].includes(error.kind))) throw error;
-          throw new ApiError("backup-part");
-        }
-        onFile?.(files.length, total);
-      };
-      await take("/file", main, true);
-      for (const n of parts) await take(`/file/${n}`, `${stem}.transcripts-${n}-of-${got.partsTotal}.dmbot.json.gz`, false);
-      return { files };
-    },
-    takeBackHandover: async (ref) => {
-      await call("DELETE", `/me/campaigns/${encodeURIComponent(ref)}/handover`);
-    },
-    handoverLook: async (token) => (await call("POST", "/me/handover/look", { token })) as HandoverLook,
-    handoverAccept: async (token, serverId) => {
-      const got = (await call("POST", "/me/handover/accept", { token, serverId })) as { status?: string; campaignRef?: string };
-      return got.status === "moving" ? { moving: true as const } : { campaignRef: got.campaignRef ?? "" };
-    },
-    handoverDecline: async (token) => {
-      await call("POST", "/me/handover/decline", { token });
-    },
     addDiscordUrl: () => `${root}/auth/discord/add?next=${encodeURIComponent("/account")}`,
-    removeDiscordAccount: async (key) => {
-      await call("POST", `/me/discord-accounts/${encodeURIComponent(key)}/remove`);
-    },
-    getMoveCode: async () => {
-      await call("POST", "/me/move-code");
-    },
-    myEmail: async () => (await call("GET", "/me/email")) as MyEmail,
-    changeEmail: async (address) => (await call("PUT", "/me/email", { address })) as { pending: string | null },
-    confirmEmail: async (token) => {
-      await call("POST", "/me/email/confirm", { token });
-    },
-    cancelEmailChange: async () => {
-      await call("DELETE", "/me/email/pending");
-    },
-    sendSupport: async (ticket) => {
-      const answer = (await call("POST", "/support", ticket)) as {
-        reply?: unknown;
-      } | null;
-      // Only an explicit "no address" changes the words: an answer without the field is a
-      // ticket that was kept, and the team still replies by email.
-      return { reply: answer?.reply !== false };
-    },
-    mySupport: async () => {
-      const answer = (await call("GET", "/support/mine")) as {
-        tickets?: unknown;
-        reply?: unknown;
-      } | null;
-      // Anything that is not a list of questions is no list: the page shows nothing rather
-      // than guess.
-      const tickets = Array.isArray(answer?.tickets) ? answer.tickets : [];
-      return {
-        tickets: tickets.filter(
-          (t): t is SupportQuestion =>
-            typeof t === "object" &&
-            t !== null &&
-            typeof t.at === "number" &&
-            typeof t.subject === "string" &&
-            (t.status === "new" ||
-              t.status === "answered" ||
-              t.status === "escalated" ||
-              t.status === "closed"),
-        ),
-        reply: answer?.reply !== false,
-      };
-    },
-    supportThread: async (at) => {
-      const answer = (await call("GET", `/support/mine/${encodeURIComponent(String(at))}`)) as {
-        messages?: unknown;
-      } | null;
-      const parts = Array.isArray(answer?.messages) ? answer.messages : [];
-      return parts.filter(
-        (m): m is SupportMessage =>
-          typeof m === "object" &&
-          m !== null &&
-          (m.who === "you" || m.who === "helper" || m.who === "team") &&
-          typeof m.text === "string" &&
-          typeof m.at === "number",
-      );
-    },
-    signOutEverywhere: async () => {
-      await call("POST", "/me/sign-out-everywhere");
-    },
-    startTryIt: async () => {
-      await call("POST", "/plan/try-it");
-    },
-    checkoutUrl: (plan) => url("/billing/checkout", { plan }),
-    billingPortalUrl: (flow) => url("/billing/portal", flow ? { flow } : undefined),
-    renewPlan: async () => {
-      await call("POST", "/billing/renew");
-    },
-    extraHoursUrl: () => url("/billing/extra-hours"),
-    recapAudioUrl: () => url("/billing/recap-audio"),
-    downloadExport: async () =>
-      (await call("GET", "/me/export", undefined, true)) as Blob,
-    recaps: async () =>
-      ((await call("GET", "/me/recaps")) as { recaps: Recap[] }).recaps,
-    pastSessions: async (campaignRef) =>
-      (await call("GET", `/me/campaigns/${encodeURIComponent(campaignRef)}/past-sessions`)) as PastSessions,
-    sessionReport: async (campaignRef, at) =>
-      (await call("GET", `/me/campaigns/${encodeURIComponent(campaignRef)}/sessions/${at}/report`)) as SessionReport,
-    makeSessionReport: async (campaignRef, at) =>
-      (await call("POST", `/me/campaigns/${encodeURIComponent(campaignRef)}/sessions/${at}/report/make`, {})) as SessionReport,
-    // Written at once by the API (an answer is the DM's bookkeeping, not a change to the story: Supervisor on
-    // #2661), so there is nothing to wait for or poll; the page reads the report again.
-    answerReport: async (campaignRef, at, id, action) => {
-      await call("POST", `/me/campaigns/${encodeURIComponent(campaignRef)}/sessions/${at}/report`, { id, action });
-    },
-    setBeatPresent: async (recapRef, n, present) =>
-      (await call("PUT", `/me/recaps/${encodeURIComponent(recapRef)}/beats/${n}/present`, { present })) as RecapBeat,
-    namesFixed: async (recapRef) =>
-      (await call("GET", `/me/recaps/${encodeURIComponent(recapRef)}/names-fixed`)) as NamesFixed,
-    undoNameFix: async (recapRef, id) => {
-      const queued = (await call("POST", `/me/recaps/${encodeURIComponent(recapRef)}/names-fixed/${encodeURIComponent(id)}/undo`, {})) as {
-        answer: string;
-      };
-      if (!queued?.answer) throw new ApiError("server");
-      // The bot's answer is polled under the campaign, as the report's are (the campaign is the recap's first two parts).
-      const campaign = recapRef.split(".").slice(0, 2).join(".");
-      const got = await waitForAnswer(`/me/campaigns/${encodeURIComponent(campaign)}/web/answers/${encodeURIComponent(queued.answer)}`);
-      return { putBack: got.putBack ?? 0 };
-    },
-    makeRecap: async (recapRef, replace) =>
-      recapFrom(await busyAsBusy(() => call("POST", `/me/recaps/${encodeURIComponent(recapRef)}/again`, { replace }))),
-    addRecap: async (campaignRef, input) =>
-      recapFrom(
-        await busyAsBusy(() => call("POST", `/me/campaigns/${encodeURIComponent(campaignRef)}/recaps/upload`, input)),
-      ),
-    recapList: async () => {
-      const got = (await call("GET", "/me/recaps")) as {
-        recaps: Recap[];
-        recapsThisMonth?: RecapMonth[];
-      };
-      return { recaps: got.recaps, thisMonth: got.recapsThisMonth ?? [] };
-    },
-    transcriptCampaigns: async () =>
-      (
-        (await call("GET", "/me/transcripts")) as {
-          campaigns: TranscriptCampaign[];
-        }
-      ).campaigns,
-    transcriptSessions: async (campaignRef) =>
-      (await call(
-        "GET",
-        `/me/campaigns/${encodeURIComponent(campaignRef)}/transcripts`,
-      )) as {
-        name: string;
-        keepDays?: number | null;
-        sessions: TranscriptSessionItem[];
-      },
-    transcript: async (campaignRef, number, version, offset = 0) =>
-      (await call(
-        "GET",
-        `/me/campaigns/${encodeURIComponent(campaignRef)}/transcripts/${number}?version=${version}&offset=${offset}`,
-      )) as TranscriptView,
-    transcriptFile: async (campaignRef, number, version) =>
-      (await call(
-        "GET",
-        `/me/campaigns/${encodeURIComponent(campaignRef)}/transcripts/${number}/download?version=${version}`,
-        undefined,
-        true,
-      )) as Blob,
-    transcriptStretch: async (campaignRef, number, skip) =>
-      (
-        (await call(
-          "GET",
-          `/me/campaigns/${encodeURIComponent(campaignRef)}/transcripts/${number}/stretch?speaker=${skip.speaker}&fromMs=${skip.fromMs}&toMs=${skip.toMs}`,
-        )) as { lines: StretchLine[] }
-      ).lines,
-    transcriptPutBack: async (campaignRef, number, skip) =>
-      (
-        (await call("POST", `/me/campaigns/${encodeURIComponent(campaignRef)}/transcripts/${number}/put-back`, {
-          speaker: skip.speaker,
-          fromMs: skip.fromMs,
-          toMs: skip.toMs,
-        })) as { changed: number }
-      ).changed,
-    transcriptLeaveOut: async (campaignRef, number, skip) =>
-      (
-        (await call("POST", `/me/campaigns/${encodeURIComponent(campaignRef)}/transcripts/${number}/leave-out`, {
-          speaker: skip.speaker,
-          fromMs: skip.fromMs,
-          toMs: skip.toMs,
-        })) as { changed: number }
-      ).changed,
-    setCampaignSetting: async (campaignRef, choice) =>
-      (
-        (await call("POST", `/me/campaigns/${encodeURIComponent(campaignRef)}/settings`, {
-          setting: choice.setting,
-          value: choice.value,
-          ...(choice.confirm ? { confirm: true } : {}),
-          ...(choice.on === undefined ? {} : { on: choice.on }),
-        })) as { answer: string }
-      ).answer,
-    campaignOptionalRules: async (campaignRef) =>
-      (await call("GET", `/me/campaigns/${encodeURIComponent(campaignRef)}/optional-rules`)) as OptionalRules,
-    campaignGameMasters: async (campaignRef) =>
-      (await call("GET", `/me/campaigns/${encodeURIComponent(campaignRef)}/game-masters`)) as GameMasters,
-    campaignSheets: async (campaignRef) =>
-      (await call("GET", `/me/campaigns/${encodeURIComponent(campaignRef)}/sheets`)) as CharacterSheets,
-    chooseSheet: async (campaignRef, entity, choice) => {
-      const queued = (await call(
-        "POST",
-        `/me/campaigns/${encodeURIComponent(campaignRef)}/sheets/${encodeURIComponent(entity)}`,
-        choice,
-      )) as { answer: string };
-      if (!queued?.answer) throw new ApiError("server");
-      return queued.answer;
-    },
-    sheetAnswer: async (campaignRef, answer) =>
-      (await call(
-        "GET",
-        `/me/campaigns/${encodeURIComponent(campaignRef)}/sheets/answers/${encodeURIComponent(answer)}`,
-      )) as SheetAnswer,
-    fixTranscriptLine: async (campaignRef, number, line, text) => {
-      const queued = (await call(
-        "POST",
-        `/me/campaigns/${encodeURIComponent(campaignRef)}/transcripts/${number}/fix`,
-        { speaker: line.speaker, startedMs: line.startedMs, text },
-        false,
-        undefined,
-        false,
-        fixErrorKinds,
-      )) as { answer: string; mode: FixMode };
-      if (!queued?.answer) throw new ApiError("server");
-      return queued;
-    },
-    fixAnswer: async (campaignRef, number, answer) =>
-      (await call(
-        "GET",
-        `/me/campaigns/${encodeURIComponent(campaignRef)}/transcripts/${number}/fix/${encodeURIComponent(answer)}`,
-        undefined,
-        false,
-        undefined,
-        false,
-        fixErrorKinds,
-      )) as FixAnswer,
-    campaignGameMasterCandidates: async (campaignRef, query) =>
-      (
-        (await call(
-          "GET",
-          `/me/campaigns/${encodeURIComponent(campaignRef)}/game-masters/candidates?q=${encodeURIComponent(query)}`,
-        )) as { people: GameMasterCandidate[] }
-      ).people,
-    campaignSettingAnswer: async (campaignRef, answer) =>
-      (await call(
-        "GET",
-        `/me/campaigns/${encodeURIComponent(campaignRef)}/settings/answers/${encodeURIComponent(answer)}`,
-      )) as CampaignSettingAnswer,
-    timeline: async (campaignRef) =>
-      (await call(
-        "GET",
-        `/me/campaigns/${encodeURIComponent(campaignRef)}/timeline`,
-      )) as Timeline,
-    sharedRules: async () =>
-      ((await call("GET", "/me/shared-rules")) as { campaigns: SharedRulesCampaign[] })
-        .campaigns,
-    houseRuleCampaigns: async () =>
-      (
-        (await call("GET", "/me/house-rules")) as {
-          campaigns: HouseRuleCampaign[];
-        }
-      ).campaigns,
-    houseRules: async (campaignRef) =>
-      (await call(
-        "GET",
-        `/me/campaigns/${encodeURIComponent(campaignRef)}/house-rules`,
-      )) as HouseRules,
-    ruleSharing: async (campaignRef) =>
-      (await call(
-        "GET",
-        `/me/campaigns/${encodeURIComponent(campaignRef)}/rule-sharing`,
-      )) as RuleSharing,
-    chooseRuleSharing: async (campaignRef, choice) =>
-      (
-        (await call(
-          "POST",
-          `/me/campaigns/${encodeURIComponent(campaignRef)}/rule-sharing`,
-          choice,
-        )) as { answer: string }
-      ).answer,
-    ruleSharingAnswer: async (campaignRef, answer) =>
-      (await call(
-        "GET",
-        `/me/campaigns/${encodeURIComponent(campaignRef)}/rule-sharing/answers/${encodeURIComponent(answer)}`,
-      )) as RuleSharingAnswer,
-    houseRulesFile: async (campaignRef) =>
-      (await call(
-        "GET",
-        `/me/campaigns/${encodeURIComponent(campaignRef)}/house-rules/download`,
-        undefined,
-        true,
-      )) as Blob,
-    improvement: async () =>
-      ((await call("GET", "/me/improvement")) as { improve: boolean }).improve,
-    setImprovement: async (on) =>
-      (
-        (await call("PUT", "/me/improvement", { improve: on })) as {
-          improve: boolean;
-        }
-      ).improve,
-    homebrewCampaigns: async () =>
-      ((await call("GET", "/me/homebrew")) as { campaigns: HomebrewCampaign[] })
-        .campaigns,
-    homebrew: async (campaignRef) =>
-      (await call(
-        "GET",
-        `/me/campaigns/${encodeURIComponent(campaignRef)}/homebrew`,
-      )) as HomebrewPage,
-    homebrewFile: async (campaignRef) =>
-      (await call(
-        "GET",
-        `/me/campaigns/${encodeURIComponent(campaignRef)}/homebrew/download`,
-        undefined,
-        true,
-      )) as Blob,
-    campaignNames: async (campaignRef) =>
-      (
-        (await call(
-          "GET",
-          `/me/campaigns/${encodeURIComponent(campaignRef)}/names`,
-        )) as { names: CampaignName[] }
-      ).names,
-    suggestSaidAs: async (campaignRef, nameId) =>
-      (
-        (await call(
-          "POST",
-          `/me/campaigns/${encodeURIComponent(campaignRef)}/names/${encodeURIComponent(nameId)}/said-as/suggest`,
-        )) as { suggestion: string }
-      ).suggestion,
-    respellFromVoice: async (campaignRef, nameId, clip) =>
-      (
-        (await call(
-          "POST",
-          `/me/campaigns/${encodeURIComponent(campaignRef)}/names/${encodeURIComponent(nameId)}/said-as/from-voice`,
-          undefined,
-          false,
-          clip,
-        )) as { respelling: string }
-      ).respelling,
-    saveSaidAs: async (campaignRef, nameId, saidAs) => {
-      await call(
-        "PUT",
-        `/me/campaigns/${encodeURIComponent(campaignRef)}/names/${encodeURIComponent(nameId)}/said-as`,
-        { saidAs },
-      );
-    },
-    recap: async (ref) =>
-      recapFrom(await call("GET", `/me/recaps/${encodeURIComponent(ref)}`)),
-    saveRecap: async (ref, summary, housekeeping) =>
-      recapFrom(
-        await call("PUT", `/me/recaps/${encodeURIComponent(ref)}`, {
-          summary,
-          housekeeping,
-        }),
-      ),
-    approveRecap: async (ref, choice, options) =>
-      recapFrom(
-        await call("POST", `/me/recaps/${encodeURIComponent(ref)}/approve`, {
-          choice,
-          ...(options?.post ? { post: true } : {}),
-        }),
-      ),
-    approveUnchecked: async (ref, textHash) =>
-      recapFrom(await call("POST", `/me/recaps/${encodeURIComponent(ref)}/approve-unchecked`, { textHash })),
-    recapAudioLinks: async (ref) =>
-      (
-        (await call("GET", `/me/recaps/${encodeURIComponent(ref)}/audio`)) as {
-          links: RecapAudioLinks;
-        }
-      ).links,
-    recapChoices: async (campaignRef) =>
-      (await call(
-        "GET",
-        `/me/campaigns/${encodeURIComponent(campaignRef)}/recap-choices`,
-      )) as RecapChoices,
-    setRecapChoice: async (campaignRef, which, on) =>
-      (await call(
-        "POST",
-        `/me/campaigns/${encodeURIComponent(campaignRef)}/recap-choices`,
-        {
-          which,
-          on,
-        },
-      )) as RecapChoices,
-    askRecapAudioAgain: async (ref) =>
-      (await call(
-        "POST",
-        `/me/recaps/${encodeURIComponent(ref)}/audio/again`,
-      )) as Recap,
-    plotCheck: async (ref) =>
-      (await call("GET", `/me/recaps/${encodeURIComponent(ref)}/plot`)) as PlotCheck,
-    answerPlotIssue: async (ref, issue, answer) =>
-      (await call(
-        "POST",
-        `/me/recaps/${encodeURIComponent(ref)}/plot/${encodeURIComponent(issue)}/answer`,
-        answer,
-      )) as PlotIssue,
-    plotChatSend: async (ref, issue, text) => {
-      await call("POST", `/me/recaps/${encodeURIComponent(ref)}/plot/${encodeURIComponent(issue)}/chat`, { text });
-    },
-    plotChat: async (ref, issue) =>
-      ((await call("GET", `/me/recaps/${encodeURIComponent(ref)}/plot/${encodeURIComponent(issue)}/chat`)) as {
-        messages: PlotMessage[];
-      }).messages,
-    decidePlotProposal: async (ref, issue, proposal, action) =>
-      (await call(
-        "POST",
-        `/me/recaps/${encodeURIComponent(ref)}/plot/${encodeURIComponent(issue)}/proposals/${encodeURIComponent(proposal)}`,
-        { action },
-      )) as PlotProposal,
-    nameChecks: async (ref) =>
-      (await call("GET", `/me/recaps/${encodeURIComponent(ref)}/names-to-check`)) as NameCheckList,
-    answerNameCheck: async (ref, id, answer) => {
-      await call(
-        "POST",
-        `/me/recaps/${encodeURIComponent(ref)}/names-to-check/${encodeURIComponent(id)}`,
-        answer,
-      );
-    },
-    recapAudioRemake: async (ref) =>
-      (await call(
-        "GET",
-        `/me/recaps/${encodeURIComponent(ref)}/audio/remake`,
-      )) as RecapRemake,
-    sendFix: async (ref, text) =>
-      (await call(
-        "POST",
-        `/me/recaps/${encodeURIComponent(ref)}/instructions`,
-        { text },
-      )) as { requestId: string },
-    fixResult: async (ref, requestId) =>
-      (await call(
-        "GET",
-        `/me/recaps/${encodeURIComponent(ref)}/instructions/${encodeURIComponent(requestId)}`,
-      )) as FixResult,
-    sendVoice: async (ref, clip) =>
-      (await call(
-        "POST",
-        `/me/recaps/${encodeURIComponent(ref)}/voice`,
-        undefined,
-        false,
-        clip,
-      )) as { requestId: string },
-    voiceResult: async (ref, requestId) =>
-      (await call(
-        "GET",
-        `/me/recaps/${encodeURIComponent(ref)}/voice/${encodeURIComponent(requestId)}`,
-      )) as VoiceResult,
-    rewriteWith: async (ref, requestId, corrections, style) => {
-      const got = (await call(
-        "POST",
-        `/me/recaps/${encodeURIComponent(ref)}/rewrite`,
-        { requestId, corrections, style },
-      )) as Rewritten;
-      return { ...got, recap: recapFrom(got.recap) };
-    },
-    // Google Doc links ride along with the files (#2140); the API opens each and names it "Google Doc N.txt".
-    importPreview: async (ref, files, links) =>
-      (await call(
-        "POST",
-        `/me/campaigns/${encodeURIComponent(ref)}/imports/preview`,
-        withLinks({ files }, links),
-      )) as ImportPreview,
-    importMembers: async (ref, q) =>
-      (
-        (await call(
-          "GET",
-          `/me/campaigns/${encodeURIComponent(ref)}/imports/members?q=${encodeURIComponent(q)}`,
-        )) as { members: ImportMember[] }
-      ).members,
-    importCheck: async (ref, files, mapping, links) =>
-      (await call(
-        "POST",
-        `/me/campaigns/${encodeURIComponent(ref)}/imports/check`,
-        withLinks({ files, mapping }, links),
-      )) as ImportCheck,
-    importStart: async (ref, files, plan, links) =>
-      (await call(
-        "POST",
-        `/me/campaigns/${encodeURIComponent(ref)}/imports`,
-        withLinks({ files, plan }, links),
-      )) as ImportStarted,
-    campaignPage: async (ref) =>
-      (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}`)) as CampaignPage,
-    npcPage: async (ref, entry) =>
-      (await call(
-        "GET",
-        `/me/campaigns/${encodeURIComponent(ref)}/npcs/${encodeURIComponent(entry)}`,
-      )) as NpcPage,
-    saveNpcNote: async (ref, entry, body) => {
-      await call(
-        "PUT",
-        `/me/campaigns/${encodeURIComponent(ref)}/npcs/${encodeURIComponent(entry)}/note`,
-        { body },
-      );
-    },
-    myNpcNotes: async (ref) =>
-      ((await call("GET", `/me/npc-notes?campaign=${encodeURIComponent(ref)}`)) as {
-        notes: MyNpcNote[];
-      }).notes,
-    deleteMyNpcNotes: async (ref) =>
-      ((await call("DELETE", `/me/npc-notes?campaign=${encodeURIComponent(ref)}`)) as {
-        deleted: number;
-      }).deleted,
-    allNames: async (ref, q) => {
-      const params = new URLSearchParams({ q: q.q, kind: q.kind, sort: q.sort, page: String(q.page) });
-      if (q.size !== undefined) params.set("size", String(q.size));
-      if (q.unnamed) params.set("unnamed", "1");
-      return (await call(
-        "GET",
-        `/me/campaigns/${encodeURIComponent(ref)}/all-names?${params.toString()}`,
-      )) as NamesPage;
-    },
-    smartNames: async (ref, words) =>
-      (await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/all-names/search`, { q: words })) as SmartNamesAnswer,
-    // The bot applies a name change, so the POST only queues it (202 {answer}); this waits for the
-    // answer by asking about once a second, up to a minute (#2294).
-    changeName: async (ref, id, change) => {
-      const base = `/me/campaigns/${encodeURIComponent(ref)}/all-names`;
-      const queued = (await call("POST", `${base}/${encodeURIComponent(id)}`, change)) as {
-        answer: string;
-      };
-      if (!queued?.answer) throw new ApiError("server");
-      for (let i = 0; i < NAME_POLLS; i++) {
-        // Once queued, the bot may still apply the change, so a failed look (a blip, a 5xx, a 404 on
-        // the answer) is not an answer: keep asking until the minute is up. Only "signed out" stops.
-        let got: NameAnswer | null = null;
-        try {
-          got = (await call(
-            "GET",
-            `${base}/answers/${encodeURIComponent(queued.answer)}`,
-          )) as NameAnswer;
-        } catch (error) {
-          if (error instanceof ApiError && error.kind === "signed-out") throw error;
-        }
-        if (got?.state === "done") return got.removed || !got.row ? { removed: true } : got.row;
-        if (got?.state === "failed") {
-          throw new ApiError(errorKinds[got.error ?? ""] ?? "server");
-        }
-        if (i < NAME_POLLS - 1) await new Promise((r) => setTimeout(r, NAME_POLL_MS));
-      }
-      // The bot may still apply it later: the page says so and reads the list again, never "nothing
-      // was changed", so nobody tries a merge or remove twice.
-      throw new ApiError("still-waiting");
-    },
-    nameThem: async (ref, id, step, onLook) => {
-      const base = `/me/campaigns/${encodeURIComponent(ref)}/all-names`;
-      const queued = (await call("POST", `${base}/${encodeURIComponent(id)}`, step)) as { answer: string };
-      if (!queued?.answer) throw new ApiError("server");
-      for (let i = 0; i < NAME_POLLS; i++) {
-        let got: NameAnswer | null = null;
-        try {
-          got = (await call("GET", `${base}/answers/${encodeURIComponent(queued.answer)}`)) as NameAnswer;
-          onLook?.();
-        } catch (error) {
-          if (error instanceof ApiError && error.kind === "signed-out") throw error;
-        }
-        if (got?.state === "done") {
-          return { state: "done", row: got.row ?? null, undo: got.undo ? queued.answer : null, answer: queued.answer };
-        }
-        if (got?.state === "failed") {
-          if (got.error === "known_name" && got.other) return { state: "question", other: got.other };
-          throw new ApiError(errorKinds[got.error ?? ""] ?? "server");
-        }
-        if (i < NAME_POLLS - 1) await new Promise((r) => setTimeout(r, NAME_POLL_MS));
-      }
-      throw new ApiError("still-waiting");
-    },
-    webGraph: async (ref, q) => {
-      const params = new URLSearchParams({ hops: String(q.hops) });
-      if (q.center) params.set("center", q.center);
-      if (q.view) params.set("view", q.view);
-      return (await call(
-        "GET",
-        `/me/campaigns/${encodeURIComponent(ref)}/web?${params.toString()}`,
-      )) as WebGraph;
-    },
-    webSize: async (ref, q) => {
-      const params = new URLSearchParams({ hops: String(q.hops) });
-      if (q.center) params.set("center", q.center);
-      // The size is of the web in the view being asked for, so a DM in Players View or a player
-      // peeking must not be told the size of the other one.
-      if (q.view) params.set("view", q.view);
-      return (await call(
-        "GET",
-        `/me/campaigns/${encodeURIComponent(ref)}/web/size?${params.toString()}`,
-      )) as { names: number };
-    },
-    webOverview: async (ref, q) =>
-      (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/web/overview${q.view ? `?view=${q.view}` : ""}`)) as WebOverview,
-    webFind: async (ref, q) =>
-      ((await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/web/find?view=${q.view ?? ""}&q=${encodeURIComponent(q.q)}`)) as { names: { id: string; name: string; kind: string }[] }).names,
-    webWaiting: async (ref) =>
-      (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/web/waiting`)) as Waiting,
-    // The answer is queued for the bot (202 {answer}) like every other edit; this waits for it.
-    answerWaiting: async (ref, answer, onLook) => {
-      const base = `/me/campaigns/${encodeURIComponent(ref)}/web`;
-      const body =
-        answer.action === "keep_all"
-          ? { kind: answer.kind, action: answer.action, ids: answer.ids }
-          : answer;
-      const queued = (await call("POST", `${base}/waiting`, body)) as { answer: string };
-      if (!queued?.answer) throw new ApiError("server");
-      const got = await waitForAnswer(`${base}/answers/${encodeURIComponent(queued.answer)}`, (look) =>
-        onLook?.({ waits: look.waits ?? null, progress: look.progress ?? null }),
-      );
-      const kept = (got as { kept?: unknown }).kept;
-      return typeof kept === "number" ? { kept } : {};
-    },
-    webReadings: async (ref) =>
-      (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/web/readings`)) as Readings,
-    answerReading: async (ref, answer, onLook) => {
-      const base = `/me/campaigns/${encodeURIComponent(ref)}/web`;
-      const queued = (await call("POST", `${base}/readings`, answer)) as { answer: string };
-      if (!queued?.answer) throw new ApiError("server");
-      // Looks for 150 seconds, longer than the 120 the bot is given before an answer it picked up is taken
-      // again, so a wait that has stalled is shown as stalled before the page stops looking.
-      const got = await waitForAnswer(
-        `${base}/answers/${encodeURIComponent(queued.answer)}`,
-        (look) => onLook?.({ waits: look.waits ?? null }),
-        READING_POLLS,
-      );
-      return { answerId: queued.answer, undoable: got.undoable === true };
-    },
-    webPeek: async (ref) => {
-      await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/web/peek`, {});
-    },
-    // A DM's reveal is queued for the bot like every other edit (202 {answer}); a name is answered at
-    // the All names answers, a connection at the web's own (#2405).
-    webReveal: async (ref, target) => {
-      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
-      const queued = (await call("POST", `${base}/web/reveal`, target)) as { answer: string };
-      if (!queued?.answer) throw new ApiError("server");
-      const where = target.kind === "name" ? "all-names" : "web";
-      await waitForAnswer(`${base}/${where}/answers/${encodeURIComponent(queued.answer)}`);
-    },
-    // The connection edits are queued too (202 {answer}); this waits for the edge as it now stands.
-    changeWebLink: async (ref, change) => {
-      const base = `/me/campaigns/${encodeURIComponent(ref)}/web`;
-      let queued: { answer: string };
-      if (change.action === "add") {
-        const { action: _action, ...body } = change;
-        queued = (await call("POST", `${base}/links`, body)) as { answer: string };
-      } else {
-        const { id, ...body } = change;
-        queued = (await call("POST", `${base}/links/${encodeURIComponent(id)}`, body)) as {
-          answer: string;
-        };
-      }
-      if (!queued?.answer) throw new ApiError("server");
-      const got = await waitForAnswer(`${base}/answers/${encodeURIComponent(queued.answer)}`);
-      return got.removed || !got.edge ? { removed: true } : got.edge;
-    },
-    importProgress: async (ref, importId) =>
-      (await call(
-        "GET",
-        `/me/campaigns/${encodeURIComponent(ref)}/imports/${encodeURIComponent(importId)}`,
-      )) as ImportProgress,
-    shareRecap: async (ref, action) =>
-      (await call("POST", `/me/recaps/${encodeURIComponent(ref)}/share`, {
-        action,
-      })) as RecapShare,
-    publicRecap: async (token) =>
-      (await call(
-        "GET",
-        `/recaps/${encodeURIComponent(token)}`,
-        undefined,
-        false,
-        undefined,
-        true,
-      )) as PublicRecap,
-    decideRecap: async (ref, action) =>
-      (await call(
-        "POST",
-        `/me/recaps/${encodeURIComponent(ref)}/${action}`,
-      )) as Recap,
-    characters: async () =>
-      ((await call("GET", "/me/characters")) as { characters: Character[] })
-        .characters,
     installUrl: (serverId) =>
       `${root}/install?server_id=${encodeURIComponent(serverId)}`,
-    linkServer: async (serverId) => {
-      await call("POST", `/servers/${encodeURIComponent(serverId)}/link`);
-    },
-    // No handoverCandidates or handover yet: the API has no route to make an offer from
-    // the site until #704's follow-up, so the Hand over button stays hidden.
-    acceptOffer: async (offerId) => {
-      await call("POST", `/offers/${encodeURIComponent(offerId)}/accept`);
-    },
-    declineOffer: async (offerId) => {
-      await call("POST", `/offers/${encodeURIComponent(offerId)}/decline`);
-    },
-    withdrawOffer: async (offerId) => {
-      await call("POST", `/offers/${encodeURIComponent(offerId)}/withdraw`);
-    },
-    stopRecording: async (serverId) => {
-      await call("POST", `/me/recording/${encodeURIComponent(serverId)}/stop`);
-    },
-    myLines: async (serverId) => (await call("GET", `/me/transcripts/${encodeURIComponent(serverId)}/mine`)) as MyLines,
-    deleteMyLines: async (serverId) =>
-      ((await call("POST", `/me/transcripts/${encodeURIComponent(serverId)}/delete`)) as { id: string }).id,
-    myLinesStatus: async (serverId, id) =>
-      (await call("GET", `/me/transcripts/${encodeURIComponent(serverId)}/delete/${encodeURIComponent(id)}`)) as MyLinesStatus,
-    requestDelete: async () =>
-      (
-        (await call("POST", "/account/delete/request")) as {
-          confirm_token: string;
-        }
-      ).confirm_token,
-    confirmDelete: async (token) => {
-      await call("POST", "/account/delete/confirm", { confirm_token: token });
-    },
+    ...lazyArea(ACCOUNT_METHODS, () => import("./api-account"), helpers),
+    ...lazyArea(RECAPS_METHODS, () => import("./api-recaps"), helpers),
+    ...lazyArea(NAMES_METHODS, () => import("./api-names"), helpers),
+    ...lazyArea(CAMPAIGN_METHODS, () => import("./api-campaign"), helpers),
   };
 }
