@@ -35,12 +35,12 @@ from dmbot.campaigns.models import Campaign
 from dmbot.memory.lookup import CampaignLookup
 from dmbot.memory.recall import Recall, check_citations
 from dmbot.rules import facts as rule_facts
+from dmbot.rules import rule_card
 from dmbot.rules.homebrew import Homebrew
 from dmbot.rules.house import HouseRule
 from dmbot.rules.index import ASKED_FOR, Hit, Index, normalize
 from dmbot.rules.wins import Win
 from dmbot.sidebar import brevity, context, looked, rule_clash, table_links
-from dmbot.ui import rule_card
 
 log = logging.getLogger(__name__)
 T = TypeVar("T")

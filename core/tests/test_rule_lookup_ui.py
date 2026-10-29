@@ -18,10 +18,9 @@ import discord
 from dmbot.bot import DMBot
 from dmbot.campaigns import Campaign
 from dmbot.dm_screen.settings import RuleLookupButton, settings_view
-from dmbot.rules import index
+from dmbot.rules import index, rule_card
 from dmbot.rules.homebrew import FULL, SAME_NAME, Homebrew, HomebrewError
 from dmbot.rules.house import HouseRule
-from dmbot.ui import rule_card
 from dmbot.ui import rule_lookup as ui
 from dmbot.ui.dmbot_commands import _answer_first as answer_first
 from tests.test_memory_names import FakeResponse
