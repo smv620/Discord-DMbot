@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import time
 import unittest
+from dataclasses import replace
 from typing import Any
 from unittest.mock import patch
 
@@ -593,6 +594,99 @@ class TheEdits(Editing):
         with self.assertRaises(Exception) as caught:
             await self.stamp(answer, progress_total=3, progress_done=4)
         self.assertIn("progress", str(caught.exception).lower())
+
+    def counting(self, answer: str, seen: list[Any], *, fail: bool = False) -> wa.Waiting:
+        """Waiting deps whose progress writes through the store, noting what the page then reads."""
+
+        async def now() -> set[int]:
+            return {7}
+
+        async def tell(action: wa.Action, done: int, total: int) -> None:
+            if fail:
+                raise RuntimeError("the count could not be written")
+            await self.actions.progress(self.g, action, done, total)
+            seen.append(((done, total), (await self.poll(answer))["progress"]))
+
+        return wa.Waiting(self.claims, self.backstory, now, progress=tell)
+
+    async def test_keep_all_tells_the_page_each_step_of_its_count(self) -> None:
+        answer = await self.keep_all_answer()
+        seen: list[Any] = []
+        done = await self.apply_all(waiting=self.counting(answer, seen))
+        self.assertEqual([o.error for o in done], [""])
+        self.assertEqual(
+            seen,
+            [((n, 3), {"done": n, "total": 3}) for n in range(4)],  # 0 of 3, 1 of 3 ... 3 of 3
+        )
+        self.assertEqual(len(await self.knows_hall()), 3)
+
+    async def test_a_refused_connection_still_moves_the_count_on(self) -> None:
+        answer = await self.keep_all_answer()
+        real = self.memory.add_relation
+        calls = 0
+
+        async def refuse_the_second(*args: Any, **kwargs: Any) -> Any:
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise MemoryRuleError("refused")
+            return await real(*args, **kwargs)
+
+        seen: list[Any] = []
+        with patch.object(self.memory, "add_relation", refuse_the_second):
+            await self.apply_all(waiting=self.counting(answer, seen))
+        self.assertEqual([step for step, _ in seen], [(n, 3) for n in range(4)])  # to 3 of 3
+        self.assertEqual(len(await self.knows_hall()), 2)  # the refused one stays waiting
+        self.assertEqual(await self.backstory.count(self.g, self.one.id), 1)
+
+    async def test_a_count_that_cannot_be_written_does_not_stop_the_keep(self) -> None:
+        answer = await self.keep_all_answer()
+        done = await self.apply_all(waiting=self.counting(answer, [], fail=True))
+        self.assertEqual([o.error for o in done], [""])
+        self.assertEqual(len(await self.knows_hall()), 3)
+
+    async def test_a_single_keep_writes_no_count(self) -> None:
+        keep = await self.waiting_link(self.mira, self.hall)
+        answer = await self.queue(kind="backstory", action="keep", id=keep)
+        seen: list[Any] = []
+        self.assertEqual(
+            [o.error for o in await self.apply_all(waiting=self.counting(answer, seen))], [""]
+        )
+        self.assertEqual(seen, [])
+
+    async def test_the_store_writes_the_count_together_and_refuses_a_stale_claim(self) -> None:
+        answer = await self.keep_all_answer()
+        action = await self.actions.claim_next(self.g)
+        assert action is not None
+        self.assertTrue(await self.actions.progress(self.g, action, 12, 50))
+        got = await self.poll(answer)
+        self.assertEqual(got["progress"], {"done": 12, "total": 50})
+        self.assertAlmostEqual(got["waits"]["lastMovedAt"], int(time.time()), delta=5)
+        stale = replace(action, claimed_at=action.claimed_at - 1)  # a worker that lost its claim
+        self.assertFalse(await self.actions.progress(self.g, stale, 40, 50))
+        self.assertEqual((await self.poll(answer))["progress"], {"done": 12, "total": 50})
+
+    async def test_done_can_never_run_ahead_of_total_through_the_method(self) -> None:
+        answer = await self.keep_all_answer()
+        action = await self.actions.claim_next(self.g)
+        assert action is not None
+        self.assertTrue(await self.actions.progress(self.g, action, 9, 3))
+        self.assertEqual((await self.poll(answer))["progress"], {"done": 3, "total": 3})
+        self.assertTrue(await self.actions.progress(self.g, action, -2, -1))
+        self.assertIsNone((await self.poll(answer))["progress"])  # 0 of 0: no count
+
+    async def test_a_retaken_row_starts_its_count_again(self) -> None:
+        answer = await self.keep_all_answer()
+        long_ago = int(time.time()) - 3600
+        await self.stamp(
+            answer, state="working", claimed_at=long_ago * 1000, progress_total=50,
+            progress_done=12, progress_at=long_ago,
+        )  # fmt: skip
+        action = await self.actions.claim_next(self.g)  # the dead worker's row, taken again
+        assert action is not None
+        got = await self.poll(answer)
+        self.assertIsNone(got["progress"])
+        self.assertEqual(got["waits"]["stage"], "working")
 
     async def test_an_answer_never_carries_a_word_of_the_connections(self) -> None:
         answer = await self.keep_all_answer()

@@ -10440,6 +10440,11 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 if transcripts is not None
                 else None
             ),
+            progress=(
+                (lambda action, done, total: actions.progress(guild_id, action, done, total))
+                if actions is not None
+                else None
+            ),
         )
 
     def _named_batch_for(
