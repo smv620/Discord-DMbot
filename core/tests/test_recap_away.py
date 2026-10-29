@@ -4,6 +4,7 @@ Nothing here is a real recap or a real name."""
 from __future__ import annotations
 
 import unittest
+from typing import ClassVar
 
 from dmbot.recaps import away
 from dmbot.recaps import draft as rd
@@ -169,10 +170,11 @@ class WhatComesOut(unittest.TestCase):
 
     def test_the_findings_never_ask_for_length(self) -> None:
         sentences = ["He saw Roan.", "Roan owed Maris a favour.", "Then a threat came."]
-        found = find(*sentences, present=["Maris", "Tavi", "Vell"])
+        found = find(*sentences, present=["Maris", "Tavi"])
         self.assertEqual(
-            {f.kind for f in found}, {"opening", "introduce", "thread", "closing", "moment"}
-        )  # every kind is in this draft
+            {f.kind for f in found},
+            {"opening", "introduce", "thread", "closing", "moment"},
+        )  # every kind but the goal and the listed is in this draft
         text = " ".join(writer_notes(away.changes(found, sentences))).casefold()
         for word in ("longer", "shorter", "paragraph", "sentences long", "more words", "fewer"):
             self.assertNotIn(word, text)
@@ -189,7 +191,7 @@ class WhatComesOut(unittest.TestCase):
 
     def test_is_note_knows_only_its_own_notes(self) -> None:
         sentences = ["He saw Roan.", "Roan owed Maris a favour.", "Then a threat came."]
-        found = find(*sentences, present=["Maris", "Tavi", "Vell"])
+        found = find(*sentences, present=["Maris", "Tavi"])
         notes = away.notes(found, sentences)
         self.assertTrue(notes and all(away.is_note(n) for n in notes))
         self.assertFalse(away.is_note("Check: the style could not be checked this time."))
@@ -198,6 +200,156 @@ class WhatComesOut(unittest.TestCase):
         sentences = ["He ran.", "Tavi followed."]
         found = find(*sentences)
         self.assertEqual(len(away.notes(found, sentences)), len(found))
+
+
+class MomentsAsSubjects(unittest.TestCase):
+    """#2950: a player character who is only named in a list has no moment."""
+
+    def test_a_character_only_in_a_list_is_found_one_who_acts_is_not(self) -> None:
+        listed = find(
+            "Maris, Tavi and Roan balked at the trek.",
+            "Maris drew her blade and went in.",
+        )
+        self.assertIn(("listed", 0, "Tavi"), kinds(listed))
+        self.assertNotIn(("listed", 0, "Maris"), kinds(listed))
+
+    def test_a_character_who_acts_in_any_other_shape_is_not_listed(self) -> None:
+        for sentences in (
+            ["Then Maris drew her blade.", "Meanwhile Tavi ran."],
+            ["Maris and Tavi slipped through the gate."],
+            ["Maris, hoping Tavi would follow, drew her blade.", "Tavi ran."],
+            ["In Tavi's honour, Maris raised a toast.", "Tavi ran."],
+        ):
+            with self.subTest(sentences):
+                found = find(*sentences)
+                self.assertNotIn("listed", [k for k, _, _ in kinds(found)])
+
+    def test_a_name_after_a_scene_phrase_is_a_subject(self) -> None:
+        found = find("At the gate, Maris drew her blade.", "Later, Tavi found a door.")
+        self.assertNotIn("listed", [k for k, _, _ in kinds(found)])
+        self.assertNotIn("moment", [k for k, _, _ in kinds(found)])
+
+    def test_a_character_not_there_at_all_is_still_a_moment_finding(self) -> None:
+        self.assertIn(("moment", 0, "Tavi"), kinds(find("Maris drew her blade.")))
+
+    def test_the_writer_is_asked_and_the_dm_is_told_in_plain_words(self) -> None:
+        sentences = ["Maris, Tavi and Roan balked.", "Maris drew."]
+        (change,) = away.changes([away.Finding(away.LISTED, 0, "Tavi")], sentences)
+        self.assertIn("a name in a list is not a moment", change.text)
+        self.assertEqual(
+            away.notes([away.Finding(away.LISTED, 0, "Tavi")], sentences),
+            ("Check: Tavi is named but the recap tells nothing they did.",),
+        )
+        self.assertTrue(
+            away.is_note(away.notes([away.Finding(away.LISTED, 0, "Tavi")], sentences)[0])
+        )
+
+
+class TheThing(unittest.TestCase):
+    """#2950: "the lantern" for an item the story memory knows, said with no word on what it is."""
+
+    def test_the_sheet_gives_the_nouns_of_known_items_only(self) -> None:
+        sheet = (
+            "Warding Lantern (item)",
+            "Roan (character, smith)",
+            "Ring of Protection (item)",
+            "Bag of Holding (item, magic)",
+            "Grip (item, pet token)",  # one word: a proper name, the names check handles it
+        )
+        self.assertEqual(away.things_of(sheet), ("lantern", "ring", "bag"))
+
+    def test_the_lantern_with_no_introduction_is_found(self) -> None:
+        found = find("Maris saw the lantern glow green.", "Tavi ran.", things=["lantern"])
+        self.assertIn(("introduce", 1, "the lantern"), kinds(found))
+
+    def test_the_lantern_explained_or_already_told_is_not_found(self) -> None:
+        for sentence in (
+            "Maris saw the lantern, which warns of danger, glow green.",
+            "Maris saw the lantern that warns of danger glow green.",
+        ):
+            with self.subTest(sentence):
+                self.assertNotIn(
+                    "introduce",
+                    [k for k, _, _ in kinds(find(sentence, "Tavi ran.", things=["lantern"]))],
+                )
+        told = find("Maris saw the lantern glow.", "Tavi ran.", things=["lantern"],
+                    previous=PREVIOUS + " They carried a lantern.")  # fmt: skip
+        self.assertNotIn("introduce", [k for k, _, _ in kinds(told)])
+
+    def test_only_the_first_mention_is_looked_at(self) -> None:
+        found = find("Maris saw the lantern glow.", "The lantern flickered.", things=["lantern"])
+        self.assertEqual([n for k, _, n in kinds(found) if k == "introduce"], ["the lantern"])
+
+    def test_a_noun_already_told_earlier_is_not_found_again(self) -> None:
+        for sentences in (
+            ["Maris found a lantern that warns of ghouls.", "Tavi lit the lantern."],
+            ["Maris took the Warding Lantern, which warns of ghouls.", "Tavi lit the lantern."],
+        ):
+            with self.subTest(sentences):
+                found = find(*sentences, things=["lantern"])
+                self.assertNotIn("introduce", [k for k, _, _ in kinds(found)])
+
+    def test_a_comma_and_the_is_not_an_introduction(self) -> None:
+        found = find("Maris saw the lantern, the door opened.", "Tavi ran.", things=["lantern"])
+        self.assertIn(("introduce", 1, "the lantern"), kinds(found))
+
+
+class TheGoal(unittest.TestCase):
+    THREADS: ClassVar[list[str]] = ["Find the lost crown of Vell"]
+
+    def test_no_word_of_where_the_party_goes_is_found_when_a_thread_gives_one(self) -> None:
+        found = find("Maris drew her blade.", "Tavi ran to the gate.", threads=self.THREADS)
+        self.assertIn(("goal", 0, ""), kinds(found))
+
+    def test_a_goal_word_or_the_thread_itself_satisfies_it(self) -> None:
+        for sentences in (
+            ("Maris and Tavi set out to find the crown.", "Maris drew."),
+            ("Maris sought the lost crown of Vell.", "Tavi ran."),
+            ("Maris drew.", "Tavi wanted to leave the keep."),
+        ):
+            with self.subTest(sentences):
+                found = find(*sentences, threads=self.THREADS)
+                self.assertNotIn("goal", [k for k, _, _ in kinds(found)])
+
+    def test_with_no_open_thread_there_is_nothing_to_ask_for(self) -> None:
+        found = find("Maris drew her blade.", "Tavi ran to the gate.")
+        self.assertNotIn("goal", [k for k, _, _ in kinds(found)])
+
+    def test_a_session_that_never_touched_the_thread_is_not_asked_for_a_goal(self) -> None:
+        import dataclasses  # noqa: F401
+
+        from dmbot.recaps import beats as bt
+        from dmbot.recaps import pipeline as pl
+
+        beat = bt.Beat(1, "Maris met a smuggler at Dockside.", ("Maris",), (1,), "event")
+        self.assertEqual(pl._touched(["Find the lost crown of Vell"], [beat]), ())
+        self.assertEqual(
+            pl._touched(["Meet the Dockside smuggler", "Find the crown"], [beat]),
+            ("Meet the Dockside smuggler",),
+        )
+
+    def test_the_cap_keeps_the_goal_ahead_of_the_listed_and_caps_the_listed(self) -> None:
+        names = ["Maris", "Tavi", "Brann", "Isolde", "Roan"]
+        sentences = [
+            "He ran.",
+            "Maris, Tavi, Brann, Isolde and Roan waited.",
+            "Roan owed Maris a favour.",
+            "Then a threat came.",
+        ]
+        found = find(*sentences, names=names, present=names[:4], threads=self.THREADS)
+        counts = [f.kind for f in found]
+        self.assertLessEqual(len(found), away.MAX_FINDINGS)
+        self.assertIn("goal", counts)
+        self.assertLessEqual(counts.count("listed"), 2)
+
+    def test_it_is_soft_and_plain(self) -> None:
+        (change,) = away.changes([away.Finding(away.GOAL, 0)], ["Maris drew."])
+        self.assertIn("otherwise leave it out", change.text)
+        self.assertFalse(change.hard)
+        self.assertEqual(
+            away.notes([away.Finding(away.GOAL, 0)], ["Maris drew."]),
+            ("Check: the recap does not say where the party is going or what it wants.",),
+        )
 
 
 if __name__ == "__main__":
