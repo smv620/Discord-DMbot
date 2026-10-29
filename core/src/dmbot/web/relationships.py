@@ -531,7 +531,9 @@ async def queue_reveal(db: Database, session: Session, ref: str, body: object) -
 async def read_answer(db: Database, session: Session, ref: str, answer: str) -> dict[str, Any]:
     """Where one of the caller's own connection edits stands: `state` (waiting, working, done,
     failed), the `error` word when it failed, and, when it is done, the pair's `edge` as it now
-    stands (or `removed` when its last connection went)."""
+    stands (or `removed` when its last connection went). An answer to a waiting fact, connection or
+    question (`claim-*`, `backstory-*`) also carries `waits` (stage, how long, when it last moved)
+    and, for Keep all, `progress` (`{done, total}`), counts and times only (#2921)."""
     guild_id, campaign_id = _parse(ref)
     _guild_of(session, guild_id)
     if not ID_PATTERN.match(answer):

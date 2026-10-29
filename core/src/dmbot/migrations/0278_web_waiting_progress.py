@@ -36,6 +36,14 @@ WEB_WAITING_PROGRESS = (
         ADD COLUMN progress_at    BIGINT NOT NULL DEFAULT 0,
         ADD CONSTRAINT name_actions_progress_check CHECK (progress_done <= progress_total);
 
+    COMMENT ON COLUMN name_actions.progress_done IS
+        'Connections a Keep all has kept so far. Written with progress_total in ONE update (the'
+        ' CHECK needs done <= total), and set back to 0 when a stalled row is retaken.';
+    COMMENT ON COLUMN name_actions.progress_total IS
+        'Connections a Keep all will try (at most 50); 0 when no count is kept.';
+    COMMENT ON COLUMN name_actions.progress_at IS
+        'When the bot last moved this row forward, in Unix SECONDS (claimed_at is milliseconds).';
+
     CREATE OR REPLACE FUNCTION pg_temp.swap_once(def text, old text, new text) RETURNS text
     LANGUAGE plpgsql AS $f$
     BEGIN

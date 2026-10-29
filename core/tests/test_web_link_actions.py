@@ -553,6 +553,28 @@ class TheEdits(Editing):
         self.assertEqual(got["waits"]["lastMovedAt"], now)
         self.assertFalse(got["waits"]["stalled"])
 
+    async def test_a_recent_progress_stamp_keeps_an_old_claim_from_reading_stalled(self) -> None:
+        answer = await self.keep_all_answer()
+        now = int(time.time())
+        await self.stamp(
+            answer, state="working", claimed_at=(now - 3600) * 1000, progress_total=50,
+            progress_done=30, progress_at=now,
+        )  # fmt: skip
+        got = await self.poll(answer)
+        self.assertFalse(got["waits"]["stalled"])
+        self.assertEqual(got["waits"]["lastMovedAt"], now)
+
+    async def test_a_single_claim_answer_keeps_the_old_fields_and_adds_the_wait(self) -> None:
+        yes = await self.claim()
+        answer = await self.queue(kind="claim", action="confirm", id=yes)
+        got = await self.poll(answer)
+        self.assertEqual(
+            (got["state"], got["error"], got["edge"], got["removed"]), ("waiting", "", None, False)
+        )
+        self.assertIsNone(got["kept"])
+        self.assertIsNone(got["progress"])
+        self.assertEqual(got["waits"]["stage"], "queued")
+
     async def test_a_working_answer_that_has_gone_quiet_reads_stalled(self) -> None:
         answer = await self.keep_all_answer()
         long_ago = int(time.time()) - 3600
