@@ -1,6 +1,6 @@
 /** @jsxImportSource preact */
 // @vitest-environment happy-dom
-// The relationship web page (#2324): re-centring, steps out, the big-web question, the connection panel
+// The Story Graph page (#2324): re-centring, steps out, the big-web question, the connection panel
 // and its edits, and what a server manager who isn't a DM never sees.
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
 import { afterEach, describe, expect, it } from "vitest";

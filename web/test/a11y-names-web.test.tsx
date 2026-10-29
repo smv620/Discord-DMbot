@@ -1,6 +1,6 @@
 /** @jsxImportSource preact */
 // @vitest-environment happy-dom
-// Accessibility of the Names page (#2295) and the relationship web (#2324): axe-core on each in
+// Accessibility of the Names page (#2295) and the Story Graph (#2324): axe-core on each in
 // the states a person can reach, as a11y-islands.test.tsx does for the account page (#2249).
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
 import axe from "axe-core";
@@ -58,7 +58,7 @@ describe("Names page", () => {
   });
 });
 
-describe("relationship web", () => {
+describe("Story Graph", () => {
   it.each([
     ["a DM", "/account/web/100.cmp1"],
     ["a server manager who is not a DM", "/account/web/100.cmp1.web-manager"],

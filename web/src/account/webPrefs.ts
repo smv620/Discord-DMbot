@@ -1,4 +1,4 @@
-// What a person chose on the relationship web, kept in this browser only (#2934): which layout, and the
+// What a person chose on the Story Graph, kept in this browser only (#2934): which layout, and the
 // places of the names they moved. Never sent to the server, so a DM's arrangement is never shared data and
 // never reaches a player. Every read and write is guarded: private windows and blocked storage throw, and
 // the map must work the same without it.

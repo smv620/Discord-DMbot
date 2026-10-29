@@ -1,5 +1,5 @@
-"""The DM-screen notice for a peek at the relationship web (#2404): "<name> peeked at the
-relationship web", posted once for each visit.
+"""The DM-screen notice for a peek at the Story Graph (#2404): "<name> peeked at the
+Story Graph", posted once for each visit.
 
 A player who turns the peek on (after the page's warning) asks the website's peek door, which
 records the visit in `web_peeks` (only when the campaign's DM screen lets players peek). The bot
@@ -33,7 +33,7 @@ def notice(name: str) -> str:
     """The line for the DM screen. A name with markdown or a mention in it does neither."""
     one_line = " ".join(name.split())  # no new line, so a name cannot fake a second message
     plain = discord.utils.escape_markdown(discord.utils.escape_mentions(one_line), as_needed=False)
-    return f"👀 {plain} peeked at the relationship web."
+    return f"👀 {plain} peeked at the Story Graph."
 
 
 class PeekNotices:
