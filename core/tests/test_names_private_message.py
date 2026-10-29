@@ -1,7 +1,9 @@
-"""The check of new names, opened from the DM's private message (#2976): a private message has no
+"""The check of new names, opened from the DM's private message (#2977): a private message has no
 server, so its cards' buttons used to answer "Use this in a server". Invented names."""
 
 from __future__ import annotations
+
+from typing import Any
 
 from dmbot.memory.models import PROPOSED
 from dmbot.ui import names as ui
@@ -17,7 +19,7 @@ class FromAPrivateMessage(NamesTest):
         ui._PRIVATE_SERVERS.clear()
         await super().asyncTearDown()
 
-    def private(self, user: int = 0) -> object:
+    def private(self, user: int = 0) -> Any:  # (a stand-in interaction, as the other tests use)
         it = self.it(user) if user else self.it()
         it.guild = None
         it.guild_id = None

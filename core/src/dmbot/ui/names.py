@@ -154,7 +154,7 @@ def changed(interaction: discord.Interaction, campaign: Campaign) -> None:
         cache.mark_stale(campaign.guild_id, campaign.id)
 
 
-# The server of a campaign whose cards were opened from a private message (#2976): a private message
+# The server of a campaign whose cards were opened from a private message (#2977): a private message
 # has no server, so the card's buttons would all answer "Use this in a server". Only the campaign's
 # own DM (checked by `can_run` when the card is opened) puts a campaign here, and every press is
 # checked again below. Lost on a restart: a card from before it asks to be opened again.
