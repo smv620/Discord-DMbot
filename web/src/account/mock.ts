@@ -2008,7 +2008,8 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
           if (change.player !== undefined) {
             // The bot's two refusals: not an ID (or not for a player character), and an ID nobody in the server has.
             if (change.kind !== "player_character" || !/^[1-9][0-9]{14,18}$/.test(change.player)) throw new ApiError("bad-player");
-            if (change.player.endsWith("0000")) throw new ApiError("not-member");
+            if (change.confirmed !== true) throw new ApiError("bad-player"); // nothing links without the confirmation
+            if (change.player.endsWith("0000")) throw new ApiError("unknown-id");
             if (change.player.endsWith("9999")) throw new ApiError("bot-player");
           }
           row.kind = change.kind;
@@ -2059,6 +2060,14 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       signedIn();
       if (namesView(ref) !== "dm") throw new ApiError("not-allowed");
       if (/\.timed-out\b/.test(ref)) throw new ApiError("still-waiting");
+      if (step.action === "kind") {
+        // Who an ID is: the pretend bot's answers, by how the ID ends.
+        if (!/^[1-9][0-9]{14,18}$/.test(step.player)) throw new ApiError("bad-player");
+        if (step.player.endsWith("0000")) throw new ApiError("unknown-id");
+        if (step.player.endsWith("9999")) throw new ApiError("bot-player");
+        if (step.player.endsWith("1111")) throw new ApiError("lookup-failed");
+        return { state: "player", name: "SomeUser", inServer: !step.player.endsWith("5555") };
+      }
       const answer = `ans${nameSteps.size + 1}`;
       if (step.action === "name-undo") {
         const done = nameSteps.get(step.answer);

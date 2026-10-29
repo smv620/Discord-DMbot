@@ -1514,7 +1514,7 @@ export interface NamesQuery {
 export type NameChange =
   | { action: "spell"; name: string }
   // `player`: for a player character, the Discord ID of who plays it (#2985); the bot checks the person is in the server.
-  | { action: "kind"; kind: string; player?: string }
+  | { action: "kind"; kind: string; player?: string; confirmed?: true }
   | { action: "add-other"; other: string }
   | { action: "remove-other"; other: string }
   // "Players don't know this one yet" on the whole entry; `secret` is one other name (#2294).
@@ -1532,13 +1532,16 @@ export type NameThemStep =
   // "Yes, the same person": joined into the name DMbot already knows, which is kept.
   | { action: "name-join"; into: string }
   // Takes back a name just given or a join; `answer` is the id the step came back with.
-  | { action: "name-undo"; answer: string };
+  | { action: "name-undo"; answer: string }
+  // Who a Discord ID is (#3004): the bot asks Discord and writes nothing; the answer is shown for the DM to confirm.
+  | { action: "kind"; kind: "player_lookup"; player: string };
 
 /** How a step ended: done (`undo` is the id to take it back with, null when it can't be), or a question
  * because DMbot already knows someone with that name. */
 export type NameThemResult =
   | { state: "done"; row: NameRow | null; undo: string | null; answer: string }
-  | { state: "question"; other: { id: string; name: string } };
+  | { state: "question"; other: { id: string; name: string } }
+  | { state: "player"; name: string; inServer: boolean };
 
 /** What the bot says about a queued name change (#2294). */
 interface NameAnswer {
@@ -1551,6 +1554,8 @@ interface NameAnswer {
   other?: { id: string; name: string } | null;
   /** True while the step can still be undone (#2803). */
   undo?: boolean;
+  /** Who a looked-up Discord ID is: the name Discord shows, and whether they are in this server yet (#3004). */
+  player?: { name: string; inServer: boolean } | null;
 }
 const NAME_POLL_MS = 1000;
 const NAME_POLLS = 60;
@@ -1849,7 +1854,8 @@ export type ApiErrorKind =
   | "bad-kind" // a kind the campaign doesn't have (#2295)
   | "bad-player" // a Discord ID that is not an ID (#2985)
   | "bot-player" // that ID is a bot, which cannot play a character (#2985)
-  | "not-member" // that person is not in this Discord server (#2985)
+  | "unknown-id" // Discord does not know that ID (#3004)
+  | "lookup-failed" // Discord could not be asked: nothing was linked (#3004)
   | "name-exists" // another name already goes by that (#2295)
   | "needs-confirm" // a removal sent without its confirmation (#2295)
   | "bad-page" // a page of the Names list that isn't there any more (#2295)
@@ -2482,7 +2488,8 @@ const errorKinds: Record<string, ApiErrorKind> = {
   bad_name: "bad-name",
   bad_kind: "bad-kind",
   bad_player: "bad-player",
-  not_member: "not-member",
+  unknown_id: "unknown-id",
+  lookup_failed: "lookup-failed",
   bot_player: "bot-player",
   exists: "name-exists",
   needs_confirm: "needs-confirm",
@@ -3278,15 +3285,8 @@ export function httpApi(
       ((await call("DELETE", `/me/npc-notes?campaign=${encodeURIComponent(ref)}`)) as {
         deleted: number;
       }).deleted,
-    allNames: async (ref, q) => {
-      const params = new URLSearchParams({ q: q.q, kind: q.kind, sort: q.sort, page: String(q.page) });
-      if (q.size !== undefined) params.set("size", String(q.size));
-      if (q.unnamed) params.set("unnamed", "1");
-      return (await call(
-        "GET",
-        `/me/campaigns/${encodeURIComponent(ref)}/all-names?${params.toString()}`,
-      )) as NamesPage;
-    },
+    allNames: async (ref, q) =>
+      (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/all-names?${new URLSearchParams({ q: q.q, kind: q.kind, sort: q.sort, page: String(q.page), ...(q.size !== undefined ? { size: String(q.size) } : {}), ...(q.unnamed ? { unnamed: "1" } : {}) })}`)) as NamesPage,
     smartNames: async (ref, words) =>
       (await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/all-names/search`, { q: words })) as SmartNamesAnswer,
     // The bot applies a name change, so the POST only queues it (202 {answer}); this waits for the
@@ -3332,6 +3332,7 @@ export function httpApi(
           if (error instanceof ApiError && error.kind === "signed-out") throw error;
         }
         if (got?.state === "done") {
+          if (got.player) return { state: "player", ...got.player };
           return { state: "done", row: got.row ?? null, undo: got.undo ? queued.answer : null, answer: queued.answer };
         }
         if (got?.state === "failed") {
@@ -3342,15 +3343,8 @@ export function httpApi(
       }
       throw new ApiError("still-waiting");
     },
-    webGraph: async (ref, q) => {
-      const params = new URLSearchParams({ hops: String(q.hops) });
-      if (q.center) params.set("center", q.center);
-      if (q.view) params.set("view", q.view);
-      return (await call(
-        "GET",
-        `/me/campaigns/${encodeURIComponent(ref)}/web?${params.toString()}`,
-      )) as WebGraph;
-    },
+    webGraph: async (ref, q) =>
+      (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/web?hops=${q.hops}${q.center ? `&center=${encodeURIComponent(q.center)}` : ""}${q.view ? `&view=${q.view}` : ""}`)) as WebGraph,
     // The size is of the web in the view being asked for, so a DM in Players View or a player peeking must not be
     // told the size of the other one.
     webSize: async (ref, q) =>

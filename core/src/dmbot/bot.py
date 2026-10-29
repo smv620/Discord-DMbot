@@ -10538,16 +10538,31 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
 
         return batch_of
 
-    def _player_lookup(self, guild_id: int) -> Callable[[int], Awaitable[bool | None]]:
-        """For a player character made on the website with a Discord ID: True for a person of this
-        server, False for a bot, None for someone who is not in it. A failed lookup raises, so the
-        action is marked failed (and can be sent again), never read as "not in the server"."""
+    def _player_lookup(self, guild_id: int) -> web_actions.PlayerLookupFn:
+        """Who a Discord ID is, for the website's "Please confirm: <name>" (#3004): the name Discord
+        shows (the display name, else the username), whether it is a bot, and whether the person is
+        in this server yet. Discord's user lookup, not a member one, so someone who has not joined
+        can be found. None when Discord does not know the ID; a failed lookup raises, so it is
+        never read as "unknown"."""
 
-        async def member_of(user_id: int) -> bool | None:
-            found = await self.find_member(guild_id, user_id)
-            return None if found is None else not found.bot
+        async def look_up(user_id: int) -> web_actions.PlayerLookup | None:
+            guild = self.get_guild(guild_id)
+            if guild is None:
+                raise RuntimeError("the server is not reachable")
+            member = guild.get_member(user_id)
+            user: discord.User | discord.Member | None = member
+            if user is None:
+                try:
+                    user = await asyncio.wait_for(
+                        self.fetch_user(user_id), game_masters.LOOKUP_S * 4
+                    )
+                except discord.NotFound:
+                    return None
+            return web_actions.PlayerLookup(
+                name=user.global_name or user.name, bot=user.bot, in_server=member is not None
+            )
 
-        return member_of
+        return look_up
 
     async def run_name_actions(self) -> None:
         """What DMs did on the website's All names page (#2294), applied through the same memory
@@ -10578,7 +10593,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                                 action,
                                 self._waiting_answers(guild.id),
                                 named_batch=self._named_batch_for(guild.id),
-                                member_of=self._player_lookup(guild.id),
+                                look_up=self._player_lookup(guild.id),
                             )
                         )
                     except Exception as exc:  # the row must never stay "working" for a bug
