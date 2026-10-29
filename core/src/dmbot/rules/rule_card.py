@@ -15,7 +15,7 @@ from collections.abc import Iterable, Sequence
 
 import discord
 
-from dmbot.discord_limits import MESSAGE_MAX
+from dmbot.discord_limits import CHOICE_VALUE_MAX, MESSAGE_MAX
 from dmbot.rules import facts as rule_facts
 from dmbot.rules import index
 from dmbot.rules.book_rank import BOOK_TAG, LEGACY_TAG
@@ -514,3 +514,42 @@ def choice_label(entry: Entry) -> str:
     older = f" [Legacy {entry.edition}]" if entry.edition == index.LEGACY else ""
     label = f"{entry.name} ({kind}){older}"
     return label if len(label) <= NAME_MAX else label[: NAME_MAX - 1] + "…"
+
+
+def choice_value(srd: index.Index, entry: index.Entry) -> str:
+    """What is typed into the box when a name is picked. A feature several classes share is
+    picked with its class in front ("Rogue Evasion"); one a class has at two levels ("Improved
+    Brutal Strike") with its level after, which `_features` reads back."""
+    if entry.kind in index.NAMED_KINDS and (
+        srd.lookup(entry.name, entry.edition) is not None
+        or any(  # a gear entry and a magic item can share a name ("Spell Scroll"): #1927
+            srd.lookup(entry.name, entry.edition, kind=kind) is not None
+            for kind in index.NAMED_KINDS
+            if kind != entry.kind
+        )
+        or (
+            entry.kind != index.RULE  # a feat shares its name with a class feature
+            and srd.lookup_all(entry.name, entry.edition, kind=index.FEATURE)
+        )
+    ):
+        return f"{entry.name} ({entry.kind})"[
+            :CHOICE_VALUE_MAX
+        ]  # also a creature's name: say which
+    if entry.kind == "monster" and any(
+        srd.lookup(entry.name, edition, kind=kind) is not None
+        for edition in ("2024", "2014")
+        for kind in (index.ITEM, *index.ORIGIN_KINDS, *index.EQUIPMENT_KINDS, *index.HAZARD_KINDS)
+    ):
+        return f"{entry.name} (creature)"[
+            :CHOICE_VALUE_MAX
+        ]  # the species or background has the name too
+    if entry.kind != index.FEATURE:
+        return entry.name[:CHOICE_VALUE_MAX]
+    klass = str(entry.details.get("class", ""))
+    same = [
+        h
+        for h in srd.lookup_all(entry.name, entry.edition, kind=index.FEATURE, prefer=klass)
+        if h.entry.details.get("class") == klass
+    ]
+    level = f" {entry.details.get('level')}" if len(same) > 1 else ""
+    return f"{klass} {entry.name}{level}"[:CHOICE_VALUE_MAX]

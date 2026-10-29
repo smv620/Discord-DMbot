@@ -351,6 +351,7 @@ from dmbot.rules.spotter import Mention
 from dmbot.rules.wins import RuleRef, Win, WinsSection, WinsStore
 from dmbot.sessions import SavedSession, SessionStore
 from dmbot.sidebar import knowledge
+from dmbot.sidebar import rule_clash as sidebar_rule_clash
 from dmbot.sidebar.answer import PROMPT_VERSION as SIDEBAR_PROMPT_VERSION
 from dmbot.sidebar.answer import Sidebar
 from dmbot.sidebar.ask import asks_off_record, request_in
@@ -505,6 +506,7 @@ from dmbot.ui.recap_again import (
 )
 from dmbot.ui.recap_upload import recap_upload_command  # noqa: F401 (registers it)
 from dmbot.ui.revealed_report import UndoRevealedButton, report_text, revealed_view
+from dmbot.ui.rule_clash import ClashView
 from dmbot.ui.rule_lookup import dmbot_rule  # noqa: F401 (registers it)
 from dmbot.ui.secret_aloud import (
     SecretAloudButton,
@@ -3398,6 +3400,24 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             second_try=careful,
             settled=settled,
         )
+
+    def sidebar_clash_view(
+        self,
+        campaign: Campaign,
+        clash: tuple[sidebar_rule_clash.Side, sidebar_rule_clash.Side],
+        retry: Callable[[], Awaitable[None]],
+    ) -> discord.ui.View:
+        """The two buttons under the DM's "which one applies?" (#2284); built here so the sidebar
+        imports nothing from `ui` (#2827)."""
+
+        async def record(winner: RuleRef, loser: RuleRef, by: int) -> bool:
+            return await self.sidebar_record_win(campaign, winner, loser, by)
+
+        return ClashView(clash, dm_ids=campaign.dm_user_ids, record=record, retry=retry)
+
+    def sidebar_looked_view(self, key: str) -> discord.ui.View:
+        """The DM's "📖 What I looked at" under a rules answer, for the list kept under `key`."""
+        return looked_at.view(key)
 
     async def sidebar_record_win(
         self, campaign: Campaign, winner: RuleRef, loser: RuleRef, by: int
