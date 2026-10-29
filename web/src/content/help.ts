@@ -445,11 +445,11 @@ export const timeSuggestionSteps: Step[] = [
 ];
 
 
-// How the table runs initiative, heard by FightBot (#1788; #1771, merged in #1783). Off until dev1 has
-// live-checked it; flip it in the same change that moves "FightBot follows your turn order" out of
-// `held` in whats-new.ts, a test ties the two. There is no setting or button for it (the side-initiative
+// How the table runs initiative, heard by FightBot (#1788; #1771, merged in #1783). Live since the 2026-10-18
+// deploy; it was flipped in the same change that took "FightBot follows your turn order" out of its
+// held state, and a test ties the two. There is no setting or button for it (the side-initiative
 // button went in #1774), so the steps name none.
-export const INITIATIVE_STYLE_LIVE = false;
+export const INITIATIVE_STYLE_LIVE = true;
 
 export const initiativeStyleSteps: Step[] = [
   {
