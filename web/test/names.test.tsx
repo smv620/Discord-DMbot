@@ -282,15 +282,65 @@ describe("what a DM can do", () => {
       expect(options).toContain("npc");
     });
 
-    it("sends the Discord ID with it", async () => {
+    const typeId = async (row: ReturnType<typeof within>, id: string) => {
+      fireEvent.input(row.getByLabelText(w.playerLabel), { target: { value: id } });
+      await act(async () => {});
+    };
+    const linked = (api: ReturnType<typeof mockApi>) => calls(api, "changeName").filter((c) => c.includes("player_character"));
+
+    it("asks who the ID is first and links nothing until the DM says that's them (#3004)", async () => {
       const { api, row } = await pick();
       // A pasted mention and stray spaces are tidied before it is sent.
-      fireEvent.input(row.getByLabelText(w.playerLabel), { target: { value: ` <@${PLAYER_ID}> ` } });
-      await act(async () => {});
-      fireEvent.click(row.getByRole("button", { name: w.saveKind }));
+      await typeId(row, ` <@${PLAYER_ID}> `);
+      fireEvent.click(row.getByRole("button", { name: w.playerCheck }));
+      expect(await row.findByText(w.playerConfirm("SomeUser"))).toBeTruthy();
+      expect(row.getByText(w.playerNotRecording)).toBeTruthy();
+      expect(calls(api, "nameThem").pop()).toBe(`nameThem:100.cmp1:n7:{"action":"kind","kind":"player_lookup","player":"${PLAYER_ID}"}`);
+      expect(linked(api)).toHaveLength(0); // asked, not linked
+      fireEvent.click(row.getByRole("button", { name: w.playerYes }));
       await waitFor(() =>
-        expect(calls(api, "changeName").pop()).toBe(`changeName:100.cmp1:n7:{"action":"kind","kind":"player_character","player":"${PLAYER_ID}"}`),
+        expect(linked(api).pop()).toBe(`changeName:100.cmp1:n7:{"action":"kind","kind":"player_character","player":"${PLAYER_ID}","confirmed":true}`),
       );
+      await waitFor(() => expect(within(rowOf("Gorrak")).getByText("PCs")).toBeTruthy());
+    });
+
+    it("cancels without linking, and a changed ID has to be checked again", async () => {
+      const { api, row } = await pick();
+      await typeId(row, PLAYER_ID);
+      fireEvent.click(row.getByRole("button", { name: w.playerCheck }));
+      await row.findByText(w.playerConfirm("SomeUser"));
+      fireEvent.click(row.getByRole("button", { name: w.playerCancel }));
+      expect(row.queryByText(w.playerConfirm("SomeUser"))).toBeNull();
+      fireEvent.click(row.getByRole("button", { name: w.playerCheck }));
+      await row.findByText(w.playerConfirm("SomeUser"));
+      await typeId(row, "123456789012345679"); // another ID: the confirmation was for the first
+      expect(row.queryByText(w.playerConfirm("SomeUser"))).toBeNull();
+      expect(row.queryByRole("button", { name: w.playerYes })).toBeNull();
+      expect(linked(api)).toHaveLength(0);
+    });
+
+    it("offers to link someone who is not in the server yet, in words that say so", async () => {
+      const { api, row } = await pick();
+      await typeId(row, "123456789012345555");
+      fireEvent.click(row.getByRole("button", { name: w.playerCheck }));
+      expect(await row.findByText(w.playerNotHere("SomeUser"))).toBeTruthy();
+      fireEvent.click(row.getByRole("button", { name: w.playerYes }));
+      await waitFor(() => expect(linked(api)).toHaveLength(1));
+    });
+
+    it("shows the wait's stage while Discord is asked", async () => {
+      const api = mockApi("table");
+      const slow = api.nameThem!.bind(api);
+      api.nameThem = (ref, id, step, onLook) => new Promise((go) => setTimeout(() => go(slow(ref, id, step, onLook)), 50));
+      open(DM, api);
+      await ready();
+      const row = await edit("Gorrak");
+      fireEvent.change(row.getByLabelText(w.kindChange), { target: { value: "player_character" } });
+      await typeId(row, PLAYER_ID);
+      fireEvent.click(row.getByRole("button", { name: w.playerCheck }));
+      expect(await row.findByText(w.playerStage["waiting"] ?? "")).toBeTruthy();
+      expect(await row.findByText(w.playerConfirm("SomeUser"))).toBeTruthy();
+      expect(row.queryByText(w.playerStage["waiting"] ?? "")).toBeNull();
     });
 
     it("has an (i) that opens and closes the hint on how to find an ID", async () => {
@@ -307,17 +357,20 @@ describe("what a DM can do", () => {
       expect(hint().hasAttribute("hidden")).toBe(true);
     });
 
-    it("says so in plain words when the ID is not an ID, or nobody in the server has it", async () => {
-      const { row } = await pick();
-      fireEvent.input(row.getByLabelText(w.playerLabel), { target: { value: "Mira" } });
-      fireEvent.click(row.getByRole("button", { name: w.saveKind }));
-      expect(await row.findByText(w.errors["bad-player"] ?? "")).toBeTruthy();
-      fireEvent.input(row.getByLabelText(w.playerLabel), { target: { value: "123456789012340000" } });
-      fireEvent.click(row.getByRole("button", { name: w.saveKind }));
-      expect(await row.findByText(w.errors["not-member"] ?? "")).toBeTruthy();
-      fireEvent.input(row.getByLabelText(w.playerLabel), { target: { value: "123456789012349999" } });
-      fireEvent.click(row.getByRole("button", { name: w.saveKind }));
-      expect(await row.findByText(w.errors["bot-player"] ?? "")).toBeTruthy();
+    it("says so in plain words when the ID is not an ID, unknown to Discord, a bot's, or could not be checked", async () => {
+      const { api, row } = await pick();
+      for (const [id, error] of [
+        ["Mira", "bad-player"],
+        ["123456789012340000", "unknown-id"],
+        ["123456789012349999", "bot-player"],
+        ["123456789012341111", "lookup-failed"],
+      ] as const) {
+        await typeId(row, id);
+        fireEvent.click(row.getByRole("button", { name: w.playerCheck }));
+        expect(await row.findByText(w.errors[error] ?? "")).toBeTruthy();
+        expect(row.queryByRole("button", { name: w.playerYes })).toBeNull(); // never linked without the name shown
+      }
+      expect(linked(api)).toHaveLength(0);
     });
   });
 

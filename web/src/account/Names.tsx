@@ -761,9 +761,16 @@ function NameEditor({ id, row, kinds, act, api, refId, focusSaid }: EditorProps)
   // Who plays it, for a player character: a Discord ID, or empty for "not yet" (#2985).
   const [player, setPlayer] = useState("");
   const [playerInfo, setPlayerInfo] = useState(false);
+  // Who Discord says the typed ID is, shown for the DM to confirm before anything is linked (#3004).
+  const [lookup, setLookup] = useState<{ id: string; name: string; inServer: boolean } | null>(null);
+  const [looking, setLooking] = useState(false);
+  const [looks, setLooks] = useState(0);
+  const lookWait = useObservedWait(looking, String(looks));
+  const confirmBox = useRef<HTMLParagraphElement>(null);
+  const playerId = player.replace(/[<@!>\s]/g, "");
   const [other, setOther] = useState("");
   // Saving is for a new kind, or (for a player character already) a Discord ID to attach.
-  const kindChanged = kindKey !== row.kind || (kindKey === PLAYER && player.replace(/[<@!>\s]/g, "") !== "");
+  const kindChanged = kindKey !== row.kind || (kindKey === PLAYER && playerId !== "");
   const [mergeQ, setMergeQ] = useState("");
   const [mergeFound, setMergeFound] = useState<NameRow[] | null>(null);
   // The search itself failed (not "nothing matches"), or has more matches than the first page.
@@ -864,6 +871,27 @@ function NameEditor({ id, row, kinds, act, api, refId, focusSaid }: EditorProps)
     };
   }, [api, refId, mergeQ, row.id]);
 
+  /** Ask the bot who a Discord ID is; nothing is linked until the DM confirms the name it shows. */
+  async function check(typed: string): Promise<void> {
+    if (looking) return;
+    setProblem(null);
+    setLookup(null);
+    if (!api.nameThem) return void setProblem(words.errors["lookup-failed"] ?? words.errorFallback); // nothing links unchecked
+    setLooking(true);
+    setLooks(0);
+    try {
+      const got = await api.nameThem(refId, row.id, { action: "kind", kind: "player_lookup", player: typed }, () => setLooks((n) => n + 1));
+      if (got.state === "player") {
+        setLookup({ id: typed, name: got.name, inServer: got.inServer });
+        setTimeout(() => confirmBox.current?.focus(), 0);
+      }
+    } catch (error) {
+      setProblem(refusal(error) ?? words.errorFallback);
+    } finally {
+      setLooking(false);
+    }
+  }
+
   /** Resolves true when the change worked, so a box is emptied only then. */
   async function run(change: NameChange, ok: string): Promise<boolean> {
     setWorking(true);
@@ -952,16 +980,21 @@ function NameEditor({ id, row, kinds, act, api, refId, focusSaid }: EditorProps)
         onSubmit={(e) => {
           e.preventDefault();
           if (!kindChanged) return;
-          // A pasted mention (<@123…>) or stray spaces are tidied, so a real ID is not refused for them.
-          const id = kindKey === PLAYER ? player.replace(/[<@!>\s]/g, "") : "";
-          void run(id === "" ? { action: "kind", kind: kindKey } : { action: "kind", kind: kindKey, player: id }, words.saved).then((done) => {
-            if (done) setPlayer(""); // saved: the box is empty again, so Save does not offer the same ID twice
-          });
+          // A pasted mention (<@123…>) or stray spaces are tidied, so a real ID is not refused for them. An ID is
+          // asked about first and linked only once the DM has confirmed the name Discord shows (#3004).
+          if (kindKey === PLAYER && playerId !== "") void check(playerId);
+          else void run({ action: "kind", kind: kindKey }, words.saved);
         }}
       >
         <label class="field">
           {words.kindChange}
-          <select value={kindKey} onChange={(e) => setKindKey((e.target as HTMLSelectElement).value)}>
+          <select
+            value={kindKey}
+            onChange={(e) => {
+              setKindKey((e.target as HTMLSelectElement).value);
+              setLookup(null);
+            }}
+          >
             {[...kinds, ...ALWAYS_OFFERED.filter((a) => !kinds.some((k) => k.key === a.key))].map((k) => (
               <option key={k.key} value={k.key}>
                 {k.label}
@@ -980,7 +1013,10 @@ function NameEditor({ id, row, kinds, act, api, refId, focusSaid }: EditorProps)
                 autocomplete="off"
                 value={player}
                 aria-describedby={`${id}-player-note`}
-                onInput={(e) => setPlayer((e.target as HTMLInputElement).value)}
+                onInput={(e) => {
+                  setPlayer((e.target as HTMLInputElement).value);
+                  setLookup(null); // a confirmation is for the ID it was asked about
+                }}
               />
               <InfoButton
                 id={`${id}-player-info`}
@@ -996,9 +1032,47 @@ function NameEditor({ id, row, kinds, act, api, refId, focusSaid }: EditorProps)
             </span>
           </div>
         )}
-        <button type="submit" class="button secondary" disabled={working || !kindChanged}>
-          {words.saveKind}
+        <button type="submit" class="button secondary" disabled={working || looking || !kindChanged}>
+          {kindKey === PLAYER && playerId !== "" ? words.playerCheck : words.saveKind}
         </button>
+        {looking && (
+          <WorkProgress
+            stage={looks === 0 ? (words.playerStage["waiting"] as string) : (words.playerStage["working"] as string)}
+            startedAt={lookWait.startedAt}
+            updatedAt={lookWait.movedAt}
+            state={lookWait.quiet ? "stalled" : "running"}
+            progressUnknown
+            whatToDo={words.playerQuiet}
+          />
+        )}
+        {lookup && (
+          <div class="stack" role="group" aria-label={words.playerConfirm(lookup.name)}>
+            <p tabIndex={-1} ref={confirmBox}>
+              <strong>{lookup.inServer ? words.playerConfirm(lookup.name) : words.playerNotHere(lookup.name)}</strong>
+            </p>
+            <p class="small muted">{words.playerNotRecording}</p>
+            <p class="row">
+              <button
+                type="button"
+                class="button"
+                disabled={working}
+                onClick={() =>
+                  void run({ action: "kind", kind: PLAYER, player: lookup.id, confirmed: true }, words.saved).then((done) => {
+                    if (done) {
+                      setLookup(null);
+                      setPlayer(""); // linked: the box is empty again, so Save does not offer the same ID twice
+                    }
+                  })
+                }
+              >
+                {words.playerYes}
+              </button>
+              <button type="button" class="button secondary" disabled={working} onClick={() => setLookup(null)}>
+                {words.playerCancel}
+              </button>
+            </p>
+          </div>
+        )}
       </form>
 
       <label class="choice">
