@@ -9,12 +9,15 @@ import type { WebOverview as Overview } from "./api";
 
 export default function WebOverview({
   overview,
+  refId,
   center,
   alone,
   onCentre,
   onAlone,
 }: {
   overview: Overview;
+  /** The campaign, for a name's page address. */
+  refId: string;
   /** The name now in the middle of the map. */
   center: string | null;
   /** A name from the tray that was picked, if any: it has no connection to draw. */
@@ -58,6 +61,15 @@ export default function WebOverview({
                   {words.groupButton(g.centerName, g.size)}
                   {g.center === center && <span class="small muted"> ({words.groupHere})</span>}
                 </button>
+                {g.page === true && (
+                  <>
+                    {" "}
+                    <a class="small" href={`/account/npc/${encodeURIComponent(refId)}/${encodeURIComponent(g.center)}`}>
+                      {words.openItsPage}
+                      <span class="visually-hidden">{words.openItsPageFor(g.centerName)}</span>
+                    </a>
+                  </>
+                )}
               </li>
             ))}
           </ul>
@@ -90,6 +102,15 @@ export default function WebOverview({
                       {n.secret && <span class="visually-hidden"> ({words.secretWords})</span>}
                       {n.revealed === false && <span class="small muted"> ({words.notRevealed})</span>}
                     </button>
+                    {n.page === true && (
+                      <>
+                        {" "}
+                        <a class="small" href={`/account/npc/${encodeURIComponent(refId)}/${encodeURIComponent(n.id)}`}>
+                          {words.openItsPage}
+                          <span class="visually-hidden">{words.openItsPageFor(n.name)}</span>
+                        </a>
+                      </>
+                    )}
                   </li>
                 ))}
               </ul>
