@@ -106,7 +106,7 @@
   --link-ally: #0d7d6a;
   --link-group: #6b4fc0;
   --link-work: #2a68b0;
-  --link-other: var(--muted, #6b7770);
+  --link-other: var(--text-muted, #6b7770);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -136,7 +136,8 @@
 .account .web-edge.web-link-group .web-line { stroke: var(--link); stroke-dasharray: 14 4 3 4; }
 .account .web-edge.web-link-work .web-line { stroke: var(--link); stroke-dasharray: 4 4; }
 .account .web-edge.web-link-other .web-line { stroke: var(--link); stroke-width: 1.5; }
-.account .web-edge.chosen .web-line { stroke-width: 4; }
+/* The chosen line keeps its accent colour over its kind colour, as well as being thicker. */
+.account .web-edge.chosen .web-line { stroke: var(--accent, currentColor); stroke-width: 4; }
 /* A theory keeps its own dotted look on top of its colour. */
 .account .web-edge.web-theory .web-line { stroke-dasharray: 2 6; }
 
@@ -169,9 +170,14 @@
   margin: var(--space-2, 0.5rem) 0;
 }
 
+/* Off: the words keep full contrast and stay struck through; only the dot empties to a ring. */
 .account .web-chip[aria-pressed="false"] {
-  opacity: 0.55;
   text-decoration: line-through;
+}
+
+.account .web-chip[aria-pressed="false"] .web-dot {
+  background: transparent;
+  border: 2px solid var(--link);
 }
 
 .account .web-kindmark {

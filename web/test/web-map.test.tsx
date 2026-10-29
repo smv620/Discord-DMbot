@@ -420,7 +420,7 @@ describe("kinds of connection", () => {
   it("has a chip for each kind that is there, on by default, and no chips without kinds", () => {
     drawKinded();
     const chips = [...document.querySelectorAll(".web-chip")] as HTMLButtonElement[];
-    expect(chips.map((c) => c.textContent?.trim())).toEqual(["Family", "Groups", "Work"]);
+    expect(chips.map((c) => c.textContent?.trim())).toEqual(["Family", "Clubs and groups", "Work"]);
     expect(chips.every((c) => c.getAttribute("aria-pressed") === "true")).toBe(true);
   });
 
@@ -449,5 +449,43 @@ describe("kinds of connection", () => {
     drawKinded();
     const labels = [...document.querySelectorAll(".web-area-text")].map((t) => t.textContent);
     expect(labels).toEqual(expect.arrayContaining(["Family", "Work"]));
+  });
+});
+
+describe("kinds of connection, edge cases", () => {
+  it("treats a kind this page does not know as the neutral one", () => {
+    expect(edgeKind({ links: [{ kind: "rival" }] })).toBe("other");
+    expect(edgeKind({ links: [{ kind: "rival" }, { kind: "work" }] })).toBe("other");
+  });
+
+  it("lights no name through a line that is hidden", () => {
+    drawKinded();
+    fireEvent.click([...document.querySelectorAll(".web-chip")].find((c) => c.textContent?.includes("Work")) as HTMLButtonElement);
+    fireEvent.pointerEnter(nodeOf("Mira"));
+    // Garrick is joined to Mira only by the hidden work line, so he fades with the rest.
+    expect(nodeOf("Garrick").classList.contains("web-faded")).toBe(true);
+    expect(nodeOf("Far Hall").classList.contains("web-faded")).toBe(false);
+    expect(document.querySelector(".web-side")!.textContent).not.toContain("serves");
+  });
+
+  it("settles again when a connection's kind changes with the same number of lines", () => {
+    setup(false);
+    const ask = vi.fn(() => 1);
+    vi.stubGlobal("requestAnimationFrame", ask);
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+    const props = { center: "m", refId: "1.a", selected: null, onCenter: () => {}, onLine: () => {} };
+    const { rerender } = render(<WebMap nodes={nodes} edges={kinded} {...props} />);
+    const first = ask.mock.calls.length;
+    const changed = kinded.map((e, i) => (i === 0 ? { ...e, links: [{ ...e.links[0]!, kind: "family" as const }] } : e));
+    rerender(<WebMap nodes={nodes} edges={changed} {...props} />);
+    expect(ask.mock.calls.length).toBeGreaterThan(first);
+  });
+
+  it("says a hidden kind is hidden to a screen reader", () => {
+    drawKinded();
+    const chip = [...document.querySelectorAll(".web-chip")].find((c) => c.textContent?.includes("Work")) as HTMLButtonElement;
+    expect(chip.textContent).not.toContain("(hidden)");
+    fireEvent.click(chip);
+    expect(chip.textContent).toContain(words.hiddenMark);
   });
 });

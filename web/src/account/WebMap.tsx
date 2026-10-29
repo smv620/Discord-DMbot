@@ -17,6 +17,7 @@ import {
   COOLING,
   extentOf,
   forceStep,
+  LINK_KINDS,
   connectionGroups,
   edgeKind,
   kindAnchors,
@@ -31,7 +32,6 @@ import { isTheory, zoomAbout, type View } from "./webLayout";
 
 const SHAPE_R = 24; // half the width of a name's shape: 48 px across at normal size, a fine thing to tap
 const STEPS_PER_FRAME = 2; // the settle runs a couple of steps each frame: calm, and quick to finish
-const LINK_KINDS = ["family", "ally", "group", "work", "other"]; // the kinds of connection, in the order shown
 const NUDGE = 24; // how far an arrow key moves the name it is on
 
 /** Kinds with a drawn shape; any other kind is a circle with a dashed edge. */
@@ -180,7 +180,7 @@ export default function WebMap({
   // still here keeps where it is, so choosing another middle does not shuffle the whole map.
   // The parent builds fresh arrays on every render; only a real change to the names or lines may re-place them,
   // or choosing a line would shake the whole map.
-  const sig = `${nodes.map((n) => n.id).join(",")}|${edges.map((x) => `${x.a}>${x.b}:${x.links.length}`).join(",")}`;
+  const sig = `${nodes.map((n) => n.id).join(",")}|${edges.map((x) => `${x.a}>${x.b}:${x.links.length}:${edgeKind(x)}`).join(",")}`;
   useEffect(() => {
     setFocus((f) => (f !== null && nodes.some((n) => n.id === f) ? f : null));
     const before = new Map(sim.current.map((n) => [n.id, n]));
@@ -195,7 +195,7 @@ export default function WebMap({
     }
     sim.current = next;
     linksRef.current = linkPairs(next, edges);
-    anchorsRef.current = kindAnchors([...new Set(next.map((n) => n.group))].sort());
+    anchorsRef.current = kindAnchors([...new Set(next.filter((n) => n.id !== center).map((n) => n.group))].sort());
     if (loop.current) cancelAnimationFrame(loop.current);
     loop.current = 0;
     if (reducedMotion() || next.length > MAX_SIM_NAMES) {
@@ -340,6 +340,7 @@ export default function WebMap({
   if (focus) {
     near.add(focus);
     for (const e of edges) {
+      if (off.has(edgeKind(e))) continue; // a line that is not drawn lights nothing
       if (e.a === focus) near.add(e.b);
       if (e.b === focus) near.add(e.a);
     }
@@ -355,7 +356,7 @@ export default function WebMap({
   const detailPinned = detail ? (at.get(detail.id)?.pinned ?? false) : false;
   const sideLines = detail
     ? edges
-        .filter((x) => x.a === detail.id || x.b === detail.id)
+        .filter((x) => (x.a === detail.id || x.b === detail.id) && !off.has(edgeKind(x)))
         .flatMap((x) =>
           x.links.map((l) => ({
             id: l.id,
@@ -410,10 +411,12 @@ export default function WebMap({
               }
             >
               <span class="web-dot" aria-hidden="true" /> {words.linkKind[k]}
+              {off.has(k) && <span class="visually-hidden"> {words.hiddenMark}</span>}
             </button>
           ))}
         </div>
       )}
+      {kindsPresent.length > 0 && <p class="small muted">{words.kindHint}</p>}
       <p class="small muted">{tooBig ? words.layoutTooBig : words.panHint}</p>
       <div class="web-stage">
       <svg
