@@ -48,6 +48,8 @@ export const webPage = {
   zoomOut: "Zoom out",
   resetView: "Reset the view",
   panHint: "Drag a name to move it. It stays where you drop it. Drag the empty space to look around. Pinch or use the zoom buttons to zoom.",
+  fullScreen: "Full screen",
+  leaveFullScreen: "Leave full screen",
   layoutLabel: "How the names are laid out",
   layoutTooBig: "That is too many names to move around. Choose fewer steps out to rearrange them.",
   sideNone: "No connections shown for this name.",

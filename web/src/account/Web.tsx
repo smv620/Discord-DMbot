@@ -491,21 +491,21 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
               selected={line}
               onCenter={(id) => void load(id, hops)}
               onLine={(a, b) => setLine({ a, b })}
-            />
+            >
+              {chosen && (
+                <LinePanel
+                  key={`${chosen.a}|${chosen.b}`}
+                  edge={chosen}
+                  nameOf={nameOf}
+                  canEdit={canEdit}
+                  act={act}
+                  reveal={reveal} revealing={revealing}
+                  onClose={() => setLine(null)}
+                />
+              )}
+            </WebMap>
           </>
         )
-      )}
-
-      {chosen && (
-        <LinePanel
-          key={`${chosen.a}|${chosen.b}`}
-          edge={chosen}
-          nameOf={nameOf}
-          canEdit={canEdit}
-          act={act}
-          reveal={reveal} revealing={revealing}
-          onClose={() => setLine(null)}
-        />
       )}
 
       <section class="stack" aria-labelledby="web-list">
