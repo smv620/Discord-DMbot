@@ -4,6 +4,7 @@ re-checked when applied, and read back only by the DM who made them. Invented na
 
 from __future__ import annotations
 
+import time
 import unittest
 from typing import Any
 from unittest.mock import patch
@@ -511,6 +512,92 @@ class TheEdits(Editing):
             ],
             [],
         )
+
+    async def stamp(self, answer: str, **columns: Any) -> None:
+        """What the bot writes to a queued row while it works (the website never does)."""
+        sets = ", ".join(f"{name} = %s" for name in columns)
+        async with self.db.guild(self.g) as conn:
+            await conn.execute(
+                f"UPDATE name_actions SET {sets} WHERE id = %s", (*columns.values(), answer)
+            )
+
+    async def keep_all_answer(self) -> str:
+        for a in (self.mira, self.rook, self.keep):
+            await self.waiting_link(a, self.hall)
+        ids = [w.id for w in await self.backstory.waiting(self.g, self.one.id)]
+        return await self.queue(kind="backstory", action="keep_all", ids=ids)
+
+    async def test_a_queued_answer_shows_its_wait_and_no_count(self) -> None:
+        answer = await self.keep_all_answer()
+        got = await self.poll(answer)
+        self.assertEqual(got["state"], "waiting")
+        self.assertIsNone(got["progress"])  # nothing written yet: no "0 of 0"
+        waits = got["waits"]
+        self.assertEqual(waits["stage"], "queued")
+        self.assertGreater(waits["lastMovedAt"], 0)
+        self.assertFalse(waits["stalled"])
+        self.assertEqual(
+            set(got), {"state", "error", "edge", "removed", "kept", "waits", "progress"}
+        )
+
+    async def test_keep_all_shows_how_far_it_has_got_and_when_it_last_moved(self) -> None:
+        answer = await self.keep_all_answer()
+        now = int(time.time())
+        await self.stamp(
+            answer, state="working", claimed_at=now * 1000, progress_total=50,
+            progress_done=12, progress_at=now,
+        )  # fmt: skip
+        got = await self.poll(answer)
+        self.assertEqual(got["progress"], {"done": 12, "total": 50})
+        self.assertEqual(got["waits"]["stage"], "working")
+        self.assertEqual(got["waits"]["lastMovedAt"], now)
+        self.assertFalse(got["waits"]["stalled"])
+
+    async def test_a_recent_progress_stamp_keeps_an_old_claim_from_reading_stalled(self) -> None:
+        answer = await self.keep_all_answer()
+        now = int(time.time())
+        await self.stamp(
+            answer, state="working", claimed_at=(now - 3600) * 1000, progress_total=50,
+            progress_done=30, progress_at=now,
+        )  # fmt: skip
+        got = await self.poll(answer)
+        self.assertFalse(got["waits"]["stalled"])
+        self.assertEqual(got["waits"]["lastMovedAt"], now)
+
+    async def test_a_single_claim_answer_keeps_the_old_fields_and_adds_the_wait(self) -> None:
+        yes = await self.claim()
+        answer = await self.queue(kind="claim", action="confirm", id=yes)
+        got = await self.poll(answer)
+        self.assertEqual(
+            (got["state"], got["error"], got["edge"], got["removed"]), ("waiting", "", None, False)
+        )
+        self.assertIsNone(got["kept"])
+        self.assertIsNone(got["progress"])
+        self.assertEqual(got["waits"]["stage"], "queued")
+
+    async def test_a_working_answer_that_has_gone_quiet_reads_stalled(self) -> None:
+        answer = await self.keep_all_answer()
+        long_ago = int(time.time()) - 3600
+        await self.stamp(answer, state="working", claimed_at=long_ago * 1000, progress_at=long_ago)
+        got = await self.poll(answer)
+        self.assertTrue(got["waits"]["stalled"])
+
+    async def test_a_single_answer_has_no_count_even_if_the_bot_wrote_one(self) -> None:
+        keep = await self.waiting_link(self.mira, self.hall)
+        answer = await self.queue(kind="backstory", action="keep", id=keep)
+        await self.stamp(answer, state="working", progress_total=5, progress_done=1)
+        self.assertIsNone((await self.poll(answer))["progress"])  # only Keep all counts
+
+    async def test_the_count_cannot_run_ahead_of_its_total(self) -> None:
+        answer = await self.keep_all_answer()
+        with self.assertRaises(Exception) as caught:
+            await self.stamp(answer, progress_total=3, progress_done=4)
+        self.assertIn("progress", str(caught.exception).lower())
+
+    async def test_an_answer_never_carries_a_word_of_the_connections(self) -> None:
+        answer = await self.keep_all_answer()
+        await self.stamp(answer, state="working", progress_total=3, progress_done=1)
+        self.assertNotIn("Mira", str(await self.poll(answer)))
 
     async def test_keep_all_keeps_only_the_ids_the_page_showed(self) -> None:
         shown = await self.waiting_link(self.mira, self.hall)

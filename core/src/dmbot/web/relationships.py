@@ -563,7 +563,9 @@ async def queue_reveal(db: Database, session: Session, ref: str, body: object) -
 async def read_answer(db: Database, session: Session, ref: str, answer: str) -> dict[str, Any]:
     """Where one of the caller's own connection edits stands: `state` (waiting, working, done,
     failed), the `error` word when it failed, and, when it is done, the pair's `edge` as it now
-    stands (or `removed` when its last connection went)."""
+    stands (or `removed` when its last connection went). An answer to a waiting fact, connection or
+    question (`claim-*`, `backstory-*`) also carries `waits` (stage, how long, when it last moved)
+    and, for Keep all, `progress` (`{done, total}`), counts and times only (#2921)."""
     guild_id, campaign_id = _parse(ref)
     _guild_of(session, guild_id)
     if not ID_PATTERN.match(answer):
@@ -594,14 +596,19 @@ async def read_answer(db: Database, session: Session, ref: str, answer: str) -> 
         }
     edge = None
     if str(got["action"]).startswith(("claim-", "backstory-")):
-        # a waiting connection answered: how it ended, and for Keep all how many were kept
+        # a waiting connection answered: how it ended, and for Keep all how many were kept, and
+        # how far it has got while it works (#2921: the stage, the wait and "12 of 50")
+        total = int(got.get("progressTotal") or 0)
+        keeping = got["action"] == "backstory-keep-all"
         return {
             "state": got["state"],
             "error": got["error"],
             "edge": None,
             "removed": False,
-            "kept": int(got["resultId"])
-            if got["action"] == "backstory-keep-all" and got["resultId"]
+            "kept": int(got["resultId"]) if keeping and got["resultId"] else None,
+            "waits": _reading_answer(got)["waits"],
+            "progress": {"done": int(got.get("progressDone") or 0), "total": total}
+            if keeping and total > 0
             else None,
         }
     if got["state"] == "done" and got["resultId"] and got["resultOther"]:
@@ -715,6 +722,8 @@ def _reading_answer(got: dict[str, Any]) -> dict[str, Any]:
     state = str(got["state"])
     created = int(got.get("createdAt") or 0)
     claimed = int(got.get("claimedAt") or 0) // 1000  # (the queue marks pickups in milliseconds)
+    # The bot also stamps its progress as it goes (Keep all, one connection at a time, #2921).
+    moved = max(claimed, int(got.get("progressAt") or 0))
     now = int(got.get("now") or created)
     stage = {"waiting": "queued", "working": "working"}.get(state, state)
     return {
@@ -726,11 +735,11 @@ def _reading_answer(got: dict[str, Any]) -> dict[str, Any]:
         "waits": {
             "stage": stage,
             "waitedSeconds": max(0, now - created) if created else 0,
-            "lastMovedAt": claimed or created,
+            "lastMovedAt": moved or created,
             "now": now,  # the server's clock, so the page need not guess it (seconds)
             # nothing has moved for longer than a stalled worker is given before it is retaken
             "stalled": state in ("waiting", "working")
-            and now - (claimed or created) > RETAKE_AFTER_S,
+            and now - (moved or created) > RETAKE_AFTER_S,
         },
     }
 
