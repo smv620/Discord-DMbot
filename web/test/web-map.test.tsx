@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-// The relationship web's free layout and its map (#2934): names settle apart, can be moved and stay where
+// The Story Graph's free layout and its map (#2934): names settle apart, can be moved and stay where
 // they were dropped, the lines go quiet until a name is in focus, and the person's choices stay in this
 // browser. The layout is checked as pure code (no clock, no random numbers) and the map as a rendered page.
 import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/preact";
@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import WebMap from "../src/account/WebMap";
 import type { WebEdge, WebNode } from "../src/account/api";
-import { MAX_SIM_NAMES, MAX_SIM_STEPS, connectionGroups, edgeKind, forceStep, kindAnchors, linkPairs, settle, startNodes } from "../src/account/webForce";
+import { MAX_SIM_NAMES, MAX_SIM_STEPS, edgeKind, forceStep, kindAnchors, linkPairs, orderedKinds, settle, startNodes } from "../src/account/webForce";
 import { readMode, readPlaces, saveMode, savePlaces } from "../src/account/webPrefs";
 import { webPage as words } from "../src/content/web-words";
 
@@ -91,17 +91,19 @@ describe("the free layout", () => {
     expect(list.map((n) => [n.x, n.y])).toEqual(before);
   });
 
-  it("pulls names that share a kind of connection together in the grouped layout", () => {
+  it("pulls names of one kind together in the grouped layout, whatever joins them to the middle", () => {
+    // Half are NPCs and half places, all joined to the middle by the same kind of line.
     const many = [
       ...Array.from({ length: 4 }, (_, i) => ({ id: `p${i}`, name: `P${i}`, kind: "npc" })),
-      ...Array.from({ length: 4 }, (_, i) => ({ id: `q${i}`, name: `Q${i}`, kind: "npc" })),
-      { id: "c", name: "Centre", kind: "npc" },
+      ...Array.from({ length: 4 }, (_, i) => ({ id: `q${i}`, name: `Q${i}`, kind: "place" })),
+      { id: "c", name: "Centre", kind: "player_character" },
     ];
-    const some: WebEdge[] = many.slice(0, 8).map((n, i) => ({ a: "c", b: n.id, label: "x", more: 0, links: [{ ...link(`k${i}`, "x"), kind: i < 4 ? ("family" as const) : ("work" as const) }] }));
-    const groups = connectionGroups(some, "c");
-    const list = startNodes(many, some, "c", {}, groups);
+    const some: WebEdge[] = many.slice(0, 8).map((n, i) => ({ a: "c", b: n.id, label: "x", more: 0, links: [{ ...link(`k${i}`, "x"), kind: "other" as const }] }));
+    const list = startNodes(many, some, "c", {});
+    expect(list.find((n) => n.id === "p0")!.group).toBe("npc");
+    expect(list.find((n) => n.id === "q0")!.group).toBe("place");
     const links = linkPairs(list, some);
-    settle(list, links, list.findIndex((n) => n.id === "c"), "groups", kindAnchors(["family", "work"]));
+    settle(list, links, list.findIndex((n) => n.id === "c"), "groups", kindAnchors(["npc", "place"]));
     const mean = (g: string) => {
       const m = list.filter((n) => n.group === g);
       return { x: m.reduce((t, n) => t + n.x, 0) / m.length, y: m.reduce((t, n) => t + n.y, 0) / m.length };
@@ -111,22 +113,18 @@ describe("the free layout", () => {
       const m = list.filter((n) => n.group === g);
       return m.reduce((t, n) => t + Math.hypot(n.x - c.x, n.y - c.y), 0) / m.length;
     };
-    const apart = Math.hypot(mean("family").x - mean("work").x, mean("family").y - mean("work").y);
-    expect(apart).toBeGreaterThan(within("family"));
-    expect(apart).toBeGreaterThan(within("work"));
+    const apart = Math.hypot(mean("npc").x - mean("place").x, mean("npc").y - mean("place").y);
+    expect(apart).toBeGreaterThan(within("npc"));
+    expect(apart).toBeGreaterThan(within("place"));
   });
 
-  it("works out a line's kind and each name's group from the lines out of the middle", () => {
+  it("works out a line's kind from its connections, and orders the kinds of name people first", () => {
     const e = (a: string, b: string, ...kinds: (string | undefined)[]) => ({ a, b, links: kinds.map((kind) => ({ kind })) });
     expect(edgeKind(e("a", "b", "family"))).toBe("family");
     expect(edgeKind(e("a", "b", "family", "family"))).toBe("family");
     expect(edgeKind(e("a", "b", "family", "work"))).toBe("other");
     expect(edgeKind(e("a", "b", undefined))).toBe("other");
-    const groups = connectionGroups([e("m", "a", "family"), e("m", "b", "work"), e("a", "c", "ally"), e("b", "c", "ally")], "m");
-    expect(groups.get("a")).toBe("family");
-    expect(groups.get("b")).toBe("work");
-    expect(groups.get("c")).toBe("family"); // reached through a first, so it follows a
-    expect(groups.has("m")).toBe(false);
+    expect(orderedKinds(["item", "place", "npc", "player_character", "npc", "zebra", "event"])).toEqual(["player_character", "npc", "place", "item", "event", "zebra"]);
   });
 
   it("starts a name at its saved place, pinned, and ignores a line to a name that is not here", () => {
@@ -447,11 +445,25 @@ describe("kinds of connection", () => {
     expect(document.querySelector(".web-legend")!.textContent).toContain("Work");
   });
 
-  it("labels the grouped areas with the kinds of connection", () => {
+  it("labels the grouped areas with what the names are, never with the kinds of connection (#2990)", () => {
     saveMode("groups");
     drawKinded();
     const labels = [...document.querySelectorAll(".web-area-text")].map((t) => t.textContent);
-    expect(labels).toEqual(expect.arrayContaining(["Family", "Work"]));
+    // The pretend names are NPCs, a place and a group; each kind present has one area, each with the Names page's words.
+    expect(labels).toEqual(expect.arrayContaining(["NPCs", "Places"]));
+    expect(labels.every((l) => !["Family", "Work", "Something else", "Friends and allies"].includes(l ?? ""))).toBe(true);
+    expect(new Set(labels).size).toBe(labels.length); // an empty kind has no area, a kind has one
+    // The lines keep their own colour and the chips are still there.
+    expect(document.querySelector(".web-legend")!.textContent).toContain("Work");
+  });
+
+  it("gives no area to a kind that has no names, and keeps the middle name out of every area", () => {
+    saveMode("groups");
+    drawKinded();
+    const labels = [...document.querySelectorAll(".web-area-text")].map((t) => t.textContent);
+    expect(labels).not.toContain("Items");
+    expect(labels).not.toContain("Events");
+    expect(document.querySelectorAll(".web-node.centre")).toHaveLength(1);
   });
 });
 

@@ -1,4 +1,4 @@
-// The relationship web's layout (#2324): the chosen name in the middle and each ring one hop further out,
+// The Story Graph's layout (#2324): the chosen name in the middle and each ring one hop further out,
 // worked out here in plain code so the page needs no graph library (the site's weight budget, #1947,
 // has no room for one). Pure and deterministic: the same names and connections always land in the
 // same places, so a redraw after a small change does not shuffle everything.

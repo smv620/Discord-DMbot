@@ -204,15 +204,6 @@ body:has(.account-wide) .wrap {
   background: var(--link);
 }
 
-.account .web-area.web-link-family circle,
-.account .web-area.web-link-ally circle,
-.account .web-area.web-link-group circle,
-.account .web-area.web-link-work circle,
-.account .web-area.web-link-other circle {
-  fill: var(--link);
-  stroke: var(--link);
-}
-
 .account .web-chips {
   display: flex;
   flex-wrap: wrap;
