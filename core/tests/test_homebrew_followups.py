@@ -13,10 +13,10 @@ from dmbot.rules.homebrew import Homebrew, HomebrewSection, HomebrewStore, credi
 from dmbot.rules.homebrew_packs import HomebrewReader
 from dmbot.rules.homebrew_sources import PAGE_KEEP_S, SiteApprovalsSection, SourceStore
 from dmbot.rules.pack_updates import PackUpdateStore
+from dmbot.rules.rule_card import homebrew_citation
 from dmbot.rules.rule_sets import FollowedSetsSection
 from dmbot.ui import homebrew as brew_ui
 from dmbot.ui import shared_packs
-from dmbot.ui.rule_card import homebrew_citation
 from tests.pg import DatabaseTest
 
 GUILD = 1001

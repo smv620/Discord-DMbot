@@ -14,9 +14,9 @@ from dmbot.rules.homebrew import FileEntry, Homebrew, HomebrewStore
 from dmbot.rules.homebrew_packs import HomebrewPackStore, HomebrewReader
 from dmbot.rules.house import HouseRuleError
 from dmbot.rules.pack_content import PACKS_MAX
+from dmbot.rules.rule_card import homebrew_citation
 from dmbot.rules.rule_sets import Follow, FollowedSetsSection, RuleSetError
 from dmbot.sidebar.context import homebrew_source, relevant_homebrew
-from dmbot.ui.rule_card import homebrew_citation
 from tests.pg import DatabaseTest
 
 GUILD_A, GUILD_B = 1001, 2002

@@ -210,7 +210,7 @@ export const dmBotChannelSteps: Step[] = [
     names: [
       { name: "📖 Look up a rule", file: "dm_screen/dm_bot_panel.py" },
       { name: "📜 Transcripts", file: "dm_screen/dm_bot_panel.py" },
-      { name: "Your DM decides what applies at your table.", file: "ui/rule_card.py" },
+      { name: "Your DM decides what applies at your table.", file: "rules/rule_card.py" },
     ],
   },
   {

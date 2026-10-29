@@ -27,11 +27,10 @@ from typing import Any
 import discord
 
 from dmbot.dm_screen.rules_cards import spotter_for
-from dmbot.rules import house
+from dmbot.rules import house, rule_card
 from dmbot.rules.conflicts import Checked
 from dmbot.rules.house import HouseRule, HouseRuleError
 from dmbot.rules.house_voice import Clash, Proposal, Said
-from dmbot.ui import rule_card
 
 log = logging.getLogger(__name__)
 

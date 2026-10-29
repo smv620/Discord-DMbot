@@ -11,7 +11,7 @@ never in a transcript. A house rule that names the thing comes first; the book c
 the DM decides what applies. Nothing is guessed: no match means "couldn't find that", with
 close names to press.
 
-The card itself is built in `dmbot.ui.rule_card`, which has no Discord in it.
+The card itself is built in `dmbot.rules.rule_card`, which has no Discord in it.
 """
 
 from __future__ import annotations
@@ -29,11 +29,11 @@ from discord import app_commands
 from dmbot.campaigns import FALLBACK_NONE, Campaign
 from dmbot.campaigns.models import DEFAULT_FALLBACK, DEFAULT_TARGET
 from dmbot.logs import set_log_context
-from dmbot.rules import index
+from dmbot.rules import index, rule_card
 from dmbot.rules.book_rank import book_is_legacy, book_wins
 from dmbot.rules.homebrew import Homebrew
 from dmbot.rules.house import HouseRule
-from dmbot.ui import logic, rule_card
+from dmbot.ui import logic
 from dmbot.ui.dmbot_commands import (
     NOT_IN_SERVER,
     VIEW_TIMEOUT_S,
