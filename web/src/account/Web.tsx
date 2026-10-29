@@ -63,6 +63,9 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
   // What is typed in the steps box: it may be half-typed, so it is kept apart from the steps in use.
   const [hopsText, setHopsText] = useState(String(DEFAULT_HOPS));
   const [editing, setEditing] = useState<string | null>(null);
+  // The list at the bottom is closed until asked for, and each name in it opens on its own (or all together).
+  const [listOpen, setListOpen] = useState(false);
+  const [openRows, setOpenRows] = useState<Set<string>>(new Set());
   // A web too big to draw without asking: what was asked for, held until the person says yes.
   const [big, setBig] = useState<{ names: number; center: string | null; hops: number } | null>(null);
   const [line, setLine] = useState<{ a: string; b: string } | null>(null);
@@ -355,15 +358,6 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
   return (
     <div class="stack web-page">
       {ref && <CampaignNav api={api} campaignRef={ref} page="graph" />}
-      <p class="muted small">{words.lead}</p>
-      {canEdit ? (
-        <p class="small muted">{words.undoNote}</p>
-      ) : (
-        <p class="note" role="note">
-          {words.readOnly}
-        </p>
-      )}
-
       {isDm && (
         <fieldset class="web-view">
           <legend>{words.viewLegend}</legend>
@@ -444,8 +438,6 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
         </p>
       </div>
 
-      {askBox}
-
       <p class="small" role="status" aria-live="polite">
         {words.howMany(nodes.length, edges.length)}
       </p>
@@ -457,29 +449,12 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
         {news && !news.ok ? <span key={news.n}>{news.text}</span> : ""}
       </p>
 
-      {overview && (
-        <WebOverviewPanel
-          overview={overview}
-          refId={ref}
-          center={center}
-          alone={alone}
-          onCentre={(id) => void load(id, Math.max(hops, graph?.maxHops ?? hops))}
-          onAlone={setAlone}
-        />
-      )}
-
-      {WEB_READINGS_LIVE && overview?.canEdit && asked !== "players" && <WebReadings key={`readings-${ref}`} api={api} campaignRef={ref} />}
-
-      {WEB_WAITING_LIVE && overview?.canEdit && asked !== "players" && (
-        <WebWaiting key={ref} api={api} campaignRef={ref} onChanged={() => void load(center, hops, true)} />
-      )}
-
       {nodes.length <= 1 && edges.length === 0 ? (
         <p class="muted">{words.empty}</p>
       ) : (
         center && (
           <>
-            <a class="small" href="#web-list">
+            <a class="small" href="#web-list" onClick={() => setListOpen(true)}>
               {words.skipMap}
             </a>
             <WebMap
@@ -508,67 +483,125 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
         )
       )}
 
-      <section class="stack" aria-labelledby="web-list">
-        <h2 id="web-list">{words.listHeading}</h2>
-        <h3 class="small">{words.namesHeading}</h3>
+      <p class="muted small">{words.lead}</p>
+      {canEdit ? (
+        <p class="small muted">{words.undoNote}</p>
+      ) : (
+        <p class="note" role="note">
+          {words.readOnly}
+        </p>
+      )}
+
+      {askBox}
+
+      {overview && (
+        <WebOverviewPanel
+          overview={overview}
+          refId={ref}
+          center={center}
+          alone={alone}
+          onCentre={(id) => void load(id, Math.max(hops, graph?.maxHops ?? hops))}
+          onAlone={setAlone}
+        />
+      )}
+
+      {WEB_READINGS_LIVE && overview?.canEdit && asked !== "players" && <WebReadings key={`readings-${ref}`} api={api} campaignRef={ref} />}
+
+      {WEB_WAITING_LIVE && overview?.canEdit && asked !== "players" && (
+        <WebWaiting key={ref} api={api} campaignRef={ref} onChanged={() => void load(center, hops, true)} />
+      )}
+
+      <details
+        class="web-list-box"
+        id="web-list"
+        open={listOpen}
+        onToggle={(e) => setListOpen((e.currentTarget as HTMLDetailsElement).open)}
+      >
+        <summary>{words.listHeading}</summary>
+        <div class="stack">
+        <div class="row web-list-tools">
+          <h3 class="small">{words.namesHeading}</h3>
+          <button type="button" class="button secondary" onClick={() => setOpenRows(new Set(nodes.map((n) => n.id)))}>
+            {words.expandAll}
+          </button>
+          <button type="button" class="button secondary" onClick={() => setOpenRows(new Set())}>
+            {words.collapseAll}
+          </button>
+        </div>
         <ul class="web-names">
-          {nodes.map((n) => (
-            <li key={n.id} class={n.revealed === false ? "name-row web-dim" : "name-row"}>
-              <span class="campaign-name">
-                {n.secret && <span aria-hidden="true">{words.secretMark} </span>}
-                {n.name}
-              </span>
-              {n.secret && <span class="visually-hidden"> ({words.secretWords})</span>}{" "}
-              {n.revealed === false && <span class="small muted">({words.notRevealed}) </span>}
-              <span class="tag">{kindWords(n.kind)}</span>
-              {n.page === true && (
-                <>
-                  {" "}
-                  <a class="small" href={`/account/npc/${encodeURIComponent(ref)}/${encodeURIComponent(n.id)}`}>
-                    {words.openItsPage}
-                    <span class="visually-hidden">{words.openItsPageFor(n.name)}</span>
-                  </a>
-                </>
-              )}
-              {n.id === center ? (
-                <span class="small muted"> {words.inMiddle}</span>
-              ) : (
-                <button type="button" class="button secondary" onClick={() => void load(n.id, hops)} aria-label={words.makeMiddle(n.name)}>
-                  {words.makeMiddleShort}
-                </button>
-              )}
-              {canEdit && n.revealed === false && api.webReveal && (
+          {nodes.map((n) => {
+            const open = openRows.has(n.id);
+            return (
+              <li key={n.id} class={`web-name${n.revealed === false ? " web-dim" : ""}`}>
                 <button
                   type="button"
-                  class="button secondary"
-                  aria-label={words.revealFor(n.name)}
-                  disabled={revealing.has(`name:${n.id}`)}
+                  class="web-name-toggle"
+                  aria-expanded={open}
+                  aria-controls={`web-name-${n.id}`}
                   onClick={() =>
-                    void reveal({ kind: "name", id: n.id }).then((said) => {
-                      // A refusal or a give-up is said in its own words, never swallowed.
-                      if (said) setNews({ ok: false, text: said, n: ++sayings.current });
+                    setOpenRows((was) => {
+                      const next = new Set(was);
+                      if (!next.delete(n.id)) next.add(n.id);
+                      return next;
                     })
                   }
                 >
-                  {words.reveal}
+                  <span aria-hidden="true">{open ? "▾" : "▸"}</span>
+                  <span class="campaign-name">
+                    {n.secret && <span aria-hidden="true">{words.secretMark} </span>}
+                    {n.name}
+                  </span>
+                  {n.secret && <span class="visually-hidden"> ({words.secretWords})</span>}
+                  {n.revealed === false && <span class="small muted"> ({words.notRevealed})</span>}
+                  <span class="tag">{kindWords(n.kind)}</span>
+                  {n.id === center && <span class="small muted">{words.inMiddle}</span>}
                 </button>
-              )}
-              {canEdit && api.changeName && (
-                <button
-                  type="button"
-                  class="button secondary"
-                  aria-expanded={editing === n.id}
-                  aria-label={words.changeFor(n.name)}
-                  onClick={() => setEditing(editing === n.id ? null : n.id)}
-                >
-                  {editing === n.id ? words.doneShort : words.changeShort}
-                </button>
-              )}
-              {canEdit && editing === n.id && (
-                <NodePanel node={n} act={actName} />
-              )}
-            </li>
-          ))}
+                {open && (
+                  <div class="web-name-more row" id={`web-name-${n.id}`}>
+                    {n.page === true && (
+                      <a class="small" href={`/account/npc/${encodeURIComponent(ref)}/${encodeURIComponent(n.id)}`}>
+                        {words.openItsPage}
+                        <span class="visually-hidden">{words.openItsPageFor(n.name)}</span>
+                      </a>
+                    )}
+                    {n.id !== center && (
+                      <button type="button" class="button secondary" onClick={() => void load(n.id, hops)} aria-label={words.makeMiddle(n.name)}>
+                        {words.makeMiddleShort}
+                      </button>
+                    )}
+                    {canEdit && n.revealed === false && api.webReveal && (
+                      <button
+                        type="button"
+                        class="button secondary"
+                        aria-label={words.revealFor(n.name)}
+                        disabled={revealing.has(`name:${n.id}`)}
+                        onClick={() =>
+                          void reveal({ kind: "name", id: n.id }).then((said) => {
+                            // A refusal or a give-up is said in its own words, never swallowed.
+                            if (said) setNews({ ok: false, text: said, n: ++sayings.current });
+                          })
+                        }
+                      >
+                        {words.reveal}
+                      </button>
+                    )}
+                    {canEdit && api.changeName && (
+                      <button
+                        type="button"
+                        class="button secondary"
+                        aria-expanded={editing === n.id}
+                        aria-label={words.changeFor(n.name)}
+                        onClick={() => setEditing(editing === n.id ? null : n.id)}
+                      >
+                        {editing === n.id ? words.doneShort : words.changeShort}
+                      </button>
+                    )}
+                    {canEdit && editing === n.id && <NodePanel node={n} act={actName} />}
+                  </div>
+                )}
+              </li>
+            );
+          })}
         </ul>
         <h3 class="small">{words.linesHeading}</h3>
         <WebLines lines={own} onOpen={(a, b) => setLine({ a, b })} />
@@ -579,7 +612,8 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
             <WebLines lines={further} onOpen={(a, b) => setLine({ a, b })} />
           </>
         )}
-      </section>
+        </div>
+      </details>
     </div>
   );
 }

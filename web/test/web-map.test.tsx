@@ -533,7 +533,8 @@ describe("full screen (#2981)", () => {
     const css = readFileSync(resolve(process.cwd(), "src/styles/web-map.css"), "utf8");
     expect(css).toMatch(/body:has\(\.account-wide\) \.wrap \{\s*max-width: 110rem/);
     expect(css).toMatch(/\.account\.account-wide \{\s*max-width: none/);
-    expect(css).toMatch(/@container \(min-width: 64rem\)/);
+    // The details panel never goes beside the map: one column at every width (owner, #2984).
+    expect(css).not.toMatch(/grid-template-columns: minmax\(0, 1fr\) 19rem/);
     const page = readFileSync(resolve(process.cwd(), "src/pages/account/web.astro"), "utf8");
     expect(page).toContain("account account-wide");
   });
