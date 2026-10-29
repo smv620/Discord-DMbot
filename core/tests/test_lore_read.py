@@ -1392,9 +1392,9 @@ class TheSecondLookFailures(unittest.IsolatedAsyncioTestCase):
 
     async def test_one_paragraph_failing_does_not_stop_the_others(self) -> None:
         fake = self._fake(AIError(BUSY))
-        done = await lr.read_lore(fake, fake, LONG_THIN, {}, Gate())
-        self.assertEqual(done.stats.second_calls, 2)  # the two that answered are used
-        self.assertEqual(done.stats.extra_links, 2)
+        result = await lr.read_lore(fake, fake, LONG_THIN, {}, Gate())
+        self.assertEqual(result.stats.second_calls, 2)  # the two that answered are used
+        self.assertEqual(result.stats.extra_links, 2)
 
     async def test_out_of_funds_still_stops_the_rest(self) -> None:
         fake = self._fake(AIOutOfFunds(OUT_OF_FUNDS))

@@ -561,7 +561,7 @@ async def _ask_paragraph(
     paragraph: str,
     names: list[str],
 ) -> Reply | None:
-    """One paragraph's answer, or None when the AI had a busy, failed or cut call for it: this
+    """One paragraph's answer, or None when the AI had a busy or failed call for it: this
     paragraph keeps what pass 1 had and the others still run (#2948). Out of funds is raised."""
     try:
         reply: Reply = await _call(
@@ -636,8 +636,6 @@ async def _second_look(
         failure = task.exception()
         if isinstance(failure, AIOutOfFunds):
             raise failure
-        if isinstance(failure, AIError):  # (this paragraph keeps what pass 1 had)
-            continue
         if failure is not None:
             raise failure  # (a bug is not swallowed as if the AI had failed)
         reply = task.result()
