@@ -1,4 +1,4 @@
-"""💬 Table chat on ⚙️ Settings (#1118): which typed chat DMbot reads, and the DM's switch.
+"""💬 Table chat on ⚙️ Manage DMbot (#1118): which typed chat DMbot reads, and the DM's switch.
 
 DMbot always reads the table voice channel's own text chat while it listens (from people who
 agreed), and at most one more text channel the DM picks here. Least privilege: the panel says
@@ -25,7 +25,7 @@ log = logging.getLogger(__name__)
 _ID = r"(?P<campaign>[0-9a-f]{32})"
 ONLY_DM = (
     "Only this campaign's DM (or a server manager) can change table chat. "
-    "Ask them to open ⚙️ Settings."
+    "Ask them to open ⚙️ Manage DMbot."
 )
 FAILED = "Sorry, that didn't save. Please try again."
 NOT_THAT_ONE = (
@@ -199,7 +199,7 @@ class TableChatButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
     template=rf"dmbot:tablechat:{_ID}",
 ):
-    """💬 Table chat, on ⚙️ Settings: opens the private panel above."""
+    """💬 Table chat, on ⚙️ Manage DMbot: opens the private panel above."""
 
     def __init__(self, campaign_id: str) -> None:
         super().__init__(

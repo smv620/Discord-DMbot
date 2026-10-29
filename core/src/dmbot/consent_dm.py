@@ -958,11 +958,19 @@ class MenuButton(
     lasting message the menu takes its buttons' place; otherwise it comes as an only-you
     message."""
 
-    def __init__(self, guild_id: int, campaign_id: str | None = None) -> None:
+    def __init__(
+        self,
+        guild_id: int,
+        campaign_id: str | None = None,
+        *,
+        label: str = MENU_LABEL,
+        emoji: str = "🗂️",
+    ) -> None:
+        # `label`/`emoji`: the DM Bot channel's menu calls the same menu 🙋 My data (#2986).
         super().__init__(
             discord.ui.Button(
-                label=MENU_LABEL,
-                emoji="🗂️",
+                label=label,
+                emoji=emoji,
                 style=discord.ButtonStyle.secondary,
                 custom_id=f"dmbot:consent:menu:{guild_id}:{campaign_id or '-'}",
             )

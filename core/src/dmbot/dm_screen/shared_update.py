@@ -25,7 +25,7 @@ HEADER = (
     "📚 Shared rules updated at this start. DMbot took the new versions. Buttons are by number:"
 )
 ROWS_MAX = 4  # updates that get their own buttons; the rest are named, then handled in Settings
-OVERFLOW = "{n} without buttons here: open ⚙️ Settings → 📚 Shared rules."
+OVERFLOW = "{n} without buttons here: open ⚙️ Manage DMbot → 📚 Shared rules."
 TEXT_MAX = MESSAGE_MAX - 100  # margin kept from before: room for the words a sender adds around it
 
 

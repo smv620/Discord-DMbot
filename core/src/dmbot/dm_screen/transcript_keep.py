@@ -1,4 +1,4 @@
-"""🗄️ Transcript retention, in ⚙️ Settings → 🗂️ Campaign management (#1533): how long the
+"""🗄️ Transcript retention, in ⚙️ Manage DMbot → 🗂️ Campaign management (#1533): how long the
 campaign keeps its transcripts.
 
 The DM picks Forever (the default), 1 year, 90 days or 30 days. The daily retention job
@@ -35,7 +35,7 @@ CHOICES: tuple[tuple[str, int | None], ...] = (
 )
 LABEL_OF: dict[str, str] = {"forever": "Forever", **{str(d): w for d, w in KEEP_LABELS.items()}}
 ONLY_DMS = "Only this campaign's DMs can change that."
-GONE = "That campaign isn't here any more. Open ⚙️ Settings again."
+GONE = "That campaign isn't here any more. Open ⚙️ Manage DMbot again."
 COULDNT = "That didn't work, and nothing changed. Please try again in a moment."
 INTRO = "📜 **Keep transcripts for**"
 
@@ -119,7 +119,7 @@ class TranscriptsButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
     template=rf"dmbot:keep:{_ID}",
 ):
-    """🗄️ Transcript retention, in ⚙️ Settings → 🗂️ Campaign management: opens the private panel
+    """🗄️ Transcript retention, in ⚙️ Manage DMbot → 🗂️ Campaign management: opens the private panel
     above. DMs only."""
 
     def __init__(self, campaign_id: str) -> None:

@@ -59,7 +59,7 @@ async def read_campaign(
             name = mine["name"]
             role = "owner" if mine["owner_user_id"] == session.user_id else "co-dm"
             # The campaign's current choices, for the page's Settings group (#2461): the same ones
-            # ⚙️ Settings shows. Only a DM reads the campaign's row, so only a DM gets them.
+            # ⚙️ Manage DMbot shows. Only a DM reads the campaign's row, so only a DM gets them.
             settings: dict[str, Any] | None = {
                 "visibility": str(mine["dm_screen_visibility"]),
                 "level": str(mine["dm_screen_level"]),

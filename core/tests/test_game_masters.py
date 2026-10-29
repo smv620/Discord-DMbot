@@ -1,5 +1,5 @@
-"""Adding and removing a campaign's game masters from ⚙️ Settings (#1600, item 2 of #618): DMs only
-on every press, a bot / a duplicate / the cap refused, the plan holder and the last game master
+"""Adding and removing a campaign's game masters from ⚙️ Manage DMbot (#1600, item 2 of #618): DMs
+only on every press, a bot / a duplicate / the cap refused, the plan holder and the last game master
 kept, self-removal allowed, a private message to a new game master, no change to anyone's consent,
 the DM screen's access re-applied, and a running table's DM set following at once."""
 

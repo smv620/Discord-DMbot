@@ -120,7 +120,7 @@ class TheBotsFlow(unittest.IsolatedAsyncioTestCase):
         self.store.orphan_missing_owner.assert_awaited_once()
         self.assertEqual({u for u, _ in self.sent}, {DM, 88})
         self.assertNotIn(77, {u for u, _ in self.sent})  # the owner is gone: not told
-        self.assertIn("Press Take it on in ⚙️ Settings", self.sent[0][1])
+        self.assertIn("Press Take it on in ⚙️ Manage DMbot", self.sent[0][1])
 
     async def test_a_deleted_account_is_ownerless_at_once(self) -> None:
         self.guild.fetch_member.side_effect = not_found(op.UNKNOWN_MEMBER)

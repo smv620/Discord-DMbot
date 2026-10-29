@@ -1,7 +1,7 @@
 """Looking up a rule (#908): the DM asks for a spell, a condition or a creature by name, and
 gets what the free rules (the SRD) say, privately, with where it comes from.
 
-Two ways in: the 📖 **Look up a rule** button on the DM screen's ⚙️ Settings card (the
+Two ways in: the 📖 **Look up a rule** button on the DM screen's ⚙️ Manage DMbot card (the
 campaign's DMs only), which opens a form with one box, and `/dmbot rule name:` with a list of
 names that opens as they type, for **anyone in the server** (decided 2026-10-16, #1562). A
 player gets the same card without the DM's own things: only homebrew the DM let players know,

@@ -47,7 +47,7 @@ READ_MAX_BYTES = 4 * house_file.MAX_FILE_CHARS  # as bytes: UTF-8 is up to 4 per
 
 CLOSED = (
     "This offer has ended (DMbot restarted, or it was already handled). To compare again, "
-    "press ⚙️ Settings, then 📄 House-rules file, then 🔄 Compare now, or upload the file again."
+    "press ⚙️ Manage DMbot, then 📄 House-rules file, then 🔄 Compare now, or upload the file again."
 )
 ONLY_DMS = "Only this campaign's DMs can use these buttons."
 FAILED = (
