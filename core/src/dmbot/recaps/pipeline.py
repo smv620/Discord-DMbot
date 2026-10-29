@@ -2375,6 +2375,9 @@ class RecapWorker:
         phrase and counts, never text) and the DM gets the plain note."""
         log.info("Recap: the final read was not used (%s)", why)
         self._count("final_kept", 1)
+        self._count(
+            "final_kept_" + why.split(":")[0].replace(" ", "_"), 1
+        )  # by reason, counts only
         notes = tuple(dict.fromkeys((*loop.notes, note)))
         await self._store.update(
             gid, cid, job.session_at, errors=0, last_error="", next_at=0,

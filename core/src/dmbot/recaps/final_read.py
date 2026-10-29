@@ -55,8 +55,8 @@ material gives it, is said plainly when it happens.
 written for the ear. Do not repeat a name within one sentence, but say the name again when a \
 listener could lose track of who it is.
 
-You may reorder sentences, add a short introduction or transition (it carries no new fact, one \
-sentence at most), bring forward something a character did that the draft left out, and rewrite \
+You may reorder sentences, add a short introduction or a transition (a sentence or two, every fact in it \
+taken from the material), bring forward something a character did that the draft left out, and rewrite \
 for flow. All of it only from what the beat sheet, the transcript, the who-and-what \
 sheet, the open threads and the story so far say. When none of them says it, leave the detail out; \
 if a fix would need a fact you do not have, leave that line as it is.

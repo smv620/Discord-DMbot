@@ -142,6 +142,12 @@ class FinalRead(WorkerHarness):
         with self.assertRaises(ConfigError):
             _on_unless_off(get("maybe"), "RECAP_FINAL_READ")
 
+    def test_the_prompt_lets_it_add_context_but_only_from_the_material(self) -> None:
+        text = fr.final_system(None, rd.length_for(3))
+        self.assertIn("every fact in it taken from the material", text)
+        self.assertNotIn("no new fact", text)  # the pass is for the context a listener lacks
+        self.assertIn("never invent an action to give someone a turn", text)
+
     def test_the_page_names_the_stage_while_the_pass_runs(self) -> None:
         row = {
             "state": "prose",
