@@ -172,7 +172,7 @@ export interface RuleSharingAnswer {
   note: string;
 }
 
-/** What ⚙️ Settings holds for a campaign today. */
+/** What ⚙️ Manage DMbot holds for a campaign today. */
 export interface CampaignSettings {
   visibility: "private" | "peek" | "open";
   level: "quiet" | "normal" | "chatty";

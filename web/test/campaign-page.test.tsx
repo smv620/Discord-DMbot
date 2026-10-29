@@ -100,7 +100,7 @@ describe("the page", () => {
       expect(within(section).getByText(w.doThisInDiscord(w.paths[key])), key).toBeTruthy();
     for (const key of ["gameMasters", "handOver", "pause"] as const) expect(within(section).getByText(w.settingsLabels[key]), key).toBeTruthy();
     expect(within(section).queryByText(w.doThisInDiscord(w.paths.delete))).toBeNull();
-    expect(w.paths.retention).toBe("⚙️ Settings → 🗂️ Campaign management → 🗄️ Transcript retention");
+    expect(w.paths.retention).toBe("⚙️ Manage DMbot → 🗂️ Campaign management → 🗄️ Transcript retention");
   });
 
   it("shows a co-DM the controls but not the owner's Discord steps", async () => {

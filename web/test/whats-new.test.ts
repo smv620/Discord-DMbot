@@ -97,7 +97,7 @@ describe("What's new", () => {
     const fix = [...entries, ...held].find((e) => e.title === "Tell DMbot what to fix");
     expect(fix?.what).toContain("this campaign's later recaps");
     expect(fix?.what).toContain("newest 10");
-    expect(fix?.what).toContain("⚙️ Settings → 📜 Recaps → ✍️ Recap style");
+    expect(fix?.what).toContain("⚙️ Manage DMbot → 📜 Recaps → ✍️ Recap style");
   });
 
   it("lists every entry, newest first, with the day it went live", () => {

@@ -135,7 +135,7 @@ export const webPage = {
   normalView: "Normal view",
   peekSwitch: "Peek behind the DM screen",
   peekOffNote:
-    "Turned off by the DM. To turn it on, the DM opens 👤 DMbot Main Menu → ⚙️ Settings → 👁️ Who can see the DM screen → 👀 Players can peek.",
+    "Turned off by the DM. To turn it on, the DM opens 👤 DMbot Main Menu → ⚙️ Manage DMbot → 👁️ Who can see the DM screen → 👀 Players can peek.",
   peekTitle: "Peek behind the DM screen?",
   peekWarn:
     "Peeking shows you the DM's secrets and things your characters haven't found yet. It can spoil the mystery and the fun. Your DM will be told you peeked.",

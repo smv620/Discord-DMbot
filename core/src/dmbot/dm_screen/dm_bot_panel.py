@@ -79,8 +79,9 @@ TRANSCRIPTS_URL = "https://getdmbot.com/account/transcripts"
 
 def campaign_url(site_url: str, guild_id: int, campaign_id: str, *, several: bool = False) -> str:
     """Where 🌐 Manage campaign goes: the website's page for this campaign, or (for a DM of several
-    campaigns in this server) their campaign list. Empty when the address is not a usable link
-    (Discord refuses a bad link button whole)."""
+    campaigns in this server) their campaign list. An address that is not a plain https one (what
+    Discord would refuse as a link button) falls back to the public site, so this never returns an
+    empty or broken link."""
     parts = urlsplit(site_url.strip())
     host = parts.netloc if parts.scheme.lower() == "https" and parts.netloc else "getdmbot.com"
     path = "/account/campaigns" if several else f"/account/campaigns/{guild_id}.{campaign_id}"
