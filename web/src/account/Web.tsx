@@ -1,5 +1,5 @@
 /** @jsxImportSource preact */
-// The relationship web page (#2324): a campaign's names as a map, with the same names and connections
+// The Story Graph page (#2324): a campaign's names as a map, with the same names and connections
 // as lists under it. Pick a name for the middle, choose how many steps out, tap a line to read its
 // connections. A campaign's DMs can also change the words of a connection, make it secret, remove it or
 // add one (the same actions as in Discord, so ↩️ Undo there still works). Who sees what is the API's

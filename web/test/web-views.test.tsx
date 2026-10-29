@@ -1,6 +1,6 @@
 /** @jsxImportSource preact */
 // @vitest-environment happy-dom
-// The relationship web's views (#2405): the DM's Full View / Players View, revealing a name or a
+// The Story Graph's views (#2405): the DM's Full View / Players View, revealing a name or a
 // connection, theories drawn dotted, and the player's "Peek behind the DM screen" switch with its
 // warning, its greyed-out state when the DM turned it off, and the fall-back when they do meanwhile.
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/preact";

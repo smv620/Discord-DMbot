@@ -1,5 +1,5 @@
-// The Story graph's kind words (#2618): NPCs and PCs, never "People". A real person at the table is not
-// on the Story graph or the Names page (Supervisor, #2670).
+// The Story Graph's kind words (#2618): NPCs and PCs, never "People". A real person at the table is not
+// on the Story Graph or the Names page (Supervisor, #2670).
 import { describe, expect, it } from "vitest";
 
 import { kindWords } from "../src/content/web-words";
