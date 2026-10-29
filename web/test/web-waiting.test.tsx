@@ -667,10 +667,64 @@ describe("the wait says what DMbot is doing (#2921)", () => {
     hold.next([look("working", { progress: { done: 1, total: 2 } })]);
     await open(api);
     press(w.keepAll(2));
-    const panel = (await screen.findByText(w.keepingConnections)).parentElement as HTMLElement;
+    const panel = (await screen.findByText(w.keepingConnections)).closest(".work-progress") as HTMLElement;
     expect(panel.textContent).not.toMatch(/knows|grew up|Rook|Newcomer|Far Hall/);
     hold.open();
     await settled();
   });
+});
+
+describe("the wait's words and times (#2921)", () => {
+  it("Keep all says Keeping connections before its first count, not Saving your answer", async () => {
+    live.on = true;
+    const api = mockApi("table");
+    const hold = holdAnswers(api);
+    hold.next([look("working")]);
+    await open(api);
+    press(w.keepAll(2));
+    expect(await screen.findByText(w.keepingConnections)).toBeTruthy();
+    expect(screen.queryByText(w.savingStage)).toBeNull();
+    hold.open();
+    await settled();
+  });
+
+  it("the elapsed time comes from the server's wait, so a browser clock an hour out shows the same", async () => {
+    live.on = true;
+    const api = mockApi("table");
+    const hold = holdAnswers(api);
+    hold.next([look("working", { waits: { stage: "working", waitedSeconds: 125, lastMovedAt: now() - 10, stalled: false, now: now() } })]);
+    await open(api);
+    const real = Date.now();
+    const skewed = vi.spyOn(Date, "now").mockReturnValue(real + 3600 * 1000);
+    try {
+      press(w.confirm, screen.getByText("Mira Voss knows Far Hall").closest(".panel") as HTMLElement);
+      expect(await screen.findByText(/Running for 2 min/)).toBeTruthy();
+      expect(screen.queryByText(/Running for 62 min/)).toBeNull();
+    } finally {
+      skewed.mockRestore();
+      hold.open();
+    }
+    await settled();
+  }, 15000);
+});
+
+describe("over the wire: the wait's looks (#2921)", () => {
+  it("the answer's looks reach the page in order, and a done answer returns how many were kept", async () => {
+    const answers: unknown[] = [
+      { state: "working", waits: { stage: "working", waitedSeconds: 1, lastMovedAt: 5, stalled: false, now: 6 }, progress: { done: 1, total: 2 } },
+      { state: "done", kept: 2 },
+    ];
+    const api = httpApi("https://api.example.test", (async (url: string) => {
+      if (url.endsWith("/waiting")) return new Response(JSON.stringify({ answer: "a1" }), { status: 200 });
+      return new Response(JSON.stringify(answers.shift()), { status: 200 });
+    }) as unknown as typeof fetch);
+    const looks: WaitingLook[] = [];
+    const got = await api.answerWaiting!("1.a", { kind: "backstory", action: "keep_all", ids: ["b1", "b2"] }, (look) => looks.push(look));
+    expect(got).toEqual({ kept: 2 });
+    expect(looks[0]).toEqual({
+      waits: { stage: "working", waitedSeconds: 1, lastMovedAt: 5, stalled: false, now: 6 },
+      progress: { done: 1, total: 2 },
+    });
+  }, 15000);
 });
 

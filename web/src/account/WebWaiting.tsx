@@ -18,13 +18,16 @@ const sessionDay = (seconds: number): string =>
 
 /** The wait panel's words and times for an answer on the way (#2921): from the bot's looks once it has sent any, else the
  * page's own clock, so an older API or the first moments before the first look show what they always did. */
-function waitShown(sending: { since: number; stage: string; look: WaitingLook | null }) {
+function waitShown(sending: { since: number; stage: string; keepAll: boolean; look: WaitingLook | null }) {
   const waits = sending.look?.waits ?? null;
   const progress = sending.look?.progress ?? null;
+  // A Keep all says so from its first look, before any count, so it never reads as a plain save.
+  const keeping = progress !== null || (sending.keepAll && waits !== null);
   return {
-    stage: progress ? w.keepingConnections : waits?.stage === "queued" ? w.queuedStage : waits ? w.savingStage : sending.stage,
+    stage: waits?.stage === "queued" ? w.queuedStage : keeping ? w.keepingConnections : waits ? w.savingStage : sending.stage,
     startedAt: waits ? (waits.now ?? sending.since) - waits.waitedSeconds : sending.since,
-    updatedAt: waits?.lastMovedAt,
+    // No time is shown for a look with no server clock or a zero time: a wrong age is worse than none.
+    updatedAt: waits && waits.now !== undefined && waits.lastMovedAt > 0 ? waits.lastMovedAt : undefined,
     serverNow: waits?.now ?? sending.since,
     state: waits?.stalled ? ("stalled" as const) : ("running" as const),
     done: progress?.done,
@@ -57,7 +60,7 @@ export default function WebWaiting({
 }) {
   const [list, setList] = useState<Waiting | null>(null);
   const [failed, setFailed] = useState(false);
-  const [sending, setSending] = useState<{ since: number; stage: string; look: WaitingLook | null } | null>(null);
+  const [sending, setSending] = useState<{ since: number; stage: string; keepAll: boolean; look: WaitingLook | null } | null>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
   const shown = useRef(campaignRef);
   const [said, setSaid] = useState<Said>(null);
@@ -100,7 +103,7 @@ export default function WebWaiting({
   ): Promise<void> {
     if (!api.answerWaiting || inFlight.current) return;
     inFlight.current = true;
-    setSending({ since: Math.floor(Date.now() / 1000), stage, look: null });
+    setSending({ since: Math.floor(Date.now() / 1000), stage, keepAll: answer.action === "keep_all", look: null });
     setSaid(null);
     try {
       const got = await api.answerWaiting(campaignRef, answer, (look) => setSending((now) => (now ? { ...now, look } : now)));
@@ -168,17 +171,17 @@ export default function WebWaiting({
         {said && !said.ok ? <span key={said.n}>{said.text}</span> : ""}
       </p>
       {sending && (() => {
-        const shown = waitShown(sending);
+        const wait = waitShown(sending);
         return (
           <WorkProgress
-            stage={shown.stage}
-            startedAt={shown.startedAt}
-            updatedAt={shown.updatedAt}
-            serverNow={shown.serverNow}
-            state={shown.state}
-            done={shown.done}
-            total={shown.total}
-            unit={shown.unit}
+            stage={wait.stage}
+            startedAt={wait.startedAt}
+            updatedAt={wait.updatedAt}
+            serverNow={wait.serverNow}
+            state={wait.state}
+            done={wait.done}
+            total={wait.total}
+            unit={wait.unit}
           />
         );
       })()}
