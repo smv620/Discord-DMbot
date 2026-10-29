@@ -445,7 +445,7 @@ describe("Use a document link", () => {
     expect(screen.getByText(w.mine("Sorrel"))).toBeTruthy();
   });
 
-  it("the old section stops asking about its choice once the page has left", async () => {
+  it("a held answer is not asked for again while the page is on another campaign", async () => {
     const api = mockApi("table");
     const answer = api.sheetAnswer!.bind(api);
     let release!: () => void;
@@ -467,7 +467,46 @@ describe("Use a document link", () => {
     await new Promise((r) => setTimeout(r, 2000));
     expect(asked).toBe(before);
     release();
+    await new Promise((r) => setTimeout(r, 1500)); // let the held choice finish before the next test
   });
+
+  it("the old section keeps waiting for its answer after the page has left, and stops once the answer has come", async () => {
+    const api = mockApi("table");
+    const answer = api.sheetAnswer!.bind(api);
+    let finish = false;
+    let asked = 0;
+    api.sheetAnswer = async (ref, id) => {
+      const got = await answer(ref, id);
+      if (ref !== "100.sh") return got;
+      asked += 1;
+      return finish ? got : { ...got, state: "running", stage: "reading" };
+    };
+    const { rerender } = render(<CharacterSheetsSection api={api} campaignRef="100.sh" />);
+    await screen.findByRole("heading", { name: w.heading });
+    fireEvent.click(screen.getByRole("button", { name: w.forget }));
+    await waitFor(() => expect(asked).toBeGreaterThanOrEqual(1), { timeout: 4000 });
+    rerender(<CharacterSheetsSection api={api} campaignRef="100.other" />);
+    await screen.findByText(w.mine("Sorrel"));
+    try {
+      const left = asked;
+      // Two more asks, not one: a loop that makes one last ask and then stops must fail here.
+      await waitFor(() => expect(asked).toBeGreaterThanOrEqual(left + 2), { timeout: 6000 });
+      finish = true;
+      rerender(<CharacterSheetsSection api={api} campaignRef="100.sh" />);
+      expect((await screen.findByRole("button", { name: w.forget })).getAttribute("aria-disabled")).toBe("true");
+      await waitFor(
+        () => expect(screen.getByRole("button", { name: w.forget }).getAttribute("aria-disabled")).not.toBe("true"),
+        { timeout: 6000 },
+      );
+      // The done answer has come: nothing is asked again, beyond the poll that was already due.
+      const settled = asked;
+      await new Promise((r) => setTimeout(r, 3000));
+      expect(asked).toBe(settled);
+    } finally {
+      finish = true; // on a failure too, so the old loop ends at its next poll instead of running for an hour
+      await new Promise((r) => setTimeout(r, 1500)); // let no timer outlive the test
+    }
+  }, 20000);
 });
 
 describe("one choice at a time per campaign", () => {
