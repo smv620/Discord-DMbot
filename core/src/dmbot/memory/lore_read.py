@@ -392,6 +392,7 @@ async def read_list(
     gate: AbstractAsyncContextManager[Any],
     stats: Stats,
     tick: Callable[[int], None] | None = None,
+    look: Callable[[int, int], None] | None = None,
 ) -> tuple[PlainList, bool]:
     """Pass 1: the whole text in one call, retried once with twice the room, then continued from
     the list so far while it is still cut off at the cap. Returns the list and whether it is
@@ -446,7 +447,7 @@ async def read_list(
         and time.monotonic() - started < PASS1_BUDGET_S
     ):
         await _second_look(
-            ai, text, own, gate, stats, found, tick, PASS1_BUDGET_S - (time.monotonic() - started)
+            ai, text, own, gate, stats, found, look, PASS1_BUDGET_S - (time.monotonic() - started)
         )
     return found, cut
 
@@ -577,7 +578,7 @@ async def _second_look(
     gate: AbstractAsyncContextManager[Any],
     stats: Stats,
     listed: PlainList,
-    tick: Callable[[int], None] | None,
+    look: Callable[[int, int], None] | None,
     budget_s: float,
 ) -> None:
     """Pass 1 skips statements (#2757, as #2454 reads again what an answer cut off) and stops long
@@ -593,15 +594,18 @@ async def _second_look(
     if not gaps:
         stats.paragraph_lines_after = stats.paragraph_lines_before
         return
-    if tick is not None:
-        tick(stats.read_calls + 1)
+    # The second look shows its own count (paragraphs done of asked), never a call number: a number
+    # that climbs reads as failures to the DM (#2932).
+    if look is not None:
+        look(0, len(gaps))
     tasks = [
         asyncio.ensure_future(_ask_paragraph(ai, own, gate, para, names)) for para, names, _ in gaps
     ]
 
     def _one_back(task: asyncio.Future[Any]) -> None:
-        if tick is not None and not task.cancelled() and task.exception() is None:
-            tick(stats.read_calls + 1 + sum(1 for t in tasks if t.done() and not t.cancelled()))
+        if look is not None and not task.cancelled() and task.exception() is None:
+            done = sum(1 for t in tasks if t.done() and not t.cancelled() and t.exception() is None)
+            look(done, len(gaps))
 
     for task in tasks:
         task.add_done_callback(_one_back)
@@ -779,14 +783,19 @@ async def read_lore(
     stats = Stats(unsettled=[] if hold_open else None)
     started = time.monotonic()
     tick: Callable[[int], None] | None = None
+    look: Callable[[int, int], None] | None = None
     if progress is not None:
-        # Each pass-1 call is movement ("try 2"), so a working pass is not called stalled.
-        def _tick(call: int) -> None:
-            progress("reading", call, 0)
+        # Each pass-1 call is movement, so a working pass is not called stalled. The screen gets
+        # no call number: "try 14" read like failures (#2932).
+        def _tick(_call: int) -> None:
+            progress("reading", 0, 0)
 
-        tick = _tick
+        def _look(done: int, total: int) -> None:
+            progress("looking", done, total)
 
-    listed, cut = await read_list(read_ai, text, own, gate, stats, tick)
+        tick, look = _tick, _look
+
+    listed, cut = await read_list(read_ai, text, own, gate, stats, tick, look)
     if skip_name is not None:
         # A name the campaign already has is not offered again, but a line that gives it new
         # spellings stays for shaping: a relationship may be written with one (#2841). Those

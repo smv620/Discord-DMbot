@@ -528,7 +528,9 @@ class TheProgress(unittest.IsolatedAsyncioTestCase):
             await lr.read_lore(
                 fake, fake, TEXT, {}, Gate(), progress=lambda s, d, t: told.append((s, d, t))
             )
-        self.assertEqual(told[0], ("reading", 1, 0))  # the first pass-1 call
+        self.assertEqual(
+            told[0], ("reading", 0, 0)
+        )  # the first pass-1 call: no call number (#2932)
         shaping = [t for t in told if t[0] == "shaping"]
         self.assertEqual(shaping[0][1], 0)
         total = shaping[0][2]
@@ -1286,3 +1288,61 @@ class TheSwornToCard(unittest.TestCase):
         self.assertEqual(back_words("sworn_to", ""), "is owed an oath by")
         self.assertEqual(CARD_BACK["sworn_to"], "is owed an oath by")
         self.assertEqual(predicate_for("is sworn to"), ("sworn_to", ""))
+
+
+class TheSecondLookProgress(unittest.IsolatedAsyncioTestCase):
+    """#2932: no call number on the screen as "try"; the second look counts its own paragraphs."""
+
+    async def test_the_second_look_reports_a_count_from_zero_to_the_number_of_paragraphs(
+        self,
+    ) -> None:
+        first = (
+            'NAMES\n- Brother Aldric | person | quote: "Brother Aldric"\n'
+            '- Mira | person | quote: "Mira, called the Fox"\n'
+            '- Greyfen Abbey | place | quote: "Greyfen Abbey"\n\n'
+            "RELATIONSHIPS\n- Brother Aldric — leads — Greyfen Abbey"
+            ' | quote: "abbot of Greyfen Abbey"\n'
+        )
+        more = (
+            "RELATIONSHIPS\n- Mira — is related to — Brother Aldric | quote: "
+            '"Mira, called the Fox, is the niece of Brother Aldric"\n'
+        )
+        queue = [Reply(first, False), Reply(more, False)]
+
+        async def complete(system: str, text: str, *, max_tokens: int, schema: Any = None) -> Reply:
+            if schema is None:
+                return queue.pop(0)
+            return Reply(json.dumps({"names": [], "connections": []}), False)
+
+        fake = SimpleNamespace(complete=AsyncMock(side_effect=complete), model="claude-sonnet-5-5")
+        told: list[tuple[str, int, int]] = []
+        await lr.read_lore(
+            fake, fake, LONG, {}, Gate(), progress=lambda s, d, t: told.append((s, d, t))
+        )
+        looking = [t for t in told if t[0] == "looking"]
+        self.assertEqual(looking[0], ("looking", 0, 1))  # starts at zero of the paragraphs asked
+        self.assertEqual(looking[-1], ("looking", 1, 1))  # ends at all of them
+        self.assertNotIn("try", repr(told))
+
+    async def test_pass_one_reports_only_reading_before_the_second_look_starts(self) -> None:
+        first = (
+            'NAMES\n- Brother Aldric | person | quote: "Brother Aldric"\n'
+            '- Mira | person | quote: "Mira, called the Fox"\n'
+            '- Greyfen Abbey | place | quote: "Greyfen Abbey"\n\n'
+            "RELATIONSHIPS\n- Brother Aldric — leads — Greyfen Abbey"
+            ' | quote: "abbot of Greyfen Abbey"\n'
+        )
+        queue = [Reply(first, False), Reply("RELATIONSHIPS\n", False)]
+
+        async def complete(system: str, text: str, *, max_tokens: int, schema: Any = None) -> Reply:
+            if schema is None:
+                return queue.pop(0)
+            return Reply(json.dumps({"names": [], "connections": []}), False)
+
+        fake = SimpleNamespace(complete=AsyncMock(side_effect=complete), model="claude-sonnet-5-5")
+        told: list[tuple[str, int, int]] = []
+        await lr.read_lore(
+            fake, fake, LONG, {}, Gate(), progress=lambda s, d, t: told.append((s, d, t))
+        )
+        first_look = next(i for i, t in enumerate(told) if t[0] == "looking")
+        self.assertTrue(all(t == ("reading", 0, 0) for t in told[:first_look]))
