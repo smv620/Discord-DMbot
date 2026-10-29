@@ -152,27 +152,27 @@ body:has(.account-wide) .wrap {
 /* Kinds of connection (#2934, core #2942): a colour and a line style for each, so colour is never the only
    signal; the legend and the chips use the same classes. "other" is a neutral, thinner, plain line. */
 .account {
-  --link-family: #a8650a;
-  --link-ally: #0d7d6a;
-  --link-group: #6b4fc0;
-  --link-work: #2a68b0;
+  --link-family: #9a7b4f;
+  --link-ally: #4f8f86;
+  --link-group: #8a7fb0;
+  --link-work: #6f8fb3;
   --link-other: var(--text-muted, #6b7770);
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) .account {
-    --link-family: #e6b450;
-    --link-ally: #4fd1b6;
-    --link-group: #a78bfa;
-    --link-work: #63b3ed;
+    --link-family: #c9b27c;
+    --link-ally: #7fc4b8;
+    --link-group: #b4a9d6;
+    --link-work: #9bb8d6;
   }
 }
 
 :root[data-theme="dark"] .account {
-  --link-family: #e6b450;
-  --link-ally: #4fd1b6;
-  --link-group: #a78bfa;
-  --link-work: #63b3ed;
+  --link-family: #c9b27c;
+  --link-ally: #7fc4b8;
+  --link-group: #b4a9d6;
+  --link-work: #9bb8d6;
 }
 
 .account .web-link-family { --link: var(--link-family); }
@@ -185,7 +185,7 @@ body:has(.account-wide) .wrap {
 .account .web-edge.web-link-ally .web-line { stroke: var(--link); stroke-dasharray: 10 5; }
 .account .web-edge.web-link-group .web-line { stroke: var(--link); stroke-dasharray: 14 4 3 4; }
 .account .web-edge.web-link-work .web-line { stroke: var(--link); stroke-dasharray: 4 4; }
-.account .web-edge.web-link-other .web-line { stroke: var(--link); stroke-width: 1.5; }
+.account .web-edge.web-link-other .web-line { stroke: var(--link); stroke-width: 1.5; stroke-dasharray: 2 4; }
 /* The chosen line keeps its accent colour over its kind colour, as well as being thicker. */
 .account .web-edge.chosen .web-line { stroke: var(--accent, currentColor); stroke-width: 4; }
 /* A theory keeps its own dotted look on top of its colour. */
@@ -339,24 +339,24 @@ body:has(.account-wide) .wrap {
    read as the same thing. */
 .account {
   --kind-npc: #c62828;
-  --kind-player_character: #1565c0;
-  --kind-place: #2e7d32;
+  --kind-player_character: #3949ab;
+  --kind-place: #00796b;
   --kind-group: #8e24aa;
   --kind-item: #ef6c00;
-  --kind-event: #00838f;
+  --kind-event: #0277bd;
   --kind-creature: #6d4c41;
-  --kind-quest: #f9a825;
+  --kind-quest: #e0a100;
   --kind-other: #607d8b;
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) .account {
     --kind-npc: #ff6b6b;
-    --kind-player_character: #64b5f6;
-    --kind-place: #81c784;
+    --kind-player_character: #9fa8da;
+    --kind-place: #4db6ac;
     --kind-group: #ce93d8;
     --kind-item: #ffb74d;
-    --kind-event: #4dd0e1;
+    --kind-event: #4fc3f7;
     --kind-creature: #bcaaa4;
     --kind-quest: #ffd54f;
     --kind-other: #b0bec5;
@@ -365,11 +365,11 @@ body:has(.account-wide) .wrap {
 
 :root[data-theme="dark"] .account {
   --kind-npc: #ff6b6b;
-  --kind-player_character: #64b5f6;
-  --kind-place: #81c784;
+  --kind-player_character: #9fa8da;
+  --kind-place: #4db6ac;
   --kind-group: #ce93d8;
   --kind-item: #ffb74d;
-  --kind-event: #4dd0e1;
+  --kind-event: #4fc3f7;
   --kind-creature: #bcaaa4;
   --kind-quest: #ffd54f;
   --kind-other: #b0bec5;
@@ -405,9 +405,24 @@ body:has(.account-wide) .wrap {
 
 .account .web-edge .web-line {
   stroke-width: 1.5;
-  stroke-opacity: 0.8;
+  stroke-opacity: 0.75;
 }
 
 .account .web-edge.chosen .web-line {
   stroke-opacity: 1;
+}
+
+/* Names are outlined in the text colour so a light fill (gold, orange) never washes out. */
+.account .web-node :where(circle, rect, polygon) {
+  stroke: var(--text, currentColor);
+}
+
+/* "Something else" lines are dotted in the legend as on the map, so they are not mistaken for family. */
+.account .web-legend .web-link-other .web-line { stroke-dasharray: 2 4; }
+
+/* A player character has a ring inside its circle: not a dashed edge, which a small circle loses. */
+.account .web-pc-ring {
+  fill: none;
+  stroke: var(--text, currentColor);
+  stroke-width: 1.5;
 }

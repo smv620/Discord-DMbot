@@ -44,7 +44,7 @@ function Shape({ kind, r }: { kind: string; r: number }) {
     poly(Array.from({ length: n }, (_, i) => [Math.cos(turn + (2 * Math.PI * i) / n) * k, Math.sin(turn + (2 * Math.PI * i) / n) * k]));
   switch (kindStyle(kind)) {
     case "place":
-      return <rect x={-r} y={-r} width={2 * r} height={2 * r} rx={5} />;
+      return <rect x={-r} y={-r} width={2 * r} height={2 * r} rx={2} />;
     case "group":
       return <polygon points={poly([[0, -1.2], [1.2, 0], [0, 1.2], [-1.2, 0]])} />;
     case "item":
@@ -63,9 +63,14 @@ function Shape({ kind, r }: { kind: string; r: number }) {
       return <polygon points={poly(pts)} />;
     }
     case "player_character":
-      return <circle r={r} stroke-dasharray="4 3" />;
+      return (
+        <>
+          <circle r={r} />
+          <circle r={r * 0.45} class="web-pc-ring" />
+        </>
+      );
     case "other":
-      return <circle r={r} stroke-dasharray="1 3" />;
+      return <circle r={r} stroke-dasharray="2 3" stroke-width="2.5" />;
     default:
       return <circle r={r} />;
   }
