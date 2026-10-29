@@ -350,7 +350,7 @@ from dmbot.recaps.store import RecapRightsSection, RecapSection, RecapStore
 from dmbot.recaps.style import NotesSection, NoteStore, StyleSection, StyleStore
 from dmbot.retention import RetentionJob
 from dmbot.retention_channels import ChannelCounts, HasChannels, retire_channels
-from dmbot.rules import house_voice, optional, set_sync, web_sharing
+from dmbot.rules import house_voice, optional, rule_card, set_sync, web_sharing
 from dmbot.rules import index as rules_index
 from dmbot.rules.book_rank import book_is_legacy, book_wins
 from dmbot.rules.followed import followed_rules, own_first
@@ -461,7 +461,6 @@ from dmbot.ui import (
     looked_at,
     name_pass_undo,
     recap_audio,
-    rule_card,
     shared_rules_defs,
 )
 from dmbot.ui import guide as guide_screen

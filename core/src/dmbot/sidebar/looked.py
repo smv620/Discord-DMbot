@@ -15,6 +15,7 @@ from collections import OrderedDict
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+from dmbot.rules import rule_card
 from dmbot.rules.index import Hit, Index
 from dmbot.sidebar.context import Context
 
@@ -50,7 +51,6 @@ def _place(hit: Hit) -> str:
 def of(ctx: Context, srd: Index) -> tuple[Looked, ...]:
     """The house rules, then the entries, that the answer was built from, in the order the
     prompt had them. Lazy imports: the UI modules import the sidebar."""
-    from dmbot.ui import rule_card
     from dmbot.ui.rule_lookup import choice_value
 
     items = [Looked(f"House rule {rule.number}", "your table") for rule in ctx.house_rules]
