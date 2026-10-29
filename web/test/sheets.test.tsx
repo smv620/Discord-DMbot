@@ -445,7 +445,7 @@ describe("Use a document link", () => {
     expect(screen.getByText(w.mine("Sorrel"))).toBeTruthy();
   });
 
-  it("the old section stops asking about its choice once the page has left", async () => {
+  it("a held answer is not asked for again while the page is on another campaign", async () => {
     const api = mockApi("table");
     const answer = api.sheetAnswer!.bind(api);
     let release!: () => void;
@@ -467,6 +467,36 @@ describe("Use a document link", () => {
     await new Promise((r) => setTimeout(r, 2000));
     expect(asked).toBe(before);
     release();
+    await new Promise((r) => setTimeout(r, 1500)); // let the held choice finish before the next test
+  });
+
+  it("the old section keeps waiting for its answer after the page has left, and stops once the answer has come", async () => {
+    const api = mockApi("table");
+    const answer = api.sheetAnswer!.bind(api);
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    let asked = 0;
+    api.sheetAnswer = async (ref, id) => {
+      if (ref !== "100.sh") return answer(ref, id);
+      asked += 1;
+      await held;
+      return answer(ref, id);
+    };
+    const { rerender } = render(<CharacterSheetsSection api={api} campaignRef="100.sh" />);
+    await screen.findByRole("heading", { name: w.heading });
+    fireEvent.click(screen.getByRole("button", { name: w.forget }));
+    await waitFor(() => expect(asked).toBe(1), { timeout: 4000 });
+    rerender(<CharacterSheetsSection api={api} campaignRef="100.other" />);
+    await screen.findByText(w.mine("Sorrel"));
+    release();
+    await new Promise((r) => setTimeout(r, 1000));
+    expect(asked).toBe(1); // the answer came; nothing asked again
+    rerender(<CharacterSheetsSection api={api} campaignRef="100.sh" />);
+    await waitFor(
+      () => expect(screen.getByRole("button", { name: w.forget }).getAttribute("aria-disabled")).not.toBe("true"),
+      { timeout: 4000 },
+    );
+    await new Promise((r) => setTimeout(r, 1500)); // let no timer outlive the test
   });
 });
 
