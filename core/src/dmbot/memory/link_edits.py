@@ -9,8 +9,10 @@ are never logged here.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from dmbot.memory import kin
-from dmbot.memory.models import DM, REJECTED, Relation, Written
+from dmbot.memory.models import DM, REJECTED, MemoryRuleError, Relation, Written
 from dmbot.memory.store import MemoryStore
 
 
@@ -24,6 +26,60 @@ async def set_secret(
     return await memory.update_relation(
         guild_id, campaign_id, link.id, source=DM, secret=secret, unrevealed=reveal
     )
+
+
+ONLY_THE_DM, SOME_CHARACTERS, EVERYONE = "dm", "some", "everyone"
+WHO_KNOWS = (ONLY_THE_DM, SOME_CHARACTERS, EVERYONE)
+PICK_ONE = "Pick at least one character."
+
+
+def who_knows_now(link: Relation, knowers: Sequence[str]) -> str:
+    """Which of the three answers a connection is at now: shown to everyone, known by these
+    characters, or only the DM's (#2935)."""
+    if not (link.secret or link.unrevealed):
+        return EVERYONE
+    return SOME_CHARACTERS if knowers else ONLY_THE_DM
+
+
+async def set_who_knows(
+    memory: MemoryStore,
+    guild_id: int,
+    campaign_id: str,
+    link: Relation,
+    who: str,
+    characters: Sequence[str] = (),
+) -> Written[object]:
+    """ "Who knows this?" for one connection (#2935), the one call the name card and the website
+    share. Only the DM (hidden from the party, no knowers), only these player characters (hidden
+    from the party, each of those characters' own point of view holds it), or everyone at the table
+    (their knowers let go, then shown to the players: the same as the old "show to players").
+    The three keep the meaning of the old 🤫 and 👁️ switches. Returns the last change, which Undo
+    reverses."""
+    if who not in WHO_KNOWS:
+        raise MemoryRuleError("Pick who knows it: only you, some characters, or everyone.")
+    if who == SOME_CHARACTERS and not characters:
+        raise MemoryRuleError(PICK_ONE)
+    if who == EVERYONE:
+        if not (link.secret or link.unrevealed):
+            return Written(None, None)  # already everyone's: nothing to write
+        before = (await memory.connection_knowers(guild_id, campaign_id, [link.id])).get(
+            link.id, []
+        )
+        if before:
+            await memory.set_connection_knowers(guild_id, campaign_id, link.id, [], source=DM)
+        try:
+            return await set_secret(memory, guild_id, campaign_id, link, False)
+        except MemoryRuleError:  # (refused until its names are shown): put who knew it back
+            if before:
+                await memory.set_connection_knowers(
+                    guild_id, campaign_id, link.id, before, source=DM
+                )
+            raise
+    chosen = list(characters) if who == SOME_CHARACTERS else []
+    await memory.check_knowers(guild_id, campaign_id, chosen)  # nothing is hidden on a bad pick
+    if not (link.secret or link.unrevealed):
+        await set_secret(memory, guild_id, campaign_id, link, True)
+    return await memory.set_connection_knowers(guild_id, campaign_id, link.id, chosen, source=DM)
 
 
 async def remove(

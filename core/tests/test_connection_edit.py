@@ -301,17 +301,180 @@ class Cards(base.NamesTest):
         self.assertIn("already says that", str(it.response.sent or it.followup.send.await_args))
         self.assertEqual(await self.relations(), before)
 
-    async def test_hide_and_show_use_what_the_page_showed(self) -> None:
+    async def pc(self, name: str, user: int) -> Any:
+        made = await ui.save_name(self.memory, self.campaign, name, "npc", [], [])
+        await self.memory.confirm_entity(
+            GUILD, self.campaign.id, made.id, "player_character", source="dm", played_by=user
+        )
+        self.fresh()
+        return made
+
+    async def who_page(self, who: int = DM) -> Any:
+        """The "Who knows this?" page for the card's only connection."""
+        page = await self.page(who)
+        it = self.it(who)
+        await page._who(it)
+        return it.response.edited[0]
+
+    async def test_who_knows_this_offers_three_answers_and_the_old_switch_meaning(self) -> None:
         await self.know("Kesh")
         page = await self.page()
-        self.assertIn("🤫 Hide from players", self.labels(page))
+        self.assertIn(connection_edit.WHO_BUTTON, self.labels(page))
+        self.assertNotIn("🤫 Hide from players", self.labels(page))
+        text, view = await self.who_page()
+        self.assertIn("Players can see this connection.", text)
+        # only me: the old "Hide from players"
         it = self.it()
-        await page._flip(it)
-        self.assertIn("Hidden from players", it.response.edited[0][0])
+        await view._only_me(it)
+        self.assertIn("Only the DM can see it now", it.response.edited[0][0])
         (hidden,) = await self.relations()
         self.assertTrue(hidden.secret)
-        shown = await self.page()
-        self.assertIn("👁️ Show to players", self.labels(shown))
+        self.assertEqual(
+            await self.memory.connection_knowers(GUILD, self.campaign.id, [hidden.id]), {}
+        )
+        # everyone: the old "Show to players", with the usual Undo
+        text, view = await self.who_page()
+        self.assertIn("Only the DM can see it.", text)
+        it = self.it()
+        await view._everyone(it)
+        self.assertIn("Players can see it now", it.response.edited[0][0])
+        (shown,) = await self.relations()
+        self.assertEqual((shown.secret, shown.unrevealed), (False, False))
+
+    async def test_only_some_characters_are_picked_from_the_player_characters(self) -> None:
+        await self.know("Kesh")
+        mara = await self.pc("Mara", 1001)
+        await self.pc("Tavin", 1002)
+        await ui.save_name(self.memory, self.campaign, "Old Smith", "npc", [], [])  # (not offered)
+        self.fresh()
+        _, view = await self.who_page()
+        self.assertEqual(sorted(o.label for o in view.pick.options), ["Mara", "Tavin"])
+        view.pick._values = [mara.id]
+        await view._picked(self.it())
+        it = self.it()
+        await view._some(it)
+        self.assertIn("Only Mara knows it now (and the DM)", it.response.edited[0][0])
+        (link,) = await self.relations()
+        self.assertTrue(link.secret)  # hidden from the party, and:
+        self.assertEqual(
+            await self.memory.connection_knowers(GUILD, self.campaign.id, [link.id]),
+            {link.id: [mara.id]},
+        )
+        text, again = await self.who_page()  # the page shows who knows it now
+        self.assertIn("Only Mara knows it (and the DM)", text)
+        self.assertEqual([o.default for o in again.pick.options if o.label == "Mara"], [True])
+
+    async def test_some_with_nobody_picked_is_refused_and_changes_nothing(self) -> None:
+        await self.know("Kesh")
+        await self.pc("Mara", 1001)
+        _, view = await self.who_page()
+        self.assertTrue(view.some.disabled)  # nothing to save until someone is picked
+        it = self.it()
+        await view._some(it)
+        self.assertIn(
+            "Choose at least one character", str(it.response.sent or it.followup.send.await_args)
+        )
+        (link,) = await self.relations()
+        self.assertFalse(link.secret)
+
+    async def test_everyone_lets_go_of_who_knew_it(self) -> None:
+        await self.know("Kesh", secret=True)
+        mara = await self.pc("Mara", 1001)
+        _, view = await self.who_page()
+        view.pick._values = [mara.id]
+        await view._picked(self.it())
+        await view._some(self.it())
+        _, view = await self.who_page()
+        await view._everyone(self.it())
+        (link,) = await self.relations()
+        self.assertFalse(link.secret)
+        self.assertEqual(
+            await self.memory.connection_knowers(GUILD, self.campaign.id, [link.id]), {}
+        )
+
+    async def test_the_names_read_right_for_one_or_several_and_the_state_is_first(self) -> None:
+        self.assertEqual(connection_edit.called(["Mara"]), "Mara")
+        self.assertEqual(connection_edit.called(["Mara", "Tavin"]), "Mara and Tavin")
+        self.assertEqual(connection_edit.called(["A", "B", "C"]), "A, B and C")
+        names = {"1": "Mara", "2": "Tavin"}
+        text = connection_edit.who_text("Kesh", "some", ["1", "2"], names, has_characters=True)
+        self.assertTrue(text.startswith("**Hidden from the party. Only Mara and Tavin know it"))
+        lost = connection_edit.who_text("Kesh", "some", ["9"], names, has_characters=True)
+        self.assertIn("Only some characters know it", lost)  # a knower the menu cannot name
+        bare = connection_edit.who_text("Kesh", "dm", [], {}, has_characters=False)
+        self.assertIn("no player characters yet", bare)
+
+    async def test_the_answer_it_is_already_at_changes_nothing_and_is_marked(self) -> None:
+        await self.know("Kesh", secret=True)
+        _, view = await self.who_page()
+        self.assertEqual(
+            [
+                c.label
+                for c in view.children
+                if getattr(c, "style", None) == discord.ButtonStyle.success
+            ],
+            ["🤫 Only the DM"],
+        )
+        it = self.it()
+        await view._only_me(it)
+        self.assertIn("Already like that", str(it.response.sent or it.followup.send.await_args))
+        (link,) = await self.relations()
+        self.assertTrue(link.secret)
+
+    async def test_a_bad_pick_changes_nothing_not_even_the_hiding(self) -> None:
+        await self.know("Kesh")  # (public)
+        npc = await ui.save_name(self.memory, self.campaign, "Old Smith", "npc", [], [])
+        _, view = await self.who_page()
+        view.picked = [npc.id]  # forged: not a player character
+        it = self.it()
+        await view._some(it)
+        self.assertIn("Couldn't change that", str(it.response.sent or it.followup.send.await_args))
+        (link,) = await self.relations()
+        self.assertFalse(link.secret)  # still public: the check came before the hiding
+
+    async def test_undo_is_offered_only_for_showing_it_and_works(self) -> None:
+        await self.know("Kesh", secret=True)
+        _, view = await self.who_page()
+        it = self.it()
+        await view._everyone(it)
+        _, card = it.response.edited[0]
+        (undo,) = [c for c in card.children if isinstance(c, name_card.UndoConnectionButton)]
+        await undo.callback(self.it())
+        (again,) = await self.relations()
+        self.assertTrue(again.secret)  # showing it was undone
+        _, view = await self.who_page()
+        it = self.it()
+        await view._only_me(it)  # already only the DM's: nothing to undo or write
+        self.assertIn("Already like that", str(it.response.sent or it.followup.send.await_args))
+
+    async def test_the_menu_holds_no_more_than_the_server_accepts(self) -> None:
+        await self.know("Kesh")
+        for k in range(14):
+            await self.pc(f"Hero {k:02}", 2000 + k)
+        _, view = await self.who_page()
+        self.assertEqual(view.pick.max_values, 12)
+
+    async def test_a_manager_cannot_press_the_who_knows_page(self) -> None:
+        await self.know("Kesh")
+        _, view = await self.who_page()
+        await view._only_me(self.it(MANAGER))
+        (link,) = await self.relations()
+        self.assertFalse(link.secret)
+
+    async def test_a_backstory_connection_is_held_back_until_everyone(self) -> None:
+        """#2404: kept from a backstory it waits unrevealed; the DM's Everyone shows it."""
+        other = await ui.save_name(self.memory, self.campaign, "Kesh", "npc", [], [])
+        await self.memory.add_relation(
+            GUILD, self.campaign.id, self.bell.id, "knows", other.id,
+            source="dm", confidence=1.0, status=CONFIRMED, unrevealed=True,
+        )  # fmt: skip
+        self.fresh()
+        text, view = await self.who_page()
+        self.assertIn("Only the DM can see it.", text)
+        it = self.it()
+        await view._everyone(it)
+        (shown,) = await self.relations()
+        self.assertEqual((shown.secret, shown.unrevealed), (False, False))
 
     async def test_pin_and_unpin_use_what_the_page_showed(self) -> None:
         await self.know("Kesh")
@@ -350,10 +513,9 @@ class Cards(base.NamesTest):
             source="dm", confidence=1.0, status=CONFIRMED, unrevealed=True,
         )  # fmt: skip
         self.fresh()
-        page = await self.page()
-        self.assertIn("👁️ Show to players", self.labels(page))
+        _, view = await self.who_page()
         it = self.it()
-        await page._flip(it)
+        await view._everyone(it)
         note, card = it.response.edited[0]
         self.assertIn("Players can see it now", note)
         (shown,) = await self.relations()
@@ -363,12 +525,12 @@ class Cards(base.NamesTest):
         (held,) = await self.relations()
         self.assertEqual((held.secret, held.unrevealed), (False, True))
 
-    async def test_a_manager_has_no_flip_and_cannot_press_a_dm_pages(self) -> None:
+    async def test_a_manager_has_no_who_knows_and_cannot_press_a_dm_pages(self) -> None:
         await self.know("Kesh")
         mine = await self.page(MANAGER)
-        self.assertFalse([x for x in self.labels(mine) if "players" in x.lower()])
+        self.assertNotIn(connection_edit.WHO_BUTTON, self.labels(mine))
         dm_page = await self.page()
-        await dm_page._flip(self.it(MANAGER))
+        await dm_page._who(self.it(MANAGER))
         (still,) = await self.relations()
         self.assertFalse(still.secret)
 
@@ -403,7 +565,7 @@ class Cards(base.NamesTest):
             GUILD, self.campaign.id, rel.id, status="rejected", source=DM_SOURCE
         )  # another DM took it back meanwhile
         self.fresh()
-        for press in (page._flip, page._remove):
+        for press in (page._who, page._remove):
             it = self.it()
             await press(it)
             self.assertIn(
