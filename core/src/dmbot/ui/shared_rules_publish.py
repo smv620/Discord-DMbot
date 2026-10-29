@@ -1,6 +1,6 @@
 """The publisher's side of shared house rules (#1191): publishing a new version, undoing it,
 and the version history. Only the campaign's DMs edit the set (no separate co-editor list; owner
-decision, PLAN #1257). Reached from the Shared house rules menu in ⚙️ Settings; every press
+decision, PLAN #1257). Reached from the Shared house rules menu in ⚙️ Manage DMbot; every press
 re-checks that the person is a DM of the campaign. Followers get a new version at their next session
 start, never sooner, and may take it or pick from it (dmbot.dm_screen.set_update)."""
 

@@ -1,4 +1,4 @@
-"""✍️ Recap style, under ⚙️ Settings → 📜 Recaps (#2075): the examples that show how recaps sound.
+"""✍️ Recap style, under ⚙️ Manage DMbot → 📜 Recaps (#2075): the examples that show how recaps sound.
 
 The DM pastes up to 3 recaps they like (each at most 600 words). DMbot copies how they sound, never
 what happens in them: the code throws away a draft that takes a name or a run of words from one.

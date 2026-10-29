@@ -51,7 +51,7 @@ export const voiceWords = {
     "no-consent":
       "Agree to recording in Discord first, then try again. DMbot only listens to people who have agreed to be recorded; it sends you a button in a private message to agree. Or type your note instead.",
     "not-allowed":
-      "Recaps are turned off for this campaign or its plan right now. Check ⚙️ Settings → 📜 Recaps.",
+      "Recaps are turned off for this campaign or its plan right now. Check ⚙️ Manage DMbot → 📜 Recaps.",
     "not-editable":
       "This recap can't change now (it was posted or skipped, or it is being written). Open the recap list to see where it is.",
     "too-soon": "You sent a recording a moment ago. Wait a minute, then try again.",

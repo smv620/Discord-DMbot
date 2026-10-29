@@ -573,7 +573,7 @@ class Decisions(Harness):
         self.assertEqual(
             text,
             "They didn't answer within 7 days, so the offer ended. The campaign is still yours. "
-            "You can offer it again from ⚙️ Settings → 🗂️ Campaign management → 🤝 Hand over, or "
+            "You can offer it again from ⚙️ Manage DMbot → 🗂️ Campaign management → 🤝 Hand over, or "
             "from your account page.",
         )
         self.assertNotIn("****", text)

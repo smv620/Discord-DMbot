@@ -435,13 +435,14 @@ class SettingsButton(LookupTest):
             it.response.send_modal.assert_not_awaited()
             self.assertEqual(it.response.send_message.await_args.args[0], ui.ONLY_DMS)
 
-    async def test_the_button_is_only_on_a_dms_card(self) -> None:
+    async def test_the_button_is_no_longer_on_manage_dmbot(self) -> None:
+        # 📖 Look up a rule is on the ❓ Help card now (#2986); old cards still answer.
         c = campaign()
-        for viewer, expected in ((DM, True), (PLAYER, False)):
+        for viewer in (DM, PLAYER):
             view = settings_view(c, None, viewer)
             items: list[Any] = [getattr(i, "item", i) for i in view.children]
             ids = [str(i.custom_id) for i in items]
-            self.assertEqual(f"dmbot:rulelookup:{C1}" in ids, expected, viewer)
+            self.assertNotIn(f"dmbot:rulelookup:{C1}", ids, viewer)
 
     async def test_the_button_survives_a_restart_and_fits_a_phone(self) -> None:
         button = RuleLookupButton("a" * 32)

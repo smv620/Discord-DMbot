@@ -153,8 +153,8 @@ describe("sharing your rules", () => {
     await screen.findByText(w.sharedAs("Rules", 1), {}, slow);
     expect(screen.getByText(w.codesInDiscord)).toBeTruthy();
     // The real path in Discord, as Supervisor named it on #2796.
-    expect(w.codesInDiscord).toContain("⚙️ Settings → 📚 Shared rules → 🔑 New share code");
-    expect(w.codeHelp).toContain("⚙️ Settings → 📚 Shared rules → 🔑 New share code");
+    expect(w.codesInDiscord).toContain("⚙️ Manage DMbot → 📚 Shared rules → 🔑 New share code");
+    expect(w.codeHelp).toContain("⚙️ Manage DMbot → 📚 Shared rules → 🔑 New share code");
     expect(document.body.textContent).not.toMatch(/ABCDEFGHJK/);
     expect(calls(api, "chooseRuleSharing").some((c) => /make_code|turn_off_code/.test(c))).toBe(false);
   });

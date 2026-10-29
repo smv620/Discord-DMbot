@@ -50,7 +50,7 @@ class Kinds(unittest.TestCase):
                 clean_kind(raw)
             self.assertEqual(str(raised.exception), NOT_HOMEBREW)
         self.assertEqual(
-            NOT_HOMEBREW, "Rules go in House rules, not Homebrew: ⚙️ Settings → House rules."
+            NOT_HOMEBREW, "Rules go in House rules, not Homebrew: ⚙️ Manage DMbot → House rules."
         )
 
     def test_the_files_help_no_longer_lists_it(self) -> None:

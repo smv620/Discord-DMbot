@@ -39,10 +39,11 @@ class Roles(unittest.TestCase):
         for who, role in cases.items():
             self.assertEqual(panel.role_of(who), role, who)
 
-    def test_only_a_game_master_gets_settings(self) -> None:
-        for role in Role:
-            self.assertEqual(panel.may_press(role, Button.SETTINGS), role is Role.GAME_MASTER, role)
-            self.assertEqual(Button.SETTINGS in panel.buttons_for(role), role is Role.GAME_MASTER)
+    def test_only_a_game_master_gets_the_manage_buttons(self) -> None:
+        for button in (Button.MANAGE_DMBOT, Button.MANAGE_CAMPAIGN):
+            for role in Role:
+                self.assertEqual(panel.may_press(role, button), role is Role.GAME_MASTER, role)
+                self.assertEqual(button in panel.buttons_for(role), role is Role.GAME_MASTER)
 
     def test_each_role_has_what_the_weaker_ones_have(self) -> None:
         order = [Role.GUEST, Role.MEMBER, Role.PLAYER, Role.GAME_MASTER]
@@ -58,10 +59,17 @@ class Roles(unittest.TestCase):
                     button in panel.buttons_for(role), panel.may_press(role, button), (role, button)
                 )
 
-    def test_a_guest_gets_help_rules_and_transcripts_and_nothing_about_the_campaign(self) -> None:
-        everyone = (Button.HELP, Button.RULE, Button.TRANSCRIPTS)  # drawn first, in this order
-        self.assertEqual(panel.buttons_for(Role.GUEST), everyone)
-        self.assertEqual(panel.buttons_for(Role.MEMBER), (*everyone, Button.MY_MENU))
+    def test_each_role_gets_exactly_its_buttons_in_order_and_never_more_than_four(self) -> None:
+        self.assertEqual(panel.buttons_for(Role.GUEST), (Button.HELP,))
+        mine = (Button.MY_DATA, Button.HELP)
+        self.assertEqual(panel.buttons_for(Role.MEMBER), mine)
+        self.assertEqual(panel.buttons_for(Role.PLAYER), mine)
+        self.assertEqual(
+            panel.buttons_for(Role.GAME_MASTER),
+            (Button.MANAGE_DMBOT, Button.MANAGE_CAMPAIGN, Button.MY_DATA, Button.HELP),
+        )
+        for role in Role:
+            self.assertLessEqual(len(panel.buttons_for(role)), 4)
 
     def test_the_shared_message_holds_only_what_every_role_may_press(self) -> None:
         for button in panel.shared_panel():

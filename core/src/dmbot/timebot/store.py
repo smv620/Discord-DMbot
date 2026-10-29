@@ -29,7 +29,7 @@ from dmbot.timebot.split import Group
 
 NOT_A_DM = "Only this campaign's DMs can use the clock."
 DAMAGED = "That backup file's game clock is damaged, so nothing was restored."
-NO_CLOCK = "Set the game clock first (⚙️ Settings, then Game clock)."
+NO_CLOCK = "Set the game clock first (⚙️ Manage DMbot, then Game clock)."
 GONE = "That group is gone. The party may have rejoined, so check the clock message."
 MOVED_ON = (
     "The clocks have moved on since, so there is nothing to undo. "

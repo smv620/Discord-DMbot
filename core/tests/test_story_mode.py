@@ -338,10 +338,10 @@ class Buttons(Setup):
         self.assertIn(
             "Shared story", [getattr(getattr(c, "item", c), "label", "") for c in view.children]
         )
-        self.assertIn("Shared story:", settings.settings_text(self.a, None, DM))
         player_view = settings.settings_view(self.a, None, PLAYER)
         self.assertNotIn(
             "Shared story",
             [getattr(getattr(c, "item", c), "label", "") for c in player_view.children],
         )
-        self.assertNotIn("Shared story:", settings.settings_text(self.a, None, PLAYER))
+        # (the card no longer has a line for it: it is on the "Not on the website yet" list, #2986)
+        self.assertIn("Shared story", settings.settings_text(self.a, None, DM))
