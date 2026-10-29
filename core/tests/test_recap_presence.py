@@ -345,6 +345,20 @@ class TheAliasEdges(unittest.TestCase):
             put("Bora Bora lay ahead and Sarek nodded."), "Bora Bora lay ahead and Tavin nodded."
         )
 
+    def test_a_stray_mishearing_of_a_familiar_name_is_still_put_right_by_its_sound(self) -> None:
+        got = self.familiar("Doren stood at the gate.")
+        self.assertEqual(got, "Doran Ashvale stood at the gate.")
+
+    def test_a_doubled_word_is_collapsed_only_where_a_rewrite_made_it(self) -> None:
+        from dmbot.recaps.unknown_names import _undoubled
+
+        self.assertEqual(_undoubled("Doren Ashvale", "Doran Ashvale Ashvale"), "Doran Ashvale")
+        self.assertEqual(
+            _undoubled("x", "the Ashvale Ashvale-born heir"), "the Ashvale Ashvale-born heir"
+        )
+        self.assertEqual(_undoubled("x", "Łukasz Łukasz spoke"), "Łukasz spoke")
+        self.assertEqual(_undoubled("Bora Bora", "Bora Bora and Doran"), "Bora Bora and Doran")
+
     def test_the_whole_path_keeps_a_familiar_name(self) -> None:
         beat = bt.Beat(1, "Doran stood.", ("Doran Ashvale",), (1,), "event")
         prose = rd.Prose("《Calm》 Doran Ashvale stood. Doran spoke. Doran nodded.", ("strings",))
