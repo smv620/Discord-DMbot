@@ -2738,3 +2738,13 @@ DEPLOY 88dbce2b (2026-10-29, dev1, owner's OK through the prompt "Deploy now"; S
 - Features line: handover email off, time suggestions on, recaps on, plot checks off, meaning search off, recap audio on, structured split and beats on, sidebar on, secret reveal on, who is he off, importing sessions on, billing link on, email on. Test recordings on: the owner confirmed (2026-10-29, through Supervisor) that this is deliberate, for reuse across test rounds; they save voice only for people who opted in.
 - web-api healthy.
 - Not yet checked: /dmbot start in the test server (owner; the three old channels should be gone), the game-time line, and the Delete row at the bottom of a campaign page on the website.
+
+DEPLOY d890ea81 (2026-10-29, dev1, owner's OK through the prompt "Deploy now"; Supervisor's fifth deploy handover on #516, 17:21 UTC). Live was 88dbce2b.
+- CI: every job green on d890ea81 (the merge of #2974).
+- Dry run on a copy (restored from a backup taken 17:35 UTC): 275 to 277 migration rows, 0279_who_knows and 0280_link_known_by applied; second run applied nothing.
+- Backup before the stop (chmod 600, private folder). Core stopped with web-api, core started first, web-api after.
+- Live: 277 migration rows, last 0280_link_known_by. Bot connected to 2 servers, ears not restarted, 0 errors since start.
+- Features line: handover email off, time suggestions on, recaps on, plot checks off, meaning search off, recap audio on, structured split on, final read on, structured beats on, sidebar on, sidebar recall on, session-start note on, extractor on, live heads-up off, secret reveal on, plan limits off, importing sessions on, ai helpers on, billing link on, email on, table pictures off, who is he off, test recordings on (the owner's deliberate setting).
+- The start-up channel sweep line was not in the log this time (no old channels were present to delete); not confirmed.
+- web-api healthy.
+- Not yet checked: the Story graph Steps spinner (up to 8 hops) and a deep view, the Who knows this? page for a connection and an other name in the test server, and the owner's recap test (word count, away findings, final read used or kept).
