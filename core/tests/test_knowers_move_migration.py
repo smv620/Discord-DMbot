@@ -148,3 +148,83 @@ class TheMove(unittest.IsolatedAsyncioTestCase):
             )
             row = await cur.fetchone()
         self.assertEqual(row["n"], 0)
+
+
+class Theories(TheMove):
+    """A guess or a suspicion is knowledge with a certainty (§9b item 2): the move keeps it."""
+
+    async def table(self) -> dict[str, str]:
+        ids = {
+            "tavin": await self.add(
+                "Tavin", type="character", role="player_character", played_by=MEMBERS[0]
+            ),
+            "mara": await self.add(
+                "Mara", type="character", role="player_character", played_by=MEMBERS[1]
+            ),
+            "voss": await self.add("Voss", type="character", role="npc"),
+            "council": await self.add("Lantern Council", type="faction"),
+        }
+        return ids
+
+    async def view(self, entity_id: str) -> str:
+        async with self.memory._write(GUILD, self.c, "dm") as w:
+            from dmbot.memory import knowers
+
+            return await knowers._view_of(w, entity_id)
+
+    async def party_theory(self, relation_id: str, confidence: float) -> None:
+        """The party holding a guess: the API refuses it today (a guess is not recorded there),
+        but a file or an older version can have one, so the move must keep it."""
+        async with self.db.guild(GUILD) as conn:
+            await conn.execute(
+                "INSERT INTO memory_beliefs (guild_id, campaign_id, id, perspective_id,"
+                " relation_id, confidence, status, seq, recorded_at)"
+                " SELECT %s, %s, md5(random()::text), p.id, %s, %s, 'theory', 99, 1"
+                " FROM memory_perspectives p WHERE p.guild_id = %s AND p.campaign_id = %s"
+                " AND p.kind = 'party'",
+                (GUILD, self.c, relation_id, confidence, GUILD, self.c),
+            )
+
+    async def test_a_player_characters_theory_keeps_its_certainty(self) -> None:
+        ids = await self.table()
+        rel = await self.link(ids["voss"], ids["council"], secret=True)
+        await self.memory.believe(
+            GUILD, self.c, await self.view(ids["tavin"]), rel, 0.5, "theory", source="dm"
+        )
+        await self.db.migrate(MIGRATIONS)
+        got = await self.memory.visible_to(GUILD, self.c, Viewer.character(ids["tavin"]))
+        self.assertEqual(got.how_sure(CONNECTION, rel), 0.5)
+        other = await self.memory.visible_to(GUILD, self.c, Viewer.character(ids["mara"]))
+        self.assertFalse(other.knows(CONNECTION, rel))
+
+    async def test_a_party_theory_gives_every_player_character_its_certainty(self) -> None:
+        ids = await self.table()
+        rel = await self.link(ids["voss"], ids["council"])
+        await self.party_theory(rel, 0.75)
+        await self.db.migrate(MIGRATIONS)
+        for who in ("tavin", "mara"):
+            seen = await self.memory.visible_to(GUILD, self.c, Viewer.character(ids[who]))
+            self.assertEqual(seen.how_sure(CONNECTION, rel), 0.75, who)
+
+    async def test_a_player_characters_own_certainty_beats_the_partys(self) -> None:
+        ids = await self.table()
+        rel = await self.link(ids["voss"], ids["council"])
+        await self.party_theory(rel, 0.75)
+        await self.memory.believe(
+            GUILD, self.c, await self.view(ids["tavin"]), rel, 0.25, "theory", source="dm"
+        )
+        await self.db.migrate(MIGRATIONS)
+        tavin = await self.memory.visible_to(GUILD, self.c, Viewer.character(ids["tavin"]))
+        mara = await self.memory.visible_to(GUILD, self.c, Viewer.character(ids["mara"]))
+        self.assertEqual(tavin.how_sure(CONNECTION, rel), 0.25)
+        self.assertEqual(mara.how_sure(CONNECTION, rel), 0.75)
+
+    async def test_a_belief_of_zero_makes_no_row(self) -> None:
+        ids = await self.table()
+        rel = await self.link(ids["voss"], ids["council"], secret=True)
+        view = await self.view(ids["tavin"])
+        await self.memory.believe(GUILD, self.c, view, rel, 1.0, "revealed_fact", source="dm")
+        await self.memory.believe(GUILD, self.c, view, rel, 0.0, "secret_plot", source="dm")
+        await self.db.migrate(MIGRATIONS)  # stopped knowing: the newest belief is 0.0
+        got = await self.memory.visible_to(GUILD, self.c, Viewer.character(ids["tavin"]))
+        self.assertFalse(got.knows(CONNECTION, rel))

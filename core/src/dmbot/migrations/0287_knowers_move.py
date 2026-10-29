@@ -11,13 +11,14 @@ from __future__ import annotations
 # read or written below has a `migrate_backfill` policy for the length of this migration.
 # What each row means (every row is certainty 1.0, the way things were told before certainty):
 #   - revealed (a confirmed entry not hidden from the players, not an unnamed person and not a
-#     limited clue; a name not secret; a connection The party holds at 1.0; a condition of such an
+#     limited clue; a name not secret; a connection The party holds; a condition of such an
 #     entry): known to every player character that exists now;
 #   - secret, hidden, unnamed, unrevealed: known to nobody (the DM fixes those with Who knows this);
 #   - a character entry knows that it exists itself (§9b, self-knowledge);
 #   - a limited clue is known to the characters its `knows` connections list;
-#   - a connection's knowers: each player character's current belief of 1.0, and each NPC's
-#     current belief above 0 (at that certainty);
+#   - a connection's knowers: each player character's and each NPC's current belief above 0, at
+#     its certainty (theories included); The party's current belief above 0 goes to every player
+#     character at The party's certainty, unless the character has a row of its own;
 #   - a secret other name: its old knowers (`memory_alias_knowers`).
 # A point of view is made for every confirmed character that has none (a player's `pc`, any
 # other `npc`), since a knower row needs one.
@@ -132,39 +133,10 @@ KNOWERS_MOVE = r"""
         WHERE a.status <> 'rejected' AND a.secret
         ON CONFLICT DO NOTHING;
 
-    -- A connection The party holds as fact: every player character knows it (unless one of its
-    -- ends is hidden from the players, a limited clue or an unnamed person: the old readers kept
-    -- such a connection from them, and learning it would make that entry known).
-    INSERT INTO memory_knowers
-            (guild_id, campaign_id, id, perspective_id, relation_id, created_at, confidence)
-        SELECT r.guild_id, r.campaign_id,
-               md5(random()::text || clock_timestamp()::text || r.id || p.id),
-               p.id, r.id, r.created_at, 1.0
-        FROM memory_relations r
-        JOIN memory_entities a ON a.guild_id = r.guild_id AND a.campaign_id = r.campaign_id
-                              AND a.id = r.subject_id
-        JOIN memory_entities o ON o.guild_id = r.guild_id AND o.campaign_id = r.campaign_id
-                              AND o.id = r.object_id
-        JOIN memory_perspectives p ON p.guild_id = r.guild_id AND p.campaign_id = r.campaign_id
-                                  AND p.kind = 'pc'
-        WHERE r.status = 'confirmed'
-          AND NOT a.hidden_from_players AND NOT a.audience_limited AND NOT a.unnamed
-          AND NOT o.hidden_from_players AND NOT o.audience_limited AND NOT o.unnamed
-          AND EXISTS (
-            SELECT 1 FROM memory_beliefs b
-            JOIN memory_perspectives party ON party.guild_id = b.guild_id
-                                          AND party.campaign_id = b.campaign_id
-                                          AND party.id = b.perspective_id
-            WHERE party.kind = 'party' AND b.guild_id = r.guild_id AND b.campaign_id = r.campaign_id
-              AND b.relation_id = r.id AND b.confidence >= 1.0
-              AND b.seq = (SELECT max(x.seq) FROM memory_beliefs x
-                           WHERE x.guild_id = b.guild_id AND x.campaign_id = b.campaign_id
-                             AND x.perspective_id = b.perspective_id
-                             AND x.relation_id = b.relation_id))
-        ON CONFLICT DO NOTHING;
-
-    -- A connection's knowers: a player character's current belief of 1.0, an NPC's current belief
-    -- above 0 at that certainty (a belief of 0.0 is how "stopped knowing" was written).
+    -- A connection's knowers: every current belief above 0 of a player character's or an NPC's, at
+    -- its certainty (a guess or a suspicion is knowledge with a certainty; a belief of 0.0 is how
+    -- "stopped knowing" was written, so it makes no row). These go first, so a character's own
+    -- row wins over the party's below.
     INSERT INTO memory_knowers
             (guild_id, campaign_id, id, perspective_id, relation_id, created_at, confidence)
         SELECT b.guild_id, b.campaign_id,
@@ -175,8 +147,37 @@ KNOWERS_MOVE = r"""
                                   AND p.id = b.perspective_id
         JOIN memory_relations r ON r.guild_id = b.guild_id AND r.campaign_id = b.campaign_id
                                AND r.id = b.relation_id
-        WHERE r.status = 'confirmed'
-          AND ((p.kind = 'pc' AND b.confidence >= 1.0) OR (p.kind = 'npc' AND b.confidence > 0))
+        WHERE r.status = 'confirmed' AND p.kind IN ('pc', 'npc') AND b.confidence > 0
+          AND b.seq = (SELECT max(x.seq) FROM memory_beliefs x
+                       WHERE x.guild_id = b.guild_id AND x.campaign_id = b.campaign_id
+                         AND x.perspective_id = b.perspective_id
+                         AND x.relation_id = b.relation_id)
+        ON CONFLICT DO NOTHING;
+
+    -- What The party believes: every player character holds it at The party's certainty (1.0
+    -- for a fact the players have, below that for a theory), unless it has a row of its own. Not
+    -- when an end is hidden from the players, a limited clue or an unnamed person: the old
+    -- readers kept such a connection from them, and learning it would make that entry known.
+    INSERT INTO memory_knowers
+            (guild_id, campaign_id, id, perspective_id, relation_id, created_at, confidence)
+        SELECT r.guild_id, r.campaign_id,
+               md5(random()::text || clock_timestamp()::text || r.id || p.id),
+               p.id, r.id, r.created_at, b.confidence
+        FROM memory_relations r
+        JOIN memory_entities a ON a.guild_id = r.guild_id AND a.campaign_id = r.campaign_id
+                              AND a.id = r.subject_id
+        JOIN memory_entities o ON o.guild_id = r.guild_id AND o.campaign_id = r.campaign_id
+                              AND o.id = r.object_id
+        JOIN memory_beliefs b ON b.guild_id = r.guild_id AND b.campaign_id = r.campaign_id
+                             AND b.relation_id = r.id
+        JOIN memory_perspectives party ON party.guild_id = b.guild_id
+                                      AND party.campaign_id = b.campaign_id
+                                      AND party.id = b.perspective_id AND party.kind = 'party'
+        JOIN memory_perspectives p ON p.guild_id = r.guild_id AND p.campaign_id = r.campaign_id
+                                  AND p.kind = 'pc'
+        WHERE r.status = 'confirmed' AND b.confidence > 0
+          AND NOT a.hidden_from_players AND NOT a.audience_limited AND NOT a.unnamed
+          AND NOT o.hidden_from_players AND NOT o.audience_limited AND NOT o.unnamed
           AND b.seq = (SELECT max(x.seq) FROM memory_beliefs x
                        WHERE x.guild_id = b.guild_id AND x.campaign_id = b.campaign_id
                          AND x.perspective_id = b.perspective_id
