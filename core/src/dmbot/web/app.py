@@ -1589,6 +1589,19 @@ def create_app(
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 
+    @app.get("/me/campaigns/{ref}/web/find")
+    async def me_campaign_web_find(
+        ref: str, signed: Signed, q: str = "", view: str | None = None
+    ) -> dict[str, Any]:
+        """The names to offer under the Story graph's "Find a name" box: the names the caller may
+        see in this view, by main name (#2989)."""
+        session, _token = signed
+        try:
+            return {"names": await relationships.find_names(db, session, ref, q, view=view or None)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
     @app.get("/me/campaigns/{ref}/web/size")
     async def me_campaign_web_size(
         ref: str,
