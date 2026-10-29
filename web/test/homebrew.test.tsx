@@ -194,7 +194,7 @@ describe("a campaign's entries", () => {
     expect(await screen.findByText(text.leadOneCampaign)).toBeTruthy();
     expect(text.leadOneCampaign).toContain("An entry marked (off) is kept");
     expect(screen.getByText(text.dmChanges)).toBeTruthy();
-    expect(text.dmChanges).toContain("⚙️ Settings → 📚 Homebrew");
+    expect(text.dmChanges).toContain("⚙️ Manage DMbot → 📚 Homebrew");
     expect(
       screen.queryByRole("button", { name: /add|edit|remove/i }),
     ).toBeNull();

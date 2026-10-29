@@ -5,6 +5,7 @@ The store tests need Postgres; the rest use fakes."""
 
 from __future__ import annotations
 
+import asyncio
 import unittest
 from types import SimpleNamespace
 from typing import Any, cast
@@ -302,10 +303,8 @@ class DmSide(unittest.IsolatedAsyncioTestCase):
                 for i in player_view.children
             )
         )
-        self.assertIn("not set", screen_settings.settings_text(campaign, None, DM))
-        self.assertIn(
-            "Join on D&D Beyond", screen_settings.settings_text(self.campaign(LINK), None, DM)
-        )
+        # (the card has no line for it any more: it waits on the "Not on the website yet" list)
+        self.assertIn("D&D Beyond invite", screen_settings.settings_text(campaign, None, DM))
 
     def test_the_buttons_id_matches_its_template(self) -> None:
         custom_id = screen_settings.InviteButton(CAMPAIGN).item.custom_id
@@ -452,11 +451,23 @@ class FromTheSheet(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         it = sheet_interaction()
         await ui.MySheetButton(GUILD, CAMPAIGN).callback(it)
-        text = said(it)
-        self.assertIn("Link my D&D Beyond sheet", text)
-        call = it.followup.send.await_args or it.response.send_message.await_args
-        labels = [i.label for i in call.kwargs["view"].children]
-        self.assertEqual(labels, [ui.LINK_LABEL])
+        # The form opens on the same press (#2986); the panel with its one button is the fallback
+        # when the read is slow.
+        it.response.send_modal.assert_awaited_once()
+        self.assertIsInstance(it.response.send_modal.await_args.args[0], ui.NewSheetForm)
+        slow = sheet_interaction()
+        read = slow.client.sheets.characters_of
+
+        async def slow_read(*args: Any) -> Any:
+            await asyncio.sleep(0.2)
+            return await read(*args)
+
+        slow.client.sheets.characters_of = slow_read
+        with patch.object(ui, "FORM_WAIT_S", 0.01):
+            await ui.MySheetButton(GUILD, CAMPAIGN).callback(slow)
+        self.assertIn("Link my D&D Beyond sheet", said(slow))
+        call = slow.followup.send.await_args or slow.response.send_message.await_args
+        self.assertEqual([i.label for i in call.kwargs["view"].children], [ui.LINK_LABEL])
         # From the consent confirmation (no campaign) it still says who adds it.
         plain = sheet_interaction()
         await ui.MySheetButton(GUILD).callback(plain)

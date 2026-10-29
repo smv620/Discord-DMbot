@@ -1,6 +1,6 @@
 """`/dmbot import` (#2154): the private reply with the link to the website's import page, the same
-as the 📥 Import sessions button on ⚙️ Settings (`dm_screen.import_button`). It takes no options and
-no file: importing happens only on the website."""
+as the 📥 Import sessions button on ⚙️ Manage DMbot (`dm_screen.import_button`). It takes no
+options and no file: importing happens only on the website."""
 
 from __future__ import annotations
 

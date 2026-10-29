@@ -2,7 +2,7 @@
 
 The website has no right on the campaign tables, so a choice (who can see the DM screen, how much
 DMbot says, how long transcripts are kept) is queued as a row (`setting_actions`). This module
-claims the rows one at a time in the order made and applies each exactly as Discord's ⚙️ Settings
+claims the rows one at a time in the order made and applies each exactly as Discord's ⚙️ Manage DMbot
 buttons do: the same store calls, so channel permissions, the notice in the DM screen and a running
 session all follow, and the DM is told in the same words. Not here: hand over, pause and delete (the
 page sends the DM to Discord for those). A game master added or removed (#2776) goes through the

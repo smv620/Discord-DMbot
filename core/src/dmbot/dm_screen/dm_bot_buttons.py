@@ -2,10 +2,11 @@
 channel").
 
 One shared message holds two buttons everyone may press: 👤 DMbot Main Menu and ❓ Help. 👤 answers
-privately with the buttons that person's role gets (`dm_bot_panel.buttons_for`), re-checked from
-the campaign as it is now on every press, and those buttons are the menus DMbot already has
-(the 🗂️ Menu, 📜 My character sheet, ⚙️ Settings), each of which checks the person again. Every
-answer is private; nothing from the DM screen is ever posted here.
+privately with the buttons that person's role gets (`dm_bot_panel.buttons_for`, at most four:
+⚙️ Manage DMbot, 🌐 Manage campaign, 🙋 My data, ❓ Help; #2986), re-checked from the campaign as it
+is now on every press. Manage DMbot and My data are menus DMbot already has (⚙️ Manage DMbot and 🗂️
+Menu), each of which checks the person again. Every answer is private; nothing from the DM screen
+is ever posted here.
 
 The panel message is kept by DMbot: edited in place when it exists, posted again when it was
 deleted, so a deleted panel never leaves the channel empty.
@@ -24,9 +25,7 @@ import discord
 from dmbot import consent_dm
 from dmbot.campaigns import Campaign
 from dmbot.dm_screen import dm_bot_panel as panel
-from dmbot.dm_screen.backstory_button import BackstoryButton
 from dmbot.dm_screen.dm_bot_panel import Button, Role, Standing
-from dmbot.dm_screen.names_button import NamesButton
 from dmbot.dm_screen.settings import SettingsButton
 from dmbot.mentions import NO_PINGS
 
@@ -35,21 +34,18 @@ log = logging.getLogger(__name__)
 _ID = r"(?P<campaign>[0-9a-f]{32})"
 GONE = "DMbot can't find that campaign. Ask your DM."
 WENT_WRONG = "Something went wrong. Please press it again."
-# The same closing sentence on every card, in the buttons' own words (the 📜 icon is also on
-# "My character sheet", so the text names buttons, not icons).
-_TAIL = " Press Look up a rule to check a rule, or Transcripts to read what was said."
 CARD_TEXT = {
     Role.GAME_MASTER: (
-        "You are a DM here. 🗂️ Menu is about you (stop recording, delete your transcripts). "
-        "⚙️ Settings is for the whole game." + _TAIL
+        "You are a DM here. ⚙️ is DMbot in Discord, 🌐 is your campaign on the website, "
+        "🙋 is about you."
     ),
     Role.PLAYER: (
-        "You play here. Press 🗂️ Menu to stop being recorded or delete your transcripts." + _TAIL
+        "You play here. Press 🙋 My data to see or stop your recording, or to link your sheet."
     ),
-    Role.MEMBER: ("You agreed to be recorded in this server. Press 🗂️ Menu to stop." + _TAIL),
+    Role.MEMBER: "You agreed to be recorded in this server. Press 🙋 My data to stop.",
     Role.GUEST: (
-        "DMbot is not recording you. To play, join the voice channel and DMbot will message "
-        "you to ask. Help explains DMbot." + _TAIL
+        "DMbot is not recording you. To play, join the voice channel and DMbot will send "
+        "you a message to ask first. Press ❓ Help to see how DMbot works."
     ),
 }
 
@@ -85,33 +81,50 @@ async def standing_of(client: Any, campaign: Campaign, user_id: int) -> Standing
 
 
 def role_view(
-    role: Role, campaign: Campaign, *, sheets: bool, site_url: str = ""
+    role: Role, campaign: Campaign, *, site_url: str = "", several: bool = False
 ) -> discord.ui.View:
-    """The buttons that role gets, built from `buttons_for` and nothing else."""
+    """The buttons that role gets, built from `buttons_for` and nothing else. `several`: the
+    person runs more than one campaign in this server, so 🌐 goes to their list."""
     view = discord.ui.View(timeout=None)
     for button in panel.buttons_for(role):
         if button is Button.HELP:
             view.add_item(HelpButton(campaign.id))
-        elif button is Button.RULE:
-            view.add_item(RuleButton(campaign.id))
-        elif button is Button.TRANSCRIPTS:  # a link: opens the website, nothing to check here
+        elif button is Button.MY_DATA:
             view.add_item(
-                discord.ui.Button(
-                    label=panel.LABELS[Button.TRANSCRIPTS],
-                    style=discord.ButtonStyle.link,
-                    url=panel.transcripts_url(site_url),
+                consent_dm.MenuButton(
+                    campaign.guild_id,
+                    campaign.id,
+                    label=panel.LABELS[Button.MY_DATA][2:].strip(),
+                    emoji="🙋",
                 )
             )
-        elif button is Button.MY_MENU:
-            view.add_item(consent_dm.MenuButton(campaign.guild_id, campaign.id))
-        elif button is Button.MY_CHARACTER and sheets:
-            view.add_item(consent_dm.sheet_button(campaign.guild_id, campaign.id))
-        elif button is Button.SETTINGS:
+        elif button is Button.MANAGE_DMBOT:
             view.add_item(SettingsButton(campaign.id))
-        elif button is Button.NAMES:
-            view.add_item(NamesButton(campaign.id))
-        elif button is Button.BACKSTORY:
-            view.add_item(BackstoryButton(campaign.id))
+        elif button is Button.MANAGE_CAMPAIGN:  # a link: opens the website, nothing to check here
+            view.add_item(
+                discord.ui.Button(
+                    label=panel.LABELS[Button.MANAGE_CAMPAIGN][2:].strip(),
+                    emoji="🌐",
+                    style=discord.ButtonStyle.link,
+                    url=panel.campaign_url(
+                        site_url, campaign.guild_id, campaign.id, several=several
+                    ),
+                )
+            )
+    return view
+
+
+def help_view(campaign: Campaign, site_url: str = "") -> discord.ui.View:
+    """The Help card's buttons: 📖 Look up a rule and the 📜 Transcripts link, for anyone."""
+    view = discord.ui.View(timeout=None)
+    view.add_item(RuleButton(campaign.id))
+    view.add_item(
+        discord.ui.Button(
+            label=panel.LABELS[Button.TRANSCRIPTS],
+            style=discord.ButtonStyle.link,
+            url=panel.transcripts_url(site_url),
+        )
+    )
     return view
 
 
@@ -130,6 +143,30 @@ async def _campaign_here(interaction: discord.Interaction, campaign_id: str) -> 
         log.exception("Couldn't load a campaign for the DM Bot panel")
         return None
     return campaign
+
+
+def _site(interaction: discord.Interaction) -> str:
+    """The website address the bot was set up with (empty: the public one is used)."""
+    settings = getattr(interaction.client, "settings", None)  # (a client without one: no link)
+    return str(getattr(settings, "site_url", "") or "")
+
+
+async def _runs_several(interaction: discord.Interaction, campaign: Campaign) -> bool:
+    """Does this DM run more than one campaign in this server? Then 🌐 opens their list. A failed
+    read counts as one: it goes straight to this campaign."""
+    store = getattr(interaction.client, "campaigns", None)
+    if store is None:
+        return False
+    try:
+        mine = [
+            c
+            for c in await store.list_campaigns(campaign.guild_id)
+            if interaction.user.id in c.dm_user_ids
+        ]
+    except Exception:
+        log.warning("Couldn't count a DM's campaigns for the menu", exc_info=True)
+        return False
+    return len(mine) > 1
 
 
 class OpenButton(
@@ -164,12 +201,11 @@ class OpenButton(
             return
         who = await standing_of(interaction.client, campaign, interaction.user.id)
         role = panel.role_of(who)
-        sheets = getattr(interaction.client, "sheets", None) is not None
-        settings = getattr(interaction.client, "settings", None)  # (a client without one: no link)
-        site = str(getattr(settings, "site_url", "") or "")
+        site = _site(interaction)
+        several = role is Role.GAME_MASTER and await _runs_several(interaction, campaign)
         await interaction.followup.send(
             CARD_TEXT[role],
-            view=role_view(role, campaign, sheets=sheets, site_url=site),
+            view=role_view(role, campaign, site_url=site, several=several),
             ephemeral=True,
             allowed_mentions=NO_PINGS,
         )
@@ -205,7 +241,12 @@ class HelpButton(
         if campaign is None:
             await interaction.followup.send(GONE, ephemeral=True)
             return
-        await interaction.followup.send(logic.HELP_TEXT, ephemeral=True, allowed_mentions=NO_PINGS)
+        await interaction.followup.send(
+            logic.HELP_TEXT,
+            view=help_view(campaign, _site(interaction)),
+            ephemeral=True,
+            allowed_mentions=NO_PINGS,
+        )
 
 
 class RuleButton(

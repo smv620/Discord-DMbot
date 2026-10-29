@@ -95,7 +95,7 @@ export const featureSteps: FeatureStep[] = [
   {
     audience: "gameMaster",
     whatsNew: "Your shared rules in one place",
-    text: "My Account has a Shared rules page. For each campaign you run, it lists the house rules and homebrew packs you share with other tables, and the ones you use from other tables. It is for looking only. To share, stop sharing or follow a set, do it in Discord: ⚙️ Settings, then 📚 Shared rules.",
+    text: "My Account has a Shared rules page. For each campaign you run, it lists the house rules and homebrew packs you share with other tables, and the ones you use from other tables. It is for looking only. To share, stop sharing or follow a set, do it in Discord: ⚙️ Manage DMbot, then 📚 Shared rules.",
   },
   {
     audience: "gameMaster",

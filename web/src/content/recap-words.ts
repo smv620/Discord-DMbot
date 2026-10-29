@@ -121,7 +121,7 @@ export const recapSteps: { text: string; names?: { name: string; file: string }[
     ],
   },
   {
-    text: `Press Recaps on ⚙️ Settings to stop the recaps, to stop only the email (the DM screen still tells you when a recap is ready)${
+    text: `Press Recaps on ⚙️ Manage DMbot to stop the recaps, to stop only the email (the DM screen still tells you when a recap is ready)${
       RECAP_AUDIO_LIVE ? ", or, on plans with narration, to stop the narration" : ""
     }. You can turn them back on there. Your plan decides what you can have.`,
     names: [{ name: "Recaps", file: "dm_screen/recap_panel.py" }],
@@ -135,7 +135,7 @@ export const recapSteps: { text: string; names?: { name: string; file: string }[
   ...(RECAP_FIX_LIVE
     ? [
         {
-          text: "To change a recap without editing it yourself, open it on the website, type what you'd like changed under Tell DMbot what to fix, and press Send. DMbot sorts your note into points. Remove any you don't want and keep the style notes you do; a style note you keep is saved for this campaign's later recaps too. DMbot keeps the newest 10. You can remove them in ⚙️ Settings → 📜 Recaps → ✍️ Recap style. Then choose Rewrite with these. That uses one Try again, and you approve the new text again. DMbot only sorts what you wrote and rewrites with what you kept; it never adds story, and you decide what is kept.",
+          text: "To change a recap without editing it yourself, open it on the website, type what you'd like changed under Tell DMbot what to fix, and press Send. DMbot sorts your note into points. Remove any you don't want and keep the style notes you do; a style note you keep is saved for this campaign's later recaps too. DMbot keeps the newest 10. You can remove them in ⚙️ Manage DMbot → 📜 Recaps → ✍️ Recap style. Then choose Rewrite with these. That uses one Try again, and you approve the new text again. DMbot only sorts what you wrote and rewrites with what you kept; it never adds story, and you decide what is kept.",
         },
       ]
     : []),
