@@ -62,7 +62,7 @@ import type {
   RuleSharingAnswer,
   RuleSharingChoice,
 } from "./api";
-import { ApiError, type PlotIssue, type PlotMessage, type PlotProposal } from "./api";
+import { ApiError, type FixAnswer, type FixMode, type PlotIssue, type PlotMessage, type PlotProposal } from "./api";
 import { NAME_LIMIT } from "../content/names-words";
 
 /** Found in the built files only if the pretend API was included; check-csp fails a real
@@ -726,6 +726,8 @@ function pronounWaiting(): Waiting {
     counts: { claims: 0, backstory: 0, ready: 0, which: 0, all: 0 },
   };
 }
+/** The pretend "Fix this line" answers' modes, by answer (#2858). */
+const fixes = new Map<string, FixMode>();
 export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   const waitingState: Record<string, Waiting> = {}; // (fresh for each pretend API)
   const readingState: Record<string, { list: Reading[]; kept: Map<string, Reading> }> = {}; // (#2412) by campaign
@@ -1742,6 +1744,25 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       if (choice.action === "document" && !/^https:\/\/[^\s/]+/i.test(choice.url)) throw new ApiError("bad-document-link");
       if (/\.sheets-slow(\.|$)/.test(ref)) throw new ApiError("too-soon");
       return "sheet-answer";
+    },
+    async fixTranscriptLine(ref, number, line, text) {
+      calls.push(`fixTranscriptLine:${ref}:${number}:${line.speaker}:${line.startedMs}:${text}`);
+      await reachable();
+      signedIn();
+      if (!text.trim() || [...text].length > 200) throw new ApiError("bad-text");
+      // The mock's own rule: a fix ending in "!" is a rewrite made at once, any other is a suggestion to the DM.
+      const mode: FixMode = text.endsWith("!") ? "rewrite" : "suggest";
+      const answer = `fix-${number}-${line.startedMs}-${fixes.size + 1}`;
+      fixes.set(answer, mode);
+      return { answer, mode };
+    },
+    async fixAnswer(ref, number, answer): Promise<FixAnswer> {
+      calls.push(`fixAnswer:${ref}:${number}:${answer}`);
+      await reachable();
+      signedIn();
+      const mode: FixMode = fixes.get(answer) ?? "suggest";
+      if (mode === "rewrite") return { stage: "done", state: "done", mode, result: "changed", undo: true, reason: null };
+      return { stage: "done", state: "done", mode, result: "sent", undo: false, reason: null };
     },
     async sheetAnswer(ref, answer): Promise<SheetAnswer> {
       calls.push(`sheetAnswer:${ref}:${answer}`);
@@ -3208,6 +3229,9 @@ function mockTranscript(number: number, version: TranscriptVersion, putBack = fa
       ...(skipped && putBack ? ["[0:01:02] (Speaker 1): did you see the match"] : []),
     ],
     ...(skipped ? { skips: [{ ...MOCK_SKIP, putBack }], filter: { kept: 412, leftOut: putBack ? 6 : 9, putBack: putBack ? 3 : 0 } } : {}),
+    // The DM may fix any spoken line of the cleaned reading (#2858); the as-heard reading has no fixes.
+    // (only the spoken line; the off-topic marker has no words to fix)
+    ...(heard ? {} : { viewer: { id: "pretend-dm", isDm: true }, fixable: [{ line: 1, speaker: "Speaker 2", startedMs: 40_000 }] }),
   };
 }
 
