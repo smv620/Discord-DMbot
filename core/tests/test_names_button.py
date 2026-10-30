@@ -34,10 +34,10 @@ class WhoGetsTheButton(unittest.TestCase):
             with self.subTest(role):
                 self.assertFalse(_has_names(role_view(role, campaign())))
 
-    def test_settings_has_it_for_a_dm_and_for_nobody_else(self) -> None:
-        for viewer, want in ((DM, True), (PLAYER, False), (999, False)):
+    def test_manage_dmbot_no_longer_has_it_the_website_has_names(self) -> None:
+        for viewer in (DM, PLAYER, 999):  # (#2986: the Names page is on the website)
             with self.subTest(viewer):
-                self.assertEqual(_has_names(settings_view(campaign(), None, viewer)), want)
+                self.assertFalse(_has_names(settings_view(campaign(), None, viewer)))
 
 
 class TheButtonCount(unittest.TestCase):

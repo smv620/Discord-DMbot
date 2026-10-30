@@ -12,7 +12,7 @@ character knows) are separate and ask `characters_of` for who a viewer plays.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -22,8 +22,10 @@ from dmbot.memory._changes import (
     ALIASES,
     BELIEFS,
     ENTITIES,
+    KNOWERS,
     PERSPECTIVES,
     RELATIONS,
+    STATES,
     Changes,
     Scope,
 )
@@ -31,6 +33,7 @@ from dmbot.memory.models import (
     CONFIRMED,
     DM,
     KNOWN,
+    NPC_VIEW,
     PC_VIEW,
     PLAYER_CHARACTER,
     REVEALED_FACT,
@@ -44,6 +47,7 @@ NOT_HIDDEN = "Everyone at the table already knows this one."
 NOT_A_PLAYER_CHARACTER = "Pick player characters from this campaign."
 NOT_SECRET = "Only a secret name can be known by some characters."
 MAX_KNOWERS = 12  # a table's characters; more than this is a mistake, not a party
+MAX_KNOWERS_ANY = 60  # the characters of a campaign, NPCs included (a whole faction told at once)
 
 
 async def _characters(w: Scope, character_ids: Sequence[str]) -> list[str]:
@@ -80,6 +84,117 @@ async def _view_of(w: Changes, entity_id: str) -> str:
         PERSPECTIVES, {"id": made, "kind": PC_VIEW, "entity_id": entity_id, "created_at": w.now}
     )
     return made
+
+
+NOT_A_CHARACTER = "Pick characters from this campaign."
+NO_SUCH_STATEMENT = "That is gone or was never here."
+BAD_CERTAINTY = "How sure someone is goes from 0 to 1."
+_COLUMNS = {
+    "entry": ("about_entity_id", ENTITIES),
+    "property": ("state_id", STATES),
+    "connection": ("relation_id", RELATIONS),
+    "alias": ("alias_id", ALIASES),
+}
+
+
+async def _known_characters(w: Scope, character_ids: Sequence[str]) -> dict[str, bool]:
+    """The confirmed characters among these ids, player characters and NPCs, each with whether it
+    is a player's (§9b: a point of view for each character). Anything else (another campaign's
+    entry, a place, a name not yet confirmed) is refused."""
+    chosen = list(dict.fromkeys(character_ids))
+    if len(chosen) > MAX_KNOWERS_ANY:
+        raise MemoryRuleError(NOT_A_CHARACTER)
+    if not chosen:
+        return {}
+    found = {
+        r["id"]: r["role"] == PLAYER_CHARACTER
+        for r in await w.select(
+            ENTITIES,
+            " AND id = ANY(%s) AND type IN ('character', 'faction') AND status = %s",
+            [chosen, CONFIRMED],
+        )
+    }
+    if len(found) != len(chosen):
+        raise MemoryRuleError(NOT_A_CHARACTER)
+    return {i: found[i] for i in chosen}
+
+
+async def _view_for(w: Changes, entity_id: str, player: bool) -> str:
+    """A character's point of view, made the first time it is needed (a player's is `pc`)."""
+    if player:
+        return await _view_of(w, entity_id)
+    have = await w.select(PERSPECTIVES, " AND entity_id = %s", [entity_id])
+    if have:
+        return str(have[0]["id"])
+    made = new_id()
+    await w.insert(
+        PERSPECTIVES, {"id": made, "kind": NPC_VIEW, "entity_id": entity_id, "created_at": w.now}
+    )
+    return made
+
+
+async def set_statement_knowers(
+    w: Changes, kind: str, statement_id: str, character_ids: Sequence[str] | Mapping[str, float]
+) -> list[str]:
+    """Exactly these characters know this statement (none: only the DM) (#2995, §9b). `kind` is
+    entry, property, connection or alias. A list means each is sure (1.0); a mapping gives each
+    one's certainty, 0.0 (knows of it, believes it false) to 1.0. Only the DM; the statement must
+    exist and not be rejected; each knower must be a confirmed character or group of this
+    campaign (a group's row is what its members commonly know, #2995: the gate gives a member the
+    group's certainty unless the member has a row of their own). Returns who now knows."""
+    if w.source != DM:
+        raise MemoryRuleError(ONLY_THE_DM)
+    if kind not in _COLUMNS:
+        raise MemoryRuleError(NO_SUCH_STATEMENT)
+    column, table = _COLUMNS[kind]
+    statement = await w.get(table, statement_id)
+    if statement is None or statement.get("status") in ("rejected", "merged"):
+        raise MemoryRuleError(NO_SUCH_STATEMENT)
+    sure = (
+        dict(character_ids)
+        if isinstance(character_ids, Mapping)
+        else dict.fromkeys(character_ids, 1.0)
+    )
+    if any(not 0.0 <= c <= 1.0 for c in sure.values()):
+        raise MemoryRuleError(BAD_CERTAINTY)
+    chosen = await _known_characters(w, list(sure))
+    views = {i: await _view_for(w, i, player) for i, player in chosen.items()}
+    have = {
+        r["perspective_id"]: r
+        for r in await w.select(KNOWERS, f" AND {column} = %s", [statement_id])
+    }
+    for entity_id, view_id in views.items():
+        if view_id not in have:
+            await w.insert(
+                KNOWERS,
+                {"id": new_id(), "perspective_id": view_id, "about_entity_id": None,
+                 "state_id": None, "relation_id": None, "alias_id": None,
+                 column: statement_id, "created_at": w.now, "confidence": sure[entity_id]},
+            )  # fmt: skip
+        elif have[view_id]["confidence"] != sure[entity_id]:
+            await w.update(KNOWERS, have[view_id]["id"], {"confidence": sure[entity_id]})
+    for view_id, row in have.items():
+        if view_id not in views.values():
+            await w.delete(KNOWERS, row["id"])
+    return list(chosen)
+
+
+async def statement_knowers(
+    scope: Scope, kind: str, statement_ids: Sequence[str]
+) -> dict[str, list[str]]:
+    """For each of these statements, the characters who know it (their entry ids)."""
+    out: dict[str, list[str]] = {}
+    if not statement_ids:
+        return out
+    column, _ = _COLUMNS[kind]
+    views = {
+        r["id"]: r["entity_id"]
+        for r in await scope.select(PERSPECTIVES, " AND entity_id IS NOT NULL")
+    }
+    for row in await scope.select(KNOWERS, f" AND {column} = ANY(%s)", [list(statement_ids)]):
+        if row["perspective_id"] in views:
+            out.setdefault(row[column], []).append(views[row["perspective_id"]])
+    return out
 
 
 async def set_connection_knowers(
@@ -349,3 +464,51 @@ async def check_characters(scope: Scope, character_ids: Sequence[str]) -> None:
     many, or anything but this campaign's confirmed player characters. A multi-step edit calls it
     first so a bad pick cannot leave it half done."""
     await _characters(scope, character_ids)
+
+
+async def fold_knowers(
+    w: Changes, keep_id: str, gone_id: str, views: tuple[str, str] | None
+) -> None:
+    """Two entries merge (#2995): whoever knew the merged-away entry exists now knows the kept
+    one does, and the merged-away character's knowledge becomes the kept character's (`views` is
+    its point of view and the kept one's, from `beliefs.fold_perspective`). A statement both knew
+    keeps one row. One read, and nothing more when no list is touched."""
+    gone_view, keep_view = views if views is not None else ("", "")
+    rows = await w.select(
+        KNOWERS,
+        " AND (about_entity_id = ANY(%s) OR perspective_id = ANY(%s))",
+        [[keep_id, gone_id], [gone_view, keep_view]],
+    )
+    columns = ("about_entity_id", "state_id", "relation_id", "alias_id")
+
+    def after(row: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "perspective_id": keep_view
+            if gone_view and row["perspective_id"] == gone_view
+            else row["perspective_id"],
+            "about_entity_id": keep_id
+            if row["about_entity_id"] == gone_id
+            else row["about_entity_id"],
+        }
+
+    def key(row: dict[str, Any], moved: dict[str, Any]) -> tuple[str, str, str]:
+        column = next(c for c in columns if moved.get(c, row[c]) is not None)
+        return column, str(moved.get(column, row[column])), str(moved["perspective_id"])
+
+    seen: set[tuple[str, str, str]] = set()
+    changing: list[tuple[dict[str, Any], dict[str, Any]]] = []
+    for row in rows:
+        moved = after(row)
+        if moved["perspective_id"] == row["perspective_id"] and (
+            moved["about_entity_id"] == row["about_entity_id"]
+        ):
+            seen.add(key(row, moved))
+        else:
+            changing.append((row, moved))
+    for row, moved in changing:
+        k = key(row, moved)
+        if k in seen:
+            await w.delete(KNOWERS, row["id"])
+        else:
+            seen.add(k)
+            await w.update(KNOWERS, row["id"], moved)

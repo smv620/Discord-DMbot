@@ -254,7 +254,7 @@ describe("Help: the website's read-only pages (#1588)", () => {
   it("holds the 📇 Names button step with its held What's new entry, and flips them together (#2002)", () => {
     expect(held.map((h) => h.title).includes("A 📇 Names button")).toBe(!NAMES_BUTTON_LIVE);
     const shown = dmSteps.map((x) => x.text).join(" ");
-    expect(shown.includes("📇 Names")).toBe(NAMES_BUTTON_LIVE);
+    expect(shown.includes("On the website, pick Names.")).toBe(NAMES_BUTTON_LIVE);
     const words = namesButtonSteps.map((x) => x.text).join(" ");
     expect(words).toContain("search the names and fix one");
     expect(words).toContain("Any after-session check you haven't done yet (Check names, Check who is who, Check what was said) waits there.");

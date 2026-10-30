@@ -334,7 +334,8 @@ class ThePanel(unittest.IsolatedAsyncioTestCase):
             len(panel.RecapsPanel(campaign(), panel.PlanFacts(False, False)).children), 0
         )
 
-    def test_the_settings_card_offers_the_button_to_the_campaigns_dms_only(self) -> None:
+    def test_the_settings_card_offers_recap_style_to_the_campaigns_dms_only(self) -> None:
+        # (#2986: the switches are on the website now; only the recap style stays in Discord)
         camp = campaign(
             dm_screen_level="normal", dm_screen_visibility="peek", rules_cards=False,
             side_initiative=False, dndbeyond_invite=None, paused=False, quiet_stop_minutes=30,
@@ -346,8 +347,9 @@ class ThePanel(unittest.IsolatedAsyncioTestCase):
                 for c in settings_view(camp, None, viewer).children
             ]
 
-        self.assertIn(f"dmbot:recaps:{'c' * 32}", ids(DM))
-        self.assertNotIn(f"dmbot:recaps:{'c' * 32}", ids(OTHER))
+        self.assertIn(f"dmbot:recapstyle:{'c' * 32}", ids(DM))
+        self.assertNotIn(f"dmbot:recapstyle:{'c' * 32}", ids(OTHER))
+        self.assertNotIn(f"dmbot:recaps:{'c' * 32}", ids(DM))
 
     async def test_a_server_manager_who_is_not_a_dm_cannot_change_it(self) -> None:
         camp = campaign()

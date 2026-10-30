@@ -830,6 +830,14 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       };
     });
   };
+  // Two pretend quests that sit outside the drawn web, so the page can be built with "Cluster by quest" (#2992): a
+  // DM in Full View is told of them, nobody else. The first names are in the bell quest, the second also in the heist.
+  const pretendQuests = (id: string): { id: string; name: string; links: number }[] => {
+    const n = Number(id.replace(/\D/g, "")) || 0;
+    if (n % 4 === 1) return [{ id: "q-bell", name: "Find the Lost Bell", links: 2 }, { id: "q-heist", name: "The Keep Heist", links: 1 }];
+    if (n % 4 === 2) return [{ id: "q-heist", name: "The Keep Heist", links: 1 }];
+    return [];
+  };
   const webGraphOf = (ref: string, query: WebQuery): WebGraph => {
     const view = webView(ref);
     if (view === "none") throw new ApiError("not-found");
@@ -870,7 +878,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       .filter((n) => near.has(n.id))
       .map((n) =>
         all
-          ? { ...current(n), revealed: n.revealed !== false, page: current(n).kind === "npc" }
+          ? { ...current(n), revealed: n.revealed !== false, page: current(n).kind === "npc", ...(dm ? { quests: pretendQuests(n.id) } : {}) }
           : { id: n.id, name: current(n).name, kind: current(n).kind, page: current(n).kind === "npc" },
       );
     const edges = edgesOf(usable.filter((l) => near.has(l.a) && near.has(l.b)), all, all, view === "dm" && all);
@@ -2033,6 +2041,13 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         }
         case "kind":
           if (!NAME_KINDS.some((k) => k.key === change.kind)) throw new ApiError("bad-kind");
+          if (change.player !== undefined) {
+            // The bot's two refusals: not an ID (or not for a player character), and an ID nobody in the server has.
+            if (change.kind !== "player_character" || !/^[1-9][0-9]{14,18}$/.test(change.player)) throw new ApiError("bad-player");
+            if (change.confirmed !== true) throw new ApiError("bad-player"); // nothing links without the confirmation
+            if (change.player.endsWith("0000")) throw new ApiError("unknown-id");
+            if (change.player.endsWith("9999")) throw new ApiError("bot-player");
+          }
           row.kind = change.kind;
           if (change.kind !== "npc") row.npcId = null;
           break;
@@ -2081,6 +2096,14 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       signedIn();
       if (namesView(ref) !== "dm") throw new ApiError("not-allowed");
       if (/\.timed-out\b/.test(ref)) throw new ApiError("still-waiting");
+      if (step.action === "kind") {
+        // Who an ID is: the pretend bot's answers, by how the ID ends.
+        if (!/^[1-9][0-9]{14,18}$/.test(step.player)) throw new ApiError("bad-player");
+        if (step.player.endsWith("0000")) throw new ApiError("unknown-id");
+        if (step.player.endsWith("9999")) throw new ApiError("bot-player");
+        if (step.player.endsWith("1111")) throw new ApiError("lookup-failed");
+        return { state: "player", name: "SomeUser", inServer: !step.player.endsWith("5555") };
+      }
       const answer = `ans${nameSteps.size + 1}`;
       if (step.action === "name-undo") {
         const done = nameSteps.get(step.answer);

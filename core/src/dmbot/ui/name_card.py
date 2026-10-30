@@ -59,7 +59,7 @@ from dmbot.memory.search import MAX_RESULTS, Match, find, said_lately
 from dmbot.memory.store import SAID_AS_MAX, MemoryStore
 from dmbot.mentions import NO_PINGS
 from dmbot.transcript.respell import contains, done_note, left_note, recaps_note, undone_note
-from dmbot.ui import all_names, logic
+from dmbot.ui import all_names, logic, player_id
 from dmbot.ui.dmbot_commands import (
     VIEW_TIMEOUT_S,
     _answer_first,
@@ -1520,6 +1520,13 @@ class KindChange(_Menu):
         if kind == PC:
             self.clear_items()
             self.add_item(_UserSelect(self._player_picked))
+
+            async def allowed(press: discord.Interaction) -> bool:
+                return await _campaign_for(press, self.campaign_id) is not None
+
+            self.add_item(  # (#3004) a player who has not joined the server yet
+                player_id.type_id_button(campaign.guild_id, allowed, self._player_typed, self._back)
+            )
             self.add_item(_Button(self._back, label="Back", style=discord.ButtonStyle.secondary))
             await _replace(interaction, f"**Who plays {_md(self.name)}?**", self)
             return
@@ -1534,12 +1541,20 @@ class KindChange(_Menu):
         self.stop()
         await show_card(interaction, self.campaign_id, self.entity_id, replace=True)
 
+    async def _player_typed(
+        self, interaction: discord.Interaction, user_id: int, name: str
+    ) -> None:
+        await self._link_player(interaction, user_id)
+
     async def _player_picked(
         self, interaction: discord.Interaction, player: discord.User | discord.Member
     ) -> None:
         if player.bot:
             await _tell(interaction, "Pick a person, not a bot.")
             return
+        await self._link_player(interaction, player.id)
+
+    async def _link_player(self, interaction: discord.Interaction, user_id: int) -> None:
         await _answer_first(interaction, in_place=True)
         campaign = await _campaign_for(interaction, self.campaign_id)
         memory = _memory(interaction)
@@ -1547,7 +1562,7 @@ class KindChange(_Menu):
             return
         try:
             await memory.confirm_entity(
-                campaign.guild_id, campaign.id, self.entity_id, PC, source=DM, played_by=player.id
+                campaign.guild_id, campaign.id, self.entity_id, PC, source=DM, played_by=user_id
             )
         except MemoryRuleError:
             await _tell(interaction, GONE)

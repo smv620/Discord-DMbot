@@ -187,6 +187,7 @@ from dmbot.dm_screen.quiet_stop import (
     stopped_text,
 )
 from dmbot.dm_screen.recap_panel import RecapsButton
+from dmbot.dm_screen.recap_style import RecapStyleButton
 from dmbot.dm_screen.retired_channels import remove_old_channels
 from dmbot.dm_screen.settings import (
     BackToSettingsButton,
@@ -453,6 +454,7 @@ from dmbot.ui import (
     image_fix,
     looked_at,
     name_pass_undo,
+    player_id,
     recap_audio,
     shared_rules_defs,
 )
@@ -1466,6 +1468,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             InviteButton,
             TableChatButton,
             RecapsButton,
+            RecapStyleButton,  # the one recap choice left in Discord (#2986)
             GameMastersButton,  # who the DMs are (#1600)
         )
         # Hand-over (#437): on ⚙️ Manage DMbot, in private messages, and after /dmbot start.
@@ -10538,6 +10541,24 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
 
         return batch_of
 
+    def _player_lookup(self, guild_id: int) -> web_actions.PlayerLookupFn:
+        """Who a Discord ID is, for the website's "Please confirm: <name>" (#3004): the lookup the
+        Discord side uses too (`ui.player_id.look_up`: Discord's user lookup, so someone who has not
+        joined can be found). None when Discord does not know the ID; a failed lookup raises, so it
+        is never read as "unknown" and the action fails and can be sent again."""
+
+        async def look_up(user_id: int) -> web_actions.PlayerLookup | None:
+            found = await player_id.look_up(self, guild_id, str(user_id))
+            if found.kind == player_id.FOUND:
+                return web_actions.PlayerLookup(found.name, False, found.in_server)
+            if found.kind == player_id.BOT:
+                return web_actions.PlayerLookup("", True, True)
+            if found.kind == player_id.FAILED:
+                raise RuntimeError("Discord could not be asked")
+            return None  # Discord does not know that ID (or it is not one)
+
+        return look_up
+
     async def run_name_actions(self) -> None:
         """What DMs did on the website's All names page (#2294), applied through the same memory
         paths as Discord's name card, so a change on either shows on both and Undo works. Each
@@ -10567,6 +10588,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                                 action,
                                 self._waiting_answers(guild.id),
                                 named_batch=self._named_batch_for(guild.id),
+                                look_up=self._player_lookup(guild.id),
                             )
                         )
                     except Exception as exc:  # the row must never stay "working" for a bug

@@ -551,3 +551,114 @@ describe("full screen (#2981)", () => {
     expect(page).toContain("account account-wide");
   });
 });
+
+describe("each kind of name has its own colour, shape and word (#2992)", () => {
+  const kinds = ["npc", "player_character", "place", "faction", "item", "event", "creature", "quest", "concept"];
+  const many: WebNode[] = [
+    { id: "c0", name: "Centre", kind: "npc" },
+    ...kinds.slice(1).map((kind, i) => ({ id: `k${i}`, name: `Name ${kind}`, kind })),
+  ];
+  const wired: WebEdge[] = many.slice(1).map((n, i) => ({ a: "c0", b: n.id, label: "x", more: 0, links: [link(`w${i}`, "x")] }));
+  const css = () => readFileSync(resolve(process.cwd(), "src/styles/web-map.css"), "utf8");
+
+  it("draws every style as its own class and its own shape", () => {
+    render(<WebMap nodes={many} edges={wired} center="c0" refId="1.a" selected={null} onCenter={() => {}} onLine={() => {}} />);
+    const style = (name: string) => [...nodeOf(name).classList].find((c) => c.startsWith("web-kind-"));
+    expect(kinds.map((k) => style(k === "npc" ? "Centre" : `Name ${k}`))).toEqual([
+      "web-kind-npc", "web-kind-player_character", "web-kind-place", "web-kind-group", "web-kind-item",
+      "web-kind-event", "web-kind-creature", "web-kind-quest", "web-kind-other",
+    ]);
+    const shape = (name: string) => {
+      const el = nodeOf(name).querySelector("circle:not(.web-hit), rect, polygon")!;
+      return `${el.tagName}:${el.getAttribute("points")?.split(" ").length ?? ""}:${el.getAttribute("stroke-dasharray") ?? ""}:${nodeOf(name).querySelectorAll(".web-pc-ring").length}`;
+    };
+    const shapes = kinds.map((k) => shape(k === "npc" ? "Centre" : `Name ${k}`));
+    expect(new Set(shapes).size).toBe(kinds.length); // colour is never the only signal
+  });
+
+  it("gives each kind a colour token for light and dark, and its legend a word, a shape and a colour", () => {
+    for (const style of ["npc", "player_character", "place", "group", "item", "event", "creature", "quest", "other"]) {
+      expect(css().match(new RegExp(`--kind-${style}:`, "g"))).toHaveLength(3); // light, dark by system, dark by choice
+      expect(css()).toContain(`.web-kind-${style} { --kind: var(--kind-${style}); }`);
+    }
+    render(<WebMap nodes={many} edges={wired} center="c0" refId="1.a" selected={null} onCenter={() => {}} onLine={() => {}} />);
+    const legend = document.querySelector(".web-legend")!;
+    for (const word of ["NPCs", "PCs", "Places", "Groups", "Items", "Events", "Creatures", "Quests", "Ideas"]) expect(legend.textContent).toContain(word);
+    expect(legend.querySelectorAll('svg[class^="web-kind-"]').length).toBe(kinds.length);
+  });
+
+  it("tints each kind's area with the colour of its names", () => {
+    saveMode("groups");
+    render(<WebMap nodes={many} edges={wired} center="c0" refId="1.a" selected={null} onCenter={() => {}} onLine={() => {}} />);
+    const areas = [...document.querySelectorAll(".web-area")];
+    expect(areas.length).toBeGreaterThan(0);
+    for (const area of areas) {
+      const label = area.querySelector(".web-area-text")!.textContent!;
+      const names = [...document.querySelectorAll(".web-node")].filter((n) => n.classList.contains([...area.classList].find((c) => c.startsWith("web-kind-"))!));
+      expect(names.length, label).toBeGreaterThan(0); // the wash is the colour of names that are there
+    }
+    expect(css()).toMatch(/\.web-area\[class\*="web-kind-"\] circle \{\s*fill: var\(--kind\);\s*fill-opacity: 0\.14/);
+  });
+});
+
+describe("Cluster by quest (#2992)", () => {
+  const bell = { id: "q-bell", name: "Find the Lost Bell", links: 2 };
+  const heist = { id: "q-heist", name: "The Keep Heist", links: 1 };
+  const withQuests: WebNode[] = [
+    { id: "m", name: "Mira Voss", kind: "npc", quests: [bell, heist] }, // in two: sits in the bell, the one with more links
+    { id: "g", name: "Garrick", kind: "npc", quests: [heist] },
+    { id: "h", name: "Far Hall", kind: "place", quests: [] }, // in none
+    { id: "o", name: "The Order", kind: "group", quests: [bell] },
+  ];
+  const wired: WebEdge[] = [
+    { a: "m", b: "g", label: "x", more: 0, links: [link("a", "x")] },
+    { a: "m", b: "h", label: "x", more: 0, links: [link("b", "x")] },
+    { a: "m", b: "o", label: "x", more: 0, links: [link("c", "x")] },
+  ];
+  const drawQuests = (list: WebNode[] = withQuests, center = "g") => {
+    saveMode("quests");
+    return render(<WebMap nodes={list} edges={wired} center={center} refId="1.a" selected={null} onCenter={() => {}} onLine={() => {}} />);
+  };
+  const labels = () => [...document.querySelectorAll(".web-area-text")].map((t) => t.textContent);
+
+  it("offers the third layout only when the door sent quests, and remembers it", () => {
+    drawQuests();
+    const group = document.querySelector(".web-tools")!;
+    expect([...group.querySelectorAll("button")].map((b) => b.textContent)).toEqual(expect.arrayContaining([words.layoutFree, words.layoutGroups, words.layoutQuests]));
+    expect(readMode()).toBe("quests");
+    cleanup();
+    // A player is sent no quests: no third button, and a saved "quests" is the spread layout for them.
+    saveMode("quests");
+    render(<WebMap nodes={nodes} edges={edges} center="m" refId="1.a" selected={null} onCenter={() => {}} onLine={() => {}} />);
+    expect([...document.querySelectorAll(".web-tools button")].some((b) => b.textContent === words.layoutQuests)).toBe(false);
+    expect(document.querySelectorAll(".web-area")).toHaveLength(0);
+    expect(document.querySelector('.web-tools button[aria-pressed="true"]')!.textContent).toBe(words.layoutFree);
+  });
+
+  it("gives each quest a labelled area, a name in two quests the one with more links, and the rest a place of their own", () => {
+    drawQuests(withQuests, "g"); // Garrick is the middle, so the others are drawn in areas
+    expect(labels()).toEqual(expect.arrayContaining(["Find the Lost Bell", words.noQuest]));
+    // Mira (bell, then heist) and the Order (bell) share the bell area; Far Hall is in no quest.
+    const area = (label: string) => [...document.querySelectorAll(".web-area")].find((a) => a.querySelector(".web-area-text")!.textContent === label)!;
+    expect(area("Find the Lost Bell").classList.contains("web-kind-quest")).toBe(true); // the quest colour, as a light wash
+    expect(area(words.noQuest).classList.contains("web-kind-other")).toBe(true);
+    expect(labels()).not.toContain("The Keep Heist"); // Garrick, the only one in the heist, is the middle name
+  });
+
+  it("says which other quests a name is in", () => {
+    drawQuests(withQuests, "m"); // the panel shows the middle name, Mira, who is in the bell and the heist
+    expect(document.querySelector(".web-side")!.textContent).toContain(words.alsoIn("The Keep Heist"));
+    cleanup();
+    drawQuests(withQuests, "g"); // Garrick is in one quest only: nothing to add
+    expect(document.querySelector(".web-side")!.textContent).not.toContain("Also in");
+  });
+
+  it("puts a quest that is drawn in its own area, and names areas of quests that are not drawn", () => {
+    const quest: WebNode = { id: "q-bell", name: "Find the Lost Bell", kind: "quest", quests: [] };
+    const list = [...withQuests, quest];
+    const lines: WebEdge[] = [...wired, { a: "m", b: "q-bell", label: "x", more: 0, links: [link("d", "x")] }];
+    saveMode("quests");
+    render(<WebMap nodes={list} edges={lines} center="g" refId="1.a" selected={null} onCenter={() => {}} onLine={() => {}} />);
+    expect(labels().filter((l) => l === "Find the Lost Bell")).toHaveLength(1); // the drawn quest and its names share one area
+  });
+});
