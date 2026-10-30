@@ -16,7 +16,7 @@ from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from dmbot.memory import beliefs
+from dmbot.memory import beliefs, gate
 from dmbot.memory._changes import (
     ALIAS_KNOWERS,
     ALIASES,
@@ -484,9 +484,23 @@ async def what_my_characters_know(scope: Scope, user_id: int) -> Mine:
             )
         )
 
+    # Each end is named the way THIS player's characters know it (#3037): the main name only when
+    # one of them knows the entry under its own name, else the first other name they learned. An
+    # end none of them may name is not shown, so a joined person never reads as the named one.
+    shown_names = await gate.names_for(
+        scope,
+        gate.Viewer.player(mine),
+        sorted(
+            {r["subject_id"] for r in hidden}
+            | {r["object_id"] for r in hidden}
+            | {a["entity_id"] for a in aliases}
+        ),
+    )
+
     def name(entity_id: str) -> str | None:
-        found = entries.get(entity_id)
-        return None if found is None else str(found["name"])
+        if entity_id not in entries:
+            return None
+        return shown_names.get(entity_id)
 
     connections = []
     for r in hidden:

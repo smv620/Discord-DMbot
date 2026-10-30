@@ -33,7 +33,7 @@ from dmbot.memory._changes import (
     Scope,
     Table,
 )
-from dmbot.memory.models import CONFIRMED, PLAYER_CHARACTER
+from dmbot.memory.models import CONFIRMED, PLAYER_CHARACTER, lookup_key
 
 ENTRY, PROPERTY, CONNECTION, ALIAS = "entry", "property", "connection", "alias"
 KINDS = (ENTRY, PROPERTY, CONNECTION, ALIAS)
@@ -318,3 +318,75 @@ async def visible_to(scope: Scope, viewer: Viewer) -> Visible:
     if viewer.dm:
         return Visible(everything=True)
     return visible(viewer, await load(scope))
+
+
+async def names_for(
+    scope: Scope, viewer: Viewer, entity_ids: Sequence[str], *, public: bool = False
+) -> dict[str, str | None]:
+    """`display_name` for each of these entries, read in the caller's scope (so a reader that
+    already holds a snapshot names its entries from the same one). The other names are taken in
+    the order the viewer's own characters learned them. `public`: an entry nobody may name comes
+    back as "someone" rather than None."""
+    seen = await visible_to(scope, viewer)
+    entries = {
+        str(r["id"]): str(r["name"])
+        for r in await scope.select(
+            ENTITIES,
+            " AND id = ANY(%s) AND status NOT IN ('merged', 'rejected')",
+            [list(entity_ids)],
+        )
+    }
+    names = await scope.select(
+        ALIASES,
+        " AND entity_id = ANY(%s) AND status <> 'rejected' ORDER BY created_at, id",
+        [list(entries)],
+    )
+    learned: dict[str, int] = {}
+    if not seen.everything and names:
+        mine = await scope.select(
+            KNOWERS, " AND alias_id = ANY(%s)", [[str(a["id"]) for a in names]]
+        )
+        # the order THIS viewer learned them in: only its own characters' rows count
+        own = (
+            {
+                str(p["id"])
+                for p in await scope.select(
+                    PERSPECTIVES, " AND entity_id = ANY(%s)", [sorted(viewer.characters)]
+                )
+            }
+            if viewer.characters
+            else None
+        )
+        for row in mine:
+            if own is not None and str(row["perspective_id"]) not in own:
+                continue
+            key = str(row["alias_id"])
+            learned[key] = min(learned.get(key, row["created_at"]), row["created_at"])
+    out: dict[str, str | None] = {}
+    for entity_id in entity_ids:
+        main = entries.get(entity_id)
+        if main is None:
+            out[entity_id] = None
+            continue
+        # (an entry's own name is stored as a name too: it stands for the main name, which the
+        # entry's own row governs, so it is not one of the "other" names)
+        others = sorted(
+            (
+                (str(a["id"]), str(a["text"]))
+                for a in names
+                if str(a["entity_id"]) == entity_id and a["key"] != lookup_key(main)
+            ),
+            key=lambda pair: (learned.get(pair[0], 0), pair[0]),
+        )
+        # (a row on the entry's own name alias counts as knowing the entry under its name)
+        own_name = [
+            str(a["id"])
+            for a in names
+            if str(a["entity_id"]) == entity_id and a["key"] == lookup_key(main)
+        ]
+        if any(alias in seen.aliases for alias in own_name):
+            shown: str | None = main
+        else:
+            shown = display_name(seen, entity_id, main, others)
+        out[entity_id] = SOMEONE if shown is None and public else shown
+    return out

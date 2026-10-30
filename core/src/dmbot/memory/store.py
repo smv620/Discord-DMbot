@@ -2999,73 +2999,14 @@ class MemoryStore:
         `gate.display_name`. The other names are taken in the order the viewer's characters learned
         them. `public`: a place that is not one character's (a table answer, a recap): pass the
         party as the viewer, and an entry nobody may name comes back as "someone", never None.
-        One campaign; the DM gets the main name."""
+        One campaign; the DM gets the main name. No Discord view shows one character's names to a
+        player today (the name card and lists are for the DM and managers, table answers and
+        recaps are party-wide and follow the flags); a Discord view that ever does must take its
+        names from here or `gate.display_name`, never from the main name (Supervisor, #3037)."""
         if not entity_ids:
             return {}
         async with self._read(guild_id, campaign_id, snapshot=True) as scope:
-            seen = await gate.visible_to(scope, viewer)
-            entries = {
-                str(r["id"]): str(r["name"])
-                for r in await scope.select(
-                    ENTITIES,
-                    " AND id = ANY(%s) AND status NOT IN ('merged', 'rejected')",
-                    [list(entity_ids)],
-                )
-            }
-            names = await scope.select(
-                ALIASES,
-                " AND entity_id = ANY(%s) AND status <> 'rejected' ORDER BY created_at, id",
-                [list(entries)],
-            )
-            learned: dict[str, int] = {}
-            if not seen.everything and names:
-                mine = await scope.select(
-                    KNOWERS, " AND alias_id = ANY(%s)", [[str(a["id"]) for a in names]]
-                )
-                # the order THIS viewer learned them in: only its own characters' rows count
-                own = (
-                    {
-                        str(p["id"])
-                        for p in await scope.select(
-                            PERSPECTIVES, " AND entity_id = ANY(%s)", [sorted(viewer.characters)]
-                        )
-                    }
-                    if viewer.characters
-                    else None
-                )
-                for row in mine:
-                    if own is not None and str(row["perspective_id"]) not in own:
-                        continue
-                    key = str(row["alias_id"])
-                    learned[key] = min(learned.get(key, row["created_at"]), row["created_at"])
-        out: dict[str, str | None] = {}
-        for entity_id in entity_ids:
-            main = entries.get(entity_id)
-            if main is None:
-                out[entity_id] = None
-                continue
-            # (an entry's own name is stored as a name too: it stands for the main name, which the
-            # entry's own row governs, so it is not one of the "other" names)
-            others = sorted(
-                (
-                    (str(a["id"]), str(a["text"]))
-                    for a in names
-                    if str(a["entity_id"]) == entity_id and a["key"] != lookup_key(main)
-                ),
-                key=lambda pair: (learned.get(pair[0], 0), pair[0]),
-            )
-            # (a row on the entry's own name alias counts as knowing the entry under its name)
-            own_name = [
-                str(a["id"])
-                for a in names
-                if str(a["entity_id"]) == entity_id and a["key"] == lookup_key(main)
-            ]
-            if any(alias in seen.aliases for alias in own_name):
-                shown: str | None = main
-            else:
-                shown = gate.display_name(seen, entity_id, main, others)
-            out[entity_id] = gate.SOMEONE if shown is None and public else shown
-        return out
+            return await gate.names_for(scope, viewer, entity_ids, public=public)
 
     async def not_the_same(
         self, guild_id: int, campaign_id: str, ids: Sequence[str], *, user_id: int
