@@ -829,7 +829,12 @@ async def summary(
                 if cut
                 else f"🤖 DMbot found no new names in {_md(label)}."
                 + (
-                    note + "\nPress 📜 Check the connections to look at them one by one."
+                    note
+                    + (
+                        "\nPress 📜 Check the connections to look at them one by one."
+                        if ready is None or ready or (dropped and dropped.get("which_waiting"))
+                        else ""
+                    )
                     if waiting
                     else " Nothing was added." + note
                 )
@@ -952,6 +957,7 @@ async def queue_links(
     have = {
         (r.subject_id, r.predicate, r.object_id)
         for r in await memory.relations(campaign.guild_id, campaign.id, include_secret=True)
+        if r.to_session_at is None  # (an ended one can be offered again: the DM may change back)
     }
     symmetric = await symmetric_kinds(memory, campaign)
 
@@ -1588,11 +1594,11 @@ class ConnectionOffer(_Menu):
             # A card that turned secret since it was drawn (an end became a name the players
             # don't know) is kept as secret whichever button was pressed: never a public
             # connection naming a hidden end.
-            now = int(time.time())
             old = self._old(c)
+            start = keep.change_start(old, int(time.time()))
             ended: list[int | None] = []
             try:
-                ended = await keep.end_replaced(memory, campaign.guild_id, campaign.id, old, now)
+                await keep.end_replaced(memory, campaign.guild_id, campaign.id, old, start, ended)
                 kept = await memory.add_relation(
                     campaign.guild_id, campaign.id, c.subject_id, c.predicate, c.object_id,
                     source=DM, confidence=1.0, status=CONFIRMED, secret=secret or c.secret,
@@ -1602,13 +1608,14 @@ class ConnectionOffer(_Menu):
                     # ✅ Keep: the uploader's character knows it from the start; 🤫 Keep as secret
                     # is the DM's alone (#2935)
                     known_by=[c.known_by] if c.known_by and not (secret or c.secret) else (),
-                    from_session_at=now if old else None,  # (starts as the old one ends)
+                    from_session_at=start if old else None,  # (starts as the old one ends)
                 )  # fmt: skip
-            except MemoryRuleError:
+            except Exception as exc:
+                # a change is whole or not at all, whatever went wrong
+                await keep.undo_batches(memory, campaign.guild_id, campaign.id, ended)
+                if not isinstance(exc, MemoryRuleError):
+                    raise
                 log.info("A connection from a background was refused")
-                for batch in reversed(ended):  # a change is whole or not at all
-                    if batch is not None:
-                        await memory.undo(campaign.guild_id, campaign.id, batch, source=DM)
                 await _tell(
                     interaction,
                     "DMbot couldn't keep that one. Press ❌ No to move on, or try again.",

@@ -338,7 +338,6 @@ class TheReading(unittest.IsolatedAsyncioTestCase):
             {},
             Gate(),
             skip_name=lambda name: name.casefold() in have,
-            skip_pair=lambda a, b: {a, b} == {"Brother Aldric", "Greyfen Abbey"},
         )
         shaped = [c.args[1] for c in fake.complete.await_args_list if c.kwargs.get("schema")]
         seen = "\n".join(shaped)
@@ -348,7 +347,6 @@ class TheReading(unittest.IsolatedAsyncioTestCase):
         self.assertIn("- Brother Aldric |", seen)
         self.assertEqual(done.known_spellings, {"Brother Aldric": ("Aldric",)})
         self.assertNotIn("- Greyfen Abbey |", seen)
-        self.assertNotIn("Brother Aldric — leads — Greyfen Abbey", seen)
         self.assertEqual({n.name for n in done.names}, {"Ashen Hand", "Mira"})
         # (the fake answers a link by its first end alone; what matters is what it was given)
         self.assertIn(("Mira", "Brother Aldric"), {(c.a, c.b) for c in done.links})

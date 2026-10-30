@@ -7,10 +7,10 @@ from __future__ import annotations
 
 import json
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 from dmbot.memory import backstory_keep as keep
-from dmbot.memory.models import CONFIRMED, NewName
+from dmbot.memory.models import CONFIRMED, MemoryRuleError, NewName
 from dmbot.ui import name_background as ui_bg
 from dmbot.ui.name_lists import Upload, _ai_busy, _ai_reads
 from tests import lore_fake
@@ -104,7 +104,7 @@ class TheChange(NamesTest):
         press = await self.read("works for")
         said = shown(press)
         self.assertIn("1 ready to check", said)
-        self.assertNotIn("change", said.split("🔎")[-1])
+        self.assertNotIn("change", said)
         view = await self.card()
         self.assertIn("Keep this?", view.text())
         await next(b for b in view.children if b.label == "✅ Keep").callback(self.it())
@@ -131,3 +131,19 @@ class TheChange(NamesTest):
         )
         live = [r.predicate for r in await self.relations() if r.to_session_at is None]
         self.assertEqual(live, ["ally_of"])
+
+    async def test_a_refused_change_leaves_the_old_connection_as_it_was(self) -> None:
+        await self.read("enemy")
+        view = await self.card()
+        with patch.object(self.memory, "add_relation", AsyncMock(side_effect=MemoryRuleError("x"))):
+            await next(b for b in view.children if b.label == "✅ Change it").callback(self.it())
+        (only,) = await self.relations()
+        self.assertEqual((only.predicate, only.to_session_at), ("ally_of", None))
+        self.assertEqual(len(await self.store.waiting(GUILD, self.campaign.id)), 1)
+
+    async def test_after_a_change_the_old_kind_can_be_offered_back(self) -> None:
+        await self.read("enemy")
+        view = await self.card()
+        await next(b for b in view.children if b.label == "✅ Change it").callback(self.it())
+        said = shown(await self.read("friend"))  # (the ended friendship is not "already known")
+        self.assertIn("1 change ready to check", said)

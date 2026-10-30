@@ -69,21 +69,43 @@ async def changes_among(
     return {k: v for k, v in found.items() if v}
 
 
+def change_start(old: Sequence[Relation], now: int) -> int:
+    """When a change takes hold: now, or just after the latest start among the connections it
+    ends (one that began later than now would end before it began). The old ones end and the new
+    one starts at this same moment, so they never overlap."""
+    return max([now, *((r.from_session_at or 0) + 1 for r in old)])
+
+
 async def end_replaced(
-    memory: MemoryStore, guild_id: int, campaign_id: str, old: Sequence[Relation], now: int
-) -> list[int | None]:
-    """End these connections as of `now` (never deleted, so the history and the timeline keep
-    them). Returns the batch of each, for Undo."""
-    batches: list[int | None] = []
+    memory: MemoryStore,
+    guild_id: int,
+    campaign_id: str,
+    old: Sequence[Relation],
+    start: int,
+    ended: list[int | None],
+) -> None:
+    """End these connections as of `start` (never deleted, so the history and the timeline keep
+    them). Each one's batch is appended to `ended` as it is done, so a caller whose later step
+    fails can take back exactly what was ended (`undo_batches`)."""
     for r in old:
-        # (a connection that began later than now would be ended before it began: it ends just
-        # after its start instead)
-        end = max(now, (r.from_session_at or 0) + 1)
         written = await memory.update_relation(
-            guild_id, campaign_id, r.id, source=DM, to_session_at=end
+            guild_id, campaign_id, r.id, source=DM, to_session_at=start
         )
-        batches.append(written.batch)
-    return batches
+        ended.append(written.batch)
+
+
+async def undo_batches(
+    memory: MemoryStore, guild_id: int, campaign_id: str, batches: Sequence[int | None]
+) -> None:
+    """Take back these writes, newest first. One that cannot be reversed (changed since) is
+    logged and skipped: the rest still go back."""
+    for batch in reversed(batches):
+        if batch is None:
+            continue
+        try:
+            await memory.undo(guild_id, campaign_id, batch, source=DM)
+        except MemoryRuleError:
+            log.info("A write of a change could not be taken back")
 
 
 async def keep_all(
@@ -110,8 +132,9 @@ async def keep_all(
             else []
         )
         ended: list[int | None] = []
+        start = change_start(old, now)
         try:
-            ended = await end_replaced(memory, guild_id, campaign_id, old, now)
+            await end_replaced(memory, guild_id, campaign_id, old, start, ended)
             written = await memory.add_relation(
                 guild_id, campaign_id, c.subject_id, c.predicate, c.object_id,
                 source=DM, confidence=1.0, status=CONFIRMED, secret=c.secret, detail=c.detail,
@@ -119,12 +142,13 @@ async def keep_all(
                 unrevealed=True, decided=c.decided or None,
                 # the uploader's character knows it, unless it uses a secret name (#2935)
                 known_by=[c.known_by] if c.known_by and not c.secret else (),
-                from_session_at=now if old else None,  # (starts as the old one ends)
+                from_session_at=start if old else None,  # (starts as the old one ends)
             )  # fmt: skip
-        except MemoryRuleError:
-            for batch in reversed(ended):  # the change is whole or not at all
-                if batch is not None:
-                    await memory.undo(guild_id, campaign_id, batch, source=DM)
+        except Exception as exc:
+            # the change is whole or not at all, whatever went wrong
+            await undo_batches(memory, guild_id, campaign_id, ended)
+            if not isinstance(exc, MemoryRuleError):
+                raise
             done.refused += 1
             if progress is not None:
                 await progress(tried, total)
@@ -149,15 +173,16 @@ async def undo_all(
     back; one that cannot be reversed (changed since) is left as it is."""
     back = 0
     for (c, batch), ended in reversed(list(zip(done.kept, done.ended, strict=True))):
-        if batch is None:
+        if batch is None and not ended:
             continue
-        try:
-            await memory.undo(guild_id, campaign_id, batch, source=DM)
-            for old_batch in reversed(ended):  # a change: the old connection lives again
-                if old_batch is not None:
-                    await memory.undo(guild_id, campaign_id, old_batch, source=DM)
-        except MemoryRuleError:
-            continue
+        # (the old connections come back whatever happens to the new one, and the link waits
+        # again once the new one is gone: nothing is lost half way)
+        if batch is not None:
+            try:
+                await memory.undo(guild_id, campaign_id, batch, source=DM)
+            except MemoryRuleError:
+                continue
+        await undo_batches(memory, guild_id, campaign_id, ended)
         await store.add(
             guild_id,
             campaign_id,
