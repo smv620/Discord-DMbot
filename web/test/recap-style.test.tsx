@@ -54,19 +54,52 @@ describe("Recap style", () => {
     fireEvent.click(screen.getByRole("button", { name: words.addNote }));
     for (let i = 0; i < 4; i++) await act(async () => { await vi.advanceTimersByTimeAsync(20_000); });
     await waitFor(() => expect(document.querySelector("#rs-notes ~ ol, section[aria-labelledby=rs-notes] ol")?.textContent).toContain("Keep it short."));
-    fireEvent.click(screen.getByRole("button", { name: words.remove(1) }));
+    fireEvent.click(screen.getByRole("button", { name: new RegExp(`^${words.remove(1)}`) }));
+    fireEvent.click(screen.getByRole("button", { name: words.removeYes }));
     for (let i = 0; i < 4; i++) await act(async () => { await vi.advanceTimersByTimeAsync(20_000); });
     expect(await screen.findByText(words.usingDefaults)).toBeTruthy();
     expect(api.calls.some((c) => c.includes("remove_example:"))).toBe(true);
   });
 
-  it("refuses a recap over the word limit before sending", async () => {
+  it("keeps what was typed when the change fails, and says nothing was changed", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const api = mockApi("table");
+    api.recapStyleAction = async () => ({ state: "failed", error: "not_taken", action: "add_example", createdAt: 1, updatedAt: 2, serverNow: 3 });
+    render(<RecapStyleView api={api} path={PATH} />);
+    await screen.findByText(words.usingOwn(1));
+    fireEvent.input(screen.getByLabelText(words.exampleLabel), { target: { value: "Keep these words." } });
+    fireEvent.click(screen.getByRole("button", { name: words.addExample }));
+    for (let i = 0; i < 3; i++) await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
+    expect(await screen.findByText(words.failedReasons["not_taken"] as string)).toBeTruthy();
+    expect((screen.getByLabelText(words.exampleLabel) as HTMLTextAreaElement).value).toBe("Keep these words.");
+  });
+
+  it("asks before deleting, and sends nothing on Keep mine", async () => {
+    const api = mockApi("table");
+    render(<RecapStyleView api={api} path={PATH} />);
+    await screen.findByText(words.usingOwn(1));
+    fireEvent.click(screen.getByRole("button", { name: words.useDefaults }));
+    expect(screen.getByText(words.deleteAsk)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: words.keep }));
+    expect(screen.queryByText(words.deleteAsk)).toBeNull();
+    expect(api.calls.some((c) => c.startsWith("changeRecapStyle:"))).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: words.useDefaults }));
+    fireEvent.click(screen.getByRole("button", { name: words.deleteYes }));
+    await waitFor(() => expect(api.calls.some((c) => c.includes("changeRecapStyle:100.cmp1:use_defaults"))).toBe(true));
+  });
+
+  it("is not found, not blank, for a broken address", () => {
+    render(<RecapStyleView api={mockApi("table")} path="/account/recap-style/%E0%A4%A" />);
+    expect(screen.getByText(words.notFound)).toBeTruthy();
+  });
+
+  it("says a recap is over the word limit as it is typed, and will not send it", async () => {
     const api = mockApi("table");
     render(<RecapStyleView api={api} path={PATH} />);
     await screen.findByText(words.usingOwn(1));
     fireEvent.input(screen.getByLabelText(words.exampleLabel), { target: { value: Array(STYLE_EXAMPLE_WORDS + 1).fill("word").join(" ") } });
-    fireEvent.click(screen.getByRole("button", { name: words.addExample }));
-    expect((await screen.findByRole("alert")).textContent).toBe(words.tooManyWords);
+    expect((await screen.findByRole("alert")).textContent).toBe(words.tooManyWords(STYLE_EXAMPLE_WORDS + 1));
+    expect((screen.getByRole("button", { name: words.addExample }) as HTMLButtonElement).disabled).toBe(true);
     expect(api.calls.some((c) => c.startsWith("changeRecapStyle:"))).toBe(false);
   });
 

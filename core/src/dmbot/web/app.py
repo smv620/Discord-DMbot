@@ -1290,6 +1290,7 @@ def create_app(
         "bad_arg": (422, "bad_arg"),
         "too_long": (422, "too_long"),
         "too_soon": (429, "too_soon"),
+        "full": (409, "full"),
     }
 
     @app.get("/me/campaigns/{ref}/recap-style")
@@ -1316,8 +1317,8 @@ def create_app(
             raise HTTPException(status_code=404, detail="not_found")
         try:
             body = await bounded_json(
-                request, 1_200_000
-            )  # 8,000 characters at up to 4 bytes each, with room
+                request, 128 * 1024
+            )  # 8,000 characters, all escaped, with room
             return await recap_style.add(db, session, ref, body)
         except RecapError as err:
             status, detail = style_refusals.get(err.code, (404, "not_found"))

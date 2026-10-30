@@ -35,6 +35,8 @@ def _check(body: object) -> tuple[str, str]:
     # Postgres text cannot hold a NUL and psycopg cannot send a lone surrogate: refuse, not a 500.
     if "\x00" in arg or any(0xD800 <= ord(ch) <= 0xDFFF for ch in arg):
         raise RecapError("bad_arg")
+    if action in ("add_example", "add_note"):
+        arg = arg.strip()  # (as the door and the bot trim it, so the length is of what is kept)
     if len(arg) > EXAMPLE_CHARS:
         raise RecapError("too_long")
     if action in ("remove_example", "remove_note") and not re.fullmatch(r"[0-9]{1,18}", arg):
@@ -60,7 +62,8 @@ async def read(db: Database, session: Session, ref: str) -> dict[str, Any]:
 
 async def add(db: Database, session: Session, ref: str, body: object) -> dict[str, Any]:
     """Queue one change; answers `{"id": ...}` to poll. `bad_arg`, `bad_action` and `too_long` for
-    a shape the door refuses, `too_soon` with ten open at once, `not_allowed` for a non-DM."""
+    a shape the door refuses, `full` with three examples, `too_soon` with ten open at once,
+    `not_allowed` for a non-DM."""
     guild_id, campaign_id = _parse(ref)
     _guild_of(session, guild_id)
     action, arg = _check(body)

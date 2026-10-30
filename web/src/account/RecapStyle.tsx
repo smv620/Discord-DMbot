@@ -4,14 +4,19 @@
 // and are shown only to a campaign's DM; the API says so too. Nothing is kept on this page after it is sent.
 import { useEffect, useRef, useState } from "preact/hooks";
 
-import { recapStylePage as words, STYLE_EXAMPLE_WORDS, STYLE_MAX_EXAMPLES, STYLE_NOTE_CHARS } from "../content/recap-style-words";
+import { recapStylePage as words, STYLE_EXAMPLE_WORDS, STYLE_MAX_EXAMPLES, STYLE_MAX_NOTES, STYLE_NOTE_CHARS } from "../content/recap-style-words";
 import { type AccountApi, ApiError, type RecapStyle, type RecapStyleAction } from "./api";
 import WorkProgress from "./WorkProgress";
 
 /** The campaign's address, read from `/account/recap-style/<server>.<campaign>`. */
 export function campaignFromPath(path: string): string | null {
   const match = /^\/account\/recap-style\/([^/]+)\/?$/.exec(path);
-  return match ? decodeURIComponent(match[1] ?? "") : null;
+  if (!match) return null;
+  try {
+    return decodeURIComponent(match[1] ?? "");
+  } catch {
+    return null; // (a broken address is "not found", not a blank page)
+  }
 }
 
 const POLL_MS = 2000;
@@ -34,8 +39,11 @@ export default function RecapStyleView({ api, path }: { api: AccountApi; path: s
   const [problem, setProblem] = useState("");
   const [open, setOpen] = useState<{ id: string; action: Change; at: RecapStyleAction | null } | null>(null);
   const [stopped, setStopped] = useState(false);
+  // A delete that is waiting for "Yes": nothing is sent until then, because a deleted example cannot come back.
+  const [ask, setAsk] = useState<{ action: Change; arg: string; text: string; yes: string } | null>(null);
   const alertBox = useRef<HTMLParagraphElement>(null);
   const idle = useRef(0);
+  const errors = useRef(0);
   const seen = useRef(-1);
 
   const load = async (): Promise<void> => {
@@ -59,17 +67,25 @@ export default function RecapStyleView({ api, path }: { api: AccountApi; path: s
       try {
         const got = await api.recapStyleAction?.(ref, open.id);
         if (!live || !got) return;
+        errors.current = 0;
         idle.current = got.updatedAt === seen.current ? idle.current + 1 : 0;
         seen.current = got.updatedAt;
         setOpen((o) => (o && o.id === open.id ? { ...o, at: got } : o));
         if (got.state === "done") {
+          // What was typed is cleared only now, so a change that fails loses none of a long paste.
+          if (open.action === "add_example") setExample("");
+          if (open.action === "add_note") setNote("");
           void load();
           return;
         }
         if (got.state === "failed") return;
         timer = setTimeout(look, Math.min(POLL_MS * 2 ** Math.min(idle.current, 3), POLL_MAX_MS));
       } catch {
-        if (live) setStopped(true);
+        if (!live) return;
+        // One lost answer is not the end: try again a few times before saying the page has stopped looking.
+        errors.current += 1;
+        if (errors.current >= 3) setStopped(true);
+        else timer = setTimeout(look, POLL_MS * 2 ** errors.current);
       }
     };
     timer = setTimeout(look, POLL_MS);
@@ -94,6 +110,7 @@ export default function RecapStyleView({ api, path }: { api: AccountApi; path: s
       seen.current = -1;
       idle.current = 0;
       setStopped(false);
+      errors.current = 0;
       setOpen({ id: got.id, action, at: null });
       return true;
     } catch (err) {
@@ -106,6 +123,8 @@ export default function RecapStyleView({ api, path }: { api: AccountApi; path: s
 
   const failed = open?.at?.state === "failed";
   const done = open?.at?.state === "done";
+  // One change at a time: the controls rest until the one in flight has finished, so its end is never overwritten.
+  const pending = open !== null && !failed && !done && !stopped;
   const examples = style?.examples ?? [];
   const full = examples.length >= STYLE_MAX_EXAMPLES;
   const words600 = wordCount(example);
@@ -118,7 +137,7 @@ export default function RecapStyleView({ api, path }: { api: AccountApi; path: s
       <p>{words.lead}</p>
       {open && (
         <WorkProgress
-          stage={done ? words.doneNote : open.at?.state === "working" ? words.working : words.waiting}
+          stage={(done ? words.doneNote : open.at?.state === "working" ? words.working : words.waiting)[open.action] ?? words.genericProblem}
           startedAt={open.at?.createdAt ?? null}
           updatedAt={open.at?.updatedAt ?? null}
           serverNow={open.at?.serverNow ?? null}
@@ -137,11 +156,29 @@ export default function RecapStyleView({ api, path }: { api: AccountApi; path: s
       <section class="stack" aria-labelledby="rs-examples">
         <h2 id="rs-examples">{words.examplesHeading}</h2>
         <p>{style === null ? words.loading : examples.length === 0 ? words.usingDefaults : words.usingOwn(examples.length)}</p>
+        <p class="small">{words.examplesIntro}</p>
         <ol class="stack">
           {examples.map((e, i) => (
             <li key={e.id} class="stack">
-              <p class="small">{e.text.length > 400 ? `${e.text.slice(0, 400)}…` : e.text}</p>
-              <button type="button" class="button secondary" disabled={busy} onClick={() => void send("remove_example", e.id)}>
+              {e.text.length > 400 ? (
+                <details>
+                  <summary class="small">
+                    {e.text.slice(0, 400)}… ({words.exampleWords(wordCount(e.text))}) {words.showAll}
+                  </summary>
+                  <p class="small">{e.text}</p>
+                </details>
+              ) : (
+                <p class="small">
+                  {e.text} ({words.exampleWords(wordCount(e.text))})
+                </p>
+              )}
+              <button
+                type="button"
+                class="button secondary"
+                disabled={busy || pending}
+                aria-label={`${words.remove(i + 1)}: ${e.text.slice(0, 30)}`}
+                onClick={() => setAsk({ action: "remove_example", arg: e.id, text: words.removeAsk(i + 1), yes: words.removeYes })}
+              >
                 {words.remove(i + 1)}
               </button>
             </li>
@@ -149,11 +186,32 @@ export default function RecapStyleView({ api, path }: { api: AccountApi; path: s
         </ol>
         {examples.length > 0 && (
           <p>
-            <button type="button" class="button secondary" disabled={busy} onClick={() => void send("use_defaults")}>
+            <button type="button" class="button secondary" disabled={busy || pending} onClick={() => setAsk({ action: "use_defaults", arg: "", text: words.deleteAsk, yes: words.deleteYes })}>
               {words.useDefaults}
-            </button>{" "}
-            <span class="small">{words.useDefaultsNote}</span>
+            </button>
           </p>
+        )}
+        {ask && (
+          <div class="stack" role="group" aria-label={ask.text}>
+            <p role="alert">{ask.text}</p>
+            <p>
+              <button
+                type="button"
+                class="button"
+                disabled={busy || pending}
+                onClick={async () => {
+                  const { action, arg } = ask;
+                  setAsk(null);
+                  await send(action, arg);
+                }}
+              >
+                {ask.yes}
+              </button>{" "}
+              <button type="button" class="button secondary" onClick={() => setAsk(null)}>
+                {words.keep}
+              </button>
+            </p>
+          </div>
         )}
         {full ? (
           <p>{words.exampleFull}</p>
@@ -163,8 +221,8 @@ export default function RecapStyleView({ api, path }: { api: AccountApi; path: s
             onSubmit={async (e) => {
               e.preventDefault();
               if (example.trim() === "") return;
-              if (words600 > STYLE_EXAMPLE_WORDS) return setProblem(words.tooManyWords);
-              if (await send("add_example", example.trim())) setExample("");
+              if (words600 > STYLE_EXAMPLE_WORDS) return setProblem(words.tooManyWords(words600));
+              await send("add_example", example.trim());
             }}
           >
             <label for="rs-example">{words.exampleLabel}</label>
@@ -172,8 +230,9 @@ export default function RecapStyleView({ api, path }: { api: AccountApi; path: s
             <p id="rs-example-help" class="small">
               {words.exampleHelp} {words.count(words600)}
             </p>
+            {words600 > STYLE_EXAMPLE_WORDS && <p role="alert">{words.tooManyWords(words600)}</p>}
             <p>
-              <button type="submit" class="button" disabled={busy}>
+              <button type="submit" class="button" disabled={busy || pending || words600 > STYLE_EXAMPLE_WORDS}>
                 {busy ? words.sending : words.addExample}
               </button>
             </p>
@@ -183,12 +242,14 @@ export default function RecapStyleView({ api, path }: { api: AccountApi; path: s
 
       <section class="stack" aria-labelledby="rs-notes">
         <h2 id="rs-notes">{words.notesHeading}</h2>
+        <p class="small">{words.notesIntro}</p>
         {style !== null && style.notes.length === 0 && <p>{words.notesNone}</p>}
+        {style !== null && style.notes.length >= STYLE_MAX_NOTES && <p>{words.notesFull}</p>}
         <ol class="stack">
           {(style?.notes ?? []).map((n, i) => (
             <li key={n.id}>
               {n.text}{" "}
-              <button type="button" class="button secondary" disabled={busy} onClick={() => void send("remove_note", n.id)}>
+              <button type="button" class="button secondary" disabled={busy || pending} aria-label={`${words.removeNote(i + 1)}: ${n.text.slice(0, 30)}`} onClick={() => void send("remove_note", n.id)}>
                 {words.removeNote(i + 1)}
               </button>
             </li>
@@ -199,7 +260,7 @@ export default function RecapStyleView({ api, path }: { api: AccountApi; path: s
           onSubmit={async (e) => {
             e.preventDefault();
             if (note.trim() === "") return;
-            if (await send("add_note", note.trim())) setNote("");
+            await send("add_note", note.trim());
           }}
         >
           <label for="rs-note">{words.noteLabel}</label>
@@ -208,7 +269,7 @@ export default function RecapStyleView({ api, path }: { api: AccountApi; path: s
             {words.noteHelp}
           </p>
           <p>
-            <button type="submit" class="button" disabled={busy}>
+            <button type="submit" class="button" disabled={busy || pending}>
               {busy ? words.sending : words.addNote}
             </button>
           </p>

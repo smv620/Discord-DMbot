@@ -77,17 +77,25 @@ WEB_RECAP_STYLE = (
                                       'add_note', 'remove_note') THEN
             RETURN jsonb_build_object('status', 'bad_action');
         END IF;
+        -- Trimmed of every kind of white space the bot's `str.strip()` drops, not only
+        -- spaces, so the door and the bot count the same words.
         IF act IN ('add_example', 'add_note') THEN
-            want := btrim(want);
+            want := btrim(want, E' \t\r\n\f\v');
         END IF;
         IF (act = 'use_defaults' AND want <> '')
            OR (act IN ('remove_example', 'remove_note') AND want !~ '^[0-9]{1,18}$')
            OR (act = 'add_example' AND (want = '' OR char_length(want) > @EXAMPLE_CHARS@
-               OR array_length(regexp_split_to_array(want, '\s+'), 1) > @EXAMPLE_WORDS@))
+               OR array_length(regexp_split_to_array(want, '[ \t\r\n\f\v]+'), 1) > @EXAMPLE_WORDS@))
            OR (act = 'add_note' AND char_length(want) NOT BETWEEN 1 AND @NOTE_CHARS@) THEN
             RETURN jsonb_build_object('status', 'bad_arg');
         END IF;
         PERFORM pg_advisory_xact_lock(hashtextextended('recap_style:' || g::TEXT || ':' || c, 0));
+        -- A pasted recap is the DM's own words: the bot blanks `arg` as it finishes a row,
+        -- and this does the same for any finished row it missed, so no words wait here for
+        -- a DM who never comes back.
+        UPDATE web_recap_style_actions r SET arg = ''
+            WHERE r.guild_id = g AND r.campaign_id = c AND r.state IN ('done', 'failed')
+              AND r.arg <> '';
         DELETE FROM web_recap_style_actions r
             WHERE r.guild_id = g AND r.campaign_id = c AND r.created_at < now_s - 86400;
         UPDATE web_recap_style_actions r SET state = 'waiting', claimed_at = 0, updated_at = now_s
@@ -97,6 +105,10 @@ WEB_RECAP_STYLE = (
                                              updated_at = now_s
             WHERE r.guild_id = g AND r.campaign_id = c AND r.state = 'waiting'
               AND r.updated_at < now_s - 1800;
+        IF act = 'add_example' AND (SELECT count(*) FROM recap_style_examples e
+                                    WHERE e.guild_id = g AND e.campaign_id = c) >= 3 THEN
+            RETURN jsonb_build_object('status', 'full');
+        END IF;
         IF (SELECT count(*) FROM web_recap_style_actions r
             WHERE r.guild_id = g AND r.campaign_id = c AND r.state IN ('waiting', 'working')) >= 10
         THEN
@@ -127,6 +139,9 @@ WEB_RECAP_STYLE = (
             RETURN NULL;
         END IF;
         PERFORM pg_advisory_xact_lock(hashtextextended('recap_style:' || g::TEXT || ':' || c, 0));
+        UPDATE web_recap_style_actions x SET arg = ''
+            WHERE x.guild_id = g AND x.campaign_id = c AND x.state IN ('done', 'failed')
+              AND x.arg <> '';
         UPDATE web_recap_style_actions x SET state = 'waiting', claimed_at = 0, updated_at = now_s
             WHERE x.guild_id = g AND x.campaign_id = c AND x.state = 'working'
               AND x.updated_at < now_s - 600;

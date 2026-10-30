@@ -85,6 +85,45 @@ class TheDoors(Reading):
         self.assertEqual(await self.turned_away("add_example", "a\ud800b"), "bad_arg")
         self.assertEqual(len(await self.rows()), 4)
 
+    async def test_white_space_other_than_a_space_is_trimmed_and_not_counted(self) -> None:
+        words = " ".join(["word"] * EXAMPLE_MAX_WORDS)
+        self.assertEqual(len((await self.put("add_example", f"\n\t{words}\r\n"))["id"]), 32)
+        for blank in ("\n", "\t \n"):
+            self.assertEqual(await self.turned_away("add_example", blank), "bad_arg")
+            self.assertEqual(await self.turned_away("add_note", blank), "bad_arg")
+
+    async def test_a_fourth_example_is_refused_at_the_door(self) -> None:
+        for n in (1, 2, 3):
+            await self.sql(
+                "INSERT INTO recap_style_examples (guild_id, campaign_id, position, text,"
+                " created_by, created_at) VALUES (%s, %s, %s, 'x', %s, 1)",
+                GUILD, self.one.id, n, ALICE.id,
+            )  # fmt: skip
+        self.assertEqual(await self.turned_away("add_example", WORDS), "full")
+        self.assertEqual((await self.put("add_note", "Keep it short."))["id"] != "", True)
+
+    async def test_a_finished_change_loses_any_words_it_still_held(self) -> None:
+        got = await self.put("add_example", WORDS)
+        await self.sql("UPDATE web_recap_style_actions SET state = 'done'")
+        await recap_style.action(self.web, self.session, self.cref, got["id"])
+        [row] = await self.rows()
+        self.assertEqual(row["arg"], "")
+
+    async def test_a_taken_change_gone_quiet_goes_back_to_waiting(self) -> None:
+        got = await self.put("use_defaults")
+        await self.sql(
+            "UPDATE web_recap_style_actions SET state = 'working', claimed_at = 1,"
+            " updated_at = updated_at - 700"
+        )
+        seen = await recap_style.action(self.web, self.session, self.cref, got["id"])
+        self.assertEqual(seen["state"], "waiting")
+
+    async def test_rows_older_than_a_day_are_gone_on_the_next_add(self) -> None:
+        await self.put("use_defaults")
+        await self.sql("UPDATE web_recap_style_actions SET created_at = created_at - 90000")
+        await self.put("use_defaults")
+        self.assertEqual(len(await self.rows()), 1)
+
     async def test_the_full_word_limit_is_taken(self) -> None:
         got = await self.put("add_example", " ".join(["word"] * EXAMPLE_MAX_WORDS))
         self.assertEqual(len(got["id"]), 32)
