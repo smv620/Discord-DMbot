@@ -1813,8 +1813,10 @@ async def offer_ready(interaction: discord.Interaction, campaign_id: str) -> boo
     Returns whether there was anything to ask."""
     try:
         from dmbot.ui.name_questions import offer_names  # (it imports this module)
+        from dmbot.ui.worked_out_questions import offer_worked_out
 
         asked_names = await offer_names(interaction, campaign_id)  # suggested other names first
+        asked_names = await offer_worked_out(interaction, campaign_id) or asked_names
         view = ConnectionOffer(campaign_id)
         if not await view.load(interaction):
             return asked_names

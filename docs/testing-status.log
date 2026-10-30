@@ -1,137 +1,34 @@
 DMbot - TESTING STATUS (current testing only)
 =============================================
-Last updated: 2026-10-18 01:4x UTC by dev1 (deploy 86976110 live)
+Last updated: 2026-10-30 17:20 UTC by dev1
 
-**For the people at the table: docs/next-test-step.md has the one next small test (#569).**
+For the people at the table: docs/next-test-step.md has the one next small test (#569).
 Short by design: see CLAUDE.md "Testing logs". Full record: docs/testing-history.log.
 Never put tokens, .env contents or players' personal data here (public repo).
 
 ------------------------------------------------------------------------------
-READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
-------------------------------------------------------------------------------
-- CloudDev, 2026-10-23: import progress in the one shared shape (#2564, PR #2571, migration 0217: columns and a trigger, no row changes). Deploy with the bot stopped, after the backup; bot before web-api. An import that is mid-way when 0217 runs has no last-moved time yet (it reads as its import time), so it may show "stalled" until its next step: check the page after the next cleaning chunk.
-- Supervisor, 2026-10-21 19:0x UTC: STEP C, for the owner's import test (#2261). Steps A and B are live (364ed24c, 15:47).
-  Deploy development at or after the merge of #2286 (WebDev, the Import page opens per server). That brings:
-  the 📥 Import sessions button (#2268), imports for chosen servers (#2267), the recap split with the fixed
-  opening and closing lines (#2258, #2269), PlotBot's notes on what matters (#2270), the recap page's names to
-  check (#2251), installs follow-ups (#2277), secret-question follow-ups (#2276), sidebar timings (#2271).
-  1. Back up (dry run first). Migrations 0157, 0158 and 0160 (0161 too if #2278 has merged) run on start;
-     none changes rows when it runs. Bot before web-api.
-  2. .env, at the terminal: `scripts/update-env DMBOT_IMPORTS_SERVERS=<the test server's number>`. Only that
-     server; the number never goes into the repository, an issue or a chat. DMBOT_IMPORTS stays 0.
-     Recreate both bot and web-api (the compose file now passes it to web-api).
-  3. Checks: in the test server, ⚙️ Settings shows 📥 Import sessions and it opens the website's import page
-     for that campaign; in any other server the button is missing and the page says "This page isn't open yet."
-  4. Then write the owner's steps from #2261 into docs/next-test-step.md: a new campaign, 📜 From a story or
-     background in the names menu, import session 1 with "Write a recap", read it, then session 2.
-     Record on #2261: the split for each session (line numbers, never words), word counts, the owner's verdict.
-  Switches that stay off: DMBOT_IMPORTS, IMPORT_LIVE, SUPPORT_AI_LIVE, RECAP_VOICE_LIVE.
-- Owner alerts (#1907), once merged: no migration. The owner sets OWNER_ALERT_EMAIL (their private address) and
-  optionally MAIL_ALERTS_REPLY_TO in the server's .env at the terminal (dev1 never types the address into the
-  repository or a chat), then dev1 restarts bot and web-api (bot first). Check: the start-up log says "Owner
-  alerts are off" before the setting and not after. MAIL_DAILY_CAP now keeps 10 slots back for alerts (it must be above 10).
-- CloudDev, 2026-10-23, once #2550 merges (hand-over by email, #2532 C2): migration 0215 re-creates every foreign key
-  that carries guild_id (about 130 of them) with ON UPDATE CASCADE, so a campaign can change server in one change.
-  Each key is rebuilt and checked again, which holds locks on those tables for the whole migration: deploy with the
-  bot stopped, after the backup (dry run first), then start bot before web-api. This PR's own migration is 0215; 0212, 0213 and 0214 come with #2546, #2548 and #2549. DMBOT_HANDOVER_EMAIL stays off (the website and
-  the Discord button keep the old behaviour) until the owner's go.
-(nothing else: the deploy of 3b75a693 (migrations 0122-0127) and everything before it are live)
-- Waiting on the owner, not a deploy: once the Stripe account exists (#1096), replace the LEMONSQUEEZY_* values in .env
-  with the STRIPE_* ones (.env.example) through scripts/set-key (#1110). Payments stay off until then.
-
-------------------------------------------------------------------------------
 LIVE NOW
 ------------------------------------------------------------------------------
-core + web-api 86976110 (2026-10-18 01:40 UTC, migrations 0128_npcs_channel (the NPC roster channel: a column and a new table, no row changes), 0129_initiative_style and 0130_initiative_style_backfill (the heard initiative style; 0130 folds the retired side-initiative switch into it, row-level security opened for itself); the NPC list channel, the initiative style kept per campaign, #1774, #1775, #1782, #1783, #1786 (sync logs), #1787, the no-pings default (#1834), the start-up smoke test (#1830), the players page (#1821), privacy wording (#1810); a rebuild; bot first, then web-api; dry run of 0128-0130 on a copy passed; backup ~/db-backups/dmbot-before-86976110-20261018T0141Z.sql; core connected (2 servers), 0 errors; web-api healthy. The duplicate-commands clear ran at 21:33 UTC (the original test server's old per-server copies removed; variable emptied after the restart). Still to check: /dmbot once per command in that server, the test server and dnd_testing; before that 174c35ec (2026-10-17 17:00 UTC, #1772 slash commands on every server, #1760 time suggestions); before that 3b75a693 (2026-10-17 15:13 UTC, migrations 0122-0127; the consent timing line #1708); before that 713e7349 (2026-10-17 07:36 UTC, migration 0121 story_mode (the DM's per-campaign switch, default off, #1696); the Stripe adapter on API version 2026-09-30.endive (#1704); the DM Bot channel's Look up a rule and Transcripts buttons (#1693); the memory health log line (#1700); due-soon promises (#1687), led_to wording (#1690), scripts/set-variables (#1685); a rebuild, no compose change; bot first, then web-api; old containers stopped first, with the owner's OK); before that e25d74ea (2026-10-17 05:28 UTC, migration 0120 dm_bot_channel (the DM Bot channel and its panel, #1673); the Homebrew menu with one button per kind and counts (#1672), story memory promises the DM keeps (#1677), quiet threads (#1678), led_to (#1682); a rebuild, no compose or .env change; bot first, then web-api; old containers stopped first, with the owner's OK); before that 68a8949f (2026-10-17 03:46 UTC, migrations 0115 clue_audience (clues only some people know, #1651), 0116 web_homebrew_source (website source line, a function, #1657), 0117 standing (#1661), 0118 story_threads (widens one CHECK, #1670) and 0119 homebrew_more_kinds (species, subclass, background, #1671); Approved sites screen with Take back (#1654), the homebrew kinds menu; a rebuild, no compose or .env change; bot first, then web-api; old containers stopped first, with the owner's OK); before that 3535138d (2026-10-17 00:22 UTC, migrations 0109 game_clock_groups (split the party, #1614), 0110 improvement_opt_outs, 0111 homebrew_rules_to_house_rules (moves rows, #1630), 0112 homebrew_enabled (drops players_may_know; every entry on, #1636), 0113 homebrew_sources (backfills added_by; homebrew_pages, site_approvals, #1638) and 0114 homebrew_pack_doors (website door functions); Settings button on the /dmbot start voice step and /dmbot settings (#1619), Game masters in Settings (#1600), Add from a link (#1634), Who made these (#1639), packs by reference (#1635), delete a campaign (#1608); a rebuild, no compose or .env change; bot first, then web-api; old containers stopped first, with the owner's OK); before that a026cfd7 (2026-10-16 21:13 UTC, migrations 0106 waiting_name_questions (a new table, row-level security forced, #1590), 0107 web_homebrew_book and 0108 web_homebrew_packs (door replaces, #1581, #1587); the website Homebrew page tags and followed packs; unanswered "Did they mean...?" questions waiting for the DM (the Check names button); day skips on the clock (#1596); an expired campaign's channels tidied (#1599); a rebuild, no compose or .env change; bot first, then web-api; old containers stopped first, with the owner's OK); before that 257f5b67 (2026-10-16 18:02 UTC, migration 0105 web_transcript_keep (a CREATE OR REPLACE of the website's two transcript doors, adding keepDays, no row change, #1578); rules alerts and the DM sidebar rank shared-book entries by edition (#1574); the Help and privacy pages say what Delete my transcripts leaves (#1573); the Transcripts page says how long a campaign keeps transcripts (#1575); a rebuild, no compose or .env change; bot first, then web-api; old containers stopped first); before that 1df5a4e5 (2026-10-16 17:08 UTC, migration 0104 homebrew_book_edition (a nullable column with two checks on homebrew_entries, no row change, #1568); the question "Which rules is this book written for?" after "I have the right" when a DM loads a homebrew file from a book, and /dmbot rule ranking book entries by that edition with a [Shared book] tag; a rebuild, no compose or .env change; bot first, then web-api; old containers stopped first); before that 47d4ccf4 (2026-10-16 16:38 UTC, migration 0103 web_transcript_deleted (replaces two website doors, no row change, #1551); deleted-transcript sessions on the website's Transcripts list (#1551), Make it my own on a pack entry's card (#1543), Secret: yes on Connect to... for DMs (#1550), DM words never fixed by the Cleaner and "DM" resolved to the DM who is here (#1555, #1560), a who column in Download all and Add many for DMs (#1561), /dmbot rule for anyone in the server, private (#1564), Help entries (#1553, #1556); a rebuild, no compose or .env change; bot first, then web-api; old containers stopped first); before that 11f794f0 (2026-10-16 15:14 UTC, migrations 0100 web_homebrew (the website's Homebrew page, #1545), 0101 transcript_keep (Keep transcripts for, Settings -> Transcripts, and Delete my transcripts in the Menu, #1536) and 0102 pack_suggestions (homebrew packs, Suggest an entry, #1539); the combined DM-screen note at a session start (#1540), Show all on the name card (#1544); a rebuild, no compose or .env change; bot first, then web-api; old containers stopped first; the What's new entries for these stay held until seen on the test server); before that 1cc09299 (2026-10-16 13:19 UTC, migrations 0094 web_transcripts and 0095 web_transcript_pages (the website's Transcripts doors), 0096 support_week_mail (a one-row table), 0097 homebrew_entries (a new table, row-level security forced), 0098 web_house_rules (two read-only doors), 0099 homebrew_from_book (a defaulted column); the website's Transcripts and House rules pages, Settings -> Homebrew for the DM, the weekly support email; a rebuild, no compose or .env change; old containers stopped first; homebrew's What's new entry stays held); before that bbaab1bd (2026-10-16 10:20 UTC, migrations 0092 support_handed_over (two nullable columns on support_tickets, #1490) and 0093 transcript_suggestions (a new table, row-level security forced, #1493: the /dmbot fix picker); #1481, #1482, #1484, #1492, #1495 (CI only), #1496, #1497, #1498; a rebuild, no compose or .env change; old containers stopped first); before that be0d42fd (2026-10-16 08:43 UTC, migrations 0089 memory_from_set (#1471, shared sets carry relationship definitions), 0090 support_reason (#1473), 0091 web_recap_choices (#1469, two SECURITY DEFINER doors); #1476 waiting recap said at session start, #1477; a rebuild, no compose or .env change; old containers stopped first); before that 1ba2c3d3 (2026-10-16 07:42 UTC, migrations 0086 support_thread (support_replies), 0087 web_names, 0088 support_mine_answer (a policy and a door on support_replies); a rebuild; #1454 aliases, #1452 support flow, #1453 web names, #1457 DM-screen recap buttons, #1458, #1462, #1464, #1465; web-api now receives the support settings and ANTHROPIC_API_KEY; MAIL_SUPPORT_FROM, MAIL_ALERTS_FROM, MAIL_INBOUND_SECRET and SUPPORT_AI_MODEL are empty (nothing mails); old containers stopped first); before that e8555e2c (2026-10-16 06:28 UTC, migration 0085 recap_audio_again (recap_jobs.audio_asked_at and the function dmbot_recap_audio_again for the website's "new audio" door, #1430); a rebuild;
-the new named volume discord-dmbot_recap-audio: core writes it at /data/recap-audio, web-api reads it read-only at /recap-audio (WEB_RECAP_AUDIO_DIR); ffmpeg 7.1.5; recaps and recap audio built and OFF;
-old containers stopped first); before that e49cdb00 (2026-10-16 04:52 UTC, migrations 0077 extractor_progress, 0079 recap_jobs, 0080 recap_audio_addon, 0081 recap_audio_follow_ups, 0082 recap_audio_jobs,
-0083 memory_said_as, 0084 recap_switches; ffmpeg 7.1.5 in the core image; the extractor-gates plan gate and ceiling (#1369), the pre-session note (#1406), the secret-name question (#1410),
-recaps and recap audio built and OFF (DMBOT_RECAPS unset, no ElevenLabs key), the owner's Resend .env settings applied by the restart; old containers stopped first); before that 4d7aea9b (2026-10-16 02:17 UTC, migrations 0076 claims_by_fact (recall service #1351) and 0078 support_own (a person's own support questions #1374); quick answers use
-the facts the DM confirmed (#1377) and no longer carry a DM's notes on a name into a reply that reaches the raw transcript (#1380, a privacy fix); the linker #1368 and the extractor
-path #1365 are in but the extractor is OFF; old containers stopped first; 0077 (#1369) not in it); before that 3a001d41 (2026-10-16 00:09 UTC, migration 0075 support_email (a function), the web API's /support routes and the admin Tickets list, the site's Support form (#1345);
-old containers stopped first); before that cbfd20d8 (2026-10-15 20:53 UTC, migration 0074 support_tickets (private support tickets, web-api POST /support and the admin list, #1344),
-the per-schema migration lock (#1331), set-key takes a Resend key (#1348), website and docs changes; old containers stopped first; SUPPORT_TEAM_EMAIL not set (optional);
-mail still on the old Gmail settings until the owner switches to Resend); before that bc54a3e0 (2026-10-15 17:53 UTC, story memory 5a: migration 0073 memory_claims (claims store), the DM's after-session questions #1299, the steward wired in #1306,
-confirm in one transaction #1307, continuity heads-ups #1333, the shared-rules "no longer updated" note #1318; the extractor stays OFF (DMBOT_STORY_EXTRACTOR default 0, #1282));
-before that cf4983b6 (2026-10-15 13:49 UTC, the accounts and shared-rules stack #1271: migrations 0063-0072; DMbot ID and personal links (#1228),
-sign-in by emailed link (#1237), account moves (#1244), payment email, email sender and records (#1239, #1288), trial extension (#1240), memory
-states (#1272), shared house rules and suggestions (#1255, #1261, #1262), better extractor prompt (#1292, still off live); SMTP_* and
-LINK_TOKEN_SECRET set by the owner in .env); before that ee256c7 (2026-10-15 02:00 UTC, the big deploy #1180: migrations 0051-0062; typed chat #1152 (Message Content Intent is on),
-FightBot and combat rounds, D&D Beyond invites and sheet questions, table questions in the dmb-chat channel, people as entries,
-relationship definitions, shared rule sets, the website's Stop recording me #1157, timer seconds #1194; consent wording v6, so
-everyone is asked again); before that fc09d9c (2026-10-13 07:07 UTC, migrations 0049 timer total #1123 and 0050 game-time channel #1116, Start listening #1130); before that 042ca8d (2026-10-13 06:11 UTC, migration 0048 plan end date #1106); before that 6c26108 (2026-10-11 20:52 UTC, migration 0047 owner_left #1099: account deletion keeps campaigns; DM "Who was speaking just now?" question #1100; before that 8391df7 19:30 UTC, speaker labels on DM lines #1093/#1095, payments adapter and extra hours #1086/#1097 in web-api, payments still off; before that e8fe8e3 18:11 UTC, migration 0046 transcript entity #1090; before that 383470a 17:01 UTC, migration 0045 campaign_guilds, retention follow-ups #1080, transcript table-talk tags #1079; before that 0f39e35 05:55 UTC, "confident / uncertain" #1072; before that 4f2a957 05:03 UTC, entry facts #1064; before that 5383938 04:44 UTC, migrations through 0044 memory kinds #1053; before that 4904c12 04:08 UTC; sidebar header facts #1045, fixes #1039; before that ccb8f47 03:31 UTC; wake phrase "Hey DMbot" #1048, consent age line #1044; before that 02:38 UTC, migrations through 0043: retention, house-rules file, TimeBot, test voice
-consent, AI tiers, the 16-or-older consent words), web-api from 383470a (2026-10-11 17:27 UTC, per-address limits #1084), ears 21c5ff1, web-api
-and the Cloudflare Tunnel (api.getdmbot.com, /admin only; the admin page is
-https://dev.getdmbot.com/admin). DMBOT_ENFORCE_PLANS is off (turned on only at the
-website's go-live, #498, after #910's fixes). DMBOT_FREE_USERS is empty again (set by mistake for a few hours on 2026-10-10, see the history).
-DMBOT_SIDEBAR is 1 (ON since 2026-10-10 05:47 UTC: Supervisor said "sidebar may go on" on #954 after 18 of 19; the owner set it, dev1 cannot edit .env; test recordings are OFF until DMBOT_TEST_RECORDING_GUILDS is set). If a live answer is wrong AND says "sure", post it on #954 and set it back to 0. DMBOT_ADMIN_PRIMARY_ID is set; DMBOT_ADMIN_SECONDARY_ID waits for the owner. The app stays
-private (no install link) until the website launches.
-
-NEW LIVE CHECKS (not done; also from e25d74ea, the owner in Discord: the dmb-dm-bot channel appears, with My buttons and Help; each role sees its own buttons; the DM screen no longer shows Settings; Homebrew kinds show with counts; also from 68a8949f, the owner in Discord: Approved sites in Homebrew (see and Take back); a homebrew entry's source line on the website; Standing on an NPC's name card (Set standing...); the new homebrew kinds species, subclass and background; secrets and story threads: only that their buttons appear on a name card; also from 3535138d, the owner in Discord: (1) the Settings button on the /dmbot start voice step and /dmbot settings; (2) Game masters in Settings: add and remove one; (3) Split the party on the game clock and rejoin; (4) Homebrew: Turn off / Turn on an entry, and Load a file and answer "Who made these?"; (5) Add from a link: PASSED 2026-10-17 (D&D Beyond answers our server; see the history); (6) Delete a campaign: only check the button shows for the plan holder, do not test it on a real campaign; also from a026cfd7: a DM's Check names button appears after a session that left a question unanswered; a DM's "Three days later, you..." moves the clock with Undo; the website Homebrew page shows "From a shared book" on such an entry, if one exists; also from 257f5b67: a non-DM /dmbot rule card; the website's Transcripts page of a campaign with a keep limit shows "Transcripts are kept for N days after each session, then deleted."; also from 1df5a4e5: a DM loads a from-book homebrew file and sees the question "Which rules is this book written for?" after "I have the right"; also from 47d4ccf4: /dmbot rule as a non-DM member gives a private card ending "Your DM decides what applies at your table."; Connect to... shows Secret: no for a DM; a DM's Download all names file has the player rows section in its header; Test J covers Keep, Delete, Homebrew packs; need a game session or a signed-in member): (1) a recorded player types /dmbot fix after a session and sees the picker (nothing need be sent); (2) the DM opens Settings -> Homebrew: the empty list with Add, Download file and Load file (DM only); (3) the website's Transcripts and House rules pages open read-only for a signed-in member (signed-out calls answer 401, checked).
+core + web-api at bb42bc80 (tenth deploy, part B, 2026-10-30 17:03 UTC).
+  Migrations 0290_web_recap_style and 0291_pause_setting (288 rows). Bot connected to 2 servers, 0 errors; web-api healthy.
+  Part A (168857075, migration 0289, 16:00 UTC) is also live. Full entries: docs/testing-history.log.
+Switches off: DMBOT_WEB_LORE, DMBOT_WEB_RECAP_STYLE, DMBOT_WEB_PAUSE, DMBOT_STORY_FAMILY_ONLY (unset = off).
 
 ------------------------------------------------------------------------------
-NEXT TEST: none queued (Test I, the new consent question, PASSED 2026-10-17, with a slow consent button: see the history). The owner's live checks are listed below. Test J (keeping and deleting transcripts, Homebrew packs) PASSED on 2026-10-16
+READY TO DEPLOY
 ------------------------------------------------------------------------------
-After the big deploy (ee256c7) the live checks run one small test at a time, in the order of #1270: 1 consent v6 (Test I),
-2 typed chat, 3 table questions, 4 FightBot and spell slots, 5 the timer form incl. "60 seconds" (Test F again, #1194 is
-fixed), 6 shared house rules, 7 the website's Stop recording me. Test G (sidebar by voice) PASSED on 2026-10-13. Test F first
-run worked except the two timer faults (#1112, fixed in #1123).
-
-SMALL TESTS AFTER THAT (one at a time; each one's "Check:" note is in the history log,
-entry "Status log as it stood before it was trimmed"):
-  1. ⚙️ Menu and Stop (#821, #843).   2. House rules (#869): /dmbot houserules.
-  3. Names: Add many, Download all in several files, Check new names (#870, #895, #872).
-  4. Put back an off-topic line (#847); the Transcript Cleaner notes (#877).
-  5. Hand over a campaign from Discord (needs a 2nd account) (#705 and follow-ups).
-  6. Plain words when something breaks (#637); /dmbot start with ears stopped (#659).
-  7. Backup and restore (#879); one PDF (#630); character sheets (#740, #781).
-  8. The hours meter records a session (#883, #909; plans off): numbers only.
-  9. 📖 Look up a rule (#921): as a DM, ⚙️ Settings > 📖 Look up a rule; look up Fireball,
-     Goblin (it says it is now called Goblin Warrior), Grappled and a made-up name (it
-     offers names); as a player `/dmbot rule name:Fireball` works.
- 10. #914 and #925 (audio health counts, with Test D): `audio user=...` lines show decrypt_failed=,
-     decode_errors=, link_dropped=; `Capture check:` names the cause when audio went missing.
- 11. Campaign cap (#927; plans off): create a campaign and start a session as usual; the
-     ownerless test campaign may ask a DM to "Take it on" (press it: it is yours).
- 12. Rules cards (#942): as a DM, ⚙️ Settings > Turn rules cards on; start listening and say
-     "I cast Fireball": a card with Heard: appears on the DM screen, nothing in the transcript.
- 13. #937 with plans off: 🤖 Find names, /dmbot backup and restore, a transcript download
-     still work as before.
- 14. House rules: typed to DMbot in the private chat (#971) and said at the table (#959), then
-     /dmbot houserules shows them (needs the quick-answers side: #944).
- 15. ⏸️ Pause / ▶️ Unpause a campaign on ⚙️ Settings (#962; owner only; plans off).
- 16. The DM sidebar (#944, #954): Test E done 2026-10-10; re-check range questions after #1039 is fixed.
- 17. Retention (#985, plans off): first 03:00 UTC run done 2026-10-11, PASS (one dry-run line, no ERROR).
- 18. House-rules file (#988): put two rules in a Google Doc (anyone with the link can view),
-     ⚙️ Settings > 📄 House-rules file > 🔗 Connect a file; the comparison shows 2 to add;
-     Review > Accept one and Skip the other.
- 19. TimeBot (#994, #1008): as a DM, ⚙️ Settings > Game clock; set a time; Start a timer (or Time it on
-     a spell card); +1 hour: the DM screen says "has likely ended" with Ended / Still going +10 min.
- 20. At a table: the new consent words (#670, #695), the off-topic filter (#678), run 8.
- 21. #148 (1 person, ~2 min): take Speak away from DMbot's role (Server Settings > Roles > DMbot), /dmbot start,
-     talk for a minute: DMbot still hears you and ears logs no voice errors.
- 22. #147 (1 person, ~5 min): /dmbot start, press Start listening twice, Stop listening, start again, then dev1
-     restarts core mid-session: it resumes, and the core log names every save and removal of the saved session.
- 23. Memory health (#1699): after the next live session ends, dev1 reads the core log for one line
-     `memory health: entities=N confirmed=N proposed=N duplicates=N orphans=N unused_terms=N
-     flags_this_session=N asked_dm=N` (counts only, no names) and notes the numbers in the history.
+Nothing. The next handover comes from Supervisor on #516.
 
 ------------------------------------------------------------------------------
-LATEST RESULTS
+OWNER CHECKS (not done yet)
 ------------------------------------------------------------------------------
-  Admin page (2026-10-09): Google and password sign-in, give/change/revoke free access
-  all work. Test C (2026-10-08): Yes, stop ends the session, PASS. Test B PASS. Test A
-  passed on a phone and a computer (the #631 decrypt error recurs at times; #641
-  re-listens and loses about a second).
+Part A: Story Graph (one click picks a name, double click focuses it); the three-way upload choice
+  (Everyone in the story / Spoilers / smart guess); "Who knows this?" on a name and a connection; start-up sweep at 0 waiting.
+Part B: "Is X another name of Y?" on a lore text; secrecy follows the upload choice; new connection kinds in the connect menu;
+  the website shows no Recap style or Pause controls; the party after a short live session with two consenting players.
 
-Open issues from testing
-  #631 (closed, recurs, see #764)   #43 DAVE loss after a pause   #45 uncounted losses
-  #112 menus run off phone screens  #120 capture check drops audio counts
-  #121 start of speech may be cut   #264 a link pasted into Add many becomes a name
-  Owner's: #833 the getdmbot.com noindex question; #906 no "Generated by" footers.
-
-TEST K (the DM Bot channel, 2026-10-18): done by the owner. Passed: the DM screen is clear, Settings and the Homebrew counts work, the Help answer is private (when it answers).
-Open problems (CloudDev): #1963 the panel is not pinned; #1964 Help "didn't respond in time"; #1965 the undo button cuts off long item names (about 25% wider needed); #1966 the Menu and Settings icons are swapped (Settings is the gear, Menu 🗂️).
-Note: after adding the bot only the dmb-dm-bot- channel shows; the others appear after /dmbot start then Start listening.
-NEXT TEST: none until the four fixes are on the server (docs/next-test-step.md).
-NEXT TEST: Test L (docs/next-test-step.md): a real session of at least 35 minutes, with one secret name said aloud; the recap waits for approval; Both makes the voice-over and music. Recaps are on (DMBOT_RECAPS=1) and recap audio follows them, guarded by the approval gate (#2090).
+------------------------------------------------------------------------------
+BLOCKERS
+------------------------------------------------------------------------------
+- Party backfill (#3036): dry run of link_party on the test server, counts only, not yet run.
+- Supervisor's checks on the Story Graph and lore work need the owner at the table.
