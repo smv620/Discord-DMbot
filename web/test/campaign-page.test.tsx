@@ -73,7 +73,7 @@ describe("the page", () => {
       ]),
     );
     // Words equal Discord's and the PLAN's (#2461 item 4).
-    for (const label of ["Recaps", "Story timeline", "Story graph", "Names and NPCs", "Transcripts", "Import a past session", "House rules", "Homebrew", "Shared rules"])
+    for (const label of ["Recaps", "Story timeline", "Story Graph", "Names and NPCs", "Transcripts", "Import a past session", "House rules", "Homebrew", "Shared rules"])
       expect(screen.getByRole("link", { name: label }), label).toBeTruthy();
     expect(screen.getByRole("link", { name: w.pages.timeline }).getAttribute("href")).toBe("/account/timeline/100.cmp1");
   });
@@ -100,7 +100,7 @@ describe("the page", () => {
       expect(within(section).getByText(w.doThisInDiscord(w.paths[key])), key).toBeTruthy();
     for (const key of ["gameMasters", "handOver", "pause"] as const) expect(within(section).getByText(w.settingsLabels[key]), key).toBeTruthy();
     expect(within(section).queryByText(w.doThisInDiscord(w.paths.delete))).toBeNull();
-    expect(w.paths.retention).toBe("⚙️ Settings → 🗂️ Campaign management → 🗄️ Transcript retention");
+    expect(w.paths.retention).toBe("⚙️ Manage DMbot → 🗂️ Campaign management → 🗄️ Transcript retention");
   });
 
   it("shows a co-DM the controls but not the owner's Discord steps", async () => {
@@ -192,6 +192,8 @@ describe("the page", () => {
     };
     render(<CampaignPageView api={api} path={DM} />);
     expect(await screen.findByText(w.signedOut)).toBeTruthy();
+    // The link from Discord's Manage campaign button lands signed out: one press signs in and comes back here.
+    expect(screen.getByRole("link", { name: w.signIn }).getAttribute("href")).toBe(api.signInUrl());
   });
 
   it("treats an API without the route as a campaign that isn't there", async () => {
@@ -274,7 +276,7 @@ describe("the breadcrumb and the four tabs on every campaign page (#2461)", () =
     ["the transcripts", () => <Transcripts api={mockApi("table")} path={`/account/transcripts/${REFC}`} />, w.pages.transcripts, w.groups.table],
     ["a transcript", () => <Transcripts api={mockApi("table")} path={`/account/transcripts/${REFC}/1`} />, w.pages.transcripts, w.groups.table],
     ["the timeline", () => <Timeline api={mockApi("table")} path="/account/timeline/100.cmp1" />, w.pages.timeline, w.groups.story],
-    ["the story graph", () => <Web api={mockApi("table")} path="/account/web/100.cmp1" />, w.pages.graph, w.groups.story],
+    ["the Story Graph", () => <Web api={mockApi("table")} path="/account/web/100.cmp1" />, w.pages.graph, w.groups.story],
     ["the import page", () => <Import api={mockApi("table")} path="/account/import/100.cmp1" />, w.pages.import, w.groups.table],
     ["the names", () => <Names api={mockApi("table")} path="/account/names/100.cmp1" />, w.pages.names, w.groups.story],
     ["an NPC's page", () => <Npc api={mockApi("table")} path="/account/npc/100.cmp1/e1" />, w.pages.names, w.groups.story, true],

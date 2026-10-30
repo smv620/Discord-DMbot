@@ -1,4 +1,4 @@
-"""⚙️ Settings on the DM screen (#515), with a stand-in Discord interaction."""
+"""⚙️ Manage DMbot on the DM screen (#515), with a stand-in Discord interaction."""
 
 import unittest
 from typing import Any
@@ -84,13 +84,13 @@ class SettingsCardTest(unittest.TestCase):
         items: list[Any] = list(view.children)
         self.assertEqual(
             [i.row for i in items],
-            [0, 0, 1, 1, 3, 3, 3, 3, 3, 4, 4, 0, 4, 4, 4, 1, 0],
-        )  # the two menus (Who can see, Campaign management) sit by the levels (#2281) ...
-        # ... then Look up, Rules cards, Clock, House file, Invite, chat, Recaps, Stop when quiet,
-        # Shared rules, Homebrew, Names, What's switched on and Shared story
+            [0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3],
+        )  # rows 0 and 1: what needs Discord (levels, Who can see, Rules cards, Clock, chat, Stop
+        # when quiet, What's switched on); rows 2 and up wait for the website (#2986)
         labels = [i.item.label for i in items]
         self.assertEqual(labels[:2], ["✓ Quiet", "Normal"])  # no Chatty
-        self.assertEqual(labels[2:4], ["Who can see the DM screen", "Campaign management"])
+        self.assertEqual(labels[2], "Who can see the DM screen")
+        self.assertEqual(labels[8], "Campaign management")  # the first that waits for the website
         self.assertEqual(
             [i.item.disabled for i in items],
             [True] + [False] * (len(items) - 1),
@@ -105,11 +105,12 @@ class SettingsCardTest(unittest.TestCase):
             SettingsButton.__discord_ui_compiled_template__.fullmatch(str(button.item.custom_id))
         )
 
-    def test_the_rules_line_is_only_for_the_campaigns_dms(self) -> None:
-        c = campaign()
-        for viewer, expected in ((DM, True), (PLAYER, False), (None, False)):
-            self.assertEqual("Look up a rule" in settings_text(c, None, viewer), expected, viewer)
-        self.assertIn("free rules (SRD)", settings_text(c, None, DM))
+    def test_the_card_says_what_it_is_and_where_the_rest_is(self) -> None:
+        text = settings_text(campaign(), None, DM)
+        self.assertIn("What DMbot does in this Discord server.", text)
+        self.assertIn("🌐 Manage campaign", text)
+        self.assertIn("**Not on the website yet:**", text)
+        self.assertNotIn("Look up a rule", text)  # it is on the Help card now
 
     def test_the_help_card_no_longer_has_settings(self) -> None:
         ids = [str(i.item.custom_id) for i in card_view(campaign()).children]  # type: ignore[attr-defined]
@@ -220,7 +221,7 @@ class SettingsButtonsTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Who can see the DM screen", kwargs["content"])  # the visibility card
         labels = [i.item.label for i in kwargs["view"].children]
         self.assertIn("✓ Only the DM", labels)  # the card shows what's saved now
-        self.assertIn("Back to Settings", labels)
+        self.assertIn("Back", labels)
 
     async def test_a_refused_visibility_tap_leaves_the_card(self) -> None:
         it = press(PLAYER)
@@ -236,7 +237,7 @@ class SettingsWordsTest(unittest.IsolatedAsyncioTestCase):
     def test_the_card_says_what_cant_be_changed_and_what_follows(self) -> None:
         text = settings_text(campaign())
         self.assertNotIn("Kept until the campaign is deleted", text)  # moved to its own card
-        self.assertIn("If DMbot is listening now, it follows the change from now on.", text)
+        self.assertNotIn("Tap a button to change it", text)  # one short card (#2986)
         self.assertNotIn("next line", text)
         self.assertEqual(LOAD_FAILED, "Sorry, something went wrong. Please try again.")
 
@@ -309,3 +310,32 @@ class HelpCardVisibilityTest(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CardTrimTest(unittest.TestCase):
+    """What left Manage DMbot because the website has it (#2986): Import sessions, Names, and Recaps
+    except the recap style, which only Discord has."""
+
+    def test_import_names_and_recaps_are_off_the_card_and_the_style_button_is_on_it(self) -> None:
+        from dmbot.dm_screen.recap_style import RecapStyleButton
+
+        view = settings_view(campaign(), None, DM)
+        items: list[Any] = [getattr(i, "item", i) for i in view.children]
+        labels = [str(i.label) for i in items]
+        for gone in ("Names", "Recaps", "Import sessions"):
+            self.assertNotIn(gone, labels)
+        self.assertIn("Recap style", labels)
+        self.assertTrue(any(isinstance(i, RecapStyleButton) for i in view.children))
+        text = settings_text(campaign(), None, DM)
+        for gone in ("📇 Names", "📜 Recaps", "📥 Import sessions"):
+            self.assertNotIn(gone, text)
+
+    def test_the_style_button_survives_a_restart(self) -> None:
+        from dmbot.dm_screen.recap_style import RecapStyleButton
+
+        button = RecapStyleButton(CAMPAIGN)
+        match = RecapStyleButton.__discord_ui_compiled_template__.fullmatch(
+            str(button.item.custom_id)
+        )
+        self.assertIsNotNone(match)
+        self.assertLessEqual(len(str(button.item.label)), 25)

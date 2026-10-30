@@ -353,7 +353,7 @@ NO_OWNER_YET = (
 )
 OFFER_TO_SELF = "This campaign is already yours. Pick someone else."
 OFFER_WAITING = (
-    "You already offered this campaign to someone. Take that offer back first (⚙️ Settings "
+    "You already offered this campaign to someone. Take that offer back first (⚙️ Manage DMbot "
     "→ 🗂️ Campaign management, "
     f"then **Take back offer**), or wait: it ends by itself after {HANDOVER_DAYS} days."
 )
@@ -364,7 +364,7 @@ NO_ROOM_TO_RESTORE = (
 NOT_THE_OWNER_PAUSE = "Only the campaign's owner can pause or unpause it."
 NO_ROOM_TO_UNPAUSE = (
     "Your plan has no room to unpause this campaign. Pause one of your other campaigns first "
-    "(open it, then ⚙️ Settings → 🗂️ Campaign management → ⏸️ **Pause this campaign**)."
+    "(open it, then ⚙️ Manage DMbot → 🗂️ Campaign management → ⏸️ **Pause this campaign**)."
 )
 MAX_DMS = 5  # a campaign's game masters at most (#1600)
 TOO_MANY_DMS = (

@@ -1,8 +1,8 @@
-"""🌐 Approved sites, in ⚙️ Settings → 📚 Homebrew (#1652; CLAUDE.md, "Least privilege": every access
-must be visible and revocable). A campaign says once per site that it has the right to use homebrew
-from there (#1633). Here a DM sees each site with who said so and when, and can take it back: the
-entries from that site stay saved but DMbot stops using them until a DM says yes again. Nothing is
-deleted. DM only, asked again on every press.
+"""🌐 Approved sites, in ⚙️ Manage DMbot → 📚 Homebrew (#1652; CLAUDE.md, "Least privilege": every
+access must be visible and revocable). A campaign says once per site that it has the right to
+use homebrew from there (#1633). Here a DM sees each site with who said so and when, and can
+take it back: the entries from that site stay saved but DMbot stops using them until a DM says
+yes again. Nothing is deleted. DM only, asked again on every press.
 """
 
 from __future__ import annotations

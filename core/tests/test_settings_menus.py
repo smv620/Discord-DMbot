@@ -39,9 +39,9 @@ def labels(view: discord.ui.View) -> list[str]:
 class Menus(unittest.TestCase):
     def test_the_card_holds_both_menu_buttons_for_a_dm_who_has_something_in_them(self) -> None:
         c = campaign()
-        self.assertEqual(labels(settings_view(c, None, DM))[2:4], [
-            "Who can see the DM screen", "Campaign management",
-        ])  # fmt: skip
+        shown = labels(settings_view(c, None, DM))
+        self.assertEqual(shown[2], "Who can see the DM screen")  # the one sub-page, by the levels
+        self.assertIn("Campaign management", shown)  # (until the website has it)
 
     def test_a_player_has_neither_menu_and_no_management_button(self) -> None:
         shown = labels(settings_view(campaign(), None, PLAYER))
@@ -53,9 +53,9 @@ class Menus(unittest.TestCase):
         dm = labels(management_view(c, None, DM))
         for wanted in ("Transcript retention", "Delete this campaign"):
             self.assertTrue(any(wanted in x for x in dm), (wanted, dm))
-        self.assertEqual(dm[-1], "Back to Settings")
+        self.assertEqual(dm[-1], "Back")
         nobody = management_view(c, None, PLAYER)
-        self.assertEqual(labels(nobody), ["Back to Settings"])
+        self.assertEqual(labels(nobody), ["Back"])
 
     def test_every_card_fits_discord(self) -> None:
         c = campaign()
@@ -94,7 +94,7 @@ class Menus(unittest.TestCase):
             "Delete this campaign",
         ):
             self.assertTrue(any(wanted in x for x in mine), (wanted, mine))
-        self.assertEqual(mine[-1], "Back to Settings")
+        self.assertEqual(mine[-1], "Back")
         theirs = labels(management_view(c, None, co_dm))
         for wanted in ("Transcript retention", "Game masters", "Delete this campaign"):
             self.assertTrue(any(wanted in x for x in theirs), (wanted, theirs))
@@ -105,7 +105,7 @@ class Menus(unittest.TestCase):
         main = labels(settings_view(c, None, manager))
         self.assertNotIn("Campaign management", main)
         self.assertIn("Who can see the DM screen", main)
-        self.assertEqual(labels(management_view(c, None, manager)), ["Back to Settings"])
+        self.assertEqual(labels(management_view(c, None, manager)), ["Back"])
 
     def test_a_waiting_offer_can_be_taken_back_only_by_who_made_it(self) -> None:
         owner, co_dm = 7, 8
@@ -141,12 +141,13 @@ class Menus(unittest.TestCase):
         text = management_text(campaign(), None, DM)
         self.assertIn("Campaign management", text)
         self.assertIn("transcripts", text.lower())
-        self.assertIn("Back to Settings", text)
+        self.assertIn("Back", text)
         self.assertIn("**Owner:**", text)
 
-    def test_the_main_card_says_where_the_rest_went_only_to_who_has_something_there(self) -> None:
-        self.assertIn("Campaign management", settings_text(campaign(), None, DM))
-        self.assertNotIn("Campaign management", settings_text(campaign(), None, PLAYER))
+    def test_the_main_card_lists_what_is_not_on_the_website_yet(self) -> None:
+        text = settings_text(campaign(), None, DM)
+        self.assertIn("**Not on the website yet:**", text)
+        self.assertIn("Campaign management", text.split("Not on the website yet")[1])
 
 
 class Presses(unittest.IsolatedAsyncioTestCase):
@@ -162,13 +163,13 @@ class Presses(unittest.IsolatedAsyncioTestCase):
                 await button.callback(it)
             kwargs = it.response.edit_message.await_args.kwargs
             self.assertIn(expect, kwargs["content"])
-            self.assertIn("Back to Settings", labels(kwargs["view"]))
+            self.assertIn("Back", labels(kwargs["view"]))
 
             it = press(DM)
             it.response.edit_message = AsyncMock()
             with patch.object(settings_module, "_may", AsyncMock(return_value=allowed)):
                 await BackToSettingsButton(CAMPAIGN).callback(it)
-            self.assertIn("Settings for", it.response.edit_message.await_args.kwargs["content"])
+            self.assertIn("Manage DMbot for", it.response.edit_message.await_args.kwargs["content"])
 
     async def test_a_server_manager_who_is_no_dm_opens_management_with_only_the_way_back(
         self,
@@ -176,9 +177,7 @@ class Presses(unittest.IsolatedAsyncioTestCase):
         it = press(PLAYER, found=campaign(), manager=True)  # (the real `_may`, not a stand-in)
         it.response.edit_message = AsyncMock()
         await ManagementMenuButton(CAMPAIGN).callback(it)
-        self.assertEqual(
-            labels(it.response.edit_message.await_args.kwargs["view"]), ["Back to Settings"]
-        )
+        self.assertEqual(labels(it.response.edit_message.await_args.kwargs["view"]), ["Back"])
 
     async def test_an_edit_that_fails_answers_the_press_privately(self) -> None:
         it = press(DM)

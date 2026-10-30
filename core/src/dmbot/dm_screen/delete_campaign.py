@@ -1,4 +1,4 @@
-"""🗑 Delete this campaign, in ⚙️ Settings → 🗂️ Campaign management (#1608; owner decision
+"""🗑 Delete this campaign, in ⚙️ Manage DMbot → 🗂️ Campaign management (#1608; owner decision
 2026-10-16, docs/PLAN.md, "Data,
 ownership and deletion"). Only the game master whose plan the campaign uses (its owner) may
 delete it (a campaign with no owner: any of its game masters, #2556); every other game master

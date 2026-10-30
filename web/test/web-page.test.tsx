@@ -1,6 +1,6 @@
 /** @jsxImportSource preact */
 // @vitest-environment happy-dom
-// The relationship web page (#2324): re-centring, steps out, the big-web question, the connection panel
+// The Story Graph page (#2324): re-centring, steps out, the big-web question, the connection panel
 // and its edits, and what a server manager who isn't a DM never sees.
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
 import { afterEach, describe, expect, it } from "vitest";
@@ -53,11 +53,12 @@ describe("reading the web", () => {
     await open();
     // The drawing is hidden from screen readers; the lists carry the same names.
     expect(document.querySelector("svg[aria-label^='A map of']")).toBeTruthy();
-    expect(screen.getByRole("heading", { name: "The same web, as a list" })).toBeTruthy();
+    expect(screen.getByText("The same web, as a list")).toBeTruthy();
   });
 
   it("puts another name in the middle", async () => {
     const api = await open();
+    fireEvent.click(screen.getByRole("button", { name: "Expand all" }));
     const button = screen.getAllByRole("button", { name: /^Put .* in the middle$/ })[0] as HTMLElement;
     fireEvent.click(button);
     await waitFor(() => expect(api.calls.filter((c) => c.startsWith("webGraph")).length).toBeGreaterThan(1));
@@ -231,6 +232,7 @@ describe("saying no to a very big first draw", () => {
 describe("changing a name", () => {
   it("lets a DM change spelling and kind, and shows the change", async () => {
     const api = await open();
+    fireEvent.click(screen.getByRole("button", { name: "Expand all" }));
     fireEvent.click(screen.getAllByRole("button", { name: /^Change / })[0] as HTMLElement);
     const group = screen.getByRole("group", { name: /^About / });
     fireEvent.input(within(group).getByLabelText("Spelling"), { target: { value: "Zed the Bold" } });
@@ -285,7 +287,7 @@ describe("how many more connections a line has", () => {
     render(<Web api={stub(true)} path={at()} />);
     await screen.findByText("3 names, 2 lines");
     for (const w of ["Mira serves Garrick", "Mira owes Garrick", "Mira fears Garrick", "Mira hunts Garrick"]) {
-      expect(within(document.getElementById("web-list")!.parentElement!).getByText(new RegExp(w))).toBeTruthy();
+      expect(within(document.getElementById("web-list")!).getByText(new RegExp(w))).toBeTruthy();
     }
     expect(document.body.textContent).not.toContain("↔");
     // At rest a line with several connections says how many; hovering a name shows that name's lines in words.
@@ -298,7 +300,7 @@ describe("how many more connections a line has", () => {
   it("recounts for someone who is not a DM, and drops a secret name", async () => {
     render(<Web api={stub(false)} path={at()} />);
     await screen.findByText("2 names, 1 line");
-    expect(within(document.getElementById("web-list")!.parentElement!).getByText(/Mira owes Garrick/)).toBeTruthy();
+    expect(within(document.getElementById("web-list")!).getByText(/Mira owes Garrick/)).toBeTruthy();
     expect(document.body.textContent).not.toMatch(/Hidden Heir/);
     expect(document.body.textContent).not.toMatch(/fears|hunts/);
   });
@@ -307,6 +309,9 @@ describe("how many more connections a line has", () => {
 describe("the Open its page link", () => {
   it("a name marked page true has the Open its page link, pointing at the NPC page address", async () => {
     await open();
+    fireEvent.click(screen.getByRole("button", { name: "Expand all" }));
+    fireEvent.click(screen.getByRole("button", { name: "Expand all" }));
+    fireEvent.click(screen.getByRole("button", { name: "Expand all" }));
     const links = screen.getAllByRole("link", { name: (label: string) => label.startsWith(w.openItsPage) });
     expect(links.length).toBeGreaterThan(0);
     expect(links[0]!.getAttribute("href")).toMatch(/^\/account\/npc\/100\.cmp1\/[^/]+$/);
@@ -337,6 +342,7 @@ describe("the Open its page link", () => {
 
   it("the link's words appear once per link and nowhere else on the page", async () => {
     await open();
+    fireEvent.click(screen.getByRole("button", { name: "Expand all" }));
     const shown = (document.body.textContent ?? "").split(w.openItsPage).length - 1;
     expect(shown).toBe(screen.getAllByRole("link", { name: (label: string) => label.startsWith(w.openItsPage) }).length);
   });
@@ -409,3 +415,47 @@ describe("the kind of each connection in the line panel (#2934)", () => {
   });
 });
 
+
+describe("the list at the bottom (#2984)", () => {
+  const toggles = () => [...document.querySelectorAll<HTMLButtonElement>(".web-name-toggle")];
+
+  it("sits after the map, closed, and the map comes right after the search", async () => {
+    await open();
+    const list = document.getElementById("web-list") as HTMLDetailsElement;
+    expect(list.tagName).toBe("DETAILS");
+    expect(list.open).toBe(false);
+    const map = document.querySelector(".web-map")!;
+    expect(map.compareDocumentPosition(list) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // The two hint lines make way: they come after the map, not before it.
+    const lead = screen.getByText(w.lead);
+    expect(map.compareDocumentPosition(lead) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("shows only the names until one is opened, then its buttons", async () => {
+    await open();
+    expect(toggles().length).toBeGreaterThan(1);
+    expect(screen.queryAllByRole("button", { name: /^Put .* in the middle$/ })).toHaveLength(0);
+    expect(screen.queryAllByRole("button", { name: /^Change / })).toHaveLength(0);
+    const first = toggles().find((t) => !t.textContent?.includes(w.inMiddle))!;
+    expect(first.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(first);
+    expect(first.getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getAllByRole("button", { name: /^Put .* in the middle$/ })).toHaveLength(1);
+    fireEvent.click(first);
+    expect(screen.queryAllByRole("button", { name: /^Put .* in the middle$/ })).toHaveLength(0);
+  });
+
+  it("opens every name with Expand all and closes them with Collapse all", async () => {
+    await open();
+    fireEvent.click(screen.getByRole("button", { name: w.expandAll }));
+    expect(toggles().every((t) => t.getAttribute("aria-expanded") === "true")).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: w.collapseAll }));
+    expect(toggles().every((t) => t.getAttribute("aria-expanded") === "false")).toBe(true);
+  });
+
+  it("opens the list when the skip link is used", async () => {
+    await open();
+    fireEvent.click(screen.getByRole("link", { name: w.skipMap }));
+    expect((document.getElementById("web-list") as HTMLDetailsElement).open).toBe(true);
+  });
+});

@@ -1,4 +1,4 @@
-"""🧭 Shared story on ⚙️ Settings (#1692; docs/STORY_MEMORY.md, section 6): the DM picks Off,
+"""🧭 Shared story on ⚙️ Manage DMbot (#1692; docs/STORY_MEMORY.md, section 6): the DM picks Off,
 Watch the story or Guide me.
 
 This is only the switch and the DM's confirmation. Nothing reads the mode yet: reading the
@@ -48,7 +48,7 @@ MEANING = {
     ),
 }
 ONLY_DMS = "Only this campaign's DMs can change that. Ask one of them."
-GONE = "That campaign isn't here any more. Open ⚙️ Settings again."
+GONE = "That campaign isn't here any more. Open ⚙️ Manage DMbot again."
 COULDNT = "That didn't work, and nothing changed. Please try again in a moment."
 INTRO = "🧭 **Shared story**"
 COMING = (
@@ -167,7 +167,7 @@ class StoryButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
     template=rf"dmbot:story:{_ID}",
 ):
-    """🧭 Shared story, on ⚙️ Settings: opens the private panel above. DMs only."""
+    """🧭 Shared story, on ⚙️ Manage DMbot: opens the private panel above. DMs only."""
 
     def __init__(self, campaign_id: str, *, row: int | None = None) -> None:
         super().__init__(

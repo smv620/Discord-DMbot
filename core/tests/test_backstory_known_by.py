@@ -9,7 +9,7 @@ from dmbot.memory.models import CONFIRMED
 from tests.test_memory_names import GUILD, NamesTest
 
 
-class KnownBy(NamesTest):
+class _Table(NamesTest):
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
         self.store = BackstoryLinks(self.db)
@@ -38,6 +38,8 @@ class KnownBy(NamesTest):
     async def knowers(self, ids: list[str]) -> dict[str, list[str]]:
         return await self.memory.connection_knowers(GUILD, self.campaign.id, ids)
 
+
+class KnownBy(_Table):
     async def test_the_waiting_row_keeps_the_character_and_keep_all_passes_it_on(self) -> None:
         ids = await self.ids()
         await self.store.add(
@@ -123,3 +125,52 @@ class KnownBy(NamesTest):
         self.assertEqual(again.value[0].id, rid)
         got = await self.knowers([rid])
         self.assertEqual(sorted(got[rid]), sorted([mara.value.id, ids["Tavin"]]))
+
+
+class SecretNames(_Table):
+    """The secret names an upload gives start as known by its character too (C2c)."""
+
+    async def stored(self, known_by: str) -> tuple[str, list[str]]:
+        from dmbot.memory import background as bg
+        from dmbot.ui import name_background as ui_bg
+
+        found = [bg.Found("Vell Ashgrove", "npc", (), ("Nightshade",), "q")]
+        made = await ui_bg.store(self.memory, self.campaign, found, known_by=known_by)
+        (entity_id,) = made["npc"]
+        aliases = await self.memory.aliases(
+            GUILD, self.campaign.id, entity_id=entity_id, include_secret=True
+        )
+        return entity_id, [a.id for a in aliases if a.secret]
+
+    async def test_a_secret_name_from_a_pc_backstory_is_known_by_that_pc(self) -> None:
+        ids = await self.ids()
+        _, secret = await self.stored(ids["Tavin"])
+        got = await self.memory.alias_knowers(GUILD, self.campaign.id, secret)
+        self.assertEqual(got, {secret[0]: [ids["Tavin"]]})
+
+    async def test_with_no_character_the_secret_name_is_the_dms_alone(self) -> None:
+        await self.ids()
+        _, secret = await self.stored("")
+        self.assertEqual(await self.memory.alias_knowers(GUILD, self.campaign.id, secret), {})
+
+    async def test_only_the_secret_spellings_and_all_of_them_get_the_character(self) -> None:
+        from dmbot.memory import background as bg
+        from dmbot.ui import name_background as ui_bg
+
+        ids = await self.ids()
+        found = [bg.Found("Vell Ashgrove", "npc", ("Lady Vell",), ("Nightshade", "The Hood"), "q")]
+        made = await ui_bg.store(self.memory, self.campaign, found, known_by=ids["Tavin"])
+        (entity_id,) = made["npc"]
+        aliases = await self.memory.aliases(
+            GUILD, self.campaign.id, entity_id=entity_id, include_secret=True
+        )
+        secret = [a.id for a in aliases if a.secret]
+        plain = [a.id for a in aliases if not a.secret]
+        self.assertEqual(len(secret), 2)
+        got = await self.memory.alias_knowers(GUILD, self.campaign.id, secret + plain)
+        self.assertEqual(sorted(got), sorted(secret))
+
+    async def test_a_character_that_is_not_one_leaves_the_name_with_the_dm_alone(self) -> None:
+        ids = await self.ids()
+        _, secret = await self.stored(ids["Voss"])  # (an NPC, not a player character)
+        self.assertEqual(await self.memory.alias_knowers(GUILD, self.campaign.id, secret), {})

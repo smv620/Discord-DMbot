@@ -172,7 +172,7 @@ export interface RuleSharingAnswer {
   note: string;
 }
 
-/** What ⚙️ Settings holds for a campaign today. */
+/** What ⚙️ Manage DMbot holds for a campaign today. */
 export interface CampaignSettings {
   visibility: "private" | "peek" | "open";
   level: "quiet" | "normal" | "chatty";
@@ -586,7 +586,7 @@ export interface ReportDifference {
   truth: string;
   evidence: ReportEvidence[];
   answer: ReportAnswer | null;
-  /** The connection "Fix the DM's view" opens in the Story graph; null when there is none. */
+  /** The connection "Fix the DM's view" opens in the Story Graph; null when there is none. */
   open: { a: string; b: string } | null;
   remindedFrom?: number | null;
 }
@@ -1304,7 +1304,7 @@ export type RecapAudioLinks = Partial<
 
 export type RecapAction = "post" | "again" | "drop";
 
-/** One name on the relationship web (#2324). `secret` is sent to the campaign's DMs only. */
+/** One name on the Story Graph (#2324). `secret` is sent to the campaign's DMs only. */
 export interface WebNode {
   id: string;
   name: string;
@@ -1316,6 +1316,9 @@ export interface WebNode {
   revealed?: boolean;
   /** True when this name has an NPC page (#2887; core #2893). Absent from an older API. */
   page?: boolean;
+  /** The quests this name is joined to directly, the most-connected first, even a quest outside the steps drawn
+   * (#2992). Only for a DM in Full View: nobody else is told of a quest or a tie to one. */
+  quests?: { id: string; name: string; links: number }[];
 }
 
 /** How sure the party is of a connection it only suspects (#2405, docs/STORY_MEMORY.md). */
@@ -1513,7 +1516,8 @@ export interface NamesQuery {
 /** What a DM can do to one name: the same actions as the name card in Discord (#2295). */
 export type NameChange =
   | { action: "spell"; name: string }
-  | { action: "kind"; kind: string }
+  // `player`: for a player character, the Discord ID of who plays it (#2985); the bot checks the person is in the server.
+  | { action: "kind"; kind: string; player?: string; confirmed?: true }
   | { action: "add-other"; other: string }
   | { action: "remove-other"; other: string }
   // "Players don't know this one yet" on the whole entry; `secret` is one other name (#2294).
@@ -1531,13 +1535,16 @@ export type NameThemStep =
   // "Yes, the same person": joined into the name DMbot already knows, which is kept.
   | { action: "name-join"; into: string }
   // Takes back a name just given or a join; `answer` is the id the step came back with.
-  | { action: "name-undo"; answer: string };
+  | { action: "name-undo"; answer: string }
+  // Who a Discord ID is (#3004): the bot asks Discord and writes nothing; the answer is shown for the DM to confirm.
+  | { action: "kind"; kind: "player_lookup"; player: string };
 
 /** How a step ended: done (`undo` is the id to take it back with, null when it can't be), or a question
  * because DMbot already knows someone with that name. */
 export type NameThemResult =
   | { state: "done"; row: NameRow | null; undo: string | null; answer: string }
-  | { state: "question"; other: { id: string; name: string } };
+  | { state: "question"; other: { id: string; name: string } }
+  | { state: "player"; name: string; inServer: boolean };
 
 /** What the bot says about a queued name change (#2294). */
 interface NameAnswer {
@@ -1550,6 +1557,8 @@ interface NameAnswer {
   other?: { id: string; name: string } | null;
   /** True while the step can still be undone (#2803). */
   undo?: boolean;
+  /** Who a looked-up Discord ID is: the name Discord shows, and whether they are in this server yet (#3004). */
+  player?: { name: string; inServer: boolean } | null;
 }
 const NAME_POLL_MS = 1000;
 const NAME_POLLS = 60;
@@ -1846,6 +1855,10 @@ export type ApiErrorKind =
   | "bad-email" // an address that is not an email address (#2349)
   | "bad-name" // a name that is empty or has a letter DMbot can't keep (#2295)
   | "bad-kind" // a kind the campaign doesn't have (#2295)
+  | "bad-player" // a Discord ID that is not an ID (#2985)
+  | "bot-player" // that ID is a bot, which cannot play a character (#2985)
+  | "unknown-id" // Discord does not know that ID (#3004)
+  | "lookup-failed" // Discord could not be asked: nothing was linked (#3004)
   | "name-exists" // another name already goes by that (#2295)
   | "needs-confirm" // a removal sent without its confirmation (#2295)
   | "bad-page" // a page of the Names list that isn't there any more (#2295)
@@ -2131,13 +2144,16 @@ export interface AccountApi {
   /** Give a name to someone the story never named, join them into a name DMbot knows, or undo either (#2803).
    * `onLook` hears each time the bot's answer is read, for the wait panel. Missing from an API older than that. */
   nameThem?(ref: string, id: string, step: NameThemStep, onLook?: () => void): Promise<NameThemResult>;
-  /** The relationship web around a name (#2324, API #2323). Missing from an older API. */
+  /** The Story Graph around a name (#2324, API #2323). Missing from an older API. */
   webGraph?(ref: string, query: WebQuery): Promise<WebGraph>;
   /** How many names that web would draw, asked before drawing so a big one can be warned about. */
   webSize?(ref: string, query: WebQuery): Promise<{ names: number }>;
-  /** The Story graph's overview: counts, names with no connection yet, groups (#2632). Missing from an API
+  /** The Story Graph's overview: counts, names with no connection yet, groups (#2632). Missing from an API
    * older than that: then the page is the graph alone. */
   webOverview?(ref: string, query: { view?: WebView }): Promise<WebOverview>;
+  /** The names to offer under "Find a name" in this view: only what the caller may see there, so a DM in
+   * Players View is never offered a name the players don't know (#2989). Missing from an older API. */
+  webFind?(ref: string, query: { q: string; view?: WebView }): Promise<{ id: string; name: string; kind: string }[]>;
   /** What waits for the DM, and one answer to it (#2635, #2652). `answerWaiting` resolves with how many
    * connections a Keep all kept, when the API says. Missing from an API older than that. */
   webWaiting?(ref: string): Promise<Waiting>;
@@ -2474,6 +2490,10 @@ const errorKinds: Record<string, ApiErrorKind> = {
   not_in_server: "not-in-server",
   bad_name: "bad-name",
   bad_kind: "bad-kind",
+  bad_player: "bad-player",
+  unknown_id: "unknown-id",
+  lookup_failed: "lookup-failed",
+  bot_player: "bot-player",
   exists: "name-exists",
   needs_confirm: "needs-confirm",
   bad_page: "bad-page",
@@ -3268,15 +3288,8 @@ export function httpApi(
       ((await call("DELETE", `/me/npc-notes?campaign=${encodeURIComponent(ref)}`)) as {
         deleted: number;
       }).deleted,
-    allNames: async (ref, q) => {
-      const params = new URLSearchParams({ q: q.q, kind: q.kind, sort: q.sort, page: String(q.page) });
-      if (q.size !== undefined) params.set("size", String(q.size));
-      if (q.unnamed) params.set("unnamed", "1");
-      return (await call(
-        "GET",
-        `/me/campaigns/${encodeURIComponent(ref)}/all-names?${params.toString()}`,
-      )) as NamesPage;
-    },
+    allNames: async (ref, q) =>
+      (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/all-names?${new URLSearchParams({ q: q.q, kind: q.kind, sort: q.sort, page: String(q.page), ...(q.size !== undefined ? { size: String(q.size) } : {}), ...(q.unnamed ? { unnamed: "1" } : {}) })}`)) as NamesPage,
     smartNames: async (ref, words) =>
       (await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/all-names/search`, { q: words })) as SmartNamesAnswer,
     // The bot applies a name change, so the POST only queues it (202 {answer}); this waits for the
@@ -3322,6 +3335,7 @@ export function httpApi(
           if (error instanceof ApiError && error.kind === "signed-out") throw error;
         }
         if (got?.state === "done") {
+          if (got.player) return { state: "player", ...got.player };
           return { state: "done", row: got.row ?? null, undo: got.undo ? queued.answer : null, answer: queued.answer };
         }
         if (got?.state === "failed") {
@@ -3332,35 +3346,16 @@ export function httpApi(
       }
       throw new ApiError("still-waiting");
     },
-    webGraph: async (ref, q) => {
-      const params = new URLSearchParams({ hops: String(q.hops) });
-      if (q.center) params.set("center", q.center);
-      if (q.view) params.set("view", q.view);
-      return (await call(
-        "GET",
-        `/me/campaigns/${encodeURIComponent(ref)}/web?${params.toString()}`,
-      )) as WebGraph;
-    },
-    webSize: async (ref, q) => {
-      const params = new URLSearchParams({ hops: String(q.hops) });
-      if (q.center) params.set("center", q.center);
-      // The size is of the web in the view being asked for, so a DM in Players View or a player
-      // peeking must not be told the size of the other one.
-      if (q.view) params.set("view", q.view);
-      return (await call(
-        "GET",
-        `/me/campaigns/${encodeURIComponent(ref)}/web/size?${params.toString()}`,
-      )) as { names: number };
-    },
-    webOverview: async (ref, q) => {
-      const params = new URLSearchParams();
-      if (q.view) params.set("view", q.view);
-      const tail = params.toString();
-      return (await call(
-        "GET",
-        `/me/campaigns/${encodeURIComponent(ref)}/web/overview${tail ? `?${tail}` : ""}`,
-      )) as WebOverview;
-    },
+    webGraph: async (ref, q) =>
+      (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/web?hops=${q.hops}${q.center ? `&center=${encodeURIComponent(q.center)}` : ""}${q.view ? `&view=${q.view}` : ""}`)) as WebGraph,
+    // The size is of the web in the view being asked for, so a DM in Players View or a player peeking must not be
+    // told the size of the other one.
+    webSize: async (ref, q) =>
+      (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/web/size?hops=${q.hops}${q.center ? `&center=${encodeURIComponent(q.center)}` : ""}${q.view ? `&view=${q.view}` : ""}`)) as { names: number },
+    webOverview: async (ref, q) =>
+      (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/web/overview${q.view ? `?view=${q.view}` : ""}`)) as WebOverview,
+    webFind: async (ref, q) =>
+      ((await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/web/find?view=${q.view ?? ""}&q=${encodeURIComponent(q.q)}`)) as { names: { id: string; name: string; kind: string }[] }).names,
     webWaiting: async (ref) =>
       (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/web/waiting`)) as Waiting,
     // The answer is queued for the bot (202 {answer}) like every other edit; this waits for it.

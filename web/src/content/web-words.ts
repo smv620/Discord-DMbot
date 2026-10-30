@@ -1,11 +1,11 @@
-// The words of the relationship web page (#2324; docs/PLAN.md, "The relationship web on the website"):
+// The words of the Story Graph page (#2324; docs/PLAN.md, "The Story Graph on the website"):
 // the names of a campaign as dots, the connections between them as lines. Plain words. DMbot never
 // decides: a DM changes what DMbot remembers, and Undo is on the name's card in Discord.
 /** Over this many names the page asks before drawing (PLAN: "about 300"). */
 export const BIG_WEB = 300;
 
 export const webPage = {
-  heading: "Relationship web",
+  heading: "Story Graph",
   lead: "How the names in this campaign are connected. Tap a name to put it in the middle. Tap a line to read its connections.",
   loading: "Loading…",
   signedOut: "You were signed out. Sign in again.",
@@ -48,6 +48,8 @@ export const webPage = {
   zoomOut: "Zoom out",
   resetView: "Reset the view",
   panHint: "Drag a name to move it. It stays where you drop it. Drag the empty space to look around. Pinch or use the zoom buttons to zoom.",
+  fullScreen: "Full screen",
+  leaveFullScreen: "Leave full screen",
   layoutLabel: "How the names are laid out",
   layoutTooBig: "That is too many names to move around. Choose fewer steps out to rearrange them.",
   sideNone: "No connections shown for this name.",
@@ -57,6 +59,9 @@ export const webPage = {
   oneWay: (a: string, b: string): string => `${a} → ${b}`,
   layoutFree: "Spread out",
   layoutGroups: "Cluster by kind",
+  layoutQuests: "Cluster by quest",
+  noQuest: "Not part of a quest",
+  alsoIn: (quests: string): string => `Also in: ${quests}`,
   kindLabel: "Kinds of connection",
   kindHint: "Tap a kind to hide or show it. A line through it means hidden.",
   hiddenMark: "(hidden)",
@@ -74,11 +79,27 @@ export const webPage = {
     group: "Groups",
     item: "Items",
     event: "Events",
+    // The rest are the Names page's words for them (core web/all_names.py).
+    faction: "Groups",
+    creature: "Creatures",
+    deity: "Gods",
+    character: "Characters",
+    concept: "Ideas",
+    quest: "Quests",
+    mystery: "Mysteries",
+    hook: "Hooks",
+    goal: "Goals",
+    promise: "Promises",
+    clue: "Clues",
+    people: "Folk and peoples",
+    thread: "Story threads",
   } as Record<string, string>,
   secretMark: "🤫",
   secretWords: "Secret: only the DM sees this",
   listHeading: "The same web, as a list",
   namesHeading: "Names",
+  expandAll: "Expand all",
+  collapseAll: "Collapse all",
   linesHeading: "Connections",
   makeMiddleShort: "Make middle",
   seeLineShort: "Open",
@@ -135,7 +156,7 @@ export const webPage = {
   normalView: "Normal view",
   peekSwitch: "Peek behind the DM screen",
   peekOffNote:
-    "Turned off by the DM. To turn it on, the DM opens 👤 DMbot Main Menu → ⚙️ Settings → 👁️ Who can see the DM screen → 👀 Players can peek.",
+    "Turned off by the DM. To turn it on, the DM opens 👤 DMbot Main Menu → ⚙️ Manage DMbot → 👁️ Who can see the DM screen → 👀 Players can peek.",
   peekTitle: "Peek behind the DM screen?",
   peekWarn:
     "Peeking shows you the DM's secrets and things your characters haven't found yet. It can spoil the mystery and the fun. Your DM will be told you peeked.",

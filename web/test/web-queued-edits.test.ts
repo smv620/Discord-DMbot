@@ -1,4 +1,4 @@
-// The relationship web's edits are queued for the bot (202 {answer}) and answered later (#2323,
+// The Story Graph's edits are queued for the bot (202 {answer}) and answered later (#2323,
 // #2405): the real client must wait for the answer, not read the 202 as the result. These run the
 // real client against a fake server.
 import { afterEach, describe, expect, it, vi } from "vitest";

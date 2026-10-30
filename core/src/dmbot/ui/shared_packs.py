@@ -1,4 +1,4 @@
-"""Homebrew packs, from ⚙️ Settings → 📚 Shared rules → 📦 Homebrew packs (#1527): share the
+"""Homebrew packs, from ⚙️ Manage DMbot → 📚 Shared rules → 📦 Homebrew packs (#1527): share the
 campaign's own homebrew as a named pack, follow another table's pack, and put the followed packs
 in order. Only entries travel (never story, names or notes), and entries that came from a
 published book never leave their campaign (CLAUDE.md, IP rule): the Share step says which stay.
@@ -40,7 +40,7 @@ log = logging.getLogger(__name__)
 
 INTRO = (
     "📦 **Homebrew packs**\nA Homebrew pack is a named bundle of your homebrew: the spells, "
-    "monsters, items and other game content in ⚙️ Settings → 📚 Homebrew. Share your "
+    "monsters, items and other game content in ⚙️ Manage DMbot → 📚 Homebrew. Share your "
     "pack with another table, or follow someone else's. Only homebrew is shared in a pack, "
     "never your story, names or notes."
 )

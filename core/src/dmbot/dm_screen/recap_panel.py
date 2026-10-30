@@ -1,4 +1,4 @@
-"""📜 Recaps on ⚙️ Settings (#1421): the DM's three choices for the recap of each session.
+"""📜 Recaps on ⚙️ Manage DMbot (#1421): the DM's three choices for the recap of each session.
 
 "Write a recap after each session", "Make the narration and music" and "Email me when it is
 ready". They are on by default and can only turn things off: what the plan allows is decided
@@ -25,7 +25,7 @@ from dmbot.mentions import NO_PINGS
 log = logging.getLogger(__name__)
 
 _ID = r"(?P<campaign>[0-9a-f]{32})"
-ONLY_DM = "Only the DM can change recaps. Ask them to use ⚙️ Settings."
+ONLY_DM = "Only the DM can change recaps. Ask them to use ⚙️ Manage DMbot."
 FAILED = "Sorry, that didn't save. Please try again."
 NOT_IN_PLAN = "📜 Recaps aren't part of this campaign's plan. Plans and prices are on the website."
 CANT_TELL = "📜 Couldn't check the plan just now. Please try again."
@@ -190,7 +190,7 @@ class RecapsButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
     template=rf"dmbot:recaps:{_ID}",
 ):
-    """📜 Recaps, on ⚙️ Settings: opens the private panel above."""
+    """📜 Recaps, on ⚙️ Manage DMbot: opens the private panel above."""
 
     def __init__(self, campaign_id: str) -> None:
         super().__init__(

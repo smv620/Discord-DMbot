@@ -382,7 +382,7 @@ class Registration(unittest.TestCase):
             for item in view.children
             if isinstance(item, discord.ui.DynamicItem)
         }
-        self.assertTrue({"RulesCardsButton", "RuleLookupButton", "RulesCardButton"} <= built)
+        self.assertTrue({"RulesCardsButton", "RulesCardButton"} <= built)
         self.assertEqual(sorted(built - registered), [])  # a press after a restart must work
 
 

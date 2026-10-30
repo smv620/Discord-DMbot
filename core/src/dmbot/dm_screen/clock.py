@@ -49,7 +49,7 @@ _ID = r"(?P<campaign>[0-9a-f]{32})"
 NO_REST_RULE = "xge-no-long-rest"  # the optional rule the 24-hour line follows
 
 SET_FIRST = (
-    "The clock isn't set yet. Press **Game clock** in ⚙️ Settings and give the day and the hour."
+    "The clock isn't set yet. Press **Game clock** in ⚙️ Manage DMbot and give the day and the hour."
 )
 GONE = "That campaign isn't here any more."
 FAILED = "That didn't save. Try again in a moment."
@@ -718,7 +718,7 @@ async def _show_here(
     interaction: discord.Interaction, client: Any, campaign: Campaign, stored: Stored
 ) -> discord.Message | None:
     """Redraw the clock in the message that was pressed; if the press came from somewhere
-    else (the form opened from ⚙️ Settings), show it the usual way."""
+    else (the form opened from ⚙️ Manage DMbot), show it the usual way."""
     where_are_we.shown(client, campaign)  # the clock is redrawn right here: shown, and moved
     message = interaction.message
     if message is not None and message.id == stored.message_id:
@@ -759,7 +759,7 @@ class ClockButton(
         r"(?P<action>m10|h1|short|long|dawn|set|typed|timer|open|cstart|cnext|cend|split|rejoin)"
     ),
 ):
-    """One of the clock's buttons (`open` is the ⚙️ Settings button that starts or shows it)."""
+    """One of the clock's buttons (`open` is the ⚙️ Manage DMbot button that starts or shows it)."""
 
     def __init__(self, campaign_id: str, action: str) -> None:
         if action == "open":
