@@ -94,8 +94,8 @@ async def read(read_ai: Any, shape_ai: Any = None, text: str = TEXT) -> lr.LoreR
 class TheExamples(unittest.TestCase):
     def test_their_format_is_pinned(self) -> None:
         text = lr.EXAMPLES
-        self.assertEqual(text.count("NAMES\n"), 3)
-        self.assertEqual(text.count("RELATIONSHIPS\n"), 2)
+        self.assertEqual(text.count("NAMES\n"), 4)
+        self.assertEqual(text.count("RELATIONSHIPS\n"), 3)
         self.assertEqual(text.count("NOT INCLUDED\n"), 1)
         name_line = re.compile(r"^- .+ \| (person|place|group|god|item|event|idea)( \| .+)*$")
         link_line = re.compile(r'^- .+ — .+ — .+ \| quote: ".+"$')
@@ -108,10 +108,22 @@ class TheExamples(unittest.TestCase):
         self.assertIn("Wyrmhold", listed.left_out[0])
 
     def test_the_second_example_is_a_names_list_that_keeps_the_aside_as_another_name(self) -> None:
-        second = lr.EXAMPLES.split("Example 3.", 1)[1]
+        second = lr.EXAMPLES.split("Example 4.", 1)[1]
         self.assertNotIn("RELATIONSHIPS", second)
         self.assertIn("other names: the rogue", second)
         self.assertIn("said: kah-ZETH", second)
+
+    def test_the_fourth_example_teaches_an_earlier_name_as_an_other_secret_name(self) -> None:
+        third = lr.EXAMPLES.split("Example 3.", 1)[1].split("Example 4.", 1)[0]
+        listed = lr.parse_plain(third.split("Output:\n", 1)[1])
+        self.assertEqual(len(listed.names), 2)  # (Tamsin Vell has no line of her own)
+        self.assertIn("secret: Tamsin Vell", listed.names[0])
+        self.assertTrue(any(x.startswith("- Tamsin Vell —") for x in listed.links))
+
+    def test_the_prompts_say_an_earlier_name_is_never_a_name_of_its_own(self) -> None:
+        for word in ("pseudonym", "originally", "born", "formerly", "took the name", "a.k.a."):
+            self.assertIn(word, lr.read_instructions())
+        self.assertIn("never an entry of its own", lr.shape_instructions())
 
     def test_the_prompt_teaches_the_rules(self) -> None:
         prompt = lr.read_instructions({"patron_of": "is a mentor of"})
