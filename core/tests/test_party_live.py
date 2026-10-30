@@ -64,3 +64,19 @@ class TheLiveStep(IsolatedAsyncioTestCase):
                 )
                 await DMBot.link_the_party(bot, table)
                 bot.memory.link_party.assert_not_awaited()
+
+
+class TheImportStep(IsolatedAsyncioTestCase):
+    async def test_a_failed_link_after_the_scan_is_logged_and_nothing_else_changes(self) -> None:
+        # A link that raises must not reach the scan's failure path (which would count the
+        # session as unchecked and drop its new names).
+        bot = fake_bot()
+        bot.memory.link_party = AsyncMock(side_effect=RuntimeError("the campaign row is gone"))
+        ready: Any = SimpleNamespace(guild_id=GUILD, campaign_id=CAMPAIGN, session_id=SESSION)
+        with patch("dmbot.bot.session_speakers", AsyncMock(return_value={1, 3})):
+            await DMBot._link_import_party(bot, GUILD, ready)  # must not raise
+
+    async def test_an_import_with_no_memory_links_nothing(self) -> None:
+        bot = fake_bot(memory=False)
+        ready: Any = SimpleNamespace(guild_id=GUILD, campaign_id=CAMPAIGN, session_id=SESSION)
+        await DMBot._link_import_party(bot, GUILD, ready)  # no memory: nothing to do

@@ -10181,10 +10181,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     async with asyncio.timeout(STALE_SCAN_S // 3):
                         added = await self._scan_import(gid, ready)
                     await store.finish_scan(gid, ready.session_id, int(time.time()))
-                    # The scan is done, so the session's speakers are known; linking is idempotent,
-                    # so an import's sessions each link their own party (#3036).
-                    if self.memory is not None:
-                        await self._link_the_party(gid, ready.campaign_id, ready.session_id)
+                    await self._link_import_party(gid, ready)
                     done += 1
                     self._import_names.setdefault(ready.campaign_id, []).extend(added)
                 except Exception:
@@ -10201,6 +10198,16 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         await self._apply_import_plays(gid, store)
         await self._tell_import_news(gid, store)
         return done
+
+    async def _link_import_party(self, gid: int, ready: Ready) -> None:
+        """After an imported session's scan is done: link its party (#3036). Its own `try`: a
+        failure here is logged and never reaches the scan's claim or counts, which are settled."""
+        if self.memory is None:
+            return
+        try:
+            await self._link_the_party(gid, ready.campaign_id, ready.session_id)
+        except Exception:
+            log.exception("Import: couldn't link the party for a session")
 
     async def _apply_import_plays(self, gid: int, store: ImportStore) -> None:
         """The DM's "plays which character" choices from the import page become links, through a

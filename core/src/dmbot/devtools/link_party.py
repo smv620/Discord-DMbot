@@ -10,7 +10,8 @@ so the backfill covers them. Only user ids are read, never a line's words.
 A server is named, not all of them: every read here is scoped to one server, as the isolation
 rule requires. `--dry-run` writes nothing and prints what a real run would do. Its numbers come
 from reads that copy the rule's checks, so they can drift from a real run; a real run prints the
-exact numbers. Counts only, one line per campaign and one total; no names, no words.
+exact numbers. Counts only, one line per campaign and one total; no names, no words. A session
+that fails stops the run with its error; each session is saved on its own, so a rerun is safe.
 """
 
 from __future__ import annotations
@@ -55,8 +56,9 @@ async def campaign_sessions(db: Database, guild_id: int, campaign_id: str) -> li
     """This campaign's stored session ids in date order (read only)."""
     async with db.guild(guild_id) as conn:
         cur = await conn.execute(
-            "SELECT id FROM transcript_sessions WHERE campaign_id = %s ORDER BY started_at, id",
-            (campaign_id,),
+            "SELECT id FROM transcript_sessions WHERE guild_id = %s AND campaign_id = %s"
+            " ORDER BY started_at, id",
+            (guild_id, campaign_id),
         )
         return [str(r["id"]) for r in await cur.fetchall()]
 
