@@ -5806,7 +5806,7 @@ async def _move_relations(w: Changes, keep_id: str, gone_id: str, *, join: bool 
             state[row["id"]],
             subject_id=subject,
             object_id=obj,
-            **({"secret": True} if join else {}),
+            secret=True if join else state[row["id"]].secret,
         )
         state[row["id"]] = moved
         for end in (subject, obj):
