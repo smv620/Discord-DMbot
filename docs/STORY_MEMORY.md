@@ -899,6 +899,109 @@ rule says which in `memory/checks.py`'s docstring.
 - **Known gap (follow-up):** the loop check runs when a "led to" link is made; confirming a rejected
   one, merging two names and restoring a backup skip it.
 
+
+### 9b. Who knows what: knowledge per character (owner, 2026-10-29)
+
+Written after the owner's examples (the cursed sword, Bruno, Shela, Tran and Clyde). This replaces the on/off
+"secret", "not revealed yet", "hidden from players" and "known only by some" flags with one rule: **every
+statement has a list of the characters who know it.** Sections 9 and 9a still hold for beliefs, confidence and
+evidence. This section says how knowledge is kept and who sees what. Names in the examples are invented.
+
+**1. What can be known.** Four kinds of statement, each with its own id:
+- an entry exists, under the name used ("Shela exists");
+- a property of an entry ("the sword is cursed", "Bruno carries a parasite"): the claims and states of section 1;
+- a connection ("Bruno → desires → Shela"): a `memory_relations` row, as today;
+- an other name ("Bruno is also known as Rook"): a `memory_aliases` row.
+
+**2. Who knows it, and how sure they are.** Individual characters, player characters and NPCs, each through
+their own point of view (section 9a). The DM always knows everything and is never listed. **Each knower holds
+the statement with a confidence** (owner, 2026-10-29: "we are using reification so everything gets a certainty
+from each perspective"): 1.0 is certain it's true, 0.0 is certain it's false, and anything between is a guess or
+a suspicion. **No row means the character doesn't know of it at all.** For example, with Bruno, Shela and Tran
+all NPCs:
+- "Bruno → desires → Shela": Bruno 1.0, Shela 0.95. Tran has no row.
+- "Shela → desires → Bruno": Bruno 0.3 (he hopes so), Shela 0.0 (she doesn't), Tran no row.
+
+A viewer is shown a statement when one of its characters has a row, with that character's confidence, so a guess
+is drawn as uncertain.
+
+**Groups** (owner, 2026-10-29). A group's point of view holds what is **commonly known among its members** ("the
+tower council knows who each member's apprentice is"). Each member's view includes the group's rows, at the
+group's confidence, unless the member has a row of their own, which wins. Nothing spreads beyond membership: Tran
+knowing something tells Tran's **friend** Clyde nothing. **"The party" is never a knower:** what the player
+characters know is always their own rows.
+
+**3. Words, worked out from the list, never stored as flags:**
+
+| Who knows it | Word |
+|---|---|
+| nobody but the DM | **secret** (rare: the cursed sword nobody has noticed, the parasite even Bruno doesn't know about) |
+| some NPCs, no player character | **hidden from the players** (Bruno spies for Irendi; Tran is his contact) |
+| one NPC, about themself | known to that NPC (Bruno's desire for Shela is known to Bruno) |
+| some player characters, not all | **partly revealed** |
+| every player character | known to the party |
+
+Most "spoilers" are simply unknown to one or more player characters, not secret.
+
+**4. How knowledge gets in. DMbot makes its best guess live and asks nobody during play.**
+- **In a scene:** what is said or shown in a scene is learned by **every character in the scene**, player
+  characters and NPCs. Whether the *player* came to the session doesn't matter; whether the *character* is in the
+  scene does. Who is in a scene: the party together unless the game clock says it is split (#1614), plus the NPCs
+  the narration puts there.
+- **A check that finds something:** a successful Perception, Investigation, Insight, Nature, History, Arcana,
+  Religion, Survival or other check to notice, discover or recall is a reveal **to that one character**. When the
+  player then says their character tells the others, or the party acts on it, it is revealed to the party.
+- **Characters telling each other:** when DMbot hears that information was passed on in-world ("Bruno tells Tran
+  about Shela"), the listener learns it at once, with no question to the DM. **Learning a statement means learning
+  that the entries it names exist** (Tran now knows Shela exists). It never spreads further (Clyde learns nothing).
+- **Self-knowledge:** a character knows their own desires, plans and memories, never what is hidden even from them.
+- **Uploads** (owner, 2026-10-29). **Before reading, the upload confirms who the player characters are**, and
+  any missing one can be added then, with the player's Discord ID. A character's backstory is known to that
+  character (#2935). For campaign lore the DM chooses one of three:
+  - **A. World general knowledge:** all of it is known to every player character.
+  - **B. Spoilers:** none of it is known to the player characters yet. They can discover it in play.
+  - **C. Smart guess:** the AI decides, passage by passage, what would be common knowledge in the world and what
+    the player characters wouldn't know, using what their backstories say about them. This is tested on generated
+    sample documents.
+
+  **In every case the AI also guesses what NPCs and groups know**, with a confidence ("the council knows who each
+  member's apprentice is"). The player characters know such a thing only when their backstory ties them to it
+  (they worked closely with the council). These are guesses, and every one is an assertion with a confidence that
+  the DM can change.
+- **The DM decides in the end:** "Who knows this?" lists player characters and NPCs and overrides any guess.
+
+**5. After the session, not during it.** One private summary for the DM lists the session's **new names**, **new
+connections** and **reveals** (who learned what), each with Undo. Nothing interrupts play to ask.
+
+**6. What each viewer sees** (one gate in code, below):
+- **A player:** what their own characters know.
+- **The DM:** everything, plus **See as…** any player character, any NPC, or the party.
+- **Anything read to the whole table** (recaps, answers in `dmb-chat`): only what **every** player character at that
+  session knows.
+- **A private answer to one player:** what that player's characters know.
+- **An AI prompt:** the slice for whoever the answer is for, never more.
+
+**7. Recaps and partial reveals** (the owner's guidance, in their words): "A reveal to one or more player characters
+that remains hidden information to one or more other player characters must be cited in the recap for story
+continuity but the recap text must be non-specific so that spoilers are not accidentally revealed." For example:
+"Okthandom learned something about his mysterious friend." PlotBot marks it as mattering, so it stays relevant in
+later sessions.
+- **Not every private thing matters.** A ranger who fails to find herbs in one spot and finds them in another, then
+  uses them in front of everyone, is trivial and isn't cited. Privacy alone never makes a thing interesting.
+- **A private interaction between two player characters always matters, always.** It is cited, non-specifically.
+
+**8. One gate.** One function decides what a viewer may know, and every reader of story memory goes through it:
+- the Story Graph and its doors;
+- names and NPC pages;
+- recall and table answers;
+- the recap writer, its critics and the final read;
+- every AI prompt.
+
+A test fails if a reader skips it, as `test_relation_readers.py` does for connections today.
+
+**9. Moving to it.** What is revealed today becomes known to every player character. What is secret today becomes
+known to nobody. Today's "Who knows this?" knowers carry over as they are. "The party" point of view is worked out
+from the player characters from then on, never written by itself.
 ## Build order (proposed)
 
 Each step is useful on its own and ships behind the existing phases.

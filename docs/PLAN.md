@@ -2246,7 +2246,12 @@ names panel nor the speech-to-text hints can be a fixed list.
     (`backstory_links.detail`). When nothing could be read before the cut, the DM is told so, never "no names".
   - **📌 Asserted or 100% truth:** the lore upload has one switch, **Asserted** (the default) or **📌 100% truth**.
     Kept connections from a truth upload are pinned. Either way, everything uploaded starts not revealed to
-    players.
+    players, **except lore the DM uploads as "Everyone in the story"** (Supervisor, 2026-10-30, from the
+    owner's choice A of 2026-10-29, #2959): its names are stored shown to the players, and its kept
+    connections are kept revealed when both their ends are shown. Every player character knows it, and the
+    who-knows lists follow the flags (#3018). "Only the DM" keeps the old rule. A smart guess's "world"
+    statements are treated the same way, at certainty 0.75. A secret name or connection is never opened by
+    any choice.
   - **Pronunciation in the list** (`Tavin (TAV-in) | NPC | Mo`): the bracket after a name is read as how to say
     it only when it looks like a respelling of that name. Code decides, never the AI: its letters (hyphens,
     stress marks and capitals ignored) sound close to the name, and it holds no plain words like "the", "of" or
@@ -2328,7 +2333,26 @@ names panel nor the speech-to-text hints can be a fixed list.
      every other suggestion, never kept without the DM's press. This is the one place a read goes past
      what the text states outright: it still never adds an event, and the DM decides.
   **Relationship mining from imported and live sessions** (same day): family connections only, by the same
-  rules; allies, enemies and other kinds are not mined from sessions yet.
+  rules; allies, enemies and other kinds are not mined from sessions yet. *Widened by the owner on
+  2026-10-30, replacing that limit:* **the Story Graph must catch every node and edge a session or a document
+  reveals**, for every connection kind (allies, enemies, rivals, work, membership, leadership, teachers,
+  captives, places, items and the rest), not only family:
+  - **Unnamed entities are kept.** "The guard at the gate", "a hooded stranger", "Brewner's daughter" or "the
+    azure tome" each become an entry marked unnamed, with a plain description as its label, so their
+    connections are kept from the first mention.
+  - **Pronouns and references count.** A relationship stated through "he", "his sister", "them" or "the
+    king" is kept once DMbot works out who is meant, from the same passage or scene. A reference it can't
+    work out is kept on an unnamed entry, never dropped.
+  - **Entity resolution comes later and is its own step.** When an unnamed entry turns out to be a named one
+    ("the guard at the gate" is "Ken the guard"), DMbot offers the DM a merge with the evidence. On a yes,
+    the existing merge joins them and moves every connection and who-knows row. Nothing is merged without
+    the DM.
+  - **Everything is still a suggestion with its evidence,** confirmed by the DM as now, from consented lines
+    only (CLAUDE.md, Consent), and DMbot never invents an event. Obvious inferences stay marked as worked
+    out (item 5 above).
+  - **PCs who play a session together know each other** and form "The party", by rule, not by mining (#3036).
+  - Built in #2960 (sessions, widened), #2790 (references and unnamed entries), #3037 (resolution later) and
+    the session reader's measurement (#1282) before it is switched on live.
 - **Hints follow the scene** (replacing the fixed order). Hints go with every piece of
   speech sent to speech-to-text, so they can change clip by clip. Up to 50 per clip
   for Deepgram (fewer when names are long; local Whisper keeps about 600 characters),
@@ -4564,6 +4588,33 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
   answer is retried. The same holds for every AI write-up in DMbot (house-rule notes, support replies,
   the DM sidebar's answers): limits are in the instructions, and only a platform's hard limit (Discord's
   2,000 characters a message) splits an answer into parts, never cuts it.
+  **Session notes: the beat sheet is kept** (owner, 2026-10-30, after reading the beat sheets the new
+  recap pipeline writes: "fantastic", "great for condensed notes"). Until now a beat sheet lived only in
+  its recap job, as a step toward the recap. From now on it is part of the session, the campaign's own
+  record of what happened:
+  - **Stored with the session,** one current beat sheet per session (the latest one DMbot wrote, with
+    when it was written). A redone recap writes a new one, which replaces it. The words are DMbot's own
+    paraphrase, using character names and never quoting anyone (the beat prompt's rules), so it holds
+    no player's words.
+  - **It belongs to the campaign, like a recap.** It stays when a player uses Delete my transcripts or
+    Stop recording me, when transcripts are deleted by the campaign's retention setting, and when a
+    player deletes their account. It goes only when the campaign is deleted. Players keep their right
+    to read and delete their own lines of the transcript. This matches the privacy page as it already
+    reads: "What DMbot makes from a session belongs to the campaign … deleted only with the campaign."
+  - **Its line pointers are only pointers.** A beat cites the transcript lines it rests on. When those
+    lines are deleted, the pointers to them are dropped, and the beat's sentence stays.
+  - **In backups and moves:** a backup holds every session's beat sheet, and restoring one puts them
+    back. A campaign move takes them along.
+  - **Who sees it:** the campaign's game masters, on the session's page on the website (the
+    transcripts list), and by a 📝 Session notes button beside a recap in Discord. Players don't see it
+    yet. It is written from the shared transcript but read by the DM before the recap is shared, so
+    sharing it with players is a later choice for the DM.
+  - **What uses it:** the next recaps ("the story so far") and, later, the DM sidebar's "where we left
+    off" and imported sessions, as condensed notes. A session whose transcript is gone still has its
+    notes for this.
+  - Built in CloudDev #3026 (storing it, deletion, backups and moves) and WebDev #3027 (the website's
+    session notes and the privacy page naming them).
+
   **A recap is a short story someone who missed the session can follow** (owner, 2026-10-29, after
   reading a live recap that was accurate but thin: things with no introduction, no goal, one character
   carrying it; #2950, #2952, #2954). This replaces the "write only from the beat sheet" rule and the
@@ -5441,7 +5492,9 @@ says, and DMs would not pay for a service that claims their campaigns.
   lock), not during a session, one warning and a typed name; its channels go as retention's do.
 - **Severable personal data is deleted on request, best effort:** a person's own lines and what DMbot
   learned about them (Delete my transcripts, Stop recording me, account deletion). Generated content
-  and copies other people already downloaded stay, and the pages say so.
+  and copies other people already downloaded stay, and the pages say so. *(Owner, 2026-10-30:)* a
+  session's **beat sheet** (its session notes, see "Session notes: the beat sheet is kept") is generated
+  content: it stays when a player deletes their lines, and goes only with the campaign.
 - **Account data stays protected:** Discord ids, emails, payment and record-keeping data are never
   published or shared beyond the processors the privacy page names.
 - **Improving DMbot:** DMbot uses transcripts and typed table chat to improve itself (the raw transcript

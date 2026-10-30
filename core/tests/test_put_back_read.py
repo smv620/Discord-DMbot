@@ -62,6 +62,7 @@ class Base(DatabaseTest):
             story_extractor_max_calls=10,
             story_extractor_max_calls_day=50,
             story_readings_on=False,
+            story_family_only=False,
         )
         dm.extractor_ai = None
         dm._put_back_tasks = {}
@@ -100,6 +101,7 @@ class Reading(Base):
 
     async def test_the_extractor_reads_only_the_put_back_lines_numbered_in_place(self) -> None:
         self.dm.settings.story_extractor_on = True
+        self.dm.settings.story_family_only = True  # the mode reaches the extractor (#2960)
         self.dm.extractor_ai = SimpleNamespace(model="m")
         self.dm.plan_allows = AsyncMock(return_value=True)
         self.dm.name_of = lambda gid, uid: f"<@{uid}>"
@@ -107,6 +109,7 @@ class Reading(Base):
 
         async def run(client: Any, claims: Any, given: list[Line], **kw: Any) -> Report:
             seen["lines"], seen["after_ms"] = given, kw["after_ms"]
+            seen["family_only"] = kw["family_only"]
             return Report(calls=1)
 
         with (
@@ -125,6 +128,7 @@ class Reading(Base):
             ],
         )
         self.assertEqual(seen["after_ms"], 0)
+        self.assertEqual(seen["family_only"], self.dm.settings.story_family_only)
         self.assertEqual(await self.waiting(), [])
 
     def with_extractor(self) -> None:

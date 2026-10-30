@@ -150,3 +150,30 @@ describe("Upload lore", () => {
     expect(await screen.findByText(words.stages["waiting"] as string)).toBeTruthy();
   });
 });
+
+describe("the wait panel on Upload lore (Supervisor's send-back on #3059)", () => {
+  it("does not hold the panel at 'waiting for you': an upload nobody has picked up for a while reads as stalled", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const api = mockApi("table");
+    api.loreAdd = async () => ({ id: "0".repeat(32), state: "waiting", stage: "waiting", error: "", source: "paste", choice: "smart", namesFound: 0, linksFound: 0, done: 0, total: 0, createdAt: 100, updatedAt: 100, serverNow: 500 });
+    render(<Lore api={api} path={PATH} />);
+    await fill();
+    fireEvent.click(screen.getByLabelText(words.rights));
+    fireEvent.click(screen.getByRole("button", { name: words.submit }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
+    expect(document.querySelector(".work-progress")?.getAttribute("data-state")).toBe("stalled");
+  });
+
+  it("shows a running clock for an upload that was just sent", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const api = mockApi("table");
+    api.loreAdd = async () => ({ id: "0".repeat(32), state: "waiting", stage: "waiting", error: "", source: "paste", choice: "smart", namesFound: 0, linksFound: 0, done: 0, total: 0, createdAt: 100, updatedAt: 100, serverNow: 110 });
+    render(<Lore api={api} path={PATH} />);
+    await fill();
+    fireEvent.click(screen.getByLabelText(words.rights));
+    fireEvent.click(screen.getByRole("button", { name: words.submit }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
+    expect(document.querySelector(".work-progress")?.getAttribute("data-state")).toBe("running");
+    expect(document.body.textContent).toMatch(/Running for/);
+  });
+});

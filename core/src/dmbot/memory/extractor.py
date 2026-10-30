@@ -39,6 +39,7 @@ from dmbot.memory.claims import (
     UNKNOWN_NAME_REASON,
     ClaimStore,
     Extracted,
+    is_family,
     parse_answer,
 )
 from dmbot.memory.ontology import Tally
@@ -259,6 +260,7 @@ async def run(
     after_ms: int = 0,
     count_call: Callable[[], Awaitable[None]] | None = None,
     readings: bool = False,
+    family_only: bool = False,
 ) -> Report:
     """Read the session's lines and store what the AI found as proposals, all at once at the end
     (the linker picks the most-said new names across the whole session). `consenting` is asked
@@ -277,8 +279,13 @@ async def run(
     reveals, frame-ups, divinations; `readings.py`), inside the same ceilings: it is a call like
     any other, counted before it is made and held to `max_calls`, so turning it on does not raise
     what a session may spend. Its answers wait as claims that carry a reading and are placed by
-    the DM, never written."""
+    the DM, never written.
+
+    `family_only` (#2960; owner, 2026-10-29: families first, allies and enemies not yet): only a
+    claim that says a family role ("is the niece of") is kept, whatever else the AI returned; the
+    rest are counted as `not family` and never stored. No readings are asked in this mode."""
     report = Report()
+    readings = readings and not family_only
     collected: list[Extracted] = []
     believed: list[Extracted] = []
     everyone: dict[str, int | None] = {}  # every line sent, to who said it
@@ -337,6 +344,10 @@ async def run(
             continue
         streak = 0
         found, bad = parse_answer(reply.text, speakers.keys())
+        if family_only:
+            family = [c for c in found if is_family(c)]
+            report.dropped["not family"] += len(found) - len(family)
+            found = family
         collected.extend(found)
         answered_by = reply.model or answered_by
         everyone.update(speakers)
