@@ -3,6 +3,7 @@
 // two never disagree. The parts are named for what a DM is doing: read the story, add to it, set the rules.
 import { campaignPage as words } from "../content/campaign-page";
 import { IMPORT_LIVE } from "../content/import-words";
+import { LORE_LIVE } from "../content/lore-words";
 import { RECAPS_LIVE } from "../content/recap-words";
 
 export type CampaignGroup = "overview" | "story" | "add" | "rules" | "settings";
@@ -15,6 +16,7 @@ export type CampaignPageKey =
   | "graph"
   | "names"
   | "transcripts"
+  | "lore"
   | "import"
   | "houseRules"
   | "homebrew";
@@ -26,6 +28,7 @@ export const GROUP_OF: Record<CampaignPageKey, CampaignGroup> = {
   graph: "story",
   names: "story",
   transcripts: "story",
+  lore: "add",
   import: "add",
   houseRules: "rules",
   homebrew: "rules",
@@ -49,6 +52,7 @@ export function sectionPages(ref: string, o: { isDm: boolean; importsOn?: boolea
   if (o.isDm) story.push({ key: "names", href: `/account/names/${e}`, label: words.pages.names, note: words.pageNotes.names });
   story.push({ key: "transcripts", href: `/account/transcripts/${e}`, label: words.pages.transcripts, note: words.pageNotes.transcripts });
   const add: SectionPage[] = [];
+  if (o.isDm && LORE_LIVE) add.push({ key: "lore", href: `/account/lore/${e}`, label: words.pages.lore, note: words.pageNotes.lore });
   if (o.isDm && (IMPORT_LIVE || o.importsOn)) add.push({ key: "import", href: `/account/import/${e}`, label: words.pages.import, note: words.pageNotes.import });
   // House rules and homebrew are read by anyone in the server (only changing them is the DM's), so they are for the
   // whole table.

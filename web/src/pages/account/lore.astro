@@ -1,0 +1,20 @@
+---
+import LoreIsland from "../../account/LoreIsland";
+import { lorePage } from "../../content/lore-words";
+import Base from "../../layouts/Base.astro";
+import "../../styles/account.css";
+---
+
+<Base
+  title="Upload lore"
+  description="Give DMbot a backstory or notes about your world."
+  noindex
+>
+  <div class="account">
+    <h1>{lorePage.heading}</h1>
+    <LoreIsland client:load />
+    <noscript>
+      <p>This page needs JavaScript to upload lore. Turn it on, then reload the page.</p>
+    </noscript>
+  </div>
+</Base>

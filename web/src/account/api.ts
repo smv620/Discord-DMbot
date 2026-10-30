@@ -1044,6 +1044,33 @@ export interface JobProgress {
   state: "running" | "stalled" | "failed" | "done";
   reason?: string | null;
 }
+/** What a DM gives for Upload lore (#3022): words (typed, or read from a text file in the browser) or a link, never
+ * both. `choice` is how the lore is known: `world` general knowledge, `spoilers`, or `smart` (DMbot guesses). `speaker` is
+ * a character's id ("whose backstory"), or "" for none. `rights` is the right-to-use box. */
+export interface LoreInput {
+  source: "paste" | "file" | "link";
+  text?: string;
+  link?: string;
+  choice: "world" | "spoilers" | "smart";
+  speaker: string;
+  rights: boolean;
+}
+/** Where an upload stands: stages and counts only, never the words (#3022). Times are the server's seconds. */
+export interface LoreUpload {
+  id: string;
+  state: "waiting" | "working" | "done" | "failed";
+  stage: string;
+  error: string;
+  source: "paste" | "file" | "link";
+  choice: "world" | "spoilers" | "smart";
+  namesFound: number;
+  linksFound: number;
+  done: number;
+  total: number;
+  createdAt: number;
+  updatedAt: number;
+  serverNow: number;
+}
 export interface ImportStarted {
   importId: string;
   sessions: { file: string; state: ImportState; writeRecap?: boolean }[];
@@ -1819,6 +1846,7 @@ export type ApiErrorKind =
   | "free-access" // free access: there's nothing to pay for
   | "slow-down" // too many tries from this address (the API limits sign-in, billing, delete)
   | "bad-link" // an emailed sign-in link that is wrong, used or ended (#1231)
+  | "bad-speaker" // "whose backstory" is not a character of this campaign (#3022)
   | "bad-text" // a fix must be between 1 and 200 characters (#2858)
   | "same" // a fix that is what the line already says (#2858)
   | "not-yours" // only the speaker or the DM may fix a line (#2858)
@@ -2132,6 +2160,13 @@ export interface AccountApi {
   /** One change to one name (DMs only); the same action as the name card in Discord. */
   /** One campaign's page (#2416). Missing from an API older than that. */
   campaignPage?(campaignRef: string): Promise<CampaignPage>;
+  /** Upload lore (#3022; core web/lore.py): DMbot reads the words and offers the names and connections for the DM to
+   * check. Answers where it stands. Refusals: `needs-confirm` (the right-to-use box was not ticked), `slow-down` (one is
+   * already open: `loreRead(ref)` finds it), `too-soon` (five an hour), `bad-text`, `ticket-too-long`, `bad-speaker`,
+   * `not-allowed`, `not-found` while the server switch is off. Missing from an older API. */
+  loreAdd?(campaignRef: string, input: LoreInput): Promise<LoreUpload>;
+  /** One upload's progress, or with no id the newest of the last day; null when there is none. */
+  loreRead?(campaignRef: string, id?: string): Promise<LoreUpload | null>;
   /** One NPC's page. `campaignRef` is `<server>.<campaign>`, `entry` the NPC's id (#2266). */
   npcPage?(campaignRef: string, entry: string): Promise<NpcPage>;
   /** Save my private note on an NPC; an empty note clears it. */
@@ -2384,6 +2419,7 @@ export interface AccountApi {
  * route can never show the fix words. Only the two fix calls read it. */
 export const fixErrorKinds: Record<string, ApiErrorKind> = {
   bad_text: "bad-text",
+  bad_speaker: "bad-speaker",
   same: "same",
   not_yours: "not-yours",
   not_recorded: "not-recorded",
@@ -2505,6 +2541,7 @@ export const errorKinds: Record<string, ApiErrorKind> = {
   bad_choice: "bad-choice",
   too_big: "too-big",
   not_editable: "not-editable",
+  bad_speaker: "bad-speaker",
   bad_text: "bad-text",
   fixed_lines: "fixed-lines",
   no_tries: "no-tries",
@@ -2565,7 +2602,7 @@ export interface ApiHelpers {
 export const ACCOUNT_METHODS = ["emailSignInRequest", "emailSignInUse", "offerHandover", "deleteCampaign", "restoreStage", "restorePart", "restoreGo", "restoreStatus", "restoreCancel", "campaignBackup", "takeBackHandover", "handoverLook", "handoverAccept", "handoverDecline", "removeDiscordAccount", "getMoveCode", "myEmail", "changeEmail", "confirmEmail", "cancelEmailChange", "sendSupport", "mySupport", "supportThread", "signOutEverywhere", "startTryIt", "checkoutUrl", "billingPortalUrl", "renewPlan", "extraHoursUrl", "downloadExport", "characters", "linkServer", "acceptOffer", "declineOffer", "withdrawOffer", "stopRecording", "myLines", "deleteMyLines", "myLinesStatus", "requestDelete", "confirmDelete"] as const satisfies readonly (keyof AccountApi)[];
 export const RECAPS_METHODS = ["recapAudioUrl", "recaps", "pastSessions", "sessionReport", "makeSessionReport", "answerReport", "setBeatPresent", "makeRecap", "addRecap", "recapList", "recap", "saveRecap", "approveRecap", "approveUnchecked", "recapAudioLinks", "recapChoices", "setRecapChoice", "askRecapAudioAgain", "plotCheck", "answerPlotIssue", "plotChatSend", "plotChat", "decidePlotProposal", "recapAudioRemake", "sendFix", "fixResult", "sendVoice", "voiceResult", "rewriteWith", "importPreview", "importMembers", "importCheck", "importStart", "importProgress", "shareRecap", "publicRecap", "decideRecap"] as const satisfies readonly (keyof AccountApi)[];
 export const NAMES_METHODS = ["namesFixed", "undoNameFix", "campaignNames", "suggestSaidAs", "respellFromVoice", "saveSaidAs", "nameChecks", "answerNameCheck", "npcPage", "saveNpcNote", "myNpcNotes", "deleteMyNpcNotes", "allNames", "smartNames", "changeName", "nameThem", "webGraph", "webSize", "webOverview", "webFind", "webWaiting", "answerWaiting", "webReadings", "answerReading", "webPeek", "webReveal", "changeWebLink"] as const satisfies readonly (keyof AccountApi)[];
-export const CAMPAIGN_METHODS = ["transcriptCampaigns", "transcriptSessions", "transcript", "transcriptFile", "transcriptStretch", "transcriptPutBack", "transcriptLeaveOut", "setCampaignSetting", "campaignOptionalRules", "campaignGameMasters", "campaignSheets", "chooseSheet", "sheetAnswer", "fixTranscriptLine", "fixAnswer", "campaignGameMasterCandidates", "campaignSettingAnswer", "timeline", "sharedRules", "houseRuleCampaigns", "houseRules", "ruleSharing", "chooseRuleSharing", "ruleSharingAnswer", "houseRulesFile", "improvement", "setImprovement", "homebrewCampaigns", "homebrew", "homebrewFile", "campaignPage"] as const satisfies readonly (keyof AccountApi)[];
+export const CAMPAIGN_METHODS = ["transcriptCampaigns", "transcriptSessions", "transcript", "transcriptFile", "transcriptStretch", "transcriptPutBack", "transcriptLeaveOut", "setCampaignSetting", "campaignOptionalRules", "campaignGameMasters", "campaignSheets", "chooseSheet", "sheetAnswer", "fixTranscriptLine", "fixAnswer", "campaignGameMasterCandidates", "campaignSettingAnswer", "timeline", "sharedRules", "houseRuleCampaigns", "houseRules", "ruleSharing", "chooseRuleSharing", "ruleSharingAnswer", "houseRulesFile", "improvement", "setImprovement", "homebrewCampaigns", "homebrew", "homebrewFile", "campaignPage", "loreAdd", "loreRead"] as const satisfies readonly (keyof AccountApi)[];
 
 /** A stand-in for each call of an area: the first use loads the area's file (once), and every call goes to it. */
 function lazyArea<K extends keyof AccountApi>(names: readonly K[], load: () => Promise<{ default: (h: ApiHelpers) => Record<string, unknown> }>, h: ApiHelpers): Pick<AccountApi, K> {

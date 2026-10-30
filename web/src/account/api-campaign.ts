@@ -2,6 +2,7 @@
 // pages that do not use them do not carry them. Each is the same call it was inside `httpApi`; the names are listed
 // in `CAMPAIGN_METHODS` there, and a test keeps the two in step.
 import type {
+  LoreUpload,
   CampaignPage,
   CampaignSettingAnswer,
   CharacterSheets,
@@ -215,5 +216,9 @@ export default function campaignArea({ call }: ApiHelpers): Partial<AccountApi> 
       )) as Blob,
     campaignPage: async (ref) =>
       (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}`)) as CampaignPage,
+    loreAdd: async (ref, input) =>
+      ((await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/lore`, input)) as { upload: LoreUpload }).upload,
+    loreRead: async (ref, id) =>
+      ((await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/lore${id ? `/${encodeURIComponent(id)}` : ""}`)) as { upload: LoreUpload | null }).upload,
   };
 }
