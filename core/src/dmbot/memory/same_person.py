@@ -153,6 +153,8 @@ def from_rows(
     character may be either: "the hooded stranger" can turn out to be one); a declined
     pair is kept as `name_not_same` keeps it, in id order, and turned back into (unnamed, named).
     `stated` is empty until a reading records "the text says it is": that is a later slice."""
+    # (the store hands over entries that are not players: a link through a person would let a
+    # shared player count as evidence for two different characters, so it is left out below)
     live = {str(e["id"]) for e in entries}
     spoken: dict[str, list[str]] = {}
     for a in aliases:
