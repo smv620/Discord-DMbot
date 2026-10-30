@@ -6,7 +6,8 @@ from __future__ import annotations
 
 from dmbot.memory.gate import ALIAS, ENTRY, Viewer
 from dmbot.memory.models import CONFIRMED, MemoryRuleError
-from tests.test_gate import GUILD_A, Helpers
+from tests.test_gate import Helpers
+from tests.test_memory_store import GUILD_A
 
 
 class TheJoin(Helpers):
@@ -18,6 +19,8 @@ class TheJoin(Helpers):
         )
         self.guard = made.entity.id
         self.ken = await self.add("Ken", type="character", role="npc", status=CONFIRMED)
+        (shown,) = await self.memory.unnamed(GUILD_A, self.c)
+        self.label = shown[0].name  # (what the join makes the secret other name from)
         self.sees_guard = self.ids["okthandom"]  # knew only the unnamed guard
         self.sees_ken = self.ids["mara"]  # knew Ken
         await self.know(ENTRY, self.guard, [self.sees_guard])
@@ -31,26 +34,18 @@ class TheJoin(Helpers):
 
     async def alias_id(self) -> str:
         found = await self.memory.aliases(GUILD_A, self.c, entity_id=self.ken, include_secret=True)
-        (one,) = [a for a in found if a.text == await self.guard_label()]
+        (one,) = [a for a in found if a.text == self.label]
         return one.id
 
-    async def guard_label(self) -> str:
-        (entity,) = [e for e, _ in await self.memory.unnamed(GUILD_A, self.c)] or [None]
-        return entity.name if entity else self._label
-
     async def test_the_description_becomes_a_secret_other_name_of_the_named_entry(self) -> None:
-        (before,) = await self.memory.unnamed(GUILD_A, self.c)
-        self._label = before[0].name
         await self.join()
         found = await self.memory.aliases(GUILD_A, self.c, entity_id=self.ken, include_secret=True)
-        (alias,) = [a for a in found if a.text == self._label]
+        (alias,) = [a for a in found if a.text == self.label]
         self.assertEqual((alias.secret, alias.status), (True, CONFIRMED))
         public = await self.memory.aliases(GUILD_A, self.c, entity_id=self.ken)
-        self.assertNotIn(self._label, [a.text for a in public])  # never shown to players
+        self.assertNotIn(self.label, [a.text for a in public])  # never shown to players
 
     async def test_who_knew_only_the_guard_knows_the_secret_name_and_not_ken(self) -> None:
-        (before,) = await self.memory.unnamed(GUILD_A, self.c)
-        self._label = before[0].name
         await self.join()
         seen = await self.view(self.sees_guard)
         # (the entry is known to them only through that name: no row says they know it by its own)
@@ -59,16 +54,12 @@ class TheJoin(Helpers):
         self.assertTrue(seen.knows(ALIAS, alias))  # type: ignore[attr-defined]
 
     async def test_who_knew_ken_keeps_what_they_knew_and_learns_nothing_of_the_guard(self) -> None:
-        (before,) = await self.memory.unnamed(GUILD_A, self.c)
-        self._label = before[0].name
         await self.join()
         seen = await self.view(self.sees_ken)
         self.assertTrue(seen.knows(ENTRY, self.ken))  # type: ignore[attr-defined]
         self.assertFalse(seen.knows(ALIAS, await self.alias_id()))  # type: ignore[attr-defined]
 
     async def test_the_dm_sees_both(self) -> None:
-        (before,) = await self.memory.unnamed(GUILD_A, self.c)
-        self._label = before[0].name
         await self.join()
         dm = await self.memory.visible_to(GUILD_A, self.c, Viewer.the_dm())
         self.assertTrue(dm.knows(ENTRY, self.ken))
