@@ -101,6 +101,32 @@ class TheDoor(PauseBase):
                 (THURSDAY.id, self.one.id, f"{n:032x}", ALICE.id, NOW),
             )
 
+    async def test_a_repeat_press_still_gets_the_open_choice_when_ten_are_open(self) -> None:
+        first = await self.queue({"setting": "pause", "on": True})
+        for n in range(9):
+            await self.sql_row(n)
+        self.assertEqual(await self.queue({"setting": "pause", "on": True}), first)
+        self.assertEqual(await self.refused({"setting": "pause", "on": False}), "too_soon")
+
+    async def test_the_table_keeps_turn_on_for_exactly_the_yes_or_no_settings(self) -> None:
+        for setting, value, turn_on in (("pause", "", None), ("level", "quiet", True)):
+            with self.subTest(setting=setting), self.assertRaises(Exception):  # noqa: B017
+                async with self.db.guild(THURSDAY.id) as conn:
+                    await conn.execute(
+                        "INSERT INTO setting_actions (guild_id, campaign_id, id, user_id, setting,"
+                        " value, turn_on, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                        (
+                            THURSDAY.id,
+                            self.one.id,
+                            "f" * 32,
+                            ALICE.id,
+                            setting,
+                            value,
+                            turn_on,
+                            NOW,
+                        ),
+                    )
+
     async def test_the_switch_keeps_it_closed_before_the_body_is_judged(self) -> None:
         self.assertEqual(
             await self.refused({"setting": "pause", "on": True}, on=False), "not_found"

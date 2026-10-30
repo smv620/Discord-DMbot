@@ -153,6 +153,8 @@ export default function CampaignSettings({
   const s = page.settings;
   const owner = page.role === "owner";
   const [values, setValues] = useState<Record<CampaignSettingName, string> | null>(s ? current(s) : null);
+  // Set when the owner pauses or unpauses from the panel below, so the row above agrees without a reload.
+  const [pausedNow, setPausedNow] = useState<boolean | null>(null);
   const [phases, setPhases] = useState<Record<CampaignSettingName, Phase>>({
     visibility: { kind: "idle" },
     level: { kind: "idle" },
@@ -253,7 +255,7 @@ export default function CampaignSettings({
         </li>
         <li>
           <span class="campaign-name">{words.settingsLabels.pause}</span>
-          {s && <span class="block">{s.paused ? words.pausedYes : words.pausedNo}</span>}
+          {s && <span class="block">{(pausedNow ?? s.paused) ? words.pausedYes : words.pausedNo}</span>}
           {/* Every game master sees whether it is paused; only the owner is given the steps. */}
           {owner && !(PAUSE_LIVE && api.setCampaignSetting) && (
             <span class="small muted block">{words.doThisInDiscord(words.paths.pause)}</span>
@@ -268,7 +270,7 @@ export default function CampaignSettings({
         {!owner && <li class="small muted">{words.ownerOnlyNote}</li>}
       </ul>
       {PAUSE_LIVE && owner && s && api.setCampaignSetting && (
-        <LazyPanel load={() => import("./PausePanel")} what="pause" props={{ api, campaignRef, paused: s.paused }} />
+        <LazyPanel load={() => import("./PausePanel")} what="pause" props={{ api, campaignRef, paused: pausedNow ?? s.paused, onChanged: setPausedNow }} />
       )}
       {CO_DMS_LIVE && api.campaignGameMasters && (
         <LazyPanel load={() => import("./GameMasters")} what="the game masters" props={{ api, campaignRef }} />

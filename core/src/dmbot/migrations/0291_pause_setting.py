@@ -55,6 +55,7 @@ PAUSE_SETTING = r"""
             WHERE a.guild_id = g AND a.campaign_id = c AND a.created_at < now_s - 3600;
         SELECT a.id INTO have FROM setting_actions a
             WHERE a.guild_id = g AND a.campaign_id = c AND a.setting = 'pause'
+              AND a.user_id = dmbot_current_user()
               AND a.turn_on = pause_ AND a.state IN ('waiting', 'working');
         IF have IS NOT NULL THEN
             RETURN jsonb_build_object('status', 'ok', 'id', have);
