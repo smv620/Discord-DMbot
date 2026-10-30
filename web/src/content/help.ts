@@ -996,7 +996,7 @@ export const playerSteps: Step[] = [
   ...(RULE_KINDS_LIVE ? ruleKindSteps : []),
   ...(FIGHT_AND_ITEM_RULES_LIVE ? magicItemRuleSteps : []),
   {
-    text: "Want your own lines gone? In Discord, open the 🗂️ Menu DMbot sends you and press 🗑 Delete my transcripts. It deletes every line you said in that server, from every past game. It can't be undone. Other people's lines, your game master's story notes and copies already downloaded stay.",
+    text: "Want your own lines gone? In Discord, open the 🗂️ Menu DMbot sends you and press 🗑 Delete my transcripts. It deletes every line you said in that server, from every past game. It can't be undone. Other people's lines, the recaps and session notes DMbot made for the campaign, and copies already downloaded stay.",
     names: [{ name: "🗑 Delete my transcripts", file: "consent_dm.py" }],
   },
   {
