@@ -2925,6 +2925,148 @@ class MemoryStore:
                 (guild_id, campaign_id, a, b, user_id, int(self._clock())),
             )
 
+    async def join_same_person(
+        self, guild_id: int, campaign_id: str, unnamed_id: str, named_id: str
+    ) -> Written[Entity]:
+        """The DM says this unnamed person ("the guard at the gate") is that named one (#3037).
+        The named entry is kept; the unnamed one's description becomes a secret other name of it;
+        every connection and fact moves over. Nothing widens (Supervisor's ruling): whoever knew
+        only the unnamed person knows that secret name and not the real one, and every other
+        who-knows row keeps its own scope. One change, so one Undo puts both entries back, lists
+        included. Only the DM can ask for this, so the source is the DM's."""
+        async with self._write(guild_id, campaign_id, DM) as w:
+            unnamed = await _entity_row(w, unnamed_id)
+            named = await _entity_row(w, named_id)
+            if not unnamed["unnamed"] or named["unnamed"] or named["status"] != CONFIRMED:
+                raise MemoryRuleError("That isn't an unnamed person and a named one.")
+            if PERSON in (unnamed["type"], named["type"]):
+                raise MemoryRuleError("A player or the DM can't be joined this way.")
+            if unnamed["type"] != "character" or named["type"] != "character":
+                raise MemoryRuleError("Only a character can be joined to a character.")
+            hanging = await w.select(
+                ENTITIES,
+                " AND unnamed_anchor = %s AND status IN ('proposed', 'confirmed')",
+                [unnamed_id],
+            )
+            if hanging:  # their wording is built on this person ("the guard's dog")
+                raise MemoryRuleError(
+                    "Something is described through this person "
+                    f"(the {hanging[0]['unnamed_what']}). Name it or remove it first, so it "
+                    f"isn't described through {named['name']}."
+                )
+            text = clean_text(str(unnamed["name"]))
+            existing = await w.select(
+                ALIASES, " AND entity_id = %s AND key = %s", [named_id, lookup_key(text)]
+            )
+            if existing:
+                alias_id = str(existing[0]["id"])
+            else:
+                row = await w.insert(
+                    ALIASES, _new_alias(w, named_id, text, "old", CONFIRMED, True, None)
+                )
+                alias_id = str(row["id"])
+            # What the unnamed person was connected to was never shown to the players under that
+            # description; once it hangs off the named entry the old readers (which look at the
+            # flag, not at who knows) would show it as the named one's. It starts secret, so the
+            # join teaches nobody anything; the DM can show it again as usual.
+            # (the connections and the other names are made secret AS they move, in the same single
+            # update of each row: the unnamed end still keeps the flag sync from treating them as
+            # shown, and a second update of one row would make Undo refuse)
+            # Likewise its condition ("dead"): moving it would show the players the named one's
+            # condition, which they were not told. It is closed and stays as history; the DM sets
+            # the named entry's condition as usual.
+            for state in await w.select(
+                STATES, " AND closed_at IS NULL AND entity_id = %s", [unnamed_id]
+            ):
+                await w.update(STATES, state["id"], {"closed_at": w.now})
+            kept = await self._merge_in(
+                w, named_id, unnamed_id, source=DM, dm_said_same=True, join_alias=alias_id
+            )
+            final = await w.get(ENTITIES, kept)
+            assert final is not None
+            return Written(_entity(final), w.batch)
+
+    async def display_names(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        viewer: gate.Viewer,
+        entity_ids: Sequence[str],
+        *,
+        public: bool = False,
+    ) -> dict[str, str | None]:
+        """The name each of these entries is shown by to this viewer (#3037): see
+        `gate.display_name`. The other names are taken in the order the viewer's characters learned
+        them. `public`: a place that is not one character's (a table answer, a recap): pass the
+        party as the viewer, and an entry nobody may name comes back as "someone", never None.
+        One campaign; the DM gets the main name."""
+        if not entity_ids:
+            return {}
+        async with self._read(guild_id, campaign_id, snapshot=True) as scope:
+            seen = await gate.visible_to(scope, viewer)
+            entries = {
+                str(r["id"]): str(r["name"])
+                for r in await scope.select(
+                    ENTITIES,
+                    " AND id = ANY(%s) AND status NOT IN ('merged', 'rejected')",
+                    [list(entity_ids)],
+                )
+            }
+            names = await scope.select(
+                ALIASES,
+                " AND entity_id = ANY(%s) AND status <> 'rejected' ORDER BY created_at, id",
+                [list(entries)],
+            )
+            learned: dict[str, int] = {}
+            if not seen.everything and names:
+                mine = await scope.select(
+                    KNOWERS, " AND alias_id = ANY(%s)", [[str(a["id"]) for a in names]]
+                )
+                # the order THIS viewer learned them in: only its own characters' rows count
+                own = (
+                    {
+                        str(p["id"])
+                        for p in await scope.select(
+                            PERSPECTIVES, " AND entity_id = ANY(%s)", [sorted(viewer.characters)]
+                        )
+                    }
+                    if viewer.characters
+                    else None
+                )
+                for row in mine:
+                    if own is not None and str(row["perspective_id"]) not in own:
+                        continue
+                    key = str(row["alias_id"])
+                    learned[key] = min(learned.get(key, row["created_at"]), row["created_at"])
+        out: dict[str, str | None] = {}
+        for entity_id in entity_ids:
+            main = entries.get(entity_id)
+            if main is None:
+                out[entity_id] = None
+                continue
+            # (an entry's own name is stored as a name too: it stands for the main name, which the
+            # entry's own row governs, so it is not one of the "other" names)
+            others = sorted(
+                (
+                    (str(a["id"]), str(a["text"]))
+                    for a in names
+                    if str(a["entity_id"]) == entity_id and a["key"] != lookup_key(main)
+                ),
+                key=lambda pair: (learned.get(pair[0], 0), pair[0]),
+            )
+            # (a row on the entry's own name alias counts as knowing the entry under its name)
+            own_name = [
+                str(a["id"])
+                for a in names
+                if str(a["entity_id"]) == entity_id and a["key"] == lookup_key(main)
+            ]
+            if any(alias in seen.aliases for alias in own_name):
+                shown: str | None = main
+            else:
+                shown = gate.display_name(seen, entity_id, main, others)
+            out[entity_id] = gate.SOMEONE if shown is None and public else shown
+        return out
+
     async def not_the_same(
         self, guild_id: int, campaign_id: str, ids: Sequence[str], *, user_id: int
     ) -> int:
@@ -2966,10 +3108,14 @@ class MemoryStore:
         source: str,
         dm_said_same: bool,
         confirm_keys: Collection[str] = (),
+        join_alias: str | None = None,
     ) -> str:
-        """One merge inside an open write (see `merge`). Returns the id that was kept: a named
-        entry is always the one kept when the other has no name (#2790), so the DM giving a name
-        to "Ken's sister" keeps the real name whichever way round the merge was asked."""
+        """One merge inside an open write (see `merge`). `join_alias`: the merge joins an unnamed
+        person to the named one it turned out to be (#3037), and this is the secret other name made
+        from the description; who knew the unnamed person now know that name and nothing more.
+        Returns the id that was kept: a named entry is always the one kept when the other has no
+        name (#2790), so the DM giving a name to "Ken's sister" keeps the real name whichever way
+        round the merge was asked."""
         onto = await _load_ontology(w)
         keep = await _entity_row(w, keep_id)
         gone = await _entity_row(w, gone_id)
@@ -3008,6 +3154,11 @@ class MemoryStore:
                 # And so does an entry the players don't know yet (#2321).
                 "hidden_from_players": (kept["hidden_from_players"] or gone["hidden_from_players"]),
             }
+            if join_alias is not None:
+                # A join keeps the named entry's own flags: the unnamed person's would close the
+                # named entry to every character who knew it (#3037).
+                merged["audience_limited"] = kept["audience_limited"]
+                merged["hidden_from_players"] = kept["hidden_from_players"]
             if merged != {k: kept[k] for k in merged}:
                 await w.update(ENTITIES, keep_id, merged)
         before_moves = await merge_restore.snapshot(
@@ -3018,7 +3169,9 @@ class MemoryStore:
         await states.move_states(w, onto, keep_id, kept["type"], gone_id)
         if confirm_keys and source != DM:
             raise ValueError("Only the DM confirms names")
-        await _move_aliases(w, keep_id, gone_id, frozenset(confirm_keys))
+        await _move_aliases(
+            w, keep_id, gone_id, frozenset(confirm_keys), join=join_alias is not None
+        )
         await merge_restore.move_sheets(w.conn, w.ids, keep_id, gone_id)
         own = await w.select(
             ALIASES, " AND entity_id = %s AND key = %s", [keep_id, lookup_key(keep["name"])]
@@ -3027,12 +3180,16 @@ class MemoryStore:
             # The other entry's name was a secret one: the main name everyone sees
             # must never be.
             raise MemoryRuleError("A secret name can't be the main name.")
-        await _move_relations(w, keep_id, gone_id)
+        await _move_relations(w, keep_id, gone_id, join=join_alias is not None)
         await _move_standing(w, keep_id, gone_id)
         await merge_restore.move_notes(w.conn, w.ids, keep_id, gone_id)
         await merge_restore.move_links(w.conn, w.ids, keep_id, gone_id, kept["type"])
         await knowers.fold_knowers(
-            w, keep_id, gone_id, await beliefs.fold_perspective(w, keep_id, gone_id)
+            w,
+            keep_id,
+            gone_id,
+            await beliefs.fold_perspective(w, keep_id, gone_id),
+            as_alias=join_alias,
         )
         for table in (MENTIONS, CORRECTIONS):  # one statement each (#164)
             await w.update_where(table, {"entity_id": keep_id}, " AND entity_id = %s", [gone_id])
@@ -3043,8 +3200,12 @@ class MemoryStore:
         # at the merged-away entry (still there), and its label leaves the anchor out.
         # (the new anchor and the new stored label in ONE update of each row: a second change to
         # the same entry in one batch could not be undone)
-        hanging = await w.select(
-            ENTITIES, " AND unnamed_anchor = %s AND id <> %s", [gone_id, keep_id]
+        hanging = (
+            []  # (a join leaves them: live ones are refused before, the rest keep their wording)
+            if join_alias is not None
+            else await w.select(
+                ENTITIES, " AND unnamed_anchor = %s AND id <> %s", [gone_id, keep_id]
+            )
         )
         if hanging:
             await w.update_rows(
@@ -5463,7 +5624,12 @@ async def _delete_relation(w: Changes, relation_id: str) -> None:
 
 
 async def _move_aliases(
-    w: Changes, keep_id: str, gone_id: str, confirm: frozenset[str] = frozenset()
+    w: Changes,
+    keep_id: str,
+    gone_id: str,
+    confirm: frozenset[str] = frozenset(),
+    *,
+    join: bool = False,
 ) -> None:
     """The other entry's names move over in one statement (#164); a name both have is
     kept once, with the stronger status and any secret mark. Names whose key is in
@@ -5479,15 +5645,27 @@ async def _move_aliases(
             (confirming if said and alias["status"] != CONFIRMED else moving).append(alias["id"])
             continue
         status = CONFIRMED if said else alias["status"]
-        upgrade = _upgrade(twin, status, alias["secret"], DM)
+        # (a join: the name Ken already had keeps its own flag, and whoever knew the copy that
+        # goes knows his)
+        upgrade = _upgrade(twin, status, alias["secret"] and not join, DM)
+        if join:
+            await knowers.move_rows(w, "alias_id", alias["id"], twin["id"])
         await w.delete(ALIASES, alias["id"])
         if upgrade:
             await w.update(ALIASES, twin["id"], upgrade)
+    # (a join makes the moved names secret in this same update: a second one would make Undo
+    # refuse)
+    secret = {"secret": True} if join else {}
     if moving:
-        await w.update_where(ALIASES, {"entity_id": keep_id}, " AND id = ANY(%s)", [moving])
+        await w.update_where(
+            ALIASES, {"entity_id": keep_id, **secret}, " AND id = ANY(%s)", [moving]
+        )
     if confirming:
         await w.update_where(
-            ALIASES, {"entity_id": keep_id, "status": CONFIRMED}, " AND id = ANY(%s)", [confirming]
+            ALIASES,
+            {"entity_id": keep_id, "status": CONFIRMED, **secret},
+            " AND id = ANY(%s)",
+            [confirming],
         )
     await w.update_where(ALIASES, {"used_by": keep_id}, " AND used_by = %s", [gone_id])
 
@@ -5580,7 +5758,7 @@ async def _refuse_led_to_loop(
         raise MemoryRuleError(MERGE_LED_TO_LOOP)
 
 
-async def _move_relations(w: Changes, keep_id: str, gone_id: str) -> None:
+async def _move_relations(w: Changes, keep_id: str, gone_id: str, *, join: bool = False) -> None:
     """The other entry's facts move over. They're checked one by one, in the same order
     as before, against an in-memory copy of every fact they could clash with (so the
     same duplicates are folded and the same problems flagged); the moves themselves are
@@ -5627,9 +5805,19 @@ async def _move_relations(w: Changes, keep_id: str, gone_id: str) -> None:
         pred = onto.predicates.get(row["predicate"])
         if pred is not None:
             subject, obj = ordered(pred, subject, obj, str(row["detail"]), bool(row["directional"]))
-        moves[row["id"]] = {"subject_id": subject, "object_id": obj}
+        # (a join moves a connection AND makes it secret in this one update: a second update of
+        # the same row would make the Undo refuse, and the unnamed end still keeps the flag sync
+        # from treating it as shown)
+        moves[row["id"]] = {
+            "subject_id": subject, "object_id": obj, **({"secret": True} if join else {}),
+        }  # fmt: skip
         forget(state[row["id"]])
-        moved = dataclasses.replace(state[row["id"]], subject_id=subject, object_id=obj)
+        moved = dataclasses.replace(
+            state[row["id"]],
+            subject_id=subject,
+            object_id=obj,
+            secret=True if join else state[row["id"]].secret,
+        )
         state[row["id"]] = moved
         for end in (subject, obj):
             touching.setdefault(end, set()).add(moved.id)
@@ -5637,7 +5825,14 @@ async def _move_relations(w: Changes, keep_id: str, gone_id: str) -> None:
         others = [state[fact_id] for fact_id in sorted(near, key=order.__getitem__)]
         twin = duplicate_of(moved, others)
         if twin is not None:  # both said the same: keep one, with the stronger status
-            upgrade = _upgrade(_relation_row(twin), moved.status, moved.secret, DM, moved.source)
+            # (a join's moved fact is secret, but its twin keeps its own flag)
+            upgrade = _upgrade(
+                _relation_row(twin),
+                moved.status,
+                moved.secret and not join,
+                DM,
+                moved.source,
+            )
             if moved.directional and not twin.directional:  # the one with a direction wins (#2457)
                 upgrade = {
                     **upgrade, "directional": True, "subject_id": moved.subject_id,
@@ -5654,6 +5849,12 @@ async def _move_relations(w: Changes, keep_id: str, gone_id: str) -> None:
         if pred is not None and moved.status != REJECTED:
             to_check.append((moved, others))
     await w.update_rows(RELATIONS, moves)
+    if join:  # the bulk write does not revoke what The party believed: do it for the secret ones
+        for moved_id in moves:
+            if moved_id not in gone_rows:
+                moved_row = await w.get(RELATIONS, moved_id)
+                if moved_row is not None:
+                    await beliefs.follow(w, moved_row)
     # Flags before removals, as the old walk did: a flag can point at a fact removed
     # later in the walk, and removing that fact removes its flags too.
     extra = await states.load_extras(w, onto, [moved for moved, _ in to_check])
@@ -5667,7 +5868,9 @@ async def _move_relations(w: Changes, keep_id: str, gone_id: str) -> None:
     by_id = {r["id"]: r for r in rows}
     for relation_id in gone_rows:
         if relation_id in folded:  # what was believed of the folded fact is believed of its twin
-            await beliefs.carry(w, by_id[relation_id], folded[relation_id])
+            await beliefs.carry(w, by_id[relation_id], folded[relation_id], copy_beliefs=not join)
+            if join:  # and whoever knew the folded fact knows its twin: nothing is lost
+                await knowers.move_rows(w, "relation_id", relation_id, folded[relation_id])
         await _delete_relation(w, relation_id)
 
 
