@@ -978,10 +978,3 @@ async def _bulk(
         ).format(sql.Identifier(table.name), cols, cols, sql.Identifier(table.name)),
         (guild_id, campaign_id, Jsonb([{c: row.get(c) for c in table.columns} for row in rows])),
     )
-
-
-def connection_shown(ends: Mapping[str, Mapping[str, Any]], relation: dict[str, Any]) -> bool:
-    """This connection is shown to the players: its own flags and both its ends allow it. A fold
-    in a plain merge keeps or drops what the players know by whether the folded fact and its twin
-    were shown (#3073)."""
-    return relation_shown(relation) and ends_shown(ends, relation)
