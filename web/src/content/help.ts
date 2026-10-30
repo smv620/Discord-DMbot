@@ -167,11 +167,11 @@ export const namesButtonSteps: Step[] = [
   {
     text: `${
       DM_BOT_CHANNEL_LIVE
-        ? "To see every name DMbot knows in your campaign, press 📇 Names on your card in the DMbot channel, or in ⚙️ Manage DMbot."
-        : "To see every name DMbot knows in your campaign, press ⚙️ Manage DMbot, then 📇 Names."
+        ? "To see every name DMbot knows in your campaign, press 🌐 Manage campaign in the DMbot channel. On the website, pick Names."
+        : "To see every name DMbot knows in your campaign, press 🌐 Manage campaign. On the website, pick Names."
     } You can search the names and fix one. Any after-session check you haven't done yet (Check names, Check who is who, Check what was said) waits there. You can also type /dmbot names.`,
     names: [
-      { name: "Names", file: "dm_screen/names_button.py" },
+      { name: "Manage campaign", file: "dm_screen/dm_bot_panel.py" },
       { name: "Check names", file: "ui/names.py" },
       { name: "Check who is who", file: "ui/names.py" },
       { name: "Check what was said", file: "ui/names.py" },

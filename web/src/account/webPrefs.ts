@@ -10,7 +10,8 @@ const placesKey = (campaign: string): string => `dmbot:web-places:${campaign}`;
 
 export function readMode(): LayoutMode {
   try {
-    return window.localStorage.getItem(MODE_KEY) === "groups" ? "groups" : "free";
+    const saved = window.localStorage.getItem(MODE_KEY);
+    return saved === "groups" || saved === "quests" ? saved : "free";
   } catch {
     return "free";
   }

@@ -26,6 +26,7 @@ const SCRIPTED = new Set([
   "account/timeline.html", // the Story timeline (#2462)
   "account/transcripts.html",
   "account/import.html", // the importer (#2107); open for the site or a test server (#2260)
+  "account/lore.html", // Upload lore (#3022)
   "account/names.html", // the Names page (#2295)
   "account/web.html", // the relationship web (#2324)
   "account/campaigns.html", // a campaign's own page (#2416)
@@ -76,4 +77,4 @@ if (problems.length > 0) {
   console.error(problems.join("\n"));
   process.exit(1);
 }
-console.log("Every inline script is allowed by its hash; only /account, /account/recaps, /account/house-rules, /account/homebrew, /account/sharing, /account/timeline, /account/transcripts, /account/import, /account/names, /account/web, /account/campaigns, /account/npc, /handover, /hello, /help, /admin, /pricing and /unsubscribe have scripts.");
+console.log("Every inline script is allowed by its hash; only /account, /account/recaps, /account/house-rules, /account/homebrew, /account/sharing, /account/timeline, /account/transcripts, /account/import, /account/lore, /account/names, /account/web, /account/campaigns, /account/npc, /handover, /hello, /help, /admin, /pricing and /unsubscribe have scripts.");
