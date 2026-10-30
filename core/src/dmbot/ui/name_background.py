@@ -885,6 +885,7 @@ async def save_earlier_names(
     if not more:
         return
     try:
+        waiting = {a.id for a, _ in await memory.suggested_names(campaign.guild_id, campaign.id)}
         await memory.add_names(campaign.guild_id, campaign.id, [], source=DM, more=more)
     except MemoryRuleError as exc:
         log.info("Skipped the earlier names of a background: %s", exc)
@@ -892,24 +893,25 @@ async def save_earlier_names(
     except Exception:  # the names of the read are stored already: this must not undo the read
         log.exception("The earlier names of a background could not be saved")
         return
+    try:
+        # only the names this call added: one an earlier upload suggested keeps its own knowers
+        added = [
+            a for a, _ in await memory.suggested_names(campaign.guild_id, campaign.id)
+            if a.id not in waiting
+        ]  # fmt: skip
+    except Exception:
+        log.exception("The suggested names could not be read")
+        return
     if known_by:  # the uploader's character knows the secret names it gave (#2935), as store() does
-        try:
-            suggested = await memory.suggested_names(campaign.guild_id, campaign.id)
-            this_read = {name_key(sp) for found in spellings.values() for sp in found}
-            for alias, _ in suggested:
-                if alias.secret and name_key(alias.text) in this_read:
-                    await _secret_names_known_by(
-                        memory, campaign, alias.entity_id, [alias.text], known_by
-                    )
-        except Exception:
-            log.exception("Who knows the suggested secret names could not be recorded")
+        for alias in added:
+            if alias.secret:
+                await _secret_names_known_by(
+                    memory, campaign, alias.entity_id, [alias.text], known_by
+                )
     if held is None or not text:
         return
-    try:  # the sentence around each, for its question (memory only; a failure only loses it)
-        for alias, _ in await memory.suggested_names(campaign.guild_id, campaign.id):
-            held.put(campaign.guild_id, alias.id, lore_context.around(text, "", alias.text))
-    except Exception:
-        log.exception("The sentences of the suggested names could not be kept")
+    for alias in added:  # the sentence around each, for its question (memory only)
+        held.put(campaign.guild_id, alias.id, lore_context.around(text, "", alias.text))
 
 
 async def store(
@@ -1321,9 +1323,15 @@ async def queue_links(
             dropped["not_in_text"] += settled.unresolved
         answers = [*answers, settled.connections]
     picks: list[bg.Pick] = []
+    # (the campaign's own secret names stay secret whatever the upload's choice: the choice only
+    # frees the earlier names this read found)
+    campaign_secrets = {
+        key for key, entries in lookup.by_key.items() if any(e.secret for e in entries)
+    }
     kept = bg.keep_connections(
         answers, found, ends, cap=bg.MAX_CONNECTIONS, skip=known, dropped=dropped,
-        questions=questions, speaker=speaker, picks=picks, secret_keys=secret_spellings,
+        questions=questions, speaker=speaker, picks=picks,
+        secret_keys={*secret_spellings, *campaign_secrets},
     )  # fmt: skip
     # A pronoun-resolved question or unnamed person is secret as a connection would be: when its
     # named end is a secret spelling, of this reading or of the campaign (`keep_connections` does

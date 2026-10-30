@@ -410,3 +410,70 @@ class TheNameQuestion(NamesTest):
         self.assertEqual(view.yes, 1)
         (still,) = await self.memory.suggested_names(GUILD, self.campaign.id)
         self.assertEqual(still[0].status, "proposed")
+
+
+class TheSecrecyEdges(NamesTest):
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        self.bot.plan_gate = AsyncMock(return_value=None)  # type: ignore[method-assign]
+        self.store = BackstoryLinks(self.db)
+        self.bot.backstory_links = self.store
+        made = await self.memory.add_entity(
+            GUILD, self.campaign.id, name="Ash Morrow", type="character", role="npc",
+            status=CONFIRMED, source="dm",
+        )  # fmt: skip
+        self.ash = made.value.id
+
+    async def test_a_second_upload_does_not_replace_the_first_ones_knowers(self) -> None:
+        a = (
+            await self.memory.add_entity(
+                GUILD, self.campaign.id, name="Tavin", type="character", role="player_character",
+                played_by=1001, status=CONFIRMED, source="dm",
+            )
+        ).value.id  # fmt: skip
+        b = (
+            await self.memory.add_entity(
+                GUILD, self.campaign.id, name="Wren", type="character", role="player_character",
+                played_by=1002, status=CONFIRMED, source="dm",
+            )
+        ).value.id  # fmt: skip
+        hidden = {name_key("Tamsin Vell")}
+        await ui_bg.save_earlier_names(
+            self.memory, self.campaign, {"Ash Morrow": ("Tamsin Vell",)}, hidden, None, "", a
+        )
+        await ui_bg.save_earlier_names(  # (the same spelling again, by another uploader)
+            self.memory, self.campaign, {"Ash Morrow": ("Tamsin Vell",)}, hidden, None, "", b
+        )
+        (alias,) = [x for x, _ in await self.memory.suggested_names(GUILD, self.campaign.id)]
+        who = await self.memory.alias_knowers(GUILD, self.campaign.id, [alias.id])
+        self.assertEqual(who.get(alias.id, []), [a])  # (the first upload's character, kept)
+
+    async def test_a_connection_through_an_existing_secret_name_stays_secret_under_everyone(
+        self,
+    ) -> None:
+        await self.memory.add_alias(
+            GUILD, self.campaign.id, self.ash, "the hooded stranger", kind="title", secret=True,
+            status=CONFIRMED, source="dm",
+        )  # fmt: skip
+        answer = {
+            "names": [
+                {"name": "Ash Morrow", "kind": "person", "also": ["the hooded stranger"],
+                 "secret": [], "quote": "the hooded stranger"},
+                {"name": "Master Orlen", "kind": "person", "also": [], "secret": [],
+                 "quote": "served Master Orlen"},
+            ],
+            "connections": [
+                {"a": "the hooded stranger", "how": "works for", "b": "Master Orlen",
+                 "quote": "the hooded stranger served Master Orlen"},
+            ],
+        }  # fmt: skip
+        ai = lore_fake.lore_ai(json.dumps(answer))
+        self.bot.background_ai = self.bot.background_read_ai = ai  # type: ignore[assignment]
+        text = "The hooded stranger served Master Orlen."
+        done = await ui_bg.read_background(
+            self.bot, self.campaign, Upload(text, "lore", True),
+            truth=False, speaker=None, known_by="", started=time.monotonic(), choice="world",
+        )  # fmt: skip
+        _ = done
+        waiting = await self.store.waiting(GUILD, self.campaign.id)
+        self.assertFalse([w for w in waiting if not w.secret])  # (never a public row)
