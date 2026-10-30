@@ -3,9 +3,11 @@ the choice rides on the waiting row, Keep passes it on, and Undo puts it back. I
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from dmbot.memory import backstory_keep as keep
 from dmbot.memory.backstory_links import BackstoryLinks, NewLink, NewWhich
-from dmbot.memory.models import CONFIRMED
+from dmbot.memory.models import CONFIRMED, NewName
 from tests.test_memory_names import GUILD, NamesTest
 
 
@@ -174,3 +176,109 @@ class SecretNames(_Table):
         ids = await self.ids()
         _, secret = await self.stored(ids["Voss"])  # (an NPC, not a player character)
         self.assertEqual(await self.memory.alias_knowers(GUILD, self.campaign.id, secret), {})
+
+
+class UploadsNeverHide(_Table):
+    """An upload never hides what the players were already shown (#3025): a secret spelling in
+    a backstory leaves an existing public connection and name as they are."""
+
+    async def public_fact(self, ids: dict[str, str]) -> str:
+        made = await self.memory.add_relation(
+            GUILD, self.campaign.id, ids["Voss"], "member_of", ids["Lantern Council"],
+            source="dm", confidence=1.0, status=CONFIRMED,
+        )  # fmt: skip
+        return str(made.value[0].id)
+
+    async def test_a_secret_spelling_keeps_an_existing_public_connection_public(self) -> None:
+        ids = await self.ids()
+        await self.store.add(
+            GUILD, self.campaign.id,
+            [NewLink(ids["Voss"], "member_of", ids["Lantern Council"], "q", True,
+                     known_by=ids["Tavin"])],
+        )  # fmt: skip
+        (waiting,) = await self.store.waiting(GUILD, self.campaign.id)
+        # (the same connection became public while the link waited: kept, it must not hide it)
+        rid = await self.public_fact(ids)
+        await keep.keep_all(self.memory, self.store, GUILD, self.campaign.id, [waiting])
+        (rel,) = [
+            r
+            for r in await self.memory.relations(GUILD, self.campaign.id, include_secret=True)
+            if r.id == rid
+        ]
+        self.assertFalse(rel.secret)
+        self.assertFalse(rel.unrevealed)
+        shown = await self.memory.relations(GUILD, self.campaign.id, include_secret=False)
+        self.assertIn(rid, [r.id for r in shown])  # (still in every player's view)
+        # the uploader's character knows it (a public fact: every player character does)
+        known = await self.memory.statement_knowers(GUILD, self.campaign.id, "connection", [rid])
+        self.assertIn(ids["Tavin"], known.get(rid, []))
+
+    async def test_the_same_connection_new_to_the_campaign_is_still_kept_secret(self) -> None:
+        ids = await self.ids()
+        await self.store.add(
+            GUILD, self.campaign.id,
+            [NewLink(ids["Voss"], "member_of", ids["Lantern Council"], "q", True)],
+        )  # fmt: skip
+        (waiting,) = await self.store.waiting(GUILD, self.campaign.id)
+        await keep.keep_all(self.memory, self.store, GUILD, self.campaign.id, [waiting])
+        (rel,) = [
+            r
+            for r in await self.memory.relations(GUILD, self.campaign.id, include_secret=True)
+            if r.predicate == "member_of"
+        ]
+        self.assertTrue(rel.secret)
+
+    async def test_the_dms_own_keep_as_secret_does_hide_an_existing_public_twin(self) -> None:
+        ids = await self.ids()
+        await self.store.add(
+            GUILD, self.campaign.id,
+            [NewLink(ids["Voss"], "member_of", ids["Lantern Council"], "q")],
+        )  # fmt: skip
+        (waiting,) = await self.store.waiting(GUILD, self.campaign.id)
+        rid = await self.public_fact(ids)
+        await keep.keep_all(
+            self.memory, self.store, GUILD, self.campaign.id,
+            [replace(waiting, secret=True)], keep_flags=False,
+        )  # fmt: skip
+        (rel,) = [
+            r
+            for r in await self.memory.relations(GUILD, self.campaign.id, include_secret=True)
+            if r.id == rid
+        ]
+        self.assertTrue(rel.secret)  # (the DM pressed 🤫: that is their word, not the text's)
+
+    async def test_a_secret_spelling_of_a_public_name_leaves_it_public(self) -> None:
+        ids = await self.ids()
+        await self.memory.add_alias(
+            GUILD, self.campaign.id, ids["Voss"], "Old Voss", kind="nickname", source="dm",
+            status=CONFIRMED,
+        )  # fmt: skip
+        await self.memory.add_names(
+            GUILD, self.campaign.id,
+            [NewName("Voss", "npc", CONFIRMED, secrets=("Old Voss",))],
+            source="dm",
+        )  # fmt: skip
+        public = await self.memory.aliases(GUILD, self.campaign.id, entity_id=ids["Voss"])
+        self.assertIn("Old Voss", [a.text for a in public])
+
+    async def test_a_secret_proposal_kept_with_a_secret_spelling_stays_secret(self) -> None:
+        # (#2412: a theory waits as a secret proposal; the DM keeping it must not make it public)
+        ids = await self.ids()
+        await self.store.add(
+            GUILD, self.campaign.id,
+            [NewLink(ids["Voss"], "member_of", ids["Lantern Council"], "q", True)],
+        )  # fmt: skip
+        (waiting,) = await self.store.waiting(GUILD, self.campaign.id)
+        theory = await self.memory.add_relation(
+            GUILD, self.campaign.id, ids["Voss"], "member_of", ids["Lantern Council"],
+            source="extractor", confidence=0.6, status="proposed", secret=True,
+        )  # fmt: skip
+        await keep.keep_all(self.memory, self.store, GUILD, self.campaign.id, [waiting])
+        (rel,) = [
+            r
+            for r in await self.memory.relations(GUILD, self.campaign.id, include_secret=True)
+            if r.id == theory.value[0].id
+        ]
+        self.assertEqual((rel.status, rel.secret), (CONFIRMED, True))
+        shown = await self.memory.relations(GUILD, self.campaign.id, include_secret=False)
+        self.assertNotIn(rel.id, [r.id for r in shown])

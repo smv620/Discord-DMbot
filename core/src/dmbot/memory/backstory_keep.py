@@ -171,10 +171,15 @@ async def keep_all(
     campaign_id: str,
     links: Sequence[Waiting],
     progress: Callable[[int, int], Awaitable[None]] | None = None,
+    *,
+    keep_flags: bool = True,
 ) -> KeptAll:
     """Keep each of these ready connections. A refused one stays in the list. `progress(done,
     total)` is told before the first and after each one (kept or refused: tried), for the
-    website's "12 of 50" (#2924); counts only."""
+    website's "12 of 50" (#2924); counts only. `keep_flags`: keeping a connection that already
+    exists never makes it secret, so a secret spelling in the text never hides what the players
+    were shown (#3025); False only when the DM pressed 🤫 Keep as secret, which is their own word.
+    """
     done = KeptAll()
     total = len(links)
     if progress is not None:
@@ -200,6 +205,7 @@ async def keep_all(
                 # the uploader's character knows it, unless it uses a secret name (#2935)
                 known_by=[c.known_by] if c.known_by and not c.secret else (),
                 from_session_at=start if old else None,  # (starts as the old one ends)
+                keep_flags=keep_flags,
             )  # fmt: skip
         except Exception as exc:
             # the change is whole or not at all, whatever went wrong
