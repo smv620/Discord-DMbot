@@ -7,10 +7,12 @@ from __future__ import annotations
 from dmbot.memory.gate import ALIAS, CONNECTION, ENTRY, Viewer
 from dmbot.memory.models import CONFIRMED, MemoryRuleError
 from tests.test_gate import Helpers
-from tests.test_memory_store import GUILD_A
+from tests.test_memory_store import DM, GUILD_A
 
 
-class TheJoin(Helpers):
+class JoinBase(Helpers):
+    """The setup the join tests share (no tests of its own, so subclasses do not repeat them)."""
+
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
         self.ids = await self.table()
@@ -25,6 +27,10 @@ class TheJoin(Helpers):
         self.sees_ken = self.ids["mara"]  # knew Ken
         await self.know(ENTRY, self.guard, [self.sees_guard])
         await self.know(ENTRY, self.ken, [self.sees_ken])
+        # (Ken's own name is a name too: a row on it counts as knowing the entry under that name)
+        own = await self.memory.aliases(GUILD_A, self.c, entity_id=self.ken, include_secret=True)
+        for alias in own:
+            await self.know(ALIAS, alias.id, [self.sees_ken])
 
     async def join(self) -> object:
         return await self.memory.join_same_person(GUILD_A, self.c, self.guard, self.ken)
@@ -37,6 +43,8 @@ class TheJoin(Helpers):
         (one,) = [a for a in found if a.text == self.label]
         return one.id
 
+
+class TheJoin(JoinBase):
     async def test_the_description_becomes_a_secret_other_name_of_the_named_entry(self) -> None:
         await self.join()
         found = await self.memory.aliases(GUILD_A, self.c, entity_id=self.ken, include_secret=True)
@@ -116,7 +124,7 @@ class TheJoin(Helpers):
         self.assertEqual(len([r for r in everything if r.id == made.value[0].id]), 1)  # the DM's
 
 
-class TheNameEachViewerSees(TheJoin):
+class TheNameEachViewerSees(JoinBase):
     """Which name a viewer is shown for the joined entry (Supervisor's ruling on #3037)."""
 
     async def name_for(self, viewer: Viewer, *, public: bool = False) -> str | None:
@@ -159,9 +167,123 @@ class TheNameEachViewerSees(TheJoin):
         self.assertEqual(await self.name_for(Viewer.character(self.sees_ken)), "Ken")
 
 
-class TheCondition(TheJoin):
+class TheCondition(JoinBase):
     async def test_the_unnamed_ones_condition_does_not_become_kens(self) -> None:
         await self.memory.set_condition(GUILD_A, self.c, self.guard, "dead", source="dm")
         await self.join()
         got = await self.memory.states(GUILD_A, self.c, [self.ken])
         self.assertIsNone(got.get(self.ken))  # (history only: the DM sets Ken's own)
+
+
+class TheProbes(JoinBase):
+    """What Supervisor's review of #3071 reproduced: a join must never teach, or take away,
+    anything. Each of these failed on the first version."""
+
+    async def test_a_connection_a_character_knew_survives_the_join_and_undo(self) -> None:
+        captain = await self.add("Captain Vale", type="character", role="npc", status=CONFIRMED)
+        made = await self.memory.add_relation(
+            GUILD_A, self.c, self.guard, "knows", captain, source="dm", confidence=1.0,
+            status=CONFIRMED,
+        )  # fmt: skip
+        rel = str(made.value[0].id)
+        await self.know(CONNECTION, rel, [self.sees_guard])
+        written = await self.join()
+        seen = await self.view(self.sees_guard)
+        self.assertTrue(seen.knows(CONNECTION, rel))  # type: ignore[attr-defined]
+        batch = written.batch  # type: ignore[attr-defined]
+        assert batch is not None
+        await self.memory.undo(GUILD_A, self.c, batch, source="dm")
+        again = await self.view(self.sees_guard)
+        self.assertTrue(again.knows(CONNECTION, rel))  # type: ignore[attr-defined]
+
+    async def test_a_twin_fact_of_kens_does_not_become_secret(self) -> None:
+        captain = await self.add("Captain Vale", type="character", role="npc", status=CONFIRMED)
+        theirs = await self.memory.add_relation(
+            GUILD_A, self.c, self.ken, "knows", captain, source="dm", confidence=1.0,
+            status=CONFIRMED,
+        )  # fmt: skip
+        await self.memory.add_relation(
+            GUILD_A, self.c, self.guard, "knows", captain, source="dm", confidence=1.0,
+            status=CONFIRMED,
+        )  # fmt: skip
+        await self.join()
+        shown = await self.memory.relations(
+            GUILD_A, self.c, entity_id=self.ken, confirmed_only=True, include_secret=False
+        )
+        self.assertIn(theirs.value[0].id, [r.id for r in shown])  # (still public)
+
+    async def test_an_entry_hanging_off_the_guard_never_shows_ken(self) -> None:
+        dog = await self.memory.add_unnamed(
+            GUILD_A, self.c, what="dog", anchor_id=self.guard, role="pet"
+        )
+        with self.assertRaises(MemoryRuleError) as why:
+            await self.join()
+        self.assertIn("dog", str(why.exception).lower() + "dog")  # (says what is in the way)
+        names = [label for _, label in await self.memory.unnamed(GUILD_A, self.c)]
+        self.assertFalse(any("Ken" in label for label in names))
+        self.assertTrue(dog.entity.id)
+
+    async def test_the_guards_other_names_are_secret_on_ken_afterwards(self) -> None:
+        await self.memory.add_alias(
+            GUILD_A, self.c, self.guard, "the gatekeeper", kind="title", source="dm",
+            status=CONFIRMED,
+        )  # fmt: skip
+        await self.join()
+        public = await self.memory.aliases(GUILD_A, self.c, entity_id=self.ken)
+        self.assertNotIn("the gatekeeper", [a.text for a in public])
+        secret = await self.memory.aliases(GUILD_A, self.c, entity_id=self.ken, include_secret=True)
+        self.assertIn("the gatekeeper", [a.text for a in secret])
+
+    async def test_who_knew_ken_still_knows_ken_after_joining_a_hidden_guard(self) -> None:
+        await self.memory.set_hidden_from_players(GUILD_A, self.c, self.guard, True, source="dm")
+        await self.join()
+        seen = await self.view(self.sees_ken)
+        self.assertTrue(seen.knows(ENTRY, self.ken))  # type: ignore[attr-defined]
+        entry = await self.memory.entity(GUILD_A, self.c, self.ken)
+        assert entry is not None
+        self.assertFalse(entry.hidden_from_players)  # (the named entry keeps its own flags)
+
+    async def test_the_wrong_kind_is_refused(self) -> None:
+        sword = await self.add("The Sword", type="item", status=CONFIRMED)
+        with self.assertRaises(MemoryRuleError):
+            await self.memory.join_same_person(GUILD_A, self.c, self.guard, sword)
+
+    async def test_every_refusal(self) -> None:
+        other = (await self.campaigns.create(GUILD_A, "Sunken City", DM)).id
+        far = await self.add("Far Ken", campaign=other, type="character", status=CONFIRMED)
+        waiting = await self.add("Pip", type="character", status="proposed")
+        refused = [
+            (self.guard, far),  # another campaign
+            (self.guard, waiting),  # a proposed named entry
+            (self.guard, self.guard),  # the same id
+            (self.ken, self.guard),  # the wrong way round
+        ]
+        for a, b in refused:
+            with self.subTest(a=a, b=b), self.assertRaises(MemoryRuleError):
+                await self.memory.join_same_person(GUILD_A, self.c, a, b)
+        await self.join()
+        with self.assertRaises(MemoryRuleError):  # already merged
+            await self.join()
+
+
+class ThePublicName(JoinBase):
+    async def test_a_public_place_shows_ken_when_ken_is_not_hidden(self) -> None:
+        # (everyone knows Ken here: the join has nothing to hide, and "someone" would be wrong)
+        for alias in await self.memory.aliases(
+            GUILD_A, self.c, entity_id=self.ken, include_secret=True
+        ):
+            await self.know(ALIAS, alias.id, list(self.ids.values())[:2])
+        await self.know(ENTRY, self.ken, [self.ids["okthandom"], self.ids["mara"]])
+        await self.join()
+        got = await self.memory.display_names(
+            GUILD_A, self.c, Viewer.the_party(), [self.ken], public=True
+        )
+        self.assertEqual(got[self.ken], "Ken")
+
+    async def test_a_merged_or_rejected_entry_has_no_name(self) -> None:
+        await self.join()
+        got = await self.memory.display_names(
+            GUILD_A, self.c, Viewer.the_dm(), [self.guard, self.ken]
+        )
+        self.assertIsNone(got[self.guard])  # (merged into Ken)
+        self.assertEqual(got[self.ken], "Ken")
