@@ -865,6 +865,9 @@ async def store(
                 others=item.also,
                 secrets=item.secret,
                 note=note,
+                # (a name the choice calls known is stored not held back; the list follows when the
+                # DM confirms it, at the hook's 1.0: only a connection's certainty is lowered for
+                # a smart guess, #2959)
                 shown=known,
             )
         )
