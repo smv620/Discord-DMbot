@@ -1749,7 +1749,8 @@ class WhatPeopleBelieve(Editing):
         claim = await self.claims.get(self.g, self.one.id, ident)
         assert claim is not None and claim.fact_id
         others = await self.memory.perspectives(self.g, self.one.id)
-        mine = next(p for p in others if p.kind == "npc")  # Rook's point of view
+        # Rook's point of view (a player's character has one from the start since #2995)
+        mine = next(p for p in others if p.entity_id is not None)
         await self.memory.believe(
             self.g, self.one.id, mine.id, claim.fact_id, 0.25, "theory", source="dm"
         )  # something else wrote to the same connection since

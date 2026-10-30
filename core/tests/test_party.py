@@ -108,6 +108,24 @@ class TheParty(NamesTest):
         shown = {frozenset((a, b)) for a, _, b in await self.edges("knows")}
         self.assertNotIn(frozenset((self.ids["Mara"], self.ids["Tavin"])), shown)
 
+    async def test_a_party_the_dm_removed_is_not_made_again_or_filled(self) -> None:
+        await self.link(*PLAYERS.values())
+        (faction,) = await self.the_party()
+        await self.memory.set_entity_status(
+            GUILD, self.campaign.id, faction, source="dm", status=REJECTED
+        )
+        done = await self.link(*PLAYERS.values())
+        self.assertEqual((done.members, done.made_party), (0, False))
+        self.assertEqual(
+            [
+                e.status
+                for e in await self.memory.entities(GUILD, self.campaign.id, statuses=[REJECTED])
+                if e.source == "party"
+            ],
+            [REJECTED],
+        )
+        self.assertEqual(await self.the_party(), [])  # (no live one, none made again)
+
     async def test_the_party_keeps_the_dms_name_for_it(self) -> None:
         await self.link(101, 102)
         (faction,) = await self.the_party()

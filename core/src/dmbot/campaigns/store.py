@@ -81,7 +81,9 @@ log = logging.getLogger(__name__)
 EXPORT_FORMAT = "dmbot-campaign"
 # 2: written compressed since #164; contents unchanged from 1. Plain files of either
 # version still restore: the file's first bytes, not its version, say if it's packed.
-EXPORT_VERSION = 2
+# 3: carries the who-knows lists (`memory_knowers`, #2995). An older file has none, so its restore
+# works them out from the old flags; a file of this version keeps the lists it holds, however few.
+EXPORT_VERSION = 3
 
 RULE_ID_MAX = 64
 # Discord IDs and Unix timestamps must fit Postgres BIGINT (signed 64-bit).
@@ -1845,6 +1847,10 @@ class CampaignStore:
                 except (ValueError, TypeError, KeyError, AttributeError, OverflowError) as exc:
                     raise CampaignError(DAMAGED) from exc
                 await tell(step)
+            if _has_no_lists(sections, data):
+                from dmbot.memory import knowers
+
+                await knowers.move_flags(conn, guild_id, campaign_id)  # (#2995, slice 2b)
             if order:
                 if replace_campaign_id is not None:  # the copy's transcripts replace the old ones
                     await TranscriptParts().clear(conn, guild_id, campaign_id)
@@ -2243,6 +2249,22 @@ def _unpack(raw: bytes) -> bytes:
     if not unpacker.eof or unpacker.unused_data:  # cut short, or more after the end
         raise CampaignError(NOT_A_BACKUP)
     return text
+
+
+def _has_no_lists(sections: dict[str, Any], data: object) -> bool:
+    """A backup made before the lists existed (#2995): version 2 or older with no who-knows rows in
+    its memory. Its restore works them out from the old flags (`knowers.move_flags`). A file of
+    version 3 keeps its lists as they are, empty or trimmed, so a list the DM narrowed is never
+    widened again and a campaign that showed nothing stays that way. A version-2 file that already
+    has rows is kept as it is for the same reason."""
+    version = data.get("version") if isinstance(data, dict) else None
+    memory = sections.get("memory")
+    return (
+        isinstance(version, int)
+        and version < 3
+        and isinstance(memory, dict)
+        and not memory.get("knower")
+    )
 
 
 def _validate_backup(

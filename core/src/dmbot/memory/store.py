@@ -59,6 +59,7 @@ from dmbot.memory._changes import (
     ENTITIES,
     FLAGS,
     IMPRESSIONS,
+    KNOWERS,
     MENTIONS,
     NOT_FOUND,
     PERSPECTIVES,
@@ -3578,7 +3579,7 @@ class MemoryStore:
                 RELATIONS,
                 " AND ((predicate = %s AND subject_id = ANY(%s) AND object_id = ANY(%s))"
                 " OR (predicate = %s AND subject_id = ANY(%s) AND object_id = %s))",
-                [party_mod.KNOWS, chars, chars, party_mod.MEMBER_OF, chars, faction],
+                [party_mod.KNOWS, chars, chars, party_mod.MEMBER_OF, chars, faction or ""],
             )  # (every status: a connection the DM removed is still "had")
             have = {(r["subject_id"], r["predicate"], r["object_id"]) for r in held}
             pairs = members = 0
@@ -3589,13 +3590,15 @@ class MemoryStore:
                     w, a, party_mod.KNOWS, b, confidence=1.0, status=CONFIRMED, leave=True
                 )
                 pairs += 1
-            for c in chars:
-                if (c, party_mod.MEMBER_OF, faction) in have:
-                    continue
-                await self.add_relation_in(
-                    w, c, party_mod.MEMBER_OF, faction, confidence=1.0, status=CONFIRMED, leave=True
-                )
-                members += 1
+            if faction is not None:  # (none: the DM rejected the party, so nobody is added to it)
+                for c in chars:
+                    if (c, party_mod.MEMBER_OF, faction) in have:
+                        continue
+                    await self.add_relation_in(
+                        w, c, party_mod.MEMBER_OF, faction,
+                        confidence=1.0, status=CONFIRMED, leave=True,
+                    )  # fmt: skip
+                    members += 1
             return party_mod.PartyLinked(len(chars), pairs, members, made)
 
     async def add_relation(
@@ -4488,8 +4491,11 @@ class MemoryStore:
             # (new words can raise a check's flag in the same change: it goes back with them, and
             # so do the beliefs written for the connections it added or ended, #2409)
             others = await cur.fetchall()
+            # (and who knows each, #2995: the lists follow a connection ending or starting, each
+            # write logged in the same batch, so they go back with it)
             if not rows or any(
-                o["table_name"] not in (FLAGS.name, BELIEFS.name) or o["op"] != "insert"
+                o["table_name"] not in (FLAGS.name, BELIEFS.name, KNOWERS.name)
+                or (o["op"] != "insert" and o["table_name"] != KNOWERS.name)
                 for o in others
             ):
                 raise TooLateToUndo(self._too_late())
