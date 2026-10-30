@@ -53,6 +53,7 @@ export const webPage = {
   layoutLabel: "How the names are laid out",
   layoutTooBig: "That is too many names to move around. Choose fewer steps out to rearrange them.",
   sideNone: "No connections shown for this name.",
+  putInMiddle: "Put it in the middle",
   keepHere: "Keep it here",
   letMove: "Let it move",
   bothWays: "Both ways",
