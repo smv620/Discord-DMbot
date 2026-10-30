@@ -110,13 +110,8 @@
     border-color: var(--accent);
   }
 
-  /* The pages inside the part you are in (#2985): lighter than the tabs above them, one row that scrolls sideways
-     on a phone, the current page bold as well as underlined. */
-  .account .subtabs {
-    flex-wrap: nowrap;
-    overflow-x: auto;
-  }
-
+  /* The pages inside the part you are in (#2985): lighter than the tabs above them, the current page bold as well as underlined
+     (the row wraps: a sideways scroll fails the phone check). */
   .account .subtabs a {
     white-space: nowrap;
     font-size: var(--text-sm);
