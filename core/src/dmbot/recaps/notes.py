@@ -87,15 +87,33 @@ class SessionNotesStore:
             return None if row is None else _notes(row)
 
     async def all(
-        self, guild_id: int, campaign_id: str, *, before: int | None = None, last: int | None = None
+        self,
+        guild_id: int,
+        campaign_id: str,
+        *,
+        before: int | None = None,
+        last: int | None = None,
+        transcript_gone: bool = False,
     ) -> list[Notes]:
         """Every session's notes, oldest session first. `before` keeps only sessions earlier than
         that one and `last` only the latest that many (the website's list and the writer's
-        context)."""
+        context). `transcript_gone`: only sessions whose transcript no longer exists (no session
+        row, or its lines were deleted), which is when the writer needs the notes (#3026)."""
+        gone = (
+            " AND NOT EXISTS (SELECT 1 FROM transcript_sessions s WHERE s.guild_id = n.guild_id"
+            " AND s.campaign_id = n.campaign_id AND s.started_at = n.session_at"
+            " AND s.transcripts_deleted_at IS NULL AND (s.line_count > 0 OR EXISTS ("
+            "SELECT 1 FROM transcript_lines l WHERE l.session_id = s.id)))"
+            if transcript_gone
+            else ""
+        )
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
-                f"SELECT {_COLUMNS} FROM session_notes WHERE guild_id = %s AND campaign_id = %s"
-                " AND (%s::bigint IS NULL OR session_at < %s) ORDER BY session_at DESC LIMIT %s",
+                "SELECT n.session_at, n.beats, n.written_at, n.job_created_at"
+                " FROM session_notes n WHERE n.guild_id = %s AND n.campaign_id = %s"
+                " AND (%s::bigint IS NULL OR n.session_at < %s)"
+                + gone
+                + " ORDER BY n.session_at DESC LIMIT %s",
                 (guild_id, campaign_id, before, before, last),
             )
             return [_notes(r) for r in reversed(await cur.fetchall())]
