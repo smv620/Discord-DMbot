@@ -1073,6 +1073,32 @@ export interface LoreUpload {
   updatedAt: number;
   serverNow: number;
 }
+/** One request about a campaign's house-rules file (#2985): stage and counts only, never the link or a rule. */
+export interface HouseFileRequest {
+  id: string;
+  action: "link" | "unlink" | "check" | "upload";
+  state: "waiting" | "working" | "done" | "failed";
+  stage: string;
+  error: string;
+  toAdd: number;
+  toChange: number;
+  toRemove: number;
+  rulesRead: number;
+  createdAt: number;
+  updatedAt: number;
+}
+/** Whether a house-rules file is connected, the site it is on (never the address) and a request's progress. */
+export interface HouseFileState {
+  linked: boolean;
+  site: string;
+  request: HouseFileRequest | null;
+  serverNow: number;
+}
+export interface HouseFileInput {
+  action: HouseFileRequest["action"];
+  link?: string;
+  text?: string;
+}
 /** The campaign's recap style (#2985): ids are the stores' own, to remove by. */
 export interface RecapStyle {
   examples: { id: string; text: string }[];
@@ -2187,6 +2213,14 @@ export interface AccountApi {
    * already open: `loreRead(ref)` finds it), `too-soon` (five an hour), `bad-text`, `ticket-too-long`, `bad-speaker`,
    * `not-allowed`, `not-found` while the server switch is off. Missing from an older API. */
   loreAdd?(campaignRef: string, input: LoreInput): Promise<LoreUpload>;
+  /** The campaign's house-rules file (#2985; core web/house_file.py): whether one is connected, the site it is on, and
+   * the newest request (or the one `id` names). DM only: `not-allowed` for anyone else, `not-found` while the server
+   * switch is off. Missing from an older API. */
+  houseFile?(campaignRef: string, id?: string): Promise<HouseFileState>;
+  /** Queue a request about the file: connect or change it, stop using it, compare now, or upload text once. Answers the
+   * state with that request. Refusals: `slow-down` (one is already open: `houseFile(ref)` finds it), `too-soon` (ten an
+   * hour), `bad-text`, `ticket-too-long`, `not-allowed`, `not-found` while the server switch is off. */
+  houseFileAdd?(campaignRef: string, input: HouseFileInput): Promise<HouseFileState>;
   /** The campaign's recap style (#2985; core web/recap_style.py): the DM's own example recaps and standing notes, and
    * whether DMbot's own examples are in use. DM only. */
   recapStyle?(campaignRef: string): Promise<RecapStyle>;
@@ -2635,7 +2669,7 @@ export interface ApiHelpers {
 export const ACCOUNT_METHODS = ["emailSignInRequest", "emailSignInUse", "offerHandover", "deleteCampaign", "restoreStage", "restorePart", "restoreGo", "restoreStatus", "restoreCancel", "campaignBackup", "takeBackHandover", "handoverLook", "handoverAccept", "handoverDecline", "removeDiscordAccount", "getMoveCode", "myEmail", "changeEmail", "confirmEmail", "cancelEmailChange", "sendSupport", "mySupport", "supportThread", "signOutEverywhere", "startTryIt", "checkoutUrl", "billingPortalUrl", "renewPlan", "extraHoursUrl", "downloadExport", "characters", "linkServer", "acceptOffer", "declineOffer", "withdrawOffer", "stopRecording", "myLines", "deleteMyLines", "myLinesStatus", "requestDelete", "confirmDelete"] as const satisfies readonly (keyof AccountApi)[];
 export const RECAPS_METHODS = ["recapAudioUrl", "recaps", "pastSessions", "sessionReport", "makeSessionReport", "answerReport", "setBeatPresent", "makeRecap", "addRecap", "recapList", "recap", "saveRecap", "approveRecap", "approveUnchecked", "recapAudioLinks", "recapChoices", "setRecapChoice", "askRecapAudioAgain", "plotCheck", "answerPlotIssue", "plotChatSend", "plotChat", "decidePlotProposal", "recapAudioRemake", "sendFix", "fixResult", "sendVoice", "voiceResult", "rewriteWith", "importPreview", "importMembers", "importCheck", "importStart", "importProgress", "shareRecap", "publicRecap", "decideRecap"] as const satisfies readonly (keyof AccountApi)[];
 export const NAMES_METHODS = ["namesFixed", "undoNameFix", "campaignNames", "suggestSaidAs", "respellFromVoice", "saveSaidAs", "nameChecks", "answerNameCheck", "npcPage", "saveNpcNote", "myNpcNotes", "deleteMyNpcNotes", "allNames", "smartNames", "changeName", "nameThem", "webGraph", "webSize", "webOverview", "webFind", "webWaiting", "answerWaiting", "webReadings", "answerReading", "webPeek", "webReveal", "changeWebLink"] as const satisfies readonly (keyof AccountApi)[];
-export const CAMPAIGN_METHODS = ["transcriptCampaigns", "transcriptSessions", "transcript", "transcriptFile", "transcriptStretch", "transcriptPutBack", "transcriptLeaveOut", "setCampaignSetting", "campaignOptionalRules", "campaignGameMasters", "campaignSheets", "chooseSheet", "sheetAnswer", "fixTranscriptLine", "fixAnswer", "campaignGameMasterCandidates", "campaignSettingAnswer", "timeline", "sharedRules", "houseRuleCampaigns", "houseRules", "ruleSharing", "chooseRuleSharing", "ruleSharingAnswer", "houseRulesFile", "improvement", "setImprovement", "homebrewCampaigns", "homebrew", "homebrewFile", "campaignPage", "loreAdd", "loreRead", "recapStyle", "changeRecapStyle", "recapStyleAction"] as const satisfies readonly (keyof AccountApi)[];
+export const CAMPAIGN_METHODS = ["transcriptCampaigns", "transcriptSessions", "transcript", "transcriptFile", "transcriptStretch", "transcriptPutBack", "transcriptLeaveOut", "setCampaignSetting", "campaignOptionalRules", "campaignGameMasters", "campaignSheets", "chooseSheet", "sheetAnswer", "fixTranscriptLine", "fixAnswer", "campaignGameMasterCandidates", "campaignSettingAnswer", "timeline", "sharedRules", "houseRuleCampaigns", "houseRules", "ruleSharing", "chooseRuleSharing", "ruleSharingAnswer", "houseRulesFile", "improvement", "setImprovement", "homebrewCampaigns", "homebrew", "homebrewFile", "campaignPage", "loreAdd", "loreRead", "recapStyle", "changeRecapStyle", "recapStyleAction", "houseFile", "houseFileAdd"] as const satisfies readonly (keyof AccountApi)[];
 
 /** A stand-in for each call of an area: the first use loads the area's file (once), and every call goes to it. */
 function lazyArea<K extends keyof AccountApi>(names: readonly K[], load: () => Promise<{ default: (h: ApiHelpers) => Record<string, unknown> }>, h: ApiHelpers): Pick<AccountApi, K> {
