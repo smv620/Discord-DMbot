@@ -9,7 +9,7 @@
 import type { ComponentChildren } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 
-import { readLine } from "./webReading";
+import { mapReadLine } from "./webReading";
 
 import { kindWords, webPage as words } from "../content/web-words";
 import { kindStyle } from "./webKinds";
@@ -563,14 +563,14 @@ export default function WebMap({
             // verb to show, so a thick bundle is never mistaken for one.
             const from = focus ?? picked;
             const reads = from !== null && (edge.a === from || edge.b === from);
-            const reading = reads ? readLine(edge, from) : null;
+            const reading = reads ? mapReadLine(edge, from) : null;
             const many = edge.links.length > 1 ? words.nConnections(edge.links.length) : null;
-            const shown = reading
-              ? reading.verb !== null
-                ? `${theory ? `${words.theoryMark} ` : ""}${reading.verb}${reading.more > 0 ? ` (+${reading.more})` : ""}`
-                : many
-              : chosen
-                ? text
+            const shown = chosen
+              ? text
+              : reading
+                ? reading.verb !== null
+                  ? `${theory ? `${words.theoryMark} ` : ""}${reading.verb}${reading.more > 0 ? ` (+${reading.more})` : ""}`
+                  : many
                 : many;
             const arrowFrom = reading?.arrow && from !== null ? (from === edge.a ? p : q) : null;
             const arrowTo = arrowFrom === null ? null : arrowFrom === p ? q : p;
@@ -608,7 +608,7 @@ export default function WebMap({
                 {arrowFrom && arrowTo && <path d={arrowhead(arrowFrom, arrowTo)} class="web-arrow" aria-hidden="true" />}
                 {shown && (
                   <text x={mx} y={my - 5} transform={`rotate(${upright.toFixed(1)} ${mx} ${my})`} class="web-edge-text" text-anchor="middle" onClick={open}>
-                    <title>{shown}</title>
+                    <title>{text}</title>
                     {short(shown, 26)}
                   </text>
                 )}
@@ -725,6 +725,7 @@ export default function WebMap({
           >
             {detailPinned ? words.letMove : words.keepHere}
           </button>
+          {detail.id === center ? <p class="small muted">{words.inMiddle}</p> : <p class="small muted">{words.doubleTapHint}</p>}
           {detail.id !== center && (
             <button type="button" class="button secondary" onClick={() => onCenter(detail.id)}>
               {words.putInMiddle}
@@ -759,6 +760,7 @@ export default function WebMap({
           {edges.some(isTheory) && <li>{words.legendTheory}</li>}
           {edges.some((e) => e.links.some((l) => l.pinned)) && <li>{words.legendPinned}</li>}
         </ul>
+        {edges.some((e) => e.links.length > 0) && <p class="small muted">{words.legendReading}</p>}
       </section>
     </div>
   );
