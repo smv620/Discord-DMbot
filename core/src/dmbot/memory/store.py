@@ -1950,7 +1950,8 @@ class MemoryStore:
                         "unique_item": None,
                         # Names from a list, or read from the DM's story, start unrevealed
                         # (#2404): the table's first mention of one shows it to the players.
-                        "hidden_from_players": True,
+                        # Only the DM's word that the world knows it (`shown`) opens one (#2959).
+                        "hidden_from_players": not n.shown,
                     }
                 )  # fmt: skip
                 seen = {name_key_}
@@ -3928,6 +3929,22 @@ class MemoryStore:
         async with self._write(guild_id, campaign_id, source) as w:
             chosen = await knowers.set_statement_knowers(w, kind, statement_id, character_ids)
             return Written(chosen, w.batch)
+
+    async def mark_guess(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        kind: str,
+        statement_ids: Sequence[str],
+        certainty: float,
+        *,
+        source: str,
+    ) -> int:
+        """Record that the player characters who know these statements know them as a guess
+        (`certainty`, below 1.0), not as the DM's word (#2959). It changes only the certainty of
+        rows that exist: who knows what is the old flags' business until the readers move."""
+        async with self._write(guild_id, campaign_id, source) as w:
+            return await knowers.mark_guess(w, kind, statement_ids, certainty)
 
     async def statement_knowers(
         self, guild_id: int, campaign_id: str, kind: str, statement_ids: Sequence[str]

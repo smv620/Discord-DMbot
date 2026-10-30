@@ -270,7 +270,9 @@ class TheNameQuestion(NamesTest):
         from dmbot.memory.lookup import CampaignLookup
 
         view = await self.card()
-        await next(b for b in view.children if b.label == "✅ Yes").callback(self.it(DM))
+        await next(b for b in view.children if b.label == "✅ Yes, the same person").callback(
+            self.it(DM)
+        )
         found = await self.memory.aliases(
             GUILD, self.campaign.id, entity_id=self.ash, include_secret=True
         )
@@ -282,7 +284,9 @@ class TheNameQuestion(NamesTest):
 
     async def test_no_is_remembered_and_the_same_text_never_asks_again(self) -> None:
         view = await self.card()
-        await next(b for b in view.children if b.label == "❌ No").callback(self.it(DM))
+        await next(b for b in view.children if b.label == "❌ No, someone else").callback(
+            self.it(DM)
+        )
         await ui_bg.save_earlier_names(
             self.memory, self.campaign, {"Ash Morrow": ("Tamsin Vell",)}, {name_key("Tamsin Vell")}
         )
@@ -292,7 +296,9 @@ class TheNameQuestion(NamesTest):
         from tests.test_memory_names import MANAGER
 
         view = await self.card()
-        await next(b for b in view.children if b.label == "✅ Yes").callback(self.it(MANAGER))
+        await next(b for b in view.children if b.label == "✅ Yes, the same person").callback(
+            self.it(MANAGER)
+        )
         (still,) = await self.memory.suggested_names(GUILD, self.campaign.id)
         self.assertEqual(still[0].status, "proposed")
 
@@ -304,7 +310,7 @@ class TheNameQuestion(NamesTest):
 
     async def test_a_second_yes_on_the_same_name_counts_once(self) -> None:
         view = await self.card()
-        yes = next(b for b in view.children if b.label == "✅ Yes")
+        yes = next(b for b in view.children if b.label == "✅ Yes, the same person")
         await yes.callback(self.it(DM))
         await yes.callback(self.it(DM))
         self.assertEqual(view.yes, 1)
@@ -321,15 +327,26 @@ class TheNameQuestion(NamesTest):
         self.assertEqual(len(await self.memory.suggested_names(GUILD, self.campaign.id)), 1)
 
     async def test_a_failing_count_never_fails_the_read(self) -> None:
-        async def boom(*_: Any) -> Any:
-            raise RuntimeError("down")
+        from unittest.mock import patch
 
-        self.memory.suggested_names = boom  # type: ignore[method-assign]
-        await ui_bg.save_earlier_names(
-            self.memory,
-            self.campaign,
-            {"Ash Morrow": ("Old Ash",)},
-            (),
-            self.bot.lore_context,
-            "Old Ash",
-        )  # no error
+        with patch.object(self.memory, "suggested_names", side_effect=RuntimeError("down")):
+            await ui_bg.save_earlier_names(
+                self.memory,
+                self.campaign,
+                {"Ash Morrow": ("Old Ash",)},
+                (),
+                self.bot.lore_context,
+                "Old Ash",
+            )  # no error
+
+    async def test_two_quick_presses_answer_the_card_they_were_made_on(self) -> None:
+        import asyncio
+
+        await ui_bg.save_earlier_names(self.memory, self.campaign, {"Ash Morrow": ("Old Ash",)}, ())
+        view = await self.card()
+        yes = next(b for b in view.children if b.label == "✅ Yes, the same person")
+        await asyncio.gather(yes.callback(self.it(DM)), yes.callback(self.it(DM)))
+        # two names waited; the double press answered the first and not the one behind it
+        self.assertEqual(view.yes, 1)
+        (still,) = await self.memory.suggested_names(GUILD, self.campaign.id)
+        self.assertEqual(still[0].status, "proposed")

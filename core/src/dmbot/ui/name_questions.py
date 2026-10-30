@@ -17,7 +17,13 @@ from dmbot.memory.models import CONFIRMED, DM, REJECTED, Alias, MemoryRuleError
 from dmbot.mentions import NO_PINGS
 from dmbot.ui import logic
 from dmbot.ui.dmbot_commands import _bot, _Button, _Menu, _tell
-from dmbot.ui.name_background import ONLY_DMS, QUOTE_SHOWN, _campaign_for, _md, _memory
+from dmbot.ui.name_background import (
+    ONLY_DMS,
+    QUOTE_SHOWN,
+    campaign_for,
+    markdown_safe,
+    memory_of,
+)
 
 log = logging.getLogger(__name__)
 
@@ -37,13 +43,15 @@ class NameQuestions(_Menu):
         self.total = 0
         self.busy = asyncio.Lock()  # a second press waits for the first, so none is counted twice
         grey = discord.ButtonStyle.secondary
-        self.add_item(_Button(self._yes, label="✅ Yes", style=discord.ButtonStyle.success))
-        self.add_item(_Button(self._no, label="❌ No", style=grey))
+        self.add_item(
+            _Button(self._yes, label="✅ Yes, the same person", style=discord.ButtonStyle.success)
+        )
+        self.add_item(_Button(self._no, label="❌ No, someone else", style=grey))
         self.add_item(_Button(self._not_now, label="⏭️ Not now", style=grey))
 
     async def _waiting(self, interaction: discord.Interaction) -> list[tuple[Alias, str]]:
-        memory = _memory(interaction)
-        campaign = await _campaign_for(interaction, self.campaign_id)
+        memory = memory_of(interaction)
+        campaign = await campaign_for(interaction, self.campaign_id)
         if memory is None or campaign is None:
             return []
         return await memory.suggested_names(campaign.guild_id, campaign.id)
@@ -54,7 +62,7 @@ class NameQuestions(_Menu):
         self.current = waiting[0] if waiting else None
 
     async def load(self, interaction: discord.Interaction) -> bool:
-        campaign = await _campaign_for(interaction, self.campaign_id)
+        campaign = await campaign_for(interaction, self.campaign_id)
         if campaign is None or interaction.user.id not in campaign.dm_user_ids:
             return False
         self.guild_id = campaign.guild_id
@@ -69,10 +77,11 @@ class NameQuestions(_Menu):
         said = ""
         sentence = self.held.get(self.guild_id, alias.id) if self.held is not None else ""
         if sentence:
-            said = f"From your text: “{_md(logic.shorten(sentence, QUOTE_SHOWN))}”\n"
+            said = f"From your text: “{markdown_safe(logic.shorten(sentence, QUOTE_SHOWN))}”\n"
         hidden = " It is a secret name: players will not see it." if alias.secret else ""
         return (
-            f"🔎 **Is {_md(alias.text)} another name of {_md(entry)}?**{place}\n"
+            f"🔎 **Is {markdown_safe(alias.text)} another name of "
+            f"{markdown_safe(entry)}?**{place}\n"
             f"{said}Nothing uses the name until you say yes.{hidden}"
         )
 
@@ -91,15 +100,15 @@ class NameQuestions(_Menu):
 
     async def _answer(self, yes: bool, interaction: discord.Interaction) -> None:
         await interaction.response.defer()
+        shown = self.current  # the card this press was made on, taken before any wait
         async with self.busy:
-            campaign = await _campaign_for(interaction, self.campaign_id)
-            memory = _memory(interaction)
+            campaign = await campaign_for(interaction, self.campaign_id)
+            memory = memory_of(interaction)
             if campaign is None or memory is None:
                 return
             if interaction.user.id not in campaign.dm_user_ids:  # on every press
                 await _tell(interaction, ONLY_DMS)
                 return
-            shown = self.current
             if shown is None:
                 return
             now = await self._waiting(interaction)
@@ -128,7 +137,7 @@ class NameQuestions(_Menu):
 
     async def _not_now(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer()
-        campaign = await _campaign_for(interaction, self.campaign_id)
+        campaign = await campaign_for(interaction, self.campaign_id)
         if campaign is None or interaction.user.id not in campaign.dm_user_ids:  # every press
             await _tell(interaction, ONLY_DMS)
             return
