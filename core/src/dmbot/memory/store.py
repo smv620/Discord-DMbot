@@ -689,10 +689,18 @@ class MemoryStore:
             # Names and facts of live entries, filtered here against the entries just
             # read (same snapshot): plain reads, never a join that can go quadratic (#598).
             live = {str(r["id"]) for r in entities}
+            confirmed = {str(r["id"]) for r in entities if r["status"] == CONFIRMED}
             aliases = [
                 r
                 for r in await scope.select(ALIASES, " AND status <> 'rejected' ORDER BY id")
+                # (a name an AI read suggested for an entry the DM confirmed is not used until
+                # the DM says yes: matching, fixes and connection ends all wait, #3034)
                 if r["entity_id"] in live
+                and not (
+                    r["status"] == PROPOSED
+                    and r["source"] == BACKGROUND_SOURCE
+                    and r["entity_id"] in confirmed
+                )
             ]
             # The table's people, apart from the story's entries: only the names the DM
             # confirmed, never the placeholder `Player 1234` (the entry's own name).
@@ -1871,7 +1879,7 @@ class MemoryStore:
                 if m.entity_id not in live:
                     folded.append(None)  # forgotten or joined to another since
                     continue
-                status = live[m.entity_id]
+                status = PROPOSED if m.proposed else live[m.entity_id]
                 has = has_keys.setdefault(m.entity_id, set())
                 extra = [(t, "nickname", False) for t in m.others]
                 extra += [(t, "title", True) for t in m.secrets]
@@ -1883,7 +1891,17 @@ class MemoryStore:
                     used.add(key)
                     has.add(key)
                     aliases.append(
-                        _new_alias(w, m.entity_id, text, kind, status, secret, None, codes)
+                        _new_alias(
+                            w,
+                            m.entity_id,
+                            text,
+                            kind,
+                            status,
+                            secret,
+                            None,
+                            codes,
+                            BACKGROUND_SOURCE if m.proposed else None,
+                        )
                     )
                     added = True
                 folded.append(m.entity_id if added else None)
@@ -4852,6 +4870,7 @@ def _new_alias(
     secret: bool,
     used_by: str | None,
     codes: list[str] | None = None,  # worked out already (_Prepared)
+    source: str | None = None,  # an AI read's suggestion records BACKGROUND_SOURCE (#3034)
 ) -> dict[str, Any]:
     return {
         "id": new_id(),
@@ -4863,7 +4882,7 @@ def _new_alias(
         "secret": secret,
         "status": status,
         "sound_codes": list(sound_codes(text)) if codes is None else codes,
-        "source": w.source,
+        "source": source or w.source,
         "created_at": w.now,
     }
 
