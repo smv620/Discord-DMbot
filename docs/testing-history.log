@@ -2766,3 +2766,7 @@ DEPLOY fb1b148a (2026-10-29, dev1, owner's OK through the prompt "Deploy now"; S
 - web-api healthy.
 - Brings: #2998, the four-button Discord menu (DMbot Main Menu for a DM, player and guest; Help card; Manage DMbot; My character sheet).
 - Not yet checked (owner, in the test server's DM Bot channel): the main menu's four buttons for a DM, Manage campaign, Manage DMbot with the Discord-live settings at the top, a player seeing only My data and Help, My character sheet opening its form, and an old Settings button opening the new card.
+
+CHECK fb1b148a (2026-10-30, dev1, the owner's check in the test server's DM Bot channel, after the deploy). Owner's verdict: "looks better".
+- The DM's 👤 DMbot Main Menu shows the four buttons for a DM: ⚙️ Manage DMbot, 🌐 Manage campaign, 🙋 My data and ❓ Help, with the one-line intro.
+- Not yet checked: a player seeing only My data and Help, My character sheet opening its form, and an old Settings button opening the new card.
