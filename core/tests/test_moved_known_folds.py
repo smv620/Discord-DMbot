@@ -4,38 +4,52 @@ player characters' onto a twin they were not shown. Invented names."""
 
 from __future__ import annotations
 
+from typing import Any
+
+from dmbot.db import Database
 from dmbot.memory.gate import CONNECTION
 from dmbot.memory.models import CONFIRMED, new_id
+from dmbot.memory.store import MemoryStore
 from tests.test_gate import Helpers
 from tests.test_memory_store import GUILD_A
 from tests.test_same_person_join import JoinBase
 
 
 class Common:
+    # What the test bases (`Helpers`, `JoinBase`) give; stated here so the helpers below type-check.
+    memory: MemoryStore
+    db: Database
+    c: str
+    ids: dict[str, str]
+
+    async def undo(self, written: Any) -> None:
+        assert written.batch is not None
+        await self.undo(written)
+
     async def kn(self, rel: str) -> list[str]:
-        got = await self.memory.statement_knowers(GUILD_A, self.c, CONNECTION, [rel])  # type: ignore[attr-defined]
-        names = {v: k for k, v in self.ids.items()}  # type: ignore[attr-defined]
+        got = await self.memory.statement_knowers(GUILD_A, self.c, CONNECTION, [rel])
+        names = {v: k for k, v in self.ids.items()}
         return sorted(names.get(p, "other") for p in got.get(rel, []))
 
     async def bel(self, rel: str) -> dict[str, float | None]:
         out: dict[str, float | None] = {}
         for name in ("okthandom", "mara"):
-            pc = self.ids[name]  # type: ignore[attr-defined]
-            async with self.db.guild(GUILD_A) as conn:  # type: ignore[attr-defined]
+            pc = self.ids[name]
+            async with self.db.guild(GUILD_A) as conn:
                 cur = await conn.execute(
                     "SELECT b.confidence FROM memory_beliefs b JOIN memory_perspectives p"
                     " ON p.guild_id = b.guild_id AND p.campaign_id = b.campaign_id"
                     " AND p.id = b.perspective_id WHERE b.guild_id = %s AND b.campaign_id = %s"
                     " AND b.relation_id = %s AND p.entity_id = %s ORDER BY b.seq DESC LIMIT 1",
-                    (GUILD_A, self.c, rel, pc),  # type: ignore[attr-defined]
+                    (GUILD_A, self.c, rel, pc),
                 )
                 row = await cur.fetchone()
             out[name] = None if row is None else float(row["confidence"])
         return out
 
-    async def rel(self, a: str, b: str, **kw: object) -> str:
+    async def rel(self, a: str, b: str, **kw: Any) -> str:
         kw.setdefault("status", CONFIRMED)
-        made = await self.memory.add_relation(  # type: ignore[attr-defined]
+        made = await self.memory.add_relation(
             GUILD_A,
             self.c,
             a,
@@ -43,13 +57,13 @@ class Common:
             b,
             source="dm",
             confidence=1.0,
-            **kw,  # type: ignore[attr-defined]
+            **kw,
         )
         return str(made.value[0].id)
 
     async def pv(self, name: str) -> str:
-        views = {p.entity_id: p.id for p in await self.memory.perspectives(GUILD_A, self.c)}  # type: ignore[attr-defined]
-        return views[self.ids[name]]  # type: ignore[attr-defined]
+        views = {p.entity_id: p.id for p in await self.memory.perspectives(GUILD_A, self.c)}
+        return views[self.ids[name]]
 
 
 async def limit(t: Helpers, eid: str) -> None:
@@ -85,7 +99,7 @@ class Merge(Common, Helpers):
             GUILD_A, self.c, self.hidden, self.a, source="dm", dm_said_same=True
         )
         after = (await self.kn(pub), await self.bel(pub), await self.kn(sec), await self.bel(sec))
-        await self.memory.undo(GUILD_A, self.c, w.batch, source="dm")
+        await self.undo(w)
         undo = (await self.kn(pub), await self.bel(pub), await self.kn(sec), await self.bel(sec))
         self.assertEqual((after[0], after[2]), ([], []))
         self.assertTrue(all((v or 0) < 1.0 for v in after[1].values()))
@@ -103,7 +117,7 @@ class Merge(Common, Helpers):
         pub = await self.rel(self.a, self.vale)
         w = await self.memory.merge_many(GUILD_A, self.c, self.hidden, [self.a], source="dm")
         self.assertEqual(await self.kn(pub), [])
-        await self.memory.undo(GUILD_A, self.c, w.batch, source="dm")
+        await self.undo(w)
         self.assertEqual(await self.kn(pub), ["mara", "okthandom"])
 
     async def test_p2_shown_keeps(self) -> None:
@@ -136,7 +150,7 @@ class Merge(Common, Helpers):
         self.assertTrue(all((v or 0) < 1.0 for v in (await self.bel(twin)).values()))
         mine_now = await self.memory.what_my_characters_know(GUILD_A, self.c, 1)
         self.assertEqual([c.subject for c in mine_now.connections], [])
-        await self.memory.undo(GUILD_A, self.c, w.batch, source="dm")
+        await self.undo(w)
         undo = (
             await self.kn(mine),
             await self.bel(mine),
@@ -165,7 +179,7 @@ class Merge(Common, Helpers):
         )
         w = await self.memory.merge(GUILD_A, self.c, b, self.a, source="dm", dm_said_same=True)
         self.assertEqual(await self.kn(twin), ["okthandom"])
-        await self.memory.undo(GUILD_A, self.c, w.batch, source="dm")
+        await self.undo(w)
         self.assertEqual(await self.kn(mine), ["okthandom"])
         self.assertEqual(await self.kn(twin), [])
 
@@ -217,7 +231,7 @@ class Merge(Common, Helpers):
         mine = await self.rel(self.a, self.vale)
         before = (await self.kn(mine), await self.kn(twin))
         w = await self.memory.merge(GUILD_A, self.c, b, self.a, source="dm", dm_said_same=True)
-        await self.memory.undo(GUILD_A, self.c, w.batch, source="dm")
+        await self.undo(w)
         self.assertEqual((await self.kn(mine), await self.kn(twin)), before)
 
     async def npc_view(self, entity: str) -> str:
@@ -252,7 +266,7 @@ class Join(Common, JoinBase):
         before = (await self.kn(sec), await self.bel(sec))
         w = await self.join()
         after = (await self.kn(sec), await self.bel(sec))
-        await self.memory.undo(GUILD_A, self.c, w.batch, source="dm")  # type: ignore[attr-defined]
+        await self.undo(w)
         self.assertEqual(before, after)
         self.assertEqual(before, (await self.kn(sec), await self.bel(sec)))
 
@@ -266,7 +280,7 @@ class Join(Common, JoinBase):
         )
         w = await self.join()
         self.assertEqual(await self.kn(twin), ["okthandom"])
-        await self.memory.undo(GUILD_A, self.c, w.batch, source="dm")  # type: ignore[attr-defined]
+        await self.undo(w)
         self.assertEqual(await self.kn(mine), ["okthandom"])
         self.assertEqual(await self.kn(twin), [])
 
