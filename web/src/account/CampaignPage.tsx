@@ -82,6 +82,10 @@ export default function CampaignPageView({ api, path }: { api: AccountApi; path:
     return (
       <div class="panel" role="status">
         <p>{words.signedOut}</p>
+        {/* Discord's 🌐 Manage campaign opens this address; signing in brings the person back to it (#2301). */}
+        <a class="button" href={api.signInUrl()}>
+          {words.signIn}
+        </a>
       </div>
     );
   if (view === "none" || !ref)

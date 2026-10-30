@@ -11,7 +11,7 @@ export const gameMasterWords = {
   plan: "plan",
   planNote: "Their plan runs this campaign, so they can't be removed. They can hand the campaign over first.",
   planNoteSelf:
-    "Your plan runs this campaign, so you can't be removed. Hand the campaign over first, in Discord: ⚙️ Settings → 🗂️ Campaign management → 🤝 Hand over.",
+    "Your plan runs this campaign, so you can't be removed. Hand the campaign over first, in Discord: ⚙️ Manage DMbot → 🗂️ Campaign management → 🤝 Hand over.",
   you: "you",
   remove: "Remove",
   removeLabel: (name: string): string => `Remove ${name}`,

@@ -3,7 +3,7 @@ owner offers it to another member of the server, and the person offered answers 
 message. Ownership moves only when they accept, within 7 days, and only if their plan
 has room for it then. The rules are all in `CampaignStore`; this is the Discord side.
 
-- ⚙️ Settings → 🗂️ Campaign management shows who owns the campaign and, for the owner,
+- ⚙️ Manage DMbot → 🗂️ Campaign management shows who owns the campaign and, for the owner,
   **🤝 Hand over** (type the new owner's email), or **Take back offer** while one waits for
   an answer.
 - The person offered gets a private message with **Accept** / **No thanks**. If DMbot
@@ -66,15 +66,15 @@ NOT_A_PERSON = "That's a bot. Pick a person."
 OFFER_SENT = (
     "Offer sent to **{name}**. Nothing changes until they accept (they have {days} days). "
     "DMbot will send you a private message with their answer. To take it back: "
-    "⚙️ Settings → 🗂️ Campaign management → **Take back offer**."
+    "⚙️ Manage DMbot → 🗂️ Campaign management → **Take back offer**."
 )
 MENU_TIMED_OUT = (
-    "This menu timed out, so no offer was sent. To try again: ⚙️ Settings → "
+    "This menu timed out, so no offer was sent. To try again: ⚙️ Manage DMbot → "
     "🗂️ Campaign management → 🤝 Hand over."
 )
 OFFER_EMAILED = (
     f"📧 {handover_email.SENT} Nothing changes until they open the link and accept (it works for "
-    "{days} days). To take it back: ⚙️ Settings → 🗂️ Campaign management → **Take back offer**."
+    "{days} days). To take it back: ⚙️ Manage DMbot → 🗂️ Campaign management → **Take back offer**."
 )
 # Keep in step with site_offers.NOT_SENT (the same, for an offer made on the website).
 UNREACHABLE = (
@@ -84,11 +84,11 @@ UNREACHABLE = (
 )
 UNREACHABLE_STUCK = (
     "DMbot couldn't send **{name}** a private message, and couldn't take the offer back "
-    "either. Take it back yourself: ⚙️ Settings → 🗂️ Campaign management → **Take back offer**."
+    "either. Take it back yourself: ⚙️ Manage DMbot → 🗂️ Campaign management → **Take back offer**."
 )
 UNREACHABLE_ANSWERED = (
     "DMbot couldn't send **{name}** a private message, but the offer was already answered "
-    "(on the DMbot website) or taken back meanwhile. ⚙️ Settings → 🗂️ Campaign management "
+    "(on the DMbot website) or taken back meanwhile. ⚙️ Manage DMbot → 🗂️ Campaign management "
     "shows where it stands."
 )
 OFFER_TEXT = (
@@ -126,7 +126,7 @@ OFFER_EXPIRED = (
     "changed. If you still want it, ask **{owner}** to offer it again."
 )
 _OFFER_AGAIN = (
-    "It stays yours. To offer it again: ⚙️ Settings → 🗂️ Campaign management → **Hand "
+    "It stays yours. To offer it again: ⚙️ Manage DMbot → 🗂️ Campaign management → **Hand "
     "over**, or your account "
     "page on the DMbot website."
 )
@@ -137,7 +137,7 @@ TOLD_EXPIRED = (
 # An offer made by email (#2532; PLAN): there is no name, and the campaign never moved.
 TOLD_EXPIRED_EMAIL = (
     "They didn't answer within {days} days, so the offer ended. The campaign is still yours. "
-    "You can offer it again from ⚙️ Settings → 🗂️ Campaign management → 🤝 Hand over, or from "
+    "You can offer it again from ⚙️ Manage DMbot → 🗂️ Campaign management → 🤝 Hand over, or from "
     "your account page."
 )
 # A campaign moved to the new owner's other server after an offer by email (#2532, slice C).
@@ -204,9 +204,9 @@ TAKE_NO_ROOM = (
 )
 TAKE_GONE = "Someone already took this campaign on, so nothing changed."
 NOT_NOW = "OK. DMbot will ask again next time you start this campaign."
-ENDED_CAMPAIGN = DM_CAMPAIGN_GONE  # one voice with ⚙️ Settings
+ENDED_CAMPAIGN = DM_CAMPAIGN_GONE  # one voice with ⚙️ Manage DMbot
 FAILED = LOAD_FAILED
-# How ⚙️ Settings draws its card, for redrawing it after an offer is taken back. Set by
+# How ⚙️ Manage DMbot draws its card, for redrawing it after an offer is taken back. Set by
 # settings.py (which imports this module, so it can't be imported from here).
 Card = Callable[[Campaign, int], tuple[str, discord.ui.View]]  # campaign, who's looking
 _settings_card: Card | None = None
@@ -351,7 +351,7 @@ async def _broke(interaction: discord.Interaction, what: str) -> None:
 
 
 def owner_line(campaign: Campaign, offer: HandoverOffer | None) -> str:
-    """For the ⚙️ Settings card: whose plan the campaign uses, and any offer waiting."""
+    """For the ⚙️ Manage DMbot card: whose plan the campaign uses, and any offer waiting."""
     if campaign.owner_user_id is None:
         line = (
             "• **Owner:** none yet. Any of its DMs can press **Take it on** so it uses their "
@@ -387,7 +387,7 @@ class HandoverButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
     template=rf"dmbot:handover:{_CAMPAIGN}",
 ):
-    """🤝 Hand over, on ⚙️ Settings: the owner types the email of who takes the campaign over."""
+    """🤝 Hand over, on ⚙️ Manage DMbot: the owner types the email of who takes the campaign over."""
 
     def __init__(self, campaign_id: str) -> None:
         super().__init__(
@@ -827,7 +827,7 @@ class WithdrawOfferButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
     template=rf"dmbot:offer:back:{_GUILD}:{_OFFER}",
 ):
-    """On ⚙️ Settings while an offer waits: the owner takes it back, and the card shows
+    """On ⚙️ Manage DMbot while an offer waits: the owner takes it back, and the card shows
     the campaign as it is now."""
 
     def __init__(self, guild_id: int, offer_id: int) -> None:
@@ -894,9 +894,9 @@ class WithdrawOfferButton(
 
 
 async def redraw_card(interaction: discord.Interaction, campaign: Campaign) -> None:
-    """⚙️ Settings as the campaign is now, with no offer waiting (best effort)."""
+    """⚙️ Manage DMbot as the campaign is now, with no offer waiting (best effort)."""
     if _settings_card is None:  # settings.py sets it on import: a bug if it's missing
-        log.warning("No ⚙️ Settings card to redraw after a hand-over offer")
+        log.warning("No ⚙️ Manage DMbot card to redraw after a hand-over offer")
         return
     text, view = _settings_card(campaign, interaction.user.id)
     with contextlib.suppress(discord.HTTPException):
@@ -950,7 +950,7 @@ class TakeOnButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
     template=rf"dmbot:takeon:{_CAMPAIGN}",
 ):
-    """Take it on: after `/dmbot start`, and on ⚙️ Settings of a campaign with no owner."""
+    """Take it on: after `/dmbot start`, and on ⚙️ Manage DMbot of a campaign with no owner."""
 
     def __init__(self, campaign_id: str, *, row: int | None = None) -> None:
         super().__init__(

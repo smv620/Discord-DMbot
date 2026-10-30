@@ -286,7 +286,7 @@ async def may_change_screen(
 ) -> tuple[Campaign, discord.Guild, CampaignStore] | None:
     """The campaign, if this person (its DM, or a server manager) may change its DM
     screen or settings; otherwise None, after telling them why (with these words). The
-    one check for the help card and ⚙️ Settings (#515). Scoped to the server the button
+    one check for the help card and ⚙️ Manage DMbot (#515). Scoped to the server the button
     was pressed in."""
     guild = interaction.guild
     member = interaction.user
@@ -319,7 +319,7 @@ async def save_visibility(
 ) -> Campaign | None:
     """Change who can see the DM screen (the interaction is already deferred) and say so
     privately. The campaign as saved, or None if it failed (the DM is told). `quiet`: the
-    caller shows the change itself (the ⚙️ Settings card is redrawn), so the private
+    caller shows the change itself (the ⚙️ Manage DMbot card is redrawn), so the private
     reply is only sent when it adds something (a warning, or peekers losing access)."""
     was = campaign.dm_screen_visibility
     try:
@@ -364,7 +364,7 @@ def hide_view(campaign_id: str) -> discord.ui.View:
 
 
 def card_view(campaign: Campaign) -> discord.ui.View:
-    """The help card's buttons: only Hide, for peekers. Who can see the screen and ⚙️ Settings
+    """The help card's buttons: only Hide, for peekers. Who can see the screen and ⚙️ Manage DMbot
     moved to the DM Bot channel (#1666), so the DM screen holds only in-game things. (Cards posted
     before that keep working: their buttons are still registered.)"""
     view = discord.ui.View(timeout=None)
@@ -420,7 +420,7 @@ class StopListeningButton(
         if not bot.may_stop(guild.id, member.id, manager):  # asked again at "Yes, stop"
             await interaction.response.send_message(messages.ONLY_DM_STOPS, ephemeral=True)
             return
-        # Ask first (#554): a tap next to ⚙️ Settings mustn't end the session by accident.
+        # Ask first (#554): a tap next to ⚙️ Manage DMbot mustn't end the session by accident.
         session, name = running
         confirm = StopConfirm(self.campaign_id, session)
         await interaction.response.send_message(

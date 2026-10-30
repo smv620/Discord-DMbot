@@ -22,11 +22,11 @@ describe("the words are the panel's own", () => {
 
   it("says where the same choices are on Discord, and the button it names exists", () => {
     expect(words.sameOnDiscord).toBe(
-      "The same choices are in Discord: \u{1F464} DMbot Main Menu \u2192 \u2699\ufe0f Settings, in your DM Bot channel.",
+      "The same choices are in Discord: \u{1F464} DMbot Main Menu \u2192 \u2699\ufe0f Manage DMbot, in your DM Bot channel.",
     );
     // The menu it names is the bot's own (#2289, #2333).
     expect(readFileSync(join(botDir, "dm_screen/dm_bot_panel.py"), "utf8")).toContain("DMbot Main Menu");
     expect(panel).toContain('label="Recaps"');
-    expect(panel).toContain("\u2699\ufe0f Settings");
+    expect(panel).toContain("\u2699\ufe0f Manage DMbot");
   });
 });

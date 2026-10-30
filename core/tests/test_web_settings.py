@@ -1,7 +1,7 @@
 """A DM's choices on the website's Settings page (#2463): who can see the DM screen, how much DMbot
 says, how long transcripts are kept. Queued by the website's own database role, applied by the bot
-the way Discord's ⚙️ Settings buttons apply them, re-checked when applied, and read back only by the
-DM who made them. Invented names throughout."""
+the way Discord's ⚙️ Manage DMbot buttons apply them, re-checked when applied, and read back only
+by the DM who made them. Invented names throughout."""
 
 from __future__ import annotations
 

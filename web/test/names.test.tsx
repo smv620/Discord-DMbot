@@ -3,7 +3,7 @@
 // The Names page (#2295) against the pretend API: search as you type, the filter by kind with its
 // counts, sorting, paging, what each action sends, and the views for someone who may not change
 // names (a server manager who isn't a DM) or may not see the list at all.
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError } from "../src/account/api";
@@ -239,6 +239,139 @@ describe("what a DM can do", () => {
     fireEvent.click(row.getByRole("button", { name: w.saveKind }));
     await waitFor(() => expect(calls(api, "changeName").pop()).toBe('changeName:100.cmp1:n7:{"action":"kind","kind":"group"}'));
     await waitFor(() => expect(within(rowOf("Gorrak")).getByText("Groups")).toBeTruthy());
+  });
+
+  describe("making a name a player character (#2985)", () => {
+    const PLAYER_ID = "123456789012345678";
+    const pick = async () => {
+      const api = open();
+      await ready();
+      const row = await edit("Gorrak");
+      fireEvent.change(row.getByLabelText(w.kindChange), { target: { value: "player_character" } });
+      await row.findByLabelText(w.playerLabel);
+      return { api, row };
+    };
+
+    it("offers the Discord ID box only for a player character, saying it can wait", async () => {
+      const api = open();
+      await ready();
+      const row = await edit("Gorrak");
+      expect(row.queryByLabelText(w.playerLabel)).toBeNull();
+      fireEvent.change(row.getByLabelText(w.kindChange), { target: { value: "player_character" } });
+      expect(await row.findByLabelText(w.playerLabel)).toBeTruthy();
+      expect(row.getByText(w.playerNote)).toBeTruthy();
+      fireEvent.click(row.getByRole("button", { name: w.saveKind }));
+      // No ID: the same message as before, no `player` in it.
+      await waitFor(() => expect(calls(api, "changeName").pop()).toBe('changeName:100.cmp1:n7:{"action":"kind","kind":"player_character"}'));
+      await waitFor(() => expect(within(rowOf("Gorrak")).getByText("PCs")).toBeTruthy());
+    });
+
+    it("is offered even when the campaign has no player character yet", async () => {
+      // The API lists only kinds that have names, so without this a first player character could never be made.
+      const api = mockApi("table");
+      const all = api.allNames!.bind(api);
+      api.allNames = async (ref, query) => {
+        const page = await all(ref, query);
+        return { ...page, kinds: page.kinds.filter((k) => k.key !== "player_character") };
+      };
+      open(DM, api);
+      await ready();
+      const row = await edit("Gorrak");
+      const options = [...(row.getByLabelText(w.kindChange) as HTMLSelectElement).options].map((o) => o.value);
+      expect(options).toContain("player_character");
+      expect(options).toContain("npc");
+    });
+
+    const typeId = async (row: ReturnType<typeof within>, id: string) => {
+      fireEvent.input(row.getByLabelText(w.playerLabel), { target: { value: id } });
+      await act(async () => {});
+    };
+    const linked = (api: ReturnType<typeof mockApi>) => calls(api, "changeName").filter((c) => c.includes("player_character"));
+
+    it("asks who the ID is first and links nothing until the DM says that's them (#3004)", async () => {
+      const { api, row } = await pick();
+      // A pasted mention and stray spaces are tidied before it is sent.
+      await typeId(row, ` <@${PLAYER_ID}> `);
+      fireEvent.click(row.getByRole("button", { name: w.playerCheck }));
+      expect(await row.findByText(w.playerConfirm("SomeUser"))).toBeTruthy();
+      expect(row.getByText(w.playerNotRecording)).toBeTruthy();
+      expect(calls(api, "nameThem").pop()).toBe(`nameThem:100.cmp1:n7:{"action":"kind","kind":"player_lookup","player":"${PLAYER_ID}"}`);
+      expect(linked(api)).toHaveLength(0); // asked, not linked
+      fireEvent.click(row.getByRole("button", { name: w.playerYes }));
+      await waitFor(() =>
+        expect(linked(api).pop()).toBe(`changeName:100.cmp1:n7:{"action":"kind","kind":"player_character","player":"${PLAYER_ID}","confirmed":true}`),
+      );
+      await waitFor(() => expect(within(rowOf("Gorrak")).getByText("PCs")).toBeTruthy());
+    });
+
+    it("cancels without linking, and a changed ID has to be checked again", async () => {
+      const { api, row } = await pick();
+      await typeId(row, PLAYER_ID);
+      fireEvent.click(row.getByRole("button", { name: w.playerCheck }));
+      await row.findByText(w.playerConfirm("SomeUser"));
+      fireEvent.click(row.getByRole("button", { name: w.playerCancel }));
+      expect(row.queryByText(w.playerConfirm("SomeUser"))).toBeNull();
+      fireEvent.click(row.getByRole("button", { name: w.playerCheck }));
+      await row.findByText(w.playerConfirm("SomeUser"));
+      await typeId(row, "123456789012345679"); // another ID: the confirmation was for the first
+      expect(row.queryByText(w.playerConfirm("SomeUser"))).toBeNull();
+      expect(row.queryByRole("button", { name: w.playerYes })).toBeNull();
+      expect(linked(api)).toHaveLength(0);
+    });
+
+    it("offers to link someone who is not in the server yet, in words that say so", async () => {
+      const { api, row } = await pick();
+      await typeId(row, "123456789012345555");
+      fireEvent.click(row.getByRole("button", { name: w.playerCheck }));
+      expect(await row.findByText(w.playerNotHere("SomeUser"))).toBeTruthy();
+      fireEvent.click(row.getByRole("button", { name: w.playerYes }));
+      await waitFor(() => expect(linked(api)).toHaveLength(1));
+    });
+
+    it("shows the wait's stage while Discord is asked", async () => {
+      const api = mockApi("table");
+      const slow = api.nameThem!.bind(api);
+      api.nameThem = (ref, id, step, onLook) => new Promise((go) => setTimeout(() => go(slow(ref, id, step, onLook)), 50));
+      open(DM, api);
+      await ready();
+      const row = await edit("Gorrak");
+      fireEvent.change(row.getByLabelText(w.kindChange), { target: { value: "player_character" } });
+      await typeId(row, PLAYER_ID);
+      fireEvent.click(row.getByRole("button", { name: w.playerCheck }));
+      expect(await row.findByText(w.playerStage["waiting"] ?? "")).toBeTruthy();
+      expect(await row.findByText(w.playerConfirm("SomeUser"))).toBeTruthy();
+      expect(row.queryByText(w.playerStage["waiting"] ?? "")).toBeNull();
+    });
+
+    it("has an (i) that opens and closes the hint on how to find an ID", async () => {
+      const { row } = await pick();
+      const hint = () => row.getByRole("note", { hidden: true });
+      expect(hint().hasAttribute("hidden")).toBe(true);
+      expect(hint().querySelectorAll("li")).toHaveLength(3);
+      const button = row.getByRole("button", { name: w.playerInfoLabel });
+      expect(button.getAttribute("aria-expanded")).toBe("false");
+      fireEvent.click(button);
+      expect(hint().hasAttribute("hidden")).toBe(false);
+      expect(row.getByRole("button", { name: w.playerInfoClose }).getAttribute("aria-expanded")).toBe("true");
+      fireEvent.click(row.getByRole("button", { name: w.playerInfoClose }));
+      expect(hint().hasAttribute("hidden")).toBe(true);
+    });
+
+    it("says so in plain words when the ID is not an ID, unknown to Discord, a bot's, or could not be checked", async () => {
+      const { api, row } = await pick();
+      for (const [id, error] of [
+        ["Mira", "bad-player"],
+        ["123456789012340000", "unknown-id"],
+        ["123456789012349999", "bot-player"],
+        ["123456789012341111", "lookup-failed"],
+      ] as const) {
+        await typeId(row, id);
+        fireEvent.click(row.getByRole("button", { name: w.playerCheck }));
+        expect(await row.findByText(w.errors[error] ?? "")).toBeTruthy();
+        expect(row.queryByRole("button", { name: w.playerYes })).toBeNull(); // never linked without the name shown
+      }
+      expect(linked(api)).toHaveLength(0);
+    });
   });
 
   it("adds and removes another name", async () => {

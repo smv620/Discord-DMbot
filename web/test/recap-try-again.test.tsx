@@ -158,7 +158,7 @@ describe("a recap that is being made", () => {
 describe("the Settings words", () => {
   it("send the DM to the Main Menu in their DM Bot channel", () => {
     expect(choiceWords.sameOnDiscord).toBe(
-      "The same choices are in Discord: 👤 DMbot Main Menu → ⚙️ Settings, in your DM Bot channel.",
+      "The same choices are in Discord: 👤 DMbot Main Menu → ⚙️ Manage DMbot, in your DM Bot channel.",
     );
   });
 });

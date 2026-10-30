@@ -144,7 +144,7 @@ def settings_summary(
         f"• **{level.capitalize()}**{RECOMMENDED if level == DEFAULT_DM_SCREEN_LEVEL else ''}"
         f" — how much DMbot says, in the DM screen only: {DM_SCREEN_LEVELS.get(level, level)}."
         " Warnings (like DMbot no longer hearing the table) always show. Change it any time:"
-        " press ⚙️ Settings in the DM Bot channel, or type `/dmbot settings`.",
+        " press ⚙️ Manage DMbot in the DM Bot channel, or type `/dmbot settings`.",
     ]
 
 
@@ -261,11 +261,15 @@ HELP_TEXT = (
     "in private. It remembers each campaign between sessions.\n"
     "**DMbot never makes up the story and never decides anything. The DM always does.**\n"
     "\n"
+    "**The menu:** press 👤 DMbot Main Menu in the DM Bot channel. 🙋 My data is about you: "
+    "your recording, your transcripts and your character sheet. DMs also get ⚙️ Manage DMbot "
+    "(what DMbot does in this server) and 🌐 Manage campaign (your campaign on the website).\n"
+    "\n"
     "**Commands**\n"
     "• `/dmbot start`: pick your campaign and voice channel, then start listening\n"
     "• `/dmbot stop`: stop listening\n"
     "• `/dmbot names`: the names DMbot listens for (characters, places, NPCs)\n"
-    "• 📜 Upload campaign lore (DMs, in 👤 DMbot Main Menu): DMbot finds names and connections in "
+    "• 📜 Upload campaign lore (DMs, in ⚙️ Manage DMbot): DMbot finds names and connections in "
     "your notes; you keep what's right\n"
     "• `/dmbot optionalrules`: turn optional rules from Xanathar's and Tasha's on or off\n"
     "• `/dmbot houserules`: see this campaign's house rules (its DM adds, edits and removes them)\n"

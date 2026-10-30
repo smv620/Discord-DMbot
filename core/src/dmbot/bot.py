@@ -187,6 +187,7 @@ from dmbot.dm_screen.quiet_stop import (
     stopped_text,
 )
 from dmbot.dm_screen.recap_panel import RecapsButton
+from dmbot.dm_screen.recap_style import RecapStyleButton
 from dmbot.dm_screen.retired_channels import remove_old_channels
 from dmbot.dm_screen.settings import (
     BackToSettingsButton,
@@ -1466,9 +1467,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             InviteButton,
             TableChatButton,
             RecapsButton,
+            RecapStyleButton,  # the one recap choice left in Discord (#2986)
             GameMastersButton,  # who the DMs are (#1600)
         )
-        # Hand-over (#437): on ⚙️ Settings, in private messages, and after /dmbot start.
+        # Hand-over (#437): on ⚙️ Manage DMbot, in private messages, and after /dmbot start.
         self.add_dynamic_items(
             HandoverButton,
             WithdrawOfferButton,
@@ -10538,6 +10540,32 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
 
         return batch_of
 
+    def _player_lookup(self, guild_id: int) -> web_actions.PlayerLookupFn:
+        """Who a Discord ID is, for the website's "Please confirm: <name>" (#3004): the name Discord
+        shows (the display name, else the username), whether it is a bot, and whether the person is
+        in this server yet. Discord's user lookup, not a member one, so someone who has not joined
+        can be found. None when Discord does not know the ID; a failed lookup raises, so it is
+        never read as "unknown"."""
+
+        async def look_up(user_id: int) -> web_actions.PlayerLookup | None:
+            guild = self.get_guild(guild_id)
+            if guild is None:
+                raise RuntimeError("the server is not reachable")
+            member = guild.get_member(user_id)
+            user: discord.User | discord.Member | None = member
+            if user is None:
+                try:
+                    user = await asyncio.wait_for(
+                        self.fetch_user(user_id), game_masters.LOOKUP_S * 4
+                    )
+                except discord.NotFound:
+                    return None
+            return web_actions.PlayerLookup(
+                name=user.global_name or user.name, bot=user.bot, in_server=member is not None
+            )
+
+        return look_up
+
     async def run_name_actions(self) -> None:
         """What DMs did on the website's All names page (#2294), applied through the same memory
         paths as Discord's name card, so a change on either shows on both and Undo works. Each
@@ -10567,6 +10595,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                                 action,
                                 self._waiting_answers(guild.id),
                                 named_batch=self._named_batch_for(guild.id),
+                                look_up=self._player_lookup(guild.id),
                             )
                         )
                     except Exception as exc:  # the row must never stay "working" for a bug
@@ -10686,7 +10715,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
 
     async def run_web_settings(self) -> None:
         """What DMs chose on the website's Settings page (#2463), applied the way Discord's
-        ⚙️ Settings buttons apply it. Each sender must still be a DM of the campaign; only the
+        ⚙️ Manage DMbot buttons apply it. Each sender must still be a DM of the campaign; only the
         outcome word is logged, never the choice."""
         store = self.web_settings
         if store is None:
@@ -11469,7 +11498,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         return channel.id, None
 
     async def upgrade_dm_bot_channel(self, campaign: Campaign) -> int | None:
-        """A campaign made before the DM Bot channel (#1666) gets one when its ⚙️ Settings is
+        """A campaign made before the DM Bot channel (#1666) gets one when its ⚙️ Manage DMbot is
         pressed, not only at the next session start. Returns the new channel's id, or None
         (it already had one, or it couldn't be made: the start-time note says why). The
         campaign is read again first, so two quick presses make one channel."""

@@ -1,14 +1,16 @@
 /** @jsxImportSource preact */
-// The relationship web's map (#2324, #2934): names as shapes, connections as lines, drawn as plain SVG.
+// The Story Graph's map (#2324, #2934): names as shapes, connections as lines, drawn as plain SVG.
 // Names settle apart by themselves (webForce.ts) and can be dragged; a name that was moved stays where it
 // was dropped, remembered in this browser only (webPrefs.ts). Lines say their words only for the name
 // the pointer or the keyboard is on, so a crowded map stays readable. Pan by dragging the background, zoom
 // by wheel, pinch or the buttons. The same names and connections are listed under the map for screen
 // readers. For the keyboard each name is a stop (Enter puts it in the middle, arrow keys move it), and
 // the lines of the name in focus become stops too, so a map of hundreds of lines is not hundreds of Tabs.
+import type { ComponentChildren } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import { kindWords, webPage as words } from "../content/web-words";
+import { kindStyle } from "./webKinds";
 import type { WebEdge, WebNode } from "./api";
 import {
   MAX_SIM_NAMES,
@@ -18,9 +20,11 @@ import {
   extentOf,
   forceStep,
   LINK_KINDS,
-  connectionGroups,
   edgeKind,
   kindAnchors,
+  NO_QUEST,
+  orderedKinds,
+  questGroups,
   linkPairs,
   settle,
   startNodes,
@@ -34,27 +38,51 @@ const SHAPE_R = 24; // half the width of a name's shape: 48 px across at normal 
 const STEPS_PER_FRAME = 2; // the settle runs a couple of steps each frame: calm, and quick to finish
 const NUDGE = 24; // how far an arrow key moves the name it is on
 
-/** Kinds with a drawn shape; any other kind is a circle with a dashed edge. */
-const KIND_ORDER = ["npc", "place", "group", "item", "event"];
-
+/** Each style has its own shape (and the plain ones a dashed edge), so a name is known by shape and word as
+ * well as by its colour. */
 function Shape({ kind, r }: { kind: string; r: number }) {
-  switch (kind) {
+  const poly = (pts: [number, number][]): string => pts.map(([x, y]) => `${x * r},${y * r}`).join(" ");
+  const ring = (n: number, k: number, turn = 0): string =>
+    poly(Array.from({ length: n }, (_, i) => [Math.cos(turn + (2 * Math.PI * i) / n) * k, Math.sin(turn + (2 * Math.PI * i) / n) * k]));
+  switch (kindStyle(kind)) {
     case "place":
-      return <rect x={-r} y={-r} width={2 * r} height={2 * r} rx={5} />;
+      return <rect x={-r} y={-r} width={2 * r} height={2 * r} rx={2} />;
     case "group":
-      return <polygon points={`0,${-r * 1.2} ${r * 1.2},0 0,${r * 1.2} ${-r * 1.2},0`} />;
+      return <polygon points={poly([[0, -1.2], [1.2, 0], [0, 1.2], [-1.2, 0]])} />;
     case "item":
-      return <polygon points={`0,${-r * 1.15} ${r * 1.1},${r * 0.85} ${-r * 1.1},${r * 0.85}`} />;
-    case "event": {
-      const pts = [0, 1, 2, 3, 4, 5].map((i) => {
-        const a = (Math.PI / 3) * i;
-        return `${Math.cos(a) * r * 1.1},${Math.sin(a) * r * 1.1}`;
+      return <polygon points={poly([[0, -1.15], [1.1, 0.85], [-1.1, 0.85]])} />;
+    case "event":
+      return <polygon points={ring(6, 1.1)} />;
+    case "creature":
+      return <polygon points={ring(8, 1.1, Math.PI / 8)} />;
+    case "quest": {
+      // a five-pointed star: the long and the short points take turns
+      const pts: [number, number][] = Array.from({ length: 10 }, (_, i) => {
+        const k = i % 2 === 0 ? 1.3 : 0.55;
+        const a = -Math.PI / 2 + (Math.PI * i) / 5;
+        return [Math.cos(a) * k, Math.sin(a) * k];
       });
-      return <polygon points={pts.join(" ")} />;
+      return <polygon points={poly(pts)} />;
     }
+    case "player_character":
+      return (
+        <>
+          <circle r={r} />
+          <circle r={r * 0.45} class="web-pc-ring" />
+        </>
+      );
+    case "other":
+      return <circle r={r} stroke-dasharray="2 3" stroke-width="2.5" />;
     default:
-      return <circle r={r} stroke-dasharray={KIND_ORDER.includes(kind) ? undefined : "4 3"} />;
+      return <circle r={r} />;
   }
+}
+
+/** The groups of names, in the order their areas and anchors are given: kinds people first, quests as the door
+ * sent them with "not part of a quest" last. */
+function areaKeys(groups: string[], mode: LayoutMode): string[] {
+  if (mode === "quests") return [...new Set(groups)].sort((a, b) => Number(a === NO_QUEST) - Number(b === NO_QUEST));
+  return orderedKinds(groups);
 }
 
 const short = (text: string, max = 18): string => (text.length > max ? `${text.slice(0, max - 1)}…` : text);
@@ -75,6 +103,7 @@ export default function WebMap({
   selected,
   onCenter,
   onLine,
+  children,
 }: {
   nodes: WebNode[];
   edges: WebEdge[];
@@ -85,8 +114,15 @@ export default function WebMap({
   selected: { a: string; b: string } | null;
   onCenter: (id: string) => void;
   onLine: (a: string, b: string) => void;
+  /** The chosen line's panel: drawn inside the map so it stays visible in full screen. */
+  children?: ComponentChildren;
 }) {
   const [mode, setMode] = useState<LayoutMode>(readMode);
+  // "Cluster by quest" needs the door's quests, which only a DM in Full View is sent: without them it is the spread layout.
+  const hasQuests = nodes.some((n) => n.quests !== undefined);
+  const modeNow: LayoutMode = mode === "quests" && !hasQuests ? "free" : mode;
+  // Full screen (#2981): the map fills the window, for a campaign too big for the page's own space.
+  const [full, setFull] = useState(false);
   const [view, setView] = useState<View>({ x: 0, y: 0, k: 1 });
   const [frame, setFrame] = useState(0);
   const [extent, setExtent] = useState(260);
@@ -172,7 +208,7 @@ export default function WebMap({
   const centerRef = useRef(center);
   centerRef.current = center;
   const modeRef = useRef(mode);
-  modeRef.current = mode;
+  modeRef.current = modeNow;
   const linksRef = useRef<[number, number][]>([]);
   const anchorsRef = useRef(new Map<string, { x: number; y: number }>());
 
@@ -184,8 +220,11 @@ export default function WebMap({
   useEffect(() => {
     setFocus((f) => (f !== null && nodes.some((n) => n.id === f) ? f : null));
     const before = new Map(sim.current.map((n) => [n.id, n]));
-    const groups = connectionGroups(edges, center);
-    const next = startNodes(nodes, edges, center, places.current, groups);
+    const next = startNodes(nodes, edges, center, places.current);
+    if (modeNow === "quests") {
+      const by = questGroups(nodes);
+      for (const n of next) n.group = by.get(n.id) ?? NO_QUEST;
+    }
     for (const n of next) {
       const old = before.get(n.id);
       if (old && !n.pinned) {
@@ -195,12 +234,12 @@ export default function WebMap({
     }
     sim.current = next;
     linksRef.current = linkPairs(next, edges);
-    anchorsRef.current = kindAnchors([...new Set(next.filter((n) => n.id !== center).map((n) => n.group))].sort());
+    anchorsRef.current = kindAnchors(areaKeys(next.filter((n) => n.id !== center).map((n) => n.group), modeNow));
     if (loop.current) cancelAnimationFrame(loop.current);
     loop.current = 0;
     if (reducedMotion() || next.length > MAX_SIM_NAMES) {
       // Less motion: place the names at once. A very big web keeps its rings and is only moved by hand.
-      settle(next, linksRef.current, next.findIndex((n) => n.id === center), mode, anchorsRef.current);
+      settle(next, linksRef.current, next.findIndex((n) => n.id === center), modeNow, anchorsRef.current);
       setExtent(extentOf(next));
       setFrame((f) => f + 1);
     } else {
@@ -215,7 +254,7 @@ export default function WebMap({
       loop.current = 0;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sig, center, mode]);
+  }, [sig, center, modeNow]);
 
   // The window listeners are added once and removed on unmount, so a drag that ends off the map, or a
   // map that disappears mid-drag, leaves nothing behind. Handlers read the latest values through refs.
@@ -308,6 +347,21 @@ export default function WebMap({
     }
   };
 
+  // Escape leaves full screen, and the page behind does not scroll while it is on.
+  useEffect(() => {
+    if (!full) return undefined;
+    const leave = (e: KeyboardEvent): void => {
+      if (e.key === "Escape") setFull(false);
+    };
+    const before = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", leave);
+    return () => {
+      window.removeEventListener("keydown", leave);
+      document.body.style.overflow = before;
+    };
+  }, [full]);
+
   const chooseMode = (next: LayoutMode): void => {
     if (next === mode) return;
     saveMode(next);
@@ -346,8 +400,8 @@ export default function WebMap({
     }
   }
   const e = extent;
-  const kindsHere = KIND_ORDER.filter((k) => nodes.some((n) => n.kind === k));
-  const otherKinds = [...new Set(nodes.map((n) => n.kind))].filter((k) => !KIND_ORDER.includes(k));
+  // Every kind drawn, people first, each once (the legend shows its colour, shape and word).
+  const kindsHere = orderedKinds(nodes.map((n) => n.kind));
   const anyPinned = sim.current.some((n) => n.pinned);
   const kindsPresent = LINK_KINDS.filter((k) => edges.some((e) => edgeKind(e) === k));
   const tooBig = nodes.length > MAX_SIM_NAMES;
@@ -367,10 +421,12 @@ export default function WebMap({
           })),
         )
     : [];
+  // The name of each quest, from the nodes that say they are in it and from the quests drawn.
+  const questNames = new Map<string, string>(nodes.flatMap((n) => [...(n.quests ?? []).map((q): [string, string] => [q.id, q.name]), ...(kindStyle(n.kind) === "quest" ? [[n.id, n.name] as [string, string]] : [])]));
   void frame; // each frame of the settle re-draws the map from the names' new places
 
   return (
-    <div class="web-map">
+    <div class={`web-map${full ? " web-full" : ""}`}>
       <div class="row web-tools">
         <button type="button" class="button secondary" onClick={() => zoom(1.4)} aria-label={words.zoomIn}>
           +
@@ -382,13 +438,21 @@ export default function WebMap({
           {words.resetView}
         </button>
         <div class="web-seg" role="group" aria-label={words.layoutLabel}>
-          <button type="button" class="button secondary" disabled={tooBig} aria-pressed={mode === "free"} onClick={() => chooseMode("free")}>
+          <button type="button" class="button secondary" disabled={tooBig} aria-pressed={modeNow === "free"} onClick={() => chooseMode("free")}>
             {words.layoutFree}
           </button>
-          <button type="button" class="button secondary" disabled={tooBig} aria-pressed={mode === "groups"} onClick={() => chooseMode("groups")}>
+          <button type="button" class="button secondary" disabled={tooBig} aria-pressed={modeNow === "groups"} onClick={() => chooseMode("groups")}>
             {words.layoutGroups}
           </button>
+          {hasQuests && (
+            <button type="button" class="button secondary" disabled={tooBig} aria-pressed={modeNow === "quests"} onClick={() => chooseMode("quests")}>
+              {words.layoutQuests}
+            </button>
+          )}
         </div>
+        <button type="button" class="button secondary" aria-pressed={full} onClick={() => setFull((f) => !f)}>
+          {full ? words.leaveFullScreen : words.fullScreen}
+        </button>
         <button type="button" class="button secondary" disabled={!anyPinned} onClick={letGo}>
           {words.letGo}
         </button>
@@ -433,18 +497,19 @@ export default function WebMap({
         }}
       >
         <g transform={`translate(${view.x} ${view.y}) scale(${view.k})`}>
-          {mode === "groups" &&
-            LINK_KINDS.map((k) => {
+          {modeNow !== "free" &&
+            areaKeys(sim.current.filter((n) => n.id !== center).map((n) => n.group), modeNow).map((k) => {
               const members = sim.current.filter((n) => n.group === k && n.id !== center);
               if (members.length === 0) return null;
               const cx = members.reduce((t, n) => t + n.x, 0) / members.length;
               const cy = members.reduce((t, n) => t + n.y, 0) / members.length;
               const r = members.reduce((t, n) => Math.max(t, Math.hypot(n.x - cx, n.y - cy) + 60), 64);
+              const quest = modeNow === "quests";
               return (
-                <g key={k} class={`web-area web-link-${k}`} aria-hidden="true">
+                <g key={k} class={`web-area web-kind-${quest ? (k === NO_QUEST ? "other" : "quest") : kindStyle(k)}`} aria-hidden="true">
                   <circle cx={cx} cy={cy} r={r} />
                   <text x={cx} y={cy - r - 6} text-anchor="middle" class="web-area-text">
-                    {words.linkKind[k]}
+                    {quest ? (k === NO_QUEST ? words.noQuest : (questNames.get(k) ?? k)) : kindWords(k)}
                   </text>
                 </g>
               );
@@ -510,7 +575,7 @@ export default function WebMap({
             return (
               <g
                 key={n.id}
-                class={`web-node web-kind-${KIND_ORDER.includes(n.kind) ? n.kind : "other"}${n.id === center ? " centre" : ""}${n.revealed === false ? " web-dim" : ""}${faded ? " web-faded" : ""}`}
+                class={`web-node web-kind-${kindStyle(n.kind)}${n.id === center ? " centre" : ""}${n.revealed === false ? " web-dim" : ""}${faded ? " web-faded" : ""}`}
                 transform={`translate(${place.x.toFixed(1)} ${place.y.toFixed(1)})`}
                 tabIndex={0}
                 role="button"
@@ -560,6 +625,7 @@ export default function WebMap({
         <aside class="web-side panel stack" aria-labelledby="web-side-h" aria-live="polite">
           <h3 id="web-side-h">{detail.name}</h3>
           <p class="small muted">{kindWords(detail.kind)}</p>
+          {(detail.quests?.length ?? 0) > 1 && <p class="small">{words.alsoIn(detail.quests!.slice(1).map((q) => q.name).join(", "))}</p>}
           {sideLines.length === 0 ? (
             <p class="small">{words.sideNone}</p>
           ) : (
@@ -601,14 +667,15 @@ export default function WebMap({
         </aside>
       )}
       </div>
+      {children}
       <section aria-labelledby="web-legend" class="web-legend">
         <h3 id="web-legend" class="small">
           {words.legendHeading}
         </h3>
         <ul class="row small">
-          {[...kindsHere, ...otherKinds].map((k) => (
+          {kindsHere.map((k) => (
             <li key={k}>
-              <svg width="26" height="26" viewBox="-15 -15 30 30" aria-hidden="true" class={`web-kind-${KIND_ORDER.includes(k) ? k : "other"}`}>
+              <svg width="26" height="26" viewBox="-15 -15 30 30" aria-hidden="true" class={`web-kind-${kindStyle(k)}`}>
                 <Shape kind={k} r={9} />
               </svg>{" "}
               {kindWords(k)}

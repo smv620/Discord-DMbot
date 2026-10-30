@@ -42,7 +42,7 @@ TOO_SOON = (
 )
 NOT_ALLOWED = (
     "DMbot can't hand this campaign over right now. Only its owner can; check "
-    "⚙️ Settings → 🗂️ Campaign management."
+    "⚙️ Manage DMbot → 🗂️ Campaign management."
 )
 FAILED = "DMbot couldn't send that email, so nothing was offered. Try again in a minute."
 

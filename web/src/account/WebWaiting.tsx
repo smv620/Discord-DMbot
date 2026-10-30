@@ -1,5 +1,5 @@
 /** @jsxImportSource preact */
-// What waits for the DM on the Story graph (#2635, #2652): facts PlotBot heard at the table, connections
+// What waits for the DM on the Story Graph (#2635, #2652): facts PlotBot heard at the table, connections
 // found in a backstory (grouped by upload, with Keep all), "Which Mara?" questions and "Who is she?" pronoun
 // questions (#2831). The DM decides
 // everything: each answer is sent to DMbot, which makes the very calls the DM screen's buttons make, so
