@@ -218,7 +218,7 @@ async def read_web(
     pages: set[str] = got["pageIds"]
     nodes = [
         {
-            **{k: v for k, v in n.items() if k != "secret" or v is not None},
+            **{k: v for k, v in n.items() if k not in ("secret", "quests") or v is not None},
             "page": str(n["id"]) in pages,
         }
         for n in got["nodes"]

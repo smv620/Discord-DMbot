@@ -654,38 +654,42 @@ class WhileClosing(unittest.IsolatedAsyncioTestCase):
 
 
 class ThePlayerLookup(unittest.IsolatedAsyncioTestCase):
-    """The bot's side of "Please confirm: <name>" (#3004), on stand-ins for Discord."""
+    """The bot's side of "Please confirm: <name>" (#3004): one lookup shared with the Discord half
+    (`ui.player_id.look_up`), on stand-ins for Discord."""
 
-    def lookup(self, member: Any, fetched: Any = None, guild: bool = True) -> Any:
+    def lookup(self, user: Any, member: Any = None, member_gone: bool = False) -> Any:
+        import discord
+
         class FakeGuild:
             def get_member(self, _id: int) -> Any:
                 return member
 
-        async def fetch_user(_id: int) -> Any:
-            if isinstance(fetched, Exception):
-                raise fetched
-            return fetched
+            async def fetch_member(self, _id: int) -> Any:
+                if member_gone:
+                    raise discord.NotFound(SimpleNamespace(status=404, reason="Not Found"), "x")
+                return None
 
-        fake = SimpleNamespace(
-            get_guild=lambda _gid: FakeGuild() if guild else None, fetch_user=fetch_user
-        )
+        async def fetch_user(_id: int) -> Any:
+            if isinstance(user, Exception):
+                raise user
+            return user
+
+        fake = SimpleNamespace(get_guild=lambda _gid: FakeGuild(), fetch_user=fetch_user)
         return DMBot._player_lookup(fake, 1)  # type: ignore[arg-type]
 
-    async def test_a_member_in_the_cache_is_in_the_server_and_shown_by_display_name(self) -> None:
+    async def test_a_member_is_in_the_server_and_shown_by_display_name(self) -> None:
         user = SimpleNamespace(global_name="Some User", name="someuser", bot=False)
-        found = await self.lookup(user)(123456789012345678)
+        found = await self.lookup(user, member=user)(123456789012345678)
         self.assertEqual(found, wa.PlayerLookup("Some User", False, True))
 
-    async def test_someone_not_in_the_server_is_found_by_user_lookup_and_named_by_username(
-        self,
-    ) -> None:
+    async def test_someone_not_in_the_server_is_found_and_named_by_username(self) -> None:
         user = SimpleNamespace(global_name=None, name="someuser", bot=False)
-        found = await self.lookup(None, user)(123456789012345678)
+        found = await self.lookup(user, member_gone=True)(123456789012345678)
         self.assertEqual(found, wa.PlayerLookup("someuser", False, False))
 
     async def test_a_bot_is_said_to_be_one(self) -> None:
         user = SimpleNamespace(global_name=None, name="botty", bot=True)
-        found = await self.lookup(None, user)(123456789012345678)
+        found = await self.lookup(user)(123456789012345678)
         assert found is not None
         self.assertTrue(found.bot)
 
@@ -693,9 +697,7 @@ class ThePlayerLookup(unittest.IsolatedAsyncioTestCase):
         import discord
 
         gone = discord.NotFound(SimpleNamespace(status=404, reason="Not Found"), "Unknown User")
-        self.assertIsNone(await self.lookup(None, gone)(123456789012345678))
+        self.assertIsNone(await self.lookup(gone)(123456789012345678))
         broken = discord.HTTPException(SimpleNamespace(status=500, reason="Oops"), "down")
-        with self.assertRaises(discord.HTTPException):
-            await self.lookup(None, broken)(123456789012345678)
         with self.assertRaises(RuntimeError):
-            await self.lookup(None, guild=False)(123456789012345678)
+            await self.lookup(broken)(123456789012345678)
