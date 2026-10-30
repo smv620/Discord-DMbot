@@ -7,6 +7,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any
 
+from dmbot.memory.gate import CONNECTION, Viewer
 from dmbot.memory.models import CONFIRMED, PROPOSED, REJECTED, WORKED_OUT_SOURCE
 from tests.test_memory_store import GUILD_A, ConfirmedMemoryTest
 
@@ -17,6 +18,15 @@ class TheWorkedOutLinks(ConfirmedMemoryTest):
         self.aldric = await self.add("Aldric", type="character", status=CONFIRMED)
         self.bryn = await self.add("Bryn", type="character", status=CONFIRMED)
         self.mira = await self.add("Mira", type="character", status=CONFIRMED)
+        self.pc = (
+            await self.add(  # (there before the links, as the flags give lists to those present)
+                "Okthandom",
+                type="character",
+                role="player_character",
+                played_by=1,
+                status=CONFIRMED,
+            )
+        )
 
     async def state(
         self, a: str, role: str, b: str, *, secret: bool = False, status: str = CONFIRMED
@@ -139,12 +149,16 @@ class TheWorkedOutLinks(ConfirmedMemoryTest):
             GUILD_A, self.c, relation.id, source="dm", status=CONFIRMED
         )
 
-    async def shown_to_players(self) -> list[Any]:
-        """What a player's view reads: confirmed, not secret."""
-        found = await self.memory.relations(
-            GUILD_A, self.c, confirmed_only=True, include_secret=False
-        )
-        return [r for r in found if r.source == WORKED_OUT_SOURCE]
+    async def player_view(self) -> tuple[list[str], list[str]]:
+        """What a player character is told, read the way the gate reads it: the worked-out
+        links on the list of who knows a connection, and in a player's own view."""
+        pc = self.pc
+        mine = await self.mine()
+        ids = [str(r.id) for r in mine]
+        knowers = await self.memory.statement_knowers(GUILD_A, self.c, CONNECTION, ids)
+        told = [i for i in ids if pc in knowers.get(i, [])]
+        view = await self.memory.visible_to(GUILD_A, self.c, Viewer.character(pc))
+        return told, [i for i in ids if i in view.connections]
 
     async def test_an_unrevealed_source_makes_the_suggestion_secret(self) -> None:
         await self.state(self.aldric, "mother", self.bryn)
@@ -169,18 +183,19 @@ class TheWorkedOutLinks(ConfirmedMemoryTest):
         (mine,) = await self.mine()
         self.assertTrue(mine.secret)
 
-    async def test_players_see_only_a_confirmed_link_from_plain_sources(self) -> None:
+    async def test_players_are_told_only_a_confirmed_link_from_plain_sources(self) -> None:
         await self.mother_and_sisters()
         await self.memory.rework_family(GUILD_A, self.c)
-        self.assertEqual(await self.shown_to_players(), [])  # waiting: not shown
+        self.assertEqual(await self.player_view(), ([], []))  # waiting: not shown
         (mine,) = await self.mine()
         await self.confirm(mine)
-        self.assertEqual(len(await self.shown_to_players()), 1)  # plain sources: shown
+        told, seen = await self.player_view()
+        self.assertEqual((told, seen), ([str(mine.id)], [str(mine.id)]))  # plain: shown
 
-    async def test_players_never_see_a_confirmed_link_from_a_hidden_source(self) -> None:
+    async def test_players_are_never_told_a_confirmed_link_from_a_hidden_source(self) -> None:
         await self.mother_and_sisters()
         await self.memory.set_hidden_from_players(GUILD_A, self.c, self.bryn, True, source="dm")
         await self.memory.rework_family(GUILD_A, self.c)
         (mine,) = await self.mine()
         await self.confirm(mine)
-        self.assertEqual(await self.shown_to_players(), [])
+        self.assertEqual(await self.player_view(), ([], []))

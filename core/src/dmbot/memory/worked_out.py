@@ -6,7 +6,10 @@ Every result is a PROPOSED `kin_of` connection with source `worked_out`: never c
 behalf, shown to the DM only ("worked out from X and Y, not stated"), never to players. A confirm
 makes it stand on its own; a rejection is final (it is never made again). A proposed one is taken
 away again when one of the links it came from is removed or rejected, so recomputing is always
-safe. A link that is secret in either source is secret here. Counts only leave this module.
+safe. It starts secret when a source is secret or unrevealed, or any end of either source (the
+middle name too) is kept from the players, and a later refresh can only make it secret, never plain.
+Only live entries (proposed or confirmed) count; merged or rejected ones feed nothing. Counts only
+leave this module.
 """
 
 from __future__ import annotations
@@ -85,7 +88,10 @@ async def rework(
     proposed link and `delete(id)` takes one away (the store's own checked paths, which also clear
     the flag rows that point at it). Idempotent."""
     rows = await w.select(RELATIONS, " AND predicate = %s", [KIN])
-    entities = {str(e["id"]): e for e in await w.select(ENTITIES, "", [])}
+    entities = {
+        str(e["id"]): e
+        for e in await w.select(ENTITIES, " AND status IN ('proposed', 'confirmed')", [])
+    }
     derived = kin_derive.derive(_stated(rows, set(entities)))
     by_id = {str(r["id"]): r for r in rows}
     held = {
@@ -149,15 +155,18 @@ async def waiting(scope: Scope) -> list[Suggestion]:
     mine = [r for r in rows if r["source"] == WORKED_OUT_SOURCE and r["status"] == PROPOSED]
     if not mine:
         return []
-    derived: dict[tuple[str, str, str], tuple[str, ...]] = {
-        (d.a_id, d.role, d.b_id): tuple(d.source_ids) for d in kin_derive.derive(_stated(rows))
-    }
-    by_id = {str(r["id"]): r for r in rows}
     ends = sorted({str(x) for r in rows for x in (r["subject_id"], r["object_id"])})
     names = {
         str(e["id"]): str(e["name"])
-        for e in await scope.select(ENTITIES, " AND id = ANY(%s)", [ends])
+        for e in await scope.select(
+            ENTITIES, " AND id = ANY(%s) AND status IN ('proposed', 'confirmed')", [ends]
+        )
     }
+    derived: dict[tuple[str, str, str], tuple[str, ...]] = {
+        (d.a_id, d.role, d.b_id): tuple(d.source_ids)
+        for d in kin_derive.derive(_stated(rows, set(names)))
+    }
+    by_id = {str(r["id"]): r for r in rows}
     out: list[Suggestion] = []
     for r in mine:
         role = kin.role_of(str(r["detail"] or ""))

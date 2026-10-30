@@ -108,6 +108,13 @@ class WorkedOutQuestions(_Menu):
                 await memory.rework_family(campaign.guild_id, campaign.id)
             except Exception:
                 log.exception("Worked-out family links could not be refreshed")
+                if yes:  # fail closed: when it is showing players or asking again, ask again
+                    await _tell(
+                        interaction,
+                        "I couldn't check that one just now. It stays waiting; "
+                        "try again in a moment.",
+                    )
+                    return
             now = await self._waiting(interaction)
             if shown.relation_id not in {s.relation_id for s in now}:  # answered or gone meanwhile
                 await self._show(interaction, now)

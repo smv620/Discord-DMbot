@@ -3620,10 +3620,11 @@ class MemoryStore:
                 await _delete_relation(w, relation_id)
 
             done = await worked_out_mod.rework(w, add, drop)
-            log.info(  # counts only, never names (#2564)
-                "Worked-out family links: %d added, %d removed, %d waiting",
-                done.added, done.removed, done.waiting,
-            )  # fmt: skip
+            if done.added or done.removed:  # (only when something changed)
+                log.info(  # counts only, never names (#2564)
+                    "Worked-out family links: %d added, %d removed, %d waiting",
+                    done.added, done.removed, done.waiting,
+                )  # fmt: skip
             return done
 
     async def worked_out_waiting(

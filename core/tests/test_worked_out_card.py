@@ -4,7 +4,7 @@ remembered until yes, yes confirms, no is final, only a DM answers. Invented nam
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 from dmbot.memory.models import CONFIRMED, PROPOSED, REJECTED
 from dmbot.ui.worked_out_questions import WorkedOutQuestions
@@ -64,3 +64,12 @@ class TheWorkedOutCard(NamesTest):
         view = await self.card()
         await next(b for b in view.children if b.label.startswith("✅")).callback(self.it(99))
         self.assertEqual(await self.rows(), [(PROPOSED, "parent")])
+
+    async def test_a_failed_check_before_a_yes_saves_nothing(self) -> None:
+        view = await self.card()
+        with patch.object(
+            self.memory, "rework_family", AsyncMock(side_effect=RuntimeError("down"))
+        ):
+            it = self.it(DM)
+            await next(b for b in view.children if b.label.startswith("✅")).callback(it)
+        self.assertEqual(await self.rows(), [(PROPOSED, "parent")])  # asked again, not confirmed
