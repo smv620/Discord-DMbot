@@ -197,8 +197,37 @@ describe("the map", () => {
     // Each text holds its tooltip (the full words) first and what is drawn last.
     const texts = () => [...document.querySelectorAll(".web-edge-text")].map((t) => t.lastChild?.textContent);
     expect(texts()).toEqual(["2 connections"]);
-    fireEvent.pointerEnter(nodeOf("Far Hall"));
-    expect(texts()).toEqual(["2 connections", "lives at"]);
+    fireEvent.pointerEnter(nodeOf("Mira"));
+    expect(texts()).toEqual(["serves (+1)", "lives at"]); // (read from Mira, who is where they are worded from)
+    expect(document.querySelectorAll(".web-arrow")).toHaveLength(2);
+  });
+
+  it("reads a line from the focused end: the other wording with an arrow away, or nothing and no arrowhead", () => {
+    const owned: WebEdge[] = [
+      { a: "m", b: "g", label: "owns", more: 0, links: [{ ...link("l1", "owns"), back: "is owned by" }] },
+      { a: "m", b: "h", label: "lives at", more: 0, links: [link("l3", "lives at")] },
+    ];
+    const texts = () => [...document.querySelectorAll(".web-edge-text")].map((t) => t.lastChild?.textContent);
+    render(<WebMap nodes={nodes} edges={owned} center="m" refId="1.a" selected={null} onCenter={() => {}} onLine={() => {}} />);
+    fireEvent.pointerEnter(nodeOf("Garrick")); // the owned end: it has its own wording
+    expect(texts()).toEqual(["is owned by"]);
+    expect(document.querySelectorAll(".web-arrow")).toHaveLength(1);
+    fireEvent.pointerLeave(nodeOf("Garrick"));
+    fireEvent.pointerEnter(nodeOf("Far Hall")); // the end with no wording: the line stays, with no words and no arrowhead
+    expect(texts()).toEqual([]);
+    expect(document.querySelectorAll(".web-arrow")).toHaveLength(0);
+    expect(document.querySelectorAll(".web-line").length).toBeGreaterThan(0);
+  });
+
+  it("reads from the name that was picked when nothing is hovered, and a mutual line has the words but no arrowhead", () => {
+    const mutual: WebEdge[] = [{ a: "m", b: "g", label: "allies with", more: 0, links: [{ ...link("l1", "allies with"), direction: "both" }] }];
+    const texts = () => [...document.querySelectorAll(".web-edge-text")].map((t) => t.lastChild?.textContent);
+    render(<WebMap nodes={nodes} edges={mutual} center="m" refId="1.a" selected={null} onCenter={() => {}} onLine={() => {}} />);
+    expect(texts()).toEqual([]);
+    fireEvent.click(nodeOf("Garrick"));
+    fireEvent.pointerLeave(nodeOf("Garrick"));
+    expect(texts()).toEqual(["allies with"]);
+    expect(document.querySelectorAll(".web-arrow")).toHaveLength(0);
   });
 
   it("opens a line from the keyboard", () => {

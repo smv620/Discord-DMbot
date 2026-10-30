@@ -9,6 +9,8 @@
 import type { ComponentChildren } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 
+import { readLine } from "./webReading";
+
 import { kindWords, webPage as words } from "../content/web-words";
 import { kindStyle } from "./webKinds";
 import type { WebEdge, WebNode } from "./api";
@@ -37,6 +39,20 @@ import { isTheory, zoomAbout, type View } from "./webLayout";
 const SHAPE_R = 24; // half the width of a name's shape: 48 px across at normal size, a fine thing to tap
 const STEPS_PER_FRAME = 2; // the settle runs a couple of steps each frame: calm, and quick to finish
 const DOUBLE_MS = 400; // two clicks on one name within this are a double click
+/** A small arrowhead just outside the other name's shape, pointing away from the name in focus. */
+function arrowhead(from: { x: number; y: number }, to: { x: number; y: number }): string {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const len = Math.hypot(dx, dy) || 1;
+  const ux = dx / len;
+  const uy = dy / len;
+  const back = SHAPE_R * 1.25 + 4; // (clear of the shape, even the bigger one of the middle name)
+  const tx = to.x - ux * back;
+  const ty = to.y - uy * back;
+  const bx = tx - ux * 11;
+  const by = ty - uy * 11;
+  return `M${tx.toFixed(1)} ${ty.toFixed(1)}L${(bx - uy * 5).toFixed(1)} ${(by + ux * 5).toFixed(1)}L${(bx + uy * 5).toFixed(1)} ${(by - ux * 5).toFixed(1)}Z`;
+}
 const NUDGE = 24; // how far an arrow key moves the name it is on
 
 /** Each style has its own shape (and the plain ones a dashed edge), so a name is known by shape and word as
@@ -541,9 +557,23 @@ export default function WebMap({
             const dim = edge.links.length > 0 && edge.links.every((l) => l.revealed === false);
             const touches = focus !== null && (edge.a === focus || edge.b === focus);
             const text = `${theory ? `${words.theoryMark} ` : ""}${edge.label}${edge.more > 0 ? ` (+${edge.more})` : ""}`;
-            // Words only on the line of the name in focus or the chosen line; a line that holds several
-            // connections says how many, so a thick bundle is never mistaken for one.
-            const shown = touches || chosen ? text : edge.links.length > 1 ? words.nConnections(edge.links.length) : null;
+            // The line of the name in focus (hovered, else picked) says just the verb as that name would say it, with an
+            // arrow toward the other name; with no wording from that end it says nothing and has no arrowhead. The
+            // chosen line keeps its full words. A line that holds several connections says how many when it has no
+            // verb to show, so a thick bundle is never mistaken for one.
+            const from = focus ?? picked;
+            const reads = from !== null && (edge.a === from || edge.b === from);
+            const reading = reads ? readLine(edge, from) : null;
+            const many = edge.links.length > 1 ? words.nConnections(edge.links.length) : null;
+            const shown = reading
+              ? reading.verb !== null
+                ? `${theory ? `${words.theoryMark} ` : ""}${reading.verb}${reading.more > 0 ? ` (+${reading.more})` : ""}`
+                : many
+              : chosen
+                ? text
+                : many;
+            const arrowFrom = reading?.arrow && from !== null ? (from === edge.a ? p : q) : null;
+            const arrowTo = arrowFrom === null ? null : arrowFrom === p ? q : p;
             const open = (): void => {
               if (!dragged.current) onLine(edge.a, edge.b);
             };
@@ -575,9 +605,10 @@ export default function WebMap({
                     }
                   }}
                 />
+                {arrowFrom && arrowTo && <path d={arrowhead(arrowFrom, arrowTo)} class="web-arrow" aria-hidden="true" />}
                 {shown && (
                   <text x={mx} y={my - 5} transform={`rotate(${upright.toFixed(1)} ${mx} ${my})`} class="web-edge-text" text-anchor="middle" onClick={open}>
-                    <title>{text}</title>
+                    <title>{shown}</title>
                     {short(shown, 26)}
                   </text>
                 )}
