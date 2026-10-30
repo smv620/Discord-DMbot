@@ -94,8 +94,8 @@ async def read(read_ai: Any, shape_ai: Any = None, text: str = TEXT) -> lr.LoreR
 class TheExamples(unittest.TestCase):
     def test_their_format_is_pinned(self) -> None:
         text = lr.EXAMPLES
-        self.assertEqual(text.count("NAMES\n"), 4)
-        self.assertEqual(text.count("RELATIONSHIPS\n"), 3)
+        self.assertEqual(text.count("NAMES\n"), 5)
+        self.assertEqual(text.count("RELATIONSHIPS\n"), 4)
         self.assertEqual(text.count("NOT INCLUDED\n"), 1)
         name_line = re.compile(r"^- .+ \| (person|place|group|god|item|event|idea)( \| .+)*$")
         link_line = re.compile(r'^- .+ — .+ — .+ \| quote: ".+"$')
@@ -108,7 +108,7 @@ class TheExamples(unittest.TestCase):
         self.assertIn("Wyrmhold", listed.left_out[0])
 
     def test_the_second_example_is_a_names_list_that_keeps_the_aside_as_another_name(self) -> None:
-        second = lr.EXAMPLES.split("Example 4.", 1)[1]
+        second = lr.EXAMPLES.split("Example 5.", 1)[1]
         self.assertNotIn("RELATIONSHIPS", second)
         self.assertIn("other names: the rogue", second)
         self.assertIn("said: kah-ZETH", second)
@@ -119,6 +119,15 @@ class TheExamples(unittest.TestCase):
         self.assertEqual(len(listed.names), 2)  # (Tamsin Vell has no line of her own)
         self.assertIn("secret: Tamsin Vell", listed.names[0])
         self.assertTrue(any(x.startswith("- Tamsin Vell —") for x in listed.links))
+
+    def test_the_prompt_covers_a_heading_a_group_and_words_in_quotation_marks(self) -> None:
+        prompt = lr.read_instructions()
+        for rule in ("section title", "one line for each person", "quotation marks"):
+            self.assertIn(rule, prompt)
+        example = lr.EXAMPLES.split("Example 4.", 1)[1].split("Example 5.", 1)[0]
+        listed = lr.parse_plain(example.split("Output:\n", 1)[1])
+        self.assertEqual(sum("mentors" in x for x in listed.links), 3)  # (them: each of the three)
+        self.assertTrue(any(lr.line_name(n) == "Danrel" for n in listed.names))  # (the note's name)
 
     def test_the_prompts_say_an_earlier_name_is_never_a_name_of_its_own(self) -> None:
         for word in ("pseudonym", "originally", "born", "formerly", "took the name", "a.k.a."):

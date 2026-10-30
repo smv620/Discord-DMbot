@@ -121,7 +121,29 @@ NAMES
 RELATIONSHIPS
 - Tamsin Vell — serves — Master Orlen | quote: "Tamsin Vell served Master Orlen"
 
-Example 4. Input (a list of names, no relationships):
+Example 4. Input (a group, and a note in quotation marks):
+<document>
+Vessa, Orin and Pell rode north, and Captain Ryl mentored them. \
+A note was left at the camp: "Danrel, Eastvale. The Order knows who you are."
+</document>
+Output:
+NAMES
+- Vessa | person | quote: "Vessa, Orin and Pell rode north"
+- Orin | person | quote: "Orin and Pell rode"
+- Pell | person | quote: "Pell rode north"
+- Captain Ryl | person | quote: "Captain Ryl mentored them"
+- Danrel | person | quote: "Danrel, Eastvale"
+- Eastvale | place | quote: "Danrel, Eastvale"
+- Order | group | other names: The Order | quote: "The Order knows who you are"
+
+RELATIONSHIPS
+- Captain Ryl — mentors — Vessa | quote: "Vessa, Orin and Pell rode north, and Captain Ryl mentored them"
+- Captain Ryl — mentors — Orin | quote: "Orin and Pell rode north, and Captain Ryl mentored them"
+- Captain Ryl — mentors — Pell | quote: "Pell rode north, and Captain Ryl mentored them"
+- Danrel — is in — Eastvale | quote: "Danrel, Eastvale"
+- Order — knows — Danrel | quote: "Danrel, Eastvale. The Order knows who you are"
+
+Example 5. Input (a list of names, no relationships):
 <document>
 Tavin (the rogue) | NPC
 Ka'zeth (kah-ZETH) | NPC
@@ -169,6 +191,12 @@ def read_instructions(own: Mapping[str, str] | None = None) -> str:
         "later one) and put the earlier name under 'other names:', or under 'secret:' when the "
         "text presents it as hidden (a pseudonym, to remain anonymous, a disguise). "
         "Relationships the text writes about the earlier name belong to that same person.\n"
+        "- WHO A WORD STANDS FOR: a section title names the character the section is about, so "
+        "'his', 'her' and 'their' at the start of that section mean that character; write the "
+        "full name as the end. 'them', 'they' or 'the four' standing for several named people "
+        "means each of them: write one line for each person, never skip it because there are "
+        "several. Words inside quotation marks, a warning, a letter, a sign or a spoken line, are "
+        "still the document's own words: list the names and relationships they state.\n"
         "- Leave out descriptions, ordinary words, spells, rules terms and kinds of creature in "
         "general (elves, goblins).\n"
         "- RELATIONSHIPS: go through the text sentence by sentence, and for every sentence that "
