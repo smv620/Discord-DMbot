@@ -60,7 +60,7 @@ from dmbot.memory.models import (
     Relation,
     name_key,
 )
-from dmbot.memory.ontology import ACTIVE, check_named
+from dmbot.memory.ontology import ACTIVE, FALLBACK_PREDICATE, check_named
 from dmbot.memory.pronouns import is_pronoun
 from dmbot.memory.store import MemoryStore
 from dmbot.memory.which_else import COULD_NOT_KEEP, none_of_these
@@ -1057,7 +1057,7 @@ def _waiting_note(queued: int) -> str:
 KNOWN_ALREADY = ("same_pair", "already_have", "already_waiting")
 LEFT_OUT = (
     "name_not_found", "which_one", "unreadable", "word_not_allowed", "bad_names", "not_in_text",
-    "spelling_clash", "which_way",
+    "spelling_clash", "which_way", "bad_kind",
 )  # fmt: skip
 NOT_READ = ("cut_before_check", "over_cap")
 
@@ -1363,6 +1363,22 @@ async def queue_links(
         world_links,
         world_level if world_all else 0,
     )
+    onto = await memory.ontology(campaign.guild_id, campaign.id)
+
+    def fitted(c: bg.Connection, a_id: str, b_id: str) -> str | None:
+        """The kind this connection may have between these two entries (#3035): its own when the
+        ends fit it, "is in" for a place in a place that the AI called a membership, else None.
+        A campaign's own kind and the catch-all take any ends."""
+        term = onto.predicates.get(c.how)
+        if term is None or not term.core or c.how == FALLBACK_PREDICATE:
+            return c.how
+        a_type, b_type = lookup.entities[a_id].type, lookup.entities[b_id].type
+        if onto.is_any(a_type, term.subject_types) and onto.is_any(b_type, term.object_types):
+            return c.how
+        if c.how == "member_of" and a_type == "place" and b_type == "place":
+            return "located_in"
+        return None
+
     # (a kept connection may name an end by another spelling than the one the read listed: both
     # are compared by the entry they point to, either way round)
     world_ids = {
@@ -1370,27 +1386,27 @@ async def queue_links(
         for ka, how, kb in world_links
         if (x := entry(ka)) is not None and (y := entry(kb)) is not None
     }
-    rows = [
-        NewLink(
-            a,
-            c.how,
-            b,
-            c.quote,
-            c.secret,
-            c.words,
-            truth,
-            upload,
-            c.decided,
-            known_by,
+    rows = []
+    for c in kept:
+        if (a := entry(c.a)) is None or (b := entry(c.b)) is None:
+            continue
+        how = fitted(c, a, b)
+        if how is None:  # the ends do not fit the kind: counted, never stored
+            if dropped is not None:
+                dropped["bad_kind"] += 1
+            continue
+        world = (
             world_level
             if world_all
             or (a, c.how, b) in world_ids
             or (c.how in symmetric and (b, c.how, a) in world_ids)
-            else 0,
+            else 0
         )
-        for c in kept
-        if (a := entry(c.a)) is not None and (b := entry(c.b)) is not None
-    ]
+        rows.append(
+            NewLink(
+                a, how, b, c.quote, c.secret, c.words, truth, upload, c.decided, known_by, world
+            )
+        )
     if settled.unnamed:  # (nothing here runs when the check is off: the rows are as they were)
         room = max(0, bg.MAX_CONNECTIONS - len(rows))
         if len(settled.unnamed) > room and dropped is not None:

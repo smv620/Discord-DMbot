@@ -394,14 +394,14 @@ class Flow(DatabaseTest):
         self,
     ) -> None:
         await self.memory.add_predicate(
-            GUILD_B, self.far, term("mentor_of", "mentors"), examples=["x"], reason="y", source="dm"
+            GUILD_B, self.far, term("patron_of", "mentors"), examples=["x"], reason="y", source="dm"
         )
         await self.follow(await self.publish(["vowed_to"]))
         async with self.db.guild(GUILD_B) as conn:
             rows = await MemorySection().dump(conn, GUILD_B, self.far)
             followed = await FollowedSetsSection().dump(conn, GUILD_B, self.far)
         marks = {r["key"]: r["from_set"] for r in rows if r.get("table") == "predicate"}
-        self.assertIsNone(marks["mentor_of"])
+        self.assertIsNone(marks["patron_of"])
         self.assertIsNotNone(marks["vowed_to"])
         self.assertEqual([d["key"] for d in followed[0]["content"]["definitions"]], ["vowed_to"])
         MemorySection().check(rows)
