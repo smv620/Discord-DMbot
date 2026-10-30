@@ -50,9 +50,7 @@
     {
       "text": "The cant stores its stolen cloth there",
       "expect": "spoiler",
-      "world_for": [
-        "Bram Doyle"
-      ]
+      "world_for": []
     },
     {
       "text": "Only Odelle and the wharfmaster know the way down",

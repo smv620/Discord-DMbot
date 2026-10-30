@@ -8,7 +8,7 @@
   ],
   "statements": [
     {
-      "text": "The temple fell three hundred years ago in the Sundering",
+      "text": "The temple fell three hundred years ago in the Long Flood",
       "expect": "world",
       "world_for": []
     },
@@ -33,16 +33,14 @@
       "world_for": []
     },
     {
-      "text": "The last priest, Ysenne, did not drown in the Sundering",
+      "text": "The last priest, Ysenne, did not drown in the Long Flood",
       "expect": "spoiler",
       "world_for": []
     },
     {
       "text": "she sealed the stair behind her",
       "expect": "spoiler",
-      "world_for": [
-        "Tamsin Vey"
-      ]
+      "world_for": []
     },
     {
       "text": "The stair is still there, hidden behind a fallen column on the north side of the nave",

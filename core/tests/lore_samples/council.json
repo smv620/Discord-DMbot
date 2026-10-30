@@ -42,7 +42,9 @@
     {
       "text": "Dunstan has done it since the winter of the flood",
       "expect": "spoiler",
-      "world_for": []
+      "world_for": [
+        "Teodric Hale"
+      ]
     },
     {
       "text": "The council also keeps a second, sealed ledger in the cellar under the Hall of Reeds",

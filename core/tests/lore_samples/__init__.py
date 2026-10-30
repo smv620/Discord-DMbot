@@ -46,13 +46,14 @@ class Sample:
 
 
 def load_all() -> list[Sample]:
-    """Every sample in this folder, sorted by name. A file that breaks the shape raises at once, so
-    a bad sample never passes silently."""
-    samples = []
+    """Every sample in this folder, sorted by name. An unknown expectation raises at once, so a bad
+    sample never passes silently."""
+    samples: list[Sample] = []
     for path in sorted(HERE.glob("*.json")):
         data = json.loads(path.read_text(encoding="utf-8"))
-        statements = []
+        statements: list[Statement] = []
         for item in data["statements"]:
+            # The JSON value is untyped; the check below narrows it to one of the two words.
             expect = item["expect"]
             if expect not in _EXPECTS:
                 raise ValueError(f"{path.name}: unknown expect {expect!r}")

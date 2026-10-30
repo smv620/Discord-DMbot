@@ -34,26 +34,38 @@ class TheSamples(unittest.TestCase):
                 self.assertGreaterEqual(worlds * 3, total)
                 self.assertGreaterEqual(spoilers * 3, total)
 
-    def test_every_expectation_is_world_or_spoiler(self) -> None:
+    def test_each_has_a_title(self) -> None:
         for sample in SAMPLES:
-            for statement in sample.statements:
-                with self.subTest(sample.name, text=statement.text):
-                    self.assertIn(statement.expect, ("world", "spoiler"))
+            with self.subTest(sample.name):
+                self.assertTrue(sample.title.strip())
 
-    def test_only_named_backstories_are_the_ones_that_know_a_spoiler(self) -> None:
+    def test_at_most_one_pc_backstory(self) -> None:
+        for sample in SAMPLES:
+            with self.subTest(sample.name):
+                self.assertLessEqual(len(sample.pc_backstories), 1)
+
+    def test_world_for_names_only_pcs_with_a_backstory(self) -> None:
         for sample in SAMPLES:
             names = {pc.character for pc in sample.pc_backstories}
             for statement in sample.statements:
                 with self.subTest(sample.name, text=statement.text):
                     self.assertTrue(set(statement.world_for) <= names)
 
+    def test_world_for_is_empty_on_every_world_statement(self) -> None:
+        # Only a spoiler can be known to a character because of a backstory.
+        for sample in SAMPLES:
+            for statement in sample.statements:
+                if statement.expect == "world":
+                    with self.subTest(sample.name, text=statement.text):
+                        self.assertEqual(statement.world_for, ())
+
     def test_the_names_in_each_statement_appear_in_its_document(self) -> None:
         for sample in SAMPLES:
-            text = sample.text.casefold()
             for statement in sample.statements:
-                # "A — kind — B" names its two ends; a plain sentence must appear whole.
+                # "A — kind — B" names its two ends; a plain sentence must appear whole. The match
+                # is exact, case included, so a name is written the way the document writes it.
                 parts = [p.strip() for p in statement.text.split(" — ")]
                 names = (parts[0], parts[-1]) if len(parts) == 3 else (statement.text,)
                 for name in names:
                     with self.subTest(sample.name, name=name):
-                        self.assertIn(name.casefold(), text)
+                        self.assertIn(name, sample.text)
