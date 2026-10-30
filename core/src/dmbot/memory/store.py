@@ -3905,6 +3905,7 @@ class MemoryStore:
         directional: bool = False,
         decided: str | None = None,
         known_by: Sequence[str] = (),
+        keep_flags: bool = False,
     ) -> Written[tuple[Relation, list[Flag]]]:
         """Store a fact, checked against the rules. Problems become flags for the DM to
         review; the fact is stored as given either way. A fact already known is only
@@ -3912,13 +3913,16 @@ class MemoryStore:
         rejected unless the DM says it again. `unrevealed`: the story holds it back from the
         players until the table has said it (#2404), the DM's to say. `directional`: a family
         connection whose detail is a role that reads one way, so the first name is the one who
-        holds it (#2457); the DM's to say, and kept in the order given."""
+        holds it (#2457); the DM's to say, and kept in the order given. `keep_flags`: restating a
+        fact that already exists never makes it secret (an upload never hides what the players
+        were already shown, #3025); its status still upgrades as usual, and a new fact is made as
+        asked."""
         async with self._write(guild_id, campaign_id, source) as w:
             value = await self.add_relation_in(
                 w, subject_id, predicate, object_id, confidence=confidence, status=status,
                 detail=detail, from_session_at=from_session_at, to_session_at=to_session_at,
                 secret=secret, mention_ids=mention_ids, unrevealed=unrevealed,
-                directional=directional, decided=decided,
+                directional=directional, decided=decided, keep_flags=keep_flags,
             )  # fmt: skip
             if known_by and w.source == DM and (value[0].secret or value[0].unrevealed):
                 # The characters who know it from the start (#2935): the same change as the
@@ -3954,6 +3958,7 @@ class MemoryStore:
         fresh: bool = False,
         leave: bool = False,
         made_by: str | None = None,
+        keep_flags: bool = False,
     ) -> tuple[Relation, list[Flag]]:
         """`add_relation` inside a write that is already open (#1301), with the same checks;
         the write's own source is the fact's source. The caller opened `w` for the right
@@ -4016,6 +4021,11 @@ class MemoryStore:
             return same, []
         if same is not None:
             upgrade = _upgrade(_relation_row(same), status, secret, source)
+            if keep_flags and upgrade.get("secret") is True:
+                # (`keep_flags`: an upload's secret spelling never HIDES a fact the players were
+                # shown. Only that raise is dropped: the rest of `_upgrade` stays as it is, so a
+                # secret proposal the DM keeps still follows the #2412 rule.)
+                del upgrade["secret"]
             if new.directional and not same.directional:  # the DM's word on the direction wins
                 upgrade = {
                     **upgrade, "directional": True, "subject_id": s, "object_id": o,
