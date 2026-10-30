@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import time
+import unittest
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -145,7 +146,7 @@ class TheEarlierName(NamesTest):
         from dmbot.memory import lore_read
 
         _ = lore_read  # (the guard lives in read_lore: the fake reads below go through it)
-        extra = {
+        extra: dict[str, Any] = {
             "names": [
                 *ANSWER["names"],
                 {"name": "Tamsin Vell", "kind": "person", "also": [], "secret": [],
@@ -157,3 +158,78 @@ class TheEarlierName(NamesTest):
         self.bot.background_ai = self.bot.background_read_ai = self.ai  # type: ignore[assignment]
         await self.go()
         self.assertNotIn("Tamsin Vell", await self.everyone())
+
+    async def test_a_suggested_name_is_not_used_until_the_dm_says_yes(self) -> None:
+        from dmbot.memory.lookup import CampaignLookup
+        from dmbot.memory.models import name_key
+
+        await self.ash()
+        await self.go()
+        lookup = CampaignLookup.build(await self.memory.lookup_data(GUILD, self.campaign.id))
+        self.assertNotIn(name_key("Tamsin Vell"), lookup.by_key)  # (kept, but not matched yet)
+        found = await self.memory.aliases(GUILD, self.campaign.id, include_secret=True)
+        self.assertIn("Tamsin Vell", {a.text for a in found})
+
+    async def test_originally_x_son_of_z_gives_the_character_a_parent(self) -> None:
+        text = "Originally Brask, son of Hollin, he took the name Rook."
+        answer = {
+            "names": [
+                {"name": "Rook", "kind": "person", "also": [], "secret": ["Brask"],
+                 "quote": "he took the name Rook"},
+                {"name": "Hollin", "kind": "person", "also": [], "secret": [],
+                 "quote": "son of Hollin"},
+            ],
+            "connections": [
+                {"a": "Hollin", "how": "parent", "b": "Brask", "quote": "Brask, son of Hollin"},
+            ],
+        }  # fmt: skip
+        self.ai = lore_fake.lore_ai(json.dumps(answer))
+        self.bot.background_ai = self.bot.background_read_ai = self.ai  # type: ignore[assignment]
+        made = await self.memory.add_entity(
+            GUILD, self.campaign.id, name="Rook", type="character", role="player_character",
+            played_by=1003, status=CONFIRMED, source="dm",
+        )  # fmt: skip
+        await ui_bg.read_background(
+            self.bot, self.campaign, Upload(text, "your lore", True),
+            truth=False, speaker=None, known_by="", started=time.monotonic(),
+        )  # fmt: skip
+        waiting = await self.store.waiting(GUILD, self.campaign.id)
+        (link,) = waiting
+        self.assertEqual((link.predicate, link.detail), ("kin_of", "parent"))
+        self.assertEqual(link.object_id, made.value.id)  # (Hollin is the parent of Rook)
+
+
+class TheFold(unittest.TestCase):
+    def found(self, name: str, also: tuple[str, ...] = (), secret: tuple[str, ...] = ()) -> Any:
+        from dmbot.memory.background import Found
+
+        return Found(name, "npc", also, secret, "q")
+
+    def test_a_reversed_pair_is_one_person_toward_the_name_the_campaign_has(self) -> None:
+        from dmbot.memory.lore_read import fold_names
+
+        lines = [self.found("Tamsin Vell", secret=("Ash Morrow",)), self.found("Ash Morrow")]
+        (one,) = fold_names(lines, lambda name: name == "Ash Morrow")
+        self.assertEqual(one.name, "Ash Morrow")
+        self.assertEqual(one.secret, ("Tamsin Vell",))  # (secret in the line that said so)
+
+    def test_mutual_lines_fold_into_one_and_never_into_none(self) -> None:
+        from dmbot.memory.lore_read import fold_names
+
+        lines = [self.found("A One", also=("B Two",)), self.found("B Two", also=("A One",))]
+        (one,) = fold_names(lines)
+        self.assertEqual((one.name, one.also), ("A One", ("B Two",)))
+
+    def test_the_union_of_the_spellings_is_kept(self) -> None:
+        from dmbot.memory.lore_read import fold_names
+
+        lines = [self.found("Ash", also=("Ashy",)), self.found("Tam", secret=("Ash",), also=("T",))]
+        (one,) = fold_names(lines)
+        self.assertEqual(one.name, "Ash")
+        self.assertEqual(set(one.also), {"Ashy", "T"})
+        self.assertEqual(one.secret, ("Tam",))  # (the other name was secret in the second line)
+
+    def test_two_different_people_stay_two(self) -> None:
+        from dmbot.memory.lore_read import fold_names
+
+        self.assertEqual(len(fold_names([self.found("Mira"), self.found("Wren")])), 2)

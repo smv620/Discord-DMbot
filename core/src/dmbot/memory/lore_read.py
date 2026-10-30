@@ -768,6 +768,58 @@ def _gives_spellings(line: str) -> bool:
     return re.search(r"(?:other names|secret):\s*[^|\s]", line, re.I) is not None
 
 
+def fold_names(
+    names: list[bg.Found], skip_name: Callable[[str], bool] | None = None
+) -> list[bg.Found]:
+    """One entry for each person (#3034): a line whose name another line gives as an other or
+    secret name, in either direction, is the same person. They are folded into one, toward the
+    name the campaign already has (else the one listed first), and every spelling of both is kept
+    (a spelling that was secret in either stays secret). Mutual lines (A lists B and B lists A)
+    fold into one, never into none."""
+    out: list[bg.Found] = []
+    for f in names:
+        mine = {name_key(f.name), *(name_key(sp) for sp in (*f.also, *f.secret))}
+        at = next(
+            (
+                i
+                for i, g in enumerate(out)
+                if mine & {name_key(g.name), *(name_key(sp) for sp in (*g.also, *g.secret))}
+                and g.kind == f.kind
+            ),
+            None,
+        )
+        if at is None:
+            out.append(f)
+            continue
+        g = out[at]
+        first, second = (
+            (f, g) if skip_name and skip_name(f.name) and not skip_name(g.name) else (g, f)
+        )
+        hidden = {name_key(sp) for sp in (*g.secret, *f.secret)}
+        # (when one line called the other's name its disguise, that pair stays hidden whichever
+        # name the entry keeps)
+        if name_key(first.name) in {name_key(sp) for sp in second.secret}:
+            hidden.add(name_key(second.name))
+        if name_key(second.name) in {name_key(sp) for sp in first.secret}:
+            hidden.add(name_key(second.name))
+        spellings = dict.fromkeys(
+            [second.name, *first.also, *first.secret, *second.also, *second.secret]
+        )
+        keep = {name_key(first.name)}
+        also: list[str] = []
+        secret: list[str] = []
+        for sp in spellings:
+            key = name_key(sp)
+            if key in keep:
+                continue
+            keep.add(key)
+            (secret if key in hidden else also).append(sp)
+        out[at] = bg.Found(
+            first.name, first.kind, tuple(also), tuple(secret), first.quote or second.quote
+        )
+    return out
+
+
 def line_name(line: str) -> str:
     """The name a pass-1 name line is about: "- Mira Voss | person | ..." gives "Mira Voss"."""
     return line.lstrip("-* ").split("|", 1)[0].strip()
@@ -895,8 +947,7 @@ async def read_lore(
     secrets = frozenset(name_key(sp) for f in names for sp in f.secret)
     # A name the list also gives as another line's other or secret name is that person, not a
     # second one (#3034): the model was told never to give an earlier name a line of its own.
-    spelled_keys = {name_key(sp) for f in names for sp in (*f.also, *f.secret)}
-    names = [f for f in names if name_key(f.name) not in spelled_keys]
+    names = fold_names(names, skip_name)
     known: dict[str, tuple[str, ...]] = {}
     if skip_name is not None:
         # (a name the campaign has: its other names and, when the text calls one a disguise or an
