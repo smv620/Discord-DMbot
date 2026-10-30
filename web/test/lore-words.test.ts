@@ -14,3 +14,19 @@ describe("Upload lore", () => {
     expect([LORE_TEXT_MAX, LORE_LINK_MAX]).toEqual([262_144, 2000]);
   });
 });
+
+describe("Upload lore words (#3050)", () => {
+  it("says what the smart choice really does and who 'everyone' is", async () => {
+    const { lorePage } = await import("../src/content/lore-words");
+    expect(lorePage.known.smart.label).toBe("Let DMbot guess");
+    expect(lorePage.known.smart.note).toContain("can be wrong");
+    expect(lorePage.known.smart.note).toContain("Who knows this?");
+    expect(lorePage.known.smart.note).not.toContain("approve");
+    expect(lorePage.known.world.note).toContain("player's character");
+  });
+
+  it("has a word for the sorting stage the bot reports", async () => {
+    const { lorePage } = await import("../src/content/lore-words");
+    expect(lorePage.stages["sorting"]).toBe("Working out what the players know.");
+  });
+});

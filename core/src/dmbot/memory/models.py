@@ -25,9 +25,11 @@ FIX, KEEP = "fix", "keep"  # correction actions
 
 # Where a fact came from. "dm" is the DM's own word; everything else needs confirming.
 BACKGROUND_SOURCE = "background"  # a suggestion read from the DM's own story (#2167)
+PARTY_SOURCE = "party"  # the faction "The party", made by the rule that links the players (#3036)
 SOURCES = (
     *("dm", "character", "scan", "cleaner", "undo", "entitybot", "backup", "extractor"),
     BACKGROUND_SOURCE,
+    PARTY_SOURCE,
 )
 
 # What the story extractor's claims are (docs/STORY_MEMORY.md, section 1; #1297): proposals
@@ -217,6 +219,9 @@ class NewName:
     secrets: tuple[str, ...] = ()
     role: str | None = None  # for a character: player character, NPC or god
     note: str = ""  # shown with a suggestion until the DM decides (a quote, how it was found)
+    # Not held back from the players: the DM said the world knows this name (an upload's "World
+    # general knowledge", #2959). The list of who knows it follows once the DM confirms the name.
+    shown: bool = False
 
 
 @dataclass(frozen=True, slots=True)
