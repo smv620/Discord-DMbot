@@ -828,6 +828,14 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       };
     });
   };
+  // Two pretend quests that sit outside the drawn web, so the page can be built with "Cluster by quest" (#2992): a
+  // DM in Full View is told of them, nobody else. The first names are in the bell quest, the second also in the heist.
+  const pretendQuests = (id: string): { id: string; name: string; links: number }[] => {
+    const n = Number(id.replace(/\D/g, "")) || 0;
+    if (n % 4 === 1) return [{ id: "q-bell", name: "Find the Lost Bell", links: 2 }, { id: "q-heist", name: "The Keep Heist", links: 1 }];
+    if (n % 4 === 2) return [{ id: "q-heist", name: "The Keep Heist", links: 1 }];
+    return [];
+  };
   const webGraphOf = (ref: string, query: WebQuery): WebGraph => {
     const view = webView(ref);
     if (view === "none") throw new ApiError("not-found");
@@ -868,7 +876,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       .filter((n) => near.has(n.id))
       .map((n) =>
         all
-          ? { ...current(n), revealed: n.revealed !== false, page: current(n).kind === "npc" }
+          ? { ...current(n), revealed: n.revealed !== false, page: current(n).kind === "npc", ...(dm ? { quests: pretendQuests(n.id) } : {}) }
           : { id: n.id, name: current(n).name, kind: current(n).kind, page: current(n).kind === "npc" },
       );
     const edges = edgesOf(usable.filter((l) => near.has(l.a) && near.has(l.b)), all, all, view === "dm" && all);
