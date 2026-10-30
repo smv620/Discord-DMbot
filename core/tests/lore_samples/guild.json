@@ -1,0 +1,63 @@
+{
+  "title": "The Guild of Saltwright Carters",
+  "pc_backstories": [
+    {
+      "character": "Bram Doyle",
+      "tie": "drove a salt wagon for the guild"
+    }
+  ],
+  "statements": [
+    {
+      "text": "The Guild of Saltwright Carters has carried goods along the Harrow road for two hundred years",
+      "expect": "world",
+      "world_for": []
+    },
+    {
+      "text": "Its members wear a grey cloak with a white band",
+      "expect": "world",
+      "world_for": []
+    },
+    {
+      "text": "The guildmaster is chosen each spring by a show of hands",
+      "expect": "world",
+      "world_for": []
+    },
+    {
+      "text": "The road was resurfaced in the spring",
+      "expect": "world",
+      "world_for": []
+    },
+    {
+      "text": "The apprentices learn knots on the quay every Thursday",
+      "expect": "world",
+      "world_for": []
+    },
+    {
+      "text": "Odelle sells information to the thieves' cant that works the north road",
+      "expect": "spoiler",
+      "world_for": []
+    },
+    {
+      "text": "The guild's coffers grow by this trade, and the carters are never told where the money comes from",
+      "expect": "spoiler",
+      "world_for": []
+    },
+    {
+      "text": "Beneath the wharf warehouses there is a cellar",
+      "expect": "spoiler",
+      "world_for": []
+    },
+    {
+      "text": "The cant stores its stolen cloth there",
+      "expect": "spoiler",
+      "world_for": [
+        "Bram Doyle"
+      ]
+    },
+    {
+      "text": "Only Odelle and the wharfmaster know the way down",
+      "expect": "spoiler",
+      "world_for": []
+    }
+  ]
+}

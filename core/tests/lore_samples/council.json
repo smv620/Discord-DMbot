@@ -1,0 +1,63 @@
+{
+  "title": "The Council of Merrow Hollow",
+  "pc_backstories": [
+    {
+      "character": "Teodric Hale",
+      "tie": "served on the council"
+    }
+  ],
+  "statements": [
+    {
+      "text": "Merrow Hollow is a river city of four thousand souls",
+      "expect": "world",
+      "world_for": []
+    },
+    {
+      "text": "The council meets on the first day of each month in the Hall of Reeds",
+      "expect": "world",
+      "world_for": []
+    },
+    {
+      "text": "any citizen may sit in the gallery to listen",
+      "expect": "world",
+      "world_for": []
+    },
+    {
+      "text": "The bell is rung for the fair, for a funeral, and for a fire",
+      "expect": "world",
+      "world_for": []
+    },
+    {
+      "text": "Corwen Tadd — is the speaker of — the council",
+      "expect": "world",
+      "world_for": []
+    },
+    {
+      "text": "The seat held by Hesper Lowe is in fact kept by her brother, Dunstan",
+      "expect": "spoiler",
+      "world_for": [
+        "Teodric Hale"
+      ]
+    },
+    {
+      "text": "Dunstan has done it since the winter of the flood",
+      "expect": "spoiler",
+      "world_for": []
+    },
+    {
+      "text": "The council also keeps a second, sealed ledger in the cellar under the Hall of Reeds",
+      "expect": "spoiler",
+      "world_for": []
+    },
+    {
+      "text": "It lists the debts the city owes to the Varn family",
+      "expect": "spoiler",
+      "world_for": []
+    },
+    {
+      "text": "Only the speaker and the clerk have the key",
+      "expect": "spoiler",
+      "world_for": []
+    }
+  ]
+}

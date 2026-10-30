@@ -1,0 +1,56 @@
+{
+  "title": "The Quiet Choir of Caddock Vale",
+  "pc_backstories": [],
+  "statements": [
+    {
+      "text": "The Quiet Choir meets each dusk in the shrine at Caddock Vale",
+      "expect": "world",
+      "world_for": []
+    },
+    {
+      "text": "The Choir sings the same three verses every night",
+      "expect": "world",
+      "world_for": []
+    },
+    {
+      "text": "Mother Ilse Brand — leads in public — the Quiet Choir",
+      "expect": "world",
+      "world_for": []
+    },
+    {
+      "text": "She has never refused a bowl of soup to a traveller",
+      "expect": "world",
+      "world_for": []
+    },
+    {
+      "text": "The children carry lanterns home at dusk, as they always have",
+      "expect": "world",
+      "world_for": []
+    },
+    {
+      "text": "The real direction of the Choir comes from the groundskeeper, Garrick Fenn",
+      "expect": "spoiler",
+      "world_for": []
+    },
+    {
+      "text": "Ilse does not know that the verses are a key",
+      "expect": "spoiler",
+      "world_for": []
+    },
+    {
+      "text": "Beneath the shrine a stair leads down past the well to a chamber with a bronze door",
+      "expect": "spoiler",
+      "world_for": []
+    },
+    {
+      "text": "The Choir believes the door opens when the third verse is sung in full",
+      "expect": "spoiler",
+      "world_for": []
+    },
+    {
+      "text": "Garrick learned them from a book found in the well",
+      "expect": "spoiler",
+      "world_for": []
+    }
+  ]
+}
