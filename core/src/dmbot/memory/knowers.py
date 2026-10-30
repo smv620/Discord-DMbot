@@ -781,7 +781,7 @@ async def forget_moved(
     of view believed. A DM's own list on a connection whose ends stay as hidden as they were is
     left alone, and nothing is ever opened here. A join does not call this: it keeps whoever knew.
     Logged, so Undo brings it all back (#3073)."""
-    lost = [a["id"] for b, a in moved if _ends_shown(entities, b) and not _ends_shown(entities, a)]
+    lost = [a["id"] for b, a in moved if ends_shown(entities, b) and not ends_shown(entities, a)]
     if not lost:
         return
     await _close(w, "relation_id", lost)
@@ -809,7 +809,7 @@ async def _close(w: Changes, column: str, ids: Sequence[str]) -> None:
         await w.delete_where_in(KNOWERS, column, ids, views)
 
 
-def _ends_shown(ends: dict[str, dict[str, Any]], relation: dict[str, Any]) -> bool:
+def ends_shown(ends: Mapping[str, Mapping[str, Any]], relation: Mapping[str, Any]) -> bool:
     """Neither end of this connection is kept from the players."""
     return all(
         e in ends and entry_shown_end(ends[e])
@@ -840,7 +840,7 @@ async def _follow_dependents(
             await _open(
                 w,
                 "relation_id",
-                [(r["id"], False) for r in relations if relation_shown(r) and _ends_shown(ends, r)],
+                [(r["id"], False) for r in relations if relation_shown(r) and ends_shown(ends, r)],
             )
         else:
             for column, found in (
@@ -955,7 +955,7 @@ async def move_flags(conn: Any, guild_id: int, campaign_id: str) -> int:
     return len(rows)
 
 
-def entry_shown_end(row: dict[str, Any]) -> bool:
+def entry_shown_end(row: Mapping[str, Any]) -> bool:
     """An end of a connection that is not kept from the players (the move's rule: such a
     connection is not handed to every player character, since learning it names that end)."""
     return not (row["hidden_from_players"] or row["audience_limited"] or row["unnamed"])
@@ -978,3 +978,10 @@ async def _bulk(
         ).format(sql.Identifier(table.name), cols, cols, sql.Identifier(table.name)),
         (guild_id, campaign_id, Jsonb([{c: row.get(c) for c in table.columns} for row in rows])),
     )
+
+
+def connection_shown(ends: Mapping[str, Mapping[str, Any]], relation: dict[str, Any]) -> bool:
+    """This connection is shown to the players: its own flags and both its ends allow it. A fold
+    in a plain merge keeps or drops what the players know by whether the folded fact and its twin
+    were shown (#3073)."""
+    return relation_shown(relation) and ends_shown(ends, relation)

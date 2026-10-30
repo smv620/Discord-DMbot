@@ -5881,8 +5881,18 @@ async def _move_relations(w: Changes, keep_id: str, gone_id: str, *, join: bool 
     by_id = {r["id"]: r for r in rows}
     for relation_id in gone_rows:
         if relation_id in folded:  # what was believed of the folded fact is believed of its twin
-            await beliefs.carry(w, by_id[relation_id], folded[relation_id], copy_beliefs=not join)
-            if join:  # and whoever knew the folded fact knows its twin: nothing is lost
+            twin_row = await w.get(RELATIONS, folded[relation_id])
+            was_shown = knowers.connection_shown(entities, by_id[relation_id])
+            twin_shown = twin_row is not None and knowers.connection_shown(entities, twin_row)
+            # A plain merge never hands the players a belief in a twin they were not shown (the
+            # folded fact was shown, its twin is not): nothing is carried, and Undo is the batch.
+            carry_beliefs = not join and not (was_shown and not twin_shown)
+            await beliefs.carry(
+                w, by_id[relation_id], folded[relation_id], copy_beliefs=carry_beliefs
+            )
+            if join or (was_shown and twin_shown):
+                # whoever knew the folded fact knows its twin: nothing is lost (a join keeps
+                # whoever knew; two shown facts say the same to the same people)
                 await knowers.move_rows(w, "relation_id", relation_id, folded[relation_id])
         await _delete_relation(w, relation_id)
 
