@@ -87,6 +87,14 @@ class Finding(ConfirmedMemoryTest):
         entity = await self.add(name, type="character", role="player_character", played_by=9)
         made = new_id()
         async with self.db.guild(GUILD_A) as conn:
+            cur = await conn.execute(  # (a player's character already has its view since #2995)
+                "SELECT id FROM memory_perspectives WHERE guild_id = %s AND campaign_id = %s"
+                " AND entity_id = %s",
+                (GUILD_A, self.c, entity),
+            )
+            have = await cur.fetchone()
+            if have is not None:
+                return str(have["id"])
             await conn.execute(
                 "INSERT INTO memory_perspectives (guild_id, campaign_id, id, kind, entity_id,"
                 " created_at) VALUES (%s, %s, %s, 'pc', %s, 1)",
