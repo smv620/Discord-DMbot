@@ -114,11 +114,11 @@ class TheExamples(unittest.TestCase):
         self.assertIn("said: kah-ZETH", second)
 
     def test_the_prompt_teaches_the_rules(self) -> None:
-        prompt = lr.read_instructions({"mentor_of": "is a mentor of"})
+        prompt = lr.read_instructions({"patron_of": "is a mentor of"})
         for rule in ("Only what the text states", "NOT INCLUDED", "copied exactly", "data, not"):
             self.assertIn(rule, prompt)
         self.assertIn("person, place, group, god, item, event, idea", prompt)
-        self.assertIn("mentor_of", prompt)
+        self.assertIn("patron_of", prompt)
         self.assertIn(lr.EXAMPLES, prompt)
 
     def test_the_prompt_asks_for_every_stated_relationship_sentence_by_sentence(self) -> None:
@@ -960,7 +960,7 @@ class TheRolesAndDirections(unittest.TestCase):
         got, _ = connections([row("Mira", "apprentice", "Brother Aldric", self.quote())], FAMILY)
         self.assertEqual(
             [(c.a, c.how, c.words, c.b) for c in got],
-            [("Brother Aldric", FALLBACK_PREDICATE, "mentors", "Mira")],
+            [("Brother Aldric", "mentor_of", "", "Mira")],
         )
 
     def test_a_mentor_line_and_an_apprentice_line_for_one_pair_are_one_fact(self) -> None:
@@ -970,7 +970,8 @@ class TheRolesAndDirections(unittest.TestCase):
         ]
         out, lost = kept(rows, ["Brother Aldric", "Mira"], FAMILY)
         self.assertEqual(
-            [(c.a, c.b, c.words) for c in out], [("Brother Aldric", "Mira", "mentors")]
+            [(c.a, c.how, c.b, c.words) for c in out],
+            [("Brother Aldric", "mentor_of", "Mira", "")],
         )
         self.assertEqual(dict(lost), {"same_pair": 1})
 
@@ -1076,7 +1077,7 @@ class TheRolesAndDirections(unittest.TestCase):
             )
             self.assertEqual(dict(lost), {"same_pair": 1})
 
-    def test_the_queue_has_no_words_so_a_pair_is_offered_once_per_kind(self) -> None:
+    def test_a_pair_is_offered_once_per_kind_and_each_new_kind_is_its_own(self) -> None:
         # (kept + dropped always adds up to the lines looked at)
         rows = [
             row("Brother Aldric", "mentor", "Mira", self.quote()),
@@ -1085,11 +1086,13 @@ class TheRolesAndDirections(unittest.TestCase):
         ]
         out, lost = kept(rows, ["Brother Aldric", "Mira"], FAMILY)
         self.assertEqual(len(out) + sum(lost.values()), len(rows))
+        # (each is a kind of its own now, so the pair holds all three; only the same kind twice
+        # is one fact, #3033)
         self.assertEqual(
             sorted((c.how, c.words) for c in out),
-            [(FALLBACK_PREDICATE, "mentors"), ("kin_of", "")],
+            [("kin_of", ""), ("mentor_of", ""), ("rival_of", "")],
         )
-        self.assertEqual(dict(lost), {"same_pair": 1})  # the rival line, after the mentor line
+        self.assertEqual(dict(lost), {})
 
     def test_a_plain_family_line_is_still_one_fact_either_way_round(self) -> None:
         rows = [

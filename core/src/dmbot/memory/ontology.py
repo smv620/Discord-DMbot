@@ -473,7 +473,29 @@ CORE_PREDICATES: tuple[PredicateTerm, ...] = (
         ),
         examples=("Strahd is an enemy of Cerric.", "The Zhentarim are an enemy of the Harpers."),
         inverse_label="is an enemy of",
-        synonyms=("rival_of", "enemies_with", "hates", "opposes"),
+        synonyms=("enemies_with", "hates", "opposes"),
+        inner_state=True,
+        version=2,  # a rival is its own kind now: `rival_of` is no longer a synonym (#3035)
+    ),
+    PredicateTerm(
+        "rival_of",
+        "is a rival of",
+        "Competes with: rivals, a rival apprentice, a rival house. They want to beat each other, "
+        "not to harm each other. Both ways.",
+        (*_BEINGS, "faction"),
+        (*_BEINGS, "faction"),
+        symmetric=True,
+        covers=(
+            "rival apprentices, rival merchants, a rival guild",
+            "two people or groups competing for the same prize or place",
+        ),
+        not_this=(
+            ("they are at war or want each other harmed", "enemy_of"),
+            ("they merely dislike each other in passing", "knows"),
+        ),
+        examples=("Dorn is a rival of Ilse.", "The Silver Lanterns are a rival of the Guild."),
+        inverse_label="is a rival of",
+        synonyms=("rivals_with", "competes_with"),
         inner_state=True,
     ),
     PredicateTerm(
@@ -535,11 +557,90 @@ CORE_PREDICATES: tuple[PredicateTerm, ...] = (
         synonyms=("carrying", "holds", "wields", "wearing", "has_on"),
     ),
     PredicateTerm(
+        "mentor_of",
+        "teaches",
+        "Teaches or trains: a mentor and their apprentice, a master and a student. The first name "
+        "is the teacher.",
+        _BEINGS,
+        _BEINGS,
+        covers=(
+            "a mage and the apprentice they train",
+            "a master and a student, a trainer and a trainee",
+        ),
+        not_this=(
+            ("one works for the other and is paid", "serves"),
+            ("they merely know each other", "knows"),
+        ),
+        examples=("Doran teaches Ilsa.", "Brother Aldric teaches Mira."),
+        inverse_label="is taught by",
+        synonyms=("teaches", "trains"),
+    ),
+    PredicateTerm(
+        "leads",
+        "leads",
+        "Is in charge of a group or a place: a guildmaster, a captain, a mayor, a speaker, a "
+        "ruler. The first name is the leader.",
+        ("character",),
+        ("faction", "place"),
+        covers=(
+            "the head of a guild, an army or a cult",
+            "the mayor, speaker or ruler of a town or realm",
+        ),
+        not_this=(
+            ("an ordinary member of a group", "member_of"),
+            ("a person who works for another person", "serves"),
+        ),
+        examples=("Speaker Holt leads Brindle.", "Captain Vale leads the Silver Lanterns."),
+        inverse_label="is led by",
+        synonyms=("rules", "heads", "speaker_of", "leader_of", "captain_of", "mayor_of"),
+    ),
+    PredicateTerm(
+        "founded",
+        "founded",
+        "Started a group or built a place. The founder may be long dead and not a member.",
+        ("character", "faction"),
+        ("faction", "place"),
+        covers=("the person who started a guild, cult or order", "who built a town or a keep"),
+        not_this=(("a character who belongs to a group", "member_of"),),
+        examples=("Arven founded the Silver Lanterns.",),
+        inverse_label="was founded by",
+        synonyms=("founder_of", "established", "built"),
+    ),
+    PredicateTerm(
+        "captive_of",
+        "is held captive by",
+        "Is a prisoner of someone: captured, kidnapped or locked up. One captor at a time; the "
+        "captive is the first name.",
+        ("character",),
+        ("character", "faction"),
+        max_per_subject=1,
+        covers=("a prisoner of a villain, a kidnapped child, a captive of a guild",),
+        not_this=(
+            ("they are on opposite sides", "enemy_of"),
+            ("someone trapped in a place", "located_in"),
+        ),
+        examples=("Tor is held captive by the circus master.",),
+        inverse_label="holds captive",
+        synonyms=("imprisoned_by", "prisoner_of", "held_by", "captured_by"),
+    ),
+    PredicateTerm(
+        "contains",
+        "contains",
+        "Has something inside it: a note in a book, a gem in a chest, a room in a vault.",
+        ("item", "place"),
+        ("item",),
+        covers=("a note inside a tome", "a gem inside a chest"),
+        not_this=(("an item kept in a place", "located_in"),),
+        examples=("The tome contains a note.",),
+        inverse_label="is inside",
+        synonyms=("has_inside",),
+    ),
+    PredicateTerm(
         "knows",
         "knows",
         "Knows someone or about something: has met them, or has learned of it. The weakest tie "
         "between two entries; use a stronger one when it fits.",
-        _BEINGS,
+        (*_BEINGS, "faction"),  # (a group knows who someone is, #3033)
         _ANY,
         covers=(
             "a character who has met another character",
@@ -553,6 +654,7 @@ CORE_PREDICATES: tuple[PredicateTerm, ...] = (
         examples=("Belleros knows Cerric.", "Cerric knows the Sun Blade."),
         inverse_label="is known by",
         synonyms=("knows_of", "met", "acquainted_with"),
+        version=2,  # a group may know too (#3033)
     ),
     PredicateTerm(
         "serves",

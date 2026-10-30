@@ -67,6 +67,13 @@ CONNECTIONS = {
     "works for": "serves",
     "knows": "knows",
     "sworn to": "sworn_to",  # an oath, vow, pact or fealty
+    # Kinds of their own (#3033, #3035): they used to be kept on the catch-all with fixed words.
+    "mentor": "mentor_of",
+    "rival": "rival_of",
+    "leads": "leads",
+    "founded": "founded",
+    "captive": "captive_of",  # a is held captive by b
+    "contains": "contains",  # a contains b
 }
 # The relationships lore is mostly made of (#2757), built in so the AI never has to word them
 # itself (a free label may use only the quote's own words, which "mentors" or "is a rival of"
@@ -75,18 +82,24 @@ CONNECTIONS = {
 # the second ("a mentors b"). Plain words for a DM: nothing here is a technical term.
 LORE_KEPT = {"serves": "serves", "ally": "ally_of"}
 LORE_WORDS = {
-    "mentor": "mentors",
-    "rival": "is a rival of",
-    "founded": "founded",
-    "leads": "leads",
     "worships": "worships",
 }
 # Family by role: kept as a family connection whose detail is the role (#2457), read "a is the
 # parent of b" (the role belongs to the first name, as `kin` reads it).
-LORE_KIN = ("parent",)
+LORE_KIN = ("parent", "sibling", "spouse", "grandparent", "aunt", "uncle", "niece", "nephew",
+            "cousin")  # fmt: skip
+# The role words a text uses, in the neutral word DMbot keeps (the gender stays out of the data):
+# "his younger sister" is a sibling, "whose husband" a spouse (#3035). A word of `kin.ROLES` that is
+# neutral already (aunt, cousin…) stands for itself.
+KIN_NEUTRAL = {
+    "mother": "parent", "father": "parent", "son": "child", "daughter": "child",
+    "sister": "sibling", "brother": "sibling", "wife": "spouse", "husband": "spouse",
+    "grandmother": "grandparent", "grandfather": "grandparent",
+    "granddaughter": "grandchild", "grandson": "grandchild",
+}  # fmt: skip
 # "a is an apprentice of b" is "b mentors a", and "a is a child of b" is "b is the parent of a":
 # kept that way round, so the two ways of saying it are one fact and are never offered twice.
-LORE_REVERSED = {"apprentice": "mentor", "child": "parent"}
+LORE_REVERSED = {"apprentice": "mentor", "child": "parent", "grandchild": "grandparent"}
 ALL_WORDS = (*CONNECTIONS, *LORE_KEPT, *LORE_WORDS, *LORE_KIN, *LORE_REVERSED)  # `how` answers
 MAX_OWN_KINDS = 20  # the campaign's own relationships offered to the AI as well
 # A stated relationship no fixed kind and no campaign term fits (#2454): kept on the catch-all
@@ -729,6 +742,7 @@ def read_connections(
             continue
         a, b, quote = item.get("a"), item.get("b"), item.get("quote")
         word = str(item.get("how", "")).strip().lower()
+        word = KIN_NEUTRAL.get(word, word)  # (a gendered role word is kept as its neutral one)
         reverse = word in LORE_REVERSED
         word = LORE_REVERSED.get(word, word)
         how = (
