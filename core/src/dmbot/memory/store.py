@@ -3576,6 +3576,7 @@ class MemoryStore:
         unrevealed: bool = False,
         directional: bool = False,
         decided: str | None = None,
+        known_by: Sequence[str] = (),
     ) -> Written[tuple[Relation, list[Flag]]]:
         """Store a fact, checked against the rules. Problems become flags for the DM to
         review; the fact is stored as given either way. A fact already known is only
@@ -3591,6 +3592,18 @@ class MemoryStore:
                 secret=secret, mention_ids=mention_ids, unrevealed=unrevealed,
                 directional=directional, decided=decided,
             )  # fmt: skip
+            if known_by and w.source == DM and (value[0].secret or value[0].unrevealed):
+                # The characters who know it from the start (#2935): the same change as the
+                # connection, so one Undo takes both. A pick the rules refuse (a character since
+                # demoted) only leaves the connection with the DM alone, as before.
+                try:
+                    # (a connection that already existed keeps the characters the DM chose)
+                    held = (await knowers.connection_knowers(w, [value[0].id])).get(value[0].id, [])
+                    await knowers.set_connection_knowers(
+                        w, value[0].id, [*held, *(k for k in known_by if k not in held)]
+                    )
+                except MemoryRuleError:
+                    log.info("A connection's first knowers were refused")
             return Written(value, w.batch)
 
     async def add_relation_in(

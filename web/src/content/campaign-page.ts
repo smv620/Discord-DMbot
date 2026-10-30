@@ -5,6 +5,7 @@
 export const campaignPage = {
   loading: "Loading…",
   signedOut: "You were signed out. Sign in again.",
+  signIn: "Sign in with Discord",
   notFound: "We couldn't find that campaign. Open it from My Campaigns.",
   down: "We couldn't reach DMbot. Check your connection and try again.",
   tryAgain: "Try again",
@@ -49,7 +50,7 @@ export const campaignPage = {
   pages: {
     recaps: "Recaps",
     timeline: "Story timeline",
-    graph: "Story graph",
+    graph: "Story Graph",
     names: "Names and NPCs",
     transcripts: "Transcripts",
     import: "Import a past session",
@@ -95,13 +96,13 @@ export const campaignPage = {
   pausedNo: "Not paused",
   doThisInDiscord: (path: string): string => `Do this in Discord: ${path}`,
   paths: {
-    visibility: "⚙️ Settings → 👁️ Who can see the DM screen",
-    level: "⚙️ Settings → the Quiet and Normal buttons",
-    retention: "⚙️ Settings → 🗂️ Campaign management → 🗄️ Transcript retention",
-    gameMasters: "⚙️ Settings → 🗂️ Campaign management → 👑 Game masters",
-    handOver: "⚙️ Settings → 🗂️ Campaign management → 🤝 Hand over",
-    pause: "⚙️ Settings → 🗂️ Campaign management → ⏸️ Pause this campaign (or ▶️ Unpause)",
-    delete: "⚙️ Settings → 🗂️ Campaign management → 🗑 Delete this campaign",
+    visibility: "⚙️ Manage DMbot → 👁️ Who can see the DM screen",
+    level: "⚙️ Manage DMbot → the Quiet and Normal buttons",
+    retention: "⚙️ Manage DMbot → 🗂️ Campaign management → 🗄️ Transcript retention",
+    gameMasters: "⚙️ Manage DMbot → 🗂️ Campaign management → 👑 Game masters",
+    handOver: "⚙️ Manage DMbot → 🗂️ Campaign management → 🤝 Hand over",
+    pause: "⚙️ Manage DMbot → 🗂️ Campaign management → ⏸️ Pause this campaign (or ▶️ Unpause)",
+    delete: "⚙️ Manage DMbot → 🗂️ Campaign management → 🗑 Delete this campaign",
   },
   listeningNow: "Listening now",
 

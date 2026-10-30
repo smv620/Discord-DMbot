@@ -443,6 +443,19 @@ class TheRoute(Web):
             return await sessions.sign_in(self.web, BOB_USER, [MEMBER], now=NOW, days=30)
         return await sessions.sign_in(self.web, ALICE, [THURSDAY], now=NOW, days=30)
 
+    async def test_find_a_name_answers_for_the_view_asked_and_refuses_a_bad_one(self) -> None:
+        await self.sql(
+            "UPDATE memory_entities SET hidden_from_players = true WHERE id = %s", self.hall
+        )
+        async with await self.client(self.session) as client:
+            base = f"/me/campaigns/{self.cref}/web/find"
+            full = await client.get(base, params={"q": "far"})
+            self.assertEqual([n["name"] for n in full.json()["names"]], ["Far Hall"])
+            players = await client.get(base, params={"q": "far", "view": "players"})
+            self.assertEqual((players.status_code, players.json()), (200, {"names": []}))
+            bad = await client.get(base, params={"q": "far", "view": "everything"})
+            self.assertEqual((bad.status_code, bad.json()["error"]), (400, "bad_view"))
+
     async def test_the_routes_answer_and_a_bad_step_count_is_a_plain_400(self) -> None:
         async with await self.client(self.session) as client:
             got = await client.get(

@@ -1,13 +1,16 @@
 // @vitest-environment happy-dom
-// The relationship web's free layout and its map (#2934): names settle apart, can be moved and stay where
+// The Story Graph's free layout and its map (#2934): names settle apart, can be moved and stay where
 // they were dropped, the lines go quiet until a name is in focus, and the person's choices stay in this
 // browser. The layout is checked as pure code (no clock, no random numbers) and the map as a rendered page.
 import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/preact";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import WebMap from "../src/account/WebMap";
 import type { WebEdge, WebNode } from "../src/account/api";
-import { MAX_SIM_NAMES, MAX_SIM_STEPS, connectionGroups, edgeKind, forceStep, kindAnchors, linkPairs, settle, startNodes } from "../src/account/webForce";
+import { MAX_SIM_NAMES, MAX_SIM_STEPS, edgeKind, forceStep, kindAnchors, linkPairs, orderedKinds, settle, startNodes } from "../src/account/webForce";
 import { readMode, readPlaces, saveMode, savePlaces } from "../src/account/webPrefs";
 import { webPage as words } from "../src/content/web-words";
 
@@ -88,17 +91,19 @@ describe("the free layout", () => {
     expect(list.map((n) => [n.x, n.y])).toEqual(before);
   });
 
-  it("pulls names that share a kind of connection together in the grouped layout", () => {
+  it("pulls names of one kind together in the grouped layout, whatever joins them to the middle", () => {
+    // Half are NPCs and half places, all joined to the middle by the same kind of line.
     const many = [
       ...Array.from({ length: 4 }, (_, i) => ({ id: `p${i}`, name: `P${i}`, kind: "npc" })),
-      ...Array.from({ length: 4 }, (_, i) => ({ id: `q${i}`, name: `Q${i}`, kind: "npc" })),
-      { id: "c", name: "Centre", kind: "npc" },
+      ...Array.from({ length: 4 }, (_, i) => ({ id: `q${i}`, name: `Q${i}`, kind: "place" })),
+      { id: "c", name: "Centre", kind: "player_character" },
     ];
-    const some: WebEdge[] = many.slice(0, 8).map((n, i) => ({ a: "c", b: n.id, label: "x", more: 0, links: [{ ...link(`k${i}`, "x"), kind: i < 4 ? ("family" as const) : ("work" as const) }] }));
-    const groups = connectionGroups(some, "c");
-    const list = startNodes(many, some, "c", {}, groups);
+    const some: WebEdge[] = many.slice(0, 8).map((n, i) => ({ a: "c", b: n.id, label: "x", more: 0, links: [{ ...link(`k${i}`, "x"), kind: "other" as const }] }));
+    const list = startNodes(many, some, "c", {});
+    expect(list.find((n) => n.id === "p0")!.group).toBe("npc");
+    expect(list.find((n) => n.id === "q0")!.group).toBe("place");
     const links = linkPairs(list, some);
-    settle(list, links, list.findIndex((n) => n.id === "c"), "groups", kindAnchors(["family", "work"]));
+    settle(list, links, list.findIndex((n) => n.id === "c"), "groups", kindAnchors(["npc", "place"]));
     const mean = (g: string) => {
       const m = list.filter((n) => n.group === g);
       return { x: m.reduce((t, n) => t + n.x, 0) / m.length, y: m.reduce((t, n) => t + n.y, 0) / m.length };
@@ -108,22 +113,18 @@ describe("the free layout", () => {
       const m = list.filter((n) => n.group === g);
       return m.reduce((t, n) => t + Math.hypot(n.x - c.x, n.y - c.y), 0) / m.length;
     };
-    const apart = Math.hypot(mean("family").x - mean("work").x, mean("family").y - mean("work").y);
-    expect(apart).toBeGreaterThan(within("family"));
-    expect(apart).toBeGreaterThan(within("work"));
+    const apart = Math.hypot(mean("npc").x - mean("place").x, mean("npc").y - mean("place").y);
+    expect(apart).toBeGreaterThan(within("npc"));
+    expect(apart).toBeGreaterThan(within("place"));
   });
 
-  it("works out a line's kind and each name's group from the lines out of the middle", () => {
+  it("works out a line's kind from its connections, and orders the kinds of name people first", () => {
     const e = (a: string, b: string, ...kinds: (string | undefined)[]) => ({ a, b, links: kinds.map((kind) => ({ kind })) });
     expect(edgeKind(e("a", "b", "family"))).toBe("family");
     expect(edgeKind(e("a", "b", "family", "family"))).toBe("family");
     expect(edgeKind(e("a", "b", "family", "work"))).toBe("other");
     expect(edgeKind(e("a", "b", undefined))).toBe("other");
-    const groups = connectionGroups([e("m", "a", "family"), e("m", "b", "work"), e("a", "c", "ally"), e("b", "c", "ally")], "m");
-    expect(groups.get("a")).toBe("family");
-    expect(groups.get("b")).toBe("work");
-    expect(groups.get("c")).toBe("family"); // reached through a first, so it follows a
-    expect(groups.has("m")).toBe(false);
+    expect(orderedKinds(["item", "place", "npc", "player_character", "npc", "zebra", "event"])).toEqual(["player_character", "npc", "place", "item", "event", "zebra"]);
   });
 
   it("starts a name at its saved place, pinned, and ignores a line to a name that is not here", () => {
@@ -444,11 +445,25 @@ describe("kinds of connection", () => {
     expect(document.querySelector(".web-legend")!.textContent).toContain("Work");
   });
 
-  it("labels the grouped areas with the kinds of connection", () => {
+  it("labels the grouped areas with what the names are, never with the kinds of connection (#2990)", () => {
     saveMode("groups");
     drawKinded();
     const labels = [...document.querySelectorAll(".web-area-text")].map((t) => t.textContent);
-    expect(labels).toEqual(expect.arrayContaining(["Family", "Work"]));
+    // The pretend names are NPCs, a place and a group; each kind present has one area, each with the Names page's words.
+    expect(labels).toEqual(expect.arrayContaining(["NPCs", "Places"]));
+    expect(labels.every((l) => !["Family", "Work", "Something else", "Friends and allies"].includes(l ?? ""))).toBe(true);
+    expect(new Set(labels).size).toBe(labels.length); // an empty kind has no area, a kind has one
+    // The lines keep their own colour and the chips are still there.
+    expect(document.querySelector(".web-legend")!.textContent).toContain("Work");
+  });
+
+  it("gives no area to a kind that has no names, and keeps the middle name out of every area", () => {
+    saveMode("groups");
+    drawKinded();
+    const labels = [...document.querySelectorAll(".web-area-text")].map((t) => t.textContent);
+    expect(labels).not.toContain("Items");
+    expect(labels).not.toContain("Events");
+    expect(document.querySelectorAll(".web-node.centre")).toHaveLength(1);
   });
 });
 
@@ -487,5 +502,101 @@ describe("kinds of connection, edge cases", () => {
     expect(chip.textContent).not.toContain("(hidden)");
     fireEvent.click(chip);
     expect(chip.textContent).toContain(words.hiddenMark);
+  });
+});
+
+describe("full screen (#2981)", () => {
+  const button = (name: string) => [...document.querySelectorAll(".web-tools button")].find((b) => b.textContent === name) as HTMLButtonElement;
+
+  it("fills the window on request, says so, and is left by the button or Escape", () => {
+    draw();
+    const map = document.querySelector(".web-map")!;
+    expect(map.classList.contains("web-full")).toBe(false);
+    expect(button(words.fullScreen).getAttribute("aria-pressed")).toBe("false");
+    fireEvent.click(button(words.fullScreen));
+    expect(map.classList.contains("web-full")).toBe(true);
+    expect(button(words.leaveFullScreen).getAttribute("aria-pressed")).toBe("true");
+    expect(document.body.style.overflow).toBe("hidden");
+    fireEvent.click(button(words.leaveFullScreen));
+    expect(map.classList.contains("web-full")).toBe(false);
+    expect(document.body.style.overflow).toBe("");
+    fireEvent.click(button(words.fullScreen));
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(map.classList.contains("web-full")).toBe(false);
+    expect(document.body.style.overflow).toBe("");
+  });
+
+  it("draws the chosen line's panel inside the map, so full screen still shows it", () => {
+    draw({ children: <section class="web-line-panel">The line</section> });
+    fireEvent.click(button(words.fullScreen));
+    const map = document.querySelector(".web-map.web-full")!;
+    expect(map.querySelector(".web-line-panel")?.textContent).toBe("The line");
+  });
+
+  it("gives the page back its scrolling when the map goes away while full screen", () => {
+    const { unmount } = draw();
+    fireEvent.click(button(words.fullScreen));
+    unmount();
+    expect(document.body.style.overflow).toBe("");
+  });
+
+  it("keeps the wide page and the details under the map in the style sheet", () => {
+    // jsdom lays nothing out, so the width rules are read from the file that the page loads.
+    const css = readFileSync(resolve(process.cwd(), "src/styles/web-map.css"), "utf8");
+    expect(css).toMatch(/body:has\(\.account-wide\) \.wrap \{\s*max-width: 110rem/);
+    expect(css).toMatch(/\.account\.account-wide \{\s*max-width: none/);
+    // The details panel never goes beside the map: one column at every width (owner, #2984).
+    expect(css).not.toMatch(/grid-template-columns: minmax\(0, 1fr\) 19rem/);
+    const page = readFileSync(resolve(process.cwd(), "src/pages/account/web.astro"), "utf8");
+    expect(page).toContain("account account-wide");
+  });
+});
+
+describe("each kind of name has its own colour, shape and word (#2992)", () => {
+  const kinds = ["npc", "player_character", "place", "faction", "item", "event", "creature", "quest", "concept"];
+  const many: WebNode[] = [
+    { id: "c0", name: "Centre", kind: "npc" },
+    ...kinds.slice(1).map((kind, i) => ({ id: `k${i}`, name: `Name ${kind}`, kind })),
+  ];
+  const wired: WebEdge[] = many.slice(1).map((n, i) => ({ a: "c0", b: n.id, label: "x", more: 0, links: [link(`w${i}`, "x")] }));
+  const css = () => readFileSync(resolve(process.cwd(), "src/styles/web-map.css"), "utf8");
+
+  it("draws every style as its own class and its own shape", () => {
+    render(<WebMap nodes={many} edges={wired} center="c0" refId="1.a" selected={null} onCenter={() => {}} onLine={() => {}} />);
+    const style = (name: string) => [...nodeOf(name).classList].find((c) => c.startsWith("web-kind-"));
+    expect(kinds.map((k) => style(k === "npc" ? "Centre" : `Name ${k}`))).toEqual([
+      "web-kind-npc", "web-kind-player_character", "web-kind-place", "web-kind-group", "web-kind-item",
+      "web-kind-event", "web-kind-creature", "web-kind-quest", "web-kind-other",
+    ]);
+    const shape = (name: string) => {
+      const el = nodeOf(name).querySelector("circle:not(.web-hit), rect, polygon")!;
+      return `${el.tagName}:${el.getAttribute("points")?.split(" ").length ?? ""}:${el.getAttribute("stroke-dasharray") ?? ""}:${nodeOf(name).querySelectorAll(".web-pc-ring").length}`;
+    };
+    const shapes = kinds.map((k) => shape(k === "npc" ? "Centre" : `Name ${k}`));
+    expect(new Set(shapes).size).toBe(kinds.length); // colour is never the only signal
+  });
+
+  it("gives each kind a colour token for light and dark, and its legend a word, a shape and a colour", () => {
+    for (const style of ["npc", "player_character", "place", "group", "item", "event", "creature", "quest", "other"]) {
+      expect(css().match(new RegExp(`--kind-${style}:`, "g"))).toHaveLength(3); // light, dark by system, dark by choice
+      expect(css()).toContain(`.web-kind-${style} { --kind: var(--kind-${style}); }`);
+    }
+    render(<WebMap nodes={many} edges={wired} center="c0" refId="1.a" selected={null} onCenter={() => {}} onLine={() => {}} />);
+    const legend = document.querySelector(".web-legend")!;
+    for (const word of ["NPCs", "PCs", "Places", "Groups", "Items", "Events", "Creatures", "Quests", "Ideas"]) expect(legend.textContent).toContain(word);
+    expect(legend.querySelectorAll('svg[class^="web-kind-"]').length).toBe(kinds.length);
+  });
+
+  it("tints each kind's area with the colour of its names", () => {
+    saveMode("groups");
+    render(<WebMap nodes={many} edges={wired} center="c0" refId="1.a" selected={null} onCenter={() => {}} onLine={() => {}} />);
+    const areas = [...document.querySelectorAll(".web-area")];
+    expect(areas.length).toBeGreaterThan(0);
+    for (const area of areas) {
+      const label = area.querySelector(".web-area-text")!.textContent!;
+      const names = [...document.querySelectorAll(".web-node")].filter((n) => n.classList.contains([...area.classList].find((c) => c.startsWith("web-kind-"))!));
+      expect(names.length, label).toBeGreaterThan(0); // the wash is the colour of names that are there
+    }
+    expect(css()).toMatch(/\.web-area\[class\*="web-kind-"\] circle \{\s*fill: var\(--kind\);\s*fill-opacity: 0\.14/);
   });
 });

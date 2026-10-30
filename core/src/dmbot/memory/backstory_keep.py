@@ -51,6 +51,8 @@ async def keep_all(
                 source=DM, confidence=1.0, status=CONFIRMED, secret=c.secret, detail=c.detail,
                 directional=kin.directional(c.detail),  # a family role keeps who holds it
                 unrevealed=True, decided=c.decided or None,
+                # the uploader's character knows it, unless it uses a secret name (#2935)
+                known_by=[c.known_by] if c.known_by and not c.secret else (),
             )  # fmt: skip
         except MemoryRuleError:
             done.refused += 1
@@ -85,7 +87,18 @@ async def undo_all(
         await store.add(
             guild_id,
             campaign_id,
-            [NewLink(c.subject_id, c.predicate, c.object_id, c.quote, c.secret, c.detail, c.truth)],
+            [
+                NewLink(
+                    c.subject_id,
+                    c.predicate,
+                    c.object_id,
+                    c.quote,
+                    c.secret,
+                    c.detail,
+                    c.truth,
+                    known_by=c.known_by,
+                )
+            ],
         )
         back += 1
     return back

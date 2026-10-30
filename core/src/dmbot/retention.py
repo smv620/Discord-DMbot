@@ -158,7 +158,7 @@ def warning_text(
         # A fixed date, not a clock a session restarts: only taking it on keeps it.
         why = "the DM who ran it deleted their account and no one has taken it on"
         keep = [
-            f"any of its DMs can open ⚙️ Settings → 🗂️ Campaign management {where} and "
+            f"any of its DMs can open ⚙️ Manage DMbot → 🗂️ Campaign management {where} and "
             f"press 🤝 **{TAKE_ON}**"
         ]
     if standing.backups:
@@ -211,7 +211,7 @@ def grouped_warning_text(
         keep.append("play a session in that campaign's server (it is then safe for a while)")
     if any(owner_left(c) for c, _s, _a in items):
         keep.append(
-            "for one whose DM left, any of its DMs can open ⚙️ Settings → 🗂️ Campaign "
+            "for one whose DM left, any of its DMs can open ⚙️ Manage DMbot → 🗂️ Campaign "
             "management in its server and "
             f"press 🤝 **{TAKE_ON}** (a session doesn't keep it)"
         )

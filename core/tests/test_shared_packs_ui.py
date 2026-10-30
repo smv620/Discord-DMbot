@@ -269,7 +269,7 @@ class CardWords(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn("A Homebrew pack is a named bundle of your homebrew", sp.INTRO)
         self.assertNotIn("you made", sp.INTRO)
-        self.assertIn("⚙️ Settings → 📚 Homebrew", sp.INTRO)
+        self.assertIn("⚙️ Manage DMbot → 📚 Homebrew", sp.INTRO)
         self.assertIn(
             "Only homebrew is shared in a pack, never your story, names or notes.", sp.INTRO
         )

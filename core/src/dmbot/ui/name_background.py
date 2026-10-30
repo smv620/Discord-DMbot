@@ -78,6 +78,7 @@ from dmbot.ui.names import (
     changed,
     start_review,
 )
+from dmbot.ui.who_knows import player_characters
 from dmbot.waiting import WaitingMessage, message_is_gone
 
 log = logging.getLogger(__name__)
@@ -336,6 +337,9 @@ class BackgroundOffer(_Menu):
         self.upload = upload
         self.choices = dict(choices)  # entity id -> name
         self.speaker: str | None = None  # whose backstory it is, once the DM says (#2650)
+        # ...and, when that is a player character, their entry id: what the kept connections start
+        # as known by (#2935). Empty for an NPC's backstory or none picked.
+        self.known_by = ""
         if self.choices:
             self.add_item(self._select())
         self.truth = False  # asked once per upload (#2447): "may change in play" by default
@@ -371,6 +375,9 @@ class BackgroundOffer(_Menu):
             return
         picked = self.whose.values[0]
         self.speaker = self.choices.get(picked)
+        memory = _memory(interaction)
+        pcs = {c for c, _ in await player_characters(memory, campaign)} if memory else set()
+        self.known_by = picked if picked in pcs else ""
         for option in self.whose.options:
             option.default = option.value == picked
         await interaction.response.edit_message(
@@ -409,6 +416,7 @@ class BackgroundOffer(_Menu):
             return
         truth = self.truth  # as it was when Find names was pressed, not when the AI is done
         speaker = self.speaker
+        known_by = self.known_by
         bot = _bot(interaction)
         ai = bot.background_ai
         memory = _memory(interaction)
@@ -522,7 +530,12 @@ class BackgroundOffer(_Menu):
                     rules=(campaign.target_ruleset, campaign.fallback_ruleset),
                 )
                 stored = await store(
-                    memory, campaign, found, getattr(bot, "lore_context", None), self.upload.text
+                    memory,
+                    campaign,
+                    found,
+                    getattr(bot, "lore_context", None),
+                    self.upload.text,
+                    known_by,
                 )
                 questions: list[str] = []
                 keys: set[tuple[str, str, str]] = set()
@@ -539,6 +552,7 @@ class BackgroundOffer(_Menu):
                     keys=keys,
                     upload=upload_label(self.upload.label, time.time()),
                     speaker=speaker,
+                    known_by=known_by,
                     unsettled=read.stats.unsettled or (),
                     who_ai=who_ai,
                     on_who=on_who,
@@ -601,12 +615,17 @@ async def store(
     found: list[bg.Found],
     held: lore_context.Held | None = None,
     text: str = "",
+    known_by: str = "",
 ) -> dict[str, list[str]]:
     """Each name as a suggestion with its quote (never confirmed), its other spellings with it and
     a disguise kept as a secret name. One change for the whole list: one reload of the live names,
     one Undo. Returns the new suggestions' IDs for each kind. What is stored stays the short quote
     (the text is never kept, #2167); `held` gets the sentence around each name, cut from `text`
-    while it is still in memory, for the review card to show (#2561): memory only, never stored."""
+    while it is still in memory, for the review card to show (#2561): memory only, never stored.
+    `known_by` (the uploader's player character, #2935): a secret name the upload gives starts as
+    known by that character, as a kept connection does; with none, it is the DM's alone. That is
+    set after the names, in changes of its own: Undo of the names removes the name and, with it,
+    who knew it."""
     names: list[NewName] = []
     items: list[bg.Found] = []
     for item in found:
@@ -643,7 +662,31 @@ async def store(
                     entity_id,
                     lore_context.around(text, item.quote, item.name),
                 )
+            if known_by and item.secret:
+                await _secret_names_known_by(memory, campaign, entity_id, item.secret, known_by)
     return stored
+
+
+async def _secret_names_known_by(
+    memory: MemoryStore, campaign: Campaign, entity_id: str, secrets: Sequence[str], known_by: str
+) -> None:
+    """The secret spellings this upload gave one entry start as known by the uploader's character
+    (#2935). A refusal (a character since demoted) leaves the name with the DM alone, as before."""
+    wanted = {name_key(s) for s in secrets}
+    found = await memory.aliases(
+        campaign.guild_id, campaign.id, entity_id=entity_id, include_secret=True
+    )
+    for alias in found:
+        if not alias.secret or name_key(alias.text) not in wanted:
+            continue
+        try:
+            await memory.set_alias_knowers(
+                campaign.guild_id, campaign.id, alias.id, [known_by], source=DM
+            )
+        except MemoryRuleError:
+            log.info("A secret name's first knowers were refused")
+        except Exception:  # the names are stored: this only leaves the name with the DM alone
+            log.exception("A secret name's first knowers could not be set")
 
 
 def _plural(kind: str, count: int) -> str:
@@ -825,6 +868,7 @@ async def queue_links(
     keys: set[tuple[str, str, str]] | None = None,
     upload: str = "",
     speaker: str | None = None,
+    known_by: str = "",
     unsettled: Sequence[bg.Unsettled] = (),
     who_ai: who_ask.Client | None = None,
     on_who: Callable[[int, int], None] | None = None,
@@ -921,9 +965,9 @@ async def queue_links(
         if dropped is not None:
             dropped["which_waiting"] += 1  # (`_queue_picks` takes back any lost)
     settled.unnamed = [replace(u, secret=name_key(u.fixed) in hidden) for u in settled.unnamed]
-    await _queue_picks(store, campaign, picks, entry, truth, upload, dropped)
+    await _queue_picks(store, campaign, picks, entry, truth, upload, dropped, known_by)
     rows = [
-        NewLink(a, c.how, b, c.quote, c.secret, c.words, truth, upload, c.decided)
+        NewLink(a, c.how, b, c.quote, c.secret, c.words, truth, upload, c.decided, known_by)
         for c in kept
         if (a := entry(c.a)) is not None and (b := entry(c.b)) is not None
     ]
@@ -932,7 +976,7 @@ async def queue_links(
         if len(settled.unnamed) > room and dropped is not None:
             dropped["over_cap"] += len(settled.unnamed) - room  # (counted; no entry is made)
         made_rows = await _unnamed_rows(
-            memory, campaign, settled.unnamed[:room], entry, truth, upload, dropped
+            memory, campaign, settled.unnamed[:room], entry, truth, upload, dropped, known_by
         )
         held = {(r.subject_id, r.predicate, r.object_id) for r in rows}
         for r in made_rows:  # (two lines about one unnamed person are one row)
@@ -967,6 +1011,7 @@ async def _unnamed_rows(
     truth: bool,
     upload: str,
     dropped: bg.Dropped | None,
+    known_by: str = "",
 ) -> list[NewLink]:
     """The relationships kept with a person the read could not name (#2790): each makes (or finds)
     the unnamed entry, hung off the named end when the story gave a relationship word. A named end
@@ -996,7 +1041,9 @@ async def _unnamed_rows(
             continue
         other = added.entity.id
         a, b = (fixed, other) if u.fixed_is_a else (other, fixed)
-        rows.append(NewLink(a, u.how, b, u.quote, u.secret, u.words, truth, upload, u.decided))
+        rows.append(
+            NewLink(a, u.how, b, u.quote, u.secret, u.words, truth, upload, u.decided, known_by)
+        )
     return rows
 
 
@@ -1008,6 +1055,7 @@ async def _queue_picks(
     truth: bool,
     upload: str,
     dropped: bg.Dropped | None,
+    known_by: str = "",
 ) -> int:
     """Queue the "Which Mara?" questions (#2650). One whose names are not entries of the campaign
     after all is counted as not found, so the summary's parts still add up."""
@@ -1033,6 +1081,7 @@ async def _queue_picks(
                 truth,
                 upload,
                 p.decided,
+                known_by,
             )
         )
     added = int(await store.add_which(campaign.guild_id, campaign.id, rows)) if rows else 0
@@ -1338,6 +1387,7 @@ class ConnectionOffer(_Menu):
         self.shown: list[Waiting] = []
         self.total = 0
         self.words: dict[str, str] = {}
+        self.characters: dict[str, str] = {}  # player characters (id -> name), for the default
         self.busy = asyncio.Lock()  # a second press waits for the first, so none is counted twice
         grey = discord.ButtonStyle.secondary
         self.keep = _Button(
@@ -1360,6 +1410,7 @@ class ConnectionOffer(_Menu):
             return []
         onto = await memory.ontology(campaign.guild_id, campaign.id)
         self.words = {k: p.label for k, p in onto.predicates.items() if not p.core}
+        self.characters = dict(await player_characters(memory, campaign))
         symmetric = {k for k, p in onto.predicates.items() if p.symmetric}
         waiting = await store.waiting(campaign.guild_id, campaign.id, symmetric=symmetric)
         return [w for w in waiting if w.ready]
@@ -1401,6 +1452,14 @@ class ConnectionOffer(_Menu):
             if c.secret
             else "🤫 Keep as secret hides it from players."
         )
+        who = self.characters.get(c.known_by)
+        if who is not None:
+            mine = _md(who[:40])
+            note += (
+                f"\n👥 ✅ Keep: you and **{mine}**'s character know it."
+                if not c.secret
+                else f"\n👥 **{mine}**'s character won't know it: it uses a secret name."
+            )
         return (
             f"📜 **Connection {self.kept + self.left_out + 1} of {self.total}.** Keep this?\n"
             f"**{_md(c.subject)}** {how} **{_md(c.object)}**\n"
@@ -1479,6 +1538,9 @@ class ConnectionOffer(_Menu):
                     detail=c.detail,
                     directional=kin.directional(c.detail),  # "a is the parent of b" keeps its order
                     unrevealed=True,  # a backstory connection waits to be said at the table (#2404)
+                    # ✅ Keep: the uploader's character knows it from the start; 🤫 Keep as secret
+                    # is the DM's alone (#2935)
+                    known_by=[c.known_by] if c.known_by and not (secret or c.secret) else (),
                 )  # fmt: skip
             except MemoryRuleError:
                 log.info("A connection from a background was refused")

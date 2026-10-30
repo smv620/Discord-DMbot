@@ -34,7 +34,7 @@ export const HOMEBREW_LINKS_LIVE = true;
 
 export const homebrewLinkSteps: Step[] = [
   {
-    text: "To add homebrew from a web page, press ⚙️ Settings, then 📚 Homebrew, then 🔗 Add from a link, and paste the address of a published homebrew page. If the site says the page isn't public, publish it there first. DMbot reads that one page and shows it to you. It is saved only when you press Save. The first time for a site, DMbot asks you to press I have the right. After that it never asks again for that site in this campaign.",
+    text: "To add homebrew from a web page, press ⚙️ Manage DMbot, then 📚 Homebrew, then 🔗 Add from a link, and paste the address of a published homebrew page. If the site says the page isn't public, publish it there first. DMbot reads that one page and shows it to you. It is saved only when you press Save. The first time for a site, DMbot asks you to press I have the right. After that it never asks again for that site in this campaign.",
     names: [
       { name: "🔗 Add from a link", file: "ui/homebrew.py" },
       { name: "Save", file: "ui/homebrew.py" },
@@ -53,7 +53,7 @@ export const homebrewLinkSteps: Step[] = [
     ],
   },
   {
-    text: "To see which sites your campaign said it may use homebrew from, press ⚙️ Settings, then 📚 Homebrew, then 🌐 Approved sites. Each site shows who said yes and when. To take one back, pick it from the Take back a site list, then press Take it back. DMbot keeps the entries but stops using them until a game master says yes again. Nothing is deleted.",
+    text: "To see which sites your campaign said it may use homebrew from, press ⚙️ Manage DMbot, then 📚 Homebrew, then 🌐 Approved sites. Each site shows who said yes and when. To take one back, pick it from the Take back a site list, then press Take it back. DMbot keeps the entries but stops using them until a game master says yes again. Nothing is deleted.",
     names: [
       { name: "🌐 Approved sites", file: "ui/homebrew.py" },
       { name: "Take back a site", file: "ui/approved_sites.py" },
@@ -150,7 +150,7 @@ export const storyStateSteps: Step[] = [
 ];
 
 // The DMbot channel (#1666, #1676) moves the buttons off the DM screen, so every Help line that
-// sent people to ⚙️ Settings "on the DM screen" changes with it. It is held with the What's new
+// sent people to ⚙️ Manage DMbot "on the DM screen" changes with it. It is held with the What's new
 // entry "A DMbot channel for buttons" (whats-new.ts, `held`) until it has been seen on the test
 // server. Set this to true in the same change that moves that entry out of `held`; a test keeps
 // the two in step and checks that no line points both ways.
@@ -167,8 +167,8 @@ export const namesButtonSteps: Step[] = [
   {
     text: `${
       DM_BOT_CHANNEL_LIVE
-        ? "To see every name DMbot knows in your campaign, press 📇 Names on your card in the DMbot channel, or in ⚙️ Settings."
-        : "To see every name DMbot knows in your campaign, press ⚙️ Settings, then 📇 Names."
+        ? "To see every name DMbot knows in your campaign, press 📇 Names on your card in the DMbot channel, or in ⚙️ Manage DMbot."
+        : "To see every name DMbot knows in your campaign, press ⚙️ Manage DMbot, then 📇 Names."
     } You can search the names and fix one. Any after-session check you haven't done yet (Check names, Check who is who, Check what was said) waits there. You can also type /dmbot names.`,
     names: [
       { name: "Names", file: "dm_screen/names_button.py" },
@@ -182,11 +182,11 @@ export const namesButtonSteps: Step[] = [
 
 export const settingsOnDmScreenSteps: Step[] = [
   {
-    text: "On your DM screen, press ⚙️ Settings to change the game clock, house rules, or who can peek behind the DM screen.",
-    names: [{ name: "Settings", file: "dm_screen/settings.py" }],
+    text: "On your DM screen, press ⚙️ Manage DMbot to change the game clock, house rules, or who can peek behind the DM screen.",
+    names: [{ name: "Manage DMbot", file: "dm_screen/settings.py" }],
   },
   {
-    text: "Can't find ⚙️ Settings? Type /dmbot settings in your server and it opens for you, privately. It is also on the voice-channel step after /dmbot start. Only the campaign's game masters can use it.",
+    text: "Can't find ⚙️ Manage DMbot? Type /dmbot settings in your server and it opens for you, privately. It is also on the voice-channel step after /dmbot start. Only the campaign's game masters can use it.",
   },
 ];
 
@@ -199,14 +199,15 @@ export const dmBotChannelSteps: Step[] = [
     ],
   },
   {
-    text: "Everyone also gets 📖 Look up a rule and 📜 Transcripts. If you said yes to being recorded, you get 🗂️ Menu, where you can stop being recorded. Players also get 📜 My character sheet. Game masters get ⚙️ Settings too.",
+    text: "Players, and anyone who said yes to being recorded, get 🙋 My data: it stops or pauses your recording, deletes your transcripts and opens 📜 My character sheet. Game masters also get ⚙️ Manage DMbot and 🌐 Manage campaign. Everyone gets ❓ Help.",
     names: [
-      { name: "🗂️ Menu", file: "consent_dm.py" },
+      { name: "🙋 My data", file: "dm_screen/dm_bot_panel.py" },
+      { name: "🌐 Manage campaign", file: "dm_screen/dm_bot_panel.py" },
       { name: "📜 My character sheet", file: "ui/sheets.py" },
     ],
   },
   {
-    text: "Press 📖 Look up a rule to check a rule. Only you see the answer. Players' answers end with \"Your DM decides what applies at your table.\" Press 📜 Transcripts to open the Transcripts page on the DMbot website.",
+    text: "Press ❓ Help, then 📖 Look up a rule to check a rule. Only you see the answer. Players' answers end with \"Your DM decides what applies at your table.\" On the same card, press 📜 Transcripts to open the Transcripts page on the DMbot website.",
     names: [
       { name: "📖 Look up a rule", file: "dm_screen/dm_bot_panel.py" },
       { name: "📜 Transcripts", file: "dm_screen/dm_bot_panel.py" },
@@ -214,11 +215,11 @@ export const dmBotChannelSteps: Step[] = [
     ],
   },
   {
-    text: "To change the game clock, house rules, or who can see the DM screen, press 👤 DMbot Main Menu in the DMbot channel, then ⚙️ Settings. Who can see the DM screen is under 👁️.",
-    names: [{ name: "Settings", file: "dm_screen/settings.py" }],
+    text: "To change the game clock, house rules, or who can see the DM screen, press 👤 DMbot Main Menu in the DMbot channel, then ⚙️ Manage DMbot. Who can see the DM screen is under 👁️. Things the website does not have yet are listed at the bottom of that card.",
+    names: [{ name: "Manage DMbot", file: "dm_screen/settings.py" }],
   },
   {
-    text: "Can't find ⚙️ Settings? Type /dmbot settings in your server and it opens for you, privately. Only the campaign's game masters can use it.",
+    text: "Can't find ⚙️ Manage DMbot? Type /dmbot settings in your server and it opens for you, privately. Only the campaign's game masters can use it.",
   },
   {
     text: "Your DM screen is quieter now. It holds only notes, alerts and ⏹ Stop listening. The other buttons moved to the DMbot channel.",
@@ -296,7 +297,7 @@ export const HOMEBREW_KINDS_LIVE = false;
 
 export const homebrewKindSteps: Step[] = [
   {
-    text: "Press ⚙️ Settings, then 📚 Homebrew. You see a button for each kind that has entries, like Spells 10/12, which means 10 of 12 spells are on. Press one to see only those. Press ↩ All kinds to go back.",
+    text: "Press ⚙️ Manage DMbot, then 📚 Homebrew. You see a button for each kind that has entries, like Spells 10/12, which means 10 of 12 spells are on. Press one to see only those. Press ↩ All kinds to go back.",
     names: [
       { name: "Spells", file: "ui/homebrew.py" },
       { name: "↩ All kinds", file: "ui/homebrew.py" },
@@ -320,7 +321,7 @@ export const SHARED_STORY_LIVE = false;
 
 export const sharedStorySteps: Step[] = [
   {
-    text: "To choose how DMbot uses your adventure book, press ⚙️ Settings, then 🧭 Shared story. Off means DMbot remembers your table's story only. Watch the story also tells you when your table and the book no longer fit. Guide me adds a button that says what the book has next. Both need you to give it your adventure first, and link names (the steps below).",
+    text: "To choose how DMbot uses your adventure book, press ⚙️ Manage DMbot, then 🧭 Shared story. Off means DMbot remembers your table's story only. Watch the story also tells you when your table and the book no longer fit. Guide me adds a button that says what the book has next. Both need you to give it your adventure first, and link names (the steps below).",
     names: [
       { name: "Shared story", file: "dm_screen/story_mode.py" },
       { name: "Watch the story", file: "dm_screen/story_mode.py" },
@@ -476,7 +477,7 @@ export const WHATS_ON_LIVE = false;
 
 export const whatsOnSteps: Step[] = [
   {
-    text: "Wondering if something new is on yet? Press ⚙️ Settings, then ℹ️ What's switched on. Only you see the answer, and only game masters can press it.",
+    text: "Wondering if something new is on yet? Press ⚙️ Manage DMbot, then ℹ️ What's switched on. Only you see the answer, and only game masters can press it.",
     names: [{ name: "What's switched on", file: "features.py" }],
   },
 ];
@@ -571,7 +572,7 @@ export const QUIET_STOP_LIVE = false;
 
 export const quietStopSteps: Step[] = [
   {
-    text: "If nobody is in the voice channel for 5 minutes, or nobody has spoken or typed at the table for 10 minutes, DMbot warns you on your DM screen, so a forgotten game doesn't use up your listening hours. Press Keep listening, or just speak, type or come back, and it carries on; if nothing changes, it stops listening 5 minutes later. A music bot or any other bot never counts as a person. To change the 10 minutes, use the 🔇 Stop when quiet button in ⚙️ Settings: each press goes to 15, 30 and 5, then back to 10; there is no Off. When it stops, it sends you a private message and tells everyone still in the voice channel.",
+    text: "If nobody is in the voice channel for 5 minutes, or nobody has spoken or typed at the table for 10 minutes, DMbot warns you on your DM screen, so a forgotten game doesn't use up your listening hours. Press Keep listening, or just speak, type or come back, and it carries on; if nothing changes, it stops listening 5 minutes later. A music bot or any other bot never counts as a person. To change the 10 minutes, use the 🔇 Stop when quiet button in ⚙️ Manage DMbot: each press goes to 15, 30 and 5, then back to 10; there is no Off. When it stops, it sends you a private message and tells everyone still in the voice channel.",
     names: [
       { name: "Keep listening", file: "dm_screen/quiet_stop.py" },
       { name: "Stop when quiet", file: "dm_screen/settings.py" },
@@ -600,11 +601,11 @@ export const dmSteps: Step[] = [
   ...(NAMES_BUTTON_LIVE ? namesButtonSteps : []),
   ...(WHATS_ON_LIVE ? whatsOnSteps : []),
   {
-    text: "To let DMbot read what people type, press ⚙️ Settings, then Table chat. It reads the voice channel's chat and one more channel you pick, only from people who said yes.",
+    text: "To let DMbot read what people type, press ⚙️ Manage DMbot, then Table chat. It reads the voice channel's chat and one more channel you pick, only from people who said yes.",
     names: [{ name: "Table chat", file: "dm_screen/table_chat_panel.py" }],
   },
   {
-    text: "To keep track of the game's day and hour, press ⚙️ Settings, then Game clock, and pick a day and an hour. DMbot pins one message on your DM screen, like \"🕰️ Day 4, afternoon (14:30)\". It has the buttons +10 min, +1 hour, Rests & time… and Start a timer. Short rest, Long rest and Skip to dawn are inside the Rests & time… menu. Only the campaign's game masters can press them. Players see just the day and a rough time of day, like \"afternoon\".",
+    text: "To keep track of the game's day and hour, press ⚙️ Manage DMbot, then Game clock, and pick a day and an hour. DMbot pins one message on your DM screen, like \"🕰️ Day 4, afternoon (14:30)\". It has the buttons +10 min, +1 hour, Rests & time… and Start a timer. Short rest, Long rest and Skip to dawn are inside the Rests & time… menu. Only the campaign's game masters can press them. Players see just the day and a rough time of day, like \"afternoon\".",
     names: [
       { name: "Game clock", file: "dm_screen/clock.py" },
       { name: "+10 min", file: "dm_screen/clock.py" },
@@ -620,7 +621,7 @@ export const dmSteps: Step[] = [
     names: [{ name: "Undo", file: "dm_screen/clock.py" }],
   },
   {
-    text: "If your party splits up, press ⚙️ Settings, then Game clock, then Rests & time…, then ✂️ Split the party, and name two or three groups. Each group gets its own clock, and the buttons act on the group you pick. Players can see the group names. While the party is split, DMbot won't move a clock from what it hears. To bring everyone back, press 🤝 Rejoin the party and pick the time to keep. Undo puts it back.",
+    text: "If your party splits up, press ⚙️ Manage DMbot, then Game clock, then Rests & time…, then ✂️ Split the party, and name two or three groups. Each group gets its own clock, and the buttons act on the group you pick. Players can see the group names. While the party is split, DMbot won't move a clock from what it hears. To bring everyone back, press 🤝 Rejoin the party and pick the time to keep. Undo puts it back.",
     names: [
       { name: "Split the party", file: "dm_screen/clock.py" },
       { name: "Rejoin the party", file: "dm_screen/clock.py" },
@@ -653,7 +654,7 @@ export const dmSteps: Step[] = [
     ],
   },
   {
-    text: "To keep your homebrew in a text file, press ⚙️ Settings, then 📚 Homebrew, then 📤 Download file. To load a file back, press 📥 Load file. An entry that came from a book you shared gets a note line under its name: [Shared book], and also [Legacy 2014] if the book is for older rules than your table plays. The note is only for you to read. Loading the file ignores it. Entries you load are your own homebrew unless you confirm \"I have the right\" for a book.",
+    text: "To keep your homebrew in a text file, press ⚙️ Manage DMbot, then 📚 Homebrew, then 📤 Download file. To load a file back, press 📥 Load file. An entry that came from a book you shared gets a note line under its name: [Shared book], and also [Legacy 2014] if the book is for older rules than your table plays. The note is only for you to read. Loading the file ignores it. Entries you load are your own homebrew unless you confirm \"I have the right\" for a book.",
     names: [
       { name: "Homebrew", file: "dm_screen/settings.py" },
       { name: "📤 Download file", file: "ui/homebrew.py" },
@@ -703,7 +704,7 @@ export const dmSteps: Step[] = [
     names: [{ name: "/dmbot backup", file: "ui/dmbot_commands.py" }],
   },
   {
-    text: "To share your house rules with another table, press ⚙️ Settings, then 📚 Shared rules, then 📤 Share my house rules (paid campaigns only). DMbot gives you a share code. Anyone with the code can read your rules, so give it only to a game master you trust. Press 🔑 New share code to get another one. Old codes keep working; Stop sharing turns them all off. If your table has relationships of its own (kinds of link between people, places and things), DMbot shows them as a list before sharing. Tick the ones to share and press Share with ticked, or press Rules only. Only their names and what they mean go; never your story, your characters' or places' names, or your notes.",
+    text: "To share your house rules with another table, press ⚙️ Manage DMbot, then 📚 Shared rules, then 📤 Share my house rules (paid campaigns only). DMbot gives you a share code. Anyone with the code can read your rules, so give it only to a game master you trust. Press 🔑 New share code to get another one. Old codes keep working; Stop sharing turns them all off. If your table has relationships of its own (kinds of link between people, places and things), DMbot shows them as a list before sharing. Tick the ones to share and press Share with ticked, or press Rules only. Only their names and what they mean go; never your story, your characters' or places' names, or your notes.",
     names: [
       { name: "Shared rules", file: "dm_screen/settings.py" },
       { name: "📤 Share my house rules", file: "ui/shared_rules.py" },
@@ -713,7 +714,7 @@ export const dmSteps: Step[] = [
     ],
   },
   {
-    text: "To use another table's rules, press ⚙️ Settings, then 📚 Shared rules, then 📥 Use shared rules, and type their code. DMbot shows you the rules first. Press Yes, use this set to keep them. Your own house rules always win over theirs. If the set brings relationships, DMbot tells you which. You can't change them while you use the set. One you already have by the same name stays yours.",
+    text: "To use another table's rules, press ⚙️ Manage DMbot, then 📚 Shared rules, then 📥 Use shared rules, and type their code. DMbot shows you the rules first. Press Yes, use this set to keep them. Your own house rules always win over theirs. If the set brings relationships, DMbot tells you which. You can't change them while you use the set. One you already have by the same name stays yours.",
     names: [
       { name: "📥 Use shared rules", file: "ui/shared_rules.py" },
       { name: "Yes, use this set", file: "ui/shared_rules.py" },
@@ -762,22 +763,22 @@ export const dmSteps: Step[] = [
     ],
   },
   {
-    text: "To stop using someone's rules, press ⚙️ Settings, then 📚 Shared rules, then Stop using shared rules. Your own rules stay as they are. Their relationships go too, unless a fact of yours uses one: that one stays, marked, and can't be used for new facts.",
+    text: "To stop using someone's rules, press ⚙️ Manage DMbot, then 📚 Shared rules, then Stop using shared rules. Your own rules stay as they are. Their relationships go too, unless a fact of yours uses one: that one stays, marked, and can't be used for new facts.",
     names: [{ name: "Stop using shared rules", file: "ui/shared_rules.py" }],
   },
   {
-    text: "To stop sharing your own rules, press ⚙️ Settings, then 📚 Shared rules, then Stop sharing, then Yes, stop sharing. Every share code stops working. Tables already using your rules keep their copy, but it won't be updated any more.",
+    text: "To stop sharing your own rules, press ⚙️ Manage DMbot, then 📚 Shared rules, then Stop sharing, then Yes, stop sharing. Every share code stops working. Tables already using your rules keep their copy, but it won't be updated any more.",
     names: [
       { name: "Stop sharing", file: "ui/shared_rules.py" },
       { name: "Yes, stop sharing", file: "ui/shared_rules.py" },
     ],
   },
   {
-    text: "You can choose how long a campaign keeps its transcripts: Forever, 1 year, 90 days or 30 days (⚙️ Settings → 🗂️ Campaign management → 🗄️ Transcript retention). Older ones are deleted within a day. Recaps stay. Each campaign's Transcripts page on this website shows its limit, so you can save a copy before a transcript is deleted.",
+    text: "You can choose how long a campaign keeps its transcripts: Forever, 1 year, 90 days or 30 days (⚙️ Manage DMbot → 🗂️ Campaign management → 🗄️ Transcript retention). Older ones are deleted within a day. Recaps stay. Each campaign's Transcripts page on this website shows its limit, so you can save a copy before a transcript is deleted.",
     names: [{ name: "Transcript retention", file: "dm_screen/transcript_keep.py" }],
   },
   {
-    text: "To add homebrew (your own spells, monsters, items and other game content), press ⚙️ Settings, then 📚 Homebrew. Press ➕ Add to type an entry in, or 📥 Load file to bring in a text file (see keeping homebrew in a text file). When you load a file, DMbot asks Who made these? Pick Me, A website or Someone else, and the name stays with the entries. It also asks whether it is from a book. Made-up rules go in House rules, not here.",
+    text: "To add homebrew (your own spells, monsters, items and other game content), press ⚙️ Manage DMbot, then 📚 Homebrew. Press ➕ Add to type an entry in, or 📥 Load file to bring in a text file (see keeping homebrew in a text file). When you load a file, DMbot asks Who made these? Pick Me, A website or Someone else, and the name stays with the entries. It also asks whether it is from a book. Made-up rules go in House rules, not here.",
     names: [
       { name: "➕ Add", file: "ui/homebrew.py" },
       { name: "📥 Load file", file: "ui/homebrew.py" },
@@ -813,7 +814,7 @@ export const dmSteps: Step[] = [
   ...(STORY_STATES_LIVE ? storyStateSteps : []),
   ...(IMPORT_LIVE ? importSteps : []),
   {
-    text: "To share your homebrew with another table, press ⚙️ Settings, then 📚 Shared rules, then 📦 Homebrew packs, then 📤 Share my homebrew (paid campaigns only). DMbot gives you a share code. Any game master in your server can read everything you share, and so can anyone you give the code to. That includes entries you hide from players. Only share what you are happy for them to see. Followers get a new version only when you press 🔄 Publish my changes. Only homebrew is shared, never your story, names or notes.",
+    text: "To share your homebrew with another table, press ⚙️ Manage DMbot, then 📚 Shared rules, then 📦 Homebrew packs, then 📤 Share my homebrew (paid campaigns only). DMbot gives you a share code. Any game master in your server can read everything you share, and so can anyone you give the code to. That includes entries you hide from players. Only share what you are happy for them to see. Followers get a new version only when you press 🔄 Publish my changes. Only homebrew is shared, never your story, names or notes.",
     names: [
       { name: "📦 Homebrew packs", file: "ui/shared_rules.py" },
       { name: "📤 Share my homebrew", file: "ui/shared_packs.py" },
@@ -821,7 +822,7 @@ export const dmSteps: Step[] = [
     ],
   },
   {
-    text: "To use another table's homebrew, press ⚙️ Settings, then 📚 Shared rules, then 📦 Homebrew packs, then 📥 Follow a pack, and type the share code they gave you. DMbot shows you what is in the pack first. Press Yes, follow this pack only if you want it. If you have homebrew with the same name, yours is used. Press Stop following any time to stop.",
+    text: "To use another table's homebrew, press ⚙️ Manage DMbot, then 📚 Shared rules, then 📦 Homebrew packs, then 📥 Follow a pack, and type the share code they gave you. DMbot shows you what is in the pack first. Press Yes, follow this pack only if you want it. If you have homebrew with the same name, yours is used. Press Stop following any time to stop.",
     names: [
       { name: "📥 Follow a pack", file: "ui/shared_packs.py" },
       { name: "Yes, follow this pack", file: "ui/shared_packs.py" },
@@ -848,7 +849,7 @@ export const dmSteps: Step[] = [
     ],
   },
   {
-    text: "Only the game master whose plan a campaign uses can delete it, and not while it is being played. Press ⚙️ Settings, then 🗂️ Campaign management, then 🗑 Delete this campaign. DMbot lists what will be lost: story memory, notes, recaps, house rules, homebrew and transcripts. To keep a copy first, press 💾 Back up first. Then press Delete it and type the campaign's name. It can't be undone. Copies people already downloaded stay, and the transcript and chat channels stay until a server admin removes them.",
+    text: "Only the game master whose plan a campaign uses can delete it, and not while it is being played. Press ⚙️ Manage DMbot, then 🗂️ Campaign management, then 🗑 Delete this campaign. DMbot lists what will be lost: story memory, notes, recaps, house rules, homebrew and transcripts. To keep a copy first, press 💾 Back up first. Then press Delete it and type the campaign's name. It can't be undone. Copies people already downloaded stay, and the transcript and chat channels stay until a server admin removes them.",
     names: [
       { name: "Delete this campaign", file: "dm_screen/delete_campaign.py" },
       { name: "Back up first", file: "dm_screen/delete_campaign.py" },
@@ -856,7 +857,7 @@ export const dmSteps: Step[] = [
     ],
   },
   {
-    text: "To see or change who your game masters are, press 🗂️ Campaign management (it is in ⚙️ Settings), then 👑 Game masters. To add one, press ➕ Add a game master and pick someone from your server (people only, not bots). A campaign can have up to 5. They get a private message, and right away they can see the DM screen and change settings. To remove one, press ➖ Remove a game master, pick them, then press Remove to confirm. They lose access right away, even in the middle of a game. You can remove yourself too. You can't remove the last game master, or the one whose plan the campaign uses; hand the campaign over first (🤝 Hand over, under 🗂️ Campaign management in ⚙️ Settings). Being made a game master doesn't record anyone. Being recorded is still each person's own yes.",
+    text: "To see or change who your game masters are, press 🗂️ Campaign management (it is in ⚙️ Manage DMbot), then 👑 Game masters. To add one, press ➕ Add a game master and pick someone from your server (people only, not bots). A campaign can have up to 5. They get a private message, and right away they can see the DM screen and change settings. To remove one, press ➖ Remove a game master, pick them, then press Remove to confirm. They lose access right away, even in the middle of a game. You can remove yourself too. You can't remove the last game master, or the one whose plan the campaign uses; hand the campaign over first (🤝 Hand over, under 🗂️ Campaign management in ⚙️ Manage DMbot). Being made a game master doesn't record anyone. Being recorded is still each person's own yes.",
     names: [
       { name: "Game masters", file: "dm_screen/game_masters.py" },
       { name: "Add a game master", file: "dm_screen/game_masters.py" },
@@ -864,7 +865,7 @@ export const dmSteps: Step[] = [
     ],
   },
   {
-    text: "To give a campaign to another game master, press 🗂️ Campaign management (it is in ⚙️ Settings), then 🤝 Hand over. They must say yes.",
+    text: "To give a campaign to another game master, press 🗂️ Campaign management (it is in ⚙️ Manage DMbot), then 🤝 Hand over. They must say yes.",
     names: [{ name: "Hand over", file: "dm_screen/handover.py" }],
   },
   // Website and table features built on 2026-10-22/23 (#2498); each shows once its What's new entry is out of `held`.
@@ -1020,11 +1021,11 @@ export const accountSteps: Step[] = [
     text: "Forgot your password? DMbot has no password. It uses your Discord account, so use Discord's own reset: open the Discord sign-in page and press Forgot your password?",
   },
   {
-    text: "Moving to a new Discord account? Do this for each campaign you own: press 🗂️ Campaign management (it is in ⚙️ Settings), then 🤝 Hand over, and pick your new account or another game master. When all are handed over, cancel your plan on your account page. On the new account, say yes to being recorded again.",
+    text: "Moving to a new Discord account? Do this for each campaign you own: press 🗂️ Campaign management (it is in ⚙️ Manage DMbot), then 🤝 Hand over, and pick your new account or another game master. When all are handed over, cancel your plan on your account page. On the new account, say yes to being recorded again.",
     names: [{ name: "Hand over", file: "dm_screen/handover.py" }],
   },
   {
-    text: "Can't get into your old account any more? After 7 days out of the server, or if Discord says the account is gone, DMbot offers the campaign's other game masters a Take it on button in ⚙️ Settings → 🗂️ Campaign management. A game master chooses whether to press it. Or use a new account: join the server, type /dmbot backup, then /dmbot restore. Both need a paid campaign, and restore needs a free campaign slot on your plan.",
+    text: "Can't get into your old account any more? After 7 days out of the server, or if Discord says the account is gone, DMbot offers the campaign's other game masters a Take it on button in ⚙️ Manage DMbot → 🗂️ Campaign management. A game master chooses whether to press it. Or use a new account: join the server, type /dmbot backup, then /dmbot restore. Both need a paid campaign, and restore needs a free campaign slot on your plan.",
     names: [
       { name: "Take it on", file: "dm_screen/handover.py" },
       { name: "/dmbot backup", file: "ui/dmbot_commands.py" },
@@ -1063,7 +1064,7 @@ export const emailSteps: Step[] = [
 ];
 
 /** Said under the list: it is not a step. */
-export const emailNote = "For now, emails are sent from DMbot's own Gmail mailbox.";
+export const emailNote = "Emails are sent through Resend, a company that sends email for us.";
 
 /** Not a step to do: what players may notice at the table. */
 export const playerNote = GAMETIME_IN_CHAT_LIVE
@@ -1088,7 +1089,7 @@ export const snagsHeading = "If something doesn't work";
 
 const whatsOnSnag: Snag = {
   question: "Something on What's new isn't there for me.",
-  text: "Press ℹ️ What's switched on in ⚙️ Settings to see what is on for your table. If something you read about is still missing a day later, ask us in Support.",
+  text: "Press ℹ️ What's switched on in ⚙️ Manage DMbot to see what is on for your table. If something you read about is still missing a day later, ask us in Support.",
   names: [{ name: "What's switched on", file: "features.py" }],
   link: { text: "Getting help", href: "#getting-help" },
 };

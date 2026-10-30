@@ -85,7 +85,7 @@ export const reportWords = {
       }) as Record<string, string>
     )[action] ?? "Answered.",
   undo: "Undo",
-  openConnection: "Open the Story graph to fix it",
+  openConnection: "Open the Story Graph to fix it",
   working: "Saving your answer…",
   saved: (left: number): string => (left === 1 ? "Saved. 1 left." : `Saved. ${left} left.`),
   undone: (left: number): string => (left === 1 ? "Answer taken back. 1 left." : `Answer taken back. ${left} left.`),

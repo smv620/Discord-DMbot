@@ -336,19 +336,11 @@ def overview_of(got: dict[str, Any], pages: Collection[str] = ()) -> dict[str, A
     }
 
 
-async def read_overview(
-    db: Database,
-    session: Session,
-    ref: str,
-    *,
-    view: str | None = None,
-    max_names: int = OVERVIEW_NAMES,
-    max_pairs: int = OVERVIEW_PAIRS,
-) -> dict[str, Any]:
-    """Every name the caller may see, which are connected and in which groups (#2632): the numbers
-    for the Story graph's count line, its "Not connected yet" tray and its other groups. The same
-    people see the same names as in `read_web` (the door shares that door's checks); `view` as
-    there."""
+async def _overview_door(
+    db: Database, session: Session, ref: str, view: str | None, max_names: int, max_pairs: int
+) -> tuple[dict[str, Any], set[str]]:
+    """The overview door's answer for the caller, and the ids of names with a page; the refusals
+    are the same for every reader of it."""
     guild_id, campaign_id = _parse(ref)
     _guild_of(session, guild_id)
     if view is not None and view not in VIEWS:
@@ -371,7 +363,47 @@ async def read_overview(
         raise RecapError(str(got["status"]))
     if got is None or got["status"] != "ok":
         raise RecapError("not_found")
-    return overview_of(dict(got), pages)
+    return dict(got), pages
+
+
+async def read_overview(
+    db: Database,
+    session: Session,
+    ref: str,
+    *,
+    view: str | None = None,
+    max_names: int = OVERVIEW_NAMES,
+    max_pairs: int = OVERVIEW_PAIRS,
+) -> dict[str, Any]:
+    """Every name the caller may see, which are connected and in which groups (#2632): the numbers
+    for the Story graph's count line, its "Not connected yet" tray and its other groups. The same
+    people see the same names as in `read_web` (the door shares that door's checks); `view` as
+    there."""
+    got, pages = await _overview_door(db, session, ref, view, max_names, max_pairs)
+    return overview_of(got, pages)
+
+
+SEARCH_MAX = 100  # the longest name; a longer search matches nothing anyway
+FIND_LIMIT = 8  # names offered under the "Find a name" box
+
+
+async def find_names(
+    db: Database, session: Session, ref: str, query: str, *, view: str | None = None
+) -> list[dict[str, Any]]:
+    """The names the caller may see whose main name contains `query`, for the Story graph's "Find a
+    name" box (#2989). It reads the graph's own door, so someone looking as the players do (a
+    player, or a DM in Players View) is offered only what the players know: never a hidden, limited
+    or secret name. (The All names list is the DM's whole list, so it cannot serve that view.)"""
+    needle = " ".join(query.split()).casefold()[:SEARCH_MAX]
+    if not needle:
+        return []
+    got, _pages = await _overview_door(db, session, ref, view, OVERVIEW_NAMES, 1)
+    found = [
+        {"id": n["id"], "name": n["name"], "kind": n["kind"]}
+        for n in got["names"]
+        if needle in str(n["name"]).casefold()
+    ]
+    return found[:FIND_LIMIT]
 
 
 async def read_characters(db: Database, session: Session, ref: str) -> dict[str, Any]:

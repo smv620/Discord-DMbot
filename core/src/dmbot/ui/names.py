@@ -38,7 +38,7 @@ from dmbot.memory.models import (
 from dmbot.memory.name_longer import longer_names, widens
 from dmbot.memory.scan import Match, near_match_in, sound_keys
 from dmbot.memory.sounds import sound_codes
-from dmbot.ui import all_names, logic, name_places
+from dmbot.ui import all_names, logic, name_places, player_id
 from dmbot.ui.dmbot_commands import (
     NOT_IN_SERVER,
     VIEW_TIMEOUT_S,
@@ -154,13 +154,22 @@ def changed(interaction: discord.Interaction, campaign: Campaign) -> None:
         cache.mark_stale(campaign.guild_id, campaign.id)
 
 
+# The server of a campaign whose cards were opened from a private message (#2977): a private message
+# has no server, so the card's buttons would all answer "Use this in a server". Only the campaign's
+# own DM (checked by `can_run` when the card is opened) puts a campaign here, and every press is
+# checked again below. Lost on a restart: a card from before it asks to be opened again.
+_PRIVATE_SERVERS: dict[str, int] = {}
+
+
 async def _campaign_for(interaction: discord.Interaction, campaign_id: str) -> Campaign | None:
     """The campaign, if this person may manage its names; tells them otherwise."""
-    guild = interaction.guild
-    if guild is None:
+    guild_id = interaction.guild.id if interaction.guild is not None else None
+    if guild_id is None:
+        guild_id = _PRIVATE_SERVERS.get(campaign_id)
+    if guild_id is None:
         await _tell(interaction, NOT_IN_SERVER)
         return None
-    campaign = await _bot(interaction).campaigns.get(guild.id, campaign_id)
+    campaign = await _bot(interaction).campaigns.get(guild_id, campaign_id)
     if campaign is None or not logic.can_run(
         campaign, interaction.user.id, _is_manager(interaction)
     ):
@@ -439,8 +448,9 @@ class NamesHome(_Menu):
             await interaction.response.send_modal(AddNameForm(self.campaign_id, secrets=secrets))
 
     async def _character(self, interaction: discord.Interaction) -> None:
-        if await _campaign_for(interaction, self.campaign_id):
-            view = PlayerPicker(self.campaign_id)
+        campaign = await _campaign_for(interaction, self.campaign_id)
+        if campaign:
+            view = PlayerPicker(self.campaign_id, campaign.guild_id)
             await _send(interaction, "**Who plays this character?**", view)
 
     async def _check(self, interaction: discord.Interaction) -> None:
@@ -894,10 +904,20 @@ class _UserSelect(discord.ui.UserSelect[Any]):
 
 
 class PlayerPicker(_Menu):
-    def __init__(self, campaign_id: str) -> None:
+    def __init__(self, campaign_id: str, guild_id: int | None = None) -> None:
         super().__init__()
         self.campaign_id = campaign_id
         self.add_item(_UserSelect(self.picked))
+        if guild_id is not None:  # (#3004) a player who has not joined the server yet
+            self.add_item(player_id.type_id_button(guild_id, self._allowed, self._typed))
+
+    async def _allowed(self, interaction: discord.Interaction) -> bool:
+        return await _campaign_for(interaction, self.campaign_id) is not None
+
+    async def _typed(self, interaction: discord.Interaction, user_id: int, name: str) -> None:
+        if await _campaign_for(interaction, self.campaign_id):
+            self.stop()
+            await interaction.response.send_modal(CharacterForm(self.campaign_id, user_id, name))
 
     async def picked(
         self, interaction: discord.Interaction, player: discord.User | discord.Member
@@ -929,12 +949,12 @@ class CharacterForm(discord.ui.Modal, title="Add a player's character"):
         max_length=200,
     )
 
-    def __init__(self, campaign_id: str, player_id: int, player_name: str) -> None:
+    def __init__(self, campaign_id: str, player_discord_id: int, player_name: str) -> None:
         super().__init__(
             title=logic.shorten(f"{player_name}'s character", 45), timeout=VIEW_TIMEOUT_S
         )
         self.campaign_id = campaign_id
-        self.player_id = player_id
+        self.player_id = player_discord_id
         self.player_name = player_name
 
     async def on_error(  # type: ignore[override]  # a form's has no item (discord.py)
@@ -1550,6 +1570,7 @@ class SuggestionReview(_Menu):
         if kind == PC:  # who plays them?
             self.clear_items()
             self.add_item(_UserSelect(self._player_picked))
+            self.add_item(self._type_id(campaign, entity))
             self.add_item(_Button(self._back, label="Back", style=discord.ButtonStyle.secondary))
             await _replace(interaction, f"**Who plays {_md(entity.name)}?**", self)
             return
@@ -1561,25 +1582,46 @@ class SuggestionReview(_Menu):
         changed(interaction, campaign)  # the next card sees it at once
         await self._saved(interaction, campaign, memory, f"✅ Added {self._added(entity)}.")
 
+    def _type_id(self, campaign: Campaign, entity: Entity) -> _Button:
+        """⌨️ Type a Discord ID, for a player who is not in the server yet (#3004). It is for this
+        suggestion only: a confirmation that comes after the queue moved on links nothing."""
+
+        async def allowed(interaction: discord.Interaction) -> bool:
+            return await _campaign_for(interaction, self.campaign_id) is not None
+
+        async def linked(interaction: discord.Interaction, user_id: int, name: str) -> None:
+            await self._link_player(interaction, user_id, name, expected=entity.id)
+
+        return player_id.type_id_button(campaign.guild_id, allowed, linked, self._back)
+
     async def _player_picked(
         self, interaction: discord.Interaction, player: discord.User | discord.Member
     ) -> None:
         if player.bot:
             await _tell(interaction, "Pick a person, not a bot.")
             return
+        await self._link_player(interaction, player.id, player.display_name)
+
+    async def _link_player(
+        self, interaction: discord.Interaction, user_id: int, name: str, expected: str | None = None
+    ) -> None:
+        await _answer_first(interaction, in_place=True)  # (the save and the next card follow)
         current = await self._current(interaction)
         if current is None:
             return
         campaign, memory, entity = current
+        if expected is not None and entity.id != expected:
+            await _tell(interaction, "That one's already done.")
+            return
         try:
             await memory.confirm_entity(
-                campaign.guild_id, campaign.id, entity.id, PC, source=DM, played_by=player.id
+                campaign.guild_id, campaign.id, entity.id, PC, source=DM, played_by=user_id
             )
         except MemoryRuleError:
             await _tell(interaction, GONE)
             return
         changed(interaction, campaign)
-        note = f"✅ Added {self._added(entity)}, played by **{_md(player.display_name)}**."
+        note = f"✅ Added {self._added(entity)}, played by **{_md(name)}**."
         await self._saved(interaction, campaign, memory, note)
 
     async def _same(self, interaction: discord.Interaction) -> None:
@@ -1896,6 +1938,8 @@ class RecapNamesButton(
         if campaign is None or not logic.can_run(campaign, interaction.user.id, False):
             await _tell(interaction, logic.NO_CAMPAIGN_ACCESS)
             return
+        if interaction.guild is None:
+            _PRIVATE_SERVERS[campaign.id] = campaign.guild_id  # so the cards' buttons work here
         await _review(interaction, memory, campaign)
 
 

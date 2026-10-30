@@ -576,7 +576,7 @@ function namesView(ref: string): "dm" | "manager" | "none" {
   return "dm";
 }
 
-/** The pretend campaign behind the relationship web (#2324): the Names page's names joined by a few
+/** The pretend campaign behind the Story Graph (#2324): the Names page's names joined by a few
  * made-up connections, so every ring has something in it. `.web-big` makes a campaign of 350 names
  * (the page warns before drawing it), `.web-manager` a server manager who isn't a DM (no secrets, no
  * editing) and `.web-none` someone who may not see it (not found). */
@@ -1481,7 +1481,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       choices[which] = on;
       return { ...choices };
     },
-    // The relationship web (#2324): rings out from a name, the way the real API counts hops.
+    // The Story Graph (#2324): rings out from a name, the way the real API counts hops.
     async webGraph(ref, query: WebQuery): Promise<WebGraph> {
       calls.push(`webGraph:${ref}:center=${query.center ?? ""}:hops=${query.hops}${query.view ? `:view=${query.view}` : ""}`);
       await reachable();
@@ -1489,6 +1489,20 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       return webGraphOf(ref, query);
     },
     // The overview (#2632): every visible name, the ones with no connection yet, and the groups.
+    async webFind(ref, query) {
+      calls.push(`webFind:${ref}:${query.q}${query.view ? `:view=${query.view}` : ""}`);
+      await reachable();
+      signedIn();
+      const view = webView(ref);
+      if (view === "none") throw new ApiError("not-found");
+      const all = view === "dm" ? query.view !== "players" : query.view === "full";
+      const needle = query.q.trim().toLowerCase();
+      if (needle === "") return [];
+      return web(ref)
+        .nodes.filter((n) => (all || (!n.secret && n.revealed !== false)) && n.name.toLowerCase().includes(needle))
+        .slice(0, 8)
+        .map((n) => ({ id: n.id, name: n.name, kind: n.kind }));
+    },
     async webOverview(ref, query) {
       calls.push(`webOverview:${ref}${query.view ? `:view=${query.view}` : ""}`);
       await reachable();
@@ -1991,6 +2005,13 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         }
         case "kind":
           if (!NAME_KINDS.some((k) => k.key === change.kind)) throw new ApiError("bad-kind");
+          if (change.player !== undefined) {
+            // The bot's two refusals: not an ID (or not for a player character), and an ID nobody in the server has.
+            if (change.kind !== "player_character" || !/^[1-9][0-9]{14,18}$/.test(change.player)) throw new ApiError("bad-player");
+            if (change.confirmed !== true) throw new ApiError("bad-player"); // nothing links without the confirmation
+            if (change.player.endsWith("0000")) throw new ApiError("unknown-id");
+            if (change.player.endsWith("9999")) throw new ApiError("bot-player");
+          }
           row.kind = change.kind;
           if (change.kind !== "npc") row.npcId = null;
           break;
@@ -2039,6 +2060,14 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       signedIn();
       if (namesView(ref) !== "dm") throw new ApiError("not-allowed");
       if (/\.timed-out\b/.test(ref)) throw new ApiError("still-waiting");
+      if (step.action === "kind") {
+        // Who an ID is: the pretend bot's answers, by how the ID ends.
+        if (!/^[1-9][0-9]{14,18}$/.test(step.player)) throw new ApiError("bad-player");
+        if (step.player.endsWith("0000")) throw new ApiError("unknown-id");
+        if (step.player.endsWith("9999")) throw new ApiError("bot-player");
+        if (step.player.endsWith("1111")) throw new ApiError("lookup-failed");
+        return { state: "player", name: "SomeUser", inServer: !step.player.endsWith("5555") };
+      }
       const answer = `ans${nameSteps.size + 1}`;
       if (step.action === "name-undo") {
         const done = nameSteps.get(step.answer);

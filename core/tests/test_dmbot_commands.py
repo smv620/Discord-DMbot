@@ -634,7 +634,7 @@ class CampaignPickersFitAPhone(unittest.TestCase):
 
 
 class SettingsWhereTheDmLooks(CommandTests):
-    """#1619: ⚙️ Settings on the step after /dmbot start, and /dmbot settings as a fallback."""
+    """#1619: ⚙️ Manage DMbot on the step after /dmbot start, and /dmbot settings as a fallback."""
 
     def interaction(self, user_id: int = DM, **guild: Any) -> Any:
         it = fake_interaction(self.bot, user_id)
@@ -682,7 +682,7 @@ class SettingsWhereTheDmLooks(CommandTests):
         it = self.interaction()
         await cmds.dmbot_settings.callback(it)  # type: ignore[call-arg]
         text, kw = it.response.sent[0]
-        self.assertIn("Settings for Frostmaiden", text)
+        self.assertIn("Manage DMbot for Frostmaiden", text)
         self.assertTrue(kw["ephemeral"])
 
     async def test_the_settings_command_refuses_a_player(self) -> None:
@@ -691,7 +691,7 @@ class SettingsWhereTheDmLooks(CommandTests):
         await cmds.dmbot_settings.callback(it)  # type: ignore[call-arg]
         text, _ = it.response.sent[0]
         self.assertIn("Only this campaign's DM", text)
-        self.assertNotIn("Settings for", text)
+        self.assertNotIn("Manage DMbot for", text)
 
     async def test_the_settings_command_prefers_the_running_campaign_else_the_last_played(
         self,
@@ -701,11 +701,11 @@ class SettingsWhereTheDmLooks(CommandTests):
         await self.campaigns.mark_played(GUILD, second.id)
         it = self.interaction()
         await cmds.dmbot_settings.callback(it)  # type: ignore[call-arg]
-        self.assertIn("Settings for Newer", it.response.sent[0][0])
+        self.assertIn("Manage DMbot for Newer", it.response.sent[0][0])
         self.bot.tables[GUILD] = SimpleNamespace(campaign_id=first.id)  # type: ignore[assignment]
         again = self.interaction()
         await cmds.dmbot_settings.callback(again)  # type: ignore[call-arg]
-        self.assertIn("Settings for Older", again.response.sent[0][0])
+        self.assertIn("Manage DMbot for Older", again.response.sent[0][0])
 
     async def test_the_settings_command_with_no_campaign_points_to_start(self) -> None:
         it = self.interaction()
