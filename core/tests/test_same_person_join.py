@@ -218,7 +218,11 @@ class TheProbes(JoinBase):
         )
         with self.assertRaises(MemoryRuleError) as why:
             await self.join()
-        self.assertIn("dog", str(why.exception).lower() + "dog")  # (says what is in the way)
+        self.assertEqual(
+            str(why.exception),
+            "Something is described through this person (the dog). Name it or remove it first, "
+            "so it isn't described through Ken.",
+        )
         names = [label for _, label in await self.memory.unnamed(GUILD_A, self.c)]
         self.assertFalse(any("Ken" in label for label in names))
         self.assertTrue(dog.entity.id)
@@ -287,3 +291,112 @@ class ThePublicName(JoinBase):
         )
         self.assertIsNone(got[self.guard])  # (merged into Ken)
         self.assertEqual(got[self.ken], "Ken")
+
+
+class TheSecondReview(JoinBase):
+    """What Supervisor's second review of #3071 found."""
+
+    async def set_columns(self, entity_id: str, **columns: object) -> None:
+        sets = ", ".join(f"{name} = %s" for name in columns)
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                f"UPDATE memory_entities SET {sets} WHERE guild_id = %s AND campaign_id = %s"
+                " AND id = %s",
+                (*columns.values(), GUILD_A, self.c, entity_id),
+            )
+
+    async def test_undo_works_when_the_guard_had_a_public_other_name(self) -> None:
+        await self.memory.add_alias(
+            GUILD_A, self.c, self.guard, "the gatekeeper", kind="title", source="dm",
+            status=CONFIRMED,
+        )  # fmt: skip
+        written = await self.join()
+        batch = written.batch  # type: ignore[attr-defined]
+        assert batch is not None
+        await self.memory.undo(GUILD_A, self.c, batch, source="dm")  # (was refused)
+        back = await self.memory.aliases(GUILD_A, self.c, entity_id=self.guard)
+        self.assertIn("the gatekeeper", [a.text for a in back])  # public again, on the guard
+        self.assertEqual(len(await self.memory.unnamed(GUILD_A, self.c)), 1)
+
+    async def test_a_name_ken_already_had_keeps_its_flag_and_its_knowers(self) -> None:
+        shared_ken = await self.memory.add_alias(
+            GUILD_A, self.c, self.ken, "the gatekeeper", kind="title", source="dm",
+            status=CONFIRMED,
+        )  # fmt: skip
+        theirs = await self.memory.add_alias(
+            GUILD_A, self.c, self.guard, "the gatekeeper", kind="title", source="dm",
+            status=CONFIRMED,
+        )  # fmt: skip
+        await self.know(ALIAS, shared_ken.value.id, [self.sees_ken])
+        await self.know(ALIAS, theirs.value.id, [self.sees_guard])
+        await self.join()
+        names = await self.memory.aliases(GUILD_A, self.c, entity_id=self.ken)
+        self.assertIn("the gatekeeper", [a.text for a in names])  # (still public: Ken's own)
+        seen = await self.view(self.sees_guard)
+        self.assertTrue(seen.knows(ALIAS, shared_ken.value.id))  # type: ignore[attr-defined]
+        other = await self.view(self.sees_ken)
+        self.assertTrue(other.knows(ALIAS, shared_ken.value.id))  # type: ignore[attr-defined]
+
+    async def test_a_guard_connection_folding_into_kens_twin_keeps_its_knowers(self) -> None:
+        captain = await self.add("Captain Vale", type="character", role="npc", status=CONFIRMED)
+        ken_twin = await self.memory.add_relation(
+            GUILD_A, self.c, self.ken, "knows", captain, source="dm", confidence=1.0,
+            status=CONFIRMED,
+        )  # fmt: skip
+        mine = await self.memory.add_relation(
+            GUILD_A, self.c, self.guard, "knows", captain, source="dm", confidence=1.0,
+            status=CONFIRMED,
+        )  # fmt: skip
+        await self.know(CONNECTION, str(mine.value[0].id), [self.sees_guard])
+        await self.join()
+        seen = await self.view(self.sees_guard)
+        self.assertTrue(seen.knows(CONNECTION, str(ken_twin.value[0].id)))  # type: ignore[attr-defined]
+        shown = await self.memory.relations(
+            GUILD_A, self.c, entity_id=self.ken, confirmed_only=True, include_secret=False
+        )
+        self.assertIn(ken_twin.value[0].id, [r.id for r in shown])  # (and Ken's stays public)
+
+    async def test_no_extra_belief_lands_on_a_public_twin(self) -> None:
+        captain = await self.add("Captain Vale", type="character", role="npc", status=CONFIRMED)
+        ken_twin = await self.memory.add_relation(
+            GUILD_A, self.c, self.ken, "knows", captain, source="dm", confidence=1.0,
+            status=CONFIRMED,
+        )  # fmt: skip
+        await self.memory.add_relation(
+            GUILD_A, self.c, self.guard, "knows", captain, source="dm", confidence=1.0,
+            status=CONFIRMED,
+        )  # fmt: skip
+
+        async def beliefs() -> int:
+            async with self.db.guild(GUILD_A) as conn:
+                cur = await conn.execute(
+                    "SELECT count(*) AS n FROM memory_beliefs WHERE guild_id = %s"
+                    " AND campaign_id = %s AND relation_id = %s",
+                    (GUILD_A, self.c, str(ken_twin.value[0].id)),
+                )
+                row = await cur.fetchone()
+                return int(row["n"]) if row else -1
+
+        before = await beliefs()
+        await self.join()
+        self.assertEqual(await beliefs(), before)
+
+    async def test_an_entry_that_is_not_live_but_hangs_off_the_guard_is_left_alone(self) -> None:
+        dog = await self.memory.add_unnamed(
+            GUILD_A, self.c, what="dog", anchor_id=self.guard, role="pet"
+        )
+        await self.set_columns(dog.entity.id, status="rejected")
+        await self.join()
+        entry = await self.memory.entity(GUILD_A, self.c, dog.entity.id)
+        assert entry is not None
+        self.assertNotIn("Ken", entry.name)  # (not renamed, so nothing shows Ken if it comes back)
+        self.assertEqual(entry.unnamed_anchor, self.guard)
+
+    async def test_a_rejected_named_entry_and_a_person_are_refused(self) -> None:
+        rejected = await self.add("Gone", type="character", role="npc", status=CONFIRMED)
+        await self.set_columns(rejected, status="rejected")
+        person = await self.add("Pat", type="character", role="npc", status=CONFIRMED)
+        await self.set_columns(person, type="person")
+        for named in (rejected, person):
+            with self.subTest(named=named), self.assertRaises(MemoryRuleError):
+                await self.memory.join_same_person(GUILD_A, self.c, self.guard, named)

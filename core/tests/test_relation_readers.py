@@ -73,8 +73,6 @@ STORE = {
     + ": only counts live connections, to decide a rejection (#2790)",
     "relations": "all live ones, without guess connections (they are not connections yet)",
     "lookup_data": CONFIRMED_ONLY + " (a proposed one only while not secret)",
-    "join_same_person": DM_ONLY
-    + ": the connections that move are made secret, so no reader shows them",
     "same_person_offers": CONFIRMED_ONLY
     + ": evidence for a DM-only question, never a connection shown",
     "set_condition_in": DM_ONLY + ": what an entry's condition touches",

@@ -2950,8 +2950,9 @@ class MemoryStore:
             )
             if hanging:  # their wording is built on this person ("the guard's dog")
                 raise MemoryRuleError(
-                    f"Someone is described by this person ({hanging[0]['unnamed_what']}). "
-                    "Name or remove them first, so nobody is described as the named one."
+                    "Something is described through this person "
+                    f"(the {hanging[0]['unnamed_what']}). Name it or remove it first, so it "
+                    f"isn't described through {named['name']}."
                 )
             text = clean_text(str(unnamed["name"]))
             existing = await w.select(
@@ -2968,17 +2969,9 @@ class MemoryStore:
             # description; once it hangs off the named entry the old readers (which look at the
             # flag, not at who knows) would show it as the named one's. It starts secret, so the
             # join teaches nobody anything; the DM can show it again as usual.
-            # (secret BEFORE the move, while the unnamed end still keeps the flag sync from
-            # treating the connection as shown: after the move it would close the connection and
-            # take it away from the characters who knew it)
-            for r in await w.select(
-                RELATIONS, " AND (subject_id = %s OR object_id = %s) AND NOT secret",
-                [unnamed_id, unnamed_id],
-            ):  # fmt: skip
-                await w.update(RELATIONS, r["id"], {"secret": True})
-            # Its other names move to the named entry as secret names, each keeping who knew it.
-            for name in await w.select(ALIASES, " AND entity_id = %s AND NOT secret", [unnamed_id]):
-                await w.update(ALIASES, name["id"], {"secret": True})
+            # (the connections and the other names are made secret AS they move, in the same single
+            # update of each row: the unnamed end still keeps the flag sync from treating them as
+            # shown, and a second update of one row would make Undo refuse)
             # Likewise its condition ("dead"): moving it would show the players the named one's
             # condition, which they were not told. It is closed and stays as history; the DM sets
             # the named entry's condition as usual.
@@ -3176,7 +3169,9 @@ class MemoryStore:
         await states.move_states(w, onto, keep_id, kept["type"], gone_id)
         if confirm_keys and source != DM:
             raise ValueError("Only the DM confirms names")
-        await _move_aliases(w, keep_id, gone_id, frozenset(confirm_keys))
+        await _move_aliases(
+            w, keep_id, gone_id, frozenset(confirm_keys), join=join_alias is not None
+        )
         await merge_restore.move_sheets(w.conn, w.ids, keep_id, gone_id)
         own = await w.select(
             ALIASES, " AND entity_id = %s AND key = %s", [keep_id, lookup_key(keep["name"])]
@@ -3185,7 +3180,7 @@ class MemoryStore:
             # The other entry's name was a secret one: the main name everyone sees
             # must never be.
             raise MemoryRuleError("A secret name can't be the main name.")
-        await _move_relations(w, keep_id, gone_id, secret_stays=join_alias is not None)
+        await _move_relations(w, keep_id, gone_id, join=join_alias is not None)
         await _move_standing(w, keep_id, gone_id)
         await merge_restore.move_notes(w.conn, w.ids, keep_id, gone_id)
         await merge_restore.move_links(w.conn, w.ids, keep_id, gone_id, kept["type"])
@@ -3205,8 +3200,12 @@ class MemoryStore:
         # at the merged-away entry (still there), and its label leaves the anchor out.
         # (the new anchor and the new stored label in ONE update of each row: a second change to
         # the same entry in one batch could not be undone)
-        hanging = await w.select(
-            ENTITIES, " AND unnamed_anchor = %s AND id <> %s", [gone_id, keep_id]
+        hanging = (
+            []  # (a join leaves them: live ones are refused before, the rest keep their wording)
+            if join_alias is not None
+            else await w.select(
+                ENTITIES, " AND unnamed_anchor = %s AND id <> %s", [gone_id, keep_id]
+            )
         )
         if hanging:
             await w.update_rows(
@@ -5615,7 +5614,12 @@ async def _delete_relation(w: Changes, relation_id: str) -> None:
 
 
 async def _move_aliases(
-    w: Changes, keep_id: str, gone_id: str, confirm: frozenset[str] = frozenset()
+    w: Changes,
+    keep_id: str,
+    gone_id: str,
+    confirm: frozenset[str] = frozenset(),
+    *,
+    join: bool = False,
 ) -> None:
     """The other entry's names move over in one statement (#164); a name both have is
     kept once, with the stronger status and any secret mark. Names whose key is in
@@ -5631,15 +5635,27 @@ async def _move_aliases(
             (confirming if said and alias["status"] != CONFIRMED else moving).append(alias["id"])
             continue
         status = CONFIRMED if said else alias["status"]
-        upgrade = _upgrade(twin, status, alias["secret"], DM)
+        # (a join: the name Ken already had keeps its own flag, and whoever knew the copy that
+        # goes knows his)
+        upgrade = _upgrade(twin, status, alias["secret"] and not join, DM)
+        if join:
+            await knowers.move_rows(w, "alias_id", alias["id"], twin["id"])
         await w.delete(ALIASES, alias["id"])
         if upgrade:
             await w.update(ALIASES, twin["id"], upgrade)
+    # (a join makes the moved names secret in this same update: a second one would make Undo
+    # refuse)
+    secret = {"secret": True} if join else {}
     if moving:
-        await w.update_where(ALIASES, {"entity_id": keep_id}, " AND id = ANY(%s)", [moving])
+        await w.update_where(
+            ALIASES, {"entity_id": keep_id, **secret}, " AND id = ANY(%s)", [moving]
+        )
     if confirming:
         await w.update_where(
-            ALIASES, {"entity_id": keep_id, "status": CONFIRMED}, " AND id = ANY(%s)", [confirming]
+            ALIASES,
+            {"entity_id": keep_id, "status": CONFIRMED, **secret},
+            " AND id = ANY(%s)",
+            [confirming],
         )
     await w.update_where(ALIASES, {"used_by": keep_id}, " AND used_by = %s", [gone_id])
 
@@ -5732,9 +5748,7 @@ async def _refuse_led_to_loop(
         raise MemoryRuleError(MERGE_LED_TO_LOOP)
 
 
-async def _move_relations(
-    w: Changes, keep_id: str, gone_id: str, *, secret_stays: bool = False
-) -> None:
+async def _move_relations(w: Changes, keep_id: str, gone_id: str, *, join: bool = False) -> None:
     """The other entry's facts move over. They're checked one by one, in the same order
     as before, against an in-memory copy of every fact they could clash with (so the
     same duplicates are folded and the same problems flagged); the moves themselves are
@@ -5781,9 +5795,19 @@ async def _move_relations(
         pred = onto.predicates.get(row["predicate"])
         if pred is not None:
             subject, obj = ordered(pred, subject, obj, str(row["detail"]), bool(row["directional"]))
-        moves[row["id"]] = {"subject_id": subject, "object_id": obj}
+        # (a join moves a connection AND makes it secret in this one update: a second update of
+        # the same row would make the Undo refuse, and the unnamed end still keeps the flag sync
+        # from treating it as shown)
+        moves[row["id"]] = {
+            "subject_id": subject, "object_id": obj, **({"secret": True} if join else {}),
+        }  # fmt: skip
         forget(state[row["id"]])
-        moved = dataclasses.replace(state[row["id"]], subject_id=subject, object_id=obj)
+        moved = dataclasses.replace(
+            state[row["id"]],
+            subject_id=subject,
+            object_id=obj,
+            **({"secret": True} if join else {}),
+        )
         state[row["id"]] = moved
         for end in (subject, obj):
             touching.setdefault(end, set()).add(moved.id)
@@ -5791,11 +5815,11 @@ async def _move_relations(
         others = [state[fact_id] for fact_id in sorted(near, key=order.__getitem__)]
         twin = duplicate_of(moved, others)
         if twin is not None:  # both said the same: keep one, with the stronger status
-            # (`secret_stays`: a join's moved fact is secret, but its twin keeps its own flag)
+            # (a join's moved fact is secret, but its twin keeps its own flag)
             upgrade = _upgrade(
                 _relation_row(twin),
                 moved.status,
-                moved.secret and not secret_stays,
+                moved.secret and not join,
                 DM,
                 moved.source,
             )
@@ -5828,7 +5852,9 @@ async def _move_relations(
     by_id = {r["id"]: r for r in rows}
     for relation_id in gone_rows:
         if relation_id in folded:  # what was believed of the folded fact is believed of its twin
-            await beliefs.carry(w, by_id[relation_id], folded[relation_id])
+            await beliefs.carry(w, by_id[relation_id], folded[relation_id], copy_beliefs=not join)
+            if join:  # and whoever knew the folded fact knows its twin: nothing is lost
+                await knowers.move_rows(w, "relation_id", relation_id, folded[relation_id])
         await _delete_relation(w, relation_id)
 
 
