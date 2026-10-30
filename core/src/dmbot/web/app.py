@@ -1934,6 +1934,8 @@ def create_app(
         "unknown_person": (400, "unknown_person"),
         # Pause is the owner's alone (#2985): a game master who is not the owner is told so.
         "not_owner": (403, "not_owner"),
+        # Turning the Shared story switch on needs the right-to-use confirmation (#2985).
+        "needs_confirm": (400, "needs_confirm"),
     }
 
     line_delete_refusals = {
@@ -2210,6 +2212,7 @@ def create_app(
                     body,
                     co_dms_on=settings.co_dms_on,
                     pause_on=settings.pause_on,
+                    story_mode_on=settings.story_mode_on,
                 )
             }
         except RecapError as err:

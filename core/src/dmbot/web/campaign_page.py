@@ -46,7 +46,7 @@ async def read_campaign(
         await _scoped(conn, guild_id)
         cur = await conn.execute(
             "SELECT c.name, c.owner_user_id, c.dm_screen_visibility, c.dm_screen_level,"
-            " c.transcript_keep_days, c.paused,"
+            " c.transcript_keep_days, c.paused, c.story_mode,"
             " (SELECT count(*) FROM campaign_dms m WHERE m.guild_id = c.guild_id"
             "    AND m.campaign_id = c.id) AS dm_count"
             " FROM campaigns c"
@@ -65,6 +65,7 @@ async def read_campaign(
                 "level": str(mine["dm_screen_level"]),
                 "keepDays": mine["transcript_keep_days"],
                 "paused": bool(mine["paused"]),
+                "storyMode": str(mine["story_mode"]),
                 "gameMasters": int(mine["dm_count"]),
             }
         else:
