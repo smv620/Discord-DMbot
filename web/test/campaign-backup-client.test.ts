@@ -24,7 +24,11 @@ const progress = (stage: string, extra: object = {}) => ({
 });
 const ID = "a".repeat(32);
 
-beforeEach(() => vi.useFakeTimers());
+// The API's calls load their file on first use (#3010); loaded already, the call needs no real waiting under fake timers.
+beforeEach(async () => {
+  await import("../src/account/api-account");
+  vi.useFakeTimers();
+});
 afterEach(() => vi.useRealTimers());
 
 describe("the backup before Delete", () => {

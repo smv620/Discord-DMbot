@@ -42,17 +42,21 @@ export const campaignPage = {
   myAccount: "My Account",
   thisCampaign: "This campaign",
   groups: {
+    overview: "Overview",
     story: "Story",
-    table: "At the table",
+    add: "Add to the story",
     rules: "Rules",
     settings: "Settings",
   },
+  /** The pages inside the part you are in, under the tabs. */
+  pagesLabel: "Pages in this part",
   pages: {
     recaps: "Recaps",
     timeline: "Story timeline",
     graph: "Story Graph",
     names: "Names and NPCs",
     transcripts: "Transcripts",
+    lore: "Upload lore",
     import: "Import a past session",
     houseRules: "House rules",
     homebrew: "Homebrew",
@@ -63,12 +67,13 @@ export const campaignPage = {
     graph: "How the names in this campaign are connected.",
     names: "Every name DMbot remembers. Search them and fix any that are wrong.",
     transcripts: "Read and download what was said. Everyone in the server can read these.",
+    lore: "Give DMbot a backstory or notes about your world.",
     import: "Add a session you played before using DMbot.",
     houseRules: "The rules this campaign plays by.",
     homebrew: "The homebrew this campaign uses.",
   },
   sharedRules: "Shared rules",
-  sharedRulesNote: "Share these, or follow another table's.",
+  sharedRulesNote: "Share this campaign's rules, or follow another table's. Opens your account's sharing page.",
   // The Settings group: the current choice of each, read-only for now. Where the website cannot
   // change it yet, it says where to in Discord, with the names of Discord's own menus.
   settingsLead: "Your campaign's choices. Only game masters see this. Tap a choice to change it here. The rest is done in Discord.",
