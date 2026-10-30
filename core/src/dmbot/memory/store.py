@@ -5839,6 +5839,12 @@ async def _move_relations(w: Changes, keep_id: str, gone_id: str, *, join: bool 
         if pred is not None and moved.status != REJECTED:
             to_check.append((moved, others))
     await w.update_rows(RELATIONS, moves)
+    if join:  # the bulk write does not revoke what The party believed: do it for the secret ones
+        for moved_id in moves:
+            if moved_id not in gone_rows:
+                moved_row = await w.get(RELATIONS, moved_id)
+                if moved_row is not None:
+                    await beliefs.follow(w, moved_row)
     # Flags before removals, as the old walk did: a flag can point at a fact removed
     # later in the walk, and removing that fact removes its flags too.
     extra = await states.load_extras(w, onto, [moved for moved, _ in to_check])
