@@ -200,6 +200,7 @@ class TheMove(unittest.IsolatedAsyncioTestCase):
                 "SELECT count(*) AS n FROM memory_knowers WHERE campaign_id = %s", (other,)
             )
             row = await cur.fetchone()
+        assert row is not None
         self.assertEqual(row["n"], 0)
 
 
