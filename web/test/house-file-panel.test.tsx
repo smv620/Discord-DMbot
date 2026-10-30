@@ -9,7 +9,7 @@ import { ApiError } from "../src/account/api";
 import { mockApi } from "../src/account/mock";
 import HouseFilePanel from "../src/account/HouseFilePanel";
 import { HOUSE_FILE_LIVE } from "../src/content/house-file-switch";
-import { houseFilePanel as words } from "../src/content/house-file-words";
+import { discordPath, houseFilePanel as words } from "../src/content/house-file-words";
 import { entries, held } from "../src/content/whats-new";
 
 afterEach(() => {
@@ -77,7 +77,7 @@ describe("The House-rules file on the website", () => {
     expect(text).toContain("⚙️ Manage DMbot");
     expect(text).toContain("📄 House-rules file");
     expect(text).toContain("🔄 Compare now");
-    expect(text).toContain("Accept all");
+    expect(text).toContain("Accept all changes");
     expect(text).toContain("Review");
   });
 
@@ -102,7 +102,6 @@ describe("The House-rules file on the website", () => {
     await connect(api, "100.cmp1.hf-fail");
     await settle();
     expect(await screen.findByText(new RegExp(words.failedReasons.unreadable!))).toBeTruthy();
-    expect(document.body.textContent).toContain(words.failedNext);
     expect(document.body.textContent).toContain("📄 House-rules file");
   });
 
@@ -161,7 +160,7 @@ describe("The House-rules file on the website", () => {
     await connect(api);
     await waitFor(() => expect(api.calls.filter((c) => c.startsWith("houseFileAdd")).length).toBe(1));
     // (the buttons are off while one is open)
-    expect((screen.getByRole("button", { name: words.change }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: words.connect }) as HTMLButtonElement).disabled).toBe(true); // (not connected until DMbot has done it)
     expect((screen.getByRole("button", { name: words.upload }) as HTMLButtonElement).disabled).toBe(true);
   });
 
@@ -174,12 +173,70 @@ describe("The House-rules file on the website", () => {
     expect(await screen.findByText(words.removing)).toBeTruthy(); // (the pretend compare has 3 to remove)
   });
 
-  it("the stalled and failed words each name the Discord path", () => {
-    for (const line of [words.stalled, words.failedNext]) {
-      expect(line).toContain("⚙️ Manage DMbot");
-      expect(line).toContain("📄 House-rules file");
-      expect(line).toContain("🔄 Compare now");
+  it("the Discord path names a button that is really there for what was asked", () => {
+    // 🔄 Compare now only exists when a file is connected (ui/house_file.py), so it is never offered otherwise.
+    expect(discordPath("check", true)).toContain("🔄 Compare now");
+    expect(discordPath("link", true)).toContain("🔄 Compare now");
+    expect(discordPath("check", false)).toContain("🔗 Connect a file");
+    expect(discordPath("link", false)).toContain("🔗 Connect a file");
+    expect(discordPath("upload", false)).toContain("📎 Upload a file once");
+    expect(discordPath("upload", true)).toContain("📎 Upload a file once");
+    expect(discordPath("unlink", true)).toContain("Stop using this file");
+    for (const action of ["check", "link", "upload", "unlink"]) {
+      for (const linked of [true, false]) {
+        const line = discordPath(action, linked);
+        expect(line).toContain("⚙️ Manage DMbot");
+        expect(line).toContain("📄 House-rules file");
+        if (!linked) expect(line).not.toContain("🔄 Compare now");
+        expect(words.stalled(action, linked)).toContain(line);
+        expect(words.failedNext(action, linked)).toContain(line);
+      }
     }
+  });
+
+  it("an upload with differences and no connected file points to the upload button, not Compare now", async () => {
+    const api = mockApi("table");
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    render(<HouseFilePanel api={api} campaignRef="100.cmp1" />);
+    fireEvent.click(await screen.findByRole("button", { name: words.upload }));
+    fireEvent.change(screen.getByLabelText(words.upload), { target: { files: [new File(["1. A rule"], "rules.txt", { type: "text/plain" })] } });
+    await screen.findByText("rules.txt");
+    fireEvent.click(screen.getByRole("button", { name: words.uploadSend }));
+    await settle();
+    expect(await screen.findByText(words.counts(2, 1, 3))).toBeTruthy();
+    const text = document.body.textContent ?? "";
+    expect(text).toContain("📎 Upload a file once");
+    expect(text).not.toContain("🔄 Compare now");
+  });
+
+  it("a connect that fails points to Connect a file, since nothing is connected", async () => {
+    const api = mockApi("table");
+    await connect(api, "100.cmp1.hf-fail");
+    await settle();
+    expect(await screen.findByText(new RegExp(words.failedReasons.unreadable!))).toBeTruthy();
+    const text = document.body.textContent ?? "";
+    expect(text).toContain("🔗 Connect a file");
+    expect(text).not.toContain("🔄 Compare now");
+    expect(await screen.findByText(words.notConnected)).toBeTruthy();
+  });
+
+  it("says just Connected when the site cannot be read from a link set in Discord", async () => {
+    const api = mockApi("table");
+    const real = api.houseFile!.bind(api);
+    api.houseFile = async (ref, id) => ({ ...(await real(ref, id)), linked: true, site: "" });
+    render(<HouseFilePanel api={api} campaignRef="100.cmp1" />);
+    expect(await screen.findByText(words.connected(""))).toBeTruthy();
+    expect(words.connected("")).not.toContain(": .");
+  });
+
+  it("uses Discord's own button words and says when Accept all is off", async () => {
+    expect(words.next).toContain("✅ Accept all changes");
+    expect(words.next).toContain("🔍 Review");
+    expect(words.next).toContain("🙈 Not now");
+    const api = mockApi("table");
+    await connect(api);
+    await settle();
+    expect(await screen.findByText(words.manyRemovals)).toBeTruthy(); // (the pretend compare has removals)
   });
 
   it("every failure the bot can report has plain words, and none blames DMbot's side", () => {
@@ -217,6 +274,6 @@ describe("The House-rules file on the website", () => {
   it("every result that has differences also names the next step", () => {
     expect(words.next).toContain("Accept all");
     expect(words.next).toContain("Review");
-    expect(words.nextFallback).toContain("📄 House-rules file");
+    expect(words.nextFallback("check", true)).toContain("📄 House-rules file");
   });
 });

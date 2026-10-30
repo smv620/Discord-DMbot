@@ -185,9 +185,9 @@ export default function HouseFilePanel({ api, campaignRef }: { api: AccountApi; 
             serverNow={state.serverNow}
             state={progress}
             frozen={stopped}
-            reason={failed ? `${words.failed} ${words.failedReasons[req.error] ?? words.failedFallback} ${words.failedNext}` : null}
+            reason={failed ? `${words.failed} ${words.failedReasons[req.error] ?? words.failedFallback} ${words.failedNext(req.action, state.linked)}` : null}
           />
-          {progress === "stalled" && <p role="status">{words.stalled}</p>}
+          {progress === "stalled" && <p role="status">{words.stalled(req.action, state.linked)}</p>}
           {stopped && !done && !failed && <p role="status">{words.lookFailed}</p>}
           {done && !compared && words.results[req.action] && <p role="status">{words.results[req.action]}</p>}
           {compared && (
@@ -197,7 +197,8 @@ export default function HouseFilePanel({ api, campaignRef }: { api: AccountApi; 
               {differences > 0 && (
                 <>
                   <p>{words.next}</p>
-                  <p class="small muted">{words.nextFallback}</p>
+                  {req.toRemove > 0 && <p class="small">{words.manyRemovals}</p>}
+                  <p class="small muted">{words.nextFallback(req.action, state.linked)}</p>
                 </>
               )}
             </div>

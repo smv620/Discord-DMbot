@@ -749,6 +749,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   // Pretend house-rules file (#2985): `.hf-match` compares equal, `.hf-fail` cannot be read, `.hf-player` is for a non-game-master,
   // `.hf-none` is off. The link is never kept; only its site.
   let houseFileSite = "";
+  let houseFilePending = ""; // the site of a link request, set only when the request is done (as the bot would)
   let houseFileNow: HouseFileRequest | null = null;
   let houseFileLooks = 0;
   let loreLooks = 0;
@@ -1779,6 +1780,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
             const compares = houseFileNow.action !== "unlink";
             houseFileNow = { ...houseFileNow, state: "done", stage: compares ? "compared" : "done", toAdd: compares && !match ? 2 : 0, toChange: compares && !match ? 1 : 0, toRemove: compares && !match ? 3 : 0, rulesRead: compares ? 12 : 0, updatedAt: at };
             if (houseFileNow.action === "unlink") houseFileSite = "";
+            if (houseFileNow.action === "link") houseFileSite = houseFilePending;
           }
         }
       }
@@ -1792,8 +1794,9 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       if (/\.hf-player$/.test(ref)) throw new ApiError("not-allowed");
       if (houseFileNow && (houseFileNow.state === "waiting" || houseFileNow.state === "working")) throw new ApiError("slow-down");
       if (input.action === "link") {
-        if (!/^https:\/\/[^\s]+$/.test(input.link ?? "")) throw new ApiError("bad-text");
-        houseFileSite = new URL(input.link as string).host;
+        // (the door: https, no login details, no port, no spaces)
+        if (!/^https:\/\/[^/?#@:\s]+([/?#]\S*)?$/.test(input.link ?? "")) throw new ApiError("bad-text");
+        houseFilePending = new URL(input.link as string).host;
       }
       const at = Math.floor(Date.now() / 1000);
       houseFileLooks = 0;

@@ -76,11 +76,16 @@ class TheDoors(Reading):
         return await self.add(**body)
 
     async def test_the_site_is_the_host_only_never_login_details_a_port_or_a_path(self) -> None:
-        for link in (
-            "https://user:secret@docs.example.com:8443/a?k=v#f",
-            "https://token@docs.example.com/x",
-            "https://docs.example.com:8443",
-            "https://docs.example.com?k=v",
+        for link, site in (
+            ("https://user:secret@docs.example.com:8443/a?k=v#f", "docs.example.com"),
+            ("https://token@docs.example.com/x", "docs.example.com"),
+            ("https://docs.example.com:8443", "docs.example.com"),
+            ("https://docs.example.com?k=v", "docs.example.com"),
+            # A link set in Discord may have no https:// at all, or be www.
+            ("docs.example.com/document/d/x", "docs.example.com"),
+            ("www.docs.example.com/x", "www.docs.example.com"),
+            ("user:secret@docs.example.com/x", "docs.example.com"),
+            ("www.user:secret@docs.example.com", "docs.example.com"),
         ):
             with self.subTest(link=link):
                 await self.sql("DELETE FROM house_rules_file")
@@ -90,8 +95,8 @@ class TheDoors(Reading):
                     self.one.id, GUILD, link, ALICE.id,
                 )  # fmt: skip
                 got = await house_file.read(self.web, self.session, self.cref, None)
-                self.assertEqual(got["site"], "docs.example.com")
-                for leaked in ("secret", "token", "k=v", "8443", "@"):
+                self.assertEqual(got["site"], site)
+                for leaked in ("secret", "token", "k=v", "8443", "@", "/x"):
                     self.assertNotIn(leaked, repr(got))
 
     async def test_with_no_file_it_says_so_and_has_no_site(self) -> None:
@@ -106,6 +111,8 @@ class TheDoors(Reading):
             {"action": "link", "link": "https://example.com/a b"},
             {"action": "link", "link": "https://user:secret@example.com/doc"},
             {"action": "link", "link": "https://token@example.com"},
+            {"action": "link", "link": "https://example.com:8443/doc"},
+            {"action": "link", "link": "https://example.com:443"},
             {"action": "link", "link": "https://"},
             {"action": "link", "link": LINK, "text": WORDS},
             {"action": "upload", "text": "   "},
@@ -203,6 +210,22 @@ class TheDoors(Reading):
                 await house_file.read(self.web, self.session, other, request)
             self.assertEqual(err.exception.code, "not_allowed")
 
+    async def test_adding_to_a_campaign_the_dm_does_not_run_queues_nothing(self) -> None:
+        other = f"{GUILD}.{self.two.id}"
+        self.assertEqual(await self.turned_away(ref=other), "not_allowed")
+        self.assertEqual(await self.rows(), [])
+
+    async def test_a_server_not_on_the_sessions_list_is_not_found(self) -> None:
+        with self.assertRaises(RecapError) as err:
+            await house_file.add(
+                self.web, self.session, f"999999.{self.one.id}", {"action": "check"}
+            )
+        self.assertEqual(err.exception.code, "not_found")
+        with self.assertRaises(RecapError) as err:
+            await house_file.read(self.web, self.session, f"999999.{self.one.id}", None)
+        self.assertEqual(err.exception.code, "not_found")
+        self.assertEqual(await self.rows(), [])
+
     async def test_reading_a_bad_or_unknown_id_is_not_found(self) -> None:
         for bad in ("ZZ", "0" * 32):
             with self.assertRaises(RecapError) as err:
@@ -277,4 +300,5 @@ class TheRoutes(TheDoors):
         url = f"/me/campaigns/{self.cref}/house-file"
         self.assertEqual((await c.post(url, json={"action": "check"})).status_code, 404)
         self.assertEqual((await c.get(url)).status_code, 404)
+        self.assertEqual((await c.get(f"{url}/{'0' * 32}")).status_code, 404)
         self.assertEqual(await self.rows(), [])

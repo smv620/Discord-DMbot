@@ -58,11 +58,11 @@ HOUSE_FILE_ACTIONS = (
     + _isolate("web_house_file_actions")
     + r"""
     -- Queue one request for the campaign, for a DM of it in a server on the caller's list (NULL
-    -- for anyone else). `link` and `upload` carry their words (an https address, or the file's
-    -- text), `unlink` and `check` carry none. One open request a campaign (`busy`: the page reads
-    -- the open one), ten an hour (`too_soon`). A claim the bot took and went quiet on for ten
-    -- minutes goes back to waiting; one nobody took in half an hour ends as `not_taken` with its
-    -- words blanked. 'ok' with the id otherwise.
+    -- for anyone else). `link` and `upload` carry their words (an https address with no port, or
+    -- the file's text), `unlink` and `check` carry none. One open request a campaign (`busy`: the
+    -- page reads the open one), ten an hour (`too_soon`). A claim the bot took and went quiet on
+    -- for ten minutes goes back to waiting; one nobody took in half an hour ends as `not_taken`
+    -- with its words blanked. 'ok' with the id otherwise.
     CREATE FUNCTION dmbot_web_house_file_add(g BIGINT, c TEXT, act TEXT, lnk TEXT, txt TEXT)
     RETURNS JSONB
     LANGUAGE plpgsql SECURITY DEFINER AS $fn$
@@ -80,7 +80,7 @@ HOUSE_FILE_ACTIONS = (
         END IF;
         IF act IS NULL OR act NOT IN ('link', 'unlink', 'check', 'upload')
            OR (act = 'link' AND (COALESCE(txt, '') <> ''
-                                 OR COALESCE(lnk, '') !~ '^https://[^/?#@[:space:]]+([/?#][^[:space:]]*)?$'
+                                 OR COALESCE(lnk, '') !~ '^https://[^/?#@:[:space:]]+([/?#][^[:space:]]*)?$'
                                  OR char_length(lnk) > 2000))
            OR (act = 'upload' AND (btrim(COALESCE(txt, '')) = '' OR COALESCE(lnk, '') <> ''
                                    OR char_length(txt) > @TEXT_MAX@))
@@ -116,13 +116,13 @@ HOUSE_FILE_ACTIONS = (
     $fn$;
 
     -- Where the campaign's house-rules file stands, for a DM of it: whether a file is connected
-    -- and the SITE its link is on (the host only: no login details before an @, no port, no path;
-    -- the address is never shown back, as in Discord; the add door refuses an @ in new links but a
-    -- link set in Discord may have one, so this strips it too),
-    -- and one request's progress (the id, or the newest of the last day when `rid` is NULL): stage,
-    -- counts and times, never the link, the text or a rule's words. NULL for anyone not a DM. The
-    -- same sweeps as the add door, so a request nobody took ends as failed even when the page
-    -- only reads.
+    -- and the SITE its link is on, and one request's progress (the id, or the newest of the last
+    -- day when `rid` is NULL): stage, counts and times, never the link, the text or a rule's words.
+    -- The site is the host only: no scheme needed, no login details before an @, no port, no path.
+    -- The address is never shown back, as in Discord. The add door refuses an @ and a port in new
+    -- links, but a link set in Discord may have either, or no https:// at all, so this copes with
+    -- all of them. NULL for anyone not a DM. The same sweeps as the add door, so a request nobody
+    -- took ends as failed even when the page only reads.
     CREATE FUNCTION dmbot_web_house_file_read(g BIGINT, c TEXT, rid TEXT) RETURNS JSONB
     LANGUAGE plpgsql SECURITY DEFINER AS $fn$
     DECLARE
@@ -149,7 +149,7 @@ HOUSE_FILE_ACTIONS = (
                                             text = '', updated_at = now_s
             WHERE u.guild_id = g AND u.campaign_id = c AND u.state = 'waiting'
               AND u.updated_at < now_s - 1800;
-        SELECT substring(f.link FROM '^[a-zA-Z]+://(?:[^/?#@]*@)?([^/?#:@]+)') INTO linked_to
+        SELECT substring(f.link FROM '^(?:[a-zA-Z]+://)?(?:[^/?#@]*@)?([^/?#:@]+)') INTO linked_to
             FROM house_rules_file f WHERE f.guild_id = g AND f.campaign_id = c;
         found_row := FOUND;
         SELECT q.* INTO r FROM web_house_file_actions q

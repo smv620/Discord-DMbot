@@ -5,12 +5,27 @@
 export const HOUSE_FILE_TEXT_MAX = 200_000;
 export const HOUSE_FILE_LINK_MAX = 2000;
 
-const DISCORD_PATH = "In Discord, press ⚙️ Manage DMbot, then 📄 House-rules file, then 🔄 Compare now.";
+// The Discord buttons the DM presses are not always there: 🔄 Compare now only appears when a file is connected, and the
+// connect button changes its name. So the path is chosen by what the DM just asked for and whether a file is connected,
+// with the exact labels from ui/house_file.py.
+const FILE_BUTTONS: Record<string, { linked: string; unlinked: string }> = {
+  check: { linked: "🔄 Compare now", unlinked: "🔗 Connect a file" },
+  link: { linked: "🔄 Compare now", unlinked: "🔗 Connect a file" },
+  upload: { linked: "📎 Upload a file once", unlinked: "📎 Upload a file once" },
+  unlink: { linked: "Stop using this file", unlinked: "🔗 Connect a file" },
+};
+
+/** "In Discord, press ⚙️ Manage DMbot, then 📄 House-rules file, then <the button for this action>." */
+export function discordPath(action: string, linked: boolean): string {
+  const buttons = FILE_BUTTONS[action] ?? FILE_BUTTONS.check!;
+  return `In Discord, press ⚙️ Manage DMbot, then 📄 House-rules file, then ${linked ? buttons.linked : buttons.unlinked}.`;
+}
 
 export const houseFilePanel = {
   heading: "House-rules file",
   intro: "Keep your house rules in a file you can read anywhere. DMbot compares it with your campaign's rules and tells you what is different. It never changes a rule on its own.",
-  connected: (site: string): string => `Connected: ${site}. DMbot looks at it at the start of every session.`,
+  // (A link set in Discord can be one the site cannot be read from: then it just says Connected.)
+  connected: (site: string): string => `${site ? `Connected: ${site}.` : "Connected."} DMbot looks at it at the start of every session.`,
   notConnected: "No file is connected yet.",
   connect: "Connect a file",
   change: "Use another file",
@@ -18,7 +33,7 @@ export const houseFilePanel = {
   stop: "Stop using this file",
   upload: "Upload a text file once",
   linkLabel: "Link to your rules (Doc, PDF, web page)",
-  linkHelp: "A share link that anyone with it can open. It starts with https://. DMbot never shows it back.",
+  linkHelp: "A share link that anyone with it can open. It starts with https:// and has no :port. DMbot never shows it back.",
   linkSend: "Connect it",
   uploadHelp: "A .txt file, up to 200,000 letters. For a PDF, Word or Excel file, use Discord: ⚙️ Manage DMbot, then 📄 House-rules file, then 📎 Upload a file once.",
   uploadSend: "Compare this file",
@@ -49,8 +64,9 @@ export const houseFilePanel = {
   counts: (add: number, change: number, remove: number): string =>
     `${[add > 0 ? `${add} to add` : "", change > 0 ? `${change} to change` : "", remove > 0 ? `${remove} to remove` : ""].filter(Boolean).join(", ")}.`,
   removing: "Removing means a rule in DMbot that your file doesn't have. Review shows each one first.",
-  next: "DMbot is putting the choice on your DM screen in Discord. Look for Review, Accept all, or Not now. Nothing changes until you press one.",
-  nextFallback: `If you can't see it, ${DISCORD_PATH.charAt(0).toLowerCase()}${DISCORD_PATH.slice(1)}`,
+  next: "DMbot is putting the choice on your DM screen in Discord. Look for ✅ Accept all changes, 🔍 Review or 🙈 Not now. Nothing changes until you press one.",
+  manyRemovals: "When many rules would be removed, Accept all is switched off: use Review.",
+  nextFallback: (action: string, linked: boolean): string => `If you can't see it, ${discordPath(action, linked).replace(/^In/, "in")}`,
   failed: "Nothing was changed.",
   failedReasons: {
     not_taken: "DMbot didn't pick this up in time. Try again in a minute.",
@@ -66,8 +82,8 @@ export const houseFilePanel = {
     not_dm: "Only a DM of this campaign can do this.",
   } as Record<string, string>,
   failedFallback: "DMbot couldn't finish this.",
-  failedNext: `You can also do it in Discord. ${DISCORD_PATH}`,
-  stalled: `DMbot hasn't moved on this for a while. It may be busy. You can wait, or in Discord press ⚙️ Manage DMbot, then 📄 House-rules file, then 🔄 Compare now.`,
+  failedNext: (action: string, linked: boolean): string => `You can also do it in Discord. ${discordPath(action, linked)}`,
+  stalled: (action: string, linked: boolean): string => `DMbot hasn't moved on this for a while. It may be busy. You can wait, or do it in Discord. ${discordPath(action, linked)}`,
   tooBig: "That file is too long. Use a file up to 200,000 letters.",
   fileUnreadable: "That doesn't look like a plain text file. Use a .txt file, or upload it in Discord.",
   nothingYet: "Add a link or a file first.",
