@@ -2902,14 +2902,19 @@ class MemoryStore:
             raise MemoryRuleError("That's the same entry.")
         a, b = not_same_pair(unnamed_id, named_id)
         async with self._db.guild(guild_id) as conn:
+            # exactly the kind of pair the offers make: one live unnamed person and one confirmed
+            # named entry that is not a player, both in this campaign (a stray pair would also
+            # hide a real look-alike offer, since the finder shares this table)
             cur = await conn.execute(
                 "SELECT count(*) AS n FROM memory_entities WHERE guild_id = %s AND campaign_id = %s"
-                " AND status IN ('proposed', 'confirmed') AND id = ANY(%s)",
-                (guild_id, campaign_id, [unnamed_id, named_id]),
+                " AND type <> %s AND ((id = %s AND unnamed AND status IN ('proposed', 'confirmed'))"
+                " OR (id = %s AND NOT unnamed AND status = 'confirmed'))",
+                (guild_id, campaign_id, PERSON, unnamed_id, named_id),
             )
             row = await cur.fetchone()
             if row is None or int(row["n"]) != 2:
                 raise MemoryRuleError(NOT_FOUND)
+            # (the look-alike finder only reads named entries, so its cache needs no clearing)
             await conn.execute(
                 "INSERT INTO name_not_same (guild_id, campaign_id, a_id, b_id, decided_by,"
                 " created_at) VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING",

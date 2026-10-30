@@ -3,7 +3,7 @@ nothing read across campaigns. Invented names."""
 
 from __future__ import annotations
 
-from dmbot.memory.models import CONFIRMED
+from dmbot.memory.models import CONFIRMED, MemoryRuleError
 from dmbot.memory.same_person import WORDS
 from tests.test_memory_store import DM, GUILD_A, ConfirmedMemoryTest
 
@@ -56,3 +56,19 @@ class TheOffers(ConfirmedMemoryTest):
         self.assertTrue(other.entity.id)
         offers = await self.memory.same_person_offers(GUILD_A, c2)
         self.assertEqual(offers, [])  # (Ken lives in the other campaign)
+
+    async def test_a_no_for_a_pair_that_is_not_unnamed_and_named_is_refused(self) -> None:
+        c2 = (await self.campaigns.create(GUILD_A, "Sunken City", DM)).id
+        far = await self.add("Far", campaign=c2, type="character", status=CONFIRMED)
+        for a, b in (
+            (self.ken, self.mira),  # two named
+            (self.guard, far),  # another campaign
+            (self.ken, self.guard),  # the wrong way round
+        ):
+            with self.subTest(a=a, b=b), self.assertRaises(MemoryRuleError):
+                await self.memory.not_the_same_person(GUILD_A, self.c, a, b, user_id=7)
+
+    async def test_saying_no_twice_is_fine(self) -> None:
+        for _ in range(2):
+            await self.memory.not_the_same_person(GUILD_A, self.c, self.guard, self.ken, user_id=7)
+        self.assertEqual(await self.memory.same_person_offers(GUILD_A, self.c), [])
