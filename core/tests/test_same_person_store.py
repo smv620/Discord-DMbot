@@ -116,3 +116,52 @@ class TheOffers(ConfirmedMemoryTest):
         (offer,) = await self.memory.same_person_offers(GUILD_A, self.c)
         self.assertEqual((offer.unnamed_id, offer.named_id), (self.guard, self.ken))
         self.assertEqual(await self.memory.same_person_offers(GUILD_A, c2), [])
+
+    async def set_columns(self, entity_id: str, **columns: object) -> None:
+        """Put an entry in a state the store's own doors make hard to reach (a rejected entry, a
+        player's person entry), straight in the table."""
+        sets = ", ".join(f"{name} = %s" for name in columns)
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                f"UPDATE memory_entities SET {sets} WHERE guild_id = %s AND campaign_id = %s"
+                " AND id = %s",
+                (*columns.values(), GUILD_A, self.c, entity_id),
+            )
+
+    async def test_a_rejected_named_entry_is_never_offered(self) -> None:
+        await self.set_columns(self.ken, status="rejected")
+        self.assertEqual(await self.memory.same_person_offers(GUILD_A, self.c), [])
+
+    async def test_a_person_entry_is_never_offered(self) -> None:
+        # (a player or the DM: a link through one does not count either, since a person is not a
+        # character the story can describe twice)
+        await self.set_columns(self.ken, type="person")
+        self.assertEqual(await self.memory.same_person_offers(GUILD_A, self.c), [])
+
+    async def test_a_second_campaigns_names_and_connections_would_offer_if_they_were_read(
+        self,
+    ) -> None:
+        c2 = (await self.campaigns.create(GUILD_A, "Sunken City", DM)).id
+        # this campaign: an unnamed watchman with no named match of its own
+        watchman = (
+            await self.memory.add_unnamed(GUILD_A, self.c, what="watchman at the dock")
+        ).entity.id
+        captain = await self.add("Captain Vale", type="character", status=CONFIRMED)
+        await self.relate(watchman, "knows", captain, status=CONFIRMED)
+        # the other campaign: a named match through a confirmed other name and a connection
+        vik = await self.add("Vik", campaign=c2, type="character", status=CONFIRMED)
+        await self.memory.add_alias(
+            GUILD_A, c2, vik, "Dock Watchman", kind="nickname", source="dm", status=CONFIRMED
+        )
+        far_captain = await self.add(
+            "Captain Vale", campaign=c2, type="character", status=CONFIRMED
+        )
+        await self.memory.add_relation(
+            GUILD_A, c2, vik, "knows", far_captain, source="dm", confidence=1.0, status=CONFIRMED
+        )
+        self.assertEqual(
+            {o.unnamed_id for o in await self.memory.same_person_offers(GUILD_A, self.c)}
+            & {watchman},
+            set(),
+        )
+        self.assertEqual(await self.memory.same_person_offers(GUILD_A, c2), [])
