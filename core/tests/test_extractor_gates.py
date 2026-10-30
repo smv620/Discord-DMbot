@@ -198,7 +198,9 @@ class Gates(unittest.IsolatedAsyncioTestCase):
         me.settings.story_family_only = True
         with patch.object(extractor, "run", AsyncMock(return_value=extractor.Report())) as run:
             await DMBot.extract_claims(me, self.table(), 0)
-        self.assertIs(run.await_args.kwargs["family_only"], True)
+        call = run.await_args
+        assert call is not None
+        self.assertIs(call.kwargs["family_only"], True)
 
     async def test_a_campaign_whose_plan_has_no_story_memory_runs_nothing(self) -> None:
         me = self.fake(allowed=False)
