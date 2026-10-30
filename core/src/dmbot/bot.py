@@ -10725,6 +10725,13 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
     async def apply_retention(self, campaign: Campaign, days: int | None) -> Campaign:
         return await self.campaigns.set_transcript_keep(campaign.guild_id, campaign.id, days)
 
+    async def apply_story_mode(
+        self, campaign: Campaign, mode: str, confirmed_by: int | None
+    ) -> Campaign:
+        return await self.campaigns.set_story_mode(
+            campaign.guild_id, campaign.id, mode, confirmed_by=confirmed_by
+        )
+
     async def apply_optional_rule(
         self, campaign: Campaign, rule: OptionalRule, turn_on: bool, sender_id: int
     ) -> bool:

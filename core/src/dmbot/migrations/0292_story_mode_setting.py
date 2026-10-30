@@ -1,0 +1,77 @@
+"""0292_story_mode_setting
+
+The Shared story switch chosen on the website (#2985).
+"""
+
+from __future__ import annotations
+
+STORY_MODE_SETTING = r"""
+    -- A seventh choice on the website's Settings queue (#2985): the Shared story switch. `setting`
+    -- also accepts 'story_mode', whose `value` is off, watch or guide; `turn_on` stays NULL for it
+    -- (the yes/no settings are the only ones that carry one), and `flag` is the DM's "I have the
+    -- right to use this material" confirmation, which the bot records with who and when
+    -- (shared_confirmations) when it applies the switch. No row changes: no backfill policy.
+    ALTER TABLE setting_actions DROP CONSTRAINT IF EXISTS setting_actions_setting_check;
+    ALTER TABLE setting_actions
+        ADD CONSTRAINT setting_actions_setting_check
+            CHECK (setting IN ('visibility', 'level', 'retention', 'optional_rule', 'co_dm',
+                               'pause', 'story_mode'));
+
+    -- The same door as before, with the new setting: turning the switch ON (watch or guide) needs
+    -- the confirmation (`fl`), so a choice without it is 'needs_confirm' here and never queued;
+    -- off never asks. The bot checks again and writes the record. Everything else is as it was
+    -- (0197): NULL for anyone not a DM of the campaign, 'bad_setting', 'bad_value', 'too_soon'.
+    CREATE OR REPLACE FUNCTION dmbot_web_setting_add(
+        g BIGINT, c TEXT, st TEXT, val TEXT, fl BOOLEAN
+    ) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        rid TEXT := replace(gen_random_uuid()::TEXT, '-', '');
+        now_s BIGINT := floor(extract(epoch FROM clock_timestamp()))::BIGINT;
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
+           OR NOT EXISTS (SELECT 1 FROM campaign_dms d
+                          WHERE d.guild_id = g AND d.campaign_id = c
+                            AND d.user_id = dmbot_current_user()) THEN
+            RETURN NULL;
+        END IF;
+        IF st IS NULL OR st NOT IN ('visibility', 'level', 'retention', 'story_mode') THEN
+            RETURN jsonb_build_object('status', 'bad_setting');
+        END IF;
+        IF val IS NULL
+           OR (st = 'visibility' AND val NOT IN ('private', 'peek', 'open'))
+           OR (st = 'level' AND val NOT IN ('quiet', 'normal'))
+           OR (st = 'retention' AND val NOT IN ('forever', '365', '90', '30'))
+           OR (st = 'story_mode' AND val NOT IN ('off', 'watch', 'guide')) THEN
+            RETURN jsonb_build_object('status', 'bad_value');
+        END IF;
+        IF st = 'story_mode' AND val <> 'off' AND fl IS NOT TRUE THEN
+            RETURN jsonb_build_object('status', 'needs_confirm');
+        END IF;
+        PERFORM pg_advisory_xact_lock(hashtextextended('setting_action:' || g::TEXT || c, 0));
+        DELETE FROM setting_actions a
+            WHERE a.guild_id = g AND a.campaign_id = c AND a.created_at < now_s - 3600;
+        IF (SELECT count(*) FROM setting_actions a
+            WHERE a.guild_id = g AND a.campaign_id = c AND a.state IN ('waiting', 'working')) >= 10
+        THEN
+            RETURN jsonb_build_object('status', 'too_soon');
+        END IF;
+        INSERT INTO setting_actions (guild_id, campaign_id, id, user_id, setting, value, flag,
+                                     created_at)
+            VALUES (g, c, rid, dmbot_current_user(), st, val, COALESCE(fl, false), now_s);
+        RETURN jsonb_build_object('status', 'ok', 'id', rid);
+    END
+    $fn$;
+    -- CREATE OR REPLACE drops the pinned search_path and the grant rule, so both are set again.
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_setting_add(BIGINT, TEXT, TEXT, TEXT, BOOLEAN)'
+            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_web_setting_add(BIGINT, TEXT, TEXT, TEXT, BOOLEAN) FROM PUBLIC;
+"""
+
+SQL = STORY_MODE_SETTING
