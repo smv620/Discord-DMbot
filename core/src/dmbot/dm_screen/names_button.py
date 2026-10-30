@@ -1,4 +1,4 @@
-"""📇 Names: the way into the campaign's names from the DM Bot channel and ⚙️ Settings (#1986).
+"""📇 Names: the way into the campaign's names from the DM Bot channel and ⚙️ Manage DMbot (#1986).
 
 The names menu is `/dmbot names`; this button opens the same private home card, so a DM never needs
 the command and never meets a second menu. It is only drawn for the campaign's DMs, and the press

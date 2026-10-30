@@ -1,12 +1,14 @@
-// The relationship web's free layout (#2934): names push each other apart, lines pull their two ends
+// The Story Graph's free layout (#2934): names push each other apart, lines pull their two ends
 // together, and the names settle by themselves so a crowded spot opens up. Written in plain code so the page
 // needs no graph library (the site's weight budget, #1947). Pure, with no clock and no random numbers: the
 // same names and lines always settle in the same places, which keeps the tests exact and a redraw calm.
+import { KIND_STYLES, kindStyle } from "./webKinds";
 import { radialLayout } from "./webLayout";
 
-/** "free": names settle anywhere. "groups": names gather by the kind of connection that joins them to the
- * middle name (family, friends and allies, groups, work). */
-export type LayoutMode = "free" | "groups";
+/** "free": names settle anywhere. "groups": names gather by what each one is (player characters, NPCs, places,
+ * items, groups, events...: the kinds the Names page uses), not by how it is connected (#2990). "quests": names
+ * gather by the quest they are joined to (#2992). */
+export type LayoutMode = "free" | "groups" | "quests";
 
 /** More names than this keep their rings and are only movable by hand: pushing every pair apart is
  * the slow part, and a web this big is already past what a screen can show clearly. */
@@ -17,7 +19,7 @@ export const MAX_SIM_STEPS = 300;
 export interface SimNode {
   id: string;
   kind: string;
-  /** The group it gathers with in the grouped layout (see `connectionGroups`). */
+  /** The group it gathers with in the grouped layout: what it is (its kind). */
   group: string;
   x: number;
   y: number;
@@ -48,7 +50,6 @@ export function startNodes(
   edges: { a: string; b: string }[],
   center: string,
   saved: SavedPlaces = {},
-  groups: Map<string, string> = new Map(),
 ): SimNode[] {
   const rings = radialLayout(nodes, edges, center);
   return nodes.map((n) => {
@@ -57,7 +58,7 @@ export function startNodes(
     return {
       id: n.id,
       kind: n.kind,
-      group: groups.get(n.id) ?? "other",
+      group: n.kind,
       x: kept ? kept[0] : (at?.x ?? 0),
       y: kept ? kept[1] : (at?.y ?? 0),
       vx: 0,
@@ -77,31 +78,11 @@ export function edgeKind(edge: { links: { kind?: string | undefined }[] }): stri
   return kinds.size === 1 ? [...kinds][0]! : "other";
 }
 
-/** Which group each name gathers with: the kind of the line it is reached by, walking out from the middle
- * name, so a name two steps out follows the one it hangs from. The middle name has none. */
-export function connectionGroups(
-  edges: { a: string; b: string; links: { kind?: string | undefined }[] }[],
-  center: string,
-): Map<string, string> {
-  const next = new Map<string, { to: string; kind: string }[]>();
-  for (const e of edges) {
-    const kind = edgeKind(e);
-    (next.get(e.a) ?? next.set(e.a, []).get(e.a)!).push({ to: e.b, kind });
-    (next.get(e.b) ?? next.set(e.b, []).get(e.b)!).push({ to: e.a, kind });
-  }
-  const out = new Map<string, string>();
-  const seen = new Set([center]);
-  const queue = [center];
-  for (let i = 0; i < queue.length; i += 1) {
-    const here = queue[i]!;
-    for (const step of next.get(here) ?? []) {
-      if (seen.has(step.to)) continue;
-      seen.add(step.to);
-      out.set(step.to, here === center ? step.kind : (out.get(here) ?? step.kind));
-      queue.push(step.to);
-    }
-  }
-  return out;
+/** The kinds of name in the order their areas and the legend give them: the people first, then the places and
+ * things, each style's kinds together by key (#2992). */
+export function orderedKinds(kinds: Iterable<string>): string[] {
+  const rank = (k: string): number => KIND_STYLES.indexOf(kindStyle(k));
+  return [...new Set(kinds)].sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
 }
 
 /** Where each group gathers in the grouped layout: the groups spread evenly around the middle. */
@@ -161,8 +142,8 @@ export function forceStep(
       b.vy += dy * f;
     }
   }
-  const rest = mode === "groups" ? 130 : REST;
-  const pull = mode === "groups" ? PULL * 0.4 : PULL;
+  const rest = mode !== "free" ? 130 : REST;
+  const pull = mode !== "free" ? PULL * 0.4 : PULL;
   for (const [i, j] of links) {
     const a = sim[i]!;
     const b = sim[j]!;
@@ -182,7 +163,7 @@ export function forceStep(
     const home = i === centreIndex ? CENTRE_HOME : HOME;
     n.vx -= n.x * home;
     n.vy -= n.y * home;
-    const anchor = mode === "groups" && i !== centreIndex ? anchors.get(n.group) : undefined;
+    const anchor = mode !== "free" && i !== centreIndex ? anchors.get(n.group) : undefined;
     if (anchor) {
       n.vx += (anchor.x - n.x) * 0.022;
       n.vy += (anchor.y - n.y) * 0.022;
@@ -232,4 +213,11 @@ export function extentOf(sim: { x: number; y: number }[], floor = 220): number {
   let far = 0;
   for (const n of sim) far = Math.max(far, Math.abs(n.x), Math.abs(n.y));
   return Math.max(floor, far + 110);
+}
+
+/** The group a name gathers with in "Cluster by quest": a quest is its own group; any other name joins the quest it
+ * has most connections with (the door sends them in that order), or "none" (#2992). */
+export const NO_QUEST = "none";
+export function questGroups(nodes: { id: string; kind: string; quests?: { id: string }[] | undefined }[]): Map<string, string> {
+  return new Map(nodes.map((n) => [n.id, kindStyle(n.kind) === "quest" ? n.id : (n.quests?.[0]?.id ?? NO_QUEST)]));
 }

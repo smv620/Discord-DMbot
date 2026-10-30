@@ -65,6 +65,7 @@ export default function NameThem({
         setTimeout(() => questionBox.current?.focus(), 0);
         return;
       }
+      if (got.state === "player") return; // (only a Discord ID lookup says this: not asked here)
       setQuestion(null);
       done = { text: text(asked.current), undo: got.undo, join: step.action === "name-join" };
     } catch (error) {

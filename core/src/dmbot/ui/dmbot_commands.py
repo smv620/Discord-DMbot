@@ -220,7 +220,7 @@ async def _failed(
 
 
 NOT_IN_SERVER = "Use this in a server."
-SETTINGS_HINT = "Settings: press ⚙️ Settings here, or use the DM Bot channel."
+SETTINGS_HINT = "Settings: press ⚙️ Manage DMbot here, or use the DM Bot channel."
 
 
 # ---- /dmbot start: welcome, then which campaign? ---------------------------------------
@@ -476,7 +476,7 @@ class VoicePicker(_Menu):
             row=1,
         )
         self.add_item(self.start_button)
-        # ⚙️ Settings where the DM is looking (#1619). Only those who can start this campaign
+        # ⚙️ Manage DMbot where the DM is looking (#1619). Only those who can start this campaign
         # reach this step, and the button checks again on every press.
         self.add_item(SettingsButton(campaign.id, row=2))
 
@@ -993,7 +993,7 @@ async def dmbot_start(interaction: discord.Interaction) -> None:
 
 @dmbot_group.command(name="settings", description="Open this campaign's settings (for its DM)")
 async def dmbot_settings(interaction: discord.Interaction) -> None:
-    """The same ⚙️ Settings card as the button, for a DM who can't find it (#1619): the campaign
+    """The same ⚙️ Manage DMbot card as the button, for a DM who can't find it (#1619): the campaign
     running in this server, else the last one played. Private; the button's own check decides
     who may see it (the campaign's DMs and server managers)."""
     guild = interaction.guild

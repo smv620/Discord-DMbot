@@ -1,5 +1,5 @@
 /** @jsxImportSource preact */
-// What the Story graph hides when it draws one centre's web (#2632): how many names there are in all, the
+// What the Story Graph hides when it draws one centre's web (#2632): how many names there are in all, the
 // names with no connection yet (a list beside the map, not drawn, so it does not count against the map's
 // size cap) and the other groups of linked names. The map alone drew 2 of a campaign's 51 names because
 // it walks only the confirmed connections of its centre. The API decides what the person may see (a

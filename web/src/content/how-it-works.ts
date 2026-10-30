@@ -100,7 +100,7 @@ export const team = {
         {
           icon: "🧠",
           name: "The Story Memory",
-          job: "Everything the campaign remembers: people, places, things, and how they connect. On the website it is the Story graph. It keeps two views: The truth (what the DM knows) and The party (what the players know).",
+          job: "Everything the campaign remembers: people, places, things, and how they connect. On the website it is the Story Graph. It keeps two views: The truth (what the DM knows) and The party (what the players know).",
         },
         {
           icon: "👥",

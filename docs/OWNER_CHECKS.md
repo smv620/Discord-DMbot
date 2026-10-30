@@ -44,8 +44,8 @@ Unlocks: #1771
 ### 3. The DMbot channel with the buttons
 **You'll do:**
 1. Look for the channel **dmb-dm-bot**. Press 👤 DMbot Main Menu.
-2. Press 📖 Look up a rule and look up any rule.
-3. Press ⚙️ Settings, then back out.
+2. Press ❓ Help, then 📖 Look up a rule, and look up any rule.
+3. Press ⚙️ Manage DMbot, then back out.
 
 **It worked if:** the channel is there, only you see your buttons, the rule answer is private, and your DM
 screen shows only notes, alerts and ⏹ Stop listening.
@@ -93,7 +93,7 @@ players.
 Unlocks: #1662, #1674
 
 ### 8. Homebrew by kind
-**You'll do:** press ⚙️ Settings, then 📚 Homebrew. Press a kind, then ↩ All kinds. Then press ➕ Add and pick
+**You'll do:** press ⚙️ Manage DMbot, then 📚 Homebrew. Press a kind, then ↩ All kinds. Then press ➕ Add and pick
 🧝 Species (or Subclass, or Background) as the kind, and add one made-up entry.
 
 **It worked if:** you see one button for each kind with a count on it, and the new kinds are on the list.
@@ -105,7 +105,7 @@ Unlocks: #1663, #1665
 ## Group C. Takes a little longer
 
 ### 9. A quiet "where are we" line
-**You'll do:** set the game clock under ⚙️ Settings, then Game clock. Leave listening on and don't touch the
+**You'll do:** set the game clock under ⚙️ Manage DMbot, then Game clock. Leave listening on and don't touch the
 clock for half an hour. It posts nothing when your DM screen is on Quiet, so keep it on Normal.
 
 **It worked if:** one short line appears on your DM screen saying where the game is, and nothing is posted to
@@ -115,7 +115,7 @@ Unlocks: #1738
 
 ### 10. Shared story: watching your adventure
 **You'll do:**
-1. Press ⚙️ Settings, then 🧭 Shared story, and choose **Watch the story**. Read the warning and
+1. Press ⚙️ Manage DMbot, then 🧭 Shared story, and choose **Watch the story**. Read the warning and
    press **I have the right**.
 2. Press 📖 Give your adventure, then Give a file, and pick a short made-up text file you wrote yourself.
    Then press 📖 Read it now and Yes, read it.
@@ -150,15 +150,15 @@ Do 16, 17 and 18 before 15. Check 15 deletes a campaign.
 1. Type `/dmbot settings` anywhere in your test server.
 2. Type `/dmbot start`, press ＋ New campaign (or ▶ Continue last campaign if one exists) and look at the step where you pick the voice channel. You do not need to press ▶ Start listening.
 
-**It worked if:** Settings opens from the command and says only you can see it, and ⚙️ Settings is on the voice-channel step too.
+**It worked if:** Settings opens from the command and says only you can see it, and ⚙️ Manage DMbot is on the voice-channel step too.
 
 Unlocks: #1619
 
 ### 13. Game masters
 **You'll do:**
-1. Press ⚙️ Settings, then 👑 Game masters.
+1. Press ⚙️ Manage DMbot, then 👑 Game masters.
 2. Press ➕ Add a game master and pick a second test account of yours that is already in the server.
-3. On that account, press ⚙️ Settings or type `/dmbot settings`.
+3. On that account, press ⚙️ Manage DMbot or type `/dmbot settings`.
 4. Back on your account, press ➖ Remove a game master and take them off again. Try step 3 again.
 
 **It worked if:** Settings opens for the second account after you add them, and does not once you take them off.
@@ -167,7 +167,7 @@ Unlocks: #1600, #1603
 
 ### 14. Splitting the party
 **You'll do:**
-1. Set the game clock first: press ⚙️ Settings, then Game clock, and give any day and hour. You do not need to wait for it.
+1. Set the game clock first: press ⚙️ Manage DMbot, then Game clock, and give any day and hour. You do not need to wait for it.
 2. Press Rests & time…, then ✂️ Split the party.
 3. Name two groups, for example "Tower" and "Camp".
 4. Press 🤝 Rejoin the party, pick a time to keep, then press Undo.
@@ -181,7 +181,7 @@ Unlocks: #1607
 
 **You'll do:**
 1. On the throwaway campaign, press ⏹ Stop listening if it is on. It cannot be deleted while it is being played. Only the game master whose plan it uses can delete it, which should be you.
-2. Press ⚙️ Settings, then 🗑 Delete this campaign.
+2. Press ⚙️ Manage DMbot, then 🗑 Delete this campaign.
 3. Read what will be lost. Press 💾 Back up first and wait for the file.
 4. Press Delete it, then type the campaign's name.
 
@@ -223,7 +223,7 @@ Unlocks: #1407
 This button is merged but not on the server yet. Do this check after dev1 deploys it.
 
 **You'll do:**
-1. Press ⚙️ Settings, then ℹ️ What's switched on.
+1. Press ⚙️ Manage DMbot, then ℹ️ What's switched on.
 
 **It worked if:** only you see the answer, and it lists what is on for your table.
 

@@ -1335,6 +1335,16 @@ sidebar, the clock, cards and the after-session notes for the DM.
   open (❓ Check names, 🧑 Check who is who, 🗣️ Check what was said), so a missed post is never lost.
 - Built in #1666 (CloudDev); Help follows (WebDev).
 
+**The DM Bot channel: four buttons** (owner, 2026-10-29: "Discord is very simple, very clean, super easy to
+navigate. Right now it's a mess."; #2986, website #2985). Discord keeps only what needs Discord to be there:
+channels, voice and recording, what DMbot posts or shows in Discord, and a person's own consent. Everything
+else about a campaign is managed on the website. 👤 DMbot Main Menu holds at most **⚙️ Manage DMbot** (DMs:
+table chat channel, stop when quiet, who sees the DM screen, Quiet/Normal, rules cards, game clock, what's
+switched on), **🌐 Manage campaign** (DMs: a link to the campaign's website page), **🙋 My data** (the old
+🗂️ Menu with 📜 My character sheet) and **❓ Help** (with 📖 Look up a rule and 📜 Transcripts). Each other
+Settings item leaves Discord as soon as the website does it. A button that only reveals another button is not
+allowed: 📜 My character sheet opens its form at once when there is no sheet yet.
+
 **Channel structure (decided 2026-10-04, #85).** Every channel DMbot creates starts with
 `dmb-`, so its channels group together in the sidebar and are clearly bot-managed.
 

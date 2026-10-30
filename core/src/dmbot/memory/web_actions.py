@@ -45,7 +45,7 @@ from dmbot.memory.models import (
     lookup_key,
     name_key,
 )
-from dmbot.memory.store import PERSON, MemoryStore
+from dmbot.memory.store import INT64_MAX, PERSON, MemoryStore
 from dmbot.memory.which_else import COULD_NOT_KEEP, none_of_these
 
 log = logging.getLogger(__name__)
@@ -58,6 +58,10 @@ NOT_ALLOWED = "not_allowed"  # the sender is not a DM of the campaign any more
 NOT_FOUND = "not_found"  # the name (or the other name) is gone, or no longer confirmed
 BAD_NAME = "bad_name"  # a spelling or another name the rules refuse
 BAD_KIND = "bad_kind"  # a kind the rules do not take
+UNKNOWN_ID = "unknown_id"  # Discord does not know that ID
+LOOKUP_FAILED = "lookup_failed"  # Discord could not be asked: nothing is linked, try again
+BAD_PLAYER = "bad_player"  # not an ID the rules take
+BOT_PLAYER = "bot_player"  # the ID is a bot's: a bot cannot play a character
 EXISTS = "exists"  # the spelling is already another name's
 BAD_TARGET = "bad_target"  # a merge, a secret or a removal the rules refuse
 FAILED = "failed"  # anything unexpected; the action can be sent again
@@ -303,6 +307,7 @@ async def apply(
     action: Action,
     waiting: Waiting | None = None,
     named_batch: Callable[[str, int, str], Awaitable[int | None]] | None = None,
+    look_up: PlayerLookupFn | None = None,
 ) -> Outcome:
     """Do one action the way Discord's name card does. Nothing here logs the DM's words."""
     if action.user_id not in dm_user_ids:
@@ -335,7 +340,7 @@ async def apply(
     if entity is None or entity.status != CONFIRMED or entity.type == PERSON:
         return _failed(NOT_FOUND)
     try:
-        return await _do(memory, guild_id, cid, entity.id, entity.name, action)
+        return await _do(memory, guild_id, cid, entity.id, entity.name, action, look_up)
     except MemoryRuleError:
         return _failed(NOT_FOUND)  # the name changed under us (another DM, or Discord)
 
@@ -431,8 +436,92 @@ async def _other(
     return None
 
 
+@dataclass(frozen=True)
+class PlayerLookup:
+    """Who a Discord ID belongs to, for the DM to confirm before DMbot links it (#3004). The name is
+    only shown, never kept: what is linked is the ID."""
+
+    name: str
+    bot: bool
+    in_server: bool
+
+
+# Asks Discord about one ID: None when Discord does not know it. A failed lookup raises, so it is
+# never read as "unknown" (and nothing is linked without the name having been shown).
+PlayerLookupFn = Callable[[int], Awaitable[PlayerLookup | None]]
+LOOKUP_KIND = "player_lookup"  # a `kind` action that only looks an ID up and writes nothing
+
+
+def _player_id(text: str) -> int | None:
+    if not (text.isascii() and text.isdigit()) or not 0 < int(text) <= INT64_MAX:
+        return None
+    return int(text)
+
+
+async def _ask_discord(look_up: PlayerLookupFn | None, user_id: int) -> PlayerLookup | Outcome:
+    """The lookup, or the outcome to give when it cannot be used (unknown, a bot, a failure)."""
+    if look_up is None:
+        return _failed(LOOKUP_FAILED)  # no way to ask: nothing is guessed
+    try:
+        found = await look_up(user_id)
+    except Exception as exc:  # the type only: never the ID, never a name
+        log.warning("A player lookup failed: %s", type(exc).__name__)
+        return _failed(LOOKUP_FAILED)
+    if found is None:
+        return _failed(UNKNOWN_ID)
+    if found.bot:
+        return _failed(BOT_PLAYER)
+    return found
+
+
+async def _player_lookup(a: Action, look_up: PlayerLookupFn | None) -> Outcome:
+    """Say who an ID is, for the page's "Please confirm: <name>". The answer rides in `result_other`
+    (a letter for in the server or not, then the name, cut to fit); the row is gone within the hour,
+    and nothing about the character changes."""
+    user_id = _player_id(a.text)
+    if user_id is None:
+        return _failed(BAD_PLAYER)
+    found = await _ask_discord(look_up, user_id)
+    if isinstance(found, Outcome):
+        return found
+    return Outcome(result_other=("i" if found.in_server else "o") + found.name[:31])
+
+
+async def _player_character(
+    memory: MemoryStore,
+    guild_id: int,
+    cid: str,
+    entity_id: str,
+    a: Action,
+    look_up: PlayerLookupFn | None,
+) -> Outcome:
+    """Make a name a player character, as Discord's "What it is" does. With a Discord ID the
+    player is attached too (Discord's "Who plays it?"). The DM has confirmed the name Discord shows
+    for the ID (`flag`: the page sends it only after "That's them"), and the person need not be in
+    the server yet. The ID is asked again here, so a bot or an unknown ID is never linked."""
+    if not a.text:
+        await memory.set_entity_type(guild_id, cid, entity_id, PLAYER_CHARACTER, source=DM)
+        return Outcome(result_id=entity_id)
+    user_id = _player_id(a.text)
+    if user_id is None or not a.flag:  # nothing links without the confirmation
+        return _failed(BAD_PLAYER)
+    found = await _ask_discord(look_up, user_id)
+    if isinstance(found, Outcome):
+        return found
+    await memory.confirm_entity(
+        guild_id, cid, entity_id, PLAYER_CHARACTER, source=DM, played_by=user_id
+    )
+    return Outcome(result_id=entity_id)
+
+
 async def _do(
-    memory: MemoryStore, guild_id: int, cid: str, entity_id: str, name: str, a: Action
+    memory: MemoryStore,
+    guild_id: int,
+    cid: str,
+    entity_id: str,
+    name: str,
+    a: Action,
+    look_up: PlayerLookupFn | None = None,
 ) -> Outcome:
     if a.action == "spell":
         new = " ".join(a.text.split())
@@ -448,8 +537,10 @@ async def _do(
             return _failed(BAD_NAME)
         return Outcome(result_id=entity_id)
     if a.action == "kind":
+        if a.kind == LOOKUP_KIND:
+            return await _player_lookup(a, look_up)
         if a.kind == PLAYER_CHARACTER:
-            return _failed(BAD_KIND)  # who plays them is asked in Discord
+            return await _player_character(memory, guild_id, cid, entity_id, a, look_up)
         try:
             await memory.set_entity_type(guild_id, cid, entity_id, a.kind, source=DM)
         except MemoryRuleError:

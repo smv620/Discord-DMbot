@@ -153,7 +153,7 @@ describe("the answers", () => {
     await waitFor(() => expect(document.activeElement?.textContent).toBe("Undo"));
   });
 
-  it("opens the Story graph after Fix the DM's view, without claiming it is fixed", async () => {
+  it("opens the Story Graph after Fix the DM's view, without claiming it is fixed", async () => {
     await open();
     await screen.findByText(/Aldric has hidden it/);
     fireEvent.click(within1(/Aldric has hidden it/, "Fix the DM's view"));

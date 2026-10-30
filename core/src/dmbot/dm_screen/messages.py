@@ -11,7 +11,7 @@ from dmbot import install
 from dmbot.dm_screen.rules import Exposure
 from dmbot.transcript.export import duration
 
-# Shared by ⚙️ Settings and its hand-over buttons (a DM's screens), so both say the same.
+# Shared by ⚙️ Manage DMbot and its hand-over buttons (a DM's screens), so both say the same.
 # CAMPAIGN_GONE below is the players' version.
 DM_CAMPAIGN_GONE = (
     "DMbot can't find this campaign anymore. It may have been deleted. To start a new one: "
@@ -63,7 +63,7 @@ NOT_LISTENING_NOW = (
     "DMbot isn't listening to this campaign right now. To start, run `/dmbot start`."
 )
 STOP_FAILED = "Something went wrong stopping DMbot. Try `/dmbot stop`."
-# The Stop button asks first (#554): a thumb slip next to ⚙️ Settings mustn't end it.
+# The Stop button asks first (#554): a thumb slip next to ⚙️ Manage DMbot mustn't end it.
 STOP_YES_LABEL = "Yes, stop"
 STOP_CANCEL_LABEL = "Cancel"
 STOP_KEPT = "Still listening."

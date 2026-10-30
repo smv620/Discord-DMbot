@@ -299,6 +299,9 @@ async def _still_member(interaction: discord.Interaction, guild_id: int) -> bool
     return True
 
 
+# How long the press may read before it must answer (a form has to be sent within 3 seconds).
+FORM_WAIT_S = 2.0
+
 # ---- the player's button and panel --------------------------------------------------
 
 
@@ -333,9 +336,36 @@ class MySheetButton(
         except Exception as exc:
             await _failed(interaction, exc)
 
+    async def _form_at_once(self, interaction: discord.Interaction, store: SheetStore) -> bool:
+        """No sheet yet: open the "Link my D&D Beyond sheet" form on this very press (#2986), so
+        there is nothing to dig through. A form must be sent within 3 seconds and cannot follow a
+        deferral, so the read gets a short wait (like the game clock's form) and anything slower
+        or unclear falls back to the panel below, never an error. Only a member Discord already
+        shows us (cached) skips the usual check."""
+        guild = interaction.client.get_guild(self.guild_id)
+        if (
+            self.campaign_id is None
+            or guild is None
+            or guild.get_member(interaction.user.id) is None
+        ):
+            return False
+        try:
+            async with asyncio.timeout(FORM_WAIT_S):
+                found = await store.characters_of(
+                    self.guild_id, interaction.user.id, self.campaign_id
+                )
+        except Exception:  # (a timeout included) the panel path below says what happened
+            return False
+        if found:
+            return False
+        await interaction.response.send_modal(NewSheetForm(self.guild_id, self.campaign_id))
+        return True
+
     async def _run(self, interaction: discord.Interaction) -> None:
-        await _answer_first(interaction)
         store = _store(interaction)
+        if store is not None and await self._form_at_once(interaction, store):
+            return
+        await _answer_first(interaction)
         if store is None:
             await _tell(interaction, NOT_AVAILABLE)
             return
