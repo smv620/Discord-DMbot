@@ -1,0 +1,479 @@
+"""A character known by an earlier name (#3034): the earlier name becomes an other name of the
+character the campaign has, secret when the text calls it a disguise, and the lines written about
+it reach that character. Never a new character. Invented names and text."""
+
+from __future__ import annotations
+
+import json
+import time
+import unittest
+from typing import Any
+from unittest.mock import AsyncMock
+
+from dmbot.memory.backstory_links import BackstoryLinks
+from dmbot.memory.models import CONFIRMED, name_key
+from dmbot.ui import name_background as ui_bg
+from dmbot.ui.name_lists import Upload
+from tests import lore_fake
+from tests.test_memory_names import DM, GUILD, NamesTest
+
+TEXT = (
+    "Born Tamsin Vell, the thief fled north under the pseudonym Ash Morrow. Tamsin Vell served "
+    "Master Orlen before the flight. Tamsin Vell is the sister of Wren Vell."
+)
+ANSWER: dict[str, Any] = {
+    "names": [
+        {"name": "Ash Morrow", "kind": "person", "also": [], "secret": ["Tamsin Vell"],
+         "quote": "under the pseudonym Ash Morrow"},
+        {"name": "Master Orlen", "kind": "person", "also": [], "secret": [],
+         "quote": "served Master Orlen"},
+        {"name": "Wren Vell", "kind": "person", "also": [], "secret": [],
+         "quote": "sister of Wren Vell"},
+    ],
+    "connections": [
+        {"a": "Tamsin Vell", "how": "works for", "b": "Master Orlen",
+         "quote": "Tamsin Vell served Master Orlen"},
+        {"a": "Tamsin Vell", "how": "family", "b": "Wren Vell",
+         "quote": "Tamsin Vell is the sister of Wren Vell"},
+    ],
+}  # fmt: skip
+
+
+class TheEarlierName(NamesTest):
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        self.bot.plan_gate = AsyncMock(return_value=None)  # type: ignore[method-assign]
+        self.store = BackstoryLinks(self.db)
+        self.bot.backstory_links = self.store
+        self.ai = lore_fake.lore_ai(json.dumps(ANSWER))
+        self.bot.background_ai = self.bot.background_read_ai = self.ai  # type: ignore[assignment]
+
+    async def ash(self) -> str:
+        made = await self.memory.add_entity(
+            GUILD, self.campaign.id, name="Ash Morrow", type="character", role="player_character",
+            played_by=1002, status=CONFIRMED, source="dm",
+        )  # fmt: skip
+        return str(made.value.id)
+
+    async def go(self, choice: str = "spoilers") -> Any:
+        return await ui_bg.read_background(
+            self.bot, self.campaign, Upload(TEXT, "your lore", True),
+            truth=False, speaker=None, known_by="", started=time.monotonic(), choice=choice,
+        )  # fmt: skip
+
+    async def everyone(self) -> dict[str, Any]:
+        found = await self.memory.entities(GUILD, self.campaign.id)
+        return {e.name: e for e in found}
+
+    async def test_the_earlier_name_is_a_secret_other_name_of_the_character_we_have(self) -> None:
+        ash = await self.ash()
+        await self.go()
+        names = await self.everyone()
+        self.assertNotIn("Tamsin Vell", names)  # (never a character of its own)
+        found = await self.memory.aliases(
+            GUILD, self.campaign.id, entity_id=ash, include_secret=True
+        )
+        self.assertEqual({(a.text, a.secret) for a in found if a.text != "Ash Morrow"},
+                         {("Tamsin Vell", True)})  # fmt: skip
+        # a suggestion for the DM, never confirmed on their behalf, and never shown to players
+        (earlier,) = [a for a in found if a.text == "Tamsin Vell"]
+        self.assertEqual(earlier.status, "proposed")
+        shown = await self.memory.aliases(GUILD, self.campaign.id, entity_id=ash)
+        self.assertNotIn("Tamsin Vell", {a.text for a in shown})
+
+    async def test_what_is_written_about_the_earlier_name_reaches_the_character(self) -> None:
+        ash = await self.ash()
+        await self.go()
+        waiting = await self.store.waiting(GUILD, self.campaign.id)
+        about = {(w.predicate, w.object_id) for w in waiting if w.subject_id == ash}
+        self.assertEqual(len(about), 2, about)  # the master and the sister: both from Ash Morrow
+        every = await self.memory.entities(GUILD, self.campaign.id, statuses=["proposed"])
+        names = {e.id: e.name for e in every}
+        self.assertEqual({names[o] for _, o in about}, {"Master Orlen", "Wren Vell"})
+        self.assertTrue(
+            all(w.secret for w in waiting if w.subject_id == ash)
+        )  # (through a disguise)
+
+    async def secrecy_of(self, choice: str) -> tuple[set[bool], set[bool]]:
+        """(is the earlier name secret?, are the connections written through it secret?)"""
+        ash = await self.ash()
+        await self.go(choice)
+        found = await self.memory.aliases(
+            GUILD, self.campaign.id, entity_id=ash, include_secret=True
+        )
+        names = {a.secret for a in found if a.text == "Tamsin Vell"}
+        links = {
+            w.secret
+            for w in await self.store.waiting(GUILD, self.campaign.id)
+            if w.subject_id == ash
+        }
+        return names, links
+
+    async def test_only_the_dm_keeps_the_earlier_name_and_its_connections_secret(self) -> None:
+        self.assertEqual(await self.secrecy_of("spoilers"), ({True}, {True}))
+
+    async def test_everyone_in_the_story_makes_them_plain(self) -> None:
+        self.assertEqual(await self.secrecy_of("world"), ({False}, {False}))
+
+    async def test_a_smart_guess_keeps_them_secret_whatever_the_ai_says(self) -> None:
+        async def everything_is_world(system: str, user: str, **kw: Any) -> Any:
+            from dmbot.ai import Reply
+
+            return Reply(json.dumps({"world": list(range(20))}), False)
+
+        original = self.ai.complete
+
+        async def routed(system: str, user: str, **kw: Any) -> Any:
+            from dmbot.memory import lore_knowledge
+
+            if system == lore_knowledge.SYSTEM:
+                return await everything_is_world(system, user, **kw)
+            return await original(system, user, **kw)
+
+        self.ai.complete = routed  # type: ignore[assignment]
+        self.assertEqual(await self.secrecy_of("smart"), ({True}, {True}))
+
+    async def test_a_new_character_under_everyone_gets_a_plain_earlier_name(self) -> None:
+        await self.go("world")
+        names = await self.everyone()
+        found = await self.memory.aliases(
+            GUILD, self.campaign.id, entity_id=names["Ash Morrow"].id, include_secret=True
+        )
+        self.assertEqual({a.secret for a in found if a.text == "Tamsin Vell"}, {False})
+
+    async def test_the_same_text_read_twice_adds_nothing(self) -> None:
+        await self.ash()
+        await self.go()
+        before = (
+            len(await self.everyone()),
+            len(await self.store.waiting(GUILD, self.campaign.id)),
+        )
+        await self.go()
+        after = (len(await self.everyone()), len(await self.store.waiting(GUILD, self.campaign.id)))
+        self.assertEqual(after, before)
+
+    async def test_a_character_the_campaign_lacks_gets_the_earlier_name_with_its_entry(
+        self,
+    ) -> None:
+        await self.go()
+        names = await self.everyone()
+        self.assertNotIn("Tamsin Vell", names)
+        found = await self.memory.aliases(
+            GUILD, self.campaign.id, entity_id=names["Ash Morrow"].id, include_secret=True
+        )
+        self.assertIn(("Tamsin Vell", True), {(a.text, a.secret) for a in found})
+
+    async def test_a_name_two_entries_both_claim_is_saved_for_neither(self) -> None:
+        from dmbot.ui.name_background import save_earlier_names
+
+        a = await self.ash()
+        made = await self.memory.add_entity(
+            GUILD, self.campaign.id, name="Wren Vell", type="character", role="npc",
+            status=CONFIRMED, source="dm",
+        )  # fmt: skip
+        await save_earlier_names(
+            self.memory, self.campaign, {"Ash Morrow": ("The Fox",), "Wren Vell": ("The Fox",)}, ()
+        )
+        for entity in (a, made.value.id):
+            found = await self.memory.aliases(
+                GUILD, self.campaign.id, entity_id=entity, include_secret=True
+            )
+            self.assertNotIn("The Fox", {x.text for x in found})
+
+    async def test_a_public_earlier_name_is_a_plain_suggestion(self) -> None:
+        from dmbot.ui.name_background import save_earlier_names
+
+        ash = await self.ash()
+        await save_earlier_names(self.memory, self.campaign, {"Ash Morrow": ("Old Ash",)}, ())
+        found = await self.memory.aliases(GUILD, self.campaign.id, entity_id=ash)
+        (one,) = [a for a in found if a.text == "Old Ash"]
+        self.assertEqual((one.secret, one.status), (False, "proposed"))
+
+    async def test_an_earlier_name_with_a_line_of_its_own_is_folded_into_the_person(self) -> None:
+        from dmbot.memory import lore_read
+
+        _ = lore_read  # (the guard lives in read_lore: the fake reads below go through it)
+        extra: dict[str, Any] = {
+            "names": [
+                *ANSWER["names"],
+                {"name": "Tamsin Vell", "kind": "person", "also": [], "secret": [],
+                 "quote": "Born Tamsin Vell"},
+            ],
+            "connections": ANSWER["connections"],
+        }  # fmt: skip
+        self.ai = lore_fake.lore_ai(json.dumps(extra))
+        self.bot.background_ai = self.bot.background_read_ai = self.ai  # type: ignore[assignment]
+        await self.go()
+        self.assertNotIn("Tamsin Vell", await self.everyone())
+
+    async def test_a_suggested_name_is_not_used_until_the_dm_says_yes(self) -> None:
+        from dmbot.memory.lookup import CampaignLookup
+
+        await self.ash()
+        await self.go()
+        lookup = CampaignLookup.build(await self.memory.lookup_data(GUILD, self.campaign.id))
+        self.assertNotIn(name_key("Tamsin Vell"), lookup.by_key)  # (kept, but not matched yet)
+        found = await self.memory.aliases(GUILD, self.campaign.id, include_secret=True)
+        self.assertIn("Tamsin Vell", {a.text for a in found})
+
+    async def test_originally_x_son_of_z_gives_the_character_a_parent(self) -> None:
+        text = "Originally Brask, son of Hollin, he took the name Rook."
+        answer = {
+            "names": [
+                {"name": "Rook", "kind": "person", "also": [], "secret": ["Brask"],
+                 "quote": "he took the name Rook"},
+                {"name": "Hollin", "kind": "person", "also": [], "secret": [],
+                 "quote": "son of Hollin"},
+            ],
+            "connections": [
+                {"a": "Hollin", "how": "parent", "b": "Brask", "quote": "Brask, son of Hollin"},
+            ],
+        }  # fmt: skip
+        self.ai = lore_fake.lore_ai(json.dumps(answer))
+        self.bot.background_ai = self.bot.background_read_ai = self.ai  # type: ignore[assignment]
+        made = await self.memory.add_entity(
+            GUILD, self.campaign.id, name="Rook", type="character", role="player_character",
+            played_by=1003, status=CONFIRMED, source="dm",
+        )  # fmt: skip
+        await ui_bg.read_background(
+            self.bot, self.campaign, Upload(text, "your lore", True),
+            truth=False, speaker=None, known_by="", started=time.monotonic(),
+        )  # fmt: skip
+        waiting = await self.store.waiting(GUILD, self.campaign.id)
+        (link,) = waiting
+        self.assertEqual((link.predicate, link.detail), ("kin_of", "parent"))
+        self.assertEqual(link.object_id, made.value.id)  # (Hollin is the parent of Rook)
+
+
+class TheFold(unittest.TestCase):
+    def found(self, name: str, also: tuple[str, ...] = (), secret: tuple[str, ...] = ()) -> Any:
+        from dmbot.memory.background import Found
+
+        return Found(name, "npc", also, secret, "q")
+
+    def test_a_reversed_pair_is_one_person_toward_the_name_the_campaign_has(self) -> None:
+        from dmbot.memory.lore_read import fold_names
+
+        lines = [self.found("Tamsin Vell", secret=("Ash Morrow",)), self.found("Ash Morrow")]
+        (one,) = fold_names(lines, lambda name: name == "Ash Morrow")
+        self.assertEqual(one.name, "Ash Morrow")
+        self.assertEqual(one.secret, ("Tamsin Vell",))  # (secret in the line that said so)
+
+    def test_mutual_lines_fold_into_one_and_never_into_none(self) -> None:
+        from dmbot.memory.lore_read import fold_names
+
+        lines = [self.found("A One", also=("B Two",)), self.found("B Two", also=("A One",))]
+        (one,) = fold_names(lines)
+        self.assertEqual((one.name, one.also), ("A One", ("B Two",)))
+
+    def test_the_union_of_the_spellings_is_kept(self) -> None:
+        from dmbot.memory.lore_read import fold_names
+
+        lines = [self.found("Ash", also=("Ashy",)), self.found("Tam", secret=("Ash",), also=("T",))]
+        (one,) = fold_names(lines)
+        self.assertEqual(one.name, "Ash")
+        self.assertEqual(set(one.also), {"Ashy", "T"})
+        self.assertEqual(one.secret, ("Tam",))  # (the other name was secret in the second line)
+
+    def test_two_different_people_stay_two(self) -> None:
+        from dmbot.memory.lore_read import fold_names
+
+        self.assertEqual(len(fold_names([self.found("Mira"), self.found("Wren")])), 2)
+
+
+class TheNameQuestion(NamesTest):
+    """ "Is Tamsin another name of Ash?" in 📜 Check the connections: nothing uses the suggested
+    name until the DM says yes, a no is remembered, only a DM may answer."""
+
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        self.bot.plan_gate = AsyncMock(return_value=None)  # type: ignore[method-assign]
+        self.store = BackstoryLinks(self.db)
+        self.bot.backstory_links = self.store
+        made = await self.memory.add_entity(
+            GUILD, self.campaign.id, name="Ash Morrow", type="character", role="npc",
+            status=CONFIRMED, source="dm",
+        )  # fmt: skip
+        self.ash = made.value.id
+        await ui_bg.save_earlier_names(
+            self.memory, self.campaign, {"Ash Morrow": ("Tamsin Vell",)}, {name_key("Tamsin Vell")}
+        )
+
+    async def card(self) -> Any:
+        from dmbot.ui.name_questions import NameQuestions
+
+        view = NameQuestions(self.campaign.id)
+        self.assertTrue(await view.load(self.it(DM)))
+        return view
+
+    async def test_the_card_asks_in_plain_words_and_says_it_is_secret(self) -> None:
+        view = await self.card()
+        text = view.text()
+        self.assertIn("Is Tamsin Vell another name of Ash Morrow?", text)
+        self.assertIn("Nothing uses the name until you say yes", text)
+        self.assertIn("secret name", text)
+
+    async def test_yes_confirms_the_name_and_it_is_used_from_then_on(self) -> None:
+        from dmbot.memory.lookup import CampaignLookup
+
+        view = await self.card()
+        await next(b for b in view.children if b.label == "✅ Yes, the same person").callback(
+            self.it(DM)
+        )
+        found = await self.memory.aliases(
+            GUILD, self.campaign.id, entity_id=self.ash, include_secret=True
+        )
+        (alias,) = [a for a in found if a.text == "Tamsin Vell"]
+        self.assertEqual((alias.status, alias.secret), ("confirmed", True))
+        lookup = CampaignLookup.build(await self.memory.lookup_data(GUILD, self.campaign.id))
+        self.assertIn(name_key("Tamsin Vell"), lookup.by_key)
+        self.assertEqual(await self.memory.suggested_names(GUILD, self.campaign.id), [])
+
+    async def test_no_is_remembered_and_the_same_text_never_asks_again(self) -> None:
+        view = await self.card()
+        await next(b for b in view.children if b.label == "❌ No, someone else").callback(
+            self.it(DM)
+        )
+        await ui_bg.save_earlier_names(
+            self.memory, self.campaign, {"Ash Morrow": ("Tamsin Vell",)}, {name_key("Tamsin Vell")}
+        )
+        self.assertEqual(await self.memory.suggested_names(GUILD, self.campaign.id), [])
+
+    async def test_only_a_dm_can_answer(self) -> None:
+        from tests.test_memory_names import MANAGER
+
+        view = await self.card()
+        await next(b for b in view.children if b.label == "✅ Yes, the same person").callback(
+            self.it(MANAGER)
+        )
+        (still,) = await self.memory.suggested_names(GUILD, self.campaign.id)
+        self.assertEqual(still[0].status, "proposed")
+
+    async def test_the_connections_button_asks_the_names_first(self) -> None:
+        it = self.it(DM)
+        self.assertTrue(await ui_bg.offer_ready(it, self.campaign.id))
+        said = it.followup.send.await_args.args[0]
+        self.assertIn("another name of Ash Morrow", said)
+
+    async def test_a_second_yes_on_the_same_name_counts_once(self) -> None:
+        view = await self.card()
+        yes = next(b for b in view.children if b.label == "✅ Yes, the same person")
+        await yes.callback(self.it(DM))
+        await yes.callback(self.it(DM))
+        self.assertEqual(view.yes, 1)
+
+    async def test_not_now_keeps_the_question_and_only_a_dm_may_press_it(self) -> None:
+        from tests.test_memory_names import MANAGER
+
+        view = await self.card()
+        not_now = next(b for b in view.children if b.label == "⏭️ Not now")
+        await not_now.callback(self.it(MANAGER))
+        self.assertFalse(view.is_finished())
+        await not_now.callback(self.it(DM))
+        self.assertTrue(view.is_finished())
+        self.assertEqual(len(await self.memory.suggested_names(GUILD, self.campaign.id)), 1)
+
+    async def test_a_failing_count_never_fails_the_read(self) -> None:
+        from unittest.mock import patch
+
+        with patch.object(self.memory, "suggested_names", side_effect=RuntimeError("down")):
+            await ui_bg.save_earlier_names(
+                self.memory,
+                self.campaign,
+                {"Ash Morrow": ("Old Ash",)},
+                (),
+                self.bot.lore_context,
+                "Old Ash",
+            )  # no error
+
+    async def test_a_press_answers_the_card_it_was_made_on_even_if_its_defer_is_slow(self) -> None:
+        import asyncio
+
+        await ui_bg.save_earlier_names(self.memory, self.campaign, {"Ash Morrow": ("Old Ash",)}, ())
+        view = await self.card()
+        yes = next(b for b in view.children if b.label == "✅ Yes, the same person")
+        first_done = asyncio.Event()
+        second = self.it(DM)
+        real_defer = second.response.defer
+
+        async def slow_defer(*args: Any, **kw: Any) -> Any:
+            await first_done.wait()  # this press reaches the server only after the first ended
+            return await real_defer(*args, **kw)
+
+        second.response.defer = slow_defer
+        pressing = asyncio.ensure_future(yes.callback(second))
+        await asyncio.sleep(0)  # (the second press has now been made on card one)
+        await yes.callback(self.it(DM))
+        first_done.set()
+        await pressing
+        # two names waited; two presses on the first card answered the first card only
+        self.assertEqual(view.yes, 1)
+        (still,) = await self.memory.suggested_names(GUILD, self.campaign.id)
+        self.assertEqual(still[0].status, "proposed")
+
+
+class TheSecrecyEdges(NamesTest):
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        self.bot.plan_gate = AsyncMock(return_value=None)  # type: ignore[method-assign]
+        self.store = BackstoryLinks(self.db)
+        self.bot.backstory_links = self.store
+        made = await self.memory.add_entity(
+            GUILD, self.campaign.id, name="Ash Morrow", type="character", role="npc",
+            status=CONFIRMED, source="dm",
+        )  # fmt: skip
+        self.ash = made.value.id
+
+    async def test_a_second_upload_does_not_replace_the_first_ones_knowers(self) -> None:
+        a = (
+            await self.memory.add_entity(
+                GUILD, self.campaign.id, name="Tavin", type="character", role="player_character",
+                played_by=1001, status=CONFIRMED, source="dm",
+            )
+        ).value.id  # fmt: skip
+        b = (
+            await self.memory.add_entity(
+                GUILD, self.campaign.id, name="Wren", type="character", role="player_character",
+                played_by=1002, status=CONFIRMED, source="dm",
+            )
+        ).value.id  # fmt: skip
+        hidden = {name_key("Tamsin Vell")}
+        await ui_bg.save_earlier_names(
+            self.memory, self.campaign, {"Ash Morrow": ("Tamsin Vell",)}, hidden, None, "", a
+        )
+        await ui_bg.save_earlier_names(  # (the same spelling again, by another uploader)
+            self.memory, self.campaign, {"Ash Morrow": ("Tamsin Vell",)}, hidden, None, "", b
+        )
+        (alias,) = [x for x, _ in await self.memory.suggested_names(GUILD, self.campaign.id)]
+        who = await self.memory.alias_knowers(GUILD, self.campaign.id, [alias.id])
+        self.assertEqual(who.get(alias.id, []), [a])  # (the first upload's character, kept)
+
+    async def test_a_connection_through_an_existing_secret_name_stays_secret_under_everyone(
+        self,
+    ) -> None:
+        await self.memory.add_alias(
+            GUILD, self.campaign.id, self.ash, "the hooded stranger", kind="title", secret=True,
+            status=CONFIRMED, source="dm",
+        )  # fmt: skip
+        answer = {
+            "names": [
+                {"name": "Ash Morrow", "kind": "person", "also": ["the hooded stranger"],
+                 "secret": [], "quote": "the hooded stranger"},
+                {"name": "Master Orlen", "kind": "person", "also": [], "secret": [],
+                 "quote": "served Master Orlen"},
+            ],
+            "connections": [
+                {"a": "the hooded stranger", "how": "works for", "b": "Master Orlen",
+                 "quote": "the hooded stranger served Master Orlen"},
+            ],
+        }  # fmt: skip
+        ai = lore_fake.lore_ai(json.dumps(answer))
+        self.bot.background_ai = self.bot.background_read_ai = ai  # type: ignore[assignment]
+        text = "The hooded stranger served Master Orlen."
+        done = await ui_bg.read_background(
+            self.bot, self.campaign, Upload(text, "lore", True),
+            truth=False, speaker=None, known_by="", started=time.monotonic(), choice="world",
+        )  # fmt: skip
+        _ = done
+        waiting = await self.store.waiting(GUILD, self.campaign.id)
+        self.assertFalse([w for w in waiting if not w.secret])  # (never a public row)

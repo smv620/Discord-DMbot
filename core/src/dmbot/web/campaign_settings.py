@@ -6,8 +6,8 @@ database door (`dmbot_web_setting_add`, schema.py), which checks the signed-in p
 campaign; the bot applies it the way Discord's ⚙️ Manage DMbot buttons do (dm_screen/web_settings.py)
 and the page reads where it stands. A server manager who is not a DM, a player and anyone else get
 "not allowed" or "not found", the same as for the other pages. Optional rules (#2753) and game
-masters (#2768) go through the same queue. Not here: hand over, pause and delete (the page sends the
-DM to Discord for those).
+masters (#2768) and pause (#2985, the owner only) go through the same queue. Not here: hand over
+and delete (the page sends the DM to Discord for those).
 
 A campaign is named by `<server>.<campaign>`, as for the recap and transcript pages.
 """
@@ -37,6 +37,7 @@ CHOICES: dict[str, tuple[str, ...]] = {
 
 OPTIONAL_RULE = "optional_rule"  # a fourth choice: one optional rule on or off (#2753)
 CO_DM = "co_dm"  # a fifth: one game master added or removed (#2768)
+PAUSE = "pause"  # a sixth: the campaign paused or unpaused, by its owner (#2985)
 PERSON_ID = re.compile(r"^[1-9][0-9]{0,18}$")  # a Discord id: digits, never a name
 
 
@@ -85,8 +86,26 @@ def _co_dm(body: object) -> tuple[str, bool] | None:
     return person, add
 
 
+def _pause(body: object) -> bool | None:
+    """True to pause, False to unpause, when the body is a pause choice (#2985); None otherwise.
+    `on` must be a real yes or no (true is "pause"). Only the owner may; the door says so and the
+    bot checks the owner and the plan's room again."""
+    if not isinstance(body, dict) or body.get("setting") != PAUSE:
+        return None
+    on = body.get("on")
+    if not isinstance(on, bool):
+        raise RecapError("bad_value")
+    return on
+
+
 async def queue_setting(
-    db: Database, session: Session, ref: str, body: object, *, co_dms_on: bool = False
+    db: Database,
+    session: Session,
+    ref: str,
+    body: object,
+    *,
+    co_dms_on: bool = False,
+    pause_on: bool = False,
 ) -> str:
     """Queue one choice of the signed-in DM for the bot and return its id. A server the person is
     not in is "not found"; a member who is not a DM of the campaign is "not allowed". A shorter
@@ -96,15 +115,24 @@ async def queue_setting(
     _guild_of(session, guild_id)
     if _is_co_dm(body) and not co_dms_on:  # off until the bot applies it too (DMBOT_WEB_CO_DMS)
         raise RecapError("not_found")  # (before the body is judged: a malformed one is 404 too)
+    if isinstance(body, dict) and body.get("setting") == PAUSE and not pause_on:
+        raise RecapError("not_found")  # off until the bot applies it too (DMBOT_WEB_PAUSE)
     rule = _optional_rule(body)
     master = _co_dm(body)
-    setting, value, confirmed = ("", "", False) if rule or master else _arguments(body)
+    pause = _pause(body)
+    setting, value, confirmed = (
+        ("", "", False) if rule or master or pause is not None else _arguments(body)
+    )
     async with db.user(session.user_id, session=session.id_hash) as conn:
         await _scoped(conn, guild_id)
         if rule:
             cur = await conn.execute(
                 "SELECT dmbot_web_optional_rule_add(%s, %s, %s, %s) AS r",
                 (guild_id, campaign_id, rule[0], rule[1]),
+            )
+        elif pause is not None:
+            cur = await conn.execute(
+                "SELECT dmbot_web_pause_add(%s, %s, %s) AS r", (guild_id, campaign_id, pause)
             )
         elif master:
             cur = await conn.execute(

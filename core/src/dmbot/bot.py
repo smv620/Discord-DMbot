@@ -46,6 +46,7 @@ from dmbot import (
     hours,
     images,
     install,
+    lore_upload,
     mail,
     owner_presence,
     plan_rules,
@@ -255,6 +256,7 @@ from dmbot.memory import (
     embedding,
     extractor,
     lore_context,
+    lore_queue,
     meaning,
     plan_reader,
     report_make,
@@ -329,6 +331,7 @@ from dmbot.recaps.audio.files import AudioFiles
 from dmbot.recaps.audio.worker import AudioWorker
 from dmbot.recaps.discord import (
     HINTS_WAIT_S,
+    LORE_SWEEP_EVERY_S,
     NAME_ANSWERS_PER_ROUND,
     RecapFeatures,
 )
@@ -394,6 +397,7 @@ from dmbot.transcript import speaker_question as speaker_q
 from dmbot.transcript import spelled as spelled_out
 from dmbot.transcript import stream as transcript_lines
 from dmbot.transcript import suggestions as line_suggestions
+from dmbot.transcript.attendance import session_speakers
 from dmbot.transcript.cleaner import (
     DM_EDIT,
     IMAGE_EDIT,
@@ -888,6 +892,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self.name_answers = name_answers.AnswerStore(recaps.db) if recaps is not None else None
         # What DMs did on the website's All names page, waiting to be applied (#2294).
         self.name_actions = web_actions.ActionStore(recaps.db) if recaps is not None else None
+        # The lore DMs uploaded on the website, waiting to be read (#3022), and the reads running.
+        self.lore_uploads = lore_queue.LoreQueue(recaps.db) if recaps is not None else None
+        self._lore_reads: dict[int, asyncio.Task[None]] = {}  # server -> its read in progress
+        self._lore_swept: dict[int, float] = {}  # server -> when its queue was last swept
         # What DMs chose on the website's Settings page, waiting to be applied (#2463).
         self.web_settings = web_settings.SettingStore(recaps.db) if recaps is not None else None
         # What DMs chose on the website's rule sharing section, waiting to be applied (#2793).
@@ -1617,6 +1625,13 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         with contextlib.suppress(Exception):
             await asyncio.wait_for(self.ai_watch.wait(), 3)
         document_reader.shutdown()  # files being read: end them, don't wait out their limit
+        # Website lore uploads being read: each puts its claim back to waiting (the next start reads
+        # it again) and is waited for here, so the write is not lost with the process (#3022).
+        reads = list(getattr(self, "_lore_reads", {}).values())  # a test stub skips __init__
+        for read in reads:
+            read.cancel()
+        with contextlib.suppress(Exception):
+            await asyncio.wait_for(asyncio.gather(*reads, return_exceptions=True), 5)
         for reading in list(self.plan_reads.values()):
             reading.cancel()  # a read in progress is stopped; it carries on when a DM presses again
         if self._eleven_http is not None:
@@ -2843,6 +2858,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
 
         steps: list[tuple[str, Callable[[], Awaitable[Any]]]] = [
             ("stored transcript", stored),
+            # After the stored transcript: its lines say who took part (#3036).
+            ("the party", lambda: self.link_the_party(table)),
             ("stop button", lambda: self._remove_stop_button(table)),
             ("capture check", lambda: self.post_summary(table)),
             ("final transcript", channel),
@@ -8294,6 +8311,31 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             log.exception("Couldn't write an answer into its stored line")
             return False
 
+    async def link_the_party(self, table: Table) -> None:
+        """After a live session: the player characters whose players took part know each other and
+        are members of The party (#3036). By rule, from who had a line in the stored session; only
+        people who still agree count. Counts only in the log."""
+        if self.memory is None or table.campaign_id is None or table.transcript_session_id is None:
+            return
+        gid, cid = table.guild_id, table.campaign_id
+        with log_context(guild_id=gid, campaign_id=cid):
+            await self._link_the_party(gid, cid, table.transcript_session_id)
+
+    async def _link_the_party(self, gid: int, cid: str, session_id: str) -> None:
+        """Link the party for one stored session's speakers. Shared by live sessions and imports, so
+        the rule and the consent check are the same for both."""
+        assert self.memory is not None and self.transcripts is not None
+        speakers = await session_speakers(self.transcripts.db, gid, cid, session_id)
+        # Agreed, not "recorded now": a pause is temporary, and who took part is a fact (#3036).
+        agreed = await self.consent.agreed(gid)
+        linked = await self.memory.link_party(gid, cid, {u for u in speakers if u in agreed})
+        log.info(
+            "The party: %d characters, %d pairs, %d members",
+            linked.characters,
+            linked.pairs,
+            linked.members,
+        )
+
     async def learn_people(self, table: Table) -> None:
         """After a session: turn the names people answered to at least twice into waiting
         questions for the DM (#1188). Only people who still agree; the questions are saved
@@ -8495,6 +8537,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 skip=skip,
                 after_ms=after_ms,
                 readings=self.settings.story_readings_on,
+                family_only=self.settings.story_family_only,
                 count_call=lambda: transcripts.record_extraction(
                     gid, sid, through_ms=0, calls=1, now=int(time.time())
                 ),
@@ -8651,6 +8694,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 skip=skip,
                 after_ms=0,
                 readings=self.settings.story_readings_on,
+                family_only=self.settings.story_family_only,
                 count_call=lambda: transcripts.record_extraction(
                     gid, sid, through_ms=0, calls=1, now=int(time.time())
                 ),
@@ -10142,6 +10186,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         scanned, never once per session. Counts only in the log."""
         assert self.import_job is not None
         store = self.import_job.store
+        # First: the DM's "plays which character" choices, so a session scanned below is linked to
+        # the characters those choices make the players' own (#3036).
+        await self._apply_import_plays(gid, store)
         done = 0
         for ready in await store.ready_for_scan(gid):
             with log_context(guild_id=gid, campaign_id=ready.campaign_id):
@@ -10154,6 +10201,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     async with asyncio.timeout(STALE_SCAN_S // 3):
                         added = await self._scan_import(gid, ready)
                     await store.finish_scan(gid, ready.session_id, int(time.time()))
+                    await self._link_import_party(gid, ready)
                     done += 1
                     self._import_names.setdefault(ready.campaign_id, []).extend(added)
                 except Exception:
@@ -10170,6 +10218,16 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         await self._apply_import_plays(gid, store)
         await self._tell_import_news(gid, store)
         return done
+
+    async def _link_import_party(self, gid: int, ready: Ready) -> None:
+        """After an imported session's scan is done: link its party (#3036). Its own `try`: a
+        failure here is logged and never reaches the scan's claim or counts, which are settled."""
+        if self.memory is None:
+            return
+        try:
+            await self._link_the_party(gid, ready.campaign_id, ready.session_id)
+        except Exception:
+            log.exception("Import: couldn't link the party for a session")
 
     async def _apply_import_plays(self, gid: int, store: ImportStore) -> None:
         """The DM's "plays which character" choices from the import page become links, through a
@@ -10608,6 +10666,35 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     log.info("Name action %s: %s", action.action, done.error or "done")
                     if not done.error and self.lookup is not None:
                         self.lookup.mark_stale(guild.id, action.campaign_id)
+
+    async def run_lore_uploads(self) -> None:
+        """The lore DMs uploaded on the website (#3022): for each server, sweep its queue (words
+        never stay just because the DM did not come back), and when no read is running there, take
+        the oldest waiting upload and read it in its own task. A read takes minutes, so it must not
+        hold this loop, which every other website action shares. One read at a time per server."""
+        queue = self.lore_uploads
+        if queue is None or self.memory is None:
+            return
+        for guild in list(self.guilds):
+            if self._closing:
+                return
+            running = self._lore_reads.get(guild.id)
+            if running is not None and running.done():
+                del self._lore_reads[guild.id]
+                running = None
+            now = time.monotonic()
+            if now - self._lore_swept.get(guild.id, -LORE_SWEEP_EVERY_S) >= LORE_SWEEP_EVERY_S:
+                self._lore_swept[guild.id] = now
+                await queue.sweep(guild.id)
+            if running is not None:
+                continue
+            claim = await queue.claim_next(guild.id)
+            if claim is None:
+                continue
+            with log_context(guild_id=guild.id, campaign_id=claim.campaign_id):
+                self._lore_reads[guild.id] = asyncio.ensure_future(
+                    lore_upload.run_upload(self, queue, claim, guild.id)
+                )
 
     # ---- the website's Settings page (#2463): the Host of dm_screen.web_settings ----
 

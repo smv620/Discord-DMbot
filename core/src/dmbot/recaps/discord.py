@@ -123,6 +123,7 @@ if TYPE_CHECKING:  # (only for annotations: `bot.py` imports this module)
     from dmbot.memory.exposures import ExposureStore
     from dmbot.memory.importance import ImportanceCache
     from dmbot.memory.lookup import LookupCache
+    from dmbot.memory.lore_queue import LoreQueue
     from dmbot.memory.store import MemoryStore
     from dmbot.memory.web_actions import ActionStore
     from dmbot.memory.web_sheets import ActionStore as SheetActionStore
@@ -154,6 +155,7 @@ WEB_RESTORE_TIDY_EVERY = 30  # rounds (about a minute) between the restore rows'
 RECAP_REQUEST_ROUND_S = 2  # how often the bot looks for what a DM typed on the recap page
 RECAP_REQUESTS_PER_ROUND = 3  # for one server, so one busy server can't hold the others
 RECAP_VOICE_AT_ONCE = 3  # spoken notes written down at the same time, in all servers (#2161)
+LORE_SWEEP_EVERY_S = 30.0  # how often a server's lore upload queue is swept for stale rows (#3022)
 NAME_ANSWERS_PER_ROUND = 10  # a page of names answered at once, for one server
 CLIP_SWEEP_EVERY = (
     30  # rounds (about a minute) between sweeps of voice clips older than ten minutes
@@ -233,6 +235,7 @@ class RecapFeatures:
         mailer: Mailer | None
         memory: MemoryStore | None
         meter: Meter | None
+        lore_uploads: LoreQueue | None
         name_actions: ActionStore | None
         name_answers: name_answers.AnswerStore | None
         peek_notices: PeekNotices | None
@@ -310,6 +313,7 @@ class RecapFeatures:
             remember: Hashable | None = None,
         ) -> discord.Message | None: ...
         async def run_name_actions(self) -> None: ...
+        async def run_lore_uploads(self) -> None: ...
         async def run_peek_notices(self) -> None: ...
         async def run_web_settings(self) -> None: ...
         async def run_web_rule_sharing(self) -> None: ...
@@ -1921,6 +1925,10 @@ class RecapFeatures:
                 await self.run_name_actions()
             except Exception as exc:
                 log.warning("The name actions failed: %s", type(exc).__name__)
+            try:
+                await self.run_lore_uploads()
+            except Exception as exc:
+                log.warning("The lore uploads failed: %s", type(exc).__name__)
             try:
                 await self.run_web_settings()
             except Exception as exc:
