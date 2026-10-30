@@ -271,6 +271,20 @@ export default function WebMap({
     const pair = (): [{ x: number; y: number }, { x: number; y: number }] =>
       [...pointers.current.values()].slice(0, 2) as [{ x: number; y: number }, { x: number; y: number }];
     const move = (m: PointerEvent): void => {
+      const before = pointers.current.get(m.pointerId);
+      if (before) pointers.current.set(m.pointerId, { x: m.clientX, y: m.clientY });
+      // Two fingers are a pinch, wherever they landed (on a name or on the empty space): it comes before a
+      // name's drag and before panning, so a pinch that starts on a name still zooms (#3015).
+      if (pointers.current.size >= 2 && pinch.current) {
+        const [p, q] = pair();
+        const now = Math.hypot(p.x - q.x, p.y - q.y);
+        if (now > 0) {
+          setView((v) => zoomAbout(v, toDrawingRef.current((p.x + q.x) / 2, (p.y + q.y) / 2), now / (pinch.current ?? now)));
+          pinch.current = now;
+          dragged.current = true;
+        }
+        return;
+      }
       const grab = dragName.current;
       if (grab) {
         if (!grab.moved && Math.hypot(m.clientX - grab.x, m.clientY - grab.y) <= 5) return;
@@ -289,19 +303,7 @@ export default function WebMap({
         setFrame((f) => f + 1);
         return;
       }
-      const before = pointers.current.get(m.pointerId);
       if (!before) return;
-      pointers.current.set(m.pointerId, { x: m.clientX, y: m.clientY });
-      if (pointers.current.size >= 2 && pinch.current) {
-        const [p, q] = pair();
-        const now = Math.hypot(p.x - q.x, p.y - q.y);
-        if (now > 0) {
-          setView((v) => zoomAbout(v, toDrawingRef.current((p.x + q.x) / 2, (p.y + q.y) / 2), now / (pinch.current ?? now)));
-          pinch.current = now;
-          dragged.current = true;
-        }
-        return;
-      }
       const from = start.current.get(m.pointerId);
       if (from && Math.hypot(m.clientX - from.x, m.clientY - from.y) > 5) dragged.current = true;
       const u = unitsRef.current();
@@ -310,6 +312,9 @@ export default function WebMap({
       setView((v) => ({ ...v, x: v.x + dx, y: v.y + dy }));
     };
     const up = (u: PointerEvent): void => {
+      pointers.current.delete(u.pointerId);
+      start.current.delete(u.pointerId);
+      if (pointers.current.size < 2) pinch.current = null;
       if (dragName.current) {
         const grab = dragName.current;
         dragName.current = null;
@@ -320,9 +325,6 @@ export default function WebMap({
         setTimeout(() => (dragged.current = false), 0);
         return;
       }
-      pointers.current.delete(u.pointerId);
-      start.current.delete(u.pointerId);
-      if (pointers.current.size < 2) pinch.current = null;
       // The click that follows a drag arrives after this; forget the drag only once it has passed.
       if (pointers.current.size === 0) setTimeout(() => (dragged.current = false), 0);
     };
@@ -344,6 +346,8 @@ export default function WebMap({
     if (pointers.current.size === 2) {
       const [p, q] = [...pointers.current.values()] as [{ x: number; y: number }, { x: number; y: number }];
       pinch.current = Math.hypot(p.x - q.x, p.y - q.y);
+      // A second finger turns a name's drag into a pinch: the name stays where it was.
+      dragName.current = null;
     }
   };
 
@@ -489,7 +493,7 @@ export default function WebMap({
         viewBox={`${-e} ${-e} ${2 * e} ${2 * e}`}
         role="group"
         aria-label={words.mapLabel(nodes.length, byId.get(center)?.name ?? "")}
-        onPointerDown={down}
+        onPointerDownCapture={down}
         onWheel={(ev) => {
           if (!ev.ctrlKey && !ev.metaKey) return; // plain scrolling belongs to the page
           ev.preventDefault();
@@ -582,6 +586,7 @@ export default function WebMap({
                 aria-label={words.nameButton(n.name)}
                 onPointerDown={(ev) => {
                   ev.stopPropagation();
+                  if (pointers.current.size > 1) return; // a second finger: a pinch, not a drag of this name
                   dragName.current = { id: n.id, x: ev.clientX, y: ev.clientY, moved: false };
                   dragged.current = false;
                 }}

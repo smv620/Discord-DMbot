@@ -1,7 +1,8 @@
 /** @jsxImportSource preact */
 // What every page of one campaign starts with (#2461; docs/PLAN.md, "Where everything is on the
-// website"): the breadcrumb "My Account › <Campaign> › <Page>" and the campaign's four tabs (Story,
-// At the table, Rules, Settings), with the one this page belongs to marked. It replaces the old
+// website"): the breadcrumb "My Account › <Campaign> › <Page>", the campaign's tabs (Overview, Story,
+// Add to the story, Rules, Settings) with the one this page belongs to marked, and under them the pages in
+// that part, so a DM always sees where they are and what else is next to it (#2985). It replaces the old
 // "← <campaign>" back links, so nobody is lost. The Settings tab is only for the campaign's game
 // masters, as the API names them (a missing or new role shows no Settings: it fails closed).
 import { useEffect, useState } from "preact/hooks";
@@ -9,32 +10,9 @@ import { useEffect, useState } from "preact/hooks";
 import { campaignPage as words } from "../content/campaign-page";
 import { type AccountApi, type CampaignPage } from "./api";
 import { campaignHref } from "./campaignLinks";
+import { type CampaignGroup, type CampaignPageKey, GROUP_OF, sectionPages } from "./campaignSections";
 
-export type CampaignGroup = "story" | "table" | "rules" | "settings";
-
-/** Which page this is: it decides the last crumb and the marked tab. */
-export type CampaignPageKey =
-  | "campaign"
-  | "recaps"
-  | "timeline"
-  | "graph"
-  | "names"
-  | "transcripts"
-  | "import"
-  | "houseRules"
-  | "homebrew";
-
-const GROUP_OF: Record<CampaignPageKey, CampaignGroup | null> = {
-  campaign: null,
-  recaps: "story",
-  timeline: "story",
-  graph: "story",
-  names: "story",
-  transcripts: "table",
-  import: "table",
-  houseRules: "rules",
-  homebrew: "rules",
-};
+export type { CampaignGroup, CampaignPageKey };
 
 // One read of the campaign's page per campaign, kept for this page load and shared by the navs that
 // ask, so a page with two of them does not ask twice. (The campaign's own page reads for itself,
@@ -82,14 +60,30 @@ export default function CampaignNav({
   }, [api, campaignRef]);
 
   const campaign = name || found?.name || words.thisCampaign;
-  const here = GROUP_OF[page];
+  // Settings is a part of the campaign's own page: its tab is the marked one once the person has gone there (#settings).
+  const [hash, setHash] = useState(typeof window === "undefined" ? "" : window.location.hash);
+  useEffect(() => {
+    const on = (): void => setHash(window.location.hash);
+    window.addEventListener("hashchange", on);
+    return () => window.removeEventListener("hashchange", on);
+  }, []);
+  const here = page === "campaign" && hash === "#settings" ? "settings" : GROUP_OF[page];
   const isDm = found?.role === "owner" || found?.role === "co-dm";
   const home = campaignHref(campaignRef);
   const listName = page === "campaign" ? null : words.pages[page];
   // A page inside a list (one NPC, one recap) names itself last and links the list before it.
   const listHref = page === "names" ? `/account/names/${encodeURIComponent(campaignRef)}` : `/account/recaps?campaign=${encodeURIComponent(campaignRef)}`;
   const pageName = label ?? listName;
-  const tabs: CampaignGroup[] = isDm ? ["story", "table", "rules", "settings"] : ["story", "table", "rules"];
+  const parts = sectionPages(campaignRef, { isDm, importsOn: found?.importsOn });
+  // Each tab opens the first page of its part (Settings, the Overview's settings); a part with no page for this
+  // person (Add to the story, for a player) has no tab.
+  const tabs: { group: CampaignGroup; href: string }[] = [{ group: "overview", href: home }];
+  for (const group of ["story", "add", "rules"] as const) {
+    const first = parts[group][0];
+    if (first) tabs.push({ group, href: first.href });
+  }
+  if (isDm) tabs.push({ group: "settings", href: `${home}#settings` });
+  const inPart = here === "story" || here === "add" || here === "rules" ? parts[here] : [];
 
   return (
     <div class="campaign-nav">
@@ -115,15 +109,28 @@ export default function CampaignNav({
       </nav>
       <nav aria-label={words.tabsLabel}>
         <ul class="tabs">
-          {tabs.map((group) => (
+          {tabs.map(({ group, href }) => (
             <li key={group}>
-              <a href={`${home}#${group}`} aria-current={here === group ? "location" : undefined}>
+              <a href={href} aria-current={here === group ? "location" : undefined}>
                 {words.groups[group]}
               </a>
             </li>
           ))}
         </ul>
       </nav>
+      {inPart.length > 1 && (
+        <nav aria-label={words.pagesLabel}>
+          <ul class="tabs subtabs">
+            {inPart.map((p) => (
+              <li key={p.key}>
+                <a href={p.href} aria-current={p.key === page ? "page" : undefined}>
+                  {p.label}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </nav>
+      )}
     </div>
   );
 }

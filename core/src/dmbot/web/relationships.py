@@ -56,7 +56,23 @@ def check_words(decided: object) -> str:
     return checked_line(decided).strip() if isinstance(decided, str) else ""
 
 
-def edges_from(rows: list[dict[str, Any]], *, can_edit: bool) -> list[dict[str, Any]]:
+def who_knows(link: dict[str, Any]) -> dict[str, Any]:
+    """ "Who knows this?" of one connection, for a DM (#2935).
+
+    `who` is "all" when the table may know it (it is not held back), "some" when it is held back
+    and some player characters know it, else "dm". `knownBy` lists those characters ({id, name},
+    empty unless "some"). A connection is held back when it is secret or the party has not
+    learned it (the door says so, by the rule Discord uses). Public readers never see either field.
+    """
+    held = bool(link["held"])
+    known = list(link["known_by"] or [])
+    who = "all" if not held else ("some" if known else "dm")
+    return {"who": who, "knownBy": known if who == "some" else []}
+
+
+def edges_from(
+    rows: list[dict[str, Any]], *, can_edit: bool, is_dm: bool = False
+) -> list[dict[str, Any]]:
     """The door's connections grouped one edge for each pair of names (`a` the smaller ID), each
     with its `label` (the words of the label connection), `more` (how many others there are) and
     every connection as `links`: {id, words, secret, revealed, direction, kind}. `direction` says
@@ -86,6 +102,10 @@ def edges_from(rows: list[dict[str, Any]], *, can_edit: bool) -> list[dict[str, 
                 "check": check_words(row.get("decided")),
                 "direction": direction,
                 "kind": link_kind(str(row["predicate"])),  # for the map's colours (#2942)
+                # the player characters who know a held-back connection (#2935); only the DM's full
+                # view carries them (the door sends nothing otherwise)
+                "known_by": row.get("knownBy"),
+                "held": row.get("held"),
                 "at": int(row["at"]),
             }
         )
@@ -110,6 +130,7 @@ def edges_from(rows: list[dict[str, Any]], *, can_edit: bool) -> list[dict[str, 
                         "check": x["check"] if can_edit else "",
                         "direction": x["direction"],
                         "kind": x["kind"],
+                        **(who_knows(x) if is_dm else {}),
                     }
                     for x in links
                 ],
@@ -205,7 +226,13 @@ async def read_web(
     return {
         "center": got["center"],
         "nodes": nodes,
-        "edges": edges_from(got["edges"], can_edit=bool(got["seesAll"])),
+        "edges": edges_from(
+            got["edges"],
+            can_edit=bool(got["seesAll"]),
+            # "Who knows this?" is the DM's alone, in the full view: a player who peeks sees
+            # everything the DM screen shows, but not which characters know what (#2935)
+            is_dm=bool(got["canEdit"]) and bool(got["seesAll"]),
+        ),
         "truncated": bool(got["truncated"]),
         "maxHops": MAX_HOPS,
         "canEdit": bool(got["canEdit"]),
@@ -377,6 +404,27 @@ async def find_names(
         if needle in str(n["name"]).casefold()
     ]
     return found[:FIND_LIMIT]
+
+
+async def read_characters(db: Database, session: Session, ref: str) -> dict[str, Any]:
+    """The campaign's player characters, for "Who knows this?" (#2935).
+
+    They are the only ones a DM may say know something (the tick boxes). DM only: anyone else, and
+    a campaign that is not theirs, is "not found", so nothing hints at who plays what. At most one
+    menu's worth (25), by name.
+    """
+    guild_id, campaign_id = _parse(ref)
+    _guild_of(session, guild_id)
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        cur = await conn.execute(
+            "SELECT dmbot_web_player_characters(%s, %s) AS r", (guild_id, campaign_id)
+        )
+        found = await cur.fetchone()
+    got = found["r"] if found else None
+    if got is None:
+        raise RecapError("not_found")
+    return {"characters": [{"id": str(c["id"]), "name": str(c["name"])} for c in got]}
 
 
 async def peek(db: Database, session: Session, ref: str) -> dict[str, Any]:

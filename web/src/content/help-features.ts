@@ -45,7 +45,7 @@ export const featureSteps: FeatureStep[] = [
   {
     audience: "gameMaster",
     whatsNew: "Your campaign has its own home",
-    text: "Each campaign has its own page on the website, in four parts: Story, At the table, Rules and Settings. Settings is only for game masters. A trail at the top shows where you are, and four tabs let you jump to another part.",
+    text: "Each campaign has its own page on the website, in five parts: Overview, Story, Add to the story, Rules and Settings. Add to the story and Settings are only for game masters. A trail at the top shows where you are, the tabs jump to another part, and under them are the pages in the part you are in.",
   },
   {
     audience: "gameMaster",

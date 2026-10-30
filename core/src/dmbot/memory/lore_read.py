@@ -769,7 +769,6 @@ async def read_lore(
     gate: AbstractAsyncContextManager[Any],
     *,
     skip_name: Callable[[str], bool] | None = None,
-    skip_pair: Callable[[str, str], bool] | None = None,
     progress: Callable[[str, int, int], None] | None = None,
     aliases: Mapping[str, Sequence[str]] | None = None,
     hold_open: bool = False,
@@ -777,9 +776,10 @@ async def read_lore(
     """Both passes over the whole text. Nothing here stores anything: the caller merges the
     names, keeps what the campaign can hold and shows the DM every suggestion.
 
-    `skip_name` and `skip_pair` say what the campaign already has (a name's spelling; two names
-    that are already connected): those lines are dropped before pass 2, so a second run of a
-    long background shapes only the rest instead of the same first slices again.
+    `skip_name` says which names the campaign already has (a spelling): those lines are dropped
+    before pass 2, so a second run of a long background shapes only the rest instead of the same
+    first slices again. A connection is never dropped for its pair being connected: a different
+    kind may be a change the DM wants to see (#3021), so it is checked after shaping.
 
     `progress(stage, done, total)` is told where the read is, with counts only (never text):
     "reading" while pass 1 runs (no call number: the screen would read it as failures, #2932),
@@ -811,12 +811,6 @@ async def read_lore(
         listed.names = [
             n for n in listed.names if not skip_name(line_name(n)) or _gives_spellings(n)
         ]
-    if skip_pair is not None:
-        before = len(listed.links)
-        listed.links = [
-            x for x in listed.links if not ((e := line_ends(x)) is not None and skip_pair(*e))
-        ]
-        stats.dropped["already_connected"] += before - len(listed.links)
     names: list[bg.Found] = []
     links: list[bg.Connection] = []
     by = SHAPE_LINES

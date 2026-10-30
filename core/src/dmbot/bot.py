@@ -454,6 +454,7 @@ from dmbot.ui import (
     image_fix,
     looked_at,
     name_pass_undo,
+    player_id,
     recap_audio,
     shared_rules_defs,
 )
@@ -10541,28 +10542,20 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         return batch_of
 
     def _player_lookup(self, guild_id: int) -> web_actions.PlayerLookupFn:
-        """Who a Discord ID is, for the website's "Please confirm: <name>" (#3004): the name Discord
-        shows (the display name, else the username), whether it is a bot, and whether the person is
-        in this server yet. Discord's user lookup, not a member one, so someone who has not joined
-        can be found. None when Discord does not know the ID; a failed lookup raises, so it is
-        never read as "unknown"."""
+        """Who a Discord ID is, for the website's "Please confirm: <name>" (#3004): the lookup the
+        Discord side uses too (`ui.player_id.look_up`: Discord's user lookup, so someone who has not
+        joined can be found). None when Discord does not know the ID; a failed lookup raises, so it
+        is never read as "unknown" and the action fails and can be sent again."""
 
         async def look_up(user_id: int) -> web_actions.PlayerLookup | None:
-            guild = self.get_guild(guild_id)
-            if guild is None:
-                raise RuntimeError("the server is not reachable")
-            member = guild.get_member(user_id)
-            user: discord.User | discord.Member | None = member
-            if user is None:
-                try:
-                    user = await asyncio.wait_for(
-                        self.fetch_user(user_id), game_masters.LOOKUP_S * 4
-                    )
-                except discord.NotFound:
-                    return None
-            return web_actions.PlayerLookup(
-                name=user.global_name or user.name, bot=user.bot, in_server=member is not None
-            )
+            found = await player_id.look_up(self, guild_id, str(user_id))
+            if found.kind == player_id.FOUND:
+                return web_actions.PlayerLookup(found.name, False, found.in_server)
+            if found.kind == player_id.BOT:
+                return web_actions.PlayerLookup("", True, True)
+            if found.kind == player_id.FAILED:
+                raise RuntimeError("Discord could not be asked")
+            return None  # Discord does not know that ID (or it is not one)
 
         return look_up
 
