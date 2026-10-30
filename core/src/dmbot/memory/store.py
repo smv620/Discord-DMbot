@@ -3578,7 +3578,7 @@ class MemoryStore:
                 RELATIONS,
                 " AND ((predicate = %s AND subject_id = ANY(%s) AND object_id = ANY(%s))"
                 " OR (predicate = %s AND subject_id = ANY(%s) AND object_id = %s))",
-                [party_mod.KNOWS, chars, chars, party_mod.MEMBER_OF, chars, faction],
+                [party_mod.KNOWS, chars, chars, party_mod.MEMBER_OF, chars, faction or ""],
             )  # (every status: a connection the DM removed is still "had")
             have = {(r["subject_id"], r["predicate"], r["object_id"]) for r in held}
             pairs = members = 0
@@ -3589,7 +3589,7 @@ class MemoryStore:
                     w, a, party_mod.KNOWS, b, confidence=1.0, status=CONFIRMED, leave=True
                 )
                 pairs += 1
-            for c in chars:
+            for c in chars if faction is not None else ():  # (no party: the DM rejected it)
                 if (c, party_mod.MEMBER_OF, faction) in have:
                     continue
                 await self.add_relation_in(

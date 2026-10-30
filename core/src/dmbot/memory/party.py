@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from dmbot.memory._changes import ALIASES, ENTITIES, Changes
-from dmbot.memory.models import CONFIRMED, PARTY_SOURCE, PLAYER_CHARACTER, new_id
+from dmbot.memory.models import CONFIRMED, PARTY_SOURCE, PLAYER_CHARACTER, REJECTED, new_id
 
 PARTY_NAME = "The party"
 KNOWS, MEMBER_OF = "knows", "member_of"
@@ -54,13 +54,16 @@ async def characters_of(w: Changes, user_ids: Collection[int]) -> list[str]:
     return sorted(str(r["id"]) for r in newest.values())
 
 
-async def find_or_make(w: Changes) -> tuple[str, bool]:
+async def find_or_make(w: Changes) -> tuple[str | None, bool]:
     """(the party faction's id, whether it was just made). Found by its source, whatever the DM
-    renamed it to; a rejected or merged one is gone, and a new one is made."""
+    renamed it to. One the DM rejected is their word that there is no such group: no id (None),
+    nothing is made again and nobody is added to it. A merged one is gone, and a new one is made."""
     rows = await w.select(ENTITIES, " AND source = %s AND type = 'faction'", [PARTY_SOURCE])
     live = [r for r in rows if r["status"] == CONFIRMED and r["merged_into"] is None]
     if live:
         return str(min(live, key=lambda r: (r["created_at"], r["id"]))["id"]), False
+    if any(r["status"] == REJECTED for r in rows):
+        return None, False
     row = await w.insert(
         ENTITIES,
         {
