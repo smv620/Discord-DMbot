@@ -22,7 +22,7 @@ def fake_bot(*, memory: bool = True) -> Any:
     bot.memory = AsyncMock() if memory else None
     if memory:
         bot.memory.link_party = AsyncMock(return_value=PartyLinked(2, 1, 2, True))
-    bot.consent.consenting = AsyncMock(return_value=frozenset({1, 3}))
+    bot.consent.agreed = AsyncMock(return_value=frozenset({1, 3}))
     bot.transcripts = SimpleNamespace(db=MagicMock())
     bot._link_the_party = partial(DMBot._link_the_party, bot)
     return bot

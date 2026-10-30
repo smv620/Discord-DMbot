@@ -32,7 +32,7 @@ class ThePartyBackfill(NamesTest):
         await self.session(GUILD, self.campaign.id, list(PLAYERS.values()), started_at=100)
         # The stub says everyone still agrees; the consent store itself is tested elsewhere.
         consent = MagicMock()
-        consent.consenting = AsyncMock(return_value=frozenset(PLAYERS.values()))
+        consent.agreed = AsyncMock(return_value=frozenset(PLAYERS.values()))
         self.consent_patch = patch.object(link_party, "ConsentStore", return_value=consent)
         self.consent_patch.start()
         self.addCleanup(self.consent_patch.stop)
@@ -61,11 +61,21 @@ class ThePartyBackfill(NamesTest):
     async def test_a_dry_run_counts_and_writes_nothing(self) -> None:
         totals = await link_party.backfill(self.db, args(dry_run=True))
 
-        self.assertEqual(
-            (totals.campaigns, totals.sessions, totals.characters, totals.pairs, totals.members),
-            (1, 1, 3, 3, 3),
-        )
+        self.assertEqual((totals.campaigns, totals.sessions, totals.speakers), (1, 1, 3))
+        self.assertEqual((totals.characters, totals.pairs, totals.members), (0, 0, 0))
         self.assertEqual(await self.knows(GUILD, self.campaign.id), 0)
+
+    async def test_a_dry_run_over_two_sessions_writes_nothing_and_a_real_run_counts_exactly(
+        self,
+    ) -> None:
+        await self.session(GUILD, self.campaign.id, list(PLAYERS.values()), started_at=200)
+
+        dry = await link_party.backfill(self.db, args(dry_run=True))
+        real = await link_party.backfill(self.db, args())
+
+        self.assertEqual((dry.sessions, dry.speakers), (2, 6))
+        self.assertEqual((real.sessions, real.pairs, real.members), (2, 3, 3))
+        self.assertEqual(await self.knows(GUILD, self.campaign.id), 3)
 
     async def test_a_real_run_links_each_session_and_a_second_run_adds_nothing(self) -> None:
         first = await link_party.backfill(self.db, args())

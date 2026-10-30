@@ -6,6 +6,7 @@ from __future__ import annotations
 from dmbot.campaigns import CampaignStore
 from dmbot.memory.models import new_id
 from dmbot.transcript.attendance import session_speakers
+from dmbot.transcript.models import OFF_RECORD, SIDEBAR_ANSWER
 from tests.pg import DatabaseTest
 
 GUILD, OTHER, DM = 111, 222, 9
@@ -48,3 +49,29 @@ class TheSpeakers(DatabaseTest):
         session = await self.add_session(GUILD, campaign.id, [])
 
         self.assertEqual(await session_speakers(self.db, GUILD, session), set())
+
+    async def test_only_table_speech_counts(self) -> None:
+        # The DM's sidebar question, a typed chat line and an off-the-record marker each have a user
+        # id, but none of them is speaking at the table.
+        campaign = await CampaignStore(self.db).create(GUILD, "Frostmaiden", DM)
+        session = new_id()
+        async with self.db.guild(GUILD) as conn:
+            await conn.execute(
+                "INSERT INTO transcript_sessions (id, guild_id, campaign_id, started_at,"
+                " ended_at, line_count) VALUES (%s, %s, %s, 100, 200, 3)",
+                (session, GUILD, campaign.id),
+            )
+            for user, sidebar, typed in (
+                (DM, SIDEBAR_ANSWER, False),
+                (2001, None, True),
+                (2002, OFF_RECORD, False),
+                (1001, None, False),
+            ):
+                await conn.execute(
+                    "INSERT INTO transcript_lines (guild_id, session_id, started_ms, user_id,"
+                    " heard, duration_ms, sidebar, typed) VALUES (%s, %s, 5, %s, 'we meet',"
+                    " 1000, %s, %s)",
+                    (GUILD, session, user, sidebar, typed),
+                )
+
+        self.assertEqual(await session_speakers(self.db, GUILD, session), {1001})

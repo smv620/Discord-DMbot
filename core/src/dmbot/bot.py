@@ -8312,7 +8312,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         the rule and the consent check are the same for both."""
         assert self.memory is not None and self.transcripts is not None
         speakers = await session_speakers(self.transcripts.db, gid, session_id)
-        agreed = await self.consent.consenting(gid)
+        # Agreed, not "recorded now": a pause is temporary, and who took part is a fact (#3036).
+        agreed = await self.consent.agreed(gid)
         linked = await self.memory.link_party(gid, cid, {u for u in speakers if u in agreed})
         log.info(
             "The party: %d characters, %d pairs, %d members",
