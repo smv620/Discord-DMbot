@@ -16,10 +16,18 @@ import time
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 
-from dmbot.memory import kin
+from dmbot.memory import kin, lore_knowledge
 from dmbot.memory.backstory_links import BackstoryLinks, NewLink, Waiting
 from dmbot.memory.checks import conflicts
-from dmbot.memory.models import CONFIRMED, DM, REJECTED, MemoryRuleError, Relation
+from dmbot.memory.lookup import CampaignLookup
+from dmbot.memory.models import (
+    CONFIRMED,
+    DM,
+    PLAYER_CHARACTER,
+    REJECTED,
+    MemoryRuleError,
+    Relation,
+)
 from dmbot.memory.ontology import Ontology
 from dmbot.memory.store import MemoryStore
 
@@ -67,6 +75,54 @@ async def changes_among(
         (c.subject_id, c.predicate, c.object_id): replaced_by(onto, c, existing) for c in links
     }
     return {k: v for k, v in found.items() if v}
+
+
+async def player_character_ids(memory: MemoryStore, guild_id: int, campaign_id: str) -> list[str]:
+    """The campaign's confirmed player characters (entry ids), all of them."""
+    lookup = CampaignLookup.build(await memory.lookup_data(guild_id, campaign_id))
+    return sorted(
+        e.id
+        for e in lookup.entities.values()
+        if e.role == PLAYER_CHARACTER and e.status == CONFIRMED and not e.merged_into
+    )
+
+
+async def shown_entry_ids(memory: MemoryStore, guild_id: int, campaign_id: str) -> set[str]:
+    """The entries the players are shown: confirmed, not held back from them, not a limited clue
+    and not an unnamed person (the old readers' rule). Read once per batch."""
+    data = await memory.lookup_data(guild_id, campaign_id)
+    return {
+        e.id
+        for e in data.entities
+        if e.status == CONFIRMED
+        and not (e.hidden_from_players or e.audience_limited or e.unnamed or e.merged_into)
+    }
+
+
+def kept_unrevealed(c: Waiting, secret: bool, shown: set[str]) -> bool:
+    """Does a connection kept from this waiting row still wait to be said at the table? Yes,
+    unless the upload said the players know it (#2959: World general knowledge, or a smart guess
+    the AI called common knowledge), it is not secret and both its ends are shown. The old flags
+    are what the players see until the readers go through the who-knows lists (#2995 slice 3), so
+    this is where an upload's choice reaches them; the list follows the flag by itself."""
+    if not c.world or secret or c.secret:
+        return True
+    return not {c.subject_id, c.object_id} <= shown
+
+
+async def mark_guess(
+    memory: MemoryStore, guild_id: int, campaign_id: str, kind: str, written_ids: Sequence[str]
+) -> None:
+    """A statement kept because the AI guessed the players know it is recorded at 0.75, not as the
+    DM's word. Any failure is logged: the connection is kept either way."""
+    if not written_ids:
+        return
+    try:
+        await memory.mark_guess(
+            guild_id, campaign_id, kind, written_ids, lore_knowledge.GUESS_CERTAINTY, source=DM
+        )
+    except Exception:  # a database trouble: the knowing stays at sure, the keep stays made
+        log.exception("A guess could not be recorded as a guess")
 
 
 def change_start(old: Sequence[Relation], now: int) -> int:
@@ -124,6 +180,7 @@ async def keep_all(
     if progress is not None:
         await progress(0, total)
     onto = await memory.ontology(guild_id, campaign_id) if links else None
+    shown = await shown_entry_ids(memory, guild_id, campaign_id) if links else set()
     for tried, c in enumerate(links, 1):
         now = int(time.time())
         old = (
@@ -139,7 +196,7 @@ async def keep_all(
                 guild_id, campaign_id, c.subject_id, c.predicate, c.object_id,
                 source=DM, confidence=1.0, status=CONFIRMED, secret=c.secret, detail=c.detail,
                 directional=kin.directional(c.detail),  # a family role keeps who holds it
-                unrevealed=True, decided=c.decided or None,
+                unrevealed=kept_unrevealed(c, c.secret, shown), decided=c.decided or None,
                 # the uploader's character knows it, unless it uses a secret name (#2935)
                 known_by=[c.known_by] if c.known_by and not c.secret else (),
                 from_session_at=start if old else None,  # (starts as the old one ends)
@@ -153,6 +210,10 @@ async def keep_all(
             if progress is not None:
                 await progress(tried, total)
             continue
+        made = written.value[0]
+        # (only a connection made just now: an older twin's rows are the DM's, not this guess's)
+        if c.world == lore_knowledge.GUESS and not made.unrevealed and made.created_at >= now:
+            await mark_guess(memory, guild_id, campaign_id, "connection", [made.id])
         if c.truth:
             try:
                 await memory.pin(guild_id, campaign_id, written.value[0].id, True, source=DM)
@@ -196,6 +257,7 @@ async def undo_all(
                     c.detail,
                     c.truth,
                     known_by=c.known_by,
+                    world=c.world,
                 )
             ],
         )
