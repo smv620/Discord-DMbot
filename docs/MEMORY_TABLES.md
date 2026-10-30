@@ -4,7 +4,7 @@ The story memory holds the campaign's names, how they connect, and who knows wha
 
 Every table is in the one `dmbot` database, in the public schema. Every row carries `guild_id` (the Discord server) and `campaign_id`; both are the first two parts of every key and are left out of the lists below. Read the migrations in `core/src/dmbot/migrations/` for the shape of each table, and `core/src/dmbot/memory/_changes.py` for which tables Undo can reach.
 
-Sources: the facts come from a freshly migrated database (every migration in order), so types, nulls and defaults are exact. Allowed values come from the table's `CHECK` constraints. Meanings come only from a code comment or docstring, cited in brackets. Anything else is written as `Not yet documented`.
+Sources: the facts come from a freshly migrated database (every migration in order), so types, nulls and defaults are exact. Allowed values come from the table's `CHECK` constraints. Meanings come only from a code comment or docstring (in `models.py`, `_changes.py` or a migration), cited in brackets. Anything else is written as `Not yet documented`.
 
 Count: 24 tables. The migrations create 24 distinct `memory_*` tables (`grep -ho "CREATE TABLE memory_[a-z_]*" core/src/dmbot/migrations/*.py | sort -u`).
 
@@ -165,7 +165,7 @@ These are for the lead to decide. The page does not pick a side.
 | `id` | text | no |  | Not yet documented |
 | `entity_id` | text | no |  | Not yet documented |
 | `condition` | text | no |  | A thing's condition for a time (models.py, `State`). |
-| `from_session_at` | bigint | yes |  | When the condition began, in session time; `State.since` uses this, else `created_at` (models.py, `State`). |
+| `from_session_at` | bigint | yes |  | When the condition changed; `State.since` uses this, else `created_at` (models.py, `State`). |
 | `source` | text | no |  | Who said so (models.py, `State`). |
 | `created_at` | bigint | no |  | Not yet documented |
 | `closed_at` | bigint | yes |  | Empty while this is the current condition; a newer one closes it and the history is kept (models.py, `State`). |
@@ -233,7 +233,7 @@ These are for the lead to decide. The page does not pick a side.
 | `id` | text | no |  | Not yet documented |
 | `perspective_id` | text | no |  | Not yet documented |
 | `relation_id` | text | no |  | Not yet documented |
-| `confidence` | double precision | no |  | How sure this perspective is of the connection, 0.0 to 1.0. At 1.0 (`KNOWN`) it is held as fact (models.py, `Belief.known`, `KNOWN`). |
+| `confidence` | double precision | no |  | How sure this perspective is of the connection. At 1.0 (`KNOWN`) it is held as fact (models.py, `Belief.known`, `KNOWN`). |
 | `status` | text | no |  | Not yet documented |
 | `session_at` | bigint | yes |  | Not yet documented |
 | `evidence_ids` | text[] | no | `'{}'::text[]` | The evidence the belief points at, by id, at most 20 (models.py, `Belief`, `EVIDENCE_MAX`). |
@@ -291,7 +291,7 @@ These are for the lead to decide. The page does not pick a side.
 | `relationship` | text | no |  | Not yet documented |
 | `object` | text | no |  | Not yet documented |
 | `details` | text | no | `''::text` | Not yet documented |
-| `how` | text | no |  | Where the claim came from (models.py, `HOWS`). |
+| `how` | text | no |  | How the claim was said: what the DM told the table, what a player said or believes, or what someone means to do; never a fact (models.py, comment above `HOWS`). |
 | `lines` | text[] | no |  | Not yet documented |
 | `speaker_ids` | bigint[] | no | `'{}'::bigint[]` | Not yet documented |
 | `source` | text | no |  | Not yet documented |
@@ -302,8 +302,8 @@ These are for the lead to decide. The page does not pick a side.
 | `session_started_at` | bigint | yes |  | Not yet documented |
 | `created_at` | bigint | no |  | Not yet documented |
 | `decided_at` | bigint | yes |  | Not yet documented |
-| `fact_id` | text | yes |  | Not yet documented |
-| `reading` | jsonb | yes |  | Not yet documented |
+| `fact_id` | text | yes |  | A pointer to the fact the claim became, to follow while that fact is still there; not a database link (_changes.py, comment above `CLAIMS`). |
+| `reading` | jsonb | yes |  | A claim that is a belief for the DM to place (#2412); null otherwise (_changes.py, `CLAIMS` default). |
 
 **Allowed values:**
 
@@ -332,7 +332,7 @@ These are for the lead to decide. The page does not pick a side.
 | `involves_guess` | boolean | no | `false` | Not yet documented |
 | `found_at` | bigint | no |  | Not yet documented |
 | `session_started_at` | bigint | yes |  | Not yet documented |
-| `said_at` | bigint | yes |  | Not yet documented |
+| `said_at` | bigint | yes |  | When a major one was told to the DM on the DM screen, so it is told once (migrations/0238_contradiction_grades.py). |
 
 **Allowed values:**
 
@@ -511,7 +511,7 @@ These are for the lead to decide. The page does not pick a side.
 | `relation_id` | text | yes |  | Not yet documented |
 | `alias_id` | text | yes |  | Not yet documented |
 | `created_at` | bigint | no |  | Not yet documented |
-| `confidence` | double precision | no | `1.0` | Not yet documented |
+| `confidence` | double precision | no | `1.0` | How sure that character is, from 0.0 (knows of it and believes it false) to 1.0; no row means the character does not know of it at all (migrations/0286_knowers_confidence.py). |
 
 **Foreign keys:**
 
@@ -537,7 +537,7 @@ These are for the lead to decide. The page does not pick a side.
 | `span_start` | integer | no |  | Not yet documented |
 | `span_end` | integer | no |  | Not yet documented |
 | `confidence` | double precision | no |  | Not yet documented |
-| `method` | text | no |  | How the name was matched (models.py, `MENTION_METHODS`). |
+| `method` | text | no |  | Not yet documented |
 | `created_at` | bigint | no |  | Not yet documented |
 
 **Allowed values:**
@@ -564,7 +564,7 @@ These are for the lead to decide. The page does not pick a side.
 
 **Allowed values:**
 
-- `kind`: `truth`, `party` (CHECK constraint on the table).
+- `kind`: `truth`, `party`, `pc`, `npc` (CHECK constraint on the table).
 
 **Foreign keys:**
 
@@ -598,7 +598,7 @@ These are for the lead to decide. The page does not pick a side.
 | `inverse_label` | text | no | `''::text` | Not yet documented |
 | `synonyms` | text[] | no | `'{}'::text[]` | Not yet documented |
 | `version` | integer | no | `1` | Not yet documented |
-| `from_set` | text | yes |  | Not yet documented |
+| `from_set` | text | yes |  | The set a relationship was borrowed from (#1456), if any (_changes.py, `PREDICATES` default). |
 
 **Allowed values:**
 
@@ -645,9 +645,9 @@ These are for the lead to decide. The page does not pick a side.
 | `id` | text | no |  | Not yet documented |
 | `entity_id` | text | no |  | Not yet documented |
 | `kind` | text | no |  | The kind of rules link (models.py, `LINK_KINDS`). |
-| `rules_source` | text | no |  | Not yet documented |
+| `rules_source` | text | no |  | Where the rules come from, such as srd52, srd51 or homebrew; empty when not known (models.py, `RuleLink.rules_source`). |
 | `name` | text | no |  | Not yet documented |
-| `edition` | text | yes |  | The rules edition, 2014 or 2024, when known (models.py, `LINK_EDITIONS`). |
+| `edition` | text | yes |  | The rules edition, 2014 or 2024, when known; 2014 is shown as [Legacy 2014] (models.py, `RuleLink.edition`). |
 | `known` | boolean | no |  | True exactly when `rules_source` is set (CHECK constraint on the table). |
 | `created_at` | bigint | no |  | Not yet documented |
 
@@ -700,7 +700,7 @@ These are for the lead to decide. The page does not pick a side.
 | `line_id` | bigint | yes |  | Not yet documented |
 | `model` | text | no |  | Not yet documented |
 | `text_hash` | text | no |  | Not yet documented |
-| `vector` | _float4 | no |  | Not yet documented |
+| `vector` | real[] | no |  | Not yet documented |
 | `made_at` | bigint | no |  | Not yet documented |
 
 **Foreign keys:**
@@ -710,4 +710,4 @@ These are for the lead to decide. The page does not pick a side.
 
 ## Not yet documented
 
-Every column without a meaning above is `Not yet documented`: the source files read were `core/src/dmbot/migrations/*.py`, `core/src/dmbot/memory/_changes.py`, and `core/src/dmbot/memory/models.py`. The meanings given here come from `models.py` only; the store modules that write these tables were not read for this page.
+Every column without a meaning above is `Not yet documented`: the source files read were `core/src/dmbot/migrations/*.py`, `core/src/dmbot/memory/_changes.py`, and `core/src/dmbot/memory/models.py`. The meanings given here come from code comments and docstrings in `models.py`, `_changes.py` and the migrations listed in brackets. The store modules that write these tables were not read for this page.
