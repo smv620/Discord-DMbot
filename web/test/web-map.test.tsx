@@ -229,6 +229,7 @@ describe("the map", () => {
   it("one click picks a name and the panel stays on it; two quick clicks put it in the middle", () => {
     const onCenter = vi.fn();
     draw({ onCenter });
+    vi.spyOn(Date, "now").mockReturnValue(5000); // (two clicks in the same instant, whatever the runner's speed)
     expect(document.querySelector("#web-side-h")!.textContent).toBe("Mira Voss"); // (the middle name to start with)
     fireEvent.click(nodeOf("Garrick"));
     expect(onCenter).not.toHaveBeenCalled();
@@ -251,6 +252,38 @@ describe("the map", () => {
     now.mockReturnValue(1000);
     fireEvent.click(nodeOf("Garrick"));
     now.mockReturnValue(1000 + 900);
+    fireEvent.click(nodeOf("Garrick"));
+    expect(onCenter).not.toHaveBeenCalled();
+    now.mockRestore();
+  });
+
+  it("falls back to the middle name when the picked name is no longer drawn", () => {
+    const view = draw();
+    fireEvent.click(nodeOf("Garrick"));
+    fireEvent.pointerLeave(nodeOf("Garrick"));
+    expect(document.querySelector("#web-side-h")!.textContent).toBe("Garrick");
+    view.rerender(<WebMap nodes={nodes.filter((n) => n.id !== "g")} edges={[]} center="m" refId="1.a" selected={null} onCenter={() => {}} onLine={() => {}} />);
+    expect(document.querySelector("#web-side-h")!.textContent).toBe("Mira Voss");
+  });
+
+  it("starts the panel on the new middle name when the middle changes", () => {
+    const view = draw();
+    fireEvent.click(nodeOf("Garrick"));
+    fireEvent.pointerLeave(nodeOf("Garrick"));
+    view.rerender(<WebMap nodes={nodes} edges={edges} center="g" refId="1.a" selected={null} onCenter={() => {}} onLine={() => {}} />);
+    expect(document.querySelector("#web-side-h")!.textContent).toBe("Garrick");
+    view.rerender(<WebMap nodes={nodes} edges={edges} center="m" refId="1.a" selected={null} onCenter={() => {}} onLine={() => {}} />);
+    expect(document.querySelector("#web-side-h")!.textContent).toBe("Mira Voss"); // (the old pick did not come back)
+  });
+
+  it("tap, drag, tap on one name is not a double click", async () => {
+    withBox();
+    const onCenter = vi.fn();
+    draw({ onCenter });
+    const now = vi.spyOn(Date, "now").mockReturnValue(7000);
+    fireEvent.click(nodeOf("Garrick"));
+    drag(nodeOf("Garrick"), [150, 90]);
+    fireEvent.click(nodeOf("Garrick")); // (the click that ends the drag)
     fireEvent.click(nodeOf("Garrick"));
     expect(onCenter).not.toHaveBeenCalled();
     now.mockRestore();

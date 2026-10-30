@@ -130,10 +130,15 @@ export default function WebMap({
   // The name the pointer or the keyboard is on: everything not joined to it fades.
   const [focus, setFocus] = useState<string | null>(null);
   // The name a click picked: the side panel stays on it (a phone has no hover), until the middle name changes.
-  const [picked, setPicked] = useState<string | null>(null);
+  // It is tied to the middle name it was picked under, so a new middle name starts with the panel on that name
+  // with no frame of the old one.
+  const [pickedAt, setPickedAt] = useState<{ id: string; center: string } | null>(null);
+  const picked = pickedAt && pickedAt.center === center ? pickedAt.id : null;
+  if (pickedAt && pickedAt.center !== center) setPickedAt(null); // (forgotten for good, not only hidden while the middle differs)
+  const setPicked = (id: string) => setPickedAt({ id, center });
+  const touched = useRef(false);
   const lastTap = useRef<{ id: string; at: number } | null>(null);
-  // A new middle name (the graph reloaded around it) starts with the panel on that name.
-  useEffect(() => setPicked(null), [center]);
+
   // Kinds of connection the person turned off with the chips: their lines are not drawn.
   const [off, setOff] = useState<Set<string>>(new Set());
   const sim = useRef<SimNode[]>([]);
@@ -416,7 +421,8 @@ export default function WebMap({
   const kindsPresent = LINK_KINDS.filter((k) => edges.some((e) => edgeKind(e) === k));
   const tooBig = nodes.length > MAX_SIM_NAMES;
   // The side panel: the name in focus, or the middle name, with its connections in words.
-  const detail = byId.get(focus ?? picked ?? center) ?? null;
+  // A picked or focused name that is no longer drawn falls back to the next, never to an empty panel.
+  const detail = byId.get(focus ?? "") ?? byId.get(picked ?? "") ?? byId.get(center) ?? null;
   const detailPinned = detail ? (at.get(detail.id)?.pinned ?? false) : false;
   const sideLines = detail
     ? edges
@@ -592,6 +598,7 @@ export default function WebMap({
                 aria-label={words.nameButton(n.name)}
                 onPointerDown={(ev) => {
                   ev.stopPropagation();
+                  touched.current = ev.pointerType === "touch";
                   if (pointers.current.size > 1) return; // a second finger: a pinch, not a drag of this name
                   dragName.current = { id: n.id, x: ev.clientX, y: ev.clientY, moved: false };
                   dragged.current = false;
@@ -601,7 +608,12 @@ export default function WebMap({
                 onFocus={() => setFocus(n.id)}
                 onBlur={() => setFocus((f) => (f === n.id ? null : f))}
                 onClick={() => {
-                  if (dragged.current) return;
+                  if (dragged.current) {
+                    lastTap.current = null; // (the end of a drag is neither a click nor half of a double click)
+                    return;
+                  }
+                  // A finger leaves no hover behind: the panel follows the pick, not the last name touched.
+                  if (touched.current) setFocus(null);
                   // One click picks the name; a second on the same name within DOUBLE_MS puts it in the middle.
                   // Counted here, not with `dblclick`, which a phone does not send reliably.
                   const now = Date.now();
