@@ -57,6 +57,14 @@ describe("The Shared story choice on the website", () => {
     expect(seen).toEqual(["guide"]);
   });
 
+  it("puts the focus back on a choice when the question is closed", () => {
+    render(<StoryModePanel api={mockApi("table")} campaignRef="100.cmp1" mode="off" />);
+    fireEvent.click(screen.getByRole("button", { name: words.choose("watch") }));
+    expect(document.activeElement?.getAttribute("type")).toBe("checkbox");
+    fireEvent.click(screen.getByRole("button", { name: words.keep }));
+    return waitFor(() => expect(document.activeElement?.tagName).toBe("BUTTON"));
+  });
+
   it("turns it off at once with no question and no confirmation", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const api = mockApi("table");

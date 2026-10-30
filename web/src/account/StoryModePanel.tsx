@@ -25,10 +25,14 @@ export default function StoryModePanel({ api, campaignRef, mode, onChanged }: { 
   const [problem, setProblem] = useState("");
   const live = useRef(true);
   const box = useRef<HTMLInputElement>(null);
+  const choices = useRef<HTMLUListElement>(null);
+  const wasAsking = useRef(false);
   useEffect(() => () => void (live.current = false), []);
-  // The question takes the keyboard focus (the box to tick); the choice buttons are back when it closes.
+  // The question takes the keyboard focus (the box to tick); when it closes the focus goes back to the first choice.
   useEffect(() => {
     if (asking) box.current?.focus();
+    else if (wasAsking.current) choices.current?.querySelector("button")?.focus();
+    wasAsking.current = asking !== null;
   }, [asking]);
 
   const busy = wait !== null && wait.state !== "done" && wait.state !== "failed" && wait.state !== "timed_out";
@@ -77,25 +81,25 @@ export default function StoryModePanel({ api, campaignRef, mode, onChanged }: { 
     }
   };
 
-  const direction = wait && wait.to !== "off" ? "on" : "off";
   const failedReason = (w: Wait): string => `${plain(w.note) || words.failed} ${words.stillThat(current)}`;
   return (
     <div class="stack">
       <h3>{words.heading}</h3>
       <p>{words.intro}</p>
+      <p class="small muted">{words.whereMaterial}</p>
       <p>{words.now(current)}</p>
       {problem && <p role="alert">{problem}</p>}
       {wait && wait.state === "timed_out" && <p role="status">{words.timedOut}</p>}
       {wait && wait.state !== "timed_out" && (
         <WorkProgress
-          stage={wait.state === "done" ? words.done[direction] : wait.state === "working" ? words.working[direction] : words.waiting[direction]}
+          stage={wait.state === "done" ? words.done(wait.to) : wait.state === "working" ? words.working : words.waiting}
           startedAt={wait.since}
           state={wait.state === "failed" ? "failed" : wait.state === "done" ? "done" : "running"}
           reason={wait.state === "failed" ? failedReason(wait) : null}
         />
       )}
       {asking === null && (
-        <ul class="stack">
+        <ul class="stack" ref={choices}>
           {MODES.filter((m) => m !== current).map((m) => (
             <li key={m}>
               <button type="button" class="button secondary" disabled={busy} onClick={() => pick(m)}>
@@ -107,7 +111,10 @@ export default function StoryModePanel({ api, campaignRef, mode, onChanged }: { 
         </ul>
       )}
       {asking !== null && (
-        <div class="stack" role="group" aria-label={words.confirmLabel}>
+        <div class="stack" role="group" aria-label={words.turnOn(asking)}>
+          <p>
+            <strong>{words.turnOn(asking)}</strong>
+          </p>
           <p>{words.modes[asking].help}</p>
           <p>{words.warning}</p>
           <label>
