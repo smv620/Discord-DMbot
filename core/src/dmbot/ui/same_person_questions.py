@@ -132,8 +132,10 @@ class SamePersonQuestions(_Menu):
                         campaign.guild_id, campaign.id, *pair, user_id=interaction.user.id
                     )
             except MemoryRuleError as exc:
+                # (the rule's own words say what is in the way, for example someone described by
+                # this person)
                 log.info("A possible match could not be answered: %s", exc)
-                await _tell(interaction, "DMbot couldn't save that one. It stays waiting.")
+                await _tell(interaction, f"{exc} It stays waiting.")
                 return
             except Exception:
                 log.exception("A possible match could not be answered")

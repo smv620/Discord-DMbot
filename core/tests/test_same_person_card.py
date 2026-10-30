@@ -100,3 +100,14 @@ class TheMatchCard(NamesTest):
     async def test_a_player_is_not_asked(self) -> None:
         view = SamePersonQuestions(self.campaign.id)
         self.assertFalse(await view.load(self.it(99)))
+
+    async def test_a_refusal_says_what_is_in_the_way_and_the_card_stays(self) -> None:
+        await self.memory.add_unnamed(
+            GUILD, self.campaign.id, what="dog", anchor_id=self.guard, role="pet"
+        )
+        view = await self.card()
+        it = self.it(DM)
+        await self.press(view, "✅").callback(it)
+        self.assertEqual(len(await self.memory.unnamed(GUILD, self.campaign.id)), 2)  # not joined
+        told = " ".join(str(c) for c in it.followup.send.await_args_list)
+        self.assertIn("dog", told)
