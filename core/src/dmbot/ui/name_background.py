@@ -716,6 +716,15 @@ async def read_background(
         until=started + lore_read.LORE_TIME_LIMIT_S - WHO_SUMMARY_MARGIN_S,
     )
     pcs = await keep.player_character_ids(memory, campaign.guild_id, campaign.id)
+    # "Everyone in the story" (#3034, Supervisor's ruling on PLAN item 1): a disguise or an earlier
+    # name is just another name, and so are the connections written through it. Under "Only the DM"
+    # and a smart guess it stays secret (DM authority).
+    everyone = choice == lore_knowledge.WORLD
+    secret_keys = frozenset() if everyone else read.secret_spellings
+    if everyone:
+        found = [
+            replace(f, also=tuple(dict.fromkeys((*f.also, *f.secret))), secret=()) for f in found
+        ]
     stored = await store(
         memory,
         campaign,
@@ -732,9 +741,10 @@ async def read_background(
         memory,
         campaign,
         read.known_spellings,
-        read.secret_spellings,
+        secret_keys,
         getattr(bot, "lore_context", None),
         upload.text,
+        known_by,
     )
     questions: list[str] = []
     keys: set[tuple[str, str, str]] = set()
@@ -757,7 +767,7 @@ async def read_background(
         on_who=on_who,
         until=started + lore_read.LORE_TIME_LIMIT_S - WHO_SUMMARY_MARGIN_S,
         known_spellings=read.known_spellings,
-        secret_spellings=read.secret_spellings,
+        secret_spellings=secret_keys,
         world_links=world_links,
         world_all=choice == lore_knowledge.WORLD,
         world_level=lore_knowledge.level_of(choice),
@@ -849,6 +859,7 @@ async def save_earlier_names(
     secret: Collection[str],
     held: lore_context.Held | None = None,
     text: str = "",
+    known_by: str = "",
 ) -> None:
     """The other names a lore text gives a name the campaign already has (#3034): a pseudonym, an
     earlier or birth name, a nickname. They are saved as suggestions on that entry (never a new
@@ -881,6 +892,17 @@ async def save_earlier_names(
     except Exception:  # the names of the read are stored already: this must not undo the read
         log.exception("The earlier names of a background could not be saved")
         return
+    if known_by:  # the uploader's character knows the secret names it gave (#2935), as store() does
+        try:
+            suggested = await memory.suggested_names(campaign.guild_id, campaign.id)
+            this_read = {name_key(sp) for found in spellings.values() for sp in found}
+            for alias, _ in suggested:
+                if alias.secret and name_key(alias.text) in this_read:
+                    await _secret_names_known_by(
+                        memory, campaign, alias.entity_id, [alias.text], known_by
+                    )
+        except Exception:
+            log.exception("Who knows the suggested secret names could not be recorded")
     if held is None or not text:
         return
     try:  # the sentence around each, for its question (memory only; a failure only loses it)
