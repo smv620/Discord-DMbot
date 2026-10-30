@@ -110,8 +110,16 @@
     border-color: var(--accent);
   }
 
-  /* The pages inside the part you are in (#2985): lighter than the tabs above them. */
+  /* The pages inside the part you are in (#2985): lighter than the tabs above them, one row that scrolls sideways
+     on a phone, the current page bold as well as underlined. */
+  .account .subtabs {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+  }
+
   .account .subtabs a {
+    white-space: nowrap;
+    font-size: var(--text-sm);
     border-color: transparent;
     border-bottom: 3px solid transparent;
     border-radius: 0;

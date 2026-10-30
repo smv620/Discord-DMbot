@@ -500,6 +500,15 @@ describe("the parts and the pages in each (#2985)", () => {
     expect(screen.queryByRole("navigation", { name: w.pagesLabel })).toBeNull(); // Add to the story holds one page so far
   });
 
+  it("marks the Settings tab, not the Overview, once the person is on the Settings part of the page", async () => {
+    window.location.hash = "#settings";
+    render(<CampaignNav api={mockApi("table")} campaignRef="100.cmp1" page="campaign" />);
+    await waitFor(() => expect(tabsOf().getAllByRole("link")).toHaveLength(5));
+    const marked = tabsOf().getAllByRole("link").filter((a) => a.getAttribute("aria-current"));
+    expect(marked.map((a) => a.textContent)).toEqual([w.groups.settings]);
+    window.location.hash = "";
+  });
+
   it("keeps Transcripts under Story and Import under Add to the story, not under 'At the table'", async () => {
     render(<CampaignNav api={mockApi("table")} campaignRef="100.cmp1" page="transcripts" />);
     await waitFor(() => expect(tabsOf().getAllByRole("link")).toHaveLength(5));

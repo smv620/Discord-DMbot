@@ -71,7 +71,7 @@ export const campaignPage = {
     homebrew: "The homebrew this campaign uses.",
   },
   sharedRules: "Shared rules",
-  sharedRulesNote: "Share these, or follow another table's.",
+  sharedRulesNote: "Share this campaign's rules, or follow another table's. Opens your account's sharing page.",
   // The Settings group: the current choice of each, read-only for now. Where the website cannot
   // change it yet, it says where to in Discord, with the names of Discord's own menus.
   settingsLead: "Your campaign's choices. Only game masters see this. Tap a choice to change it here. The rest is done in Discord.",

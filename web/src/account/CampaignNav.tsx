@@ -60,7 +60,14 @@ export default function CampaignNav({
   }, [api, campaignRef]);
 
   const campaign = name || found?.name || words.thisCampaign;
-  const here = GROUP_OF[page];
+  // Settings is a part of the campaign's own page: its tab is the marked one once the person has gone there (#settings).
+  const [hash, setHash] = useState(typeof window === "undefined" ? "" : window.location.hash);
+  useEffect(() => {
+    const on = (): void => setHash(window.location.hash);
+    window.addEventListener("hashchange", on);
+    return () => window.removeEventListener("hashchange", on);
+  }, []);
+  const here = page === "campaign" && hash === "#settings" ? "settings" : GROUP_OF[page];
   const isDm = found?.role === "owner" || found?.role === "co-dm";
   const home = campaignHref(campaignRef);
   const listName = page === "campaign" ? null : words.pages[page];
