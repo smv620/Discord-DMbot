@@ -6,8 +6,9 @@ import { KIND_STYLES, kindStyle } from "./webKinds";
 import { radialLayout } from "./webLayout";
 
 /** "free": names settle anywhere. "groups": names gather by what each one is (player characters, NPCs, places,
- * items, groups, events...: the kinds the Names page uses), not by how it is connected (#2990). */
-export type LayoutMode = "free" | "groups";
+ * items, groups, events...: the kinds the Names page uses), not by how it is connected (#2990). "quests": names
+ * gather by the quest they are joined to (#2992). */
+export type LayoutMode = "free" | "groups" | "quests";
 
 /** More names than this keep their rings and are only movable by hand: pushing every pair apart is
  * the slow part, and a web this big is already past what a screen can show clearly. */
@@ -141,8 +142,8 @@ export function forceStep(
       b.vy += dy * f;
     }
   }
-  const rest = mode === "groups" ? 130 : REST;
-  const pull = mode === "groups" ? PULL * 0.4 : PULL;
+  const rest = mode !== "free" ? 130 : REST;
+  const pull = mode !== "free" ? PULL * 0.4 : PULL;
   for (const [i, j] of links) {
     const a = sim[i]!;
     const b = sim[j]!;
@@ -162,7 +163,7 @@ export function forceStep(
     const home = i === centreIndex ? CENTRE_HOME : HOME;
     n.vx -= n.x * home;
     n.vy -= n.y * home;
-    const anchor = mode === "groups" && i !== centreIndex ? anchors.get(n.group) : undefined;
+    const anchor = mode !== "free" && i !== centreIndex ? anchors.get(n.group) : undefined;
     if (anchor) {
       n.vx += (anchor.x - n.x) * 0.022;
       n.vy += (anchor.y - n.y) * 0.022;
@@ -212,4 +213,11 @@ export function extentOf(sim: { x: number; y: number }[], floor = 220): number {
   let far = 0;
   for (const n of sim) far = Math.max(far, Math.abs(n.x), Math.abs(n.y));
   return Math.max(floor, far + 110);
+}
+
+/** The group a name gathers with in "Cluster by quest": a quest is its own group; any other name joins the quest it
+ * has most connections with (the door sends them in that order), or "none" (#2992). */
+export const NO_QUEST = "none";
+export function questGroups(nodes: { id: string; kind: string; quests?: { id: string }[] | undefined }[]): Map<string, string> {
+  return new Map(nodes.map((n) => [n.id, kindStyle(n.kind) === "quest" ? n.id : (n.quests?.[0]?.id ?? NO_QUEST)]));
 }
