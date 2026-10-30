@@ -260,3 +260,25 @@ class UploadsNeverHide(_Table):
         )  # fmt: skip
         public = await self.memory.aliases(GUILD, self.campaign.id, entity_id=ids["Voss"])
         self.assertIn("Old Voss", [a.text for a in public])
+
+    async def test_a_secret_proposal_kept_with_a_secret_spelling_stays_secret(self) -> None:
+        # (#2412: a theory waits as a secret proposal; the DM keeping it must not make it public)
+        ids = await self.ids()
+        await self.store.add(
+            GUILD, self.campaign.id,
+            [NewLink(ids["Voss"], "member_of", ids["Lantern Council"], "q", True)],
+        )  # fmt: skip
+        (waiting,) = await self.store.waiting(GUILD, self.campaign.id)
+        theory = await self.memory.add_relation(
+            GUILD, self.campaign.id, ids["Voss"], "member_of", ids["Lantern Council"],
+            source="extractor", confidence=0.6, status="proposed", secret=True,
+        )  # fmt: skip
+        await keep.keep_all(self.memory, self.store, GUILD, self.campaign.id, [waiting])
+        (rel,) = [
+            r
+            for r in await self.memory.relations(GUILD, self.campaign.id, include_secret=True)
+            if r.id == theory.value[0].id
+        ]
+        self.assertEqual((rel.status, rel.secret), (CONFIRMED, True))
+        shown = await self.memory.relations(GUILD, self.campaign.id, include_secret=False)
+        self.assertNotIn(rel.id, [r.id for r in shown])

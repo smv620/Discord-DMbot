@@ -176,9 +176,10 @@ async def keep_all(
 ) -> KeptAll:
     """Keep each of these ready connections. A refused one stays in the list. `progress(done,
     total)` is told before the first and after each one (kept or refused: tried), for the
-    website's "12 of 50" (#2924); counts only. `keep_flags`: a connection that already exists keeps
-    its flags, so a secret spelling in the text never hides what the players were shown (#3025);
-    False only when the DM pressed 🤫 Keep as secret, which is their own word."""
+    website's "12 of 50" (#2924); counts only. `keep_flags`: keeping a connection that already
+    exists never makes it secret, so a secret spelling in the text never hides what the players
+    were shown (#3025); False only when the DM pressed 🤫 Keep as secret, which is their own word.
+    """
     done = KeptAll()
     total = len(links)
     if progress is not None:

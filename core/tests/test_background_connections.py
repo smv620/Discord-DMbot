@@ -347,6 +347,28 @@ class ThePath(NamesTest):
         self.assertEqual((rel.status, rel.secret), (CONFIRMED, False))
         self.assertEqual(len(await self.waiting()), 2)
 
+    async def test_keep_leaves_a_public_twin_alone_and_the_dms_secret_press_does_not(self) -> None:
+        # (#3025) what each button hands the store: only the DM's own 🤫 may hide an old fact
+        for label, flags in (("✅ Keep", True), ("🤫 Keep as secret", False)):
+            with self.subTest(label):
+                await self.asyncTearDown()
+                await self.asyncSetUp()
+                await self.read()
+                await self.confirm_all()
+                _, view = await self.offer()
+                real = self.memory.add_relation
+                seen: list[Any] = []
+
+                async def spy(
+                    *args: Any, _real: Any = real, _seen: list[Any] = seen, **kw: Any
+                ) -> Any:
+                    _seen.append(kw.get("keep_flags"))
+                    return await _real(*args, **kw)
+
+                with patch.object(self.memory, "add_relation", spy):
+                    await self.button(view, label).callback(self.it())
+                self.assertEqual(seen, [flags])
+
     async def test_a_truth_upload_pins_what_is_kept_and_an_asserted_one_does_not(self) -> None:
         for truth in (False, True):
             await self.asyncTearDown()

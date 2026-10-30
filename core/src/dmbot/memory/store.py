@@ -3752,9 +3752,10 @@ class MemoryStore:
         rejected unless the DM says it again. `unrevealed`: the story holds it back from the
         players until the table has said it (#2404), the DM's to say. `directional`: a family
         connection whose detail is a role that reads one way, so the first name is the one who
-        holds it (#2457); the DM's to say, and kept in the order given. `keep_flags`: a fact that
-        already exists keeps its flags whatever `secret` says (an upload never hides what the
-        players were already shown, #3025); a new one is made as asked."""
+        holds it (#2457); the DM's to say, and kept in the order given. `keep_flags`: restating a
+        fact that already exists never makes it secret (an upload never hides what the players
+        were already shown, #3025); its status still upgrades as usual, and a new fact is made as
+        asked."""
         async with self._write(guild_id, campaign_id, source) as w:
             value = await self.add_relation_in(
                 w, subject_id, predicate, object_id, confidence=confidence, status=status,
@@ -3858,8 +3859,12 @@ class MemoryStore:
         if same is not None and leave:
             return same, []
         if same is not None:
-            # (`keep_flags`: an upload's secret spelling never hides a fact the players were shown)
-            upgrade = _upgrade(_relation_row(same), status, secret and not keep_flags, source)
+            upgrade = _upgrade(_relation_row(same), status, secret, source)
+            if keep_flags and upgrade.get("secret") is True:
+                # (`keep_flags`: an upload's secret spelling never HIDES a fact the players were
+                # shown. Only that raise is dropped: the rest of `_upgrade` stays as it is, so a
+                # secret proposal the DM keeps still follows the #2412 rule.)
+                del upgrade["secret"]
             if new.directional and not same.directional:  # the DM's word on the direction wins
                 upgrade = {
                     **upgrade, "directional": True, "subject_id": s, "object_id": o,
