@@ -549,7 +549,7 @@ class FlagsFollow(Helpers):
         raw["sections"]["memory"] = [
             r for r in raw["sections"]["memory"] if r.get("table") != "knower"
         ]
-        raw["version"] = 2  # (and an older file)
+        raw["version"] = 2  # (and an older file: the lists came with version 3)
         restored = await self.campaigns.import_backup(GUILD_B, decode_backup(encode_backup(raw)), 7)
         got = await self.memory.statement_knowers(GUILD_B, restored.id, ENTRY, [place, hidden])
         self.assertEqual(sorted(got[place]), await self.pcs(ids))  # shown: every player character
@@ -569,7 +569,7 @@ class FlagsFollow(Helpers):
         place = await self.add("Greywater", type="place", status=CONFIRMED)  # shown to every PC
         await self.know(ENTRY, place, [ids["mara"]])  # the DM trimmed it: only Mara
         raw = await self.campaigns.export(GUILD_A, self.c)
-        raw["version"] = 2  # made by the version before this one: the file still has lists
+        raw["version"] = 2  # made just before the version that carries lists: it still has some
         restored = await self.campaigns.import_backup(GUILD_B, decode_backup(encode_backup(raw)), 7)
         got = await self.memory.statement_knowers(GUILD_B, restored.id, ENTRY, [place])
         self.assertEqual(got[place], [ids["mara"]])  # not widened again from the flags

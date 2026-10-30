@@ -33,6 +33,7 @@ from dmbot.memory.models import (
     CONFIRMED,
     DM,
     KNOWN,
+    MERGED,
     NPC_VIEW,
     PC_VIEW,
     PLAYER_CHARACTER,
@@ -634,6 +635,10 @@ async def follow_flags(
     closed: list[str] = []
     if table_name == "memory_entities":
         for before, after in rows:
+            if after["status"] == MERGED:
+                # (a merge moves everything that hung off the entry, who knows each included, in
+                # its own bulk statements: closing it here would be a second, row-by-row pass)
+                continue
             now, was = entry_shown(after), before is not None and entry_shown(before)
             if now and not was:
                 opened.append((after["id"], before is None))
@@ -648,6 +653,9 @@ async def follow_flags(
             if a["entity_id"] in owners and entry_shown(owners[a["entity_id"]])
         ]  # fmt: skip
     elif table_name == "memory_aliases":
+        # (a name whose own flags did not change is left alone before anything is read: a merge
+        # moves hundreds of them, and who knows each moves with it in the merge's own statements)
+        rows = [(b, a) for b, a in rows if b is None or alias_shown(b) != alias_shown(a)]
         owners = await _entities_by_id(w, {a["entity_id"] for _, a in rows})
         for before, after in rows:
             ok = after["entity_id"] in owners and entry_shown(owners[after["entity_id"]])
@@ -657,6 +665,7 @@ async def follow_flags(
             elif was and not now:
                 closed.append(after["id"])
     else:
+        rows = [(b, a) for b, a in rows if b is None or relation_shown(b) != relation_shown(a)]
         ends = await _entities_by_id(
             w, {x for _, a in rows for x in (a["subject_id"], a["object_id"])}
         )
