@@ -790,8 +790,8 @@ async def move_flags(conn: Any, guild_id: int, campaign_id: str) -> int:
                 put("alias_id", a["id"], v, int(a["created_at"]))
     live_aliases = {a["id"]: a for a in await scope.select(ALIASES)}
     for k in await scope.select(ALIAS_KNOWERS):
-        a = live_aliases.get(k["alias_id"])
-        if a is not None and a["status"] != "rejected" and a["secret"]:
+        held = live_aliases.get(k["alias_id"])
+        if held is not None and held["status"] != "rejected" and held["secret"]:
             put("alias_id", k["alias_id"], k["perspective_id"], int(k["created_at"]))
     relations = {r["id"]: r for r in await scope.select(RELATIONS)}
     for r in relations.values():  # a limited clue is known to those who `knows` it
@@ -806,25 +806,28 @@ async def move_flags(conn: Any, guild_id: int, campaign_id: str) -> int:
     for b in sorted(await scope.select(BELIEFS), key=lambda b: b["seq"]):
         current[(b["perspective_id"], b["relation_id"])] = b
     for b in current.values():  # a character's own belief first, so it wins over The party's
-        v, r = by_id.get(b["perspective_id"]), relations.get(b["relation_id"])
+        view, rel = by_id.get(b["perspective_id"]), relations.get(b["relation_id"])
         if (
-            v and r and r["status"] == CONFIRMED and v["kind"] in (PC_VIEW, NPC_VIEW)
+            view and rel and rel["status"] == CONFIRMED and view["kind"] in (PC_VIEW, NPC_VIEW)
             and b["confidence"] > 0
         ):  # fmt: skip
-            put("relation_id", r["id"], v["id"], int(b["recorded_at"]), float(b["confidence"]))
+            put("relation_id", rel["id"], view["id"], int(b["recorded_at"]), float(b["confidence"]))
     parties = {p["id"] for p in await scope.select(PERSPECTIVES, " AND kind = 'party'")}
     for b in current.values():
-        r = relations.get(b["relation_id"])
+        held_rel = relations.get(b["relation_id"])
         if (
             b["perspective_id"] in parties
-            and r
-            and r["status"] == CONFIRMED
+            and held_rel
+            and held_rel["status"] == CONFIRMED
             and b["confidence"] > 0
         ):
-            ends = (entities.get(r["subject_id"]), entities.get(r["object_id"]))
+            ends = (entities.get(held_rel["subject_id"]), entities.get(held_rel["object_id"]))
             if all(e is not None and entry_shown_end(e) for e in ends):
                 for v in pcs:
-                    put("relation_id", r["id"], v, int(r["created_at"]), float(b["confidence"]))
+                    put(
+                        "relation_id", held_rel["id"], v, int(held_rel["created_at"]),
+                        float(b["confidence"]),
+                    )  # fmt: skip
     await _bulk(conn, guild_id, campaign_id, KNOWERS, list(rows.values()))
     return len(rows)
 
