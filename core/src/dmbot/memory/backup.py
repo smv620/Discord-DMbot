@@ -30,6 +30,7 @@ from dmbot.memory._changes import (
     EVIDENCE,
     FLAGS,
     IMPRESSIONS,
+    KNOWERS,
     PERSPECTIVES,
     PREDICATES,
     RELATIONS,
@@ -98,6 +99,7 @@ _TAGS: dict[str, Table] = {
     "relation": RELATIONS,
     "perspective": PERSPECTIVES,  # who holds beliefs (#2409)
     "alias_knower": ALIAS_KNOWERS,  # which characters know an other name (#2935)
+    "knower": KNOWERS,  # which characters know each statement (#2995)
     "belief": BELIEFS,
     "evidence": EVIDENCE,  # what a connection or belief stands on (#2662)
     "impression": IMPRESSIONS,
@@ -364,6 +366,12 @@ def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
             raw = _checked_sheet(raw)
         elif table is EVIDENCE:
             _check_evidence(raw)
+        elif table is KNOWERS:  # four statement columns, exactly one set (`_check_knowers`)
+            if not all(
+                raw[c] is None or is_id(raw[c])
+                for c in ("about_entity_id", "state_id", "relation_id", "alias_id")
+            ) or not all(_valid(c, raw[c]) for c in ("id", "perspective_id", "created_at")):
+                raise CampaignError(DAMAGED)
         elif not all(_valid(c, raw[c]) for c in table.columns if c != "reading"):
             # (a claim's reading has its own check, `_check_claim`)
             raise CampaignError(DAMAGED)
@@ -413,6 +421,10 @@ def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
         for k in by_tag["alias_knower"]
         if aliases[k["alias_id"]]["secret"] and views[k["perspective_id"]]["kind"] == "pc"
     ]
+    # Who knows each statement (#2995): a row must name exactly one statement the file holds and a
+    # point of view the file holds; anything else is damage. A row for a point of view that is not
+    # a character's cannot exist (the party is never a knower), so it is damage too.
+    _check_knowers(by_tag, views)
     entities = {r["id"]: r for r in by_tag["entity"]}
     if any(r["entity_id"] not in entities for r in by_tag["sheet"]):
         raise CampaignError(DAMAGED)
@@ -420,6 +432,27 @@ def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
         r for r in by_tag["sheet"] if entities[r["entity_id"]]["played_by"] == r["player_id"]
     ]
     return by_tag
+
+
+def _check_knowers(
+    by_tag: dict[str, list[dict[str, Any]]], views: dict[str, dict[str, Any]]
+) -> None:
+    """Every `memory_knowers` row names one statement in the file and a character's point of
+    view in the file (#2995). A backup must hold the whole list or none of it, so damage refuses
+    the file."""
+    held = {
+        "about_entity_id": {r["id"] for r in by_tag["entity"]},
+        "state_id": {r["id"] for r in by_tag["state"]},
+        "relation_id": {r["id"] for r in by_tag["relation"]},
+        "alias_id": {r["id"] for r in by_tag["alias"]},
+    }
+    for k in by_tag["knower"]:
+        named = [c for c in held if k[c] is not None]
+        if len(named) != 1 or k[named[0]] not in held[named[0]]:
+            raise CampaignError(DAMAGED)
+        view = views.get(k["perspective_id"])
+        if view is None or view["kind"] not in ("pc", "npc"):
+            raise CampaignError(DAMAGED)
 
 
 _OLD_PARENTS = {k: v[0] for k, v in MIGRATED_KINDS.items()}
