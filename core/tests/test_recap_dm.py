@@ -369,12 +369,12 @@ class TheButtons(unittest.IsolatedAsyncioTestCase):
             [f"dmbot:recap:{a}:{CID}:{AT}" for a in ("read", "approve", "post", "drop", "tell")],
         )
         # (#2420) a new line: the three ways to approve, then Read it with no website address, or
-        # the review link and Share a recap with one
-        self.assertEqual(len(ready_view(CID, AT).children), 4)
+        # the review link and Share a recap with one; then 📝 Session notes (#3026) in both
+        self.assertEqual(len(ready_view(CID, AT).children), 5)
         new = ready_view(CID, AT, "https://site.example.com").children
         self.assertEqual(
             [(getattr(getattr(c, "item", c), "label", ""), getattr(c, "url", None)) for c in new][
-                3:
+                3:5
             ],
             [
                 ("Review the recap", "https://site.example.com/account/recaps"),
