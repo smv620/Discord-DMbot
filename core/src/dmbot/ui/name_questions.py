@@ -99,8 +99,8 @@ class NameQuestions(_Menu):
             )
 
     async def _answer(self, yes: bool, interaction: discord.Interaction) -> None:
-        await interaction.response.defer()
         shown = self.current  # the card this press was made on, taken before any wait
+        await interaction.response.defer()
         async with self.busy:
             campaign = await campaign_for(interaction, self.campaign_id)
             memory = memory_of(interaction)
