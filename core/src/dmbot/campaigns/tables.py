@@ -128,6 +128,7 @@ NOT_IN_BACKUP: dict[str, str] = {
     "name_actions": _WAIT,
     "setting_actions": _WAIT,
     "web_rule_actions": _WAIT,
+    "web_recap_style_actions": _WAIT,
     "web_report_requests": _WAIT,
     "lore_uploads": _WAIT,
     "web_sheet_actions": _WAIT,
