@@ -47,6 +47,7 @@ from dmbot.memory import (
     states,
 )
 from dmbot.memory import party as party_mod
+from dmbot.memory import same_person as same_person_mod
 from dmbot.memory import threads as threads_mod
 from dmbot.memory import unnamed as unnamed_mod
 from dmbot.memory._changes import (
@@ -2871,6 +2872,49 @@ class MemoryStore:
             wanted = set(only)
             found = [g for g in found if wanted & {n.id for n in g}]
         return found
+
+    async def same_person_offers(
+        self, guild_id: int, campaign_id: str
+    ) -> list[same_person_mod.Offer]:
+        """The unnamed people ("the guard at the gate") who may be a named one (#3037), with the
+        evidence, best first. Only offers: nothing is joined here. A DM-only reader: the evidence is
+        fixed phrases, but it is worked out from secret names and notes. Reads one campaign, and a
+        pair the DM said "not the same" to (`name_not_same`) is never offered again."""
+        async with self._read(guild_id, campaign_id, snapshot=True) as scope:
+            entries = await scope.select(
+                ENTITIES, " AND status IN ('proposed', 'confirmed') AND type <> %s", [PERSON]
+            )
+            aliases = await scope.select(ALIASES, " AND status IN ('proposed', 'confirmed')")
+            links = await scope.select(RELATIONS, " AND status = 'confirmed'")
+            cur = await scope.conn.execute(
+                "SELECT a_id, b_id FROM name_not_same WHERE guild_id = %s AND campaign_id = %s",
+                scope.ids,
+            )
+            apart = {(str(r["a_id"]), str(r["b_id"])) for r in await cur.fetchall()}
+        return same_person_mod.from_rows(entries, aliases, links, apart)
+
+    async def not_the_same_person(
+        self, guild_id: int, campaign_id: str, unnamed_id: str, named_id: str, *, user_id: int
+    ) -> None:
+        """The DM says this unnamed person is not that named one: remembered, so the pair is never
+        offered again. Not in the change log (nothing changed; the DM can still merge by hand)."""
+        if unnamed_id == named_id:
+            raise MemoryRuleError("That's the same entry.")
+        a, b = not_same_pair(unnamed_id, named_id)
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT count(*) AS n FROM memory_entities WHERE guild_id = %s AND campaign_id = %s"
+                " AND status IN ('proposed', 'confirmed') AND id = ANY(%s)",
+                (guild_id, campaign_id, [unnamed_id, named_id]),
+            )
+            row = await cur.fetchone()
+            if row is None or int(row["n"]) != 2:
+                raise MemoryRuleError(NOT_FOUND)
+            await conn.execute(
+                "INSERT INTO name_not_same (guild_id, campaign_id, a_id, b_id, decided_by,"
+                " created_at) VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING",
+                (guild_id, campaign_id, a, b, user_id, int(self._clock())),
+            )
 
     async def not_the_same(
         self, guild_id: int, campaign_id: str, ids: Sequence[str], *, user_id: int

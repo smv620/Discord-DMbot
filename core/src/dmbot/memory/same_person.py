@@ -19,6 +19,7 @@ from __future__ import annotations
 import re
 from collections.abc import Collection, Sequence
 from dataclasses import dataclass
+from typing import Any
 
 from dmbot.memory.models import name_key
 
@@ -137,3 +138,41 @@ def offers(
         found.extend(ranked[:MAX_OFFERS_PER_ENTRY])
     found.sort(key=lambda o: (-o.score, o.unnamed_id, o.named_id))
     return found
+
+
+def from_rows(
+    entries: Sequence[dict[str, Any]],
+    aliases: Sequence[dict[str, Any]],
+    relations: Sequence[dict[str, Any]],
+    apart: Collection[tuple[str, str]],
+) -> list[Offer]:
+    """The offers for one campaign's rows (the store reads them, scoped to the campaign). An
+    unnamed entry is the left side, a named confirmed one of the same kind the right; a declined
+    pair is kept as `name_not_same` keeps it, in id order, and turned back into (unnamed, named).
+    `stated` is empty until a reading records "the text says it is": that is a later slice."""
+    spoken: dict[str, list[str]] = {}
+    for a in aliases:
+        spoken.setdefault(str(a["entity_id"]), []).append(str(a["text"]))
+    links: dict[str, set[Link]] = {}
+    for r in relations:
+        subject, other = str(r["subject_id"]), str(r["object_id"])
+        links.setdefault(subject, set()).add((str(r["predicate"]), other, True))
+        links.setdefault(other, set()).add((str(r["predicate"]), subject, False))
+    unnamed: list[Unnamed] = []
+    named: list[Named] = []
+    for e in entries:
+        eid = str(e["id"])
+        mine = frozenset(links.get(eid, ()))
+        if e["unnamed"]:
+            what = " ".join(str(x) for x in (e["unnamed_what"], e["unnamed_role"]) if x)
+            unnamed.append(Unnamed(eid, str(e["type"]), what, mine))
+        elif e["status"] == "confirmed":
+            words = " ".join([str(e["name"]), *spoken.get(eid, []), str(e["description"] or "")])
+            named.append(Named(eid, str(e["type"]), words, mine))
+    declined = {
+        (u.id, n.id)
+        for u in unnamed
+        for n in named
+        if ((u.id, n.id) if u.id < n.id else (n.id, u.id)) in apart
+    }
+    return offers(unnamed, named, declined=declined)
