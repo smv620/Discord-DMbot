@@ -1,7 +1,6 @@
 // The words of Pause / Unpause on a campaign's page (#2985). Only the campaign's owner has the button: it is their plan's
 // place that changes (Discord's rule, dm_screen/pause.py). The other game masters see the state and are told to ask.
 export const pausePanel = {
-  heading: "Pause",
   pausedNow: "Paused. This campaign can't start. Nothing is deleted.",
   runningNow: "Not paused. This campaign can start.",
   pauseButton: "Pause this campaign",
@@ -15,7 +14,6 @@ export const pausePanel = {
   waiting: { pause: "Pausing the campaign. DMbot will do it in a moment.", unpause: "Unpausing the campaign. DMbot will do it in a moment." },
   working: { pause: "Pausing the campaign now.", unpause: "Unpausing the campaign now." },
   done: { pause: "Paused. The campaign can't start until you unpause it.", unpause: "Unpaused. The campaign can start again." },
-  notOwner: "Only the campaign's owner can pause or unpause it. Ask them to.",
   failed: "Nothing was changed. Try again in a minute.",
   stillPaused: "The campaign is still paused.",
   stillRunning: "The campaign is still not paused.",

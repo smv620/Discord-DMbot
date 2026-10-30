@@ -8,10 +8,21 @@ import { pausePanel as words } from "../content/pause-words";
 import { type AccountApi, ApiError, type CampaignSettingAnswer } from "./api";
 import WorkProgress from "./WorkProgress";
 
+/** Discord's words with its `**bold**` and `code` marks taken out: the page shows plain text. */
+const plain = (note: string): string => note.replaceAll("**", "").replaceAll("`", "").replace(/\s*\n+\s*/g, " ").trim();
+
 const POLL_MS = 1500;
 const POLLS = 40;
 
 type Wait = { on: boolean; state: CampaignSettingAnswer["state"] | "sending" | "timed_out"; note: string; error: string; since: number };
+
+// The bot's note already says why it refused; the plan hint is only for a failure that came with no words of its own.
+function failedReason(wait: Wait, isPaused: boolean): string {
+  const note = plain(wait.note);
+  const state = isPaused ? words.stillPaused : words.stillRunning;
+  if (note) return `${note} ${state}`;
+  return `${words.failed} ${state}${wait.on ? "" : ` ${words.noRoomNext}`}`;
+}
 
 export default function PausePanel({ api, campaignRef, paused, onChanged }: { api: AccountApi; campaignRef: string; paused: boolean; onChanged?: (paused: boolean) => void }) {
   const [isPaused, setPaused] = useState(paused);
@@ -75,7 +86,7 @@ export default function PausePanel({ api, campaignRef, paused, onChanged }: { ap
           stage={wait.state === "done" ? words.done[kind] : wait.state === "working" ? words.working[kind] : words.waiting[kind]}
           startedAt={wait.since}
           state={wait.state === "failed" ? "failed" : wait.state === "done" ? "done" : "running"}
-          reason={wait.state === "failed" ? `${wait.note || words.failed} ${isPaused ? words.stillPaused : words.stillRunning}${wait.on ? "" : ` ${words.noRoomNext}`}` : null}
+          reason={wait.state === "failed" ? failedReason(wait, isPaused) : null}
         />
       )}
       {!asking && (

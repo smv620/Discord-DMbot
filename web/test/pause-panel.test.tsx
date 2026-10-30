@@ -111,6 +111,34 @@ describe("the wait and the focus (reviewer and ux-critic, #2985)", () => {
     fireEvent.click(screen.getByRole("button", { name: words.yesUnpause }));
     await act(async () => { await vi.advanceTimersByTimeAsync(3_000); });
     expect(await screen.findByText(new RegExp(words.stillPaused))).toBeTruthy();
+    expect(document.body.textContent).not.toContain(words.noRoomNext); // the bot's note already says why
+  });
+
+  async function refusedWith(note: string, on: boolean): Promise<void> {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const api = mockApi("table");
+    api.campaignSettingAnswer = async () => ({ state: "failed", error: "refused", setting: "pause", value: "", note });
+    render(<PausePanel api={api} campaignRef="100.cmp1" paused={on} />);
+    fireEvent.click(screen.getByRole("button", { name: on ? words.unpauseButton : words.pauseButton }));
+    fireEvent.click(screen.getByRole("button", { name: on ? words.yesUnpause : words.yesPause }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(3_000); });
+  }
+
+  it("shows the bot's note as plain text, with no ** or backtick", async () => {
+    await refusedWith("**Nothing** changed: `pause` is not allowed.", false);
+    expect(await screen.findByText(/Nothing changed: pause is not allowed\./)).toBeTruthy();
+    expect(document.body.textContent).not.toMatch(/\*|`/);
+  });
+
+  it("does not show the plan hint for a refusal that is not about room", async () => {
+    await refusedWith("Only the campaign's owner can do that.", true);
+    expect(await screen.findByText(/Only the campaign's owner can do that\./)).toBeTruthy();
+    expect(document.body.textContent).not.toContain(words.noRoomNext);
+  });
+
+  it("shows the plan hint when an unpause fails with no words of its own", async () => {
+    await refusedWith("", true);
+    expect(await screen.findByText(new RegExp(words.stillPaused))).toBeTruthy();
     expect(document.body.textContent).toContain(words.noRoomNext);
   });
 });
