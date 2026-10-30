@@ -21,6 +21,8 @@ export function campaignFromPath(path: string): string | null {
 
 const POLL_MS = 2000;
 const POLL_MAX_MS = 20_000;
+/** A change nobody has touched for this long reads as stalled (the door puts a taken one back at ten minutes). */
+const STALLED_S = 300;
 
 type Change = RecapStyleAction["action"];
 
@@ -125,6 +127,8 @@ export default function RecapStyleView({ api, path }: { api: AccountApi; path: s
   const done = open?.at?.state === "done";
   // One change at a time: the controls rest until the one in flight has finished, so its end is never overwritten.
   const pending = open !== null && !failed && !done && !stopped;
+  // Quiet this long, waiting for the bot or working, is a stall (the panel's `waiting` is for waiting on the person).
+  const stalled = open?.at ? open.at.serverNow - open.at.updatedAt > STALLED_S : false;
   const examples = style?.examples ?? [];
   const full = examples.length >= STYLE_MAX_EXAMPLES;
   const words600 = wordCount(example);
@@ -141,8 +145,7 @@ export default function RecapStyleView({ api, path }: { api: AccountApi; path: s
           startedAt={open.at?.createdAt ?? null}
           updatedAt={open.at?.updatedAt ?? null}
           serverNow={open.at?.serverNow ?? null}
-          state={failed ? "failed" : done ? "done" : "running"}
-          waiting={open.at?.state !== "working" && !done && !failed}
+          state={failed ? "failed" : done ? "done" : stalled ? "stalled" : "running"}
           frozen={stopped}
           reason={failed ? (words.failedReasons[open.at?.error ?? ""] ?? words.failedFallback) : null}
         />

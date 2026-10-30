@@ -4,7 +4,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ApiError } from "../src/account/api";
+import { ApiError, httpApi } from "../src/account/api";
 import { mockApi } from "../src/account/mock";
 import RecapStyleView from "../src/account/RecapStyle";
 import { recapStylePage as words, RECAP_STYLE_LIVE, STYLE_EXAMPLE_WORDS } from "../src/content/recap-style-words";
@@ -121,5 +121,56 @@ describe("Recap style", () => {
     render(<RecapStyleView api={api} path={PATH} />);
     expect(await screen.findByText(words.exampleFull)).toBeTruthy();
     expect(screen.queryByLabelText(words.exampleLabel)).toBeNull();
+  });
+});
+
+describe("the wait and the refusals (Supervisor's send-back on #3059)", () => {
+  it("does not hold the wait panel at 'waiting for you': a change that sits untouched reads as stalled", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const api = mockApi("table");
+    api.recapStyleAction = async () => ({ state: "waiting", error: "", action: "add_note", createdAt: 100, updatedAt: 100, serverNow: 100 + 400 });
+    render(<RecapStyleView api={api} path={PATH} />);
+    await screen.findByText(words.usingOwn(1));
+    fireEvent.input(screen.getByLabelText(words.noteLabel), { target: { value: "Keep it short." } });
+    fireEvent.click(screen.getByRole("button", { name: words.addNote }));
+    for (let i = 0; i < 2; i++) await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
+    expect(await screen.findByText(/Nothing new for a while/)).toBeTruthy();
+    expect(document.querySelector(".work-progress")?.getAttribute("data-state")).toBe("stalled");
+  });
+
+  it("shows a running clock while the change is being made", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const api = mockApi("table");
+    api.recapStyleAction = async () => ({ state: "working", error: "", action: "add_note", createdAt: 100, updatedAt: 150, serverNow: 160 });
+    render(<RecapStyleView api={api} path={PATH} />);
+    await screen.findByText(words.usingOwn(1));
+    fireEvent.input(screen.getByLabelText(words.noteLabel), { target: { value: "Keep it short." } });
+    fireEvent.click(screen.getByRole("button", { name: words.addNote }));
+    for (let i = 0; i < 2; i++) await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
+    expect(document.querySelector(".work-progress")?.getAttribute("data-state")).toBe("running");
+    expect(document.body.textContent).toMatch(/Running for/);
+  });
+
+  it("tells a DM who asks for a fourth example that they have three", async () => {
+    const api = mockApi("table");
+    api.changeRecapStyle = async () => {
+      throw new ApiError("full");
+    };
+    render(<RecapStyleView api={api} path={PATH} />);
+    await screen.findByText(words.usingOwn(1));
+    fireEvent.input(screen.getByLabelText(words.exampleLabel), { target: { value: "One more." } });
+    fireEvent.click(screen.getByRole("button", { name: words.addExample }));
+    expect((await screen.findByRole("alert")).textContent).toBe(words.problems["full"]);
+  });
+
+  it("turns the server's 409 full into that same refusal", async () => {
+    const api = httpApi("/x", async () => new Response(JSON.stringify({ error: "full" }), { status: 409, headers: { "content-type": "application/json" } }));
+    await expect(api.changeRecapStyle?.("1.a", "add_example", "words")).rejects.toMatchObject({ kind: "full" });
+  });
+
+  it("does not say only the game master can see the examples, because co-DMs and the backup can", () => {
+    expect(words.lead).not.toMatch(/Only you/);
+    expect(words.lead).toContain("backup");
+    expect(words.lead).toContain("game masters");
   });
 });

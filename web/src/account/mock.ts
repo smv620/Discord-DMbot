@@ -1719,7 +1719,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       calls.push(`changeRecapStyle:${ref}:${action}:${arg.length}`);
       await reachable();
       signedIn();
-      if (action === "add_example" && styleNow.examples.length >= 3) throw new ApiError("bad-choice");
+      if (action === "add_example" && styleNow.examples.length >= 3) throw new ApiError("full");
       const id = String(styleChanges.size + 1).padStart(32, "0");
       styleChanges.set(id, { action, arg, looks: 0, at: Math.floor(Date.now() / 1000) });
       return { id };

@@ -1820,6 +1820,7 @@ export type ApiErrorKind =
   | "plan-needed" // sharing house rules needs a plan that allows it (#2783)
   | "no-rules" // there is no house rule of the campaign's own to share (#2783)
   | "bad-choice" // a sharing choice the API cannot read (#2783)
+  | "full" // three examples already, so no fourth (#2985)
   | "busy" // a recap that is being written or sent now can't be made again (#2608, #2609)
   | "no-lines" // the session's transcript is gone, so there is nothing to write from (#2608)
   | "needs-rights" // the campaign's first added recap: say you may use it (#2609)
@@ -2466,6 +2467,7 @@ export const fixErrorKinds: Record<string, ApiErrorKind> = {
 export const errorKinds: Record<string, ApiErrorKind> = {
   plan: "plan-needed",
   no_rules: "no-rules",
+  full: "full",
   bad_arg: "bad-choice",
   gone: "gone",
   ambiguous: "ambiguous",

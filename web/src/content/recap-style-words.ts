@@ -20,7 +20,7 @@ export const recapStylePage = {
   loading: "Loading…",
   notOpen: "This page isn't open yet.",
   notFound: "We can't find that campaign. Go back to your campaigns and choose it.",
-  lead: "Show DMbot how your recaps should sound. Paste a recap you like. DMbot copies the style, not the story: nothing from your example goes into your recaps. Only you, the game master, can see these examples.",
+  lead: "Show DMbot how your recaps should sound. Paste a recap you like. DMbot copies the style, not the story: nothing from your example goes into your recaps. Your campaign's game masters can see these examples, and they are kept in the campaign's backup, so leave out anything that must stay secret.",
   examplesHeading: "Example recaps",
   examplesIntro: "Recaps you like. DMbot copies how they sound.",
   usingOwn: (n: number): string => `${n} of ${STYLE_MAX_EXAMPLES} examples.`,
