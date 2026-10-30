@@ -36,12 +36,14 @@ SESSION_NOTES = (
     CREATE POLICY migrate_backfill ON session_notes FOR ALL USING (true) WITH CHECK (true);
     CREATE POLICY migrate_backfill ON recap_jobs FOR SELECT USING (true);
 
-    -- Every beat sheet a recap job already holds becomes its session's notes.
+    -- Every CHECKED beat sheet a recap job already holds becomes its session's notes: a job still
+    -- building its sheet (state beats, or queued) or one that failed has none worth keeping.
     INSERT INTO session_notes
             (guild_id, campaign_id, session_at, beats, written_at, job_created_at)
         SELECT j.guild_id, j.campaign_id, j.session_at, j.beats, j.updated_at, j.created_at
         FROM recap_jobs j
         WHERE jsonb_typeof(j.beats) = 'array' AND jsonb_array_length(j.beats) > 0
+          AND j.state IN ('checked', 'prose', 'housekeeping', 'audio', 'ready')
         ON CONFLICT DO NOTHING;
 
     DROP POLICY migrate_backfill ON recap_jobs;

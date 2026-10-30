@@ -284,6 +284,47 @@ class TheStorySoFar(NotesTest):
         self.assertEqual(told, ("The accepted telling.",))
 
 
+class TheStoryBudget(NotesTest):
+    async def test_a_long_notes_entry_is_cut_to_its_share_at_a_beat_and_recaps_survive(
+        self,
+    ) -> None:
+        from dmbot.recaps.accepted import AcceptedStore
+        from dmbot.recaps.inputs import NOTES_ENTRY_CHARS
+
+        async with self.db.guild(GUILD) as conn:
+            for at, text in ((1000, "The first recap. " * 100), (2000, "The second recap. " * 100)):
+                await conn.execute(
+                    "INSERT INTO recap_accepted (guild_id, campaign_id, session_at, version,"
+                    " text_hash, title, summary, accepted_by, accepted_at)"
+                    " VALUES (%s, %s, %s, 1, %s, 'T', %s, %s, 1)",
+                    (GUILD, self.camp.id, at, "a" * 64, text.strip(), DM),
+                )
+        long = [beat(f"Beat number {n} " + "x" * 90, [n]) for n in range(1, 160)]  # about 15,000
+        await self.beats_step(self.camp, 3000, long)
+        told = await story_so_far(AcceptedStore(self.db), GUILD, self.camp.id, 9000, self.notes)
+        self.assertEqual(len(told), 3)
+        self.assertTrue(told[0].startswith("The first recap."))
+        self.assertTrue(told[1].startswith("The second recap."))
+        self.assertLessEqual(len(told[2]), NOTES_ENTRY_CHARS)
+        self.assertTrue(told[2].endswith("x" * 90))  # cut after a whole beat, never in the middle
+
+    async def test_a_session_whose_transcript_still_exists_is_not_told_by_its_notes(self) -> None:
+        from dmbot.recaps.accepted import AcceptedStore
+
+        started = 1000
+        sid = await self.transcripts.open_session(GUILD, self.camp.id, started)
+        await self.transcripts.add_lines(GUILD, sid, [line(started + 1, ME, "hello there")])
+        await self.transcripts.end_session(GUILD, sid, started + 3600)
+        await self.beats_step(self.camp, started, FIRST)
+        told = await story_so_far(AcceptedStore(self.db), GUILD, self.camp.id, 5000, self.notes)
+        self.assertEqual(told, ())
+        await self.transcripts.delete_session_transcript(
+            GUILD, self.camp.id, sid, NOW, NOW
+        )  # (retention took the transcript: now the notes tell it)
+        again = await story_so_far(AcceptedStore(self.db), GUILD, self.camp.id, 5000, self.notes)
+        self.assertEqual(len(again), 1)
+
+
 class TheMigration(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         if not TEST_URL:
@@ -303,17 +344,32 @@ class TheMigration(unittest.IsolatedAsyncioTestCase):
         await self.db.close()
         await drop_schema(TEST_URL, self.schema)
 
-    async def test_the_beats_recap_jobs_already_hold_become_the_notes(self) -> None:
+    async def test_the_checked_beats_recap_jobs_already_hold_become_the_notes(self) -> None:
         camp = await CampaignStore(self.db).create(GUILD, "Frostmaiden", DM)
         other = await CampaignStore(self.db).create(GUILD, "Sunken City", DM)
         recaps = RecapStore(self.db)
-        for campaign, at, sheet in ((camp, 1000, FIRST), (camp, 2000, []), (other, 1000, SECOND)):
+        # (campaign, session, beats, the job's state): only a checked sheet is the session's notes
+        jobs = (
+            (camp, 1000, FIRST, "checked"),
+            (camp, 2000, [], "checked"),  # no beats
+            (camp, 3000, SECOND, "beats"),  # a sheet still being built
+            (camp, 4000, SECOND, "failed"),  # a job that failed
+            (camp, 5000, SECOND, "ready"),
+            (other, 1000, SECOND, "prose"),
+        )
+        for campaign, at, sheet, state in jobs:
             await recaps.enqueue(GUILD, campaign.id, at, dm_user_id=DM)
             await recaps.update(GUILD, campaign.id, at, state="beats", beats=sheet)
+            async with self.db.guild(GUILD) as conn:  # (the state, without the notes' own hook)
+                await conn.execute(
+                    "UPDATE recap_jobs SET state = %s WHERE guild_id = %s AND campaign_id = %s"
+                    " AND session_at = %s",
+                    (state, GUILD, campaign.id, at),
+                )
         await self.db.migrate(MIGRATIONS)
         notes = SessionNotesStore(self.db)
         mine = await notes.all(GUILD, camp.id)
-        self.assertEqual([n.session_at for n in mine], [1000])  # (a job with no beats has none)
+        self.assertEqual([n.session_at for n in mine], [1000, 5000])
         self.assertEqual(mine[0].beats, FIRST)
         theirs = await notes.all(GUILD, other.id)
         self.assertEqual(theirs[0].beats, SECOND)

@@ -42,7 +42,7 @@ class Warning(unittest.IsolatedAsyncioTestCase):
         await c.DeleteButton(GUILD).callback(it)
         text = it.followup.send.await_args.args[0]
         self.assertIn("everything you said that DMbot wrote down in **Dragon Club**", text)
-        self.assertIn("Other people's lines and the DM's story notes stay", text)
+        self.assertIn("Recaps and session notes DMbot made stay with the campaign", text)
         self.assertIn("12 lines in 3 sessions", text)
         self.assertIn("Copies people already downloaded stay too", text)
         self.assertIn("This can't be undone.", text)
