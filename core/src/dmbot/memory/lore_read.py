@@ -109,7 +109,19 @@ RELATIONSHIPS
 - Orrin Dace — mentors — Sorrel Tane | quote: "Orrin Dace mentored two apprentices, Pell Wick and Sorrel Tane"
 - Orrin Dace — founded — Lantern League | quote: "Orrin Dace mentored two apprentices, Pell Wick and Sorrel Tane, and founded the Lantern League"
 
-Example 3. Input (a list of names, no relationships):
+Example 3. Input (a character known by an earlier name):
+<document>
+Born Tamsin Vell, the thief fled north under the pseudonym Ash Morrow. Tamsin Vell served Master Orlen before the flight.
+</document>
+Output:
+NAMES
+- Ash Morrow | person | secret: Tamsin Vell | quote: "under the pseudonym Ash Morrow"
+- Master Orlen | person | quote: "served Master Orlen"
+
+RELATIONSHIPS
+- Tamsin Vell — serves — Master Orlen | quote: "Tamsin Vell served Master Orlen"
+
+Example 4. Input (a list of names, no relationships):
 <document>
 Tavin (the rogue) | NPC
 Ka'zeth (kah-ZETH) | NPC
@@ -150,6 +162,13 @@ def read_instructions(own: Mapping[str, str] | None = None) -> str:
         "openly for the same one; give 'said:' only when the text shows how to say the name; "
         "give 'secret:' only when the text says plainly that a name is a disguise or a secret "
         f"identity. 'quote:' is {bg.QUOTE_WORDS} words at most, copied exactly from the text.\n"
+        "- ONE PERSON, TWO NAMES: when the text says a character was first known by another "
+        "name (born, originally, formerly, a pseudonym, took the name, now calls himself or "
+        "herself, also known as, a.k.a., an alias), that earlier name is NOT a name of its own: "
+        "never give it its own line. Write one line for the name the story goes by now (the "
+        "later one) and put the earlier name under 'other names:', or under 'secret:' when the "
+        "text presents it as hidden (a pseudonym, to remain anonymous, a disguise). "
+        "Relationships the text writes about the earlier name belong to that same person.\n"
         "- Leave out descriptions, ordinary words, spells, rules terms and kinds of creature in "
         "general (elves, goblins).\n"
         "- RELATIONSHIPS: go through the text sentence by sentence, and for every sentence that "
@@ -164,7 +183,8 @@ def read_instructions(own: Mapping[str, str] | None = None) -> str:
         "of, owns, is in (also: lives in, resides in, is from), leads, founded, worships, is a "
         "parent of, is a child of, knows, is sworn to (an oath, vow, pact or fealty), pays"
         f"{theirs}). Write each relationship's two ends as the full "
-        "names you listed under NAMES, never as 'my brother', 'the twins' or a title; when a "
+        "names you listed under NAMES (or one of that name's other or secret names, as the "
+        "sentence has it), never as 'my brother', 'the twins' or a title; when a "
         "sentence says 'his sister' or 'she', still write the two full names" + _speaking() + " "
         f"'quote:' is {bg.QUOTE_WORDS} words at most, copied exactly from the text, and holds "
         "both names or a word of each (one that does not is dropped).\n"
@@ -227,7 +247,8 @@ def shape_instructions(own: Mapping[str, str] | None = None) -> str:
         "words, no entry the list does not have. One entry for each list line.\n\n"
         f"For each NAMES line give name, kind (exactly one of {kinds}), also (its 'other "
         "names', else empty), secret (its 'secret:' disguises, else empty) and quote (its "
-        "'quote:', else empty). Leave out 'said:'.\n"
+        "'quote:', else empty). Leave out 'said:'. An earlier name of a character stays in also or "
+        "secret: it is never an entry of its own.\n"
         "For each RELATIONSHIPS line give a and b (the two names as in the line), quote (its "
         f"'quote:') and how, which reads 'a <how> b': exactly one of {words}{theirs}. They mean: "
         "family = a is family of b; member = a is a member of b (or belongs to a group); "
@@ -747,6 +768,58 @@ def _gives_spellings(line: str) -> bool:
     return re.search(r"(?:other names|secret):\s*[^|\s]", line, re.I) is not None
 
 
+def fold_names(
+    names: list[bg.Found], skip_name: Callable[[str], bool] | None = None
+) -> list[bg.Found]:
+    """One entry for each person (#3034): a line whose name another line gives as an other or
+    secret name, in either direction, is the same person. They are folded into one, toward the
+    name the campaign already has (else the one listed first), and every spelling of both is kept
+    (a spelling that was secret in either stays secret). Mutual lines (A lists B and B lists A)
+    fold into one, never into none."""
+    out: list[bg.Found] = []
+    for f in names:
+        mine = {name_key(f.name), *(name_key(sp) for sp in (*f.also, *f.secret))}
+        at = next(
+            (
+                i
+                for i, g in enumerate(out)
+                if mine & {name_key(g.name), *(name_key(sp) for sp in (*g.also, *g.secret))}
+                and g.kind == f.kind
+            ),
+            None,
+        )
+        if at is None:
+            out.append(f)
+            continue
+        g = out[at]
+        first, second = (
+            (f, g) if skip_name and skip_name(f.name) and not skip_name(g.name) else (g, f)
+        )
+        hidden = {name_key(sp) for sp in (*g.secret, *f.secret)}
+        # (when one line called the other's name its disguise, that pair stays hidden whichever
+        # name the entry keeps)
+        if name_key(first.name) in {name_key(sp) for sp in second.secret}:
+            hidden.add(name_key(second.name))
+        if name_key(second.name) in {name_key(sp) for sp in first.secret}:
+            hidden.add(name_key(second.name))
+        spellings = dict.fromkeys(
+            [second.name, *first.also, *first.secret, *second.also, *second.secret]
+        )
+        keep = {name_key(first.name)}
+        also: list[str] = []
+        secret: list[str] = []
+        for sp in spellings:
+            key = name_key(sp)
+            if key in keep:
+                continue
+            keep.add(key)
+            (secret if key in hidden else also).append(sp)
+        out[at] = bg.Found(
+            first.name, first.kind, tuple(also), tuple(secret), first.quote or second.quote
+        )
+    return out
+
+
 def line_name(line: str) -> str:
     """The name a pass-1 name line is about: "- Mira Voss | person | ..." gives "Mira Voss"."""
     return line.lstrip("-* ").split("|", 1)[0].strip()
@@ -872,9 +945,18 @@ async def read_lore(
             reply_text, text, set(own), stats.dropped, here, stats.unsettled
         )
     secrets = frozenset(name_key(sp) for f in names for sp in f.secret)
+    # A name the list also gives as another line's other or secret name is that person, not a
+    # second one (#3034): the model was told never to give an earlier name a line of its own.
+    names = fold_names(names, skip_name)
     known: dict[str, tuple[str, ...]] = {}
     if skip_name is not None:
-        known = {f.name: f.also for f in names if skip_name(f.name) and f.also}
+        # (a name the campaign has: its other names and, when the text calls one a disguise or an
+        # earlier name, that too, #3034; `secrets` tells the two apart)
+        known = {
+            f.name: (*f.also, *f.secret)
+            for f in names
+            if skip_name(f.name) and (f.also or f.secret)
+        }
         names = [f for f in names if not skip_name(f.name)]
     stats.names_kept, stats.links_kept = len(names), len(links)
     log.info(

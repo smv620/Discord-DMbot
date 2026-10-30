@@ -55,6 +55,7 @@ from dmbot.memory.models import (
     DM,
     PROPOSED,
     MemoryRuleError,
+    MoreNames,
     NewName,
     Relation,
     name_key,
@@ -725,6 +726,7 @@ async def read_background(
         # under the smart guess it stays secret whatever the AI says (DM authority)
         fold_secret=choice == lore_knowledge.WORLD,
     )
+    await save_earlier_names(memory, campaign, read.known_spellings, read.secret_spellings)
     questions: list[str] = []
     keys: set[tuple[str, str, str]] = set()
     queued = await queue_links(
@@ -817,6 +819,43 @@ async def _world(
     names = {name_key(f.name) for i, f in enumerate(found) if i in known}
     keys = {_link_key(c.a, c.how, c.b) for i, c in enumerate(links, len(found)) if i in known}
     return names, keys, ok
+
+
+async def save_earlier_names(
+    memory: MemoryStore,
+    campaign: Campaign,
+    spellings: Mapping[str, Sequence[str]],
+    secret: Collection[str],
+) -> None:
+    """The other names a lore text gives a name the campaign already has (#3034): a pseudonym, an
+    earlier or birth name, a nickname. They are saved as suggestions on that entry (never a new
+    character, never confirmed for the DM), secret when the text called the name a disguise.
+    A spelling the entry has, or another entry uses, is left out by the store, so reading the
+    same text twice adds nothing. A refusal is logged: the read goes on without them."""
+    if not spellings:
+        return
+    lookup = CampaignLookup.build(await memory.lookup_data(campaign.guild_id, campaign.id))
+    more: list[MoreNames] = []
+    claims: dict[str, set[str]] = {}
+    for main, found in spellings.items():
+        for sp in found:
+            claims.setdefault(name_key(sp), set()).add(name_key(main))
+    for main, found in spellings.items():
+        found = tuple(sp for sp in found if len(claims[name_key(sp)]) == 1)  # (not two names')
+        ids = {e.entity_id for e in lookup.by_key.get(name_key(main), ()) if not e.person}
+        if len(ids) != 1:
+            continue  # (no such entry, or two: DMbot will not guess which one is meant)
+        hidden = tuple(sp for sp in found if name_key(sp) in secret)
+        shown = tuple(sp for sp in found if name_key(sp) not in secret)
+        more.append(MoreNames(next(iter(ids)), shown, hidden, proposed=True))
+    if not more:
+        return
+    try:
+        await memory.add_names(campaign.guild_id, campaign.id, [], source=DM, more=more)
+    except MemoryRuleError as exc:
+        log.info("Skipped the earlier names of a background: %s", exc)
+    except Exception:  # the names of the read are stored already: this must not undo the read
+        log.exception("The earlier names of a background could not be saved")
 
 
 async def store(
