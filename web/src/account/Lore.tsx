@@ -201,6 +201,7 @@ export default function Lore({ api, path }: { api: AccountApi; path: string }) {
             <p role="status">{upload.namesFound + upload.linksFound === 0 ? words.foundNothing : words.found(upload.namesFound, upload.linksFound)}</p>
             {upload.namesFound + upload.linksFound > 0 && (
               <>
+                {upload.choice === "smart" && <p>{words.guessed}</p>}
                 <p>{words.nextLead}</p>
                 <ul class="plain-list">
                   <li><a href={`/account/names/${encodeURIComponent(ref)}`}>{words.checkNames}</a></li>
