@@ -51,6 +51,7 @@ from dmbot.web import (
     handover_offer,
     imports,
     line_fixes,
+    lore,
     my_lines,
     names_smart,
     npc_pages,
@@ -1229,6 +1230,59 @@ def create_app(
                 raise HTTPException(status_code=429, detail="too_soon") from None
             raise HTTPException(status_code=404, detail="not_found") from None
 
+    lore_refusals = {
+        "not_allowed": (403, "not_allowed"),
+        "needs_confirm": (409, "needs_confirm"),
+        "busy": (409, "busy"),
+        "too_soon": (429, "too_soon"),
+        "bad_text": (422, "bad_text"),
+        "too_long": (422, "too_long"),
+        "bad_speaker": (422, "bad_speaker"),
+    }
+
+    @app.post("/me/campaigns/{ref}/lore", status_code=202)
+    async def me_lore_add(ref: str, signed: Signed, request: Request) -> dict[str, Any]:
+        """Upload campaign lore (#3022): `{"source": "paste"|"file"|"link", "text"|"link": ...,
+        "choice": "world"|"spoilers"|"smart", "speaker": <character id or "">, "rights": true}`,
+        queued for the bot, answered with its progress. DM only (403); 409 `needs_confirm` until
+        `rights` is true, 409 `busy` while one is open, 429 `too_soon` past five an hour, 422 for
+        words the door refuses. 404 while DMBOT_WEB_LORE is off."""
+        session, _token = signed
+        if not settings.lore_on:
+            raise HTTPException(status_code=404, detail="not_found")
+        try:
+            body = await bounded_json(
+                request, 1_200_000
+            )  # 262,144 characters at up to 4 bytes each
+            return await lore.add(db, session, ref, body)
+        except RecapError as err:
+            status, detail = lore_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/lore")
+    async def me_lore_latest(ref: str, signed: Signed) -> dict[str, Any]:
+        """The newest upload of the last day, or `{"upload": null}`. DM only."""
+        session, _token = signed
+        if not settings.lore_on:
+            raise HTTPException(status_code=404, detail="not_found")
+        try:
+            return await lore.read(db, session, ref, None)
+        except RecapError as err:
+            status, detail = lore_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/lore/{upload}")
+    async def me_lore_read(ref: str, upload: str, signed: Signed) -> dict[str, Any]:
+        """One upload's progress: stage, counts, times; never its words. DM only; 404 if gone."""
+        session, _token = signed
+        if not settings.lore_on:
+            raise HTTPException(status_code=404, detail="not_found")
+        try:
+            return await lore.read(db, session, ref, upload)
+        except RecapError as err:
+            status, detail = lore_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
     @app.post("/me/recaps/{ref}/again")
     async def me_recap_again(ref: str, signed: Signed, request: Request) -> dict[str, Any]:
         """Make the recap of a session, or make it again (#2608): `{"replace": true}` once the DM
@@ -1589,6 +1643,16 @@ def create_app(
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 
+    @app.get("/me/campaigns/{ref}/web/characters")
+    async def me_campaign_web_characters(ref: str, signed: Signed) -> dict[str, Any]:
+        """The campaign's player characters, for "Who knows this?" (#2935). DM only."""
+        session, _token = signed
+        try:
+            return await relationships.read_characters(db, session, ref)
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
     @app.get("/me/campaigns/{ref}/web/find")
     async def me_campaign_web_find(
         ref: str, signed: Signed, q: str = "", view: str | None = None
@@ -1770,6 +1834,7 @@ def create_app(
         "bad_action": (400, "bad_action"),
         "bad_name": (400, "bad_name"),
         "bad_kind": (400, "bad_kind"),
+        "bad_player": (400, "bad_player"),
         "too_long": (400, "too_long"),
         "needs_confirm": (400, "needs_confirm"),
         "bad_target": (400, "bad_target"),

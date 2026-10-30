@@ -2748,3 +2748,33 @@ DEPLOY d890ea81 (2026-10-29, dev1, owner's OK through the prompt "Deploy now"; S
 - The start-up channel sweep line was not in the log this time (no old channels were present to delete); not confirmed.
 - web-api healthy.
 - Not yet checked: the Story graph Steps spinner (up to 8 hops) and a deep view, the Who knows this? page for a connection and an other name in the test server, and the owner's recap test (word count, away findings, final read used or kept).
+
+DEPLOY a8805996 (2026-10-29, dev1, owner's OK through the prompt "Deploy now"; Supervisor's sixth deploy handover on #516, 19:08 UTC, a small deploy). Live was d890ea81.
+- CI: all 11 checks green on a8805996 (the merge of #2988).
+- No migrations: live stays at 277 rows (0280_link_known_by). No dry run needed.
+- Backup before the stop (chmod 600, private folder). Bot stopped with web-api, bot started first, web-api after.
+- Bot connected to 2 servers, 0 errors since start.
+- web-api healthy.
+- Brings: #2978 (the "Check new names" buttons from the DM's private message), #2983 and #2984 (Story graph layout and full screen), #2988 (sign-in button on a signed-out campaign page), #1404 (privacy page names Resend).
+- Not yet checked: the "Check new names" buttons (owner, in the DM), the Story graph full screen, the sign-in button, and the privacy page.
+
+DEPLOY fb1b148a (2026-10-29, dev1, owner's OK through the prompt "Deploy now"; Supervisor's seventh deploy handover on #516, 23:05 UTC, a small deploy). Live was a8805996.
+- CI: all 11 checks green on fb1b148a (the merge of #2998).
+- No migrations: live stays at 277 rows (0280_link_known_by). No dry run needed.
+- Backup before the stop (chmod 600, private folder). Bot stopped with web-api, bot started first, web-api after.
+- Bot connected to 2 servers, 0 errors since start.
+- web-api healthy.
+- Brings: #2998, the four-button Discord menu (DMbot Main Menu for a DM, player and guest; Help card; Manage DMbot; My character sheet).
+- Not yet checked (owner, in the test server's DM Bot channel): the main menu's four buttons for a DM, Manage campaign, Manage DMbot with the Discord-live settings at the top, a player seeing only My data and Help, My character sheet opening its form, and an old Settings button opening the new card.
+
+CHECK fb1b148a (2026-10-30, dev1, the owner's check in the test server's DM Bot channel, after the deploy). Owner's verdict: "looks better".
+- The DM's 👤 DMbot Main Menu shows the four buttons for a DM: ⚙️ Manage DMbot, 🌐 Manage campaign, 🙋 My data and ❓ Help, with the one-line intro.
+- Not yet checked: a player seeing only My data and Help, My character sheet opening its form, and an old Settings button opening the new card.
+
+DEPLOY 22f981e9 (2026-10-30, dev1, owner's OK through the prompt "Deploy now"; Supervisor's eighth deploy handover on #516, 01:37 UTC). Live was fb1b148a.
+- CI: all 11 checks green on 22f981e9 (the merge of #3009).
+- Dry run on a copy (restored from a backup taken before the dry run): 277 to 282 migration rows; 0282 to 0286 applied; second run applied nothing.
+- Backup before the stop (chmod 600, private folder). Bot stopped with web-api, bot started first, web-api after.
+- Live: 282 migration rows, last 0286_knowers_confidence. memory_knowers exists and has 0 rows. Bot connected to 2 servers, 0 errors since start.
+- web-api healthy.
+- Not yet checked (owner, on the website and in Discord): Story Graph colours and Cluster by quest; the Player character name check with a confirmed Discord ID; ⚙️ Manage DMbot without the items the website now does.

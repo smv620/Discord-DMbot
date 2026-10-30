@@ -45,7 +45,7 @@ export const featureSteps: FeatureStep[] = [
   {
     audience: "gameMaster",
     whatsNew: "Your campaign has its own home",
-    text: "Each campaign has its own page on the website, in four parts: Story, At the table, Rules and Settings. Settings is only for game masters. A trail at the top shows where you are, and four tabs let you jump to another part.",
+    text: "Each campaign has its own page on the website, in five parts: Overview, Story, Add to the story, Rules and Settings. Add to the story and Settings are only for game masters. A trail at the top shows where you are, the tabs jump to another part, and under them are the pages in the part you are in.",
   },
   {
     audience: "gameMaster",
@@ -65,7 +65,7 @@ export const featureSteps: FeatureStep[] = [
   {
     audience: "gameMaster",
     whatsNew: "After the session: things to check",
-    text: "Under a session's recap, After the session: things to check lists what DMbot noticed. First, things it holds that may not fit together, with both sides and where each came from; if the words behind a line are gone, it says a line from that session is no longer available. Then what the party has wrong, in three groups: disguised on purpose, misunderstood, and simply false. Each one has four answers: That's intended (kept, and not raised again), Fix the DM's view (opens the Story graph), Not a problem, and Remind me next session. Undo takes an answer back. Only the DM sees this list, never a player. DMbot only lists; you decide.",
+    text: "Under a session's recap, After the session: things to check lists what DMbot noticed. First, things it holds that may not fit together, with both sides and where each came from; if the words behind a line are gone, it says a line from that session is no longer available. Then what the party has wrong, in three groups: disguised on purpose, misunderstood, and simply false. Each one has four answers: That's intended (kept, and not raised again), Fix the DM's view (opens the Story Graph), Not a problem, and Remind me next session. Undo takes an answer back. Only the DM sees this list, never a player. DMbot only lists; you decide.",
   },
   {
     audience: "gameMaster",
@@ -79,13 +79,13 @@ export const featureSteps: FeatureStep[] = [
   },
   {
     audience: "gameMaster",
-    whatsNew: "What people believe, on the Story graph",
-    text: "On a campaign's Story graph, What people believe lists theories, accusations and reveals DMbot heard. Press Keep as a belief to note what that person thinks, or Drop it to skip one. Undo is there right after you keep one. A belief is never treated as a fact. If a new name is in it, answer Check new names first. Only you, the DM, see this.",
+    whatsNew: "What people believe, on the Story Graph",
+    text: "On a campaign's Story Graph, What people believe lists theories, accusations and reveals DMbot heard. Press Keep as a belief to note what that person thinks, or Drop it to skip one. Undo is there right after you keep one. A belief is never treated as a fact. If a new name is in it, answer Check new names first. Only you, the DM, see this.",
   },
   {
     audience: "gameMaster",
-    whatsNew: "Every name on the Story graph",
-    text: "At the top of the Story graph, a line counts every name and every connection in the campaign, not only the ones drawn. Not connected yet lists the names that have no connection, by kind. Tap one to check: it says it has no connections yet. If the names form more than one group, Other groups of linked names has a button for each. Tap one to put that group in the middle of the map. Players see only what they are allowed to see.",
+    whatsNew: "Every name on the Story Graph",
+    text: "At the top of the Story Graph, a line counts every name and every connection in the campaign, not only the ones drawn. Not connected yet lists the names that have no connection, by kind. Tap one to check: it says it has no connections yet. If the names form more than one group, Other groups of linked names has a button for each. Tap one to put that group in the middle of the map. Players see only what they are allowed to see.",
   },
   {
     audience: "gameMaster",
@@ -95,7 +95,7 @@ export const featureSteps: FeatureStep[] = [
   {
     audience: "gameMaster",
     whatsNew: "Your shared rules in one place",
-    text: "My Account has a Shared rules page. For each campaign you run, it lists the house rules and homebrew packs you share with other tables, and the ones you use from other tables. It is for looking only. To share, stop sharing or follow a set, do it in Discord: ⚙️ Settings, then 📚 Shared rules.",
+    text: "My Account has a Shared rules page. For each campaign you run, it lists the house rules and homebrew packs you share with other tables, and the ones you use from other tables. It is for looking only. To share, stop sharing or follow a set, do it in Discord: ⚙️ Manage DMbot, then 📚 Shared rules.",
   },
   {
     audience: "gameMaster",

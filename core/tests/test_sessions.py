@@ -730,7 +730,7 @@ class SaveAndResume(SessionTests):
             self.posts.clear()
             await bot._on_status(bot.tables[GUILD], Status("joined", guild_id=GUILD))
         self.assertFalse(any("listening again" in t for t in self.screen_posts()))
-        # #553 (a decision): no new ⚙️ Settings message on a quiet resume either; the
+        # #553 (a decision): no new ⚙️ Manage DMbot message on a quiet resume either; the
         # help card is refreshed at the next /dmbot start. Don't "fix" this into a
         # card re-post on every restart.
         posted = [ids for _, ids in each[-1]]  # the second, quick one (the first is announced)
@@ -1310,7 +1310,7 @@ class SaveAndResume(SessionTests):
         self.assertNotIn(GUILD, self.bot.tables)
 
     async def test_settings_change_how_much_dmbot_says_mid_session(self) -> None:
-        # #515: ⚙️ Settings → Quiet saves it and the running session follows at once.
+        # #515: ⚙️ Manage DMbot → Quiet saves it and the running session follows at once.
         from dmbot.dm_screen.settings import LevelButton
 
         await self.start()

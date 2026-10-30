@@ -1,5 +1,5 @@
 /** @jsxImportSource preact */
-// "What people believe" on the Story graph (#2412 slice 3b; core PR 2693): the theories, accusations, reveals
+// "What people believe" on the Story Graph (#2412 slice 3b; core PR 2693): the theories, accusations, reveals
 // and tricks DMbot noticed, each of which the DM may keep as a belief (what someone thinks, never a fact),
 // say is not right, or take back. Each answer is sent to DMbot, which makes the very calls the DM screen
 // makes, so consent and every rule hold the same. Only a DM of the campaign gets the list (a player or a

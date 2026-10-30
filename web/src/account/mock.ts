@@ -62,7 +62,7 @@ import type {
   RuleSharingAnswer,
   RuleSharingChoice,
 } from "./api";
-import { ApiError, type WebLinkKind, type FixAnswer, type FixMode, type PlotIssue, type PlotMessage, type PlotProposal, type WaitingLook } from "./api";
+import { ApiError, type LoreUpload, type WebLinkKind, type FixAnswer, type FixMode, type PlotIssue, type PlotMessage, type PlotProposal, type WaitingLook } from "./api";
 import { NAME_LIMIT } from "../content/names-words";
 
 /** Found in the built files only if the pretend API was included; check-csp fails a real
@@ -576,7 +576,7 @@ function namesView(ref: string): "dm" | "manager" | "none" {
   return "dm";
 }
 
-/** The pretend campaign behind the relationship web (#2324): the Names page's names joined by a few
+/** The pretend campaign behind the Story Graph (#2324): the Names page's names joined by a few
  * made-up connections, so every ring has something in it. `.web-big` makes a campaign of 350 names
  * (the page warns before drawing it), `.web-manager` a server manager who isn't a DM (no secrets, no
  * editing) and `.web-none` someone who may not see it (not found). */
@@ -745,6 +745,8 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   let failedMove = false; // the move asked for failed: the offer is open again with the reason
   let moveState: "none" | "moving" | "failing" = "none"; // a campaign the bot is moving: `look` says ended meanwhile (#2550)
   let movedIn = 0; // looks at /me before a campaign the bot is moving shows up (#2550)
+  let loreNow: LoreUpload | null = null; // the pretend upload (#3022)
+  let loreLooks = 0;
   let putBackNow = false; // session 2's left-out stretch has been put back by a DM (#2568)
   const myEmail: MyEmail = {
     address: "dm@example.com",
@@ -828,6 +830,14 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       };
     });
   };
+  // Two pretend quests that sit outside the drawn web, so the page can be built with "Cluster by quest" (#2992): a
+  // DM in Full View is told of them, nobody else. The first names are in the bell quest, the second also in the heist.
+  const pretendQuests = (id: string): { id: string; name: string; links: number }[] => {
+    const n = Number(id.replace(/\D/g, "")) || 0;
+    if (n % 4 === 1) return [{ id: "q-bell", name: "Find the Lost Bell", links: 2 }, { id: "q-heist", name: "The Keep Heist", links: 1 }];
+    if (n % 4 === 2) return [{ id: "q-heist", name: "The Keep Heist", links: 1 }];
+    return [];
+  };
   const webGraphOf = (ref: string, query: WebQuery): WebGraph => {
     const view = webView(ref);
     if (view === "none") throw new ApiError("not-found");
@@ -868,7 +878,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       .filter((n) => near.has(n.id))
       .map((n) =>
         all
-          ? { ...current(n), revealed: n.revealed !== false, page: current(n).kind === "npc" }
+          ? { ...current(n), revealed: n.revealed !== false, page: current(n).kind === "npc", ...(dm ? { quests: pretendQuests(n.id) } : {}) }
           : { id: n.id, name: current(n).name, kind: current(n).kind, page: current(n).kind === "npc" },
       );
     const edges = edgesOf(usable.filter((l) => near.has(l.a) && near.has(l.b)), all, all, view === "dm" && all);
@@ -1481,7 +1491,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       choices[which] = on;
       return { ...choices };
     },
-    // The relationship web (#2324): rings out from a name, the way the real API counts hops.
+    // The Story Graph (#2324): rings out from a name, the way the real API counts hops.
     async webGraph(ref, query: WebQuery): Promise<WebGraph> {
       calls.push(`webGraph:${ref}:center=${query.center ?? ""}:hops=${query.hops}${query.view ? `:view=${query.view}` : ""}`);
       await reachable();
@@ -1695,6 +1705,32 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         state.links.splice(state.links.indexOf(link), 1);
       }
       return edgeOf(link.a, link.b);
+    },
+    // Pretend Upload lore (#3022): the words are not kept; the upload moves on by the number of looks, as the bot's would.
+    // A speaker "refuse" is one the door turns away, and a second add while one is open is `slow-down`.
+    async loreAdd(ref, input): Promise<LoreUpload> {
+      calls.push(`loreAdd:${ref}:${input.source}:${input.choice}:${input.speaker || "-"}:${input.rights ? "rights" : "no-rights"}:${(input.text ?? input.link ?? "").length}`);
+      await reachable();
+      signedIn();
+      if (!input.rights) throw new ApiError("needs-confirm");
+      if (input.speaker === "refuse") throw new ApiError("bad-speaker");
+      if (loreNow && loreNow.state !== "done" && loreNow.state !== "failed") throw new ApiError("slow-down");
+      const at = Math.floor(Date.now() / 1000);
+      loreLooks = 0;
+      loreNow = { id: "0".repeat(31) + "1", state: "waiting", stage: "waiting", error: "", source: input.source, choice: input.choice, namesFound: 0, linksFound: 0, done: 0, total: 0, createdAt: at, updatedAt: at, serverNow: at };
+      return loreNow;
+    },
+    async loreRead(ref, id): Promise<LoreUpload | null> {
+      calls.push(`loreRead:${ref}:${id ?? "-"}`);
+      await reachable();
+      signedIn();
+      if (!loreNow || (id && id !== loreNow.id)) return null;
+      loreLooks += 1;
+      const at = Math.floor(Date.now() / 1000);
+      if (loreNow.state === "waiting" && loreLooks >= 2) loreNow = { ...loreNow, state: "working", stage: "reading", updatedAt: at };
+      else if (loreNow.state === "working" && loreLooks >= 4) loreNow = { ...loreNow, state: "done", stage: "done", namesFound: 4, linksFound: 3, updatedAt: at };
+      loreNow = { ...loreNow, serverNow: at };
+      return loreNow;
     },
     // The pretend campaign page (#2416): a ref ending `.cp-none` is one nobody may see, `.cp-player` one
     // the person plays in without running it, `.cp-co` one they help run.
@@ -2005,6 +2041,13 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         }
         case "kind":
           if (!NAME_KINDS.some((k) => k.key === change.kind)) throw new ApiError("bad-kind");
+          if (change.player !== undefined) {
+            // The bot's two refusals: not an ID (or not for a player character), and an ID nobody in the server has.
+            if (change.kind !== "player_character" || !/^[1-9][0-9]{14,18}$/.test(change.player)) throw new ApiError("bad-player");
+            if (change.confirmed !== true) throw new ApiError("bad-player"); // nothing links without the confirmation
+            if (change.player.endsWith("0000")) throw new ApiError("unknown-id");
+            if (change.player.endsWith("9999")) throw new ApiError("bot-player");
+          }
           row.kind = change.kind;
           if (change.kind !== "npc") row.npcId = null;
           break;
@@ -2053,6 +2096,14 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       signedIn();
       if (namesView(ref) !== "dm") throw new ApiError("not-allowed");
       if (/\.timed-out\b/.test(ref)) throw new ApiError("still-waiting");
+      if (step.action === "kind") {
+        // Who an ID is: the pretend bot's answers, by how the ID ends.
+        if (!/^[1-9][0-9]{14,18}$/.test(step.player)) throw new ApiError("bad-player");
+        if (step.player.endsWith("0000")) throw new ApiError("unknown-id");
+        if (step.player.endsWith("9999")) throw new ApiError("bot-player");
+        if (step.player.endsWith("1111")) throw new ApiError("lookup-failed");
+        return { state: "player", name: "SomeUser", inServer: !step.player.endsWith("5555") };
+      }
       const answer = `ans${nameSteps.size + 1}`;
       if (step.action === "name-undo") {
         const done = nameSteps.get(step.answer);

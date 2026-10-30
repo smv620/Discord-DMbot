@@ -54,12 +54,12 @@ describe("the page", () => {
   };
   const groups = () => screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent);
 
-  it("gives a DM the four groups in order, each page opened on this campaign", async () => {
+  it("gives a DM the parts in order, each page opened on this campaign", async () => {
     await open(DM);
     // The campaign's name is the page's heading and title, so the name is what a screen reader hears.
     await waitFor(() => expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("The Brynwater Crossing"));
     expect(document.title).toBe("The Brynwater Crossing · DMbot");
-    expect(groups()).toEqual([w.groups.story, w.groups.table, w.groups.rules, w.groups.settings]);
+    expect(groups()).toEqual([w.groups.story, w.groups.add, w.groups.rules, w.groups.settings]);
     expect(hrefs()).toEqual(
       expect.arrayContaining([
         "/account/recaps?campaign=100.cmp1",
@@ -73,7 +73,7 @@ describe("the page", () => {
       ]),
     );
     // Words equal Discord's and the PLAN's (#2461 item 4).
-    for (const label of ["Recaps", "Story timeline", "Story graph", "Names and NPCs", "Transcripts", "Import a past session", "House rules", "Homebrew", "Shared rules"])
+    for (const label of ["Recaps", "Story timeline", "Story Graph", "Names and NPCs", "Transcripts", "Import a past session", "House rules", "Homebrew", "Shared rules"])
       expect(screen.getByRole("link", { name: label }), label).toBeTruthy();
     expect(screen.getByRole("link", { name: w.pages.timeline }).getAttribute("href")).toBe("/account/timeline/100.cmp1");
   });
@@ -100,7 +100,7 @@ describe("the page", () => {
       expect(within(section).getByText(w.doThisInDiscord(w.paths[key])), key).toBeTruthy();
     for (const key of ["gameMasters", "handOver", "pause"] as const) expect(within(section).getByText(w.settingsLabels[key]), key).toBeTruthy();
     expect(within(section).queryByText(w.doThisInDiscord(w.paths.delete))).toBeNull();
-    expect(w.paths.retention).toBe("⚙️ Settings → 🗂️ Campaign management → 🗄️ Transcript retention");
+    expect(w.paths.retention).toBe("⚙️ Manage DMbot → 🗂️ Campaign management → 🗄️ Transcript retention");
   });
 
   it("shows a co-DM the controls but not the owner's Discord steps", async () => {
@@ -145,13 +145,13 @@ describe("the page", () => {
     const read = api.campaignPage!.bind(api);
     api.campaignPage = async (r) => ({ ...(await read(r)), role: "viewer" as never });
     await open(DM, api);
-    expect(groups()).toEqual([w.groups.story, w.groups.table, w.groups.rules]);
+    expect(groups()).toEqual([w.groups.story, w.groups.rules]);
     expect(hrefs().some((h) => h?.startsWith("/account/recaps"))).toBe(false);
   });
 
   it("gives a player only the table's pages and no Settings", async () => {
     await open(PLAYER);
-    expect(groups()).toEqual([w.groups.story, w.groups.table, w.groups.rules]);
+    expect(groups()).toEqual([w.groups.story, w.groups.rules]);
     expect(screen.queryByRole("heading", { name: w.groups.settings })).toBeNull();
     expect(screen.queryByRole("link", { name: w.groups.settings })).toBeNull(); // not in the tabs either
     const all = hrefs();
@@ -265,7 +265,7 @@ describe("the recap list", () => {
   });
 });
 
-describe("the breadcrumb and the four tabs on every campaign page (#2461)", () => {
+describe("the breadcrumb and the tabs on every campaign page (#2461, #2985)", () => {
   const REFC = "200000000000000001.cmp1";
   const name = "The Brynwater Crossing";
   const crumbs = () => within(screen.getByRole("navigation", { name: w.crumbsLabel }));
@@ -273,11 +273,11 @@ describe("the breadcrumb and the four tabs on every campaign page (#2461)", () =
   it.each([
     ["the house rules", () => <HouseRules api={mockApi("table")} path={`/account/house-rules/${REFC}`} />, w.pages.houseRules, w.groups.rules],
     ["the homebrew", () => <Homebrew api={mockApi("table")} path={`/account/homebrew/${REFC}`} />, w.pages.homebrew, w.groups.rules],
-    ["the transcripts", () => <Transcripts api={mockApi("table")} path={`/account/transcripts/${REFC}`} />, w.pages.transcripts, w.groups.table],
-    ["a transcript", () => <Transcripts api={mockApi("table")} path={`/account/transcripts/${REFC}/1`} />, w.pages.transcripts, w.groups.table],
+    ["the transcripts", () => <Transcripts api={mockApi("table")} path={`/account/transcripts/${REFC}`} />, w.pages.transcripts, w.groups.story],
+    ["a transcript", () => <Transcripts api={mockApi("table")} path={`/account/transcripts/${REFC}/1`} />, w.pages.transcripts, w.groups.story],
     ["the timeline", () => <Timeline api={mockApi("table")} path="/account/timeline/100.cmp1" />, w.pages.timeline, w.groups.story],
-    ["the story graph", () => <Web api={mockApi("table")} path="/account/web/100.cmp1" />, w.pages.graph, w.groups.story],
-    ["the import page", () => <Import api={mockApi("table")} path="/account/import/100.cmp1" />, w.pages.import, w.groups.table],
+    ["the Story Graph", () => <Web api={mockApi("table")} path="/account/web/100.cmp1" />, w.pages.graph, w.groups.story],
+    ["the import page", () => <Import api={mockApi("table")} path="/account/import/100.cmp1" />, w.pages.import, w.groups.add],
     ["the names", () => <Names api={mockApi("table")} path="/account/names/100.cmp1" />, w.pages.names, w.groups.story],
     ["an NPC's page", () => <Npc api={mockApi("table")} path="/account/npc/100.cmp1/e1" />, w.pages.names, w.groups.story, true],
     ["a recap", () => <Recaps api={mockApi("table")} path="/account/recaps/200000000000000001.cmp1.1791000000" />, w.pages.recaps, w.groups.story, true],
@@ -300,14 +300,15 @@ describe("the breadcrumb and the four tabs on every campaign page (#2461)", () =
     await screen.findByRole("navigation", { name: w.tabsLabel });
     await waitFor(() => expect(tabs().getAllByRole("link").length).toBeGreaterThan(0));
     expect(tabs().queryByRole("link", { name: w.groups.settings })).toBeNull();
-    expect(tabs().getAllByRole("link").map((a) => a.textContent)).toEqual([w.groups.story, w.groups.table, w.groups.rules]);
+    expect(tabs().getAllByRole("link").map((a) => a.textContent)).toEqual([w.groups.overview, w.groups.story, w.groups.rules]);
   });
 
-  it("marks no tab on the campaign's own page, and names the campaign as the page", async () => {
+  it("marks the Overview tab on the campaign's own page, and names the campaign as the page", async () => {
     render(<CampaignPageView api={mockApi("table")} path={DM} />);
     await screen.findByRole("heading", { level: 2, name: w.groups.story });
     expect(crumbs().getByText(name).getAttribute("aria-current")).toBe("page");
-    expect(tabs().getAllByRole("link").some((a) => a.getAttribute("aria-current"))).toBe(false);
+    const marked = tabs().getAllByRole("link").filter((a) => a.getAttribute("aria-current"));
+    expect(marked.map((a) => a.textContent)).toEqual([w.groups.overview]);
   });
 
   it("asks for the campaign once for two navs, and asks again after a failed read", async () => {
@@ -454,3 +455,65 @@ describe("Delete this campaign, at the bottom of the page (#2879)", () => {
   });
 });
 
+
+describe("the parts and the pages in each (#2985)", () => {
+  const tabsOf = () => within(screen.getByRole("navigation", { name: w.tabsLabel }));
+  const pagesOf = () => within(screen.getByRole("navigation", { name: w.pagesLabel }));
+
+  it("gives a DM five tabs, each opening the first page of its part", async () => {
+    render(<CampaignNav api={mockApi("table")} campaignRef="100.cmp1" page="campaign" />);
+    await waitFor(() => expect(tabsOf().getAllByRole("link")).toHaveLength(5));
+    const by = Object.fromEntries(tabsOf().getAllByRole("link").map((a) => [a.textContent, a.getAttribute("href")]));
+    expect(by).toEqual({
+      [w.groups.overview]: "/account/campaigns/100.cmp1",
+      [w.groups.story]: "/account/recaps?campaign=100.cmp1",
+      [w.groups.add]: "/account/import/100.cmp1",
+      [w.groups.rules]: "/account/house-rules/100.cmp1",
+      [w.groups.settings]: "/account/campaigns/100.cmp1#settings",
+    });
+  });
+
+  it("gives a player no Add to the story or Settings, and Story opens the timeline", async () => {
+    render(<CampaignNav api={mockApi("table")} campaignRef="100.cmp1.cp-player" page="campaign" />);
+    await waitFor(() => expect(tabsOf().getAllByRole("link").length).toBeGreaterThan(0));
+    const by = Object.fromEntries(tabsOf().getAllByRole("link").map((a) => [a.textContent, a.getAttribute("href")]));
+    expect(Object.keys(by)).toEqual([w.groups.overview, w.groups.story, w.groups.rules]);
+    expect(by[w.groups.story]).toBe("/account/timeline/100.cmp1.cp-player");
+  });
+
+  it("lists the pages of the part you are in under the tabs, and marks this page", async () => {
+    render(<CampaignNav api={mockApi("table")} campaignRef="100.cmp1" page="graph" />);
+    await waitFor(() => expect(pagesOf().getAllByRole("link").length).toBeGreaterThan(1));
+    expect(pagesOf().getAllByRole("link").map((a) => a.textContent)).toEqual([w.pages.recaps, w.pages.timeline, w.pages.graph, w.pages.names, w.pages.transcripts]);
+    const here = pagesOf().getAllByRole("link").filter((a) => a.getAttribute("aria-current"));
+    expect(here.map((a) => a.textContent)).toEqual([w.pages.graph]);
+    expect(here[0]!.getAttribute("aria-current")).toBe("page");
+  });
+
+  it("has no second row on the Overview, or in a part with one page", async () => {
+    render(<CampaignNav api={mockApi("table")} campaignRef="100.cmp1" page="campaign" />);
+    await waitFor(() => expect(tabsOf().getAllByRole("link")).toHaveLength(5));
+    expect(screen.queryByRole("navigation", { name: w.pagesLabel })).toBeNull();
+    cleanup();
+    render(<CampaignNav api={mockApi("table")} campaignRef="100.cmp1" page="import" />);
+    await waitFor(() => expect(tabsOf().getAllByRole("link")).toHaveLength(5));
+    expect(screen.queryByRole("navigation", { name: w.pagesLabel })).toBeNull(); // Add to the story holds one page so far
+  });
+
+  it("marks the Settings tab, not the Overview, once the person is on the Settings part of the page", async () => {
+    window.location.hash = "#settings";
+    render(<CampaignNav api={mockApi("table")} campaignRef="100.cmp1" page="campaign" />);
+    await waitFor(() => expect(tabsOf().getAllByRole("link")).toHaveLength(5));
+    const marked = tabsOf().getAllByRole("link").filter((a) => a.getAttribute("aria-current"));
+    expect(marked.map((a) => a.textContent)).toEqual([w.groups.settings]);
+    window.location.hash = "";
+  });
+
+  it("keeps Transcripts under Story and Import under Add to the story, not under 'At the table'", async () => {
+    render(<CampaignNav api={mockApi("table")} campaignRef="100.cmp1" page="transcripts" />);
+    await waitFor(() => expect(tabsOf().getAllByRole("link")).toHaveLength(5));
+    const marked = tabsOf().getAllByRole("link").filter((a) => a.getAttribute("aria-current"));
+    expect(marked.map((a) => a.textContent)).toEqual([w.groups.story]);
+    expect(JSON.stringify(w.groups)).not.toContain("At the table");
+  });
+});

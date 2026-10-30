@@ -1,4 +1,4 @@
-"""🤝 Hand over, the Discord side (#437 part 1b): the owner offers from ⚙️ Settings, the
+"""🤝 Hand over, the Discord side (#437 part 1b): the owner offers from ⚙️ Manage DMbot, the
 person offered answers in a private message, and an offer DMbot can't deliver is taken
 back. The rules are CampaignStore's (tested with a database in test_campaign_handover);
 here, what each button says and calls, with fakes. Each callback answers Discord before
@@ -350,7 +350,7 @@ class PickingBy(unittest.IsolatedAsyncioTestCase):
         guild.fetch_member.side_effect = discord.NotFound(MagicMock(status=404), "gone")
         with self.assertLogs("dmbot.dm_screen.handover", "INFO"):
             await self.picker(self.person(BUYER))._picked(it)
-        self.assertIn("Take it back yourself: ⚙️ Settings", shown(it))
+        self.assertIn("Take it back yourself: ⚙️ Manage DMbot", shown(it))
 
     async def test_a_bot_or_a_refusal_says_why(self) -> None:
         it = interaction(OWNER)

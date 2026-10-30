@@ -498,7 +498,7 @@ def party_knows(table: str = "memory_relations") -> str:
     )
 
 
-async def fold_perspective(w: Changes, keep_id: str, gone_id: str) -> None:
+async def fold_perspective(w: Changes, keep_id: str, gone_id: str) -> tuple[str, str] | None:
     """A merged-away character's beliefs become the kept entry's (#2438, #2433). The kept entry
     gets a perspective if it had none, and every belief of the other entry's moves onto it. History
     is kept, so a pair both believed has both rows and the newest (highest `seq`) is the one read.
@@ -507,7 +507,7 @@ async def fold_perspective(w: Changes, keep_id: str, gone_id: str) -> None:
     resting on it)."""
     gone_p = await w.select(PERSPECTIVES, " AND entity_id = %s", [gone_id])
     if not gone_p:
-        return
+        return None
     keep_p = await w.select(PERSPECTIVES, " AND entity_id = %s", [keep_id])
     if keep_p:
         target = keep_p[0]["id"]
@@ -533,3 +533,4 @@ async def fold_perspective(w: Changes, keep_id: str, gone_id: str) -> None:
     await w.update_where(
         ALIAS_KNOWERS, {"perspective_id": target}, " AND perspective_id = %s", [gone_p[0]["id"]]
     )
+    return str(gone_p[0]["id"]), str(target)  # (who knows what folds with it: #2995)

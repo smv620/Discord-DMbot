@@ -36,6 +36,7 @@ from dmbot.db import Database, row_int
 from dmbot.memory import (
     beliefs,
     evidence,
+    gate,
     kin,
     knowers,
     merge_restore,
@@ -2935,7 +2936,9 @@ class MemoryStore:
         await _move_standing(w, keep_id, gone_id)
         await merge_restore.move_notes(w.conn, w.ids, keep_id, gone_id)
         await merge_restore.move_links(w.conn, w.ids, keep_id, gone_id, kept["type"])
-        await beliefs.fold_perspective(w, keep_id, gone_id)
+        await knowers.fold_knowers(
+            w, keep_id, gone_id, await beliefs.fold_perspective(w, keep_id, gone_id)
+        )
         for table in (MENTIONS, CORRECTIONS):  # one statement each (#164)
             await w.update_where(table, {"entity_id": keep_id}, " AND entity_id = %s", [gone_id])
         await w.update(ENTITIES, keep_id, {"status": _stronger(keep["status"], gone["status"])})
@@ -3828,6 +3831,38 @@ class MemoryStore:
         async with self._write(guild_id, campaign_id, source) as w:
             chosen = await knowers.set_alias_knowers(w, alias_id, character_ids)
             return Written(chosen, w.batch)
+
+    async def set_statement_knowers(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        kind: str,
+        statement_id: str,
+        character_ids: Sequence[str] | Mapping[str, float],
+        *,
+        source: str,
+    ) -> Written[list[str]]:
+        """Who knows an entry, a property, a connection or an other name (#2995, §9b): exactly
+        these characters (player characters, NPCs) or groups, each sure (a list) or with a
+        certainty from 0.0 to 1.0 (a mapping); none: only the DM. One change, so Undo takes
+        it back. Only the DM."""
+        async with self._write(guild_id, campaign_id, source) as w:
+            chosen = await knowers.set_statement_knowers(w, kind, statement_id, character_ids)
+            return Written(chosen, w.batch)
+
+    async def statement_knowers(
+        self, guild_id: int, campaign_id: str, kind: str, statement_ids: Sequence[str]
+    ) -> dict[str, list[str]]:
+        """The characters (entry ids) who know each of these statements."""
+        async with self._read(guild_id, campaign_id, snapshot=True) as scope:
+            return await knowers.statement_knowers(scope, kind, statement_ids)
+
+    async def visible_to(
+        self, guild_id: int, campaign_id: str, viewer: gate.Viewer
+    ) -> gate.Visible:
+        """What this viewer may know of the campaign: the one gate (#2995)."""
+        async with self._read(guild_id, campaign_id, snapshot=True) as scope:
+            return await gate.visible_to(scope, viewer)
 
     async def connection_knowers(
         self, guild_id: int, campaign_id: str, relation_ids: Sequence[str]

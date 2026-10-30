@@ -38,6 +38,8 @@ READERS = {
     "into the campaign's words for PlotBot; ids and names, no transcript",
     "memory/report_store.py": "only checks that the connections of a difference still exist",
     "memory/placing.py": "writes the proposed connections and their beliefs for the DM",
+    "memory/gate.py": "the gate (#2995): reads each connection's ends to say which entries a "
+    "viewer learns, and only for connections its list says that viewer knows",
     "memory/knowers.py": DM_ONLY + ": who knows a connection; only checks it exists, any status",
     "memory/notify.py": DM_ONLY + ": what the DM is told",
     "memory/health.py": DM_ONLY + ": counts for the DM, not shown to players",
