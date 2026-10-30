@@ -1626,7 +1626,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         document_reader.shutdown()  # files being read: end them, don't wait out their limit
         # Website lore uploads being read: each puts its claim back to waiting (the next start reads
         # it again) and is waited for here, so the write is not lost with the process (#3022).
-        reads = list(self._lore_reads.values())
+        reads = list(getattr(self, "_lore_reads", {}).values())  # a test stub skips __init__
         for read in reads:
             read.cancel()
         with contextlib.suppress(Exception):
