@@ -6,7 +6,7 @@ export const BIG_WEB = 300;
 
 export const webPage = {
   heading: "Story Graph",
-  lead: "How the names in this campaign are connected. Tap a name to put it in the middle. Tap a line to read its connections.",
+  lead: "How the names in this campaign are connected. Tap a name to see what is known about it. Double tap it, or use the button in its panel, to put it in the middle. Tap a line to read its connections.",
   loading: "Loading…",
   signedOut: "You were signed out. Sign in again.",
   notYours: "We couldn't find that web. Open it from the Names page.",
@@ -54,6 +54,8 @@ export const webPage = {
   layoutTooBig: "That is too many names to move around. Choose fewer steps out to rearrange them.",
   sideNone: "No connections shown for this name.",
   putInMiddle: "Put it in the middle",
+  doubleTapHint: "Double tap a name to put it in the middle.",
+  legendReading: "Point at or tap a name and its lines read from that name, with an arrow to the other name. A plain line has no words from that name; tap it to read it. No arrow means it works both ways.",
   keepHere: "Keep it here",
   letMove: "Let it move",
   bothWays: "Both ways",
@@ -70,7 +72,7 @@ export const webPage = {
   letGo: "Let everything move again",
   nConnections: (n: number): string => `${n} connections`,
   lineBetween: (a: string, b: string): string => `Open the connections between ${a} and ${b}`,
-  nameButton: (name: string): string => `${name}. Activate to put it in the middle.`,
+  nameButton: (name: string): string => `${name}. Press Enter to pick it.`,
   legendHeading: "What the shapes and lines mean",
   // Kinds the API may send; any other key is shown as it comes.
   kinds: {
