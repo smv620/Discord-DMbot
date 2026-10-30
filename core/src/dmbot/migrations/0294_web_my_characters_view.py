@@ -38,7 +38,7 @@ _SHARED_SWAPS = (
     (
         _COMMENT,
         "        flag_vis := vis;\n"
-        "        IF NOT sees_all THEN\n"
+        "        IF NOT sees_all AND NOT is_dm THEN\n"
         "            SELECT COALESCE(jsonb_object_agg(m.entity_id, m.shown_name), '{}'::jsonb)\n"
         "            INTO alt_names\n"
         "            FROM dmbot_my_known_entries(g, c) m WHERE NOT (m.entity_id = ANY (vis));\n"
@@ -75,6 +75,18 @@ _REVEALED = (
     "'revealed', NOT sees_all OR NOT (e.hidden_from_players OR e.unnamed OR e.audience_limited)",
 )
 
+# A connection's free-text `detail` is the DM's own note and could name a main name; a player gets
+# it only when neither end is shown to them under another name.
+_DETAIL = (
+    "'detail', r.detail,",
+    "'detail', CASE WHEN sees_all OR NOT EXISTS (\n"
+    "                        SELECT 1 FROM memory_entities x\n"
+    "                        WHERE x.guild_id = g AND x.campaign_id = c\n"
+    "                          AND x.id IN (r.subject_id, r.object_id)\n"
+    "                          AND alt_names->>x.id IS NOT NULL\n"
+    "                          AND alt_names->>x.id <> x.name) THEN r.detail ELSE '' END,",
+)
+
 _RELATIONSHIPS_SWAPS = (
     ("        kept TEXT[];\n    BEGIN", "        kept TEXT[];\n" + _DECLARE + "    BEGIN"),
     *_SHARED_SWAPS,
@@ -89,6 +101,7 @@ _RELATIONSHIPS_SWAPS = (
         "'id', e.id, 'name', " + _NODE + ",\n                    'revealed'",
     ),
     _REVEALED,
+    _DETAIL,
 )
 
 _OVERVIEW_SWAPS = (
@@ -112,6 +125,22 @@ WEB_MY_CHARACTERS_VIEW = (
     -- The signed-in player's own confirmed characters' points of view. Nobody else's: `played_by`
     -- is the Discord id of the signed-in person; with no signed-in person (a shared link) it is
     -- empty.
+    -- An unnamed person's label, built the way `memory/unnamed.label` builds it ("Ken's sister
+    -- (name unknown)"), so a player's view can build it from an anchor name they may read.
+    CREATE FUNCTION dmbot_unnamed_label(what TEXT, anchor TEXT) RETURNS TEXT
+    LANGUAGE sql IMMUTABLE AS $fn$
+        SELECT CASE
+            WHEN anchor IS NULL OR anchor = '' THEN
+                left(btrim(regexp_replace(what, '\s+', ' ', 'g')), 100) || ' (name unknown)'
+            ELSE (CASE WHEN right(rtrim(left(anchor, 40)), 1) IN ('s', 'S')
+                       THEN rtrim(left(anchor, 40)) || ''''
+                       ELSE rtrim(left(anchor, 40)) || '''s' END)
+                 || ' ' || regexp_replace(
+                        left(btrim(regexp_replace(what, '\s+', ' ', 'g')), 100),
+                        '^(a|an|the)\s+', '', 'i') || ' (name unknown)'
+        END
+    $fn$;
+
     CREATE FUNCTION dmbot_my_perspectives(g BIGINT, c TEXT) RETURNS SETOF TEXT
     LANGUAGE sql STABLE SECURITY DEFINER AS $fn$
         SELECT p.id FROM memory_perspectives p
@@ -162,9 +191,44 @@ WEB_MY_CHARACTERS_VIEW = (
             GROUP BY a.entity_id, a.text, a.id
         ), first_other AS (
             SELECT DISTINCT ON (eid) eid, text FROM learned ORDER BY eid, at, id
+        ), anchor_name AS (
+            -- what an unnamed person's label may call the entry they hang off: its main name if
+            -- the players are shown it by name, or one of these characters knows it by name
+            SELECT en.id,
+                   CASE WHEN (en.id IN (SELECT eid FROM own) AND NOT en.unnamed)
+                          OR (NOT en.hidden_from_players AND NOT en.audience_limited
+                              AND NOT en.unnamed
+                              AND NOT EXISTS (
+                                  SELECT 1 FROM memory_aliases s
+                                  WHERE s.guild_id = g AND s.campaign_id = c
+                                    AND s.entity_id = en.id AND s.secret
+                                    AND s.status <> 'rejected'
+                                    AND regexp_replace(lower(s.text), '[^[:alnum:]]', '', 'g')
+                                      = regexp_replace(lower(en.name), '[^[:alnum:]]', '', 'g')))
+                        THEN en.name END AS nm
+            FROM memory_entities en WHERE en.guild_id = g AND en.campaign_id = c
         )
         SELECT e.id,
-               CASE WHEN e.id IN (SELECT eid FROM own) THEN e.name ELSE f.text END
+               CASE
+                   WHEN e.id IN (SELECT eid FROM own) THEN
+                       CASE WHEN e.unnamed THEN dmbot_unnamed_label(
+                                e.unnamed_what,
+                                CASE WHEN e.unnamed_anchor IS NULL THEN NULL ELSE COALESCE(
+                                    (SELECT nm FROM anchor_name WHERE id = e.unnamed_anchor),
+                                    'someone') END)
+                            ELSE e.name END
+                   WHEN f.text LIKE '% (name unknown)' THEN COALESCE((
+                       -- a joined person's label is rebuilt from what it described
+                       SELECT dmbot_unnamed_label(
+                                m.unnamed_what,
+                                CASE WHEN m.unnamed_anchor IS NULL THEN NULL ELSE COALESCE(
+                                    (SELECT nm FROM anchor_name WHERE id = m.unnamed_anchor),
+                                    'someone') END)
+                       FROM memory_entities m
+                       WHERE m.guild_id = g AND m.campaign_id = c AND m.merged_into = e.id
+                         AND m.unnamed AND m.name = f.text LIMIT 1), 'someone (name unknown)')
+                   ELSE f.text
+               END
         FROM memory_entities e
         LEFT JOIN first_other f ON f.eid = e.id
         WHERE e.guild_id = g AND e.campaign_id = c AND e.status = 'confirmed'

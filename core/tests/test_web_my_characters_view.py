@@ -11,9 +11,11 @@ from typing import Any
 
 from dmbot.memory.gate import CONNECTION, ENTRY
 from dmbot.memory.models import DM as DM_SOURCE
+from dmbot.memory.ontology import FALLBACK_PREDICATE
 from dmbot.web import relationships
 from tests.test_recap_web import BOB
 from tests.test_web_all_names import MEMBER
+from tests.test_web_api import ALICE
 from tests.test_web_relationships import BOB_USER, Web
 
 OTHER_PLAYER = 7777  # a player who is not signed in
@@ -175,13 +177,21 @@ class TheEdges(MyCharacters):
         found = await self.memory.aliases(
             self.g, self.one.id, entity_id=self.ken, include_secret=True
         )
-        later = next(a.id for a in found if a.text == "Old Greycloak")
         label_alias = next(a.id for a in found if a.text == self.label)
-        await self.know("alias", later, [self.okra])
+        later = next(a.id for a in found if a.text == "Old Greycloak")
         await self.know("alias", label_alias, [self.okra])
-        got = await self.bob()
-        self.assertIn(self.names(got)[self.ken], (self.label, "Old Greycloak"))
-        self.assertNotEqual(self.names(got)[self.ken], "Ken")
+        await self.know("alias", later, [self.okra])
+
+        async def learned(alias_id: str, at: int) -> None:
+            await self.sql(
+                "UPDATE memory_knowers SET created_at = %s WHERE alias_id = %s", at, alias_id
+            )
+
+        await learned(label_alias, 100)
+        await learned(later, 200)
+        self.assertEqual(self.names(await self.bob())[self.ken], self.label)
+        await learned(label_alias, 300)  # now Old Greycloak was learned first
+        self.assertEqual(self.names(await self.bob())[self.ken], "Old Greycloak")
 
     async def test_a_known_connection_to_a_shown_entry_shows_even_if_the_party_does_not_know_it(
         self,
@@ -190,3 +200,85 @@ class TheEdges(MyCharacters):
         got = await self.bob()
         ends = {(e["a"], e["b"]) for e in got["edges"]}
         self.assertTrue(any(self.ken in pair and self.mira in pair for pair in ends))
+
+
+class HiddenAnchors(MyCharacters):
+    async def sister(self) -> str:
+        made = await self.memory.add_unnamed(
+            self.g, self.one.id, what="sister", role="sibling", anchor_id=self.ken
+        )
+        await self.sql(
+            "UPDATE memory_entities SET status = 'confirmed' WHERE id = %s", made.entity.id
+        )
+        await self.know(ENTRY, made.entity.id, [self.okra])
+        return str(made.entity.id)
+
+    async def test_an_unnamed_persons_label_never_carries_a_hidden_anchors_name(self) -> None:
+        sister = await self.sister()
+        got = await self.bob()
+        self.assertNotIn("Ken", str(got))
+        names = await self.overview_names(self.player)
+        self.assertEqual(names[sister], "someone's sister (name unknown)")
+        self.assertNotIn("Ken", str(names))
+
+    async def test_the_joined_label_is_rebuilt_too(self) -> None:
+        sister = await self.sister()
+        await self.memory.join_same_person(self.g, self.one.id, sister, self.ken)
+        await self.know(
+            ENTRY, self.ken, []
+        )  # (nobody knows Ken by name; the sister's label is a secret other name now)
+        found = await self.memory.aliases(
+            self.g, self.one.id, entity_id=self.ken, include_secret=True
+        )
+        label_alias = next(a.id for a in found if a.text.endswith("(name unknown)"))
+        await self.know("alias", label_alias, [self.okra])
+        names = await self.overview_names(self.player)
+        self.assertEqual(names[self.ken], "someone's sister (name unknown)")
+        self.assertNotIn("Ken", str(names))
+
+
+class TheDmAsAPlayer(MyCharacters):
+    async def test_a_dms_players_view_is_not_widened_by_a_character_they_play(self) -> None:
+        # the DM (Alice) also plays Okra
+        await self.sql(
+            "UPDATE memory_entities SET played_by = %s WHERE id = %s", ALICE.id, self.okra
+        )
+        await self.join()
+        got = await self.graph(self.session, center=self.mira, hops=2, view="players")
+        self.assertNotIn(self.ken, self.names(got))
+        self.assertNotIn("Ken", str(got))
+
+
+class TheDetail(MyCharacters):
+    async def test_a_connections_note_is_withheld_when_an_end_is_shown_under_another_name(
+        self,
+    ) -> None:
+        await self.sql(  # (on the catch-all the DM's own words are the connection's label)
+            "UPDATE memory_relations SET predicate = %s, detail = %s WHERE id = %s",
+            FALLBACK_PREDICATE,
+            "owes a favour to Ken",
+            self.guard_link,
+        )
+        await self.join()
+        got = await self.bob()
+        edge = next(x for e in got["edges"] for x in e["links"] if x["id"] == self.guard_link)
+        self.assertNotIn("favour", edge["words"])
+        self.assertNotIn("Ken", str(got))
+        dm = await self.graph(center=self.mira, hops=2)
+        self.assertIn("favour", str(dm))
+
+
+class TableAnswers(MyCharacters):
+    async def test_a_name_every_player_may_see_is_used_in_public_places(self) -> None:
+        """Table answers and recaps are party-wide: after a join, Ken (hidden) is "someone"."""
+        from dmbot.memory.gate import Viewer
+
+        await self.join()
+        shown = await self.memory.display_names(
+            self.g, self.one.id, Viewer.the_party(), [self.ken], public=True
+        )
+        self.assertEqual(shown[self.ken], "someone")
+        shown = await self.memory.display_names(
+            self.g, self.one.id, Viewer.the_party(), [self.mira], public=True
+        )
+        self.assertEqual(shown[self.mira], "Mira Voss")
