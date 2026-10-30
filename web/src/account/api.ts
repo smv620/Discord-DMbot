@@ -87,7 +87,7 @@ export type CampaignSettingName = "visibility" | "level" | "retention";
 
 /** A choice the queue carries: the three above, an optional rule switched on or off (#2753), or a game master
  * added or removed (#2768: `value` is the person's id, `on` true to add). */
-export type QueuedSetting = CampaignSettingName | "optional_rule" | "co_dm";
+export type QueuedSetting = CampaignSettingName | "optional_rule" | "co_dm" | "pause";
 
 /** One of a campaign's game masters (#2768; core web/game_masters.py). `plan` is the one whose plan runs the
  * campaign (cannot be removed); `you` is the person looking (may leave). */
@@ -1820,6 +1820,7 @@ export type ApiErrorKind =
   | "plan-needed" // sharing house rules needs a plan that allows it (#2783)
   | "no-rules" // there is no house rule of the campaign's own to share (#2783)
   | "bad-choice" // a sharing choice the API cannot read (#2783)
+  | "not-owner" // only the campaign's owner can pause it (#2985)
   | "full" // three examples already, so no fourth (#2985)
   | "busy" // a recap that is being written or sent now can't be made again (#2608, #2609)
   | "no-lines" // the session's transcript is gone, so there is nothing to write from (#2608)
@@ -2467,6 +2468,7 @@ export const fixErrorKinds: Record<string, ApiErrorKind> = {
 export const errorKinds: Record<string, ApiErrorKind> = {
   plan: "plan-needed",
   no_rules: "no-rules",
+  not_owner: "not-owner",
   full: "full",
   bad_arg: "bad-choice",
   gone: "gone",

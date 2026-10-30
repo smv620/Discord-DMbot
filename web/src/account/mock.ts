@@ -1936,6 +1936,11 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         list.splice(list.indexOf(person), 1);
         return { ...base, state: "done", note: `**${person.name}** is no longer a game master.` };
       }
+      if (asked.setting === "pause") {
+        if (/\.pa-noroom$/.test(ref) && asked.on === false)
+          return { ...base, state: "failed", error: "refused", note: "You have no free place on your plan. Pause another campaign first." };
+        return { ...base, state: "done", note: asked.on ? "Paused." : "Unpaused." };
+      }
       if (asked.setting === "optional_rule") {
         const rule = PRETEND_RULES.find((r) => r.id === asked.value);
         if (!rule) return { ...base, state: "failed", error: "bad_value" };

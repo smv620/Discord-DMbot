@@ -137,6 +137,9 @@ class WebSettings:
     # Upload lore on the website (#3022; DMBOT_WEB_LORE): off, the routes that queue an upload
     # answer 404, so nothing is queued before the bot's half (#3022) reads it.
     lore_on: bool = False
+    # Pause and unpause from the website (#2985; DMBOT_WEB_PAUSE): off, a pause choice answers 404,
+    # so nothing is queued before the bot step that applies it is deployed.
+    pause_on: bool = False
     # Recap style on the website (#2985; DMBOT_WEB_RECAP_STYLE): off, its routes answer 404, so
     # nothing is queued before the bot step that applies a change is deployed.
     recap_style_on: bool = False
@@ -379,6 +382,9 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
     lore_raw = (get("DMBOT_WEB_LORE") or "0").lower()
     if lore_raw not in ("0", "1", "true", "false", "on", "off"):
         raise ConfigError(f'DMBOT_WEB_LORE must be 1 (on) or 0 (off), got "{lore_raw}".')
+    pause_raw = (get("DMBOT_WEB_PAUSE") or "0").lower()
+    if pause_raw not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError(f'DMBOT_WEB_PAUSE must be 1 (on) or 0 (off), got "{pause_raw}".')
     recap_style_raw = (get("DMBOT_WEB_RECAP_STYLE") or "0").lower()
     if recap_style_raw not in ("0", "1", "true", "false", "on", "off"):
         raise ConfigError(
@@ -403,6 +409,7 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
         co_dms_on=co_dms_raw in ("1", "true", "on"),
         report_make_on=report_make_raw in ("1", "true", "on"),
         lore_on=lore_raw in ("1", "true", "on"),
+        pause_on=pause_raw in ("1", "true", "on"),
         recap_style_on=recap_style_raw in ("1", "true", "on"),
         recaps_on=recaps_raw in ("1", "true", "on"),
         plot_check_on=recaps_raw in ("1", "true", "on")

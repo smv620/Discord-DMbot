@@ -1932,6 +1932,8 @@ def create_app(
         "plan_holder": (409, "plan_holder"),
         "too_many": (409, "too_many"),
         "unknown_person": (400, "unknown_person"),
+        # Pause is the owner's alone (#2985): a game master who is not the owner is told so.
+        "not_owner": (403, "not_owner"),
     }
 
     line_delete_refusals = {
@@ -2202,7 +2204,12 @@ def create_app(
         try:
             return {
                 "answer": await campaign_settings.queue_setting(
-                    db, session, ref, body, co_dms_on=settings.co_dms_on
+                    db,
+                    session,
+                    ref,
+                    body,
+                    co_dms_on=settings.co_dms_on,
+                    pause_on=settings.pause_on,
                 )
             }
         except RecapError as err:
