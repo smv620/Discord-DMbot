@@ -62,6 +62,7 @@ class Base(DatabaseTest):
             story_extractor_max_calls=10,
             story_extractor_max_calls_day=50,
             story_readings_on=False,
+            story_family_only=False,
         )
         dm.extractor_ai = None
         dm._put_back_tasks = {}
