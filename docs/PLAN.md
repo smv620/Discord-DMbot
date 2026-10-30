@@ -2246,7 +2246,12 @@ names panel nor the speech-to-text hints can be a fixed list.
     (`backstory_links.detail`). When nothing could be read before the cut, the DM is told so, never "no names".
   - **📌 Asserted or 100% truth:** the lore upload has one switch, **Asserted** (the default) or **📌 100% truth**.
     Kept connections from a truth upload are pinned. Either way, everything uploaded starts not revealed to
-    players.
+    players, **except lore the DM uploads as "Everyone in the story"** (Supervisor, 2026-10-30, from the
+    owner's choice A of 2026-10-29, #2959): its names are stored shown to the players, and its kept
+    connections are kept revealed when both their ends are shown. Every player character knows it, and the
+    who-knows lists follow the flags (#3018). "Only the DM" keeps the old rule. A smart guess's "world"
+    statements are treated the same way, at certainty 0.75. A secret name or connection is never opened by
+    any choice.
   - **Pronunciation in the list** (`Tavin (TAV-in) | NPC | Mo`): the bracket after a name is read as how to say
     it only when it looks like a respelling of that name. Code decides, never the AI: its letters (hyphens,
     stress marks and capitals ignored) sound close to the name, and it holds no plain words like "the", "of" or
