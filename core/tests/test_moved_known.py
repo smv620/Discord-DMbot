@@ -1,6 +1,6 @@
-"""A connection that moves to other ends in a merge or join is not known to a player's character
-about those ends (#3073): what the characters knew goes when an end is hidden or was unnamed, and
-a merge between two shown entries keeps everything. Invented names."""
+"""A connection that moves to other ends in a plain merge is not known to a player's character about
+an end kept from them (#3073), and a merge between two shown entries keeps everything; a join keeps
+whoever knew (Supervisor's ruling on #3037). Invented names."""
 
 from __future__ import annotations
 
@@ -84,43 +84,42 @@ class MergeMovesConnections(Helpers):
         self.assertTrue(await self.believes(rel))
 
 
-class JoinMovesBeliefs(JoinBase):
-    async def test_a_belief_in_the_guards_connection_is_not_listed_under_kens_name(self) -> None:
-        captain = await self.add("Captain Vale", type="character", role="npc", status=CONFIRMED)
+class JoinKeepsWhoKnew(JoinBase):
+    """A join is not a plain merge (Supervisor's ruling on #3037): whoever knew the unnamed person's
+    connection still knows it, through the secret other name, even onto a hidden Ken."""
+
+    async def relate(self, a: str, secret: bool = True) -> str:
+        if not hasattr(self, "captain"):
+            self.captain = await self.add(
+                "Captain Vale", type="character", role="npc", status=CONFIRMED
+            )
         made = await self.memory.add_relation(
-            GUILD_A, self.c, self.guard, "knows", captain, source="dm", confidence=1.0,
-            status=CONFIRMED, secret=True,
+            GUILD_A, self.c, a, "knows", self.captain, source="dm", confidence=1.0,
+            status=CONFIRMED, secret=secret,
         )  # fmt: skip
-        rel = str(made.value[0].id)
+        return str(made.value[0].id)
+
+    async def test_the_guards_knower_keeps_the_row_onto_a_hidden_ken_and_after_undo(self) -> None:
+        await self.memory.set_hidden_from_players(GUILD_A, self.c, self.ken, True, source="dm")
+        rel = await self.relate(self.guard)
         await self.memory.set_connection_knowers(
             GUILD_A, self.c, rel, [self.sees_guard], source="dm"
         )
-        # (the guard is unnamed: the reader shows nothing under a name that is not confirmed)
         written = await self.join()
-        mine = await self.memory.what_my_characters_know(GUILD_A, self.c, 1)
-        self.assertEqual(mine.connections, ())
+        got = await self.memory.statement_knowers(GUILD_A, self.c, CONNECTION, [rel])
+        self.assertEqual(got.get(rel), [self.sees_guard])
         batch = written.batch  # type: ignore[attr-defined]
         assert batch is not None
         await self.memory.undo(GUILD_A, self.c, batch, source="dm")
         got = await self.memory.statement_knowers(GUILD_A, self.c, CONNECTION, [rel])
         self.assertEqual(got.get(rel), [self.sees_guard])
 
-
-class JoinFoldsIntoTwin(JoinBase):
-    async def test_a_hidden_twin_is_not_handed_the_guards_knowers(self) -> None:
-        captain = await self.add("Captain Vale", type="character", role="npc", status=CONFIRMED)
-        twin = await self.memory.add_relation(
-            GUILD_A, self.c, self.ken, "knows", captain, source="dm", confidence=1.0,
-            status=CONFIRMED, secret=True,
-        )  # fmt: skip
-        mine = await self.memory.add_relation(
-            GUILD_A, self.c, self.guard, "knows", captain, source="dm", confidence=1.0,
-            status=CONFIRMED, secret=True,
-        )  # fmt: skip
+    async def test_a_folded_fact_gives_its_knowers_to_a_hidden_twin(self) -> None:
+        twin = await self.relate(self.ken)
+        mine = await self.relate(self.guard)
         await self.memory.set_connection_knowers(
-            GUILD_A, self.c, str(mine.value[0].id), [self.sees_guard], source="dm"
+            GUILD_A, self.c, mine, [self.sees_guard], source="dm"
         )
         await self.join()
-        twin_id = str(twin.value[0].id)
-        got = await self.memory.statement_knowers(GUILD_A, self.c, CONNECTION, [twin_id])
-        self.assertEqual(got.get(twin_id, []), [])
+        got = await self.memory.statement_knowers(GUILD_A, self.c, CONNECTION, [twin])
+        self.assertEqual(got.get(twin), [self.sees_guard])
