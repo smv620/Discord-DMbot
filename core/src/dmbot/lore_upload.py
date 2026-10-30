@@ -56,6 +56,7 @@ _STAGES = {
     "looking": q.READING,
     "shaping": q.FINDING_NAMES,
     "who": q.FINDING_LINKS,
+    "sorting": q.FINDING_LINKS,
 }
 
 

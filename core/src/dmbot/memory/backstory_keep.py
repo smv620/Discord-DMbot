@@ -88,21 +88,31 @@ async def player_character_ids(memory: MemoryStore, guild_id: int, campaign_id: 
 
 
 async def know_world(
-    memory: MemoryStore, guild_id: int, campaign_id: str, kind: str, statement_ids: Sequence[str]
+    memory: MemoryStore,
+    guild_id: int,
+    campaign_id: str,
+    kind: str,
+    statement_ids: Sequence[str],
+    pcs: Sequence[str] | None = None,
 ) -> None:
     """These statements are general knowledge of the setting (#2959): every player character knows
-    each, at 1.0. A statement that is gone, or no player characters yet, leaves nothing to write; a
-    refusal is logged and the statement stays with the DM alone (never a failed keep)."""
-    pcs = await player_character_ids(memory, guild_id, campaign_id)
-    if not pcs:
+    each, at 1.0. `pcs`: the player characters, when the caller has them already (read once per
+    batch). A statement that is gone, or no player characters yet, leaves nothing to write. Any
+    failure is logged and the statement stays with the DM alone: it never fails a keep that has
+    already been made."""
+    if pcs is None:
+        pcs = await player_character_ids(memory, guild_id, campaign_id)
+    if not pcs or not statement_ids:
         return
     for statement_id in statement_ids:
         try:
             await memory.set_statement_knowers(
-                guild_id, campaign_id, kind, statement_id, pcs, source=DM
+                guild_id, campaign_id, kind, statement_id, list(pcs), source=DM
             )
         except MemoryRuleError:
             log.info("General knowledge could not be recorded for a statement")
+        except Exception:  # a database trouble: the connection is kept, the knowing is not
+            log.exception("General knowledge could not be recorded for a statement")
 
 
 def change_start(old: Sequence[Relation], now: int) -> int:

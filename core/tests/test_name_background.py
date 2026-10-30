@@ -322,6 +322,7 @@ class ThePath(NamesTest):
             ["🤖 Find names", ui_bg.TRUTH_OFF, "Cancel", ui_bg.KNOWS_LABELS["spoilers"]],
         )
         self.assertIn("Players don't know it yet", text)  # (#2959: the default)
+        self.assertIn("Tap the Players button to switch", text)
         self.ai.complete.assert_not_awaited()  # nothing is sent until the DM presses
 
     async def test_the_players_button_goes_round_the_three_choices_and_the_read_gets_it(
