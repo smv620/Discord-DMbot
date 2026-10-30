@@ -12,8 +12,18 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from dmbot.mentions import NO_PINGS
+from dmbot.recaps.beats import Beat
 from dmbot.ui.decision_lines import DecisionLines
-from dmbot.ui.recap_dm import _TEMPLATE, GONE, NO_NOTES, NOT_YOURS, RecapButton, ready_view
+from dmbot.ui.recap_dm import (
+    _TEMPLATE,
+    GONE,
+    NO_NOTES,
+    NO_STORE,
+    NOT_YOURS,
+    NOTES_FAILED,
+    RecapButton,
+    ready_view,
+)
 
 GUILD, DM_ID, PLAYER = 5, 7, 11
 CID = "c" * 32
@@ -29,15 +39,25 @@ def sheet_of(*beats: Any) -> Any:
     return SimpleNamespace(sheet=lambda: list(beats))
 
 
-def press(*, user: int = DM_ID, notes: Any = None, campaign_present: bool = True) -> Any:
-    store_get = AsyncMock(return_value=notes)
+def press(
+    *,
+    user: int = DM_ID,
+    notes: Any = None,
+    campaign_present: bool = True,
+    store_error: bool = False,
+    recaps_present: bool = True,
+) -> Any:
+    store_get = AsyncMock(
+        side_effect=RuntimeError("down") if store_error else None, return_value=notes
+    )
     campaign = SimpleNamespace(guild_id=GUILD, id=CID, dm_user_ids=frozenset({DM_ID}))
+    decision_lines = MagicMock(spec=DecisionLines)  # remember_pressed is recorded, not run
     bot = SimpleNamespace(
         campaigns=SimpleNamespace(
             get=AsyncMock(return_value=campaign if campaign_present else None)
         ),
-        recaps=SimpleNamespace(db=MagicMock()),
-        decision_lines=DecisionLines(),
+        recaps=SimpleNamespace(db=MagicMock()) if recaps_present else None,
+        decision_lines=decision_lines,
     )
     answered = {"done": False}  # a defer answers the interaction, as Discord does
 
@@ -138,9 +158,11 @@ class TheNotesButton(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(sent_texts(interaction), [NO_NOTES])
 
     async def test_plotbots_notes_and_keeps_are_never_shown(self) -> None:
-        interaction = await self.run_with(
-            sheet_of(beat(1, "Mira fled north.", note="SECRET NOTE TEXT", keep="KEEP THIS"))
-        )
+        real = Beat(
+            number=1, what="Mira fled north.", who=(), lines=(), kind="scene",
+            note="SECRET NOTE TEXT", keep=True,
+        )  # fmt: skip
+        interaction = await self.run_with(sheet_of(real))
 
         text = "\n".join(sent_texts(interaction))
         self.assertIn("Mira fled north.", text)
@@ -167,3 +189,32 @@ class TheNotesButton(unittest.IsolatedAsyncioTestCase):
         customs = [custom_id(c) for c in view.children]
         self.assertTrue(any(c.startswith("dmbot:recap:notes:") for c in customs))
         self.assertLessEqual(len(view.children), 25)
+
+
+class TheNotesErrors(unittest.IsolatedAsyncioTestCase):
+    async def test_a_store_that_fails_says_so_and_nothing_else_happens(self) -> None:
+        button, bot, interaction, store_get = press(store_error=True)
+        with patch("dmbot.ui.recap_dm.SessionNotesStore") as store_cls:
+            store_cls.return_value.get = store_get
+            await button.callback(interaction)
+
+        self.assertEqual(sent_texts(interaction), [NOTES_FAILED])
+        bot.decision_lines.remember_pressed.assert_not_called()
+
+    async def test_without_a_recap_store_the_notes_say_so_before_any_read(self) -> None:
+        button, _bot, interaction, store_get = press(recaps_present=False)
+        with patch("dmbot.ui.recap_dm.SessionNotesStore") as store_cls:
+            store_cls.return_value.get = store_get
+            await button.callback(interaction)
+
+        self.assertEqual(interaction.response.send_message.await_args.args[0], NO_STORE)
+        store_get.assert_not_awaited()
+
+    async def test_the_read_asks_for_this_campaign_and_this_session_only(self) -> None:
+        button, bot, interaction, store_get = press(notes=sheet_of(beat(1, "x")))
+        with patch("dmbot.ui.recap_dm.SessionNotesStore") as store_cls:
+            store_cls.return_value.get = store_get
+            await button.callback(interaction)
+
+        store_get.assert_awaited_once_with(GUILD, CID, AT)
+        bot.decision_lines.remember_pressed.assert_not_called()

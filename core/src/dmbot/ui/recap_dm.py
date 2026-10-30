@@ -10,6 +10,7 @@ more. **Not this one** is the website's "Don't post". Editing the words stays on
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any
 
@@ -26,6 +27,8 @@ from dmbot.ui.decision_lines import with_outcome
 from dmbot.ui.dmbot_commands import _bot, _tell
 from dmbot.ui.recap_share import ShareButton
 
+log = logging.getLogger(__name__)
+
 NOT_YOURS = "Only this campaign's DM can do this. Ask your DM."
 GONE = "I can't find this recap any more. Nothing was changed. Check your recap page."
 DECIDED = "This recap was already posted or skipped, so nothing was changed."
@@ -36,6 +39,7 @@ POSTED = "✅ Posted to the table. The players can see it now."
 NO_STORE = "Recaps aren't available right now. Try again in a minute."
 NOT_NOW = "Okay, nothing was posted. Press Post to the table whenever you're ready."
 NO_NOTES = "There are no notes for this session yet."
+NOTES_FAILED = "I couldn't read the notes just now. Nothing was changed. Try again in a minute."
 NOTES_HEADING = "**Session notes**"
 NOTES_PART_CHARS = 1900  # Discord allows 2,000 characters a message; the heading takes the rest
 
@@ -160,9 +164,14 @@ class RecapButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], te
         """The session's beats as a numbered list, privately, in as many messages as it takes. Only
         the beats' own text: PlotBot's notes and keeps are never shown. Nothing is written."""
         await interaction.response.defer(ephemeral=True, thinking=False)
-        notes = await SessionNotesStore(bot.recaps.db).get(
-            guild_id, self.campaign_id, self.session_at
-        )
+        try:
+            notes = await SessionNotesStore(bot.recaps.db).get(
+                guild_id, self.campaign_id, self.session_at
+            )
+        except Exception:
+            log.exception("Session notes: couldn't read them")  # ids only, never the notes' words
+            await _tell(interaction, NOTES_FAILED)
+            return
         text = numbered(notes) if notes is not None else ""
         if not text:
             await _tell(interaction, NO_NOTES)
@@ -189,9 +198,8 @@ class RecapButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], te
         if store is None:
             await _tell(interaction, NO_STORE)
             return
-        if (
-            self.act == "notes"
-        ):  # before the recap's state: notes can exist for a recap started over
+        # Before the recap's own state: notes can exist for a recap started over.
+        if self.act == "notes":
             await self._show_notes(interaction, bot, guild.id)
             return
         job = await store.get(guild.id, campaign.id, self.session_at)
@@ -470,7 +478,8 @@ def ready_view(
     audio_off: bool = False,
 ) -> discord.ui.View:
     """The buttons on a new recap line (#2420): the three plain ways to approve it, in the page's
-    words, then **📝 Review the recap** (the link to its page, `review_url`) and Share a recap.
+    words, then **📝 Review the recap** (the link to its page, `review_url`) and Share a recap, then
+    **📝 Session notes** (#3026) on the same row in both branches.
     `audio_off`: audio can't be made now, so that button is greyed (the line says why). "Don't
     post" is gone: a recap the DM doesn't approve simply stays a draft. The older buttons (read,
     approve, post, skip, tell) still work on lines already sent, so nothing breaks. With no website
