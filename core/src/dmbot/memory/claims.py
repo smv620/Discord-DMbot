@@ -532,13 +532,16 @@ def implied_kind(onto: Ontology, claim: Extracted, side: str) -> str:
         return CONCEPT
     term, from_object = known
     types = term.object_types if (side == "object") != from_object else term.subject_types
-    if len(types) != 1:
+    # (a kind that allows several ends is guessed as a character when it allows one: a new name
+    # in "knows" or "rival of" is a person far more often than anything else)
+    pick = types[0] if len(types) == 1 else "character" if "character" in types else None
+    if pick is None:
         return CONCEPT
     try:
-        onto.active_type(types[0])
+        onto.active_type(pick)
     except MemoryRuleError:
         return CONCEPT
-    return types[0] if types[0] != "person" else CONCEPT
+    return pick if pick != "person" else CONCEPT
 
 
 class ClaimStore:
