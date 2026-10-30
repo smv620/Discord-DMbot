@@ -419,7 +419,7 @@ class TheThirdReview(JoinBase):
     async def test_the_party_stops_believing_a_connection_that_moved_and_recall_drops_it(
         self,
     ) -> None:
-        from dmbot.memory import beliefs
+        from dmbot.memory.models import KNOWN
         from dmbot.memory.recall import PLAYERS, RecallService
 
         captain = await self.add("Captain Vale", type="character", role="npc", status=CONFIRMED)
@@ -438,7 +438,7 @@ class TheThirdReview(JoinBase):
                     " WHERE pb.guild_id = %s AND pb.campaign_id = %s AND pb.relation_id = %s"
                     " AND p.kind = 'party' ORDER BY pb.seq DESC LIMIT 1) now"
                     " WHERE now.confidence >= %s) AS known",
-                    (GUILD_A, self.c, rel, beliefs.KNOWN),
+                    (GUILD_A, self.c, rel, KNOWN),
                 )
                 row = await cur.fetchone()
                 return bool(row and row["known"])
