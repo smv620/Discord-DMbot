@@ -13,6 +13,7 @@ The files are also made smaller on purpose (#3010): the picture sits faded behin
 sharpness is never seen, and every page counts the picture in its weight budget. Each is cut to 75% of
 the artwork's size (the wide one is then about 1,030 px across, the tall one about 580) at quality 65.
 """
+
 import sys
 from pathlib import Path
 

@@ -245,6 +245,9 @@ class MoreNames:
     entity_id: str
     others: tuple[str, ...] = ()
     secrets: tuple[str, ...] = ()
+    # Saved as suggestions, not as the DM's word: names an AI read found for a character the DM
+    # confirmed already (#3034). The entry stays as it is.
+    proposed: bool = False
 
 
 @dataclass(frozen=True, slots=True)

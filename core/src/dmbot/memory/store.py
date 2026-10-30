@@ -1871,7 +1871,7 @@ class MemoryStore:
                 if m.entity_id not in live:
                     folded.append(None)  # forgotten or joined to another since
                     continue
-                status = live[m.entity_id]
+                status = PROPOSED if m.proposed else live[m.entity_id]
                 has = has_keys.setdefault(m.entity_id, set())
                 extra = [(t, "nickname", False) for t in m.others]
                 extra += [(t, "title", True) for t in m.secrets]
