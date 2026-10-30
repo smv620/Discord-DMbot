@@ -55,11 +55,12 @@ from dmbot.memory.models import (
     DM,
     PROPOSED,
     MemoryRuleError,
+    MoreNames,
     NewName,
     Relation,
     name_key,
 )
-from dmbot.memory.ontology import ACTIVE, check_named
+from dmbot.memory.ontology import ACTIVE, FALLBACK_PREDICATE, check_named
 from dmbot.memory.pronouns import is_pronoun
 from dmbot.memory.store import MemoryStore
 from dmbot.memory.which_else import COULD_NOT_KEEP, none_of_these
@@ -603,6 +604,7 @@ class BackgroundOffer(_Menu):
                 dropped=done.dropped,
                 questions=done.questions,
                 changes=done.changes,
+                suggested=done.suggested,
                 knowledge_note=done.knowledge_note,
             )
         except (AIError, CampaignError) as exc:  # CampaignError: the campaign is gone
@@ -638,6 +640,7 @@ class BackgroundRead:
     changes: int
     dropped: Mapping[str, int]
     questions: list[str]
+    suggested: int = 0  # other names suggested for names the DM has, waiting for a yes (#3034)
     # What the DM should know about "who knows it" (#2959), else "": it could not be sorted, or no
     # player character is confirmed yet. Words only, nothing from the text.
     knowledge_note: str = ""
@@ -713,6 +716,15 @@ async def read_background(
         until=started + lore_read.LORE_TIME_LIMIT_S - WHO_SUMMARY_MARGIN_S,
     )
     pcs = await keep.player_character_ids(memory, campaign.guild_id, campaign.id)
+    # "Everyone in the story" (#3034, Supervisor's ruling on PLAN item 1): a disguise or an earlier
+    # name is just another name, and so are the connections written through it. Under "Only the DM"
+    # and a smart guess it stays secret (DM authority).
+    everyone = choice == lore_knowledge.WORLD
+    secret_keys = frozenset() if everyone else read.secret_spellings
+    if everyone:
+        found = [
+            replace(f, also=tuple(dict.fromkeys((*f.also, *f.secret))), secret=()) for f in found
+        ]
     stored = await store(
         memory,
         campaign,
@@ -724,6 +736,15 @@ async def read_background(
         # a disguise becomes a plain other name only when the DM said everything is known;
         # under the smart guess it stays secret whatever the AI says (DM authority)
         fold_secret=choice == lore_knowledge.WORLD,
+    )
+    await save_earlier_names(
+        memory,
+        campaign,
+        read.known_spellings,
+        secret_keys,
+        getattr(bot, "lore_context", None),
+        upload.text,
+        known_by,
     )
     questions: list[str] = []
     keys: set[tuple[str, str, str]] = set()
@@ -746,7 +767,7 @@ async def read_background(
         on_who=on_who,
         until=started + lore_read.LORE_TIME_LIMIT_S - WHO_SUMMARY_MARGIN_S,
         known_spellings=read.known_spellings,
-        secret_spellings=read.secret_spellings,
+        secret_spellings=secret_keys,
         world_links=world_links,
         world_all=choice == lore_knowledge.WORLD,
         world_level=lore_knowledge.level_of(choice),
@@ -767,6 +788,11 @@ async def read_background(
         )
         or "nothing",
     )  # (counts only: the questions are the DM's own words, shown only to them)
+    try:
+        suggested = len(await memory.suggested_names(campaign.guild_id, campaign.id))
+    except Exception:  # only the count for the summary: the read itself is done
+        log.exception("The suggested names could not be counted")
+        suggested = 0
     note = ""
     if choice != lore_knowledge.SPOILERS:
         if not sorted_ok:
@@ -775,7 +801,7 @@ async def read_background(
             note = KNOWS_NO_PLAYERS
     return BackgroundRead(
         stored, queued, read.cut, read.stats.links_listed, ready, changes,
-        read.stats.dropped, questions, note,
+        read.stats.dropped, questions, suggested, note,
     )  # fmt: skip
 
 
@@ -817,6 +843,75 @@ async def _world(
     names = {name_key(f.name) for i, f in enumerate(found) if i in known}
     keys = {_link_key(c.a, c.how, c.b) for i, c in enumerate(links, len(found)) if i in known}
     return names, keys, ok
+
+
+# The few helpers the suggested-names view shares with this module (public, so a sibling module
+# can use them without reaching into private names).
+campaign_for = _campaign_for
+memory_of = _memory
+markdown_safe = _md
+
+
+async def save_earlier_names(
+    memory: MemoryStore,
+    campaign: Campaign,
+    spellings: Mapping[str, Sequence[str]],
+    secret: Collection[str],
+    held: lore_context.Held | None = None,
+    text: str = "",
+    known_by: str = "",
+) -> None:
+    """The other names a lore text gives a name the campaign already has (#3034): a pseudonym, an
+    earlier or birth name, a nickname. They are saved as suggestions on that entry (never a new
+    character, never confirmed for the DM), secret when the text called the name a disguise.
+    A spelling the entry has, or another entry uses, is left out by the store, so reading the
+    same text twice adds nothing. A refusal is logged: the read goes on without them."""
+    if not spellings:
+        return
+    lookup = CampaignLookup.build(await memory.lookup_data(campaign.guild_id, campaign.id))
+    more: list[MoreNames] = []
+    claims: dict[str, set[str]] = {}
+    for main, found in spellings.items():
+        for sp in found:
+            claims.setdefault(name_key(sp), set()).add(name_key(main))
+    for main, found in spellings.items():
+        found = tuple(sp for sp in found if len(claims[name_key(sp)]) == 1)  # (not two names')
+        ids = {e.entity_id for e in lookup.by_key.get(name_key(main), ()) if not e.person}
+        if len(ids) != 1:
+            continue  # (no such entry, or two: DMbot will not guess which one is meant)
+        hidden = tuple(sp for sp in found if name_key(sp) in secret)
+        shown = tuple(sp for sp in found if name_key(sp) not in secret)
+        more.append(MoreNames(next(iter(ids)), shown, hidden, proposed=True))
+    if not more:
+        return
+    try:
+        waiting = {a.id for a, _ in await memory.suggested_names(campaign.guild_id, campaign.id)}
+        await memory.add_names(campaign.guild_id, campaign.id, [], source=DM, more=more)
+    except MemoryRuleError as exc:
+        log.info("Skipped the earlier names of a background: %s", exc)
+        return
+    except Exception:  # the names of the read are stored already: this must not undo the read
+        log.exception("The earlier names of a background could not be saved")
+        return
+    try:
+        # only the names this call added: one an earlier upload suggested keeps its own knowers
+        added = [
+            a for a, _ in await memory.suggested_names(campaign.guild_id, campaign.id)
+            if a.id not in waiting
+        ]  # fmt: skip
+    except Exception:
+        log.exception("The suggested names could not be read")
+        return
+    if known_by:  # the uploader's character knows the secret names it gave (#2935), as store() does
+        for alias in added:
+            if alias.secret:
+                await _secret_names_known_by(
+                    memory, campaign, alias.entity_id, [alias.text], known_by
+                )
+    if held is None or not text:
+        return
+    for alias in added:  # the sentence around each, for its question (memory only)
+        held.put(campaign.guild_id, alias.id, lore_context.around(text, "", alias.text))
 
 
 async def store(
@@ -962,7 +1057,7 @@ def _waiting_note(queued: int) -> str:
 KNOWN_ALREADY = ("same_pair", "already_have", "already_waiting")
 LEFT_OUT = (
     "name_not_found", "which_one", "unreadable", "word_not_allowed", "bad_names", "not_in_text",
-    "spelling_clash", "which_way",
+    "spelling_clash", "which_way", "bad_kind",
 )  # fmt: skip
 NOT_READ = ("cut_before_check", "over_cap")
 
@@ -1034,10 +1129,18 @@ async def summary(
     dropped: Mapping[str, int] | None = None,
     questions: Sequence[str] = (),
     changes: int = 0,
+    suggested: int = 0,
     knowledge_note: str = "",
 ) -> None:
     total = sum(map(len, stored.values()))
-    waiting = queued + (dropped or {}).get("which_waiting", 0)
+    links_waiting = queued + (dropped or {}).get("which_waiting", 0)
+    waiting = links_waiting + suggested  # (the 📜 button shows for names too)
+    names_note = (
+        f"\n🔎 {suggested} other name{'' if suggested == 1 else 's'} to check: press 📜 Check "
+        "the connections. Nothing uses a name until you say yes."
+        if suggested
+        else ""
+    )
     note = (knowledge_note if total or waiting else "") + _found_note(
         links_found,
         queued,
@@ -1045,7 +1148,7 @@ async def summary(
         dropped=dropped,
         questions=questions,
         changes=changes,
-        always=not total and bool(waiting),
+        always=not total and bool(links_waiting),  # (names alone are no 'Found 0 connections')
     )
     if not total:
         # Never "no names" after a cut-off: the reading did not finish, so nothing is known (#2454)
@@ -1057,9 +1160,13 @@ async def summary(
                 else f"🤖 DMbot found no new names in {_md(label)}."
                 + (
                     note
+                    + names_note
                     + (
                         "\nPress 📜 Check the connections to look at them one by one."
-                        if ready is None or ready or (dropped and dropped.get("which_waiting"))
+                        if ready is None
+                        or ready
+                        or suggested
+                        or (dropped and dropped.get("which_waiting"))
                         else ""
                     )
                     if waiting
@@ -1075,7 +1182,7 @@ async def summary(
     parts = ", ".join(
         _plural(k, len(ids)) for k, ids in sorted(stored.items(), key=lambda x: -len(x[1]))
     )
-    view = BulkConfirm(campaign.id, stored, queued + (dropped or {}).get("which_waiting", 0))
+    view = BulkConfirm(campaign.id, stored, waiting)
     await interaction.edit_original_response(
         content=(
             f"📜 **{total} name{'' if total == 1 else 's'} to check** from {_md(label)}: "
@@ -1088,6 +1195,7 @@ async def summary(
                 else ""
             )
             + note
+            + names_note
             + (CUT_NOTE if cut else "")
         ),
         view=view,
@@ -1215,9 +1323,15 @@ async def queue_links(
             dropped["not_in_text"] += settled.unresolved
         answers = [*answers, settled.connections]
     picks: list[bg.Pick] = []
+    # (the campaign's own secret names stay secret whatever the upload's choice: the choice only
+    # frees the earlier names this read found)
+    campaign_secrets = {
+        key for key, entries in lookup.by_key.items() if any(e.secret for e in entries)
+    }
     kept = bg.keep_connections(
         answers, found, ends, cap=bg.MAX_CONNECTIONS, skip=known, dropped=dropped,
-        questions=questions, speaker=speaker, picks=picks, secret_keys=secret_spellings,
+        questions=questions, speaker=speaker, picks=picks,
+        secret_keys={*secret_spellings, *campaign_secrets},
     )  # fmt: skip
     # A pronoun-resolved question or unnamed person is secret as a connection would be: when its
     # named end is a secret spelling, of this reading or of the campaign (`keep_connections` does
@@ -1249,6 +1363,22 @@ async def queue_links(
         world_links,
         world_level if world_all else 0,
     )
+    onto = await memory.ontology(campaign.guild_id, campaign.id)
+
+    def fitted(c: bg.Connection, a_id: str, b_id: str) -> str | None:
+        """The kind this connection may have between these two entries (#3035): its own when the
+        ends fit it, "is in" for a place in a place that the AI called a membership, else None.
+        A campaign's own kind and the catch-all take any ends."""
+        term = onto.predicates.get(c.how)
+        if term is None or not term.core or c.how == FALLBACK_PREDICATE:
+            return c.how
+        a_type, b_type = lookup.entities[a_id].type, lookup.entities[b_id].type
+        if onto.is_any(a_type, term.subject_types) and onto.is_any(b_type, term.object_types):
+            return c.how
+        if c.how == "member_of" and a_type == "place" and b_type == "place":
+            return "located_in"
+        return None
+
     # (a kept connection may name an end by another spelling than the one the read listed: both
     # are compared by the entry they point to, either way round)
     world_ids = {
@@ -1256,27 +1386,27 @@ async def queue_links(
         for ka, how, kb in world_links
         if (x := entry(ka)) is not None and (y := entry(kb)) is not None
     }
-    rows = [
-        NewLink(
-            a,
-            c.how,
-            b,
-            c.quote,
-            c.secret,
-            c.words,
-            truth,
-            upload,
-            c.decided,
-            known_by,
+    rows = []
+    for c in kept:
+        if (a := entry(c.a)) is None or (b := entry(c.b)) is None:
+            continue
+        how = fitted(c, a, b)
+        if how is None:  # the ends do not fit the kind: counted, never stored
+            if dropped is not None:
+                dropped["bad_kind"] += 1
+            continue
+        world = (
             world_level
             if world_all
             or (a, c.how, b) in world_ids
             or (c.how in symmetric and (b, c.how, a) in world_ids)
-            else 0,
+            else 0
         )
-        for c in kept
-        if (a := entry(c.a)) is not None and (b := entry(c.b)) is not None
-    ]
+        rows.append(
+            NewLink(
+                a, how, b, c.quote, c.secret, c.words, truth, upload, c.decided, known_by, world
+            )
+        )
     if settled.unnamed:  # (nothing here runs when the check is off: the rows are as they were)
         room = max(0, bg.MAX_CONNECTIONS - len(rows))
         if len(settled.unnamed) > room and dropped is not None:
@@ -1682,9 +1812,12 @@ async def offer_ready(interaction: discord.Interaction, campaign_id: str) -> boo
     when the DM has answered names (Add all, the end of 📝 Check new names) and by the 📜 button.
     Returns whether there was anything to ask."""
     try:
+        from dmbot.ui.name_questions import offer_names  # (it imports this module)
+
+        asked_names = await offer_names(interaction, campaign_id)  # suggested other names first
         view = ConnectionOffer(campaign_id)
         if not await view.load(interaction):
-            return False
+            return asked_names
         with contextlib.suppress(discord.HTTPException):
             await interaction.followup.send(
                 view.text(), view=view, ephemeral=True, allowed_mentions=NO_PINGS

@@ -178,7 +178,8 @@ export default function Lore({ api, path }: { api: AccountApi; path: string }) {
     const failed = upload.state === "failed";
     const done = upload.state === "done";
     const quiet = upload.serverNow - upload.updatedAt;
-    const state = failed ? "failed" : done ? "done" : quiet > STALLED_S && upload.state === "working" ? "stalled" : "running";
+    // Quiet this long, waiting for the bot or working, is a stall (the panel's `waiting` is for waiting on the person, not on DMbot).
+    const state = failed ? "failed" : done ? "done" : quiet > STALLED_S ? "stalled" : "running";
     return (
       <div class="stack">
         {back}
@@ -192,7 +193,6 @@ export default function Lore({ api, path }: { api: AccountApi; path: string }) {
           updatedAt={upload.updatedAt}
           serverNow={upload.serverNow}
           state={state}
-          waiting={upload.state === "waiting"}
           frozen={stopped}
           reason={failed ? (words.failedReasons[upload.error] ?? words.failedFallback) : null}
         />

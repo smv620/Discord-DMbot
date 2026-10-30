@@ -140,6 +140,9 @@ class WebSettings:
     # Pause and unpause from the website (#2985; DMBOT_WEB_PAUSE): off, a pause choice answers 404,
     # so nothing is queued before the bot step that applies it is deployed.
     pause_on: bool = False
+    # Recap style on the website (#2985; DMBOT_WEB_RECAP_STYLE): off, its routes answer 404, so
+    # nothing is queued before the bot step that applies a change is deployed.
+    recap_style_on: bool = False
     # Sharing house rules from the website (#2783; DMBOT_WEB_RULE_SHARING): off, the routes that
     # queue a choice answer 404, so nothing is queued before the bot can run it.
     rule_sharing_on: bool = False
@@ -382,6 +385,11 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
     pause_raw = (get("DMBOT_WEB_PAUSE") or "0").lower()
     if pause_raw not in ("0", "1", "true", "false", "on", "off"):
         raise ConfigError(f'DMBOT_WEB_PAUSE must be 1 (on) or 0 (off), got "{pause_raw}".')
+    recap_style_raw = (get("DMBOT_WEB_RECAP_STYLE") or "0").lower()
+    if recap_style_raw not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError(
+            f'DMBOT_WEB_RECAP_STYLE must be 1 (on) or 0 (off), got "{recap_style_raw}".'
+        )
     sheets_raw = (get("DMBOT_WEB_SHEETS") or "0").lower()
     if sheets_raw not in ("0", "1", "true", "false", "on", "off"):
         raise ConfigError(f'DMBOT_WEB_SHEETS must be 1 (on) or 0 (off), got "{sheets_raw}".')
@@ -402,6 +410,7 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
         report_make_on=report_make_raw in ("1", "true", "on"),
         lore_on=lore_raw in ("1", "true", "on"),
         pause_on=pause_raw in ("1", "true", "on"),
+        recap_style_on=recap_style_raw in ("1", "true", "on"),
         recaps_on=recaps_raw in ("1", "true", "on"),
         plot_check_on=recaps_raw in ("1", "true", "on")
         and (get("DMBOT_PLOT_CHECK") or "0").lower() in ("1", "true", "on"),

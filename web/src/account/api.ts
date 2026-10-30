@@ -1071,6 +1071,24 @@ export interface LoreUpload {
   updatedAt: number;
   serverNow: number;
 }
+/** The campaign's recap style (#2985): ids are the stores' own, to remove by. */
+export interface RecapStyle {
+  examples: { id: string; text: string }[];
+  notes: { id: string; text: string }[];
+  /** True when the campaign has no examples of its own, so DMbot's own are used. */
+  defaults: boolean;
+}
+export interface RecapStyleChange {
+  action: "add_example" | "remove_example" | "use_defaults" | "add_note" | "remove_note";
+}
+export interface RecapStyleAction {
+  state: "waiting" | "working" | "done" | "failed";
+  error: string;
+  action: RecapStyleChange["action"];
+  createdAt: number;
+  updatedAt: number;
+  serverNow: number;
+}
 export interface ImportStarted {
   importId: string;
   sessions: { file: string; state: ImportState; writeRecap?: boolean }[];
@@ -1803,6 +1821,7 @@ export type ApiErrorKind =
   | "no-rules" // there is no house rule of the campaign's own to share (#2783)
   | "bad-choice" // a sharing choice the API cannot read (#2783)
   | "not-owner" // only the campaign's owner can pause it (#2985)
+  | "full" // three examples already, so no fourth (#2985)
   | "busy" // a recap that is being written or sent now can't be made again (#2608, #2609)
   | "no-lines" // the session's transcript is gone, so there is nothing to write from (#2608)
   | "needs-rights" // the campaign's first added recap: say you may use it (#2609)
@@ -2166,6 +2185,15 @@ export interface AccountApi {
    * already open: `loreRead(ref)` finds it), `too-soon` (five an hour), `bad-text`, `ticket-too-long`, `bad-speaker`,
    * `not-allowed`, `not-found` while the server switch is off. Missing from an older API. */
   loreAdd?(campaignRef: string, input: LoreInput): Promise<LoreUpload>;
+  /** The campaign's recap style (#2985; core web/recap_style.py): the DM's own example recaps and standing notes, and
+   * whether DMbot's own examples are in use. DM only. */
+  recapStyle?(campaignRef: string): Promise<RecapStyle>;
+  /** Queue one change to the recap style for the bot; answers the id to look at with `recapStyleAction`. Refusals:
+   * `bad-action`, `bad-choice` (nothing, too many words, or a bad id), `ticket-too-long`, `too-soon`, `not-allowed`,
+   * `not-found` while the server switch is off. */
+  changeRecapStyle?(campaignRef: string, action: RecapStyleChange["action"], arg?: string): Promise<{ id: string }>;
+  /** Where a queued change stands: state, error word, times; never its words. */
+  recapStyleAction?(campaignRef: string, id: string): Promise<RecapStyleAction>;
   /** One upload's progress, or with no id the newest of the last day; null when there is none. */
   loreRead?(campaignRef: string, id?: string): Promise<LoreUpload | null>;
   /** One NPC's page. `campaignRef` is `<server>.<campaign>`, `entry` the NPC's id (#2266). */
@@ -2441,6 +2469,7 @@ export const errorKinds: Record<string, ApiErrorKind> = {
   plan: "plan-needed",
   no_rules: "no-rules",
   not_owner: "not-owner",
+  full: "full",
   bad_arg: "bad-choice",
   gone: "gone",
   ambiguous: "ambiguous",
@@ -2604,7 +2633,7 @@ export interface ApiHelpers {
 export const ACCOUNT_METHODS = ["emailSignInRequest", "emailSignInUse", "offerHandover", "deleteCampaign", "restoreStage", "restorePart", "restoreGo", "restoreStatus", "restoreCancel", "campaignBackup", "takeBackHandover", "handoverLook", "handoverAccept", "handoverDecline", "removeDiscordAccount", "getMoveCode", "myEmail", "changeEmail", "confirmEmail", "cancelEmailChange", "sendSupport", "mySupport", "supportThread", "signOutEverywhere", "startTryIt", "checkoutUrl", "billingPortalUrl", "renewPlan", "extraHoursUrl", "downloadExport", "characters", "linkServer", "acceptOffer", "declineOffer", "withdrawOffer", "stopRecording", "myLines", "deleteMyLines", "myLinesStatus", "requestDelete", "confirmDelete"] as const satisfies readonly (keyof AccountApi)[];
 export const RECAPS_METHODS = ["recapAudioUrl", "recaps", "pastSessions", "sessionReport", "makeSessionReport", "answerReport", "setBeatPresent", "makeRecap", "addRecap", "recapList", "recap", "saveRecap", "approveRecap", "approveUnchecked", "recapAudioLinks", "recapChoices", "setRecapChoice", "askRecapAudioAgain", "plotCheck", "answerPlotIssue", "plotChatSend", "plotChat", "decidePlotProposal", "recapAudioRemake", "sendFix", "fixResult", "sendVoice", "voiceResult", "rewriteWith", "importPreview", "importMembers", "importCheck", "importStart", "importProgress", "shareRecap", "publicRecap", "decideRecap"] as const satisfies readonly (keyof AccountApi)[];
 export const NAMES_METHODS = ["namesFixed", "undoNameFix", "campaignNames", "suggestSaidAs", "respellFromVoice", "saveSaidAs", "nameChecks", "answerNameCheck", "npcPage", "saveNpcNote", "myNpcNotes", "deleteMyNpcNotes", "allNames", "smartNames", "changeName", "nameThem", "webGraph", "webSize", "webOverview", "webFind", "webWaiting", "answerWaiting", "webReadings", "answerReading", "webPeek", "webReveal", "changeWebLink"] as const satisfies readonly (keyof AccountApi)[];
-export const CAMPAIGN_METHODS = ["transcriptCampaigns", "transcriptSessions", "transcript", "transcriptFile", "transcriptStretch", "transcriptPutBack", "transcriptLeaveOut", "setCampaignSetting", "campaignOptionalRules", "campaignGameMasters", "campaignSheets", "chooseSheet", "sheetAnswer", "fixTranscriptLine", "fixAnswer", "campaignGameMasterCandidates", "campaignSettingAnswer", "timeline", "sharedRules", "houseRuleCampaigns", "houseRules", "ruleSharing", "chooseRuleSharing", "ruleSharingAnswer", "houseRulesFile", "improvement", "setImprovement", "homebrewCampaigns", "homebrew", "homebrewFile", "campaignPage", "loreAdd", "loreRead"] as const satisfies readonly (keyof AccountApi)[];
+export const CAMPAIGN_METHODS = ["transcriptCampaigns", "transcriptSessions", "transcript", "transcriptFile", "transcriptStretch", "transcriptPutBack", "transcriptLeaveOut", "setCampaignSetting", "campaignOptionalRules", "campaignGameMasters", "campaignSheets", "chooseSheet", "sheetAnswer", "fixTranscriptLine", "fixAnswer", "campaignGameMasterCandidates", "campaignSettingAnswer", "timeline", "sharedRules", "houseRuleCampaigns", "houseRules", "ruleSharing", "chooseRuleSharing", "ruleSharingAnswer", "houseRulesFile", "improvement", "setImprovement", "homebrewCampaigns", "homebrew", "homebrewFile", "campaignPage", "loreAdd", "loreRead", "recapStyle", "changeRecapStyle", "recapStyleAction"] as const satisfies readonly (keyof AccountApi)[];
 
 /** A stand-in for each call of an area: the first use loads the area's file (once), and every call goes to it. */
 function lazyArea<K extends keyof AccountApi>(names: readonly K[], load: () => Promise<{ default: (h: ApiHelpers) => Record<string, unknown> }>, h: ApiHelpers): Pick<AccountApi, K> {
