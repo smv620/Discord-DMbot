@@ -157,3 +157,11 @@ class TheNameEachViewerSees(TheJoin):
         )
         self.assertEqual(got[self.guard], self.label)
         self.assertEqual(await self.name_for(Viewer.character(self.sees_ken)), "Ken")
+
+
+class TheCondition(TheJoin):
+    async def test_the_unnamed_ones_condition_does_not_become_kens(self) -> None:
+        await self.memory.set_condition(GUILD_A, self.c, self.guard, "dead", source="dm")
+        await self.join()
+        got = await self.memory.states(GUILD_A, self.c, [self.ken])
+        self.assertIsNone(got.get(self.ken))  # (history only: the DM sets Ken's own)

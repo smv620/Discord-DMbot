@@ -2961,6 +2961,13 @@ class MemoryStore:
                     [unnamed_id, unnamed_id],
                 )
             ]  # fmt: skip
+            # Likewise its condition ("dead"): moving it would show the players the named one's
+            # condition, which they were not told. It is closed and stays as history; the DM sets
+            # the named entry's condition as usual.
+            for state in await w.select(
+                STATES, " AND closed_at IS NULL AND entity_id = %s", [unnamed_id]
+            ):
+                await w.update(STATES, state["id"], {"closed_at": w.now})
             kept = await self._merge_in(
                 w, named_id, unnamed_id, source=DM, dm_said_same=True, join_alias=alias_id
             )
