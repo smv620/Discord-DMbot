@@ -96,11 +96,13 @@ class Viewers(unittest.TestCase):
             player_characters=PCS,
         )  # fmt: skip
         got = visible(Viewer.character(TRAN), data)
-        self.assertEqual(got.entries, {"bruno-entry", "shela-entry", "rook-entry", "sword-entry"})
-        self.assertEqual(visible(Viewer.character(CLYDE), data).entries, frozenset())
+        self.assertEqual(
+            got.entries, {"bruno-entry", "shela-entry", "rook-entry", "sword-entry", TRAN}
+        )
+        self.assertEqual(visible(Viewer.character(CLYDE), data).entries, {CLYDE})
 
 
-class Stored(MemoryTest):
+class Helpers(MemoryTest):
     async def table(self) -> dict[str, str]:
         add = self.add
         return {
@@ -111,9 +113,16 @@ class Stored(MemoryTest):
             "mara": await add(
                 "Mara", type="character", role="player_character", played_by=2, status=CONFIRMED
             ),
-            "bruno": await add("Bruno", type="character", role="npc", status=CONFIRMED),
-            "shela": await add("Shela", type="character", role="npc", status=CONFIRMED),
-            "sword": await add("The Sword", type="item", status=CONFIRMED),
+            # (hidden from the players, so the lists start empty: these tests set them)
+            "bruno": await add(
+                "Bruno", type="character", role="npc", status=CONFIRMED, hidden_from_players=True
+            ),
+            "shela": await add(
+                "Shela", type="character", role="npc", status=CONFIRMED, hidden_from_players=True
+            ),
+            "sword": await add(
+                "The Sword", type="item", status=CONFIRMED, hidden_from_players=True
+            ),
         }  # fmt: skip
 
     async def link(self, a: str, b: str) -> str:
@@ -126,6 +135,8 @@ class Stored(MemoryTest):
     async def know(self, kind: str, statement: str, who: list[str]) -> None:
         await self.memory.set_statement_knowers(GUILD_A, self.c, kind, statement, who, source="dm")
 
+
+class Stored(Helpers):
     async def test_the_writer_and_the_gate_agree_for_each_kind(self) -> None:
         ids = await self.table()
         rel = await self.link(ids["bruno"], ids["shela"])
@@ -192,9 +203,10 @@ class Stored(MemoryTest):
         await self.know(ENTRY, ids["sword"], [ids["mara"]])
         raw = encode_backup(await self.campaigns.export(GUILD_A, self.c))
         restored = await self.campaigns.import_backup(GUILD_B, decode_backup(raw), 7)
-        self.assertEqual(await self.count("memory_knowers", GUILD_B), 2)
         got = await self.memory.statement_knowers(GUILD_B, restored.id, CONNECTION, [rel])
         self.assertEqual(got, {rel: [ids["bruno"]]})
+        sword = await self.memory.statement_knowers(GUILD_B, restored.id, ENTRY, [ids["sword"]])
+        self.assertEqual(sword, {ids["sword"]: [ids["mara"]]})
 
     async def test_a_merge_moves_who_knows_the_entry_exists(self) -> None:
         ids = await self.table()
@@ -215,7 +227,10 @@ class Stored(MemoryTest):
         shela = await self.memory.statement_knowers(GUILD_A, self.c, ENTRY, [ids["shela"]])
         self.assertEqual(sword[ids["sword"]], [ids["bruno"]])  # one row, not two
         self.assertEqual(shela[ids["shela"]], [ids["bruno"]])
-        self.assertEqual(await self.count("memory_knowers"), 2)
+        both = await self.memory.statement_knowers(
+            GUILD_A, self.c, ENTRY, [ids["sword"], ids["shela"]]
+        )
+        self.assertEqual(sum(len(v) for v in both.values()), 2)  # two rows, none doubled
 
     async def test_a_rejected_statement_grants_nothing(self) -> None:
         ids = await self.table()
@@ -261,7 +276,11 @@ class Stored(MemoryTest):
         ids = await self.table()
         await self.know(ENTRY, ids["sword"], [ids["mara"]])
         raw = await self.campaigns.export(GUILD_A, self.c)
-        rows = [r for r in raw["sections"]["memory"] if r.get("table") == "knower"]
+        rows = [
+            r
+            for r in raw["sections"]["memory"]
+            if r.get("table") == "knower" and r.get("about_entity_id") == ids["sword"]
+        ]
         self.assertEqual(len(rows), 1)
         for change in (
             {"about_entity_id": None},  # names no statement
@@ -365,7 +384,7 @@ class Groups(unittest.TestCase):
         )  # Mara is not in it
 
 
-class StoredCertainty(Stored):
+class StoredCertainty(Helpers):
     async def test_the_writer_keeps_each_certainty_and_changes_it_in_place(self) -> None:
         ids = await self.table()
         rel = await self.link(ids["bruno"], ids["shela"])
@@ -379,7 +398,8 @@ class StoredCertainty(Stored):
         )
         again = await self.memory.visible_to(GUILD_A, self.c, Viewer.character(ids["shela"]))
         self.assertEqual(again.how_sure(CONNECTION, rel), 0.0)
-        self.assertEqual(await self.count("memory_knowers"), 2)  # one row each, changed in place
+        got = await self.memory.statement_knowers(GUILD_A, self.c, CONNECTION, [rel])
+        self.assertEqual(len(got[rel]), 2)  # one row each, changed in place
         with self.assertRaises(MemoryRuleError):
             await self.memory.set_statement_knowers(
                 GUILD_A, self.c, CONNECTION, rel, {ids["bruno"]: 1.5}, source="dm"
@@ -412,3 +432,154 @@ class StoredCertainty(Stored):
         restored = await self.campaigns.import_backup(GUILD_B, decode_backup(raw), 7)
         seen = await self.memory.visible_to(GUILD_B, restored.id, Viewer.character(ids["mara"]))
         self.assertEqual(seen.how_sure(ENTRY, ids["sword"]), 0.35)
+
+
+class FlagsFollow(Helpers):
+    """The old flags keep the lists in step (#2995, slice 2b)."""
+
+    async def known(self, kind: str, statement: str) -> list[str]:
+        got = await self.memory.statement_knowers(GUILD_A, self.c, kind, [statement])
+        return sorted(got.get(statement, []))
+
+    async def pcs(self, ids: dict[str, str]) -> list[str]:
+        return sorted([ids["okthandom"], ids["mara"]])
+
+    async def test_a_new_shown_entry_is_known_to_every_player_character(self) -> None:
+        ids = await self.table()
+        place = await self.add("Greywater", type="place", status=CONFIRMED)
+        self.assertEqual(await self.known(ENTRY, place), await self.pcs(ids))
+
+    async def test_a_hidden_or_unconfirmed_entry_is_known_to_nobody(self) -> None:
+        ids = await self.table()
+        hidden = await self.add("Rook", type="npc", status=CONFIRMED, hidden_from_players=True)
+        waiting = await self.add("Zed", type="npc", status="proposed")
+        self.assertEqual(await self.known(ENTRY, hidden), [])
+        self.assertEqual(await self.known(ENTRY, waiting), [])
+        self.assertIn(ids["okthandom"], await self.known(ENTRY, ids["okthandom"]))
+
+    async def test_hiding_clears_the_list_and_showing_again_gives_it_to_every_pc(self) -> None:
+        ids = await self.table()
+        place = await self.add("Greywater", type="place", status=CONFIRMED)
+        await self.memory.set_hidden_from_players(GUILD_A, self.c, place, True, source="dm")
+        self.assertEqual(await self.known(ENTRY, place), [])
+        await self.memory.set_hidden_from_players(GUILD_A, self.c, place, False, source="dm")
+        self.assertEqual(await self.known(ENTRY, place), await self.pcs(ids))
+
+    async def test_undo_of_hiding_brings_the_list_back(self) -> None:
+        ids = await self.table()
+        place = await self.add("Greywater", type="place", status=CONFIRMED)
+        hide = await self.memory.set_hidden_from_players(GUILD_A, self.c, place, True, source="dm")
+        assert hide.batch is not None
+        await self.memory.undo(GUILD_A, self.c, hide.batch, source="dm")
+        self.assertEqual(await self.known(ENTRY, place), await self.pcs(ids))
+
+    async def test_a_list_the_dm_set_is_kept_while_the_flags_do_not_change(self) -> None:
+        ids = await self.table()
+        place = await self.add("Greywater", type="place", status=CONFIRMED)
+        await self.know(ENTRY, place, [ids["mara"]])  # partly revealed
+        await self.memory.add_alias(
+            GUILD_A, self.c, place, "The Grey", kind="nickname", source="dm", status=CONFIRMED
+        )  # another statement is written: this list is untouched
+        self.assertEqual(await self.known(ENTRY, place), [ids["mara"]])
+
+    async def test_a_revealed_connection_and_a_plain_name_follow_their_flags(self) -> None:
+        ids = await self.table()
+        a = await self.add("Tran", type="character", role="npc", status=CONFIRMED)
+        b = await self.add("Clyde", type="character", role="npc", status=CONFIRMED)
+        shown = await self.memory.add_relation(
+            GUILD_A, self.c, a, "knows", b, source="dm", confidence=1.0, status=CONFIRMED
+        )
+        rel = str(shown.value[0].id)
+        self.assertEqual(await self.known(CONNECTION, rel), await self.pcs(ids))
+        # a connection with a hidden end is kept from the players, as the old readers kept it
+        kept = await self.memory.add_relation(
+            GUILD_A, self.c, a, "knows", ids["bruno"], source="dm", confidence=1.0,
+            status=CONFIRMED,
+        )  # fmt: skip
+        self.assertEqual(await self.known(CONNECTION, str(kept.value[0].id)), [])
+        # hiding an entry takes its connections and names with it, showing it brings them back
+        await self.memory.set_hidden_from_players(GUILD_A, self.c, b, True, source="dm")
+        self.assertEqual(await self.known(CONNECTION, rel), [])
+        await self.memory.set_hidden_from_players(GUILD_A, self.c, b, False, source="dm")
+        self.assertEqual(await self.known(CONNECTION, rel), await self.pcs(ids))
+
+    async def test_a_condition_is_known_with_its_entry(self) -> None:
+        ids = await self.table()
+        place = await self.add("Greywater", type="place", status=CONFIRMED)
+        await self.memory.set_condition(GUILD_A, self.c, place, "destroyed", source="dm")
+        state = (await self.memory.states(GUILD_A, self.c, [place]))[place]
+        self.assertEqual(await self.known(PROPERTY, state.id), await self.pcs(ids))
+
+    async def test_the_old_knowers_writers_write_the_list_too_and_keep_other_rows(self) -> None:
+        ids = await self.table()
+        rel = await self.link(ids["bruno"], ids["shela"])  # secret
+        await self.memory.set_statement_knowers(
+            GUILD_A, self.c, CONNECTION, rel, {ids["bruno"]: 0.6}, source="dm"
+        )
+        await self.memory.set_connection_knowers(
+            GUILD_A, self.c, rel, [ids["okthandom"]], source="dm"
+        )
+        self.assertEqual(
+            await self.known(CONNECTION, rel), sorted([ids["bruno"], ids["okthandom"]])
+        )  # the NPC's row stays; the player character was added
+        await self.memory.set_connection_knowers(GUILD_A, self.c, rel, [], source="dm")
+        self.assertEqual(await self.known(CONNECTION, rel), [ids["bruno"]])
+        shade = await self.memory.add_alias(
+            GUILD_A, self.c, ids["bruno"], "Shade", kind="title", secret=True, source="dm"
+        )
+        await self.memory.set_alias_knowers(
+            GUILD_A, self.c, shade.value.id, [ids["mara"]], source="dm"
+        )
+        self.assertEqual(await self.known(ALIAS, shade.value.id), [ids["mara"]])
+
+    async def test_a_character_knows_its_own_entry_without_a_row(self) -> None:
+        ids = await self.table()
+        seen = await self.memory.visible_to(GUILD_A, self.c, Viewer.character(ids["bruno"]))
+        self.assertTrue(seen.knows(ENTRY, ids["bruno"]))
+        self.assertEqual(seen.how_sure(ENTRY, ids["bruno"]), 1.0)
+        other = await self.memory.visible_to(GUILD_A, self.c, Viewer.character(ids["shela"]))
+        self.assertFalse(other.knows(ENTRY, ids["bruno"]))
+
+    async def test_a_backup_from_before_the_lists_gets_them_from_its_flags(self) -> None:
+        ids = await self.table()
+        place = await self.add("Greywater", type="place", status=CONFIRMED)
+        hidden = await self.add("Rook", type="npc", status=CONFIRMED, hidden_from_players=True)
+        raw = await self.campaigns.export(GUILD_A, self.c)
+        raw["sections"]["memory"] = [
+            r for r in raw["sections"]["memory"] if r.get("table") != "knower"
+        ]
+        raw["version"] = 2  # (and an older file)
+        restored = await self.campaigns.import_backup(GUILD_B, decode_backup(encode_backup(raw)), 7)
+        got = await self.memory.statement_knowers(GUILD_B, restored.id, ENTRY, [place, hidden])
+        self.assertEqual(sorted(got[place]), await self.pcs(ids))  # shown: every player character
+        self.assertEqual(got[hidden], [hidden])  # hidden: nobody, but it knows itself
+
+    async def test_a_current_backup_is_restored_as_it_is(self) -> None:
+        ids = await self.table()
+        place = await self.add("Greywater", type="place", status=CONFIRMED)
+        await self.know(ENTRY, place, [ids["mara"]])
+        raw = encode_backup(await self.campaigns.export(GUILD_A, self.c))
+        restored = await self.campaigns.import_backup(GUILD_B, decode_backup(raw), 7)
+        got = await self.memory.statement_knowers(GUILD_B, restored.id, ENTRY, [place])
+        self.assertEqual(got[place], [ids["mara"]])  # not worked out again from the flags
+
+    async def test_a_backup_with_lists_keeps_a_list_the_dm_trimmed(self) -> None:
+        ids = await self.table()
+        place = await self.add("Greywater", type="place", status=CONFIRMED)  # shown to every PC
+        await self.know(ENTRY, place, [ids["mara"]])  # the DM trimmed it: only Mara
+        raw = await self.campaigns.export(GUILD_A, self.c)
+        raw["version"] = 2  # made by the version before this one: the file still has lists
+        restored = await self.campaigns.import_backup(GUILD_B, decode_backup(encode_backup(raw)), 7)
+        got = await self.memory.statement_knowers(GUILD_B, restored.id, ENTRY, [place])
+        self.assertEqual(got[place], [ids["mara"]])  # not widened again from the flags
+
+    async def test_undo_of_a_brand_new_shown_statement_takes_its_list_with_it(self) -> None:
+        ids = await self.table()
+        made = await self.memory.add_entity(
+            GUILD_A, self.c, name="Greywater", type="place", source="dm", status=CONFIRMED
+        )
+        place = made.value.id
+        self.assertEqual(await self.known(ENTRY, place), await self.pcs(ids))
+        assert made.batch is not None
+        await self.memory.undo(GUILD_A, self.c, made.batch, source="dm")
+        self.assertEqual(await self.known(ENTRY, place), [])

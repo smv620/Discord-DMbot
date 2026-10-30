@@ -1845,6 +1845,10 @@ class CampaignStore:
                 except (ValueError, TypeError, KeyError, AttributeError, OverflowError) as exc:
                     raise CampaignError(DAMAGED) from exc
                 await tell(step)
+            if _has_no_lists(sections):
+                from dmbot.memory import knowers
+
+                await knowers.move_flags(conn, guild_id, campaign_id)  # (#2995, slice 2b)
             if order:
                 if replace_campaign_id is not None:  # the copy's transcripts replace the old ones
                     await TranscriptParts().clear(conn, guild_id, campaign_id)
@@ -2243,6 +2247,14 @@ def _unpack(raw: bytes) -> bytes:
     if not unpacker.eof or unpacker.unused_data:  # cut short, or more after the end
         raise CampaignError(NOT_A_BACKUP)
     return text
+
+
+def _has_no_lists(sections: dict[str, Any]) -> bool:
+    """A backup whose memory holds no who-knows rows (#2995): one made before the lists existed.
+    Its restore works them out from the old flags (`knowers.move_flags`). A file that has any
+    rows is restored as it is, so a list the DM trimmed is never widened again."""
+    memory = sections.get("memory")
+    return isinstance(memory, dict) and not memory.get("knower")
 
 
 def _validate_backup(

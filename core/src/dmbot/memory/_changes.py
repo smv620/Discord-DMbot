@@ -243,6 +243,12 @@ ALL = (TYPES, PREDICATES, ENTITIES, ALIASES, MENTIONS, RELATIONS, CORRECTIONS, F
        BELIEFS, EVIDENCE, ALIAS_KNOWERS, KNOWERS)  # fmt: skip
 BY_NAME = {t.name: t for t in ALL}
 
+# The columns whose change can change whether the players are shown a statement (#2995).
+_FLAGS = frozenset(
+    {"status", "secret", "unrevealed", "hidden_from_players", "audience_limited", "unnamed",
+     "entity_id", "subject_id", "object_id", "role", "played_by"}
+)  # fmt: skip
+
 # The column of `memory_knowers` that names each kind of statement.
 _KNOWN_COLUMN: dict[str, str] = {
     "memory_entities": "about_entity_id",
@@ -376,6 +382,8 @@ class Changes(Scope):
         self.restored: set[str] = set()  # connections an Undo gave back their old meaning
         # (point of view, connection) beliefs an Undo took away
         self.unbelieved: set[tuple[str, str]] = set()
+        # The player characters' points of view, once a write needs them (`knowers._player_views`)
+        self.player_views: list[str] | None = None
         self.perspectives: dict[str, str] | None = (
             None  # The truth's and The party's ids, once known
         )
@@ -397,6 +405,7 @@ class Changes(Scope):
         await self._log(table, after[table.key], "insert", None, after)
         if table is RELATIONS and self.undoes is None:
             await self._beliefs_follow(after)
+        await self._knowers_follow(table, [(None, after)])
         return after
 
     async def update(self, table: Table, row_id: str, changes: dict[str, Any]) -> dict[str, Any]:
@@ -432,7 +441,25 @@ class Changes(Scope):
             and ("status" in changes or "secret" in changes or "unrevealed" in changes)
         ):
             await self._beliefs_follow(after)
+        if table.name not in _KNOWN_COLUMN or _FLAGS & set(changes):
+            await self._knowers_follow(table, [(before, after)])
         return after
+
+    async def _knowers_follow(
+        self, table: Table, rows: Sequence[tuple[dict[str, Any] | None, dict[str, Any]]]
+    ) -> None:
+        """A statement was written: keep who knows it in step with its old flags (#2995, slice
+        2b). Until the readers go through the gate (slice 3) the flags still say what the players
+        see, so a statement that becomes shown to the players is known to every player character
+        and one that stops being shown is known to nobody. Not an Undo's own writes: its log has
+        them. Imported here: the module needs the tables above."""
+        if self.undoes is not None or table.name not in _KNOWN_COLUMN:
+            return
+        if table.name == "memory_entities":
+            self.player_views = None  # a character may have just become a player's
+        from dmbot.memory import knowers
+
+        await knowers.follow_flags(self, table.name, rows)
 
     async def _beliefs_follow(self, relation: dict[str, Any]) -> None:
         """A connection was written: keep The truth's and The party's belief in step with it, in the
@@ -499,7 +526,37 @@ class Changes(Scope):
         written = {r[table.key]: row_of(r, table) for r in await cur.fetchall()}
         after = [written[row[table.key]] for row in rows]
         await self._log_many(table, "insert", [(r[table.key], None, r) for r in after])
+        await self._knowers_follow(table, [(None, r) for r in after])
         return after
+
+    async def insert_unlogged(self, table: Table, rows: Sequence[dict[str, Any]]) -> None:
+        """Insert many rows that no change log needs: rows made with a new statement, which the
+        database removes with it (an Undo of the statement takes them away, and its delete logs
+        them first, so an Undo of that brings them back). One statement however many."""
+        if not rows:
+            return
+        cols = sql.SQL(", ").join(sql.Identifier(c) for c in table.columns)
+        await self.conn.execute(
+            sql.SQL(
+                "INSERT INTO {} (guild_id, campaign_id, {}) SELECT %s, %s, {}"
+                " FROM jsonb_populate_recordset(NULL::{}, %s)"
+            ).format(sql.Identifier(table.name), cols, cols, sql.Identifier(table.name)),
+            (*self.ids, Jsonb([{c: _cell(table, row, c) for c in table.columns} for row in rows])),
+        )
+
+    async def delete_where_in(self, table: Table, column: str, values: Sequence[str]) -> None:
+        """Delete every row whose `column` is one of `values`, logging each first, in two
+        statements however many (a row nothing links to: the knowers lists)."""
+        found = await self.select(table, f" AND {column} = ANY(%s)", [list(values)])
+        if not found:
+            return
+        await self.conn.execute(
+            sql.SQL(
+                "DELETE FROM {} WHERE guild_id = %s AND campaign_id = %s AND {} = ANY(%s)"
+            ).format(sql.Identifier(table.name), sql.Identifier(table.key)),
+            (*self.ids, [r[table.key] for r in found]),
+        )
+        await self._log_many(table, "delete", [(r[table.key], r, None) for r in found])
 
     async def update_where(
         self, table: Table, changes: dict[str, Any], where: LiteralString, params: Sequence[Any]
@@ -589,6 +646,7 @@ class Changes(Scope):
         )
         if "status" in columns:
             await self._forget_later(table, [after for _, after in logged])
+        await self._knowers_follow(table, logged)
         return [after for _, after in logged]
 
     async def _forget_later(self, table: Table, rows: list[dict[str, Any]]) -> None:
