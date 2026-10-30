@@ -56,6 +56,7 @@ function fileFor(url) {
   if (/^\/account\/homebrew\/[^/]+$/.test(path)) path = "/account/homebrew";
   if (/^\/account\/import\/[^/]+$/.test(path)) path = "/account/import";
   if (/^\/account\/lore\/[^/]+$/.test(path)) path = "/account/lore";
+  if (/^\/account\/recap-style\/[^/]+$/.test(path)) path = "/account/recap-style";
   if (/^\/account\/names\/[^/]+$/.test(path)) path = "/account/names";
   if (/^\/account\/web\/[^/]+$/.test(path)) path = "/account/web";
   if (/^\/account\/npc\/[^/]+\/[^/]+$/.test(path)) path = "/account/npc";
@@ -167,6 +168,7 @@ const pages = [
   ["transcripts", "/account/transcripts?demo=table"],
   ["transcripts, signed out (the line at the top)", "/account/transcripts?demo=signed-out"],
   ["lore: the form", "/account/lore/100.cmp1?demo=table"],
+  ["recap style: examples and notes", "/account/recap-style/100.cmp1?demo=table"],
   ["import: choose files", "/account/import/100.cmp1?demo=table"],
   ["import: the chosen files, each with Remove", "/account/import/100.cmp1?demo=table", async (page) => {
     await page.setInputFiles('input[type="file"]', [
