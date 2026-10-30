@@ -1,0 +1,20 @@
+---
+import RecapStyleIsland from "../../account/RecapStyleIsland";
+import { recapStylePage } from "../../content/recap-style-words";
+import Base from "../../layouts/Base.astro";
+import "../../styles/account.css";
+---
+
+<Base
+  title="Recap style"
+  description="Show DMbot how your recaps should sound."
+  noindex
+>
+  <div class="account">
+    <h1>{recapStylePage.heading}</h1>
+    <RecapStyleIsland client:load />
+    <noscript>
+      <p>This page needs JavaScript to change the recap style. Turn it on, then reload the page.</p>
+    </noscript>
+  </div>
+</Base>

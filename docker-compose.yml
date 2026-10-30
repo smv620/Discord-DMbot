@@ -162,6 +162,8 @@ services:
       # "Make it again" on a session's report (#2661): off, the route that queues the request is 404.
       DMBOT_WEB_REPORT_MAKE: ${DMBOT_WEB_REPORT_MAKE:-0}
       DMBOT_WEB_LORE: ${DMBOT_WEB_LORE:-0}
+      DMBOT_WEB_PAUSE: ${DMBOT_WEB_PAUSE:-0}
+      DMBOT_WEB_RECAP_STYLE: ${DMBOT_WEB_RECAP_STYLE:-0}
       # Search by meaning on the Names page (#2733): the same switch, key and models as the bot.
       DMBOT_MEANING_SEARCH: ${DMBOT_MEANING_SEARCH:-0}
       VOYAGE_API_KEY: ${VOYAGE_API_KEY:-}

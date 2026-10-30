@@ -121,7 +121,29 @@ NAMES
 RELATIONSHIPS
 - Tamsin Vell — serves — Master Orlen | quote: "Tamsin Vell served Master Orlen"
 
-Example 4. Input (a list of names, no relationships):
+Example 4. Input (a group, and a note in quotation marks):
+<document>
+Vessa, Orin and Pell rode north, and Captain Ryl mentored them. \
+A note was left at the camp: "Danrel, Eastvale. The Order knows who you are."
+</document>
+Output:
+NAMES
+- Vessa | person | quote: "Vessa, Orin and Pell rode north"
+- Orin | person | quote: "Orin and Pell rode"
+- Pell | person | quote: "Pell rode north"
+- Captain Ryl | person | quote: "Captain Ryl mentored them"
+- Danrel | person | quote: "Danrel, Eastvale"
+- Eastvale | place | quote: "Danrel, Eastvale"
+- Order | group | other names: The Order | quote: "The Order knows who you are"
+
+RELATIONSHIPS
+- Captain Ryl — mentors — Vessa | quote: "Vessa, Orin and Pell rode north, and Captain Ryl mentored them"
+- Captain Ryl — mentors — Orin | quote: "Orin and Pell rode north, and Captain Ryl mentored them"
+- Captain Ryl — mentors — Pell | quote: "Pell rode north, and Captain Ryl mentored them"
+- Danrel — is in — Eastvale | quote: "Danrel, Eastvale"
+- Order — knows — Danrel | quote: "Danrel, Eastvale. The Order knows who you are"
+
+Example 5. Input (a list of names, no relationships):
 <document>
 Tavin (the rogue) | NPC
 Ka'zeth (kah-ZETH) | NPC
@@ -169,6 +191,12 @@ def read_instructions(own: Mapping[str, str] | None = None) -> str:
         "later one) and put the earlier name under 'secret:' (DMbot decides whether it is shown; "
         "a plain nickname the text uses openly stays under 'other names:'). "
         "Relationships the text writes about the earlier name belong to that same person.\n"
+        "- WHO A WORD STANDS FOR: a section title names the character the section is about, so "
+        "'his', 'her' and 'their' at the start of that section mean that character; write the "
+        "full name as the end. 'them', 'they' or 'the four' standing for several named people "
+        "means each of them: write one line for each person, never skip it because there are "
+        "several. Words inside quotation marks, a warning, a letter, a sign or a spoken line, are "
+        "still the document's own words: list the names and relationships they state.\n"
         "- Leave out descriptions, ordinary words, spells, rules terms and kinds of creature in "
         "general (elves, goblins).\n"
         "- RELATIONSHIPS: go through the text sentence by sentence, and for every sentence that "
@@ -180,8 +208,11 @@ def read_instructions(own: Mapping[str, str] | None = None) -> str:
         "father, sister or cousin, in brackets), is a member of (also: belongs to, is associated "
         "with, served in), works for (also: is employed by, is a bodyguard for), serves, "
         "mentors, is an apprentice of, is a rival of, is an ally of, is a friend of, is an enemy "
-        "of, owns, is in (also: lives in, resides in, is from), leads, founded, worships, is a "
-        "parent of, is a child of, knows, is sworn to (an oath, vow, pact or fealty), pays"
+        "of, owns, is in (also: lives in, resides in, is from), leads (also: rules, is the "
+        "speaker, mayor or captain of), founded, worships, is a parent of, is a child of, is a "
+        "sibling of (a brother or sister), is a spouse of (a husband or wife), is held captive by "
+        "(captured, imprisoned), contains (has inside it), knows (a group can know a person), "
+        "is sworn to (an oath, vow, pact or fealty), pays"
         f"{theirs}). Write each relationship's two ends as the full "
         "names you listed under NAMES (or one of that name's other or secret names, as the "
         "sentence has it), never as 'my brother', 'the twins' or a title; when a "
@@ -256,9 +287,15 @@ def shape_instructions(own: Mapping[str, str] | None = None) -> str:
         "ally = a is an ally of b; enemy = a is an enemy of b; owns = a owns b; "
         "works for = a works for b; serves = a serves b; knows = a knows b; "
         "sworn to = a is sworn to b (an oath, a vow, a pact or fealty); "
-        "mentor = a mentors b; apprentice = a is an apprentice of b; rival = a is a rival of b; "
-        "founded = a founded b; parent = a is a parent of b; child = a is a child of b; "
-        "leads = a leads b; worships = a worships b. "
+        "mentor = a mentors b; apprentice = a is an apprentice of b; rival = a is a rival of b "
+        "(competes with, does not want b harmed); founded = a founded b; parent = a is a parent "
+        "of b (a mother or father); child = a is a child of b (a son or daughter); sibling = a "
+        "is a brother or sister of b; spouse = a is a husband or wife of b; grandparent = a is a "
+        "grandparent of b; aunt, uncle, niece, nephew and cousin = a is that to b; "
+        "leads = a leads b (a group or a place: its leader, ruler, speaker, mayor or captain); "
+        "captive = a is held captive by b; contains = a contains b (a note in a book, a gem in "
+        "a chest); worships = a worships b. A family line that names a role uses that role's "
+        "word; use 'family' only when the line names none. "
         f"When none of them fits the line's words, use \"{bg.OTHER}\" and put the line's own "
         f'words in "words" (at most {bg.WORDS_CHARS} characters, for example "pays"); otherwise '
         '"words" is empty. Never pick a kind that changes what the line says.\n'
