@@ -87,6 +87,23 @@ describe("The Shared story choice on the website", () => {
     expect(document.body.textContent).toContain(words.stillThat("off"));
   });
 
+  it("does not call a lost answer a failure, and says to check back", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const api = mockApi("table");
+    api.campaignSettingAnswer = async () => ({ state: "waiting", error: "", setting: "story_mode", value: "off", note: "" });
+    render(<StoryModePanel api={api} campaignRef="100.cmp1" mode="guide" />);
+    fireEvent.click(screen.getByRole("button", { name: words.choose("off") }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(70_000); });
+    expect(await screen.findByText(words.timedOut)).toBeTruthy();
+    expect(screen.getByText(words.now("guide"))).toBeTruthy();
+  });
+
+  it("never promises the players cannot see the notes", () => {
+    const all = JSON.stringify(words);
+    expect(all).not.toMatch(/never your players|only you see it/i);
+    expect(all).toContain("📖 Give your adventure");
+  });
+
   it("says so when the server refuses", async () => {
     const api = mockApi("table");
     api.setCampaignSetting = async () => {

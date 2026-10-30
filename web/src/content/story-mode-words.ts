@@ -5,11 +5,11 @@ export type StoryMode = "off" | "watch" | "guide";
 
 export const storyModePanel = {
   heading: "Shared story",
-  intro: "DMbot can follow your adventure's story. It only tells you, never your players. It never makes up story and never decides anything: you do.",
-  whereMaterial: "You give DMbot the adventure itself in Discord, with the Give DMbot your adventure button on the Shared story card.",
+  intro: "DMbot can follow your adventure's story. It tells you on your DM screen, never at the table. It never makes up story and never decides anything: you do.",
+  whereMaterial: "Once it is on, you give DMbot the adventure itself in Discord, with the 📖 Give your adventure button on the Shared story card.",
   modes: {
     off: { label: "Off", help: "DMbot doesn't follow the adventure's story." },
-    watch: { label: "Watch the story", help: "DMbot warns you, once, if someone the adventure needs is gone or something it needs is lost. Only you see it." },
+    watch: { label: "Watch the story", help: "DMbot warns you on your DM screen, once, if someone the adventure needs is gone or something it needs is lost." },
     guide: { label: "Guide me", help: "Does Watch too, and you can ask DMbot what comes next in your adventure. Only you see the answer." },
   } as Record<StoryMode, { label: string; help: string }>,
   now: (mode: StoryMode): string => `Now: ${storyModePanel.modes[mode].label}.`,
