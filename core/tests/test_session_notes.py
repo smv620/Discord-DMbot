@@ -349,7 +349,7 @@ class TheMigration(unittest.IsolatedAsyncioTestCase):
         other = await CampaignStore(self.db).create(GUILD, "Sunken City", DM)
         recaps = RecapStore(self.db)
         # (campaign, session, beats, the job's state): only a checked sheet is the session's notes
-        jobs = (
+        jobs: tuple[tuple[Any, int, list[Any], str], ...] = (
             (camp, 1000, FIRST, "checked"),
             (camp, 2000, [], "checked"),  # no beats
             (camp, 3000, SECOND, "beats"),  # a sheet still being built
