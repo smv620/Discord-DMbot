@@ -18,6 +18,12 @@ CONNECTION_WORDS = {
     "serves": "works for",
     "sworn_to": "is sworn to",
     "carries": "carries",
+    "rival_of": "is a rival of",
+    "mentor_of": "teaches",
+    "leads": "leads",
+    "founded": "founded",
+    "captive_of": "is held captive by",
+    "contains": "contains",
 }
 # The same connection read from the other name's card ("Frostwolf tribe has as members
 # Ulfgar"). Connections that read the same both ways use CONNECTION_WORDS.
@@ -29,10 +35,15 @@ CONNECTION_BACK = {
     "serves": "is the boss of",
     "sworn_to": "is owed an oath by",
     "carries": "is carried by",
+    "mentor_of": "is taught by",
+    "leads": "is led by",
+    "founded": "was founded by",
+    "captive_of": "holds captive",
+    "contains": "is inside",
 }
 # On a card, where several names may follow ("members include Ulfgar, Kesh").
 CARD_BACK = {**CONNECTION_BACK, "member_of": "members include"}
-BOTH_WAYS = frozenset({"ally_of", "enemy_of", "kin_of"})
+BOTH_WAYS = frozenset({"ally_of", "enemy_of", "rival_of", "kin_of"})
 
 
 def connection_words(predicate: str) -> str:

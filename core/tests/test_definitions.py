@@ -50,6 +50,14 @@ RELEASED = {
     ("advances", 1): "fa3b7b2b0aae2deb",  # an event moved a thread (#1662)
     ("resolves", 1): "aa8c8c7d656fce4e",  # an event ended a thread (#1662)
     ("associated_with", 1): "9b1afee4b882cde9",  # the catch-all for a refused term (#1303)
+    ("enemy_of", 2): "c181c37cec9e77cf",  # `rival_of` is its own kind (#3035)
+    ("knows", 2): "12c36b3477a99239",  # a group may know too (#3033)
+    ("rival_of", 1): "d00c5cc79f11ba80",
+    ("mentor_of", 1): "1616325b035b16db",
+    ("leads", 1): "ee3de5c3496a20b0",
+    ("founded", 1): "453344314eeb9f97",
+    ("captive_of", 1): "60efcb060e24ab3f",
+    ("contains", 1): "c50a7cc648af878b",
 }
 
 
@@ -120,7 +128,7 @@ class OldBackups(unittest.TestCase):
     def test_a_backup_from_before_has_version_1_everywhere(self) -> None:
         rows = [
             {"table": "relation", "predicate": "ally_of"},
-            {"table": "predicate", "key": "mentor_of"},
+            {"table": "predicate", "key": "patron_of"},
         ]
         out = _with_definition_fields(rows)
         self.assertEqual(out[0]["definition_version"], 1)
@@ -153,7 +161,20 @@ class ACampaignsOwnSwornTo(unittest.TestCase):
         by_tag["predicate"] = [row]
         _check_terms(by_tag)  # no CampaignError
 
-    def test_a_current_backup_naming_a_core_key_is_still_damaged(self) -> None:
+    def test_a_current_backup_with_its_own_mentor_of_loads_as_the_core_one(self) -> None:
+        # a campaign made its own `mentor_of` before the core had it (#3035); its file is
+        # current-format, and it must load: the row is replaced by the core, the facts keep the key
+        own = {**self.ROW, "key": "mentor_of", "version": 1}
+        rows = _with_definition_fields([own, {"table": "relation", "predicate": "mentor_of"}])
+        (term,) = [r for r in rows if r["table"] == "predicate"]
+        (fact,) = [r for r in rows if r["table"] == "relation"]
+        self.assertEqual((term["status"], term["replaced_by"]), ("deprecated", "mentor_of"))
+        self.assertEqual(fact["predicate"], "mentor_of")
+        by_tag: dict[str, list[dict[str, object]]] = {tag: [] for tag in _TAGS}
+        by_tag["predicate"] = [term]
+        _check_terms(by_tag)  # no CampaignError
+
+    def test_a_check_of_a_row_that_was_never_read_in_still_refuses_a_core_key(self) -> None:
         from dmbot.campaigns import CampaignError
 
         row = {**self.ROW, "version": 1}  # a current file: no excuse for a core key
@@ -293,19 +314,19 @@ class Stored(MemoryTest):
             GUILD_A,
             self.c,
             PredicateTerm(
-                "mentor_of", "mentors", "Teaches and guides.", ("character",), ("character",)
+                "patron_of", "mentors", "Teaches and guides.", ("character",), ("character",)
             ),
             examples=["Belleros mentors Cerric."],
             reason="the table uses it",
             source="dm",
         )
-        await self.relate(b, "mentor_of", a)
+        await self.relate(b, "patron_of", a)
         self.assertEqual((await self.memory.recheck_definitions(GUILD_A, self.c)).value, 0)
         # The meaning moved on: version 2 now wants a place on the other end.
         async with self.db.guild(GUILD_A) as conn:
             await conn.execute(
                 "UPDATE memory_predicates SET version = 2, object_types = ARRAY['place']"
-                " WHERE key = 'mentor_of'"
+                " WHERE key = 'patron_of'"
             )
         self.assertEqual((await self.memory.recheck_definitions(GUILD_A, self.c)).value, 1)
         async with self.db.guild(GUILD_A) as conn:
@@ -313,5 +334,5 @@ class Stored(MemoryTest):
             flags = [r["kind"] for r in await cur.fetchall()]
         self.assertEqual(flags, ["wrong_object"])  # a flag for the DM, nothing fixed
         facts = await self.memory.relations(GUILD_A, self.c)
-        self.assertEqual([(f.predicate, f.definition_version) for f in facts], [("mentor_of", 2)])
+        self.assertEqual([(f.predicate, f.definition_version) for f in facts], [("patron_of", 2)])
         self.assertEqual((await self.memory.recheck_definitions(GUILD_A, self.c)).value, 0)

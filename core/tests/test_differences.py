@@ -60,9 +60,23 @@ class Finding(ConfirmedMemoryTest):
         return relation
 
     async def character(self, name: str, kind: str = "pc") -> str:
-        entity = await self.add(name, type="character", role="player_character", played_by=9)
+        player = kind == "pc"  # (a player's character has its view from the start, #2995)
+        entity = await self.add(
+            name,
+            type="character",
+            role="player_character" if player else "npc",
+            played_by=9 if player else None,
+        )
         made = new_id()
         async with self.db.guild(GUILD_A) as conn:
+            cur = await conn.execute(
+                "SELECT id FROM memory_perspectives WHERE guild_id = %s AND campaign_id = %s"
+                " AND entity_id = %s",
+                (GUILD_A, self.c, entity),
+            )
+            have = await cur.fetchone()
+            if have is not None:
+                return str(have["id"])
             await conn.execute(
                 "INSERT INTO memory_perspectives (guild_id, campaign_id, id, kind, entity_id,"
                 " created_at) VALUES (%s, %s, %s, %s, %s, 1)",

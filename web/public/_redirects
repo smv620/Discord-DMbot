@@ -15,6 +15,9 @@
 # The Import sessions page (#2107): one page for every campaign; it reads which from the address.
 /account/import/*  /account/import  200
 
+# The Recap style page (#2985): one page for every campaign; it reads which from the address.
+/account/recap-style/*  /account/recap-style  200
+
 # The Upload lore page (#3022): one page for every campaign; it reads which from the address.
 /account/lore/*  /account/lore  200
 

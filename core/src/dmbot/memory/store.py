@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import itertools
 import logging
 import time
 from collections.abc import (
@@ -45,6 +46,7 @@ from dmbot.memory import (
     standing,
     states,
 )
+from dmbot.memory import party as party_mod
 from dmbot.memory import threads as threads_mod
 from dmbot.memory import unnamed as unnamed_mod
 from dmbot.memory._changes import (
@@ -57,6 +59,7 @@ from dmbot.memory._changes import (
     ENTITIES,
     FLAGS,
     IMPRESSIONS,
+    KNOWERS,
     MENTIONS,
     NOT_FOUND,
     PERSPECTIVES,
@@ -582,6 +585,26 @@ class MemoryStore:
             live = await _live_ids(scope, None if entity_id is None else [entity_id])
             return [_alias(r) for r in rows if r["entity_id"] in live]
 
+    async def suggested_names(self, guild_id: int, campaign_id: str) -> list[tuple[Alias, str]]:
+        """The other names an AI read suggested for entries the DM confirmed, still waiting for
+        a yes (#3034): each with its entry's name, oldest first. A DM-only reader."""
+        async with self._read(guild_id, campaign_id, snapshot=True) as scope:
+            rows = await scope.select(
+                ALIASES,
+                " AND status = 'proposed' AND source = %s ORDER BY created_at, id",
+                [BACKGROUND_SOURCE],
+            )
+            wanted = sorted({str(r["entity_id"]) for r in rows})
+            owners = {
+                str(r["id"]): str(r["name"])
+                for r in await scope.select(
+                    ENTITIES, " AND id = ANY(%s) AND status = 'confirmed'", [wanted]
+                )
+            }
+            return [
+                (_alias(r), owners[str(r["entity_id"])]) for r in rows if r["entity_id"] in owners
+            ]
+
     async def confirmed_name_for(self, guild_id: int, campaign_id: str, key: str) -> str | None:
         """The confirmed entry already called `key` by a name everyone may know (not a
         secret one), if any: its name. Look-ups by key and by ID, never every name of the
@@ -686,10 +709,18 @@ class MemoryStore:
             # Names and facts of live entries, filtered here against the entries just
             # read (same snapshot): plain reads, never a join that can go quadratic (#598).
             live = {str(r["id"]) for r in entities}
+            confirmed = {str(r["id"]) for r in entities if r["status"] == CONFIRMED}
             aliases = [
                 r
                 for r in await scope.select(ALIASES, " AND status <> 'rejected' ORDER BY id")
+                # (a name an AI read suggested for an entry the DM confirmed is not used until
+                # the DM says yes: matching, fixes and connection ends all wait, #3034)
                 if r["entity_id"] in live
+                and not (
+                    r["status"] == PROPOSED
+                    and r["source"] == BACKGROUND_SOURCE
+                    and r["entity_id"] in confirmed
+                )
             ]
             # The table's people, apart from the story's entries: only the names the DM
             # confirmed, never the placeholder `Player 1234` (the entry's own name).
@@ -1868,7 +1899,7 @@ class MemoryStore:
                 if m.entity_id not in live:
                     folded.append(None)  # forgotten or joined to another since
                     continue
-                status = live[m.entity_id]
+                status = PROPOSED if m.proposed else live[m.entity_id]
                 has = has_keys.setdefault(m.entity_id, set())
                 extra = [(t, "nickname", False) for t in m.others]
                 extra += [(t, "title", True) for t in m.secrets]
@@ -1880,7 +1911,17 @@ class MemoryStore:
                     used.add(key)
                     has.add(key)
                     aliases.append(
-                        _new_alias(w, m.entity_id, text, kind, status, secret, None, codes)
+                        _new_alias(
+                            w,
+                            m.entity_id,
+                            text,
+                            kind,
+                            status,
+                            secret,
+                            None,
+                            codes,
+                            BACKGROUND_SOURCE if m.proposed else None,
+                        )
                     )
                     added = True
                 folded.append(m.entity_id if added else None)
@@ -1909,7 +1950,8 @@ class MemoryStore:
                         "unique_item": None,
                         # Names from a list, or read from the DM's story, start unrevealed
                         # (#2404): the table's first mention of one shows it to the players.
-                        "hidden_from_players": True,
+                        # Only the DM's word that the world knows it (`shown`) opens one (#2959).
+                        "hidden_from_players": not n.shown,
                     }
                 )  # fmt: skip
                 seen = {name_key_}
@@ -3560,6 +3602,44 @@ class MemoryStore:
 
     # ---- relationships ----------------------------------------------------------------
 
+    async def link_party(
+        self, guild_id: int, campaign_id: str, user_ids: Collection[int]
+    ) -> party_mod.PartyLinked:
+        """The player characters whose players took part in a session know each other and are
+        members of "The party" (#3036). By rule, as the DM's standing choice, never by the AI: see
+        `memory.party`. One change (one Undo), idempotent, and a connection that exists in any
+        state, a removed one included, is left as it is."""
+        async with self._write(guild_id, campaign_id, DM) as w:
+            chars = await party_mod.characters_of(w, user_ids)
+            if not chars:
+                return party_mod.PartyLinked(0, 0, 0, False)
+            faction, made = await party_mod.find_or_make(w)
+            held = await w.select(
+                RELATIONS,
+                " AND ((predicate = %s AND subject_id = ANY(%s) AND object_id = ANY(%s))"
+                " OR (predicate = %s AND subject_id = ANY(%s) AND object_id = %s))",
+                [party_mod.KNOWS, chars, chars, party_mod.MEMBER_OF, chars, faction or ""],
+            )  # (every status: a connection the DM removed is still "had")
+            have = {(r["subject_id"], r["predicate"], r["object_id"]) for r in held}
+            pairs = members = 0
+            for a, b in itertools.combinations(chars, 2):
+                if (a, party_mod.KNOWS, b) in have or (b, party_mod.KNOWS, a) in have:
+                    continue
+                await self.add_relation_in(
+                    w, a, party_mod.KNOWS, b, confidence=1.0, status=CONFIRMED, leave=True
+                )
+                pairs += 1
+            if faction is not None:  # (none: the DM rejected the party, so nobody is added to it)
+                for c in chars:
+                    if (c, party_mod.MEMBER_OF, faction) in have:
+                        continue
+                    await self.add_relation_in(
+                        w, c, party_mod.MEMBER_OF, faction,
+                        confidence=1.0, status=CONFIRMED, leave=True,
+                    )  # fmt: skip
+                    members += 1
+            return party_mod.PartyLinked(len(chars), pairs, members, made)
+
     async def add_relation(
         self,
         guild_id: int,
@@ -3849,6 +3929,22 @@ class MemoryStore:
         async with self._write(guild_id, campaign_id, source) as w:
             chosen = await knowers.set_statement_knowers(w, kind, statement_id, character_ids)
             return Written(chosen, w.batch)
+
+    async def mark_guess(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        kind: str,
+        statement_ids: Sequence[str],
+        certainty: float,
+        *,
+        source: str,
+    ) -> int:
+        """Record that the player characters who know these statements know them as a guess
+        (`certainty`, below 1.0), not as the DM's word (#2959). It changes only the certainty of
+        rows that exist: who knows what is the old flags' business until the readers move."""
+        async with self._write(guild_id, campaign_id, source) as w:
+            return await knowers.mark_guess(w, kind, statement_ids, certainty)
 
     async def statement_knowers(
         self, guild_id: int, campaign_id: str, kind: str, statement_ids: Sequence[str]
@@ -4450,8 +4546,11 @@ class MemoryStore:
             # (new words can raise a check's flag in the same change: it goes back with them, and
             # so do the beliefs written for the connections it added or ended, #2409)
             others = await cur.fetchall()
+            # (and who knows each, #2995: the lists follow a connection ending or starting, each
+            # write logged in the same batch, so they go back with it)
             if not rows or any(
-                o["table_name"] not in (FLAGS.name, BELIEFS.name) or o["op"] != "insert"
+                o["table_name"] not in (FLAGS.name, BELIEFS.name, KNOWERS.name)
+                or (o["op"] != "insert" and o["table_name"] != KNOWERS.name)
                 for o in others
             ):
                 raise TooLateToUndo(self._too_late())
@@ -4791,6 +4890,7 @@ def _new_alias(
     secret: bool,
     used_by: str | None,
     codes: list[str] | None = None,  # worked out already (_Prepared)
+    source: str | None = None,  # an AI read's suggestion records BACKGROUND_SOURCE (#3034)
 ) -> dict[str, Any]:
     return {
         "id": new_id(),
@@ -4802,7 +4902,7 @@ def _new_alias(
         "secret": secret,
         "status": status,
         "sound_codes": list(sound_codes(text)) if codes is None else codes,
-        "source": w.source,
+        "source": source or w.source,
         "created_at": w.now,
     }
 

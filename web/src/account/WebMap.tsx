@@ -9,6 +9,8 @@
 import type { ComponentChildren } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 
+import { mapReadLine } from "./webReading";
+
 import { kindWords, webPage as words } from "../content/web-words";
 import { kindStyle } from "./webKinds";
 import type { WebEdge, WebNode } from "./api";
@@ -36,6 +38,21 @@ import { isTheory, zoomAbout, type View } from "./webLayout";
 
 const SHAPE_R = 24; // half the width of a name's shape: 48 px across at normal size, a fine thing to tap
 const STEPS_PER_FRAME = 2; // the settle runs a couple of steps each frame: calm, and quick to finish
+const DOUBLE_MS = 400; // two clicks on one name within this are a double click
+/** A small arrowhead just outside the other name's shape, pointing away from the name in focus. */
+function arrowhead(from: { x: number; y: number }, to: { x: number; y: number }): string {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const len = Math.hypot(dx, dy) || 1;
+  const ux = dx / len;
+  const uy = dy / len;
+  const back = SHAPE_R * 1.25 + 4; // (clear of the shape, even the bigger one of the middle name)
+  const tx = to.x - ux * back;
+  const ty = to.y - uy * back;
+  const bx = tx - ux * 11;
+  const by = ty - uy * 11;
+  return `M${tx.toFixed(1)} ${ty.toFixed(1)}L${(bx - uy * 5).toFixed(1)} ${(by + ux * 5).toFixed(1)}L${(bx + uy * 5).toFixed(1)} ${(by - ux * 5).toFixed(1)}Z`;
+}
 const NUDGE = 24; // how far an arrow key moves the name it is on
 
 /** Each style has its own shape (and the plain ones a dashed edge), so a name is known by shape and word as
@@ -128,6 +145,16 @@ export default function WebMap({
   const [extent, setExtent] = useState(260);
   // The name the pointer or the keyboard is on: everything not joined to it fades.
   const [focus, setFocus] = useState<string | null>(null);
+  // The name a click picked: the side panel stays on it (a phone has no hover), until the middle name changes.
+  // It is tied to the middle name it was picked under, so a new middle name starts with the panel on that name
+  // with no frame of the old one.
+  const [pickedAt, setPickedAt] = useState<{ id: string; center: string } | null>(null);
+  const picked = pickedAt && pickedAt.center === center ? pickedAt.id : null;
+  if (pickedAt && pickedAt.center !== center) setPickedAt(null); // (forgotten for good, not only hidden while the middle differs)
+  const setPicked = (id: string) => setPickedAt({ id, center });
+  const touched = useRef(false);
+  const lastTap = useRef<{ id: string; at: number } | null>(null);
+
   // Kinds of connection the person turned off with the chips: their lines are not drawn.
   const [off, setOff] = useState<Set<string>>(new Set());
   const sim = useRef<SimNode[]>([]);
@@ -410,7 +437,8 @@ export default function WebMap({
   const kindsPresent = LINK_KINDS.filter((k) => edges.some((e) => edgeKind(e) === k));
   const tooBig = nodes.length > MAX_SIM_NAMES;
   // The side panel: the name in focus, or the middle name, with its connections in words.
-  const detail = byId.get(focus ?? center) ?? null;
+  // A picked or focused name that is no longer drawn falls back to the next, never to an empty panel.
+  const detail = byId.get(focus ?? "") ?? byId.get(picked ?? "") ?? byId.get(center) ?? null;
   const detailPinned = detail ? (at.get(detail.id)?.pinned ?? false) : false;
   const sideLines = detail
     ? edges
@@ -529,9 +557,23 @@ export default function WebMap({
             const dim = edge.links.length > 0 && edge.links.every((l) => l.revealed === false);
             const touches = focus !== null && (edge.a === focus || edge.b === focus);
             const text = `${theory ? `${words.theoryMark} ` : ""}${edge.label}${edge.more > 0 ? ` (+${edge.more})` : ""}`;
-            // Words only on the line of the name in focus or the chosen line; a line that holds several
-            // connections says how many, so a thick bundle is never mistaken for one.
-            const shown = touches || chosen ? text : edge.links.length > 1 ? words.nConnections(edge.links.length) : null;
+            // The line of the name in focus (hovered, else picked) says just the verb as that name would say it, with an
+            // arrow toward the other name; with no wording from that end it says nothing and has no arrowhead. The
+            // chosen line keeps its full words. A line that holds several connections says how many when it has no
+            // verb to show, so a thick bundle is never mistaken for one.
+            const from = focus ?? picked;
+            const reads = from !== null && (edge.a === from || edge.b === from);
+            const reading = reads ? mapReadLine(edge, from) : null;
+            const many = edge.links.length > 1 ? words.nConnections(edge.links.length) : null;
+            const shown = chosen
+              ? text
+              : reading
+                ? reading.verb !== null
+                  ? `${theory ? `${words.theoryMark} ` : ""}${reading.verb}${reading.more > 0 ? ` (+${reading.more})` : ""}`
+                  : many
+                : many;
+            const arrowFrom = reading?.arrow && from !== null ? (from === edge.a ? p : q) : null;
+            const arrowTo = arrowFrom === null ? null : arrowFrom === p ? q : p;
             const open = (): void => {
               if (!dragged.current) onLine(edge.a, edge.b);
             };
@@ -563,6 +605,7 @@ export default function WebMap({
                     }
                   }}
                 />
+                {arrowFrom && arrowTo && <path d={arrowhead(arrowFrom, arrowTo)} class="web-arrow" aria-hidden="true" />}
                 {shown && (
                   <text x={mx} y={my - 5} transform={`rotate(${upright.toFixed(1)} ${mx} ${my})`} class="web-edge-text" text-anchor="middle" onClick={open}>
                     <title>{text}</title>
@@ -586,6 +629,7 @@ export default function WebMap({
                 aria-label={words.nameButton(n.name)}
                 onPointerDown={(ev) => {
                   ev.stopPropagation();
+                  touched.current = ev.pointerType === "touch";
                   if (pointers.current.size > 1) return; // a second finger: a pinch, not a drag of this name
                   dragName.current = { id: n.id, x: ev.clientX, y: ev.clientY, moved: false };
                   dragged.current = false;
@@ -595,7 +639,19 @@ export default function WebMap({
                 onFocus={() => setFocus(n.id)}
                 onBlur={() => setFocus((f) => (f === n.id ? null : f))}
                 onClick={() => {
-                  if (!dragged.current) onCenter(n.id);
+                  if (dragged.current) {
+                    lastTap.current = null; // (the end of a drag is neither a click nor half of a double click)
+                    return;
+                  }
+                  // A finger leaves no hover behind: the panel follows the pick, not the last name touched.
+                  if (touched.current) setFocus(null);
+                  // One click picks the name; a second on the same name within DOUBLE_MS puts it in the middle.
+                  // Counted here, not with `dblclick`, which a phone does not send reliably.
+                  const now = Date.now();
+                  const again = lastTap.current?.id === n.id && now - lastTap.current.at < DOUBLE_MS;
+                  lastTap.current = again ? null : { id: n.id, at: now };
+                  if (again) onCenter(n.id);
+                  else setPicked(n.id);
                 }}
                 onKeyDown={(ev) => {
                   const step: Record<string, [number, number]> = {
@@ -610,7 +666,7 @@ export default function WebMap({
                     nudge(n.id, by[0], by[1]);
                   } else if (ev.key === "Enter" || ev.key === " ") {
                     ev.preventDefault();
-                    onCenter(n.id);
+                    setPicked(n.id); // (the panel's "Put it in the middle" button is the keyboard's double click)
                   }
                 }}
               >
@@ -669,6 +725,12 @@ export default function WebMap({
           >
             {detailPinned ? words.letMove : words.keepHere}
           </button>
+          {detail.id === center ? <p class="small muted">{words.inMiddle}</p> : <p class="small muted">{words.doubleTapHint}</p>}
+          {detail.id !== center && (
+            <button type="button" class="button secondary" onClick={() => onCenter(detail.id)}>
+              {words.putInMiddle}
+            </button>
+          )}
         </aside>
       )}
       </div>
@@ -698,6 +760,7 @@ export default function WebMap({
           {edges.some(isTheory) && <li>{words.legendTheory}</li>}
           {edges.some((e) => e.links.some((l) => l.pinned)) && <li>{words.legendPinned}</li>}
         </ul>
+        {edges.some((e) => e.links.length > 0) && <p class="small muted">{words.legendReading}</p>}
       </section>
     </div>
   );

@@ -200,18 +200,18 @@ class TheChecks(unittest.TestCase):
             {
                 "connections": [
                     link("Mirelle", "knows", "Brannoch", "Mirelle knows Brannoch"),
-                    link("Mirelle", "mentor_of", "Oakmere", "Mirelle teaches Oakmere"),
-                    link("Mirelle", "mentor_of", "Brannoch", "Mirelle knows Brannoch"),
+                    link("Mirelle", "patron_of", "Oakmere", "Mirelle teaches Oakmere"),
+                    link("Mirelle", "patron_of", "Brannoch", "Mirelle knows Brannoch"),
                 ]
             }
         )
         plain = bg.read_connections(raw, text)
         self.assertEqual([c.how for c in plain], ["knows"])  # their own kind is unknown
-        got = bg.read_connections(raw, text, {"mentor_of"})
-        self.assertEqual(sorted(c.how for c in got), ["knows", "mentor_of", "mentor_of"])
-        self.assertIn("mentor_of", json.dumps(bg.schema({"mentor_of": "is a mentor of"})))
-        self.assertNotIn("mentor_of", json.dumps(bg.SCHEMA))
-        self.assertIn("mentor_of", lore_read.shape_instructions({"mentor_of": "is a mentor of"}))
+        got = bg.read_connections(raw, text, {"patron_of"})
+        self.assertEqual(sorted(c.how for c in got), ["knows", "patron_of", "patron_of"])
+        self.assertIn("patron_of", json.dumps(bg.schema({"patron_of": "is a mentor of"})))
+        self.assertNotIn("patron_of", json.dumps(bg.SCHEMA))
+        self.assertIn("patron_of", lore_read.shape_instructions({"patron_of": "is a mentor of"}))
         self.assertIn("knows", lore_read.shape_instructions())
 
     def test_a_pair_the_campaign_has_is_left_out_before_the_cap(self) -> None:
@@ -789,7 +789,7 @@ class ThePath(NamesTest):
 
     async def test_the_campaigns_own_kind_is_offered_to_the_ai_and_kept(self) -> None:
         term = PredicateTerm(
-            "mentor_of", "is a mentor of", "One teaches the other.", ("character",), ("character",),
+            "patron_of", "is a mentor of", "One teaches the other.", ("character",), ("character",),
             core=False,
         )  # fmt: skip
         await self.memory.add_predicate(
@@ -798,10 +798,10 @@ class ThePath(NamesTest):
         )  # fmt: skip
         await self.read()
         shaping = next(c for c in self.ai.complete.await_args_list if c.kwargs.get("schema"))
-        self.assertIn("mentor_of", shaping.args[0])
-        self.assertIn("mentor_of", json.dumps(shaping.kwargs["schema"]))
+        self.assertIn("patron_of", shaping.args[0])
+        self.assertIn("patron_of", json.dumps(shaping.kwargs["schema"]))
         reading = next(c for c in self.ai.complete.await_args_list if not c.kwargs.get("schema"))
-        self.assertIn("mentor_of", reading.args[0])
+        self.assertIn("patron_of", reading.args[0])
 
     async def test_the_log_has_counts_only(self) -> None:
         with self.assertLogs("dmbot.ui.name_background", "INFO") as logs:
