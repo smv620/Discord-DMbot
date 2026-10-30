@@ -566,6 +566,8 @@ class BackstoryLinks:
         cur = await conn.execute(
             "SELECT subject_id, predicate, object_id FROM memory_relations"
             " WHERE guild_id = %s AND campaign_id = %s AND status = 'confirmed'"
+            # (a connection that was ended is history: the same kind may be offered again, #3021)
+            " AND to_session_at IS NULL"
             " AND subject_id = ANY(%s) AND object_id = ANY(%s)",
             (guild_id, campaign_id, list(ids), list(ids)),
         )
