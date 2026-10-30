@@ -63,14 +63,20 @@ def backward(role: str) -> str:
 # marriage word, as whole words. Only for reading what an AI returned (the extractor's
 # family-only mode, #2960); the roles DMbot stores are still `ROLES` and `parse`.
 _LOOSE = re.compile(
-    rf"(?<![a-z])(?:{_ALT}|siblings|twins?|twin|married|wed|widow(?:er)?|brothers|sisters"
-    r"|cousins|parents|children|spouses)(?![a-z])"
+    rf"(?<![a-z])(?:(?:step|half)-?)?(?:{_ALT})s?(?![a-z])"
+    r"|(?<![a-z])(?:siblings|twins?|married|wed|widow(?:er)?|children|fianc[ée]e?s?"
+    r"|engaged|betrothed)(?![a-z])"
+)
+# Words that look like a role and are not a family tie ("a father figure to", "a brother in arms")
+_NOT_FAMILY = re.compile(
+    rf"(?<![a-z])(?:{_ALT})\s+(?:figure|in\s+arms|of\s+the\s+(?:order|church|faith|temple))"
 )
 
 
 def looks_like_family(words: str) -> bool:
     """Does an AI's relationship wording name a family tie in any of its own ways?"""
-    return _LOOSE.search(" ".join(words.split()).casefold()) is not None
+    clean = _NOT_FAMILY.sub(" ", " ".join(words.split()).casefold())
+    return _LOOSE.search(clean) is not None
 
 
 def parse(words: str) -> tuple[str, bool] | None:
