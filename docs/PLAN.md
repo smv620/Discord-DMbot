@@ -2246,7 +2246,12 @@ names panel nor the speech-to-text hints can be a fixed list.
     (`backstory_links.detail`). When nothing could be read before the cut, the DM is told so, never "no names".
   - **📌 Asserted or 100% truth:** the lore upload has one switch, **Asserted** (the default) or **📌 100% truth**.
     Kept connections from a truth upload are pinned. Either way, everything uploaded starts not revealed to
-    players.
+    players, **except lore the DM uploads as "Everyone in the story"** (Supervisor, 2026-10-30, from the
+    owner's choice A of 2026-10-29, #2959): its names are stored shown to the players, and its kept
+    connections are kept revealed when both their ends are shown. Every player character knows it, and the
+    who-knows lists follow the flags (#3018). "Only the DM" keeps the old rule. A smart guess's "world"
+    statements are treated the same way, at certainty 0.75. A secret name or connection is never opened by
+    any choice.
   - **Pronunciation in the list** (`Tavin (TAV-in) | NPC | Mo`): the bracket after a name is read as how to say
     it only when it looks like a respelling of that name. Code decides, never the AI: its letters (hyphens,
     stress marks and capitals ignored) sound close to the name, and it holds no plain words like "the", "of" or
@@ -2328,7 +2333,26 @@ names panel nor the speech-to-text hints can be a fixed list.
      every other suggestion, never kept without the DM's press. This is the one place a read goes past
      what the text states outright: it still never adds an event, and the DM decides.
   **Relationship mining from imported and live sessions** (same day): family connections only, by the same
-  rules; allies, enemies and other kinds are not mined from sessions yet.
+  rules; allies, enemies and other kinds are not mined from sessions yet. *Widened by the owner on
+  2026-10-30, replacing that limit:* **the Story Graph must catch every node and edge a session or a document
+  reveals**, for every connection kind (allies, enemies, rivals, work, membership, leadership, teachers,
+  captives, places, items and the rest), not only family:
+  - **Unnamed entities are kept.** "The guard at the gate", "a hooded stranger", "Brewner's daughter" or "the
+    azure tome" each become an entry marked unnamed, with a plain description as its label, so their
+    connections are kept from the first mention.
+  - **Pronouns and references count.** A relationship stated through "he", "his sister", "them" or "the
+    king" is kept once DMbot works out who is meant, from the same passage or scene. A reference it can't
+    work out is kept on an unnamed entry, never dropped.
+  - **Entity resolution comes later and is its own step.** When an unnamed entry turns out to be a named one
+    ("the guard at the gate" is "Ken the guard"), DMbot offers the DM a merge with the evidence. On a yes,
+    the existing merge joins them and moves every connection and who-knows row. Nothing is merged without
+    the DM.
+  - **Everything is still a suggestion with its evidence,** confirmed by the DM as now, from consented lines
+    only (CLAUDE.md, Consent), and DMbot never invents an event. Obvious inferences stay marked as worked
+    out (item 5 above).
+  - **PCs who play a session together know each other** and form "The party", by rule, not by mining (#3036).
+  - Built in #2960 (sessions, widened), #2790 (references and unnamed entries), #3037 (resolution later) and
+    the session reader's measurement (#1282) before it is switched on live.
 - **Hints follow the scene** (replacing the fixed order). Hints go with every piece of
   speech sent to speech-to-text, so they can change clip by clip. Up to 50 per clip
   for Deepgram (fewer when names are long; local Whisper keeps about 600 characters),

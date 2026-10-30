@@ -554,6 +554,11 @@ async def show_home(interaction: discord.Interaction, campaign_id: str) -> None:
             connections += len(await memory.suggested_names(campaign.guild_id, campaign.id))
         except Exception:
             log.exception("Couldn't count the suggested names")
+        try:  # so do family links worked out from the DM's own (#2960)
+            await memory.rework_family(campaign.guild_id, campaign.id)
+            connections += len(await memory.worked_out_waiting(campaign.guild_id, campaign.id))
+        except Exception:
+            log.exception("Couldn't count the worked-out family links")
     look_alikes = None
     if memory is not None and sees_secrets(campaign, interaction.user.id):  # DMs only (#2426)
         from dmbot.ui.look_alikes import count_groups
