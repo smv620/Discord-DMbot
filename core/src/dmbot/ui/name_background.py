@@ -716,6 +716,15 @@ async def read_background(
         until=started + lore_read.LORE_TIME_LIMIT_S - WHO_SUMMARY_MARGIN_S,
     )
     pcs = await keep.player_character_ids(memory, campaign.guild_id, campaign.id)
+    # "Everyone in the story" (#3034, Supervisor's ruling on PLAN item 1): a disguise or an earlier
+    # name is just another name, and so are the connections written through it. Under "Only the DM"
+    # and a smart guess it stays secret (DM authority).
+    everyone = choice == lore_knowledge.WORLD
+    secret_keys = frozenset() if everyone else read.secret_spellings
+    if everyone:
+        found = [
+            replace(f, also=tuple(dict.fromkeys((*f.also, *f.secret))), secret=()) for f in found
+        ]
     stored = await store(
         memory,
         campaign,
@@ -732,9 +741,10 @@ async def read_background(
         memory,
         campaign,
         read.known_spellings,
-        read.secret_spellings,
+        secret_keys,
         getattr(bot, "lore_context", None),
         upload.text,
+        known_by,
     )
     questions: list[str] = []
     keys: set[tuple[str, str, str]] = set()
@@ -757,7 +767,7 @@ async def read_background(
         on_who=on_who,
         until=started + lore_read.LORE_TIME_LIMIT_S - WHO_SUMMARY_MARGIN_S,
         known_spellings=read.known_spellings,
-        secret_spellings=read.secret_spellings,
+        secret_spellings=secret_keys,
         world_links=world_links,
         world_all=choice == lore_knowledge.WORLD,
         world_level=lore_knowledge.level_of(choice),
@@ -849,6 +859,7 @@ async def save_earlier_names(
     secret: Collection[str],
     held: lore_context.Held | None = None,
     text: str = "",
+    known_by: str = "",
 ) -> None:
     """The other names a lore text gives a name the campaign already has (#3034): a pseudonym, an
     earlier or birth name, a nickname. They are saved as suggestions on that entry (never a new
@@ -874,6 +885,7 @@ async def save_earlier_names(
     if not more:
         return
     try:
+        waiting = {a.id for a, _ in await memory.suggested_names(campaign.guild_id, campaign.id)}
         await memory.add_names(campaign.guild_id, campaign.id, [], source=DM, more=more)
     except MemoryRuleError as exc:
         log.info("Skipped the earlier names of a background: %s", exc)
@@ -881,13 +893,25 @@ async def save_earlier_names(
     except Exception:  # the names of the read are stored already: this must not undo the read
         log.exception("The earlier names of a background could not be saved")
         return
+    try:
+        # only the names this call added: one an earlier upload suggested keeps its own knowers
+        added = [
+            a for a, _ in await memory.suggested_names(campaign.guild_id, campaign.id)
+            if a.id not in waiting
+        ]  # fmt: skip
+    except Exception:
+        log.exception("The suggested names could not be read")
+        return
+    if known_by:  # the uploader's character knows the secret names it gave (#2935), as store() does
+        for alias in added:
+            if alias.secret:
+                await _secret_names_known_by(
+                    memory, campaign, alias.entity_id, [alias.text], known_by
+                )
     if held is None or not text:
         return
-    try:  # the sentence around each, for its question (memory only; a failure only loses it)
-        for alias, _ in await memory.suggested_names(campaign.guild_id, campaign.id):
-            held.put(campaign.guild_id, alias.id, lore_context.around(text, "", alias.text))
-    except Exception:
-        log.exception("The sentences of the suggested names could not be kept")
+    for alias in added:  # the sentence around each, for its question (memory only)
+        held.put(campaign.guild_id, alias.id, lore_context.around(text, "", alias.text))
 
 
 async def store(
@@ -1299,9 +1323,15 @@ async def queue_links(
             dropped["not_in_text"] += settled.unresolved
         answers = [*answers, settled.connections]
     picks: list[bg.Pick] = []
+    # (the campaign's own secret names stay secret whatever the upload's choice: the choice only
+    # frees the earlier names this read found)
+    campaign_secrets = {
+        key for key, entries in lookup.by_key.items() if any(e.secret for e in entries)
+    }
     kept = bg.keep_connections(
         answers, found, ends, cap=bg.MAX_CONNECTIONS, skip=known, dropped=dropped,
-        questions=questions, speaker=speaker, picks=picks, secret_keys=secret_spellings,
+        questions=questions, speaker=speaker, picks=picks,
+        secret_keys={*secret_spellings, *campaign_secrets},
     )  # fmt: skip
     # A pronoun-resolved question or unnamed person is secret as a connection would be: when its
     # named end is a secret spelling, of this reading or of the campaign (`keep_connections` does
