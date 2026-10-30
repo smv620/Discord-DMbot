@@ -38,6 +38,7 @@ SKIPPED = "👍 Skipped. Nothing was posted. You can still find it on your recap
 POSTED = "✅ Posted to the table. The players can see it now."
 NO_STORE = "Recaps aren't available right now. Try again in a minute."
 NOT_NOW = "Okay, nothing was posted. Press Post to the table whenever you're ready."
+NOTES_LABEL = "📝 Session notes"  # the recap line's button (#3026)
 NO_NOTES = "There are no notes for this session yet."
 NOTES_FAILED = "I couldn't read the notes just now. Nothing was changed. Try again in a minute."
 NOTES_HEADING = "**Session notes**"
@@ -50,7 +51,7 @@ _TEMPLATE = (
 _LABELS = {
     "read": ("Read it", discord.ButtonStyle.primary),
     # The session's beats as a numbered list, privately (the session notes, #3026).
-    "notes": ("📝 Session notes", discord.ButtonStyle.secondary),
+    "notes": (NOTES_LABEL, discord.ButtonStyle.secondary),
     "post": ("Post to the table", discord.ButtonStyle.success),
     "drop": ("Not this one", discord.ButtonStyle.secondary),
     "tell": ("💬 Tell DMbot what you think", discord.ButtonStyle.secondary),
