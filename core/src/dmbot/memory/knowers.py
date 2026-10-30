@@ -519,12 +519,22 @@ async def check_characters(scope: Scope, character_ids: Sequence[str]) -> None:
 
 
 async def fold_knowers(
-    w: Changes, keep_id: str, gone_id: str, views: tuple[str, str] | None
+    w: Changes,
+    keep_id: str,
+    gone_id: str,
+    views: tuple[str, str] | None,
+    *,
+    as_alias: str | None = None,
 ) -> None:
     """Two entries merge (#2995): whoever knew the merged-away entry exists now knows the kept
     one does, and the merged-away character's knowledge becomes the kept character's (`views` is
     its point of view and the kept one's, from `beliefs.fold_perspective`). A statement both knew
-    keeps one row. One read, and nothing more when no list is touched."""
+    keeps one row. One read, and nothing more when no list is touched.
+
+    `as_alias`: the merged-away entry was an unnamed person the DM now says is the kept one (#3037).
+    Whoever knew only that the unnamed person exists must not learn the kept entry's name, so their
+    "knows this entry exists" row becomes a row on the secret other name made from the description
+    (`as_alias`), open to them only; every other row keeps its own scope, statement by statement."""
     gone_view, keep_view = views if views is not None else ("", "")
     rows = await w.select(
         KNOWERS,
@@ -534,6 +544,14 @@ async def fold_knowers(
     columns = ("about_entity_id", "state_id", "relation_id", "alias_id")
 
     def after(row: dict[str, Any]) -> dict[str, Any]:
+        if as_alias is not None and row["about_entity_id"] == gone_id:
+            return {
+                "perspective_id": keep_view
+                if gone_view and row["perspective_id"] == gone_view
+                else row["perspective_id"],
+                "about_entity_id": None,
+                "alias_id": as_alias,
+            }
         return {
             "perspective_id": keep_view
             if gone_view and row["perspective_id"] == gone_view

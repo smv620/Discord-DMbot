@@ -2923,6 +2923,40 @@ class MemoryStore:
                 (guild_id, campaign_id, a, b, user_id, int(self._clock())),
             )
 
+    async def join_same_person(
+        self, guild_id: int, campaign_id: str, unnamed_id: str, named_id: str
+    ) -> Written[Entity]:
+        """The DM says this unnamed person ("the guard at the gate") is that named one (#3037).
+        The named entry is kept; the unnamed one's description becomes a secret other name of it;
+        every connection and fact moves over. Nothing widens (Supervisor's ruling): whoever knew
+        only the unnamed person knows that secret name and not the real one, and every other
+        who-knows row keeps its own scope. One change, so one Undo puts both entries back, lists
+        included. Only the DM can ask for this, so the source is the DM's."""
+        async with self._write(guild_id, campaign_id, DM) as w:
+            unnamed = await _entity_row(w, unnamed_id)
+            named = await _entity_row(w, named_id)
+            if not unnamed["unnamed"] or named["unnamed"] or named["status"] != CONFIRMED:
+                raise MemoryRuleError("That isn't an unnamed person and a named one.")
+            if PERSON in (unnamed["type"], named["type"]):
+                raise MemoryRuleError("A player or the DM can't be joined this way.")
+            text = clean_text(str(unnamed["name"]))
+            existing = await w.select(
+                ALIASES, " AND entity_id = %s AND key = %s", [named_id, lookup_key(text)]
+            )
+            if existing:
+                alias_id = str(existing[0]["id"])
+            else:
+                row = await w.insert(
+                    ALIASES, _new_alias(w, named_id, text, "old", CONFIRMED, True, None)
+                )
+                alias_id = str(row["id"])
+            kept = await self._merge_in(
+                w, named_id, unnamed_id, source=DM, dm_said_same=True, join_alias=alias_id
+            )
+            final = await w.get(ENTITIES, kept)
+            assert final is not None
+            return Written(_entity(final), w.batch)
+
     async def not_the_same(
         self, guild_id: int, campaign_id: str, ids: Sequence[str], *, user_id: int
     ) -> int:
@@ -2964,10 +2998,14 @@ class MemoryStore:
         source: str,
         dm_said_same: bool,
         confirm_keys: Collection[str] = (),
+        join_alias: str | None = None,
     ) -> str:
-        """One merge inside an open write (see `merge`). Returns the id that was kept: a named
-        entry is always the one kept when the other has no name (#2790), so the DM giving a name
-        to "Ken's sister" keeps the real name whichever way round the merge was asked."""
+        """One merge inside an open write (see `merge`). `join_alias`: the merge joins an unnamed
+        person to the named one it turned out to be (#3037), and this is the secret other name made
+        from the description; who knew the unnamed person now know that name and nothing more.
+        Returns the id that was kept: a named entry is always the one kept when the other has no
+        name (#2790), so the DM giving a name to "Ken's sister" keeps the real name whichever way
+        round the merge was asked."""
         onto = await _load_ontology(w)
         keep = await _entity_row(w, keep_id)
         gone = await _entity_row(w, gone_id)
@@ -3030,7 +3068,11 @@ class MemoryStore:
         await merge_restore.move_notes(w.conn, w.ids, keep_id, gone_id)
         await merge_restore.move_links(w.conn, w.ids, keep_id, gone_id, kept["type"])
         await knowers.fold_knowers(
-            w, keep_id, gone_id, await beliefs.fold_perspective(w, keep_id, gone_id)
+            w,
+            keep_id,
+            gone_id,
+            await beliefs.fold_perspective(w, keep_id, gone_id),
+            as_alias=join_alias,
         )
         for table in (MENTIONS, CORRECTIONS):  # one statement each (#164)
             await w.update_where(table, {"entity_id": keep_id}, " AND entity_id = %s", [gone_id])
