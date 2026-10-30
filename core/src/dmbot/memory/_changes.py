@@ -194,6 +194,24 @@ PERSPECTIVES = Table(
 ALIAS_KNOWERS = Table(
     "memory_alias_knowers", "id", ("id", "alias_id", "perspective_id", "created_at")
 )
+# Who knows each statement (#2995; STORY_MEMORY §9b): one row for each (statement, character), the
+# statement being an entry, a state, a connection or an other name (one column set). Logged, so Undo
+# takes a change of who knows back, and an Undo of removing a statement brings who knew it back.
+KNOWERS = Table(
+    "memory_knowers",
+    "id",
+    (
+        "id",
+        "perspective_id",
+        "about_entity_id",
+        "state_id",
+        "relation_id",
+        "alias_id",
+        "created_at",
+        "confidence",
+    ),
+    defaults={"confidence": 1.0},  # how sure that character is, 0.0 to 1.0 (0286)
+)
 BELIEFS = Table(
     "memory_beliefs",
     "id",
@@ -222,8 +240,16 @@ PLAN_POSITION = Table(
 )
 ALL = (TYPES, PREDICATES, ENTITIES, ALIASES, MENTIONS, RELATIONS, CORRECTIONS, FLAGS, RULE_LINKS,
        STATES, CLAIMS, IMPRESSIONS, ATTITUDES, PLAN_SAME_AS, PLAN_POSITION, PERSPECTIVES,
-       BELIEFS, EVIDENCE, ALIAS_KNOWERS)  # fmt: skip
+       BELIEFS, EVIDENCE, ALIAS_KNOWERS, KNOWERS)  # fmt: skip
 BY_NAME = {t.name: t for t in ALL}
+
+# The column of `memory_knowers` that names each kind of statement.
+_KNOWN_COLUMN: dict[str, str] = {
+    "memory_entities": "about_entity_id",
+    "memory_states": "state_id",
+    "memory_relations": "relation_id",
+    "memory_aliases": "alias_id",
+}
 
 # What links to a row (table, column, is the column a list), checked before deleting it,
 # because the database would otherwise delete those rows too, without logging them.
@@ -271,6 +297,7 @@ DEPENDENTS: dict[str, tuple[tuple[str, str, bool], ...]] = {
     "memory_perspectives": (
         ("memory_beliefs", "perspective_id", False),
         ("memory_alias_knowers", "perspective_id", False),
+        ("memory_knowers", "perspective_id", False),
     ),
 }
 
@@ -430,6 +457,10 @@ class Changes(Scope):
         if table is ALIASES:  # who knows an other name goes with it (#2935)
             for knower in await self.select(ALIAS_KNOWERS, " AND alias_id = %s", [row_id]):
                 await self.delete(ALIAS_KNOWERS, knower["id"])
+        if table.name in _KNOWN_COLUMN:  # who knows a statement goes with it, each logged (#2995)
+            column = _KNOWN_COLUMN[table.name]
+            for knower in await self.select(KNOWERS, f" AND {column} = %s", [row_id]):
+                await self.delete(KNOWERS, knower["id"])
         for dep_table, column, is_list in DEPENDENTS.get(table.name, ()):
             test = "%s = ANY({})" if is_list else "{} = %s"
             query = sql.SQL(

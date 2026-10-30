@@ -9,13 +9,14 @@ it. The panel is private and needs no stored button IDs.
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 import discord
 
 from dmbot.campaigns import Campaign, CampaignError
 from dmbot.dm_screen import messages
-from dmbot.dm_screen.recap_panel import FAILED, ONLY_DM, may_change
+from dmbot.dm_screen.recap_panel import _ID, FAILED, ONLY_DM, may_change
 from dmbot.logs import set_log_context
 from dmbot.mentions import NO_PINGS
 from dmbot.recaps.style import (
@@ -208,3 +209,33 @@ async def dm_campaign(interaction: discord.Interaction, campaign_id: str) -> Cam
         await interaction.response.send_message(ONLY_DM, ephemeral=True)
         return None
     return campaign
+
+
+class RecapStyleButton(
+    discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
+    template=rf"dmbot:recapstyle:{_ID}",
+):
+    """✍️ Recap style, on ⚙️ Manage DMbot (#2986): the one recap choice the website does not have,
+    so it stays here when the rest of 📜 Recaps moves to the website. Opens the private panel."""
+
+    def __init__(self, campaign_id: str) -> None:
+        super().__init__(
+            discord.ui.Button(
+                label="Recap style",
+                emoji="✍️",
+                style=discord.ButtonStyle.secondary,
+                custom_id=f"dmbot:recapstyle:{campaign_id}",
+            )
+        )
+        self.campaign_id = campaign_id
+
+    @classmethod
+    async def from_custom_id(
+        cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
+    ) -> RecapStyleButton:
+        return cls(match["campaign"])
+
+    async def callback(self, interaction: discord.Interaction) -> Any:
+        campaign = await dm_campaign(interaction, self.campaign_id)
+        if campaign is not None:
+            await show(interaction, campaign)

@@ -1589,6 +1589,16 @@ def create_app(
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 
+    @app.get("/me/campaigns/{ref}/web/characters")
+    async def me_campaign_web_characters(ref: str, signed: Signed) -> dict[str, Any]:
+        """The campaign's player characters, for "Who knows this?" (#2935). DM only."""
+        session, _token = signed
+        try:
+            return await relationships.read_characters(db, session, ref)
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
     @app.get("/me/campaigns/{ref}/web/find")
     async def me_campaign_web_find(
         ref: str, signed: Signed, q: str = "", view: str | None = None
@@ -1770,6 +1780,7 @@ def create_app(
         "bad_action": (400, "bad_action"),
         "bad_name": (400, "bad_name"),
         "bad_kind": (400, "bad_kind"),
+        "bad_player": (400, "bad_player"),
         "too_long": (400, "too_long"),
         "needs_confirm": (400, "needs_confirm"),
         "bad_target": (400, "bad_target"),

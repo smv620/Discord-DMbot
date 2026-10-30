@@ -137,6 +137,15 @@ class EveryClaimedTableComesBack(DatabaseTest):
                 " perspective_id, created_at) SELECT %s, %s, %s, al.id, p.id, 1 FROM al, p",
                 (g, c, new_id(), A, g, c, new_id(), B, g, c, new_id()),
             ),
+            "memory_knowers": (
+                # a character's point of view (the one the secret-name seed made) that knows an
+                # entry exists (#2995)
+                "INSERT INTO memory_knowers (guild_id, campaign_id, id, perspective_id,"
+                " about_entity_id, created_at) SELECT %s, %s, %s, p.id, %s, 1"
+                " FROM memory_perspectives p WHERE p.guild_id = %s AND p.campaign_id = %s"
+                " AND p.entity_id IS NOT NULL LIMIT 1",
+                (g, c, new_id(), A, g, c),
+            ),
             "memory_evidence": (
                 "INSERT INTO memory_evidence (guild_id, campaign_id, id, relation_id, kind,"
                 " target_id, session_started_at, added_at) VALUES (%s, %s, %s, %s, 'clue', %s, 1, 1)",

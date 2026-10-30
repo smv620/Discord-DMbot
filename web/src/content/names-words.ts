@@ -62,6 +62,25 @@ export const namesPage = {
   sayTooLong: "DMbot can't use that. Use 80 letters or fewer, with no odd characters.",
   kindChange: "What it is",
   saveKind: "Save what it is",
+  // Making a name a player character (#2985): who plays it can be added now or later, in Discord or here.
+  playerLabel: "Who plays it? Their Discord ID (optional)",
+  playerNote: "Not sure yet? Leave this empty. It is still a player character, and you can add the player later. Adding an ID doesn't start recording anyone: they still choose that themselves.",
+  playerInfoLabel: "How to find a Discord ID",
+  playerInfoSteps: [
+    "In Discord, open User Settings (App Settings on a phone), then Advanced, and turn on Developer Mode. You only do this once.",
+    "Go back to the server and right-click the player's name (on a phone, press and hold it). Choose Copy User ID, not Copy Message ID.",
+    "Paste it here. It is a long number, like 123456789012345678.",
+  ],
+  playerInfoClose: "Hide the hint",
+  // Confirming who an ID is before it is linked (#3004). Linking is not recording: consent is separate.
+  playerCheck: "Check who that is",
+  playerConfirm: (name: string): string => `Please confirm: ${name}`,
+  playerNotHere: (name: string): string => `${name} isn't in this server yet. Link them anyway?`,
+  playerNotRecording: "This only links the ID to the character. It doesn't start recording anyone: they still choose that themselves.",
+  playerYes: "✅ That's them",
+  playerCancel: "Cancel",
+  playerStage: { waiting: "Waiting for DMbot to ask Discord.", working: "DMbot is asking Discord who that is." } as Record<string, string>,
+  playerQuiet: "Discord is slow to answer. You can keep waiting, or cancel and try again.",
   othersHeading: "Other names",
   noOthers: "It has no other names.",
   addOtherLabel: "Add another name for it",
@@ -114,6 +133,10 @@ export const namesPage = {
   errors: {
     "bad-name": "Type a name using letters, numbers or common marks.",
     "bad-kind": "Pick a kind from the list.",
+    "bad-player": "That doesn't look like a Discord ID. It should be 17 to 19 numbers, with no letters. Tap the (i) to see how to copy one.",
+    "bot-player": "That's a bot account. A bot can't play a character.",
+    "unknown-id": "Discord doesn't know that ID. Check it and try again.",
+    "lookup-failed": "Couldn't check that ID with Discord. Try again in a minute.",
     "name-exists": "A name like that already exists. Pick another spelling, or merge the two.",
     // The API's "too_long" is shared with the support form's: for a name it means this.
     "ticket-too-long": `That name is too long. Use ${NAME_LIMIT} letters or fewer.`,

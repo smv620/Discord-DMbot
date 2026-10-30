@@ -2,11 +2,13 @@
 // together, and the names settle by themselves so a crowded spot opens up. Written in plain code so the page
 // needs no graph library (the site's weight budget, #1947). Pure, with no clock and no random numbers: the
 // same names and lines always settle in the same places, which keeps the tests exact and a redraw calm.
+import { KIND_STYLES, kindStyle } from "./webKinds";
 import { radialLayout } from "./webLayout";
 
 /** "free": names settle anywhere. "groups": names gather by what each one is (player characters, NPCs, places,
- * items, groups, events...: the kinds the Names page uses), not by how it is connected (#2990). */
-export type LayoutMode = "free" | "groups";
+ * items, groups, events...: the kinds the Names page uses), not by how it is connected (#2990). "quests": names
+ * gather by the quest they are joined to (#2992). */
+export type LayoutMode = "free" | "groups" | "quests";
 
 /** More names than this keep their rings and are only movable by hand: pushing every pair apart is
  * the slow part, and a web this big is already past what a screen can show clearly. */
@@ -76,15 +78,10 @@ export function edgeKind(edge: { links: { kind?: string | undefined }[] }): stri
   return kinds.size === 1 ? [...kinds][0]! : "other";
 }
 
-/** The kinds of name in the order their areas are given: the people first, then places and things. A kind this
- * page has no place for follows, by its key, so a new kind still gets an area. */
-const AREA_ORDER = ["player_character", "npc", "deity", "character", "creature", "faction", "group", "place", "item", "event"];
-
+/** The kinds of name in the order their areas and the legend give them: the people first, then the places and
+ * things, each style's kinds together by key (#2992). */
 export function orderedKinds(kinds: Iterable<string>): string[] {
-  const rank = (k: string): number => {
-    const i = AREA_ORDER.indexOf(k);
-    return i === -1 ? AREA_ORDER.length : i;
-  };
+  const rank = (k: string): number => KIND_STYLES.indexOf(kindStyle(k));
   return [...new Set(kinds)].sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
 }
 
@@ -145,8 +142,8 @@ export function forceStep(
       b.vy += dy * f;
     }
   }
-  const rest = mode === "groups" ? 130 : REST;
-  const pull = mode === "groups" ? PULL * 0.4 : PULL;
+  const rest = mode !== "free" ? 130 : REST;
+  const pull = mode !== "free" ? PULL * 0.4 : PULL;
   for (const [i, j] of links) {
     const a = sim[i]!;
     const b = sim[j]!;
@@ -166,7 +163,7 @@ export function forceStep(
     const home = i === centreIndex ? CENTRE_HOME : HOME;
     n.vx -= n.x * home;
     n.vy -= n.y * home;
-    const anchor = mode === "groups" && i !== centreIndex ? anchors.get(n.group) : undefined;
+    const anchor = mode !== "free" && i !== centreIndex ? anchors.get(n.group) : undefined;
     if (anchor) {
       n.vx += (anchor.x - n.x) * 0.022;
       n.vy += (anchor.y - n.y) * 0.022;
@@ -216,4 +213,11 @@ export function extentOf(sim: { x: number; y: number }[], floor = 220): number {
   let far = 0;
   for (const n of sim) far = Math.max(far, Math.abs(n.x), Math.abs(n.y));
   return Math.max(floor, far + 110);
+}
+
+/** The group a name gathers with in "Cluster by quest": a quest is its own group; any other name joins the quest it
+ * has most connections with (the door sends them in that order), or "none" (#2992). */
+export const NO_QUEST = "none";
+export function questGroups(nodes: { id: string; kind: string; quests?: { id: string }[] | undefined }[]): Map<string, string> {
+  return new Map(nodes.map((n) => [n.id, kindStyle(n.kind) === "quest" ? n.id : (n.quests?.[0]?.id ?? NO_QUEST)]));
 }
