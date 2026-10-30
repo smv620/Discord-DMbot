@@ -4,7 +4,7 @@ what they knew; the DM sees both; Undo puts both back. Invented names."""
 
 from __future__ import annotations
 
-from dmbot.memory.gate import ALIAS, ENTRY, Viewer
+from dmbot.memory.gate import ALIAS, CONNECTION, ENTRY, Viewer
 from dmbot.memory.models import CONFIRMED, MemoryRuleError
 from tests.test_gate import Helpers
 from tests.test_memory_store import GUILD_A
@@ -81,3 +81,79 @@ class TheJoin(Helpers):
         for a, b in ((self.ken, other), (self.ken, self.guard)):
             with self.subTest(a=a, b=b), self.assertRaises(MemoryRuleError):
                 await self.memory.join_same_person(GUILD_A, self.c, a, b)
+
+    async def test_a_connection_that_moves_to_ken_stays_hidden_from_players_who_did_not_know_it(
+        self,
+    ) -> None:
+        captain = await self.add("Captain Vale", type="character", role="npc", status=CONFIRMED)
+        made = await self.memory.add_relation(
+            GUILD_A, self.c, self.guard, "knows", captain, source="dm", confidence=1.0,
+            status=CONFIRMED,
+        )  # fmt: skip
+        rel = str(made.value[0].id)
+        before = await self.view(self.sees_ken)
+        self.assertFalse(before.knows(CONNECTION, rel))  # type: ignore[attr-defined]
+        await self.join()
+        for pc in (self.sees_ken, self.sees_guard, self.ids["okthandom"], self.ids["mara"]):
+            with self.subTest(pc=pc):
+                seen = await self.view(pc)
+                self.assertFalse(seen.knows(CONNECTION, rel))  # type: ignore[attr-defined]
+
+    async def test_a_moved_connection_is_secret_so_the_old_readers_do_not_show_it(self) -> None:
+        captain = await self.add("Captain Vale", type="character", role="npc", status=CONFIRMED)
+        made = await self.memory.add_relation(
+            GUILD_A, self.c, self.guard, "knows", captain, source="dm", confidence=1.0,
+            status=CONFIRMED,
+        )  # fmt: skip
+        await self.join()
+        shown = await self.memory.relations(
+            GUILD_A, self.c, entity_id=self.ken, confirmed_only=True, include_secret=False
+        )
+        self.assertEqual([r for r in shown if r.id == made.value[0].id], [])
+        everything = await self.memory.relations(
+            GUILD_A, self.c, entity_id=self.ken, confirmed_only=True, include_secret=True
+        )
+        self.assertEqual(len([r for r in everything if r.id == made.value[0].id]), 1)  # the DM's
+
+
+class TheNameEachViewerSees(TheJoin):
+    """Which name a viewer is shown for the joined entry (Supervisor's ruling on #3037)."""
+
+    async def name_for(self, viewer: Viewer, *, public: bool = False) -> str | None:
+        got = await self.memory.display_names(GUILD_A, self.c, viewer, [self.ken], public=public)
+        return got[self.ken]
+
+    async def test_who_knew_only_the_guard_is_shown_the_guard_and_never_ken(self) -> None:
+        await self.join()
+        self.assertEqual(await self.name_for(Viewer.character(self.sees_guard)), self.label)
+
+    async def test_who_knew_ken_is_shown_ken(self) -> None:
+        await self.join()
+        self.assertEqual(await self.name_for(Viewer.character(self.sees_ken)), "Ken")
+
+    async def test_someone_who_knew_neither_is_shown_nothing(self) -> None:
+        await self.join()
+        stranger = await self.add(
+            "Zara", type="character", role="player_character", played_by=3, status=CONFIRMED
+        )
+        await self.memory.set_hidden_from_players(GUILD_A, self.c, self.ken, True, source="dm")
+        self.assertIsNone(await self.name_for(Viewer.character(stranger)))
+
+    async def test_the_dm_sees_the_main_name(self) -> None:
+        await self.join()
+        self.assertEqual(await self.name_for(Viewer.the_dm()), "Ken")
+
+    async def test_a_public_place_never_says_ken_while_ken_is_hidden(self) -> None:
+        await self.memory.set_hidden_from_players(GUILD_A, self.c, self.ken, True, source="dm")
+        await self.join()
+        self.assertEqual(await self.name_for(Viewer.the_party(), public=True), "someone")
+
+    async def test_after_undo_each_sees_what_they_saw_before(self) -> None:
+        written = await self.join()
+        assert written.batch is not None  # type: ignore[attr-defined]
+        await self.memory.undo(GUILD_A, self.c, written.batch, source="dm")  # type: ignore[attr-defined]
+        got = await self.memory.display_names(
+            GUILD_A, self.c, Viewer.character(self.sees_guard), [self.guard]
+        )
+        self.assertEqual(got[self.guard], self.label)
+        self.assertEqual(await self.name_for(Viewer.character(self.sees_ken)), "Ken")

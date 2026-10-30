@@ -2950,12 +2950,81 @@ class MemoryStore:
                     ALIASES, _new_alias(w, named_id, text, "old", CONFIRMED, True, None)
                 )
                 alias_id = str(row["id"])
+            # What the unnamed person was connected to was never shown to the players under that
+            # description; once it hangs off the named entry the old readers (which look at the
+            # flag, not at who knows) would show it as the named one's. It starts secret, so the
+            # join teaches nobody anything; the DM can show it again as usual.
+            moving = [
+                str(r["id"])
+                for r in await w.select(
+                    RELATIONS, " AND (subject_id = %s OR object_id = %s) AND NOT secret",
+                    [unnamed_id, unnamed_id],
+                )
+            ]  # fmt: skip
             kept = await self._merge_in(
                 w, named_id, unnamed_id, source=DM, dm_said_same=True, join_alias=alias_id
             )
+            for relation_id in moving:
+                if await w.get(RELATIONS, relation_id) is not None:
+                    await w.update(RELATIONS, relation_id, {"secret": True})
             final = await w.get(ENTITIES, kept)
             assert final is not None
             return Written(_entity(final), w.batch)
+
+    async def display_names(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        viewer: gate.Viewer,
+        entity_ids: Sequence[str],
+        *,
+        public: bool = False,
+    ) -> dict[str, str | None]:
+        """The name each of these entries is shown by to this viewer (#3037): see
+        `gate.display_name`. The other names are taken in the order the viewer's characters learned
+        them. `public`: a place that is not one character's (a table answer, a recap): pass the
+        party as the viewer, and an entry nobody may name comes back as "someone", never None.
+        One campaign; the DM gets the main name."""
+        if not entity_ids:
+            return {}
+        async with self._read(guild_id, campaign_id, snapshot=True) as scope:
+            seen = await gate.visible_to(scope, viewer)
+            entries = {
+                str(r["id"]): str(r["name"])
+                for r in await scope.select(ENTITIES, " AND id = ANY(%s)", [list(entity_ids)])
+            }
+            names = await scope.select(
+                ALIASES,
+                " AND entity_id = ANY(%s) AND status <> 'rejected' ORDER BY created_at, id",
+                [list(entries)],
+            )
+            learned: dict[str, int] = {}
+            if not seen.everything and names:
+                mine = await scope.select(
+                    KNOWERS, " AND alias_id = ANY(%s)", [[str(a["id"]) for a in names]]
+                )
+                for row in mine:
+                    key = str(row["alias_id"])
+                    learned[key] = min(learned.get(key, row["created_at"]), row["created_at"])
+        out: dict[str, str | None] = {}
+        for entity_id in entity_ids:
+            main = entries.get(entity_id)
+            if main is None:
+                out[entity_id] = None
+                continue
+            # (an entry's own name is stored as a name too: it stands for the main name, which the
+            # entry's own row governs, so it is not one of the "other" names)
+            others = sorted(
+                (
+                    (str(a["id"]), str(a["text"]))
+                    for a in names
+                    if str(a["entity_id"]) == entity_id and a["key"] != lookup_key(main)
+                ),
+                key=lambda pair: (learned.get(pair[0], 0), pair[0]),
+            )
+            shown = gate.display_name(seen, entity_id, main, others)
+            out[entity_id] = gate.SOMEONE if shown is None and public else shown
+        return out
 
     async def not_the_same(
         self, guild_id: int, campaign_id: str, ids: Sequence[str], *, user_id: int

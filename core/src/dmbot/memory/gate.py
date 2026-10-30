@@ -19,7 +19,7 @@ The rules, all in `visible` (pure, so they are tested without a database):
 
 from __future__ import annotations
 
-from collections.abc import Collection, Iterable, Mapping
+from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal, LiteralString
 
@@ -127,6 +127,32 @@ class Visible:
             ALIAS: self.aliases,
         }[kind]
         return statement_id in held
+
+
+SOMEONE = "someone"  # what a public place says when no name is open to every player
+
+
+def display_name(
+    seen: Visible, entity_id: str, main: str, others: Sequence[tuple[str, str]]
+) -> str | None:
+    """The name a viewer is shown for an entry (#3037 ruling): the main name only when they know
+    the entry under its own name (a row of their own for it, or the DM), otherwise the first other
+    name they know (`others`: (name id, text) in the order they learned them), otherwise None, and
+    the entry is not shown to them at all. Knowing a name or a connection makes the entry known,
+    but never makes its main name known: a join must not tell anyone what it was meant to keep."""
+    if seen.everything or (ENTRY, entity_id) in seen.sureness:
+        return main
+    for alias_id, text in others:
+        if alias_id in seen.aliases:
+            return text
+    return None
+
+
+def public_name(seen: Visible, entity_id: str, main: str, others: Sequence[tuple[str, str]]) -> str:
+    """The name for a place that is not one character's (the table's answers, recaps): `seen` is
+    what EVERY player knows (`Viewer.the_party()`), so this is the main name only if it is open to
+    all, else the first other name open to all, else "someone"."""
+    return display_name(seen, entity_id, main, others) or SOMEONE
 
 
 def word_of(knowers: Collection[str], player_characters: Collection[str]) -> str:
