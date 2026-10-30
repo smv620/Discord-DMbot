@@ -42,11 +42,14 @@ export const campaignPage = {
   myAccount: "My Account",
   thisCampaign: "This campaign",
   groups: {
+    overview: "Overview",
     story: "Story",
-    table: "At the table",
+    add: "Add to the story",
     rules: "Rules",
     settings: "Settings",
   },
+  /** The pages inside the part you are in, under the tabs. */
+  pagesLabel: "Pages in this part",
   pages: {
     recaps: "Recaps",
     timeline: "Story timeline",
