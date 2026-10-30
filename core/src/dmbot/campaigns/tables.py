@@ -28,6 +28,7 @@ SECTION_TABLES: dict[str, tuple[str, ...]] = {
         "memory_relations",
         "memory_perspectives",
         "memory_alias_knowers",
+        "memory_knowers",
         "memory_beliefs",
         "memory_evidence",
         "memory_impressions",
@@ -128,6 +129,7 @@ NOT_IN_BACKUP: dict[str, str] = {
     "setting_actions": _WAIT,
     "web_rule_actions": _WAIT,
     "web_report_requests": _WAIT,
+    "lore_uploads": _WAIT,
     "web_sheet_actions": _WAIT,
     "web_line_fixes": _WAIT,
     "rule_set_codes": "a share code is a bearer secret; a restored publisher gets a new one "

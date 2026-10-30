@@ -144,6 +144,8 @@ class Isolation(MemoryTest):
         )
         async with self.memory._write(GUILD_A, self.c, "dm") as w:
             await knowers.set_alias_knowers(w, shade.value.id, [view])
+        # and a character who knows an entry exists (#2995)
+        await self.memory.set_statement_knowers(GUILD_A, self.c, "entry", b, [view], source="dm")
         await self.relate(a, "located_in", b)  # flagged: Cerric isn't a place
         known = await self.relate(a, "knows", b, status="confirmed")  # and its beliefs (#2409)
         clue = await self.add("A map", type="clue")
@@ -1037,8 +1039,9 @@ class Undo(MemoryTest):
             undo_statements = statements
         # Row by row, this was well over a thousand round trips each. Counted with
         # execute, so the savepoints around bulk undo runs (their own round trips) aren't. (59
-        # before the people who hang off a merged entry were moved with it, #2790: one statement.)
-        self.assertLess(merge_statements, 61)
+        # before the people who hang off a merged entry were moved with it, #2790: one statement;
+        # 60 before who-knows moved with it, #2995: one read for the whole list.)
+        self.assertLess(merge_statements, 62)
         self.assertLess(undo_statements, 60)
         self.assertEqual(await self.snapshot(), before)  # undo split them again exactly
         # Still one log row per changed row, so undo and redo work as before.

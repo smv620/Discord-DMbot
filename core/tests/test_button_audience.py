@@ -160,6 +160,7 @@ AUDIENCE: dict[str, str] = {
             "dm_screen.quiet_stop.KeepListeningButton",
             "dm_screen.names_button.NamesButton",
             "dm_screen.recap_panel.RecapsButton",
+            "dm_screen.recap_style.RecapStyleButton",  # (the recap choice left in Discord, #2986)
             "dm_screen.rules_cards.RulesCardButton",
             "dm_screen.set_suggestion.SuggestionButton",
             "dm_screen.table_pause.PauseTableButton",  # the table's off the record (#2466)

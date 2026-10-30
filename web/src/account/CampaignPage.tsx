@@ -7,12 +7,11 @@
 import { useEffect, useState } from "preact/hooks";
 
 import { campaignPage as words } from "../content/campaign-page";
-import { IMPORT_LIVE } from "../content/import-words";
-import { RECAPS_LIVE } from "../content/recap-words";
 import { SHEETS_LIVE } from "../content/sheets-switch";
 import { type AccountApi, ApiError, type Campaign, type CampaignPage } from "./api";
 import CampaignFacts from "./CampaignFacts";
 import CampaignNav from "./CampaignNav";
+import { type SectionPage, sectionPages } from "./campaignSections";
 import CampaignSettings from "./CampaignSettings";
 import CampaignDelete from "./CampaignDelete";
 import { CAMPAIGN_DELETE_LIVE } from "../content/campaign-delete";
@@ -116,31 +115,16 @@ export default function CampaignPageView({ api, path }: { api: AccountApi; path:
 
   // Fail closed: only a role the API names as a DM role shows the DM tools (a missing or new one does not).
   const isDm = page.role === "owner" || page.role === "co-dm";
-  const e = encodeURIComponent(ref);
-  type Link = [href: string, label: string, note: string];
-  const story: Link[] = [];
-  if (isDm && RECAPS_LIVE) story.push([`/account/recaps?campaign=${e}`, words.pages.recaps, words.pageNotes.recaps]);
-  story.push([`/account/timeline/${e}`, words.pages.timeline, words.pageNotes.timeline]);
-  story.push([`/account/web/${e}`, words.pages.graph, words.pageNotes.graph]);
-  if (isDm) story.push([`/account/names/${e}`, words.pages.names, words.pageNotes.names]);
-  const table: Link[] = [[`/account/transcripts/${e}`, words.pages.transcripts, words.pageNotes.transcripts]];
-  if (isDm && (IMPORT_LIVE || page.importsOn)) table.push([`/account/import/${e}`, words.pages.import, words.pageNotes.import]);
-  // House rules and homebrew are read by anyone in the server (only changing them is the DM's, in
-  // Discord), so they are for the whole table.
-  const rules: Link[] = [
-    [`/account/house-rules/${e}`, words.pages.houseRules, words.pageNotes.houseRules],
-    [`/account/homebrew/${e}`, words.pages.homebrew, words.pageNotes.homebrew],
-  ];
-  if (isDm) rules.push(["/account/sharing", words.sharedRules, words.sharedRulesNote]);
+  const parts = sectionPages(ref ?? "", { isDm, importsOn: page.importsOn });
   const mine = card ?? null;
   return (
     <div class="stack campaign-page">
       <CampaignNav api={api} campaignRef={ref} page="campaign" name={page.name} />
       <p class="muted">{words.lead(page.serverName)}</p>
       {mine && <CampaignFacts campaign={mine} />}
-      <LinkList heading={words.groups.story} id="story" links={story} />
-      <LinkList heading={words.groups.table} id="table" links={table} />
-      <LinkList heading={words.groups.rules} id="rules" links={rules} />
+      <LinkList heading={words.groups.story} id="story" links={parts.story} />
+      {parts.add.length > 0 && <LinkList heading={words.groups.add} id="add" links={parts.add} />}
+      <LinkList heading={words.groups.rules} id="rules" links={parts.rules} />
       {SHEETS_LIVE && api.campaignSheets && (
         <LazyPanel load={() => import("./Sheets")} what="the character sheets" props={{ api, campaignRef: ref }} />
       )}
@@ -167,12 +151,12 @@ export default function CampaignPageView({ api, path }: { api: AccountApi; path:
   );
 }
 
-function LinkList({ heading, id, links }: { heading: string; id: string; links: [string, string, string][] }) {
+function LinkList({ heading, id, links }: { heading: string; id: string; links: SectionPage[] }) {
   return (
     <section class="stack" aria-labelledby={`${id}-heading`} id={id}>
       <h2 id={`${id}-heading`}>{heading}</h2>
       <ul class="campaigns">
-        {links.map(([href, label, note]) => (
+        {links.map(({ href, label, note }) => (
           <li key={href}>
             <a href={href}>{label}</a>
             <span class="small muted block">{note}</span>

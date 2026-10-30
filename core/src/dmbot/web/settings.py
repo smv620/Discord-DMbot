@@ -134,6 +134,9 @@ class WebSettings:
     # "Make it again" on a session's report (#2661; DMBOT_WEB_REPORT_MAKE): off, the route that
     # queues the request answers 404, so nothing is queued before the bot (#2805) takes it.
     report_make_on: bool = False
+    # Upload lore on the website (#3022; DMBOT_WEB_LORE): off, the routes that queue an upload
+    # answer 404, so nothing is queued before the bot's half (#3022) reads it.
+    lore_on: bool = False
     # Sharing house rules from the website (#2783; DMBOT_WEB_RULE_SHARING): off, the routes that
     # queue a choice answer 404, so nothing is queued before the bot can run it.
     rule_sharing_on: bool = False
@@ -370,6 +373,9 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
         raise ConfigError(
             f'DMBOT_WEB_REPORT_MAKE must be 1 (on) or 0 (off), got "{report_make_raw}".'
         )
+    lore_raw = (get("DMBOT_WEB_LORE") or "0").lower()
+    if lore_raw not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError(f'DMBOT_WEB_LORE must be 1 (on) or 0 (off), got "{lore_raw}".')
     sheets_raw = (get("DMBOT_WEB_SHEETS") or "0").lower()
     if sheets_raw not in ("0", "1", "true", "false", "on", "off"):
         raise ConfigError(f'DMBOT_WEB_SHEETS must be 1 (on) or 0 (off), got "{sheets_raw}".')
@@ -388,6 +394,7 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
         web_restore_on=restore_raw in ("1", "true", "on"),
         co_dms_on=co_dms_raw in ("1", "true", "on"),
         report_make_on=report_make_raw in ("1", "true", "on"),
+        lore_on=lore_raw in ("1", "true", "on"),
         recaps_on=recaps_raw in ("1", "true", "on"),
         plot_check_on=recaps_raw in ("1", "true", "on")
         and (get("DMBOT_PLOT_CHECK") or "0").lower() in ("1", "true", "on"),
