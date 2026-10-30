@@ -1244,7 +1244,12 @@ class TheKeptDirection(unittest.IsolatedAsyncioTestCase):
             calls.append({"args": args, **kw})
             return SimpleNamespace(value=(SimpleNamespace(id="r"),), batch=1)
 
-        memory = SimpleNamespace(add_relation=add_relation, pin=AsyncMock())
+        memory = SimpleNamespace(
+            add_relation=add_relation,
+            pin=AsyncMock(),
+            ontology=AsyncMock(return_value=SimpleNamespace(predicates={})),
+            relations=AsyncMock(return_value=[]),
+        )
         store = SimpleNamespace(remove=AsyncMock())
 
         def waiting(detail: str) -> Any:
