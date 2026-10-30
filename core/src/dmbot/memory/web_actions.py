@@ -769,7 +769,8 @@ async def _answer_waiting(
     if link is None:
         return _failed(NOT_FOUND)
     one = replace(link, secret=link.secret or a.flag)  # "keep as secret" only ever hides more
-    kept = await keep.keep_all(memory, w.backstory, guild_id, cid, [one])
+    # (the DM's own "Keep as secret" press hides an existing public twin; a spelling does not)
+    kept = await keep.keep_all(memory, w.backstory, guild_id, cid, [one], keep_flags=not a.flag)
     return Outcome(result_id="1") if kept.kept else _failed(BAD_TARGET)
 
 
