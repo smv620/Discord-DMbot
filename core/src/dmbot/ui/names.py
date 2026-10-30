@@ -554,6 +554,10 @@ async def show_home(interaction: discord.Interaction, campaign_id: str) -> None:
             connections += len(await memory.suggested_names(campaign.guild_id, campaign.id))
         except Exception:
             log.exception("Couldn't count the suggested names")
+        try:  # and unnamed people who may be a named one (#3037)
+            connections += len(await memory.same_person_offers(campaign.guild_id, campaign.id))
+        except Exception:
+            log.exception("Couldn't count the possible matches")
         try:  # so do family links worked out from the DM's own (#2960)
             await memory.rework_family(campaign.guild_id, campaign.id)
             connections += len(await memory.worked_out_waiting(campaign.guild_id, campaign.id))
