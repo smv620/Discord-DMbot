@@ -56,6 +56,7 @@ _STAGES = {
     "looking": q.READING,
     "shaping": q.FINDING_NAMES,
     "who": q.FINDING_LINKS,
+    "sorting": q.FINDING_LINKS,
 }
 
 
@@ -197,8 +198,7 @@ async def _read(bot: Any, queue: LoreQueue, claim: Claim, guild_id: int) -> tupl
             guild_id, campaign.id, claim.rights_by, OWN_WRITING, fingerprint(text)
         )
         upload = Upload(text, LABELS.get(claim.source, "your lore"), document=True)
-        # (`claim.choice`, what the lore is known as, is #2959's: until it lands the read is what
-        # Discord's does today, "may change in play")
+        # (`claim.choice` is what the players know of it: world, spoilers or smart, #2959)
         report = _Reporter(queue, guild_id, claim)
         try:
             async with report:
@@ -211,6 +211,7 @@ async def _read(bot: Any, queue: LoreQueue, claim: Claim, guild_id: int) -> tupl
                     known_by=known_by,
                     started=time.monotonic(),
                     progress=report,
+                    choice=claim.choice,
                 )
         except asyncio.CancelledError:
             if (

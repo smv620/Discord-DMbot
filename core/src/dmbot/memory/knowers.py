@@ -180,6 +180,32 @@ async def set_statement_knowers(
     return list(chosen)
 
 
+async def mark_guess(w: Changes, kind: str, statement_ids: Sequence[str], certainty: float) -> int:
+    """The player characters who know these statements only because the AI guessed so (an upload's
+    Smart guess, #2959) are recorded as sure to `certainty`, not 1.0: a guess is not the DM's word.
+    Only the player characters' rows are touched, only down from sure, and no row is made or
+    removed (the old flags' hook makes them; an NPC's or a group's row is never read here).
+    Returns how many rows changed."""
+    if w.source != DM:
+        raise MemoryRuleError(ONLY_THE_DM)
+    if kind not in _COLUMNS:
+        raise MemoryRuleError(NO_SUCH_STATEMENT)
+    if not 0.0 <= certainty < KNOWN:
+        raise MemoryRuleError(BAD_CERTAINTY)
+    column, _ = _COLUMNS[kind]
+    views = await _player_views(w)
+    if not views or not statement_ids:
+        return 0
+    rows = await w.select(
+        KNOWERS,
+        f" AND {column} = ANY(%s) AND perspective_id = ANY(%s) AND confidence > %s",
+        [list(statement_ids), views, certainty],
+    )
+    for row in rows:
+        await w.update(KNOWERS, row["id"], {"confidence": certainty})
+    return len(rows)
+
+
 async def statement_knowers(
     scope: Scope, kind: str, statement_ids: Sequence[str]
 ) -> dict[str, list[str]]:
