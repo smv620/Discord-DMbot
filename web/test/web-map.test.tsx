@@ -194,11 +194,69 @@ describe("the map", () => {
 
   it("says a line's words only for the name in focus, and counts a line that holds several connections", () => {
     draw();
-    // Each text holds its tooltip (the full words) first and what is drawn last.
+    // Each text holds its tooltip (the line's full words) first and what is drawn last.
     const texts = () => [...document.querySelectorAll(".web-edge-text")].map((t) => t.lastChild?.textContent);
     expect(texts()).toEqual(["2 connections"]);
-    fireEvent.pointerEnter(nodeOf("Far Hall"));
-    expect(texts()).toEqual(["2 connections", "lives at"]);
+    fireEvent.pointerEnter(nodeOf("Mira"));
+    expect(texts()).toEqual(["serves (+1)", "lives at"]); // (read from Mira, who is where they are worded from)
+    expect(document.querySelectorAll(".web-arrow")).toHaveLength(2);
+  });
+
+  it("reads a line from the focused end: the other wording with an arrow away, or nothing and no arrowhead", () => {
+    const owned: WebEdge[] = [
+      { a: "m", b: "g", label: "owns", more: 0, links: [{ ...link("l1", "owns"), back: "is owned by" }] },
+      { a: "m", b: "h", label: "lives at", more: 0, links: [link("l3", "lives at")] },
+    ];
+    const texts = () => [...document.querySelectorAll(".web-edge-text")].map((t) => t.lastChild?.textContent);
+    render(<WebMap nodes={nodes} edges={owned} center="m" refId="1.a" selected={null} onCenter={() => {}} onLine={() => {}} />);
+    fireEvent.pointerEnter(nodeOf("Garrick")); // the owned end: it has its own wording
+    expect(texts()).toEqual(["is owned by"]);
+    expect(document.querySelectorAll(".web-arrow")).toHaveLength(1);
+    fireEvent.pointerLeave(nodeOf("Garrick"));
+    fireEvent.pointerEnter(nodeOf("Far Hall")); // the end with no wording: the line stays, with no words and no arrowhead
+    expect(texts()).toEqual([]);
+    expect(document.querySelectorAll(".web-arrow")).toHaveLength(0);
+    expect(document.querySelectorAll(".web-line").length).toBeGreaterThan(0);
+  });
+
+  it("keeps the chosen line's full words when the name in focus touches it, and its tooltip keeps the full words", () => {
+    const texts = () => [...document.querySelectorAll(".web-edge-text")].map((t) => t.lastChild?.textContent);
+    render(<WebMap nodes={nodes} edges={edges} center="m" refId="1.a" selected={{ a: "m", b: "g" }} onCenter={() => {}} onLine={() => {}} />);
+    fireEvent.pointerEnter(nodeOf("Mira"));
+    expect(texts()).toContain("serves (+1)"); // (the chosen line: its full words, as the server worded them)
+    expect([...document.querySelectorAll(".web-edge-text title")].map((t) => t.textContent)).toContain("serves (+1)");
+  });
+
+  it("says how many when a bundle has no wording from the focused end, and a hover wins over the pick", () => {
+    const bundle: WebEdge[] = [{ a: "m", b: "g", label: "serves", more: 1, links: [link("l1", "serves"), link("l2", "owes")] }];
+    const texts = () => [...document.querySelectorAll(".web-edge-text")].map((t) => t.lastChild?.textContent);
+    render(<WebMap nodes={nodes} edges={bundle} center="m" refId="1.a" selected={null} onCenter={() => {}} onLine={() => {}} />);
+    fireEvent.pointerEnter(nodeOf("Garrick")); // the end with no wording
+    expect(texts()).toEqual(["2 connections"]);
+    expect(document.querySelectorAll(".web-arrow")).toHaveLength(0);
+    fireEvent.click(nodeOf("Mira")); // picks Mira; but Garrick is still hovered
+    expect(texts()).toEqual(["2 connections"]);
+    fireEvent.pointerLeave(nodeOf("Garrick"));
+    expect(texts()).toEqual(["serves (+1)"]); // (now read from the pick)
+  });
+
+  it("draws the arrowhead beside the other name and pointing at it", () => {
+    render(<WebMap nodes={nodes} edges={[edges[1]!]} center="m" refId="1.a" selected={null} onCenter={() => {}} onLine={() => {}} />);
+    fireEvent.pointerEnter(nodeOf("Mira"));
+    const d = document.querySelector(".web-arrow")!.getAttribute("d")!;
+    expect(d).toMatch(/^M-?[\d.]+ -?[\d.]+L-?[\d.]+ -?[\d.]+L-?[\d.]+ -?[\d.]+Z$/);
+    expect(d).not.toContain("NaN");
+  });
+
+  it("reads from the name that was picked when nothing is hovered, and a mutual line has the words but no arrowhead", () => {
+    const mutual: WebEdge[] = [{ a: "m", b: "g", label: "allies with", more: 0, links: [{ ...link("l1", "allies with"), direction: "both" }] }];
+    const texts = () => [...document.querySelectorAll(".web-edge-text")].map((t) => t.lastChild?.textContent);
+    render(<WebMap nodes={nodes} edges={mutual} center="m" refId="1.a" selected={null} onCenter={() => {}} onLine={() => {}} />);
+    expect(texts()).toEqual([]);
+    fireEvent.click(nodeOf("Garrick"));
+    fireEvent.pointerLeave(nodeOf("Garrick"));
+    expect(texts()).toEqual(["allies with"]);
+    expect(document.querySelectorAll(".web-arrow")).toHaveLength(0);
   });
 
   it("opens a line from the keyboard", () => {

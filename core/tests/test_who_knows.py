@@ -225,10 +225,14 @@ class WhoKnows(MemoryTest):
     async def test_a_characters_earlier_npc_view_becomes_a_players(self) -> None:
         ids = await self.setup_table()
         async with self.db.guild(GUILD_A) as conn:  # made as an NPC's before the player joined
+            await conn.execute(  # (so the view the table made for the player is the NPC's first)
+                "UPDATE memory_perspectives SET kind = 'npc' WHERE entity_id = %s", (ids["tavin"],)
+            )
             await conn.execute(
                 "INSERT INTO memory_perspectives (guild_id, campaign_id, id, kind, entity_id,"
-                " created_at) VALUES (%s, %s, %s, 'npc', %s, 1)",
-                (GUILD_A, self.c, "e" * 32, ids["tavin"]),
+                " created_at) SELECT %s, %s, %s, 'npc', %s, 1 WHERE NOT EXISTS (SELECT 1 FROM"
+                " memory_perspectives WHERE entity_id = %s)",
+                (GUILD_A, self.c, "e" * 32, ids["tavin"], ids["tavin"]),
             )
         link = await self.hidden_link(ids["voss"], ids["council"])
         await self.memory.set_connection_knowers(GUILD_A, self.c, link, [ids["tavin"]], source=DM)

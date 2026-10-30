@@ -57,6 +57,7 @@ from dmbot.memory._changes import (
     ENTITIES,
     FLAGS,
     IMPRESSIONS,
+    KNOWERS,
     MENTIONS,
     NOT_FOUND,
     PERSPECTIVES,
@@ -4450,8 +4451,11 @@ class MemoryStore:
             # (new words can raise a check's flag in the same change: it goes back with them, and
             # so do the beliefs written for the connections it added or ended, #2409)
             others = await cur.fetchall()
+            # (and who knows each, #2995: the lists follow a connection ending or starting, each
+            # write logged in the same batch, so they go back with it)
             if not rows or any(
-                o["table_name"] not in (FLAGS.name, BELIEFS.name) or o["op"] != "insert"
+                o["table_name"] not in (FLAGS.name, BELIEFS.name, KNOWERS.name)
+                or (o["op"] != "insert" and o["table_name"] != KNOWERS.name)
                 for o in others
             ):
                 raise TooLateToUndo(self._too_late())

@@ -176,6 +176,10 @@ def visible(viewer: Viewer, data: Statements) -> Visible:
         elif who and len(known) == len(who):  # every one of them must know it
             sureness[key] = min(known)
 
+    # A character knows that it exists itself (§9b, self-knowledge): never written as a row.
+    for c in who if viewer.mode == "any" or len(who) == 1 else ():
+        sureness[(ENTRY, c)] = 1.0
+
     def of(kind: str) -> set[str]:
         return {i for (k, i) in sureness if k == kind}
 
