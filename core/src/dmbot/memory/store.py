@@ -3589,13 +3589,15 @@ class MemoryStore:
                     w, a, party_mod.KNOWS, b, confidence=1.0, status=CONFIRMED, leave=True
                 )
                 pairs += 1
-            for c in chars if faction is not None else ():  # (no party: the DM rejected it)
-                if (c, party_mod.MEMBER_OF, faction) in have:
-                    continue
-                await self.add_relation_in(
-                    w, c, party_mod.MEMBER_OF, faction, confidence=1.0, status=CONFIRMED, leave=True
-                )
-                members += 1
+            if faction is not None:  # (none: the DM rejected the party, so nobody is added to it)
+                for c in chars:
+                    if (c, party_mod.MEMBER_OF, faction) in have:
+                        continue
+                    await self.add_relation_in(
+                        w, c, party_mod.MEMBER_OF, faction,
+                        confidence=1.0, status=CONFIRMED, leave=True,
+                    )  # fmt: skip
+                    members += 1
             return party_mod.PartyLinked(len(chars), pairs, members, made)
 
     async def add_relation(
