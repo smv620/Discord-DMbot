@@ -321,8 +321,12 @@ def offer_text(
         "DMbot's AI suggests names and the connections your text states, each with its line. "
         "You check each one.\n\n"
         f"**Treat this lore as:** {how} Tap the lore button to switch.\n\n"
-        f"**Who knows it:** {KNOWS_TEXT[lore_knowledge.normalize(knows)]} "
-        "Tap the Players button to switch.\n\n"
+        + (
+            ""
+            if speaker  # a character's backstory: the players' knowledge is not asked
+            else f"**Who knows it:** {KNOWS_TEXT[lore_knowledge.normalize(knows)]} "
+            "Tap the Players button to switch.\n\n"
+        )
         + (whose_text(speaker) if ask else "")
         + f"{rights_text()}"
     )
@@ -421,6 +425,10 @@ class BackgroundOffer(_Menu):
         memory = _memory(interaction)
         pcs = {c for c, _ in await player_characters(memory, campaign)} if memory else set()
         self.known_by = picked if picked in pcs else ""
+        # The three choices are for campaign lore: a character's backstory stays as it was (#2959)
+        self.knows = lore_knowledge.DEFAULT if self.speaker else self.knows
+        self.knows_button.label = KNOWS_LABELS[self.knows]
+        self.knows_button.disabled = bool(self.speaker)
         for option in self.whose.options:
             option.default = option.value == picked
         await interaction.response.edit_message(
@@ -694,7 +702,16 @@ async def read_background(
         rules=(campaign.target_ruleset, campaign.fallback_ruleset),
     )
     choice = lore_knowledge.normalize(choice)
-    world_names, world_links, sorted_ok = await _world(choice, found, read.links, ai, progress)
+    if speaker:  # a character's backstory stays as it was: the choices are for campaign lore
+        choice = lore_knowledge.SPOILERS
+    world_names, world_links, sorted_ok = await _world(
+        choice,
+        found,
+        read.links,
+        ai,
+        progress,
+        until=started + lore_read.LORE_TIME_LIMIT_S - WHO_SUMMARY_MARGIN_S,
+    )
     pcs = await keep.player_character_ids(memory, campaign.guild_id, campaign.id)
     stored = await store(
         memory,
@@ -707,7 +724,6 @@ async def read_background(
         # a disguise becomes a plain other name only when the DM said everything is known;
         # under the smart guess it stays secret whatever the AI says (DM authority)
         fold_secret=choice == lore_knowledge.WORLD,
-        pcs=pcs,
     )
     questions: list[str] = []
     keys: set[tuple[str, str, str]] = set()
@@ -733,6 +749,7 @@ async def read_background(
         secret_spellings=read.secret_spellings,
         world_links=world_links,
         world_all=choice == lore_knowledge.WORLD,
+        world_level=lore_knowledge.level_of(choice),
     )
     ready = await count_ready(bot, campaign, keys)
     changes = await count_changes(bot, memory, campaign, keys)
@@ -772,6 +789,7 @@ async def _world(
     links: Sequence[bg.Connection],
     ai: Any,
     progress: Callable[[str, int, int], None] | None = None,
+    until: float | None = None,
 ) -> tuple[set[str], set[tuple[str, str, str]], bool]:
     """What the upload's choice says every player character knows (#2959): the names (by key) and
     the connections (by their two names' keys and the kind), and whether it could all be sorted.
@@ -795,7 +813,7 @@ async def _world(
         if progress is not None:
             progress("sorting", done, total)
 
-    known, ok = await lore_knowledge.decide(choice, lines, ai, sorting)
+    known, ok = await lore_knowledge.decide(choice, lines, ai, sorting, until)
     names = {name_key(f.name) for i, f in enumerate(found) if i in known}
     keys = {_link_key(c.a, c.how, c.b) for i, c in enumerate(links, len(found)) if i in known}
     return names, keys, ok
@@ -810,24 +828,23 @@ async def store(
     known_by: str = "",
     world: Collection[str] = (),
     fold_secret: bool = False,
-    pcs: Sequence[str] | None = None,
 ) -> dict[str, list[str]]:
     """Each name as a suggestion with its quote (never confirmed), its other spellings with it and
     a disguise kept as a secret name. One change for the whole list: one reload of the live names,
     one Undo. Returns the new suggestions' IDs for each kind. What is stored stays the short quote
     (the text is never kept, #2167); `held` gets the sentence around each name, cut from `text`
     while it is still in memory, for the review card to show (#2561): memory only, never stored.
-    `world` (#2959): the keys of the names every player character knows (the upload's choice); each
-    is known by every player character, at 1.0, with its other names. `fold_secret`: only when the
-    DM chose "everyone knows it", a disguise the text gives is just another public name. `pcs`: the
-    player characters (read once for the batch).
+    `world` (#2959): the keys of the names the players know (the upload's choice); each is stored
+    not held back from them, with its other names, so the old flags show it once the DM confirms
+    it and the who-knows list follows the flags (nothing is written to that list here).
+    `fold_secret`: only when the DM chose "everyone knows it", a disguise the text gives is just
+    another public name.
     `known_by` (the uploader's player character, #2935): a secret name the upload gives starts as
     known by that character, as a kept connection does; with none, it is the DM's alone. That is
     set after the names, in changes of its own: Undo of the names removes the name and, with it,
     who knew it."""
     names: list[NewName] = []
     items: list[bg.Found] = []
-    knowing: set[int] = set()  # positions in `names` of the ones every player character knows
     for item in found:
         try:
             check_named(item.kind, item.name)  # one refused name must not stop the others
@@ -842,12 +859,16 @@ async def store(
             item = replace(item, also=tuple(dict.fromkeys((*item.also, *item.secret))), secret=())
         names.append(
             NewName(
-                item.name, item.kind, PROPOSED, others=item.also, secrets=item.secret, note=note
+                item.name,
+                item.kind,
+                PROPOSED,
+                others=item.also,
+                secrets=item.secret,
+                note=note,
+                shown=known,
             )
         )
         items.append(item)
-        if known:
-            knowing.add(len(names) - 1)
     stored: dict[str, list[str]] = {}
     if not names:
         return stored
@@ -858,13 +879,9 @@ async def store(
     except MemoryRuleError as exc:
         log.info("Skipped the names from a background: %s", exc)
         return stored
-    for position, (name, item, entity_id) in enumerate(
-        zip(names, items, written.value, strict=False)
-    ):
+    for name, item, entity_id in zip(names, items, written.value, strict=False):
         if entity_id is not None:
             stored.setdefault(name.type, []).append(entity_id)
-            if position in knowing:
-                await _everyone_knows(memory, campaign, entity_id, pcs)
             if held is not None and text:
                 held.put(
                     campaign.guild_id,
@@ -874,23 +891,6 @@ async def store(
             if known_by and item.secret:
                 await _secret_names_known_by(memory, campaign, entity_id, item.secret, known_by)
     return stored
-
-
-async def _everyone_knows(
-    memory: MemoryStore, campaign: Campaign, entity_id: str, pcs: Sequence[str] | None = None
-) -> None:
-    """A name every player character knows (#2959): the entry and each of its other names. A name
-    whose first record fails stays with the DM alone: the names are stored either way."""
-    try:
-        await keep.know_world(memory, campaign.guild_id, campaign.id, "entry", [entity_id], pcs)
-        others = await memory.aliases(
-            campaign.guild_id, campaign.id, entity_id=entity_id, include_secret=True
-        )
-        await keep.know_world(
-            memory, campaign.guild_id, campaign.id, "alias", [a.id for a in others], pcs
-        )
-    except Exception:
-        log.exception("A name's general knowledge could not be recorded")
 
 
 async def _secret_names_known_by(
@@ -1137,6 +1137,7 @@ async def queue_links(
     secret_spellings: Collection[str] = (),
     world_links: Collection[tuple[str, str, str]] = (),
     world_all: bool = False,
+    world_level: int = lore_knowledge.SURE,
 ) -> int:
     """Keep the reading's connections for later (`BackstoryLinks`), as entry IDs. An end is a
     name of this reading or a confirmed public name of the campaign; a pair the campaign has
@@ -1154,10 +1155,10 @@ async def queue_links(
     is no end. `secret_spellings`: every disguise this read listed (new names' and known names'):
     a connection found through one is kept as secret like any other that touches a disguise.
 
-    `world_links` (#2959): the connections (their two names' keys and the kind) every player
-    character knows once kept, by the upload's choice; `world_all`: all of them (the DM said
-    everything is known), which also covers the ones made from a settled pronoun or an unnamed
-    person."""
+    `world_links` (#2959): the connections (their two names' keys and the kind) the players know
+    once kept, by the upload's choice; `world_all`: all of them (the DM said everything is known),
+    which also covers the ones made from a settled pronoun, a "Which one?" question and an unnamed
+    person. `world_level`: how they are known (`lore_knowledge.SURE`, or `GUESS` for the AI's)."""
     store = getattr(bot, "backstory_links", None)
     if store is None or not (any(answers) or unsettled):
         return 0
@@ -1233,7 +1234,18 @@ async def queue_links(
         if dropped is not None:
             dropped["which_waiting"] += 1  # (`_queue_picks` takes back any lost)
     settled.unnamed = [replace(u, secret=name_key(u.fixed) in hidden) for u in settled.unnamed]
-    await _queue_picks(store, campaign, picks, entry, truth, upload, dropped, known_by, world_links)
+    await _queue_picks(
+        store,
+        campaign,
+        picks,
+        entry,
+        truth,
+        upload,
+        dropped,
+        known_by,
+        world_links,
+        world_level if world_all else 0,
+    )
     # (a kept connection may name an end by another spelling than the one the read listed: both
     # are compared by the entry they point to, either way round)
     world_ids = {
@@ -1253,7 +1265,11 @@ async def queue_links(
             upload,
             c.decided,
             known_by,
-            (a, c.how, b) in world_ids or (c.how in symmetric and (b, c.how, a) in world_ids),
+            world_level
+            if world_all
+            or (a, c.how, b) in world_ids
+            or (c.how in symmetric and (b, c.how, a) in world_ids)
+            else 0,
         )
         for c in kept
         if (a := entry(c.a)) is not None and (b := entry(c.b)) is not None
@@ -1271,7 +1287,7 @@ async def queue_links(
             upload,
             dropped,
             known_by,
-            world_all,
+            world_level if world_all else 0,
         )
         held = {(r.subject_id, r.predicate, r.object_id) for r in rows}
         for r in made_rows:  # (two lines about one unnamed person are one row)
@@ -1307,7 +1323,7 @@ async def _unnamed_rows(
     upload: str,
     dropped: bg.Dropped | None,
     known_by: str = "",
-    world: bool = False,
+    world: int = 0,
 ) -> list[NewLink]:
     """The relationships kept with a person the read could not name (#2790): each makes (or finds)
     the unnamed entry, hung off the named end when the story gave a relationship word. A named end
@@ -1355,9 +1371,11 @@ async def _queue_picks(
     dropped: bg.Dropped | None,
     known_by: str = "",
     world_links: Collection[tuple[str, str, str]] = (),
+    world_all: int = 0,
 ) -> int:
-    """Queue the "Which Mara?" questions (#2650). One whose names are not entries of the campaign
-    after all is counted as not found, so the summary's parts still add up."""
+    """Queue the "Which Mara?" questions (#2650). `world_all`: how every one is known when the
+    upload says all of it is (0: by `world_links`, one by one). One whose names are not entries
+    of the campaign after all is counted as not found, so the summary's parts still add up."""
     rows: list[NewWhich] = []
     for p in picks:
         fixed = entry(p.fixed)
@@ -1381,12 +1399,17 @@ async def _queue_picks(
                 upload,
                 p.decided,
                 known_by,
-                (
-                    _link_key(p.fixed, p.how, p.word)
-                    if p.fixed_is_a
-                    else _link_key(p.word, p.how, p.fixed)
-                )
-                in world_links,
+                world_all
+                or (
+                    lore_knowledge.GUESS
+                    if (
+                        _link_key(p.fixed, p.how, p.word)
+                        if p.fixed_is_a
+                        else _link_key(p.word, p.how, p.fixed)
+                    )
+                    in world_links
+                    else 0
+                ),
             )
         )
     added = int(await store.add_which(campaign.guild_id, campaign.id, rows)) if rows else 0
@@ -1863,16 +1886,20 @@ class ConnectionOffer(_Menu):
             # don't know) is kept as secret whichever button was pressed: never a public
             # connection naming a hidden end.
             old = self._old(c)
-            start = keep.change_start(old, int(time.time()))
+            now = int(time.time())
+            start = keep.change_start(old, now)
             ended: list[int | None] = []
             try:
+                shown = await keep.shown_entry_ids(memory, campaign.guild_id, campaign.id)
                 await keep.end_replaced(memory, campaign.guild_id, campaign.id, old, start, ended)
                 kept = await memory.add_relation(
                     campaign.guild_id, campaign.id, c.subject_id, c.predicate, c.object_id,
                     source=DM, confidence=1.0, status=CONFIRMED, secret=secret or c.secret,
                     detail=c.detail,
                     directional=kin.directional(c.detail),  # "a is the parent of b" keeps its order
-                    unrevealed=True,  # a backstory connection waits to be said at the table (#2404)
+                    # a backstory connection waits to be said at the table (#2404), unless the
+                    # upload said the players know it and both its ends are shown (#2959)
+                    unrevealed=keep.kept_unrevealed(c, secret or c.secret, shown),
                     # ✅ Keep: the uploader's character knows it from the start; 🤫 Keep as secret
                     # is the DM's alone (#2935)
                     known_by=[c.known_by] if c.known_by and not (secret or c.secret) else (),
@@ -1889,9 +1916,11 @@ class ConnectionOffer(_Menu):
                     "DMbot couldn't keep that one. Press ❌ No to move on, or try again.",
                 )
                 return
-            if c.world and not (secret or c.secret):  # general knowledge, kept in the open (#2959)
-                await keep.know_world(
-                    memory, campaign.guild_id, campaign.id, "connection", [kept.value[0].id]
+            made = kept.value[0]
+            # (only a connection made just now: an older twin's rows are the DM's, not a guess's)
+            if c.world == lore_knowledge.GUESS and not made.unrevealed and made.created_at >= now:
+                await keep.mark_guess(
+                    memory, campaign.guild_id, campaign.id, "connection", [made.id]
                 )
             if c.truth:  # the DM called this upload 100% truth when they uploaded it (#2447)
                 try:

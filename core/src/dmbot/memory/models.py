@@ -217,6 +217,9 @@ class NewName:
     secrets: tuple[str, ...] = ()
     role: str | None = None  # for a character: player character, NPC or god
     note: str = ""  # shown with a suggestion until the DM decides (a quote, how it was found)
+    # Not held back from the players: the DM said the world knows this name (an upload's "World
+    # general knowledge", #2959). The list of who knows it follows once the DM confirms the name.
+    shown: bool = False
 
 
 @dataclass(frozen=True, slots=True)

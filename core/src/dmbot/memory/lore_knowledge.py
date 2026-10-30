@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from collections.abc import Callable, Sequence
 from typing import Any, Protocol
 
@@ -29,6 +30,18 @@ log = logging.getLogger(__name__)
 WORLD, SPOILERS, SMART = "world", "spoilers", "smart"
 CHOICES = (WORLD, SPOILERS, SMART)
 DEFAULT = SPOILERS  # what an upload did before there was a choice
+
+# How a waiting statement is known once kept (the `world` column): the DM's word (World general
+# knowledge), the AI's guess (Smart guess, written at 0.75, "surely", not as the DM's word), or not
+# at all (Spoilers). The players are shown it through the old flags; the who-knows list follows.
+NOT_KNOWN, SURE, GUESS = 0, 1, 2
+GUESS_CERTAINTY = 0.75
+
+
+def level_of(choice: str) -> int:
+    """How the statements this choice calls world knowledge are known."""
+    return {WORLD: SURE, SMART: GUESS}.get(choice, NOT_KNOWN)
+
 
 MAX_STATEMENTS = 300  # one call; a longer list is sorted in parts of this size
 LINE_MAX = 240  # characters of one statement's line
@@ -121,11 +134,14 @@ async def decide(
     lines: Sequence[str],
     ai: Client | None = None,
     progress: Callable[[int, int], None] | None = None,
+    until: float | None = None,
 ) -> tuple[set[int], bool]:
     """(the indexes of `lines` that every player character knows, whether every part was sorted).
     WORLD is all of them, SPOILERS none. SMART asks the AI in parts, telling `progress(done,
     total)` as each ends; a part that fails (no AI, a refusal, an unreadable answer) is all
-    spoilers, never all world, and the second answer is False so the DM can be told."""
+    spoilers, never all world, and the second answer is False so the DM can be told. `until` is a
+    `time.monotonic()` deadline: a part not started by then is all spoilers too, so a slow sort
+    cannot use up the read's own time limit before any name is stored."""
     if choice == WORLD:
         return set(range(len(lines))), True
     if choice != SMART or not lines:
@@ -136,6 +152,9 @@ async def decide(
     answered = True
     starts = range(0, len(lines), MAX_STATEMENTS)
     for done, start in enumerate(starts):
+        if until is not None and time.monotonic() >= until:
+            answered = False
+            break
         if progress is not None:
             progress(done, len(starts))
         picked = await _part(ai, lines[start : start + MAX_STATEMENTS])

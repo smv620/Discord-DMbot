@@ -50,7 +50,7 @@ class NewLink:
     # The player character whose backstory it is (#2935): kept, it starts as known by them only.
     known_by: str = ""
     # Every player character knows it once kept (#2959): the upload's choice, or the AI's call.
-    world: bool = False
+    world: int = 0  # lore_knowledge.NOT_KNOWN/SURE/GUESS
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,7 +70,7 @@ class NewWhich:
     upload: str = ""
     decided: str = ""
     known_by: str = ""  # as on `NewLink`
-    world: bool = False  # as on `NewLink`
+    world: int = 0  # as on `NewLink`
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,7 +114,7 @@ class Waiting:
     told: bool = False  # the DM screen has said it is ready (#2650)
     decided: str = ""  # how a pronoun was settled (#2790), else ""
     known_by: str = ""  # the character who knows it once kept (#2935), else ""
-    world: bool = False  # every player character knows it once kept (#2959)
+    world: int = 0  # how the players know it once kept: lore_knowledge.NOT_KNOWN/SURE/GUESS (#2959)
 
 
 class BackstoryLinks:
@@ -152,7 +152,7 @@ class BackstoryLinks:
                     (guild_id, campaign_id, link.subject_id, link.predicate, link.object_id,
                      link.quote[:QUOTE_MAX], link.secret, link.detail, link.truth, now,
                      link.upload[:UPLOAD_MAX], link.decided[:DECIDED_MAX], link.known_by[:ID_MAX],
-                     link.world),
+                     int(link.world)),
                 )  # fmt: skip
                 added += cur.rowcount
                 if cur.rowcount == 0 and link.truth:  # already waiting: the new word is 100% truth
@@ -221,7 +221,7 @@ class BackstoryLinks:
                     (guild_id, campaign_id, w.other_id, w.other_is_subject, w.predicate,
                      w.word[:80], candidates,
                      w.quote[:QUOTE_MAX], w.secret, w.detail, w.truth, w.upload[:UPLOAD_MAX], now,
-                     w.decided[:DECIDED_MAX], w.known_by[:ID_MAX], w.world),
+                     w.decided[:DECIDED_MAX], w.known_by[:ID_MAX], int(w.world)),
                 )  # fmt: skip
                 added += cur.rowcount
         return added
@@ -346,7 +346,7 @@ class BackstoryLinks:
                         " %s, %s) ON CONFLICT DO NOTHING",
                         (guild_id, campaign_id, a, row["predicate"], b, row["quote"],
                          row["secret"], row["detail"], row["truth"], row["created_at"],
-                         row["upload"], decided, row["known_by"], row["world"]),
+                         row["upload"], decided, row["known_by"], int(row["world"])),
                     )  # fmt: skip
             await conn.execute(
                 "DELETE FROM backstory_which WHERE guild_id = %s AND campaign_id = %s AND id = %s",
@@ -418,7 +418,7 @@ class BackstoryLinks:
                         str(entities[a]["name"]), str(entities[b]["name"]),
                         ready, str(r["detail"]), bool(r["truth"]), str(r["id"]),
                         str(r["upload"]), bool(r["told"]), str(r["decided"]),
-                        str(r["known_by"]), bool(r["world"]),
+                        str(r["known_by"]), int(r["world"]),
                     )
                 )  # fmt: skip
             # Deletes first, then inserts: a moved row may land on a key a dropped row had.
@@ -433,7 +433,7 @@ class BackstoryLinks:
                     " ON CONFLICT DO NOTHING",
                     (guild_id, campaign_id, a, predicate, b, r["quote"], r["secret"],
                      r["detail"], r["truth"], r["created_at"], r["id"], r["upload"], r["told"],
-                     r["decided"], r["known_by"], r["world"]),
+                     r["decided"], r["known_by"], int(r["world"])),
                 )  # fmt: skip
         return out
 
