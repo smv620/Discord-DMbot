@@ -157,3 +157,55 @@ class TheNo(unittest.TestCase):
         other = Named("n3", "character", "Bram, guard of the gate")
         got = offers([GUARD], [KEN, other], declined={("u1", "n1")})
         self.assertEqual([o.named_id for o in got], ["n3"])
+
+
+class ThePrice(unittest.TestCase):
+    def test_each_named_entrys_words_are_worked_out_once(self) -> None:
+        from unittest.mock import patch
+
+        from dmbot.memory import same_person
+
+        unnamed = [Unnamed(f"u{i}", "character", "guard at the gate") for i in range(20)]
+        named = [Named(f"n{i}", "character", f"Person {i}, guard") for i in range(50)]
+        with patch.object(same_person, "meaningful", wraps=same_person.meaningful) as counted:
+            offers(unnamed, named)
+        self.assertEqual(counted.call_count, len(unnamed) + len(named))  # not their product
+
+
+class TheRows(unittest.TestCase):
+    def entry(self, eid: str, **kw: object) -> dict[str, object]:
+        base: dict[str, object] = {
+            "id": eid, "type": "character", "name": eid, "description": "", "status": "confirmed",
+            "unnamed": False, "unnamed_what": None, "unnamed_role": None,
+        }  # fmt: skip
+        return {**base, **kw}
+
+    def test_a_connection_to_an_entry_that_is_gone_is_not_evidence(self) -> None:
+        from dmbot.memory.same_person import from_rows
+
+        entries = [
+            self.entry("u1", unnamed=True, unnamed_what="watchman", status="proposed"),
+            self.entry("n1"),
+            self.entry("t1", type="place"),
+        ]
+        rel = [
+            {"subject_id": "u1", "predicate": "knows", "object_id": "gone"},
+            {"subject_id": "n1", "predicate": "knows", "object_id": "gone"},
+            {"subject_id": "u1", "predicate": "located_in", "object_id": "t1"},
+            {"subject_id": "n1", "predicate": "located_in", "object_id": "t1"},
+        ]
+        # (the one live shared connection is one piece of evidence: not enough alone)
+        self.assertEqual(from_rows(entries, [], rel, set()), [])
+
+    def test_a_declined_pair_in_either_order_is_not_offered(self) -> None:
+        from dmbot.memory.same_person import from_rows
+
+        entries = [
+            self.entry("n1", name="Ken", description="guard at the north gate"),
+            self.entry(
+                "a0", unnamed=True, unnamed_what="guard at the north gate", status="proposed"
+            ),
+        ]
+        self.assertEqual(len(from_rows(entries, [], [], set())), 1)
+        self.assertEqual(from_rows(entries, [], [], {("a0", "n1")}), [])  # (a0 sorts first)
+        self.assertEqual(from_rows(entries, [], [], {("n1", "a0")}), [])

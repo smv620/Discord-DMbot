@@ -19,6 +19,7 @@ from __future__ import annotations
 import re
 from collections.abc import Collection, Sequence
 from dataclasses import dataclass
+from typing import Any
 
 from dmbot.memory.models import name_key
 
@@ -106,6 +107,8 @@ def offers(
     for n in named:
         for link in n.links:
             holders[link] = holders.get(link, 0) + 1
+    # each named entry's words once, not once per pair (100 x 3,000 entries took 14 s otherwise)
+    words = {n.id: meaningful(n.words) for n in named}
     for u in unnamed:
         mine = meaningful(u.what)
         ranked: list[Offer] = []
@@ -115,7 +118,7 @@ def offers(
             said = (u.id, n.id) in stated
             # (a connection many hold says nothing about this one: it is not evidence)
             shared = sum(1 for link in u.links & n.links if holders[link] <= MAX_OFFERS_PER_ENTRY)
-            overlap = len(mine & meaningful(n.words))
+            overlap = len(mine & words[n.id])
             if not said and shared + overlap < MIN_EVIDENCE:
                 continue
             given: list[tuple[int, str]] = []
@@ -137,3 +140,48 @@ def offers(
         found.extend(ranked[:MAX_OFFERS_PER_ENTRY])
     found.sort(key=lambda o: (-o.score, o.unnamed_id, o.named_id))
     return found
+
+
+def from_rows(
+    entries: Sequence[dict[str, Any]],
+    aliases: Sequence[dict[str, Any]],
+    relations: Sequence[dict[str, Any]],
+    apart: Collection[tuple[str, str]],
+) -> list[Offer]:
+    """The offers for one campaign's rows (the store reads them, scoped to the campaign). An
+    unnamed entry is the left side, a named confirmed one of the same kind the right (a player's
+    character may be either: "the hooded stranger" can turn out to be one); a declined
+    pair is kept as `name_not_same` keeps it, in id order, and turned back into (unnamed, named).
+    `stated` is empty until a reading records "the text says it is": that is a later slice."""
+    # (the store hands over entries that are not players: a link through a person would let a
+    # shared player count as evidence for two different characters, so it is left out below)
+    live = {str(e["id"]) for e in entries}
+    spoken: dict[str, list[str]] = {}
+    for a in aliases:
+        if a["status"] == "confirmed":  # only names the DM said yes to count as evidence
+            spoken.setdefault(str(a["entity_id"]), []).append(str(a["text"]))
+    links: dict[str, set[Link]] = {}
+    for r in relations:
+        subject, other = str(r["subject_id"]), str(r["object_id"])
+        if subject not in live or other not in live:
+            continue  # a connection to a rejected or merged entry says nothing
+        links.setdefault(subject, set()).add((str(r["predicate"]), other, True))
+        links.setdefault(other, set()).add((str(r["predicate"]), subject, False))
+    unnamed: list[Unnamed] = []
+    named: list[Named] = []
+    for e in entries:
+        eid = str(e["id"])
+        mine = frozenset(links.get(eid, ()))
+        if e["unnamed"]:
+            what = " ".join(str(x) for x in (e["unnamed_what"], e["unnamed_role"]) if x)
+            unnamed.append(Unnamed(eid, str(e["type"]), what, mine))
+        elif e["status"] == "confirmed":
+            words = " ".join([str(e["name"]), *spoken.get(eid, []), str(e["description"] or "")])
+            named.append(Named(eid, str(e["type"]), words, mine))
+    # from the stored pairs, not by looping over every (unnamed, named) pair
+    left = {u.id for u in unnamed}
+    right = {n.id for n in named}
+    declined = {(a, b) for a, b in apart if a in left and b in right} | {
+        (b, a) for a, b in apart if b in left and a in right
+    }
+    return offers(unnamed, named, declined=declined)
