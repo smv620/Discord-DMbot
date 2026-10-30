@@ -74,7 +74,7 @@ class TheRule(unittest.TestCase):
         self.assertTrue(set(ONTO.predicates) >= INNER_STATE)
 
     def test_the_list_is_the_flag_on_the_definitions(self) -> None:
-        self.assertEqual(INNER_STATE, {"sworn_to", "ally_of", "enemy_of", "serves"})
+        self.assertEqual(INNER_STATE, {"sworn_to", "ally_of", "enemy_of", "serves", "rival_of"})
         flagged = {key for key, term in ONTO.predicates.items() if term.inner_state}
         self.assertEqual(flagged, INNER_STATE)
 

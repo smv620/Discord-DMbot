@@ -35,6 +35,12 @@ EXPECTED = {
     "resolves": OTHER,
     "promised_by": OTHER,
     "promised_to": OTHER,
+    "rival_of": OTHER,  # (a rival is shown as an enemy is: not a friend, not family)
+    "mentor_of": WORK,
+    "leads": GROUP,
+    "founded": GROUP,
+    "captive_of": OTHER,
+    "contains": WORK,
 }
 
 

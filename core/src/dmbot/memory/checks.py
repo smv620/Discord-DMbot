@@ -60,7 +60,7 @@ NESTS = "located_in"
 # word: a new relationship acts only when it is added here.
 ACTING = frozenset(
     {"carries", "serves", "sworn_to", "member_of", "knows", "appears_in", "ally_of",
-     "enemy_of"}
+     "enemy_of", "rival_of", "leads", "mentor_of"}
 )  # fmt: skip
 
 

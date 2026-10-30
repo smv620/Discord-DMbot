@@ -505,12 +505,13 @@ def _with_definition_fields(rows: list[Any]) -> list[Any]:
         elif isinstance(raw, dict) and raw.get("table") == "alias":
             raw = {"said_as": None, **raw}  # from before the narrator's spelling (#1419)
         elif isinstance(raw, dict) and raw.get("table") == "predicate":
-            old_format = "version" not in raw
             raw = {**_NEW_PREDICATE_FIELDS, **raw}
-            if old_format and raw.get("key") in core_predicates:
-                # A file from before the core took this name: never refused. The campaign's
-                # row is kept as replaced by the core one, and `recheck_definitions` looks at
-                # its facts against the core meaning.
+            if raw.get("key") in core_predicates:
+                # A campaign's own relationship whose name the core has taken since (from an old
+                # file, or a current one made before a release added the term, #3035): never
+                # refused. The campaign's row is kept as replaced by the core one, its
+                # connections use the core term, and `recheck_definitions` looks at its facts
+                # against the core meaning.
                 raw = {**raw, "status": DEPRECATED, "replaced_by": raw["key"], "version": 1}
         elif isinstance(raw, dict) and raw.get("table") == "relation":
             version = raw.get("definition_version", 1)

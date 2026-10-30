@@ -50,6 +50,10 @@
   Cache-Control: no-store
   X-Robots-Tag: noindex, nofollow
 
+/account/recap-style*
+  Cache-Control: no-store
+  X-Robots-Tag: noindex, nofollow
+
 /account/lore*
   Cache-Control: no-store
   X-Robots-Tag: noindex, nofollow

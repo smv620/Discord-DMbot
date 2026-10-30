@@ -41,6 +41,7 @@ const pages: [path: string, file: string, title: string, noindex: boolean][] = [
   ["/account/transcripts", "account/transcripts.astro", "Session transcripts · DMbot", true],
   ["/account/import", "account/import.astro", "Import sessions · DMbot", true],
   ["/account/lore", "account/lore.astro", "Upload lore · DMbot", true],
+  ["/account/recap-style", "account/recap-style.astro", "Recap style · DMbot", true],
   ["/account/names", "account/names.astro", "Names · DMbot", true],
   ["/account/web", "account/web.astro", "Story Graph · DMbot", true],
   ["/account/campaigns", "account/campaigns.astro", "Campaign · DMbot", true],
