@@ -41,7 +41,6 @@ from dmbot.campaigns.models import (
 from dmbot.campaigns.store import QUIET_STOP_CHOICES
 from dmbot.dm_screen import (
     handover,
-    import_button,
     messages,
     quiet_stop,
     story_mode,
@@ -52,9 +51,8 @@ from dmbot.dm_screen.buttons import may_change_screen, save_visibility
 from dmbot.dm_screen.clock import ClockButton
 from dmbot.dm_screen.delete_campaign import DeleteButton
 from dmbot.dm_screen.game_masters import GameMastersButton
-from dmbot.dm_screen.names_button import NamesButton
 from dmbot.dm_screen.pause import pause_buttons, pause_line
-from dmbot.dm_screen.recap_panel import RecapsButton
+from dmbot.dm_screen.recap_style import RecapStyleButton
 from dmbot.dm_screen.table_chat_panel import TableChatButton
 from dmbot.dm_screen.transcript_keep import TranscriptsButton
 from dmbot.logs import set_log_context
@@ -134,8 +132,8 @@ def _rules_cards_line(campaign: Campaign, viewer: int | None) -> str:
 # What waits here until the website has its page (#2986): each leaves this card, and this list,
 # as the website takes it over. Shown as one line under the card's buttons.
 NOT_ON_WEBSITE = (
-    "🧭 Shared story, 📥 Import sessions, 🗂️ Campaign management, 📄 House-rules file, "
-    "🔗 D&D Beyond invite, 📜 Recaps, 📚 Shared rules, 📚 Homebrew, 📇 Names, "
+    "🧭 Shared story, 🗂️ Campaign management, 📄 House-rules file, "
+    "🔗 D&D Beyond invite, 📚 Shared rules, 📚 Homebrew, "
     "📜 Upload campaign lore, and `/dmbot optionalrules`"
 )
 MANAGE_INTRO = (
@@ -264,18 +262,10 @@ def settings_view(
         view.add_item(_row(story_mode.StoryButton(campaign.id), 2))  # Shared story (#1692)
         view.add_item(_row(HouseFileButton(campaign.id), 2))  # the house-rules file (#969)
         view.add_item(_row(InviteButton(campaign.id), 2))  # the D&D Beyond invite (#1119)
-        view.add_item(_row(RecapsButton(campaign.id), 3))  # the recap choices (#1421)
+        view.add_item(_row(RecapStyleButton(campaign.id), 3))  # (the rest of Recaps: website)
         view.add_item(_row(SharedRulesButton(campaign.id), 3))  # shared house rules (#1190)
         view.add_item(_row(HomebrewButton(campaign.id), 3))  # the campaign's own homebrew (#1520)
-        view.add_item(_row(NamesButton(campaign.id), 3))  # names home (#1986)
         view.add_item(_row(BackstoryButton(campaign.id), 3))  # upload campaign lore
-        # One tap to the website's import page, with no private reply in between (#2300). A link
-        # runs no code: the website's sign-in and the API's DM check are the gate. Only where
-        # importing is on (#2154, #2259) and there is a website to open.
-        if import_button.enabled(campaign.guild_id):
-            url = import_button.page_url(site_url, campaign.guild_id, campaign.id)
-            if url:
-                view.add_item(_row(import_button.link(url), 4))
     return view
 
 

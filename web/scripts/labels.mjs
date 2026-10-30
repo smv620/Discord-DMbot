@@ -98,6 +98,8 @@ export const hiddenBotLabels = [
   { label: "DMbot Main Menu", file: "dm_screen/dm_bot_panel.py" },
   { label: "Transcript retention", file: "dm_screen/transcript_keep.py" },
   { label: "Transcripts", file: "dm_screen/dm_bot_panel.py" },
+  { label: "Manage campaign", file: "dm_screen/dm_bot_panel.py" }, // a link button built from LABELS (#2986)
+  { label: "My data", file: "dm_screen/dm_bot_panel.py" },
   { label: "Species", file: "ui/homebrew.py" },
   { label: "Start a timer", file: "dm_screen/clock.py" },
   { label: "Rejoin the party", file: "dm_screen/clock.py" },
