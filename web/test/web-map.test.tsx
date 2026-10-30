@@ -601,6 +601,59 @@ describe("each kind of name has its own colour, shape and word (#2992)", () => {
   });
 });
 
+describe("pinch to zoom (two fingers)", () => {
+  afterEach(() => vi.restoreAllMocks());
+  const scaleOf = () => Number(/scale\(([\d.]+)\)/.exec(document.querySelector(".web-svg > g")!.getAttribute("transform") ?? "")?.[1] ?? 1);
+  const spread = (a: Element, b: Element) => {
+    fireEvent.pointerDown(a, { clientX: 250, clientY: 300, pointerId: 1 });
+    fireEvent.pointerDown(b, { clientX: 350, clientY: 300, pointerId: 2 });
+    fireEvent.pointerMove(window, { clientX: 200, clientY: 300, pointerId: 1 });
+    fireEvent.pointerMove(window, { clientX: 400, clientY: 300, pointerId: 2 });
+  };
+
+  it("zooms in when two fingers on the empty space move apart", () => {
+    withBox();
+    draw();
+    const svg = document.querySelector(".web-svg")!;
+    expect(scaleOf()).toBe(1);
+    spread(svg, svg);
+    expect(scaleOf()).toBeGreaterThan(1.2);
+    fireEvent.pointerUp(window, { pointerId: 1 });
+    fireEvent.pointerUp(window, { pointerId: 2 });
+  });
+
+  it("zooms too when the first finger lands on a name, and the name is not dragged or pinned", () => {
+    withBox();
+    draw();
+    const svg = document.querySelector(".web-svg")!;
+    const before = nodeOf("Garrick").getAttribute("transform");
+    spread(nodeOf("Garrick"), svg);
+    expect(scaleOf()).toBeGreaterThan(1.2);
+    fireEvent.pointerUp(window, { pointerId: 1 });
+    fireEvent.pointerUp(window, { pointerId: 2 });
+    expect(nodeOf("Garrick").querySelector(".web-pin")).toBeNull();
+    expect(nodeOf("Garrick").getAttribute("transform")).toBe(before);
+  });
+
+  it("zooms out when the fingers come together, and one finger pans again afterwards", () => {
+    withBox();
+    draw();
+    const svg = document.querySelector(".web-svg")!;
+    spread(svg, svg);
+    const zoomed = scaleOf();
+    fireEvent.pointerMove(window, { clientX: 290, clientY: 300, pointerId: 1 });
+    fireEvent.pointerMove(window, { clientX: 310, clientY: 300, pointerId: 2 });
+    expect(scaleOf()).toBeLessThan(zoomed);
+    fireEvent.pointerUp(window, { pointerId: 1 });
+    fireEvent.pointerUp(window, { pointerId: 2 });
+    const was = document.querySelector(".web-svg > g")!.getAttribute("transform");
+    fireEvent.pointerDown(svg, { clientX: 300, clientY: 300, pointerId: 3 });
+    fireEvent.pointerMove(window, { clientX: 340, clientY: 310, pointerId: 3 });
+    fireEvent.pointerUp(window, { pointerId: 3 });
+    expect(document.querySelector(".web-svg > g")!.getAttribute("transform")).not.toBe(was);
+  });
+});
+
 describe("Cluster by quest (#2992)", () => {
   const bell = { id: "q-bell", name: "Find the Lost Bell", links: 2 };
   const heist = { id: "q-heist", name: "The Keep Heist", links: 1 };
