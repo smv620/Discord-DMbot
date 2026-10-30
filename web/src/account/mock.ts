@@ -62,7 +62,7 @@ import type {
   RuleSharingAnswer,
   RuleSharingChoice,
 } from "./api";
-import { ApiError, type LoreUpload, type WebLinkKind, type FixAnswer, type FixMode, type PlotIssue, type PlotMessage, type PlotProposal, type WaitingLook } from "./api";
+import { ApiError, type LoreUpload, type RecapStyle, type RecapStyleAction, type WebLinkKind, type FixAnswer, type FixMode, type PlotIssue, type PlotMessage, type PlotProposal, type WaitingLook } from "./api";
 import { NAME_LIMIT } from "../content/names-words";
 
 /** Found in the built files only if the pretend API was included; check-csp fails a real
@@ -747,6 +747,9 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   let movedIn = 0; // looks at /me before a campaign the bot is moving shows up (#2550)
   let loreNow: LoreUpload | null = null; // the pretend upload (#3022)
   let loreLooks = 0;
+  // The pretend recap style (#2985): a change takes effect after two looks, as the bot's would.
+  const styleNow = { examples: [{ id: "11", text: "The silver lock clicked and Mira let out her breath." }] as { id: string; text: string }[], notes: [] as { id: string; text: string }[] };
+  const styleChanges = new Map<string, { action: RecapStyleAction["action"]; arg: string; looks: number; at: number }>();
   let putBackNow = false; // session 2's left-out stretch has been put back by a DM (#2568)
   const myEmail: MyEmail = {
     address: "dm@example.com",
@@ -1705,6 +1708,39 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         state.links.splice(state.links.indexOf(link), 1);
       }
       return edgeOf(link.a, link.b);
+    },
+    async recapStyle(ref): Promise<RecapStyle> {
+      calls.push(`recapStyle:${ref}`);
+      await reachable();
+      signedIn();
+      return { examples: [...styleNow.examples], notes: [...styleNow.notes], defaults: styleNow.examples.length === 0 };
+    },
+    async changeRecapStyle(ref, action, arg = "") {
+      calls.push(`changeRecapStyle:${ref}:${action}:${arg.length}`);
+      await reachable();
+      signedIn();
+      if (action === "add_example" && styleNow.examples.length >= 3) throw new ApiError("bad-choice");
+      const id = String(styleChanges.size + 1).padStart(32, "0");
+      styleChanges.set(id, { action, arg, looks: 0, at: Math.floor(Date.now() / 1000) });
+      return { id };
+    },
+    async recapStyleAction(ref, id): Promise<RecapStyleAction> {
+      calls.push(`recapStyleAction:${ref}:${id}`);
+      await reachable();
+      signedIn();
+      const c = styleChanges.get(id);
+      if (!c) throw new ApiError("not-found");
+      c.looks += 1;
+      const now = Math.floor(Date.now() / 1000);
+      if (c.looks === 2) {
+        if (c.action === "add_example") styleNow.examples.push({ id: String(100 + styleNow.examples.length), text: c.arg });
+        else if (c.action === "remove_example") styleNow.examples = styleNow.examples.filter((e) => e.id !== c.arg);
+        else if (c.action === "use_defaults") styleNow.examples = [];
+        else if (c.action === "add_note") styleNow.notes.push({ id: String(200 + styleNow.notes.length), text: c.arg });
+        else styleNow.notes = styleNow.notes.filter((n) => n.id !== c.arg);
+      }
+      const state = c.looks >= 2 ? "done" : c.looks === 1 ? "working" : "waiting";
+      return { state, error: "", action: c.action, createdAt: c.at, updatedAt: now, serverNow: now };
     },
     // Pretend Upload lore (#3022): the words are not kept; the upload moves on by the number of looks, as the bot's would.
     // A speaker "refuse" is one the door turns away, and a second add while one is open is `slow-down`.

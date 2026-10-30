@@ -58,6 +58,7 @@ from dmbot.web import (
     offers,
     optional_rules,
     past_sessions,
+    recap_style,
     relationships,
     report,
     restores,
@@ -1281,6 +1282,57 @@ def create_app(
             return await lore.read(db, session, ref, upload)
         except RecapError as err:
             status, detail = lore_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    style_refusals = {
+        "not_allowed": (403, "not_allowed"),
+        "bad_action": (400, "bad_action"),
+        "bad_arg": (422, "bad_arg"),
+        "too_long": (422, "too_long"),
+        "too_soon": (429, "too_soon"),
+    }
+
+    @app.get("/me/campaigns/{ref}/recap-style")
+    async def me_recap_style(ref: str, signed: Signed) -> dict[str, Any]:
+        """The campaign's recap style: the DM's example recaps and standing notes, and whether
+        DMbot's own examples are in use (#2985). DM only (403). 404 while DMBOT_WEB_RECAP_STYLE
+        is off."""
+        session, _token = signed
+        if not settings.recap_style_on:
+            raise HTTPException(status_code=404, detail="not_found")
+        try:
+            return await recap_style.read(db, session, ref)
+        except RecapError as err:
+            status, detail = style_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/recap-style", status_code=202)
+    async def me_recap_style_change(ref: str, signed: Signed, request: Request) -> dict[str, Any]:
+        """Queue one change to the recap style for the bot: `{"action": "add_example" |
+        "remove_example" | "use_defaults" | "add_note" | "remove_note", "arg": words or an id}`.
+        Answers `{"id": ...}`; poll `GET …/recap-style/{id}`. DM only."""
+        session, _token = signed
+        if not settings.recap_style_on:
+            raise HTTPException(status_code=404, detail="not_found")
+        try:
+            body = await bounded_json(
+                request, 1_200_000
+            )  # 8,000 characters at up to 4 bytes each, with room
+            return await recap_style.add(db, session, ref, body)
+        except RecapError as err:
+            status, detail = style_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/recap-style/{action_id}")
+    async def me_recap_style_action(ref: str, action_id: str, signed: Signed) -> dict[str, Any]:
+        """Where one queued change stands: its state, error word and times; never its words."""
+        session, _token = signed
+        if not settings.recap_style_on:
+            raise HTTPException(status_code=404, detail="not_found")
+        try:
+            return await recap_style.action(db, session, ref, action_id)
+        except RecapError as err:
+            status, detail = style_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 
     @app.post("/me/recaps/{ref}/again")
