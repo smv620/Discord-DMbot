@@ -42,6 +42,13 @@ class TheMove(unittest.IsolatedAsyncioTestCase):
         await self.db.close()
         await drop_schema(TEST_URL, self.schema)
 
+    async def move(self) -> None:
+        """The migration, on data that has no lists yet (what it meets in a real database): the
+        code under test writes lists as it goes, so they are cleared first."""
+        async with self.db.guild(GUILD) as conn:
+            await conn.execute("DELETE FROM memory_knowers WHERE campaign_id = %s", (self.c,))
+        await self.db.migrate(MIGRATIONS)
+
     async def add(self, name: str, **kw: Any) -> str:
         kw.setdefault("type", "npc")
         kw.setdefault("status", CONFIRMED)
@@ -81,7 +88,7 @@ class TheMove(unittest.IsolatedAsyncioTestCase):
         await self.memory.set_condition(GUILD, self.c, voss, "dead", source="dm")
         hidden_state = await self.memory.set_condition(GUILD, self.c, rook, "dead", source="dm")
 
-        await self.db.migrate(MIGRATIONS)  # the move arrives while the rows are there
+        await self.move()  # the move arrives while the rows are there
 
         party = Viewer.the_party()
         table = await self.memory.visible_to(GUILD, self.c, party)
@@ -120,6 +127,52 @@ class TheMove(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(hidden_state)
         self.assertIsNotNone(gate)
 
+    async def snapshot(self) -> set[tuple[str, str, str, float]]:
+        """Every list row as (statement kind and id, who knows it, how sure), no row ids."""
+        async with self.db.guild(GUILD) as conn:
+            cur = await conn.execute(
+                "SELECT coalesce(k.about_entity_id, k.state_id, k.relation_id, k.alias_id) AS s,"
+                " CASE WHEN k.about_entity_id IS NOT NULL THEN 'entry'"
+                " WHEN k.state_id IS NOT NULL THEN 'state'"
+                " WHEN k.relation_id IS NOT NULL THEN 'relation' ELSE 'alias' END AS kind,"
+                " p.entity_id AS who, k.confidence AS sure"
+                " FROM memory_knowers k JOIN memory_perspectives p ON p.id = k.perspective_id"
+                " WHERE k.campaign_id = %s",
+                (self.c,),
+            )
+            return {(r["kind"], r["s"], r["who"], float(r["sure"])) for r in await cur.fetchall()}
+
+    async def test_the_restore_mapping_gives_the_same_lists_as_the_migration(self) -> None:
+        tavin = await self.add(
+            "Tavin", type="character", role="player_character", played_by=MEMBERS[0]
+        )
+        await self.add("Mara", type="character", role="player_character", played_by=MEMBERS[1])
+        voss = await self.add("Voss", type="character", role="npc")
+        council = await self.add("Lantern Council", type="faction")
+        rook = await self.add("Rook", type="character", role="npc")
+        await self.memory.set_hidden_from_players(GUILD, self.c, rook, True, source="dm")
+        await self.link(voss, council)
+        held = await self.link(voss, rook, secret=True)
+        await self.memory.set_connection_knowers(GUILD, self.c, held, [tavin], source="dm")
+        shade = await self.memory.add_alias(
+            GUILD, self.c, voss, "Shade", kind="title", secret=True, source="dm"
+        )
+        await self.memory.set_alias_knowers(GUILD, self.c, shade.value.id, [tavin], source="dm")
+        await self.memory.add_alias(
+            GUILD, self.c, voss, "Old Voss", kind="nickname", source="dm", status=CONFIRMED
+        )
+        await self.memory.set_condition(GUILD, self.c, voss, "dead", source="dm")
+
+        await self.move()
+        by_migration = await self.snapshot()
+        self.assertTrue(by_migration)
+        async with self.db.guild(GUILD) as conn:
+            await conn.execute("DELETE FROM memory_knowers WHERE campaign_id = %s", (self.c,))
+            from dmbot.memory import knowers
+
+            await knowers.move_flags(conn, GUILD, self.c)
+        self.assertEqual(await self.snapshot(), by_migration)
+
     async def _states(self, entity_id: str) -> list[Any]:
         found = await self.memory.states(GUILD, self.c, [entity_id])
         return [found[entity_id]] if entity_id in found else []
@@ -132,7 +185,7 @@ class TheMove(unittest.IsolatedAsyncioTestCase):
         clue = await self.add("A torn map", type="clue")
         await self.link(mara, clue)  # "knows"
         await self.memory.set_audience_limited(GUILD, self.c, clue, True, source="dm")
-        await self.db.migrate(MIGRATIONS)
+        await self.move()
         table = await self.memory.visible_to(GUILD, self.c, Viewer.the_party())
         self.assertFalse(table.knows(ENTRY, clue))  # not the whole party
         got = await self.memory.visible_to(GUILD, self.c, Viewer.character(mara))
@@ -141,7 +194,7 @@ class TheMove(unittest.IsolatedAsyncioTestCase):
     async def test_another_campaign_is_untouched_by_the_rows_of_this_one(self) -> None:
         await self.add("Voss", type="character", role="npc")
         other = (await CampaignStore(self.db).create(GUILD, "Elsewhere", DM)).id
-        await self.db.migrate(MIGRATIONS)
+        await self.move()
         async with self.db.guild(GUILD) as conn:
             cur = await conn.execute(
                 "SELECT count(*) AS n FROM memory_knowers WHERE campaign_id = %s", (other,)
@@ -192,7 +245,7 @@ class Theories(TheMove):
         await self.memory.believe(
             GUILD, self.c, await self.view(ids["tavin"]), rel, 0.5, "theory", source="dm"
         )
-        await self.db.migrate(MIGRATIONS)
+        await self.move()
         got = await self.memory.visible_to(GUILD, self.c, Viewer.character(ids["tavin"]))
         self.assertEqual(got.how_sure(CONNECTION, rel), 0.5)
         other = await self.memory.visible_to(GUILD, self.c, Viewer.character(ids["mara"]))
@@ -202,7 +255,7 @@ class Theories(TheMove):
         ids = await self.table()
         rel = await self.link(ids["voss"], ids["council"])
         await self.party_theory(rel, 0.75)
-        await self.db.migrate(MIGRATIONS)
+        await self.move()
         for who in ("tavin", "mara"):
             seen = await self.memory.visible_to(GUILD, self.c, Viewer.character(ids[who]))
             self.assertEqual(seen.how_sure(CONNECTION, rel), 0.75, who)
@@ -214,7 +267,7 @@ class Theories(TheMove):
         await self.memory.believe(
             GUILD, self.c, await self.view(ids["tavin"]), rel, 0.25, "theory", source="dm"
         )
-        await self.db.migrate(MIGRATIONS)
+        await self.move()
         tavin = await self.memory.visible_to(GUILD, self.c, Viewer.character(ids["tavin"]))
         mara = await self.memory.visible_to(GUILD, self.c, Viewer.character(ids["mara"]))
         self.assertEqual(tavin.how_sure(CONNECTION, rel), 0.25)
@@ -226,6 +279,6 @@ class Theories(TheMove):
         view = await self.view(ids["tavin"])
         await self.memory.believe(GUILD, self.c, view, rel, 1.0, "revealed_fact", source="dm")
         await self.memory.believe(GUILD, self.c, view, rel, 0.0, "secret_plot", source="dm")
-        await self.db.migrate(MIGRATIONS)  # stopped knowing: the newest belief is 0.0
+        await self.move()  # stopped knowing: the newest belief is 0.0
         got = await self.memory.visible_to(GUILD, self.c, Viewer.character(ids["tavin"]))
         self.assertFalse(got.knows(CONNECTION, rel))

@@ -2778,3 +2778,5 @@ DEPLOY 22f981e9 (2026-10-30, dev1, owner's OK through the prompt "Deploy now"; S
 - Live: 282 migration rows, last 0286_knowers_confidence. memory_knowers exists and has 0 rows. Bot connected to 2 servers, 0 errors since start.
 - web-api healthy.
 - Not yet checked (owner, on the website and in Discord): Story Graph colours and Cluster by quest; the Player character name check with a confirmed Discord ID; ⚙️ Manage DMbot without the items the website now does.
+
+DEPLOY 8b436302 (2026-10-30, dev1, owner's OK through the prompt "Deploy now"; Supervisor's ninth deploy handover on #516, 04:49 UTC). Live was 22f981e9. Migrations 0281, 0287, 0288 (282 -> 285 rows). Dry run on a copy: 282 -> 285, second run applied nothing; 0287 added 241 knowers rows in 1 campaign. Backup taken before the change. Bot started first (connected to 2 servers, 0 errors), then web-api (healthy). DMBOT_WEB_LORE left at 0 (off). Owner's post-deploy checks still to do: five tabs, Story graph pinch, Who knows this, lore upload stays hidden.
