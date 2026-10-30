@@ -715,10 +715,20 @@ async def follow_flags(
         # (a name whose own flags did not change is left alone before anything is read: a merge
         # moves hundreds of them, and who knows each moves with it in the merge's own statements)
         rows = [(b, a) for b, a in rows if b is None or alias_shown(b) != alias_shown(a)]
-        owners = await _entities_by_id(w, {a["entity_id"] for _, a in rows})
+        owners = await _entities_by_id(
+            w, {r["entity_id"] for b, a in rows for r in (a, b) if r is not None}
+        )
+
+        def shown_owner(row: dict[str, Any]) -> bool:
+            return row["entity_id"] in owners and entry_shown(owners[row["entity_id"]])
+
         for before, after in rows:
-            ok = after["entity_id"] in owners and entry_shown(owners[after["entity_id"]])
-            now, was = ok and alias_shown(after), ok and before is not None and alias_shown(before)
+            ok = shown_owner(after)
+            # (it was shown only if ITS OWN owner was shown: a join moves the guard's other name
+            # to Ken and makes it secret in one update, which must not read as "stopped being
+            # shown" and take the name away from the characters who knew it)
+            now = ok and alias_shown(after)
+            was = before is not None and shown_owner(before) and alias_shown(before)
             if now and not was:
                 opened.append((after["id"], before is None))
             elif was and not now:

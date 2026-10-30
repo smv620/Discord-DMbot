@@ -400,3 +400,53 @@ class TheSecondReview(JoinBase):
         for named in (rejected, person):
             with self.subTest(named=named), self.assertRaises(MemoryRuleError):
                 await self.memory.join_same_person(GUILD_A, self.c, self.guard, named)
+
+
+class TheThirdReview(JoinBase):
+    async def test_who_knew_the_guards_other_name_still_knows_it_after_the_join(self) -> None:
+        gatekeeper = await self.memory.add_alias(
+            GUILD_A, self.c, self.guard, "the gatekeeper", kind="title", source="dm",
+            status=CONFIRMED,
+        )  # fmt: skip
+        alias = gatekeeper.value.id
+        await self.know(ALIAS, alias, [self.sees_guard])
+        await self.join()
+        seen = await self.view(self.sees_guard)
+        self.assertTrue(seen.knows(ALIAS, alias))  # type: ignore[attr-defined]
+        other = await self.view(self.sees_ken)
+        self.assertFalse(other.knows(ALIAS, alias))  # type: ignore[attr-defined]
+
+    async def test_the_party_stops_believing_a_connection_that_moved_and_recall_drops_it(
+        self,
+    ) -> None:
+        from dmbot.memory import beliefs
+        from dmbot.memory.recall import PLAYERS, RecallService
+
+        captain = await self.add("Captain Vale", type="character", role="npc", status=CONFIRMED)
+        made = await self.memory.add_relation(
+            GUILD_A, self.c, self.guard, "knows", captain, source="dm", confidence=1.0,
+            status=CONFIRMED,
+        )  # fmt: skip
+        rel = str(made.value[0].id)
+
+        async def party_knows() -> bool:
+            async with self.db.guild(GUILD_A) as conn:
+                cur = await conn.execute(
+                    "SELECT EXISTS (SELECT 1 FROM (SELECT pb.confidence FROM memory_beliefs pb"
+                    " JOIN memory_perspectives p ON p.guild_id = pb.guild_id"
+                    " AND p.campaign_id = pb.campaign_id AND p.id = pb.perspective_id"
+                    " WHERE pb.guild_id = %s AND pb.campaign_id = %s AND pb.relation_id = %s"
+                    " AND p.kind = 'party' ORDER BY pb.seq DESC LIMIT 1) now"
+                    " WHERE now.confidence >= %s) AS known",
+                    (GUILD_A, self.c, rel, beliefs.KNOWN),
+                )
+                row = await cur.fetchone()
+                return bool(row and row["known"])
+
+        self.assertTrue(await party_knows())  # (believed while it was the guard's)
+        await self.join()
+        self.assertFalse(await party_knows())  # (secret now, so the party's belief is ended)
+        recall = await RecallService(self.memory).recall(
+            GUILD_A, self.c, seeds=[self.ken], audience=PLAYERS, opted_in={7}
+        )
+        self.assertNotIn("Captain Vale", " ".join(i.text for i in recall.items))
