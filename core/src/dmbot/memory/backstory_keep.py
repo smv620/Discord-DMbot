@@ -19,7 +19,15 @@ from dataclasses import dataclass, field
 from dmbot.memory import kin
 from dmbot.memory.backstory_links import BackstoryLinks, NewLink, Waiting
 from dmbot.memory.checks import conflicts
-from dmbot.memory.models import CONFIRMED, DM, REJECTED, MemoryRuleError, Relation
+from dmbot.memory.lookup import CampaignLookup
+from dmbot.memory.models import (
+    CONFIRMED,
+    DM,
+    PLAYER_CHARACTER,
+    REJECTED,
+    MemoryRuleError,
+    Relation,
+)
 from dmbot.memory.ontology import Ontology
 from dmbot.memory.store import MemoryStore
 
@@ -67,6 +75,34 @@ async def changes_among(
         (c.subject_id, c.predicate, c.object_id): replaced_by(onto, c, existing) for c in links
     }
     return {k: v for k, v in found.items() if v}
+
+
+async def player_character_ids(memory: MemoryStore, guild_id: int, campaign_id: str) -> list[str]:
+    """The campaign's confirmed player characters (entry ids), all of them."""
+    lookup = CampaignLookup.build(await memory.lookup_data(guild_id, campaign_id))
+    return sorted(
+        e.id
+        for e in lookup.entities.values()
+        if e.role == PLAYER_CHARACTER and e.status == CONFIRMED and not e.merged_into
+    )
+
+
+async def know_world(
+    memory: MemoryStore, guild_id: int, campaign_id: str, kind: str, statement_ids: Sequence[str]
+) -> None:
+    """These statements are general knowledge of the setting (#2959): every player character knows
+    each, at 1.0. A statement that is gone, or no player characters yet, leaves nothing to write; a
+    refusal is logged and the statement stays with the DM alone (never a failed keep)."""
+    pcs = await player_character_ids(memory, guild_id, campaign_id)
+    if not pcs:
+        return
+    for statement_id in statement_ids:
+        try:
+            await memory.set_statement_knowers(
+                guild_id, campaign_id, kind, statement_id, pcs, source=DM
+            )
+        except MemoryRuleError:
+            log.info("General knowledge could not be recorded for a statement")
 
 
 def change_start(old: Sequence[Relation], now: int) -> int:
@@ -153,6 +189,8 @@ async def keep_all(
             if progress is not None:
                 await progress(tried, total)
             continue
+        if c.world and not c.secret:  # (a secret one stays with the DM, whatever the upload said)
+            await know_world(memory, guild_id, campaign_id, "connection", [written.value[0].id])
         if c.truth:
             try:
                 await memory.pin(guild_id, campaign_id, written.value[0].id, True, source=DM)
@@ -196,6 +234,7 @@ async def undo_all(
                     c.detail,
                     c.truth,
                     known_by=c.known_by,
+                    world=c.world,
                 )
             ],
         )

@@ -318,9 +318,31 @@ class ThePath(NamesTest):
         self.assertIn("not a published book", text)
         self.assertIn("does not keep it, only a short line", text)
         self.assertEqual(
-            [b.label for b in view.children], ["🤖 Find names", ui_bg.TRUTH_OFF, "Cancel"]
+            [b.label for b in view.children],
+            ["🤖 Find names", ui_bg.TRUTH_OFF, "Cancel", ui_bg.KNOWS_LABELS["spoilers"]],
         )
+        self.assertIn("Players don't know it yet", text)  # (#2959: the default)
         self.ai.complete.assert_not_awaited()  # nothing is sent until the DM presses
+
+    async def test_the_players_button_goes_round_the_three_choices_and_the_read_gets_it(
+        self,
+    ) -> None:
+        _, view = await self.offer()
+        seen = [view.knows]
+        for _ in range(3):
+            press = self.it()
+            await view.knows_button.callback(press)
+            seen.append(view.knows)
+            shown = press.response.edited[0][0]
+            self.assertIn(ui_bg.KNOWS_TEXT[view.knows], shown)
+        self.assertEqual(seen, ["spoilers", "world", "smart", "spoilers"])
+        await view.knows_button.callback(self.it())  # world
+        with patch.object(
+            ui_bg, "read_background", AsyncMock(side_effect=RuntimeError("stop"))
+        ) as r:
+            await view._read(self.it())
+        assert r.await_args is not None
+        self.assertEqual(r.await_args.kwargs["choice"], "world")
 
     async def test_only_a_dm_gets_the_offer(self) -> None:
         it, view = await self.offer(MANAGER)
