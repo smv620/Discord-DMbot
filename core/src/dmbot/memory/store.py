@@ -5849,6 +5849,14 @@ async def _move_relations(w: Changes, keep_id: str, gone_id: str, *, join: bool 
         if pred is not None and moved.status != REJECTED:
             to_check.append((moved, others))
     await w.update_rows(RELATIONS, moves)
+    # (the bulk write skips the flag hooks, and the players' points of view must not carry a
+    # connection over to ends it was not known about: #3073)
+    by_row = {r["id"]: r for r in rows}
+    await knowers.forget_moved(
+        w,
+        [(by_row[i], {**by_row[i], **change}) for i, change in moves.items() if i not in gone_rows],
+        entities,
+    )
     if join:  # the bulk write does not revoke what The party believed: do it for the secret ones
         for moved_id in moves:
             if moved_id not in gone_rows:
@@ -5869,7 +5877,9 @@ async def _move_relations(w: Changes, keep_id: str, gone_id: str, *, join: bool 
     for relation_id in gone_rows:
         if relation_id in folded:  # what was believed of the folded fact is believed of its twin
             await beliefs.carry(w, by_id[relation_id], folded[relation_id], copy_beliefs=not join)
-            if join:  # and whoever knew the folded fact knows its twin: nothing is lost
+            if join and await knowers.twin_is_shown(w, folded[relation_id]):
+                # (a shown twin is known to everyone already; a hidden one would tell the
+                # characters who knew the unnamed person's fact that it is Ken's: #3073)
                 await knowers.move_rows(w, "relation_id", relation_id, folded[relation_id])
         await _delete_relation(w, relation_id)
 

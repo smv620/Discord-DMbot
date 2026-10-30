@@ -179,7 +179,9 @@ class TheProbes(JoinBase):
     """What Supervisor's review of #3071 reproduced: a join must never teach, or take away,
     anything. Each of these failed on the first version."""
 
-    async def test_a_connection_a_character_knew_survives_the_join_and_undo(self) -> None:
+    async def test_a_connection_a_character_knew_is_forgotten_by_the_join_and_back_after_undo(
+        self,
+    ) -> None:
         captain = await self.add("Captain Vale", type="character", role="npc", status=CONFIRMED)
         made = await self.memory.add_relation(
             GUILD_A, self.c, self.guard, "knows", captain, source="dm", confidence=1.0,
@@ -189,7 +191,8 @@ class TheProbes(JoinBase):
         await self.know(CONNECTION, rel, [self.sees_guard])
         written = await self.join()
         seen = await self.view(self.sees_guard)
-        self.assertTrue(seen.knows(CONNECTION, rel))  # type: ignore[attr-defined]
+        # (they knew it about the guard: joined, it would tell them the guard is Ken)
+        self.assertFalse(seen.knows(CONNECTION, rel))  # type: ignore[attr-defined]
         batch = written.batch  # type: ignore[attr-defined]
         assert batch is not None
         await self.memory.undo(GUILD_A, self.c, batch, source="dm")

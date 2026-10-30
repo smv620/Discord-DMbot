@@ -769,6 +769,52 @@ async def follow_flags(
         await _close(w, column, closed)
 
 
+async def forget_moved(
+    w: Changes,
+    moved: Sequence[tuple[dict[str, Any], dict[str, Any]]],
+    entities: Mapping[str, dict[str, Any]],
+) -> None:
+    """Connections whose ends changed in a merge or join (`moved`: before, after; `entities`: the
+    ends as they stand now, the merge's flags already applied). The player characters knew each
+    one about its OLD ends, so one that stopped being shown (its ends were shown and one is kept
+    from the players now), or that was told of an unnamed person (so it would now name the person
+    they are), is forgotten by them: their knower rows go and so does what their point of view
+    believed. A DM's own list on a connection whose ends stay as hidden as they were is left
+    alone, and nothing is ever opened here. Logged, so Undo brings it all back (#3073)."""
+    lost = [
+        a["id"]
+        for b, a in moved
+        if (_ends_shown(entities, b) and not _ends_shown(entities, a))
+        or any(entities.get(b[k], {}).get("unnamed") for k in ("subject_id", "object_id"))
+    ]
+    if not lost:
+        return
+    await _close(w, "relation_id", lost)
+    views = await _player_views(w)
+    if not views:
+        return
+    newest: dict[tuple[str, str], float] = {}
+    for row in await w.select(
+        BELIEFS,
+        " AND relation_id = ANY(%s) AND perspective_id = ANY(%s) ORDER BY seq",
+        [lost, views],
+    ):
+        newest[(row["relation_id"], row["perspective_id"])] = row["confidence"]
+    for (relation_id, view), confidence in newest.items():
+        if confidence >= KNOWN:
+            await beliefs.add_belief(w, view, relation_id, 0.0, SECRET_PLOT)
+
+
+async def twin_is_shown(w: Changes, relation_id: str) -> bool:
+    """This connection is shown to the players (its flags and both ends): what a folded copy's
+    knowers may be given when a join folds it into it, since everyone knows it already."""
+    row = await w.get(RELATIONS, relation_id)
+    if row is None:
+        return False
+    ends = await _entities_by_id(w, [row["subject_id"], row["object_id"]])
+    return relation_shown(row) and _ends_shown(ends, row)
+
+
 async def _close(w: Changes, column: str, ids: Sequence[str]) -> None:
     """These statements stopped being shown to the players: the player characters stop knowing
     them. An NPC's or a group's row stays: secret means kept from the players, not unknown to the
