@@ -49,6 +49,7 @@ from dmbot.memory import (
 from dmbot.memory import party as party_mod
 from dmbot.memory import threads as threads_mod
 from dmbot.memory import unnamed as unnamed_mod
+from dmbot.memory import worked_out as worked_out_mod
 from dmbot.memory._changes import (
     ALIASES,
     ATTITUDES,
@@ -121,6 +122,7 @@ from dmbot.memory.models import (
     ROLES,
     SOURCES,
     SPECIES,
+    WORKED_OUT_SOURCE,
     Alias,
     Belief,
     Correction,
@@ -3602,6 +3604,28 @@ class MemoryStore:
 
     # ---- relationships ----------------------------------------------------------------
 
+    async def rework_family(self, guild_id: int, campaign_id: str) -> worked_out_mod.Reworked:
+        """Family links worked out from the stated ones (#2960), kept as suggestions for the DM:
+        proposed, source `worked_out`, never confirmed here. One change. Idempotent; a suggestion
+        whose source link went is taken away, a confirmed or rejected one is left alone."""
+        async with self._write(guild_id, campaign_id, DM) as w:
+
+            async def add(a: str, role: str, b: str, secret: bool) -> None:
+                await self.add_relation_in(
+                    w, a, worked_out_mod.KIN, b, confidence=1.0, status=PROPOSED, detail=role,
+                    directional=True, secret=secret, made_by=WORKED_OUT_SOURCE, leave=True,
+                )  # fmt: skip
+
+            return await worked_out_mod.rework(w, add)
+
+    async def worked_out_waiting(
+        self, guild_id: int, campaign_id: str
+    ) -> list[worked_out_mod.Suggestion]:
+        """The suggestions waiting for a yes, oldest first, each with the words of the two links it
+        was worked out from. A DM-only reader."""
+        async with self._read(guild_id, campaign_id, snapshot=True) as scope:
+            return await worked_out_mod.waiting(scope)
+
     async def link_party(
         self, guild_id: int, campaign_id: str, user_ids: Collection[int]
     ) -> party_mod.PartyLinked:
@@ -3752,7 +3776,10 @@ class MemoryStore:
                 raise MemoryRuleError(NOT_FOUND)
         # Only the DM gives a role a direction, and only a family role (#2457)
         directional = bool(
-            directional and source == DM and pred.key == "kin_of" and kin.role_of(detail)
+            directional
+            and source in (DM, WORKED_OUT_SOURCE)  # (a worked-out parent has a direction too)
+            and pred.key == "kin_of"
+            and kin.role_of(detail)
         )
         s, o = ordered(pred, subject_id, object_id, detail, directional)
         new = Relation(
