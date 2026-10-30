@@ -152,6 +152,7 @@ export default function namesArea({ call, waitForAnswer }: ApiHelpers): Partial<
           if (error instanceof ApiError && error.kind === "signed-out") throw error;
         }
         if (got?.state === "done") {
+          if (got.player) return { state: "player", ...got.player };
           return { state: "done", row: got.row ?? null, undo: got.undo ? queued.answer : null, answer: queued.answer };
         }
         if (got?.state === "failed") {
