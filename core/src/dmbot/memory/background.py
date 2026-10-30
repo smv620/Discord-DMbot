@@ -936,7 +936,7 @@ def keep_connections(
         # a spelling that two names claim is no end: DMbot would be guessing which one is meant
         if key not in ends and len(owners) == 1:
             ends[key] = next(iter(owners))
-    both_ways = {"kin_of", "ally_of", "enemy_of"}
+    both_ways = {"kin_of", "ally_of", "enemy_of", "rival_of"}
     # (a public other spelling fits an end by its words too, for the name it belongs to; a secret
     # one never does)
     spellings = {

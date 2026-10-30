@@ -626,7 +626,7 @@ CORE_PREDICATES: tuple[PredicateTerm, ...] = (
     PredicateTerm(
         "contains",
         "contains",
-        "Has something inside it: a note in a book, a gem in a chest, a room in a vault.",
+        "Has something inside it: a note in a book, a gem in a chest.",
         ("item", "place"),
         ("item",),
         covers=("a note inside a tome", "a gem inside a chest"),

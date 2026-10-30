@@ -59,6 +59,20 @@ class TheWords(unittest.TestCase):
         self.assertEqual([(c.a, c.how) for c in got], [("Dorn", "rival_of"), ("Ilse", "rival_of")])
         self.assertNotIn("associated_with", {c.how for c in got})
 
+    def test_a_rivalry_told_from_both_ends_is_one_connection(self) -> None:
+        quote = "Dorn and Ilse are the rival apprentices of Doran"
+        raw = json.dumps(
+            {
+                "connections": [
+                    {"a": "Dorn", "how": "rival", "b": "Ilse", "quote": quote},
+                    {"a": "Ilse", "how": "rival", "b": "Dorn", "quote": quote},
+                ]
+            }
+        )
+        found = [bg.Found("Dorn", "npc", (), (), ""), bg.Found("Ilse", "npc", (), (), "")]
+        kept = bg.keep_connections([bg.read_connections(raw, TEXT)], found, {})
+        self.assertEqual(len(kept), 1)
+
     def test_a_family_line_keeps_its_role(self) -> None:
         sib = read("sibling", "Ilse", "Dorn", "Ilse is the sister of Dorn")
         spouse = read("spouse", "Tavin", "Mira", "Mira's husband is Tavin")
