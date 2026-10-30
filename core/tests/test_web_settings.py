@@ -72,6 +72,14 @@ class FakeBot:
         await self.store.set_optional_rule(campaign.guild_id, campaign.id, rule.id, turn_on)
         return True
 
+    async def apply_story_mode(
+        self, campaign: Campaign, mode: str, confirmed_by: int | None
+    ) -> Campaign:
+        self.calls.append(("story_mode", f"{mode}:{confirmed_by}"))
+        return await self.store.set_story_mode(
+            campaign.guild_id, campaign.id, mode, confirmed_by=confirmed_by
+        )
+
     async def find_member(self, guild_id: int, user_id: int) -> ws.Member | None:
         return ws.Member("Someone", False)
 
