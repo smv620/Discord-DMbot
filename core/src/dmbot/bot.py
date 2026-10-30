@@ -46,6 +46,7 @@ from dmbot import (
     hours,
     images,
     install,
+    lore_upload,
     mail,
     owner_presence,
     plan_rules,
@@ -255,6 +256,7 @@ from dmbot.memory import (
     embedding,
     extractor,
     lore_context,
+    lore_queue,
     meaning,
     plan_reader,
     report_make,
@@ -329,6 +331,7 @@ from dmbot.recaps.audio.files import AudioFiles
 from dmbot.recaps.audio.worker import AudioWorker
 from dmbot.recaps.discord import (
     HINTS_WAIT_S,
+    LORE_SWEEP_EVERY_S,
     NAME_ANSWERS_PER_ROUND,
     RecapFeatures,
 )
@@ -888,6 +891,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self.name_answers = name_answers.AnswerStore(recaps.db) if recaps is not None else None
         # What DMs did on the website's All names page, waiting to be applied (#2294).
         self.name_actions = web_actions.ActionStore(recaps.db) if recaps is not None else None
+        # The lore DMs uploaded on the website, waiting to be read (#3022), and the reads running.
+        self.lore_uploads = lore_queue.LoreQueue(recaps.db) if recaps is not None else None
+        self._lore_reads: dict[int, asyncio.Task[None]] = {}  # server -> its read in progress
+        self._lore_swept: dict[int, float] = {}  # server -> when its queue was last swept
         # What DMs chose on the website's Settings page, waiting to be applied (#2463).
         self.web_settings = web_settings.SettingStore(recaps.db) if recaps is not None else None
         # What DMs chose on the website's rule sharing section, waiting to be applied (#2793).
@@ -1617,6 +1624,13 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         with contextlib.suppress(Exception):
             await asyncio.wait_for(self.ai_watch.wait(), 3)
         document_reader.shutdown()  # files being read: end them, don't wait out their limit
+        # Website lore uploads being read: each puts its claim back to waiting (the next start reads
+        # it again) and is waited for here, so the write is not lost with the process (#3022).
+        reads = list(getattr(self, "_lore_reads", {}).values())  # a test stub skips __init__
+        for read in reads:
+            read.cancel()
+        with contextlib.suppress(Exception):
+            await asyncio.wait_for(asyncio.gather(*reads, return_exceptions=True), 5)
         for reading in list(self.plan_reads.values()):
             reading.cancel()  # a read in progress is stopped; it carries on when a DM presses again
         if self._eleven_http is not None:
@@ -10608,6 +10622,35 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     log.info("Name action %s: %s", action.action, done.error or "done")
                     if not done.error and self.lookup is not None:
                         self.lookup.mark_stale(guild.id, action.campaign_id)
+
+    async def run_lore_uploads(self) -> None:
+        """The lore DMs uploaded on the website (#3022): for each server, sweep its queue (words
+        never stay just because the DM did not come back), and when no read is running there, take
+        the oldest waiting upload and read it in its own task. A read takes minutes, so it must not
+        hold this loop, which every other website action shares. One read at a time per server."""
+        queue = self.lore_uploads
+        if queue is None or self.memory is None:
+            return
+        for guild in list(self.guilds):
+            if self._closing:
+                return
+            running = self._lore_reads.get(guild.id)
+            if running is not None and running.done():
+                del self._lore_reads[guild.id]
+                running = None
+            now = time.monotonic()
+            if now - self._lore_swept.get(guild.id, -LORE_SWEEP_EVERY_S) >= LORE_SWEEP_EVERY_S:
+                self._lore_swept[guild.id] = now
+                await queue.sweep(guild.id)
+            if running is not None:
+                continue
+            claim = await queue.claim_next(guild.id)
+            if claim is None:
+                continue
+            with log_context(guild_id=guild.id, campaign_id=claim.campaign_id):
+                self._lore_reads[guild.id] = asyncio.ensure_future(
+                    lore_upload.run_upload(self, queue, claim, guild.id)
+                )
 
     # ---- the website's Settings page (#2463): the Host of dm_screen.web_settings ----
 
