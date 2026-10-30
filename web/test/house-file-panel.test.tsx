@@ -5,6 +5,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { ApiError } from "../src/account/api";
 import { mockApi } from "../src/account/mock";
 import HouseFilePanel from "../src/account/HouseFilePanel";
 import { HOUSE_FILE_LIVE } from "../src/content/house-file-switch";
@@ -162,6 +163,55 @@ describe("The House-rules file on the website", () => {
     // (the buttons are off while one is open)
     expect((screen.getByRole("button", { name: words.change }) as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByRole("button", { name: words.upload }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("shows only the counts that are not zero, and warns about removals", async () => {
+    expect(words.counts(1, 0, 3)).toBe("1 to add, 3 to remove.");
+    expect(words.counts(0, 2, 0)).toBe("2 to change.");
+    const api = mockApi("table");
+    await connect(api);
+    await settle();
+    expect(await screen.findByText(words.removing)).toBeTruthy(); // (the pretend compare has 3 to remove)
+  });
+
+  it("the stalled and failed words each name the Discord path", () => {
+    for (const line of [words.stalled, words.failedNext]) {
+      expect(line).toContain("⚙️ Manage DMbot");
+      expect(line).toContain("📄 House-rules file");
+      expect(line).toContain("🔄 Compare now");
+    }
+  });
+
+  it("every failure the bot can report has plain words, and none blames DMbot's side", () => {
+    for (const code of ["not_taken", "unreadable", "bad_link", "too_big", "no_rules", "busy", "too_often", "daily_limit", "no_ai", "no_offer", "not_dm"]) {
+      expect(words.failedReasons[code], code).toBeTruthy();
+    }
+    expect(words.failedFallback).not.toMatch(/went wrong/i);
+  });
+
+  it("says so when the first look fails, and Try again looks again", async () => {
+    const api = mockApi("table");
+    let tries = 0;
+    const real = api.houseFile!.bind(api);
+    api.houseFile = async (ref, id) => {
+      tries += 1;
+      if (tries === 1) throw new ApiError("network");
+      return real(ref, id);
+    };
+    render(<HouseFilePanel api={api} campaignRef="100.cmp1" />);
+    expect(await screen.findByText(words.loadFailed)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: words.tryAgain }));
+    expect(await screen.findByText(words.notConnected)).toBeTruthy();
+  });
+
+  it("the connect and upload forms say Cancel, and Cancel sends nothing", async () => {
+    const api = mockApi("table");
+    render(<HouseFilePanel api={api} campaignRef="100.cmp1" />);
+    fireEvent.click(await screen.findByRole("button", { name: words.connect }));
+    fireEvent.click(screen.getByRole("button", { name: words.cancel }));
+    fireEvent.click(screen.getByRole("button", { name: words.upload }));
+    fireEvent.click(screen.getByRole("button", { name: words.cancel }));
+    expect(api.calls.some((c) => c.startsWith("houseFileAdd"))).toBe(false);
   });
 
   it("every result that has differences also names the next step", () => {

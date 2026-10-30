@@ -75,6 +75,25 @@ class TheDoors(Reading):
         await self.sql("UPDATE web_house_file_actions SET state = 'done'")
         return await self.add(**body)
 
+    async def test_the_site_is_the_host_only_never_login_details_a_port_or_a_path(self) -> None:
+        for link in (
+            "https://user:secret@docs.example.com:8443/a?k=v#f",
+            "https://token@docs.example.com/x",
+            "https://docs.example.com:8443",
+            "https://docs.example.com?k=v",
+        ):
+            with self.subTest(link=link):
+                await self.sql("DELETE FROM house_rules_file")
+                await self.sql(
+                    "INSERT INTO house_rules_file (campaign_id, guild_id, link, set_by, set_at)"
+                    " VALUES (%s, %s, %s, %s, 1)",
+                    self.one.id, GUILD, link, ALICE.id,
+                )  # fmt: skip
+                got = await house_file.read(self.web, self.session, self.cref, None)
+                self.assertEqual(got["site"], "docs.example.com")
+                for leaked in ("secret", "token", "k=v", "8443", "@"):
+                    self.assertNotIn(leaked, repr(got))
+
     async def test_with_no_file_it_says_so_and_has_no_site(self) -> None:
         got = await house_file.read(self.web, self.session, self.cref, None)
         self.assertEqual((got["linked"], got["site"], got["request"]), (False, "", None))
@@ -85,6 +104,9 @@ class TheDoors(Reading):
             {"action": "link"},
             {"action": "link", "link": "http://docs.example.com/plain"},
             {"action": "link", "link": "https://example.com/a b"},
+            {"action": "link", "link": "https://user:secret@example.com/doc"},
+            {"action": "link", "link": "https://token@example.com"},
+            {"action": "link", "link": "https://"},
             {"action": "link", "link": LINK, "text": WORDS},
             {"action": "upload", "text": "   "},
             {"action": "upload", "text": WORDS, "link": LINK},

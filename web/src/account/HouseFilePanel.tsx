@@ -28,6 +28,9 @@ export default function HouseFilePanel({ api, campaignRef }: { api: AccountApi; 
   const [problem, setProblem] = useState("");
   const [busy, setBusy] = useState(false);
   const [stopped, setStopped] = useState(false);
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  const misses = useRef(0);
   const seen = useRef(-1);
   const idle = useRef(0);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -41,14 +44,20 @@ export default function HouseFilePanel({ api, campaignRef }: { api: AccountApi; 
     let live = true;
     void api
       .houseFile(campaignRef)
-      .then((got) => live && setState(got))
+      .then((got) => {
+        if (!live) return;
+        setLoadFailed(false);
+        setState(got);
+      })
       .catch((err) => {
-        if (live && err instanceof ApiError && (err.kind === "not-allowed" || err.kind === "not-found")) setHidden(true);
+        if (!live) return;
+        if (err instanceof ApiError && (err.kind === "not-allowed" || err.kind === "not-found")) setHidden(true);
+        else setLoadFailed(true); // any other failure says so and offers Try again, never "Looking…" for ever
       });
     return () => {
       live = false;
     };
-  }, [api, campaignRef]);
+  }, [api, campaignRef, attempt]);
 
   const req = state?.request ?? null;
   const open = req !== null && (req.state === "waiting" || req.state === "working");
@@ -59,6 +68,7 @@ export default function HouseFilePanel({ api, campaignRef }: { api: AccountApi; 
       try {
         const got = await api.houseFile?.(campaignRef, req.id);
         if (!live || !got) return;
+        misses.current = 0;
         idle.current = got.request?.updatedAt === seen.current ? idle.current + 1 : 0;
         seen.current = got.request?.updatedAt ?? -1;
         setState(got);
@@ -67,7 +77,11 @@ export default function HouseFilePanel({ api, campaignRef }: { api: AccountApi; 
           timer.current = setTimeout(look, Math.min(POLL_MS * 2 ** Math.min(idle.current, 4), POLL_MAX_MS));
         }
       } catch {
-        if (live) setStopped(true);
+        if (!live) return;
+        // A look that fails once is tried again a few times before the page gives up (the request carries on either way).
+        misses.current += 1;
+        if (misses.current >= 3) setStopped(true);
+        else timer.current = setTimeout(look, POLL_MS * 2 ** misses.current);
       }
     };
     timer.current = setTimeout(look, POLL_MS);
@@ -83,6 +97,17 @@ export default function HouseFilePanel({ api, campaignRef }: { api: AccountApi; 
   }, [form]);
 
   if (hidden || !api.houseFile || !api.houseFileAdd) return null;
+  if (!state && loadFailed)
+    return (
+      <div class="stack">
+        <p role="alert">{words.loadFailed}</p>
+        <p>
+          <button type="button" class="button secondary" onClick={() => { setLoadFailed(false); setAttempt((n) => n + 1); }}>
+            {words.tryAgain}
+          </button>
+        </p>
+      </div>
+    );
   if (!state) return <p class="muted" role="status">{words.loading}</p>;
 
   function close() {
@@ -160,13 +185,15 @@ export default function HouseFilePanel({ api, campaignRef }: { api: AccountApi; 
             serverNow={state.serverNow}
             state={progress}
             frozen={stopped}
-            reason={failed ? `${words.failedReasons[req.error] ?? words.failedFallback} ${words.failedNext}` : null}
+            reason={failed ? `${words.failed} ${words.failedReasons[req.error] ?? words.failedFallback} ${words.failedNext}` : null}
           />
           {progress === "stalled" && <p role="status">{words.stalled}</p>}
+          {stopped && !done && !failed && <p role="status">{words.lookFailed}</p>}
           {done && !compared && words.results[req.action] && <p role="status">{words.results[req.action]}</p>}
           {compared && (
             <div class="stack" role="status">
               <p>{differences === 0 ? words.matches : words.counts(req.toAdd, req.toChange, req.toRemove)}</p>
+              {req.toRemove > 0 && <p>{words.removing}</p>}
               {differences > 0 && (
                 <>
                   <p>{words.next}</p>
@@ -213,7 +240,7 @@ export default function HouseFilePanel({ api, campaignRef }: { api: AccountApi; 
           <p class="small muted">{words.linkHelp}</p>
           <p>
             <button type="submit" class="button" disabled={busy}>{words.linkSend}</button>{" "}
-            <button type="button" class="button secondary" onClick={close}>{words.keep}</button>
+            <button type="button" class="button secondary" onClick={close}>{words.cancel}</button>
           </p>
         </form>
       )}
@@ -234,7 +261,7 @@ export default function HouseFilePanel({ api, campaignRef }: { api: AccountApi; 
           <p class="small muted">{words.uploadHelp}</p>
           <p>
             <button type="submit" class="button" disabled={busy}>{words.uploadSend}</button>{" "}
-            <button type="button" class="button secondary" onClick={close}>{words.keep}</button>
+            <button type="button" class="button secondary" onClick={close}>{words.cancel}</button>
           </p>
         </form>
       )}
