@@ -131,9 +131,10 @@ class Extracted:
 def is_family(claim: Extracted) -> bool:
     """Does this claim say a family role between two names ("is the niece of", "has an uncle")?
     The only kind a session may suggest for now (owner, 2026-10-29: families first, allies and
-    enemies not yet, #2960). Decided in code from the claim's words, whatever the AI returned:
-    any other kind of claim is dropped before it is stored."""
-    return kin.parse(claim.relationship) is not None
+    enemies not yet, #2960). Decided in code from the claim's words (read loosely: the AI says
+    "married to" and "half-brother of" too), whatever the AI returned: any other kind of claim is
+    dropped before it is stored. A measurement aid for #1282, kept off live."""
+    return kin.looks_like_family(claim.relationship)
 
 
 @dataclass(frozen=True, slots=True)

@@ -34,8 +34,10 @@ class TheRule(unittest.TestCase):
 
     def test_every_other_kind_is_not(self) -> None:
         for words in ("carries", "is an ally of", "is an enemy of", "is a member of", "works for",
-                      "is the king of", "is family of", "is related to"):  # fmt: skip
-            self.assertFalse(is_family(said(words)), words)
+                      "is the king of", "is family of", "is related to", "lives in",
+                      "is the personal assistant of", "is the grandest of"):  # fmt: skip
+            with self.subTest(words=words):
+                self.assertFalse(is_family(said(words)), words)
 
 
 class Mixed:
