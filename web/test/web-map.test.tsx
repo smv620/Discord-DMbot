@@ -169,6 +169,8 @@ const draw = (extra: Partial<Parameters<typeof WebMap>[0]> = {}) =>
   render(<WebMap nodes={nodes} edges={edges} center="m" refId="1.a" selected={null} onCenter={() => {}} onLine={() => {}} {...extra} />);
 const nodeOf = (name: string) => [...document.querySelectorAll(".web-node")].find((n) => n.textContent?.includes(name)) as SVGGElement;
 
+const middleButton = () => [...document.querySelectorAll(".web-side button")].find((b) => b.textContent === words.putInMiddle) as HTMLButtonElement | undefined;
+
 describe("the map", () => {
   it("fades every name and line that is not joined to the name in focus, and brings them back", () => {
     draw();
@@ -208,7 +210,7 @@ describe("the map", () => {
     expect(onLine).toHaveBeenCalledWith("m", "g");
   });
 
-  it("puts a name in the middle on Enter, and moves it with the arrow keys, keeping it there", () => {
+  it("picks a name on Enter, and moves it with the arrow keys, keeping it there", () => {
     const onCenter = vi.fn();
     draw({ onCenter });
     const garrick = nodeOf("Garrick");
@@ -218,7 +220,80 @@ describe("the map", () => {
     expect(nodeOf("Garrick").querySelector(".web-pin")).not.toBeNull();
     expect(readPlaces("1.a").g).toBeDefined();
     fireEvent.keyDown(nodeOf("Garrick"), { key: "Enter" });
+    expect(onCenter).not.toHaveBeenCalled(); // (Enter picks; the panel's button puts it in the middle)
+    expect(document.querySelector("#web-side-h")!.textContent).toBe("Garrick");
+    fireEvent.click(middleButton()!);
     expect(onCenter).toHaveBeenCalledWith("g");
+  });
+
+  it("one click picks a name and the panel stays on it; two quick clicks put it in the middle", () => {
+    const onCenter = vi.fn();
+    draw({ onCenter });
+    vi.spyOn(Date, "now").mockReturnValue(5000); // (two clicks in the same instant, whatever the runner's speed)
+    expect(document.querySelector("#web-side-h")!.textContent).toBe("Mira Voss"); // (the middle name to start with)
+    fireEvent.click(nodeOf("Garrick"));
+    expect(onCenter).not.toHaveBeenCalled();
+    expect(document.querySelector("#web-side-h")!.textContent).toBe("Garrick");
+    fireEvent.pointerLeave(nodeOf("Garrick"));
+    expect(document.querySelector("#web-side-h")!.textContent).toBe("Garrick"); // (it stays on the name clicked)
+    fireEvent.click(nodeOf("Garrick"));
+    expect(onCenter).toHaveBeenCalledTimes(1);
+    expect(onCenter).toHaveBeenCalledWith("g");
+  });
+
+  it("two clicks on two different names are not a double click, and a slow second click is not either", () => {
+    const onCenter = vi.fn();
+    draw({ onCenter });
+    const now = vi.spyOn(Date, "now");
+    now.mockReturnValue(1000);
+    fireEvent.click(nodeOf("Garrick"));
+    fireEvent.click(nodeOf("Mira Voss"));
+    expect(onCenter).not.toHaveBeenCalled();
+    now.mockReturnValue(1000);
+    fireEvent.click(nodeOf("Garrick"));
+    now.mockReturnValue(1000 + 900);
+    fireEvent.click(nodeOf("Garrick"));
+    expect(onCenter).not.toHaveBeenCalled();
+    now.mockRestore();
+  });
+
+  it("falls back to the middle name when the picked name is no longer drawn", () => {
+    const view = draw();
+    fireEvent.click(nodeOf("Garrick"));
+    fireEvent.pointerLeave(nodeOf("Garrick"));
+    expect(document.querySelector("#web-side-h")!.textContent).toBe("Garrick");
+    view.rerender(<WebMap nodes={nodes.filter((n) => n.id !== "g")} edges={[]} center="m" refId="1.a" selected={null} onCenter={() => {}} onLine={() => {}} />);
+    expect(document.querySelector("#web-side-h")!.textContent).toBe("Mira Voss");
+  });
+
+  it("starts the panel on the new middle name when the middle changes", () => {
+    const view = draw();
+    fireEvent.click(nodeOf("Garrick"));
+    fireEvent.pointerLeave(nodeOf("Garrick"));
+    view.rerender(<WebMap nodes={nodes} edges={edges} center="g" refId="1.a" selected={null} onCenter={() => {}} onLine={() => {}} />);
+    expect(document.querySelector("#web-side-h")!.textContent).toBe("Garrick");
+    view.rerender(<WebMap nodes={nodes} edges={edges} center="m" refId="1.a" selected={null} onCenter={() => {}} onLine={() => {}} />);
+    expect(document.querySelector("#web-side-h")!.textContent).toBe("Mira Voss"); // (the old pick did not come back)
+  });
+
+  it("tap, drag, tap on one name is not a double click", async () => {
+    withBox();
+    const onCenter = vi.fn();
+    draw({ onCenter });
+    const now = vi.spyOn(Date, "now").mockReturnValue(7000);
+    fireEvent.click(nodeOf("Garrick"));
+    drag(nodeOf("Garrick"), [150, 90]);
+    fireEvent.click(nodeOf("Garrick")); // (the click that ends the drag)
+    fireEvent.click(nodeOf("Garrick"));
+    expect(onCenter).not.toHaveBeenCalled();
+    now.mockRestore();
+  });
+
+  it("offers Put it in the middle only for a name that is not already the middle", () => {
+    draw();
+    expect(middleButton()).toBeUndefined();
+    fireEvent.click(nodeOf("Garrick"));
+    expect(middleButton()!).toBeTruthy();
   });
 
   it("keeps a moved name where it was dropped when the map is drawn again, and lets everything go on request", () => {
@@ -296,7 +371,9 @@ describe("moving a name by hand", () => {
     fireEvent.click(nodeOf("Garrick"));
     expect(onCenter).not.toHaveBeenCalled();
     await new Promise((r) => setTimeout(r, 5));
-    fireEvent.click(nodeOf("Garrick"));
+    fireEvent.click(nodeOf("Garrick")); // (the first real click picks)
+    expect(onCenter).not.toHaveBeenCalled();
+    fireEvent.click(nodeOf("Garrick")); // (the second is the double click)
     expect(onCenter).toHaveBeenCalledWith("g");
   });
 
@@ -598,6 +675,59 @@ describe("each kind of name has its own colour, shape and word (#2992)", () => {
       expect(names.length, label).toBeGreaterThan(0); // the wash is the colour of names that are there
     }
     expect(css()).toMatch(/\.web-area\[class\*="web-kind-"\] circle \{\s*fill: var\(--kind\);\s*fill-opacity: 0\.14/);
+  });
+});
+
+describe("pinch to zoom (two fingers)", () => {
+  afterEach(() => vi.restoreAllMocks());
+  const scaleOf = () => Number(/scale\(([\d.]+)\)/.exec(document.querySelector(".web-svg > g")!.getAttribute("transform") ?? "")?.[1] ?? 1);
+  const spread = (a: Element, b: Element) => {
+    fireEvent.pointerDown(a, { clientX: 250, clientY: 300, pointerId: 1 });
+    fireEvent.pointerDown(b, { clientX: 350, clientY: 300, pointerId: 2 });
+    fireEvent.pointerMove(window, { clientX: 200, clientY: 300, pointerId: 1 });
+    fireEvent.pointerMove(window, { clientX: 400, clientY: 300, pointerId: 2 });
+  };
+
+  it("zooms in when two fingers on the empty space move apart", () => {
+    withBox();
+    draw();
+    const svg = document.querySelector(".web-svg")!;
+    expect(scaleOf()).toBe(1);
+    spread(svg, svg);
+    expect(scaleOf()).toBeGreaterThan(1.2);
+    fireEvent.pointerUp(window, { pointerId: 1 });
+    fireEvent.pointerUp(window, { pointerId: 2 });
+  });
+
+  it("zooms too when the first finger lands on a name, and the name is not dragged or pinned", () => {
+    withBox();
+    draw();
+    const svg = document.querySelector(".web-svg")!;
+    const before = nodeOf("Garrick").getAttribute("transform");
+    spread(nodeOf("Garrick"), svg);
+    expect(scaleOf()).toBeGreaterThan(1.2);
+    fireEvent.pointerUp(window, { pointerId: 1 });
+    fireEvent.pointerUp(window, { pointerId: 2 });
+    expect(nodeOf("Garrick").querySelector(".web-pin")).toBeNull();
+    expect(nodeOf("Garrick").getAttribute("transform")).toBe(before);
+  });
+
+  it("zooms out when the fingers come together, and one finger pans again afterwards", () => {
+    withBox();
+    draw();
+    const svg = document.querySelector(".web-svg")!;
+    spread(svg, svg);
+    const zoomed = scaleOf();
+    fireEvent.pointerMove(window, { clientX: 290, clientY: 300, pointerId: 1 });
+    fireEvent.pointerMove(window, { clientX: 310, clientY: 300, pointerId: 2 });
+    expect(scaleOf()).toBeLessThan(zoomed);
+    fireEvent.pointerUp(window, { pointerId: 1 });
+    fireEvent.pointerUp(window, { pointerId: 2 });
+    const was = document.querySelector(".web-svg > g")!.getAttribute("transform");
+    fireEvent.pointerDown(svg, { clientX: 300, clientY: 300, pointerId: 3 });
+    fireEvent.pointerMove(window, { clientX: 340, clientY: 310, pointerId: 3 });
+    fireEvent.pointerUp(window, { pointerId: 3 });
+    expect(document.querySelector(".web-svg > g")!.getAttribute("transform")).not.toBe(was);
   });
 });
 
