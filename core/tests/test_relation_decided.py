@@ -115,14 +115,11 @@ class NoDoorReadsIt(MemoryTest):
     view may select it."""
 
     DM_DOORS = "0275_web_decided_note"
-    # 0281 widens the same edge door in place (#2976) and so repeats the one gated read; it adds
-    # no other read of the note.
-    WIDENS_IT = "0281_web_who_knows"
 
     def test_no_door_search_or_player_view_selects_it(self) -> None:
         pattern = re.compile(r"\b[a-z]{1,3}\.decided\b")
         for name, sql_text in schema.MIGRATIONS:
-            if name in (self.DM_DOORS, self.WIDENS_IT):
+            if name == self.DM_DOORS:
                 continue
             with self.subTest(migration=name):
                 self.assertIsNone(pattern.search(sql_text))
@@ -138,10 +135,3 @@ class NoDoorReadsIt(MemoryTest):
         self.assertEqual(text.count("w.decided"), 1)
         others = re.findall(r"\b[a-z]{1,3}\.decided\b", text.replace(gated, ""))
         self.assertEqual(sorted(others), ["l.decided", "w.decided"])
-
-    def test_the_widening_migration_reads_it_only_inside_the_dm_test(self) -> None:
-        text = dict(schema.MIGRATIONS)[self.WIDENS_IT]
-        gated = "CASE WHEN is_dm AND sees_all THEN r.decided END"
-        self.assertEqual(text.count("r.decided"), text.count(gated))
-        others = re.findall(r"\b[a-z]{1,3}\.decided\b", text.replace(gated, ""))
-        self.assertEqual(others, [])

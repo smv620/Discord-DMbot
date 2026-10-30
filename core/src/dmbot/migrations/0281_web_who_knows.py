@@ -23,8 +23,8 @@ from dmbot.migrations._shared import (
 # table's party is smaller). No table changes, no rows change.
 _KNOWN_BY_EDGE_SWAPS = (
     (
-        "'decided', CASE WHEN is_dm AND sees_all THEN r.decided END,",
-        "'decided', CASE WHEN is_dm AND sees_all THEN r.decided END,\n"
+        "'at', r.created_at,",
+        "'at', r.created_at,\n"
         "                    'held', CASE WHEN is_dm AND sees_all\n"
         "                                 THEN (r.secret OR r.unrevealed) END,\n"
         "                    'knownBy', CASE WHEN is_dm AND sees_all\n"
