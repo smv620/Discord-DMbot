@@ -370,7 +370,9 @@ def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
             if not all(
                 raw[c] is None or is_id(raw[c])
                 for c in ("about_entity_id", "state_id", "relation_id", "alias_id")
-            ) or not all(_valid(c, raw[c]) for c in ("id", "perspective_id", "created_at")):
+            ) or not all(
+                _valid(c, raw[c]) for c in ("id", "perspective_id", "created_at", "confidence")
+            ):
                 raise CampaignError(DAMAGED)
         elif not all(_valid(c, raw[c]) for c in table.columns if c != "reading"):
             # (a claim's reading has its own check, `_check_claim`)

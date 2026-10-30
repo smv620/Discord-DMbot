@@ -208,7 +208,9 @@ KNOWERS = Table(
         "relation_id",
         "alias_id",
         "created_at",
+        "confidence",
     ),
+    defaults={"confidence": 1.0},  # how sure that character is, 0.0 to 1.0 (0286)
 )
 BELIEFS = Table(
     "memory_beliefs",

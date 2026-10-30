@@ -278,3 +278,137 @@ class Stored(MemoryTest):
     async def test_the_table_viewer_needs_every_listed_character_to_be_known(self) -> None:
         data = lists(**{"property__big": {OKTHANDOM, MARA, BRUNO}})  # a strict superset
         self.assertTrue(visible(Viewer.the_table({OKTHANDOM, MARA}), data).knows(PROPERTY, "big"))
+
+
+GROUP = "irendi"  # a group (the Irendi): its row is what its members commonly know
+
+
+class Certainty(unittest.TestCase):
+    """How sure each point of view is (#2995, owner's example: Bruno, Shela and Tran)."""
+
+    def test_the_owners_example_no_row_is_not_knowing_and_zero_is_believing_it_false(self) -> None:
+        data = Statements(
+            knowers={
+                (CONNECTION, "bruno_desires_shela"): {BRUNO: 1.0, "shela": 0.95},
+                (CONNECTION, "shela_desires_bruno"): {BRUNO: 0.3, "shela": 0.0},
+            },
+            player_characters=PCS,
+        )
+        bruno = visible(Viewer.character(BRUNO), data)
+        self.assertEqual(bruno.how_sure(CONNECTION, "bruno_desires_shela"), 1.0)
+        self.assertEqual(bruno.how_sure(CONNECTION, "shela_desires_bruno"), 0.3)
+        shela = visible(Viewer.character("shela"), data)
+        self.assertEqual(shela.how_sure(CONNECTION, "bruno_desires_shela"), 0.95)
+        self.assertEqual(shela.how_sure(CONNECTION, "shela_desires_bruno"), 0.0)
+        self.assertTrue(shela.knows(CONNECTION, "shela_desires_bruno"))  # knows of it, disbelieves
+        tran = visible(Viewer.character(TRAN), data)
+        self.assertFalse(tran.knows(CONNECTION, "bruno_desires_shela"))  # no row: does not know
+        self.assertIsNone(tran.how_sure(CONNECTION, "bruno_desires_shela"))
+
+    def test_a_player_is_as_sure_as_their_surest_character_and_the_table_as_the_least_sure(
+        self,
+    ) -> None:
+        data = Statements(
+            knowers={(PROPERTY, "p"): {OKTHANDOM: 0.4, MARA: 0.9}}, player_characters=PCS
+        )
+        both = visible(Viewer.player({OKTHANDOM, MARA}), data)
+        self.assertEqual(both.how_sure(PROPERTY, "p"), 0.9)
+        table = visible(Viewer.the_table({OKTHANDOM, MARA}), data)
+        self.assertEqual(table.how_sure(PROPERTY, "p"), 0.4)
+        one_missing = Statements(knowers={(PROPERTY, "p"): {MARA: 0.9}}, player_characters=PCS)
+        self.assertFalse(
+            visible(Viewer.the_table({OKTHANDOM, MARA}), one_missing).knows(PROPERTY, "p")
+        )
+
+    def test_the_dm_is_never_asked_how_sure(self) -> None:
+        self.assertIsNone(visible(Viewer.the_dm(), lists()).how_sure(PROPERTY, "p"))
+
+    def test_a_plain_list_means_everyone_is_sure(self) -> None:
+        got = visible(Viewer.character(MARA), lists(**{"property__p": {MARA}}))
+        self.assertEqual(got.how_sure(PROPERTY, "p"), 1.0)
+
+
+class Groups(unittest.TestCase):
+    def data(self, own: dict[str, float] | None = None) -> Statements:
+        return Statements(
+            knowers={(CONNECTION, "spy"): {GROUP: 0.8, **(own or {})}},
+            groups={BRUNO: frozenset({GROUP}), TRAN: frozenset({GROUP})},
+            player_characters=PCS,
+        )
+
+    def test_a_member_knows_what_the_group_commonly_knows_at_the_groups_certainty(self) -> None:
+        got = visible(Viewer.character(BRUNO), self.data())
+        self.assertEqual(got.how_sure(CONNECTION, "spy"), 0.8)
+
+    def test_a_members_own_row_wins_even_when_lower(self) -> None:
+        got = visible(Viewer.character(BRUNO), self.data({BRUNO: 0.1}))
+        self.assertEqual(got.how_sure(CONNECTION, "spy"), 0.1)
+        self.assertEqual(
+            visible(Viewer.character(TRAN), self.data({BRUNO: 0.1})).how_sure(CONNECTION, "spy"),
+            0.8,
+        )
+
+    def test_a_friend_who_is_not_a_member_learns_nothing(self) -> None:
+        self.assertFalse(visible(Viewer.character(CLYDE), self.data()).knows(CONNECTION, "spy"))
+
+    def test_a_player_character_in_the_group_knows_it_so_the_party_does_not_unless_all_are(
+        self,
+    ) -> None:
+        data = Statements(
+            knowers={(CONNECTION, "spy"): {GROUP: 1.0}},
+            groups={OKTHANDOM: frozenset({GROUP})},
+            player_characters=PCS,
+        )
+        self.assertTrue(visible(Viewer.character(OKTHANDOM), data).knows(CONNECTION, "spy"))
+        self.assertFalse(
+            visible(Viewer.the_party(), data).knows(CONNECTION, "spy")
+        )  # Mara is not in it
+
+
+class StoredCertainty(Stored):
+    async def test_the_writer_keeps_each_certainty_and_changes_it_in_place(self) -> None:
+        ids = await self.table()
+        rel = await self.link(ids["bruno"], ids["shela"])
+        await self.memory.set_statement_knowers(
+            GUILD_A, self.c, CONNECTION, rel, {ids["bruno"]: 1.0, ids["shela"]: 0.95}, source="dm"
+        )
+        seen = await self.memory.visible_to(GUILD_A, self.c, Viewer.character(ids["shela"]))
+        self.assertEqual(seen.how_sure(CONNECTION, rel), 0.95)
+        await self.memory.set_statement_knowers(
+            GUILD_A, self.c, CONNECTION, rel, {ids["bruno"]: 1.0, ids["shela"]: 0.0}, source="dm"
+        )
+        again = await self.memory.visible_to(GUILD_A, self.c, Viewer.character(ids["shela"]))
+        self.assertEqual(again.how_sure(CONNECTION, rel), 0.0)
+        self.assertEqual(await self.count("memory_knowers"), 2)  # one row each, changed in place
+        with self.assertRaises(MemoryRuleError):
+            await self.memory.set_statement_knowers(
+                GUILD_A, self.c, CONNECTION, rel, {ids["bruno"]: 1.5}, source="dm"
+            )
+
+    async def test_a_group_is_a_knower_and_its_members_follow_it(self) -> None:
+        ids = await self.table()
+        guild = await self.add("The Irendi", type="faction", status=CONFIRMED)
+        await self.relate(ids["bruno"], "member_of", guild, status=CONFIRMED)
+        rel = await self.link(ids["shela"], ids["sword"])
+        await self.memory.set_statement_knowers(
+            GUILD_A, self.c, CONNECTION, rel, {guild: 0.7}, source="dm"
+        )
+        bruno = await self.memory.visible_to(GUILD_A, self.c, Viewer.character(ids["bruno"]))
+        self.assertEqual(bruno.how_sure(CONNECTION, rel), 0.7)
+        outsider = await self.memory.visible_to(GUILD_A, self.c, Viewer.character(ids["mara"]))
+        self.assertFalse(outsider.knows(CONNECTION, rel))
+        await self.memory.set_statement_knowers(
+            GUILD_A, self.c, CONNECTION, rel, {guild: 0.7, ids["bruno"]: 0.2}, source="dm"
+        )
+        own = await self.memory.visible_to(GUILD_A, self.c, Viewer.character(ids["bruno"]))
+        self.assertEqual(own.how_sure(CONNECTION, rel), 0.2)  # his own row wins
+
+    async def test_a_backup_keeps_the_certainties(self) -> None:
+        ids = await self.table()
+        await self.memory.set_statement_knowers(
+            GUILD_A, self.c, ENTRY, ids["sword"], {ids["mara"]: 0.35}, source="dm"
+        )
+        raw = encode_backup(await self.campaigns.export(GUILD_A, self.c))
+        restored = await self.campaigns.import_backup(GUILD_B, decode_backup(raw), 7)
+        seen = await self.memory.visible_to(GUILD_B, restored.id, Viewer.character(ids["mara"]))
+        self.assertEqual(seen.how_sure(ENTRY, ids["sword"]), 0.35)
