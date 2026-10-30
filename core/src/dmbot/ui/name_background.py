@@ -521,6 +521,7 @@ class BackgroundOffer(_Menu):
                 dropped=done.dropped,
                 questions=done.questions,
                 changes=done.changes,
+                suggested=done.suggested,
             )
         except (AIError, CampaignError) as exc:  # CampaignError: the campaign is gone
             with contextlib.suppress(discord.HTTPException):
@@ -555,6 +556,7 @@ class BackgroundRead:
     changes: int
     dropped: Mapping[str, int]
     questions: list[str]
+    suggested: int = 0  # other names suggested for names the DM has, waiting for a yes (#3034)
 
 
 async def read_background(
@@ -620,7 +622,14 @@ async def read_background(
         upload.text,
         known_by,
     )
-    await save_earlier_names(memory, campaign, read.known_spellings, read.secret_spellings)
+    await save_earlier_names(
+        memory,
+        campaign,
+        read.known_spellings,
+        read.secret_spellings,
+        getattr(bot, "lore_context", None),
+        upload.text,
+    )
     questions: list[str] = []
     keys: set[tuple[str, str, str]] = set()
     queued = await queue_links(
@@ -660,9 +669,14 @@ async def read_background(
         )
         or "nothing",
     )  # (counts only: the questions are the DM's own words, shown only to them)
+    try:
+        suggested = len(await memory.suggested_names(campaign.guild_id, campaign.id))
+    except Exception:  # only the count for the summary: the read itself is done
+        log.exception("The suggested names could not be counted")
+        suggested = 0
     return BackgroundRead(
         stored, queued, read.cut, read.stats.links_listed, ready, changes,
-        read.stats.dropped, questions,
+        read.stats.dropped, questions, suggested,
     )  # fmt: skip
 
 
@@ -671,6 +685,8 @@ async def save_earlier_names(
     campaign: Campaign,
     spellings: Mapping[str, Sequence[str]],
     secret: Collection[str],
+    held: lore_context.Held | None = None,
+    text: str = "",
 ) -> None:
     """The other names a lore text gives a name the campaign already has (#3034): a pseudonym, an
     earlier or birth name, a nickname. They are saved as suggestions on that entry (never a new
@@ -699,8 +715,17 @@ async def save_earlier_names(
         await memory.add_names(campaign.guild_id, campaign.id, [], source=DM, more=more)
     except MemoryRuleError as exc:
         log.info("Skipped the earlier names of a background: %s", exc)
+        return
     except Exception:  # the names of the read are stored already: this must not undo the read
         log.exception("The earlier names of a background could not be saved")
+        return
+    if held is None or not text:
+        return
+    try:  # the sentence around each, for its question (memory only; a failure only loses it)
+        for alias, _ in await memory.suggested_names(campaign.guild_id, campaign.id):
+            held.put(campaign.guild_id, alias.id, lore_context.around(text, "", alias.text))
+    except Exception:
+        log.exception("The sentences of the suggested names could not be kept")
 
 
 async def store(
@@ -899,10 +924,17 @@ async def summary(
     dropped: Mapping[str, int] | None = None,
     questions: Sequence[str] = (),
     changes: int = 0,
+    suggested: int = 0,
 ) -> None:
     total = sum(map(len, stored.values()))
-    waiting = queued + (dropped or {}).get("which_waiting", 0)
-    note = _found_note(
+    waiting = queued + (dropped or {}).get("which_waiting", 0) + suggested
+    names_note = (
+        f"\n🔎 {suggested} other name{'' if suggested == 1 else 's'} to check: press 📜 Check "
+        "the connections. Nothing uses a name until you say yes."
+        if suggested
+        else ""
+    )
+    note = names_note + _found_note(
         links_found,
         queued,
         ready=ready,
@@ -1479,9 +1511,12 @@ async def offer_ready(interaction: discord.Interaction, campaign_id: str) -> boo
     when the DM has answered names (Add all, the end of 📝 Check new names) and by the 📜 button.
     Returns whether there was anything to ask."""
     try:
+        from dmbot.ui.name_questions import offer_names  # (it imports this module)
+
+        asked_names = await offer_names(interaction, campaign_id)  # suggested other names first
         view = ConnectionOffer(campaign_id)
         if not await view.load(interaction):
-            return False
+            return asked_names
         with contextlib.suppress(discord.HTTPException):
             await interaction.followup.send(
                 view.text(), view=view, ephemeral=True, allowed_mentions=NO_PINGS

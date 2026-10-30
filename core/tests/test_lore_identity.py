@@ -11,11 +11,11 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 from dmbot.memory.backstory_links import BackstoryLinks
-from dmbot.memory.models import CONFIRMED
+from dmbot.memory.models import CONFIRMED, name_key
 from dmbot.ui import name_background as ui_bg
 from dmbot.ui.name_lists import Upload
 from tests import lore_fake
-from tests.test_memory_names import GUILD, NamesTest
+from tests.test_memory_names import DM, GUILD, NamesTest
 
 TEXT = (
     "Born Tamsin Vell, the thief fled north under the pseudonym Ash Morrow. Tamsin Vell served "
@@ -161,7 +161,6 @@ class TheEarlierName(NamesTest):
 
     async def test_a_suggested_name_is_not_used_until_the_dm_says_yes(self) -> None:
         from dmbot.memory.lookup import CampaignLookup
-        from dmbot.memory.models import name_key
 
         await self.ash()
         await self.go()
@@ -233,3 +232,104 @@ class TheFold(unittest.TestCase):
         from dmbot.memory.lore_read import fold_names
 
         self.assertEqual(len(fold_names([self.found("Mira"), self.found("Wren")])), 2)
+
+
+class TheNameQuestion(NamesTest):
+    """ "Is Tamsin another name of Ash?" in 📜 Check the connections: nothing uses the suggested
+    name until the DM says yes, a no is remembered, only a DM may answer."""
+
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        self.bot.plan_gate = AsyncMock(return_value=None)  # type: ignore[method-assign]
+        self.store = BackstoryLinks(self.db)
+        self.bot.backstory_links = self.store
+        made = await self.memory.add_entity(
+            GUILD, self.campaign.id, name="Ash Morrow", type="character", role="npc",
+            status=CONFIRMED, source="dm",
+        )  # fmt: skip
+        self.ash = made.value.id
+        await ui_bg.save_earlier_names(
+            self.memory, self.campaign, {"Ash Morrow": ("Tamsin Vell",)}, {name_key("Tamsin Vell")}
+        )
+
+    async def card(self) -> Any:
+        from dmbot.ui.name_questions import NameQuestions
+
+        view = NameQuestions(self.campaign.id)
+        self.assertTrue(await view.load(self.it(DM)))
+        return view
+
+    async def test_the_card_asks_in_plain_words_and_says_it_is_secret(self) -> None:
+        view = await self.card()
+        text = view.text()
+        self.assertIn("Is Tamsin Vell another name of Ash Morrow?", text)
+        self.assertIn("Nothing uses the name until you say yes", text)
+        self.assertIn("secret name", text)
+
+    async def test_yes_confirms_the_name_and_it_is_used_from_then_on(self) -> None:
+        from dmbot.memory.lookup import CampaignLookup
+
+        view = await self.card()
+        await next(b for b in view.children if b.label == "✅ Yes").callback(self.it(DM))
+        found = await self.memory.aliases(
+            GUILD, self.campaign.id, entity_id=self.ash, include_secret=True
+        )
+        (alias,) = [a for a in found if a.text == "Tamsin Vell"]
+        self.assertEqual((alias.status, alias.secret), ("confirmed", True))
+        lookup = CampaignLookup.build(await self.memory.lookup_data(GUILD, self.campaign.id))
+        self.assertIn(name_key("Tamsin Vell"), lookup.by_key)
+        self.assertEqual(await self.memory.suggested_names(GUILD, self.campaign.id), [])
+
+    async def test_no_is_remembered_and_the_same_text_never_asks_again(self) -> None:
+        view = await self.card()
+        await next(b for b in view.children if b.label == "❌ No").callback(self.it(DM))
+        await ui_bg.save_earlier_names(
+            self.memory, self.campaign, {"Ash Morrow": ("Tamsin Vell",)}, {name_key("Tamsin Vell")}
+        )
+        self.assertEqual(await self.memory.suggested_names(GUILD, self.campaign.id), [])
+
+    async def test_only_a_dm_can_answer(self) -> None:
+        from tests.test_memory_names import MANAGER
+
+        view = await self.card()
+        await next(b for b in view.children if b.label == "✅ Yes").callback(self.it(MANAGER))
+        (still,) = await self.memory.suggested_names(GUILD, self.campaign.id)
+        self.assertEqual(still[0].status, "proposed")
+
+    async def test_the_connections_button_asks_the_names_first(self) -> None:
+        it = self.it(DM)
+        self.assertTrue(await ui_bg.offer_ready(it, self.campaign.id))
+        said = it.followup.send.await_args.args[0]
+        self.assertIn("another name of Ash Morrow", said)
+
+    async def test_a_second_yes_on_the_same_name_counts_once(self) -> None:
+        view = await self.card()
+        yes = next(b for b in view.children if b.label == "✅ Yes")
+        await yes.callback(self.it(DM))
+        await yes.callback(self.it(DM))
+        self.assertEqual(view.yes, 1)
+
+    async def test_not_now_keeps_the_question_and_only_a_dm_may_press_it(self) -> None:
+        from tests.test_memory_names import MANAGER
+
+        view = await self.card()
+        not_now = next(b for b in view.children if b.label == "⏭️ Not now")
+        await not_now.callback(self.it(MANAGER))
+        self.assertFalse(view.is_finished())
+        await not_now.callback(self.it(DM))
+        self.assertTrue(view.is_finished())
+        self.assertEqual(len(await self.memory.suggested_names(GUILD, self.campaign.id)), 1)
+
+    async def test_a_failing_count_never_fails_the_read(self) -> None:
+        async def boom(*_: Any) -> Any:
+            raise RuntimeError("down")
+
+        self.memory.suggested_names = boom  # type: ignore[method-assign]
+        await ui_bg.save_earlier_names(
+            self.memory,
+            self.campaign,
+            {"Ash Morrow": ("Old Ash",)},
+            (),
+            self.bot.lore_context,
+            "Old Ash",
+        )  # no error

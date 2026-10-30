@@ -585,6 +585,26 @@ class MemoryStore:
             live = await _live_ids(scope, None if entity_id is None else [entity_id])
             return [_alias(r) for r in rows if r["entity_id"] in live]
 
+    async def suggested_names(self, guild_id: int, campaign_id: str) -> list[tuple[Alias, str]]:
+        """The other names an AI read suggested for entries the DM confirmed, still waiting for
+        a yes (#3034): each with its entry's name, oldest first. A DM-only reader."""
+        async with self._read(guild_id, campaign_id, snapshot=True) as scope:
+            rows = await scope.select(
+                ALIASES,
+                " AND status = 'proposed' AND source = %s ORDER BY created_at, id",
+                [BACKGROUND_SOURCE],
+            )
+            wanted = sorted({str(r["entity_id"]) for r in rows})
+            owners = {
+                str(r["id"]): str(r["name"])
+                for r in await scope.select(
+                    ENTITIES, " AND id = ANY(%s) AND status = 'confirmed'", [wanted]
+                )
+            }
+            return [
+                (_alias(r), owners[str(r["entity_id"])]) for r in rows if r["entity_id"] in owners
+            ]
+
     async def confirmed_name_for(self, guild_id: int, campaign_id: str, key: str) -> str | None:
         """The confirmed entry already called `key` by a name everyone may know (not a
         secret one), if any: its name. Look-ups by key and by ID, never every name of the
