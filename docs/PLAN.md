@@ -4564,6 +4564,33 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
   answer is retried. The same holds for every AI write-up in DMbot (house-rule notes, support replies,
   the DM sidebar's answers): limits are in the instructions, and only a platform's hard limit (Discord's
   2,000 characters a message) splits an answer into parts, never cuts it.
+  **Session notes: the beat sheet is kept** (owner, 2026-10-30, after reading the beat sheets the new
+  recap pipeline writes: "fantastic", "great for condensed notes"). Until now a beat sheet lived only in
+  its recap job, as a step toward the recap. From now on it is part of the session, the campaign's own
+  record of what happened:
+  - **Stored with the session,** one current beat sheet per session (the latest one DMbot wrote, with
+    when it was written). A redone recap writes a new one, which replaces it. The words are DMbot's own
+    paraphrase, using character names and never quoting anyone (the beat prompt's rules), so it holds
+    no player's words.
+  - **It belongs to the campaign, like a recap.** It stays when a player uses Delete my transcripts or
+    Stop recording me, when transcripts are deleted by the campaign's retention setting, and when a
+    player deletes their account. It goes only when the campaign is deleted. Players keep their right
+    to read and delete their own lines of the transcript. This matches the privacy page as it already
+    reads: "What DMbot makes from a session belongs to the campaign … deleted only with the campaign."
+  - **Its line pointers are only pointers.** A beat cites the transcript lines it rests on. When those
+    lines are deleted, the pointers to them are dropped, and the beat's sentence stays.
+  - **In backups and moves:** a backup holds every session's beat sheet, and restoring one puts them
+    back. A campaign move takes them along.
+  - **Who sees it:** the campaign's game masters, on the session's page on the website (the
+    transcripts list), and by a 📝 Session notes button beside a recap in Discord. Players don't see it
+    yet. It is written from the shared transcript but read by the DM before the recap is shared, so
+    sharing it with players is a later choice for the DM.
+  - **What uses it:** the next recaps ("the story so far") and, later, the DM sidebar's "where we left
+    off" and imported sessions, as condensed notes. A session whose transcript is gone still has its
+    notes for this.
+  - Built in CloudDev #3026 (storing it, deletion, backups and moves) and WebDev #3027 (the website's
+    session notes and the privacy page naming them).
+
   **A recap is a short story someone who missed the session can follow** (owner, 2026-10-29, after
   reading a live recap that was accurate but thin: things with no introduction, no goal, one character
   carrying it; #2950, #2952, #2954). This replaces the "write only from the beat sheet" rule and the
@@ -5441,7 +5468,9 @@ says, and DMs would not pay for a service that claims their campaigns.
   lock), not during a session, one warning and a typed name; its channels go as retention's do.
 - **Severable personal data is deleted on request, best effort:** a person's own lines and what DMbot
   learned about them (Delete my transcripts, Stop recording me, account deletion). Generated content
-  and copies other people already downloaded stay, and the pages say so.
+  and copies other people already downloaded stay, and the pages say so. *(Owner, 2026-10-30:)* a
+  session's **beat sheet** (its session notes, see "Session notes: the beat sheet is kept") is generated
+  content: it stays when a player deletes their lines, and goes only with the campaign.
 - **Account data stays protected:** Discord ids, emails, payment and record-keeping data are never
   published or shared beyond the processors the privacy page names.
 - **Improving DMbot:** DMbot uses transcripts and typed table chat to improve itself (the raw transcript
