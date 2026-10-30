@@ -12,6 +12,7 @@ from unittest.mock import patch
 
 import httpx
 
+from dmbot.memory import backstory_keep
 from dmbot.memory import web_actions as wa
 from dmbot.memory.backstory_links import BackstoryLinks, NewLink, NewWhich
 from dmbot.memory.claims import ClaimStore
@@ -486,6 +487,24 @@ class TheEdits(Editing):
                   if r.predicate == "knows" and r.object_id == self.hall]  # fmt: skip
         self.assertEqual((rel.source, rel.status, rel.subject_id), ("dm", "confirmed", self.mira))
         self.assertEqual(await self.backstory.count(self.g, self.one.id), 0)
+
+    async def test_the_websites_single_keep_hands_the_store_the_dms_secret_press_only(self) -> None:
+        # (#3025) a secret spelling leaves an old public fact alone; the DM's own press hides it
+        for pressed in (False, True):
+            with self.subTest(pressed=pressed):
+                waiting = await self.waiting_link(self.mira, self.hall, secret=True)
+                await self.queue(kind="backstory", action="keep", id=waiting, secret=pressed)
+                with patch(
+                    "dmbot.memory.web_actions.keep.keep_all", wraps=backstory_keep.keep_all
+                ) as spy:
+                    self.assertEqual([o.error for o in await self.apply_waiting()], [""])
+                call = spy.await_args
+                assert call is not None
+                self.assertEqual(call.kwargs["keep_flags"], not pressed)
+                for rel in await self.knows_hall():  # clear it for the next round
+                    await self.memory.update_relation(
+                        self.g, self.one.id, rel.id, source=DM_SOURCE, status="rejected"
+                    )
 
     async def test_keep_all_writes_every_ready_one_and_the_discord_undo_takes_them_back(
         self,

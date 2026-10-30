@@ -2042,6 +2042,9 @@ class ConnectionOffer(_Menu):
                     # is the DM's alone (#2935)
                     known_by=[c.known_by] if c.known_by and not (secret or c.secret) else (),
                     from_session_at=start if old else None,  # (starts as the old one ends)
+                    # a secret SPELLING in the text never hides what the players were shown (#3025);
+                    # the DM's own 🤫 button is their word and does
+                    keep_flags=not secret,
                 )  # fmt: skip
             except Exception as exc:
                 # a change is whole or not at all, whatever went wrong
