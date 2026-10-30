@@ -23,6 +23,11 @@ BY_PREDICATE: dict[str, str] = {
     "owns": WORK,
     "carries": WORK,
     "located_in": WORK,
+    "mentor_of": WORK,
+    "leads": GROUP,
+    "founded": GROUP,
+    "captive_of": OTHER,
+    "contains": WORK,
 }
 
 
