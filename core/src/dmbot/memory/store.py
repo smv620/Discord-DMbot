@@ -2884,14 +2884,16 @@ class MemoryStore:
             entries = await scope.select(
                 ENTITIES, " AND status IN ('proposed', 'confirmed') AND type <> %s", [PERSON]
             )
-            aliases = await scope.select(ALIASES, " AND status IN ('proposed', 'confirmed')")
+            aliases = await scope.select(ALIASES, " AND status = 'confirmed'")
             links = await scope.select(RELATIONS, " AND status = 'confirmed'")
             cur = await scope.conn.execute(
                 "SELECT a_id, b_id FROM name_not_same WHERE guild_id = %s AND campaign_id = %s",
                 scope.ids,
             )
             apart = {(str(r["a_id"]), str(r["b_id"])) for r in await cur.fetchall()}
-        return same_person_mod.from_rows(entries, aliases, links, apart)
+        # Off the event loop: it compares every unnamed entry with every named one, and the bot's
+        # other work (voice, consent) must not wait for a campaign of thousands.
+        return await asyncio.to_thread(same_person_mod.from_rows, entries, aliases, links, apart)
 
     async def not_the_same_person(
         self, guild_id: int, campaign_id: str, unnamed_id: str, named_id: str, *, user_id: int
