@@ -14,7 +14,7 @@ from dataclasses import dataclass
 import discord
 
 from dmbot.memory.models import MemoryRuleError
-from dmbot.memory.same_person import Offer
+from dmbot.memory.same_person import STATED, Offer
 from dmbot.mentions import NO_PINGS
 from dmbot.ui.dmbot_commands import _Button, _Menu, _tell
 from dmbot.ui.name_background import ONLY_DMS, campaign_for, markdown_safe, memory_of
@@ -22,6 +22,11 @@ from dmbot.ui.name_background import ONLY_DMS, campaign_for, markdown_safe, memo
 log = logging.getLogger(__name__)
 
 KEEPS = "Joining them keeps what each player knew. Nothing new is shown to players."
+
+
+def _with_the(label: str) -> str:
+    """ "the guard at the north gate": the label is made without its article."""
+    return label if label.lower().startswith(("the ", "a ", "an ")) else f"the {label}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,11 +92,15 @@ class SamePersonQuestions(_Menu):
         if c is None:
             return f"🔎 Done. {self.yes} joined, {self.no} kept apart."
         place = f" ({self.yes + self.no + 1} of {self.total})" if self.total > 1 else ""
-        why = ", ".join(c.offer.reasons)
+        # (when the story itself says so, DMbot is not guessing)
+        why = (
+            "The story says so."
+            if STATED in c.offer.reasons
+            else f"DMbot is only guessing: {', '.join(c.offer.reasons)}."
+        )
         return (
-            f"🔎 **Is {markdown_safe(c.unnamed)} the same as {markdown_safe(c.named)}?**{place}\n"
-            f"DMbot is only guessing: {why}.\n"
-            f"{KEEPS}"
+            f"🔎 **Is {_with_the(markdown_safe(c.unnamed))} the same as "
+            f"{markdown_safe(c.named)}?**{place}\n{why}\n{KEEPS}"
         )
 
     async def _show(self, interaction: discord.Interaction, waiting: list[Asked]) -> None:
@@ -111,7 +120,9 @@ class SamePersonQuestions(_Menu):
         async with self.busy:
             campaign = await campaign_for(interaction, self.campaign_id)
             memory = memory_of(interaction)
-            if campaign is None or memory is None:
+            if campaign is None:
+                return  # (`campaign_for` has already told them why)
+            if memory is None:
                 await _tell(interaction, "DMbot couldn't find that campaign. Try again.")
                 return
             if interaction.user.id not in campaign.dm_user_ids:  # on every press
@@ -143,7 +154,12 @@ class SamePersonQuestions(_Menu):
                 return
             self.yes, self.no = self.yes + int(yes), self.no + int(not yes)
             log.info("A possible match was %s", "joined" if yes else "kept apart")  # counts only
-            await self._show(interaction, await self._waiting(interaction))
+            try:  # (the answer is saved: a failed re-read must not read as "that didn't work")
+                after = await self._waiting(interaction)
+            except Exception:
+                log.exception("Couldn't read the possible matches after an answer")
+                after = []
+            await self._show(interaction, after)
 
     async def _yes(self, interaction: discord.Interaction) -> None:
         await self._answer(True, interaction)
@@ -153,21 +169,22 @@ class SamePersonQuestions(_Menu):
 
     async def _later(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer()
-        campaign = await campaign_for(interaction, self.campaign_id)
-        if campaign is None or interaction.user.id not in campaign.dm_user_ids:  # every press
-            await _tell(interaction, ONLY_DMS)
-            return
-        left = len(await self._waiting(interaction))
-        self.stop()
-        with contextlib.suppress(discord.HTTPException):
-            await interaction.edit_original_response(
-                content=(
-                    f"⏭️ Saved for later. {left} still waiting: press 📜 Check the "
-                    "connections when you are ready."
-                ),
-                view=None,
-                allowed_mentions=NO_PINGS,
-            )
+        async with self.busy:  # after any Yes that is still saving, never racing it
+            campaign = await campaign_for(interaction, self.campaign_id)
+            if campaign is None or interaction.user.id not in campaign.dm_user_ids:  # every press
+                await _tell(interaction, ONLY_DMS)
+                return
+            left = len(await self._waiting(interaction))
+            self.stop()
+            with contextlib.suppress(discord.HTTPException):
+                await interaction.edit_original_response(
+                    content=(
+                        f"⏭️ Saved for later. {left} still waiting: press 📜 Check the "
+                        "connections when you are ready."
+                    ),
+                    view=None,
+                    allowed_mentions=NO_PINGS,
+                )
 
 
 async def offer_same_person(interaction: discord.Interaction, campaign_id: str) -> bool:

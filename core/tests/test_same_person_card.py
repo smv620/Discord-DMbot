@@ -67,7 +67,7 @@ class TheMatchCard(NamesTest):
 
     async def test_the_card_asks_in_plain_words_and_promises_nothing_new_for_players(self) -> None:
         text = (await self.card()).text()
-        self.assertIn("Is guard at the north gate", text)
+        self.assertIn("Is the guard at the north gate", text)
         self.assertIn("the same as Ken?", text)
         self.assertIn(KEEPS, text)
         self.assertEqual(
@@ -111,3 +111,67 @@ class TheMatchCard(NamesTest):
         self.assertEqual(len(await self.memory.unnamed(GUILD, self.campaign.id)), 2)  # not joined
         told = " ".join(str(c) for c in it.followup.send.await_args_list)
         self.assertIn("dog", told)
+
+    async def add_second_pair(self) -> tuple[str, str]:
+        made = await self.memory.add_unnamed(
+            GUILD, self.campaign.id, what="smith at the old forge", role="smith"
+        )
+        ken = (
+            await self.memory.add_entity(
+                GUILD, self.campaign.id, name="Dov", type="character", role="npc",
+                status=CONFIRMED, source="dm", description="A smith who keeps the old forge",
+            )
+        ).value.id  # fmt: skip
+        return made.entity.id, ken
+
+    async def test_a_double_press_joins_only_the_pair_that_was_shown(self) -> None:
+        import asyncio
+
+        await self.add_second_pair()
+        view = await self.card()
+        first = view.current.offer
+        release = asyncio.Event()
+        slow = self.it(DM)
+        real_defer = slow.response.defer
+
+        async def held_defer(**kw: Any) -> None:
+            await release.wait()  # this press is answered late, after the first has finished
+            await real_defer(**kw)
+
+        slow.response.defer = held_defer
+        yes = self.press(view, "✅")
+        late = asyncio.create_task(yes.callback(slow))
+        await asyncio.sleep(0)  # (it has captured the card it was made on)
+        await yes.callback(self.it(DM))  # the first press runs to the end: pair one joined
+        release.set()
+        await late
+        left = {label for _, label in await self.memory.unnamed(GUILD, self.campaign.id)}
+        self.assertEqual(len(left), 1)  # only the first pair was joined, never the second
+        self.assertNotIn(
+            first.unnamed_id, {e.id for e, _ in await self.memory.unnamed(GUILD, self.campaign.id)}
+        )
+
+    async def test_later_writes_nothing_and_says_how_many_wait(self) -> None:
+        await self.add_second_pair()
+        view = await self.card()
+        it = self.it(DM)
+        await self.press(view, "⏭️").callback(it)
+        self.assertEqual(len(await self.memory.unnamed(GUILD, self.campaign.id)), 2)
+        self.assertIn("2 still waiting", it.response.edited[-1][0])
+
+    async def test_a_players_press_gets_the_polite_reply(self) -> None:
+        view = await self.card()
+        it = self.it(99)
+        await self.press(view, "✅").callback(it)
+        told = " ".join(str(c) for c in it.followup.send.await_args_list)
+        self.assertIn("can do that", told)  # (polite, and said once)
+        self.assertEqual(it.followup.send.await_count, 1)
+
+    async def test_a_stated_pair_says_the_story_says_so(self) -> None:
+        from dmbot.memory.same_person import STATED, Offer
+        from dmbot.ui.same_person_questions import Asked
+
+        view = await self.card()
+        view.current = Asked(Offer("u", "n", 100, (STATED,)), "guard at the north gate", "Ken")
+        self.assertIn("The story says so.", view.text())
+        self.assertNotIn("only guessing", view.text())
