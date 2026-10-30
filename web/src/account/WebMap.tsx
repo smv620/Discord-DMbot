@@ -36,6 +36,7 @@ import { isTheory, zoomAbout, type View } from "./webLayout";
 
 const SHAPE_R = 24; // half the width of a name's shape: 48 px across at normal size, a fine thing to tap
 const STEPS_PER_FRAME = 2; // the settle runs a couple of steps each frame: calm, and quick to finish
+const DOUBLE_MS = 400; // two clicks on one name within this are a double click
 const NUDGE = 24; // how far an arrow key moves the name it is on
 
 /** Each style has its own shape (and the plain ones a dashed edge), so a name is known by shape and word as
@@ -128,6 +129,16 @@ export default function WebMap({
   const [extent, setExtent] = useState(260);
   // The name the pointer or the keyboard is on: everything not joined to it fades.
   const [focus, setFocus] = useState<string | null>(null);
+  // The name a click picked: the side panel stays on it (a phone has no hover), until the middle name changes.
+  // It is tied to the middle name it was picked under, so a new middle name starts with the panel on that name
+  // with no frame of the old one.
+  const [pickedAt, setPickedAt] = useState<{ id: string; center: string } | null>(null);
+  const picked = pickedAt && pickedAt.center === center ? pickedAt.id : null;
+  if (pickedAt && pickedAt.center !== center) setPickedAt(null); // (forgotten for good, not only hidden while the middle differs)
+  const setPicked = (id: string) => setPickedAt({ id, center });
+  const touched = useRef(false);
+  const lastTap = useRef<{ id: string; at: number } | null>(null);
+
   // Kinds of connection the person turned off with the chips: their lines are not drawn.
   const [off, setOff] = useState<Set<string>>(new Set());
   const sim = useRef<SimNode[]>([]);
@@ -271,6 +282,20 @@ export default function WebMap({
     const pair = (): [{ x: number; y: number }, { x: number; y: number }] =>
       [...pointers.current.values()].slice(0, 2) as [{ x: number; y: number }, { x: number; y: number }];
     const move = (m: PointerEvent): void => {
+      const before = pointers.current.get(m.pointerId);
+      if (before) pointers.current.set(m.pointerId, { x: m.clientX, y: m.clientY });
+      // Two fingers are a pinch, wherever they landed (on a name or on the empty space): it comes before a
+      // name's drag and before panning, so a pinch that starts on a name still zooms (#3015).
+      if (pointers.current.size >= 2 && pinch.current) {
+        const [p, q] = pair();
+        const now = Math.hypot(p.x - q.x, p.y - q.y);
+        if (now > 0) {
+          setView((v) => zoomAbout(v, toDrawingRef.current((p.x + q.x) / 2, (p.y + q.y) / 2), now / (pinch.current ?? now)));
+          pinch.current = now;
+          dragged.current = true;
+        }
+        return;
+      }
       const grab = dragName.current;
       if (grab) {
         if (!grab.moved && Math.hypot(m.clientX - grab.x, m.clientY - grab.y) <= 5) return;
@@ -289,19 +314,7 @@ export default function WebMap({
         setFrame((f) => f + 1);
         return;
       }
-      const before = pointers.current.get(m.pointerId);
       if (!before) return;
-      pointers.current.set(m.pointerId, { x: m.clientX, y: m.clientY });
-      if (pointers.current.size >= 2 && pinch.current) {
-        const [p, q] = pair();
-        const now = Math.hypot(p.x - q.x, p.y - q.y);
-        if (now > 0) {
-          setView((v) => zoomAbout(v, toDrawingRef.current((p.x + q.x) / 2, (p.y + q.y) / 2), now / (pinch.current ?? now)));
-          pinch.current = now;
-          dragged.current = true;
-        }
-        return;
-      }
       const from = start.current.get(m.pointerId);
       if (from && Math.hypot(m.clientX - from.x, m.clientY - from.y) > 5) dragged.current = true;
       const u = unitsRef.current();
@@ -310,6 +323,9 @@ export default function WebMap({
       setView((v) => ({ ...v, x: v.x + dx, y: v.y + dy }));
     };
     const up = (u: PointerEvent): void => {
+      pointers.current.delete(u.pointerId);
+      start.current.delete(u.pointerId);
+      if (pointers.current.size < 2) pinch.current = null;
       if (dragName.current) {
         const grab = dragName.current;
         dragName.current = null;
@@ -320,9 +336,6 @@ export default function WebMap({
         setTimeout(() => (dragged.current = false), 0);
         return;
       }
-      pointers.current.delete(u.pointerId);
-      start.current.delete(u.pointerId);
-      if (pointers.current.size < 2) pinch.current = null;
       // The click that follows a drag arrives after this; forget the drag only once it has passed.
       if (pointers.current.size === 0) setTimeout(() => (dragged.current = false), 0);
     };
@@ -344,6 +357,8 @@ export default function WebMap({
     if (pointers.current.size === 2) {
       const [p, q] = [...pointers.current.values()] as [{ x: number; y: number }, { x: number; y: number }];
       pinch.current = Math.hypot(p.x - q.x, p.y - q.y);
+      // A second finger turns a name's drag into a pinch: the name stays where it was.
+      dragName.current = null;
     }
   };
 
@@ -406,7 +421,8 @@ export default function WebMap({
   const kindsPresent = LINK_KINDS.filter((k) => edges.some((e) => edgeKind(e) === k));
   const tooBig = nodes.length > MAX_SIM_NAMES;
   // The side panel: the name in focus, or the middle name, with its connections in words.
-  const detail = byId.get(focus ?? center) ?? null;
+  // A picked or focused name that is no longer drawn falls back to the next, never to an empty panel.
+  const detail = byId.get(focus ?? "") ?? byId.get(picked ?? "") ?? byId.get(center) ?? null;
   const detailPinned = detail ? (at.get(detail.id)?.pinned ?? false) : false;
   const sideLines = detail
     ? edges
@@ -489,7 +505,7 @@ export default function WebMap({
         viewBox={`${-e} ${-e} ${2 * e} ${2 * e}`}
         role="group"
         aria-label={words.mapLabel(nodes.length, byId.get(center)?.name ?? "")}
-        onPointerDown={down}
+        onPointerDownCapture={down}
         onWheel={(ev) => {
           if (!ev.ctrlKey && !ev.metaKey) return; // plain scrolling belongs to the page
           ev.preventDefault();
@@ -582,6 +598,8 @@ export default function WebMap({
                 aria-label={words.nameButton(n.name)}
                 onPointerDown={(ev) => {
                   ev.stopPropagation();
+                  touched.current = ev.pointerType === "touch";
+                  if (pointers.current.size > 1) return; // a second finger: a pinch, not a drag of this name
                   dragName.current = { id: n.id, x: ev.clientX, y: ev.clientY, moved: false };
                   dragged.current = false;
                 }}
@@ -590,7 +608,19 @@ export default function WebMap({
                 onFocus={() => setFocus(n.id)}
                 onBlur={() => setFocus((f) => (f === n.id ? null : f))}
                 onClick={() => {
-                  if (!dragged.current) onCenter(n.id);
+                  if (dragged.current) {
+                    lastTap.current = null; // (the end of a drag is neither a click nor half of a double click)
+                    return;
+                  }
+                  // A finger leaves no hover behind: the panel follows the pick, not the last name touched.
+                  if (touched.current) setFocus(null);
+                  // One click picks the name; a second on the same name within DOUBLE_MS puts it in the middle.
+                  // Counted here, not with `dblclick`, which a phone does not send reliably.
+                  const now = Date.now();
+                  const again = lastTap.current?.id === n.id && now - lastTap.current.at < DOUBLE_MS;
+                  lastTap.current = again ? null : { id: n.id, at: now };
+                  if (again) onCenter(n.id);
+                  else setPicked(n.id);
                 }}
                 onKeyDown={(ev) => {
                   const step: Record<string, [number, number]> = {
@@ -605,7 +635,7 @@ export default function WebMap({
                     nudge(n.id, by[0], by[1]);
                   } else if (ev.key === "Enter" || ev.key === " ") {
                     ev.preventDefault();
-                    onCenter(n.id);
+                    setPicked(n.id); // (the panel's "Put it in the middle" button is the keyboard's double click)
                   }
                 }}
               >
@@ -664,6 +694,11 @@ export default function WebMap({
           >
             {detailPinned ? words.letMove : words.keepHere}
           </button>
+          {detail.id !== center && (
+            <button type="button" class="button secondary" onClick={() => onCenter(detail.id)}>
+              {words.putInMiddle}
+            </button>
+          )}
         </aside>
       )}
       </div>
