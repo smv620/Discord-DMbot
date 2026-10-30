@@ -77,7 +77,9 @@ async def backfill(db: Database, args: argparse.Namespace) -> Totals:
         totals.campaigns += 1
         for session_id in await campaign_sessions(db, guild_id, campaign.id):
             totals.sessions += 1
-            speakers_here = await session_speakers(transcripts.db, guild_id, session_id)
+            speakers_here = await session_speakers(
+                transcripts.db, guild_id, campaign.id, session_id
+            )
             speakers = {u for u in speakers_here if u in agreed}
             totals.speakers += len(speakers)
             if args.dry_run:

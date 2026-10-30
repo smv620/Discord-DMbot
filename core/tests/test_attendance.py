@@ -36,19 +36,21 @@ class TheSpeakers(DatabaseTest):
         first = await self.add_session(GUILD, campaign.id, [DM, 1001, 1001, 1002])
         await self.add_session(GUILD, campaign.id, [1003], started_at=1000)
 
-        self.assertEqual(await session_speakers(self.db, GUILD, first), {DM, 1001, 1002})
+        self.assertEqual(
+            await session_speakers(self.db, GUILD, campaign.id, first), {DM, 1001, 1002}
+        )
 
     async def test_a_session_of_another_server_gives_nobody(self) -> None:
         campaign = await CampaignStore(self.db).create(GUILD, "Frostmaiden", DM)
         session = await self.add_session(GUILD, campaign.id, [1001])
 
-        self.assertEqual(await session_speakers(self.db, OTHER, session), set())
+        self.assertEqual(await session_speakers(self.db, OTHER, campaign.id, session), set())
 
     async def test_a_session_with_no_lines_gives_nobody(self) -> None:
         campaign = await CampaignStore(self.db).create(GUILD, "Frostmaiden", DM)
         session = await self.add_session(GUILD, campaign.id, [])
 
-        self.assertEqual(await session_speakers(self.db, GUILD, session), set())
+        self.assertEqual(await session_speakers(self.db, GUILD, campaign.id, session), set())
 
     async def test_only_table_speech_counts(self) -> None:
         # The DM's sidebar question, a typed chat line and an off-the-record marker each have a user
@@ -74,4 +76,11 @@ class TheSpeakers(DatabaseTest):
                     (GUILD, session, user, sidebar, typed),
                 )
 
-        self.assertEqual(await session_speakers(self.db, GUILD, session), {1001})
+        self.assertEqual(await session_speakers(self.db, GUILD, campaign.id, session), {1001})
+
+    async def test_a_session_of_another_campaign_on_this_server_gives_nobody(self) -> None:
+        campaign = await CampaignStore(self.db).create(GUILD, "Frostmaiden", DM)
+        other = await CampaignStore(self.db).create(GUILD, "Second table", DM)
+        session = await self.add_session(GUILD, campaign.id, [1001])
+
+        self.assertEqual(await session_speakers(self.db, GUILD, other.id, session), set())

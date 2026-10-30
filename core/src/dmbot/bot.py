@@ -8325,7 +8325,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         """Link the party for one stored session's speakers. Shared by live sessions and imports, so
         the rule and the consent check are the same for both."""
         assert self.memory is not None and self.transcripts is not None
-        speakers = await session_speakers(self.transcripts.db, gid, session_id)
+        speakers = await session_speakers(self.transcripts.db, gid, cid, session_id)
         # Agreed, not "recorded now": a pause is temporary, and who took part is a fact (#3036).
         agreed = await self.consent.agreed(gid)
         linked = await self.memory.link_party(gid, cid, {u for u in speakers if u in agreed})

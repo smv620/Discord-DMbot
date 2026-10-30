@@ -8,6 +8,7 @@ import json
 import time
 import unittest
 from collections.abc import Callable
+from functools import partial
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
@@ -477,6 +478,24 @@ class TheCrashAndTheNews(WithImports):
         self.assertIn("I couldn't check one more imported session for new names", told[0])
         self.assertIn("on the names panel", told[0])
         self.assertNotIn("your list", told[0])
+
+    async def test_a_failed_party_link_after_a_scan_changes_nothing_else(self) -> None:
+        # The link runs after the scan is finished: when it raises, the scan still counts as done,
+        # its names are still posted, and nothing is given up or retried (#3036).
+        await self.imported(1)
+        bot, campaign = fake_bot(self.store)
+        campaign.id = self.campaign.id
+        bot._scan_import = AsyncMock(return_value=["Kazeth"])
+        bot._link_import_party = partial(DMBot._link_import_party, bot)
+        bot._link_the_party = AsyncMock(side_effect=RuntimeError("down"))
+        with self.assertLogs("dmbot.bot", level="ERROR") as logs:
+            done = await DMBot.run_import_followups(bot, GUILD)
+
+        self.assertEqual(done, 1)
+        posted = " ".join(c.args[1] for c in bot.post.await_args_list)
+        self.assertIn("Kazeth", posted)  # the new names still reach the DM
+        self.assertEqual(bot._import_unchecked, {})
+        self.assertTrue(any("couldn't link the party" in line for line in logs.output))
 
     async def test_different_reasons_all_appear(self) -> None:
         bot, campaign = fake_bot(self.store)

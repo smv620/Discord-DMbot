@@ -12,7 +12,7 @@ from dmbot.devtools import link_party
 from dmbot.memory.models import CONFIRMED, new_id
 from tests.test_memory_names import GUILD, NamesTest
 
-OTHER = 222
+OTHER, DM_OTHER = 222, 9
 PLAYERS = {"Mara": 101, "Tavin": 102, "Brann": 103}
 
 
@@ -98,6 +98,3 @@ class ThePartyBackfill(NamesTest):
         await link_party.backfill(self.db, args())
 
         self.assertEqual(await self.knows(OTHER, other.id), 0)
-
-
-DM_OTHER = 9
