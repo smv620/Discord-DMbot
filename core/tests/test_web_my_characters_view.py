@@ -54,7 +54,7 @@ class MyCharacters(Web):
         return {n["id"]: n["name"] for n in got["nodes"]}
 
     async def overview_names(self, who: Any) -> dict[str, str]:
-        got, _pages = await relationships._overview_door(  # type: ignore[attr-defined]
+        got, _pages = await relationships._overview_door(
             self.web, who, self.cref, None, 100, 100
         )  # (the door's own names, before they are grouped for the page)
         return {n["id"]: n["name"] for n in got["names"]}
@@ -149,7 +149,7 @@ class TheEdges(MyCharacters):
 
     async def test_no_page_is_offered_for_an_entry_known_only_by_its_other_name(self) -> None:
         await self.join()
-        _got, pages = await relationships._overview_door(  # type: ignore[attr-defined]
+        _got, pages = await relationships._overview_door(
             self.web, self.player, self.cref, None, 100, 100
         )
         self.assertNotIn(self.ken, pages)
