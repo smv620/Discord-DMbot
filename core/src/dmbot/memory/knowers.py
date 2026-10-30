@@ -674,7 +674,16 @@ async def follow_flags(
     if opened:
         await _open(w, column, opened)
     if closed:
-        await w.delete_where_in(KNOWERS, column, closed)
+        await _close(w, column, closed)
+
+
+async def _close(w: Changes, column: str, ids: Sequence[str]) -> None:
+    """These statements stopped being shown to the players: the player characters stop knowing
+    them. An NPC's or a group's row stays: secret means kept from the players, not unknown to the
+    world (Supervisor, #3018). Logged, so Undo brings the rows back."""
+    views = await _player_views(w)
+    if views:
+        await w.delete_where_in(KNOWERS, column, ids, views)
 
 
 def _ends_shown(ends: dict[str, dict[str, Any]], relation: dict[str, Any]) -> bool:
@@ -717,7 +726,7 @@ async def _follow_dependents(
                 ("relation_id", relations),
             ):
                 if found:
-                    await w.delete_where_in(KNOWERS, column, [r["id"] for r in found])
+                    await _close(w, column, [r["id"] for r in found])
 
 
 async def move_flags(conn: Any, guild_id: int, campaign_id: str) -> int:

@@ -544,10 +544,22 @@ class Changes(Scope):
             (*self.ids, Jsonb([{c: _cell(table, row, c) for c in table.columns} for row in rows])),
         )
 
-    async def delete_where_in(self, table: Table, column: str, values: Sequence[str]) -> None:
-        """Delete every row whose `column` is one of `values`, logging each first, in two
-        statements however many (a row nothing links to: the knowers lists)."""
-        found = await self.select(table, f" AND {column} = ANY(%s)", [list(values)])
+    async def delete_where_in(
+        self,
+        table: Table,
+        column: str,
+        values: Sequence[str],
+        perspectives: Sequence[str] | None = None,
+    ) -> None:
+        """Delete every row whose `column` is one of `values` (and, when `perspectives` is given,
+        whose point of view is one of those), logging each first, in two statements however many
+        (a row nothing links to: the knowers lists)."""
+        where = " AND perspective_id = ANY(%s)" if perspectives is not None else ""
+        found = await self.select(
+            table,
+            f" AND {column} = ANY(%s)" + where,
+            [list(values)] + ([list(perspectives)] if perspectives is not None else []),
+        )
         if not found:
             return
         await self.conn.execute(

@@ -9,6 +9,7 @@ import unittest
 
 from dmbot.campaigns.store import decode_backup, encode_backup
 from dmbot.memory import gate
+from dmbot.memory._changes import RELATIONS
 from dmbot.memory.gate import (
     ALIAS,
     CONNECTION,
@@ -583,3 +584,53 @@ class FlagsFollow(Helpers):
         assert made.batch is not None
         await self.memory.undo(GUILD_A, self.c, made.batch, source="dm")
         self.assertEqual(await self.known(ENTRY, place), [])
+
+    async def flip(self, relation_id: str, **flags: bool) -> None:
+        """Change a connection's flags the way the writers do: through the change log."""
+        async with self.memory._write(GUILD_A, self.c, "dm") as w:
+            await w.update(RELATIONS, relation_id, flags)
+
+    async def shown_link(self, ids: dict[str, str]) -> tuple[str, str, str]:
+        """A connection the players are shown, between two shown NPCs, and who they are."""
+        a = await self.add("Tran", type="character", role="npc", status=CONFIRMED)
+        b = await self.add("Clyde", type="character", role="npc", status=CONFIRMED)
+        made = await self.memory.add_relation(
+            GUILD_A, self.c, a, "knows", b, source="dm", confidence=1.0, status=CONFIRMED
+        )
+        return str(made.value[0].id), a, b
+
+    async def test_an_npc_row_survives_a_statement_being_kept_from_the_players(self) -> None:
+        ids = await self.table()
+        rel, tran, _ = await self.shown_link(ids)
+        pcs = await self.pcs(ids)
+        await self.memory.set_statement_knowers(
+            GUILD_A, self.c, CONNECTION, rel, {ids["okthandom"]: 1.0, ids["mara"]: 1.0, tran: 1.0},
+            source="dm",
+        )  # fmt: skip
+        self.assertEqual(await self.known(CONNECTION, rel), sorted([*pcs, tran]))
+        await self.flip(rel, unrevealed=True)  # held back from the players
+        self.assertEqual(await self.known(CONNECTION, rel), [tran])  # the players' rows went
+        await self.flip(rel, unrevealed=False)
+        self.assertEqual(await self.known(CONNECTION, rel), sorted([*pcs, tran]))
+
+    async def test_hiding_an_entry_keeps_a_groups_row_on_its_name_and_showing_gives_pcs_back(
+        self,
+    ) -> None:
+        ids = await self.table()
+        place = await self.add("Greywater", type="place", status=CONFIRMED)
+        guild = await self.add("The Irendi", type="faction", status=CONFIRMED)
+        name = await self.memory.add_alias(
+            GUILD_A, self.c, place, "The Grey", kind="nickname", source="dm", status=CONFIRMED
+        )
+        alias = name.value.id
+        pcs = await self.pcs(ids)
+        await self.memory.set_statement_knowers(
+            GUILD_A, self.c, ALIAS, alias, {ids["okthandom"]: 1.0, ids["mara"]: 1.0, guild: 0.8},
+            source="dm",
+        )  # fmt: skip
+        await self.memory.set_hidden_from_players(GUILD_A, self.c, place, True, source="dm")
+        self.assertEqual(await self.known(ALIAS, alias), [guild])  # the players' rows went
+        await self.memory.set_hidden_from_players(GUILD_A, self.c, place, False, source="dm")
+        again = await self.known(ALIAS, alias)
+        self.assertEqual(again, sorted([*pcs, guild]))  # the players are back, the group once
+        self.assertEqual(len(again), len(set(again)))
