@@ -55,9 +55,9 @@ RELEASED = {
     ("rival_of", 1): "d00c5cc79f11ba80",
     ("mentor_of", 1): "1616325b035b16db",
     ("leads", 1): "0d9cfff87ca2a78f",
-    ("founded", 1): "1dc3f755efd2aed5",
-    ("captive_of", 1): "07f4e612b6aae011",
-    ("contains", 1): "b2d1f2e16ca60ef8",
+    ("founded", 1): "4b4cee95fe2a3d66",
+    ("captive_of", 1): "60efcb060e24ab3f",
+    ("contains", 1): "c50a7cc648af878b",
 }
 
 
@@ -161,7 +161,20 @@ class ACampaignsOwnSwornTo(unittest.TestCase):
         by_tag["predicate"] = [row]
         _check_terms(by_tag)  # no CampaignError
 
-    def test_a_current_backup_naming_a_core_key_is_still_damaged(self) -> None:
+    def test_a_current_backup_with_its_own_mentor_of_loads_as_the_core_one(self) -> None:
+        # a campaign made its own `mentor_of` before the core had it (#3035); its file is
+        # current-format, and it must load: the row is replaced by the core, the facts keep the key
+        own = {**self.ROW, "key": "mentor_of", "version": 1}
+        rows = _with_definition_fields([own, {"table": "relation", "predicate": "mentor_of"}])
+        (term,) = [r for r in rows if r["table"] == "predicate"]
+        (fact,) = [r for r in rows if r["table"] == "relation"]
+        self.assertEqual((term["status"], term["replaced_by"]), ("deprecated", "mentor_of"))
+        self.assertEqual(fact["predicate"], "mentor_of")
+        by_tag: dict[str, list[dict[str, object]]] = {tag: [] for tag in _TAGS}
+        by_tag["predicate"] = [term]
+        _check_terms(by_tag)  # no CampaignError
+
+    def test_a_check_of_a_row_that_was_never_read_in_still_refuses_a_core_key(self) -> None:
         from dmbot.campaigns import CampaignError
 
         row = {**self.ROW, "version": 1}  # a current file: no excuse for a core key

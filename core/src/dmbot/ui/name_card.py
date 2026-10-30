@@ -166,13 +166,19 @@ def sentence(lookup: CampaignLookup, r: Relation) -> str | None:
     return f"{subject.name} {fact_words(r)} {obj.name}"
 
 
+# Kinds whose "other way round" reading is not offered in the menu: Discord allows 25 options, and
+# these three are the rarest ways to say it ("is owed an oath by"). They still read both ways on a
+# card and in the edit menus; the other way round is one tap on the same name's card.
+NO_BACK_OPTION = frozenset({"located_in", "sworn_to", "captive_of"})
+
+
 def connect_choices(name: str) -> list[tuple[str, str, str | None]]:
     """(value, label, description) for "How is it connected?": each connection from this
     name's side, each followed by the same one the other way round."""
     out: list[tuple[str, str, str | None]] = []
     for p, w in CONNECTION_WORDS.items():
         out.append((p, logic.shorten(f"{name} {w}…", logic.OPTION_LABEL_MAX), None))
-        if p in CONNECTION_BACK:
+        if p in CONNECTION_BACK and p not in NO_BACK_OPTION:
             label = logic.shorten(f"{name} {CONNECTION_BACK[p]}…", logic.OPTION_LABEL_MAX)
             out.append((p + BACK, label, "The other way round"))
     return out

@@ -245,8 +245,8 @@ def shape_instructions(own: Mapping[str, str] | None = None) -> str:
         "grandparent of b; aunt, uncle, niece, nephew and cousin = a is that to b; "
         "leads = a leads b (a group or a place: its leader, ruler, speaker, mayor or captain); "
         "captive = a is held captive by b; contains = a contains b (a note in a book, a gem in "
-        "a chest); worships = a worships b. A family line always uses the role word, never "
-        "'family'. "
+        "a chest); worships = a worships b. A family line that names a role uses that role's "
+        "word; use 'family' only when the line names none. "
         f"When none of them fits the line's words, use \"{bg.OTHER}\" and put the line's own "
         f'words in "words" (at most {bg.WORDS_CHARS} characters, for example "pays"); otherwise '
         '"words" is empty. Never pick a kind that changes what the line says.\n'

@@ -107,7 +107,7 @@ class TheEnds(NamesTest):
         self.store = BackstoryLinks(self.db)
         self.bot.backstory_links = self.store
 
-    async def names(self, *named: tuple[str, str, str | None]) -> dict[str, str]:
+    async def make_names(self, *named: tuple[str, str, str | None]) -> dict[str, str]:
         made = await self.memory.add_names(
             GUILD, self.campaign.id,
             [NewName(n, t, CONFIRMED, role=r) for n, t, r in named], source="dm",
@@ -129,7 +129,7 @@ class TheEnds(NamesTest):
         ]
 
     async def test_towns_of_a_region_are_in_it_and_never_members_of_it(self) -> None:
-        await self.names(
+        await self.make_names(
             ("Ten Vales", "place", None), ("Arn", "place", None), ("Brey", "place", None)
         )
         lost = await self.queue(
@@ -142,7 +142,7 @@ class TheEnds(NamesTest):
         self.assertEqual(lost["bad_kind"], 0)
 
     async def test_a_connection_whose_ends_do_not_fit_is_dropped_and_counted(self) -> None:
-        await self.names(("Mira", "npc", "npc"), ("Brindle", "place", None))
+        await self.make_names(("Mira", "npc", "npc"), ("Brindle", "place", None))
         lost = await self.queue(
             bg.Connection("Mira", "member_of", "Brindle", "Mira is a member of Brindle"),
             bg.Connection("Brindle", "leads", "Mira", "Brindle leads Mira"),
@@ -151,7 +151,7 @@ class TheEnds(NamesTest):
         self.assertEqual(lost["bad_kind"], 2)
 
     async def test_a_character_leads_a_place_and_a_group_knows_a_person(self) -> None:
-        await self.names(
+        await self.make_names(
             ("Speaker Holt", "npc", "npc"), ("Brindle", "place", None),
             ("Brotherhood", "faction", None), ("Danneth", "npc", "npc"),
         )  # fmt: skip
@@ -172,9 +172,39 @@ class TheEnds(NamesTest):
         self.assertEqual(lost["bad_kind"], 0)
 
     async def test_an_own_kind_and_the_catch_all_take_any_ends(self) -> None:
-        await self.names(("Mira", "npc", "npc"), ("Brindle", "place", None))
+        await self.make_names(("Mira", "npc", "npc"), ("Brindle", "place", None))
         lost = await self.queue(
             bg.Connection("Mira", "associated_with", "Brindle", "Mira and Brindle", words="pays")
         )
         self.assertEqual(len(await self.waiting()), 1)
         self.assertEqual(lost["bad_kind"], 0)
+
+
+class TheMenuAndTheTerms(unittest.TestCase):
+    def test_the_connect_menu_fits_discords_limit_and_every_kind_can_be_chosen(self) -> None:
+        from dmbot.memory.link_words import CONNECTION_WORDS
+        from dmbot.ui.name_card import BACK, connect_choices
+
+        values = [v for v, _, _ in connect_choices("Mira")]
+        self.assertLessEqual(len(values), 25)  # (Discord refuses a select with more)
+        chosen = {v.removesuffix(BACK) for v in values}
+        self.assertEqual(chosen, set(CONNECTION_WORDS))  # every kind, in some direction
+
+    def test_a_family_line_that_names_no_role_stays_without_one(self) -> None:
+        (got,) = read("family", "Ilse", "Dorn", "Ilse is the sister of Dorn")
+        self.assertEqual((got.how, got.words), ("kin_of", ""))
+        self.assertIn("only when the line names none", lore_read.shape_instructions())
+
+    def test_contains_takes_an_item_and_holds_an_item_or_a_place(self) -> None:
+        from dmbot.memory.ontology import CORE_PREDICATES
+
+        (term,) = [p for p in CORE_PREDICATES if p.key == "contains"]
+        self.assertEqual((term.subject_types, term.object_types), (("item",), ("item", "place")))
+
+    def test_an_item_held_by_someone_or_built_is_not_a_captive_or_a_founding(self) -> None:
+        from dmbot.memory.ontology import CORE_PREDICATES
+
+        words = {
+            s for p in CORE_PREDICATES if p.key in ("captive_of", "founded") for s in p.synonyms
+        }
+        self.assertFalse(words & {"held_by", "built"})
