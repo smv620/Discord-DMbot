@@ -108,7 +108,9 @@ class TheDoors(Reading):
 
     async def test_an_upload_nobody_took_ends_as_not_taken_and_blanks_its_words(self) -> None:
         await self.add()
-        await self.sql("UPDATE lore_uploads SET created_at = created_at - 2000")
+        await self.sql(
+            "UPDATE lore_uploads SET created_at = created_at - 2000, updated_at = updated_at - 2000"
+        )
         await self.add()  # (the stale one is closed, so a new one is allowed)
         old, new = await self.rows()
         self.assertEqual((old["state"], old["text"], new["state"]), ("failed", "", "waiting"))
@@ -140,6 +142,36 @@ class TheDoors(Reading):
         with self.assertRaises(RecapError) as err:
             await lore.read(self.web, self.session, self.cref, "ZZ")
         self.assertEqual(err.exception.code, "not_found")
+
+    async def test_reading_alone_ends_an_upload_nobody_took_and_blanks_it(self) -> None:
+        got = await self.add()
+        await self.sql(
+            "UPDATE lore_uploads SET created_at = created_at - 2000, updated_at = updated_at - 2000"
+        )
+        read = await lore.read(self.web, self.session, self.cref, got["upload"]["id"])
+        self.assertEqual(
+            (read["upload"]["state"], read["upload"]["error"]), ("failed", "not_taken")
+        )
+        [row] = await self.rows()
+        self.assertEqual((row["text"], row["link"]), ("", ""))
+
+    async def test_a_taken_upload_gone_quiet_goes_back_and_gets_its_own_half_hour(self) -> None:
+        await self.add()
+        await self.sql(
+            "UPDATE lore_uploads SET state = 'working', created_at = created_at - 2000,"
+            " updated_at = updated_at - 700, claimed_at = 1"
+        )
+        read = await lore.read(self.web, self.session, self.cref, None)
+        self.assertEqual(read["upload"]["state"], "waiting")  # (not failed at once)
+
+    async def test_a_nul_or_a_lone_surrogate_is_a_plain_refusal(self) -> None:
+        for bad in ("a\x00b", "a\ud800b"):
+            self.assertEqual(await self.turned_away(text=bad), "bad_text")
+        self.assertEqual(
+            await self.turned_away(source="link", text="", link="https://example.com/\x00"),
+            "bad_text",
+        )
+        self.assertEqual(await self.rows(), [])
 
     def test_the_limits_match_discords_upload_form(self) -> None:
         from dmbot.ui import name_lists
@@ -191,6 +223,11 @@ class TheRoutes(TheDoors):
         bob = await self.client(BOB)
         got = await bob.post(url, json=self.body())
         self.assertEqual((got.status_code, got.json()), (403, {"error": "not_allowed"}))
+
+    async def test_a_speaker_the_door_refuses_is_422_bad_speaker_over_http(self) -> None:
+        c = await self.client()
+        got = await c.post(f"/me/campaigns/{self.cref}/lore", json=self.body(speaker="0" * 32))
+        self.assertEqual((got.status_code, got.json()), (422, {"error": "bad_speaker"}))
 
     async def test_off_by_default_nothing_is_queued(self) -> None:
         off = create_app(

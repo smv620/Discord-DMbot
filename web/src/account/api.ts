@@ -2524,6 +2524,7 @@ export const errorKinds: Record<string, ApiErrorKind> = {
   bad_choice: "bad-choice",
   too_big: "too-big",
   not_editable: "not-editable",
+  bad_speaker: "bad-speaker",
   bad_text: "bad-text",
   fixed_lines: "fixed-lines",
   no_tries: "no-tries",

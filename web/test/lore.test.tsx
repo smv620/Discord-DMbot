@@ -86,6 +86,27 @@ describe("Upload lore", () => {
     await waitFor(() => expect(api.calls).toContain("loreAdd:100.cmp1:file:smart:-:rights:9"));
   });
 
+  it("keeps what was typed when an upload fails, and offers Try again", async () => {
+    const api = mockApi("table");
+    api.loreAdd = async () => ({ id: "0".repeat(32), state: "failed", stage: "reading", error: "not_taken", source: "paste", choice: "smart", namesFound: 0, linksFound: 0, done: 0, total: 0, createdAt: 1, updatedAt: 2, serverNow: 3 });
+    render(<Lore api={api} path={PATH} />);
+    await fill("Keep these words.");
+    fireEvent.click(screen.getByLabelText(words.rights));
+    fireEvent.click(screen.getByRole("button", { name: words.submit }));
+    fireEvent.click(await screen.findByRole("button", { name: words.retry }));
+    expect(((await screen.findByLabelText(words.pasteLabel)) as HTMLTextAreaElement).value).toBe("Keep these words.");
+  });
+
+  it("says plainly when nothing was found", async () => {
+    const api = mockApi("table");
+    api.loreAdd = async () => ({ id: "0".repeat(32), state: "done", stage: "done", error: "", source: "paste", choice: "smart", namesFound: 0, linksFound: 0, done: 0, total: 0, createdAt: 1, updatedAt: 2, serverNow: 3 });
+    render(<Lore api={api} path={PATH} />);
+    await fill();
+    fireEvent.click(screen.getByLabelText(words.rights));
+    fireEvent.click(screen.getByRole("button", { name: words.submit }));
+    expect(await screen.findByText(words.foundNothing)).toBeTruthy();
+  });
+
   it("says why when the door refuses", async () => {
     const api = mockApi("table");
     api.loreAdd = async () => {
@@ -98,7 +119,7 @@ describe("Upload lore", () => {
     expect((await screen.findByRole("alert")).textContent).toBe(words.problems["too-soon"]);
   });
 
-  it("follows the upload to done and points at Check new names and the Story Graph", async () => {
+  it("follows the upload to done and points at Check the new names and the Story Graph", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const api = mockApi("table");
     render(<Lore api={api} path={PATH} />);

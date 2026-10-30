@@ -25,6 +25,10 @@ PASTE_MAX = 4000
 LINK_MAX = 2000
 
 
+def _lone_surrogate(value: str) -> bool:
+    return any(0xD800 <= ord(ch) <= 0xDFFF for ch in value)
+
+
 def _check(body: object) -> dict[str, Any]:
     """The body's fields, or `bad_text`: never a guess about what a stray field meant."""
     if not isinstance(body, dict):
@@ -37,6 +41,9 @@ def _check(body: object) -> dict[str, Any]:
         raise RecapError("bad_text")
     if len(text) > PASTE_MAX or len(link) > LINK_MAX:
         raise RecapError("too_long")
+    # Postgres text cannot hold a NUL and psycopg cannot send a lone surrogate: refuse, not a 500.
+    if any("\x00" in v or _lone_surrogate(v) for v in (text, link, who)):
+        raise RecapError("bad_text")
     if not isinstance(body.get("rights", False), bool):
         raise RecapError("bad_text")
     return {

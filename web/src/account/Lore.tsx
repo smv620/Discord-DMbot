@@ -44,6 +44,7 @@ export default function Lore({ api, path }: { api: AccountApi; path: string }) {
   const [opened, setOpened] = useState(false);
   const [stopped, setStopped] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const alertBox = useRef<HTMLParagraphElement>(null);
   const idle = useRef(0);
   const seen = useRef(-1);
 
@@ -107,7 +108,12 @@ export default function Lore({ api, path }: { api: AccountApi; path: string }) {
     };
   }, [api, ref, open, upload?.id]);
 
-  if (!ref) return <p>{words.notOpen}</p>;
+  // A refusal sits below the box on a phone: bring it into view.
+  useEffect(() => {
+    if (problem) alertBox.current?.focus();
+  }, [problem]);
+
+  if (!ref) return <p>{words.notFound}</p>;
 
   async function chooseFile(file: File | undefined) {
     setFileProblem("");
@@ -145,14 +151,14 @@ export default function Lore({ api, path }: { api: AccountApi; path: string }) {
       setStopped(false);
       setOpened(false);
       setUpload(got);
-      setText("");
-      setLink("");
-      setFileName("");
-      setRights(false);
+      setRights(false); // (the words stay until it is done, so a failure loses none of a long paste)
     } catch (err) {
       if (err instanceof ApiError && err.kind === "slow-down") {
         const got = await api.loreRead?.(ref).catch(() => null);
         if (got) {
+          seen.current = -1;
+          idle.current = 0;
+          setStopped(false);
           setOpened(true);
           setUpload(got);
         }
@@ -162,6 +168,12 @@ export default function Lore({ api, path }: { api: AccountApi; path: string }) {
     }
   }
 
+  const back = (
+    <p>
+      <a href={`/account/campaigns/${encodeURIComponent(ref)}`}>{words.back}</a>
+    </p>
+  );
+
   if (upload) {
     const failed = upload.state === "failed";
     const done = upload.state === "done";
@@ -169,6 +181,7 @@ export default function Lore({ api, path }: { api: AccountApi; path: string }) {
     const state = failed ? "failed" : done ? "done" : quiet > STALLED_S && upload.state === "working" ? "stalled" : "running";
     return (
       <div class="stack">
+        {back}
         {opened && open && <p>{words.openNote}</p>}
         <WorkProgress
           stage={stageWords(words.stages, upload.stage)}
@@ -185,17 +198,33 @@ export default function Lore({ api, path }: { api: AccountApi; path: string }) {
         />
         {done && (
           <div class="stack">
-            <p role="status">{words.found(upload.namesFound, upload.linksFound)}</p>
-            <p>{words.nextLead}</p>
-            <ul class="plain-list">
-              <li><a href={`/account/names/${encodeURIComponent(ref)}`}>{words.checkNames}</a></li>
-              <li><a href={`/account/web/${encodeURIComponent(ref)}`}>{words.seeGraph}</a></li>
-            </ul>
+            <p role="status">{upload.namesFound + upload.linksFound === 0 ? words.foundNothing : words.found(upload.namesFound, upload.linksFound)}</p>
+            {upload.namesFound + upload.linksFound > 0 && (
+              <>
+                <p>{words.nextLead}</p>
+                <ul class="plain-list">
+                  <li><a href={`/account/names/${encodeURIComponent(ref)}`}>{words.checkNames}</a></li>
+                  <li><a href={`/account/web/${encodeURIComponent(ref)}`}>{words.seeGraph}</a></li>
+                </ul>
+              </>
+            )}
           </div>
         )}
         {(done || failed) && (
-          <button type="button" class="button secondary" onClick={() => { setUpload(null); setProblem(""); }}>
-            {words.again}
+          <button
+            type="button"
+            class="button secondary"
+            onClick={() => {
+              if (done) {
+                setText("");
+                setLink("");
+                setFileName("");
+              }
+              setUpload(null);
+              setProblem("");
+            }}
+          >
+            {done ? words.again : words.retry}
           </button>
         )}
       </div>
@@ -204,6 +233,7 @@ export default function Lore({ api, path }: { api: AccountApi; path: string }) {
 
   return (
     <form class="stack" onSubmit={send} noValidate>
+      {back}
       <p>{words.lead}</p>
       <fieldset class="stack">
         <legend>{words.whereLegend}</legend>
@@ -258,7 +288,8 @@ export default function Lore({ api, path }: { api: AccountApi; path: string }) {
       <label class="choice">
         <input type="checkbox" checked={rights} onChange={(e) => setRights((e.target as HTMLInputElement).checked)} /> {words.rights}
       </label>
-      {problem && <p role="alert">{problem}</p>}
+      <p class="small">{words.rightsNote}</p>
+      {problem && <p role="alert" ref={alertBox} tabIndex={-1}>{problem}</p>}
       <p>
         <button type="submit" class="button" disabled={busy}>{busy ? words.sending : words.submit}</button>
       </p>

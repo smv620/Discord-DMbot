@@ -101,10 +101,12 @@ LORE_UPLOADS = (
         UPDATE lore_uploads u SET state = 'waiting', claimed_at = 0, updated_at = now_s
             WHERE u.guild_id = g AND u.campaign_id = c AND u.state = 'working'
               AND u.updated_at < now_s - 600;
+        -- (Measured from the last change, not from creation: a taken upload put back to waiting
+        -- gets its own half hour.)
         UPDATE lore_uploads u SET state = 'failed', error = 'not_taken', text = '', link = '',
                                   updated_at = now_s
             WHERE u.guild_id = g AND u.campaign_id = c AND u.state = 'waiting'
-              AND u.created_at < now_s - 1800;
+              AND u.updated_at < now_s - 1800;
         SELECT u.id INTO have FROM lore_uploads u
             WHERE u.guild_id = g AND u.campaign_id = c AND u.state IN ('waiting', 'working');
         IF have IS NOT NULL THEN
@@ -138,6 +140,20 @@ LORE_UPLOADS = (
                             AND d.user_id = dmbot_current_user()) THEN
             RETURN NULL;
         END IF;
+        -- The same sweeps as the add door, so an upload nobody took ends as failed even when
+        -- the page only reads, and the DM is never stuck behind it.
+        PERFORM pg_advisory_xact_lock(hashtextextended('lore_upload:' || g::TEXT || ':' || c, 0));
+        DELETE FROM lore_uploads u
+            WHERE u.guild_id = g AND u.campaign_id = c AND u.created_at < now_s - 86400;
+        UPDATE lore_uploads u SET state = 'waiting', claimed_at = 0, updated_at = now_s
+            WHERE u.guild_id = g AND u.campaign_id = c AND u.state = 'working'
+              AND u.updated_at < now_s - 600;
+        -- (Measured from the last change, not from creation: a taken upload put back to waiting
+        -- gets its own half hour.)
+        UPDATE lore_uploads u SET state = 'failed', error = 'not_taken', text = '', link = '',
+                                  updated_at = now_s
+            WHERE u.guild_id = g AND u.campaign_id = c AND u.state = 'waiting'
+              AND u.updated_at < now_s - 1800;
         SELECT q.* INTO r FROM lore_uploads q
             WHERE q.guild_id = g AND q.campaign_id = c
               AND ((uid IS NOT NULL AND q.id = uid)
