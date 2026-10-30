@@ -23,6 +23,8 @@ READERS = {
     "memory/importance.py": CONFIRMED_ONLY,
     "memory/continuity.py": CONFIRMED_ONLY + ": the counts and the story's world",
     "memory/backstory_links.py": CONFIRMED_ONLY + ": pairs already known",
+    "memory/worked_out.py": "proposes links; players see only confirmed ones, and a link from a "
+    "secret, unrevealed or hidden source starts secret",
     "memory/exposures.py": DM_ONLY + ": secret connections said aloud (confirmed ones)",
     "memory/states.py": "live located_in facts, without secret proposals that only hold guesses",
     "memory/forget_readings.py": "Stop recording me removes a connection made only to hold a guess",

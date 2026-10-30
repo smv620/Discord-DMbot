@@ -133,3 +133,54 @@ class TheWorkedOutLinks(ConfirmedMemoryTest):
         await self.memory.rework_family(GUILD_A, self.c)
         (mine,) = await self.mine()
         self.assertTrue(mine.secret)
+
+    async def confirm(self, relation: Any) -> None:
+        await self.memory.update_relation(
+            GUILD_A, self.c, relation.id, source="dm", status=CONFIRMED
+        )
+
+    async def shown_to_players(self) -> list[Any]:
+        """What a player's view reads: confirmed, not secret."""
+        found = await self.memory.relations(
+            GUILD_A, self.c, confirmed_only=True, include_secret=False
+        )
+        return [r for r in found if r.source == WORKED_OUT_SOURCE]
+
+    async def test_an_unrevealed_source_makes_the_suggestion_secret(self) -> None:
+        await self.state(self.aldric, "mother", self.bryn)
+        sister = await self.state(self.bryn, "sister", self.mira)
+        await self.memory.update_relation(GUILD_A, self.c, sister.id, source="dm", unrevealed=True)
+        await self.memory.rework_family(GUILD_A, self.c)
+        (mine,) = await self.mine()
+        self.assertTrue(mine.secret)
+
+    async def test_a_hidden_middle_name_makes_the_suggestion_secret(self) -> None:
+        await self.mother_and_sisters()
+        await self.memory.set_hidden_from_players(GUILD_A, self.c, self.bryn, True, source="dm")
+        await self.memory.rework_family(GUILD_A, self.c)
+        (mine,) = await self.mine()
+        self.assertTrue(mine.secret)
+
+    async def test_a_source_made_unrevealed_later_upgrades_the_suggestion(self) -> None:
+        mother, _ = await self.mother_and_sisters()
+        await self.memory.rework_family(GUILD_A, self.c)
+        await self.memory.update_relation(GUILD_A, self.c, mother.id, source="dm", unrevealed=True)
+        await self.memory.rework_family(GUILD_A, self.c)
+        (mine,) = await self.mine()
+        self.assertTrue(mine.secret)
+
+    async def test_players_see_only_a_confirmed_link_from_plain_sources(self) -> None:
+        await self.mother_and_sisters()
+        await self.memory.rework_family(GUILD_A, self.c)
+        self.assertEqual(await self.shown_to_players(), [])  # waiting: not shown
+        (mine,) = await self.mine()
+        await self.confirm(mine)
+        self.assertEqual(len(await self.shown_to_players()), 1)  # plain sources: shown
+
+    async def test_players_never_see_a_confirmed_link_from_a_hidden_source(self) -> None:
+        await self.mother_and_sisters()
+        await self.memory.set_hidden_from_players(GUILD_A, self.c, self.bryn, True, source="dm")
+        await self.memory.rework_family(GUILD_A, self.c)
+        (mine,) = await self.mine()
+        await self.confirm(mine)
+        self.assertEqual(await self.shown_to_players(), [])

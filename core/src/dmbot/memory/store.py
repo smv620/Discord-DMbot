@@ -3616,7 +3616,15 @@ class MemoryStore:
                     directional=True, secret=secret, made_by=WORKED_OUT_SOURCE, leave=True,
                 )  # fmt: skip
 
-            return await worked_out_mod.rework(w, add)
+            async def drop(relation_id: str) -> None:
+                await _delete_relation(w, relation_id)
+
+            done = await worked_out_mod.rework(w, add, drop)
+            log.info(  # counts only, never names (#2564)
+                "Worked-out family links: %d added, %d removed, %d waiting",
+                done.added, done.removed, done.waiting,
+            )  # fmt: skip
+            return done
 
     async def worked_out_waiting(
         self, guild_id: int, campaign_id: str

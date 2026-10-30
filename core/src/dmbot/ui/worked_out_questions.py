@@ -117,13 +117,12 @@ class WorkedOutQuestions(_Menu):
                     campaign.guild_id, campaign.id, shown.relation_id,
                     source=DM, status=CONFIRMED if yes else REJECTED,
                 )  # fmt: skip
-                if yes:  # (what follows from it, now that it stands)
-                    await memory.rework_family(campaign.guild_id, campaign.id)
             except Exception:  # (a rule refusal or a database error: the card stays as it was)
                 log.exception("A worked-out link could not be answered")
                 await _tell(interaction, "DMbot couldn't save that one. It stays waiting.")
                 return
             self.yes, self.no = self.yes + int(yes), self.no + int(not yes)
+            log.info("A worked-out family link was %s", "confirmed" if yes else "turned down")
             await self._show(interaction, await self._waiting(interaction))
 
     async def _yes(self, interaction: discord.Interaction) -> None:

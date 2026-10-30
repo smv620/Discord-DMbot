@@ -16,6 +16,7 @@ from dataclasses import dataclass
 
 from dmbot.memory import kin, kin_derive
 from dmbot.memory._changes import ENTITIES, RELATIONS, Changes, Scope
+from dmbot.memory.knowers import entry_shown_end
 from dmbot.memory.models import CONFIRMED, PROPOSED, WORKED_OUT_SOURCE
 
 KIN = "kin_of"
@@ -30,7 +31,9 @@ class Reworked:
     waiting: int
 
 
-def _stated(rows: list[dict[str, object]]) -> list[kin_derive.Stated]:
+def _stated(
+    rows: list[dict[str, object]], entity_ids: set[str] | None = None
+) -> list[kin_derive.Stated]:
     """The confirmed family links a person stated, as "a is the role of b". A role that has a
     direction but was stored without one is ambiguous, so it is not used; a worked-out link is never
     a source for another."""
@@ -38,6 +41,8 @@ def _stated(rows: list[dict[str, object]]) -> list[kin_derive.Stated]:
     for r in rows:
         if r["status"] != CONFIRMED or r["source"] == WORKED_OUT_SOURCE:
             continue
+        if entity_ids is not None and not {str(r["subject_id"]), str(r["object_id"])} <= entity_ids:
+            continue  # an end was removed or merged away
         role = kin.role_of(str(r["detail"] or ""))
         if role is None or not (r["directional"] or role in kin.MUTUAL):
             continue
@@ -52,11 +57,36 @@ async def sources_of(w: Changes) -> dict[tuple[str, str, str], tuple[str, str]]:
     return {(d.a_id, d.role, d.b_id): d.source_ids for d in kin_derive.derive(_stated(rows))}
 
 
-async def rework(w: Changes, add: Callable[[str, str, str, bool], Awaitable[None]]) -> Reworked:
+def kept_from_players(
+    source_ids: tuple[str, ...],
+    by_id: dict[str, dict[str, object]],
+    entities: dict[str, dict[str, object]],
+) -> bool:
+    """Whether a link worked out from these sources must start secret: a source is secret or not
+    yet said at the table, or an end of either (the middle name too) is kept from the players.
+    Confirming it would otherwise hand the players what the hidden source still keeps from them."""
+    for i in source_ids:
+        row = by_id.get(i)
+        if row is None or row["secret"] or row["unrevealed"]:
+            return True
+        for end in (str(row["subject_id"]), str(row["object_id"])):
+            entity = entities.get(end)
+            if entity is None or not entry_shown_end(entity):
+                return True
+    return False
+
+
+async def rework(
+    w: Changes,
+    add: Callable[[str, str, str, bool], Awaitable[None]],
+    delete: Callable[[str], Awaitable[None]],
+) -> Reworked:
     """Make the suggestions match the stated links now. `add(a, role, b, secret)` writes one
-    proposed link (the store's own checked path). Idempotent."""
+    proposed link and `delete(id)` takes one away (the store's own checked paths, which also clear
+    the flag rows that point at it). Idempotent."""
     rows = await w.select(RELATIONS, " AND predicate = %s", [KIN])
-    derived = kin_derive.derive(_stated(rows))
+    entities = {str(e["id"]): e for e in await w.select(ENTITIES, "", [])}
+    derived = kin_derive.derive(_stated(rows, set(entities)))
     by_id = {str(r["id"]): r for r in rows}
     held = {
         (str(r["subject_id"]), kin.role_of(str(r["detail"] or "")), str(r["object_id"])): r
@@ -73,7 +103,7 @@ async def rework(w: Changes, add: Callable[[str, str, str, bool], Awaitable[None
         key: tuple[str, str, str] = (d.a_id, d.role, d.b_id)
         if key in any_state:  # stated, suggested before, confirmed or rejected: leave as it is
             continue
-        secret = any(bool(by_id[i]["secret"]) for i in d.source_ids if i in by_id)
+        secret = kept_from_players(d.source_ids, by_id, entities)
         await add(d.a_id, d.role, d.b_id, secret)
         added += 1
     sources: dict[tuple[str, str, str], tuple[str, str]] = {
@@ -83,11 +113,11 @@ async def rework(w: Changes, add: Callable[[str, str, str, bool], Awaitable[None
         if row["status"] != PROPOSED:
             continue
         if held_key not in wanted:
-            await w.delete(RELATIONS, str(row["id"]))  # a source went: the suggestion goes
+            await delete(str(row["id"]))  # a source went: the suggestion goes
             removed += 1
-        elif not row["secret"] and any(bool(by_id[i]["secret"]) for i in sources[held_key]):
-            # a source became secret after the suggestion: it must not be shown as plain once
-            # confirmed (it only ever goes up, never back down)
+        elif not row["secret"] and kept_from_players(sources[held_key], by_id, entities):
+            # a source became secret, unrevealed or hidden after the suggestion: it must not be
+            # shown as plain once confirmed (it only ever goes up, never back down)
             await w.update(RELATIONS, str(row["id"]), {"secret": True})
     waiting = sum(1 for row in held.values() if row["status"] == PROPOSED) - removed + added
     return Reworked(added, removed, max(waiting, 0))
