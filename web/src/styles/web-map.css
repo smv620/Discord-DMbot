@@ -37,6 +37,12 @@
   stroke: none;
 }
 
+.account .web-arrow {
+  fill: var(--link, currentColor);
+  stroke: none;
+  pointer-events: none;
+}
+
 .account .web-edge-text {
   stroke: var(--surface, transparent);
   stroke-width: 5px;
