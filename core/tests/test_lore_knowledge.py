@@ -286,11 +286,25 @@ class TheUpload(Fixture):
         await self.confirm_all()
         got = await self.known("entry", [e.id for e in names.values()])
         self.assertEqual(set(got), {names["Vale Keep"].id})
-        guessed = [w for w in waiting if w.world and w.ready]
-        if guessed:  # a guess is written at 0.75, not as the DM's word
-            await keep.keep_all(self.memory, self.store, GUILD, self.campaign.id, guessed[:1])
-            (kept,) = await self.mine(guessed[0])
-            self.assertEqual(await self.sure(kept.id), [lk.GUESS_CERTAINTY])
+        now = await self.store.waiting(GUILD, self.campaign.id)
+        guessed = [w for w in now if w.world and w.ready]
+        self.assertTrue(guessed)  # (the Vale Keep connection: both ends are confirmed now)
+        # (the other end is a spoiler, so the connection waits: the DM tells the players about it)
+        for end in (guessed[0].subject_id, guessed[0].object_id):
+            await self.memory.set_hidden_from_players(
+                GUILD, self.campaign.id, end, False, source="dm"
+            )
+        done = await keep.keep_all(self.memory, self.store, GUILD, self.campaign.id, guessed[:1])
+        (kept,) = await self.mine(guessed[0])
+        self.assertFalse(kept.unrevealed)
+        self.assertEqual(
+            await self.sure(kept.id), [lk.GUESS_CERTAINTY]
+        )  # a guess, not the DM's word
+        # Undo takes the connection back, and the guess's rows with it
+        await keep.undo_all(self.memory, self.store, GUILD, self.campaign.id, done)
+        self.assertEqual(await self.sure(kept.id), [])
+        (again,) = [w for w in await self.store.waiting(GUILD, self.campaign.id) if w.world]
+        self.assertEqual(again.world, lk.GUESS)
 
     async def test_a_which_question_and_an_undo_keep_the_choice(self) -> None:
         a = (
