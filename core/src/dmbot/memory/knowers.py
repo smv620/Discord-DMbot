@@ -783,6 +783,37 @@ async def follow_flags(
         await _close(w, column, closed)
 
 
+async def forget_moved(
+    w: Changes,
+    moved: Sequence[tuple[dict[str, Any], dict[str, Any]]],
+    entities: Mapping[str, dict[str, Any]],
+) -> None:
+    """Connections whose ends changed in a plain merge (`moved`: before, after; `entities`: the
+    ends as they stand now, the merge's flags already applied). The player characters knew each
+    one about its OLD ends, so one that stopped being shown (its ends were shown and one is kept
+    from the players now) is forgotten by them: their knower rows go and so does what their point
+    of view believed. A DM's own list on a connection whose ends stay as hidden as they were is
+    left alone, and nothing is ever opened here. A join does not call this: it keeps whoever knew.
+    Logged, so Undo brings it all back (#3073)."""
+    lost = [a["id"] for b, a in moved if ends_shown(entities, b) and not ends_shown(entities, a)]
+    if not lost:
+        return
+    await _close(w, "relation_id", lost)
+    views = await _player_views(w)
+    if not views:
+        return
+    newest: dict[tuple[str, str], float] = {}
+    for row in await w.select(
+        BELIEFS,
+        " AND relation_id = ANY(%s) AND perspective_id = ANY(%s) ORDER BY seq",
+        [lost, views],
+    ):
+        newest[(row["relation_id"], row["perspective_id"])] = row["confidence"]
+    for (relation_id, view), confidence in newest.items():
+        if confidence >= KNOWN:
+            await beliefs.add_belief(w, view, relation_id, 0.0, SECRET_PLOT)
+
+
 async def _close(w: Changes, column: str, ids: Sequence[str]) -> None:
     """These statements stopped being shown to the players: the player characters stop knowing
     them. An NPC's or a group's row stays: secret means kept from the players, not unknown to the
@@ -792,7 +823,7 @@ async def _close(w: Changes, column: str, ids: Sequence[str]) -> None:
         await w.delete_where_in(KNOWERS, column, ids, views)
 
 
-def _ends_shown(ends: dict[str, dict[str, Any]], relation: dict[str, Any]) -> bool:
+def ends_shown(ends: Mapping[str, Mapping[str, Any]], relation: Mapping[str, Any]) -> bool:
     """Neither end of this connection is kept from the players."""
     return all(
         e in ends and entry_shown_end(ends[e])
@@ -823,7 +854,7 @@ async def _follow_dependents(
             await _open(
                 w,
                 "relation_id",
-                [(r["id"], False) for r in relations if relation_shown(r) and _ends_shown(ends, r)],
+                [(r["id"], False) for r in relations if relation_shown(r) and ends_shown(ends, r)],
             )
         else:
             for column, found in (
@@ -938,7 +969,7 @@ async def move_flags(conn: Any, guild_id: int, campaign_id: str) -> int:
     return len(rows)
 
 
-def entry_shown_end(row: dict[str, Any]) -> bool:
+def entry_shown_end(row: Mapping[str, Any]) -> bool:
     """An end of a connection that is not kept from the players (the move's rule: such a
     connection is not handed to every player character, since learning it names that end)."""
     return not (row["hidden_from_players"] or row["audience_limited"] or row["unnamed"])
