@@ -20,7 +20,7 @@ from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 
-from dmbot.memory import evidence, forget_readings, link
+from dmbot.memory import evidence, forget_readings, kin, link
 from dmbot.memory._changes import ALIASES, CLAIMS, ENTITIES, Changes
 from dmbot.memory.models import (
     CLAIM_CONFIRMED,
@@ -126,6 +126,15 @@ class Extracted:
     # A belief for the DM to place (#2412, `memory.readings`), as plain words and numbers, or None
     # for a claim that is just something said.
     reading: Mapping[str, Any] | None = None
+
+
+def is_family(claim: Extracted) -> bool:
+    """Does this claim say a family role between two names ("is the niece of", "has an uncle")?
+    The only kind a session may suggest for now (owner, 2026-10-29: families first, allies and
+    enemies not yet, #2960). Decided in code from the claim's words (read loosely: the AI says
+    "married to" and "half-brother of" too), whatever the AI returned: any other kind of claim is
+    dropped before it is stored. A measurement aid for #1282, kept off live."""
+    return kin.looks_like_family(claim.relationship)
 
 
 @dataclass(frozen=True, slots=True)
