@@ -393,7 +393,7 @@ async def backfill(conn: Conn, guild_id: int, campaign_id: str) -> None:
     )
 
 
-async def carry(w: Changes, old: dict[str, Any], new_id: str) -> None:
+async def carry(w: Changes, old: dict[str, Any], new_id: str, *, copy_beliefs: bool = True) -> None:
     """A reworded connection (#2408) is the same claim in other words, so the new one takes over
     what the old one held: each perspective's current belief (what it thought, how sure, the
     evidence and the session), the mentions it points to and its session span. Beliefs are copied
@@ -420,6 +420,8 @@ async def carry(w: Changes, old: dict[str, Any], new_id: str) -> None:
         " ON CONFLICT DO NOTHING",
         (new_id, *w.ids, old["id"], *w.ids, new_id),
     )
+    if not copy_beliefs:  # a join: the twin keeps its own flag and what is believed of it
+        return
     ids = await perspective_ids(w)
     party = ids[PARTY]
     held = await _newest(w, [old["id"], new_id])

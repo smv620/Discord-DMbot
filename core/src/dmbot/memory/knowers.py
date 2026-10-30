@@ -519,12 +519,22 @@ async def check_characters(scope: Scope, character_ids: Sequence[str]) -> None:
 
 
 async def fold_knowers(
-    w: Changes, keep_id: str, gone_id: str, views: tuple[str, str] | None
+    w: Changes,
+    keep_id: str,
+    gone_id: str,
+    views: tuple[str, str] | None,
+    *,
+    as_alias: str | None = None,
 ) -> None:
     """Two entries merge (#2995): whoever knew the merged-away entry exists now knows the kept
     one does, and the merged-away character's knowledge becomes the kept character's (`views` is
     its point of view and the kept one's, from `beliefs.fold_perspective`). A statement both knew
-    keeps one row. One read, and nothing more when no list is touched."""
+    keeps one row. One read, and nothing more when no list is touched.
+
+    `as_alias`: the merged-away entry was an unnamed person the DM now says is the kept one (#3037).
+    Whoever knew only that the unnamed person exists must not learn the kept entry's name, so their
+    "knows this entry exists" row becomes a row on the secret other name made from the description
+    (`as_alias`), open to them only; every other row keeps its own scope, statement by statement."""
     gone_view, keep_view = views if views is not None else ("", "")
     rows = await w.select(
         KNOWERS,
@@ -534,6 +544,14 @@ async def fold_knowers(
     columns = ("about_entity_id", "state_id", "relation_id", "alias_id")
 
     def after(row: dict[str, Any]) -> dict[str, Any]:
+        if as_alias is not None and row["about_entity_id"] == gone_id:
+            return {
+                "perspective_id": keep_view
+                if gone_view and row["perspective_id"] == gone_view
+                else row["perspective_id"],
+                "about_entity_id": None,
+                "alias_id": as_alias,
+            }
         return {
             "perspective_id": keep_view
             if gone_view and row["perspective_id"] == gone_view
@@ -564,6 +582,21 @@ async def fold_knowers(
         else:
             seen.add(k)
             await w.update(KNOWERS, row["id"], moved)
+
+
+async def move_rows(w: Changes, column: str, old_id: str, new_id: str) -> None:
+    """A statement is folded into its twin (the same name or connection Ken already had, #3037):
+    whoever knew the folded one knows the twin, and nothing is lost with the copy that goes. A
+    character the twin already lists keeps its own row. `column`: which statement column of the
+    list (`relation_id` or `alias_id`)."""
+    mine = await w.select(KNOWERS, f" AND {column} = %s", [new_id])
+    have = {r["perspective_id"] for r in mine}
+    for row in await w.select(KNOWERS, f" AND {column} = %s", [old_id]):
+        if row["perspective_id"] in have:
+            await w.delete(KNOWERS, row["id"])
+        else:
+            have.add(row["perspective_id"])
+            await w.update(KNOWERS, row["id"], {column: new_id})
 
 
 # ---- the old flags keep the lists in step (slice 2b) --------------------------------------------
@@ -682,10 +715,20 @@ async def follow_flags(
         # (a name whose own flags did not change is left alone before anything is read: a merge
         # moves hundreds of them, and who knows each moves with it in the merge's own statements)
         rows = [(b, a) for b, a in rows if b is None or alias_shown(b) != alias_shown(a)]
-        owners = await _entities_by_id(w, {a["entity_id"] for _, a in rows})
+        owners = await _entities_by_id(
+            w, {r["entity_id"] for b, a in rows for r in (a, b) if r is not None}
+        )
+
+        def shown_owner(row: dict[str, Any]) -> bool:
+            return row["entity_id"] in owners and entry_shown(owners[row["entity_id"]])
+
         for before, after in rows:
-            ok = after["entity_id"] in owners and entry_shown(owners[after["entity_id"]])
-            now, was = ok and alias_shown(after), ok and before is not None and alias_shown(before)
+            ok = shown_owner(after)
+            # (it was shown only if ITS OWN owner was shown: a join moves the guard's other name
+            # to Ken and makes it secret in one update, which must not read as "stopped being
+            # shown" and take the name away from the characters who knew it)
+            now = ok and alias_shown(after)
+            was = before is not None and shown_owner(before) and alias_shown(before)
             if now and not was:
                 opened.append((after["id"], before is None))
             elif was and not now:
@@ -693,15 +736,29 @@ async def follow_flags(
     else:
         rows = [(b, a) for b, a in rows if b is None or relation_shown(b) != relation_shown(a)]
         ends = await _entities_by_id(
-            w, {x for _, a in rows for x in (a["subject_id"], a["object_id"])}
+            w,
+            {
+                x
+                for b, a in rows
+                for r in (a, b)
+                if r is not None
+                for x in (r["subject_id"], r["object_id"])
+            },
         )
-        for before, after in rows:
-            ok = all(
+
+        def shown_ends(row: dict[str, Any]) -> bool:
+            return all(
                 e in ends and entry_shown_end(ends[e])
-                for e in (after["subject_id"], after["object_id"])
+                for e in (row["subject_id"], row["object_id"])
             )
+
+        for before, after in rows:
+            ok = shown_ends(after)
             now = ok and relation_shown(after)
-            was = ok and before is not None and relation_shown(before)
+            # (it was shown only if ITS OWN ends were: a join moves a connection off an unnamed
+            # person and makes it secret in one update, which must not read as "stopped being
+            # shown" and take the connection away from the characters who knew it)
+            was = before is not None and shown_ends(before) and relation_shown(before)
             if now and not was:
                 opened.append((after["id"], before is None))
             elif was and not now:
