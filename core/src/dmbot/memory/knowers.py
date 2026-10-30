@@ -584,6 +584,21 @@ async def fold_knowers(
             await w.update(KNOWERS, row["id"], moved)
 
 
+async def move_rows(w: Changes, column: str, old_id: str, new_id: str) -> None:
+    """A statement is folded into its twin (the same name or connection Ken already had, #3037):
+    whoever knew the folded one knows the twin, and nothing is lost with the copy that goes. A
+    character the twin already lists keeps its own row. `column`: which statement column of the
+    list (`relation_id` or `alias_id`)."""
+    mine = await w.select(KNOWERS, f" AND {column} = %s", [new_id])
+    have = {r["perspective_id"] for r in mine}
+    for row in await w.select(KNOWERS, f" AND {column} = %s", [old_id]):
+        if row["perspective_id"] in have:
+            await w.delete(KNOWERS, row["id"])
+        else:
+            have.add(row["perspective_id"])
+            await w.update(KNOWERS, row["id"], {column: new_id})
+
+
 # ---- the old flags keep the lists in step (slice 2b) --------------------------------------------
 
 
@@ -711,15 +726,29 @@ async def follow_flags(
     else:
         rows = [(b, a) for b, a in rows if b is None or relation_shown(b) != relation_shown(a)]
         ends = await _entities_by_id(
-            w, {x for _, a in rows for x in (a["subject_id"], a["object_id"])}
+            w,
+            {
+                x
+                for b, a in rows
+                for r in (a, b)
+                if r is not None
+                for x in (r["subject_id"], r["object_id"])
+            },
         )
-        for before, after in rows:
-            ok = all(
+
+        def shown_ends(row: dict[str, Any]) -> bool:
+            return all(
                 e in ends and entry_shown_end(ends[e])
-                for e in (after["subject_id"], after["object_id"])
+                for e in (row["subject_id"], row["object_id"])
             )
+
+        for before, after in rows:
+            ok = shown_ends(after)
             now = ok and relation_shown(after)
-            was = ok and before is not None and relation_shown(before)
+            # (it was shown only if ITS OWN ends were: a join moves a connection off an unnamed
+            # person and makes it secret in one update, which must not read as "stopped being
+            # shown" and take the connection away from the characters who knew it)
+            was = before is not None and shown_ends(before) and relation_shown(before)
             if now and not was:
                 opened.append((after["id"], before is None))
             elif was and not now:
