@@ -169,6 +169,8 @@ const draw = (extra: Partial<Parameters<typeof WebMap>[0]> = {}) =>
   render(<WebMap nodes={nodes} edges={edges} center="m" refId="1.a" selected={null} onCenter={() => {}} onLine={() => {}} {...extra} />);
 const nodeOf = (name: string) => [...document.querySelectorAll(".web-node")].find((n) => n.textContent?.includes(name)) as SVGGElement;
 
+const middleButton = () => [...document.querySelectorAll(".web-side button")].find((b) => b.textContent === words.putInMiddle) as HTMLButtonElement | undefined;
+
 describe("the map", () => {
   it("fades every name and line that is not joined to the name in focus, and brings them back", () => {
     draw();
@@ -192,11 +194,69 @@ describe("the map", () => {
 
   it("says a line's words only for the name in focus, and counts a line that holds several connections", () => {
     draw();
-    // Each text holds its tooltip (the full words) first and what is drawn last.
+    // Each text holds its tooltip (the line's full words) first and what is drawn last.
     const texts = () => [...document.querySelectorAll(".web-edge-text")].map((t) => t.lastChild?.textContent);
     expect(texts()).toEqual(["2 connections"]);
-    fireEvent.pointerEnter(nodeOf("Far Hall"));
-    expect(texts()).toEqual(["2 connections", "lives at"]);
+    fireEvent.pointerEnter(nodeOf("Mira"));
+    expect(texts()).toEqual(["serves (+1)", "lives at"]); // (read from Mira, who is where they are worded from)
+    expect(document.querySelectorAll(".web-arrow")).toHaveLength(2);
+  });
+
+  it("reads a line from the focused end: the other wording with an arrow away, or nothing and no arrowhead", () => {
+    const owned: WebEdge[] = [
+      { a: "m", b: "g", label: "owns", more: 0, links: [{ ...link("l1", "owns"), back: "is owned by" }] },
+      { a: "m", b: "h", label: "lives at", more: 0, links: [link("l3", "lives at")] },
+    ];
+    const texts = () => [...document.querySelectorAll(".web-edge-text")].map((t) => t.lastChild?.textContent);
+    render(<WebMap nodes={nodes} edges={owned} center="m" refId="1.a" selected={null} onCenter={() => {}} onLine={() => {}} />);
+    fireEvent.pointerEnter(nodeOf("Garrick")); // the owned end: it has its own wording
+    expect(texts()).toEqual(["is owned by"]);
+    expect(document.querySelectorAll(".web-arrow")).toHaveLength(1);
+    fireEvent.pointerLeave(nodeOf("Garrick"));
+    fireEvent.pointerEnter(nodeOf("Far Hall")); // the end with no wording: the line stays, with no words and no arrowhead
+    expect(texts()).toEqual([]);
+    expect(document.querySelectorAll(".web-arrow")).toHaveLength(0);
+    expect(document.querySelectorAll(".web-line").length).toBeGreaterThan(0);
+  });
+
+  it("keeps the chosen line's full words when the name in focus touches it, and its tooltip keeps the full words", () => {
+    const texts = () => [...document.querySelectorAll(".web-edge-text")].map((t) => t.lastChild?.textContent);
+    render(<WebMap nodes={nodes} edges={edges} center="m" refId="1.a" selected={{ a: "m", b: "g" }} onCenter={() => {}} onLine={() => {}} />);
+    fireEvent.pointerEnter(nodeOf("Mira"));
+    expect(texts()).toContain("serves (+1)"); // (the chosen line: its full words, as the server worded them)
+    expect([...document.querySelectorAll(".web-edge-text title")].map((t) => t.textContent)).toContain("serves (+1)");
+  });
+
+  it("says how many when a bundle has no wording from the focused end, and a hover wins over the pick", () => {
+    const bundle: WebEdge[] = [{ a: "m", b: "g", label: "serves", more: 1, links: [link("l1", "serves"), link("l2", "owes")] }];
+    const texts = () => [...document.querySelectorAll(".web-edge-text")].map((t) => t.lastChild?.textContent);
+    render(<WebMap nodes={nodes} edges={bundle} center="m" refId="1.a" selected={null} onCenter={() => {}} onLine={() => {}} />);
+    fireEvent.pointerEnter(nodeOf("Garrick")); // the end with no wording
+    expect(texts()).toEqual(["2 connections"]);
+    expect(document.querySelectorAll(".web-arrow")).toHaveLength(0);
+    fireEvent.click(nodeOf("Mira")); // picks Mira; but Garrick is still hovered
+    expect(texts()).toEqual(["2 connections"]);
+    fireEvent.pointerLeave(nodeOf("Garrick"));
+    expect(texts()).toEqual(["serves (+1)"]); // (now read from the pick)
+  });
+
+  it("draws the arrowhead beside the other name and pointing at it", () => {
+    render(<WebMap nodes={nodes} edges={[edges[1]!]} center="m" refId="1.a" selected={null} onCenter={() => {}} onLine={() => {}} />);
+    fireEvent.pointerEnter(nodeOf("Mira"));
+    const d = document.querySelector(".web-arrow")!.getAttribute("d")!;
+    expect(d).toMatch(/^M-?[\d.]+ -?[\d.]+L-?[\d.]+ -?[\d.]+L-?[\d.]+ -?[\d.]+Z$/);
+    expect(d).not.toContain("NaN");
+  });
+
+  it("reads from the name that was picked when nothing is hovered, and a mutual line has the words but no arrowhead", () => {
+    const mutual: WebEdge[] = [{ a: "m", b: "g", label: "allies with", more: 0, links: [{ ...link("l1", "allies with"), direction: "both" }] }];
+    const texts = () => [...document.querySelectorAll(".web-edge-text")].map((t) => t.lastChild?.textContent);
+    render(<WebMap nodes={nodes} edges={mutual} center="m" refId="1.a" selected={null} onCenter={() => {}} onLine={() => {}} />);
+    expect(texts()).toEqual([]);
+    fireEvent.click(nodeOf("Garrick"));
+    fireEvent.pointerLeave(nodeOf("Garrick"));
+    expect(texts()).toEqual(["allies with"]);
+    expect(document.querySelectorAll(".web-arrow")).toHaveLength(0);
   });
 
   it("opens a line from the keyboard", () => {
@@ -208,7 +268,7 @@ describe("the map", () => {
     expect(onLine).toHaveBeenCalledWith("m", "g");
   });
 
-  it("puts a name in the middle on Enter, and moves it with the arrow keys, keeping it there", () => {
+  it("picks a name on Enter, and moves it with the arrow keys, keeping it there", () => {
     const onCenter = vi.fn();
     draw({ onCenter });
     const garrick = nodeOf("Garrick");
@@ -218,7 +278,80 @@ describe("the map", () => {
     expect(nodeOf("Garrick").querySelector(".web-pin")).not.toBeNull();
     expect(readPlaces("1.a").g).toBeDefined();
     fireEvent.keyDown(nodeOf("Garrick"), { key: "Enter" });
+    expect(onCenter).not.toHaveBeenCalled(); // (Enter picks; the panel's button puts it in the middle)
+    expect(document.querySelector("#web-side-h")!.textContent).toBe("Garrick");
+    fireEvent.click(middleButton()!);
     expect(onCenter).toHaveBeenCalledWith("g");
+  });
+
+  it("one click picks a name and the panel stays on it; two quick clicks put it in the middle", () => {
+    const onCenter = vi.fn();
+    draw({ onCenter });
+    vi.spyOn(Date, "now").mockReturnValue(5000); // (two clicks in the same instant, whatever the runner's speed)
+    expect(document.querySelector("#web-side-h")!.textContent).toBe("Mira Voss"); // (the middle name to start with)
+    fireEvent.click(nodeOf("Garrick"));
+    expect(onCenter).not.toHaveBeenCalled();
+    expect(document.querySelector("#web-side-h")!.textContent).toBe("Garrick");
+    fireEvent.pointerLeave(nodeOf("Garrick"));
+    expect(document.querySelector("#web-side-h")!.textContent).toBe("Garrick"); // (it stays on the name clicked)
+    fireEvent.click(nodeOf("Garrick"));
+    expect(onCenter).toHaveBeenCalledTimes(1);
+    expect(onCenter).toHaveBeenCalledWith("g");
+  });
+
+  it("two clicks on two different names are not a double click, and a slow second click is not either", () => {
+    const onCenter = vi.fn();
+    draw({ onCenter });
+    const now = vi.spyOn(Date, "now");
+    now.mockReturnValue(1000);
+    fireEvent.click(nodeOf("Garrick"));
+    fireEvent.click(nodeOf("Mira Voss"));
+    expect(onCenter).not.toHaveBeenCalled();
+    now.mockReturnValue(1000);
+    fireEvent.click(nodeOf("Garrick"));
+    now.mockReturnValue(1000 + 900);
+    fireEvent.click(nodeOf("Garrick"));
+    expect(onCenter).not.toHaveBeenCalled();
+    now.mockRestore();
+  });
+
+  it("falls back to the middle name when the picked name is no longer drawn", () => {
+    const view = draw();
+    fireEvent.click(nodeOf("Garrick"));
+    fireEvent.pointerLeave(nodeOf("Garrick"));
+    expect(document.querySelector("#web-side-h")!.textContent).toBe("Garrick");
+    view.rerender(<WebMap nodes={nodes.filter((n) => n.id !== "g")} edges={[]} center="m" refId="1.a" selected={null} onCenter={() => {}} onLine={() => {}} />);
+    expect(document.querySelector("#web-side-h")!.textContent).toBe("Mira Voss");
+  });
+
+  it("starts the panel on the new middle name when the middle changes", () => {
+    const view = draw();
+    fireEvent.click(nodeOf("Garrick"));
+    fireEvent.pointerLeave(nodeOf("Garrick"));
+    view.rerender(<WebMap nodes={nodes} edges={edges} center="g" refId="1.a" selected={null} onCenter={() => {}} onLine={() => {}} />);
+    expect(document.querySelector("#web-side-h")!.textContent).toBe("Garrick");
+    view.rerender(<WebMap nodes={nodes} edges={edges} center="m" refId="1.a" selected={null} onCenter={() => {}} onLine={() => {}} />);
+    expect(document.querySelector("#web-side-h")!.textContent).toBe("Mira Voss"); // (the old pick did not come back)
+  });
+
+  it("tap, drag, tap on one name is not a double click", async () => {
+    withBox();
+    const onCenter = vi.fn();
+    draw({ onCenter });
+    const now = vi.spyOn(Date, "now").mockReturnValue(7000);
+    fireEvent.click(nodeOf("Garrick"));
+    drag(nodeOf("Garrick"), [150, 90]);
+    fireEvent.click(nodeOf("Garrick")); // (the click that ends the drag)
+    fireEvent.click(nodeOf("Garrick"));
+    expect(onCenter).not.toHaveBeenCalled();
+    now.mockRestore();
+  });
+
+  it("offers Put it in the middle only for a name that is not already the middle", () => {
+    draw();
+    expect(middleButton()).toBeUndefined();
+    fireEvent.click(nodeOf("Garrick"));
+    expect(middleButton()!).toBeTruthy();
   });
 
   it("keeps a moved name where it was dropped when the map is drawn again, and lets everything go on request", () => {
@@ -296,7 +429,9 @@ describe("moving a name by hand", () => {
     fireEvent.click(nodeOf("Garrick"));
     expect(onCenter).not.toHaveBeenCalled();
     await new Promise((r) => setTimeout(r, 5));
-    fireEvent.click(nodeOf("Garrick"));
+    fireEvent.click(nodeOf("Garrick")); // (the first real click picks)
+    expect(onCenter).not.toHaveBeenCalled();
+    fireEvent.click(nodeOf("Garrick")); // (the second is the double click)
     expect(onCenter).toHaveBeenCalledWith("g");
   });
 

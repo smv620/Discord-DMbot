@@ -94,8 +94,8 @@ async def read(read_ai: Any, shape_ai: Any = None, text: str = TEXT) -> lr.LoreR
 class TheExamples(unittest.TestCase):
     def test_their_format_is_pinned(self) -> None:
         text = lr.EXAMPLES
-        self.assertEqual(text.count("NAMES\n"), 3)
-        self.assertEqual(text.count("RELATIONSHIPS\n"), 2)
+        self.assertEqual(text.count("NAMES\n"), 5)
+        self.assertEqual(text.count("RELATIONSHIPS\n"), 4)
         self.assertEqual(text.count("NOT INCLUDED\n"), 1)
         name_line = re.compile(r"^- .+ \| (person|place|group|god|item|event|idea)( \| .+)*$")
         link_line = re.compile(r'^- .+ — .+ — .+ \| quote: ".+"$')
@@ -108,17 +108,38 @@ class TheExamples(unittest.TestCase):
         self.assertIn("Wyrmhold", listed.left_out[0])
 
     def test_the_second_example_is_a_names_list_that_keeps_the_aside_as_another_name(self) -> None:
-        second = lr.EXAMPLES.split("Example 3.", 1)[1]
+        second = lr.EXAMPLES.split("Example 5.", 1)[1]
         self.assertNotIn("RELATIONSHIPS", second)
         self.assertIn("other names: the rogue", second)
         self.assertIn("said: kah-ZETH", second)
 
+    def test_the_fourth_example_teaches_an_earlier_name_as_an_other_secret_name(self) -> None:
+        third = lr.EXAMPLES.split("Example 3.", 1)[1].split("Example 4.", 1)[0]
+        listed = lr.parse_plain(third.split("Output:\n", 1)[1])
+        self.assertEqual(len(listed.names), 2)  # (Tamsin Vell has no line of her own)
+        self.assertIn("secret: Tamsin Vell", listed.names[0])
+        self.assertTrue(any(x.startswith("- Tamsin Vell —") for x in listed.links))
+
+    def test_the_prompt_covers_a_heading_a_group_and_words_in_quotation_marks(self) -> None:
+        prompt = lr.read_instructions()
+        for rule in ("section title", "one line for each person", "quotation marks"):
+            self.assertIn(rule, prompt)
+        example = lr.EXAMPLES.split("Example 4.", 1)[1].split("Example 5.", 1)[0]
+        listed = lr.parse_plain(example.split("Output:\n", 1)[1])
+        self.assertEqual(sum("mentors" in x for x in listed.links), 3)  # (them: each of the three)
+        self.assertTrue(any(lr.line_name(n) == "Danrel" for n in listed.names))  # (the note's name)
+
+    def test_the_prompts_say_an_earlier_name_is_never_a_name_of_its_own(self) -> None:
+        for word in ("pseudonym", "originally", "born", "formerly", "took the name", "a.k.a."):
+            self.assertIn(word, lr.read_instructions())
+        self.assertIn("never an entry of its own", lr.shape_instructions())
+
     def test_the_prompt_teaches_the_rules(self) -> None:
-        prompt = lr.read_instructions({"mentor_of": "is a mentor of"})
+        prompt = lr.read_instructions({"patron_of": "is a mentor of"})
         for rule in ("Only what the text states", "NOT INCLUDED", "copied exactly", "data, not"):
             self.assertIn(rule, prompt)
         self.assertIn("person, place, group, god, item, event, idea", prompt)
-        self.assertIn("mentor_of", prompt)
+        self.assertIn("patron_of", prompt)
         self.assertIn(lr.EXAMPLES, prompt)
 
     def test_the_prompt_asks_for_every_stated_relationship_sentence_by_sentence(self) -> None:
@@ -960,7 +981,7 @@ class TheRolesAndDirections(unittest.TestCase):
         got, _ = connections([row("Mira", "apprentice", "Brother Aldric", self.quote())], FAMILY)
         self.assertEqual(
             [(c.a, c.how, c.words, c.b) for c in got],
-            [("Brother Aldric", FALLBACK_PREDICATE, "mentors", "Mira")],
+            [("Brother Aldric", "mentor_of", "", "Mira")],
         )
 
     def test_a_mentor_line_and_an_apprentice_line_for_one_pair_are_one_fact(self) -> None:
@@ -970,7 +991,8 @@ class TheRolesAndDirections(unittest.TestCase):
         ]
         out, lost = kept(rows, ["Brother Aldric", "Mira"], FAMILY)
         self.assertEqual(
-            [(c.a, c.b, c.words) for c in out], [("Brother Aldric", "Mira", "mentors")]
+            [(c.a, c.how, c.b, c.words) for c in out],
+            [("Brother Aldric", "mentor_of", "Mira", "")],
         )
         self.assertEqual(dict(lost), {"same_pair": 1})
 
@@ -1076,7 +1098,7 @@ class TheRolesAndDirections(unittest.TestCase):
             )
             self.assertEqual(dict(lost), {"same_pair": 1})
 
-    def test_the_queue_has_no_words_so_a_pair_is_offered_once_per_kind(self) -> None:
+    def test_a_pair_is_offered_once_per_kind_and_each_new_kind_is_its_own(self) -> None:
         # (kept + dropped always adds up to the lines looked at)
         rows = [
             row("Brother Aldric", "mentor", "Mira", self.quote()),
@@ -1085,11 +1107,13 @@ class TheRolesAndDirections(unittest.TestCase):
         ]
         out, lost = kept(rows, ["Brother Aldric", "Mira"], FAMILY)
         self.assertEqual(len(out) + sum(lost.values()), len(rows))
+        # (each is a kind of its own now, so the pair holds all three; only the same kind twice
+        # is one fact, #3033)
         self.assertEqual(
             sorted((c.how, c.words) for c in out),
-            [(FALLBACK_PREDICATE, "mentors"), ("kin_of", "")],
+            [("kin_of", ""), ("mentor_of", ""), ("rival_of", "")],
         )
-        self.assertEqual(dict(lost), {"same_pair": 1})  # the rival line, after the mentor line
+        self.assertEqual(dict(lost), {})
 
     def test_a_plain_family_line_is_still_one_fact_either_way_round(self) -> None:
         rows = [
@@ -1247,13 +1271,14 @@ class TheKeptDirection(unittest.IsolatedAsyncioTestCase):
             pin=AsyncMock(),
             ontology=AsyncMock(return_value=SimpleNamespace(predicates={})),
             relations=AsyncMock(return_value=[]),
+            lookup_data=AsyncMock(return_value=SimpleNamespace(entities=())),
         )
         store = SimpleNamespace(remove=AsyncMock())
 
         def waiting(detail: str) -> Any:
             return SimpleNamespace(
                 subject_id="s", predicate="kin_of", object_id="o", secret=False, detail=detail,
-                truth=False, decided="", known_by="",
+                truth=False, decided="", known_by="", world=0,
             )  # fmt: skip
 
         await keep_all(memory, store, 1, "c", [waiting("parent"), waiting("")])  # type: ignore[arg-type]
