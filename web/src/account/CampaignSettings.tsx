@@ -9,6 +9,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { campaignPage as words } from "../content/campaign-page";
 import { CO_DMS_LIVE } from "../content/game-masters-switch";
 import { OPTIONAL_RULES_LIVE } from "../content/optional-rules-switch";
+import { PAUSE_LIVE } from "../content/pause-switch";
 import { ApiError, type AccountApi, type CampaignPage, type CampaignSettingName } from "./api";
 import LazyPanel from "./LazyPanel";
 import { GIVE_UP_MS, LATE_POLL_MS, OFFLINE_AFTER_MS, POLL_MS, SLOW_AFTER_MS } from "./settings-timing";
@@ -254,7 +255,9 @@ export default function CampaignSettings({
           <span class="campaign-name">{words.settingsLabels.pause}</span>
           {s && <span class="block">{s.paused ? words.pausedYes : words.pausedNo}</span>}
           {/* Every game master sees whether it is paused; only the owner is given the steps. */}
-          {owner && <span class="small muted block">{words.doThisInDiscord(words.paths.pause)}</span>}
+          {owner && !(PAUSE_LIVE && api.setCampaignSetting) && (
+            <span class="small muted block">{words.doThisInDiscord(words.paths.pause)}</span>
+          )}
         </li>
         {discordOnly.map((key) => (
           <li key={key}>
@@ -264,6 +267,9 @@ export default function CampaignSettings({
         ))}
         {!owner && <li class="small muted">{words.ownerOnlyNote}</li>}
       </ul>
+      {PAUSE_LIVE && owner && s && api.setCampaignSetting && (
+        <LazyPanel load={() => import("./PausePanel")} what="pause" props={{ api, campaignRef, paused: s.paused }} />
+      )}
       {CO_DMS_LIVE && api.campaignGameMasters && (
         <LazyPanel load={() => import("./GameMasters")} what="the game masters" props={{ api, campaignRef }} />
       )}
