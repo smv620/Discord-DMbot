@@ -93,8 +93,7 @@ STORE = {
     "relation": DM_ONLY + ": one connection by id",
     "change_relation_words": "requires a confirmed connection",
     "undo_connection": DM_ONLY + ": an Undo",
-    "link_party": DM_ONLY
-    + ": a writer's own check (every status, so a removed link counts as had); shows nothing to players",
+    "link_party": DM_ONLY + ": a writer's own check (every status); shows players nothing",
 }
 
 
