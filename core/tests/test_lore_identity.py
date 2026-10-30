@@ -21,7 +21,7 @@ TEXT = (
     "Born Tamsin Vell, the thief fled north under the pseudonym Ash Morrow. Tamsin Vell served "
     "Master Orlen before the flight. Tamsin Vell is the sister of Wren Vell."
 )
-ANSWER = {
+ANSWER: dict[str, Any] = {
     "names": [
         {"name": "Ash Morrow", "kind": "person", "also": [], "secret": ["Tamsin Vell"],
          "quote": "under the pseudonym Ash Morrow"},
