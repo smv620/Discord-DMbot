@@ -588,7 +588,7 @@ CORE_PREDICATES: tuple[PredicateTerm, ...] = (
         ),
         not_this=(
             ("an ordinary member of a group", "member_of"),
-            ("a person who works for another person", "serves"),
+            ("a character who works for another character", "serves"),
         ),
         examples=("Speaker Holt leads Brindle.", "Captain Vale leads the Silver Lanterns."),
         inverse_label="is led by",
@@ -600,7 +600,7 @@ CORE_PREDICATES: tuple[PredicateTerm, ...] = (
         "Started a group or built a place. The founder may be long dead and not a member.",
         ("character", "faction"),
         ("faction", "place"),
-        covers=("the person who started a guild, cult or order", "who built a town or a keep"),
+        covers=("the character who started a guild, cult or order", "who built a town or a keep"),
         not_this=(("a character who belongs to a group", "member_of"),),
         examples=("Arven founded the Silver Lanterns.",),
         inverse_label="was founded by",

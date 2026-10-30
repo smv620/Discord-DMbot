@@ -54,8 +54,8 @@ RELEASED = {
     ("knows", 2): "12c36b3477a99239",  # a group may know too (#3033)
     ("rival_of", 1): "d00c5cc79f11ba80",
     ("mentor_of", 1): "1616325b035b16db",
-    ("leads", 1): "0d9cfff87ca2a78f",
-    ("founded", 1): "4b4cee95fe2a3d66",
+    ("leads", 1): "ee3de5c3496a20b0",
+    ("founded", 1): "453344314eeb9f97",
     ("captive_of", 1): "60efcb060e24ab3f",
     ("contains", 1): "c50a7cc648af878b",
 }
