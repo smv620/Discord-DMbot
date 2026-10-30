@@ -25,9 +25,11 @@ FIX, KEEP = "fix", "keep"  # correction actions
 
 # Where a fact came from. "dm" is the DM's own word; everything else needs confirming.
 BACKGROUND_SOURCE = "background"  # a suggestion read from the DM's own story (#2167)
+PARTY_SOURCE = "party"  # the faction "The party", made by the rule that links the players (#3036)
 SOURCES = (
     *("dm", "character", "scan", "cleaner", "undo", "entitybot", "backup", "extractor"),
     BACKGROUND_SOURCE,
+    PARTY_SOURCE,
 )
 
 # What the story extractor's claims are (docs/STORY_MEMORY.md, section 1; #1297): proposals

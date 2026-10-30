@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import itertools
 import logging
 import time
 from collections.abc import (
@@ -45,6 +46,7 @@ from dmbot.memory import (
     standing,
     states,
 )
+from dmbot.memory import party as party_mod
 from dmbot.memory import threads as threads_mod
 from dmbot.memory import unnamed as unnamed_mod
 from dmbot.memory._changes import (
@@ -3560,6 +3562,44 @@ class MemoryStore:
             return Written(len(behind), w.batch)
 
     # ---- relationships ----------------------------------------------------------------
+
+    async def link_party(
+        self, guild_id: int, campaign_id: str, user_ids: Collection[int]
+    ) -> party_mod.PartyLinked:
+        """The player characters whose players took part in a session know each other and are
+        members of "The party" (#3036). By rule, as the DM's standing choice, never by the AI: see
+        `memory.party`. One change (one Undo), idempotent, and a connection that exists in any
+        state, a removed one included, is left as it is."""
+        async with self._write(guild_id, campaign_id, DM) as w:
+            chars = await party_mod.characters_of(w, user_ids)
+            if not chars:
+                return party_mod.PartyLinked(0, 0, 0, False)
+            faction, made = await party_mod.find_or_make(w)
+            held = await w.select(
+                RELATIONS,
+                " AND ((predicate = %s AND subject_id = ANY(%s) AND object_id = ANY(%s))"
+                " OR (predicate = %s AND subject_id = ANY(%s) AND object_id = %s))",
+                [party_mod.KNOWS, chars, chars, party_mod.MEMBER_OF, chars, faction or ""],
+            )  # (every status: a connection the DM removed is still "had")
+            have = {(r["subject_id"], r["predicate"], r["object_id"]) for r in held}
+            pairs = members = 0
+            for a, b in itertools.combinations(chars, 2):
+                if (a, party_mod.KNOWS, b) in have or (b, party_mod.KNOWS, a) in have:
+                    continue
+                await self.add_relation_in(
+                    w, a, party_mod.KNOWS, b, confidence=1.0, status=CONFIRMED, leave=True
+                )
+                pairs += 1
+            if faction is not None:  # (none: the DM rejected the party, so nobody is added to it)
+                for c in chars:
+                    if (c, party_mod.MEMBER_OF, faction) in have:
+                        continue
+                    await self.add_relation_in(
+                        w, c, party_mod.MEMBER_OF, faction,
+                        confidence=1.0, status=CONFIRMED, leave=True,
+                    )  # fmt: skip
+                    members += 1
+            return party_mod.PartyLinked(len(chars), pairs, members, made)
 
     async def add_relation(
         self,

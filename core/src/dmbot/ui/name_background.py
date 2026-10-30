@@ -14,8 +14,7 @@ import contextlib
 import logging
 import time
 from collections.abc import Callable, Collection, Mapping, Sequence
-from dataclasses import replace
-from datetime import UTC, datetime
+from dataclasses import dataclass, replace
 from functools import partial
 from typing import Any, cast
 
@@ -61,15 +60,16 @@ from dmbot.ui import logic
 from dmbot.ui.dmbot_commands import _bot, _Button, _Menu, _send, _tell
 from dmbot.ui.name_lists import (
     AI_AT_ONCE,
-    AI_READS_PER_DAY,
+    BUSY,
+    LIMIT,
     LINK_MAX,
     NO_AI_FOR_DOCUMENTS,
     PASTE_MAX,
     Upload,
-    _ai_busy,
-    _ai_reads,
+    end_ai_read,
     read_attachment,
     read_link_once,
+    start_ai_read,
 )
 from dmbot.ui.names import (
     REVIEW_LABEL_MAX,
@@ -433,24 +433,20 @@ class BackgroundOffer(_Menu):
             await _tell(interaction, refused)
             return
         guild = campaign.guild_id
-        day = datetime.fromtimestamp(time.time(), UTC).strftime("%Y-%m-%d")
-        if guild in _ai_busy:
-            await _tell(interaction, "DMbot is already reading a document for this server. "
-                        "Try again when it's done.")  # fmt: skip
-            return
-        if _ai_reads.get((guild, day), 0) >= AI_READS_PER_DAY:
-            await _tell(interaction, "This server has used today's document reads. Try again "
-                        "tomorrow.")  # fmt: skip
-            return
         reading_text = (
             f"🤖 Reading {_md(self.upload.label)}… this can take a few minutes for a long "
             "background."
         )
+        why_not = start_ai_read(guild, time.time())
+        if why_not == BUSY:
+            await _tell(interaction, "DMbot is already reading a document for this server. "
+                        "Try again when it's done.")  # fmt: skip
+            return
+        if why_not == LIMIT:
+            await _tell(interaction, "This server has used today's document reads. Try again "
+                        "tomorrow.")  # fmt: skip
+            return
         self.stop()
-        _ai_busy.add(guild)
-        for old in [k for k in _ai_reads if k[1] != day]:
-            del _ai_reads[old]
-        _ai_reads[(guild, day)] = _ai_reads.get((guild, day), 0) + 1
         try:
             await interaction.edit_original_response(
                 content=reading_text,
@@ -467,20 +463,6 @@ class BackgroundOffer(_Menu):
                 campaign.id,
                 document[:12],
             )
-            known = await memory.known_keys(guild, campaign.id)
-
-            own = await own_kinds(memory, campaign)
-            aliases = await confirmed_aliases(memory, campaign)
-            # Two passes (#2454): the careful model reads the whole text into a plain list, the
-            # fast model shapes it, and the code checks every name and quote against the text.
-            read_ai = getattr(bot, "background_read_ai", None)
-            if read_ai is None:  # never for a real bot: said once so a misconfiguration shows
-                log.warning("No careful-model reader for lore: pass 1 uses the fast model")
-                read_ai = ai
-            # (The read keeps its own deadline and returns what it shaped, marked cut.)
-            # (No line is left out for its pair being connected already: a different kind between
-            # them may be a change the DM wants to see. Only the same kind the same way round is
-            # "already known", once the line is shaped: #3021.)
             who_ai = getattr(bot, "who_ai", None)  # only with DMBOT_WHO_IS_IT on (#2790)
             steps = 3 if who_ai is not None else 2
 
@@ -508,77 +490,24 @@ class BackgroundOffer(_Menu):
                             done,
                             total,
                         )
+                    elif stage == "who":
+                        # (counts only; each lookup moves the count, so a long run never looks
+                        # stalled)
+                        waiting.step(f"Step 3 of {steps}: working out who they mean", done, total)
                     else:
                         waiting.step(f"Step 2 of {steps}: picking out names and links", done, total)
 
-                def on_who(done: int, total: int) -> None:
-                    # (counts only; each lookup moves the count, so a long run never looks stalled)
-                    waiting.step(f"Step 3 of {steps}: working out who they mean", done, total)
-
-                read = await lore_read.read_lore(
-                    read_ai,
-                    ai,
-                    self.upload.text,
-                    own,
-                    AI_AT_ONCE,
-                    skip_name=lambda name: name_key(name) in known,
-                    progress=on_step,
-                    aliases=aliases,
-                    hold_open=who_ai is not None,
-                )
-                found = bg.merge(
-                    [read.names],
-                    known,
-                    rules=(campaign.target_ruleset, campaign.fallback_ruleset),
-                )
-                stored = await store(
-                    memory,
-                    campaign,
-                    found,
-                    getattr(bot, "lore_context", None),
-                    self.upload.text,
-                    known_by,
-                )
-                questions: list[str] = []
-                keys: set[tuple[str, str, str]] = set()
-                queued = await queue_links(
+                done = await read_background(
                     bot,
-                    memory,
                     campaign,
-                    found,
-                    [read.links],
-                    set(own),
+                    self.upload,
                     truth=truth,
-                    dropped=read.stats.dropped,
-                    questions=questions,
-                    keys=keys,
-                    upload=upload_label(self.upload.label, time.time()),
                     speaker=speaker,
                     known_by=known_by,
-                    unsettled=read.stats.unsettled or (),
-                    who_ai=who_ai,
-                    on_who=on_who,
-                    until=clicked + lore_read.LORE_TIME_LIMIT_S - WHO_SUMMARY_MARGIN_S,
-                    known_spellings=read.known_spellings,
-                    secret_spellings=read.secret_spellings,
+                    started=clicked,
+                    progress=on_step,
                 )
-            ready = await count_ready(bot, campaign, keys)
-            changes = await count_changes(bot, memory, campaign, keys)
-            cut = read.cut
-            log.info(
-                "Background read: %d names and %d connections suggested%s; %d connection lines "
-                "found, dropped for: %s",
-                sum(map(len, stored.values())),
-                queued,
-                ", an answer cut off" if cut else "",
-                read.stats.links_listed,
-                ", ".join(
-                    f"{k}={n}"
-                    for k, n in sorted(read.stats.dropped.items())
-                    if k != "quote_widened"  # (a line kept, not dropped: counted for the log only)
-                )
-                or "nothing",
-            )  # (counts only: the questions are the DM's own words, shown only to them)
+            stored, queued, cut = done.stored, done.queued, done.cut
             await summary(
                 interaction,
                 campaign,
@@ -586,11 +515,11 @@ class BackgroundOffer(_Menu):
                 stored,
                 queued,
                 cut=cut,
-                links_found=read.stats.links_listed,
-                ready=ready,
-                dropped=read.stats.dropped,
-                questions=questions,
-                changes=changes,
+                links_found=done.links_found,
+                ready=done.ready,
+                dropped=done.dropped,
+                questions=done.questions,
+                changes=done.changes,
             )
         except (AIError, CampaignError) as exc:  # CampaignError: the campaign is gone
             with contextlib.suppress(discord.HTTPException):
@@ -603,13 +532,136 @@ class BackgroundOffer(_Menu):
                     "keeps happening, tell your server owner."
                 )
         finally:
-            _ai_busy.discard(guild)
+            end_ai_read(guild)
 
     async def _cancel(self, interaction: discord.Interaction) -> None:
         self.stop()
         await interaction.response.edit_message(
             content="Cancelled. Nothing was sent or added.", view=None
         )
+
+
+@dataclass(slots=True)
+class BackgroundRead:
+    """What one read of a lore text made, as counts and the DM's own question words (never the
+    text): the names stored for checking, the connections queued, and what became of the lines."""
+
+    stored: dict[str, list[str]]
+    queued: int
+    cut: bool
+    links_found: int
+    ready: int | None
+    changes: int
+    dropped: Mapping[str, int]
+    questions: list[str]
+
+
+async def read_background(
+    bot: Any,
+    campaign: Campaign,
+    upload: Upload,
+    *,
+    truth: bool,
+    speaker: str | None,
+    known_by: str,
+    started: float,
+    progress: Callable[[str, int, int], None] | None = None,
+) -> BackgroundRead:
+    """The read itself, with no Discord interaction: both passes over the text, the names stored
+    as proposals and the connections queued for the DM's answers. Discord's 🤖 Find names and the
+    website's Upload lore (#3022) both come through here, so they cannot drift apart. The caller
+    has checked who may ask, the plan and the allowance, and shows the result. `progress(stage,
+    done, total)` is told where it is with counts only: "reading", "looking", "shaping" and "who"
+    (working out who a pronoun means). `started` is the monotonic time the wait began."""
+    memory = bot.memory
+    ai = bot.background_ai
+    guild = campaign.guild_id
+    known = await memory.known_keys(guild, campaign.id)
+    own = await own_kinds(memory, campaign)
+    aliases = await confirmed_aliases(memory, campaign)
+    # Two passes (#2454): the careful model reads the whole text into a plain list, the
+    # fast model shapes it, and the code checks every name and quote against the text.
+    read_ai = getattr(bot, "background_read_ai", None)
+    if read_ai is None:  # never for a real bot: said once so a misconfiguration shows
+        log.warning("No careful-model reader for lore: pass 1 uses the fast model")
+        read_ai = ai
+    # (The read keeps its own deadline and returns what it shaped, marked cut.)
+    # (No line is left out for its pair being connected already: a different kind between
+    # them may be a change the DM wants to see. Only the same kind the same way round is
+    # "already known", once the line is shaped: #3021.)
+    who_ai = getattr(bot, "who_ai", None)  # only with DMBOT_WHO_IS_IT on (#2790)
+
+    def on_who(done: int, total: int) -> None:
+        if progress is not None:
+            progress("who", done, total)
+
+    read = await lore_read.read_lore(
+        read_ai,
+        ai,
+        upload.text,
+        own,
+        AI_AT_ONCE,
+        skip_name=lambda name: name_key(name) in known,
+        progress=progress,
+        aliases=aliases,
+        hold_open=who_ai is not None,
+    )
+    found = bg.merge(
+        [read.names],
+        known,
+        rules=(campaign.target_ruleset, campaign.fallback_ruleset),
+    )
+    stored = await store(
+        memory,
+        campaign,
+        found,
+        getattr(bot, "lore_context", None),
+        upload.text,
+        known_by,
+    )
+    questions: list[str] = []
+    keys: set[tuple[str, str, str]] = set()
+    queued = await queue_links(
+        bot,
+        memory,
+        campaign,
+        found,
+        [read.links],
+        set(own),
+        truth=truth,
+        dropped=read.stats.dropped,
+        questions=questions,
+        keys=keys,
+        upload=upload_label(upload.label, time.time()),
+        speaker=speaker,
+        known_by=known_by,
+        unsettled=read.stats.unsettled or (),
+        who_ai=who_ai,
+        on_who=on_who,
+        until=started + lore_read.LORE_TIME_LIMIT_S - WHO_SUMMARY_MARGIN_S,
+        known_spellings=read.known_spellings,
+        secret_spellings=read.secret_spellings,
+    )
+    ready = await count_ready(bot, campaign, keys)
+    changes = await count_changes(bot, memory, campaign, keys)
+    log.info(
+        "Background read: %d names and %d connections suggested%s; %d connection lines "
+        "found, dropped for: %s",
+        sum(map(len, stored.values())),
+        queued,
+        ", an answer cut off" if read.cut else "",
+        read.stats.links_listed,
+        ", ".join(
+            f"{k}={n}"
+            for k, n in sorted(read.stats.dropped.items())
+            if k != "quote_widened"  # (a line kept, not dropped: counted for the log only)
+        )
+        or "nothing",
+    )  # (counts only: the questions are the DM's own words, shown only to them)
+    return BackgroundRead(
+        stored, queued, read.cut, read.stats.links_listed, ready, changes,
+        read.stats.dropped, questions,
+    )  # fmt: skip
 
 
 async def store(
