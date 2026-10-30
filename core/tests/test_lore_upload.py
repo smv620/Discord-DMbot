@@ -14,6 +14,7 @@ from dmbot import lore_upload
 from dmbot.memory import lore_queue as q
 from dmbot.memory.lore_queue import LoreQueue
 from dmbot.memory.lore_read import LORE_TIME_LIMIT_S
+from dmbot.ui import name_background as ui_bg
 from dmbot.ui import name_lists
 from dmbot.ui.name_lists import Upload, _ai_busy, _ai_reads
 from tests import lore_fake
@@ -91,6 +92,21 @@ class TheWorker(NamesTest):
         self.assertEqual((done["text"], done["link"]), ("", ""))
         self.assertGreater(await self.entries(), 0)  # names wait in Check new names
         self.assertIsNone(await self.queue.claim_next(GUILD))  # nothing is read a second time
+
+    async def test_the_claims_choice_reaches_the_read_and_the_flags(self) -> None:
+        await self.add()  # (the page said: world general knowledge)
+        asked: list[dict[str, Any]] = []
+        real = ui_bg.read_background
+
+        async def spy(*args: Any, **kwargs: Any) -> Any:
+            asked.append(kwargs)
+            return await real(*args, **kwargs)
+
+        with patch.object(lore_upload, "read_background", spy):
+            await self.work()
+        self.assertEqual([k["choice"] for k in asked], ["world"])
+        names = await self.memory.entities(GUILD, self.campaign.id, statuses=["proposed"])
+        self.assertTrue(names and not any(e.hidden_from_players for e in names))
 
     async def test_a_sender_who_stopped_being_a_dm_reads_nothing(self) -> None:
         uid = await self.add(user=MANAGER)  # (a manager is no DM of the campaign)

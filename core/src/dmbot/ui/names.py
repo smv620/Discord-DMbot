@@ -550,6 +550,10 @@ async def show_home(interaction: discord.Interaction, campaign_id: str) -> None:
             connections = await links.count(campaign.guild_id, campaign.id)
         except Exception:
             log.exception("Couldn't count the waiting connections")
+        try:  # other names an AI read suggested wait behind the same button (#3034)
+            connections += len(await memory.suggested_names(campaign.guild_id, campaign.id))
+        except Exception:
+            log.exception("Couldn't count the suggested names")
     look_alikes = None
     if memory is not None and sees_secrets(campaign, interaction.user.id):  # DMs only (#2426)
         from dmbot.ui.look_alikes import count_groups
