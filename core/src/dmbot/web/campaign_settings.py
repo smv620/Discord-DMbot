@@ -32,12 +32,14 @@ CHOICES: dict[str, tuple[str, ...]] = {
     "visibility": ("private", "peek", "open"),
     "level": ("quiet", "normal"),
     "retention": ("forever", "365", "90", "30"),
+    "story_mode": ("off", "watch", "guide"),  # the Shared story switch (#2985)
 }
 
 
 OPTIONAL_RULE = "optional_rule"  # a fourth choice: one optional rule on or off (#2753)
 CO_DM = "co_dm"  # a fifth: one game master added or removed (#2768)
 PAUSE = "pause"  # a sixth: the campaign paused or unpaused, by its owner (#2985)
+STORY_MODE = "story_mode"  # a seventh: the Shared story switch, off, watch or guide (#2985)
 PERSON_ID = re.compile(r"^[1-9][0-9]{0,18}$")  # a Discord id: digits, never a name
 
 
@@ -106,6 +108,7 @@ async def queue_setting(
     *,
     co_dms_on: bool = False,
     pause_on: bool = False,
+    story_mode_on: bool = False,
 ) -> str:
     """Queue one choice of the signed-in DM for the bot and return its id. A server the person is
     not in is "not found"; a member who is not a DM of the campaign is "not allowed". A shorter
@@ -117,6 +120,8 @@ async def queue_setting(
         raise RecapError("not_found")  # (before the body is judged: a malformed one is 404 too)
     if isinstance(body, dict) and body.get("setting") == PAUSE and not pause_on:
         raise RecapError("not_found")  # off until the bot applies it too (DMBOT_WEB_PAUSE)
+    if isinstance(body, dict) and body.get("setting") == STORY_MODE and not story_mode_on:
+        raise RecapError("not_found")  # off until the bot applies it too (DMBOT_WEB_STORY_MODE)
     rule = _optional_rule(body)
     master = _co_dm(body)
     pause = _pause(body)

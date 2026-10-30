@@ -1787,7 +1787,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         ...(role === "player"
           ? {}
           : {
-              settings: { visibility: "peek", level: "normal", keepDays: 90, paused: false, gameMasters: 2 } as const,
+              settings: { visibility: "peek", level: "normal", keepDays: 90, paused: false, storyMode: "off", gameMasters: 2 } as const,
             }),
       };
     },
@@ -1940,6 +1940,11 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         if (/\.pa-noroom$/.test(ref) && asked.on === false)
           return { ...base, state: "failed", error: "refused", note: "You have no free place on your plan. Pause another campaign first." };
         return { ...base, state: "done", note: asked.on ? "Paused." : "Unpaused." };
+      }
+      if (asked.setting === "story_mode") {
+        if (asked.value !== "off" && asked.confirm !== true) return { ...base, state: "failed", error: "needs_confirm" };
+        if (/\.sm-refused$/.test(ref)) return { ...base, state: "failed", error: "refused", note: "**Shared story** needs a `confirmation`." };
+        return { ...base, state: "done", note: "" };
       }
       if (asked.setting === "optional_rule") {
         const rule = PRETEND_RULES.find((r) => r.id === asked.value);

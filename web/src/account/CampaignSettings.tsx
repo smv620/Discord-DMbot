@@ -10,6 +10,7 @@ import { campaignPage as words } from "../content/campaign-page";
 import { CO_DMS_LIVE } from "../content/game-masters-switch";
 import { OPTIONAL_RULES_LIVE } from "../content/optional-rules-switch";
 import { PAUSE_LIVE } from "../content/pause-switch";
+import { STORY_MODE_LIVE } from "../content/story-mode-switch";
 import { ApiError, type AccountApi, type CampaignPage, type CampaignSettingName } from "./api";
 import LazyPanel from "./LazyPanel";
 import { GIVE_UP_MS, LATE_POLL_MS, OFFLINE_AFTER_MS, POLL_MS, SLOW_AFTER_MS } from "./settings-timing";
@@ -271,6 +272,9 @@ export default function CampaignSettings({
       </ul>
       {PAUSE_LIVE && owner && s && api.setCampaignSetting && (
         <LazyPanel load={() => import("./PausePanel")} what="pause" props={{ api, campaignRef, paused: pausedNow ?? s.paused, onChanged: setPausedNow }} />
+      )}
+      {STORY_MODE_LIVE && s?.storyMode && api.setCampaignSetting && (
+        <LazyPanel load={() => import("./StoryModePanel")} what="the shared story" props={{ api, campaignRef, mode: s.storyMode }} />
       )}
       {CO_DMS_LIVE && api.campaignGameMasters && (
         <LazyPanel load={() => import("./GameMasters")} what="the game masters" props={{ api, campaignRef }} />
