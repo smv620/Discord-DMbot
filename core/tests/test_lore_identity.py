@@ -339,14 +339,27 @@ class TheNameQuestion(NamesTest):
                 "Old Ash",
             )  # no error
 
-    async def test_two_quick_presses_answer_the_card_they_were_made_on(self) -> None:
+    async def test_a_press_answers_the_card_it_was_made_on_even_if_its_defer_is_slow(self) -> None:
         import asyncio
 
         await ui_bg.save_earlier_names(self.memory, self.campaign, {"Ash Morrow": ("Old Ash",)}, ())
         view = await self.card()
         yes = next(b for b in view.children if b.label == "✅ Yes, the same person")
-        await asyncio.gather(yes.callback(self.it(DM)), yes.callback(self.it(DM)))
-        # two names waited; the double press answered the first and not the one behind it
+        first_done = asyncio.Event()
+        second = self.it(DM)
+        real_defer = second.response.defer
+
+        async def slow_defer(*args: Any, **kw: Any) -> Any:
+            await first_done.wait()  # this press reaches the server only after the first ended
+            return await real_defer(*args, **kw)
+
+        second.response.defer = slow_defer
+        pressing = asyncio.ensure_future(yes.callback(second))
+        await asyncio.sleep(0)  # (the second press has now been made on card one)
+        await yes.callback(self.it(DM))
+        first_done.set()
+        await pressing
+        # two names waited; two presses on the first card answered the first card only
         self.assertEqual(view.yes, 1)
         (still,) = await self.memory.suggested_names(GUILD, self.campaign.id)
         self.assertEqual(still[0].status, "proposed")
