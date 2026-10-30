@@ -394,6 +394,7 @@ from dmbot.transcript import speaker_question as speaker_q
 from dmbot.transcript import spelled as spelled_out
 from dmbot.transcript import stream as transcript_lines
 from dmbot.transcript import suggestions as line_suggestions
+from dmbot.transcript.attendance import session_speakers
 from dmbot.transcript.cleaner import (
     DM_EDIT,
     IMAGE_EDIT,
@@ -2843,6 +2844,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
 
         steps: list[tuple[str, Callable[[], Awaitable[Any]]]] = [
             ("stored transcript", stored),
+            # After the stored transcript: its lines say who took part (#3036).
+            ("the party", lambda: self.link_the_party(table)),
             ("stop button", lambda: self._remove_stop_button(table)),
             ("capture check", lambda: self.post_summary(table)),
             ("final transcript", channel),
@@ -8294,6 +8297,30 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             log.exception("Couldn't write an answer into its stored line")
             return False
 
+    async def link_the_party(self, table: Table) -> None:
+        """After a live session: the player characters whose players took part know each other and
+        are members of The party (#3036). By rule, from who had a line in the stored session; only
+        people who still agree count. Counts only in the log."""
+        if self.memory is None or table.campaign_id is None or table.transcript_session_id is None:
+            return
+        gid, cid = table.guild_id, table.campaign_id
+        with log_context(guild_id=gid, campaign_id=cid):
+            await self._link_the_party(gid, cid, table.transcript_session_id)
+
+    async def _link_the_party(self, gid: int, cid: str, session_id: str) -> None:
+        """Link the party for one stored session's speakers. Shared by live sessions and imports, so
+        the rule and the consent check are the same for both."""
+        assert self.memory is not None and self.transcripts is not None
+        speakers = await session_speakers(self.transcripts.db, gid, session_id)
+        agreed = await self.consent.consenting(gid)
+        linked = await self.memory.link_party(gid, cid, {u for u in speakers if u in agreed})
+        log.info(
+            "The party: %d characters, %d pairs, %d members",
+            linked.characters,
+            linked.pairs,
+            linked.members,
+        )
+
     async def learn_people(self, table: Table) -> None:
         """After a session: turn the names people answered to at least twice into waiting
         questions for the DM (#1188). Only people who still agree; the questions are saved
@@ -10154,6 +10181,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     async with asyncio.timeout(STALE_SCAN_S // 3):
                         added = await self._scan_import(gid, ready)
                     await store.finish_scan(gid, ready.session_id, int(time.time()))
+                    # The scan is done, so the session's speakers are known; linking is idempotent,
+                    # so an import's sessions each link their own party (#3036).
+                    if self.memory is not None:
+                        await self._link_the_party(gid, ready.campaign_id, ready.session_id)
                     done += 1
                     self._import_names.setdefault(ready.campaign_id, []).extend(added)
                 except Exception:
