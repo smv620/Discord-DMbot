@@ -53,21 +53,24 @@ class TheParentOfASibling(unittest.TestCase):
             [Derived("mira", "parent", "bryn", ("1", "2"))],
         )
 
-    def test_a_half_sibling_gets_the_parent_of_the_one_parent_they_share(self) -> None:
-        # Aldric and Bryn share one stated parent (Mira), so Bryn is Mira's child, by the rule.
-        # This is the documented case where the rule can be wrong for half-siblings: a derived
-        # link is only ever worked out from a stated parent and a stated sibling, never from a
-        # shared parent.
+    def test_a_half_sibling_is_the_child_of_the_parent_the_sibling_link_reaches(self) -> None:
+        # Aldric's parent is Mira and Aldric is the sibling of Bryn, so by the rule Mira is Bryn's
+        # parent. Bryn's own parent Tovin then reaches Aldric the same way. The rule can be wrong
+        # for half-siblings (here Bryn may share only Tovin), and that is documented in the module:
+        # a derived link comes only from a stated parent and a stated sibling.
         links = [
             stated("1", "mira", "parent", "aldric"),
             stated("2", "aldric", "sibling", "bryn"),
             stated("3", "tovin", "parent", "bryn"),
         ]
 
-        derived = derive(links)
-
-        self.assertIn(Derived("mira", "parent", "bryn", ("1", "2")), derived)
-        self.assertIn(Derived("tovin", "parent", "aldric", ("3", "2")), derived)
+        self.assertEqual(
+            derive(links),
+            [
+                Derived("mira", "parent", "bryn", ("1", "2")),
+                Derived("tovin", "parent", "aldric", ("3", "2")),
+            ],
+        )
 
     def test_a_shared_parent_alone_gives_no_sibling_link(self) -> None:
         # Two children of one parent are not worked out as siblings: siblings are only stated.
@@ -147,9 +150,10 @@ class TheLinksNeverWorkedOut(unittest.TestCase):
         self.assertEqual(derived, [Derived("mira", "parent", "bryn", ("1", "2"))])
 
     def test_a_derived_link_is_never_a_source_for_another(self) -> None:
-        # Gorran is Mira's parent, and Mira is Aldric's parent. Gorran's grandchild is Aldric, which
-        # is the one grandparent link. Aldric's sibling Bryn is not worked out as Gorran's
-        # grandchild: that would need a derived link as a source.
+        # Mira is Bryn's parent only by being derived from "Mira parent Aldric" and "Aldric sibling
+        # Bryn". Gorran is Bryn's grandparent only if that derived link were used as a source, so
+        # no such link must appear. Gorran is Aldric's grandparent from two stated links, and that
+        # is the only grandparent link.
         links = [
             stated("1", "gorran", "parent", "mira"),
             stated("2", "mira", "parent", "aldric"),
@@ -210,10 +214,13 @@ class TheDerivedOrder(unittest.TestCase):
             stated("4", "bryn", "sibling", "cora"),
         ]
 
-        derived = derive(links)
-
-        keys = [(d.a_id, d.role, d.b_id) for d in derived]
-        self.assertEqual(keys, sorted(keys))
+        self.assertEqual(
+            derive(links),
+            [
+                Derived("mira", "parent", "cora", ("3", "4")),
+                Derived("mira", "parent", "tovin", ("1", "2")),
+            ],
+        )
 
     def test_when_two_pairs_of_sources_give_one_link_the_first_pair_is_kept(self) -> None:
         links = [
@@ -226,4 +233,81 @@ class TheDerivedOrder(unittest.TestCase):
         self.assertEqual(
             derive(links),
             [Derived("mira", "parent", "bryn", ("1", "2"))],
+        )
+
+
+class TheEdgeCases(unittest.TestCase):
+    def test_a_stated_self_link_is_not_used_as_a_source(self) -> None:
+        # "Mira is her own parent" is not a family fact, so nothing follows from it.
+        links = [stated("1", "mira", "parent", "mira"), stated("2", "mira", "sibling", "aldric")]
+
+        self.assertEqual(derive(links), [])
+
+    def test_a_stated_self_link_does_not_make_a_grandparent(self) -> None:
+        links = [
+            stated("1", "gorran", "parent", "gorran"),
+            stated("2", "gorran", "parent", "aldric"),
+        ]
+
+        self.assertEqual(derive(links), [])
+
+    def test_each_gendered_word_is_read_as_its_neutral_word(self) -> None:
+        # Mira is the parent (or the child, read the other way) of Aldric, and Aldric has a sibling
+        # Bryn. The derived role is always "parent", whichever gendered word the source used.
+        parent_links = {
+            "mother": stated("1", "mira", "mother", "aldric"),
+            "father": stated("1", "mira", "father", "aldric"),
+            "daughter": stated("1", "aldric", "daughter", "mira"),
+            "son": stated("1", "aldric", "son", "mira"),
+        }
+        sibling_links = {
+            "sibling": stated("2", "aldric", "sibling", "bryn"),
+            "sister": stated("2", "aldric", "sister", "bryn"),
+            "brother": stated("2", "aldric", "brother", "bryn"),
+        }
+        for parent_word, parent_link in parent_links.items():
+            for sibling_word, sibling_link in sibling_links.items():
+                with self.subTest(parent=parent_word, sibling=sibling_word):
+                    self.assertEqual(
+                        derive([parent_link, sibling_link]),
+                        [Derived("mira", "parent", "bryn", ("1", "2"))],
+                    )
+
+    def test_a_son_is_read_as_a_child_of_the_parent(self) -> None:
+        links = [stated("1", "aldric", "son", "mira"), stated("2", "aldric", "sibling", "bryn")]
+
+        self.assertEqual(derive(links), [Derived("mira", "parent", "bryn", ("1", "2"))])
+
+    def test_a_grandparent_built_from_child_words(self) -> None:
+        links = [stated("1", "aldric", "child", "mira"), stated("2", "mira", "child", "gorran")]
+
+        self.assertEqual(derive(links), [Derived("gorran", "grandparent", "aldric", ("2", "1"))])
+
+    def test_a_contradiction_drops_the_derived_link_rather_than_guessing(self) -> None:
+        # "Mira is the parent of Aldric", "Aldric and Bryn are siblings" and "Bryn is the parent of
+        # Mira" contradict "Mira is the parent of Bryn", so that derived link is dropped.
+        links = [
+            stated("1", "mira", "parent", "aldric"),
+            stated("2", "aldric", "sibling", "bryn"),
+            stated("3", "bryn", "parent", "mira"),
+        ]
+
+        self.assertNotIn(
+            Derived("mira", "parent", "bryn", ("1", "2")),
+            derive(links),
+        )
+
+    def test_the_first_pair_of_sources_is_compared_as_text(self) -> None:
+        # Source ids compare as strings, so "10" sorts before "9". The output is still the same
+        # every time, which is what matters.
+        links = [
+            stated("9", "mira", "parent", "aldric"),
+            stated("3", "aldric", "sibling", "bryn"),
+            stated("10", "mira", "parent", "cora"),
+            stated("2", "cora", "sibling", "bryn"),
+        ]
+
+        self.assertEqual(
+            derive(links),
+            [Derived("mira", "parent", "bryn", ("10", "2"))],
         )

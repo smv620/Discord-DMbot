@@ -23,6 +23,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import Literal
 
 # Stated words that mean one of the neutral sources. A child is the reverse of a parent, so "child"
 # is read as a parent link running the other way.
@@ -31,6 +32,10 @@ _CHILD_WORDS = frozenset({"child", "son", "daughter"})
 _SIBLING_WORDS = frozenset({"sibling", "sister", "brother"})
 _GRANDPARENT_WORDS = frozenset({"grandparent", "grandmother", "grandfather"})
 _GRANDCHILD_WORDS = frozenset({"grandchild", "granddaughter", "grandson"})
+
+
+# The only roles ever worked out. Typed so mypy rejects a gendered one.
+DerivedRole = Literal["parent", "grandparent"]
 
 
 @dataclass(frozen=True)
@@ -48,7 +53,7 @@ class Derived:
     """A link that follows from two stated links, with the ids of those two links."""
 
     a_id: str
-    role: str
+    role: DerivedRole
     b_id: str
     source_ids: tuple[str, str]
 
@@ -56,11 +61,14 @@ class Derived:
 def derive(stated: Sequence[Stated]) -> list[Derived]:
     """The links that follow from the stated ones, sorted by (a_id, role, b_id) so the result does
     not depend on the order of the input. A link that follows two different ways keeps the pair of
-    sources that sorts first."""
+    sources whose ids sort first as strings. Roles outside the lists above are dropped, and so is a
+    stated link from a name to itself, which says nothing about family."""
     parents: list[tuple[str, str, str]] = []  # (parent_id, child_id, link_id)
     siblings: list[tuple[str, str, str]] = []  # (a_id, b_id, link_id), read both ways below
     known: set[tuple[str, str, str]] = set()  # (a_id, neutral role, b_id) as stated, both readings
     for link in stated:
+        if link.a_id == link.b_id:
+            continue
         if link.role in _PARENT_WORDS:
             parents.append((link.a_id, link.b_id, link.link_id))
             known.add((link.a_id, "parent", link.b_id))
@@ -74,11 +82,12 @@ def derive(stated: Sequence[Stated]) -> list[Derived]:
         elif link.role in _GRANDCHILD_WORDS:
             known.add((link.b_id, "grandparent", link.a_id))
 
-    found: dict[tuple[str, str, str], tuple[str, str]] = {}
+    found: dict[tuple[str, DerivedRole, str], tuple[str, str]] = {}
 
-    def offer(a_id: str, role: str, b_id: str, sources: tuple[str, str]) -> None:
-        # A self-link is never a family link, and a link already stated in either reading is not
-        # worked out again.
+    def offer(a_id: str, role: DerivedRole, b_id: str, sources: tuple[str, str]) -> None:
+        # A self-link is never a family link. A link already stated in either reading is not worked
+        # out again. The reversed reading only matters for contradictory input (A parent of B and B
+        # parent of A): the derived link is dropped rather than guessing which statement is wrong.
         if a_id == b_id or (a_id, role, b_id) in known or (b_id, role, a_id) in known:
             return
         key = (a_id, role, b_id)
