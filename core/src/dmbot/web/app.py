@@ -1251,7 +1251,9 @@ def create_app(
         if not settings.lore_on:
             raise HTTPException(status_code=404, detail="not_found")
         try:
-            body = await bounded_json(request, 64 * 1024)  # 4,000 characters, escaped
+            body = await bounded_json(
+                request, 1_200_000
+            )  # 262,144 characters at up to 4 bytes each
             return await lore.add(db, session, ref, body)
         except RecapError as err:
             status, detail = lore_refusals.get(err.code, (404, "not_found"))

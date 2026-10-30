@@ -11,6 +11,6 @@ describe("Upload lore", () => {
   });
 
   it("mirrors the limits of the Discord form and the web door", () => {
-    expect([LORE_TEXT_MAX, LORE_LINK_MAX]).toEqual([4000, 2000]);
+    expect([LORE_TEXT_MAX, LORE_LINK_MAX]).toEqual([262_144, 2000]);
   });
 });

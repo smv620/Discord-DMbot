@@ -7,6 +7,11 @@ from __future__ import annotations
 
 from dmbot.migrations._shared import _isolate
 
+# The most characters of lore one upload takes: Discord's text file limit
+# (`name_list.MAX_FILE_BYTES`, 256 KB). One number for the column check and the door;
+# `web/lore.py` and the page's `LORE_TEXT_MAX` mirror it and tests keep them in step.
+TEXT_MAX = 262_144
+
 LORE_UPLOADS = (
     r"""
     -- A DM's lore or backstory given on the website (#3022), waiting for the bot. The website's
@@ -29,7 +34,7 @@ LORE_UPLOADS = (
         seq         BIGINT GENERATED ALWAYS AS IDENTITY,
         user_id     BIGINT NOT NULL CHECK (user_id > 0),
         source      TEXT NOT NULL CHECK (source IN ('paste', 'file', 'link')),
-        text        TEXT NOT NULL DEFAULT '' CHECK (char_length(text) <= 4000),
+        text        TEXT NOT NULL DEFAULT '' CHECK (char_length(text) <= @TEXT_MAX@),
         link        TEXT NOT NULL DEFAULT '' CHECK (char_length(link) <= 2000),
         speaker     TEXT NOT NULL DEFAULT '' CHECK (speaker = '' OR speaker ~ '^[0-9a-f]{32}$'),
         choice      TEXT NOT NULL CHECK (choice IN ('world', 'spoilers', 'smart')),
@@ -84,7 +89,7 @@ LORE_UPLOADS = (
            OR chosen IS NULL OR chosen NOT IN ('world', 'spoilers', 'smart')
            OR (src = 'link' AND (COALESCE(txt, '') <> '' OR COALESCE(lnk, '') !~ '^https://[^[:space:]]+$'
                                  OR char_length(lnk) > 2000))
-           OR (src <> 'link' AND (btrim(COALESCE(txt, '')) = '' OR char_length(txt) > 4000
+           OR (src <> 'link' AND (btrim(COALESCE(txt, '')) = '' OR char_length(txt) > @TEXT_MAX@
                                   OR COALESCE(lnk, '') <> ''))
            OR (COALESCE(who, '') <> '' AND who !~ '^[0-9a-f]{32}$') THEN
             RETURN jsonb_build_object('status', 'bad_text');
@@ -184,7 +189,7 @@ LORE_UPLOADS = (
 """
 )
 
-SQL = LORE_UPLOADS
+SQL = LORE_UPLOADS.replace("@TEXT_MAX@", str(TEXT_MAX))
 
 ISOLATED_TABLES: tuple[str, ...] = ("lore_uploads",)
 

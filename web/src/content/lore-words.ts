@@ -9,7 +9,7 @@
 export const LORE_LIVE = false;
 
 /** Mirror the core limits (web/lore.py, the same as Discord's form): change them together. */
-export const LORE_TEXT_MAX = 4000;
+export const LORE_TEXT_MAX = 262_144;
 export const LORE_LINK_MAX = 2000;
 
 export const lorePage = {
@@ -25,7 +25,7 @@ export const lorePage = {
   whereLegend: "How do you want to add it?",
   sources: { paste: "Paste it here", file: "A text file", link: "A link" },
   pasteLabel: "The words",
-  pasteHelp: `Up to ${LORE_TEXT_MAX.toLocaleString("en-US")} characters. For more, upload it in parts.`,
+  pasteHelp: `Up to ${LORE_TEXT_MAX.toLocaleString("en-US")} characters.`,
   count: (n: number): string => `${n.toLocaleString("en-US")} of ${LORE_TEXT_MAX.toLocaleString("en-US")}`,
   fileLabel: "Choose a text file",
   fileHelp: `Choose a plain text file (.txt or .md) of up to ${LORE_TEXT_MAX.toLocaleString("en-US")} characters. Only the words are sent.`,

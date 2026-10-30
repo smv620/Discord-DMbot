@@ -19,9 +19,10 @@ from dmbot.web.sessions import Session
 
 SOURCES = ("paste", "file", "link")
 CHOICES = ("world", "spoilers", "smart")
-# The same limits as Discord's upload form (ui/name_lists.py); web code never imports `ui`, which
-# needs discord.py, so a test keeps the two in step.
-PASTE_MAX = 4000
+# The text limit is Discord's text file limit (memory/name_list.MAX_FILE_BYTES) and the
+# migration's TEXT_MAX; the link limit is Discord's form (ui/name_lists.py, which needs
+# discord.py, so web code never imports it). Tests keep them in step.
+PASTE_MAX = 262_144
 LINK_MAX = 2000
 
 

@@ -75,7 +75,7 @@ class TheDoors(Reading):
             {"source": "zip"},
             {"choice": "everything"},
             {"text": "  "},
-            {"text": "x" * 4001},
+            {"text": "x" * (lore.PASTE_MAX + 1)},
             {"source": "link", "text": "", "link": "http://example.com"},
             {"source": "link", "text": "", "link": ""},
             {"source": "link", "text": WORDS, "link": "https://example.com"},
@@ -173,12 +173,24 @@ class TheDoors(Reading):
         )
         self.assertEqual(await self.rows(), [])
 
-    def test_the_limits_match_discords_upload_form(self) -> None:
+    def test_the_limits_match_discords_and_the_migration(self) -> None:
+        import importlib
+
+        from dmbot.memory.name_list import MAX_FILE_BYTES
         from dmbot.ui import name_lists
 
-        self.assertEqual(
-            (lore.PASTE_MAX, lore.LINK_MAX), (name_lists.PASTE_MAX, name_lists.LINK_MAX)
-        )
+        migration = importlib.import_module("dmbot.migrations.0288_lore_uploads")
+        self.assertEqual(lore.PASTE_MAX, MAX_FILE_BYTES)
+        self.assertEqual(lore.PASTE_MAX, migration.TEXT_MAX)
+        self.assertEqual(lore.LINK_MAX, name_lists.LINK_MAX)
+
+    async def test_a_long_lore_text_is_taken_up_to_the_limit_and_not_past_it(self) -> None:
+        got = await self.add(text="Mira. " * 33_334)  # 200,004 characters
+        self.assertEqual(got["upload"]["state"], "waiting")
+        await self.sql("UPDATE lore_uploads SET state = 'done'")
+        await self.add(text="x" * lore.PASTE_MAX)
+        await self.sql("UPDATE lore_uploads SET state = 'done'")
+        self.assertEqual(await self.turned_away(text="x" * (lore.PASTE_MAX + 1)), "too_long")
 
 
 class TheRoutes(TheDoors):

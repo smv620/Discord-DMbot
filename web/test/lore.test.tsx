@@ -4,7 +4,7 @@
 import { cleanup, fireEvent, render, screen, waitFor, act } from "@testing-library/preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { lorePage as words } from "../src/content/lore-words";
+import { lorePage as words, LORE_TEXT_MAX } from "../src/content/lore-words";
 import { ApiError } from "../src/account/api";
 import Lore from "../src/account/Lore";
 import { mockApi } from "../src/account/mock";
@@ -70,9 +70,20 @@ describe("Upload lore", () => {
     const api = mockApi("table");
     render(<Lore api={api} path={PATH} />);
     fireEvent.click(screen.getByLabelText(words.sources.file));
-    const file = new File(["x".repeat(4001)], "lore.txt", { type: "text/plain" });
+    const file = new File(["x".repeat(LORE_TEXT_MAX + 1)], "lore.txt", { type: "text/plain" });
     fireEvent.change(screen.getByLabelText(words.fileLabel), { target: { files: [file] } });
     expect((await screen.findByRole("alert")).textContent).toBe(words.fileTooLong);
+  });
+
+  it("takes a 100 KB text file", async () => {
+    const api = mockApi("table");
+    render(<Lore api={api} path={PATH} />);
+    fireEvent.click(screen.getByLabelText(words.sources.file));
+    fireEvent.change(screen.getByLabelText(words.fileLabel), { target: { files: [new File(["a".repeat(100_000)], "lore.txt", { type: "text/plain" })] } });
+    expect(await screen.findByText(words.fileChosen("lore.txt"))).toBeTruthy();
+    fireEvent.click(screen.getByLabelText(words.rights));
+    fireEvent.click(screen.getByRole("button", { name: words.submit }));
+    await waitFor(() => expect(api.calls).toContain("loreAdd:100.cmp1:file:smart:-:rights:100000"));
   });
 
   it("reads a text file in the browser and sends its words", async () => {
