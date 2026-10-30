@@ -53,7 +53,10 @@ class TheLiveStep(IsolatedAsyncioTestCase):
         table: Any = SimpleNamespace(
             guild_id=GUILD, campaign_id=CAMPAIGN, transcript_session_id=SESSION
         )
-        await DMBot.link_the_party(bot, table)
+        with patch("dmbot.bot.session_speakers", AsyncMock()) as speakers:
+            await DMBot.link_the_party(bot, table)
+        speakers.assert_not_awaited()
+        bot.consent.agreed.assert_not_awaited()
 
     async def test_nothing_runs_without_a_campaign_or_a_stored_session(self) -> None:
         for campaign_id, session_id in ((None, SESSION), (CAMPAIGN, None)):
@@ -79,4 +82,6 @@ class TheImportStep(IsolatedAsyncioTestCase):
     async def test_an_import_with_no_memory_links_nothing(self) -> None:
         bot = fake_bot(memory=False)
         ready: Any = SimpleNamespace(guild_id=GUILD, campaign_id=CAMPAIGN, session_id=SESSION)
+        bot._link_the_party = AsyncMock()
         await DMBot._link_import_party(bot, GUILD, ready)  # no memory: nothing to do
+        bot._link_the_party.assert_not_awaited()

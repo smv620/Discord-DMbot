@@ -30,6 +30,7 @@ from dmbot.db import Database
 from dmbot.memory.store import MemoryStore
 from dmbot.transcript.attendance import session_speakers
 from dmbot.transcript.store import TranscriptStore
+from dmbot.transcription.config import load_transcription_settings
 
 log = logging.getLogger(__name__)
 
@@ -72,7 +73,9 @@ async def backfill(db: Database, args: argparse.Namespace) -> Totals:
     transcripts = TranscriptStore(db)
     memory = MemoryStore(db)
     # Agreed, as the bot's live step is (a pause is not a refusal, #3036).
-    agreed = await ConsentStore(db).agreed(guild_id)
+    # The same rule as the live bot: with an outside engine only yeses for it count.
+    engine = load_transcription_settings(os.environ).outside_engine
+    agreed = await ConsentStore(db, outside=engine).agreed(guild_id)
     for campaign in campaigns:
         totals.campaigns += 1
         for session_id in await campaign_sessions(db, guild_id, campaign.id):

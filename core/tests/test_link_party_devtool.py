@@ -5,9 +5,11 @@ campaign filter holds, and another server's campaign is never touched. Invented 
 from __future__ import annotations
 
 from argparse import Namespace
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from dmbot.campaigns import CampaignStore
+from dmbot.consent import ConsentStore
 from dmbot.devtools import link_party
 from dmbot.memory.models import CONFIRMED, new_id
 from tests.test_memory_names import GUILD, NamesTest
@@ -84,6 +86,26 @@ class ThePartyBackfill(NamesTest):
 
         second = await link_party.backfill(self.db, args())
         self.assertEqual((second.pairs, second.members), (0, 0))
+
+    async def test_the_backfill_reads_consent_the_way_the_live_bot_does(self) -> None:
+        # Real consent rows, and the bot's outside engine: a yes given for another engine (or for
+        # none) does not count, so that person's character is not linked.
+        self.consent_patch.stop()
+        consent = ConsentStore(self.db)
+        await consent.grant(GUILD, 101, outside_to="deepgram")
+        await consent.grant(GUILD, 102)  # said yes, but not for this engine
+        await consent.grant(GUILD, 103, outside_to="deepgram")
+        settings = SimpleNamespace(outside_engine="deepgram")
+        with patch.object(link_party, "load_transcription_settings", return_value=settings):
+            totals = await link_party.backfill(self.db, args())
+
+        self.assertEqual(totals.members, 2)
+        rels = await self.memory.relations(GUILD, self.campaign.id, include_secret=True)
+        members = {r.subject_id for r in rels if r.predicate == "member_of"}
+        entities = await self.memory.entities(GUILD, self.campaign.id)
+        tavin = next(e.id for e in entities if e.name == "Tavin")
+        self.assertNotIn(tavin, members)
+        self.assertEqual(len(members), 2)
 
     async def test_a_campaign_filter_limits_the_run(self) -> None:
         totals = await link_party.backfill(self.db, args(campaign="not-this-one"))

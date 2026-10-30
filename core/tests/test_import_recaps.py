@@ -225,6 +225,23 @@ class ThePlaysChoices(WithImports):
         await bot.run_import_followups(GUILD)  # a second round does nothing
         idle.apply_import_plays.assert_not_awaited()
 
+    async def test_a_choice_links_the_party_in_the_same_round_as_the_scan(self) -> None:
+        # The DM's choice comes first, so the scanned session already sees the player character
+        # (#3036): one round gives the party link, with the real store and the real rule.
+        cerric = await self.character()
+        await self.wait(cerric)
+        bot, _ = fake_bot(self.store, memory=self.memory)
+        bot._apply_import_plays = partial(DMBot._apply_import_plays, bot)
+        bot._link_import_party = partial(DMBot._link_import_party, bot)
+        bot._link_the_party = partial(DMBot._link_the_party, bot)
+        bot.transcripts = TranscriptStore(self.db)
+        bot.memory = self.memory
+        bot._scan_import = AsyncMock(return_value=[])
+        await self.imported(1)
+        await bot.run_import_followups(GUILD)
+        members = await self.memory.relations(GUILD, self.campaign.id, include_secret=True)
+        self.assertIn(cerric, {r.subject_id for r in members if r.predicate == "member_of"})
+
     async def test_a_choice_for_someone_off_the_record_is_kept_not_dropped(self) -> None:
         """Off the record (#2466) has no lasting effect: Mira is paused (not recorded now) but
         agreed, so the DM's choice still becomes a link."""
@@ -478,6 +495,15 @@ class TheCrashAndTheNews(WithImports):
         self.assertIn("I couldn't check one more imported session for new names", told[0])
         self.assertIn("on the names panel", told[0])
         self.assertNotIn("your list", told[0])
+
+    async def test_a_successful_scan_links_the_party_of_its_session(self) -> None:
+        await self.imported(1)
+        bot, campaign = fake_bot(self.store)
+        campaign.id = self.campaign.id
+        bot._scan_import = AsyncMock(return_value=["Kazeth"])
+        await DMBot.run_import_followups(bot, GUILD)
+
+        bot._link_import_party.assert_awaited_once()
 
     async def test_a_failed_party_link_after_a_scan_changes_nothing_else(self) -> None:
         # The link runs after the scan is finished: when it raises, the scan still counts as done,

@@ -10184,6 +10184,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         scanned, never once per session. Counts only in the log."""
         assert self.import_job is not None
         store = self.import_job.store
+        # First: the DM's "plays which character" choices, so a session scanned below is linked to
+        # the characters those choices make the players' own (#3036).
+        await self._apply_import_plays(gid, store)
         done = 0
         for ready in await store.ready_for_scan(gid):
             with log_context(guild_id=gid, campaign_id=ready.campaign_id):
