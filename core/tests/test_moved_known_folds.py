@@ -24,7 +24,7 @@ class Common:
 
     async def undo(self, written: Any) -> None:
         assert written.batch is not None
-        await self.undo(written)
+        await self.memory.undo(GUILD_A, self.c, written.batch, source="dm")
 
     async def kn(self, rel: str) -> list[str]:
         got = await self.memory.statement_knowers(GUILD_A, self.c, CONNECTION, [rel])
