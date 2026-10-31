@@ -79,6 +79,15 @@ class GameTime(lies_t.Lies):
             for r in rows
         ]
         section.check(old)  # (a file from before has no such key)
+        copy = (await self.campaigns.create(GUILD_A, "Old", 7)).id
+        async with self.db.guild(GUILD_A) as conn:
+            await section.load(conn, GUILD_A, copy, old)
+            cur = await conn.execute(
+                "SELECT game_time FROM memory_beliefs WHERE guild_id = %s AND campaign_id = %s"
+                " AND status = 'theory'",
+                (GUILD_A, copy),
+            )
+            self.assertEqual([r["game_time"] for r in await cur.fetchall()], [None])
         bad = [{**r, "game_time": -5} if r["table"] == "belief" else r for r in rows]
         with self.assertRaises(Exception):  # noqa: B017 (the file is refused, whatever the class)
             section.check(bad)

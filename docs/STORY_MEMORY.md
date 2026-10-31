@@ -790,14 +790,12 @@ in counts. Nothing changes a belief. Still to build: the make job that runs the 
 the plan's limits with the shared progress, and the doors.
 
 **Game time on a belief (#3091 part 3, `memory_beliefs.game_time`):** a number of game minutes since the
-start of Day 1 (the clock's own unit), never a calendar word and never a real-world timestamp. It is set
-only when a belief is made **live** in a session that has a game clock: the stamp is the clock's minute at
-that moment (the picked group's while the party is split; a group has no list of members, so a character's
-own group cannot be told). Every belief made after a session, from a reading, an import, lore or the DM's
-edit stays empty ("time not known", as before), and nothing is ever stamped with the clock as it reads at a
-later time. A copy of a belief (a pin, a reworded connection) keeps its origin's minute, and Undo and
-backups carry it. `timebot/stamp.py` reads the minute; today no writer is live in this sense, so the
-column fills as live writers are added.
+start of Day 1 (the clock's own unit), never a calendar word and never a real-world timestamp. A line's
+game time is the newest clock-log row at or before it was spoken, for the speaker's group if they are in
+one, otherwise the main clock; nothing stamps until the clock log lands (#3091). Every belief made after a
+session from anything but a spoken line (an import, lore, the DM's edit) stays empty ("time not known",
+as before), and nothing is ever stamped with the clock as it reads at a later time. A copy of a belief (a
+pin, a reworded connection) keeps its origin's minute, and Undo and backups carry it.
 
 **The after-session report** (DM only; it is full of spoilers, and nothing in it reaches players):
 - the minor contradictions;
