@@ -16,7 +16,7 @@ from dmbot.db import Database
 from dmbot.memory import gate
 from dmbot.web import graph_view
 from dmbot.web.recaps import RecapError
-from dmbot.web.relationships import MAX_NODES, page_of, source_of
+from dmbot.web.relationships import MAX_NODES, is_dm, page_of, refuse_bad, source_of
 from dmbot.web.sessions import Session
 
 PARTY = "party"  # the viewer that is every player character at once
@@ -46,6 +46,10 @@ async def read_see_as(
     player character knows) or the id of a character of this campaign. Same shape as the plain
     graph (`read_web`), plus `seeAs: {viewer, name}`; `canEdit` is false, since this is a look, not
     a place to change anything. DM only: anyone else is `not_allowed`."""
+    # the DM check comes first, so a player who asks does not make the server read the whole graph
+    if not await is_dm(db, session, ref):
+        raise RecapError("not_allowed")
+    refuse_bad(center, hops)
     src, known, pages = await source_of(db, session, ref)
     if not known["isDm"]:
         raise RecapError("not_allowed")

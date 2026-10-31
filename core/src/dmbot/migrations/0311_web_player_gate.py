@@ -101,6 +101,12 @@ WEB_PLAYER_GATE = (
         END IF;
         RETURN jsonb_build_object(
             'status', 'ok', 'visibility', screen,
+            -- a campaign past these limits is cut (by id, by age), and the page says so
+            'limited', (SELECT count(*) > 5000 FROM memory_entities x
+                        WHERE x.guild_id = g AND x.campaign_id = c AND x.status = 'confirmed'
+                          AND x.merged_into IS NULL AND x.type <> 'person')
+                    OR (SELECT count(*) > 20000 FROM memory_relations x
+                        WHERE x.guild_id = g AND x.campaign_id = c AND x.status = 'confirmed'),
             'isDm', EXISTS (SELECT 1 FROM campaign_dms d
                             WHERE d.guild_id = g AND d.campaign_id = c
                               AND d.user_id = dmbot_current_user()),
@@ -240,11 +246,19 @@ def _cuts(name: str, after: str, extra: tuple[tuple[str, str, str, str], ...]) -
             f"        def := pg_temp.cut(def, {_dollar(start)}, {_dollar(stop)}, {_dollar(new)});"
         )
     for declared in _DECLARED:
+        # (each declaration is there once; `center_alias` is the relationships door's alone)
+        low = 0 if declared.startswith("center_alias") and name.endswith("overview") else 1
         lines.append(
-            f"        def := replace(def, {_dollar('        ' + declared + chr(10))}, '');"
+            f"        def := pg_temp.swap(def, {_dollar('        ' + declared + chr(10))}, '',"
+            f" {low}, 1);"
         )
     lines.append(
-        "        def := replace(def, 'COALESCE(alt_names->>e.id, e.name)', 'e.name');\n"
+        "        def := pg_temp.swap(def, 'COALESCE(alt_names->>e.id, e.name)', 'e.name', 1, 9);\n"
+        "        IF def LIKE '%alt_names%' OR def LIKE '%split_rels%' OR def LIKE '%my_rels%'\n"
+        "           OR def LIKE '%flag_vis%' OR def LIKE '%vedges%'\n"
+        "           OR def LIKE '%dmbot_my_%' THEN\n"
+        f"            RAISE EXCEPTION 'a player branch is still in {name}';\n"
+        "        END IF;\n"
         "        EXECUTE def;"
     )
     return "\n".join(lines)
@@ -267,6 +281,18 @@ SERVE_THE_FULL_VIEW_ONLY = (
             RAISE EXCEPTION 'end marker not found: %', left(b, 80);
         END IF;
         RETURN substr(def, 1, i - 1) || new || substr(def, i + length(a) + j - 1);
+    END
+    $f$;
+
+    CREATE OR REPLACE FUNCTION pg_temp.swap(def text, old text, new text, lo int, hi int)
+    RETURNS text LANGUAGE plpgsql AS $f$
+    DECLARE
+        n int := (length(def) - length(replace(def, old, ''))) / greatest(length(old), 1);
+    BEGIN
+        IF n < lo OR n > hi THEN
+            RAISE EXCEPTION 'found % times, wanted % to %: %', n, lo, hi, left(old, 80);
+        END IF;
+        RETURN replace(def, old, new);
     END
     $f$;
 

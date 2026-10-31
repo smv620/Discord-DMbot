@@ -198,6 +198,32 @@ class TheSplitNode(OneCampaign):
         self.assertIn(label, str(page))
 
 
+class AnOtherNameThatSplitsNothing(OneCampaign):
+    async def test_a_person_known_only_by_a_secret_name_is_still_there_under_it(self) -> None:
+        """A plain connection learned through a secret other name is not split onto a node of its
+        own (it is neither secret nor held back), so the name still names the person: they must
+        not vanish from the page (the reviewer's case on #3143)."""
+        await self.alias(self.ken, "Old Greycloak", secret=True)
+        found = await self.memory.aliases(
+            self.g, self.one.id, entity_id=self.ken, include_secret=True
+        )
+        grey = next(a.id for a in found if a.text == "Old Greycloak")
+        link = await self.link("knows", self.ken, self.mira, "ken-mira")
+        await self.sql("UPDATE memory_relations SET via_alias_id = %s WHERE id = %s", grey, link)
+        await self.know(gate.ALIAS, grey, [self.okra])
+        await self.know(CONNECTION, link, [self.okra])
+        gate_says = (
+            await self.memory.display_names(
+                self.g, self.one.id, gate.Viewer.player([self.okra, self.late]), [self.ken]
+            )
+        )[self.ken]
+        self.assertEqual(gate_says, "Old Greycloak")
+        got = await self.full_page(center=self.mira, hops=3)
+        self.assertIn("Old Greycloak", {n["name"] for n in got["nodes"]})
+        self.assertNotIn("Ken", str(got))
+        self.assertTrue(any(self.ken in (e["a"], e["b"]) for e in got["edges"]))
+
+
 class WhoIsLooking(OneCampaign):
     async def test_a_dm_in_players_view_is_the_party(self) -> None:
         got = await self.graph(self.session, view="players", hops=8)

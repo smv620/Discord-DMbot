@@ -19,11 +19,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from dmbot.memory import gate
-from dmbot.memory.link_words import connection_words
-from dmbot.memory.ontology import FALLBACK_PREDICATE
 
 ALIAS = "alias:"  # the id of a node that stands for a secret other name
-GENERIC_WORDS = connection_words(FALLBACK_PREDICATE)  # what a masked connection reads as
 
 
 def statements_of(data: dict[str, Any]) -> gate.Statements:
@@ -66,6 +63,7 @@ class Graph:
     split: frozenset[str]
     visibility: str
     can_peek: bool
+    limited: bool = False  # the source was cut at its limits (a very large campaign)
 
 
 def build(src: dict[str, Any], kn: dict[str, Any], viewer: gate.Viewer) -> Graph:
@@ -78,17 +76,9 @@ def build(src: dict[str, Any], kn: dict[str, Any], viewer: gate.Viewer) -> Graph
     )
     ids = [str(n["id"]) for n in src["names"]]
     texts: dict[str, str] = {}
-    # an other name that a confirmed connection was learned through is drawn on a node of its own
-    # (the 0294 rule, now the gate's `split_connections`), so it does not also name the person
-    through = {str(link["via"]) for link in src["links"] if link["via"] is not None}
-    named = gate.name_entries(seen, viewer, ids, rows, texts_out=texts, on_their_own=through)
+    gate.name_entries(seen, viewer, ids, rows, texts_out=texts)  # (for the other names' words)
     kinds = {str(n["id"]): str(n["kind"]) for n in src["names"]}
-    shown: dict[str, str] = {}  # entry id -> the name the viewer is shown
     mains = {str(n["id"]): str(n["name"]) for n in src["names"]}
-    for i in ids:
-        name = named.get(i)
-        if name is not None and seen.knows(gate.ENTRY, i):
-            shown[i] = name
     # a connection that has ended, or came from the story plan, is not on the NPC pages either
     live = gate.drawn_connections(
         seen,
@@ -102,6 +92,15 @@ def build(src: dict[str, Any], kn: dict[str, Any], viewer: gate.Viewer) -> Graph
         kn["aliasRows"],
     )
     split = gate.split_connections(seen, live, kn["aliasRows"], texts)
+    # an other name that facts are split onto is a node of its own for this viewer, so it does not
+    # also name the person (or the one person would be drawn twice); a name nothing is split onto
+    # for this viewer still names them
+    named = gate.name_entries(seen, viewer, ids, rows, on_their_own=set(split.nodes))
+    shown: dict[str, str] = {}  # entry id -> the name the viewer is shown
+    for i in ids:
+        name = named.get(i)
+        if name is not None and seen.knows(gate.ENTRY, i):
+            shown[i] = name
     nodes: dict[str, dict[str, Any]] = {
         i: {
             "id": i,
@@ -151,6 +150,7 @@ def build(src: dict[str, Any], kn: dict[str, Any], viewer: gate.Viewer) -> Graph
         frozenset(str(link["id"]) for link in live if str(link["id"]) in split.links),
         str(src["visibility"]),
         bool(src["isDm"]) or src["visibility"] in ("peek", "open"),
+        bool(src.get("limited", False)),
     )
 
 
@@ -234,7 +234,7 @@ def web_of(graph: Graph, center: str | None, hops: int, cap: int) -> dict[str, A
         **head,
         "center": center_alias or start,
         "names": len(within) + len(alias_nodes),
-        "truncated": len(within) > max(cap, 1),
+        "truncated": len(within) > max(cap, 1) or graph.limited,
         "nodes": [graph.nodes[i] for i in kept] + [graph.nodes[i] for i in alias_nodes],
         "edges": sorted([*edges, *virtual], key=lambda e: (e["at"], e["id"])),
     }
@@ -259,5 +259,5 @@ def overview_of_graph(graph: Graph, cap_names: int, cap_pairs: int) -> dict[str,
         "total": len(real) + len(aliases), "connections": len(graph.edges),
         "names": [graph.nodes[i] for i in real[: max(cap_names, 1)]]
         + [graph.nodes[i] for i in aliases],
-        "pairs": [list(p) for p in pairs[:cap]], "pairsMore": len(pairs) > cap,
+        "pairs": [list(p) for p in pairs[:cap]], "pairsMore": len(pairs) > cap or graph.limited,
     }  # fmt: skip

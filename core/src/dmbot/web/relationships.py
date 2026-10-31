@@ -147,7 +147,7 @@ def visit_of(session: Session) -> str:
     return hashlib.sha256(f"{session.id_hash}:peek".encode()).hexdigest()
 
 
-def _refuse_bad(center: str | None, hops: int, view: str | None = None) -> None:
+def refuse_bad(center: str | None, hops: int, view: str | None = None) -> None:
     if view is not None and view not in VIEWS:
         raise RecapError("bad_view")
     if center is not None and not (ID_PATTERN.match(center) or ALIAS_NODE.match(center)):
@@ -168,7 +168,7 @@ async def _door(
 ) -> dict[str, Any]:
     guild_id, campaign_id = _parse(ref)
     _guild_of(session, guild_id)
-    _refuse_bad(center, hops, view)
+    refuse_bad(center, hops, view)
     async with db.user(session.user_id, session=session.id_hash) as conn:
         await _scoped(conn, guild_id)
         if view is not None:  # asked for; the door decides whether this person may have it
@@ -202,7 +202,7 @@ async def _page_ids(conn: Any, guild_id: int, campaign_id: str) -> set[str]:
     return {str(i) for i in ids} if isinstance(ids, list) else set()
 
 
-async def _is_dm(db: Database, session: Session, ref: str) -> bool:
+async def is_dm(db: Database, session: Session, ref: str) -> bool:
     guild_id, campaign_id = _parse(ref)
     _guild_of(session, guild_id)
     async with db.user(session.user_id, session=session.id_hash) as conn:
@@ -223,7 +223,7 @@ async def gated(db: Database, session: Session, ref: str, view: str | None) -> b
         return False
     if view == "players":
         return True
-    return not await _is_dm(db, session, ref)
+    return not await is_dm(db, session, ref)
 
 
 async def source_of(
@@ -277,7 +277,7 @@ async def read_web(
     player's peek, refused with `peek_off` unless the campaign's DM screen lets players peek);
     none means the person's own. `visibility` and `canPeek` let the page grey out the switch."""
     if await gated(db, session, ref, view):
-        _refuse_bad(center, hops, view)
+        refuse_bad(center, hops, view)
         graph, found = await graph_of(db, session, ref)
         shaped = graph_view.web_of(graph, center, hops, MAX_NODES)
         if shaped is None:
@@ -330,7 +330,7 @@ async def read_size(
 ) -> dict[str, int]:
     """How many names are within `hops` steps, so the page can warn before drawing."""
     if await gated(db, session, ref, view):
-        _refuse_bad(center, hops, view)
+        refuse_bad(center, hops, view)
         graph, _found = await graph_of(db, session, ref)
         shaped = graph_view.web_of(graph, center, hops, MAX_NODES)
         if shaped is None:

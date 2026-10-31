@@ -500,14 +500,12 @@ def split_connections(
     chosen: dict[str, str] = {}
     for link in links:
         via = link["via"]
-        if via is None or str(via) not in held:
+        # (no text for the name: it is not one this viewer may read, so nothing is split onto it)
+        if via is None or str(via) not in held or str(via) not in texts:
             continue
         if (link["secret"] or link["unrevealed"]) and seen.knows(CONNECTION, str(link["id"])):
             chosen[str(link["id"])] = str(via)
-    nodes = {
-        a: (str(by_id[a]["entity_id"]), texts.get(a, str(by_id[a]["text"])))
-        for a in set(chosen.values())
-    }
+    nodes = {a: (str(by_id[a]["entity_id"]), texts[a]) for a in set(chosen.values())}
     return Split(chosen, nodes)
 
 

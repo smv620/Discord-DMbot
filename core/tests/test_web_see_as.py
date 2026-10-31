@@ -250,7 +250,7 @@ class WhoMayLook(SeeAs):
         self.assertEqual(await self.refused_see_as(self.rook, self.player), "not_allowed")
         # (a campaign that is not here looks the same as one that is not yours)
         self.assertEqual(
-            await self.refused_see_as(self.rook, ref=f"{THURSDAY.id}.{'0' * 32}"), "not_found"
+            await self.refused_see_as(self.rook, ref=f"{THURSDAY.id}.{'0' * 32}"), "not_allowed"
         )
 
     async def test_a_name_that_is_not_a_character_here_is_not_found(self) -> None:
