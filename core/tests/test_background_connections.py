@@ -585,6 +585,28 @@ class ThePath(NamesTest):
         (queued,) = await self.waiting()
         self.assertTrue(queued.secret)
 
+    async def test_a_second_character_posing_as_another_is_a_secret_connection_under_world(
+        self,
+    ) -> None:
+        text = "Jax, a doppelganger, poses as Valyra, the guard captain."
+        names = [
+            {"name": "Jax", "kind": "person", "also": [], "secret": [],
+             "quote": "Jax, a doppelganger"},
+            {"name": "Valyra", "kind": "person", "also": [], "secret": [],
+             "quote": "poses as Valyra"},
+        ]  # fmt: skip
+        one = [link("Jax", "disguised as", "Valyra", "Jax, a doppelganger, poses as Valyra")]
+        lore_fake.set_answer(self.ai, {"names": names, "connections": one})
+        it = self.it()
+        await ui_bg.offer(it, self.campaign.id, Upload(text, "your notes"))
+        view = it.response.sent[0][1]["view"]
+        view.knows = "world"  # "Everyone knows it": a disguise is still a plot secret
+        await view._read(self.it())
+        (queued,) = await self.waiting()
+        self.assertEqual(queued.predicate, "disguised_as")
+        self.assertTrue(queued.secret)
+        self.assertEqual(queued.world, 0)
+
     async def test_a_pair_the_campaign_has_is_neither_queued_nor_counted(self) -> None:
         made = await self.memory.add_names(
             GUILD, self.campaign.id,

@@ -785,7 +785,12 @@ CORE_PREDICATES: tuple[PredicateTerm, ...] = (
             "doppelganger_of",
             "wearing_the_face_of",
             "wears_the_face_of",
-            "disguised_as_a",
+            "is_posing_as",
+            "is_impersonating",
+            "is_pretending_to_be",
+            "is_a_doppelganger_of",
+            "is_masquerading_as",
+            "is_wearing_the_face_of",
         ),
     ),
     PredicateTerm(

@@ -60,7 +60,7 @@ from dmbot.memory.models import (
     Relation,
     name_key,
 )
-from dmbot.memory.ontology import ACTIVE, FALLBACK_PREDICATE, check_named
+from dmbot.memory.ontology import ACTIVE, DISGUISED_AS, FALLBACK_PREDICATE, check_named
 from dmbot.memory.pronouns import is_pronoun
 from dmbot.memory.store import MemoryStore
 from dmbot.memory.which_else import COULD_NOT_KEEP, none_of_these
@@ -1402,9 +1402,21 @@ async def queue_links(
             or (c.how in symmetric and (b, c.how, a) in world_ids)
             else 0
         )
+        if how == DISGUISED_AS:  # a disguise is a plot secret by nature, under every choice (#3091)
+            world = 0
         rows.append(
             NewLink(
-                a, how, b, c.quote, c.secret, c.words, truth, upload, c.decided, known_by, world
+                a,
+                how,
+                b,
+                c.quote,
+                c.secret or how == DISGUISED_AS,
+                c.words,
+                truth,
+                upload,
+                c.decided,
+                known_by,
+                world,
             )
         )
     if settled.unnamed:  # (nothing here runs when the check is off: the rows are as they were)

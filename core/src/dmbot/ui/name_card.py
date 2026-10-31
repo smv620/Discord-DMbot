@@ -54,7 +54,7 @@ from dmbot.memory.models import (
     is_id,
     name_key,
 )
-from dmbot.memory.ontology import CORE_TYPES, FALLBACK_PREDICATE
+from dmbot.memory.ontology import CORE_TYPES, DISGUISED_AS, FALLBACK_PREDICATE
 from dmbot.memory.search import MAX_RESULTS, Match, find, said_lately
 from dmbot.memory.store import SAID_AS_MAX, MemoryStore
 from dmbot.mentions import NO_PINGS
@@ -140,6 +140,7 @@ SECRET_DENIED_SAVE = (
     "Players can see this one, because only the campaign's DM can keep a connection secret."
 )
 SECRET_ALREADY = "It was already secret, so it stays secret. Remove it and add it again to show it."
+DISGUISE_SECRET = "A disguise starts secret. Show it to the players with the 🤫 switch on its card."
 SHOW_ALL = "Show all ▾"
 NOTHING_MORE = "That list has changed. Open the name card again to see it."
 NOTE_MAX = 600  # what just changed, above the card
@@ -2653,7 +2654,9 @@ async def connect(
         if forced:
             note += f" {SECRET_FORCED}"
         elif not secret:
-            note += f" {SECRET_ALREADY}"
+            # A disguise is secret by nature, however it is asked for (#3091): the store makes it
+            # so, which is not "already secret". (Rewording a revealed one makes it secret again.)
+            note += f" {DISGUISE_SECRET if predicate == DISGUISED_AS else SECRET_ALREADY}"
     else:
         note = f"🧭 Saved: {said}."
         if denied:

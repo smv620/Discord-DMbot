@@ -186,7 +186,7 @@ class TheMenuAndTheTerms(unittest.TestCase):
         from dmbot.ui.name_card import BACK, connect_choices
 
         values = [v for v, _, _ in connect_choices("Mira")]
-        self.assertLessEqual(len(values), 25)  # (Discord refuses a select with more)
+        self.assertEqual(len(values), 25)  # (Discord refuses a select with more; exactly 25 is the plan)
         chosen = {v.removesuffix(BACK) for v in values}
         self.assertEqual(chosen, set(CONNECTION_WORDS))  # every kind, in some direction
 

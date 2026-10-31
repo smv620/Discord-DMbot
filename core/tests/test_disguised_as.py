@@ -7,13 +7,23 @@ from __future__ import annotations
 import unittest
 from typing import Any
 
-from dmbot.memory import same_person
-from dmbot.memory.link_words import CONNECTION_BACK, CONNECTION_WORDS, link_words
+from dmbot.memory import background as bg
+from dmbot.memory import lore_read, same_person
+from dmbot.memory.claims import place_relationship
+from dmbot.memory.link_words import (
+    CONNECTION_BACK,
+    CONNECTION_WORDS,
+    link_words,
+    predicate_for,
+)
 from dmbot.memory.models import CONFIRMED, MemoryRuleError
-from dmbot.memory.ontology import CORE_PREDICATES, DISGUISED_AS, SYNONYMS
+from dmbot.memory.ontology import CORE_PREDICATES, DISGUISED_AS, SYNONYMS, Ontology
 from dmbot.ui import name_card
+from dmbot.ui import names as ui
+from tests import test_memory_names as tmn
+from tests import test_memory_store as tms
+from tests import test_moved_known as moved
 from tests.test_memory_store import GUILD_A
-from tests.test_moved_known import MergeMovesConnections
 
 
 class TheKind(unittest.TestCase):
@@ -43,7 +53,7 @@ class TheKind(unittest.TestCase):
     ) -> None:
         choices = name_card.connect_choices("Mira")
         values = [v for v, _, _ in choices]
-        self.assertLessEqual(len(values), 25)
+        self.assertEqual(len(values), 25)
         self.assertIn(DISGUISED_AS, values)
         self.assertNotIn(DISGUISED_AS + name_card.BACK, values)
         self.assertIn("founded", values)  # the kind is still chosen, only its back reading is not
@@ -106,7 +116,7 @@ class NoSamePersonOffer(unittest.TestCase):
         self.assertTrue(same_person.from_rows(entries, [], [relation], []))
 
 
-class TheStore(MergeMovesConnections):
+class TheStore(moved.MergeMovesConnections):
     async def mine(self) -> list[str]:
         known = await self.memory.what_my_characters_know(GUILD_A, self.c, 1)
         return [c.relation_id for c in known.connections]
@@ -179,3 +189,120 @@ class TheStore(MergeMovesConnections):
             GUILD_A, self.c, relation.id, [self.pc], source="dm"
         )
         self.assertIn(relation.id, await self.mine())
+
+
+PHRASES = (
+    "is posing as",
+    "is impersonating",
+    "is pretending to be",
+    "is a doppelganger of",
+    "is masquerading as",
+    "is wearing the face of",
+)
+
+
+class TheUsualPhrasings(unittest.TestCase):
+    def test_each_phrase_places_on_the_disguise_from_a_claim(self) -> None:
+        onto = Ontology.build()
+        for phrase in PHRASES:
+            with self.subTest(phrase):
+                term, from_object, label = place_relationship(
+                    onto, phrase, "character", "character"
+                )
+                self.assertEqual((term.key, from_object, label), (DISGUISED_AS, False, ""))
+
+    def test_each_phrase_typed_on_the_website_is_the_disguise_not_the_catch_all(self) -> None:
+        for phrase in PHRASES:
+            with self.subTest(phrase):
+                self.assertEqual(predicate_for(phrase), (DISGUISED_AS, ""))
+
+    def test_a_guard_disguised_as_a_guard_is_not_posing_as_a_particular_character(self) -> None:
+        self.assertNotIn("disguised_as_a", SYNONYMS)
+
+
+class TheLoreReads(unittest.TestCase):
+    TEXT = "Jax, a doppelganger, poses as Valyra, the guard captain."
+
+    def test_a_pose_as_is_read_as_a_connection(self) -> None:
+        raw = (
+            '{"connections": [{"a": "Jax", "how": "disguised as", "b": "Valyra",'
+            ' "quote": "Jax, a doppelganger, poses as Valyra"}]}'
+        )
+        (got,) = bg.read_connections(raw, self.TEXT)
+        self.assertEqual((got.a, got.how, got.b), ("Jax", DISGUISED_AS, "Valyra"))
+
+    def test_the_prompts_draw_the_line_between_a_second_name_and_a_second_person(self) -> None:
+        first = lore_read.read_instructions()
+        second = lore_read.shape_instructions()
+        self.assertIn("SECOND PERSON POSING AS ANOTHER", first)
+        self.assertIn("is disguised as", first)
+        self.assertIn("never put under 'secret:'", first)
+        self.assertIn("ONE PERSON, TWO NAMES", first)  # a secret identity of one person stays
+        self.assertIn("another name of the SAME person", first)
+        self.assertIn("disguised as = a is disguised as b", second)
+
+
+class ThePairNeverOffered(tms.ConfirmedMemoryTest):
+    async def test_a_proposed_disguise_between_an_unnamed_and_a_named_person_means_no_offer(
+        self,
+    ) -> None:
+        made = await self.memory.add_unnamed(
+            GUILD_A, self.c, what="guard at the north gate", role="guard"
+        )
+        guard = made.entity.id
+        ken = await self.add(
+            "Ken",
+            type="character",
+            status=CONFIRMED,
+            description="A guard who keeps the north gate",
+        )
+        self.assertEqual(
+            [
+                (o.unnamed_id, o.named_id)
+                for o in await self.memory.same_person_offers(GUILD_A, self.c)
+            ],
+            [(guard, ken)],
+        )  # (offered while nothing joins them)
+        await self.memory.add_relation(
+            GUILD_A, self.c, guard, DISGUISED_AS, ken, source="extractor", confidence=0.4
+        )  # a guess: proposed
+        self.assertEqual(await self.memory.same_person_offers(GUILD_A, self.c), [])
+
+
+class TheConnectMenuSaysItTruthfully(tmn.NamesTest):
+    async def test_a_new_disguise_ends_with_the_line_about_showing_it(self) -> None:
+        jax = await ui.save_name(self.memory, self.campaign, "Jax", "npc", [], [])
+        valyra = await ui.save_name(self.memory, self.campaign, "Valyra", "npc", [], [])
+        it = self.it()
+        await name_card.connect(it, self.campaign.id, jax.id, DISGUISED_AS, valyra.id)
+        shown = it.response.edited[0][0]
+        self.assertIn("🧭 Saved: **Jax** is disguised as **Valyra**", shown)
+        self.assertIn("players can't see it. " + name_card.DISGUISE_SECRET, shown)
+        self.assertNotIn(name_card.SECRET_ALREADY, shown)
+        self.assertEqual(
+            name_card.DISGUISE_SECRET,
+            "A disguise starts secret. Show it to the players with the 🤫 switch on its card.",
+        )
+
+
+class TheOneInDisguiseKnowsIt(TheStore):
+    async def test_a_player_character_in_disguise_and_only_their_player_sees_it(self) -> None:
+        _, valyra = await self.setUpPeople()
+        relation = (await self.disguise(self.pc, valyra)).value[0]  # the player's own character
+        self.assertIn(relation.id, await self.mine())
+        stranger = await self.memory.what_my_characters_know(GUILD_A, self.c, 999)
+        self.assertEqual([c.relation_id for c in stranger.connections], [])
+
+    async def test_the_listing_is_made_on_every_path_not_only_the_dms(self) -> None:
+        jax, valyra = await self.setUpPeople()
+        made = await self.memory.add_relation(
+            GUILD_A, self.c, jax, DISGUISED_AS, valyra, source="extractor", confidence=0.4
+        )
+        known = await self.memory.statement_knowers(
+            GUILD_A, self.c, "connection", [made.value[0].id]
+        )
+        jax_view = next(
+            p.id for p in await self.memory.perspectives(GUILD_A, self.c) if p.entity_id == jax
+        )
+        self.assertTrue(known.get(made.value[0].id))
+        _ = jax_view

@@ -74,6 +74,9 @@ CONNECTIONS = {
     "founded": "founded",
     "captive": "captive_of",  # a is held captive by b
     "contains": "contains",  # a contains b
+    # A second character posing as another (a doppelganger, an impostor): two people, never a name
+    # of one (#3091). A secret identity of ONE person stays a secret name; this is a connection.
+    "disguised as": "disguised_as",  # a is disguised as b
 }
 # The relationships lore is mostly made of (#2757), built in so the AI never has to word them
 # itself (a free label may use only the quote's own words, which "mentors" or "is a rival of"
