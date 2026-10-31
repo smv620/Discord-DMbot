@@ -66,20 +66,32 @@ class DayOne:
     ordinal: int
 
     def __post_init__(self) -> None:
+        # exactly an int: a bool is one in Python and a float would be silently rounded, and
+        # neither is a year or a day
+        if type(self.year) is not int or type(self.ordinal) is not int:
+            raise ValueError("day one")
         if not 1 <= self.year <= MAX_YEAR or not 0 <= self.ordinal < year_days(self.year):
             raise ValueError("day one")
 
 
-def day_one(year: int, name: str, day: int = 1) -> DayOne:
-    """Day 1 on a month and day ("Flamerule", 14) or a festival day ("Midsummer"). Raises
-    ValueError for a name the calendar has not got (Shieldmeet in a year without one) or a day the
-    month has not got."""
+def day_one(year: int, name: str, day: int | None = None) -> DayOne:
+    """Day 1 on a month and day ("Flamerule", 14; the 1st when no day is given) or on a festival
+    day ("Midsummer", no day). Raises ValueError for a name the calendar has not got (Shieldmeet
+    in a year without one), a day the month has not got, a day that is not exactly an int, or a
+    day given with a festival (which has none)."""
+    if type(year) is not int or (day is not None and type(day) is not int):
+        raise ValueError("day one")
     at = 0
     for label, days in _layout(year):
         if label.casefold() == name.strip().casefold():
-            if days and not 1 <= day <= days:
+            if not days:
+                if day is not None:
+                    raise ValueError("day")
+                return DayOne(year, at)
+            chosen = 1 if day is None else day
+            if not 1 <= chosen <= days:
                 raise ValueError("day")
-            return DayOne(year, at + (day - 1 if days else 0))
+            return DayOne(year, at + chosen - 1)
         at += days or 1
     raise ValueError("month")
 
@@ -112,7 +124,11 @@ def harptos(day_number: int, start: DayOne) -> str:
 
 def date_words(minute: int, kind: str = DAYS, start: DayOne | None = None) -> str:
     """The date of this game minute in the campaign's calendar. Plain "Day N" when the campaign
-    has no Harptos setting (or no Day 1 date), so a missing setting never hides the time."""
+    has no Harptos setting (or no Day 1 date), so a missing setting never hides the time. A
+    negative minute (or one that is not exactly an int) is no time at all: ValueError in both
+    modes, never "Day 0"."""
+    if type(minute) is not int or minute < 0:
+        raise ValueError("minute")
     number = day_of(minute)
     if kind == HARPTOS and start is not None:
         return harptos(number, start)
@@ -122,3 +138,20 @@ def date_words(minute: int, kind: str = DAYS, start: DayOne | None = None) -> st
 def minute_of(day_number: int, hour: int = 0, minute: int = 0) -> int:
     """The game minute at the start of day `day_number` (the clock's own arithmetic)."""
     return (day_number - 1) * MINUTES_PER_DAY + hour * 60 + minute
+
+
+@dataclass(frozen=True, slots=True)
+class Calendar:
+    """A campaign's calendar setting: which one, and (for Harptos) the date of Day 1. The default,
+    Day N, needs neither."""
+
+    kind: str = DAYS
+    start: DayOne | None = None
+
+    def __post_init__(self) -> None:
+        if self.kind not in KINDS or (self.kind == HARPTOS and self.start is None):
+            raise ValueError("calendar")
+
+    def words(self, minute: int) -> str:
+        """The date of this game minute: Day N, or the Harptos date."""
+        return date_words(minute, self.kind, self.start)

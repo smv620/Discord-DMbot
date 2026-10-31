@@ -64,6 +64,8 @@ from dmbot.web import (
     report,
     restores,
     rule_sharing,
+    see_as,
+    session_notes,
     sessions,
     shared_recaps,
     sharing,
@@ -1174,6 +1176,30 @@ def create_app(
                 raise HTTPException(status_code=403, detail="not_allowed") from None
             raise HTTPException(status_code=404, detail="not_found") from None
 
+    @app.get("/me/campaigns/{ref}/session-notes")
+    async def me_session_notes(ref: str, signed: Signed) -> dict[str, Any]:
+        """Which sessions of a campaign have session notes (#3027), for its DMs alone: newest
+        first, each with its number and how many beats. A player gets `not_allowed`."""
+        session, _token = signed
+        try:
+            return await session_notes.read_notes_list(db, session, ref)
+        except RecapError as err:
+            if err.code == "not_allowed":
+                raise HTTPException(status_code=403, detail="not_allowed") from None
+            raise HTTPException(status_code=404, detail="not_found") from None
+
+    @app.get("/me/campaigns/{ref}/session-notes/{at}")
+    async def me_session_notes_of(ref: str, at: int, signed: Signed) -> dict[str, Any]:
+        """One session's notes (#3027): its numbered beats, in words only. DM only; a session
+        with no notes is a 404."""
+        session, _token = signed
+        try:
+            return await session_notes.read_notes(db, session, ref, at)
+        except RecapError as err:
+            if err.code == "not_allowed":
+                raise HTTPException(status_code=403, detail="not_allowed") from None
+            raise HTTPException(status_code=404, detail="not_found") from None
+
     @app.get("/me/campaigns/{ref}/sessions/{at}/report")
     async def me_session_report(ref: str, at: str, signed: Signed) -> dict[str, Any]:
         """One session's after-session report (#2661): the minor contradictions and what the party
@@ -1729,6 +1755,24 @@ def create_app(
             return await relationships.read_web(
                 db, session, ref, center=center, hops=steps, view=view
             )
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/web/see-as")
+    async def me_campaign_web_see_as(
+        ref: str,
+        signed: Signed,
+        viewer: str,
+        center: str | None = None,
+        hops: str = "2",
+    ) -> dict[str, Any]:
+        """The story graph the way the party, a player character or an NPC knows it (#2999): the
+        DM's graph with everything that viewer does not know removed. DM only."""
+        session, _token = signed
+        try:
+            steps = int(hops) if re.fullmatch(r"[0-9]{1,3}", hops) else 0  # (0 is refused)
+            return await see_as.read_see_as(db, session, ref, viewer, center=center, hops=steps)
         except RecapError as err:
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None

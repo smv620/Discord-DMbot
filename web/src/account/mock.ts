@@ -1174,6 +1174,32 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
     },
     // Recaps for past sessions (#2610): the shapes of `GET past-sessions`, `POST /me/recaps/{ref}/again` and
     // `POST /me/campaigns/{ref}/recaps/upload`, and their codes (#2613, #2614).
+    async sessionNotesList(campaignRef) {
+      calls.push(`sessionNotesList:${campaignRef}`);
+      await reachable();
+      signedIn();
+      if (campaignRef.endsWith(".player")) throw new ApiError("not-allowed");
+      return {
+        sessions: [
+          { sessionAt: 1791000000, sessionNumber: 2, beats: 3, writtenAt: 1791003700 },
+          { sessionAt: 1790000000, sessionNumber: null, beats: 1, writtenAt: 1790003700 },
+        ],
+      };
+    },
+    async sessionNotes(campaignRef, at) {
+      calls.push(`sessionNotes:${campaignRef}:${at}`);
+      await reachable();
+      signedIn();
+      if (campaignRef.endsWith(".player")) throw new ApiError("not-allowed");
+      if (at === 1791000000) return { sessionAt: at, sessionNumber: 2, writtenAt: 1791003700, beats: [{ number: 1, what: "The party crosses the river", who: ["Cerric", "Mira"], where: "The Brass Ford", kind: "travel" }, { number: 2, what: "Cerric swears an oath", who: ["Cerric"], where: "", kind: "talk" }, { number: 3, what: "A storm closes the ford", who: [], where: "The Brass Ford", kind: "event" }] };
+      if (at === 1790000000) {
+        return {
+          sessionAt: at, sessionNumber: null, writtenAt: 1790003700,
+          beats: [{ number: 1, what: "The party meets the ferryman", who: ["Mira"], where: "", kind: "talk" }],
+        };
+      }
+      throw new ApiError("not-found");
+    },
     async pastSessions(campaignRef) {
       calls.push(`pastSessions:${campaignRef}`);
       await reachable();

@@ -347,6 +347,19 @@ def _unnamed_label(row: Mapping[str, Any], anchor_name: str | None) -> str:
     return unnamed.label(str(row["unnamed_what"] or ""), anchor_name or "someone")
 
 
+@dataclass(frozen=True, slots=True)
+class NameRows:
+    """The rows `name_entries` reads, whoever reads them: the bot from its scope, the website from
+    one database door. `entities` holds the entries asked for, what an unnamed one hangs off, and
+    the rows joined into them (any status); `aliases` every other name of those entries and the
+    secret names of what unnamed people hang off; `learned` each (name, character, when) a
+    character learned an other name (rows put to sleep left out)."""
+
+    entities: Mapping[str, Mapping[str, Any]]
+    aliases: Sequence[Mapping[str, Any]]
+    learned: Sequence[tuple[str, str, int]] = ()
+
+
 async def names_for(
     scope: Scope,
     viewer: Viewer,
@@ -391,23 +404,15 @@ async def names_for(
         if anchors
         else {}
     )
-    secret_own_names = (
-        [
-            a
-            for a in await scope.select(
-                ALIASES,
-                " AND entity_id = ANY(%s) AND secret AND status <> 'rejected'",
-                [sorted(anchors)],
-            )
-            if a["key"] == lookup_key(str(anchor_rows[str(a["entity_id"])]["name"]))
-        ]
+    anchor_names = (
+        await scope.select(
+            ALIASES,
+            " AND entity_id = ANY(%s) AND secret AND status <> 'rejected'",
+            [sorted(anchors)],
+        )
         if anchor_rows
         else []
     )
-    anchor_secret = {str(a["entity_id"]) for a in secret_own_names}
-    anchor_held = {
-        str(a["entity_id"]) for a in secret_own_names if str(a["id"]) in seen.aliases
-    }  # (a row on the secret name itself is what makes it known)
     # a person joined to a named entry leaves their label as an other name: the merged-away row
     # still says what it described and who it hung off
     merged = await scope.select(
@@ -415,27 +420,75 @@ async def names_for(
         " AND merged_into = ANY(%s) AND unnamed",
         [list(entries)],
     )
-    learned: dict[str, int] = {}
+    learned: list[tuple[str, str, int]] = []
     if not seen.everything and names:
         mine = await scope.select(
             KNOWERS, " AND alias_id = ANY(%s)", [[str(a["id"]) for a in names]]
         )
-        # the order THIS viewer learned them in: only its own characters' rows count
-        own = (
-            {
-                str(p["id"])
-                for p in await scope.select(
-                    PERSPECTIVES, " AND entity_id = ANY(%s)", [sorted(viewer.characters)]
-                )
-            }
-            if viewer.characters
-            else None
-        )
-        for held in mine:
-            if own is not None and str(held["perspective_id"]) not in own:
+        perspective = {
+            str(p["id"]): str(p["entity_id"])
+            for p in await scope.select(PERSPECTIVES, " AND entity_id IS NOT NULL")
+        }
+        learned = [
+            (str(k["alias_id"]), perspective[str(k["perspective_id"])], int(k["created_at"]))
+            for k in mine
+            if str(k["perspective_id"]) in perspective
+        ]
+    rows = NameRows(
+        {**{str(r["id"]): r for r in merged}, **anchor_rows, **entries},
+        [*names, *anchor_names],
+        learned,
+    )
+    return name_entries(seen, viewer, entity_ids, rows, public=public, texts_out=texts_out)
+
+
+def name_entries(
+    seen: Visible,
+    viewer: Viewer,
+    entity_ids: Sequence[str],
+    rows: NameRows,
+    *,
+    public: bool = False,
+    texts_out: dict[str, str] | None = None,
+) -> dict[str, str | None]:
+    """`names_for` without the reading: the same rules over rows already read, so the website
+    names an entry exactly as Discord does."""
+    entries = {
+        k: r
+        for k, r in rows.entities.items()
+        if k in set(entity_ids) and r["status"] not in ("merged", "rejected")
+    }
+    names = [a for a in rows.aliases if str(a["entity_id"]) in entries]
+    anchors = {
+        str(r["unnamed_anchor"])
+        for r in entries.values()
+        if r["unnamed"] and r["unnamed_anchor"] is not None
+    }
+    anchor_rows = {k: r for k, r in rows.entities.items() if k in anchors}
+    secret_own_names = [
+        a
+        for a in rows.aliases
+        if str(a["entity_id"]) in anchor_rows
+        and a["secret"]
+        and a["key"] == lookup_key(str(anchor_rows[str(a["entity_id"])]["name"]))
+    ]
+    anchor_secret = {str(a["entity_id"]) for a in secret_own_names}
+    anchor_held = {
+        str(a["entity_id"]) for a in secret_own_names if str(a["id"]) in seen.aliases
+    }  # (a row on the secret name itself is what makes it known)
+    merged = [
+        r
+        for r in rows.entities.values()
+        if r["merged_into"] is not None and str(r["merged_into"]) in entries and r["unnamed"]
+    ]
+    learned: dict[str, int] = {}
+    if not seen.everything and names:
+        listed = {str(a["id"]) for a in names}
+        for alias_id, character, at in rows.learned:
+            # the order THIS viewer learned them in: only its own characters' rows count
+            if alias_id not in listed or (viewer.characters and character not in viewer.characters):
                 continue
-            key = str(held["alias_id"])
-            learned[key] = min(learned.get(key, held["created_at"]), held["created_at"])
+            learned[alias_id] = min(learned.get(alias_id, at), at)
 
     def anchor_name(row: Mapping[str, Any]) -> str | None:
         """The name of what an unnamed person hangs off, if THIS viewer may read it."""
