@@ -570,9 +570,22 @@ async def what_my_characters_know(scope: Scope, user_id: int) -> Mine:
                 bool(r.get("directional")), others(who.get(r["id"], [])),
             )
         )  # fmt: skip
+    # (every name a join moved connections through, whether they know those connections or not)
+    joined_names = (
+        {
+            str(r["via_alias_id"])
+            for r in await scope.select(
+                RELATIONS,
+                " AND via_alias_id = ANY(%s) AND status = %s",
+                [[str(a["id"]) for a in aliases], CONFIRMED],
+            )
+        }
+        if aliases
+        else set()
+    )
     names = []
     for a in aliases:
-        if str(a["id"]) in {str(r.get("via_alias_id")) for r in hidden}:
+        if str(a["id"]) in joined_names:
             continue  # a person of their own for them (#3037): "a name of Ken" would say who
         owner = name(a["entity_id"])
         if owner is not None:

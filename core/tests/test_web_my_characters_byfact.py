@@ -231,3 +231,32 @@ class TheDmsViews(ByFactBase):
         for got in (full, players):
             self.assertFalse(any(str(i).startswith("alias:") for i in self.names(got)))
         self.assertEqual(set(self.edges_of(full)[self.guard_link]), {self.ken, self.mira})
+
+
+class TheNamesList(ByFactBase):
+    """A joined name is a person of its own: never listed as "a name of Ken", whether the character
+    knows any of its connections or not, and whether Ken is public or hidden."""
+
+    async def names_listed(self) -> list[str]:
+        mine = await self.memory.what_my_characters_know(self.g, self.one.id, BOB.id)
+        return [n.text for n in mine.names]
+
+    async def forget_the_guards_link(self) -> None:
+        await self.sql("DELETE FROM memory_knowers WHERE relation_id = %s", self.guard_link)
+
+    async def test_a_held_name_with_no_known_connection_is_not_listed_with_ken_hidden(
+        self,
+    ) -> None:
+        await self.join()
+        await self.forget_the_guards_link()
+        self.assertEqual(await self.names_listed(), [])
+
+    async def test_a_held_name_with_no_known_connection_is_not_listed_with_ken_public(
+        self,
+    ) -> None:
+        await self.reveal(self.ken)
+        await self.join()
+        await self.forget_the_guards_link()
+        self.assertEqual(await self.names_listed(), [])
+        mine = await self.memory.what_my_characters_know(self.g, self.one.id, BOB.id)
+        self.assertNotIn("Ken", repr(mine))
