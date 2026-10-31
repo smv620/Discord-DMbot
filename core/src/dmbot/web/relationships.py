@@ -37,6 +37,8 @@ MAX_NODES = 1000  # the most names one answer draws, then `truncated`
 OVERVIEW_NAMES = 5000  # the most names the overview lists, then `truncated` (the tray is not drawn)
 OVERVIEW_PAIRS = 20000  # the most connected pairs it reads, in a fixed order, then `truncated`
 ID_PATTERN = re.compile(r"^[0-9a-f]{32}$")
+# a secret other name's own node on the graph (#3037): a centre the page may ask for
+ALIAS_NODE = re.compile(r"^alias:[0-9a-f]{32}$")
 
 
 def label_of(links: list[dict[str, Any]]) -> dict[str, Any]:
@@ -148,7 +150,7 @@ def visit_of(session: Session) -> str:
 def _refuse_bad(center: str | None, hops: int, view: str | None = None) -> None:
     if view is not None and view not in VIEWS:
         raise RecapError("bad_view")
-    if center is not None and not ID_PATTERN.match(center):
+    if center is not None and not (ID_PATTERN.match(center) or ALIAS_NODE.match(center)):
         raise RecapError("not_found")
     if not 1 <= hops <= MAX_HOPS:
         raise RecapError("bad_hops")

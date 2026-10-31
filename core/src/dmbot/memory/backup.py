@@ -157,7 +157,8 @@ _CHOICES: dict[str, Sequence[str]] = {
 }
 _IDS = {"id", "entity_id", "fact_id", "merged_into", "used_by", "subject_id", "object_id",
         "relation_id", "other_id", "from_set", "viewer_id", "holder_id", "toward_id",
-        "perspective_id", "manipulated_by", "unnamed_anchor", "alias_id"}  # fmt: skip
+        "perspective_id", "manipulated_by", "unnamed_anchor", "alias_id",
+        "via_alias_id"}  # fmt: skip
 _INTS = {"played_by", "speaker_id", "session_started_at", "decided_at", "created_at",
          "from_session_at", "to_session_at", "from_game_time", "to_game_time",
          "max_per_subject", "closed_at", "session_at", "recorded_at", "seq"}  # fmt: skip
@@ -169,7 +170,7 @@ _NULLABLE = {
     "replaced_by", "parent", "from_session_at", "to_session_at", "from_game_time",
     "to_game_time", "max_per_subject", "closed_at", "unique_item", "fact_id",
     "session_started_at", "decided_at", "said_as", "from_set", "session_at", "manipulated_by",
-    "unnamed_anchor", "unnamed_role", "unnamed_what", "decided",
+    "unnamed_anchor", "unnamed_role", "unnamed_what", "decided", "via_alias_id",
 }  # fmt: skip
 
 
@@ -526,6 +527,7 @@ def _with_definition_fields(rows: list[Any]) -> list[Any]:
                 "unrevealed": False,
                 "directional": False,
                 "decided": None,
+                "via_alias_id": None,  # from before #3037: no connection came through a name
                 **raw,
                 "definition_version": version,
             }
