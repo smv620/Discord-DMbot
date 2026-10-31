@@ -13,7 +13,9 @@ import CampaignFacts from "./CampaignFacts";
 import CampaignNav from "./CampaignNav";
 import { type SectionPage, sectionPages } from "./campaignSections";
 import CampaignSettings from "./CampaignSettings";
+import CampaignBackup from "./CampaignBackup";
 import CampaignDelete from "./CampaignDelete";
+import { campaignBackupWords } from "../content/campaign-backup";
 import { CAMPAIGN_DELETE_LIVE } from "../content/campaign-delete";
 import { rememberDeleted } from "./deleted-notice";
 import LazyPanel from "./LazyPanel";
@@ -40,6 +42,8 @@ export default function CampaignPageView({ api, path }: { api: AccountApi; path:
   const [card, setCard] = useState<Campaign | null>(null);
   // Try It has no backup, so Delete offers none; the plan comes from the same /me answer as the card.
   const [tryIt, setTryIt] = useState(false);
+  // Whether /me has said which plan this is yet: a backup is offered only once it is known not to be Try It.
+  const [planKnown, setPlanKnown] = useState(false);
 
   async function load() {
     if (!ref || !api.campaignPage) return setView("none");
@@ -51,6 +55,7 @@ export default function CampaignPageView({ api, path }: { api: AccountApi; path:
         .then((me) => {
           setCard(me?.campaigns.find((c) => c.ref === ref) ?? null);
           setTryIt(me?.plan?.id === "try-it");
+          setPlanKnown(true);
         })
         .catch(() => undefined);
     } catch (error) {
@@ -129,6 +134,14 @@ export default function CampaignPageView({ api, path }: { api: AccountApi; path:
         <LazyPanel load={() => import("./Sheets")} what="the character sheets" props={{ api, campaignRef: ref }} />
       )}
       {isDm && <CampaignSettings key={ref} api={api} campaignRef={ref} page={page} />}
+      {/* A backup of its own (#3148): before this, the only way to one on the website was inside Delete. */}
+      {isDm && ref && api.campaignBackup && planKnown && !tryIt && (
+        <section class="stack" aria-labelledby="backup-heading">
+          <h2 id="backup-heading">{campaignBackupWords.heading}</h2>
+          <p class="muted">{campaignBackupWords.lead}</p>
+          <CampaignBackup api={api} refId={ref} label={campaignBackupWords.button} onGone={() => window.location.assign("/account#campaigns")} />
+        </section>
+      )}
       {/* Delete is the last thing on the page (#2879): the person who holds the plan, and only while the switch is on. */}
       {/* Only a DM is offered it; the plan holder (or the owner, without the flag) within the DMs. */}
       {isDm && CAMPAIGN_DELETE_LIVE && ref && api.deleteCampaign && (card?.canDelete ?? page.role === "owner") && (

@@ -734,7 +734,7 @@ export const dmSteps: Step[] = [
   },
   ...(QUIET_STOP_LIVE ? quietStopSteps : []),
   {
-    text: "To keep a copy of a campaign, type /dmbot backup (paid campaigns only). The copy also keeps how often names were said and by whom, but after a restore only for people who are still recorded.",
+    text: "To keep a copy of a campaign, type /dmbot backup (paid campaigns only), or open the campaign's page on the website and press Download a backup. The copy also keeps how often names were said and by whom, but after a restore only for people who are still recorded.",
     names: [{ name: "/dmbot backup", file: "ui/dmbot_commands.py" }],
   },
   {
