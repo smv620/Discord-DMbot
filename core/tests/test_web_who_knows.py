@@ -14,6 +14,8 @@ from tests.test_web_relationships import TheRoute, Web
 
 
 class WhoKnowsOnTheWeb(Web):
+    bob_has_a_hero = False  # (these tests count the campaign's player characters)
+
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
         self.tavin = await self.add("Tavin", "character", role="player_character")
@@ -129,7 +131,8 @@ class OverHttp(TheRoute):
         async with await self.client(self.session) as client:
             got = await client.get(f"/me/campaigns/{self.cref}/web/characters")
             self.assertEqual(got.status_code, 200)
-            self.assertEqual([c["name"] for c in got.json()["characters"]], ["Rook", "Tavin"])
+            names = [c["name"] for c in got.json()["characters"]]
+            self.assertEqual([n for n in names if n != "Bob's hero"], ["Rook", "Tavin"])
         async with await self.client(self.player) as client:
             no = await client.get(f"/me/campaigns/{self.cref}/web/characters")
             self.assertEqual((no.status_code, no.json()["error"]), (404, "not_found"))

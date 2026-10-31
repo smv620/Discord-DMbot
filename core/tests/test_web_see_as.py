@@ -15,13 +15,15 @@ from dmbot.memory.ontology import FALLBACK_PREDICATE
 from dmbot.web import see_as, sessions
 from dmbot.web.app import create_app
 from dmbot.web.payments import FakeProvider
-from dmbot.web.recaps import RecapError
+from dmbot.web.recaps import RecapError, _scoped
 from tests.test_recap_web import BOB, NOW
 from tests.test_web_api import API, THURSDAY, FakeDiscord, settings
 from tests.test_web_relationships import Web
 
 
 class SeeAs(Web):
+    bob_has_a_hero = False  # (the party here is Rook and Okra, whom the tests set up)
+
     """Rook (a player character) knows Mira and her friendship with Rook; the Keep is the DM's
     alone. Okra is a second player character who knows nothing yet."""
 
@@ -98,7 +100,7 @@ class WhatACharacterSees(SeeAs):
             self.assertNotIn("knownBy", link)
         for node in got["nodes"]:
             self.assertTrue(node["revealed"])
-            self.assertIsNone(node["secret"])
+            self.assertIsNone(node.get("secret"))
 
 
 class AMainNameStaysSecret(SeeAs):
@@ -158,8 +160,10 @@ class NothingSecretInTheWords(SeeAs):
         self.assertEqual(got["edges"], [])
 
     async def test_the_centre_and_the_npc_page_are_not_given_away(self) -> None:
-        got = await self.seen(self.okra)  # nothing known; the DM graph centres on Mira
-        self.assertEqual((got["nodes"], got["center"]), ([], None))
+        got = await self.seen(self.okra)  # Mira is asked for; Okra knows nothing of her
+        self.assertNotEqual(got["center"], self.mira)
+        self.assertNotIn("Mira Voss", str(got))
+        self.assertTrue(all(n["page"] is False for n in got["nodes"]))
 
 
 class NamedAsTheBotNamesThem(SeeAs):
@@ -217,16 +221,21 @@ class NamedAsTheBotNamesThem(SeeAs):
                 )
                 async with self.memory._read(self.g, self.one.id) as scope:
                     knows = await gate.visible_to(scope, who)
-                shown = {n["id"]: n["name"] for n in got["nodes"]}
-                # the same people, under the same names: known to the gate and nameable by it
-                self.assertEqual(
-                    shown,
-                    {
-                        i: name
-                        for i, name in expected.items()
-                        if name is not None and knows.knows(gate.ENTRY, i)
-                    },
-                )
+                shown = {
+                    n["id"]: n["name"] for n in got["nodes"] if not n["id"].startswith("alias:")
+                }
+                aliased = [n["name"] for n in got["nodes"] if n["id"].startswith("alias:")]
+                # the same people under the same names: known to the gate and nameable by it. A
+                # person reached only through a fact learned by a secret other name has no node of
+                # their own, so the node may be missing, but never differently named
+                allowed = {
+                    i: name
+                    for i, name in expected.items()
+                    if name is not None and knows.knows(gate.ENTRY, i)
+                }
+                for i, name in shown.items():
+                    self.assertEqual(name, allowed[i])
+                self.assertTrue(set(aliased) <= set(allowed.values()))
                 links = {x["id"] for e in got["edges"] for x in e["links"]}
                 self.assertTrue(all(knows.knows(gate.CONNECTION, i) for i in links))
 
@@ -239,6 +248,7 @@ class NamedAsTheBotNamesThem(SeeAs):
 class WhoMayLook(SeeAs):
     async def test_a_player_is_refused_and_so_is_anyone_in_another_campaign(self) -> None:
         self.assertEqual(await self.refused_see_as(self.rook, self.player), "not_allowed")
+        # (a campaign that is not here looks the same as one that is not yours)
         self.assertEqual(
             await self.refused_see_as(self.rook, ref=f"{THURSDAY.id}.{'0' * 32}"), "not_allowed"
         )
@@ -248,15 +258,47 @@ class WhoMayLook(SeeAs):
             with self.subTest(viewer):
                 self.assertEqual(await self.refused_see_as(viewer), "not_found")
 
-    async def test_the_door_answers_nothing_to_a_player_even_by_sql(self) -> None:
-        async with self.web.user(BOB.id, session="x") as conn:
-            await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(THURSDAY.id),))
+    async def test_the_door_gives_a_player_no_picker_even_by_sql(self) -> None:
+        async with self.web.user(self.player.user_id, session=self.player.id_hash) as conn:
+            await _scoped(conn, THURSDAY.id)
             cur = await conn.execute(
                 "SELECT dmbot_web_knowers_data(%s, %s) AS r", (THURSDAY.id, self.one.id)
             )
             row = await cur.fetchone()
             assert row is not None
-            self.assertIsNone(row["r"])
+            self.assertEqual((row["r"]["isDm"], row["r"]["viewers"]), (False, []))
+
+
+class ThePicker(SeeAs):
+    """The characters a DM may pick to see as (#2999)."""
+
+    async def viewers(self, who: Any = None, query: str = "") -> dict[str, Any]:
+        return await see_as.read_viewers(self.web, who or self.session, self.cref, query)
+
+    async def test_a_dm_gets_player_characters_first_then_by_name(self) -> None:
+        got = await self.viewers()
+        names = [(v["kind"], v["name"]) for v in got["viewers"]]
+        self.assertEqual(names, [("pc", "Okra"), ("pc", "Rook"), ("npc", "Mira Voss")])
+        self.assertEqual(got["total"], 3)
+        self.assertEqual(set(got["viewers"][0]), {"id", "name", "kind"})  # nothing about who plays
+
+    async def test_a_search_narrows_a_big_cast_in_any_case(self) -> None:
+        got = await self.viewers(query="  MIRA ")
+        self.assertEqual([v["name"] for v in got["viewers"]], ["Mira Voss"])
+        self.assertEqual((await self.viewers(query="zzz"))["viewers"], [])
+
+    async def test_no_more_than_a_menu_full_is_offered_and_the_total_says_so(self) -> None:
+        for n in range(30):
+            await self.add(f"Extra {n:02d}", "character", role="npc")
+        got = await self.viewers()
+        self.assertEqual(len(got["viewers"]), see_as.VIEWERS_SHOWN)
+        self.assertEqual(got["total"], 33)
+
+    async def test_a_player_and_a_stranger_are_refused(self) -> None:
+        for who, ref in ((self.player, None), (self.session, f"{THURSDAY.id}.{'0' * 32}")):
+            with self.assertRaises(RecapError) as caught:
+                await see_as.read_viewers(self.web, who, ref or self.cref)
+            self.assertEqual(caught.exception.code, "not_allowed")
 
 
 class TheRoute(SeeAs):
@@ -288,3 +330,16 @@ class TheRoute(SeeAs):
         async with await self.client(BOB) as client:
             refused = await client.get(path, params={"viewer": self.rook})
             self.assertEqual(refused.status_code, 403)
+
+    async def test_the_picker_list_is_for_the_dm_only(self) -> None:
+        from tests.test_web_api import ALICE
+
+        path = f"/me/campaigns/{self.cref}/web/viewers"
+        async with await self.client(ALICE) as client:
+            ok = await client.get(path)
+            self.assertEqual(ok.status_code, 200)
+            self.assertEqual(ok.json()["total"], 3)
+            narrowed = await client.get(path, params={"q": "mira"})
+            self.assertEqual([v["name"] for v in narrowed.json()["viewers"]], ["Mira Voss"])
+        async with await self.client(BOB) as client:
+            self.assertEqual((await client.get(path)).status_code, 403)
