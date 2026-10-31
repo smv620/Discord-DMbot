@@ -34,6 +34,10 @@ class Sorting(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(lk.normalize(None), lk.SPOILERS)
         self.assertEqual(lk.normalize("everything"), lk.SPOILERS)
         self.assertEqual(lk.normalize("world"), lk.WORLD)
+        # The form starts on world (#3098), but a missing or unknown choice still reads as spoilers.
+        self.assertEqual(lk.PICKED_FIRST, lk.WORLD)
+        self.assertEqual(lk.DEFAULT, lk.SPOILERS)
+        self.assertEqual(lk.normalize("x"), lk.SPOILERS)
 
     async def test_world_is_all_spoilers_none_and_neither_asks_the_ai(self) -> None:
         ai = AsyncMock()
