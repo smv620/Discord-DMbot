@@ -2356,9 +2356,23 @@ names panel nor the speech-to-text hints can be a fixed list.
   - **Unnamed entities are kept.** "The guard at the gate", "a hooded stranger", "Brewner's daughter" or "the
     azure tome" each become an entry marked unnamed, with a plain description as its label, so their
     connections are kept from the first mention.
+    The lore read does this for **people the text describes by a family role and never names** (GraphEngineer,
+    2026-10-31, #2959): pass 1 lists them under an UNNAMED heading, the code checks the quote like any other,
+    and the existing unnamed-entry store keeps them. The entry is the DM's alone whatever the upload's
+    knowledge choice says (the unnamed entry wins; the choice applies once the DM names the person). A
+    person the text names anywhere is never also an unnamed entry. Not yet: the second look does not
+    recover unnamed people pass 1 missed, a person described by something other than a family role (a
+    haunting presence), a person with no named end, and things (they are item entries named by their
+    words).
   - **Pronouns and references count.** A relationship stated through "he", "his sister", "them" or "the
     king" is kept once DMbot works out who is meant, from the same passage or scene. A reference it can't
-    work out is kept on an unnamed entry, never dropped.
+    work out is kept on an unnamed entry, never dropped. **The text comes first** (GraphEngineer, 2026-10-31,
+    #2757): a pronoun's name is looked for in the sentence before and, in the same paragraph, up to 3
+    sentences / 60 words back, and the quote shown is those words exactly as written. If any other name of
+    the campaign or the document stands in between, the pronoun might mean it, and the who-is-it check
+    decides instead. The check only sees names (a possessive counts, "Pell's"); a third person who is only described
+    ("her mother") is not a name, so the DM's confirmation stays the last word. The log counts the
+    reaches as `quote_reach` (they also count as `quote_widened`).
   - **Entity resolution comes later and is its own step.** When an unnamed entry turns out to be a named one
     ("the guard at the gate" is "Ken the guard"), DMbot offers the DM a merge with the evidence. On a yes,
     the existing merge joins them and moves every connection and who-knows row. Nothing is merged without

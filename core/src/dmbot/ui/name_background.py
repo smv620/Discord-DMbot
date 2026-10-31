@@ -708,6 +708,7 @@ async def read_background(
         progress=progress,
         aliases=aliases,
         hold_open=who_ai is not None,
+        known_keys=known,
     )
     found = bg.merge(
         [read.names],
@@ -773,6 +774,7 @@ async def read_background(
         speaker=speaker,
         known_by=known_by,
         unsettled=read.stats.unsettled or (),
+        unnamed=read.unnamed,
         who_ai=who_ai,
         on_who=on_who,
         until=started + lore_read.LORE_TIME_LIMIT_S - WHO_SUMMARY_MARGIN_S,
@@ -1251,6 +1253,7 @@ async def queue_links(
     speaker: str | None = None,
     known_by: str = "",
     unsettled: Sequence[bg.Unsettled] = (),
+    unnamed: Sequence[who_resolve.UnnamedLink] = (),
     who_ai: who_ask.Client | None = None,
     on_who: Callable[[int, int], None] | None = None,
     until: float | None = None,
@@ -1281,7 +1284,7 @@ async def queue_links(
     which also covers the ones made from a settled pronoun, a "Which one?" question and an unnamed
     person. `world_level`: how they are known (`lore_knowledge.SURE`, or `GUESS` for the AI's)."""
     store = getattr(bot, "backstory_links", None)
-    if store is None or not (any(answers) or unsettled):
+    if store is None or not (any(answers) or unsettled or unnamed):
         return 0
     lookup = CampaignLookup.build(await memory.lookup_data(campaign.guild_id, campaign.id))
     ends: dict[str, str] = {}
@@ -1332,6 +1335,9 @@ async def queue_links(
         if dropped is not None:
             dropped["not_in_text"] += settled.unresolved
         answers = [*answers, settled.connections]
+    # People the text describes but never names (#2959) go the way the who-is-it check's do: the
+    # same store call, the same secrecy (below) and the same cap.
+    settled.unnamed = [*settled.unnamed, *unnamed]
     picks: list[bg.Pick] = []
     # (the campaign's own secret names stay secret whatever the upload's choice: the choice only
     # frees the earlier names this read found)
