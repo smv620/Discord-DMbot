@@ -143,6 +143,9 @@ class WebSettings:
     # The Shared story switch from the website (#2985; DMBOT_WEB_STORY_MODE): off, a story-mode
     # choice answers 404, so nothing is queued before the bot step that applies it is deployed.
     story_mode_on: bool = False
+    # The House-rules file from the website (#2985; DMBOT_WEB_HOUSE_FILE): off, its routes answer
+    # 404, so nothing is queued before the bot step that applies a request is deployed.
+    house_file_on: bool = False
     # Recap style on the website (#2985; DMBOT_WEB_RECAP_STYLE): off, its routes answer 404, so
     # nothing is queued before the bot step that applies a change is deployed.
     recap_style_on: bool = False
@@ -398,6 +401,11 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
         raise ConfigError(
             f'DMBOT_WEB_STORY_MODE must be 1 (on) or 0 (off), got "{story_mode_raw}".'
         )
+    house_file_raw = (get("DMBOT_WEB_HOUSE_FILE") or "0").lower()
+    if house_file_raw not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError(
+            f'DMBOT_WEB_HOUSE_FILE must be 1 (on) or 0 (off), got "{house_file_raw}".'
+        )
     sheets_raw = (get("DMBOT_WEB_SHEETS") or "0").lower()
     if sheets_raw not in ("0", "1", "true", "false", "on", "off"):
         raise ConfigError(f'DMBOT_WEB_SHEETS must be 1 (on) or 0 (off), got "{sheets_raw}".')
@@ -419,6 +427,7 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
         lore_on=lore_raw in ("1", "true", "on"),
         pause_on=pause_raw in ("1", "true", "on"),
         story_mode_on=story_mode_raw in ("1", "true", "on"),
+        house_file_on=house_file_raw in ("1", "true", "on"),
         recap_style_on=recap_style_raw in ("1", "true", "on"),
         recaps_on=recaps_raw in ("1", "true", "on"),
         plot_check_on=recaps_raw in ("1", "true", "on")
