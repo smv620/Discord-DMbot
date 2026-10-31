@@ -882,9 +882,12 @@ def _reading_ok(reading: object) -> bool:
     character's, and short words. Untrusted."""
     if reading is None:
         return True
-    if not isinstance(reading, dict) or set(reading) - {"liar"} != set(_READING_KEYS):
+    if not isinstance(reading, dict) or set(reading) - {"liar", "spoken_at"} != set(_READING_KEYS):
         return False
-    for key, kind in (*_READING_KEYS.items(), *((("liar", str),) if "liar" in reading else ())):
+    optional = tuple(
+        (key, kind) for key, kind in (("liar", str), ("spoken_at", int)) if key in reading
+    )
+    for key, kind in (*_READING_KEYS.items(), *optional):
         value = reading[key]
         if not isinstance(value, kind) or (kind is not bool and isinstance(value, bool)):
             return False

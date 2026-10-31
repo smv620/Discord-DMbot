@@ -5,6 +5,7 @@ there, one Undo. Needs the test database; invented names throughout."""
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from typing import Any
 
 from dmbot.memory import beliefs, claims, readings
@@ -434,6 +435,65 @@ class Placing(ConfirmedMemoryTest):
             return claims._repeat_key(c.subject, c.relationship, c.object, c.how, c.reading)
 
         self.assertNotEqual(key(one), key(two))
+
+    async def clock_log(self, *rows: tuple[int, int]) -> None:
+        """Rows of the game clock's log as the database would have written them: (real time,
+        game minute) of the main clock."""
+        async with self.db.guild(GUILD_A) as conn:
+            for at, minute in rows:
+                await conn.execute(
+                    "INSERT INTO game_clock_log (guild_id, campaign_id, position, at, minute)"
+                    " VALUES (%s, %s, NULL, %s, %s)",
+                    (GUILD_A, self.c, at, minute),
+                )
+
+    async def spoken(self, at: int | None) -> str:
+        proposal = belief("pc:Mira", "theory", 0.5)
+        claim = readings.as_claim(proposal, "player_said")
+        if at is not None and claim.reading is not None:
+            claim = replace(claim, reading={**claim.reading, "spoken_at": at})
+        await self.claims.propose(
+            GUILD_A, self.c, [claim], {"1": DM},
+            opted_in={DM}, dms={DM}, prompt_version="r1", model="m1", session_started_at=1_000,
+        )  # fmt: skip
+        rows = await self.rows("memory_claims")
+        return str(rows[-1]["id"])
+
+    async def test_a_belief_gets_the_game_time_of_the_line_it_came_from(self) -> None:
+        await self.clock_log((100, 5000), (200, 5600))
+        placed = await self.place(await self.spoken(150))
+        assert placed.belief is not None
+        self.assertEqual(placed.belief.game_time, 5000)  # (the clock then, not the newest row)
+
+    async def test_no_clock_a_line_before_the_first_row_or_no_time_leaves_it_empty(self) -> None:
+        placed = await self.place(await self.spoken(150))  # no log at all
+        assert placed.belief is not None
+        self.assertIsNone(placed.belief.game_time)
+
+    async def test_a_line_before_the_clock_was_first_set_is_not_known(self) -> None:
+        await self.clock_log((100, 5000))
+        placed = await self.place(await self.spoken(99))
+        assert placed.belief is not None
+        self.assertIsNone(placed.belief.game_time)
+
+    async def test_a_reading_with_no_moment_is_never_stamped_with_the_clock_as_it_is_now(
+        self,
+    ) -> None:
+        await self.clock_log((100, 5000))
+        placed = await self.place(await self.spoken(None))
+        assert placed.belief is not None
+        self.assertIsNone(placed.belief.game_time)
+
+    async def test_a_moment_that_is_not_a_time_is_refused(self) -> None:
+        await self.clock_log((100, 5000))
+        for bad in (-5, 0, 10**13, True):
+            with self.subTest(bad):
+                claim = readings.as_claim(belief("pc:Mira", "theory", 0.4), "player_said")
+                assert claim.reading is not None
+                from dmbot.memory import placing
+
+                with self.assertRaises(MemoryRuleError):
+                    placing._checked({**claim.reading, "spoken_at": bad})
 
     async def test_a_suspected_lie_is_placed_for_the_accuser_and_names_who_lied(self) -> None:
         valyra = await self.add("Valyra", type="character")

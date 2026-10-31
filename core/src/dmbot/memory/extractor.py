@@ -20,7 +20,7 @@ import logging
 import time
 from collections import Counter
 from collections.abc import Awaitable, Callable, Collection, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Protocol
 
 from dmbot.ai import AIOutOfFunds, Reply
@@ -397,7 +397,14 @@ async def run(
             report.readings_cut += 1
         for belief in proposals(kept).beliefs:
             how = "dm_said" if any(n in dm_lines for n in belief.lines) else "player_said"
-            believed.append(as_claim(belief, how))
+            claim = as_claim(belief, how)
+            # The real moment of the newest line it came from (a line's `started_ms` is Unix
+            # milliseconds): placing it reads the game clock's log at that moment, so the belief
+            # gets the game time of the line, never of the clock as it reads later (#3091).
+            spoken = max((s.started_ms for s in batch if str(s.number) in belief.lines), default=0)
+            if spoken > 0 and claim.reading is not None:
+                claim = replace(claim, reading={**claim.reading, "spoken_at": spoken // 1000})
+            believed.append(claim)
         everyone.update(speakers)
         heard.update((number, text) for number, _who, text in rows)
     # One hand-over for the whole session: the linker picks the most-said new names across all of

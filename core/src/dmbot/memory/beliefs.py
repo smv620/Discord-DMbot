@@ -395,6 +395,7 @@ async def place_belief(
     evidence: Sequence[str] = (),
     session_at: int | None = None,
     sources: Sequence[str] = (),
+    game_time: int | None = None,
 ) -> Belief:
     """A belief the DM placed from a reading (#2412), inside an open write. `believe_in` is for
     the DM's own beliefs and refuses a guess on the party's view; this is the one door a reading
@@ -452,6 +453,7 @@ async def place_belief(
             evidence,
             session_at,
             sources=sources,
+            game_time=game_time,
         )
     )
 

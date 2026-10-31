@@ -200,6 +200,9 @@ class ReadingPass(unittest.IsolatedAsyncioTestCase):
         ((claims, speakers, _),) = store.calls
         self.assertEqual(claims[0].reading["view"], "pc:Mira")  # type: ignore[index]
         self.assertEqual((claims[0].how, speakers["1"]), ("player_said", ALICE))
+        # the real moment of the line it cites (line 1 began at 1000 ms): placing reads the game
+        # clock's log at that moment (#3091)
+        self.assertEqual(claims[0].reading["spoken_at"], 1)  # type: ignore[index]
 
     async def test_the_reading_call_is_held_to_the_same_call_limit_and_counted(self) -> None:
         counted: list[int] = []
