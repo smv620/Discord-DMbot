@@ -25,7 +25,8 @@ afterEach(() => {
   Object.assign(live, { story: false, invite: false, rulesets: false, houseFile: false });
 });
 
-describe("Help steps for the campaign settings", () => {
+// Each test loads Help fresh (a slow import when the suite runs in parallel), so allow more than the 5 s default.
+describe("Help steps for the campaign settings", { timeout: 30000 }, () => {
   it("with every switch off, Help has none of the four steps", async () => {
     const h = await help({});
     expect(has(h.dmSteps, STORY_START)).toBe(false);
