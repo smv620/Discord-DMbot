@@ -229,6 +229,29 @@ class TheChecks(unittest.TestCase):
         links = [bg.Connection("She", "knows", "Mirelle", "She knows Mirelle")]
         self.assertEqual(bg.keep_connections([links], found, {}), [])
 
+    def test_a_shared_role_beats_plain_family_whichever_is_read_first(self) -> None:
+        # Invented names. A pair read as plain "family" and as "sibling" keeps the sibling role,
+        # in either order; a second shared role never replaces the first.
+        names = [bg.Found(n, "person", (), (), "q") for n in ("Tam", "Mira")]
+        plain = bg.Connection("Tam", "kin_of", "Mira", "Tam and Mira are family")
+        sibling = bg.Connection(
+            "Tam", "kin_of", "Mira", "Tam is the brother of Mira", words="sibling"
+        )
+        cousin = bg.Connection("Tam", "kin_of", "Mira", "Tam is the cousin of Mira", words="cousin")
+        flipped = bg.Connection("Mira", "kin_of", "Tam", "Mira has a brother, Tam", words="sibling")
+        parent = bg.Connection("Tam", "kin_of", "Mira", "Tam is the father of Mira", words="parent")
+        for order in (
+            [plain, sibling], [sibling, plain], [plain, sibling, cousin], [plain, flipped],
+            [sibling, parent],  # (a held shared role is not replaced: first read wins)
+        ):  # fmt: skip
+            kept = bg.keep_connections([order], names, {})
+            self.assertEqual([c.words for c in kept], ["sibling"])
+        (kept_one,) = bg.keep_connections([[plain, sibling]], names, {})
+        self.assertEqual(kept_one.quote, sibling.quote)
+        # (a role in other letters is the same role)
+        loud = bg.Connection("Tam", "kin_of", "Mira", "Tam is the brother of Mira", words="Sibling")
+        self.assertEqual(len(bg.keep_connections([[plain, loud]], names, {})), 1)
+
 
 class ThePath(NamesTest):
     async def asyncSetUp(self) -> None:
