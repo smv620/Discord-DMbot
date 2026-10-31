@@ -135,6 +135,16 @@ class TranscriptStore:
             assert row is not None
             return str(row["id"])
 
+    async def is_import(self, guild_id: int, session_id: str) -> bool:
+        """Was this session loaded from a file? Its lines carry the dates the DM chose, not the
+        moments they were spoken at (#3091)."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT 1 FROM session_imports WHERE guild_id = %s AND session_id = %s",
+                (guild_id, session_id),
+            )
+            return await cur.fetchone() is not None
+
     async def extraction(self, guild_id: int, session_id: str) -> tuple[int, int]:
         """How far the story extractor got in this session (#1367): (when the last line it read
         began, in Unix milliseconds; AI calls used). (0, 0) for a session never read, or one that

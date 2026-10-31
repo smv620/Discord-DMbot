@@ -74,6 +74,7 @@ from dmbot.memory.models import (
     new_id,
 )
 from dmbot.memory.store import _check_led_to_live, _load_ontology, flag_kept
+from dmbot.timebot.stamp import game_time_at
 
 WAITING_ALREADY = "That is already waiting for your answer. Answer it there first."
 PLOT_IS_KNOWN = "The players already know that, so it cannot also be a secret plot."
@@ -115,7 +116,18 @@ def _checked(stored: Mapping[str, Any]) -> dict[str, Any]:
     liar = stored.get("liar")
     if not ok or (status == SUSPECTED_LIE) != isinstance(liar, str) or (liar and not lie):
         raise MemoryRuleError(beliefs.BAD_READING)
-    return {"view": view, "status": status, "confidence": c, "liar": liar or ""}
+    spoken = stored.get("spoken_at")  # the real moment of the line it came from (Unix seconds)
+    if spoken is not None and (
+        type(spoken) is not int or not 0 < spoken <= 4_102_444_800
+    ):  # (a file can bring anything)
+        raise MemoryRuleError(beliefs.BAD_READING)
+    return {
+        "view": view,
+        "status": status,
+        "confidence": c,
+        "liar": liar or "",
+        "spoken_at": spoken,
+    }
 
 
 # Who is recorded now: a snapshot, or a function (plain or awaited) that asks again.
@@ -209,7 +221,7 @@ async def place(
         if await _recorded(claim, opted_in):
             relation_id, belief, flags = await _place_in(
                 store, w, claim, reading, subject_id, term.key, object_id,
-                label, holder, names.roles, reasons, liar_id,
+                label, holder, names.roles, reasons, liar_id, reading["spoken_at"],
             )  # fmt: skip
             row = await w.update(
                 CLAIMS,
@@ -278,6 +290,7 @@ async def _place_in(
     roles: Mapping[str, tuple[str | None, int | None]],
     reasons: Sequence[tuple[str, str]] = (),
     liar_id: str | None = None,
+    spoken_at: int | None = None,
 ) -> tuple[str, Belief | None, list[Flag]]:
     """The write: find or make the connection, then the belief, in the one open write."""
     status, confidence, view = str(reading["status"]), float(reading["confidence"]), reading["view"]
@@ -329,10 +342,16 @@ async def _place_in(
             await _link_reasons(w, reasons, relation_id=host, session_at=claim.session_started_at)
         return host, None, list(flags)
     perspective = await _view_id(w, view, holder, roles)
+    # The game clock as it stood when the line was spoken (None: no clock, or nothing logged yet
+    # at that moment); never the clock as it reads now (#3091).
+    at_that_moment = (
+        await game_time_at(w.conn, w.guild_id, w.campaign_id, spoken_at) if spoken_at else None
+    )
     belief = await beliefs.place_belief(
         w, perspective, host, confidence, status,
         evidence=[claim.id], session_at=claim.session_started_at,
         sources=[liar_id] if liar_id else (),
+        game_time=at_that_moment,
     )  # fmt: skip
     await _link_reasons(w, reasons, belief_id=belief.id, session_at=claim.session_started_at)
     return host, belief, list(flags)
