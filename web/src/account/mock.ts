@@ -62,7 +62,7 @@ import type {
   RuleSharingAnswer,
   RuleSharingChoice,
 } from "./api";
-import { ApiError, type LoreUpload, type RecapStyle, type RecapStyleAction, type WebLinkKind, type FixAnswer, type FixMode, type PlotIssue, type PlotMessage, type PlotProposal, type WaitingLook } from "./api";
+import { ApiError, type HouseFileRequest, type HouseFileState, type LoreUpload, type RecapStyle, type RecapStyleAction, type WebLinkKind, type FixAnswer, type FixMode, type PlotIssue, type PlotMessage, type PlotProposal, type WaitingLook } from "./api";
 import { NAME_LIMIT } from "../content/names-words";
 
 /** Found in the built files only if the pretend API was included; check-csp fails a real
@@ -746,6 +746,12 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   let moveState: "none" | "moving" | "failing" = "none"; // a campaign the bot is moving: `look` says ended meanwhile (#2550)
   let movedIn = 0; // looks at /me before a campaign the bot is moving shows up (#2550)
   let loreNow: LoreUpload | null = null; // the pretend upload (#3022)
+  // Pretend house-rules file (#2985): `.hf-match` compares equal, `.hf-fail` cannot be read, `.hf-player` is for a non-game-master,
+  // `.hf-none` is off. The link is never kept; only its site.
+  let houseFileSite = "";
+  let houseFilePending = ""; // the site of a link request, set only when the request is done (as the bot would)
+  let houseFileNow: HouseFileRequest | null = null;
+  let houseFileLooks = 0;
   let loreLooks = 0;
   // The pretend recap style (#2985): a change takes effect after two looks, as the bot's would.
   const styleNow = { examples: [{ id: "11", text: "The silver lock clicked and Mira let out her breath." }] as { id: string; text: string }[], notes: [] as { id: string; text: string }[] };
@@ -1755,6 +1761,47 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       loreLooks = 0;
       loreNow = { id: "0".repeat(31) + "1", state: "waiting", stage: "waiting", error: "", source: input.source, choice: input.choice, namesFound: 0, linksFound: 0, done: 0, total: 0, createdAt: at, updatedAt: at, serverNow: at };
       return loreNow;
+    },
+    async houseFile(ref, id): Promise<HouseFileState> {
+      calls.push(`houseFile:${ref}:${id ?? "-"}`);
+      await reachable();
+      signedIn();
+      if (/\.hf-none$/.test(ref)) throw new ApiError("not-found");
+      if (/\.hf-player$/.test(ref)) throw new ApiError("not-allowed");
+      if (id && houseFileNow && id !== houseFileNow.id) throw new ApiError("not-found");
+      const at = Math.floor(Date.now() / 1000);
+      if (houseFileNow && (houseFileNow.state === "waiting" || houseFileNow.state === "working")) {
+        houseFileLooks += 1;
+        if (houseFileNow.state === "waiting" && houseFileLooks >= 2) houseFileNow = { ...houseFileNow, state: "working", stage: "reading", updatedAt: at };
+        else if (houseFileNow.state === "working" && houseFileLooks >= 4) {
+          if (/\.hf-fail$/.test(ref)) houseFileNow = { ...houseFileNow, state: "failed", error: "unreadable", updatedAt: at };
+          else {
+            const match = /\.hf-match$/.test(ref);
+            const compares = houseFileNow.action !== "unlink";
+            houseFileNow = { ...houseFileNow, state: "done", stage: compares ? "compared" : "done", toAdd: compares && !match ? 2 : 0, toChange: compares && !match ? 1 : 0, toRemove: compares && !match ? 3 : 0, rulesRead: compares ? 12 : 0, updatedAt: at };
+            if (houseFileNow.action === "unlink") houseFileSite = "";
+            if (houseFileNow.action === "link") houseFileSite = houseFilePending;
+          }
+        }
+      }
+      return { linked: houseFileSite !== "", site: houseFileSite, request: houseFileNow, serverNow: at };
+    },
+    async houseFileAdd(ref, input): Promise<HouseFileState> {
+      calls.push(`houseFileAdd:${ref}:${input.action}:${(input.text ?? input.link ?? "").length}`);
+      await reachable();
+      signedIn();
+      if (/\.hf-none$/.test(ref)) throw new ApiError("not-found");
+      if (/\.hf-player$/.test(ref)) throw new ApiError("not-allowed");
+      if (houseFileNow && (houseFileNow.state === "waiting" || houseFileNow.state === "working")) throw new ApiError("slow-down");
+      if (input.action === "link") {
+        // (the door: https, no login details, no port, no spaces)
+        if (!/^https:\/\/[^/?#@:\s]+([/?#]\S*)?$/.test(input.link ?? "")) throw new ApiError("bad-text");
+        houseFilePending = new URL(input.link as string).host;
+      }
+      const at = Math.floor(Date.now() / 1000);
+      houseFileLooks = 0;
+      houseFileNow = { id: "0".repeat(31) + "2", action: input.action, state: "waiting", stage: "waiting", error: "", toAdd: 0, toChange: 0, toRemove: 0, rulesRead: 0, createdAt: at, updatedAt: at };
+      return { linked: houseFileSite !== "", site: houseFileSite, request: houseFileNow, serverNow: at };
     },
     async loreRead(ref, id): Promise<LoreUpload | null> {
       calls.push(`loreRead:${ref}:${id ?? "-"}`);
