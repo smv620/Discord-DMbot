@@ -57,3 +57,37 @@ describe("the overview with an alias node", () => {
     expect(w.groupHere).toBeTruthy();
   });
 });
+
+describe("the other two places that link to a page", () => {
+  it("the overview's Not connected tray shows no page link for an alias node", async () => {
+    const api = mockApi("table");
+    const real = api.webOverview!.bind(api);
+    api.webOverview = async (ref, query) => {
+      const got = await real(ref, query);
+      const base = got.tray[0]!;
+      return { ...got, tray: [{ ...base, page: true }, { ...base, id: ALIAS, name: "The Veiled Stranger", page: true }] };
+    };
+    render(<Web api={api} path="/account/web/100.cmp1.web-lonely" />);
+    const button = await screen.findByRole("button", { name: new RegExp("The Veiled Stranger") });
+    expect(document.querySelector('a[href^="/account/npc/"]')).not.toBeNull(); // (the real tray name still has its link)
+    expect(button.closest("li")!.querySelector("a")).toBeNull();
+    expect(document.body.innerHTML).not.toContain("alias%3A");
+  });
+
+  it("the names list shows no page link for an alias node, and its row id keeps the whole id", async () => {
+    const api = mockApi("table");
+    const real = api.webGraph!.bind(api);
+    api.webGraph = async (ref, query) => {
+      const got = await real(ref, query);
+      const base = got.nodes[0]!;
+      return { ...got, nodes: [{ ...base, page: true }, { ...base, id: ALIAS, name: "The Veiled Stranger", page: true }] };
+    };
+    render(<Web api={api} path="/account/web/100.cmp1" />);
+    const row = (await screen.findByRole("button", { name: new RegExp("The Veiled Stranger") }, { timeout: 3000 })).closest("li")!;
+    fireEvent.click(await screen.findByRole("button", { name: w.expandAll }));
+    await waitFor(() => expect(document.querySelector('a[href^="/account/npc/"]')).not.toBeNull());
+    expect(row.querySelector("a")).toBeNull();
+    expect(row.querySelector(`#web-name-${ALIAS.replace(":", "\\:")}`)).not.toBeNull(); // (an id with a colon is still a valid page id)
+    expect(document.body.innerHTML).not.toContain("alias%3A");
+  });
+});
