@@ -135,6 +135,7 @@ NAMES
 - Danrel | person | quote: "Danrel, Eastvale"
 - Eastvale | place | quote: "Danrel, Eastvale"
 - Order | group | other names: The Order | quote: "The Order knows who you are"
+- note | item | quote: "A note was left at the camp"
 
 RELATIONSHIPS
 - Captain Ryl — mentors — Vessa | quote: "Vessa, Orin and Pell rode north, and Captain Ryl mentored them"
@@ -152,6 +153,22 @@ Output:
 NAMES
 - Tavin | person | other names: the rogue | quote: "Tavin (the rogue)"
 - Ka'zeth | person | said: kah-ZETH | quote: "Ka'zeth (kah-ZETH)"
+
+Example 6. Input (a special object and a group without proper names; ordinary things and crowds left out):
+<document>
+Wren Calloway carried a rusted brass compass that never pointed north, a dagger, three silver coins and a sack of rope and biscuits. \
+The guards at the gate waved her through. She had been raised by a band of river smugglers who sailed the Grey Run.
+</document>
+Output:
+NAMES
+- Wren Calloway | person | quote: "Wren Calloway carried a rusted"
+- rusted brass compass | item | quote: "a rusted brass compass that never"
+- band of river smugglers | group | quote: "by a band of river smugglers"
+- Grey Run | place | quote: "who sailed the Grey Run"
+
+RELATIONSHIPS
+- Wren Calloway — owns — rusted brass compass | quote: "Wren Calloway carried a rusted brass compass that never pointed north"
+- band of river smugglers — is in (sailed) — Grey Run | quote: "a band of river smugglers who sailed the Grey Run"
 """  # noqa: E501 (the examples are the prompt's own lines)
 
 
@@ -184,7 +201,20 @@ def read_instructions(own: Mapping[str, str] | None = None) -> str:
         "openly for the same one; give 'said:' only when the text shows how to say the name; "
         "give 'secret:' only when the text says plainly that a name is a secret identity or "
         f"another name of the SAME person. 'quote:' is {bg.QUOTE_WORDS} words at most, copied "
-        "exactly from the text.\n"
+        "exactly from the text. (A few things and groups without a proper name are listed too: "
+        "see the next rule.)\n"
+        "- THINGS AND GROUPS WITHOUT A PROPER NAME: also list these, by the words the text uses "
+        "for them (copied as written, without 'a' or 'the', with the word that tells it from "
+        "others of its kind, such as 'locked azure tome', never just 'tome'): (a) one particular "
+        "object that a character owns or carries and that the text says is unique, magical, "
+        "inscribed or precious, or that the story is built around (kind item); (b) a note, "
+        "letter or warning whose words the text quotes or whose sending or finding it tells "
+        "(kind item); (c) a group of people the text describes by what it is and says something "
+        "about, such as a traveling circus or a band of thieves (kind group). Never ordinary "
+        "gear, coins, food, weapons or clothes, never a thing the text mentions once in passing, "
+        "never a kind of creature, never a family, a household or townsfolk, never 'the party' "
+        "or a crowd ('the guards'), and never a person (a person is listed only by name). A few "
+        "for a whole page at most.\n"
         "- ONE PERSON, TWO NAMES: when the text says a character was first known by another "
         "name (born, originally, formerly, a pseudonym, took the name, now calls himself or "
         "herself, also known as, a.k.a., an alias), that earlier name is NOT a name of its own: "
@@ -204,7 +234,7 @@ def read_instructions(own: Mapping[str, str] | None = None) -> str:
         "several. Words inside quotation marks, a warning, a letter, a sign or a spoken line, are "
         "still the document's own words: list the names and relationships they state.\n"
         "- Leave out descriptions, ordinary words, spells, rules terms and kinds of creature in "
-        "general (elves, goblins).\n"
+        "general (elves, goblins), except the few things and groups the rule above asks for.\n"
         "- RELATIONSHIPS: go through the text sentence by sentence, and for every sentence that "
         "says plainly how two of those names are connected, write a line. One sentence may give "
         "several (a mentor with two named apprentices is two lines; a person who is a member of "
