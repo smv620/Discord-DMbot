@@ -64,6 +64,7 @@ from dmbot.web import (
     report,
     restores,
     rule_sharing,
+    see_as,
     sessions,
     shared_recaps,
     sharing,
@@ -1729,6 +1730,24 @@ def create_app(
             return await relationships.read_web(
                 db, session, ref, center=center, hops=steps, view=view
             )
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/web/see-as")
+    async def me_campaign_web_see_as(
+        ref: str,
+        signed: Signed,
+        viewer: str,
+        center: str | None = None,
+        hops: str = "2",
+    ) -> dict[str, Any]:
+        """The story graph the way the party, a player character or an NPC knows it (#2999): the
+        DM's graph with everything that viewer does not know removed. DM only."""
+        session, _token = signed
+        try:
+            steps = int(hops) if re.fullmatch(r"[0-9]{1,3}", hops) else 0  # (0 is refused)
+            return await see_as.read_see_as(db, session, ref, viewer, center=center, hops=steps)
         except RecapError as err:
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
