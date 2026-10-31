@@ -487,6 +487,7 @@ async def what_my_characters_know(scope: Scope, user_id: int) -> Mine:
     # Each end is named the way THIS player's characters know it (#3037): the main name only when
     # one of them knows the entry under its own name, else the first other name they learned. An
     # end none of them may name is not shown, so a joined person never reads as the named one.
+    safe_texts: dict[str, str] = {}
     shown_names = await gate.names_for(
         scope,
         gate.Viewer.player(mine),
@@ -495,6 +496,7 @@ async def what_my_characters_know(scope: Scope, user_id: int) -> Mine:
             | {r["object_id"] for r in hidden}
             | {a["entity_id"] for a in aliases}
         ),
+        texts_out=safe_texts,
     )
 
     def name(entity_id: str) -> str | None:
@@ -507,9 +509,15 @@ async def what_my_characters_know(scope: Scope, user_id: int) -> Mine:
         subject, target = name(r["subject_id"]), name(r["object_id"])
         if subject is None or target is None:
             continue
+        # (the DM's own words on a connection may name a main name: sent only when both ends are
+        # shown under their main names, as the website's doors do)
+        plain = (
+            subject == entries[r["subject_id"]]["name"]
+            and target == entries[r["object_id"]]["name"]
+        )
         connections.append(
             MineConnection(
-                r["id"], subject, r["predicate"], r["detail"] or "", target,
+                r["id"], subject, r["predicate"], (r["detail"] or "") if plain else "", target,
                 bool(r.get("directional")), others(who.get(r["id"], [])),
             )
         )  # fmt: skip
@@ -517,7 +525,8 @@ async def what_my_characters_know(scope: Scope, user_id: int) -> Mine:
     for a in aliases:
         owner = name(a["entity_id"])
         if owner is not None:
-            names.append(MineName(a["id"], a["text"], owner, others(a_who.get(a["id"], []))))
+            text = safe_texts.get(str(a["id"]), "someone (name unknown)")
+            names.append(MineName(a["id"], text, owner, others(a_who.get(a["id"], []))))
     return Mine(
         characters=tuple(sorted(str(entries[c]["name"]) for c in mine if c in entries)),
         connections=tuple(connections),

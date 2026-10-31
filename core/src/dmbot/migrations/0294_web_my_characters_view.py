@@ -29,7 +29,13 @@ from dmbot.migrations._shared import (
 # what a character's own rows grant (an entry row, or a row on a secret other name or a
 # connection); `gate.visible_to` also honours groups, self-knowledge and entries a known statement
 # names, so the website may show a player a little less than the Python readers do, never more.
-# A connection's free-text `detail` is the DM's own note and is sent as written.
+# A connection's free-text `detail` is the DM's own note: a player gets it only when neither end
+# is shown to them under another name.
+# A name belongs to the fact (Supervisor, #3037): a character that knows an entry only through a
+# secret other name, with no row of its own for the entry, sees every fact it knows through that
+# name on a SEPARATE node ("the guard at the gate"), even when the entry's main name is public;
+# the facts about the public entry (the ones everybody knows) still show on its main name. The DM
+# sees one entry.
 # The doors are read back from the database as they are and widened, each anchor found exactly
 # once (a drift stops the migration), as 0281 does. No table changes, no rows change.
 _COMMENT = "        -- The connections the caller may see, worked out once"
@@ -46,6 +52,17 @@ _SHARED_SWAPS = (
         "                vis || ARRAY(SELECT m.entity_id\n"
         "                             FROM dmbot_my_known_entries(g, c) m)) x);\n"
         "            my_rels := ARRAY(SELECT r FROM dmbot_my_known_relations(g, c) r);\n"
+        "            SELECT COALESCE(jsonb_object_agg(m.entity_id, jsonb_build_object(\n"
+        "                       'alias', m.alias_id, 'name', m.shown_name)), '{}'::jsonb)\n"
+        "            INTO split FROM dmbot_my_known_entries(g, c) m\n"
+        "            WHERE m.entity_id = ANY (flag_vis) AND NOT m.own;\n"
+        "            split_rels := ARRAY(SELECT r.id FROM memory_relations r\n"
+        "                WHERE r.guild_id = g AND r.campaign_id = c AND r.id = ANY (my_rels)\n"
+        "                  AND (r.secret OR r.unrevealed)\n"
+        "                  AND (split->>r.subject_id IS NOT NULL\n"
+        "                       OR split->>r.object_id IS NOT NULL));\n"
+        "            my_rels := ARRAY(SELECT x FROM unnest(my_rels) x\n"
+        "                             WHERE NOT (x = ANY (split_rels)));\n"
         "        END IF;\n" + _COMMENT,
     ),
     (
@@ -64,6 +81,11 @@ _DECLARE = (
     "        flag_vis TEXT[];\n"
     "        alt_names JSONB := '{}'::jsonb;\n"
     "        my_rels TEXT[] := '{}';\n"
+    "        split JSONB := '{}'::jsonb;\n"
+    "        split_rels TEXT[] := '{}';\n"
+    "        out JSONB;\n"
+    "        vedges JSONB := '[]'::jsonb;\n"
+    "        vnodes JSONB := '[]'::jsonb;\n"
 )
 _NODE = "COALESCE(alt_names->>e.id, e.name)"  # the name a node is shown by
 
@@ -87,6 +109,83 @@ _DETAIL = (
     "                          AND alt_names->>x.id <> x.name) THEN r.detail ELSE '' END,",
 )
 
+_KIND = (
+    "CASE WHEN e.type = 'character' THEN CASE e.role"
+    " WHEN 'player_character' THEN 'player_character'"
+    " WHEN 'npc' THEN 'npc' WHEN 'god' THEN 'deity' ELSE 'character' END ELSE e.type END"
+)
+# The facts a character knows only through a secret other name, on a node of that name. `vedges` are
+# those connections with the split end replaced by the node's id ("alias:<name id>"); a node is
+# listed only when one of its connections reaches something on the page.
+_VIRTUAL_EDGES = (
+    "SELECT jsonb_agg(jsonb_build_object(\n"
+    "    'id', r.id,\n"
+    "    'a', COALESCE('alias:' || (split->r.subject_id->>'alias'), r.subject_id),\n"
+    "    'b', COALESCE('alias:' || (split->r.object_id->>'alias'), r.object_id),\n"
+    "    'predicate', r.predicate, 'detail', '', 'directional', r.directional,\n"
+    "    'secret', r.secret, 'at', r.created_at, 'held', NULL, 'knownBy', NULL,\n"
+    "    'decided', NULL, 'revealed', false, 'pinned', false) ORDER BY r.created_at, r.id)\n"
+    "FROM memory_relations r\n"
+    "WHERE r.guild_id = g AND r.campaign_id = c AND r.id = ANY (split_rels)\n"
+    "  AND r.status = 'confirmed' AND r.to_session_at IS NULL AND r.predicate <> 'led_to'\n"
+    "  AND r.source NOT IN ('plan', 'story_plan')\n"
+    "  AND (split->>r.subject_id IS NOT NULL OR r.subject_id = ANY (%(far)s))\n"
+    "  AND (split->>r.object_id IS NOT NULL OR r.object_id = ANY (%(far)s))"
+)
+_VIRTUAL_NODES = (
+    "SELECT jsonb_agg(jsonb_build_object('id', 'alias:' || (s.value->>'alias'),\n"
+    "    'name', s.value->>'name', 'revealed', true, 'kind', " + _KIND + ",\n"
+    "    'quests', NULL, 'secret', NULL) ORDER BY s.value->>'name', s.key)\n"
+    "FROM jsonb_each(split) s\n"
+    "JOIN memory_entities e ON e.guild_id = g AND e.campaign_id = c AND e.id = s.key\n"
+    "WHERE EXISTS (SELECT 1 FROM jsonb_array_elements(vedges) v\n"
+    "              WHERE v->>'a' = 'alias:' || (s.value->>'alias')\n"
+    "                 OR v->>'b' = 'alias:' || (s.value->>'alias'))"
+)
+
+_GRAPH_TAIL = (
+    "AND r.subject_id = ANY (kept) AND r.object_id = ANY (kept)), '[]'::jsonb));\n    END",
+    "AND r.subject_id = ANY (kept) AND r.object_id = ANY (kept)), '[]'::jsonb));\n"
+    "        IF cardinality(split_rels) > 0 THEN\n"
+    "            vedges := COALESCE((" + (_VIRTUAL_EDGES % {"far": "kept"}) + "), '[]'::jsonb);\n"
+    "            vnodes := COALESCE((" + _VIRTUAL_NODES + "), '[]'::jsonb);\n"
+    "            out := jsonb_set(out, '{nodes}', (out->'nodes') || vnodes);\n"
+    "            out := jsonb_set(out, '{edges}', (out->'edges') || vedges);\n"
+    "            out := jsonb_set(out, '{names}',\n"
+    "                to_jsonb((out->>'names')::int + jsonb_array_length(vnodes)));\n"
+    "        END IF;\n"
+    "        RETURN out;\n    END",
+)
+_GRAPH_HEAD = (
+    "        RETURN jsonb_build_object(\n            'status', 'ok', 'center', start_id,",
+    "        out := jsonb_build_object(\n            'status', 'ok', 'center', start_id,",
+)
+
+_OVERVIEW_HEAD = (
+    "        RETURN jsonb_build_object(\n"
+    "            'status', 'ok', 'canEdit', is_dm AND sees_all,",
+    "        out := jsonb_build_object(\n"
+    "            'status', 'ok', 'canEdit', is_dm AND sees_all,",
+)
+_OVERVIEW_TAIL = (
+    "AND r.id = ANY (rel_ids)) d));\n    END",
+    "AND r.id = ANY (rel_ids)) d));\n"
+    "        IF cardinality(split_rels) > 0 THEN\n"
+    "            vedges := COALESCE((" + (_VIRTUAL_EDGES % {"far": "vis"}) + "), '[]'::jsonb);\n"
+    "            vnodes := COALESCE((" + _VIRTUAL_NODES + "), '[]'::jsonb);\n"
+    "            out := jsonb_set(out, '{names}', (out->'names') || vnodes);\n"
+    "            out := jsonb_set(out, '{pairs}', (out->'pairs') || COALESCE((\n"
+    "                SELECT jsonb_agg(DISTINCT jsonb_build_array(\n"
+    "                    LEAST(v->>'a', v->>'b'), GREATEST(v->>'a', v->>'b')))\n"
+    "                FROM jsonb_array_elements(vedges) v), '[]'::jsonb));\n"
+    "            out := jsonb_set(out, '{total}',\n"
+    "                to_jsonb((out->>'total')::int + jsonb_array_length(vnodes)));\n"
+    "            out := jsonb_set(out, '{connections}',\n"
+    "                to_jsonb((out->>'connections')::int + jsonb_array_length(vedges)));\n"
+    "        END IF;\n"
+    "        RETURN out;\n    END",
+)
+
 _RELATIONSHIPS_SWAPS = (
     ("        kept TEXT[];\n    BEGIN", "        kept TEXT[];\n" + _DECLARE + "    BEGIN"),
     *_SHARED_SWAPS,
@@ -102,6 +201,8 @@ _RELATIONSHIPS_SWAPS = (
     ),
     _REVEALED,
     _DETAIL,
+    _GRAPH_HEAD,
+    _GRAPH_TAIL,
 )
 
 _OVERVIEW_SWAPS = (
@@ -118,6 +219,8 @@ _OVERVIEW_SWAPS = (
         "ORDER BY lower(" + _NODE + "), e.id LIMIT GREATEST(cap_names, 1)) x)",
     ),
     _REVEALED,
+    _OVERVIEW_HEAD,
+    _OVERVIEW_TAIL,
 )
 
 WEB_MY_CHARACTERS_VIEW = (
@@ -159,7 +262,7 @@ WEB_MY_CHARACTERS_VIEW = (
     -- none of them may name is not listed. Confirmed entries only; the DM's kinds of note
     -- (threads, quests...) are never listed, as the table's view leaves them out.
     CREATE FUNCTION dmbot_my_known_entries(g BIGINT, c TEXT)
-    RETURNS TABLE (entity_id TEXT, shown_name TEXT)
+    RETURNS TABLE (entity_id TEXT, shown_name TEXT, own BOOLEAN, alias_id TEXT)
     LANGUAGE sql STABLE SECURITY DEFINER AS $fn$
         WITH own AS (
             SELECT k.about_entity_id AS eid FROM memory_knowers k
@@ -190,21 +293,22 @@ WEB_MY_CHARACTERS_VIEW = (
                <> regexp_replace(lower(en.name), '[^[:alnum:]]', '', 'g')
             GROUP BY a.entity_id, a.text, a.id
         ), first_other AS (
-            SELECT DISTINCT ON (eid) eid, text FROM learned ORDER BY eid, at, id
+            SELECT DISTINCT ON (eid) eid, text, id AS aid FROM learned ORDER BY eid, at, id
         ), anchor_name AS (
             -- what an unnamed person's label may call the entry they hang off: its main name if
             -- the players are shown it by name, or one of these characters knows it by name
             SELECT en.id,
-                   CASE WHEN (en.id IN (SELECT eid FROM own) AND NOT en.unnamed)
-                          OR (NOT en.hidden_from_players AND NOT en.audience_limited
-                              AND NOT en.unnamed
+                   CASE WHEN en.status = 'confirmed' AND en.merged_into IS NULL
+                         AND ((en.id IN (SELECT eid FROM own) AND NOT en.unnamed)
+                          OR (NOT en.hidden_from_players AND NOT en.unnamed
+                              AND NOT en.audience_limited
                               AND NOT EXISTS (
                                   SELECT 1 FROM memory_aliases s
                                   WHERE s.guild_id = g AND s.campaign_id = c
                                     AND s.entity_id = en.id AND s.secret
                                     AND s.status <> 'rejected'
                                     AND regexp_replace(lower(s.text), '[^[:alnum:]]', '', 'g')
-                                      = regexp_replace(lower(en.name), '[^[:alnum:]]', '', 'g')))
+                                      = regexp_replace(lower(en.name), '[^[:alnum:]]', '', 'g'))))
                         THEN en.name END AS nm
             FROM memory_entities en WHERE en.guild_id = g AND en.campaign_id = c
         )
@@ -228,7 +332,8 @@ WEB_MY_CHARACTERS_VIEW = (
                        WHERE m.guild_id = g AND m.campaign_id = c AND m.merged_into = e.id
                          AND m.unnamed AND m.name = f.text LIMIT 1), 'someone (name unknown)')
                    ELSE f.text
-               END
+               END,
+               e.id IN (SELECT eid FROM own), f.aid
         FROM memory_entities e
         LEFT JOIN first_other f ON f.eid = e.id
         WHERE e.guild_id = g AND e.campaign_id = c AND e.status = 'confirmed'
@@ -251,7 +356,8 @@ WEB_MY_CHARACTERS_VIEW = (
     BEGIN
         FOREACH f IN ARRAY ARRAY['dmbot_my_perspectives(BIGINT, TEXT)',
                                  'dmbot_my_known_entries(BIGINT, TEXT)',
-                                 'dmbot_my_known_relations(BIGINT, TEXT)'] LOOP
+                                 'dmbot_my_known_relations(BIGINT, TEXT)',
+                                 'dmbot_unnamed_label(TEXT, TEXT)'] LOOP
             EXECUTE format('ALTER FUNCTION %s SET search_path = pg_catalog, %I, pg_temp',
                            f, current_schema());
             EXECUTE format('REVOKE ALL ON FUNCTION %s FROM PUBLIC', f);

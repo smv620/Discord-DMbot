@@ -324,8 +324,15 @@ def _public_entry(row: Mapping[str, Any], own_name_secret: bool) -> bool:
     """An entry the players are shown by its main name: not hidden from them, not limited to some,
     not an unnamed person, and its main name is not a secret one (#3037 ruling: "a confirmed,
     non-secret main name" is a name every player knows)."""
-    return not (
-        row["hidden_from_players"] or row["audience_limited"] or row["unnamed"] or own_name_secret
+    return (
+        row["status"] == CONFIRMED
+        and row["merged_into"] is None
+        and not (
+            row["hidden_from_players"]
+            or row["audience_limited"]
+            or row["unnamed"]
+            or own_name_secret
+        )
     )
 
 
@@ -341,13 +348,22 @@ def _unnamed_label(row: Mapping[str, Any], anchor_name: str | None) -> str:
 
 
 async def names_for(
-    scope: Scope, viewer: Viewer, entity_ids: Sequence[str], *, public: bool = False
+    scope: Scope,
+    viewer: Viewer,
+    entity_ids: Sequence[str],
+    *,
+    public: bool = False,
+    texts_out: dict[str, str] | None = None,
 ) -> dict[str, str | None]:
     """`display_name` for each of these entries, read in the caller's scope (so a reader that
     already holds a snapshot names its entries from the same one). The other names are taken in
     the order the viewer's own characters learned them. An entry the players are shown by name is
     named by its main name; an unnamed person is named by a label built from what the viewer may
-    see. `public`: an entry nobody may name comes back as "someone" rather than None."""
+    see. A name belongs to the fact: a character that knows an entry only through a secret other
+    name (no row of its own for the entry) is shown that name even when the entry's main name is
+    public. `public`: an entry nobody may name comes back as "someone" rather than None.
+    `texts_out`, when given, is filled with every other name of these entries as this viewer may
+    read it (alias id -> text), so a reader never sends the stored text of a joined label."""
     seen = await visible_to(scope, viewer)
     entries = {
         str(r["id"]): r
@@ -420,7 +436,12 @@ async def names_for(
     def anchor_name(row: Mapping[str, Any]) -> str | None:
         """The name of what an unnamed person hangs off, if THIS viewer may read it."""
         anchor = anchor_rows.get(str(row["unnamed_anchor"])) if row["unnamed_anchor"] else None
-        if anchor is None or anchor["unnamed"]:
+        if (
+            anchor is None
+            or anchor["unnamed"]
+            or anchor["status"] != CONFIRMED
+            or anchor["merged_into"] is not None
+        ):
             return None
         known = seen.everything or (ENTRY, str(anchor["id"])) in seen.sureness
         if known or _public_entry(anchor, str(anchor["id"]) in anchor_secret):
@@ -465,11 +486,15 @@ async def names_for(
         )
         if row["unnamed"] and not seen.everything:
             main = _unnamed_label(row, anchor_name(row))
-        if _public_entry(row, own_name_secret):
+        if any(alias in seen.aliases for alias in own_name):
             shown: str | None = main
-        elif any(alias in seen.aliases for alias in own_name):
-            shown = main
         else:
             shown = display_name(seen, entity_id, main, others)
+            if shown is None and _public_entry(row, own_name_secret):
+                shown = main  # (a name every player may read, for a viewer who knows no other)
         out[entity_id] = SOMEONE if shown is None and public else shown
+        if texts_out is not None:
+            for a in names:
+                if str(a["entity_id"]) == entity_id:
+                    texts_out[str(a["id"])] = safe_text(entity_id, str(a["text"]))
     return out

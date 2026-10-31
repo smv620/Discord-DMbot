@@ -132,14 +132,8 @@ class TheNameEachViewerSees(JoinBase):
         return got[self.ken]
 
     async def test_who_knew_only_the_guard_is_shown_the_guard_and_never_ken(self) -> None:
-        await self.memory.set_hidden_from_players(GUILD_A, self.c, self.ken, True, source="dm")
         await self.join()
         self.assertEqual(await self.name_for(Viewer.character(self.sees_guard)), self.label)
-
-    async def test_a_ken_the_players_are_shown_is_named_ken_to_everyone(self) -> None:
-        """A confirmed entry shown to the players is named by its main name (#3037 ruling)."""
-        await self.join()
-        self.assertEqual(await self.name_for(Viewer.character(self.sees_guard)), "Ken")
 
     async def test_who_knew_ken_is_shown_ken(self) -> None:
         await self.join()

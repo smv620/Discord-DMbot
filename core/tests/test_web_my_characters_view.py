@@ -282,3 +282,72 @@ class TableAnswers(MyCharacters):
             self.g, self.one.id, Viewer.the_party(), [self.mira], public=True
         )
         self.assertEqual(shown[self.mira], "Mira Voss")
+
+
+class WhenKenIsPublic(MyCharacters):
+    """A name belongs to the fact (Supervisor, #3037): a character that knows Ken only through the
+    guard's name sees those facts on a separate node, even though Ken is shown to everyone."""
+
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        await self.sql(
+            "UPDATE memory_entities SET hidden_from_players = false WHERE id = %s", self.ken
+        )
+        self.ken_rook = await self.link("ally_of", self.ken, self.rook, "ken-rook")  # table-wide
+
+    async def test_the_guard_is_a_separate_node_carrying_the_moved_link(self) -> None:
+        await self.join()
+        got = await self.bob()
+        nodes = {n["id"]: n["name"] for n in got["nodes"]}
+        (guard_node,) = [i for i, n in nodes.items() if n == self.label]
+        self.assertTrue(guard_node.startswith("alias:"))
+        self.assertEqual(nodes[self.ken], "Ken")  # (the public Ken, with his public facts)
+        links = {x["id"]: (e["a"], e["b"]) for e in got["edges"] for x in e["links"]}
+        self.assertIn(self.guard_link, links)
+        self.assertEqual(set(links[self.guard_link]), {guard_node, self.mira})
+        edges = [
+            (e["a"], e["b"]) for e in got["edges"] for x in e["links"] if x["id"] == self.ken_rook
+        ]
+        self.assertEqual([set(pair) for pair in edges], [{self.ken, self.rook}])  # only on Ken
+
+    async def test_the_overview_has_the_separate_node_too(self) -> None:
+        await self.join()
+        got, _pages = await relationships._overview_door(
+            self.web, self.player, self.cref, None, 100, 100
+        )
+        names = {n["id"]: n["name"] for n in got["names"]}
+        self.assertEqual(names[self.ken], "Ken")
+        (guard_node,) = [i for i, n in names.items() if n == self.label]
+        self.assertIn(sorted([guard_node, self.mira]), [sorted(p) for p in got["pairs"]])
+
+    async def test_the_dm_sees_one_entry(self) -> None:
+        await self.join()
+        got = await self.graph(center=self.mira, hops=2)
+        self.assertEqual(self.names(got)[self.ken], "Ken")
+        self.assertNotIn(self.label, self.names(got).values())
+
+    async def test_a_character_that_knows_ken_by_name_sees_him_once(self) -> None:
+        await self.know(ENTRY, self.ken, [self.okra])
+        await self.join()
+        got = await self.bob()
+        self.assertNotIn(self.label, self.names(got).values())
+        links = {x["id"]: (e["a"], e["b"]) for e in got["edges"] for x in e["links"]}
+        self.assertEqual(set(links[self.guard_link]), {self.ken, self.mira})
+
+
+class ProposedAnchors(MyCharacters):
+    async def test_a_proposed_anchors_name_never_shows_in_a_label(self) -> None:
+        vex = await self.memory.add_entity(
+            self.g, self.one.id, type="character", name="Spy Vex", source=DM_SOURCE,
+            status="proposed", role="npc",
+        )  # fmt: skip
+        made = await self.memory.add_unnamed(
+            self.g, self.one.id, what="sister", role="sibling", anchor_id=vex.value.id
+        )
+        await self.sql(
+            "UPDATE memory_entities SET status = 'confirmed' WHERE id = %s", made.entity.id
+        )
+        await self.know(ENTRY, made.entity.id, [self.okra])
+        names = await self.overview_names(self.player)
+        self.assertEqual(names[str(made.entity.id)], "someone's sister (name unknown)")
+        self.assertNotIn("Vex", str(names))
