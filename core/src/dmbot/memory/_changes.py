@@ -217,8 +217,8 @@ BELIEFS = Table(
     "memory_beliefs",
     "id",
     ("id", "perspective_id", "relation_id", "confidence", "status", "session_at",
-     "evidence_ids", "seq", "recorded_at", "pinned"),
-    defaults={"pinned": False},  # the DM's 📌 100% truth (#2447)
+     "evidence_ids", "seq", "recorded_at", "pinned", "derived_from", "change_kind"),
+    defaults={"pinned": False, "derived_from": None, "change_kind": None},  # 📌 (#2447); lineage
 )  # fmt: skip
 # What a connection or a belief stands on, one typed link each (#2662): unlogged, because an
 # Undo must not bring back a line's reference once the line's words were removed (the link is

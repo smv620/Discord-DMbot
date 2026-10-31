@@ -122,14 +122,15 @@ async def move_sheets(conn: Conn, ids: tuple[int, str], keep_id: str, gone_id: s
 async def move_links(
     conn: Conn, ids: tuple[int, str], keep_id: str, gone_id: str, keep_type: str
 ) -> None:
-    """What a connection or a belief rests on, a clue or an event (#2412, memory_evidence), follows
-    a merge: a link to the merged name now points at the kept one. A link the kept name has
-    already (the same owner, the same kind) is dropped as the twin it is; one the kept name's kind
-    cannot be (a clue merged into a character) is dropped, since it would point at the wrong
-    kind of thing. Not in the change log, so `snapshot` keeps which links moved."""
+    """What a connection or a belief rests on (#2412, memory_evidence), a clue or an event, or the
+    entry that said it (a `source`, #3091), follows a merge: a link to the merged name now points
+    at the kept one. A link the kept name has already (the same owner, the same kind) is dropped
+    as the twin it is; a clue or event link the kept name's kind cannot be (a clue merged into a
+    character) is dropped, since it would point at the wrong kind of thing. Not in the change
+    log, so `snapshot` keeps which links moved."""
     await conn.execute(
         "DELETE FROM memory_evidence g USING memory_evidence k"
-        " WHERE g.guild_id = %s AND g.campaign_id = %s AND g.kind IN ('clue', 'event')"
+        " WHERE g.guild_id = %s AND g.campaign_id = %s AND g.kind IN ('clue', 'event', 'source')"
         " AND g.target_id = %s AND k.guild_id = g.guild_id AND k.campaign_id = g.campaign_id"
         " AND k.kind = g.kind AND k.target_id = %s"
         " AND k.relation_id IS NOT DISTINCT FROM g.relation_id"
@@ -143,7 +144,7 @@ async def move_links(
     )
     await conn.execute(
         "UPDATE memory_evidence SET target_id = %s WHERE guild_id = %s AND campaign_id = %s"
-        " AND kind IN ('clue', 'event') AND target_id = %s",
+        " AND kind IN ('clue', 'event', 'source') AND target_id = %s",
         (keep_id, *ids, gone_id),
     )
 
@@ -188,7 +189,7 @@ async def snapshot(
     gone_sheet, keep_sheet = sheets.get(gone_id), sheets.get(keep_id)
     cur = await conn.execute(
         "SELECT id FROM memory_evidence WHERE guild_id = %s AND campaign_id = %s"
-        " AND kind IN ('clue', 'event') AND target_id = %s ORDER BY id",
+        " AND kind IN ('clue', 'event', 'source') AND target_id = %s ORDER BY id",
         (*ids, gone_id),
     )
     return {

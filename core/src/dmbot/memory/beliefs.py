@@ -33,6 +33,8 @@ from dmbot.memory.evidence import CLAIM, LINE
 from dmbot.memory.models import (
     ACCUSATION,
     BELIEF_STATUSES,
+    BRANCH,
+    CHANGE_KINDS,
     CONFIRMED,
     DM,
     EVASION_UNDER_MAGIC,
@@ -43,10 +45,13 @@ from dmbot.memory.models import (
     MAGICALLY_VERIFIED,
     PARTY,
     PC_VIEW,
+    RETRACTION,
     REVEALED_FACT,
     SECRET_PLOT,
     THEORY,
+    TOLD,
     TRUTH,
+    UPDATE,
     Belief,
     MemoryRuleError,
     new_id,
@@ -61,7 +66,8 @@ def belief_of(row: dict[str, Any]) -> Belief:
     return Belief(
         row["id"], row["perspective_id"], row["relation_id"], float(row["confidence"]),
         row["status"], row["session_at"], tuple(row["evidence_ids"]), int(row["seq"]),
-        row["recorded_at"], bool(row.get("pinned", False)),
+        row["recorded_at"], bool(row.get("pinned", False)), row.get("derived_from"),
+        row.get("change_kind"),
     )  # fmt: skip
 
 
@@ -101,6 +107,42 @@ async def _newest(
     return newest
 
 
+BAD_LINEAGE = "That belief doesn't come from that one."
+NOT_A_SOURCE = "Pick someone from this campaign who said it."
+
+
+async def _check_lineage(
+    w: Changes,
+    perspective_id: str,
+    relation_id: str,
+    confidence: float,
+    derived_from: str | None,
+    change_kind: str | None,
+) -> None:
+    """Where a belief came from (#3091), checked before it is written. A change kind needs the
+    belief it comes from, in this campaign, and each kind has its shape: an `update` or a
+    `retraction` revises the same point of view's belief in the same connection (a retraction is
+    no longer held as fact); a `branch` is the same point of view's competing theory on ANOTHER
+    connection; `told` passes the same connection on from ANOTHER point of view."""
+    if derived_from is None and change_kind is None:
+        return
+    if derived_from is None or change_kind not in CHANGE_KINDS:
+        raise MemoryRuleError(BAD_LINEAGE)
+    earlier = await w.get(BELIEFS, derived_from)
+    if earlier is None:
+        raise MemoryRuleError(BAD_LINEAGE)
+    same_view = earlier["perspective_id"] == perspective_id
+    same_relation = earlier["relation_id"] == relation_id
+    shape = {
+        UPDATE: same_view and same_relation,
+        RETRACTION: same_view and same_relation and confidence < KNOWN,
+        BRANCH: same_view and not same_relation,
+        TOLD: same_relation and not same_view,
+    }[change_kind]
+    if not shape:
+        raise MemoryRuleError(BAD_LINEAGE)
+
+
 async def _add(
     w: Changes,
     perspective_id: str,
@@ -111,18 +153,29 @@ async def _add(
     session_at: int | None = None,
     pinned: bool | None = None,
     copy_from: str | None = None,
+    derived_from: str | None = None,
+    change_kind: str | None = None,
+    sources: Sequence[str] = (),
 ) -> dict[str, Any]:
     """The checked insert behind `believe_in` and `follow`. `pinned` (the DM's 📌, #2447): None
     keeps what the pair's last belief said, so a new belief never silently unpins.
     `copy_from`: the id of an earlier belief of this campaign whose evidence links this one
     carries on (a placeholder stays a placeholder); `evidence` is then that belief's old list.
-    Without it `evidence` is new and each item must be a claim or line of this campaign (#2662)."""
+    Without it `evidence` is new and each item must be a claim or line of this campaign (#2662).
+    `derived_from` and `change_kind`: the belief this one revises, and how (#3091).
+    `sources`: the entries of this campaign that said it (a `source` link each)."""
     if not 0.0 <= confidence <= 1.0:
         raise MemoryRuleError("A confidence runs from 0 to 1.")
     if status not in BELIEF_STATUSES:
         raise MemoryRuleError("That is not a kind of belief.")
     if len(evidence) > EVIDENCE_MAX or any(not e or len(e) > EVIDENCE_ID_MAX for e in evidence):
         raise MemoryRuleError("That evidence is not in the right shape.")
+    await _check_lineage(w, perspective_id, relation_id, confidence, derived_from, change_kind)
+    for who in dict.fromkeys(sources):
+        if not await evidence_links.resolves(
+            w.conn, w.guild_id, w.campaign_id, evidence_links.SOURCE, who
+        ):
+            raise MemoryRuleError(NOT_A_SOURCE)
     kinds: dict[str, str] = {}
     if copy_from is None:  # new evidence: each item a claim or a line of THIS campaign, or refused
         for item in dict.fromkeys(evidence):
@@ -153,6 +206,8 @@ async def _add(
             "seq": seq,
             "recorded_at": w.now,
             "pinned": bool(last[0]["pinned"]) if pinned is None and last else bool(pinned),
+            "derived_from": derived_from,
+            "change_kind": change_kind,
         },
     )
     if copy_from is not None:
@@ -167,6 +222,11 @@ async def _add(
     for item, kind in kinds.items():
         await evidence_links.add_in(
             w, kind=kind, target_id=item, belief_id=row["id"],
+            session_started_at=session_at, trusted=True,
+        )  # fmt: skip
+    for who in dict.fromkeys(sources):
+        await evidence_links.add_in(
+            w, kind=evidence_links.SOURCE, target_id=who, belief_id=row["id"],
             session_started_at=session_at, trusted=True,
         )  # fmt: skip
     return row
@@ -233,9 +293,13 @@ async def believe_in(
     *,
     evidence: Sequence[str] = (),
     session_at: int | None = None,
+    derived_from: str | None = None,
+    change_kind: str | None = None,
+    sources: Sequence[str] = (),
 ) -> Belief:
     """A perspective comes to believe a connection (or stops, at 0.0), inside an open write. Both
-    ends must be in this campaign; only the DM writes The truth."""
+    ends must be in this campaign; only the DM writes The truth. `derived_from`, `change_kind`
+    and `sources` say where the belief came from (#3091)."""
     perspective = await w.get(PERSPECTIVES, perspective_id)
     relation = await w.get(RELATIONS, relation_id)
     if perspective is None or relation is None:
@@ -253,7 +317,18 @@ async def believe_in(
         # own switch, and a guess is not recorded here.
         raise MemoryRuleError(NOT_A_REVEAL)
     return belief_of(
-        await _add(w, perspective_id, relation_id, confidence, status, evidence, session_at)
+        await _add(
+            w,
+            perspective_id,
+            relation_id,
+            confidence,
+            status,
+            evidence,
+            session_at,
+            derived_from=derived_from,
+            change_kind=change_kind,
+            sources=sources,
+        )
     )
 
 

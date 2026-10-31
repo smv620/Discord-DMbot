@@ -46,6 +46,7 @@ from dmbot.memory.checks import FLAG_KINDS
 from dmbot.memory.models import (
     ALIAS_KINDS,
     BELIEF_STATUSES,
+    CHANGE_KINDS,
     CLAIM_STATUSES,
     CONDITIONS,
     DESCRIPTION_MAX,
@@ -154,11 +155,12 @@ _CHOICES: dict[str, Sequence[str]] = {
     "edition": LINK_EDITIONS,
     "action": (FIX, KEEP),
     "source": SOURCES,
+    "change_kind": CHANGE_KINDS,
 }
 _IDS = {"id", "entity_id", "fact_id", "merged_into", "used_by", "subject_id", "object_id",
         "relation_id", "other_id", "from_set", "viewer_id", "holder_id", "toward_id",
         "perspective_id", "manipulated_by", "unnamed_anchor", "alias_id",
-        "via_alias_id"}  # fmt: skip
+        "via_alias_id", "derived_from"}  # fmt: skip
 _INTS = {"played_by", "speaker_id", "session_started_at", "decided_at", "created_at",
          "from_session_at", "to_session_at", "from_game_time", "to_game_time",
          "max_per_subject", "closed_at", "session_at", "recorded_at", "seq"}  # fmt: skip
@@ -171,6 +173,7 @@ _NULLABLE = {
     "to_game_time", "max_per_subject", "closed_at", "unique_item", "fact_id",
     "session_started_at", "decided_at", "said_as", "from_set", "session_at", "manipulated_by",
     "unnamed_anchor", "unnamed_role", "unnamed_what", "decided", "via_alias_id",
+    "derived_from", "change_kind",
 }  # fmt: skip
 
 
@@ -500,7 +503,8 @@ def _with_definition_fields(rows: list[Any]) -> list[Any]:
                 **raw,
             }
         elif isinstance(raw, dict) and raw.get("table") == "belief":
-            raw = {"pinned": False, **raw}  # from before the pin (#2447)
+            # from before the pin (#2447); from before lineage (#3091) no belief came from another
+            raw = {"pinned": False, "derived_from": None, "change_kind": None, **raw}
         elif isinstance(raw, dict) and raw.get("table") == "claim":
             raw = {"reading": None, **raw}  # from before readings (#2412)
         elif isinstance(raw, dict) and raw.get("table") == "alias":
@@ -809,13 +813,22 @@ def _tidy_evidence(by_tag: dict[str, list[dict[str, Any]]]) -> None:
     lines), and a claim, clue or event must be a row of this same file, else the link is a
     placeholder. A belief's old list and a claim's `lines` are not read from a file for the same
     reason (they hold line references, which name speakers)."""
+    held = {r["id"] for r in by_tag["belief"]}
     for row in by_tag["belief"]:
         row["evidence_ids"] = []
+        # a lineage link to a belief the file does not hold (or to itself) is a placeholder, and
+        # a link always says how (the database's rule); a file is never refused for it
+        if row["derived_from"] is not None and (
+            row["derived_from"] not in held or row["derived_from"] == row["id"]
+        ):
+            row["derived_from"] = None
     for row in by_tag["claim"]:  # an older file's references are not brought back (#2676)
         row["lines"] = []
     claims = {r["id"] for r in by_tag["claim"]}
     entity_kind = {r["id"]: r["type"] for r in by_tag["entity"]}
     for row in by_tag["evidence"]:
+        if row["kind"] == evidence.SOURCE and row["target_id"] not in entity_kind:
+            row["target_id"] = None  # (the entry it names is not in the file)
         kind, target = row["kind"], row["target_id"]
         if (
             kind == evidence.LINE

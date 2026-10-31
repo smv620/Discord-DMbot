@@ -824,6 +824,27 @@ the owner chooses it, one at a time.
   placeholder (a restored campaign has none of those lines). The health report counts links,
   placeholders, dangling and foreign links.
 
+**Where a belief came from: lineage and sources** (owner, 2026-10-31, #3091 part 1, migration 0297).
+- A belief row can say which earlier belief it came from (`derived_from`) and why (`change_kind`):
+  `update` (new evidence for the same point of view in the same connection), `retraction` (the same,
+  and no longer held as fact), `branch` (a competing theory of the same point of view on ANOTHER
+  connection, held beside the old one, never replacing it) or `told` (the same connection, passed on
+  from another point of view: "Tran believes it because Bruno told him"). Nothing else changes: the
+  newest `seq` of a (point of view, connection) pair is still the current belief, and there is never
+  more than one.
+- **A `source` link** is a kind of evidence (beside claim, line, clue, event) that points at the entry
+  that said something ("Advisor Morn told the party"). It is an entry of the same campaign, never
+  words.
+- **The DM's finder** answers "what rests on this?" for an entry or a belief: every current belief
+  whose evidence cites the entry as a source, or that came from such a belief through `derived_from`.
+  Only the DM asks; it returns ids and numbers, never a word of a line; nothing is changed
+  automatically. The DM decides which beliefs to change.
+- **Erasure:** when a person's lines are removed, lineage survives: a belief keeps `derived_from` and
+  its kind, and holds no words. If the earlier belief is deleted, the link becomes a placeholder
+  (`derived_from` cleared, the kind kept), like an evidence link. A merge moves a `source` link to the
+  kept entry. A backup carries both; a lineage link to a belief the file does not hold is a
+  placeholder.
+
 **Embeddings (meaning search).** Voyage AI (owner, 2026-10-24): `voyage-3.5` for embeddings and
 `rerank-2.5` for the second pass that picks what matters most. It is named on the privacy page as a
 processor before it is used.
