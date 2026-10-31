@@ -10,7 +10,7 @@ INVITE_SETTING = r"""
     -- link (docs/PLAN.md, "The D&D Beyond campaign invite"), set, changed or removed. `setting`
     -- also accepts 'dndbeyond_invite'; `value` is the link in its standard form, or empty to
     -- remove it. The link may be longer than the other settings' words, so the length limit is
-    -- 110 characters for this setting (the standard form is at most 106) and stays 40 for the
+    -- 110 characters for this setting (the standard form is at most 105) and stays 40 for the
     -- rest. The invite is the DM's own join link for their table and goes only to that server's
     -- players on a button; the row is gone after an hour and nothing logs it. No row changes: no
     -- backfill policy.

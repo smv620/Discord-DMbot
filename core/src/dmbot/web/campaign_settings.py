@@ -42,9 +42,8 @@ OPTIONAL_RULE = "optional_rule"  # a fourth choice: one optional rule on or off 
 CO_DM = "co_dm"  # a fifth: one game master added or removed (#2768)
 PAUSE = "pause"  # a sixth: the campaign paused or unpaused, by its owner (#2985)
 STORY_MODE = "story_mode"  # a seventh: the Shared story switch, off, watch or guide (#2985)
-DNDBEYOND_INVITE = (
-    "dndbeyond_invite"  # an eighth: the D&D Beyond invite link, or empty to remove it
-)
+# an eighth: the D&D Beyond invite link, or empty to remove it (#2985)
+DNDBEYOND_INVITE = "dndbeyond_invite"
 PERSON_ID = re.compile(r"^[1-9][0-9]{0,18}$")  # a Discord id: digits, never a name
 
 

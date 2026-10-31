@@ -124,6 +124,30 @@ describe("The D&D Beyond invite on the website", () => {
     expect(screen.getByText(words.now(LINK))).toBeTruthy();
   });
 
+  it("shows its own message for a paste the browser would call not a URL", () => {
+    const api = mockApi("table");
+    render(<InvitePanel api={api} campaignRef="100.cmp1" invite="" />);
+    fireEvent.click(screen.getByRole("button", { name: words.add }));
+    const form = screen.getByLabelText(words.label).closest("form")!;
+    expect(form.noValidate).toBe(true); // (else the browser's own bubble hides ours)
+    fireEvent.input(screen.getByLabelText(words.label), { target: { value: "www.dndbeyond.com/campaigns/join/abcd" } });
+    fireEvent.click(screen.getByRole("button", { name: words.save }));
+    expect(screen.getByText(words.notAnInvite)).toBeTruthy();
+    expect(screen.getByLabelText(words.label).getAttribute("aria-describedby")).toBe("invite-help");
+  });
+
+  it("a failure with no words from the bot still says what to do next", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const api = mockApi("table");
+    api.campaignSettingAnswer = async () => ({ state: "failed", error: "failed", setting: "dndbeyond_invite", value: "", note: "" });
+    render(<InvitePanel api={api} campaignRef="100.cmp1" invite="" />);
+    fireEvent.click(screen.getByRole("button", { name: words.add }));
+    fireEvent.input(screen.getByLabelText(words.label), { target: { value: LINK } });
+    fireEvent.click(screen.getByRole("button", { name: words.save }));
+    await settle();
+    expect(await screen.findByText(new RegExp(words.failedNext))).toBeTruthy();
+  });
+
   it("Cancel closes the form and sends nothing", () => {
     const api = mockApi("table");
     render(<InvitePanel api={api} campaignRef="100.cmp1" invite="" />);

@@ -103,7 +103,7 @@ export default function InvitePanel({ api, campaignRef, invite, onChanged }: { a
           stage={wait.state === "done" ? words.done[kind] : wait.state === "working" ? words.working[kind] : words.waiting[kind]}
           startedAt={wait.since}
           state={wait.state === "failed" ? "failed" : wait.state === "done" ? "done" : "running"}
-          reason={wait.state === "failed" ? `${words.failed} ${plain(wait.note)} ${words.stillNow(current)}`.replace(/\s+/g, " ").trim() : null}
+          reason={wait.state === "failed" ? `${words.failed} ${plain(wait.note) || words.failedNext} ${words.stillNow(current)}`.replace(/\s+/g, " ").trim() : null}
         />
       )}
       {!editing && (
@@ -119,12 +119,12 @@ export default function InvitePanel({ api, campaignRef, invite, onChanged }: { a
         </p>
       )}
       {editing && (
-        <form class="stack" onSubmit={save}>
+        <form class="stack" onSubmit={save} noValidate>
           <label>
             {words.label}
-            <input type="url" ref={field} value={text} maxLength={200} autocomplete="off" onInput={(e) => setText((e.currentTarget as HTMLInputElement).value)} />
+            <input type="url" ref={field} value={text} maxLength={200} autocomplete="off" aria-describedby="invite-help" onInput={(e) => setText((e.currentTarget as HTMLInputElement).value)} />
           </label>
-          <p class="small muted">{words.help}</p>
+          <p class="small muted" id="invite-help">{words.help}</p>
           <p>
             <button type="submit" class="button" disabled={busy}>{words.save}</button>{" "}
             <button type="button" class="button secondary" onClick={close}>{words.cancel}</button>
