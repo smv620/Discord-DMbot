@@ -22,6 +22,7 @@ from psycopg.types.json import Jsonb
 
 from dmbot.campaigns.models import CampaignError
 from dmbot.db import Conn, Database
+from dmbot.timebot import calendar as calendar_mod
 from dmbot.timebot import clock as game
 from dmbot.timebot import split
 from dmbot.timebot.calendar import Calendar, DayOne
@@ -31,6 +32,7 @@ from dmbot.timebot.split import Group
 NOT_A_DM = "Only this campaign's DMs can use the clock."
 DAMAGED = "That backup file's game clock is damaged, so nothing was restored."
 NO_CLOCK = "Set the game clock first (⚙️ Manage DMbot, then Game clock)."
+BAD_CALENDAR = "That is not a date this calendar has. Check the year, the month and the day."
 GONE = "That group is gone. The party may have rejoined, so check the clock message."
 MOVED_ON = (
     "The clocks have moved on since, so there is nothing to undo. "
@@ -284,19 +286,38 @@ class ClockStore:
             return Calendar()
 
     async def set_calendar(
-        self, guild_id: int, campaign_id: str, user_id: int, calendar: Calendar
+        self,
+        guild_id: int,
+        campaign_id: str,
+        user_id: int,
+        kind: str,
+        *,
+        year: int | None = None,
+        name: str | None = None,
+        day: int | None = None,
     ) -> None:
-        """Choose the campaign's calendar. Only a DM of the campaign, and only once it has a
-        clock (a calendar gives a clock's days their words). Raises CampaignError otherwise."""
+        """Choose the campaign's calendar from what a picker gives: `kind` ("days" or "harptos")
+        and, for Harptos, the date of Day 1 as a `year`, a month or festival `name` and a `day`
+        (none for a festival). Only a DM of the campaign, and only once it has a clock (a calendar
+        gives a clock's days their words). Raises CampaignError for any of these, or for a value
+        the calendar has not got; a refused value leaves the row as it was."""
         async with self._db.guild(guild_id) as conn:
             if not await self._is_dm(conn, guild_id, campaign_id, user_id):
                 raise CampaignError(NOT_A_DM)
-            start = calendar.start
+            try:
+                start: DayOne | None = None
+                if kind == calendar_mod.HARPTOS:
+                    if year is None or name is None:
+                        raise ValueError("day one")
+                    start = calendar_mod.day_one(year, name, day)
+                chosen = Calendar(kind, start)  # (refuses a kind the calendar has not got)
+            except (ValueError, TypeError, AttributeError):
+                raise CampaignError(BAD_CALENDAR) from None
             cur = await conn.execute(
                 "UPDATE game_clocks SET calendar_kind = %s, calendar_year = %s,"
                 " calendar_ordinal = %s WHERE guild_id = %s AND campaign_id = %s",
                 (
-                    calendar.kind,
+                    chosen.kind,
                     None if start is None else start.year,
                     None if start is None else start.ordinal,
                     guild_id,

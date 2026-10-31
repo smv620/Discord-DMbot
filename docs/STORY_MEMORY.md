@@ -818,7 +818,10 @@ backfill of `minute` under `migrate_backfill` must open this table's row-level s
 and the day of that year, 0 being Hammer 1), never a real-world timestamp. `timebot/calendar.py` turns a
 game minute into "Day 12" or "Flamerule 14th, 1492 DR" (365 days a year, 366 with Shieldmeet when the
 year divides by 4); dates are counted in whole days from Day 1, so a flashback stays on the one timeline.
-`ClockStore.set_calendar` is a DM's alone and needs a clock; the setting rides in the clock's backup, and
+`ClockStore.set_calendar(kind, year, name, day)` takes what a picker sends and is a DM's alone and needs a
+clock; a value the calendar has not got (a day that is not exactly a whole number, a day given with a festival,
+Shieldmeet in a common year) is refused whole and leaves the row as it was; a negative game minute has no
+date at all (an error in both modes, never "Day 0"); the setting rides in the clock's backup, and
 a file without one means Day N. A date the calendar has not got (a leap day in a common year) reads as
 Day N, never an error. The DM's picker (Discord and the website) is a later slice.
 

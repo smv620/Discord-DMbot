@@ -27,6 +27,36 @@ class TheYear(unittest.TestCase):
             cal.DayOne(0, 0)
 
 
+class Inputs(unittest.TestCase):
+    def test_a_day_one_takes_exactly_ints(self) -> None:
+        for year, ordinal in ((True, 3), (1492, True), (1492.0, 3), (1492, 3.0), ("1492", 3)):
+            with self.subTest((year, ordinal)), self.assertRaises(ValueError):
+                cal.DayOne(year, ordinal)  # type: ignore[arg-type]
+
+    def test_a_float_or_bool_day_or_year_is_refused_not_rounded(self) -> None:
+        for year, day in ((1492, 14.5), (1492, True), (1492.0, 14), (True, 14)):
+            with self.subTest((year, day)), self.assertRaises(ValueError):
+                cal.day_one(year, "Flamerule", day)  # type: ignore[arg-type]
+
+    def test_the_day_defaults_to_none_a_month_starts_on_its_first_and_a_festival_takes_none(
+        self,
+    ) -> None:
+        self.assertEqual(cal.day_one(1492, "Flamerule"), cal.day_one(1492, "Flamerule", 1))
+        cal.day_one(1492, "Midsummer")
+        for day in (1, 14, 0):
+            with self.subTest(day), self.assertRaises(ValueError):
+                cal.day_one(1492, "Midsummer", day)  # (it was silently ignored before)
+
+    def test_a_negative_minute_is_no_time_in_either_mode(self) -> None:
+        start = cal.day_one(1492, "Flamerule", 14)
+        for kind, given in ((cal.DAYS, None), (cal.HARPTOS, start)):
+            for minute in (-1, -MINUTES_PER_DAY, True, 1.5):
+                with self.subTest((kind, minute)), self.assertRaises(ValueError):
+                    cal.date_words(minute, kind, given)  # type: ignore[arg-type]
+        with self.assertRaises(ValueError):
+            cal.Calendar(cal.HARPTOS, start).words(-1)
+
+
 class HarptosDates(unittest.TestCase):
     def test_day_one_reads_as_its_own_date(self) -> None:
         start = cal.day_one(1492, "Flamerule", 14)
