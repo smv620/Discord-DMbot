@@ -20,10 +20,12 @@ from dmbot.memory.models import KNOWN_LIE, SUSPECTED_LIE
 @dataclass(frozen=True, slots=True)
 class Lie:
     """One current belief that someone lied. `believer`: the character who thinks so (None: The
-    truth, which confirms it); `liar`: the character who lied."""
+    truth, which confirms it); `liar`: the character who lied, or None when who it was is no longer
+    known (the entry was erased or merged into something that is not a character): the caller says
+    "someone, no longer known"."""
 
     believer: str | None
-    liar: str
+    liar: str | None
     relation_id: str
     status: str
     confidence: float
@@ -31,7 +33,7 @@ class Lie:
 
 _SQL = """
 SELECT p.entity_id AS believer, p.kind AS view, b.relation_id, b.status, b.confidence,
-       e.target_id AS liar
+       x.id AS liar
 FROM memory_beliefs b
 JOIN memory_perspectives p ON p.guild_id = b.guild_id AND p.campaign_id = b.campaign_id
                           AND p.id = b.perspective_id
@@ -39,12 +41,14 @@ JOIN memory_relations r ON r.guild_id = b.guild_id AND r.campaign_id = b.campaig
                        AND r.id = b.relation_id AND r.status = ANY(%(statuses)s)
                        AND r.to_session_at IS NULL
 JOIN memory_evidence e ON e.guild_id = b.guild_id AND e.campaign_id = b.campaign_id
-                      AND e.belief_id = b.id AND e.kind = 'source' AND e.target_id IS NOT NULL
+                      AND e.belief_id = b.id AND e.kind = 'source'
+LEFT JOIN memory_entities x ON x.guild_id = e.guild_id AND x.campaign_id = e.campaign_id
+                           AND x.id = e.target_id AND x.type = 'character'
 WHERE b.guild_id = %(g)s AND b.campaign_id = %(c)s AND b.status = ANY(%(lies)s)
-  AND b.seq = (SELECT max(x.seq) FROM memory_beliefs x WHERE x.guild_id = b.guild_id
-               AND x.campaign_id = b.campaign_id AND x.perspective_id = b.perspective_id
-               AND x.relation_id = b.relation_id)
-ORDER BY b.relation_id, p.entity_id NULLS FIRST, e.target_id
+  AND b.seq = (SELECT max(n.seq) FROM memory_beliefs n WHERE n.guild_id = b.guild_id
+               AND n.campaign_id = b.campaign_id AND n.perspective_id = b.perspective_id
+               AND n.relation_id = b.relation_id)
+ORDER BY b.relation_id, p.entity_id NULLS FIRST, x.id NULLS FIRST
 """
 
 
@@ -61,7 +65,7 @@ async def _read(scope: Scope, statuses: list[str]) -> list[Lie]:
     return [
         Lie(
             None if r["believer"] is None else str(r["believer"]),
-            str(r["liar"]),
+            None if r["liar"] is None else str(r["liar"]),
             str(r["relation_id"]),
             str(r["status"]),
             float(r["confidence"]),
@@ -87,5 +91,5 @@ async def lies_my_characters_think(scope: Scope, character_ids: list[str]) -> li
         for lie in await _read(scope, ["confirmed"])
         if lie.believer in mine
         and seen.knows(gate.CONNECTION, lie.relation_id)
-        and seen.knows(gate.ENTRY, lie.liar)
+        and (lie.liar is None or seen.knows(gate.ENTRY, lie.liar))
     ]

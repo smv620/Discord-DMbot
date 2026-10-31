@@ -70,6 +70,7 @@ from dmbot.memory.models import (
     SOURCES,
     THREAD_STATES,
     is_id,
+    new_id,
 )
 from dmbot.memory.ontology import (
     ACTIVE,
@@ -435,10 +436,19 @@ def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
     # point of view the file holds; anything else is damage. A row for a point of view that is not
     # a character's cannot exist (the party is never a knower), so it is damage too.
     _check_knowers(by_tag, views)
-    # A belief that someone lied names who: a source link beside it, as the writer requires (#3091)
+    # A belief that someone lied names who: a source link beside it, as the writer requires (#3091).
+    # One that lost it (an Undo and a redo once did) loads with a placeholder liar, "someone, no
+    # longer known", never a reason to refuse the file.
     told = {r["belief_id"] for r in by_tag["evidence"] if r["kind"] == evidence.SOURCE}
-    if any(b["status"] in LIE_STATUSES and b["id"] not in told for b in by_tag["belief"]):
-        raise CampaignError(DAMAGED)
+    for b in by_tag["belief"]:
+        if b["status"] in LIE_STATUSES and b["id"] not in told:
+            by_tag["evidence"].append(
+                {
+                    "table": "evidence", "id": new_id(), "relation_id": None, "belief_id": b["id"],
+                    "kind": evidence.SOURCE, "target_id": None, "session_started_at": None,
+                    "added_at": 0,
+                }
+            )  # fmt: skip
     # A row asleep waits for entries of this campaign: a name in the mark that is not an entry of
     # the file is dropped from it (a row left with none is awake), never a reason to refuse.
     entry_ids = {r["id"] for r in by_tag["entity"]}

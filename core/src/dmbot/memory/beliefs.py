@@ -114,7 +114,10 @@ BAD_LINEAGE = "That belief doesn't come from that one."
 NOT_A_SOURCE = "Pick someone from this campaign who said it."
 PINNED_RETRACTION = "That is pinned as 100% true. Unpin it first, then take it back."
 SAY_WHO_LIED = "Say which character lied."
-NOT_A_LIE = "A lie is held as false: sure it was a lie, or not sure but doubting it."
+SUSPECTED_MAX = 0.5  # a suspected lie is doubted, never leaned towards (the accusation rule: 0.5)
+NOT_A_LIE = (
+    "A lie is believed false: a sure lie is 0%, a suspected one is above 0% and at most 50%."
+)
 LIE_NOT_HERE = "The players' view as a whole can't hold a lie; a character can."
 
 
@@ -158,7 +161,7 @@ async def _check_lie(w: Changes, status: str, confidence: float, sources: Sequen
     connection is TRUE), and it names who lied: characters of this campaign, never nobody."""
     if status == KNOWN_LIE and confidence != 0.0:
         raise MemoryRuleError(NOT_A_LIE)
-    if status == SUSPECTED_LIE and not 0.0 < confidence < KNOWN:
+    if status == SUSPECTED_LIE and not 0.0 < confidence <= SUSPECTED_MAX:
         raise MemoryRuleError(NOT_A_LIE)
     liars = set(sources)
     if not liars:
@@ -346,6 +349,11 @@ async def believe_in(
         raise MemoryRuleError(LIE_NOT_HERE)
     if perspective["kind"] == TRUTH and status == SUSPECTED_LIE:
         raise MemoryRuleError(NOT_A_LIE)  # (The truth knows: it confirms a lie, it never suspects)
+    if perspective["kind"] == TRUTH:
+        held = (await _newest(w, [relation_id])).get((relation_id, perspective_id))
+        if held is not None and held["pinned"] and (confidence < KNOWN or status in LIE_STATUSES):
+            # 📌 is the DM's word that it is 100% true, whatever the lineage of the write
+            raise MemoryRuleError(PINNED_RETRACTION)
     if perspective["kind"] == PARTY and (
         confidence < KNOWN
         or relation["secret"]

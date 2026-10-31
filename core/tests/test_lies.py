@@ -6,7 +6,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from dmbot.campaigns import CampaignError
 from dmbot.memory.backup import MemorySection
 from dmbot.memory.models import CONFIRMED, MemoryRuleError
 from tests import test_moved_known as moved
@@ -45,18 +44,25 @@ class WritingALie(Lies):
             with self.subTest(confidence=confidence), self.assertRaises(MemoryRuleError):
                 await self.think(view, "known_lie", confidence, [self.valyra])
 
-    async def test_a_suspected_lie_is_between_sure_and_not_sure(self) -> None:
+    async def test_a_suspected_lie_is_above_nothing_and_at_most_half(self) -> None:
         view = await self.pc_view()
         made = await self.think(view, "suspected_lie", 0.5, [self.valyra])
         self.assertEqual(made.value.confidence, 0.5)
-        for confidence in (0.0, 1.0):
-            with self.subTest(confidence=confidence), self.assertRaises(MemoryRuleError):
+        for confidence in (0.0, 0.51, 1.0):
+            with self.subTest(confidence=confidence), self.assertRaises(MemoryRuleError) as why:
                 await self.think(view, "suspected_lie", confidence, [self.valyra])
+            self.assertEqual(
+                str(why.exception),
+                "A lie is believed false: a sure lie is 0%, a suspected one is above 0% and at "
+                "most 50%.",
+            )
 
     async def test_it_must_name_a_character_of_this_campaign(self) -> None:
         view = await self.pc_view()
         keep = await self.add("The Keep", type="place", status=CONFIRMED)
-        for sources in ([], [keep], ["f" * 32]):
+        elsewhere = (await self.campaigns.create(GUILD_A, "Elsewhere", 5)).id
+        stranger = await self.add("Pike", campaign=elsewhere, type="character", status=CONFIRMED)
+        for sources in ([], [keep], ["f" * 32], [stranger]):
             with self.subTest(sources=sources), self.assertRaises(MemoryRuleError):
                 await self.think(view, "suspected_lie", 0.5, sources)
 
@@ -78,6 +84,78 @@ class WritingALie(Lies):
         assert made.batch is not None
         await self.memory.undo(GUILD_A, self.c, made.batch, source="dm")
         self.assertEqual(await self.memory.lies(GUILD_A, self.c, source="dm"), [])
+
+
+class MoreRules(Lies):
+    async def test_a_pinned_connection_takes_no_lie_and_nothing_below_a_hundred_on_the_truth(
+        self,
+    ) -> None:
+        await self.memory.update_relation(GUILD_A, self.c, self.rel, source="dm", secret=False)
+        await self.memory.pin(GUILD_A, self.c, self.rel, True, source="dm")
+        for status, confidence, sources in (
+            ("known_lie", 0.0, [self.valyra]),
+            ("false_evidence", 0.0, []),
+            ("theory", 0.5, []),
+        ):
+            with self.subTest(status=status), self.assertRaises(MemoryRuleError) as why:
+                await self.think(self.truth, status, confidence, sources)
+            self.assertIn("Unpin it first", str(why.exception))
+        await self.memory.pin(GUILD_A, self.c, self.rel, False, source="dm")
+        done = await self.think(self.truth, "known_lie", 0.0, [self.valyra])
+        self.assertEqual(done.value.status, "known_lie")
+
+    async def test_an_npcs_point_of_view_can_hold_a_lie(self) -> None:
+        await self.memory.set_connection_knowers(GUILD_A, self.c, self.rel, [self.pc], source="dm")
+        await self.memory.set_statement_knowers(
+            GUILD_A, self.c, "connection", self.rel, {self.captain: 1.0}, source="dm"
+        )
+        view = next(
+            p.id for p in await self.memory.perspectives(GUILD_A, self.c)
+            if p.entity_id == self.captain
+        )  # fmt: skip
+        made = await self.think(view, "known_lie", 0.0, [self.valyra])
+        self.assertEqual(made.value.status, "known_lie")
+
+    async def test_a_reworded_connection_keeps_the_lie_and_who_lied(self) -> None:
+        view = await self.pc_view()
+        await self.memory.update_relation(
+            GUILD_A, self.c, self.rel, source="dm", status="confirmed"
+        )
+        await self.think(view, "suspected_lie", 0.4, [self.valyra])
+        await self.memory.change_relation_words(
+            GUILD_A, self.c, self.rel, "enemy_of", "", source="dm"
+        )
+        lies = await self.memory.lies(GUILD_A, self.c, source="dm")
+        self.assertEqual([(lie.liar, lie.status) for lie in lies], [(self.valyra, "suspected_lie")])
+        self.assertNotEqual(lies[0].relation_id, self.rel)  # (on the new connection)
+
+
+class UndoAndRedo(Lies):
+    async def test_a_lie_undone_and_redone_still_names_who_lied(self) -> None:
+        view = await self.pc_view()
+        made = await self.think(view, "known_lie", 0.0, [self.valyra])
+        assert made.batch is not None
+        undone = await self.memory.undo(GUILD_A, self.c, made.batch, source="dm")
+        self.assertEqual(await self.memory.lies(GUILD_A, self.c, source="dm"), [])
+        assert undone.batch is not None
+        await self.memory.undo(GUILD_A, self.c, undone.batch, source="dm")  # redo
+        got = await self.memory.lies(GUILD_A, self.c, source="dm")
+        self.assertEqual([(lie.liar, lie.status) for lie in got], [(self.valyra, "known_lie")])
+
+    async def test_a_campaign_that_went_through_it_still_backs_up_and_loads(self) -> None:
+        view = await self.pc_view()
+        made = await self.think(view, "known_lie", 0.0, [self.valyra])
+        assert made.batch is not None
+        undone = await self.memory.undo(GUILD_A, self.c, made.batch, source="dm")
+        assert undone.batch is not None
+        await self.memory.undo(GUILD_A, self.c, undone.batch, source="dm")
+        async with self.db.guild(GUILD_A) as conn:
+            rows = await MemorySection().dump(conn, GUILD_A, self.c)
+        copy = (await self.campaigns.create(GUILD_A, "Copy", 7)).id
+        async with self.db.guild(GUILD_A) as conn:
+            await MemorySection().load(conn, GUILD_A, copy, rows)
+        kept = await self.memory.lies(GUILD_A, copy, source="dm")
+        self.assertEqual([lie.status for lie in kept], ["known_lie"])
 
 
 class ReadingLies(Lies):
@@ -140,7 +218,7 @@ class Backups(Lies):
         kept = await self.memory.lies(GUILD_A, copy, source="dm")
         self.assertEqual([(lie.liar, lie.status) for lie in kept], [(self.valyra, "suspected_lie")])
 
-    async def test_a_lie_without_a_source_in_a_file_is_refused_as_damaged(self) -> None:
+    async def test_a_lie_without_a_liar_in_a_file_loads_with_a_placeholder(self) -> None:
         view = await self.pc_view()
         await self.think(view, "suspected_lie", 0.5, [self.valyra])
         rows = [
@@ -148,7 +226,8 @@ class Backups(Lies):
             for r in await self.rows()
             if not (r.get("table") == "evidence" and r["kind"] == "source")
         ]
-        copy = (await self.campaigns.create(GUILD_A, "Damaged", 7)).id
+        copy = (await self.campaigns.create(GUILD_A, "Lost", 7)).id
         async with self.db.guild(GUILD_A) as conn:
-            with self.assertRaises(CampaignError):
-                await MemorySection().load(conn, GUILD_A, copy, rows)
+            await MemorySection().load(conn, GUILD_A, copy, rows)
+        kept = await self.memory.lies(GUILD_A, copy, source="dm")
+        self.assertEqual([(lie.liar, lie.status) for lie in kept], [(None, "suspected_lie")])
