@@ -12,32 +12,33 @@ from dmbot.migrations._shared import (
 
 # The players' view of the graph used to be the table's: what the flags show everyone. A player
 # also knows things their own characters were told (a secret connection, an entry under a secret
-# other name), and after "the guard at the gate" is joined with "Ken" the character who knew only
-# the guard knows the entry only as that. So, for a player who is not seeing everything (a DM's full
-# view and a peek behind the DM screen are untouched), the two doors also list:
+# other name). So, for a player who is not seeing everything (a DM's full view, a DM's Players View
+# and a peek behind the DM screen are untouched), the two doors also list:
 #   - an entry one of THEIR OWN characters knows (a row in `memory_knowers` for the entry, or for a
-#     secret other name of it), named as that character knows it: the main name only if a character
-#     of theirs knows the entry under its own name, else the first other name they learned;
+#     secret other name of it), named as that character knows it: the main name only if a
+#     character of theirs knows the entry under its own name, else the first other name they
+#     learned;
 #   - a connection one of their characters knows, when both its ends are shown to them. A
 #     connection that touches such an entry is shown only if a character of theirs knows it: the
 #     table-wide connections of a hidden entry never come with it.
+# A name belongs to the fact (Supervisor, #3037): when a join moves a connection it records the
+# secret other name the connection came through (`memory_relations.via_alias_id`). A character
+# that holds a row on that name sees those connections on that name's OWN node ("the guard at the
+# gate", id `alias:<name id>`), whatever rows it also holds for the main entry: a character that
+# knows both sees two people. The facts about the entry itself still show on its main name. The
+# DM sees one entry; when the DM makes the name not secret, the connections fold into one for
+# everyone. Telling one character "the guard was Ken" is a later feature.
 # Only the signed-in player's own characters count (`played_by`), never another player's, and
 # nothing reaches an anonymous reader (a shared link has no signed-in player). An entry the flags
 # already show keeps the name everyone sees. The helpers are internal: they are not given to the
 # website's role, and the doors (SECURITY DEFINER) are the only callers (they check the caller's
 # server first; the helpers do not, so they must stay unreachable from outside). The SQL reads only
-# what a character's own rows grant (an entry row, or a row on a secret other name or a
-# connection); `gate.visible_to` also honours groups, self-knowledge and entries a known statement
-# names, so the website may show a player a little less than the Python readers do, never more.
-# A connection's free-text `detail` is the DM's own note: a player gets it only when neither end
-# is shown to them under another name.
-# A name belongs to the fact (Supervisor, #3037): a character that knows an entry only through a
-# secret other name, with no row of its own for the entry, sees every fact it knows through that
-# name on a SEPARATE node ("the guard at the gate"), even when the entry's main name is public;
-# the facts about the public entry (the ones everybody knows) still show on its main name. The DM
-# sees one entry.
+# what a character's own rows grant; `gate.visible_to` also honours groups, self-knowledge and
+# entries a known statement names, so the website may show a player a little less than the Python
+# readers do, never more. A connection's free-text `detail` is the DM's own note: a player gets it
+# only when neither end is shown to them under another name.
 # The doors are read back from the database as they are and widened, each anchor found exactly
-# once (a drift stops the migration), as 0281 does. No table changes, no rows change.
+# once (a drift stops the migration), as 0281 does. One column is added; no row changes.
 _COMMENT = "        -- The connections the caller may see, worked out once"
 _COMMENT += " (every use below reads this list)."
 _SHARED_SWAPS = (
@@ -52,15 +53,14 @@ _SHARED_SWAPS = (
         "                vis || ARRAY(SELECT m.entity_id\n"
         "                             FROM dmbot_my_known_entries(g, c) m)) x);\n"
         "            my_rels := ARRAY(SELECT r FROM dmbot_my_known_relations(g, c) r);\n"
-        "            SELECT COALESCE(jsonb_object_agg(m.entity_id, jsonb_build_object(\n"
-        "                       'alias', m.alias_id, 'name', m.shown_name)), '{}'::jsonb)\n"
-        "            INTO split FROM dmbot_my_known_entries(g, c) m\n"
-        "            WHERE m.entity_id = ANY (flag_vis) AND NOT m.own;\n"
+        "            SELECT COALESCE(jsonb_object_agg(n.alias_id, jsonb_build_object(\n"
+        "                       'entity', n.entity_id, 'alias', n.alias_id,\n"
+        "                       'name', n.shown_name, 'kind', n.kind)), '{}'::jsonb)\n"
+        "            INTO split FROM dmbot_my_alias_nodes(g, c) n;\n"
         "            split_rels := ARRAY(SELECT r.id FROM memory_relations r\n"
-        "                WHERE r.guild_id = g AND r.campaign_id = c AND r.id = ANY (my_rels)\n"
+        "                WHERE r.guild_id = g AND r.campaign_id = c AND r.status = 'confirmed'\n"
         "                  AND (r.secret OR r.unrevealed)\n"
-        "                  AND (split->>r.subject_id IS NOT NULL\n"
-        "                       OR split->>r.object_id IS NOT NULL));\n"
+        "                  AND split->>r.via_alias_id IS NOT NULL);\n"
         "            my_rels := ARRAY(SELECT x FROM unnest(my_rels) x\n"
         "                             WHERE NOT (x = ANY (split_rels)));\n"
         "        END IF;\n" + _COMMENT,
@@ -120,8 +120,10 @@ _KIND = (
 _VIRTUAL_EDGES = (
     "SELECT jsonb_agg(jsonb_build_object(\n"
     "    'id', r.id,\n"
-    "    'a', COALESCE('alias:' || (split->r.subject_id->>'alias'), r.subject_id),\n"
-    "    'b', COALESCE('alias:' || (split->r.object_id->>'alias'), r.object_id),\n"
+    "    'a', CASE WHEN r.subject_id = split->r.via_alias_id->>'entity'\n"
+    "              THEN 'alias:' || r.via_alias_id ELSE r.subject_id END,\n"
+    "    'b', CASE WHEN r.object_id = split->r.via_alias_id->>'entity'\n"
+    "              THEN 'alias:' || r.via_alias_id ELSE r.object_id END,\n"
     "    'predicate', r.predicate, 'detail', '', 'directional', r.directional,\n"
     "    'secret', r.secret, 'at', r.created_at, 'held', NULL, 'knownBy', NULL,\n"
     "    'decided', NULL, 'revealed', false, 'pinned', false) ORDER BY r.created_at, r.id)\n"
@@ -129,18 +131,16 @@ _VIRTUAL_EDGES = (
     "WHERE r.guild_id = g AND r.campaign_id = c AND r.id = ANY (split_rels)\n"
     "  AND r.status = 'confirmed' AND r.to_session_at IS NULL AND r.predicate <> 'led_to'\n"
     "  AND r.source NOT IN ('plan', 'story_plan')\n"
-    "  AND (split->>r.subject_id IS NOT NULL OR r.subject_id = ANY (%(far)s))\n"
-    "  AND (split->>r.object_id IS NOT NULL OR r.object_id = ANY (%(far)s))"
+    "  AND (r.subject_id = split->r.via_alias_id->>'entity' OR r.subject_id = ANY (%(far)s))\n"
+    "  AND (r.object_id = split->r.via_alias_id->>'entity' OR r.object_id = ANY (%(far)s))"
 )
 _VIRTUAL_NODES = (
-    "SELECT jsonb_agg(jsonb_build_object('id', 'alias:' || (s.value->>'alias'),\n"
-    "    'name', s.value->>'name', 'revealed', true, 'kind', " + _KIND + ",\n"
+    "SELECT jsonb_agg(jsonb_build_object('id', 'alias:' || s.key,\n"
+    "    'name', s.value->>'name', 'revealed', true, 'kind', s.value->>'kind',\n"
     "    'quests', NULL, 'secret', NULL) ORDER BY s.value->>'name', s.key)\n"
     "FROM jsonb_each(split) s\n"
-    "JOIN memory_entities e ON e.guild_id = g AND e.campaign_id = c AND e.id = s.key\n"
     "WHERE EXISTS (SELECT 1 FROM jsonb_array_elements(vedges) v\n"
-    "              WHERE v->>'a' = 'alias:' || (s.value->>'alias')\n"
-    "                 OR v->>'b' = 'alias:' || (s.value->>'alias'))"
+    "              WHERE v->>'a' = 'alias:' || s.key OR v->>'b' = 'alias:' || s.key)"
 )
 
 _GRAPH_TAIL = (
@@ -153,6 +153,9 @@ _GRAPH_TAIL = (
     "            out := jsonb_set(out, '{edges}', (out->'edges') || vedges);\n"
     "            out := jsonb_set(out, '{names}',\n"
     "                to_jsonb((out->>'names')::int + jsonb_array_length(vnodes)));\n"
+    "        END IF;\n"
+    "        IF center_alias IS NOT NULL THEN\n"
+    "            out := jsonb_set(out, '{center}', to_jsonb(center_alias));\n"
     "        END IF;\n"
     "        RETURN out;\n    END",
 )
@@ -187,7 +190,28 @@ _OVERVIEW_TAIL = (
 )
 
 _RELATIONSHIPS_SWAPS = (
-    ("        kept TEXT[];\n    BEGIN", "        kept TEXT[];\n" + _DECLARE + "    BEGIN"),
+    (
+        "        kept TEXT[];\n    BEGIN",
+        "        kept TEXT[];\n        center_alias TEXT;\n" + _DECLARE + "    BEGIN",
+    ),
+    # a centre that is a name's own node: the walk starts at the far end of one of its connections
+    (
+        "        IF start_id IS NULL THEN\n            SELECT x.id INTO start_id FROM (",
+        "        IF start_id LIKE 'alias:%' THEN\n"
+        "            center_alias := start_id;\n"
+        "            start_id := (SELECT CASE\n"
+        "                                 WHEN r.subject_id = split->r.via_alias_id->>'entity'\n"
+        "                                 THEN r.object_id ELSE r.subject_id END\n"
+        "                         FROM memory_relations r\n"
+        "                         WHERE r.id = ANY (split_rels)\n"
+        "                           AND 'alias:' || r.via_alias_id = center_alias\n"
+        "                         ORDER BY r.created_at, r.id LIMIT 1);\n"
+        "            IF start_id IS NULL OR NOT (start_id = ANY (vis)) THEN\n"
+        "                RETURN jsonb_build_object('status', 'not_found');\n"
+        "            END IF;\n"
+        "        END IF;\n"
+        "        IF start_id IS NULL THEN\n            SELECT x.id INTO start_id FROM (",
+    ),
     *_SHARED_SWAPS,
     # the names the walk orders by, and the node's name
     (
@@ -225,9 +249,27 @@ _OVERVIEW_SWAPS = (
 
 WEB_MY_CHARACTERS_VIEW = (
     r"""
+    -- The secret other name a join moved a connection through (#3037): a character that holds that
+    -- name sees the connection on that name's own node. NULL for every connection that was not
+    -- moved by a join; no row changes. (No foreign key: a name that goes leaves the column
+    -- pointing at nothing, which every reader treats as "no name".)
+    ALTER TABLE memory_relations ADD COLUMN via_alias_id TEXT;
+
     -- The signed-in player's own confirmed characters' points of view. Nobody else's: `played_by`
     -- is the Discord id of the signed-in person; with no signed-in person (a shared link) it is
     -- empty.
+    CREATE FUNCTION dmbot_my_perspectives(g BIGINT, c TEXT) RETURNS SETOF TEXT
+    LANGUAGE sql STABLE SECURITY DEFINER AS $fn$
+        SELECT p.id FROM memory_perspectives p
+        JOIN memory_entities pc ON pc.guild_id = p.guild_id AND pc.campaign_id = p.campaign_id
+                               AND pc.id = p.entity_id
+        WHERE p.guild_id = g AND p.campaign_id = c AND p.kind = 'pc'
+          AND dmbot_current_user() IS NOT NULL
+          AND pc.type = 'character' AND pc.role = 'player_character'
+          AND pc.status = 'confirmed' AND pc.merged_into IS NULL
+          AND pc.played_by = dmbot_current_user()
+    $fn$;
+
     -- An unnamed person's label, built the way `memory/unnamed.label` builds it ("Ken's sister
     -- (name unknown)"), so a player's view can build it from an anchor name they may read.
     CREATE FUNCTION dmbot_unnamed_label(what TEXT, anchor TEXT) RETURNS TEXT
@@ -244,51 +286,84 @@ WEB_MY_CHARACTERS_VIEW = (
         END
     $fn$;
 
-    CREATE FUNCTION dmbot_my_perspectives(g BIGINT, c TEXT) RETURNS SETOF TEXT
+    -- The entries those characters know under their own name. An entry row does not make a name
+    -- known when the entry's own name is a secret one: only a row on that name does.
+    CREATE FUNCTION dmbot_my_own_entries(g BIGINT, c TEXT) RETURNS SETOF TEXT
     LANGUAGE sql STABLE SECURITY DEFINER AS $fn$
-        SELECT p.id FROM memory_perspectives p
-        JOIN memory_entities pc ON pc.guild_id = p.guild_id AND pc.campaign_id = p.campaign_id
-                               AND pc.id = p.entity_id
-        WHERE p.guild_id = g AND p.campaign_id = c AND p.kind = 'pc'
-          AND dmbot_current_user() IS NOT NULL
-          AND pc.type = 'character' AND pc.role = 'player_character'
-          AND pc.status = 'confirmed' AND pc.merged_into IS NULL
-          AND pc.played_by = dmbot_current_user()
+        SELECT k.about_entity_id FROM memory_knowers k
+        JOIN memory_entities ke ON ke.guild_id = k.guild_id AND ke.campaign_id = k.campaign_id
+                               AND ke.id = k.about_entity_id
+        WHERE k.guild_id = g AND k.campaign_id = c AND k.about_entity_id IS NOT NULL
+          AND k.confidence > 0 AND k.perspective_id IN (SELECT dmbot_my_perspectives(g, c))
+          AND NOT EXISTS (
+              SELECT 1 FROM memory_aliases so
+              WHERE so.guild_id = g AND so.campaign_id = c AND so.entity_id = ke.id
+                AND so.secret AND so.status <> 'rejected'
+                AND regexp_replace(lower(so.text), '[^[:alnum:]]', '', 'g')
+                  = regexp_replace(lower(ke.name), '[^[:alnum:]]', '', 'g'))
+        UNION
+        SELECT a.entity_id FROM memory_knowers k
+        JOIN memory_aliases a ON a.guild_id = k.guild_id AND a.campaign_id = k.campaign_id
+                             AND a.id = k.alias_id
+        JOIN memory_entities en ON en.guild_id = a.guild_id AND en.campaign_id = a.campaign_id
+                               AND en.id = a.entity_id
+        WHERE k.guild_id = g AND k.campaign_id = c AND k.confidence > 0
+          AND k.perspective_id IN (SELECT dmbot_my_perspectives(g, c))
+          AND a.status = 'confirmed'
+          AND regexp_replace(lower(a.text), '[^[:alnum:]]', '', 'g')
+            = regexp_replace(lower(en.name), '[^[:alnum:]]', '', 'g')
+    $fn$;
+
+    -- What an unnamed person's label may call the entry they hang off: its main name if it is a
+    -- confirmed entry the players are shown by name, or one of these characters knows it by name;
+    -- else NULL (the label then says "someone's").
+    CREATE FUNCTION dmbot_my_anchor_name(g BIGINT, c TEXT, anchor_id TEXT) RETURNS TEXT
+    LANGUAGE sql STABLE SECURITY DEFINER AS $fn$
+        SELECT CASE WHEN en.status = 'confirmed' AND en.merged_into IS NULL
+                     AND ((en.id IN (SELECT dmbot_my_own_entries(g, c)) AND NOT en.unnamed)
+                      OR (NOT en.hidden_from_players AND NOT en.unnamed
+                          AND NOT en.audience_limited
+                          AND NOT EXISTS (
+                              SELECT 1 FROM memory_aliases s
+                              WHERE s.guild_id = g AND s.campaign_id = c
+                                AND s.entity_id = en.id AND s.secret AND s.status <> 'rejected'
+                                AND regexp_replace(lower(s.text), '[^[:alnum:]]', '', 'g')
+                                  = regexp_replace(lower(en.name), '[^[:alnum:]]', '', 'g'))))
+                    THEN en.name END
+        FROM memory_entities en
+        WHERE en.guild_id = g AND en.campaign_id = c AND en.id = anchor_id
+    $fn$;
+
+    -- An unnamed person's label as this player may read it.
+    CREATE FUNCTION dmbot_my_label_of(g BIGINT, c TEXT, what TEXT, anchor_id TEXT) RETURNS TEXT
+    LANGUAGE sql STABLE SECURITY DEFINER AS $fn$
+        SELECT dmbot_unnamed_label(what, CASE WHEN anchor_id IS NULL THEN NULL ELSE
+            COALESCE(dmbot_my_anchor_name(g, c, anchor_id), 'someone') END)
+    $fn$;
+
+    -- An other name of an entry as this player may read it: a joined person's label is rebuilt
+    -- from what it described.
+    CREATE FUNCTION dmbot_my_alias_text(g BIGINT, c TEXT, entity TEXT, alias_text TEXT)
+    RETURNS TEXT LANGUAGE sql STABLE SECURITY DEFINER AS $fn$
+        SELECT CASE WHEN alias_text LIKE '% (name unknown)' THEN COALESCE((
+            SELECT dmbot_my_label_of(g, c, m.unnamed_what, m.unnamed_anchor)
+            FROM memory_entities m
+            WHERE m.guild_id = g AND m.campaign_id = c AND m.merged_into = entity
+              AND m.unnamed AND m.name = alias_text LIMIT 1), 'someone (name unknown)')
+            ELSE alias_text END
     $fn$;
 
     -- The entries those characters know, and the name each is shown by (`gate.display_name`): the
     -- main name only if one of the characters knows the entry under its own name (a row for the
     -- entry, or for the name that is its own), else the first other name they learned. An entry
-    -- none of them may name is not listed. Confirmed entries only; the DM's kinds of note
-    -- (threads, quests...) are never listed, as the table's view leaves them out.
+    -- none of them may name is not listed. A name a join moved connections through is not an
+    -- other name here: it has its own node (`dmbot_my_alias_nodes`). Confirmed entries only; the
+    -- DM's kinds of note (threads, quests...) are never listed.
     CREATE FUNCTION dmbot_my_known_entries(g BIGINT, c TEXT)
     RETURNS TABLE (entity_id TEXT, shown_name TEXT, own BOOLEAN, alias_id TEXT)
     LANGUAGE sql STABLE SECURITY DEFINER AS $fn$
         WITH own AS (
-            -- (an entry row does not make a name known when the entry's own name is a secret
-            -- one: only a row on that name does, as the second branch says)
-            SELECT k.about_entity_id AS eid FROM memory_knowers k
-            JOIN memory_entities ke ON ke.guild_id = k.guild_id AND ke.campaign_id = k.campaign_id
-                                   AND ke.id = k.about_entity_id
-            WHERE k.guild_id = g AND k.campaign_id = c AND k.about_entity_id IS NOT NULL
-              AND k.confidence > 0 AND k.perspective_id IN (SELECT dmbot_my_perspectives(g, c))
-              AND NOT EXISTS (
-                  SELECT 1 FROM memory_aliases so
-                  WHERE so.guild_id = g AND so.campaign_id = c AND so.entity_id = ke.id
-                    AND so.secret AND so.status <> 'rejected'
-                    AND regexp_replace(lower(so.text), '[^[:alnum:]]', '', 'g')
-                      = regexp_replace(lower(ke.name), '[^[:alnum:]]', '', 'g'))
-            UNION
-            SELECT a.entity_id FROM memory_knowers k
-            JOIN memory_aliases a ON a.guild_id = k.guild_id AND a.campaign_id = k.campaign_id
-                                 AND a.id = k.alias_id
-            JOIN memory_entities en ON en.guild_id = a.guild_id AND en.campaign_id = a.campaign_id
-                                   AND en.id = a.entity_id
-            WHERE k.guild_id = g AND k.campaign_id = c AND k.confidence > 0
-              AND k.perspective_id IN (SELECT dmbot_my_perspectives(g, c))
-              AND a.status = 'confirmed'
-              AND regexp_replace(lower(a.text), '[^[:alnum:]]', '', 'g')
-                = regexp_replace(lower(en.name), '[^[:alnum:]]', '', 'g')
+            SELECT dmbot_my_own_entries(g, c) AS eid
         ), learned AS (
             SELECT a.entity_id AS eid, a.text, min(k.created_at) AS at, a.id
             FROM memory_knowers k
@@ -301,48 +376,19 @@ WEB_MY_CHARACTERS_VIEW = (
               AND a.status = 'confirmed' AND a.secret
               AND regexp_replace(lower(a.text), '[^[:alnum:]]', '', 'g')
                <> regexp_replace(lower(en.name), '[^[:alnum:]]', '', 'g')
+              AND NOT EXISTS (SELECT 1 FROM memory_relations v
+                              WHERE v.guild_id = g AND v.campaign_id = c
+                                AND v.via_alias_id = a.id AND v.status = 'confirmed')
             GROUP BY a.entity_id, a.text, a.id
         ), first_other AS (
             SELECT DISTINCT ON (eid) eid, text, id AS aid FROM learned ORDER BY eid, at, id
-        ), anchor_name AS (
-            -- what an unnamed person's label may call the entry they hang off: its main name if
-            -- the players are shown it by name, or one of these characters knows it by name
-            SELECT en.id,
-                   CASE WHEN en.status = 'confirmed' AND en.merged_into IS NULL
-                         AND ((en.id IN (SELECT eid FROM own) AND NOT en.unnamed)
-                          OR (NOT en.hidden_from_players AND NOT en.unnamed
-                              AND NOT en.audience_limited
-                              AND NOT EXISTS (
-                                  SELECT 1 FROM memory_aliases s
-                                  WHERE s.guild_id = g AND s.campaign_id = c
-                                    AND s.entity_id = en.id AND s.secret
-                                    AND s.status <> 'rejected'
-                                    AND regexp_replace(lower(s.text), '[^[:alnum:]]', '', 'g')
-                                      = regexp_replace(lower(en.name), '[^[:alnum:]]', '', 'g'))))
-                        THEN en.name END AS nm
-            FROM memory_entities en WHERE en.guild_id = g AND en.campaign_id = c
         )
         SELECT e.id,
-               CASE
-                   WHEN e.id IN (SELECT eid FROM own) THEN
-                       CASE WHEN e.unnamed THEN dmbot_unnamed_label(
-                                e.unnamed_what,
-                                CASE WHEN e.unnamed_anchor IS NULL THEN NULL ELSE COALESCE(
-                                    (SELECT nm FROM anchor_name WHERE id = e.unnamed_anchor),
-                                    'someone') END)
-                            ELSE e.name END
-                   WHEN f.text LIKE '% (name unknown)' THEN COALESCE((
-                       -- a joined person's label is rebuilt from what it described
-                       SELECT dmbot_unnamed_label(
-                                m.unnamed_what,
-                                CASE WHEN m.unnamed_anchor IS NULL THEN NULL ELSE COALESCE(
-                                    (SELECT nm FROM anchor_name WHERE id = m.unnamed_anchor),
-                                    'someone') END)
-                       FROM memory_entities m
-                       WHERE m.guild_id = g AND m.campaign_id = c AND m.merged_into = e.id
-                         AND m.unnamed AND m.name = f.text LIMIT 1), 'someone (name unknown)')
-                   ELSE f.text
-               END,
+               CASE WHEN e.id IN (SELECT eid FROM own) THEN
+                        CASE WHEN e.unnamed THEN dmbot_my_label_of(
+                                 g, c, e.unnamed_what, e.unnamed_anchor)
+                             ELSE e.name END
+                    ELSE dmbot_my_alias_text(g, c, e.id, f.text) END,
                e.id IN (SELECT eid FROM own), f.aid
         FROM memory_entities e
         LEFT JOIN first_other f ON f.eid = e.id
@@ -350,6 +396,40 @@ WEB_MY_CHARACTERS_VIEW = (
           AND e.merged_into IS NULL AND e.type <> 'person'
           AND e.type NOT IN ('thread', 'quest', 'mystery', 'hook', 'goal', 'promise', 'deed')
           AND (e.id IN (SELECT eid FROM own) OR f.eid IS NOT NULL)
+    $fn$;
+
+    -- The secret other names those characters hold that a join moved connections through: each is
+    -- a node of its own (the name, the entry it belongs to, and the kind of the person it
+    -- described), carrying those connections.
+    CREATE FUNCTION dmbot_my_alias_nodes(g BIGINT, c TEXT)
+    RETURNS TABLE (alias_id TEXT, entity_id TEXT, shown_name TEXT, kind TEXT)
+    LANGUAGE sql STABLE SECURITY DEFINER AS $fn$
+        SELECT a.id, a.entity_id, dmbot_my_alias_text(g, c, a.entity_id, a.text),
+               COALESCE((SELECT CASE WHEN m.type = 'character' THEN
+                            CASE m.role WHEN 'player_character' THEN 'player_character'
+                                        WHEN 'npc' THEN 'npc' WHEN 'god' THEN 'deity'
+                                        ELSE 'character' END
+                        ELSE m.type END FROM memory_entities m
+                         WHERE m.guild_id = g AND m.campaign_id = c AND m.merged_into = e.id
+                           AND m.unnamed AND m.name = a.text LIMIT 1),
+                        CASE WHEN e.type = 'character' THEN
+                            CASE e.role WHEN 'player_character' THEN 'player_character'
+                                        WHEN 'npc' THEN 'npc' WHEN 'god' THEN 'deity'
+                                        ELSE 'character' END
+                        ELSE e.type END)
+        FROM memory_aliases a
+        JOIN memory_entities e ON e.guild_id = a.guild_id AND e.campaign_id = a.campaign_id
+                              AND e.id = a.entity_id
+        WHERE a.guild_id = g AND a.campaign_id = c AND a.secret AND a.status = 'confirmed'
+          AND e.status = 'confirmed' AND e.merged_into IS NULL AND e.type <> 'person'
+          AND e.type NOT IN ('thread', 'quest', 'mystery', 'hook', 'goal', 'promise', 'deed')
+          AND EXISTS (SELECT 1 FROM memory_knowers k
+                      WHERE k.guild_id = g AND k.campaign_id = c AND k.alias_id = a.id
+                        AND k.confidence > 0
+                        AND k.perspective_id IN (SELECT dmbot_my_perspectives(g, c)))
+          AND EXISTS (SELECT 1 FROM memory_relations v
+                      WHERE v.guild_id = g AND v.campaign_id = c AND v.via_alias_id = a.id
+                        AND v.status = 'confirmed')
     $fn$;
 
     -- The connections those characters know.

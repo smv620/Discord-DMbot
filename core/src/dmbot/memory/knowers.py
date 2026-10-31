@@ -448,6 +448,14 @@ async def what_my_characters_know(scope: Scope, user_id: int) -> Mine:
                     ALIAS_KNOWERS, " AND perspective_id = ANY(%s)", [list(views)]
                 )
             }
+            | {  # (the who-knows lists a join writes: a character's row on a name)
+                r["alias_id"]
+                for r in await scope.select(
+                    KNOWERS,
+                    " AND perspective_id = ANY(%s) AND alias_id IS NOT NULL AND confidence > 0",
+                    [list(views)],
+                )
+            }
         )
         if views
         else []
@@ -461,6 +469,24 @@ async def what_my_characters_know(scope: Scope, user_id: int) -> Mine:
         if alias_ids
         else []
     )
+    # A name belongs to the fact (#3037): a connection a join moved through a secret other name
+    # that one of these characters holds is theirs, whatever else they know.
+    owner_of = {str(a["id"]): str(a["entity_id"]) for a in aliases}
+    if owner_of:
+        seen_ids = {r["id"] for r in hidden}
+        hidden = [
+            *hidden,
+            *[
+                r
+                for r in await scope.select(
+                    RELATIONS,
+                    " AND via_alias_id = ANY(%s) AND status = %s AND (secret OR unrevealed)"
+                    " AND to_session_at IS NULL ORDER BY id",
+                    [sorted(owner_of), CONFIRMED],
+                )
+                if r["id"] not in seen_ids
+            ],
+        ]
     who = await connection_knowers(scope, [r["id"] for r in hidden])
     a_who = await alias_knowers(scope, [a["id"] for a in aliases])
     wanted = {*mine}
@@ -506,7 +532,17 @@ async def what_my_characters_know(scope: Scope, user_id: int) -> Mine:
 
     connections = []
     for r in hidden:
-        subject, target = name(r["subject_id"]), name(r["object_id"])
+        through = r.get("via_alias_id") if r.get("via_alias_id") in owner_of else None
+        alias_end = owner_of.get(through) if through else None
+
+        def end(
+            entity_id: str, through: str | None = through, alias_end: str | None = alias_end
+        ) -> str | None:
+            if through is not None and entity_id == alias_end:
+                return safe_texts.get(through, "someone (name unknown)")
+            return name(entity_id)
+
+        subject, target = end(r["subject_id"]), end(r["object_id"])
         if subject is None or target is None:
             continue
         # (the DM's own words on a connection may name a main name: sent only when both ends are
@@ -523,6 +559,8 @@ async def what_my_characters_know(scope: Scope, user_id: int) -> Mine:
         )  # fmt: skip
     names = []
     for a in aliases:
+        if str(a["id"]) in {str(r.get("via_alias_id")) for r in hidden}:
+            continue  # a person of their own for them (#3037): "a name of Ken" would say who
         owner = name(a["entity_id"])
         if owner is not None:
             text = safe_texts.get(str(a["id"]), "someone (name unknown)")

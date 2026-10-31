@@ -41,6 +41,13 @@ class MyCharacters(Web):
         await self.know(ENTRY, self.guard, [self.okra])
         await self.know(CONNECTION, self.guard_link, [self.okra])
 
+    async def sql_one(self, statement: str, *args: Any) -> dict[str, Any]:
+        async with self.db.guild(self.g) as conn:
+            cur = await conn.execute(statement, args)
+            row = await cur.fetchone()
+        assert row is not None
+        return dict(row)
+
     async def know(self, kind: str, statement: str, who: list[str]) -> None:
         await self.memory.set_statement_knowers(
             self.g, self.one.id, kind, statement, who, source=DM_SOURCE
@@ -66,15 +73,19 @@ class WhoKnewOnlyTheGuard(MyCharacters):
     async def test_the_guard_is_shown_and_never_ken(self) -> None:
         await self.join()
         got = await self.bob()
-        self.assertEqual(self.names(got)[self.ken], self.label)
+        nodes = self.names(got)
+        (guard_node,) = [i for i, n in nodes.items() if n == self.label]
+        self.assertTrue(guard_node.startswith("alias:"))
+        self.assertNotIn(self.ken, nodes)
         self.assertNotIn("Ken", str(got))
         edge_ends = {(e["a"], e["b"]) for e in got["edges"]}
-        self.assertTrue(any(self.ken in pair and self.mira in pair for pair in edge_ends))
+        self.assertTrue(any(guard_node in pair and self.mira in pair for pair in edge_ends))
 
     async def test_the_overview_says_the_same(self) -> None:
         await self.join()
         names = await self.overview_names(self.player)
-        self.assertEqual(names[self.ken], self.label)
+        self.assertIn(self.label, names.values())
+        self.assertNotIn(self.ken, names)
         self.assertNotIn("Ken", str(names))
 
     async def test_undo_gives_back_what_was_seen_before(self) -> None:
@@ -87,12 +98,12 @@ class WhoKnewOnlyTheGuard(MyCharacters):
 
 
 class WhoKnewKen(MyCharacters):
-    async def test_ken_is_shown_to_a_player_whose_character_knows_him(self) -> None:
+    async def test_a_character_that_knows_both_sees_two_people(self) -> None:
         await self.know(ENTRY, self.ken, [self.okra])
         await self.join()
-        got = await self.bob()
-        self.assertEqual(self.names(got)[self.ken], "Ken")
-        self.assertNotIn(self.label, str(self.names(got).values()))
+        names = await self.overview_names(self.player)
+        self.assertEqual(names[self.ken], "Ken")
+        self.assertIn(self.label, names.values())  # (and the guard, on a node of its own)
 
 
 class NobodyElses(MyCharacters):
@@ -143,7 +154,7 @@ class TheEdges(MyCharacters):
     async def test_a_player_is_never_told_an_entry_is_kept_from_the_players(self) -> None:
         await self.join()
         got = await self.bob()
-        node = next(n for n in got["nodes"] if n["id"] == self.ken)
+        node = next(n for n in got["nodes"] if n["name"] == self.label)
         self.assertTrue(node["revealed"])
         # (and the DM's full view still says which entries are kept back)
         dm = await self.graph(center=self.mira, hops=2)
@@ -168,38 +179,41 @@ class TheEdges(MyCharacters):
         )  # (the same player's second character)
         await self.know(ENTRY, self.ken, [orla])
         await self.join()
-        got = await self.bob()
-        self.assertEqual(self.names(got)[self.ken], "Ken")
+        names = await self.overview_names(self.player)
+        self.assertEqual(names[self.ken], "Ken")
 
     async def test_the_first_other_name_a_character_learned_is_the_one_shown(self) -> None:
-        await self.join()
+        link = await self.link("knows", self.ken, self.mira, "ken-mira-secret", secret=True)
+        await self.know(CONNECTION, link, [self.okra])
         await self.alias(self.ken, "Old Greycloak", secret=True)
+        await self.alias(self.ken, "Ken the Younger", secret=True)
         found = await self.memory.aliases(
             self.g, self.one.id, entity_id=self.ken, include_secret=True
         )
-        label_alias = next(a.id for a in found if a.text == self.label)
-        later = next(a.id for a in found if a.text == "Old Greycloak")
-        await self.know("alias", label_alias, [self.okra])
-        await self.know("alias", later, [self.okra])
+        first = next(a.id for a in found if a.text == "Old Greycloak")
+        second = next(a.id for a in found if a.text == "Ken the Younger")
+        await self.know("alias", first, [self.okra])
+        await self.know("alias", second, [self.okra])
 
         async def learned(alias_id: str, at: int) -> None:
             await self.sql(
                 "UPDATE memory_knowers SET created_at = %s WHERE alias_id = %s", at, alias_id
             )
 
-        await learned(label_alias, 100)
-        await learned(later, 200)
-        self.assertEqual(self.names(await self.bob())[self.ken], self.label)
-        await learned(label_alias, 300)  # now Old Greycloak was learned first
+        await learned(first, 100)
+        await learned(second, 200)
         self.assertEqual(self.names(await self.bob())[self.ken], "Old Greycloak")
+        await learned(first, 300)  # now Ken the Younger was learned first
+        self.assertEqual(self.names(await self.bob())[self.ken], "Ken the Younger")
 
     async def test_a_known_connection_to_a_shown_entry_shows_even_if_the_party_does_not_know_it(
         self,
     ) -> None:
         await self.join()
         got = await self.bob()
+        (guard_node,) = [i for i, n in self.names(got).items() if n == self.label]
         ends = {(e["a"], e["b"]) for e in got["edges"]}
-        self.assertTrue(any(self.ken in pair and self.mira in pair for pair in ends))
+        self.assertTrue(any(guard_node in pair and self.mira in pair for pair in ends))
 
 
 class HiddenAnchors(MyCharacters):
@@ -290,9 +304,8 @@ class WhenKenIsPublic(MyCharacters):
 
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
-        await self.sql(
-            "UPDATE memory_entities SET hidden_from_players = false WHERE id = %s", self.ken
-        )
+        # (the product's own reveal: every player character now has a row for Ken)
+        await self.memory.set_hidden_from_players(self.g, self.one.id, self.ken, False, source="dm")
         self.ken_rook = await self.link("ally_of", self.ken, self.rook, "ken-rook")  # table-wide
 
     async def test_the_guard_is_a_separate_node_carrying_the_moved_link(self) -> None:
@@ -326,13 +339,15 @@ class WhenKenIsPublic(MyCharacters):
         self.assertEqual(self.names(got)[self.ken], "Ken")
         self.assertNotIn(self.label, self.names(got).values())
 
-    async def test_a_character_that_knows_ken_by_name_sees_him_once(self) -> None:
+    async def test_a_character_that_knows_ken_by_name_sees_two_people(self) -> None:
         await self.know(ENTRY, self.ken, [self.okra])
         await self.join()
         got = await self.bob()
-        self.assertNotIn(self.label, self.names(got).values())
+        nodes = self.names(got)
+        self.assertEqual(nodes[self.ken], "Ken")
+        (guard_node,) = [i for i, n in nodes.items() if n == self.label]
         links = {x["id"]: (e["a"], e["b"]) for e in got["edges"] for x in e["links"]}
-        self.assertEqual(set(links[self.guard_link]), {self.ken, self.mira})
+        self.assertEqual(set(links[self.guard_link]), {guard_node, self.mira})  # on the guard
 
 
 class ProposedAnchors(MyCharacters):
@@ -351,3 +366,75 @@ class ProposedAnchors(MyCharacters):
         names = await self.overview_names(self.player)
         self.assertEqual(names[str(made.entity.id)], "someone's sister (name unknown)")
         self.assertNotIn("Vex", str(names))
+
+
+class ByFact(MyCharacters):
+    """The split is by FACT: the join records which name each moved connection came through."""
+
+    async def test_a_public_from_creation_ken_gives_the_same_two_people(self) -> None:
+        ken = await self.add("Kenneth", "character", role="npc")  # shown to everyone from the start
+        guard = await self.memory.add_unnamed(
+            self.g, self.one.id, what="porter at the east gate", role="guard"
+        )
+        link = await self.link("knows", guard.entity.id, self.mira, "porter-mira", secret=True)
+        await self.know(ENTRY, guard.entity.id, [self.okra])
+        await self.know(CONNECTION, link, [self.okra])
+        await self.memory.join_same_person(self.g, self.one.id, guard.entity.id, ken)
+        got = await self.bob()
+        self.assertEqual(self.names(got).get(ken), None)  # (no public fact brings Kenneth here)
+        self.assertNotIn("Kenneth", str(got))
+        self.assertTrue(any(n.startswith("porter") for n in self.names(got).values()))
+
+    async def test_the_connection_records_its_name_and_undo_takes_it_back(self) -> None:
+        written = await self.join()
+        row = await self.sql_one(
+            "SELECT via_alias_id FROM memory_relations WHERE id = %s", self.guard_link
+        )
+        self.assertIsNotNone(row["via_alias_id"])
+        await self.memory.undo(self.g, self.one.id, written.batch, source=DM_SOURCE)
+        row = await self.sql_one(
+            "SELECT via_alias_id FROM memory_relations WHERE id = %s", self.guard_link
+        )
+        self.assertIsNone(row["via_alias_id"])
+
+    async def test_making_the_name_not_secret_folds_the_two_people_into_one(self) -> None:
+        await self.memory.set_hidden_from_players(self.g, self.one.id, self.ken, False, source="dm")
+        await self.know(ENTRY, self.ken, [self.okra])
+        await self.join()
+        before = await self.bob()
+        self.assertIn(self.label, self.names(before).values())
+        found = await self.memory.aliases(
+            self.g, self.one.id, entity_id=self.ken, include_secret=True
+        )
+        label_alias = next(a for a in found if a.text == self.label)
+        await self.memory.make_name_not_secret(
+            self.g, self.one.id, label_alias.id, source=DM_SOURCE
+        )
+        after = await self.bob()
+        self.assertNotIn(self.label, self.names(after).values())
+        links = {x["id"]: (e["a"], e["b"]) for e in after["edges"] for x in e["links"]}
+        self.assertEqual(set(links[self.guard_link]), {self.ken, self.mira})
+
+    async def test_the_reader_lists_the_connection_on_the_guard_with_ken_public(self) -> None:
+        await self.memory.set_hidden_from_players(self.g, self.one.id, self.ken, False, source="dm")
+        await self.join()
+        mine = await self.memory.what_my_characters_know(self.g, self.one.id, BOB.id)
+        self.assertEqual(
+            [(c.subject, c.object) for c in mine.connections], [(self.label, "Mira Voss")]
+        )
+        self.assertNotIn("Ken", repr(mine))
+
+    async def test_a_centre_on_the_guards_own_node_is_asked_for_by_its_id(self) -> None:
+        await self.join()
+        got = await self.bob()
+        (guard_node,) = [i for i, n in self.names(got).items() if n == self.label]
+        again = await self.graph(self.player, center=guard_node, hops=2)
+        self.assertEqual(again["center"], guard_node)
+        self.assertIn(guard_node, self.names(again))
+        self.assertNotIn("Ken", str(again))
+
+    async def test_the_guards_node_is_the_kind_of_the_person_it_described(self) -> None:
+        await self.join()
+        got = await self.bob()
+        node = next(n for n in got["nodes"] if n["name"] == self.label)
+        self.assertEqual(node["kind"], "npc")

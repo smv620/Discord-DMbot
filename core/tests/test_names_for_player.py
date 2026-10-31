@@ -145,5 +145,7 @@ class TheReaderNamesEachEndAsTheCharacterKnowsIt(JoinBase):
         )
         mine = await self.memory.what_my_characters_know(GUILD_A, self.c, 1)
         self.assertNotIn("Ken", repr(mine))
-        self.assertEqual([n.text for n in mine.names], ["someone's sister (name unknown)"])
+        # (the joined label is a person of its own for them: no "name of" line, which would say who)
+        self.assertEqual(mine.names, ())
+        self.assertEqual([c.subject for c in mine.connections], ["someone's sister (name unknown)"])
         self.assertTrue(all(c.detail == "" for c in mine.connections))

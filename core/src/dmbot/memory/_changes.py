@@ -152,10 +152,11 @@ RELATIONS = Table(
     "id",
     ("id", "subject_id", "predicate", "object_id", "detail", "confidence", "status", "source",
      "mention_ids", "from_session_at", "to_session_at", "from_game_time", "to_game_time",
-     "secret", "created_at", "definition_version", "unrevealed", "directional", "decided"),
+     "secret", "created_at", "definition_version", "unrevealed", "directional", "decided",
+     "via_alias_id"),
     # unrevealed: held back from the players until said at the table (#2404). directional: an
     # older row's role has no direction (#2457)
-    defaults={"unrevealed": False, "directional": False, "decided": None},
+    defaults={"unrevealed": False, "directional": False, "decided": None, "via_alias_id": None},
 )  # fmt: skip
 CORRECTIONS = Table(
     "memory_corrections",

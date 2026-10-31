@@ -262,7 +262,7 @@ def _relation(r: dict[str, Any]) -> Relation:
         float(r["confidence"]), r["status"], r["source"], tuple(r["mention_ids"]),
         r["from_session_at"], r["to_session_at"], r["from_game_time"], r["to_game_time"],
         r["secret"], r["created_at"], r["definition_version"], r["unrevealed"], r["directional"],
-        r.get("decided"),
+        r.get("decided"), r.get("via_alias_id"),
     )  # fmt: skip
 
 
@@ -287,6 +287,7 @@ def _relation_row(rel: Relation) -> dict[str, Any]:
         "unrevealed": rel.unrevealed,
         "directional": rel.directional,
         "decided": rel.decided,
+        "via_alias_id": rel.via_alias_id,
     }
 
 
@@ -3121,7 +3122,7 @@ class MemoryStore:
             # The other entry's name was a secret one: the main name everyone sees
             # must never be.
             raise MemoryRuleError("A secret name can't be the main name.")
-        await _move_relations(w, keep_id, gone_id, join=join_alias is not None)
+        await _move_relations(w, keep_id, gone_id, join=join_alias is not None, via=join_alias)
         await _move_standing(w, keep_id, gone_id)
         await merge_restore.move_notes(w.conn, w.ids, keep_id, gone_id)
         await merge_restore.move_links(w.conn, w.ids, keep_id, gone_id, kept["type"])
@@ -5699,7 +5700,9 @@ async def _refuse_led_to_loop(
         raise MemoryRuleError(MERGE_LED_TO_LOOP)
 
 
-async def _move_relations(w: Changes, keep_id: str, gone_id: str, *, join: bool = False) -> None:
+async def _move_relations(
+    w: Changes, keep_id: str, gone_id: str, *, join: bool = False, via: str | None = None
+) -> None:
     """The other entry's facts move over. They're checked one by one, in the same order
     as before, against an in-memory copy of every fact they could clash with (so the
     same duplicates are folded and the same problems flagged); the moves themselves are
@@ -5749,8 +5752,11 @@ async def _move_relations(w: Changes, keep_id: str, gone_id: str, *, join: bool 
         # (a join moves a connection AND makes it secret in this one update: a second update of
         # the same row would make the Undo refuse, and the unnamed end still keeps the flag sync
         # from treating it as shown)
+        # (and the secret other name it came through, so the players' views can keep the fact on
+        # that name: #3037)
         moves[row["id"]] = {
-            "subject_id": subject, "object_id": obj, **({"secret": True} if join else {}),
+            "subject_id": subject, "object_id": obj,
+            **({"secret": True, "via_alias_id": via} if join else {}),
         }  # fmt: skip
         forget(state[row["id"]])
         moved = dataclasses.replace(
