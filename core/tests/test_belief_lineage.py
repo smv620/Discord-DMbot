@@ -5,7 +5,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from dmbot.memory import evidence
+from psycopg.types.json import Jsonb
+
+from dmbot.memory import beliefs, evidence
 from dmbot.memory._changes import BELIEFS
 from dmbot.memory.models import CONFIRMED, MemoryRuleError
 from tests.test_memory_store import GUILD_A, MemoryTest
@@ -437,3 +439,90 @@ class DamagedFile(Lineage):
         async with self.db.guild(GUILD_A) as conn:
             with self.assertRaises(CampaignError):
                 await section.load(conn, GUILD_A, copy, rows)
+
+
+class FollowUps(Lineage):
+    async def test_a_merge_after_a_reword_still_finds_what_rests_on_the_source(self) -> None:
+        await self.memory.update_relation(
+            GUILD_A, self.c, self.rel, source="dm", status="confirmed"
+        )
+        said = (await self.believe(self.cerric_view, self.rel, 0.9, sources=[self.morn])).value
+        await self.believe(self.tran_view, self.rel, 0.7, derived_from=said.id, change_kind="told")
+        await self.memory.change_relation_words(
+            GUILD_A, self.c, self.rel, "enemy_of", "", source="dm"
+        )
+        twin = await self.add("Bruno Two", type="character", role="npc", status=CONFIRMED)
+        await self.memory.merge(GUILD_A, self.c, self.bruno, twin, source="dm", dm_said_same=True)
+        found = await self.memory.what_rests_on(GUILD_A, self.c, source="dm", entity_id=self.morn)
+        self.assertEqual(len(found), 2)
+        self.assertIn(self.tran_view, {r.perspective_id for r in found})
+
+    async def test_undoing_and_redoing_the_parent_leaves_the_child_sound(self) -> None:
+        parent = await self.believe(self.cerric_view, self.other, 0.8)
+        child = await self.believe(
+            self.cerric_view, self.rel, 0.3, derived_from=parent.value.id, change_kind="branch"
+        )
+        assert parent.batch is not None and child.batch is not None
+        undone = await self.memory.undo(GUILD_A, self.c, parent.batch, source="dm")
+        self.assertEqual(
+            await self.row(child.value.id), {"derived_from": None, "change_kind": "branch"}
+        )  # (a placeholder: the parent is gone, the kind stays)
+        assert undone.batch is not None
+        await self.memory.undo(GUILD_A, self.c, undone.batch, source="dm")  # redo the parent
+        self.assertEqual((await self.row(child.value.id))["change_kind"], "branch")
+        await self.memory.undo(GUILD_A, self.c, child.batch, source="dm")  # and the child goes
+
+    async def test_a_belief_cannot_be_copied_and_given_a_lineage_at_once(self) -> None:
+        first = (await self.believe(self.cerric_view, self.rel, 0.9)).value
+        async with self.memory._write(GUILD_A, self.c, "dm") as w:
+            with self.assertRaises(ValueError):
+                await beliefs._add(
+                    w, self.cerric_view, self.other, 0.5, "theory",
+                    copy_from=first.id, derived_from=first.id, change_kind="branch",
+                )  # fmt: skip
+
+    async def test_a_pinned_belief_is_not_taken_back_until_it_is_unpinned(self) -> None:
+        await self.memory.update_relation(
+            GUILD_A, self.c, self.rel, source="dm", status="confirmed"
+        )
+        pinned = (await self.memory.pin(GUILD_A, self.c, self.rel, True, source="dm")).value
+        with self.assertRaises(MemoryRuleError) as raised:
+            await self.believe(
+                self.truth, self.rel, 0.0, "false_evidence",
+                derived_from=pinned.id, change_kind="retraction",
+            )  # fmt: skip
+        self.assertIn("Unpin it first", str(raised.exception))
+        unpinned = (await self.memory.pin(GUILD_A, self.c, self.rel, False, source="dm")).value
+        done = await self.believe(
+            self.truth, self.rel, 0.0, "false_evidence",
+            derived_from=unpinned.id, change_kind="retraction",
+        )  # fmt: skip
+        self.assertEqual(done.value.change_kind, "retraction")
+
+    async def test_forgetting_a_persons_guess_leaves_a_belief_that_came_from_it_a_placeholder(
+        self,
+    ) -> None:
+        from dmbot.memory import forget_readings
+
+        claim = "d" * 32
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "INSERT INTO memory_claims (guild_id, campaign_id, id, subject, relationship,"
+                " object, how, lines, speaker_ids, source, prompt_version, model, status,"
+                " created_at, reading) VALUES (%s, %s, %s, 'Morn', 'knows', 'Bruno', 'dm_said',"
+                " %s, %s, 'extractor', 'v1', 'm', 'confirmed', 1, %s)",
+                (GUILD_A, self.c, claim, [], [777], Jsonb({"view": "party", "status": "theory",
+                                                           "confidence": 0.5})),
+            )  # fmt: skip
+        guess = (
+            await self.believe(self.cerric_view, self.other, 0.5, "theory", evidence=[claim])
+        ).value
+        child = (
+            await self.believe(
+                self.cerric_view, self.rel, 0.3, derived_from=guess.id, change_kind="branch"
+            )
+        ).value
+        async with self.db.guild(GUILD_A) as conn:
+            await forget_readings.forget(conn, GUILD_A, 777)
+        self.assertEqual(await self.row(child.id), {"derived_from": None, "change_kind": "branch"})
+        assert child is not None
