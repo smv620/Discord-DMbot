@@ -558,7 +558,7 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
                   </span>
                   {!n.knowWord && n.secret && <span class="visually-hidden"> ({words.secretWords})</span>}
                   {!n.knowWord && n.revealed === false && <span class="small muted"> ({words.notRevealed})</span>}
-                  {n.knowWord && <span class="small muted"> ({words.knowWords[n.knowWord]})</span>}
+                  {n.knowWord && words.knowWords[n.knowWord] && <span class="small muted"> ({words.knowWords[n.knowWord]})</span>}
                   <span class="tag">{kindWords(n.kind)}</span>
                   {n.id === center && <span class="small muted">{words.inMiddle}</span>}
                 </button>
@@ -636,7 +636,7 @@ function WebLines({ lines, onOpen }: { lines: WebLine[]; onOpen: (a: string, b: 
           <span aria-hidden="true">
             {l.from} → {l.words} → {l.to}
           </span>
-          {l.link.knowWord && <span class="small muted"> ({words.knowWords[l.link.knowWord]})</span>}
+          {l.link.knowWord && words.knowWords[l.link.knowWord] && <span class="small muted"> ({words.knowWords[l.link.knowWord]})</span>}
           <span class="visually-hidden">
             {words.lineText(l.from, l.words, l.to)}
             {!l.link.knowWord && l.link.secret ? ` (${words.secretWords})` : ""}
@@ -843,7 +843,7 @@ function LinkRow({
         {words.linkText(a, b, link.words, link.direction)}
         {!link.knowWord && link.secret && <span class="visually-hidden"> ({words.secretWords})</span>}
       </p>
-      {link.knowWord && <p class="small muted">{words.knowWords[link.knowWord]}</p>}
+      {link.knowWord && words.knowWords[link.knowWord] && <p class="small muted">{words.knowWords[link.knowWord]}</p>}
       {canEdit && link.pinned && <p class="small">{words.pinMark} {words.pinnedWords}</p>}
       {canEdit && link.check && <p class="small">{words.checkLine(link.check)}</p>}
       {link.belief && (

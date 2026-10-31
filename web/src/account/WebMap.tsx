@@ -759,7 +759,7 @@ export default function WebMap({
             </li>
           ))}
           {nodes.some((n) => n.revealed === false) && <li>{words.legendNotRevealed}</li>}
-          {nodes.some((n) => markSecret(n)) && (
+          {nodes.some((n) => n.knowWord === "secret") && (
             <li>
               {words.secretMark} {words.knowWords.secret}
             </li>

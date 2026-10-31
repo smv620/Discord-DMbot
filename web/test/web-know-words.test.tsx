@@ -31,8 +31,9 @@ describe("who knows each name and connection", () => {
   it("shows the five states in the list", async () => {
     await open();
     fireEvent.click(screen.getByRole("button", { name: w.expandAll }));
-    const body = document.body.textContent ?? "";
-    for (const word of Object.values(w.knowWords)) expect(body).toContain(word);
+    // Only the names list: the legend also carries the secret words.
+    const list = document.querySelector(".web-names")?.textContent ?? "";
+    for (const word of Object.values(w.knowWords)) expect(list).toContain(word);
   });
 
   it("shows 🤫 only for secret", async () => {
@@ -58,15 +59,11 @@ describe("who knows each name and connection", () => {
   it("the map marks only secret and the legend says so", async () => {
     const api = await open();
     const { nodes } = await statesOf(api);
+    expect(nodes.some((n) => n.knowWord === "secret")).toBe(true);
     const legend = screen.getByText(`${w.secretMark} ${w.knowWords.secret}`, { exact: false });
     expect(legend).toBeTruthy();
-    const mapped = Array.from(document.querySelectorAll<HTMLElement>(".web-node"));
-    const label = (name: string) => mapped.find((el) => el.textContent?.includes(name));
-    for (const n of nodes) {
-      const el = label(n.name);
-      if (!el) continue; // a name off the drawn map is not checked here
-      expect(el.textContent?.includes(w.secretMark) ?? false, n.name).toBe(n.knowWord === "secret");
-    }
+    // The map places its names only after a layout, which this test page does not do, so only its legend is checked
+    // here; the marks on the map are the same rule as the list's (know.ts markSecret), tested there.
   });
 
   it("with no state the old words still show", async () => {
@@ -86,5 +83,15 @@ describe("who knows each name and connection", () => {
   it("the hint shows only when a state is present", async () => {
     await open();
     expect(document.body.textContent).toContain(w.knowHint);
+  });
+
+  it("a read that is not the DM's own full view shows no state, even when the API sends one", async () => {
+    const api = mockApi("table");
+    const full = api.webGraph!.bind(api);
+    // An API that over-sends: the DM's full web with its states, but the read is not the DM's (canEdit off).
+    api.webGraph = async (ref, q) => ({ ...(await full(ref, q)), canEdit: false });
+    await open(api);
+    expect(document.body.textContent).not.toContain(w.knowHint);
+    for (const word of Object.values(w.knowWords)) expect(document.body.textContent).not.toContain(word);
   });
 });
