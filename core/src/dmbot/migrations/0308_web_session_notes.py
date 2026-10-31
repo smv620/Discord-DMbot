@@ -51,7 +51,7 @@ WEB_SESSION_NOTES = r"""
     CREATE FUNCTION dmbot_web_session_notes(g BIGINT, c TEXT, at_ BIGINT) RETURNS JSONB
     LANGUAGE plpgsql SECURITY DEFINER AS $fn$
     DECLARE
-        r session_notes%ROWTYPE;
+        r RECORD;  -- (not %ROWTYPE: the table need not exist when the door is made)
     BEGIN
         IF dmbot_current_guild() IS DISTINCT FROM g
            OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
