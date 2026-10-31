@@ -428,12 +428,23 @@ function DifferenceItem({
   return (
     <li class={item.answer ? "stack muted" : "stack"}>
       <p id={`report-item-${item.id}`}>{item.reason}</p>
-      <p>
-        <strong>{w.believes}:</strong> {item.believes}
-      </p>
-      <p>
-        <strong>{w.truth}:</strong> {item.truth}
-      </p>
+      {item.kind === "lie" ? (
+        <>
+          <p>
+            <strong>{item.view}</strong> {w.lieThinks} <strong>{item.liar ?? w.lieSomeone}</strong> {w.lieSaid} {item.believes}
+          </p>
+          <p>{w.lieTruth}</p>
+        </>
+      ) : (
+        <>
+          <p>
+            <strong>{w.believes}:</strong> {item.believes}
+          </p>
+          <p>
+            <strong>{w.truth}:</strong> {item.truth}
+          </p>
+        </>
+      )}
       <p class="small muted">{w.view(item.view)}</p>
       <Evidence list={item.evidence} />
       {item.remindedFrom ? <p class="small">{w.reminded(item.remindedFrom)}</p> : null}

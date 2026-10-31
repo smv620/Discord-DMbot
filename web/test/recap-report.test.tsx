@@ -36,7 +36,7 @@ const within1 = (words: RegExp, name: string | RegExp): HTMLElement => {
 describe("the report", () => {
   it("shows the counts, the contradictions with both statements, and the party's differences in three groups", async () => {
     await open();
-    await screen.findByText(/2 that may not fit, 3 where the party sees it differently\. 5 left for you to answer\./);
+    await screen.findByText(/2 that may not fit, 5 where the party sees it differently\. 7 left for you to answer\./);
     expect(screen.getByRole("heading", { name: w.contradictionsHeading })).toBeTruthy();
     expect(screen.getByText("The ferryman is dead.")).toBeTruthy();
     expect(screen.getByText("The ferryman rowed the party across the river.")).toBeTruthy();
@@ -113,10 +113,50 @@ describe("the answers", () => {
   it("offers the four answers on a difference with a connection to open, and three on one without", async () => {
     await open();
     await screen.findByText(/Aldric has hidden it/);
-    expect(screen.getAllByRole("button", { name: "That's intended" })).toHaveLength(5);
+    expect(screen.getAllByRole("button", { name: "That's intended" })).toHaveLength(7);
     expect(screen.getAllByRole("button", { name: "Fix the DM's view" })).toHaveLength(2); // only where there is a connection to open
-    expect(screen.getAllByRole("button", { name: "Not a problem" })).toHaveLength(5);
-    expect(screen.getAllByRole("button", { name: "Remind me next session" })).toHaveLength(5);
+    expect(screen.getAllByRole("button", { name: "Not a problem" })).toHaveLength(7);
+    expect(screen.getAllByRole("button", { name: "Remind me next session" })).toHaveLength(7);
+  });
+
+  /** The sentence paragraph of a lie, found by its own words (two lies on the page share the same words). */
+  const lieLine = async (words: string): Promise<HTMLElement> => {
+    await waitFor(() => expect(screen.getAllByText(/lied about this/).length).toBe(2));
+    const found = screen.getAllByText(/lied about this/).map((el) => el.closest("p") as HTMLElement).find((p) => p.textContent?.includes(words));
+    if (!found) throw new Error(`no lie line with ${words}`);
+    return found;
+  };
+
+  it("a lie names who thinks it and who lied", async () => {
+    await open();
+    const p = await lieLine("Valyra hid the key");
+    expect(p.textContent).toBe("Cerric thinks Valyra lied about this: Valyra hid the key");
+    expect(Array.from(p.querySelectorAll("strong")).map((s) => s.textContent)).toEqual(["Cerric", "Valyra"]);
+  });
+
+  it("a lie with no liar says someone", async () => {
+    await open();
+    const p = await lieLine("The harbour master sold the map");
+    expect(p.textContent).toBe("The party thinks someone lied about this: The harbour master sold the map");
+    expect(Array.from(p.querySelectorAll("strong")).map((s) => s.textContent)).toEqual(["The party", "someone"]);
+  });
+
+  it("a lie says Your view: it's true. and not Your view says", async () => {
+    await open();
+    await screen.findByText(/lied about this: Valyra hid the key/, { exact: false });
+    const own = item(/lied about this: Valyra hid the key/);
+    expect(own.textContent).toContain(w.lieTruth);
+    expect(own.textContent).not.toContain(w.truth);
+    expect(own.textContent).not.toContain(w.believes);
+  });
+
+  it("an item with no kind keeps They believe and Your view says", async () => {
+    await open();
+    await screen.findByText(/Old Pell is a priest\./);
+    const own = item(/Old Pell is a priest\./);
+    expect(own.textContent).toContain(w.believes);
+    expect(own.textContent).toContain(w.truth);
+    expect(own.textContent).not.toContain(w.lieTruth);
   });
 
   it("gives all four answers the same weight and ties each to its item for a screen reader", async () => {
@@ -136,13 +176,13 @@ describe("the answers", () => {
     fireEvent.click(within1(/Aldric has hidden it/, "That's intended"));
     await screen.findByText(w.answered("intended"));
     expect(api.calls).toContain("answerReport:100.cmp1:1791000000:d-lie:intended");
-    expect(screen.getByText(/4 left for you to answer\./)).toBeTruthy();
-    expect(document.querySelector("[role=status]")?.textContent).toBe("Saved. 4 left."); // one polite place
+    expect(screen.getByText(/6 left for you to answer\./)).toBeTruthy();
+    expect(document.querySelector("[role=status]")?.textContent).toBe("Saved. 6 left."); // one polite place
     expect(document.querySelectorAll("[role=status]")).toHaveLength(1);
     fireEvent.click(within1(/Aldric has hidden it/, "Undo"));
     await waitFor(() => expect(screen.queryByText(w.answered("intended"))).toBeNull());
     expect(api.calls).toContain("answerReport:100.cmp1:1791000000:d-lie:undo");
-    expect(screen.getByText(/5 left for you to answer\./)).toBeTruthy();
+    expect(screen.getByText(/7 left for you to answer\./)).toBeTruthy();
   });
 
   it("keeps the keyboard where it was: on Undo after an answer", async () => {
