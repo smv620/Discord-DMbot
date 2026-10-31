@@ -84,6 +84,53 @@ class MergeMovesConnections(Helpers):
         self.assertTrue(await self.believes(rel))
 
 
+class HidingAnEnd(MergeMovesConnections):
+    """An entry hidden straight from the players closes its connections' beliefs too (#3082)."""
+
+    async def test_hiding_an_end_closes_the_rows_and_the_belief(self) -> None:
+        shown = await self.add("Arlo", type="character", role="npc", status=CONFIRMED)
+        rel = await self.connect(shown)
+        await self.memory.set_connection_knowers(GUILD_A, self.c, rel, [self.pc], source="dm")
+        self.assertTrue(await self.believes(rel))
+        await self.memory.set_hidden_from_players(GUILD_A, self.c, shown, True, source="dm")
+        self.assertEqual(await self.knowers(rel), [])
+        self.assertFalse(await self.believes(rel))
+
+    async def test_a_revealed_connection_is_known_and_believed_again_when_its_end_is_shown(
+        self,
+    ) -> None:
+        shown = await self.add("Arlo", type="character", role="npc", status=CONFIRMED)
+        rel = await self.connect(shown)
+        await self.memory.set_connection_knowers(GUILD_A, self.c, rel, [self.pc], source="dm")
+        await self.memory.update_relation(GUILD_A, self.c, rel, source="dm", secret=False)
+        await self.memory.set_hidden_from_players(GUILD_A, self.c, shown, True, source="dm")
+        self.assertFalse(await self.believes(rel))
+        await self.memory.set_hidden_from_players(GUILD_A, self.c, shown, False, source="dm")
+        self.assertIn(self.pc, await self.knowers(rel))
+        self.assertTrue(await self.believes(rel))
+
+    async def test_undoing_the_hide_restores_both(self) -> None:
+        shown = await self.add("Arlo", type="character", role="npc", status=CONFIRMED)
+        rel = await self.connect(shown)
+        await self.memory.set_connection_knowers(GUILD_A, self.c, rel, [self.pc], source="dm")
+        written = await self.memory.set_hidden_from_players(
+            GUILD_A, self.c, shown, True, source="dm"
+        )
+        self.assertFalse(await self.believes(rel))
+        batch = written.batch
+        assert batch is not None
+        await self.memory.undo(GUILD_A, self.c, batch, source="dm")
+        self.assertEqual(await self.knowers(rel), [self.pc])
+        self.assertTrue(await self.believes(rel))
+
+    async def test_a_character_who_never_knew_it_is_not_given_a_belief_by_unhiding(self) -> None:
+        shown = await self.add("Arlo", type="character", role="npc", status=CONFIRMED)
+        rel = await self.connect(shown)  # secret: nobody knows it
+        await self.memory.set_hidden_from_players(GUILD_A, self.c, shown, True, source="dm")
+        await self.memory.set_hidden_from_players(GUILD_A, self.c, shown, False, source="dm")
+        self.assertFalse(await self.believes(rel))
+
+
 class MergeTwinFold(MergeMovesConnections):
     """Two facts that say the same thing fold into one in a plain merge (#3073)."""
 
