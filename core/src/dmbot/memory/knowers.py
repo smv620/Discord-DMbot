@@ -181,6 +181,24 @@ async def set_statement_knowers(
     return list(chosen)
 
 
+async def know_own_disguise(w: Changes, relation_id: str, entity_id: str) -> None:
+    """The one in disguise knows it (#3091): a new `disguised_as` connection is listed to its
+    subject at 1.0 in the same write, on every path, so that if the subject is a player character
+    its player sees their own disguise and nobody else's players do. Nothing for a subject that is
+    not a confirmed character."""
+    try:
+        chosen = await _known_characters(w, [entity_id])
+    except MemoryRuleError:
+        return
+    if entity_id not in chosen:
+        return
+    view = await _view_for(w, entity_id, chosen[entity_id])
+    if not await w.select(
+        KNOWERS, " AND relation_id = %s AND perspective_id = %s", [relation_id, view]
+    ):
+        await w.insert(KNOWERS, _row("relation_id", relation_id, view, w.now))
+
+
 async def mark_guess(w: Changes, kind: str, statement_ids: Sequence[str], certainty: float) -> int:
     """The player characters who know these statements only because the AI guessed so (an upload's
     Smart guess, #2959) are recorded as sure to `certainty`, not 1.0: a guess is not the DM's word.

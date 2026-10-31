@@ -5,7 +5,7 @@ Pure: no Discord, no database."""
 from __future__ import annotations
 
 from dmbot.memory import kin
-from dmbot.memory.ontology import FALLBACK_PREDICATE
+from dmbot.memory.ontology import DISGUISED_AS, FALLBACK_PREDICATE, SYNONYMS
 
 CONNECTION_WORDS = {
     "located_in": "is in",
@@ -24,6 +24,7 @@ CONNECTION_WORDS = {
     "founded": "founded",
     "captive_of": "is held captive by",
     "contains": "contains",
+    "disguised_as": "is disguised as",
 }
 # The same connection read from the other name's card ("Frostwolf tribe has as members
 # Ulfgar"). Connections that read the same both ways use CONNECTION_WORDS.
@@ -40,6 +41,7 @@ CONNECTION_BACK = {
     "founded": "was founded by",
     "captive_of": "holds captive",
     "contains": "is inside",
+    "disguised_as": "is impersonated by",
 }
 # On a card, where several names may follow ("members include Ulfgar, Kesh").
 CARD_BACK = {**CONNECTION_BACK, "member_of": "members include"}
@@ -74,6 +76,8 @@ def predicate_for(words: str) -> tuple[str, str]:
     parsed = kin.parse(clean)
     if parsed is not None and not parsed[1]:
         return KIN, parsed[0]
+    if SYNONYMS.get("_".join(clean.casefold().split())) == DISGUISED_AS:
+        return DISGUISED_AS, ""  # "is posing as" and the like (#3091): never the public catch-all
     return FALLBACK_PREDICATE, clean
 
 
