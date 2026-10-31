@@ -51,9 +51,9 @@ WEB_KNOWERS_DATA = r"""
                                 ELSE 'alias' END,
                            COALESCE(k.about_entity_id, k.state_id, k.relation_id, k.alias_id),
                            p.entity_id, k.confidence))
-                FROM memory_knowers k
+                FROM (SELECT * FROM memory_knowers WHERE cardinality(hidden_by) = 0) k
                 JOIN memory_perspectives p ON p.id = k.perspective_id
-                WHERE k.guild_id = g AND k.campaign_id = c AND cardinality(k.hidden_by) = 0
+                WHERE k.guild_id = g AND k.campaign_id = c
                   AND p.entity_id IS NOT NULL), '[]'::jsonb),
             'liveEntries', COALESCE((
                 SELECT jsonb_agg(x.id ORDER BY x.id) FROM memory_entities x
@@ -95,10 +95,10 @@ WEB_KNOWERS_DATA = r"""
                 '[]'::jsonb),
             'learned', COALESCE((
                 SELECT jsonb_agg(jsonb_build_array(k.alias_id, p.entity_id, k.created_at))
-                FROM memory_knowers k
+                FROM (SELECT * FROM memory_knowers WHERE cardinality(hidden_by) = 0) k
                 JOIN memory_perspectives p ON p.id = k.perspective_id
                 WHERE k.guild_id = g AND k.campaign_id = c AND k.alias_id IS NOT NULL
-                  AND cardinality(k.hidden_by) = 0 AND p.entity_id IS NOT NULL), '[]'::jsonb),
+                  AND p.entity_id IS NOT NULL), '[]'::jsonb),
             -- member -> group, a confirmed member_of connection
             'groups', COALESCE((
                 SELECT jsonb_agg(jsonb_build_array(r.subject_id, r.object_id))
