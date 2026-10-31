@@ -232,7 +232,7 @@ class TheChecks(unittest.TestCase):
     def test_a_shared_role_beats_plain_family_whichever_is_read_first(self) -> None:
         # Invented names. A pair read as plain "family" and as "sibling" keeps the sibling role,
         # in either order; a second shared role never replaces the first.
-        names = [bg.Found(n, "person", [], [], "q") for n in ("Tam", "Mira")]
+        names = [bg.Found(n, "person", (), (), "q") for n in ("Tam", "Mira")]
         plain = bg.Connection("Tam", "kin_of", "Mira", "Tam and Mira are family")
         sibling = bg.Connection(
             "Tam", "kin_of", "Mira", "Tam is the brother of Mira", words="sibling"

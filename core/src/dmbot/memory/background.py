@@ -1091,11 +1091,12 @@ def keep_connections(
                         continue
                     # Only a plain line is replaced, and only by a role: a held shared role or
                     # free-text label is never swapped (first read wins; two roles conflict anyway).
-                    replaces_plain = (
-                        bool((role or shared) and not held_role and where is not None)
-                        and not out[where or 0].words
-                    )
-                    if not replaces_plain:
+                    if (
+                        where is None  # (narrows `where` for the index below)
+                        or not (role or shared)
+                        or held_role
+                        or out[where].words
+                    ):
                         lost["same_pair"] += 1  # (a plain line, or the same role again)
                         continue
                     lost["same_pair"] += 1  # the plain line is dropped for the role
