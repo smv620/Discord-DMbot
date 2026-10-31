@@ -188,22 +188,38 @@ class TheExamples(unittest.TestCase):
             sum("mentors" in x for x in listed.links), 2
         )  # (two apprentices, two lines)
 
-    def test_the_sixth_example_lists_a_special_object_a_message_and_a_group(self) -> None:
-        # (#2757) things the story singles out are listed by the text's own words; the sack of
-        # rope and biscuits (ordinary gear) is not; each name stands whole in the document
+    def test_the_sixth_example_lists_a_special_object_and_a_group_and_not_the_rest(self) -> None:
+        # (#2757) things the story singles out are listed by the text's own words; the dagger,
+        # coins, sack and the guards at the gate are not; every name and quote is in the document
         example = lr.EXAMPLES.split("Example 6.", 1)[1]
-        document = example.split("<document>\n", 1)[1].split("\n</document>", 1)[0]
+        document = " ".join(
+            example.split("<document>\n", 1)[1].split("\n</document>", 1)[0].split()
+        )
         listed = lr.parse_plain(example.split("Output:\n", 1)[1])
         kinds = {n.split(" | ")[0][2:]: n.split(" | ")[1] for n in listed.names}
         self.assertEqual(kinds["rusted brass compass"], "item")
         self.assertEqual(kinds["band of river smugglers"], "group")
-        self.assertNotIn("rope", " ".join(kinds))
+        for left_out in ("dagger", "coins", "sack", "guards"):
+            self.assertNotIn(left_out, " ".join(kinds))
         for name in kinds:
-            self.assertIn(name, " ".join(document.split()))
+            self.assertIn(name, document)
+        for line in listed.names + listed.links:
+            quote = line.split('quote: "', 1)[1].rstrip('"')
+            self.assertIn(quote, document)
+            self.assertLessEqual(len(quote.split()), bg.QUOTE_WORDS * 2)
+
+    def test_a_quoted_note_the_rule_asks_for_is_listed_where_an_example_has_one(self) -> None:
+        # The rule (b) and Example 4 must agree: the example's note is a listed item.
+        four = lr.EXAMPLES.split("Example 4.", 1)[1].split("Example 5.", 1)[0]
+        self.assertIn("A note was left at the camp", four)
+        self.assertIn("- note | item |", four)
 
     def test_the_rule_for_things_and_groups_keeps_its_limits(self) -> None:
         rules = lr.read_instructions()
-        for word in ("THINGS AND GROUPS WITHOUT A PROPER NAME", "ordinary gear", "the party"):
+        for word in (
+            "THINGS AND GROUPS WITHOUT A PROPER NAME", "ordinary", "the party", "in passing",
+            "household", "except the few things and groups",
+        ):  # fmt: skip
             self.assertIn(word, rules)
 
 
