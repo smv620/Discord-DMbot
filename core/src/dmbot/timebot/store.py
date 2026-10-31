@@ -391,6 +391,18 @@ class ClockStore:
         assert stored is not None
         return stored, token
 
+    async def player_characters(self, guild_id: int, campaign_id: str) -> list[tuple[str, str]]:
+        """This campaign's confirmed player characters, (entry id, name) by name: who the DM can
+        place in a split-party group."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT id, name FROM memory_entities WHERE guild_id = %s AND campaign_id = %s"
+                " AND type = 'character' AND role = 'player_character' AND status = 'confirmed'"
+                " ORDER BY lower(name), id",
+                (guild_id, campaign_id),
+            )
+            return [(str(r["id"]), str(r["name"])) for r in await cur.fetchall()]
+
     async def members(self, guild_id: int, campaign_id: str) -> dict[str, int]:
         """The player characters placed in a group right now (character entry id -> group)."""
         async with self._db.guild(guild_id) as conn:
