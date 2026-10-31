@@ -291,6 +291,9 @@ _ANY = tuple(
 # The catch-all relationship a refused term's fact is kept on, with the steward's words as its
 # label (in the fact's `detail`), so a refusal never loses the fact (#1298, #1303).
 FALLBACK_PREDICATE = "associated_with"
+# A character posing as another is two characters and a secret by nature (#3091): a new one is
+# made secret, however it is made (the DM reveals it with the connection's own switch).
+DISGUISED_AS = "disguised_as"
 
 CORE_PREDICATES: tuple[PredicateTerm, ...] = (
     PredicateTerm(
@@ -750,6 +753,40 @@ CORE_PREDICATES: tuple[PredicateTerm, ...] = (
         examples=("Saved the mill mattered to Brindle (helped them).",),
         inverse_label="was affected by",
         synonyms=("mattered_to", "touched"),
+    ),
+    PredicateTerm(
+        DISGUISED_AS,
+        "is disguised as",
+        "One character poses as another: a doppelganger, a changeling or an impostor wearing "
+        "someone's face. Two different characters, never one: the first name is the one in "
+        "disguise, the second is the person being copied. Not for a character who has a second "
+        "name (that is one person).",
+        ("character",),
+        ("character",),
+        covers=(
+            "a doppelganger or changeling posing as a real person",
+            "an impostor, a spy or a pretender passing as someone else",
+        ),
+        not_this=(
+            ("they merely look alike", "associated_with"),
+            ("a character who works for another", "serves"),
+        ),
+        examples=("Jax is disguised as Valyra.", "The changeling is disguised as the mayor."),
+        inverse_label="is impersonated by",
+        synonyms=(
+            "posing_as",
+            "poses_as",
+            "impersonating",
+            "impersonates",
+            "masquerading_as",
+            "masquerades_as",
+            "pretending_to_be",
+            "pretends_to_be",
+            "doppelganger_of",
+            "wearing_the_face_of",
+            "wears_the_face_of",
+            "disguised_as_a",
+        ),
     ),
     PredicateTerm(
         FALLBACK_PREDICATE,

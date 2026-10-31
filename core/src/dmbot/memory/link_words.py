@@ -24,6 +24,7 @@ CONNECTION_WORDS = {
     "founded": "founded",
     "captive_of": "is held captive by",
     "contains": "contains",
+    "disguised_as": "is disguised as",
 }
 # The same connection read from the other name's card ("Frostwolf tribe has as members
 # Ulfgar"). Connections that read the same both ways use CONNECTION_WORDS.
@@ -40,6 +41,7 @@ CONNECTION_BACK = {
     "founded": "was founded by",
     "captive_of": "holds captive",
     "contains": "is inside",
+    "disguised_as": "is impersonated by",
 }
 # On a card, where several names may follow ("members include Ulfgar, Kesh").
 CARD_BACK = {**CONNECTION_BACK, "member_of": "members include"}

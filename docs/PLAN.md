@@ -1988,6 +1988,11 @@ names panel nor the speech-to-text hints can be a fixed list.
       screen says "Revealed at the table: A, B (Session N)" with ↩️ Undo. Connections are not revealed by this
       step: until the knowledge map review (#2410), the after-session report points to the held-back
       connections whose names are both revealed now.
+    - **Disguised as** (CloudDev-lead, 2026-10-31, #3091 part 4; owner request): a new core connection kind,
+      `disguised_as` ("is disguised as" / "is impersonated by"), character to character, secret by nature,
+      never offered as a "same person" join, with the usual extraction synonyms. A code release; no migration.
+      The Connect menu offers it forward only (`founded` also loses its back reading there) to stay at 25
+      options. See docs/STORY_MEMORY.md, "Disguised as".
     - **📌 100% truth** (CloudDev, 2026-10-22, #2447, migrations 0190 and 0193): the DM's own word that a connection is
       true in the story; nothing else is 100%. A DM presses 📌 Pin as 100% truth on a connection's card
       (Unpin takes it back), or answers once per lore upload, "may change in play" (default) or "📌 100% truth", and

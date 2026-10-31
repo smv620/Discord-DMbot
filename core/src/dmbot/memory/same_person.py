@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from dmbot.memory.models import name_key
+from dmbot.memory.ontology import DISGUISED_AS
 
 STATED = "the text says so"
 CONNECTIONS = "they share connections"
@@ -161,8 +162,11 @@ def from_rows(
         if a["status"] == "confirmed":  # only names the DM said yes to count as evidence
             spoken.setdefault(str(a["entity_id"]), []).append(str(a["text"]))
     links: dict[str, set[Link]] = {}
+    disguised: set[tuple[str, str]] = set()  # a disguise is two people: never offered as one
     for r in relations:
         subject, other = str(r["subject_id"]), str(r["object_id"])
+        if r["predicate"] == DISGUISED_AS and r.get("status") != "rejected":
+            disguised |= {(subject, other), (other, subject)}
         if subject not in live or other not in live:
             continue  # a connection to a rejected or merged entry says nothing
         links.setdefault(subject, set()).add((str(r["predicate"]), other, True))
@@ -184,4 +188,5 @@ def from_rows(
     declined = {(a, b) for a, b in apart if a in left and b in right} | {
         (b, a) for a, b in apart if b in left and a in right
     }
+    declined |= {(a, b) for a, b in disguised if a in left and b in right}
     return offers(unnamed, named, declined=declined)

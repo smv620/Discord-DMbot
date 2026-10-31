@@ -824,6 +824,27 @@ the owner chooses it, one at a time.
   placeholder (a restored campaign has none of those lines). The health report counts links,
   placeholders, dangling and foreign links.
 
+**Disguised as: one character posing as another** (owner, 2026-10-31, #3091 part 4; a code release, no migration).
+- A disguise is two characters, never one: Jax is not Valyra, he is a second character posing as
+  her. A "same person" join would erase the real Valyra, so it is the wrong tool. The kind is
+  `disguised_as`: "is disguised as" read forward (the subject is the one in disguise), "is
+  impersonated by" read backwards; character to character, the same character twice is refused, and
+  one character may wear several faces or be copied by several.
+- **Secret by nature:** a new one is made secret (known only to the DM), however it is made (the DM,
+  an upload, a reading), and the DM reveals it with the connection's own switch. Who knows it
+  follows the who-knows lists like any connection (Jax knows his own disguise; a character who sees
+  through it learns it). A guess ("I think the mayor is a changeling posing as her") stays a
+  theory proposal, never kept.
+- **The gate is unchanged:** a player whose characters do not know the disguise sees nothing of it
+  and keeps seeing "Valyra" with what they believe of her. Nothing is merged: what Cerric believes
+  Valyra said or did stays on Valyra's entry; the DM decides later which of it was Jax's, with the
+  lineage finder (part 1) to help.
+- The "same person?" finder never offers a pair joined by a disguise (either direction, any status
+  but rejected). "Posing as", "impersonating", "masquerading as", "pretending to be", "a doppelganger
+  of" and "wearing the face of" read as `disguised_as`. The Connect menu offers it forward only
+  (and `founded` loses its back reading there too) to stay at Discord's 25 options; both back
+  readings still read on the card.
+
 **Embeddings (meaning search).** Voyage AI (owner, 2026-10-24): `voyage-3.5` for embeddings and
 `rerank-2.5` for the second pass that picks what matters most. It is named on the privacy page as a
 processor before it is used.

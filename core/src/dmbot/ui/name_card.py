@@ -167,9 +167,9 @@ def sentence(lookup: CampaignLookup, r: Relation) -> str | None:
 
 
 # Kinds whose "other way round" reading is not offered in the menu: Discord allows 25 options, and
-# these three are the rarest ways to say it ("is owed an oath by"). They still read both ways on a
+# these are the rarest ways to say it ("is owed an oath by"). They still read both ways on a
 # card and in the edit menus; the other way round is one tap on the same name's card.
-NO_BACK_OPTION = frozenset({"located_in", "sworn_to", "captive_of"})
+NO_BACK_OPTION = frozenset({"located_in", "sworn_to", "captive_of", "founded", "disguised_as"})
 
 
 def connect_choices(name: str) -> list[tuple[str, str, str | None]]:
