@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import unittest
+from collections import Counter
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -228,6 +229,47 @@ class TheChecks(unittest.TestCase):
         found = [bg.Found("Mirelle", "npc", (), (), "")]
         links = [bg.Connection("She", "knows", "Mirelle", "She knows Mirelle")]
         self.assertEqual(bg.keep_connections([links], found, {}), [])
+
+    def test_a_pronoun_reaches_back_through_its_paragraph_for_the_name(self) -> None:
+        # Invented text (#2757). The name is two sentences back; the sentence between names nobody.
+        def read(text: str, others: set[str] | None) -> tuple[list[bg.Connection], Counter[str]]:
+            lost: Counter[str] = Counter()
+            reply = json.dumps({"connections": [link(
+                "Corvin Hale", "brother", "Daric", "His brother, Daric, vanished at forty"
+            )]})  # fmt: skip
+            return bg.read_connections(reply, text, dropped=lost, others=others), lost
+
+        near = (
+            "Corvin Hale hunted wolves. Old stories say his family was cursed. "
+            "His brother, Daric, vanished at forty."
+        )
+        names = bg.reach_names({"corvin hale", "daric", "pell ashe"})
+        got, lost = read(near, names)
+        self.assertEqual([(c.how, c.words) for c in got], [("kin_of", "sibling")])
+        self.assertEqual(lost["quote_reach"], 1)
+        self.assertTrue(got[0].quote.startswith("Corvin Hale hunted"))  # word for word
+        self.assertIn(got[0].quote, near)
+        # (without the names to check against, nothing reaches beyond the sentence before)
+        self.assertEqual(read(near, None)[0], [])
+        # another name in between: the pronoun may mean that one, so nothing is widened
+        between = near.replace("his family", "Pell Ashe and his family")
+        self.assertEqual(read(between, names)[0], [])
+        self.assertEqual(read(between.replace("Pell Ashe", "Pell"), names)[0], [])  # (a first name)
+        # four sentences back is too far; another paragraph is another subject
+        far = (
+            "Corvin Hale hunted wolves. It was cold. It was dark. Old stories say it. "
+            "His brother, Daric, vanished at forty."
+        )
+        self.assertEqual(read(far, names)[0], [])
+        apart = near.replace("wolves. ", "wolves.\n\n")
+        self.assertEqual(read(apart, names)[0], [])
+        # a reach never exceeds the queue's 400-character quote column
+        long = near.replace("hunted wolves", "hunted " + "wolves " * 70)
+        self.assertEqual(read(long, names)[0], [])
+        # the one-sentence widening is unchanged and not counted as a reach
+        one = "Old stories say Corvin Hale was cursed. His brother, Daric, vanished at forty."
+        got, lost = read(one, names)
+        self.assertEqual((len(got), lost["quote_widened"], lost["quote_reach"]), (1, 1, 0))
 
 
 class ThePath(NamesTest):

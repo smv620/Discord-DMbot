@@ -371,6 +371,36 @@ _SENTENCE_END = re.compile(r"[.!?]+[\"'”’)\]]*\s+")
 _BREAK = re.compile(r"[\n\r\u2028\u2029\x85]")
 
 
+REACH_SENTENCES = 3  # how many sentences back a pronoun's name may stand (#2757)
+REACH_WORDS = 60  # the most words of a quote that reaches back; the AI's own is 20
+# The waiting-connection queue keeps a quote to 400 characters and cuts the END (the pronoun's
+# own sentence), so a window that long is never offered.
+REACH_CHARS = 400
+
+
+def reach_names(keys: Iterable[str]) -> set[str]:
+    """The name keys a reach looks for as a third name: every key given, and a first word that
+    only one key starts with ("Brannoch" for "Brannoch Ashe"), since a text says a name short."""
+    full = {k for k in keys if k}
+    firsts = Counter(k.split()[0] for k in full if len(k.split()) > 1)
+    return full | {w for w, n in firsts.items() if n == 1 and len(w) > SHORTEST}
+
+
+def _third_name(span: str, others: Collection[str], ends: Collection[str]) -> bool:
+    """Whether a name of the campaign or the read other than the pair's own stands in the span
+    (a capitalised run of up to four words, so "boy" in running text is no name): then the
+    pronoun may mean that one, and no reach is made."""
+    tokens = re.findall(r"\w+(?:['’-]\w+)*", span)
+    for i, token in enumerate(tokens):
+        if not token[:1].isupper():
+            continue
+        for size in range(1, 5):
+            gram = name_key(" ".join(tokens[i : i + size]))
+            if gram and gram in others and gram not in ends:
+                return True
+    return False
+
+
 MIN_BORROWED_WORDS = 3  # the paragraph before must end in at least this many words to lend
 LONG_QUOTE_WORDS = 2 * QUOTE_WORDS  # a widened quote's most, when 20 cannot hold both ends
 
@@ -382,6 +412,8 @@ def _widen(
     b: str,
     holds: Callable[[str, str], bool] | None = None,
     lost: Dropped | None = None,
+    others: Collection[str] | None = None,
+    ends: Collection[str] = (),
 ) -> list[str] | None:
     """A quote that holds only one of the two names (the sentence says "his sister", #2757) made
     the sentence before it too: the text from the start of the previous sentence to the end of the
@@ -397,7 +429,16 @@ def _widen(
     (a list sentence "A mentored two apprentices: B... as well as C", #2841). A quote that opens
     its paragraph borrows the last sentence of the paragraph before it. `lost` counts how often
     each of these was needed (`quote_long`, `quote_prev_paragraph`), never a word. None when no
-    place in the text gives such a window."""
+    place in the text gives such a window.
+
+    Reach (#2757): when the sentence just before does not name the missing end (a background says
+    "Okthandom found a journal. Family members vanish at a hundred. His brother, Vaelrith, …"),
+    the window goes back through the SAME paragraph, up to `REACH_SENTENCES` sentences and
+    `REACH_WORDS` words (and `REACH_CHARS` characters, the queue's quote column), to the nearest
+    earlier sentence that holds both names. Only when `others` (the name keys of the campaign
+    and of this read, `reach_names`) is given, and only when no name in `others` but the pair's
+    own `ends` stands anywhere in the window: another name there could be the one the pronoun
+    means, so the line is left to the who-is-it check. Counted as `quote_reach`."""
     if not any(w.strip(".,;:!?\"'“”‘’()").casefold() in PRONOUNS for w in words):
         return None  # (no pronoun: the quote names what it names, and nothing is borrowed)
     holds = holds or _in_quote
@@ -435,6 +476,22 @@ def _widen(
                     if borrowed and len(tokens) - len(window) < len(piece[origin:upto].split()):
                         lost["quote_prev_paragraph"] += 1  # (the window really reaches into it)
                 return window
+        if others is None or borrowed:
+            continue
+        for back in range(2, REACH_SENTENCES + 1):
+            if len(starts) < back + 1:
+                break  # (the paragraph holds no sentence that far back)
+            reach = piece[paragraph + starts[-(back + 1)] : end]
+            tokens = reach.split()
+            if len(tokens) > REACH_WORDS or len(reach) > REACH_CHARS:
+                break  # (longer reaches are longer still)
+            if _third_name(reach, others, ends):
+                break  # (the pronoun may mean that name: the who-is-it check decides)
+            said = _squash(reach)
+            if holds(said, a) and holds(said, b):
+                if lost is not None:
+                    lost["quote_reach"] += 1
+                return tokens
     return None
 
 
@@ -711,6 +768,7 @@ def read_connections(
     dropped: Dropped | None = None,
     aliases: Mapping[str, Sequence[str]] | None = None,
     unsettled: list[Unsettled] | None = None,
+    others: Collection[str] | None = None,
 ) -> list[Connection]:
     """The connections in one answer that the text really holds: both names and the quote are in
     `piece` as whole words and the quote holds both names, so DMbot never invents a link. The
@@ -721,7 +779,11 @@ def read_connections(
     alone (#2841): a connection found through a secret one is kept secret (`keep_connections`).
     `unsettled` (#2790): when given, a connection whose pronoun the sentence before did not settle
     is added there instead of being dropped as `not_in_text`, for the caller to settle; the caller
-    then counts what became of each (the counts add up to the lines found)."""
+    then counts what became of each (the counts add up to the lines found).
+
+    `others` (#2757): the name keys of the campaign and of this read (`reach_names`). When given, a
+    quote with a pronoun may reach back through its paragraph for the name it lacks (`_widen`);
+    without it, only the sentence before is used, as before."""
     lost = dropped if dropped is not None else Counter()
     data = _json(reply)
     items = data.get("connections") if isinstance(data, dict) else None
@@ -829,7 +891,11 @@ def read_connections(
             lost["not_in_text"] += 1
         elif holds(said_squashed, seen[0]) and holds(said_squashed, seen[1]):
             out.append(_via(made, said_squashed, seen, forms))
-        elif (wide := _widen(piece, words, seen[0], seen[1], holds, lost)) is not None:
+        elif (
+            wide := _widen(
+                piece, words, seen[0], seen[1], holds, lost, others, own_ends(seen, forms)
+            )
+        ) is not None:
             # The quote named one end ("his sister…"): the sentence before it joins, word for word.
             lost["quote_widened"] += 1
             joined = replace(made, quote=" ".join(wide))
@@ -841,6 +907,13 @@ def read_connections(
         else:
             lost["not_in_text"] += 1
     return out
+
+
+def own_ends(seen: Sequence[str], forms: Callable[[str], list[str]]) -> set[str]:
+    """The keys of the pair's own two ends, with their spellings and each word of them: none of
+    these is a third name when a reach looks for one."""
+    keys = {name_key(f) for end in seen for f in forms(end)}
+    return keys | {w for k in keys for w in k.split() if len(w) >= SHORTEST}
 
 
 def _via(

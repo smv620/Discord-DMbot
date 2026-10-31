@@ -708,6 +708,7 @@ async def read_background(
         progress=progress,
         aliases=aliases,
         hold_open=who_ai is not None,
+        known_keys=known,
     )
     found = bg.merge(
         [read.names],
