@@ -13,6 +13,7 @@ import httpx
 from dmbot.memory import beliefs
 from dmbot.memory import report_store as rs
 from dmbot.memory.models import DM as DM_SOURCE
+from dmbot.memory.models import new_id
 from dmbot.memory.store import MemoryStore
 from dmbot.web import report, sessions
 from dmbot.web.app import create_app
@@ -188,6 +189,44 @@ class TheReport(Reading):
         await self.difference("false", denied=True)
         (d,) = (await self.read())["differences"]["false"]
         self.assertEqual(d["truth"], report.NOT_SO)
+
+    async def a_lie_difference(self, *, liar: bool = True) -> str:
+        cerric = await self.name("Cerric", self.one.id)
+        valyra = await self.name("Valyra", self.one.id)
+        view = new_id()
+        await self.sql(
+            "INSERT INTO memory_perspectives (guild_id, campaign_id, id, kind, entity_id,"
+            " created_at) VALUES (%s, %s, %s, 'pc', %s, 1)",
+            GUILD, self.one.id, view, cerric,
+        )  # fmt: skip
+        await self.memory.believe(
+            GUILD, self.one.id, view, self.ally, 0.5, "suspected_lie", source=DM_SOURCE,
+            sources=[valyra],
+        )  # fmt: skip
+        if not liar:  # the character who lied has gone since
+            await self.sql("DELETE FROM memory_evidence WHERE kind = 'source'")
+        await self.sql(
+            "INSERT INTO memory_differences (guild_id, campaign_id, perspective_id, relation_id,"
+            " truth_relation_id, kind, sort, reason, found_at, session_started_at)"
+            " VALUES (%s, %s, %s, %s, %s, 'lie', 'misunderstood', 'Not so.', 1, %s)",
+            GUILD, self.one.id, view, self.ally, self.ally, S1,
+        )  # fmt: skip
+        return view
+
+    async def test_a_lie_the_party_got_wrong_names_who_thinks_it_and_who_they_blame(self) -> None:
+        await self.a_lie_difference()
+        (d,) = (await self.read())["differences"]["misunderstood"]
+        self.assertEqual((d["kind"], d["liar"], d["view"]), ("lie", "Valyra", "Cerric"))
+        self.assertEqual(d["believes"], d["truth"])  # (The truth holds the statement itself)
+
+    async def test_a_liar_who_is_gone_reads_as_someone_and_other_kinds_have_no_liar(self) -> None:
+        await self.a_lie_difference(liar=False)
+        await self.difference("false", denied=True)
+        got = (await self.read())["differences"]
+        (lie,) = got["misunderstood"]
+        (plain,) = got["false"]
+        self.assertEqual((lie["kind"], lie["liar"]), ("lie", "someone"))
+        self.assertEqual((plain["kind"], plain["liar"]), ("denied", None))
 
     async def test_a_difference_never_sorted_is_counted_and_not_listed(self) -> None:
         await self.difference("not_sorted")

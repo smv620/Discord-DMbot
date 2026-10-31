@@ -786,6 +786,14 @@ the plan's limits with the shared progress, and the doors.
 - **"What the party has wrong":** where the party's or a PC's beliefs differ from the DM's view,
   sorted into disguised, misunderstood and simply false, so the DM can close plot holes before they
   grow.
+  **A lie the party got wrong (#3091, kind `lie`):** the party or a player's character thinks (or is sure)
+  that someone lied about a connection, and The truth holds that very connection at 1.0, so the accusation
+  is the mistake. It is listed with the holder named ("Cerric thinks Valyra lied about this"; the party's
+  own view reads "the party thinks"). A liar who is gone or not a kept character reads "someone". A lie The
+  truth also denies is the table being right and is not listed (no "they were right" line for now). An
+  NPC's lie is the DM's own story and is never listed. The report stays DM-only through the same door, and
+  the liar's name is the DM's view of it. A lie status never counts as asserting the connection is so
+  (`contradictions.asserts`), so a suspected lie at 50% does not read as a belief that it is true.
   **Built (#2661 slice 1): the differences finder.** `memory/differences.py` lists the beliefs a point of
   view that is not The truth holds NOW (0.5 or more, not a denial) where The truth either denies that very
   connection (0.0, False Evidence) or holds a clashing connection between the same two names that overlaps
