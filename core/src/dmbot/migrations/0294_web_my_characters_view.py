@@ -52,17 +52,18 @@ _SHARED_SWAPS = (
         "            vis := ARRAY(SELECT DISTINCT x FROM unnest(\n"
         "                vis || ARRAY(SELECT m.entity_id\n"
         "                             FROM dmbot_my_known_entries(g, c) m)) x);\n"
-        "            my_rels := ARRAY(SELECT r FROM dmbot_my_known_relations(g, c) r);\n"
+        "            my_rels := ARRAY(SELECT kr.relation_id\n"
+        "                FROM dmbot_my_known_relations(g, c) kr\n"
+        "                WHERE kr.via_alias_id IS NULL OR kr.via_open);\n"
         "            SELECT COALESCE(jsonb_object_agg(n.alias_id, jsonb_build_object(\n"
         "                       'entity', n.entity_id, 'alias', n.alias_id,\n"
         "                       'name', n.shown_name, 'kind', n.kind)), '{}'::jsonb)\n"
         "            INTO split FROM dmbot_my_alias_nodes(g, c) n;\n"
         "            split_rels := ARRAY(SELECT r.id FROM memory_relations r\n"
+        "                JOIN dmbot_my_known_relations(g, c) kr ON kr.relation_id = r.id\n"
         "                WHERE r.guild_id = g AND r.campaign_id = c AND r.status = 'confirmed'\n"
         "                  AND (r.secret OR r.unrevealed)\n"
-        "                  AND split->>r.via_alias_id IS NOT NULL);\n"
-        "            my_rels := ARRAY(SELECT x FROM unnest(my_rels) x\n"
-        "                             WHERE NOT (x = ANY (split_rels)));\n"
+        "                  AND split->>kr.via_alias_id IS NOT NULL);\n"
         "        END IF;\n" + _COMMENT,
     ),
     (
@@ -432,11 +433,22 @@ WEB_MY_CHARACTERS_VIEW = (
                         AND v.status = 'confirmed')
     $fn$;
 
-    -- The connections those characters know.
-    CREATE FUNCTION dmbot_my_known_relations(g BIGINT, c TEXT) RETURNS SETOF TEXT
+    -- The connections those characters know, with the secret other name each came through (a
+    -- join records it) and whether that name is now open (confirmed and not secret): `via` says
+    -- where a known connection is drawn, never whether it is theirs.
+    CREATE FUNCTION dmbot_my_known_relations(g BIGINT, c TEXT)
+    RETURNS TABLE (relation_id TEXT, via_alias_id TEXT, via_open BOOLEAN)
     LANGUAGE sql STABLE SECURITY DEFINER AS $fn$
-        SELECT DISTINCT k.relation_id FROM memory_knowers k
+        SELECT DISTINCT k.relation_id, r.via_alias_id,
+               COALESCE(EXISTS (SELECT 1 FROM memory_aliases va
+                                WHERE va.guild_id = g AND va.campaign_id = c
+                                  AND va.id = r.via_alias_id
+                                  AND va.status = 'confirmed' AND NOT va.secret), false)
+        FROM memory_knowers k
+        JOIN memory_relations r ON r.guild_id = k.guild_id AND r.campaign_id = k.campaign_id
+                               AND r.id = k.relation_id
         WHERE k.guild_id = g AND k.campaign_id = c AND k.relation_id IS NOT NULL
+          AND r.status = 'confirmed'
           AND k.confidence > 0 AND k.perspective_id IN (SELECT dmbot_my_perspectives(g, c))
     $fn$;
 

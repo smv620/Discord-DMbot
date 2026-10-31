@@ -430,6 +430,14 @@ async def what_my_characters_know(scope: Scope, user_id: int) -> Mine:
         ):
             newest[(row["relation_id"], row["perspective_id"])] = row["confidence"]
         knows = {rel for (rel, _), c in newest.items() if c >= KNOWN}
+        knows |= {  # (and the who-knows lists: a character's row on a connection)
+            str(r["relation_id"])
+            for r in await scope.select(
+                KNOWERS,
+                " AND perspective_id = ANY(%s) AND relation_id IS NOT NULL AND confidence > 0",
+                [list(views)],
+            )
+        }
     hidden = (
         await scope.select(
             RELATIONS,
@@ -469,24 +477,29 @@ async def what_my_characters_know(scope: Scope, user_id: int) -> Mine:
         if alias_ids
         else []
     )
-    # A name belongs to the fact (#3037): a connection a join moved through a secret other name
-    # that one of these characters holds is theirs, whatever else they know.
+    # A name belongs to the fact (#3037): `via_alias_id` says WHERE a known connection is drawn
+    # (on the name it came through), never WHETHER it is theirs: only the connections these
+    # characters know are listed. One that came through a name that is secret and held by them is
+    # drawn on that name; through a name that is not secret, on the entry; through a name that was
+    # rejected or is gone, or a secret one they do not hold, it is not shown.
     owner_of = {str(a["id"]): str(a["entity_id"]) for a in aliases}
-    if owner_of:
-        seen_ids = {r["id"] for r in hidden}
-        hidden = [
-            *hidden,
-            *[
-                r
-                for r in await scope.select(
-                    RELATIONS,
-                    " AND via_alias_id = ANY(%s) AND status = %s AND (secret OR unrevealed)"
-                    " AND to_session_at IS NULL ORDER BY id",
-                    [sorted(owner_of), CONFIRMED],
-                )
-                if r["id"] not in seen_ids
-            ],
-        ]
+    via_ids = sorted({str(r["via_alias_id"]) for r in hidden if r.get("via_alias_id")})
+    via_rows = (
+        {str(a["id"]): a for a in await scope.select(ALIASES, " AND id = ANY(%s)", [via_ids])}
+        if via_ids
+        else {}
+    )
+
+    def drawn(r: dict[str, Any]) -> bool:
+        via = r.get("via_alias_id")
+        if not via:
+            return True
+        a = via_rows.get(str(via))
+        if a is None or a["status"] != CONFIRMED:
+            return False
+        return not a["secret"] or str(via) in owner_of
+
+    hidden = [r for r in hidden if drawn(r)]
     who = await connection_knowers(scope, [r["id"] for r in hidden])
     a_who = await alias_knowers(scope, [a["id"] for a in aliases])
     wanted = {*mine}
