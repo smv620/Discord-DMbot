@@ -79,7 +79,8 @@ async def read_viewers(db: Database, session: Session, ref: str, query: str = ""
     _src, known, _pages = await source_of(db, session, ref)
     if not known["isDm"]:
         raise RecapError("not_allowed")
-    needle = " ".join(query.split()).casefold()[:100]
+    # (the order, player characters first then by name, comes from the SQL door)
+    needle = " ".join(query[:200].split()).casefold()[:100]
     found = [v for v in known["viewers"] if needle in str(v["name"]).casefold()]
     return {
         "viewers": [

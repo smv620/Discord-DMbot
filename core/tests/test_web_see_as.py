@@ -330,3 +330,16 @@ class TheRoute(SeeAs):
         async with await self.client(BOB) as client:
             refused = await client.get(path, params={"viewer": self.rook})
             self.assertEqual(refused.status_code, 403)
+
+    async def test_the_picker_list_is_for_the_dm_only(self) -> None:
+        from tests.test_web_api import ALICE
+
+        path = f"/me/campaigns/{self.cref}/web/viewers"
+        async with await self.client(ALICE) as client:
+            ok = await client.get(path)
+            self.assertEqual(ok.status_code, 200)
+            self.assertEqual(ok.json()["total"], 3)
+            narrowed = await client.get(path, params={"q": "mira"})
+            self.assertEqual([v["name"] for v in narrowed.json()["viewers"]], ["Mira Voss"])
+        async with await self.client(BOB) as client:
+            self.assertEqual((await client.get(path)).status_code, 403)
