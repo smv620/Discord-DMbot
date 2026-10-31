@@ -1009,6 +1009,9 @@ Most "spoilers" are simply unknown to one or more player characters, not secret.
     the player characters wouldn't know, using what their backstories say about them. This is tested on generated
     sample documents.
 
+  **The form starts on A, world general knowledge** (owner, 2026-10-31). An upload with no choice or an unknown
+  one is read as B.
+
   **In every case the AI also guesses what NPCs and groups know**, with a confidence ("the council knows who each
   member's apprentice is"). The player characters know such a thing only when their backstory ties them to it
   (they worked closely with the council). These are guesses, and every one is an assertion with a confidence that

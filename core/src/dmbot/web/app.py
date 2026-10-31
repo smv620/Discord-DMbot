@@ -2265,6 +2265,7 @@ def create_app(
                     pause_on=settings.pause_on,
                     story_mode_on=settings.story_mode_on,
                     invite_on=settings.invite_on,
+                    rulesets_on=settings.rulesets_on,
                 )
             }
         except RecapError as err:
