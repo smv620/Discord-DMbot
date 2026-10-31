@@ -20,6 +20,7 @@ import {
   type FixableLine,
 } from "./api";
 import CampaignNav from "./CampaignNav";
+import SessionNotesPanel from "./SessionNotes";
 import FixLine from "./FixLine";
 import { FIX_LINE_LIVE } from "../content/fix-line-switch";
 
@@ -206,6 +207,7 @@ function Sessions({ api, campaignRef }: { api: AccountApi; campaignRef: string }
               ))}
             </ul>
           )}
+          <SessionNotesPanel api={api} campaignRef={campaignRef} />
         </>
       )}
     </Shell>
