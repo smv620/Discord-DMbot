@@ -15,21 +15,24 @@ from __future__ import annotations
 import secrets
 import time
 from collections.abc import Callable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from psycopg.types.json import Jsonb
 
 from dmbot.campaigns.models import CampaignError
 from dmbot.db import Conn, Database
+from dmbot.timebot import calendar as calendar_mod
 from dmbot.timebot import clock as game
 from dmbot.timebot import split
+from dmbot.timebot.calendar import Calendar, DayOne
 from dmbot.timebot.clock import Clock
 from dmbot.timebot.split import Group
 
 NOT_A_DM = "Only this campaign's DMs can use the clock."
 DAMAGED = "That backup file's game clock is damaged, so nothing was restored."
 NO_CLOCK = "Set the game clock first (⚙️ Manage DMbot, then Game clock)."
+BAD_CALENDAR = "That is not a date this calendar has. Check the year, the month and the day."
 GONE = "That group is gone. The party may have rejoined, so check the clock message."
 MOVED_ON = (
     "The clocks have moved on since, so there is nothing to undo. "
@@ -84,6 +87,7 @@ class Restored:
     picked: int | None = None
     # the clock's log (#3091): (position or None, real time, game minute), oldest first
     log: tuple[tuple[int | None, int, int], ...] = ()
+    calendar: Calendar = field(default_factory=Calendar)  # (#3091)
 
 
 def _pack(clock: Clock) -> list[int | None]:
@@ -257,6 +261,71 @@ class ClockStore:
                 position,
             ),
         )
+
+    async def calendar(self, guild_id: int, campaign_id: str) -> Calendar:
+        """The campaign's calendar. Day N when it has none set (or no clock yet)."""
+        async with self._db.guild(guild_id) as conn:
+            return await self._read_calendar(conn, guild_id, campaign_id)
+
+    @staticmethod
+    async def _read_calendar(conn: Conn, guild_id: int, campaign_id: str) -> Calendar:
+        cur = await conn.execute(
+            "SELECT calendar_kind, calendar_year, calendar_ordinal FROM game_clocks"
+            " WHERE guild_id = %s AND campaign_id = %s",
+            (guild_id, campaign_id),
+        )
+        row = await cur.fetchone()
+        if row is None or row["calendar_year"] is None:
+            return Calendar()
+        try:
+            return Calendar(
+                str(row["calendar_kind"]),
+                DayOne(int(row["calendar_year"]), int(row["calendar_ordinal"])),
+            )
+        except ValueError:  # (a date the calendar has not got, e.g. a leap day in a common year)
+            return Calendar()
+
+    async def set_calendar(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        user_id: int,
+        kind: str,
+        *,
+        year: int | None = None,
+        name: str | None = None,
+        day: int | None = None,
+    ) -> None:
+        """Choose the campaign's calendar from what a picker gives: `kind` ("days" or "harptos")
+        and, for Harptos, the date of Day 1 as a `year`, a month or festival `name` and a `day`
+        (none for a festival). Only a DM of the campaign, and only once it has a clock (a calendar
+        gives a clock's days their words). Raises CampaignError for any of these, or for a value
+        the calendar has not got; a refused value leaves the row as it was."""
+        async with self._db.guild(guild_id) as conn:
+            if not await self._is_dm(conn, guild_id, campaign_id, user_id):
+                raise CampaignError(NOT_A_DM)
+            try:
+                start: DayOne | None = None
+                if kind == calendar_mod.HARPTOS:
+                    if year is None or name is None:
+                        raise ValueError("day one")
+                    start = calendar_mod.day_one(year, name, day)
+                chosen = Calendar(kind, start)  # (refuses a kind the calendar has not got)
+            except (ValueError, TypeError, AttributeError):
+                raise CampaignError(BAD_CALENDAR) from None
+            cur = await conn.execute(
+                "UPDATE game_clocks SET calendar_kind = %s, calendar_year = %s,"
+                " calendar_ordinal = %s WHERE guild_id = %s AND campaign_id = %s",
+                (
+                    chosen.kind,
+                    None if start is None else start.year,
+                    None if start is None else start.ordinal,
+                    guild_id,
+                    campaign_id,
+                ),
+            )
+            if cur.rowcount == 0:
+                raise CampaignError(NO_CLOCK)
 
     async def in_combat(self, guild_id: int, campaign_id: str) -> bool:
         """Is this campaign's table in combat? The one question other parts ask (#1127): the
@@ -611,7 +680,8 @@ class ClockSection:
 
     name = "game_clock"
     _KEYS = frozenset({"minute", "last_long_rest"})
-    _OPTIONAL = frozenset({"groups", "picked", "log"})
+    _OPTIONAL = frozenset({"groups", "picked", "log", "calendar"})
+    _CALENDAR_KEYS = frozenset({"kind", "year", "ordinal"})
     _LOG_KEYS = frozenset({"position", "at", "minute"})
     # A clock changes a few hundred times a session, so this is far above any real log. DMbot
     # writes its backups without a cap, so a longer one is loaded too: only the newest rows are
@@ -647,6 +717,13 @@ class ClockSection:
         ]
         if log:
             row["log"] = log
+        calendar = await ClockStore._read_calendar(conn, guild_id, campaign_id)
+        if calendar.start is not None:  # (Day N with no date is what a file without one means)
+            row["calendar"] = {
+                "kind": calendar.kind,
+                "year": calendar.start.year,
+                "ordinal": calendar.start.ordinal,
+            }
         return [row]
 
     def check(self, rows: list[Any]) -> Restored | None:
@@ -666,8 +743,26 @@ class ClockSection:
         elif "picked" in row:
             raise CampaignError(DAMAGED)
         return Restored(
-            Clock(clock[0], clock[1], None), groups, picked, self._log(row.get("log", []))
+            Clock(clock[0], clock[1], None),
+            groups,
+            picked,
+            self._log(row.get("log", [])),
+            self._calendar(row.get("calendar")),
         )
+
+    def _calendar(self, raw: Any) -> Calendar:
+        """The calendar from a file: none (Day N), or a kind and the date of Day 1 as numbers."""
+        if raw is None:
+            return Calendar()
+        if not isinstance(raw, dict) or set(raw) != self._CALENDAR_KEYS:
+            raise CampaignError(DAMAGED)
+        kind, year, ordinal = raw["kind"], raw["year"], raw["ordinal"]
+        if type(year) is not int or type(ordinal) is not int or not isinstance(kind, str):
+            raise CampaignError(DAMAGED)
+        try:
+            return Calendar(kind, DayOne(year, ordinal))
+        except ValueError:
+            raise CampaignError(DAMAGED) from None
 
     @staticmethod
     def _clock(row: dict[str, Any]) -> tuple[int, int]:
@@ -734,6 +829,18 @@ class ClockSection:
             " players_message_id = NULL, picked_group = NULL, split_phrase_told = FALSE,"
             " split_drift_told = FALSE, split_undo = NULL, updated_at = EXCLUDED.updated_at",
             (guild_id, campaign_id, clock.minute, clock.last_long_rest, int(time.time())),
+        )
+        start = restored.calendar.start
+        await conn.execute(
+            "UPDATE game_clocks SET calendar_kind = %s, calendar_year = %s, calendar_ordinal = %s"
+            " WHERE guild_id = %s AND campaign_id = %s",
+            (
+                restored.calendar.kind,
+                None if start is None else start.year,
+                None if start is None else start.ordinal,
+                guild_id,
+                campaign_id,
+            ),
         )
         await conn.execute(
             "DELETE FROM game_clock_groups WHERE guild_id = %s AND campaign_id = %s",
