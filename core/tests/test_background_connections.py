@@ -229,6 +229,19 @@ class TheChecks(unittest.TestCase):
         links = [bg.Connection("She", "knows", "Mirelle", "She knows Mirelle")]
         self.assertEqual(bg.keep_connections([links], found, {}), [])
 
+    def test_a_shared_role_beats_plain_family_whichever_is_read_first(self) -> None:
+        # Invented names. A pair read as plain "family" and as "sibling" keeps the sibling role,
+        # in either order; a second shared role never replaces the first.
+        names = [bg.Found(n, "person", [], [], "q") for n in ("Tam", "Mira")]
+        plain = bg.Connection("Tam", "kin_of", "Mira", "Tam and Mira are family")
+        sibling = bg.Connection(
+            "Tam", "kin_of", "Mira", "Tam is the brother of Mira", words="sibling"
+        )
+        cousin = bg.Connection("Tam", "kin_of", "Mira", "Tam is the cousin of Mira", words="cousin")
+        for order in ([plain, sibling], [sibling, plain], [plain, sibling, cousin]):
+            kept = bg.keep_connections([order], names, {})
+            self.assertEqual([c.words for c in kept], ["sibling"])
+
 
 class ThePath(NamesTest):
     async def asyncSetUp(self) -> None:
