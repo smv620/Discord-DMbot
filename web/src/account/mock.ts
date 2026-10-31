@@ -1556,6 +1556,8 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         calls.push(`seeAs:${ref}:${query.seeAs}`);
         await reachable();
         signedIn();
+        if (webView(ref) === "none") throw new ApiError("not-found");
+        if (webView(ref) !== "dm") throw new ApiError("not-allowed");
         const who = query.seeAs === "party" ? { id: "party", name: "The party" } : PRETEND_VIEWERS.find((v) => v.id === query.seeAs);
         if (!who) throw new ApiError("not-found");
         const plain: WebQuery = { center: query.center, hops: query.hops, view: "players" };

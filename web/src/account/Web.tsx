@@ -97,8 +97,10 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
     const mine = ++latest.current;
     const view = askedNow.current;
     setBig(null);
+    let readingSeeAs = false; // only a failed read of the character's web means the character is gone (#3161)
     try {
-      if (!sure && api.webSize) {
+      // The size is of the DM's own web, so it is not asked while the web is read as someone else.
+      if (!sure && api.webSize && seeAsNow.current === undefined) {
         const size = await api.webSize(ref, { center: at, hops: steps, ...(view ? { view } : {}) });
         if (mine !== latest.current) return;
         if (size.names > BIG_WEB) {
@@ -106,6 +108,7 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
           return;
         }
       }
+      readingSeeAs = seeAsNow.current !== undefined;
       const read = await api.webGraph(ref, {
         center: at,
         hops: steps,
@@ -127,7 +130,7 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
     } catch (error) {
       if (mine !== latest.current) return;
       const kind = error instanceof ApiError ? error.kind : "network";
-      if (kind === "not-found" && seeAsNow.current !== undefined) {
+      if (kind === "not-found" && readingSeeAs) {
         // The character is no longer in the story: say so, and read the DM's Players View again.
         seeAsNow.current = undefined;
         setSeeAsNote(words.seeAsGone);
@@ -241,6 +244,8 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
   useEffect(() => {
     setOverview(null); // (another campaign's names are never shown under this one)
     setAlone(null);
+    seeAsNow.current = undefined; // and a campaign never inherits the character it was read as (#3161)
+    setSeeAsNote("");
     void load(null, DEFAULT_HOPS);
     void loadOverview();
     // Only the campaign restarts the first read; later reads are the person's choices.
@@ -681,7 +686,6 @@ function WebLines({ lines, onOpen }: { lines: WebLine[]; onOpen: (a: string, b: 
   );
 }
 
-/** Find a name by typing; choosing one puts it in the middle. */
 /** "See as…" (#2999): a DM looks at the web as one character, or the party, knows it. Shown in the Players View only. */
 function SeeAsPicker({
   api,
@@ -703,6 +707,7 @@ function SeeAsPicker({
   const [total, setTotal] = useState(0);
   const [failed, setFailed] = useState(false);
   const latest = useRef(0);
+  const box = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!api.webViewers) return;
@@ -718,7 +723,11 @@ function SeeAsPicker({
           setFailed(false);
         })
         .catch(() => {
-          if (mine === latest.current) setFailed(true);
+          // A failed look leaves no results for an older question beside the error (#3161).
+          if (mine !== latest.current) return;
+          setList([]);
+          setTotal(0);
+          setFailed(true);
         });
     }, q === "" ? 0 : 300);
     return () => clearTimeout(timer);
@@ -735,16 +744,24 @@ function SeeAsPicker({
           autoComplete="off"
           spellcheck={false}
           aria-describedby="web-see-as-hint"
+          ref={box}
           onInput={(e) => setQ((e.target as HTMLInputElement).value)}
         />
       </label>
       <p id="web-see-as-hint" class="small muted">
         {words.seeAsHint}
       </p>
+      {seeing && <p role="status">{words.seeAsNow(seeing.name)}</p>}
       {seeing && (
-        <p role="status">
-          {words.seeAsNow(seeing.name)}{" "}
-          <button type="button" class="button secondary" onClick={onBack}>
+        <p>
+          <button
+            type="button"
+            class="button secondary"
+            onClick={() => {
+              onBack();
+              box.current?.focus(); // the button goes away once the character clears, so focus goes to the box
+            }}
+          >
             {words.seeAsBack}
           </button>
         </p>
@@ -752,24 +769,39 @@ function SeeAsPicker({
       {note && <p role="status">{note}</p>}
       <ul class="web-found" aria-label={words.seeAsListLabel}>
         <li>
-          <button type="button" class="button secondary" onClick={() => onPick("party")}>
+          <button
+            type="button"
+            class="button secondary"
+            aria-current={seeing?.viewer === "party" ? "true" : undefined}
+            onClick={() => onPick("party")}
+          >
             {words.seeAsParty}
           </button>
         </li>
         {list.map((v) => (
           <li key={v.id}>
-            <button type="button" class="button secondary" onClick={() => onPick(v.id)}>
+            <button
+              type="button"
+              class="button secondary"
+              aria-current={seeing?.viewer === v.id ? "true" : undefined}
+              onClick={() => onPick(v.id)}
+            >
               {v.name}
             </button>
           </li>
         ))}
       </ul>
       {failed && <p role="status">{words.seeAsLoadFailed}</p>}
-      {total > list.length && <p class="small muted">{words.seeAsMore(list.length, total)}</p>}
+      {total > list.length && (
+        <p class="small muted" role="status">
+          {words.seeAsMore(list.length, total)}
+        </p>
+      )}
     </div>
   );
 }
 
+/** Find a name by typing; choosing one puts it in the middle. */
 function CentrePicker({
   api,
   refId,

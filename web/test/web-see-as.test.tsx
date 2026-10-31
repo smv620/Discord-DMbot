@@ -82,11 +82,37 @@ describe("See as…", () => {
   });
 
   it("nothing can be changed while seeing as someone", async () => {
+    await open();
+    // In Full View the rows open with their controls: the test would pass vacuously if they never showed.
+    fireEvent.click(screen.getByRole("button", { name: w.expandAll }));
+    expect(screen.getAllByText(w.reveal, { exact: false }).length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByLabelText(w.playersView));
+    fireEvent.click(await screen.findByRole("button", { name: "Cerric" }));
+    await screen.findByText(w.seeAsNow("Cerric"));
+    fireEvent.click(screen.getByRole("button", { name: w.expandAll }));
+    expect(screen.queryAllByText(w.reveal, { exact: false })).toHaveLength(0);
+    expect(screen.queryAllByRole("button", { name: /^Change / })).toHaveLength(0);
+    expect(screen.getByText(w.playersViewNote)).toBeTruthy();
+  });
+
+  it("marks the character being seen as the current choice", async () => {
     await openPlayersView();
     fireEvent.click(await screen.findByRole("button", { name: "Cerric" }));
     await screen.findByText(w.seeAsNow("Cerric"));
-    expect(screen.queryAllByRole("button", { name: /^Change / })).toHaveLength(0);
-    expect(screen.queryAllByText(w.reveal, { exact: false })).toHaveLength(0);
+    expect(screen.getByRole("button", { name: "Cerric" }).getAttribute("aria-current")).toBe("true");
+    expect(screen.getByRole("button", { name: w.seeAsParty }).getAttribute("aria-current")).toBeNull();
+  });
+
+  it("a failed look clears the results of the older question", async () => {
+    const api = await openPlayersView();
+    fireEvent.input(screen.getByLabelText(w.seeAsLabel), { target: { value: "Guard" } });
+    expect(await screen.findByRole("button", { name: "Guard 1" }, { timeout: 2000 })).toBeTruthy();
+    api.webViewers = async () => {
+      throw new ApiError("network");
+    };
+    fireEvent.input(screen.getByLabelText(w.seeAsLabel), { target: { value: "Gu" } });
+    expect(await screen.findByText(w.seeAsLoadFailed, {}, { timeout: 2000 })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Guard 1" })).toBeNull();
   });
 
   it("a failed list shows the message and keeps the box", async () => {
