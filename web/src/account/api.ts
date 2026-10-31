@@ -87,7 +87,7 @@ export type CampaignSettingName = "visibility" | "level" | "retention";
 
 /** A choice the queue carries: the three above, an optional rule switched on or off (#2753), or a game master
  * added or removed (#2768: `value` is the person's id, `on` true to add). */
-export type QueuedSetting = CampaignSettingName | "optional_rule" | "co_dm" | "pause" | "story_mode";
+export type QueuedSetting = CampaignSettingName | "optional_rule" | "co_dm" | "pause" | "story_mode" | "dndbeyond_invite";
 
 /** One of a campaign's game masters (#2768; core web/game_masters.py). `plan` is the one whose plan runs the
  * campaign (cannot be removed); `you` is the person looking (may leave). */
@@ -181,6 +181,8 @@ export interface CampaignSettings {
   paused: boolean;
   /** The Shared story switch (#2985); missing from an API older than that. */
   storyMode?: "off" | "watch" | "guide";
+  /** The campaign's D&D Beyond invite link, "" when none (#2985); a game master's own, as Discord's form shows it. */
+  dndbeyondInvite?: string;
   gameMasters: number;
 }
 
