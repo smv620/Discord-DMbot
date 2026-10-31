@@ -228,12 +228,33 @@ class TheReport(Reading):
         self.assertEqual((d["kind"], d["liar"], d["who"]["name"]), ("lie", "Valyra", "Cerric"))
         self.assertEqual(d["believes"]["id"], d["truth"]["id"])  # (The truth holds the statement)
 
-    async def test_the_page_leaves_a_lie_out_until_it_has_words_for_it(self) -> None:
+    async def test_the_page_shows_a_lie_with_a_plain_name_for_who_thinks_it(self) -> None:
         await self.a_lie_difference()
         await self.difference("false", denied=True)
         shown = (await self.read())["differences"]
-        self.assertEqual(shown["misunderstood"], [])
+        (lie,) = shown["misunderstood"]
+        # (the page words it "<view> thinks <liar> lied about this", so the view is the bare name,
+        # not a description of the character)
+        self.assertEqual((lie["kind"], lie["liar"], lie["view"]), ("lie", "Valyra", "Cerric"))
         self.assertEqual(len(shown["false"]), 1)  # (the other kinds are untouched)
+        self.assertNotEqual(shown["false"][0]["kind"], "lie")
+        self.assertIsNone(shown["false"][0]["liar"])
+
+    async def test_a_lie_whose_liar_is_gone_reads_someone_on_the_page(self) -> None:
+        await self.a_lie_difference(liar=False)
+        (lie,) = (await self.read())["differences"]["misunderstood"]
+        self.assertEqual((lie["kind"], lie["liar"]), ("lie", "someone"))
+
+    async def test_a_view_that_moved_on_to_a_theory_with_a_source_names_no_liar(self) -> None:
+        view = await self.a_lie_difference()
+        self.assertEqual((await self.door())["differences"][0]["liar"], "Valyra")
+        # the view now holds the statement as a theory, told by someone: that is not a liar
+        told_by = await self.name("Mina", self.one.id)
+        await self.memory.believe(
+            GUILD, self.one.id, view, self.ally, 0.3, "theory", source=DM_SOURCE,
+            sources=[told_by],
+        )  # fmt: skip
+        self.assertIsNone((await self.door())["differences"][0]["liar"])
 
     async def test_a_lost_liar_is_null_and_only_the_newest_belief_names_one(self) -> None:
         view = await self.a_lie_difference()
