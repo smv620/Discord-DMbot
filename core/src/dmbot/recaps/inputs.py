@@ -20,7 +20,7 @@ from dmbot.recaps import fixed_lines
 from dmbot.recaps import split as sp
 from dmbot.recaps.pipeline import Inputs
 from dmbot.recaps.style import NoteStore, StyleStore
-from dmbot.recaps.text import strip_cues
+from dmbot.recaps.text import NOTES_HEAD, strip_cues
 from dmbot.timebot.clock import day_of as clock_day_of
 
 log = logging.getLogger(__name__)
@@ -261,7 +261,7 @@ def notes_entry(n: Any) -> str:
     """A session's notes as one entry of the story so far, cut to its share at a beat boundary
     (whole beats, oldest first), so a long sheet never crowds out an accepted recap. The entry
     says it is notes, so the writer does not copy it as a recap."""
-    head = "(Notes of a session with no recap) "
+    head = NOTES_HEAD
     kept: list[str] = []
     size = len(head)
     for beat in n.sheet():
@@ -283,7 +283,8 @@ async def story_so_far(
     has kept session notes (#3026, which outlive the transcript), is told by its notes, so the
     story does not lose it (a session whose transcript still exists is not told this way). Only
     the beats' own words (`what`) are used, never PlotBot's notes, cut to `NOTES_ENTRY_CHARS` at a
-    beat; the entry says it is notes, so the writer does not copy it as a recap."""
+    beat. The entry says it is notes, so the writer does not copy it as a recap; the trimmers drop
+    notes before any accepted recap (#3086), and only recaps count against `STORY_RECAPS`."""
     try:
         found = await accepted.newest(guild_id, campaign_id, before=session_at, last=STORY_RECAPS)
     except Exception as exc:  # optional context: the type, never the text
@@ -307,9 +308,8 @@ async def story_so_far(
     }
     for n in kept:
         if n.session_at < session_at and not told.get(n.session_at, "").strip():
-            told[n.session_at] = notes_entry(n)
-    latest = sorted(told)[-STORY_RECAPS:]
-    return tuple(told[at] for at in latest if told[at].strip())
+            told[n.session_at] = notes_entry(n)  # (an empty one is skipped below)
+    return tuple(told[at] for at in sorted(told) if told[at].strip())
 
 
 async def load_inputs_or_why(
