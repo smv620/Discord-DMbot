@@ -7,7 +7,8 @@ everything after it is counted in whole days, so a flashback or time travel stay
 timeline (docs/STORY_MEMORY.md 9a, "One timeline").
 
 Harptos has 12 months of 30 days and 5 festival days that belong to no month, 365 days a year.
-Shieldmeet (the leap-year day) is left out: a year is always 365 days here.
+Shieldmeet is the extra festival day of a leap year, the day after Midsummer; a Dale Reckoning
+year divisible by 4 is a leap year (366 days).
 """
 
 from __future__ import annotations
@@ -30,31 +31,51 @@ _YEAR: tuple[tuple[str, int], ...] = (
     ("Marpenoth", 30), ("Uktar", 30), ("Feast of the Moon", 0),
     ("Nightal", 30),
 )  # fmt: skip
-YEAR_DAYS = sum(30 if days else 1 for _, days in _YEAR)  # 365
+YEAR_DAYS = sum(30 if days else 1 for _, days in _YEAR)  # 365 (366 in a leap year)
+SHIELDMEET = "Shieldmeet"
 MAX_YEAR = 9999  # keeps the number small enough to store and show
 # The names a DM can start Day 1 on: a month with a day, or a festival day alone.
 MONTHS = tuple(name for name, days in _YEAR if days)
 FESTIVALS = tuple(name for name, days in _YEAR if not days)
 
 
+def is_leap(year: int) -> bool:
+    return year % 4 == 0
+
+
+def year_days(year: int) -> int:
+    return YEAR_DAYS + (1 if is_leap(year) else 0)
+
+
+def _layout(year: int) -> list[tuple[str, int]]:
+    """The year in order; a leap year has Shieldmeet right after Midsummer."""
+    out: list[tuple[str, int]] = []
+    for label, days in _YEAR:
+        out.append((label, days))
+        if label == "Midsummer" and is_leap(year):
+            out.append((SHIELDMEET, 0))
+    return out
+
+
 @dataclass(frozen=True, slots=True)
 class DayOne:
     """What date Day 1 of the campaign is: a Harptos year and the day of that year (0 is Hammer 1,
-    364 is Nightal 30). Words and numbers only."""
+    364 is Nightal 30, or 365 in a leap year). Words and numbers only."""
 
     year: int
     ordinal: int
 
     def __post_init__(self) -> None:
-        if not 1 <= self.year <= MAX_YEAR or not 0 <= self.ordinal < YEAR_DAYS:
+        if not 1 <= self.year <= MAX_YEAR or not 0 <= self.ordinal < year_days(self.year):
             raise ValueError("day one")
 
 
 def day_one(year: int, name: str, day: int = 1) -> DayOne:
     """Day 1 on a month and day ("Flamerule", 14) or a festival day ("Midsummer"). Raises
-    ValueError for a name the calendar has not got or a day the month has not got."""
+    ValueError for a name the calendar has not got (Shieldmeet in a year without one) or a day the
+    month has not got."""
     at = 0
-    for label, days in _YEAR:
+    for label, days in _layout(year):
         if label.casefold() == name.strip().casefold():
             if days and not 1 <= day <= days:
                 raise ValueError("day")
@@ -75,16 +96,18 @@ def harptos(day_number: int, start: DayOne) -> str:
     if day_number < 1:
         raise ValueError("day")
     count = start.ordinal + (day_number - 1)
-    year = start.year + count // YEAR_DAYS
-    left = count % YEAR_DAYS
-    for label, days in _YEAR:
+    year = start.year
+    while count >= year_days(year):  # (at most a few hundred years: the clock stops at day 99,999)
+        count -= year_days(year)
+        year += 1
+    for label, days in _layout(year):
         span = days or 1
-        if left < span:
+        if count < span:
             if days:
-                return f"{label} {left + 1}{_ordinal_suffix(left + 1)}, {year} DR"
+                return f"{label} {count + 1}{_ordinal_suffix(count + 1)}, {year} DR"
             return f"{label}, {year} DR"
-        left -= span
-    raise AssertionError("unreachable")  # (left is under YEAR_DAYS, so a span always holds it)
+        count -= span
+    raise AssertionError("unreachable")  # (count is under the year's length, so a span holds it)
 
 
 def date_words(minute: int, kind: str = DAYS, start: DayOne | None = None) -> str:

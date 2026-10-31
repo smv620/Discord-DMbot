@@ -12,6 +12,7 @@ from dmbot.timebot.clock import MINUTES_PER_DAY
 class TheYear(unittest.TestCase):
     def test_it_has_twelve_months_five_festival_days_and_365_days(self) -> None:
         self.assertEqual((len(cal.MONTHS), len(cal.FESTIVALS), cal.YEAR_DAYS), (12, 5, 365))
+        self.assertEqual(sum(cal.year_days(y) for y in range(1489, 1493)), 365 * 4 + 1)
 
     def test_day_one_starts_on_a_month_day_or_a_festival_and_refuses_what_is_not_there(
         self,
@@ -32,17 +33,44 @@ class HarptosDates(unittest.TestCase):
         self.assertEqual(cal.harptos(1, start), "Flamerule 14th, 1492 DR")
 
     def test_a_month_boundary_goes_through_the_festival_day_after_it(self) -> None:
-        start = cal.day_one(1492, "Flamerule", 29)
+        start = cal.day_one(1493, "Flamerule", 29)  # (1493 is not a leap year)
         self.assertEqual(
             [cal.harptos(n, start) for n in (1, 2, 3, 4, 5)],
             [
-                "Flamerule 29th, 1492 DR",
-                "Flamerule 30th, 1492 DR",
-                "Midsummer, 1492 DR",
-                "Eleasis 1st, 1492 DR",
-                "Eleasis 2nd, 1492 DR",
+                "Flamerule 29th, 1493 DR",
+                "Flamerule 30th, 1493 DR",
+                "Midsummer, 1493 DR",
+                "Eleasis 1st, 1493 DR",
+                "Eleasis 2nd, 1493 DR",
             ],
         )
+
+    def test_shieldmeet_follows_midsummer_in_a_year_divisible_by_four_and_only_then(self) -> None:
+        leap = cal.day_one(1492, "Flamerule", 30)
+        self.assertEqual(
+            [cal.harptos(n, leap) for n in (1, 2, 3, 4)],
+            [
+                "Flamerule 30th, 1492 DR",
+                "Midsummer, 1492 DR",
+                "Shieldmeet, 1492 DR",
+                "Eleasis 1st, 1492 DR",
+            ],
+        )
+        self.assertEqual(cal.year_days(1492), 366)
+        self.assertEqual(cal.year_days(1493), 365)
+        self.assertEqual(cal.day_one(1492, "Shieldmeet").ordinal, 30 + 1 + 90 + 1 + 90 + 1 + 1 - 1)
+        with self.assertRaises(ValueError):
+            cal.day_one(1493, "Shieldmeet")
+        with self.assertRaises(ValueError):
+            cal.DayOne(1493, 365)  # (a common year has no 366th day)
+        cal.DayOne(1492, 365)
+
+    def test_a_leap_year_is_366_days_long_when_the_year_turns(self) -> None:
+        start = cal.day_one(1492, "Nightal", 30)
+        self.assertEqual(cal.harptos(2, start), "Hammer 1st, 1493 DR")
+        end_of_1491 = cal.day_one(1491, "Nightal", 30)
+        self.assertEqual(cal.harptos(2 + 365, end_of_1491), "Nightal 30th, 1492 DR")  # 1492 is long
+        self.assertEqual(cal.harptos(2 + 366, end_of_1491), "Hammer 1st, 1493 DR")
 
     def test_a_month_with_no_festival_after_it_goes_straight_on(self) -> None:
         start = cal.day_one(1492, "Alturiak", 30)
