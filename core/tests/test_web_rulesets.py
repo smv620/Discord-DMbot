@@ -127,7 +127,8 @@ class TheDoor(RulesBase):
             now=NOW,
         )
         assert outsider is not None
-        self.assertIn(await self.refused("2024/2014", outsider), ("not_allowed", "not_found"))
+        # (this is the Python guard on the session's servers; the database door has its own check)
+        self.assertEqual(await self.refused("2024/2014", outsider), "not_found")
         self.assertEqual(await self.rows(), [])
 
     async def test_a_dm_cannot_queue_rules_for_a_campaign_they_do_not_run(self) -> None:
