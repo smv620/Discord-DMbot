@@ -4127,6 +4127,7 @@ class MemoryStore:
         derived_from: str | None = None,
         change_kind: str | None = None,
         sources: Sequence[str] = (),
+        game_time: int | None = None,
     ) -> Written[Belief]:
         """A perspective comes to believe a connection at `confidence` (0.0 certainly false to 1.0
         certainly true), with a status and the evidence it points at by id. A new row, never an
@@ -4139,7 +4140,7 @@ class MemoryStore:
             belief = await beliefs.believe_in(
                 w, perspective_id, relation_id, confidence, status,
                 evidence=evidence, session_at=session_at, derived_from=derived_from,
-                change_kind=change_kind, sources=sources,
+                change_kind=change_kind, sources=sources, game_time=game_time,
             )  # fmt: skip
             return Written(belief, w.batch)
 

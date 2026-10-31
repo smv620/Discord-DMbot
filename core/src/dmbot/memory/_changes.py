@@ -222,12 +222,17 @@ BELIEFS = Table(
     "memory_beliefs",
     "id",
     ("id", "perspective_id", "relation_id", "confidence", "status", "session_at",
-     "evidence_ids", "seq", "recorded_at", "pinned", "hidden_by", "derived_from", "change_kind"),
+     "evidence_ids", "seq", "recorded_at", "pinned", "hidden_by", "derived_from", "change_kind",
+     "game_time"),
     # pinned: the DM's 📌 100% truth (#2447). hidden_by (0298): on the 0.0 belief that hiding an
     # entry wrote, the entries whose hiding wrote it (the belief before it comes back when each is
     # shown again and the 0.0 is still the newest); empty on every other belief. derived_from and
     # change_kind (0297): the belief this one revises or came from, and how (#3091).
-    defaults={"pinned": False, "hidden_by": [], "derived_from": None, "change_kind": None},
+    # game_time (0304): the game minute it was made at, live in a session; None when not known.
+    defaults={
+        "pinned": False, "hidden_by": [], "derived_from": None, "change_kind": None,
+        "game_time": None,
+    },
 )  # fmt: skip
 # What a connection or a belief stands on, one typed link each (#2662): unlogged, because an
 # Undo must not bring back a line's reference once the line's words were removed (the link is
@@ -850,7 +855,10 @@ _ADDED_LATER: dict[str, dict[str, Any]] = {
     # nothing was pinned before the pin (#2447); nothing slept before a hide could put it to sleep
     # (#3082), so an Undo across the migration still finds the row as the batch left it
     # (and no belief came from another before lineage, #3091)
-    "memory_beliefs": {"pinned": False, "hidden_by": [], "derived_from": None, "change_kind": None},
+    "memory_beliefs": {
+        "pinned": False, "hidden_by": [], "derived_from": None, "change_kind": None,
+        "game_time": None,
+    },
     "memory_knowers": {"confidence": 1.0, "hidden_by": []},  # (0286 added the certainty)
     "memory_predicates": {
         "covers": [], "not_this": [], "inverse_label": "", "synonyms": [], "version": 1,
