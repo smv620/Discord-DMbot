@@ -42,6 +42,7 @@ KEEP_FOR_S = 3600  # nothing waits on a row longer than this
 VISIBILITY, LEVEL, RETENTION, OPTIONAL_RULE = "visibility", "level", "retention", "optional_rule"
 CO_DM = "co_dm"  # a game master added or removed (#2776)
 STORY_MODE = "story_mode"  # the Shared story switch (#3078)
+RULESETS = "rulesets"  # the main rules and what to use if they miss, "2024/2014" (#3112)
 PERSON_ID_MAX = 19  # digits in a Discord id
 VISIBILITIES = ("private", "peek", "open")
 RETENTION_CHOICES = tuple(choice for choice, _days in CHOICES)
@@ -120,6 +121,11 @@ class Host(Protocol):
         """Save the Shared story switch with the store's own rules (#3078): turning it on needs
         the DM's confirmation on record or `confirmed_by` now. Raises `CampaignError` with the
         words Discord shows."""
+        ...
+
+    async def apply_rulesets(self, campaign: Campaign, main: str, fallback: str) -> Campaign:
+        """Save the main rules and the fallback with the store's own check (`check_rulesets`).
+        Raises `CampaignError` with the store's words."""
         ...
 
     async def find_member(self, guild_id: int, user_id: int) -> Member | None:
@@ -217,6 +223,8 @@ async def apply(host: Host, guild_id: int, item: Setting) -> Outcome:
         return await _co_dm(host, campaign, item)
     if item.setting == STORY_MODE:
         return await _story_mode(host, campaign, item)
+    if item.setting == RULESETS:
+        return await _rulesets(host, campaign, item)
     try:
         if item.setting == VISIBILITY:
             if item.value not in VISIBILITIES:
@@ -274,6 +282,22 @@ async def _story_mode(host: Host, campaign: Campaign, item: Setting) -> Outcome:
         return Outcome(BAD_VALUE)
     try:
         await host.apply_story_mode(campaign, item.value, item.user_id if item.flag else None)
+    except CampaignError as exc:
+        return Outcome(REFUSED, str(exc))
+    return Outcome()
+
+
+async def _rulesets(host: Host, campaign: Campaign, item: Setting) -> Outcome:
+    """The main rules and the fallback (#3112), as "<main>/<fallback>". The store checks the pair
+    again (both words offered, the fallback not the main rules) and its words go to the page.
+    Everything built on the rules (optional rules, lookups) reads the campaign's saved pair each
+    time, so saving it is the whole change, as in Discord. Applying the same pair twice is the
+    same save."""
+    if item.value.count("/") != 1:
+        return Outcome(BAD_VALUE)
+    main, fallback = item.value.split("/")
+    try:
+        await host.apply_rulesets(campaign, main, fallback)
     except CampaignError as exc:
         return Outcome(REFUSED, str(exc))
     return Outcome()

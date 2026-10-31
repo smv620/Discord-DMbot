@@ -10735,6 +10735,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             campaign.guild_id, campaign.id, mode, confirmed_by=confirmed_by
         )
 
+    async def apply_rulesets(self, campaign: Campaign, main: str, fallback: str) -> Campaign:
+        return await self.campaigns.set_rulesets(campaign.guild_id, campaign.id, main, fallback)
+
     async def apply_optional_rule(
         self, campaign: Campaign, rule: OptionalRule, turn_on: bool, sender_id: int
     ) -> bool:

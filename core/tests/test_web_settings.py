@@ -6,6 +6,7 @@ by the DM who made them. Invented names throughout."""
 from __future__ import annotations
 
 import unittest
+from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
@@ -80,6 +81,10 @@ class FakeBot:
             campaign.guild_id, campaign.id, mode, confirmed_by=confirmed_by
         )
 
+    async def apply_rulesets(self, campaign: Campaign, main: str, fallback: str) -> Campaign:
+        self.calls.append(("rulesets", f"{main}/{fallback}"))
+        return await self.store.set_rulesets(campaign.guild_id, campaign.id, main, fallback)
+
     async def find_member(self, guild_id: int, user_id: int) -> ws.Member | None:
         return ws.Member("Someone", False)
 
@@ -141,6 +146,71 @@ class Settings(Base):
 
 
 class TheChoices(Settings):
+    async def queue_rules(self, value: str) -> str:
+        # (the website's switch for this choice is on here: the bot half is what is tested)
+        return await campaign_settings.queue_setting(
+            self.web,
+            self.session,
+            self.cref,
+            {"setting": "rulesets", "value": value},
+            rulesets_on=True,
+        )
+
+    async def test_each_pair_of_main_and_fallback_rules_is_saved(self) -> None:
+        for pair in ("2014/2024", "2024/none", "2014/none", "2024/2014"):
+            answer = await self.queue_rules(pair)
+            self.assertEqual([o.error for o in await self.run_bot()], [""], pair)
+            found = await self.campaign()
+            self.assertEqual(f"{found.target_ruleset}/{found.fallback_ruleset}", pair)
+            self.assertEqual((await self.poll(answer))["state"], "done")
+
+    async def test_rules_of_another_campaign_are_left_alone(self) -> None:
+        before = await self.campaign(self.two)
+        await self.queue_rules("2014/none")
+        await self.run_bot()
+        after = await self.campaign(self.two)
+        self.assertEqual(
+            (after.target_ruleset, after.fallback_ruleset),
+            (before.target_ruleset, before.fallback_ruleset),
+        )
+
+    async def test_a_sender_who_is_no_longer_a_dm_is_refused_and_nothing_is_saved(self) -> None:
+        before = await self.campaign()
+        stranger = ws.Setting("x", self.one.id, 4242, ws.RULESETS, "2014/none")
+        outcome = await ws.apply(self.bot, self.g, stranger)
+        self.assertEqual(outcome.error, ws.NOT_ALLOWED)
+        after = await self.campaign()
+        self.assertEqual(
+            (after.target_ruleset, after.fallback_ruleset),
+            (before.target_ruleset, before.fallback_ruleset),
+        )
+        self.assertEqual(self.bot.calls, [])
+
+    async def test_a_value_that_is_not_two_words_is_refused_before_the_store(self) -> None:
+        item = ws.Setting("x", self.one.id, ALICE.id, ws.RULESETS, "2024")
+        for value in ("2024", "2024/2014/none", ""):
+            outcome = await ws.apply(self.bot, self.g, replace(item, value=value))
+            self.assertEqual(outcome.error, ws.BAD_VALUE, value)
+        self.assertEqual(self.bot.calls, [])
+
+    async def test_a_pair_the_store_refuses_fails_with_the_stores_words(self) -> None:
+        item = ws.Setting("x", self.one.id, ALICE.id, ws.RULESETS, "2024/2024")
+        for value in ("2024/2024", "2024/1999"):
+            outcome = await ws.apply(self.bot, self.g, replace(item, value=value))
+            self.assertEqual(outcome.error, ws.REFUSED, value)
+            self.assertTrue(outcome.note, value)
+
+    async def test_applying_the_same_row_twice_changes_nothing_more(self) -> None:
+        await self.queue_rules("2014/none")
+        item = await self.items.claim_next(self.g)
+        assert item is not None
+        first = await ws.apply(self.bot, self.g, item)
+        once = await self.campaign()
+        again = await ws.apply(self.bot, self.g, item)
+        twice = await self.campaign()
+        self.assertEqual((first, again), (ws.Outcome(), ws.Outcome()))
+        self.assertEqual(once, twice)
+
     async def test_visibility_waits_then_changes_what_discord_changes(self) -> None:
         answer = await self.queue(setting="visibility", value="open")
         self.assertEqual((await self.poll(answer))["state"], "waiting")
