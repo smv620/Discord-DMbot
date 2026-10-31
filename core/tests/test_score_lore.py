@@ -32,6 +32,7 @@ class TheScorer(unittest.TestCase):
         got = self.run_it()
         self.assertEqual(got["p01"], "kept kind=ok")  # a mentor, by its short alias "Mira"
         self.assertEqual(got["p02"], "not_listed")  # the AI never wrote that pair
+        self.assertEqual(got["p03"], "kept")  # a place the person was born in
         self.assertEqual(got["p04"], "kept kind=ok")  # a sister, the name in the same sentence
         self.assertEqual(got["p05"], "kept kind=ok")  # a husband is a spouse
         self.assertEqual(got["p06"], "dropped:word_not_allowed")  # a free label the quote lacks
@@ -44,8 +45,16 @@ class TheScorer(unittest.TestCase):
         with redirect_stdout(out):
             sl.main(ARGS)
         shown = out.getvalue()
-        for word in ("Mira", "Voss", "Lenna", "Corvin", "Harrowgate", "mentor"):
+        for word in (
+            "Mira", "Voss", "Lenna", "Corvin", "Harrowgate", "mentor", "Pell", "Daric", "Odo",
+            "Cerro", "Maddox", "Ashe", "Brannoch", "sibling", "spouse",
+        ):  # fmt: skip
             self.assertNotIn(word, shown)
+
+    def test_two_ends_of_one_name_match_by_a_word_of_three_letters(self) -> None:
+        self.assertTrue(sl._same("Mira", "Mira Tolliver"))
+        self.assertFalse(sl._same("Al", "Al Voss"))
+        self.assertFalse(sl._same("Mira", "Mirko Tolliver"))
 
 
 if __name__ == "__main__":

@@ -14,6 +14,10 @@ never wrote the pair) or `no_entry` (an end is not among the names the read kept
 called and nothing is stored. Only the pair's id and a status are printed, never a name, a quote
 or a word of the document, so a run on a real document can be pasted into an issue. Pure apart
 from reading the three files.
+
+Limits, on purpose: the final keep step runs without the campaign's own names, secret names or
+"already have" test, so `kept` can be a little higher than a live read's; a key end that fits two
+entries (two with one first name) binds to the first, so give such ends their full name.
 """
 
 from __future__ import annotations
@@ -35,7 +39,8 @@ KEPT = "kept"
 HELD = "held_for_who_is_it"
 NOT_LISTED = "not_listed"
 NO_ENTRY = "no_entry"
-# How far a pair got, worst first: a pair with several lines is judged by its furthest one.
+# How far a pair got, worst first. A pair with several lines is judged by its furthest one: the
+# read keeps a pair if any of its lines is kept, so the best line is the one that decides.
 _RANK = {NO_ENTRY: 0, NOT_LISTED: 1, "dropped": 2, HELD: 3, KEPT: 4}
 
 
@@ -99,9 +104,12 @@ def score(
     alias_keys = {name_key(f.name): [name_key(x) for x in f.also] for f in found}
     for full, others in aliases.items():
         alias_keys.setdefault(name_key(full), []).extend(name_key(x) for x in others)
+    # (Any: these are parsed JSON objects of the AI's answer, of unknown shape until read)
     lines: list[dict[str, Any]] = []
     for reply in replies:
-        data = bg._json(reply)  # (the read's own tolerant parser)
+        # (the read's own tolerant parser, so a cut or fenced answer reads the way a real read does;
+        # this tool follows it if the helper is renamed)
+        data = bg._json(reply)
         items = data.get("connections") if isinstance(data, dict) else None
         lines.extend(x for x in items or [] if isinstance(x, dict))
     # Each line is read alone, so the reason it was lost is its own.
@@ -122,7 +130,8 @@ def score(
         else:
             reason = next(iter(lost), "unreadable")
             status.append((line, f"dropped:{reason}", None))
-    joint = bg.keep_connections([passed], found, {})
+    why_joint: Counter[str] = Counter()
+    joint = bg.keep_connections([passed], found, {}, dropped=why_joint)
     kept_keys = {frozenset((name_key(c.a), name_key(c.b))) for c in joint}
     alone: dict[int, str] = {}
     for c in passed:
@@ -147,7 +156,7 @@ def score(
                 if reached:
                     state = reached
                 elif key not in kept_keys:
-                    state = "dropped:same_pair"  # (kept alone, not with the rest: a pair twice)
+                    state = f"dropped:{_joint_reason(why_joint)}"  # (kept alone, not with the rest)
                 else:
                     state = KEPT
             rank = _RANK["dropped" if state.startswith("dropped") else state]
@@ -158,6 +167,14 @@ def score(
             ok = p.kind in (best_conn.words, best_conn.how, best_conn.how.removesuffix("_of"))
         results.append(Score(p.id, best, ok))
     return results
+
+
+def _joint_reason(why: Counter[str]) -> str:
+    """Why the joint keep step left a pair out that kept it alone: a pair said twice, or the cap."""
+    for reason in ("over_cap", "same_pair", "which_way"):
+        if why[reason]:
+            return reason
+    return "same_pair"
 
 
 def tally(scores: Sequence[Score]) -> Counter[str]:
