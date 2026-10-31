@@ -484,6 +484,56 @@ class Placing(ConfirmedMemoryTest):
         assert placed.belief is not None
         self.assertIsNone(placed.belief.game_time)
 
+    async def read_session(self, imported: bool) -> tuple[Any, Any]:
+        """The real extractor reads one session (its readings asked for) into the real claim
+        store, the way a live or imported session is read; returns the claims it handed over and
+        the placed belief of the reading (#3091, #3137)."""
+        from dmbot.memory import extractor
+        from dmbot.transcript.models import Line
+        from tests.test_extractor import Believing
+
+        handed: list[Any] = []
+        real = self.claims
+
+        class Handing:
+            async def propose(self, *args: Any, **kw: Any) -> Any:
+                handed.extend(args[2])
+                return await real.propose(*args, **kw)
+
+        async def consenting() -> set[int]:
+            return {DM, PLAYER}
+
+        lines = [Line(20_000 + n * 1000, PLAYER, f"words {n}", f"words {n}") for n in range(10)]
+        await extractor.run(
+            Believing(), Handing(), lines, guild_id=GUILD_A, campaign_id=self.c, dm_ids={DM},
+            consenting=consenting, model=lambda: "m", session_started_at=1_000,
+            readings=True, imported=imported,
+        )  # fmt: skip
+        ((reading,),) = [(c,) for c in handed if c.reading is not None][:1]
+        claim_id = str((await self.rows("memory_claims"))[-1]["id"])
+        placed = await self.claims.place(GUILD_A, self.c, claim_id, opted_in={DM, PLAYER})
+        assert placed.belief is not None
+        return reading, placed.belief
+
+    async def test_an_imported_sessions_reading_is_placed_with_no_game_time_after_a_clock_row(
+        self,
+    ) -> None:
+        # The lines of a loaded session carry no moment, so the extractor sends no spoken_at and
+        # placing has nothing to read the clock at, even with a clock row before the line (#3137).
+        await self.clock_log((10, 5000))
+        reading, belief = await self.read_session(imported=True)
+        self.assertNotIn("spoken_at", reading.reading)
+        self.assertIsNone(belief.game_time)
+
+    async def test_a_live_sessions_reading_is_stamped_from_the_clock_row_before_its_line(
+        self,
+    ) -> None:
+        # The control: the same read, not imported, takes the moment and so the game time.
+        await self.clock_log((10, 5000))
+        reading, belief = await self.read_session(imported=False)
+        self.assertIn("spoken_at", reading.reading)
+        self.assertEqual(belief.game_time, 5000)
+
     async def test_a_moment_that_is_not_a_time_is_refused(self) -> None:
         await self.clock_log((100, 5000))
         for bad in (-5, 0, 10**13, True):
