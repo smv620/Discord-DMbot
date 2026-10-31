@@ -83,7 +83,9 @@ EXPORT_FORMAT = "dmbot-campaign"
 # version still restore: the file's first bytes, not its version, say if it's packed.
 # 3: carries the who-knows lists (`memory_knowers`, #2995). An older file has none, so its restore
 # works them out from the old flags; a file of this version keeps the lists it holds, however few.
-EXPORT_VERSION = 3
+# 4: carries each session's notes (`session_notes`, #3026). An older file has none, and its restore
+# simply has none; a DMbot that predates the section refuses a file of this version as too new.
+EXPORT_VERSION = 4
 
 RULE_ID_MAX = 64
 # Discord IDs and Unix timestamps must fit Postgres BIGINT (signed 64-bit).

@@ -73,6 +73,7 @@ from dmbot.recaps.inputs import (
     recap_said,
     story_so_far,
 )
+from dmbot.recaps.notes import SessionNotesStore
 from dmbot.recaps.notify import page_link, remind_the_dm, tell_the_dm
 from dmbot.recaps.pipeline import Inputs
 from dmbot.recaps.requests import Request as RecapRequest
@@ -1177,7 +1178,13 @@ class RecapFeatures:
             return None
         # The open threads and the earlier accepted recaps are context for the writer (#2954).
         threads = await self._open_threads(gid, cid)
-        story = await story_so_far(AcceptedStore(self.recaps.db), gid, cid, job.session_at)
+        story = await story_so_far(
+            AcceptedStore(self.recaps.db),
+            gid,
+            cid,
+            job.session_at,
+            SessionNotesStore(self.recaps.db),
+        )
         return dataclasses.replace(found, corrections=job.corrections, threads=threads, story=story)
 
     async def recap_story(self, gid: int, cid: str, job: Job, seeds: Sequence[str]) -> list[Memory]:

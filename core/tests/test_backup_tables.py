@@ -228,6 +228,13 @@ class EveryClaimedTableComesBack(DatabaseTest):
                 " %s, 1)",
                 (g, c, text_hash("T", "S"), DM),
             ),
+            "session_notes": (
+                "INSERT INTO session_notes (guild_id, campaign_id, session_at, beats, written_at,"
+                " job_created_at) VALUES (%s, %s, 1,"
+                ' \'[{"what": "Mira opened the door.", "who": [], "lines": [1],'
+                ' "kind": "event"}]\'::jsonb, 1, 0)',
+                (g, c),
+            ),
             "plot_issues": (
                 "INSERT INTO plot_issues (guild_id, campaign_id, id, session_at, text_hash, kind,"
                 " level, sentence, sentence_text, reason, source_text, fine_key, created_at)"

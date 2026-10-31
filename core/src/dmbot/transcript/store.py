@@ -543,6 +543,7 @@ class TranscriptStore:
                 "DELETE FROM transcript_lines WHERE session_id = %s AND id = ANY(%s)",
                 (session_id, list(ids)),
             )
+            await _drop_note_pointers(conn, guild_id, [session_id])
             await conn.execute(
                 "UPDATE transcript_sessions SET"
                 " line_count = (SELECT count(*) FROM transcript_lines"
@@ -1039,6 +1040,7 @@ class TranscriptStore:
                 await _forget_memory_traces(conn, guild_id, user_id, [])
                 return Deleted(0, 0)
             sessions = sorted({str(r["session_id"]) for r in gone})
+            await _drop_note_pointers(conn, guild_id, sessions)
             await _forget_memory_traces(
                 conn,
                 guild_id,
@@ -1100,6 +1102,7 @@ class TranscriptStore:
                 (guild_id, session_id),
             )
             gone = await cur.fetchall()
+            await _drop_note_pointers(conn, guild_id, [session_id])
             await conn.execute(
                 "DELETE FROM transcript_suggestions WHERE guild_id = %s AND session_id = %s",
                 (guild_id, session_id),
@@ -1125,6 +1128,29 @@ class TranscriptStore:
                 (now, guild_id, session_id),
             )
             return len(gone)
+
+
+# The session notes' beats with every pointer to transcript lines emptied (#3026): the numbers a
+# beat cites mean nothing once lines of its session are gone (the numbering shifts), and the text
+# of each beat stays.
+_NO_POINTERS = (
+    "(SELECT COALESCE(jsonb_agg(CASE WHEN jsonb_typeof(e) = 'object'"
+    " THEN e || '{\"lines\": []}'::jsonb ELSE e END ORDER BY ord), '[]'::jsonb)"
+    " FROM jsonb_array_elements(n.beats) WITH ORDINALITY AS t(e, ord))"
+)
+
+
+async def _drop_note_pointers(conn: Any, guild_id: int, session_ids: Any) -> None:
+    """Lines of these sessions (transcript session ids) were just deleted, in this transaction:
+    their session notes keep every beat's text and lose the pointers."""
+    if not session_ids:
+        return
+    await conn.execute(
+        f"UPDATE session_notes n SET beats = {_NO_POINTERS} FROM transcript_sessions s"
+        " WHERE s.guild_id = %s AND s.id = ANY(%s) AND n.guild_id = s.guild_id"
+        " AND n.campaign_id = s.campaign_id AND n.session_at = s.started_at",
+        (guild_id, sorted(session_ids)),
+    )
 
 
 # How long a session has been kept: an imported one from the day it was imported (a 2024 game

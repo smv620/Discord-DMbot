@@ -43,6 +43,7 @@ from dmbot.recaps.text import (
     OPENERS,
     PERFORMANCE,
     at_word_end,
+    fit_story,
     names_a_secret,
     narration_of,
     proper_nouns,
@@ -587,12 +588,10 @@ STORY_NOTE = (
 
 def trim_story(recaps: Sequence[str], limit: int) -> list[str]:
     """The earlier recaps that fit in `limit` characters, oldest first: when they do not all fit
-    the OLDEST are dropped, each one whole and never one cut in the middle (#2954). A single recap
-    longer than the limit is dropped too."""
-    kept = [" ".join(r.split()) for r in recaps if r.strip()]
-    while kept and sum(len(r) for r in kept) > limit:
-        kept.pop(0)
-    return kept
+    the OLDEST are dropped, each one whole and never one cut in the middle (#2954), and session
+    notes go before any accepted recap (#3086). A single recap longer than the limit is dropped
+    too."""
+    return fit_story(recaps, limit)
 
 
 def open_threads(

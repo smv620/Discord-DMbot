@@ -20,7 +20,7 @@ from dmbot.recaps import fixed_lines
 from dmbot.recaps import split as sp
 from dmbot.recaps.pipeline import Inputs
 from dmbot.recaps.style import NoteStore, StyleStore
-from dmbot.recaps.text import strip_cues
+from dmbot.recaps.text import NOTES_HEAD, strip_cues
 from dmbot.timebot.clock import day_of as clock_day_of
 
 log = logging.getLogger(__name__)
@@ -254,23 +254,62 @@ async def load_inputs(
 
 
 STORY_RECAPS = 24  # the latest earlier recaps the writer can be given (#2954)
+NOTES_ENTRY_CHARS = 2_000  # one session's notes in the story: its share, so recaps always fit
+
+
+def notes_entry(n: Any) -> str:
+    """A session's notes as one entry of the story so far, cut to its share at a beat boundary
+    (whole beats, oldest first), so a long sheet never crowds out an accepted recap. The entry
+    says it is notes, so the writer does not copy it as a recap."""
+    head = NOTES_HEAD
+    kept: list[str] = []
+    size = len(head)
+    for beat in n.sheet():
+        if size + len(beat.what) + 1 > NOTES_ENTRY_CHARS:
+            break
+        kept.append(beat.what)
+        size += len(beat.what) + 1
+    return head + " ".join(kept) if kept else ""
 
 
 async def story_so_far(
-    accepted: Any, guild_id: int, campaign_id: str, session_at: int
+    accepted: Any, guild_id: int, campaign_id: str, session_at: int, notes: Any | None = None
 ) -> tuple[str, ...]:
     """The campaign's earlier accepted recaps for the writer (#2954): the newest accepted version
     of each session before this one, oldest first, without their cues and fixed opening and
     closing lines (so the writer has nothing to copy). Empty when there are none or they cannot
     be read: the bridge then stands in. Players-facing text only: an accepted recap is what the DM
-    approved to read aloud."""
+    approved to read aloud. A session whose transcript is gone and that has no accepted recap, but
+    has kept session notes (#3026, which outlive the transcript), is told by its notes, so the
+    story does not lose it (a session whose transcript still exists is not told this way). Only
+    the beats' own words (`what`) are used, never PlotBot's notes, cut to `NOTES_ENTRY_CHARS` at a
+    beat. The entry says it is notes, so the writer does not copy it as a recap; the trimmers drop
+    notes before any accepted recap (#3086), and only recaps count against `STORY_RECAPS`."""
     try:
         found = await accepted.newest(guild_id, campaign_id, before=session_at, last=STORY_RECAPS)
     except Exception as exc:  # optional context: the type, never the text
         log.warning("Recap: couldn't read the accepted recaps (%s)", type(exc).__name__)
         return ()
-    texts = (fixed_lines.without(strip_cues(a.summary)) for a in found if a.session_at < session_at)
-    return tuple(t for t in texts if t.strip())
+    try:
+        kept = (
+            await notes.all(
+                guild_id, campaign_id, before=session_at, last=STORY_RECAPS, transcript_gone=True
+            )
+            if notes is not None
+            else []
+        )
+    except Exception as exc:  # (the accepted recaps are still good without them)
+        log.warning("Recap: couldn't read the session notes (%s)", type(exc).__name__)
+        kept = []
+    told: dict[int, str] = {
+        a.session_at: fixed_lines.without(strip_cues(a.summary))
+        for a in found
+        if a.session_at < session_at
+    }
+    for n in kept:
+        if n.session_at < session_at and not told.get(n.session_at, "").strip():
+            told[n.session_at] = notes_entry(n)  # (an empty one is skipped below)
+    return tuple(told[at] for at in sorted(told) if told[at].strip())
 
 
 async def load_inputs_or_why(
