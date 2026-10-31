@@ -1994,6 +1994,11 @@ names panel nor the speech-to-text hints can be a fixed list.
       finder lists every current belief resting on an entry (or a belief), following `derived_from`; it
       changes nothing. Lineage survives erasure as placeholders. Game time and the lie statuses follow as
       parts 2 and 3. See docs/STORY_MEMORY.md, "Where a belief came from".
+    - **Lie statuses** (CloudDev-lead, 2026-10-31, #3091 part 2, migration 0301; owner request): beliefs
+      `suspected_lie` and `known_lie` say a point of view believes a speaker deliberately lied; both name who
+      lied (a `source` link) and are held as false. The DM sees every lie; a player only what their own
+      characters think and may know, through the gate. The reading rule for an accusation of lying and the
+      after-session report line follow. See docs/STORY_MEMORY.md, "Lies".
     - **📌 100% truth** (CloudDev, 2026-10-22, #2447, migrations 0190 and 0193): the DM's own word that a connection is
       true in the story; nothing else is 100%. A DM presses 📌 Pin as 100% truth on a connection's card
       (Unpin takes it back), or answers once per lore upload, "may change in play" (default) or "📌 100% truth", and

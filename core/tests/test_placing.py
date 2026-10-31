@@ -402,6 +402,18 @@ class Placing(ConfirmedMemoryTest):
         self.assertEqual((rel["status"], rel["secret"]), ("confirmed", True))
         self.assertEqual((await self.beliefs_of(again.relation_id))[0]["status"], "secret_plot")
 
+    async def test_a_pinned_connection_is_not_taken_back_by_a_zero_reading(self) -> None:
+        made = await self.relate(self.bram, "carries", self.sword, status="confirmed", secret=False)
+        rel = made.value[0].id
+        await self.memory.pin(GUILD_A, self.c, rel, True, source="dm")
+        before = await self.beliefs_of(rel)
+        false = await self.waiting_reading(belief("truth", "false_evidence", 0.0, dm_confirms=True))
+        with self.assertRaises(MemoryRuleError) as why:
+            await self.place(false)
+        self.assertIn("Unpin it first", str(why.exception))
+        self.assertEqual(await self.beliefs_of(rel), before)
+        self.assertIn(rel, await self.memory.pinned_connections(GUILD_A, self.c))
+
     async def test_an_unknown_character_or_a_state_is_refused_before_anything_is_written(
         self,
     ) -> None:

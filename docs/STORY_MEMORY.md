@@ -851,6 +851,24 @@ the owner chooses it, one at a time.
   still finds it; the finder lists only the current belief of a live connection (not one on a
   rejected or reworded-away connection), walking through the others.
 
+**Lies: believing a speaker lied** (owner, 2026-10-31, #3091 part 2, migration 0301).
+- Two belief statuses beside `false_evidence` (a statement The truth denies) and
+  `evasion_under_magic` (a dodge): `suspected_lie` (this point of view thinks the speaker lied, and is not
+  sure) and `known_lie` (it is sure). A lie is about the speaker as well as the statement, which is not
+  the same as being mistaken. Both are false for whoever holds them: a known lie is held at 0.0 and a
+  suspected one strictly between 0 and 1 (the confidence is still how sure the connection is TRUE).
+- **Both need a `source` link naming who lied** (a character of this campaign; part 1's evidence kind).
+  A character's or an NPC's point of view may hold either; The truth holds only a known lie (it confirms,
+  and only the DM writes it); The party as a whole holds neither, since the players' readers take the
+  party's belief as what everyone knows.
+- **Readers:** the DM sees every current lie on a live connection. A player sees only what their OWN
+  characters think, and only when the one gate lets those characters know both the connection and the one
+  who lied, so a lie never names a secret entry or a hidden connection. The words ("Cerric thinks Valyra
+  lied about this") are made by the caller from names the viewer may use.
+- A backup refuses a lie that names nobody. A sleeping belief (a hide's marked 0.0) is not a lie and
+  drops the belief before it out of the finder, as it drops it out of every reader, until the entry is
+  shown again.
+
 **Embeddings (meaning search).** Voyage AI (owner, 2026-10-24): `voyage-3.5` for embeddings and
 `rerank-2.5` for the second pass that picks what matters most. It is named on the privacy page as a
 processor before it is used.
