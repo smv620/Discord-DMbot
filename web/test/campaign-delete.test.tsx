@@ -214,6 +214,19 @@ describe("the backup", () => {
     await waitFor(() => expect(within(box).queryByText(/Running for/)).toBeNull());
   });
 
+  it("keeps Keep it off while a backup is being made, so the backup is not lost by closing the box", async () => {
+    const api = await page();
+    const box = await open("Lost Hollow");
+    let finish: (set: { files: { name: string; blob: Blob }[] }) => void = () => {};
+    api.campaignBackup = () => new Promise((resolve) => (finish = resolve));
+    fireEvent.click(within(box).getByRole("button", { name: w.backup }));
+    await within(box).findByText(w.backingUp, { selector: "button" });
+    expect((within(box).getByRole("button", { name: w.keep }) as HTMLButtonElement).disabled).toBe(true);
+    expect((within(box).getByRole("button", { name: w.confirm }) as HTMLButtonElement).disabled).toBe(true);
+    finish({ files: [{ name: "a.dmbot.json.gz", blob: new Blob(["{}"]) }] });
+    await waitFor(() => expect((within(box).getByRole("button", { name: w.keep }) as HTMLButtonElement).disabled).toBe(false));
+  });
+
   it("no longer says the transcripts are missing, now that the backup carries them", async () => {
     await page();
     const box = await open("Lost Hollow");

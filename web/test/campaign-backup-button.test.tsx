@@ -39,7 +39,7 @@ describe("who is offered it", () => {
     expect(await screen.findByRole("heading", { level: 2, name: w.heading })).toBeTruthy();
     expect(screen.getByText(w.lead)).toBeTruthy();
     expect(screen.getByRole("button", { name: w.button })).toBeTruthy();
-    expect(screen.getByText(dw.backupNote)).toBeTruthy(); // the same warning as in Delete
+    expect(screen.getByText(w.note)).toBeTruthy(); // the file holds the DM's secrets: players are asked not to open it
     expect(calls(api, "campaignBackup")).toHaveLength(0);
   });
 
@@ -76,7 +76,27 @@ describe("pressing it", () => {
     await open(DM, api);
     fireEvent.click(await screen.findByRole("button", { name: w.button }));
     const problem = await section().findByRole("alert");
-    expect(problem.textContent).toBe(dw.problem["too-soon"]);
+    expect(problem.textContent).toBe(w.problem["too-soon"]);
     expect(screen.getByRole("button", { name: w.button })).toBeTruthy();
+  });
+
+  it("never talks about deleting, or a button that is not on this page", async () => {
+    // every message this page can show: none mentions deleting or "Download a backup first"
+    const said = [...Object.values(w.problem), w.done(["a.zip"]), w.done(["a.zip", "b.zip"]), w.bigFile, w.fileSlow, w.note, w.lead];
+    for (const text of said) {
+      expect(text).not.toMatch(/delet/i);
+      expect(text).not.toMatch(/backup first/i);
+    }
+    // and the Delete box keeps its own words, which do
+    expect(dw.problem["backup-failed"]).toMatch(/delet/i);
+  });
+
+  it("makes one backup for two quick presses", async () => {
+    const api = await open(DM);
+    const button = await screen.findByRole("button", { name: w.button });
+    fireEvent.click(button);
+    fireEvent.click(button);
+    await section().findByRole("status");
+    expect(calls(api, "campaignBackup")).toHaveLength(1);
   });
 });

@@ -42,7 +42,8 @@ export default function CampaignPageView({ api, path }: { api: AccountApi; path:
   const [card, setCard] = useState<Campaign | null>(null);
   // Try It has no backup, so Delete offers none; the plan comes from the same /me answer as the card.
   const [tryIt, setTryIt] = useState(false);
-  // Whether /me has said which plan this is yet: a backup is offered only once it is known not to be Try It.
+  // Whether /me has said which plan this is yet: a backup is offered only once it is known not to be Try It. If /me
+  // cannot be read the section stays off (a backup that cannot be made is worse than none offered).
   const [planKnown, setPlanKnown] = useState(false);
 
   async function load() {
@@ -139,7 +140,7 @@ export default function CampaignPageView({ api, path }: { api: AccountApi; path:
         <section class="stack" aria-labelledby="backup-heading">
           <h2 id="backup-heading">{campaignBackupWords.heading}</h2>
           <p class="muted">{campaignBackupWords.lead}</p>
-          <CampaignBackup api={api} refId={ref} label={campaignBackupWords.button} onGone={() => window.location.assign("/account#campaigns")} />
+          <CampaignBackup key={ref} api={api} refId={ref} label={campaignBackupWords.button} />
         </section>
       )}
       {/* Delete is the last thing on the page (#2879): the person who holds the plan, and only while the switch is on. */}

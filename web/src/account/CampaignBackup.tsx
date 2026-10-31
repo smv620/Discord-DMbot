@@ -6,6 +6,7 @@
 // the stage names and the failures.
 import { useEffect, useRef, useState } from "preact/hooks";
 
+import { campaignBackupWords as pageWords } from "../content/campaign-backup";
 import { BACKUP_HAS_TRANSCRIPTS, campaignDeleteWords as words } from "../content/campaign-delete";
 import { stageWords } from "../content/work-progress";
 import { ApiError, type AccountApi, type JobProgress } from "./api";
@@ -15,7 +16,7 @@ export default function CampaignBackup({
   api,
   refId,
   label,
-  warnNoTranscripts = false,
+  inDelete = false,
   onWorking,
   onGone,
 }: {
@@ -23,8 +24,9 @@ export default function CampaignBackup({
   refId: string;
   /** The button's words ("Download a backup", or "Download a backup first" in the Delete box). */
   label: string;
-  /** Say that transcripts are not in the backup yet, while that is so (the Delete box needs it). */
-  warnNoTranscripts?: boolean;
+  /** In the Delete box: its words (they mention deleting) and its warning that transcripts are not in the backup
+   * yet. On the campaign's own page, the page's words, which never do. */
+  inDelete?: boolean;
   /** Told when a backup starts and ends, so the Delete box can keep its own button off meanwhile. */
   onWorking?: (working: boolean) => void;
   /** The campaign was already gone: the page reads itself again. */
@@ -77,7 +79,8 @@ export default function CampaignBackup({
       setSaved(true);
     } catch (error) {
       const kind = error instanceof ApiError ? error.kind : "server";
-      setProblem(words.problem[kind] ?? words.problem["server"] ?? "");
+      const problems = inDelete ? words.problem : pageWords.problem;
+      setProblem(problems[kind] ?? problems["server"] ?? "");
       if (kind === "not-found") onGone?.();
     } finally {
       askedAt.current = 0;
@@ -98,7 +101,7 @@ export default function CampaignBackup({
 
   return (
     <>
-      {warnNoTranscripts && !BACKUP_HAS_TRANSCRIPTS && <p class="small warn">{words.backupWithoutTranscripts}</p>}
+      {inDelete && !BACKUP_HAS_TRANSCRIPTS && <p class="small warn">{words.backupWithoutTranscripts}</p>}
       <div class="row">
         <button type="button" class="button" disabled={working} onClick={() => void backup()}>
           {working ? words.backingUp : label}
@@ -114,13 +117,13 @@ export default function CampaignBackup({
           updatedAt={fetched ? fetched.updatedAt : made?.updatedAt}
           serverNow={fetched ? fetched.serverNow : made?.serverNow}
           state={fetched ? (quietFor > 60 ? "stalled" : "running") : made && made.state !== "done" ? made.state : "running"}
-          whatToDo={fetched && quietFor > 60 ? words.fileSlow : undefined}
+          whatToDo={fetched && quietFor > 60 ? (inDelete ? words.fileSlow : pageWords.fileSlow) : undefined}
         />
       )}
-      <p class="small">{words.backupNote}</p>
+      <p class="small">{inDelete ? words.backupNote : pageWords.note}</p>
       {saved && (
         <div role="status" class="small">
-          <p>{words.backupDone(savedNames)}</p>
+          <p>{inDelete ? words.backupDone(savedNames) : pageWords.done(savedNames)}</p>
           {savedNames.length > 1 && (
             <ul>
               {savedNames.map((file) => (
@@ -130,7 +133,7 @@ export default function CampaignBackup({
           )}
         </div>
       )}
-      {saved && big && <p class="small muted">{words.backupBigFile}</p>}
+      {saved && big && <p class="small muted">{inDelete ? words.backupBigFile : pageWords.bigFile}</p>}
       {problem && (
         <p class="note bad" role="alert">
           {problem}

@@ -83,7 +83,7 @@ export default function CampaignDelete({
       <p class="small">{words.warningStays}</p>
       {backups && (
         /* First, so the way to keep a copy comes before the way to delete. */
-        <CampaignBackup api={api} refId={refId} label={words.backup} warnNoTranscripts onWorking={setBackingUp} onGone={onGone} />
+        <CampaignBackup api={api} refId={refId} label={words.backup} inDelete onWorking={setBackingUp} onGone={onGone} />
       )}
       <label class="field">
         {words.typeName}
@@ -99,7 +99,7 @@ export default function CampaignDelete({
         <button
           type="button"
           class="button secondary"
-          disabled={state === "deleting"}
+          disabled={state === "deleting" || backingUp}
           onClick={() => {
             setKept(true);
             setOpen(false);
