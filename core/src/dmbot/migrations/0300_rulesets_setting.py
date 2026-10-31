@@ -1,4 +1,4 @@
-"""0297_rulesets_setting
+"""0300_rulesets_setting
 
 The main rules and the "if missing" rules chosen on the website (#2985).
 """

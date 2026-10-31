@@ -103,7 +103,7 @@ class TheDoor(RulesBase):
                         return
 
     def test_the_sql_list_is_the_codes_list(self) -> None:
-        sql = next(m.SQL for m in _MODULES if m.__name__.endswith("0297_rulesets_setting"))
+        sql = next(m.SQL for m in _MODULES if m.__name__.endswith("0300_rulesets_setting"))
         found = re.search(r"\^\(([0-9|]+)\)/\(([0-9a-z|]+)\)\$", sql)
         assert found is not None
         self.assertEqual(set(found.group(1).split("|")), set(RULESETS))
