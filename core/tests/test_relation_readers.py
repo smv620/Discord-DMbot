@@ -43,6 +43,9 @@ READERS = {
     "memory/gate.py": "the gate (#2995): reads each connection's ends to say which entries a "
     "viewer learns, and only for connections its list says that viewer knows",
     "memory/knowers.py": DM_ONLY + ": who knows a connection; only checks it exists, any status",
+    "memory/as_of.py": "what a point of view believed at a game time: the DM any view, live "
+    "connections; a player only their own characters', on confirmed connections the gate lets "
+    "them know",
     "memory/lies.py": "who thinks someone lied: the DM sees every live connection's; a player only "
     "their own characters', on confirmed connections the gate lets them know",
     "memory/lineage.py": DM_ONLY

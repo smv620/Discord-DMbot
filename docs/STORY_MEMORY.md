@@ -813,6 +813,17 @@ moment**, never from the clock as it reads when the DM presses Place; a session 
 trigger runs as whoever changes the clock, so a clock write fails if the log insert does, and a future
 backfill of `minute` under `migrate_backfill` must open this table's row-level security too.
 
+**"As of" in story time (#3091 part 3, `memory/as_of.py`):** "what did the party believe on Flamerule 10th?"
+is answered from each belief's game time, next to the session-order readers (which answer by the session a
+belief was formed in). For each connection the answer is the belief of the latest game time at or before the
+asked one, and beliefs at the same minute break by `seq`, so a flashback or time travel moves nothing: one
+timeline. **A belief with no game time is never "believed at" a game time** (most have none: they were made
+after a session or before the clock log), so for those ask the session-order reader. The DM may ask for any
+point of view (`MemoryStore.believed_at`); a player is answered only from their own characters' points of
+view, and only for connections the one gate lets those characters know
+(`MemoryStore.my_characters_believed_at`). It returns ids and numbers; the caller makes the words, with the
+calendar for the date.
+
 **The campaign's calendar (#3091 part 3, migration 0307):** three columns on the clock's row: `calendar_kind`
 (`days`, the default and what every clock had, or `harptos`) and the date of Day 1 as two numbers (the year
 and the day of that year, 0 being Hammer 1), never a real-world timestamp. `timebot/calendar.py` turns a
