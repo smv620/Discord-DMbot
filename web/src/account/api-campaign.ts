@@ -2,6 +2,8 @@
 // pages that do not use them do not carry them. Each is the same call it was inside `httpApi`; the names are listed
 // in `CAMPAIGN_METHODS` there, and a test keeps the two in step.
 import type {
+  SessionNotes,
+  SessionNotesList,
   RecapStyle,
   RecapStyleAction,
   HouseFileState,
@@ -51,6 +53,10 @@ export default function campaignArea({ call }: ApiHelpers): Partial<AccountApi> 
         keepDays?: number | null;
         sessions: TranscriptSessionItem[];
       },
+    sessionNotesList: async (campaignRef) =>
+      (await call("GET", `/me/campaigns/${encodeURIComponent(campaignRef)}/session-notes`)) as SessionNotesList,
+    sessionNotes: async (campaignRef, at) =>
+      (await call("GET", `/me/campaigns/${encodeURIComponent(campaignRef)}/session-notes/${at}`)) as SessionNotes,
     transcript: async (campaignRef, number, version, offset = 0) =>
       (await call(
         "GET",
