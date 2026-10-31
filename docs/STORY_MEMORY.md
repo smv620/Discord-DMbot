@@ -824,6 +824,35 @@ the owner chooses it, one at a time.
   placeholder (a restored campaign has none of those lines). The health report counts links,
   placeholders, dangling and foreign links.
 
+**Disguised as: one character posing as another** (owner, 2026-10-31, #3091 part 4; a code release, no migration).
+- A disguise is two characters, never one: Jax is not Valyra, he is a second character posing as
+  her. A "same person" join would erase the real Valyra, so it is the wrong tool. The kind is
+  `disguised_as`: "is disguised as" read forward (the subject is the one in disguise), "is
+  impersonated by" read backwards; character to character, the same character twice is refused, and
+  one character may wear several faces or be copied by several.
+- **Secret by nature:** a new one is made secret (known only to the DM), however it is made (the DM,
+  an upload, a reading), and the DM reveals it with the connection's own switch. Who knows it
+  follows the who-knows lists like any connection (Jax knows his own disguise; a character who sees
+  through it learns it). A guess ("I think the mayor is a changeling posing as her") stays a
+  theory proposal, never kept.
+- **The one in disguise knows it:** when a disguise is made, its subject (a confirmed character) is
+  listed as a knower at 1.0 in the same write, on every path, so a player whose character is in disguise
+  sees their own disguise and the other players do not.
+- **Lore never reveals a disguise:** a disguise is a plot secret by nature, so every new one starts secret
+  under every lore choice ("Everyone knows it" included); only the DM reveals it with the connection's
+  switch. A secret identity of ONE person stays a secret name (the guard is Ken); a SECOND character
+  posing as another is this connection, never a name, and the lore prompts say so. A proposed disguise
+  (a guess, an upload) also means no "same person?" offer for its pair.
+- **The gate is unchanged:** a player whose characters do not know the disguise sees nothing of it
+  and keeps seeing "Valyra" with what they believe of her. Nothing is merged: what Cerric believes
+  Valyra said or did stays on Valyra's entry; the DM decides later which of it was Jax's, with the
+  lineage finder (part 1) to help.
+- The "same person?" finder never offers a pair joined by a disguise (either direction, any status
+  but rejected). "Posing as", "impersonating", "masquerading as", "pretending to be", "a doppelganger
+  of" and "wearing the face of" read as `disguised_as`. The Connect menu offers it forward only
+  (and `founded` loses its back reading there too) to stay at Discord's 25 options; both back
+  readings still read on the card.
+
 **Where a belief came from: lineage and sources** (owner, 2026-10-31, #3091 part 1, migration 0297).
 - A belief row can say which earlier belief it came from (`derived_from`) and why (`change_kind`):
   `update` (new evidence for the same point of view in the same connection), `retraction` (the same,

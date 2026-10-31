@@ -25,12 +25,13 @@ from discord import app_commands
 
 from dmbot.campaigns import Campaign
 from dmbot.discord_limits import MESSAGE_MAX
-from dmbot.memory import link_edits, name_edits
+from dmbot.memory import kin, link_edits, name_edits
 from dmbot.memory.kinds import kind_phrase
 from dmbot.memory.link_words import (
     CARD_BACK,
     CONNECTION_BACK,
     CONNECTION_WORDS,
+    KIN,
     back_words,
     connection_words,
     link_words,
@@ -54,7 +55,7 @@ from dmbot.memory.models import (
     is_id,
     name_key,
 )
-from dmbot.memory.ontology import CORE_TYPES, FALLBACK_PREDICATE
+from dmbot.memory.ontology import CORE_TYPES, DISGUISED_AS, FALLBACK_PREDICATE
 from dmbot.memory.search import MAX_RESULTS, Match, find, said_lately
 from dmbot.memory.store import SAID_AS_MAX, MemoryStore
 from dmbot.mentions import NO_PINGS
@@ -140,6 +141,7 @@ SECRET_DENIED_SAVE = (
     "Players can see this one, because only the campaign's DM can keep a connection secret."
 )
 SECRET_ALREADY = "It was already secret, so it stays secret. Remove it and add it again to show it."
+DISGUISE_SECRET = "A disguise starts secret. Show it to the players with the 🤫 switch on its card."
 SHOW_ALL = "Show all ▾"
 NOTHING_MORE = "That list has changed. Open the name card again to see it."
 NOTE_MAX = 600  # what just changed, above the card
@@ -167,9 +169,9 @@ def sentence(lookup: CampaignLookup, r: Relation) -> str | None:
 
 
 # Kinds whose "other way round" reading is not offered in the menu: Discord allows 25 options, and
-# these three are the rarest ways to say it ("is owed an oath by"). They still read both ways on a
+# these are the rarest ways to say it ("is owed an oath by"). They still read both ways on a
 # card and in the edit menus; the other way round is one tap on the same name's card.
-NO_BACK_OPTION = frozenset({"located_in", "sworn_to", "captive_of"})
+NO_BACK_OPTION = frozenset({"located_in", "sworn_to", "captive_of", "founded", "disguised_as"})
 
 
 def connect_choices(name: str) -> list[tuple[str, str, str | None]]:
@@ -2353,6 +2355,78 @@ async def show_picks(
     )
 
 
+# The family roles the Connect menu offers after "is family of" (#3102): the DM picks which one, or
+# "Just family" for no role. Twenty-three roles and "Just family" make 24 options, under Discord's
+# limit of 25.
+FAMILY_ROLES = (
+    "mother", "father", "parent", "son", "daughter", "child", "sister", "brother", "sibling",
+    "wife", "husband", "spouse", "grandparent", "grandmother", "grandfather", "grandson",
+    "granddaughter", "grandchild", "aunt", "uncle", "niece", "nephew", "cousin",
+)  # fmt: skip
+JUST_FAMILY = "just_family"  # a value no role has: the family link with no role
+
+
+class FamilyRole(_Menu):
+    """Which family role the DM means, after "is family of" (#3102). Saves nothing until a role
+    (or "Just family") is picked; Cancel saves nothing and goes back to the card."""
+
+    def __init__(
+        self,
+        campaign_id: str,
+        entity_id: str,
+        other_id: str,
+        how: str,
+        names: tuple[str, str],
+        *,
+        secret: bool,
+        forced: bool,
+    ) -> None:
+        super().__init__()
+        self.campaign_id = campaign_id
+        self.entity_id = entity_id
+        self.other_id = other_id
+        self.how = how
+        self.secret = secret
+        self.forced = forced
+        # The card's name first when it is the subject; the other way round swaps them.
+        first, second = (names[1], names[0]) if how.endswith(BACK) else names
+        options = [
+            discord.SelectOption(
+                label=role.capitalize(),
+                value=role,
+                description=logic.shorten(f"{first} is the {role} of {second}", 100),
+            )
+            for role in FAMILY_ROLES
+        ]
+        options.append(
+            discord.SelectOption(
+                label="Just family",
+                value=JUST_FAMILY,
+                description=logic.shorten(f"{first} and {second} are family. No role.", 100),
+            )
+        )
+        self.role = _Select(self._picked, placeholder="Which family role?", options=options)
+        self.add_item(self.role)
+        self.add_item(
+            _Button(self._cancel, label="Cancel", style=discord.ButtonStyle.secondary, row=1)
+        )
+
+    async def _picked(self, interaction: discord.Interaction) -> None:
+        # The menu is done once a role is picked: stop it first so a second press does nothing.
+        # secret and forced come from the card and are checked again in connect.
+        value = self.role.values[0]
+        detail = "" if value == JUST_FAMILY else value
+        self.stop()
+        await connect(
+            interaction, self.campaign_id, self.entity_id, self.how, self.other_id,
+            secret=self.secret, forced=self.forced, detail=detail,
+        )  # fmt: skip
+
+    async def _cancel(self, interaction: discord.Interaction) -> None:
+        self.stop()
+        await show_card(interaction, self.campaign_id, self.entity_id, replace=True)
+
+
 async def choose_other(
     interaction: discord.Interaction,
     view: _Menu,
@@ -2394,6 +2468,25 @@ async def choose_other(
         )
         return
     view.stop()
+    if how.removesuffix(BACK) == KIN:  # "is family of": ask the role first, save after (#3102)
+        found = await _current(interaction, campaign_id, entity_id)
+        other = await _current(interaction, campaign_id, other_id) if found else None
+        if found is None or other is None:
+            return
+        await _replace(
+            interaction,
+            "Which family role is it? Pick one, or **Just family** for no role.",
+            FamilyRole(
+                campaign_id,
+                entity_id,
+                other_id,
+                how,
+                (found[1], other[1]),
+                secret=secret or other_id in hidden,
+                forced=other_id in hidden,
+            ),
+        )
+        return
     await connect(
         interaction, campaign_id, entity_id, how, other_id,
         secret=secret or other_id in hidden, forced=other_id in hidden,
@@ -2605,6 +2698,7 @@ async def connect(
     *,
     secret: bool = False,
     forced: bool = False,
+    detail: str = "",
 ) -> None:
     """Save the connection the DM picked (confirmed: the DM said it), then the card. `secret`:
     hidden from players (🤫); `forced`: it is secret because one end was found through a secret
@@ -2630,6 +2724,8 @@ async def connect(
         secret = False
     subject, obj = (other, found) if how.endswith(BACK) else (found, other)
     subject_id, object_id = (other_id, entity_id) if how.endswith(BACK) else (entity_id, other_id)
+    # A family role (#3102) is stored with its words' direction, the way the edit menu stores it.
+    detail = (kin.role_of(detail) or "") if predicate == KIN else ""
     try:
         written = await memory.add_relation(
             campaign.guild_id,
@@ -2641,19 +2737,28 @@ async def connect(
             confidence=1.0,
             status=CONFIRMED,
             secret=secret,
+            detail=detail,
+            directional=kin.directional(detail),
         )
     except MemoryRuleError as exc:
         await _tell(interaction, f"Couldn't connect them. {exc}")
         return
     changed(interaction, campaign)
     relation, flags = written.value
-    said = f"**{_md(subject[1])}** {connection_words(predicate)} **{_md(obj[1])}**"
+    words = (
+        link_words(predicate, detail, kin.directional(detail))
+        if predicate == KIN
+        else (connection_words(predicate))
+    )
+    said = f"**{_md(subject[1])}** {words} **{_md(obj[1])}**"
     if relation.secret:  # what is stored: a connection already secret is never made public
         note = f"🧭 Saved: {said} 🤫 Secret: players can't see it."
         if forced:
             note += f" {SECRET_FORCED}"
         elif not secret:
-            note += f" {SECRET_ALREADY}"
+            # A disguise is secret by nature, however it is asked for (#3091): the store makes it
+            # so, which is not "already secret". (Rewording a revealed one makes it secret again.)
+            note += f" {DISGUISE_SECRET if predicate == DISGUISED_AS else SECRET_ALREADY}"
     else:
         note = f"🧭 Saved: {said}."
         if denied:

@@ -23,7 +23,7 @@ export const invitePanel = {
   failed: "Nothing was changed.",
   failedNext: "Try again in a minute.",
   stillNow: (link: string): string => (link ? `The link is still ${link}` : "There is still no invite link."),
-  timedOut: "DMbot hasn't answered yet. It may still do it. Check back in a minute; the current link above will change when it has.",
+  timedOut: "DMbot hasn't answered yet. It may still do it. Reload the page in a minute to see where it got to.",
   problems: {
     "not-allowed": "Only a DM of this campaign can do this. Ask your DM.",
     "bad-value": "That isn't a campaign invite link from dndbeyond.com. Paste only the link from your campaign there.",
