@@ -18,13 +18,6 @@ CAMPAIGN = SimpleNamespace(id="c" * 32, guild_id=5)
 MIRA, ALDRIC = "m" * 32, "a" * 32
 
 
-def relation(subject: str, object_: str, detail: str, directional: bool) -> Any:
-    return SimpleNamespace(
-        subject_id=subject, object_id=object_, detail=detail, directional=directional,
-        secret=False, predicate="kin_of",
-    )  # fmt: skip
-
-
 def fake_interaction() -> Any:
     return SimpleNamespace(
         user=SimpleNamespace(id=1), response=SimpleNamespace(is_done=lambda: False)
@@ -113,7 +106,7 @@ class TheRoleMenu(unittest.IsolatedAsyncioTestCase):
 class TheSave(unittest.IsolatedAsyncioTestCase):
     async def save(self, how: str, detail: str) -> tuple[tuple[Any, ...], dict[str, Any]]:
         """What connect hands the store: the positional (guild, campaign, subject, predicate,
-        object) and the keyword arguments."""
+        object) and the keyword arguments. The saved note is in `self.note`."""
         memory = MagicMock()
         memory.add_relation = AsyncMock(
             return_value=Written((SimpleNamespace(secret=False), []), None)
@@ -127,9 +120,12 @@ class TheSave(unittest.IsolatedAsyncioTestCase):
             patch.object(nc, "sees_secrets", return_value=True),
             patch.object(nc, "changed"),
             patch.object(nc, "_tell", AsyncMock()),
-            patch.object(nc, "show_card", AsyncMock()),
+            patch.object(nc, "show_card", show := AsyncMock()),
         ):
             await nc.connect(fake_interaction(), CAMPAIGN.id, MIRA, how, ALDRIC, detail=detail)
+        show_args = show.await_args
+        assert show_args is not None
+        self.note = show_args.kwargs.get("note") or ""
         await_args = memory.add_relation.await_args
         assert await_args is not None
         return await_args.args, await_args.kwargs
@@ -151,3 +147,33 @@ class TheSave(unittest.IsolatedAsyncioTestCase):
         args, kwargs = await self.save("kin_of" + nc.BACK, "sister")
         self.assertEqual((kwargs["detail"], kwargs["directional"]), ("sister", True))
         self.assertEqual((args[2], args[4]), (ALDRIC, MIRA))  # Aldric holds the role
+
+    async def test_the_saved_note_reads_with_the_role_in_the_order_it_was_saved(self) -> None:
+        await self.save("kin_of", "sister")
+        self.assertIn("is the sister of", self.note)
+        self.assertIn("Mira", self.note.split("is the sister of")[0])  # Mira holds the role
+
+    async def test_the_saved_note_reads_the_other_way_round_for_the_other_way_round(self) -> None:
+        await self.save("kin_of" + nc.BACK, "sister")
+        self.assertIn("is the sister of", self.note)
+        self.assertIn("Aldric", self.note.split("is the sister of")[0])  # Aldric holds the role
+
+
+class TheSecretPassThrough(unittest.IsolatedAsyncioTestCase):
+    async def test_a_forced_secret_role_is_saved_secret_with_the_forced_flag(self) -> None:
+        menu = nc.FamilyRole(CAMPAIGN.id, MIRA, ALDRIC, "kin_of", ("Mira", "Aldric"),
+                             secret=True, forced=True)  # fmt: skip
+        connect = AsyncMock()
+        with patch.object(nc, "connect", connect):
+            cast(Any, menu).role = SimpleNamespace(values=["sister"])
+            await menu._picked(fake_interaction())
+        kwargs = _kwargs(connect)
+        self.assertEqual(
+            (kwargs["secret"], kwargs["forced"], kwargs["detail"]), (True, True, "sister")
+        )
+
+    async def test_just_family_says_it_is_family_with_no_role(self) -> None:
+        menu = nc.FamilyRole(CAMPAIGN.id, MIRA, ALDRIC, "kin_of", ("Mira", "Aldric"),
+                             secret=False, forced=False)  # fmt: skip
+        just = next(o for o in menu.role.options if o.value == nc.JUST_FAMILY)
+        self.assertEqual(just.description, "Mira is family of Aldric, no role")
