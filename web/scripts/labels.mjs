@@ -126,6 +126,8 @@ export const hiddenBotLabels = [
 
 /** Buttons and menu items of the website itself, which the bot's code can't hold. */
 export const siteButtons = [
+  "Save the link", // the campaign invite panel (#2985), a website button, not in Discord
+  "Remove the link", // the campaign invite panel (#2985), a website button, not in Discord
   "Cleaned",
   "House rules",
   "Session transcripts",
