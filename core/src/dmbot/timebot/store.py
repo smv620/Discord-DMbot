@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import secrets
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from typing import Any
 
@@ -426,8 +426,9 @@ class ClockStore:
         campaign_id: str,
         rows: list[tuple[str, int | None]],
     ) -> None:
-        """Append these (character, group or None) rows. A character the campaign no longer has is
-        skipped (its rows went with it), so a late Undo cannot fail on one."""
+        """Append these (character, group or None) rows. A character the campaign no longer has, or
+        that is no longer a kept player character, is skipped (its rows went with it or it can no
+        longer be placed), so a late Undo cannot fail or place one."""
         if not rows:
             return
         now = int(self._now())
@@ -436,12 +437,14 @@ class ClockStore:
                 "INSERT INTO game_clock_group_log"
                 " (guild_id, campaign_id, character_id, position, at)"
                 " SELECT %s, %s, e.id, %s, %s FROM memory_entities e"
-                " WHERE e.guild_id = %s AND e.campaign_id = %s AND e.id = %s",
+                " WHERE e.guild_id = %s AND e.campaign_id = %s AND e.id = %s"
+                " AND e.type = 'character' AND e.role = 'player_character'"
+                " AND e.status = 'confirmed'",
                 [(guild_id, campaign_id, p, now, guild_id, campaign_id, c) for c, p in rows],
             )
 
     async def place_members(
-        self, guild_id: int, campaign_id: str, user_id: int, placements: dict[str, int | None]
+        self, guild_id: int, campaign_id: str, user_id: int, placements: Mapping[str, int | None]
     ) -> dict[str, int]:
         """The DM says who is in which group while the party is split: character entry id -> the
         group's position, or None for "in no group". Only this campaign's confirmed player

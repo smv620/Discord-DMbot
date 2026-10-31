@@ -809,8 +809,13 @@ no group is given (the main clock stands still while split). Before the first ro
 not known. Which group a character is in comes from the group history (#3131, below). The extractor notes each reading's
 newest cited line moment (`spoken_at`, Unix seconds) and **placing a reading stamps the belief from that
 moment**, never from the clock as it reads when the DM presses Place; a session loaded from a file
-(`session_imports`) carries no moment, because its lines hold the dates the DM chose. **Watch for:** the
-trigger runs as whoever changes the clock, so a clock write fails if the log insert does, and a future
+(`session_imports`) carries no moment, because its lines hold the dates the DM chose. The trigger never
+blocks a clock write that would otherwise succeed: its log row has the clock row's server and campaign,
+`minute`'s bound (and, for a group row, `position`'s 1 to 3), the same row-level policy, and the
+campaign's foreign key holds for any campaign with a clock row; the only check the clock tables lack, a
+real time above zero, cannot fail on a running server. **Watch for:** the trigger runs as whoever changes the clock, so a clock write fails only
+if the log insert does, and that stays true only while the log row keeps the clock row's bounds, row-level policy and foreign key:
+a new bound, check, policy or key on `game_clocks` or `game_clock_groups` must be mirrored in `game_clock_log`, and a future
 backfill of `minute` under `migrate_backfill` must open this table's row-level security too.
 
 **"As of" in story time (#3091 part 3, `memory/as_of.py`):** "what did the party believe on Flamerule 10th?"
@@ -830,10 +835,7 @@ characters of this campaign and groups that exist, otherwise nothing is written)
 append-only row each time a character is placed, moved or released, because a line's group is the one its
 speaker was in **when it was spoken**: a rejoin or an Undo of a split closes every placement (a row with no
 group), and an Undo of a rejoin writes the closed placements back. A character's group at a moment is their
-newest row at or before it. `stamp.group_of_speakers` turns a line's speakers (people, never characters) into
-a group: every kept character the person plays must have been placed, all in the same group, and speakers in
-different groups are one answer too many; anything else is "not known", because DMbot never guesses whose voice
-it was. A character that is erased takes its rows with it. It is not carried in backups (character ids are the
+newest row at or before it. `stamp.group_of_speakers` turns a line's speakers (people, never characters) into a group: only the kept characters those people play that were in a group at that moment count; exactly one group among them gives it. Characters who were not placed, and a speaker who plays none here (the DM), are ignored; two or more different groups, or none at all, are "not known", because DMbot never guesses whose voice it was. A character that is erased takes its rows with it. It is not carried in backups (character ids are the
 file's, a restored campaign starts a new history, and a split's placements are a moment of play, not story);
 a line from before the restore reads "not known".
 **The DM's buttons for it:** after a split the DM is asked privately, one picker per group ("Who is in Tower?"; the campaign's kept player characters only, at most 25 shown) and a Skip for now button; **Who is where** in **Rests & time…** reopens it any time while split. A pick says who is in that group now: someone taken off the pick is released. Words: "Pick who is in each group. Anyone you skip gets no game time on their lines until you do." Nothing here is shown to players.

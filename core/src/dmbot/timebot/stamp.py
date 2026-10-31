@@ -9,8 +9,9 @@ Which clock: the log knows when the party split and came back together, so the n
 before the moment says which. A main-clock row is the table's clock whatever group is asked for
 (the party was together). A group row means the party was split: the asked group's newest row since
 the last main-clock row is its clock, and with no group asked for the answer is None, because the
-main clock stands still while split and its minute is one the table has left. (Nothing records which
-group a character is in yet, #3131, so a caller has no group to give today.)
+main clock stands still while split and its minute is one the table has left. Which group a speaker
+was in comes from the DM's placements (`group_at`, `group_of_speakers`, #3131); a speaker nobody
+placed is not known.
 """
 
 from __future__ import annotations
@@ -69,14 +70,13 @@ async def group_of_speakers(
     conn: Conn, guild_id: int, campaign_id: str, user_ids: Sequence[int], spoken_at: int
 ) -> int | None:
     """The group a line's speaker(s) were in when it was spoken, or None when that cannot be told.
-    A line carries a person, never a character, so every character that person plays (and that
-    the campaign keeps) must have been placed, all in the same group; one who was not placed, or
-    characters in different groups, or speakers in different groups, are not known: DMbot never
-    guesses whose voice it was. Outside a split nothing is placed and the answer is None, which
-    `game_time_at` does not need (the party was together)."""
-    if not user_ids:
-        return None
-    groups: set[int | None] = set()
+    A line carries a person, never a character, so this looks at the kept player characters those
+    people play: only the ones that were in a group at that moment count. Exactly one group among
+    them gives it; characters who were not placed (or were in no group) are ignored, and a speaker
+    who plays none here (the DM, say) is ignored too. Two or more different groups, or none at all,
+    are not known: DMbot never guesses whose voice it was. Outside a split nothing is placed and the
+    answer is None, which `game_time_at` does not need (the party was together)."""
+    groups: set[int] = set()
     for user_id in dict.fromkeys(user_ids):
         cur = await conn.execute(
             "SELECT id FROM memory_entities WHERE guild_id = %s AND campaign_id = %s"
@@ -84,10 +84,8 @@ async def group_of_speakers(
             " AND played_by = %s ORDER BY id",
             (guild_id, campaign_id, user_id),
         )
-        characters = [str(r["id"]) for r in await cur.fetchall()]
-        if not characters:
-            return None
-        for character in characters:
-            groups.add(await group_at(conn, guild_id, campaign_id, character, spoken_at))
-    only = next(iter(groups)) if len(groups) == 1 else None
-    return only
+        for row in await cur.fetchall():
+            placed = await group_at(conn, guild_id, campaign_id, str(row["id"]), spoken_at)
+            if placed is not None:
+                groups.add(placed)
+    return next(iter(groups)) if len(groups) == 1 else None
