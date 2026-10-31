@@ -5,7 +5,7 @@ import QabotPrivacy from "../../components/QabotPrivacy.astro";
 import RecapsPrivacy from "../../components/RecapsPrivacy.astro";
 import { RECAP_AUDIO_LIVE, RECAP_SHARE_LIVE, RECAPS_LIVE } from "../../content/recap-words";
 import { QABOT_LIVE } from "../../content/qabot";
-import { initiativeLine, storyStatesLine } from "../../content/privacy-channels";
+import { initiativeLine, sessionNotesPrivacy, storyStatesLine } from "../../content/privacy-channels";
 import {
   deletionWarnings,
   geminiPrivacy,
@@ -99,8 +99,10 @@ import {
       An adventure file is the one exception. DMbot keeps its text, not the file, for that campaign
       only. It stays until the game master removes it or the campaign is deleted. A backup holds
       only its name.
-      <strong>What DMbot makes from a session belongs to the campaign.</strong> That means a recap,
-      story facts, notes for the game master, and anything else DMbot writes from what was said.
+      <strong>What DMbot makes from a session belongs to the campaign.</strong>
+      {sessionNotesPrivacy.live
+        ? sessionNotesPrivacy.makes
+        : "That means a recap, story facts, notes for the game master, and anything else DMbot writes from what was said."}
       It is part of the campaign, and is deleted only with the campaign.
     </li>
     <li>
@@ -136,8 +138,8 @@ import {
       🗑 Delete my transcripts. This can't be undone. It does not remove other people's lines, the story notes
       your game master kept, or copies someone already downloaded. A game master can also choose how long a campaign keeps its transcripts:
       forever, 1 year, 90 days or 30 days. Older ones are deleted within a day. A session whose
-      transcript was deleted stays in the list, marked as deleted. Recaps (short summaries of a
-      game) stay.
+      transcript was deleted stays in the list, marked as deleted.
+      {sessionNotesPrivacy.live ? sessionNotesPrivacy.stays : "Recaps (short summaries of a game) stay."}
     </li>
     <li>
       <strong>Your voice is not kept.</strong> The sound is sent to be written down, then thrown

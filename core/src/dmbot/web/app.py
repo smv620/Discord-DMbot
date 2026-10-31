@@ -65,6 +65,7 @@ from dmbot.web import (
     restores,
     rule_sharing,
     see_as,
+    session_notes,
     sessions,
     shared_recaps,
     sharing,
@@ -1170,6 +1171,30 @@ def create_app(
         session, _token = signed
         try:
             return await past_sessions.read_past_sessions(db, session, ref)
+        except RecapError as err:
+            if err.code == "not_allowed":
+                raise HTTPException(status_code=403, detail="not_allowed") from None
+            raise HTTPException(status_code=404, detail="not_found") from None
+
+    @app.get("/me/campaigns/{ref}/session-notes")
+    async def me_session_notes(ref: str, signed: Signed) -> dict[str, Any]:
+        """Which sessions of a campaign have session notes (#3027), for its DMs alone: newest
+        first, each with its number and how many beats. A player gets `not_allowed`."""
+        session, _token = signed
+        try:
+            return await session_notes.read_notes_list(db, session, ref)
+        except RecapError as err:
+            if err.code == "not_allowed":
+                raise HTTPException(status_code=403, detail="not_allowed") from None
+            raise HTTPException(status_code=404, detail="not_found") from None
+
+    @app.get("/me/campaigns/{ref}/session-notes/{at}")
+    async def me_session_notes_of(ref: str, at: int, signed: Signed) -> dict[str, Any]:
+        """One session's notes (#3027): its numbered beats, in words only. DM only; a session
+        with no notes is a 404."""
+        session, _token = signed
+        try:
+            return await session_notes.read_notes(db, session, ref, at)
         except RecapError as err:
             if err.code == "not_allowed":
                 raise HTTPException(status_code=403, detail="not_allowed") from None
