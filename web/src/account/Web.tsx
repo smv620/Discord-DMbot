@@ -32,6 +32,7 @@ import { WEB_WAITING_LIVE } from "../content/web-waiting";
 import { clampHops } from "./webLayout";
 import { listLines, type WebLine } from "./webLines";
 import CampaignNav from "./CampaignNav";
+import { npcPageHref } from "./webNodes";
 
 /** The campaign's address, read from `/account/web/<server>.<campaign>`. */
 export function webRefFromPath(path: string): string | null {
@@ -558,8 +559,8 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
                 </button>
                 {open && (
                   <div class="web-name-more row" id={`web-name-${n.id}`}>
-                    {n.page === true && (
-                      <a class="small" href={`/account/npc/${encodeURIComponent(ref)}/${encodeURIComponent(n.id)}`}>
+                    {n.page === true && npcPageHref(ref, n.id) && (
+                      <a class="small" href={npcPageHref(ref, n.id) ?? undefined}>
                         {words.openItsPage}
                         <span class="visually-hidden">{words.openItsPageFor(n.name)}</span>
                       </a>
