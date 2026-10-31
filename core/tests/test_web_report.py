@@ -7,12 +7,14 @@ from __future__ import annotations
 
 import json
 from typing import Any
+from unittest.mock import patch
 
 import httpx
 
 from dmbot.memory import beliefs
 from dmbot.memory import report_store as rs
 from dmbot.memory.models import DM as DM_SOURCE
+from dmbot.memory.models import new_id
 from dmbot.memory.store import MemoryStore
 from dmbot.web import report, sessions
 from dmbot.web.app import create_app
@@ -188,6 +190,66 @@ class TheReport(Reading):
         await self.difference("false", denied=True)
         (d,) = (await self.read())["differences"]["false"]
         self.assertEqual(d["truth"], report.NOT_SO)
+
+    async def a_lie_difference(self, *, liar: bool = True) -> str:
+        cerric = await self.name("Cerric", self.one.id)
+        valyra = await self.name("Valyra", self.one.id)
+        view = new_id()
+        await self.sql(
+            "INSERT INTO memory_perspectives (guild_id, campaign_id, id, kind, entity_id,"
+            " created_at) VALUES (%s, %s, %s, 'pc', %s, 1)",
+            GUILD, self.one.id, view, cerric,
+        )  # fmt: skip
+        await self.memory.believe(
+            GUILD, self.one.id, view, self.ally, 0.5, "suspected_lie", source=DM_SOURCE,
+            sources=[valyra],
+        )  # fmt: skip
+        if not liar:  # the character who lied has gone since
+            await self.sql("DELETE FROM memory_evidence WHERE kind = 'source'")
+        await self.sql(
+            "INSERT INTO memory_differences (guild_id, campaign_id, perspective_id, relation_id,"
+            " truth_relation_id, kind, sort, reason, found_at, session_started_at)"
+            " VALUES (%s, %s, %s, %s, %s, 'lie', 'misunderstood', 'Not so.', 1, %s)",
+            GUILD, self.one.id, view, self.ally, self.ally, S1,
+        )  # fmt: skip
+        return view
+
+    async def door(self) -> dict[str, Any]:
+        """What the door itself sent for the first session (before the page's shaping)."""
+        with patch.object(report, "shape", wraps=report.shape) as spy:
+            await self.read()
+        return dict(spy.call_args.args[0])
+
+    async def test_the_door_names_the_liar_and_the_holder_of_a_lie_the_party_got_wrong(
+        self,
+    ) -> None:
+        await self.a_lie_difference()
+        (d,) = (await self.door())["differences"]
+        self.assertEqual((d["kind"], d["liar"], d["who"]["name"]), ("lie", "Valyra", "Cerric"))
+        self.assertEqual(d["believes"]["id"], d["truth"]["id"])  # (The truth holds the statement)
+
+    async def test_the_page_leaves_a_lie_out_until_it_has_words_for_it(self) -> None:
+        await self.a_lie_difference()
+        await self.difference("false", denied=True)
+        shown = (await self.read())["differences"]
+        self.assertEqual(shown["misunderstood"], [])
+        self.assertEqual(len(shown["false"]), 1)  # (the other kinds are untouched)
+
+    async def test_a_lost_liar_is_null_and_only_the_newest_belief_names_one(self) -> None:
+        view = await self.a_lie_difference()
+        await self.sql("DELETE FROM memory_evidence WHERE kind = 'source'")
+        self.assertIsNone((await self.door())["differences"][0]["liar"])
+        # a newer belief of that view with no source does not borrow the older lie's liar
+        valyra = await self.name("Mina", self.one.id)
+        await self.memory.believe(
+            GUILD, self.one.id, view, self.ally, 0.4, "suspected_lie", source=DM_SOURCE,
+            sources=[valyra],
+        )  # fmt: skip
+        await self.sql("DELETE FROM memory_evidence WHERE kind = 'source'")
+        await self.memory.believe(
+            GUILD, self.one.id, view, self.ally, 0.3, "theory", source=DM_SOURCE
+        )
+        self.assertIsNone((await self.door())["differences"][0]["liar"])
 
     async def test_a_difference_never_sorted_is_counted_and_not_listed(self) -> None:
         await self.difference("not_sorted")
