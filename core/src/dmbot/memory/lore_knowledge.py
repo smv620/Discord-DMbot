@@ -30,6 +30,9 @@ log = logging.getLogger(__name__)
 WORLD, SPOILERS, SMART = "world", "spoilers", "smart"
 CHOICES = (WORLD, SPOILERS, SMART)
 DEFAULT = SPOILERS  # what an upload did before there was a choice
+# What the upload form starts on (owner, 2026-10-31). DEFAULT stays what normalize() falls back to,
+# so an old or unknown upload is still read as spoilers and never becomes known to the players.
+PICKED_FIRST = WORLD
 
 # How a waiting statement is known once kept (the `world` column): the DM's word (World general
 # knowledge), the AI's guess (Smart guess, written at 0.75, "surely", not as the DM's word), or not

@@ -26,8 +26,8 @@ from dmbot.db import Conn
 from dmbot.memory._changes import Changes, Scope
 from dmbot.memory.models import MemoryRuleError
 
-CLAIM, LINE, CLUE, EVENT = "claim", "line", "clue", "event"
-KINDS = (CLAIM, LINE, CLUE, EVENT)
+CLAIM, LINE, CLUE, EVENT, SOURCE = "claim", "line", "clue", "event", "source"
+KINDS = (CLAIM, LINE, CLUE, EVENT, SOURCE)
 TARGET_MAX = 100  # the column's limit; a line reference is well under it
 PER_OWNER_MAX = 20  # as many as a belief's old list held
 
@@ -43,6 +43,9 @@ _RESOLVES = {
     " AND x.campaign_id = %(c)s AND x.id = %(t)s AND x.type = 'clue')",
     EVENT: "EXISTS (SELECT 1 FROM memory_entities x WHERE x.guild_id = %(g)s"
     " AND x.campaign_id = %(c)s AND x.id = %(t)s AND x.type = 'event')",
+    # A source is the entry (a character, a person) that said it (#3091): an entry of this campaign.
+    SOURCE: "EXISTS (SELECT 1 FROM memory_entities x WHERE x.guild_id = %(g)s"
+    " AND x.campaign_id = %(c)s AND x.id = %(t)s)",
     # A line is "session:started_ms:user" (`transcript.models.line_ref`); the session must be this
     # campaign's. (The line itself may be gone already: that is a placeholder's business.)
     LINE: "EXISTS (SELECT 1 FROM transcript_sessions x WHERE x.guild_id = %(g)s"
@@ -74,7 +77,13 @@ def _link(r: dict[str, Any]) -> Link:
 
 def words_for(link: Link, session_number: int | None = None) -> str:
     """What to say of a placeholder: the kind and the session, never a word or a speaker."""
-    noun = {CLAIM: "a claim", LINE: "a line", CLUE: "a clue", EVENT: "an event"}[link.kind]
+    noun = {
+        CLAIM: "a claim",
+        LINE: "a line",
+        CLUE: "a clue",
+        EVENT: "an event",
+        SOURCE: "someone who said it",
+    }[link.kind]
     where = f" from session {session_number}" if session_number is not None else ""
     return f"{noun}{where}, no longer available"
 
@@ -242,6 +251,8 @@ _ELSEWHERE = {
     CLUE: "EXISTS (SELECT 1 FROM memory_entities x WHERE x.guild_id = %(g)s"
     " AND x.campaign_id <> %(c)s AND x.id = e.target_id)",
     EVENT: "EXISTS (SELECT 1 FROM memory_entities x WHERE x.guild_id = %(g)s"
+    " AND x.campaign_id <> %(c)s AND x.id = e.target_id)",
+    SOURCE: "EXISTS (SELECT 1 FROM memory_entities x WHERE x.guild_id = %(g)s"
     " AND x.campaign_id <> %(c)s AND x.id = e.target_id)",
     LINE: "EXISTS (SELECT 1 FROM transcript_sessions x WHERE x.guild_id = %(g)s"
     " AND x.campaign_id <> %(c)s"

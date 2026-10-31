@@ -1480,7 +1480,8 @@ PINNED_TRUTH = """
 
 # Family roles (#2457, Supervisor's ruling A): whether a family connection's detail is a role that
 # reads one way ("Mira is the niece of Aldric"). Older rows are false: their detail was stored with
-# the two names sorted by id, so its direction is arbitrary and they keep reading "is family of".
+# the two names sorted by id, so its direction is arbitrary and a one-way role keeps reading "is
+# family of" (a sibling, cousin or spouse reads in full whatever the flag says, #3102).
 # The column has a default and is added, not updated, so no row changes and no backfill policy.
 # The website's door sends it with each connection, built from the door as it stands now (0190).
 _DIRECTIONAL_LINK = "'detail', r.detail, 'secret', r.secret, 'at', r.created_at,"

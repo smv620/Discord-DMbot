@@ -581,7 +581,11 @@ class ThePath(NamesTest):
         lore_fake.set_answer(self.ai, {"names": names, "connections": one})
         it = self.it()
         await ui_bg.offer(it, self.campaign.id, Upload(text, "your background"))
-        await it.response.sent[0][1]["view"]._read(self.it())
+        view = it.response.sent[0][1]["view"]
+        view.knows = (
+            "spoilers"  # a secret spelling is secret only when the players don't know it (#3098)
+        )
+        await view._read(self.it())
         (queued,) = await self.waiting()
         self.assertTrue(queued.secret)
 

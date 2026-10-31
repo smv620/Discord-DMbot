@@ -11,6 +11,7 @@ import { CO_DMS_LIVE } from "../content/game-masters-switch";
 import { OPTIONAL_RULES_LIVE } from "../content/optional-rules-switch";
 import { PAUSE_LIVE } from "../content/pause-switch";
 import { INVITE_LIVE } from "../content/invite-switch";
+import { RULESETS_LIVE } from "../content/rulesets-switch";
 import { STORY_MODE_LIVE } from "../content/story-mode-switch";
 import { ApiError, type AccountApi, type CampaignPage, type CampaignSettingName } from "./api";
 import LazyPanel from "./LazyPanel";
@@ -276,6 +277,9 @@ export default function CampaignSettings({
       )}
       {STORY_MODE_LIVE && s?.storyMode && api.setCampaignSetting && (
         <LazyPanel load={() => import("./StoryModePanel")} what="the shared story" props={{ api, campaignRef, mode: s.storyMode }} />
+      )}
+      {RULESETS_LIVE && s?.mainRules && s.fallbackRules && api.setCampaignSetting && (
+        <LazyPanel load={() => import("./RulesetsPanel")} what="the main rules" props={{ api, campaignRef, main: s.mainRules, fallback: s.fallbackRules }} />
       )}
       {INVITE_LIVE && s?.dndbeyondInvite !== undefined && api.setCampaignSetting && (
         <LazyPanel load={() => import("./InvitePanel")} what="the campaign invite" props={{ api, campaignRef, invite: s.dndbeyondInvite }} />

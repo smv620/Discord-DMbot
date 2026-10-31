@@ -1988,6 +1988,12 @@ names panel nor the speech-to-text hints can be a fixed list.
       screen says "Revealed at the table: A, B (Session N)" with ↩️ Undo. Connections are not revealed by this
       step: until the knowledge map review (#2410), the after-session report points to the held-back
       connections whose names are both revealed now.
+    - **Belief lineage and sources** (CloudDev-lead, 2026-10-31, #3091 part 1, migration 0297; owner request): a
+      belief says which earlier belief it came from and why (`derived_from`, `change_kind`: update, branch,
+      retraction, told), and evidence gains a `source` kind pointing at the entry that said it. The DM-only
+      finder lists every current belief resting on an entry (or a belief), following `derived_from`; it
+      changes nothing. Lineage survives erasure as placeholders. Game time and the lie statuses follow as
+      parts 2 and 3. See docs/STORY_MEMORY.md, "Where a belief came from".
     - **📌 100% truth** (CloudDev, 2026-10-22, #2447, migrations 0190 and 0193): the DM's own word that a connection is
       true in the story; nothing else is 100%. A DM presses 📌 Pin as 100% truth on a connection's card
       (Unpin takes it back), or answers once per lore upload, "may change in play" (default) or "📌 100% truth", and
