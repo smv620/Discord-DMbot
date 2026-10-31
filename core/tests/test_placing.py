@@ -505,10 +505,18 @@ class Placing(ConfirmedMemoryTest):
 
         lines = [Line(20_000 + n * 1000, PLAYER, f"words {n}", f"words {n}") for n in range(10)]
         await extractor.run(
-            Believing(), cast(ClaimStore, Handing()), lines, guild_id=GUILD_A, campaign_id=self.c, dm_ids={DM},
-            consenting=consenting, model=lambda: "m", session_started_at=1_000,
-            readings=True, imported=imported,
-        )  # fmt: skip
+            Believing(),
+            cast(ClaimStore, Handing()),
+            lines,
+            guild_id=GUILD_A,
+            campaign_id=self.c,
+            dm_ids={DM},
+            consenting=consenting,
+            model=lambda: "m",
+            session_started_at=1_000,
+            readings=True,
+            imported=imported,
+        )
         ((reading,),) = [(c,) for c in handed if c.reading is not None][:1]
         claim_id = str((await self.rows("memory_claims"))[-1]["id"])
         placed = await self.claims.place(GUILD_A, self.c, claim_id, opted_in={DM, PLAYER})
