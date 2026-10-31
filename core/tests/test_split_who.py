@@ -8,7 +8,8 @@ from typing import Any
 from dmbot.dm_screen import clock as ui
 from dmbot.memory.store import MemoryStore
 from dmbot.timebot import split
-from dmbot.timebot.store import NOT_A_DM
+from dmbot.timebot.clock import Clock
+from dmbot.timebot.store import GONE, NOT_A_DM
 from tests import test_split_party as sp
 from tests.test_split_party import DM, GUILD_A, PLAYER
 
@@ -61,12 +62,22 @@ class TheQuestion(Who):
 
     async def test_a_campaign_with_no_player_characters_says_so_and_offers_nothing(self) -> None:
         other = await self.campaigns.create(GUILD_A, "Gamma", DM)
-        await self.clocks.change(GUILD_A, other.id, DM, lambda _c: sp.Clock(1000, 0))
+        await self.clocks.change(GUILD_A, other.id, DM, lambda _c: Clock(1000, 0))
         await self.clocks.split(GUILD_A, other.id, DM, ["Tower", "Camp"])
         stored = await self.clocks.get(GUILD_A, other.id)
         assert stored is not None
         content, view = await ui.placement_message(self.fake, other.id, GUILD_A, stored.groups)
         self.assertEqual((content, view), (ui.WHO_NONE, None))
+
+    async def test_who_is_where_with_nobody_to_place_says_so_and_does_not_fail(self) -> None:
+        other = await self.campaigns.create(GUILD_A, "Delta", DM)
+        await self.clocks.change(GUILD_A, other.id, DM, lambda _c: Clock(1000, 0))
+        await self.clocks.split(GUILD_A, other.id, DM, ["Tower", "Camp"])
+        dm = self.interaction()
+        await ui.ClockButton(other.id, "who")._who(dm, self.fake, GUILD_A)
+        sent = [c.args[0] for c in dm.followup.send.await_args_list]
+        sent += [c.args[0] for c in dm.response.send_message.await_args_list]
+        self.assertEqual(sent, [ui.WHO_NONE])
 
     async def test_the_panel_has_who_is_where_only_while_split(self) -> None:
         def labels(is_split: bool) -> list[str]:
@@ -143,3 +154,29 @@ class Picking(Who):
             await self.character(f"Extra {n:02d}", 200 + n)
         _, view = await self.message()
         self.assertTrue(all(len(p.options) <= ui.SELECT_MAX for p in self.selects(view)))
+
+    async def test_an_old_picker_cannot_save_into_groups_made_after_a_rejoin(self) -> None:
+        await self.split_up("Tower", "Camp")
+        _, old = await self.message()
+        await self.clocks.rejoin(GUILD_A, self.a.id, DM, 1)
+        await self.split_up("Hall", "Yard")
+        done = await self.pick(self.selects(old)[0], [self.vell])
+        self.assertEqual(done.response.send_message.await_args.args[0], GONE)
+        self.assertEqual(await self.clocks.members(GUILD_A, self.a.id), {})
+
+    async def test_over_25_characters_says_so_and_never_releases_one_it_did_not_show(self) -> None:
+        await self.split_up()
+        extra = [await self.character(f"Zed {n:02d}", 300 + n) for n in range(25)]
+        names = dict(await self.clocks.player_characters(GUILD_A, self.a.id))
+        self.assertEqual(len(names), 27)
+        content, view = await self.message()
+        self.assertIn(ui.WHO_CUT, content)
+        tower = self.selects(view)[0]
+        shown = {o.value for o in tower.options}
+        hidden = next(c for c in [self.vell, self.tuck, *extra] if c not in shown)
+        await self.clocks.place_members(GUILD_A, self.a.id, DM, {hidden: 1})
+        keep = next(iter(shown))
+        await self.pick(tower, [keep])
+        members = await self.clocks.members(GUILD_A, self.a.id)
+        self.assertEqual(members.get(hidden), 1)
+        self.assertEqual(members.get(keep), 1)

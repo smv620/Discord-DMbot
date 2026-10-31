@@ -41,6 +41,7 @@ from dmbot.rules import optional
 from dmbot.timebot import clock as game
 from dmbot.timebot import durations, effects, split, where_are_we
 from dmbot.timebot.clock import Clock
+from dmbot.timebot.store import GONE as GROUP_GONE
 from dmbot.timebot.store import MOVED_ON, ClockStore, Rejoined, Stored
 
 log = logging.getLogger(__name__)
@@ -869,6 +870,9 @@ class ClockButton(
             await _reply(interaction, split.NOT_SPLIT)
             return
         content, view = await placement_message(client, campaign.id, guild_id, stored.groups)
+        if view is None:  # discord.py cannot take view=None here
+            await _reply(interaction, content)
+            return
         await interaction.response.send_message(content, view=view, ephemeral=True)
 
     async def _form_or_show(
@@ -987,6 +991,7 @@ WHO_SKIPPED = (
     "Skipped. Press **Who is where** in **Rests & time…** any time while the party is split."
 )
 SELECT_MAX = 25  # a select shows at most 25 choices
+WHO_CUT = "Showing the first 25 player characters."
 
 
 async def _ask_who(
@@ -1021,6 +1026,8 @@ def _who_text(
 ) -> str:
     names = dict(characters)
     lines = [WHO_ASK]
+    if len(characters) > SELECT_MAX:
+        lines.append(WHO_CUT)
     for g in groups:
         here = [names[c] for c, p in members.items() if p == g.position and c in names]
         lines.append(
@@ -1074,10 +1081,23 @@ class _WhoSelect(discord.ui.Select["WhoView"]):
             return
         chosen = set(self.values)
         try:
+            # An old picker must not write into groups made since (rejoin, then split again):
+            # the same number can now be another group.
+            now = await client.clocks.get(guild.id, view.campaign_id)
+            if (
+                now is None
+                or not now.split
+                or [(g.position, g.name) for g in now.groups]
+                != [(g.position, g.name) for g in view.groups]
+            ):
+                await interaction.response.send_message(GROUP_GONE, ephemeral=True)
+                return
             before = await client.clocks.members(guild.id, view.campaign_id)
             changes: dict[str, int | None] = {c: self.group.position for c in chosen}
+            shown = {cid for cid, _ in view.characters[:SELECT_MAX]}
             for cid, position in before.items():  # in this group before, not picked now: released
-                if position == self.group.position and cid not in chosen:
+                # (only among those the picker showed: the rest could never be picked)
+                if position == self.group.position and cid not in chosen and cid in shown:
                     changes[cid] = None
             members = await client.clocks.place_members(
                 guild.id, view.campaign_id, interaction.user.id, changes
