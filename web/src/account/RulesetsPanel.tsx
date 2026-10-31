@@ -87,7 +87,7 @@ export default function RulesetsPanel({ api, campaignRef, main, fallback, onChan
           stage={wait.state === "done" ? words.done : wait.state === "working" ? words.working : words.waiting}
           startedAt={wait.since}
           state={wait.state === "failed" ? "failed" : wait.state === "done" ? "done" : "running"}
-          reason={wait.state === "failed" ? `${words.failed} ${plain(wait.note) || words.failedNext} ${words.now(current.main, current.fallback)}`.replace(/\s+/g, " ").trim() : null}
+          reason={wait.state === "failed" ? `${words.failed} ${plain(wait.note)} ${words.failedNext} ${words.still(current.main, current.fallback)}`.replace(/\s+/g, " ").trim() : null}
         />
       )}
       <form class="stack" onSubmit={(e) => { e.preventDefault(); void go(); }}>

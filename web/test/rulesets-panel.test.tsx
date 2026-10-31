@@ -94,6 +94,8 @@ describe("Main rules on the website", () => {
     expect(document.body.textContent).not.toMatch(/\*|`/);
     expect(radio(words.fallback["2014"]).checked).toBe(true);
     expect(screen.getByText(words.now("2024", "2014"))).toBeTruthy();
+    expect(document.body.textContent).toContain(words.failedNext); // (a next step even when the bot gave words)
+    expect(document.body.textContent).toContain(words.still("2024", "2014"));
   });
 
   it("a failure with no words from the bot still says what to do next", async () => {
