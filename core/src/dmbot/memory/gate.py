@@ -442,6 +442,73 @@ async def names_for(
     return name_entries(seen, viewer, entity_ids, rows, public=public, texts_out=texts_out)
 
 
+@dataclass(frozen=True, slots=True)
+class Split:
+    """The facts a viewer learned through a secret other name, which the website draws on a node
+    of that name ("alias:<id>") beside the person's own node (#3085: a name belongs to the fact)."""
+
+    links: Mapping[str, str]  # connection id -> the other name it was learned through
+    nodes: Mapping[str, tuple[str, str]]  # other name id -> (the entry it names, its text)
+
+
+def drawn_connections(
+    seen: Visible, links: Sequence[Mapping[str, Any]], aliases: Sequence[Mapping[str, Any]]
+) -> list[Mapping[str, Any]]:
+    """The known connections that are drawn at all. A name belongs to the fact (#3037): a
+    connection that came through another name is drawn on that name, but if that name was
+    rejected or is gone, or is a secret one the viewer does not hold, it is not shown (it must not
+    fall back onto the person's own name). `links` carry `via`; `aliases` the other names (`id`,
+    `secret`, `status`), rejected ones left out."""
+    by_id = {str(a["id"]): a for a in aliases}
+    out = []
+    for link in links:
+        via = link["via"]
+        if via is None:
+            out.append(link)
+            continue
+        a = by_id.get(str(via))
+        if (
+            a is not None
+            and a["status"] == CONFIRMED
+            and (not a["secret"] or seen.knows(ALIAS, str(via)))
+        ):
+            out.append(link)
+    return out
+
+
+def split_connections(
+    seen: Visible,
+    links: Sequence[Mapping[str, Any]],
+    aliases: Sequence[Mapping[str, Any]],
+    texts: Mapping[str, str],
+) -> Split:
+    """Which known connections belong on a node of the secret other name they were learned
+    through. `links` are the live confirmed connections (`id`, `via`: the other name it was
+    learned through or None, `secret`, `unrevealed`); `aliases` the other names (`id`, `entity_id`,
+    `secret`, `status`); `texts` each other name as this viewer may read it (`name_entries`).
+
+    A connection is split when the viewer knows it, it was learned through a confirmed secret
+    other name the viewer holds, and it is itself held back (secret or not yet said at the table).
+    Once the other name is made public the two fold back into one person: nothing is split. A node
+    exists only for a name that has such a connection."""
+    by_id = {str(a["id"]): a for a in aliases}
+    held = {
+        i
+        for i, a in by_id.items()
+        if a["secret"] and a["status"] == CONFIRMED and seen.knows(ALIAS, i)
+    }
+    chosen: dict[str, str] = {}
+    for link in links:
+        via = link["via"]
+        # (no text for the name: it is not one this viewer may read, so nothing is split onto it)
+        if via is None or str(via) not in held or str(via) not in texts:
+            continue
+        if (link["secret"] or link["unrevealed"]) and seen.knows(CONNECTION, str(link["id"])):
+            chosen[str(link["id"])] = str(via)
+    nodes = {a: (str(by_id[a]["entity_id"]), texts[a]) for a in set(chosen.values())}
+    return Split(chosen, nodes)
+
+
 def name_entries(
     seen: Visible,
     viewer: Viewer,
@@ -450,9 +517,12 @@ def name_entries(
     *,
     public: bool = False,
     texts_out: dict[str, str] | None = None,
+    on_their_own: Collection[str] = (),
 ) -> dict[str, str | None]:
     """`names_for` without the reading: the same rules over rows already read, so the website
-    names an entry exactly as Discord does."""
+    names an entry exactly as Discord does. `on_their_own`: other names that facts were learned
+    through, which the website draws on a node of their own (`split_connections`); such a name is
+    never also the name of the person's own node, or the one person would be drawn twice."""
     entries = {
         k: r
         for k, r in rows.entities.items()
@@ -530,7 +600,9 @@ def name_entries(
             (
                 (str(a["id"]), safe_text(entity_id, str(a["text"])))
                 for a in names
-                if str(a["entity_id"]) == entity_id and a["key"] != lookup_key(main)
+                if str(a["entity_id"]) == entity_id
+                and a["key"] != lookup_key(main)
+                and str(a["id"]) not in on_their_own
             ),
             key=lambda pair: (learned.get(pair[0], 0), pair[0]),
         )
