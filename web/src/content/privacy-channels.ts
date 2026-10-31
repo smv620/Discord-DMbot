@@ -1,6 +1,7 @@
 // Privacy lines for features that hear or show something new (#1810). Each is shown only while its
 // feature is live, with the same switch as its Help steps and What's new entry (help.ts), so the page
-// never states something that isn't true yet. Plain words: a few lines each, no technical terms.
+// never states something that isn't true yet. Session notes (#3027) have no Help step yet: their line
+// follows SESSION_NOTES_LIVE, the switch of its What's new entry. Plain words: a few lines each, no technical terms.
 import { INITIATIVE_STYLE_LIVE, STORY_STATES_LIVE } from "./help";
 import { SESSION_NOTES_LIVE } from "./session-notes-switch";
 

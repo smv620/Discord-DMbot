@@ -22,7 +22,7 @@ export default function SessionNotesPanel({ api, campaignRef }: { api: AccountAp
     setList("loading");
     setNotes({});
     setShown({});
-    if (!SESSION_NOTES_LIVE || !api.sessionNotesList) {
+    if (!SESSION_NOTES_LIVE || !api.sessionNotesList || !api.sessionNotes) {
       setList("hidden");
       return;
     }
@@ -37,10 +37,12 @@ export default function SessionNotesPanel({ api, campaignRef }: { api: AccountAp
 
   if (list === "hidden" || list === "loading") return null;
 
+  // The parent keys this panel by campaign, so a late answer for another campaign cannot reach this list.
   const fetchNotes = (at: number): void => {
     setNotes((n) => ({ ...n, [at]: "loading" }));
-    api
-      .sessionNotes!(campaignRef, at)
+    const load = api.sessionNotes;
+    if (!load) return setNotes((n) => ({ ...n, [at]: "failed" })); // the panel is not shown without it; this is a guard
+    load(campaignRef, at)
       .then((got) => setNotes((n) => ({ ...n, [at]: got })))
       .catch(() => setNotes((n) => ({ ...n, [at]: "failed" })));
   };
@@ -54,17 +56,20 @@ export default function SessionNotesPanel({ api, campaignRef }: { api: AccountAp
     <section class="stack" aria-labelledby="session-notes-heading">
       <h3 id="session-notes-heading">{w.heading}</h3>
       <p class="small">{w.intro}</p>
+      {list.length === 0 && <p class="small muted">{w.noSessions}</p>}
       {list.length > 0 && (
         <ul class="campaigns">
           {list.map((item) => {
             const day = sessionDay(item.sessionAt);
             const title = w.title(item.sessionNumber, day);
             const isOpen = !!shown[item.sessionAt];
+            // With no session number the title already carries the date, so the count line does not repeat it.
+            const lineDay = item.sessionNumber !== null ? day : null;
             return (
               <li key={item.sessionAt} class="stack">
                 <div>
                   <span class="campaign-name">{title}</span>{" "}
-                  <span class="small">{w.line(day, item.beats)}</span>{" "}
+                  <span class="small">{w.line(lineDay, item.beats)}</span>{" "}
                   <button
                     type="button"
                     class="secondary"
@@ -85,14 +90,23 @@ export default function SessionNotesPanel({ api, campaignRef }: { api: AccountAp
   );
 }
 
+/** The wait while one row's notes load: the plain line at once, then how long it has run once it passes three seconds. */
+function Opening() {
+  const [seconds, setSeconds] = useState(0);
+  useEffect(() => {
+    const started = Date.now();
+    const timer = setInterval(() => setSeconds(Math.floor((Date.now() - started) / 1000)), 1000);
+    return () => clearInterval(timer); // the row closed, or the notes arrived or failed
+  }, []);
+  return (
+    <p class="small muted" role="status">
+      {seconds >= 3 ? w.stillOpening(seconds) : w.opening}
+    </p>
+  );
+}
+
 function Beats({ got, onRetry }: { got: Opened | undefined; onRetry: () => void }) {
-  if (got === undefined || got === "loading") {
-    return (
-      <p class="small muted" role="status">
-        {w.opening}
-      </p>
-    );
-  }
+  if (got === undefined || got === "loading") return <Opening />;
   if (got === "failed") {
     return (
       <p class="panel" role="status">

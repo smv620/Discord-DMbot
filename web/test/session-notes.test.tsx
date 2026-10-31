@@ -2,7 +2,7 @@
 // @vitest-environment happy-dom
 // The Session notes panel on the Transcripts page (#3027): game masters only, behind SESSION_NOTES_LIVE. The switch is
 // read through a getter, so each test sets it before it renders.
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError } from "../src/account/api";
@@ -37,14 +37,16 @@ describe("the Session notes panel", () => {
     expect(api.calls.some((c) => c.startsWith("sessionNotesList"))).toBe(false);
   });
 
-  it("a game master sees one row for each session with notes, newest first, numbered or dated", async () => {
+  it("a game master sees one row for each session with notes, in the order the API gives, numbered or dated", async () => {
     live.on = true;
     panel();
     await screen.findByRole("heading", { name: w.heading });
     const titles = Array.from(document.querySelectorAll(".campaign-name")).map((el) => el.textContent);
     expect(titles).toEqual(["Session 2", `Session of ${sessionDay(1790000000)}`]);
     expect(within(rowFor("Session 2")).getByText(w.line(sessionDay(1791000000), 3))).toBeTruthy();
-    expect(within(rowFor(`Session of ${sessionDay(1790000000)}`)).getByText(w.line(sessionDay(1790000000), 1))).toBeTruthy();
+    expect(w.line(sessionDay(1791000000), 3)).toContain("3 things that happened");
+    // With no number the title already has the date, so the count line does not repeat it.
+    expect(within(rowFor(`Session of ${sessionDay(1790000000)}`)).getByText(w.line(null, 1))).toBeTruthy();
   });
 
   it("opening a row shows its numbered beats with Who and Where only where there are some", async () => {
@@ -122,5 +124,46 @@ describe("the Session notes panel", () => {
     fireEvent.click(screen.getByRole("button", { name: w.openFor("Session 2") }));
     await screen.findByText("The party crosses the river");
     for (const line of view.lines) expect(document.body.textContent).not.toContain(line);
+  });
+
+  it("while a row's notes take more than three seconds, the wait says how long and counts on", async () => {
+    live.on = true;
+    const api = mockApi("table");
+    api.sessionNotes = () => new Promise(() => {}); // never answers: the wait stays on screen
+    panel(api);
+    await screen.findByRole("heading", { name: w.heading }); // the list loads on real timers
+    vi.useFakeTimers();
+    try {
+      fireEvent.click(screen.getByRole("button", { name: w.openFor("Session 2") }));
+      expect(screen.getByRole("status").textContent).toBe(w.opening);
+      await act(async () => {
+        vi.advanceTimersByTime(3000);
+      });
+      expect(screen.getByRole("status").textContent).toBe(w.stillOpening(3));
+      await act(async () => {
+        vi.advanceTimersByTime(1000);
+      });
+      expect(screen.getByRole("status").textContent).toBe(w.stillOpening(4));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a game master with no games that have notes sees the line that says so", async () => {
+    live.on = true;
+    const api = mockApi("table");
+    api.sessionNotesList = async () => ({ sessions: [] });
+    panel(api);
+    expect(await screen.findByText(w.noSessions)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /notes for/ })).toBeNull();
+  });
+
+  it("an API without the notes call shows no panel rather than a stuck wait", async () => {
+    live.on = true;
+    const api = mockApi("table");
+    delete api.sessionNotes;
+    const { container } = panel(api);
+    await act(async () => {});
+    expect(container.textContent).toBe("");
   });
 });
