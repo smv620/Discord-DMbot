@@ -809,8 +809,13 @@ no group is given (the main clock stands still while split). Before the first ro
 not known. Which group a character is in comes from the group history (#3131, below). The extractor notes each reading's
 newest cited line moment (`spoken_at`, Unix seconds) and **placing a reading stamps the belief from that
 moment**, never from the clock as it reads when the DM presses Place; a session loaded from a file
-(`session_imports`) carries no moment, because its lines hold the dates the DM chose. **Watch for:** the
-trigger runs as whoever changes the clock, so a clock write fails if the log insert does, and a future
+(`session_imports`) carries no moment, because its lines hold the dates the DM chose. The trigger never
+blocks a clock write that would otherwise succeed: its log row has the clock row's server and campaign,
+`minute`'s bound (and, for a group row, `position`'s 1 to 3), the same row-level policy, and the
+campaign's foreign key holds for any campaign with a clock row; the only check the clock tables lack, a
+real time above zero, cannot fail on a running server. **Watch for:** the trigger runs as whoever changes the clock, so a clock write fails only
+if the log insert does, and that stays true only while the log row keeps the clock row's bounds, row-level policy and foreign key:
+a new bound, check, policy or key on `game_clocks` or `game_clock_groups` must be mirrored in `game_clock_log`, and a future
 backfill of `minute` under `migrate_backfill` must open this table's row-level security too.
 
 **"As of" in story time (#3091 part 3, `memory/as_of.py`):** "what did the party believe on Flamerule 10th?"
