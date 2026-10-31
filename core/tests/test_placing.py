@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
-from typing import Any
+from typing import Any, cast
 
 from dmbot.memory import beliefs, claims, readings
 from dmbot.memory.claims import ClaimStore
@@ -505,7 +505,7 @@ class Placing(ConfirmedMemoryTest):
 
         lines = [Line(20_000 + n * 1000, PLAYER, f"words {n}", f"words {n}") for n in range(10)]
         await extractor.run(
-            Believing(), Handing(), lines, guild_id=GUILD_A, campaign_id=self.c, dm_ids={DM},
+            Believing(), cast(ClaimStore, Handing()), lines, guild_id=GUILD_A, campaign_id=self.c, dm_ids={DM},
             consenting=consenting, model=lambda: "m", session_started_at=1_000,
             readings=True, imported=imported,
         )  # fmt: skip
