@@ -6,6 +6,7 @@ from __future__ import annotations
 from typing import Any
 
 from dmbot.memory import evidence
+from dmbot.memory._changes import BELIEFS
 from dmbot.memory.models import CONFIRMED, MemoryRuleError
 from tests.test_memory_store import GUILD_A, MemoryTest
 
@@ -215,8 +216,8 @@ class TheFinder(Lineage):
             GUILD_A, elsewhere, one, "knows", two, source="dm", confidence=1.0
         )
         rel = made.value[0].id
-        found = await self.memory.perspectives(GUILD_A, elsewhere)
-        truth = next(p.id for p in found if p.kind == "truth")
+        there = await self.memory.perspectives(GUILD_A, elsewhere)
+        truth = next(p.id for p in there if p.kind == "truth")
         # (the same write is fine without the lineage: only the other campaign's belief is refused)
         await self.memory.believe(GUILD_A, elsewhere, truth, rel, 0.5, "theory", source="dm")
         with self.assertRaises(MemoryRuleError):
@@ -325,3 +326,114 @@ class WhenWordsAreRemoved(Lineage):
         )
         found = await self.memory.what_rests_on(GUILD_A, self.c, source="dm", entity_id=self.morn)
         self.assertEqual([r.belief_id for r in found], [second.id])
+
+
+class Undo(Lineage):
+    async def chain(self) -> tuple[Any, Any]:
+        first = (await self.believe(self.cerric_view, self.other, 0.9, sources=[self.morn])).value
+        child = await self.believe(
+            self.cerric_view, self.rel, 0.3, derived_from=first.id, change_kind="branch"
+        )
+        return first, child
+
+    async def drop(self, belief_id: str) -> None:
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "DELETE FROM memory_beliefs WHERE guild_id = %s AND campaign_id = %s AND id = %s",
+                (GUILD_A, self.c, belief_id),
+            )
+
+    async def test_a_belief_with_lineage_is_undone(self) -> None:
+        first, child = await self.chain()
+        assert child.batch is not None
+        await self.memory.undo(GUILD_A, self.c, child.batch, source="dm")
+        found = await self.memory.what_rests_on(GUILD_A, self.c, source="dm", entity_id=self.morn)
+        self.assertEqual([r.belief_id for r in found], [first.id])
+
+    async def test_a_change_logged_before_lineage_existed_can_be_undone(self) -> None:
+        plain = await self.believe(self.cerric_view, self.other, 0.9)  # (no lineage on it)
+        assert plain.batch is not None
+        async with self.db.guild(GUILD_A) as conn:
+            for column in ("before", "after"):
+                await conn.execute(
+                    f"UPDATE memory_changes SET {column} = {column} - 'derived_from'"
+                    f" - 'change_kind' WHERE guild_id = %s AND campaign_id = %s AND batch = %s"
+                    f" AND table_name = 'memory_beliefs' AND {column} IS NOT NULL",
+                    (GUILD_A, self.c, plain.batch),
+                )
+        await self.memory.undo(GUILD_A, self.c, plain.batch, source="dm")  # (not "changed since")
+
+    async def test_the_later_belief_can_be_undone_after_its_parent_was_deleted(self) -> None:
+        first, child = await self.chain()
+        await self.drop(first.id)  # (forgotten with its connection: the database clears the link)
+        self.assertEqual(
+            (await self.row(child.value.id))["derived_from"], None
+        )  # a placeholder: its kind stays
+        assert child.batch is not None
+        await self.memory.undo(GUILD_A, self.c, child.batch, source="dm")
+
+    async def test_undoing_the_removal_of_a_belief_whose_parent_is_gone_leaves_a_placeholder(
+        self,
+    ) -> None:
+        first, child = await self.chain()
+        async with self.memory._write(GUILD_A, self.c, "dm") as w:
+            await w.delete(BELIEFS, child.value.id)  # a logged removal of the later belief
+            batch = w.batch
+        await self.drop(first.id)
+        assert batch is not None
+        await self.memory.undo(GUILD_A, self.c, batch, source="dm")
+        self.assertEqual(
+            await self.row(child.value.id), {"derived_from": None, "change_kind": "branch"}
+        )
+
+
+class AfterARewordOrAMerge(Lineage):
+    async def test_a_reworded_connection_keeps_what_rests_on_a_source(self) -> None:
+        await self.memory.update_relation(
+            GUILD_A, self.c, self.rel, source="dm", status="confirmed"
+        )
+        said = (await self.believe(self.cerric_view, self.rel, 0.9, sources=[self.morn])).value
+        told = (
+            await self.believe(
+                self.tran_view, self.rel, 0.7, derived_from=said.id, change_kind="told"
+            )
+        ).value
+        before = await self.memory.what_rests_on(GUILD_A, self.c, source="dm", entity_id=self.morn)
+        self.assertEqual({r.belief_id for r in before}, {said.id, told.id})
+        await self.memory.change_relation_words(
+            GUILD_A, self.c, self.rel, "enemy_of", "", source="dm"
+        )
+        after = await self.memory.what_rests_on(GUILD_A, self.c, source="dm", entity_id=self.morn)
+        live = {r.relation_id for r in after}
+        async with self.db.guild(GUILD_A) as conn:
+            cur = await conn.execute(
+                "SELECT id FROM memory_relations WHERE guild_id = %s AND campaign_id = %s"
+                " AND status = 'rejected'",
+                (GUILD_A, self.c),
+            )
+            rejected = {str(r["id"]) for r in await cur.fetchall()}
+        self.assertTrue(after)
+        self.assertFalse(live & rejected)  # nothing on the connection that was reworded away
+        self.assertEqual(len(after), 2)  # the source's own belief and the told copy, carried
+        self.assertIn(self.tran_view, {r.perspective_id for r in after})
+
+
+class DamagedFile(Lineage):
+    async def test_a_belief_that_came_from_another_but_says_not_how_is_refused(self) -> None:
+        from dmbot.campaigns import CampaignError
+        from dmbot.memory.backup import MemorySection
+
+        first = (await self.believe(self.cerric_view, self.rel, 0.9)).value
+        await self.believe(
+            self.cerric_view, self.rel, 0.4, derived_from=first.id, change_kind="update"
+        )
+        section = MemorySection()
+        async with self.db.guild(GUILD_A) as conn:
+            rows = await section.dump(conn, GUILD_A, self.c)
+        for r in rows:
+            if r.get("table") == "belief" and r["derived_from"]:
+                r["change_kind"] = None
+        copy = (await self.campaigns.create(GUILD_A, "Damaged", 7)).id
+        async with self.db.guild(GUILD_A) as conn:
+            with self.assertRaises(CampaignError):
+                await section.load(conn, GUILD_A, copy, rows)

@@ -386,6 +386,8 @@ def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
             _check_claim(raw)
         elif raw.get("status") == "dropped":
             raise CampaignError(DAMAGED)  # only a claim can be dropped
+        if table is BELIEFS and raw["derived_from"] is not None and raw["change_kind"] is None:
+            raise CampaignError(DAMAGED)  # a belief came from another, so it says how
         if table is BELIEFS and (
             len(raw["evidence_ids"]) > EVIDENCE_MAX
             or any(len(e) > EVIDENCE_ID_MAX for e in raw["evidence_ids"])

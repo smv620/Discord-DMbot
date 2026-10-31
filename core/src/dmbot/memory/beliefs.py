@@ -170,7 +170,14 @@ async def _add(
         raise MemoryRuleError("That is not a kind of belief.")
     if len(evidence) > EVIDENCE_MAX or any(not e or len(e) > EVIDENCE_ID_MAX for e in evidence):
         raise MemoryRuleError("That evidence is not in the right shape.")
-    await _check_lineage(w, perspective_id, relation_id, confidence, derived_from, change_kind)
+    if copy_from is None:
+        await _check_lineage(w, perspective_id, relation_id, confidence, derived_from, change_kind)
+    elif derived_from is None and change_kind is None:
+        # a copy (a reworded connection's, a pin's) is the same belief: it keeps where it came
+        # from, whatever connection it now sits on (#3091)
+        origin = await w.get(BELIEFS, copy_from)
+        if origin is not None:
+            derived_from, change_kind = origin["derived_from"], origin["change_kind"]
     for who in dict.fromkeys(sources):
         if not await evidence_links.resolves(
             w.conn, w.guild_id, w.campaign_id, evidence_links.SOURCE, who

@@ -844,7 +844,8 @@ _ADDED_LATER: dict[str, dict[str, Any]] = {
     },
     # nothing was pinned before the pin (#2447); nothing slept before a hide could put it to sleep
     # (#3082), so an Undo across the migration still finds the row as the batch left it
-    "memory_beliefs": {"pinned": False, "hidden_by": []},
+    # (and no belief came from another before lineage, #3091)
+    "memory_beliefs": {"pinned": False, "hidden_by": [], "derived_from": None, "change_kind": None},
     "memory_knowers": {"confidence": 1.0, "hidden_by": []},  # (0286 added the certainty)
     "memory_predicates": {
         "covers": [], "not_this": [], "inverse_label": "", "synonyms": [], "version": 1,
@@ -888,6 +889,17 @@ def _unchanged_since(table: Table, current: dict[str, Any] | None, after: Any) -
     after = _filled(table, after)
     if current == after:
         return True
+    if (
+        table is BELIEFS
+        and current is not None
+        and isinstance(after, dict)
+        and after.get("derived_from") is not None
+        and current["derived_from"] is None
+        and {**current, "derived_from": after["derived_from"]} == after
+    ):
+        # (the belief it came from was deleted since, which clears the link outside the log: the
+        # later belief is otherwise as the batch left it, and its kind is still there)
+        return True
     return (
         table is FLAGS
         and current is not None
@@ -924,6 +936,7 @@ async def undo_batch(changes: Changes, batch: int) -> None:
     rows = await cur.fetchall()
     if not rows:
         raise TooLateToUndo(NOT_FOUND)  # pruned (#164); the store says how long Undo works
+    rows = await _without_lost_parents(conn, ids, rows)
     start = 0
     while start < len(rows):
         end = start + 1
@@ -937,6 +950,41 @@ async def undo_batch(changes: Changes, batch: int) -> None:
     # a merge's notes and sheet live outside the log: they come back with the name (#2438)
     await merge_restore.restore(conn, ids, batch, changes.batch)
     await merge_restore.redo(conn, ids, batch, changes.batch)
+
+
+async def _without_lost_parents(
+    conn: Conn, ids: tuple[int, str], rows: Sequence[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """A belief that comes back (an Undo of its removal or of a change to it) may name the belief
+    it came from, and that one can be gone since (deleted, or forgotten with its connection): the
+    link is then a placeholder, `derived_from` cleared with its kind kept, as the database does
+    when the parent is deleted. One that comes back in this same batch is not lost (#3091)."""
+    wanted = {
+        str(r["before"]["derived_from"])
+        for r in rows
+        if r["table_name"] == BELIEFS.name
+        and isinstance(r["before"], dict)
+        and r["before"].get("derived_from")
+    }
+    if not wanted:
+        return list(rows)
+    back = {
+        str(r["row_id"]) for r in rows if r["table_name"] == BELIEFS.name and r["op"] == "delete"
+    }
+    cur = await conn.execute(
+        "SELECT id FROM memory_beliefs WHERE guild_id = %s AND campaign_id = %s AND id = ANY(%s)",
+        (*ids, sorted(wanted - back)),
+    )
+    alive = back | {str(r["id"]) for r in await cur.fetchall()}
+    return [
+        {**r, "before": {**r["before"], "derived_from": None}}
+        if r["table_name"] == BELIEFS.name
+        and isinstance(r["before"], dict)
+        and r["before"].get("derived_from")
+        and str(r["before"]["derived_from"]) not in alive
+        else dict(r)
+        for r in rows
+    ]
 
 
 async def _undo_rows(changes: Changes, run: Sequence[dict[str, Any]]) -> None:

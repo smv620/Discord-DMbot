@@ -2,7 +2,10 @@
 
 A belief rests on an entry when its evidence has a `source` link to that entry, or when it comes,
 through `derived_from`, from a belief that does (a revision, a retraction, a branch, or a belief
-passed on from another point of view). Only the DM asks, nothing is changed here, and the answer
+passed on from another point of view). Only the current belief of a live connection is listed (not
+one on a rejected, ended or reworded-away connection), but the walk goes through the others: a
+belief carried to a reworded connection keeps its lineage, and what came from the old copy is
+found. Only the DM asks, nothing is changed here, and the answer
 is ids and numbers: never a word of a line or of a source's speech, and never another campaign's
 row (every statement is scoped to one campaign). The DM chooses what to change afterwards.
 """
@@ -40,6 +43,8 @@ WITH RECURSIVE tree AS (
 SELECT b.id, b.perspective_id, b.relation_id, b.confidence, b.status, n.depth
 FROM nearest n JOIN memory_beliefs b
   ON b.guild_id = %(g)s AND b.campaign_id = %(c)s AND b.id = n.id
+JOIN memory_relations r ON r.guild_id = b.guild_id AND r.campaign_id = b.campaign_id
+  AND r.id = b.relation_id AND r.status IN ('proposed', 'confirmed') AND r.to_session_at IS NULL
 WHERE b.seq = (SELECT max(c.seq) FROM memory_beliefs c WHERE c.guild_id = b.guild_id
                AND c.campaign_id = b.campaign_id AND c.perspective_id = b.perspective_id
                AND c.relation_id = b.relation_id)

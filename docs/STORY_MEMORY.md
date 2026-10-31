@@ -844,6 +844,12 @@ the owner chooses it, one at a time.
   (`derived_from` cleared, the kind kept), like an evidence link. A merge moves a `source` link to the
   kept entry. A backup carries both; a lineage link to a belief the file does not hold is a
   placeholder.
+- **Undo and rewording:** Undo of a belief with lineage works; if the belief it came from was deleted
+  since, the link is a placeholder and the later belief can still be undone, and a belief that comes
+  back by Undo whose parent is gone comes back with the link cleared and its kind kept. A reworded
+  connection (or a pin) copies a belief with its lineage and its `source` links, so the finder
+  still finds it; the finder lists only the current belief of a live connection (not one on a
+  rejected or reworded-away connection), walking through the others.
 
 **Embeddings (meaning search).** Voyage AI (owner, 2026-10-24): `voyage-3.5` for embeddings and
 `rerank-2.5` for the second pass that picks what matters most. It is named on the privacy page as a
