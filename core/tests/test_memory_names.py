@@ -1227,6 +1227,11 @@ class NameCards(NamesTest):
         view.pick = SimpleNamespace(values=[vessa.id])
         it = self.it()
         await view._picked(it)
+        # "is family of" asks the role first, then saves (#3105)
+        role: Any = it.response.edited[0][1]
+        role.role = SimpleNamespace(values=["sister"])
+        it = self.it()
+        await role._picked(it)
         self.assertIn(name_card.SECRET_FORCED, it.response.edited[0][0])
         (rel,) = await self.memory.relations(
             GUILD, self.campaign.id, entity_id=vessa.id, include_secret=True
@@ -1261,8 +1266,12 @@ class NameCards(NamesTest):
         self.assertEqual(again.response.edited[0][1].mode, "az")
         picked = SimpleNamespace(values=[corin.id])
         dropdown.pick = picked
+        asked = self.it()
+        await dropdown._picked(asked)
+        role: Any = asked.response.edited[0][1]  # which family role, before it is saved (#3105)
+        role.role = SimpleNamespace(values=["sister"])
         done = self.it()
-        await dropdown._picked(done)
+        await role._picked(done)
         self.assertIn("🧭 Saved:", done.response.edited[0][0])
         (rel,) = await self.memory.relations(GUILD, self.campaign.id, entity_id=corin.id)
         self.assertEqual({rel.subject_id, rel.object_id}, {self.bell.id, corin.id})
