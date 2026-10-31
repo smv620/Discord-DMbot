@@ -42,6 +42,22 @@ describe("Upload lore", () => {
     expect(document.body.textContent).not.toContain("Ashen Crown");
   });
 
+  it("starts on Everyone in the story", async () => {
+    render(<Lore api={mockApi("table")} path={PATH} />);
+    expect((screen.getByLabelText(words.known.world.label, { exact: false }) as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByLabelText(words.known.spoilers.label, { exact: false }) as HTMLInputElement).checked).toBe(false);
+    expect((screen.getByLabelText(words.known.smart.label, { exact: false }) as HTMLInputElement).checked).toBe(false);
+  });
+
+  it("sends world when the choice is left alone", async () => {
+    const api = mockApi("table");
+    render(<Lore api={api} path={PATH} />);
+    await fill();
+    fireEvent.click(screen.getByLabelText(words.rights));
+    fireEvent.click(screen.getByRole("button", { name: words.submit }));
+    await waitFor(() => expect(api.calls).toContain("loreAdd:100.cmp1:paste:world:-:rights:35"));
+  });
+
   it("sends a chosen character as whose backstory it is", async () => {
     const api = mockApi("table");
     render(<Lore api={api} path={PATH} />);
@@ -83,7 +99,7 @@ describe("Upload lore", () => {
     expect(await screen.findByText(words.fileChosen("lore.txt"))).toBeTruthy();
     fireEvent.click(screen.getByLabelText(words.rights));
     fireEvent.click(screen.getByRole("button", { name: words.submit }));
-    await waitFor(() => expect(api.calls).toContain("loreAdd:100.cmp1:file:smart:-:rights:100000"));
+    await waitFor(() => expect(api.calls).toContain("loreAdd:100.cmp1:file:world:-:rights:100000"));
   });
 
   it("reads a text file in the browser and sends its words", async () => {
@@ -94,7 +110,7 @@ describe("Upload lore", () => {
     expect((await screen.findByText(words.fileChosen("lore.txt")))).toBeTruthy();
     fireEvent.click(screen.getByLabelText(words.rights));
     fireEvent.click(screen.getByRole("button", { name: words.submit }));
-    await waitFor(() => expect(api.calls).toContain("loreAdd:100.cmp1:file:smart:-:rights:9"));
+    await waitFor(() => expect(api.calls).toContain("loreAdd:100.cmp1:file:world:-:rights:9"));
   });
 
   it("keeps what was typed when an upload fails, and offers Try again", async () => {
