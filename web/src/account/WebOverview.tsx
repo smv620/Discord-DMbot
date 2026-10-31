@@ -6,6 +6,7 @@
 // player gets no hidden name, a DM gets them flagged); this only lists what it sends.
 import { kindWords, webPage as words } from "../content/web-words";
 import type { WebOverview as Overview } from "./api";
+import { npcPageHref } from "./webNodes";
 
 export default function WebOverview({
   overview,
@@ -61,10 +62,10 @@ export default function WebOverview({
                   {words.groupButton(g.centerName, g.size)}
                   {g.center === center && <span class="small muted"> ({words.groupHere})</span>}
                 </button>
-                {g.page === true && (
+                {g.page === true && npcPageHref(refId, g.center) && (
                   <>
                     {" "}
-                    <a class="small" href={`/account/npc/${encodeURIComponent(refId)}/${encodeURIComponent(g.center)}`}>
+                    <a class="small" href={npcPageHref(refId, g.center) ?? undefined}>
                       {words.openItsPage}
                       <span class="visually-hidden">{words.openItsPageFor(g.centerName)}</span>
                     </a>
@@ -102,10 +103,10 @@ export default function WebOverview({
                       {n.secret && <span class="visually-hidden"> ({words.secretWords})</span>}
                       {n.revealed === false && <span class="small muted"> ({words.notRevealed})</span>}
                     </button>
-                    {n.page === true && (
+                    {n.page === true && npcPageHref(refId, n.id) && (
                       <>
                         {" "}
-                        <a class="small" href={`/account/npc/${encodeURIComponent(refId)}/${encodeURIComponent(n.id)}`}>
+                        <a class="small" href={npcPageHref(refId, n.id) ?? undefined}>
                           {words.openItsPage}
                           <span class="visually-hidden">{words.openItsPageFor(n.name)}</span>
                         </a>
