@@ -181,7 +181,7 @@ export interface CampaignSettings {
   paused: boolean;
   /** The Shared story switch (#2985); missing from an API older than that. */
   storyMode?: "off" | "watch" | "guide";
-  /** The campaign's D&D Beyond invite link, "" when none (#2985); a game master's own, as Discord's form shows it. */
+  /** The campaign's invite link from dndbeyond.com, "" when none (#2985); a game master's own, as Discord's form shows it. */
   dndbeyondInvite?: string;
   gameMasters: number;
 }

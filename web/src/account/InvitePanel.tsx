@@ -1,5 +1,5 @@
 /** @jsxImportSource preact */
-// The D&D Beyond invite link on a campaign's page, for its game masters (#2985): paste, change or remove the campaign's
+// The campaign invite link (from dndbeyond.com) on a campaign's page, for its game masters (#2985): paste, change or remove the campaign's
 // invite link. The choice is queued for the bot like the other settings and the page follows the answer with the shared
 // wait panel. The shape is checked here with Discord's own rule so a wrong paste is caught at once; the server and the
 // bot check again. Only a DM ever gets this page's data, and the link is shown to them as Discord's own form does.

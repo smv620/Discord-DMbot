@@ -278,7 +278,7 @@ export default function CampaignSettings({
         <LazyPanel load={() => import("./StoryModePanel")} what="the shared story" props={{ api, campaignRef, mode: s.storyMode }} />
       )}
       {INVITE_LIVE && s?.dndbeyondInvite !== undefined && api.setCampaignSetting && (
-        <LazyPanel load={() => import("./InvitePanel")} what="the D&D Beyond invite" props={{ api, campaignRef, invite: s.dndbeyondInvite }} />
+        <LazyPanel load={() => import("./InvitePanel")} what="the campaign invite" props={{ api, campaignRef, invite: s.dndbeyondInvite }} />
       )}
       {CO_DMS_LIVE && api.campaignGameMasters && (
         <LazyPanel load={() => import("./GameMasters")} what="the game masters" props={{ api, campaignRef }} />
