@@ -10,6 +10,10 @@ import { RECAP_AUDIO_LIVE, RECAPS_LIVE, emailsIntroTail, recapEmailStep, recapSt
 import { SUPPORT_AI_LIVE, helpNote } from "./support-words";
 import { portalLoginSteps, portalLoginUrl } from "./billing-login";
 import { liveFeatureSteps } from "./help-features";
+import { STORY_MODE_LIVE } from "./story-mode-switch";
+import { INVITE_LIVE } from "./invite-switch";
+import { RULESETS_LIVE } from "./rulesets-switch";
+import { HOUSE_FILE_LIVE } from "./house-file-switch";
 
 export interface Step {
   /** The words people read. Names in `names` must appear in the bot's code. */
@@ -290,6 +294,36 @@ export const standingSteps: Step[] = [
       { name: "Devoted", file: "memory/standing.py" },
       { name: "Toward a character…", file: "ui/standing.py" },
     ],
+  },
+];
+
+// Help steps for the four campaign settings (#2985). Each is shown only while its own switch is on, so Help never
+// describes a button that is not there yet. They point at the website, so they have a link and no bot button names.
+export const storyModeHelpSteps: Step[] = [
+  {
+    text: "To choose how DMbot follows your adventure, open your campaign's page here and find Shared story under Settings. Off means DMbot doesn't follow the adventure's story. Watch the story warns you on your DM screen, once, if someone the adventure needs is gone or something it needs is lost. Guide me does that too, and you can ask DMbot what comes next in your adventure. Only you see the answer. The first time you turn it on, you tick that you have the right to use the material you give DMbot. DMbot never makes up story and never decides anything: you do.",
+    link: { text: "Open your campaigns", href: "/account/campaigns" },
+  },
+];
+
+export const inviteHelpSteps: Step[] = [
+  {
+    text: "To pass on your campaign's invite from dndbeyond.com, open your campaign's page here and find Campaign invite from dndbeyond.com under Settings. Paste the invite link from your campaign there and press Save the link. Players then see a Join button on new messages from DMbot. It opens your campaign's invite on dndbeyond.com. DMbot can't add anyone to your campaign for you. To take the button away, press Remove the link.",
+    link: { text: "Open your campaigns", href: "/account/campaigns" },
+  },
+];
+
+export const rulesetsHelpSteps: Step[] = [
+  {
+    text: "To choose which rules DMbot checks first, open your campaign's page here and find Main rules under Settings. Pick the 2024 rules (newest) or the 2014 rules (older). Then pick what DMbot does if the main rules don't cover something: use the other set, or skip it. Press Save. DMbot only points out what the rules say. You decide.",
+    link: { text: "Open your campaigns", href: "/account/campaigns" },
+  },
+];
+
+export const houseFileHelpSteps: Step[] = [
+  {
+    text: "To keep your house rules in a file, open the House rules page here and find House-rules file. Connect a link to your file (a Doc, PDF or web page that anyone with the link can open), or upload a .txt file once. Press Compare now to see what is different. DMbot never changes a rule on its own: it asks on your DM screen in Discord, and nothing changes until you answer there.",
+    link: { text: "Open your table's house rules", href: "/account/house-rules" },
   },
 ];
 
@@ -804,6 +838,10 @@ export const dmSteps: Step[] = [
     text: "Your house rules are on the House rules page here, and anyone can ask DMbot about a rule in the dmb-chat channel.",
     link: { text: "Read your table's house rules", href: "/account/house-rules" },
   },
+  ...(STORY_MODE_LIVE ? storyModeHelpSteps : []),
+  ...(INVITE_LIVE ? inviteHelpSteps : []),
+  ...(RULESETS_LIVE ? rulesetsHelpSteps : []),
+  ...(HOUSE_FILE_LIVE ? houseFileHelpSteps : []),
   ...(HOMEBREW_KINDS_LIVE ? homebrewKindSteps : []),
   ...(SECRET_CLUES_LIVE ? secretClueSteps : []),
   ...(PRESESSION_NOTE_LIVE ? presessionNoteSteps : []),
@@ -996,7 +1034,7 @@ export const playerSteps: Step[] = [
   ...(RULE_KINDS_LIVE ? ruleKindSteps : []),
   ...(FIGHT_AND_ITEM_RULES_LIVE ? magicItemRuleSteps : []),
   {
-    text: "Want your own lines gone? In Discord, open the 🗂️ Menu DMbot sends you and press 🗑 Delete my transcripts. It deletes every line you said in that server, from every past game. It can't be undone. Other people's lines, your game master's story notes and copies already downloaded stay.",
+    text: "Want your own lines gone? In Discord, open the 🗂️ Menu DMbot sends you and press 🗑 Delete my transcripts. It deletes every line you said in that server, from every past game. It can't be undone. Other people's lines, the recaps and session notes DMbot made for the campaign, and copies already downloaded stay.",
     names: [{ name: "🗑 Delete my transcripts", file: "consent_dm.py" }],
   },
   {

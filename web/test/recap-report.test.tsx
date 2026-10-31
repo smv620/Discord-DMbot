@@ -36,7 +36,7 @@ const within1 = (words: RegExp, name: string | RegExp): HTMLElement => {
 describe("the report", () => {
   it("shows the counts, the contradictions with both statements, and the party's differences in three groups", async () => {
     await open();
-    await screen.findByText(/2 that may not fit, 3 where the party sees it differently\. 5 left for you to answer\./);
+    await screen.findByText(/2 that may not fit, 5 where the party sees it differently\. 7 left for you to answer\./);
     expect(screen.getByRole("heading", { name: w.contradictionsHeading })).toBeTruthy();
     expect(screen.getByText("The ferryman is dead.")).toBeTruthy();
     expect(screen.getByText("The ferryman rowed the party across the river.")).toBeTruthy();
@@ -80,6 +80,99 @@ describe("the report", () => {
     expect(document.body.textContent).not.toContain("THE WORDS A PLAYER SAID");
   });
 
+  it("a source reads something someone told them", async () => {
+    await open();
+    await waitFor(() => expect(screen.getByText("something someone told them from session 4")).toBeTruthy());
+  });
+
+  it("a source whose words are gone says no longer available", async () => {
+    await open();
+    await waitFor(() => expect(screen.getByText("something someone told them from session 4, no longer available")).toBeTruthy());
+  });
+
+  it("a source never shows a quote even if the API sends one", async () => {
+    const api = mockApi("table");
+    const real = api.sessionReport!;
+    api.sessionReport = async (...args) => {
+      const got = await real(...args);
+      got.differences.disguised[0]!.evidence = [{ kind: "source", session: 5, available: true, quote: "THE NAME OF A PLAYER" }];
+      return got;
+    };
+    await open("100.cmp1", api);
+    await screen.findByText(/Aldric has hidden it/);
+    expect(document.body.textContent).toContain("something someone told them from session 5");
+    expect(document.body.textContent).not.toContain("THE NAME OF A PLAYER");
+  });
+
+  it("an unknown kind reads something DMbot noted and never its own word or a quote", async () => {
+    const api = mockApi("table");
+    const real = api.sessionReport!;
+    api.sessionReport = async (...args) => {
+      const got = await real(...args);
+      got.differences.disguised[0]!.evidence = [{ kind: "mystery" as never, session: 2, available: true, quote: "A SECRET LINE" }];
+      return got;
+    };
+    await open("100.cmp1", api);
+    await screen.findByText(/Aldric has hidden it/);
+    expect(document.body.textContent).toContain("something DMbot noted from session 2");
+    expect(document.body.textContent).not.toContain("mystery");
+    expect(document.body.textContent).not.toContain("A SECRET LINE");
+    expect(document.body.textContent).not.toContain("a fact from session 2");
+  });
+
+  it("an unknown kind with no words left says something DMbot noted, no longer available", async () => {
+    const api = mockApi("table");
+    const real = api.sessionReport!;
+    api.sessionReport = async (...args) => {
+      const got = await real(...args);
+      got.differences.disguised[0]!.evidence = [{ kind: "mystery" as never, session: 2, available: false }];
+      return got;
+    };
+    await open("100.cmp1", api);
+    await waitFor(() => expect(screen.getByText("something DMbot noted from session 2, no longer available")).toBeTruthy());
+  });
+
+  it("an inherited name such as toString is an unknown kind, never its code", async () => {
+    const api = mockApi("table");
+    const real = api.sessionReport!;
+    api.sessionReport = async (...args) => {
+      const got = await real(...args);
+      got.differences.disguised[0]!.evidence = [{ kind: "toString" as never, session: 2, available: true, quote: "A SECRET LINE" }];
+      return got;
+    };
+    await open("100.cmp1", api);
+    await screen.findByText(/Aldric has hidden it/);
+    expect(document.body.textContent).toContain("something DMbot noted from session 2");
+    expect(document.body.textContent).not.toContain("function");
+    expect(document.body.textContent).not.toContain("A SECRET LINE");
+  });
+
+  it("the four existing kinds read as before", async () => {
+    const api = mockApi("table");
+    const real = api.sessionReport!;
+    api.sessionReport = async (...args) => {
+      const got = await real(...args);
+      got.differences.disguised[0]!.evidence = [
+        { kind: "claim", session: 1, available: false },
+        { kind: "line", session: 2, available: true, quote: "NOT SHOWN" },
+        { kind: "clue", session: 3, available: false },
+        { kind: "event", session: 4, available: false },
+      ];
+      return got;
+    };
+    await open("100.cmp1", api);
+    await screen.findByText(/Aldric has hidden it/);
+    for (const words of [
+      "a fact from session 1, no longer available",
+      "a line from session 2",
+      "a clue from session 3, no longer available",
+      "an event from session 4, no longer available",
+    ]) {
+      expect(document.body.textContent).toContain(words);
+    }
+    expect(document.body.textContent).not.toContain("NOT SHOWN");
+  });
+
   it("a report the call limit cut short never reads as nothing to check", async () => {
     await open("100.cmp1.report-cut");
     await screen.findByText(w.leftForNextTime);
@@ -113,10 +206,58 @@ describe("the answers", () => {
   it("offers the four answers on a difference with a connection to open, and three on one without", async () => {
     await open();
     await screen.findByText(/Aldric has hidden it/);
-    expect(screen.getAllByRole("button", { name: "That's intended" })).toHaveLength(5);
+    expect(screen.getAllByRole("button", { name: "That's intended" })).toHaveLength(7);
     expect(screen.getAllByRole("button", { name: "Fix the DM's view" })).toHaveLength(2); // only where there is a connection to open
-    expect(screen.getAllByRole("button", { name: "Not a problem" })).toHaveLength(5);
-    expect(screen.getAllByRole("button", { name: "Remind me next session" })).toHaveLength(5);
+    expect(screen.getAllByRole("button", { name: "Not a problem" })).toHaveLength(7);
+    expect(screen.getAllByRole("button", { name: "Remind me next session" })).toHaveLength(7);
+  });
+
+  /** The sentence paragraph of a lie, found by its own words (two lies on the page share the same words). */
+  const lieLine = async (words: string): Promise<HTMLElement> => {
+    await waitFor(() => expect(screen.getAllByText(/lied about this/).length).toBe(2));
+    const found = screen.getAllByText(/lied about this/).map((el) => el.closest("p") as HTMLElement).find((p) => p.textContent?.includes(words));
+    if (!found) throw new Error(`no lie line with ${words}`);
+    return found;
+  };
+
+  it("a lie names who thinks it and who lied", async () => {
+    await open();
+    const p = await lieLine("Valyra hid the key");
+    expect(p.textContent).toBe("Cerric thinks Valyra lied about this: Valyra hid the key");
+    expect(Array.from(p.querySelectorAll("strong")).map((s) => s.textContent)).toEqual(["Cerric", "Valyra"]);
+  });
+
+  it("a lie with no liar says someone", async () => {
+    await open();
+    const p = await lieLine("The harbour master sold the map");
+    expect(p.textContent).toBe("The party thinks someone lied about this: The harbour master sold the map");
+    expect(Array.from(p.querySelectorAll("strong")).map((s) => s.textContent)).toEqual(["The party", "someone"]);
+    expect(p.parentElement?.textContent).toContain(w.lieTruth);
+  });
+
+  it("the plain sentence in the words matches what the page shows", async () => {
+    await open();
+    const p = await lieLine("Valyra hid the key");
+    expect(p.textContent).toBe(`${w.lied("Cerric", "Valyra")} Valyra hid the key`);
+    expect(w.lied("The party", null)).toBe("The party thinks someone lied about this:");
+  });
+
+  it("a lie says Your view: it's true. and not Your view says", async () => {
+    await open();
+    await screen.findByText(/lied about this: Valyra hid the key/, { exact: false });
+    const own = item(/lied about this: Valyra hid the key/);
+    expect(own.textContent).toContain(w.lieTruth);
+    expect(own.textContent).not.toContain(w.truth);
+    expect(own.textContent).not.toContain(w.believes);
+  });
+
+  it("an item with no kind keeps They believe and Your view says", async () => {
+    await open();
+    await screen.findByText(/Old Pell is a priest\./);
+    const own = item(/Old Pell is a priest\./);
+    expect(own.textContent).toContain(w.believes);
+    expect(own.textContent).toContain(w.truth);
+    expect(own.textContent).not.toContain(w.lieTruth);
   });
 
   it("gives all four answers the same weight and ties each to its item for a screen reader", async () => {
@@ -136,13 +277,13 @@ describe("the answers", () => {
     fireEvent.click(within1(/Aldric has hidden it/, "That's intended"));
     await screen.findByText(w.answered("intended"));
     expect(api.calls).toContain("answerReport:100.cmp1:1791000000:d-lie:intended");
-    expect(screen.getByText(/4 left for you to answer\./)).toBeTruthy();
-    expect(document.querySelector("[role=status]")?.textContent).toBe("Saved. 4 left."); // one polite place
+    expect(screen.getByText(/6 left for you to answer\./)).toBeTruthy();
+    expect(document.querySelector("[role=status]")?.textContent).toBe("Saved. 6 left."); // one polite place
     expect(document.querySelectorAll("[role=status]")).toHaveLength(1);
     fireEvent.click(within1(/Aldric has hidden it/, "Undo"));
     await waitFor(() => expect(screen.queryByText(w.answered("intended"))).toBeNull());
     expect(api.calls).toContain("answerReport:100.cmp1:1791000000:d-lie:undo");
-    expect(screen.getByText(/5 left for you to answer\./)).toBeTruthy();
+    expect(screen.getByText(/7 left for you to answer\./)).toBeTruthy();
   });
 
   it("keeps the keyboard where it was: on Undo after an answer", async () => {

@@ -21,6 +21,7 @@ import {
 } from "./api";
 import CampaignNav from "./CampaignNav";
 import FixLine from "./FixLine";
+import SessionNotesPanel from "./SessionNotes";
 import { FIX_LINE_LIVE } from "../content/fix-line-switch";
 
 /** Where in the pages the address points: `/account/transcripts`, `/<campaign>`, `/<campaign>/<n>`. */
@@ -206,6 +207,7 @@ function Sessions({ api, campaignRef }: { api: AccountApi; campaignRef: string }
               ))}
             </ul>
           )}
+          <SessionNotesPanel key={campaignRef} api={api} campaignRef={campaignRef} />
         </>
       )}
     </Shell>

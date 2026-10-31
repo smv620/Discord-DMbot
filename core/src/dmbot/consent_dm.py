@@ -315,8 +315,9 @@ def delete_warning_text(server: str, lines: int, sessions: int) -> str:
     return (
         f"This deletes everything you said that DMbot wrote down in **{_plain(server)}**: "
         f"{lines} line{'' if lines == 1 else 's'} in {sessions} session"
-        f"{'' if sessions == 1 else 's'}. Other people's lines and the DM's story notes stay. "
-        "Copies people already downloaded stay too. This can't be undone."
+        f"{'' if sessions == 1 else 's'}. Other people's lines stay. Recaps and session notes "
+        "DMbot made stay with the campaign. Copies people already downloaded stay too. "
+        "This can't be undone."
     )
 
 

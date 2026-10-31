@@ -595,6 +595,14 @@ what players see.
   "surely" or "unlikely"), as Theory or Accusation, with the line as evidence. **A guess is never a
   reveal:** a guessed name may become a lone name in the players' view, and a guessed connection is
   drawn as uncertain.
+  **"She's lying!"** (#3091) is a theory that also names who lied (`liar`): it is proposed as a
+  Suspected Lie at most 50% (never higher, even for "surely"), in the accuser's own view only (never the
+  whole party's), with the line as evidence and the named character as the `source`. Being wrong is not
+  lying: the model sets `liar` only when the speaker says it was on purpose. A liar who is not a known
+  character refuses the reading whole. It waits for the DM like every guess, and a person's Stop recording
+  me removes it with their other guesses. A speaker's "surely" is accepted but capped: a lie is never
+  held above 50%. **Switched off** (`readings.READ_LIES`) until the website's readings door shows who was
+  blamed (#3121); until then the model is not asked for a liar and a `liar` in an answer is dropped.
 - **B. Revealed facts:** the DM lets the characters find a clue or see an event that confirms something.
   The party's belief becomes 1.0, Revealed Fact, justified by that clue or event.
 - **C. Framing and secrets:** the DM says a revealed clue is fake, or someone is framed. The truth holds
@@ -781,11 +789,66 @@ items before a cut are kept; calls are counted before they are made and held to 
 in counts. Nothing changes a belief. Still to build: the make job that runs the grading and the sort under
 the plan's limits with the shared progress, and the doors.
 
+**Game time on a belief (#3091 part 3, `memory_beliefs.game_time`):** a number of game minutes since the
+start of Day 1 (the clock's own unit), never a calendar word and never a real-world timestamp. A line's
+game time is the newest clock-log row at or before it was spoken, for the speaker's group if they are in
+one, otherwise the main clock; nothing stamps until the clock log lands (#3091). Every belief made after a
+session from anything but a spoken line (an import, lore, the DM's edit) stays empty ("time not known",
+as before), and nothing is ever stamped with the clock as it reads at a later time. A copy of a belief (a
+pin, a reworded connection) keeps its origin's minute, and Undo and backups carry it.
+**The clock log (migration 0305, `game_clock_log`):** every change to a game clock (a group or the main
+one, with the real time and the game minute) is appended by a database trigger, so no button, phrase,
+Undo, split or rejoin can miss it; it also logs when the party splits (each group's minute) and comes back
+together (the main clock's), because the log has to know which clock the table was on. It is numbers only,
+kept for good, in backups and following a campaign that moves. A backup longer than 200,000 rows loads
+with the newest rows (the oldest moments then read as "not known"; a backup is never refused for it).
+`stamp.game_time_at(conn, guild, campaign, spoken_at, group)` reads the newest row at or before
+`spoken_at`: a main-clock row is the one clock whatever group is asked for; a group row means the party
+was split, and then the asked group's newest row since the last main row is its clock, or "not known" when
+no group is given (the main clock stands still while split). Before the first row, or with no clock, it is
+not known. Nothing records which group a character is in yet (#3131). The extractor notes each reading's
+newest cited line moment (`spoken_at`, Unix seconds) and **placing a reading stamps the belief from that
+moment**, never from the clock as it reads when the DM presses Place; a session loaded from a file
+(`session_imports`) carries no moment, because its lines hold the dates the DM chose. **Watch for:** the
+trigger runs as whoever changes the clock, so a clock write fails if the log insert does, and a future
+backfill of `minute` under `migrate_backfill` must open this table's row-level security too.
+
+**"As of" in story time (#3091 part 3, `memory/as_of.py`):** "what did the party believe on Flamerule 10th?"
+is answered from each belief's game time, next to the session-order readers (which answer by the session a
+belief was formed in). For each connection the answer is the belief of the latest game time at or before the
+asked one, and beliefs at the same minute break by `seq`, so a flashback or time travel moves nothing: one
+timeline. **A belief with no game time is never "believed at" a game time** (most have none: they were made
+after a session or before the clock log), so for those ask the session-order reader. The DM may ask for any
+point of view (`MemoryStore.believed_at`); a player is answered only from their own characters' points of
+view, and only for connections the one gate lets those characters know
+(`MemoryStore.my_characters_believed_at`). It returns ids and numbers; the caller makes the words, with the
+calendar for the date.
+
+**The campaign's calendar (#3091 part 3, migration 0307):** three columns on the clock's row: `calendar_kind`
+(`days`, the default and what every clock had, or `harptos`) and the date of Day 1 as two numbers (the year
+and the day of that year, 0 being Hammer 1), never a real-world timestamp. `timebot/calendar.py` turns a
+game minute into "Day 12" or "Flamerule 14th, 1492 DR" (365 days a year, 366 with Shieldmeet when the
+year divides by 4); dates are counted in whole days from Day 1, so a flashback stays on the one timeline.
+`ClockStore.set_calendar(kind, year, name, day)` takes what a picker sends and is a DM's alone and needs a
+clock; a value the calendar has not got (a day that is not exactly a whole number, a day given with a festival,
+Shieldmeet in a common year) is refused whole and leaves the row as it was; a negative game minute has no
+date at all (an error in both modes, never "Day 0"); the setting rides in the clock's backup, and
+a file without one means Day N. A date the calendar has not got (a leap day in a common year) reads as
+Day N, never an error. The DM's picker (Discord and the website) is a later slice.
+
 **The after-session report** (DM only; it is full of spoilers, and nothing in it reaches players):
 - the minor contradictions;
 - **"What the party has wrong":** where the party's or a PC's beliefs differ from the DM's view,
   sorted into disguised, misunderstood and simply false, so the DM can close plot holes before they
   grow.
+  **A lie the party got wrong (#3091, kind `lie`):** the party or a player's character thinks (or is sure)
+  that someone lied about a connection, and The truth holds that very connection at 1.0, so the accusation
+  is the mistake. It is listed with the holder named ("Cerric thinks Valyra lied about this"; the party's
+  own view reads "the party thinks"). A liar who is gone or not a kept character reads "someone". A lie The
+  truth also denies is the table being right and is not listed (no "they were right" line for now). An
+  NPC's lie is the DM's own story and is never listed. The report stays DM-only through the same door, and
+  the liar's name is the DM's view of it. A lie status never counts as asserting the connection is so
+  (`contradictions.asserts`), so a suspected lie at 50% does not read as a belief that it is true.
   **Built (#2661 slice 1): the differences finder.** `memory/differences.py` lists the beliefs a point of
   view that is not The truth holds NOW (0.5 or more, not a denial) where The truth either denies that very
   connection (0.0, False Evidence) or holds a clashing connection between the same two names that overlaps
@@ -823,6 +886,80 @@ the owner chooses it, one at a time.
   clears its link's target in every place that removes one. A backup carries a line's link as a
   placeholder (a restored campaign has none of those lines). The health report counts links,
   placeholders, dangling and foreign links.
+
+**Disguised as: one character posing as another** (owner, 2026-10-31, #3091 part 4; a code release, no migration).
+- A disguise is two characters, never one: Jax is not Valyra, he is a second character posing as
+  her. A "same person" join would erase the real Valyra, so it is the wrong tool. The kind is
+  `disguised_as`: "is disguised as" read forward (the subject is the one in disguise), "is
+  impersonated by" read backwards; character to character, the same character twice is refused, and
+  one character may wear several faces or be copied by several.
+- **Secret by nature:** a new one is made secret (known only to the DM), however it is made (the DM,
+  an upload, a reading), and the DM reveals it with the connection's own switch. Who knows it
+  follows the who-knows lists like any connection (Jax knows his own disguise; a character who sees
+  through it learns it). A guess ("I think the mayor is a changeling posing as her") stays a
+  theory proposal, never kept.
+- **The one in disguise knows it:** when a disguise is made, its subject (a confirmed character) is
+  listed as a knower at 1.0 in the same write, on every path, so a player whose character is in disguise
+  sees their own disguise and the other players do not.
+- **Lore never reveals a disguise:** a disguise is a plot secret by nature, so every new one starts secret
+  under every lore choice ("Everyone knows it" included); only the DM reveals it with the connection's
+  switch. A secret identity of ONE person stays a secret name (the guard is Ken); a SECOND character
+  posing as another is this connection, never a name, and the lore prompts say so. A proposed disguise
+  (a guess, an upload) also means no "same person?" offer for its pair.
+- **The gate is unchanged:** a player whose characters do not know the disguise sees nothing of it
+  and keeps seeing "Valyra" with what they believe of her. Nothing is merged: what Cerric believes
+  Valyra said or did stays on Valyra's entry; the DM decides later which of it was Jax's, with the
+  lineage finder (part 1) to help.
+- The "same person?" finder never offers a pair joined by a disguise (either direction, any status
+  but rejected). "Posing as", "impersonating", "masquerading as", "pretending to be", "a doppelganger
+  of" and "wearing the face of" read as `disguised_as`. The Connect menu offers it forward only
+  (and `founded` loses its back reading there too) to stay at Discord's 25 options; both back
+  readings still read on the card.
+
+**Where a belief came from: lineage and sources** (owner, 2026-10-31, #3091 part 1, migration 0297).
+- A belief row can say which earlier belief it came from (`derived_from`) and why (`change_kind`):
+  `update` (new evidence for the same point of view in the same connection), `retraction` (the same,
+  and no longer held as fact), `branch` (a competing theory of the same point of view on ANOTHER
+  connection, held beside the old one, never replacing it) or `told` (the same connection, passed on
+  from another point of view: "Tran believes it because Bruno told him"). Nothing else changes: the
+  newest `seq` of a (point of view, connection) pair is still the current belief, and there is never
+  more than one.
+- **A `source` link** is a kind of evidence (beside claim, line, clue, event) that points at the entry
+  that said something ("Advisor Morn told the party"). It is an entry of the same campaign, never
+  words.
+- **The DM's finder** answers "what rests on this?" for an entry or a belief: every current belief
+  whose evidence cites the entry as a source, or that came from such a belief through `derived_from`.
+  Only the DM asks; it returns ids and numbers, never a word of a line; nothing is changed
+  automatically. The DM decides which beliefs to change.
+- **Erasure:** when a person's lines are removed, lineage survives: a belief keeps `derived_from` and
+  its kind, and holds no words. If the earlier belief is deleted, the link becomes a placeholder
+  (`derived_from` cleared, the kind kept), like an evidence link. A merge moves a `source` link to the
+  kept entry. A backup carries both; a lineage link to a belief the file does not hold is a
+  placeholder.
+- **Undo and rewording:** Undo of a belief with lineage works; if the belief it came from was deleted
+  since, the link is a placeholder and the later belief can still be undone, and a belief that comes
+  back by Undo whose parent is gone comes back with the link cleared and its kind kept. A reworded
+  connection (or a pin) copies a belief with its lineage and its `source` links, so the finder
+  still finds it; the finder lists only the current belief of a live connection (not one on a
+  rejected or reworded-away connection), walking through the others.
+
+**Lies: believing a speaker lied** (owner, 2026-10-31, #3091 part 2, migration 0301).
+- Two belief statuses beside `false_evidence` (a statement The truth denies) and
+  `evasion_under_magic` (a dodge): `suspected_lie` (this point of view thinks the speaker lied, and is not
+  sure) and `known_lie` (it is sure). A lie is about the speaker as well as the statement, which is not
+  the same as being mistaken. Both are false for whoever holds them: a known lie is held at 0.0 and a
+  suspected one strictly between 0 and 1 (the confidence is still how sure the connection is TRUE).
+- **Both need a `source` link naming who lied** (a character of this campaign; part 1's evidence kind).
+  A character's or an NPC's point of view may hold either; The truth holds only a known lie (it confirms,
+  and only the DM writes it); The party as a whole holds neither, since the players' readers take the
+  party's belief as what everyone knows.
+- **Readers:** the DM sees every current lie on a live connection. A player sees only what their OWN
+  characters think, and only when the one gate lets those characters know both the connection and the one
+  who lied, so a lie never names a secret entry or a hidden connection. The words ("Cerric thinks Valyra
+  lied about this") are made by the caller from names the viewer may use.
+- A backup refuses a lie that names nobody. A sleeping belief (a hide's marked 0.0) is not a lie and
+  drops the belief before it out of the finder, as it drops it out of every reader, until the entry is
+  shown again.
 
 **Embeddings (meaning search).** Voyage AI (owner, 2026-10-24): `voyage-3.5` for embeddings and
 `rerank-2.5` for the second pass that picks what matters most. It is named on the privacy page as a
@@ -963,6 +1100,9 @@ Most "spoilers" are simply unknown to one or more player characters, not secret.
   - **C. Smart guess:** the AI decides, passage by passage, what would be common knowledge in the world and what
     the player characters wouldn't know, using what their backstories say about them. This is tested on generated
     sample documents.
+
+  **The form starts on A, world general knowledge** (owner, 2026-10-31). An upload with no choice or an unknown
+  one is read as B.
 
   **In every case the AI also guesses what NPCs and groups know**, with a confidence ("the council knows who each
   member's apprentice is"). The player characters know such a thing only when their backstory ties them to it

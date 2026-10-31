@@ -170,6 +170,7 @@ class Gates(unittest.IsolatedAsyncioTestCase):
             extraction=AsyncMock(return_value=used),
             extractor_calls_since=AsyncMock(return_value=day),
             record_extraction=AsyncMock(),
+            is_import=AsyncMock(return_value=False),
         )
         return SimpleNamespace(
             settings=SimpleNamespace(
@@ -265,6 +266,7 @@ class Contradictions(unittest.IsolatedAsyncioTestCase):
             extraction=AsyncMock(return_value=(0, used)),
             extractor_calls_since=AsyncMock(return_value=day),
             record_extraction=AsyncMock(),
+            is_import=AsyncMock(return_value=False),
         )
         return SimpleNamespace(
             settings=SimpleNamespace(

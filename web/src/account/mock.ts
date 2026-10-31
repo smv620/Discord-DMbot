@@ -680,13 +680,15 @@ function webVisibility(ref: string): "private" | "peek" | "open" {
 
 /** The pretend readings (#2412): `r-gone` is not waiting any more when answered, `r-busy` can't be written now. */
 function pretendReadings(): Reading[] {
-  const base = { why: null, waitingOn: [] as string[], canPlace: true, sessionAt: 1791000000 };
+  const base = { why: null, waitingOn: [] as string[], canPlace: true, sessionAt: 1791000000, liar: null };
   return [
     { ...base, id: "r1", rule: "theory", who: "the party", statement: "Mira Voss took the key", sureness: "fairly sure" },
     { ...base, id: "r2", rule: "reveal", who: "Rook", statement: "Roan is the one who warned the harbour", sureness: "seen" },
     { ...base, id: "r-gone", rule: "accusation", who: "the party", statement: "Brannoch burned the ferry", sureness: "doubtful" },
     { ...base, id: "r-busy", rule: "false_clue", who: "the DM's view", statement: "Far Hall hid the second key", sureness: "false" },
     { ...base, id: "r-name", rule: "theory", who: "the party", statement: "Newcomer sent the letter", sureness: "a guess", canPlace: false, why: "name_first", waitingOn: ["Newcomer"] },
+    { ...base, id: "r-lie", rule: "lie", who: "Rook", liar: "Valyra", statement: "The ferryman sold the map", sureness: "a guess" },
+    { ...base, id: "r-lie-unknown", rule: "lie", who: "the party", statement: "The innkeeper hid the ledger", sureness: "a guess" },
     { ...base, id: "r-plot", rule: "plot", who: "the DM's view", statement: "The ferryman plans to sink the barge", sureness: "secret plot" },
   ];
 }
@@ -999,7 +1001,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
   // The after-session report (#2661) the pretend API keeps by campaign and session.
   const reports = new Map<string, { made: boolean; failed?: boolean; tries: number; answers: Map<string, ReportAnswer>; looks?: number }>();
   const reportItems = (): { contradictions: ReportContradiction[]; differences: SessionReport["differences"] } => {
-    const ev = (kind: "claim" | "line" | "clue" | "event", session: number, available: boolean, quote?: string) => ({
+    const ev = (kind: "claim" | "line" | "clue" | "event" | "source", session: number, available: boolean, quote?: string) => ({
       kind, session, available, ...(quote ? { quote } : {}),
     });
     const contradictions: ReportContradiction[] = [
@@ -1020,7 +1022,21 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       id, view, believes, truth, reason, evidence: [ev("line", 4, false), ev("claim", 3, true, "swore on the Circle")], answer: null, open,
     });
     const differences = {
-      disguised: [diff("d-lie", "The party", "Aldric is loyal to the Lantern Circle.", "Aldric serves the Ashen Crown.", "Aldric has hidden it on purpose.", { a: "n2", b: "n12" })],
+      disguised: [
+        diff("d-lie", "The party", "Aldric is loyal to the Lantern Circle.", "Aldric serves the Ashen Crown.", "Aldric has hidden it on purpose.", { a: "n2", b: "n12" }),
+        {
+          ...diff("d-lie2", "Cerric", "Valyra hid the key", "", "Cerric swore it was true.", null),
+          evidence: [ev("source", 4, true), ev("claim", 3, true, "swore on the Circle")],
+          kind: "lie" as const,
+          liar: "Valyra",
+        },
+        {
+          ...diff("d-lie3", "The party", "The harbour master sold the map", "", "The party thinks someone is lying.", null),
+          evidence: [ev("source", 4, false)],
+          kind: "lie" as const,
+          liar: null,
+        },
+      ],
       misunderstood: [diff("d-mix", "Tamsin, a player character", "The shrine key opens the keep.", "The shrine key opens the shrine only.", "They saw it fit a lock and guessed the rest.", { a: "n1", b: "n20" })],
       false: [diff("d-plan", "The party", "Old Pell is a priest.", "Old Pell is a smuggler.", "Nothing said so, but they all say it.", null)],
     };
@@ -1158,6 +1174,32 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
     },
     // Recaps for past sessions (#2610): the shapes of `GET past-sessions`, `POST /me/recaps/{ref}/again` and
     // `POST /me/campaigns/{ref}/recaps/upload`, and their codes (#2613, #2614).
+    async sessionNotesList(campaignRef) {
+      calls.push(`sessionNotesList:${campaignRef}`);
+      await reachable();
+      signedIn();
+      if (campaignRef.endsWith(".player")) throw new ApiError("not-allowed");
+      return {
+        sessions: [
+          { sessionAt: 1791000000, sessionNumber: 2, beats: 3, writtenAt: 1791003700 },
+          { sessionAt: 1790000000, sessionNumber: null, beats: 1, writtenAt: 1790003700 },
+        ],
+      };
+    },
+    async sessionNotes(campaignRef, at) {
+      calls.push(`sessionNotes:${campaignRef}:${at}`);
+      await reachable();
+      signedIn();
+      if (campaignRef.endsWith(".player")) throw new ApiError("not-allowed");
+      if (at === 1791000000) return { sessionAt: at, sessionNumber: 2, writtenAt: 1791003700, beats: [{ number: 1, what: "The party crosses the river", who: ["Cerric", "Mira"], where: "The Brass Ford", kind: "travel" }, { number: 2, what: "Cerric swears an oath", who: ["Cerric"], where: "", kind: "talk" }, { number: 3, what: "A storm closes the ford", who: [], where: "The Brass Ford", kind: "event" }] };
+      if (at === 1790000000) {
+        return {
+          sessionAt: at, sessionNumber: null, writtenAt: 1790003700,
+          beats: [{ number: 1, what: "The party meets the ferryman", who: ["Mira"], where: "", kind: "talk" }],
+        };
+      }
+      throw new ApiError("not-found");
+    },
     async pastSessions(campaignRef) {
       calls.push(`pastSessions:${campaignRef}`);
       await reachable();
@@ -1630,7 +1672,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
     },
     // What people believe (#2412), the shapes of core PR 2693: DM only (anyone else gets not-found). Placing a
     // reading answers `a-<id>` and can be undone with that answer's id; `r-gone` is already gone,
-    // `r-busy` can't be written now, `r-name` waits on a new name.
+    // `r-busy` can't be written now, `r-lie-unknown` names a liar DMbot can't find, `r-name` waits on a new name.
     async webReadings(ref) {
       calls.push(`webReadings:${ref}`);
       await reachable();
@@ -1662,6 +1704,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       }
       if (!found.canPlace) throw new ApiError("name-first");
       if (answer.id === "r-busy") throw new ApiError("cannot-write");
+      if (answer.id === "r-lie-unknown") throw new ApiError("unknown-liar");
       state.list = state.list.filter((r) => r.id !== answer.id);
       if (answer.action === "no") return { answerId: `a-${answer.id}`, undoable: false };
       state.kept.set(`a-${answer.id}`, found);
@@ -1834,7 +1877,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         ...(role === "player"
           ? {}
           : {
-              settings: { visibility: "peek", level: "normal", keepDays: 90, paused: false, storyMode: "off", gameMasters: 2 } as const,
+              settings: { visibility: "peek", level: "normal", keepDays: 90, paused: false, storyMode: "off", dndbeyondInvite: "", mainRules: "2024", fallbackRules: "2014", gameMasters: 2 } as const,
             }),
       };
     },
@@ -1849,6 +1892,11 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       if (/\.cp-player$/.test(ref)) throw new ApiError("not-allowed");
       // The server's door refuses turning the Shared story switch on without the right-to-use confirmation.
       if (choice.setting === "story_mode" && choice.value !== "off" && choice.confirm !== true) throw new ApiError("needs-confirm");
+      // The server's door: "<main>/<fallback>", both offered, the fallback not the main rules.
+      if (choice.setting === "rulesets" && !/^(2024|2014)\/(2024|2014|none)$/.test(choice.value)) throw new ApiError("bad-value");
+      if (choice.setting === "rulesets" && choice.value.split("/")[0] === choice.value.split("/")[1]) throw new ApiError("bad-value");
+      // The server's door: the one standard invite shape, or empty to remove it.
+      if (choice.setting === "dndbeyond_invite" && choice.value !== "" && !/^https:\/\/(www\.)?dndbeyond\.com\/campaigns\/join\/[A-Za-z0-9]{4,64}$/.test(choice.value)) throw new ApiError("bad-value");
       const id = `a${settingAnswers.size + 1}`;
       settingAnswers.set(id, { ref, ...choice });
       return id;
@@ -1989,6 +2037,14 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         if (/\.pa-noroom$/.test(ref) && asked.on === false)
           return { ...base, state: "failed", error: "refused", note: "You have no free place on your plan. Pause another campaign first." };
         return { ...base, state: "done", note: asked.on ? "Paused." : "Unpaused." };
+      }
+      if (asked.setting === "rulesets") {
+        if (/\.rs-refused$/.test(ref)) return { ...base, state: "failed", error: "refused", note: "**Your plan** can't change the `rules`." };
+        return { ...base, state: "done", note: "" };
+      }
+      if (asked.setting === "dndbeyond_invite") {
+        if (/\.di-refused$/.test(ref)) return { ...base, state: "failed", error: "refused", note: "**Your plan** doesn't allow a `join` button." };
+        return { ...base, state: "done", note: "" };
       }
       if (asked.setting === "story_mode") {
         if (/\.sm-refused$/.test(ref)) return { ...base, state: "failed", error: "refused", note: "**Shared story** needs a `confirmation`." };

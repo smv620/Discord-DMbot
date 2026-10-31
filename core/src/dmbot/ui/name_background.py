@@ -60,7 +60,7 @@ from dmbot.memory.models import (
     Relation,
     name_key,
 )
-from dmbot.memory.ontology import ACTIVE, FALLBACK_PREDICATE, check_named
+from dmbot.memory.ontology import ACTIVE, DISGUISED_AS, FALLBACK_PREDICATE, check_named
 from dmbot.memory.pronouns import is_pronoun
 from dmbot.memory.store import MemoryStore
 from dmbot.memory.which_else import COULD_NOT_KEEP, none_of_these
@@ -281,8 +281,8 @@ KNOWS_LABELS = {
     lore_knowledge.SMART: "Players: DMbot sorts",
 }
 KNOWS_TEXT = {
-    lore_knowledge.SPOILERS: "**Players don't know it yet.** They find it out in play. (Default)",
-    lore_knowledge.WORLD: "**Everyone knows it.** Every character knows all of it.",
+    lore_knowledge.SPOILERS: "**Players don't know it yet.** They find it out in play.",
+    lore_knowledge.WORLD: "**Everyone knows it.** Every character knows all of it. (Default)",
     lore_knowledge.SMART: "**DMbot sorts it.** It guesses what everyone would know. If unsure, "
     "players don't know it yet.",
 }
@@ -304,7 +304,7 @@ def offer_text(
     *,
     ask: bool = False,
     speaker: str | None = None,
-    knows: str = lore_knowledge.DEFAULT,
+    knows: str = lore_knowledge.PICKED_FIRST,
 ) -> str:
     """The question before the AI reads a lore upload. Asked once per upload (#2447): lore that
     may change in play (the default), or 📌 100% truth, the DM's word, so DMbot tells the DM when
@@ -377,6 +377,8 @@ class BackgroundOffer(_Menu):
         self.upload = upload
         self.choices = dict(choices)  # entity id -> name
         self.speaker: str | None = None  # whose backstory it is, once the DM says (#2650)
+        # The choice to go back to when the DM picks no backstory after one (#3103).
+        self.knows_before_speaker = lore_knowledge.PICKED_FIRST
         # ...and, when that is a player character, their entry id: what the kept connections start
         # as known by (#2935). Empty for an NPC's backstory or none picked.
         self.known_by = ""
@@ -393,7 +395,7 @@ class BackgroundOffer(_Menu):
         self.add_item(
             _Button(self._cancel, label="Cancel", style=discord.ButtonStyle.secondary, row=1)
         )
-        self.knows = lore_knowledge.DEFAULT  # what the players know of it (#2959)
+        self.knows = lore_knowledge.PICKED_FIRST  # what the players know of it (#2959, #3098)
         self.knows_button = _Button(
             self._cycle,
             label=KNOWS_LABELS[self.knows],
@@ -422,12 +424,20 @@ class BackgroundOffer(_Menu):
             await _tell(interaction, ONLY_DMS)
             return
         picked = self.whose.values[0]
+        was_speaker = self.speaker is not None
         self.speaker = self.choices.get(picked)
         memory = _memory(interaction)
         pcs = {c for c, _ in await player_characters(memory, campaign)} if memory else set()
         self.known_by = picked if picked in pcs else ""
         # The three choices are for campaign lore: a character's backstory stays as it was (#2959)
-        self.knows = lore_knowledge.DEFAULT if self.speaker else self.knows
+        # A character's backstory is that character's own knowledge, never campaign lore, so it
+        # is always spoilers here, whatever the form would otherwise start on (#3098).
+        if self.speaker:
+            if not was_speaker:  # remember the DM's choice before the backstory took it
+                self.knows_before_speaker = self.knows
+            self.knows = lore_knowledge.SPOILERS
+        elif was_speaker:  # "not one": the form is back on what it was before the backstory
+            self.knows = self.knows_before_speaker
         self.knows_button.label = KNOWS_LABELS[self.knows]
         self.knows_button.disabled = bool(self.speaker)
         for option in self.whose.options:
@@ -1402,9 +1412,21 @@ async def queue_links(
             or (c.how in symmetric and (b, c.how, a) in world_ids)
             else 0
         )
+        if how == DISGUISED_AS:  # a disguise is a plot secret by nature, under every choice (#3091)
+            world = 0
         rows.append(
             NewLink(
-                a, how, b, c.quote, c.secret, c.words, truth, upload, c.decided, known_by, world
+                a,
+                how,
+                b,
+                c.quote,
+                c.secret or how == DISGUISED_AS,
+                c.words,
+                truth,
+                upload,
+                c.decided,
+                known_by,
+                world,
             )
         )
     if settled.unnamed:  # (nothing here runs when the check is off: the rows are as they were)

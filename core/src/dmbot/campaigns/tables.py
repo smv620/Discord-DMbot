@@ -49,12 +49,13 @@ SECTION_TABLES: dict[str, tuple[str, ...]] = {
     "import_speakers": ("import_speakers",),
     "rule_set_follows": ("rule_set_follows",),
     "rule_sets": ("rule_sets", "rule_set_versions", "rule_set_editors"),
-    "game_clock": ("game_clocks", "game_clock_groups"),
+    "game_clock": ("game_clocks", "game_clock_groups", "game_clock_log"),
     "game_effects": ("game_effects",),
     # (only ready jobs are carried today, which is part of what #2552 lists)
     "recaps": ("recap_jobs",),
     "recap_rights": ("recap_upload_rights",),
     "recap_accepted": ("recap_accepted",),  # each approved version of a recap (#2122)
+    "session_notes": ("session_notes",),  # each session's beat sheet, kept for good (#3026)
     "plot_issues": ("plot_issues",),  # PlotBot's issues and the DM's answers (#2122)
     "plot_fine": ("plot_fine",),  # what the DM said was not a problem (#2122)
     "memory_heard": ("memory_heard",),

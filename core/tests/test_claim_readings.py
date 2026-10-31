@@ -115,6 +115,26 @@ class Stored(ConfirmedMemoryTest):
                 with self.assertRaises(CampaignError):
                     section.check(tampered)
 
+    async def test_a_lie_reading_names_the_liar_and_a_file_is_checked_for_it(self) -> None:
+        lie = readings.BeliefProposal(
+            "pc:Bram", "Zed", "carries", "Heartseeker", 0.5, "suspected_lie", ("1",), liar="Zoe"
+        )
+        await self.propose(readings.as_claim(lie, "player_said"))
+        section = MemorySection()
+        async with self.db.guild(GUILD_A) as conn:
+            rows = await section.dump(conn, GUILD_A, self.c)
+        good = next(r["reading"] for r in rows if r["table"] == "claim")
+        self.assertEqual(good["liar"], "Zoe")
+        section.check(rows)  # (a file with a lie in it loads)
+        for liar in (5, "x" * 500):
+            with self.subTest(str(liar)[:10]):
+                tampered = [
+                    {**r, "reading": {**good, "liar": liar}} if r["table"] == "claim" else r
+                    for r in rows
+                ]
+                with self.assertRaises(CampaignError):
+                    section.check(tampered)
+
 
 class NoNewNames(Stored):
     async def test_a_reading_with_an_unknown_name_is_dropped_and_never_becomes_a_name(self) -> None:

@@ -42,6 +42,7 @@ from dmbot.memory.models import (
     PARTY,
     REVEALED_FACT,
     SECRET_PLOT,
+    SUSPECTED_LIE,
     THEORY,
     TRUTH,
 )
@@ -71,7 +72,7 @@ PRONOUNS = frozenset(
      "somebody", "who", "dm", "player", "party"}
 )  # fmt: skip
 
-READING_SYSTEM = """You help a Dungeon Master keep track of what the characters believe in their
+_READING_SYSTEM = """You help a Dungeon Master keep track of what the characters believe in their
 tabletop role-playing game, apart from what is true.
 
 You get a stretch of a session's transcript between <transcript> and </transcript>. Each line has
@@ -84,6 +85,7 @@ List only these four kinds of reading, and only when the transcript clearly says
    (the character's own name, as named in the transcript: never "Player", "DM" or a pronoun). Set
    "shared" true only if the whole table agreed out loud. Set "strength" to "surely" or "unlikely"
    when the speaker said so, else "". Set "accusation" true when it blames someone for a wrong.
+{liar}
 2. "reveal": the DM, never a player, lets the characters find a clue or see an event that shows
    something is so. Give the clue or event in "because" (its name, as said).
 3. "framing": the DM, never a player, says a clue the characters found is fake, or that someone
@@ -104,6 +106,25 @@ Answer with JSON only, in this shape:
 "subject": "...", "relationship": "...", "object": "...", "lines": [1]}]}
 Add the other fields only for the kinds that use them. Answer {"readings": []} if there are none."""
 
+# "She's lying!" is read as a suspected lie only once the website can show the DM who was blamed
+# (the readings door returns `liar`, #3121): until then the model is not asked for it, and a
+# `liar` in an answer is dropped, so the reading stays the plain accusation it was. One line turns
+# it on.
+READ_LIES = False
+_LIAR_ASK = """   When the speaker says someone is lying or lied ("she's lying!", "he lied to us"),
+   give that person's name in "liar" (never a pronoun, never the speaker) and leave "shared"
+   false. Being wrong or mistaken is not lying: use "liar" only when the speaker says it was on
+   purpose.
+"""
+
+
+def reading_system(lies: bool = READ_LIES) -> str:
+    """The prompt for the four rules, with the question about a lie only when lies are read."""
+    return _READING_SYSTEM.replace("{liar}\n", _LIAR_ASK if lies else "")
+
+
+READING_SYSTEM = reading_system()
+
 
 @dataclass(frozen=True, slots=True)
 class Reading:
@@ -118,6 +139,7 @@ class Reading:
     shared: bool = False  # a theory: the whole table agreed
     strength: str = ""  # a theory: "surely", "unlikely" or ""
     accusation: bool = False
+    liar: str = ""  # a theory: the one the speaker says lied about it (#3091)
     because: str = ""  # a reveal: the clue or event
     framer: str = ""  # framing
     framed: str = ""
@@ -143,6 +165,7 @@ class BeliefProposal:
     because: str = ""  # the clue, event or spell that justifies it, as named
     manipulated_by: str = ""  # the act or ward that faked or blocked it, as named
     new_assertion: bool = False  # the statement did not exist before (a frame-up)
+    liar: str = ""  # a suspected lie: the one said to have lied, as named (#3091)
     # The DM's view is the DM's alone to write: such a proposal always waits for them.
     dm_confirms: bool = False
 
@@ -254,10 +277,12 @@ def _reading(item: Any, known: set[str], dm_lines: set[str]) -> Reading | None:
     fields = {
         name: _text(item.get(name))
         for name in (
-            "subject", "relationship", "object", "who", "strength", "because", "framer",
+            "subject", "relationship", "object", "who", "strength", "liar", "because", "framer",
             "framed", "deception", "spell", "target", "outcome", "protection",
         )
     }  # fmt: skip
+    if not READ_LIES:
+        fields["liar"] = ""  # (not read yet: the reading stays the accusation it would be)
     for word in ("strength", "outcome"):  # "Surely" and "surely" are the same word
         fields[word] = fields[word].casefold()
     if not lines or not _complete(rule, fields, _flag(item.get("shared"))):
@@ -269,7 +294,7 @@ def _reading(item: Any, known: set[str], dm_lines: set[str]) -> Reading | None:
     return Reading(
         rule, fields["subject"], fields["relationship"], fields["object"], lines,
         who=fields["who"], shared=_flag(item.get("shared")), strength=fields["strength"],
-        accusation=_flag(item.get("accusation")), because=fields["because"],
+        accusation=_flag(item.get("accusation")), liar=fields["liar"], because=fields["because"],
         framer=fields["framer"], framed=fields["framed"], deception=fields["deception"],
         spell=fields["spell"], target=fields["target"], outcome=fields["outcome"],
         protection=fields["protection"],
@@ -285,6 +310,13 @@ def _complete(rule: str, f: dict[str, str], shared: bool) -> bool:
         return False  # "he" is not someone DMbot can name
     if f["subject"] and f["subject"].casefold() == f["object"].casefold():
         return False  # a name connected to itself says nothing
+    if f["liar"] and (
+        rule != THEORY_RULE
+        or shared  # (a lie is one character's belief, never the whole party's)
+        or f["liar"].casefold() in PRONOUNS
+        or f["liar"].casefold() == f["who"].casefold()
+    ):
+        return False
     if rule == THEORY_RULE:
         # whose guess it is: a character by name, or the party's only when the table agreed
         who_ok = bool(f["who"]) and f["who"].casefold() not in PRONOUNS
@@ -309,6 +341,11 @@ def _theory(r: Reading) -> BeliefProposal:
     # (`_complete` has already refused a theory with neither). Whether the speaker is a player
     # character or an NPC is for the store to find out from the name.
     view = PARTY if r.shared else f"pc:{r.who}"
+    if r.liar:  # "she's lying!": a suspected lie at most a guess strong, for the DM to keep or not
+        return BeliefProposal(
+            view, r.subject, r.relationship, r.object, min(confidence, GUESS), SUSPECTED_LIE,
+            r.lines, liar=r.liar,
+        )  # fmt: skip
     return BeliefProposal(
         view, r.subject, r.relationship, r.object, confidence,
         ACCUSATION if r.accusation else THEORY, r.lines,
@@ -319,7 +356,7 @@ def reading_of(belief: BeliefProposal) -> dict[str, Any]:
     """What a belief proposal adds to a stored claim (`memory_claims.reading`): plain words and
     numbers, never a line number, a speaker or a Discord id (a claim keeps those itself, and they
     go with a person's words)."""
-    return {
+    out: dict[str, Any] = {
         "view": belief.view,
         "confidence": belief.confidence,
         "status": belief.status,
@@ -328,6 +365,9 @@ def reading_of(belief: BeliefProposal) -> dict[str, Any]:
         "new_assertion": belief.new_assertion,
         "dm_confirms": belief.dm_confirms,
     }
+    if belief.liar:  # (only a lie has it, so a file from before lies stays valid)
+        out["liar"] = belief.liar
+    return out
 
 
 def as_claim(belief: BeliefProposal, how: str) -> Extracted:

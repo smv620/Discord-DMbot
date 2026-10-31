@@ -26,7 +26,7 @@ from dmbot.memory.extractor import quoted
 from dmbot.recaps.beats import Beat, sheet
 from dmbot.recaps.significance import MEMORY_CHARS, MEMORY_ITEMS, RECAP, Memory
 from dmbot.recaps.split import content_words
-from dmbot.recaps.text import at_word_end, names_a_secret
+from dmbot.recaps.text import at_word_end, fit_story, names_a_secret
 
 MAX_ROUNDS = 4  # readings of a draft: the first draft and up to three revisions
 MAX_CHANGES = 8  # PlotBot's changes for one reading
@@ -372,13 +372,7 @@ def plot_message(
         parts.append("<memory>\n" + "\n".join(shown) + "\n</memory>")
     if previous.strip():
         parts.append(f"<previous>\n{quoted(previous)[:RECAP_CHARS]}\n</previous>")
-    kept: list[str] = []
-    room = STORY_CHARS
-    for earlier in reversed(story):  # the newest first, so the oldest are the ones dropped
-        if len(earlier) > room:
-            break
-        kept.insert(0, earlier)
-        room -= len(earlier)
+    kept = fit_story(story, STORY_CHARS)  # notes are dropped before any accepted recap (#3086)
     if kept:
         parts.append(f"<story_so_far>\n{quoted(chr(10).join(kept))}\n</story_so_far>")
     numbered = "\n".join(f"[{n}] {text}" for n, text in enumerate(sentences, start=1))

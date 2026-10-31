@@ -335,6 +335,7 @@ from dmbot.recaps.discord import (
     NAME_ANSWERS_PER_ROUND,
     RecapFeatures,
 )
+from dmbot.recaps.notes import SessionNotesSection
 from dmbot.recaps.pipeline import RecapWorker
 from dmbot.recaps.plot import PlotRunner, PlotStore
 from dmbot.recaps.plot_backup import PlotFineSection, PlotIssuesSection
@@ -8538,6 +8539,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 after_ms=after_ms,
                 readings=self.settings.story_readings_on,
                 family_only=self.settings.story_family_only,
+                imported=await transcripts.is_import(gid, sid),
                 count_call=lambda: transcripts.record_extraction(
                     gid, sid, through_ms=0, calls=1, now=int(time.time())
                 ),
@@ -8695,6 +8697,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 after_ms=0,
                 readings=self.settings.story_readings_on,
                 family_only=self.settings.story_family_only,
+                imported=await transcripts.is_import(gid, sid),
                 count_call=lambda: transcripts.record_extraction(
                     gid, sid, through_ms=0, calls=1, now=int(time.time())
                 ),
@@ -12370,6 +12373,7 @@ def register_backup_sections(
     campaigns.register_section(RecapSection(forget_audio=forget_audio))
     campaigns.register_section(RecapRightsSection())  # who may use recaps written by the table
     campaigns.register_section(AcceptedSection())  # the recaps the DM approved (#2122)
+    campaigns.register_section(SessionNotesSection())  # each session's notes, kept for good (#3026)
     campaigns.register_section(PlotIssuesSection())  # PlotBot's issues and the DM's answers
     campaigns.register_section(PlotFineSection())  # ... and what the DM said was not a problem
     campaigns.register_section(ReportAnswersSection())  # the DM's report answers (#2661)

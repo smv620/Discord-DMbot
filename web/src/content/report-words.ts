@@ -52,6 +52,14 @@ export const reportWords = {
   second: "Another thing DMbot holds",
   believes: "They believe",
   truth: "Your view says",
+  // A lie (#3123): "Cerric thinks Valyra lied about this: Valyra hid the key", then "Your view: it's true.".
+  // The pieces are shown in bold around the names; `lied` is the same sentence as plain text.
+  lieThinks: "thinks",
+  lieSomeone: "someone",
+  lieSaid: "lied about this:",
+  lied: (who: string, liar: string | null, statement = ""): string =>
+    `${who} thinks ${liar ?? "someone"} lied about this:${statement ? ` ${statement}` : ""}`,
+  lieTruth: "Your view: it's true.",
   view: (v: string): string => `From: ${v}`,
   fromSession: (n: number | null | undefined): string => (n ? `Session ${n}` : "An earlier session"),
   evidence: "Where it came from",
@@ -61,7 +69,12 @@ export const reportWords = {
     line: "a line",
     clue: "a clue",
     event: "an event",
+    source: "something someone told them",
   } as Record<string, string>,
+  // A name, not words: the session only, like a line (#3134).
+  sourceHere: (kind: string, session: number): string => `${kind} from session ${session}`,
+  // A kind the page does not know yet: said plainly, never by its own raw name (#3134).
+  unknownKind: "something DMbot noted",
   // A line is a person's words: only that it exists, never what it said.
   lineHere: (session: number): string => `a line from session ${session}`,
   gone: (kind: string, session: number): string => `${kind} from session ${session}, no longer available`,
