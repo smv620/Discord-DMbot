@@ -24,7 +24,7 @@ export const storyModePanel = {
   done: (mode: StoryMode): string => `Saved. ${storyModePanel.now(mode)}`,
   failed: "Nothing was changed. Try again in a minute.",
   stillThat: (mode: StoryMode): string => `It is still ${storyModePanel.modes[mode].label}.`,
-  timedOut: "DMbot hasn't answered yet. It may still do it. Check back in a minute; the Now line changes when it has.",
+  timedOut: "DMbot hasn't answered yet. It may still do it. Reload the page in a minute to see where it got to.",
   problems: {
     "not-allowed": "Only a campaign's game master can do this. Ask your game master.",
     "needs-confirm": "Tick the box first to say you have the right to use the material.",
