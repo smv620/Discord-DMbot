@@ -157,7 +157,7 @@ async def _check_lineage(
 
 async def _check_lie(w: Changes, status: str, confidence: float, sources: Sequence[str]) -> None:
     """A belief that someone lied (#3091): false for whoever holds it, so a known lie is held at
-    0.0 and a suspected one strictly between 0 and 1 (its confidence is still how sure the
+    0.0 and a suspected one above 0 and at most 0.5 (its confidence is still how sure the
     connection is TRUE), and it names who lied: characters of this campaign, never nobody."""
     if status == KNOWN_LIE and confidence != 0.0:
         raise MemoryRuleError(NOT_A_LIE)

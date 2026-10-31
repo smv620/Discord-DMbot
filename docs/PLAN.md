@@ -1988,6 +1988,11 @@ names panel nor the speech-to-text hints can be a fixed list.
       screen says "Revealed at the table: A, B (Session N)" with ↩️ Undo. Connections are not revealed by this
       step: until the knowledge map review (#2410), the after-session report points to the held-back
       connections whose names are both revealed now.
+    - **Disguised as** (CloudDev-lead, 2026-10-31, #3091 part 4; owner request): a new core connection kind,
+      `disguised_as` ("is disguised as" / "is impersonated by"), character to character, secret by nature,
+      never offered as a "same person" join, with the usual extraction synonyms. A code release; no migration.
+      The Connect menu offers it forward only (`founded` also loses its back reading there) to stay at 25
+      options. See docs/STORY_MEMORY.md, "Disguised as".
     - **Belief lineage and sources** (CloudDev-lead, 2026-10-31, #3091 part 1, migration 0297; owner request): a
       belief says which earlier belief it came from and why (`derived_from`, `change_kind`: update, branch,
       retraction, told), and evidence gains a `source` kind pointing at the entry that said it. The DM-only
