@@ -42,6 +42,7 @@ from dmbot.memory.models import (
     KNOWN,
     MAGICALLY_VERIFIED,
     PARTY,
+    PC_VIEW,
     REVEALED_FACT,
     SECRET_PLOT,
     THEORY,
@@ -393,12 +394,21 @@ async def backfill(conn: Conn, guild_id: int, campaign_id: str) -> None:
     )
 
 
-async def carry(w: Changes, old: dict[str, Any], new_id: str, *, copy_beliefs: bool = True) -> None:
+async def carry(
+    w: Changes,
+    old: dict[str, Any],
+    new_id: str,
+    *,
+    copy_beliefs: bool = True,
+    skip_players: bool = False,
+) -> None:
     """A reworded connection (#2408) is the same claim in other words, so the new one takes over
     what the old one held: each perspective's current belief (what it thought, how sure, the
     evidence and the session), the mentions it points to and its session span. Beliefs are copied
     as new rows (history is kept on the old connection, which is ended). The players are never
-    handed a belief in a secret connection this way."""
+    handed a belief in a secret connection this way. `skip_players`: copy every point of view's
+    belief except the player characters' (a merge folding a fact the players were shown into a twin
+    they were not shown)."""
     new = await w.get(RELATIONS, new_id)
     if new is None:
         return
@@ -424,9 +434,14 @@ async def carry(w: Changes, old: dict[str, Any], new_id: str, *, copy_beliefs: b
         return
     ids = await perspective_ids(w)
     party = ids[PARTY]
+    pc_views = (
+        {str(p["id"]) for p in await w.select(PERSPECTIVES, " AND kind = %s", [PC_VIEW])}
+        if skip_players
+        else set()
+    )
     held = await _newest(w, [old["id"], new_id])
     for (relation_id, perspective_id), belief in sorted(held.items(), key=lambda kv: kv[1]["seq"]):
-        if relation_id != old["id"]:
+        if relation_id != old["id"] or perspective_id in pc_views:
             continue
         mine = held.get((new_id, perspective_id))
 
