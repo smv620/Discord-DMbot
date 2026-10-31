@@ -91,7 +91,8 @@ class TheUnnamedRead(unittest.TestCase):
         self.assertEqual(lost["already_named"], 1)
         # and a person whose words are a name of the read is no unnamed person
         got, lost = run(
-            [line("Garrick Pell", "father", "absent father")], names=("Garrick Pell", "Absent")
+            [line("Garrick Pell", "father", "absent father")],
+            names=("Garrick Pell", "Absent Father"),
         )
         self.assertEqual((got, lost["already_named"]), ([], 1))
 
@@ -125,6 +126,41 @@ class TheUnnamedRead(unittest.TestCase):
         got, lost = run(many, text)
         self.assertEqual((len(got), lost["over_cap"]), (ur.MAX_UNNAMED, 26 - ur.MAX_UNNAMED))
 
+    def test_a_second_person_in_the_quote_leaves_it_unclear_whose_parent_it_is(self) -> None:
+        text = "Garrick Pell met Tamsin Rook, the son of a stern ropemaker mother."
+        quote = "Garrick Pell met Tamsin Rook, the son of a stern ropemaker mother"
+        lost: Counter[str] = Counter()
+        names = ("Garrick Pell", "Tamsin Rook")
+        got = ur.read_unnamed(
+            [line("Garrick Pell", "mother", "stern ropemaker mother", quote)], text, {}, [],
+            names, set(), lost, people=bg.reach_names({name_key(n) for n in names}),
+        )  # fmt: skip
+        self.assertEqual((got, lost["not_in_text"]), ([], 1))
+        # a place in the quote is no second person (Example 7 has one)
+        got, _ = run([line("Garrick Pell", "mother", "stern ropemaker mother")])
+        self.assertEqual(len(got), 1)
+
+    def test_only_the_roles_the_prompt_offers_are_family_here(self) -> None:
+        for role in ("apprentice", "rival", "mentor"):
+            got, lost = run([line("Garrick Pell", role, "stern ropemaker mother")])
+            self.assertEqual((got, lost["word_not_allowed"]), ([], 1), role)
+        for role in ("wife", "grandfather", "child"):
+            self.assertEqual(ur._kin(role) is not None, True, role)  # (the neutral words too)
+
+    def test_a_description_that_shares_a_word_with_a_name_is_still_a_person(self) -> None:
+        got, lost = run(
+            [line("Garrick Pell", "mother", "stern ropemaker mother")],
+            names=("Garrick Pell", "Ashmere", "Stern", "Ropemaker's Row"),
+        )
+        self.assertEqual((len(got), lost["already_named"]), (1, 0))
+
+    def test_the_role_word_inside_a_longer_one_is_not_a_named_parent(self) -> None:
+        in_law = bg.Connection(
+            "Garrick Pell", "kin_of", "Hilda", "his mother-in-law, Hilda, came", words="parent"
+        )
+        got, lost = run([line("Garrick Pell", "mother", "stern ropemaker mother")], links=[in_law])
+        self.assertEqual((len(got), lost["already_named"]), (1, 0))
+
 
 class TheListParser(unittest.TestCase):
     def test_the_unnamed_heading_is_its_own_section(self) -> None:
@@ -135,6 +171,19 @@ class TheListParser(unittest.TestCase):
         listed = lr.parse_plain(reply)
         self.assertEqual((len(listed.names), len(listed.unnamed)), (1, 1))
         self.assertIn("UNNAMED", lr.plain_text(listed))
+
+    def test_a_mother_and_a_father_of_one_character_are_two_lines_not_one(self) -> None:
+        both = [line("Garrick Pell", "mother", "weaver mother"),
+                line("Garrick Pell", "father", "absent father"),
+                line("Garrick Pell", "father", "Absent Father")]  # fmt: skip
+        self.assertEqual(len(lr.dedupe_unnamed(both)), 2)
+
+    def test_the_long_heading_is_read_as_the_same_section(self) -> None:
+        for heading in ("UNNAMED", "UNNAMED PEOPLE", "**Unnamed people:**"):
+            listed = lr.parse_plain(
+                f"{heading}\n{line('Garrick Pell', 'mother', 'weaver mother')}\n"
+            )
+            self.assertEqual(len(listed.unnamed), 1, heading)
 
     def test_the_seventh_example_reads_back_to_two_unnamed_parents(self) -> None:
         example = lr.EXAMPLES.split("Example 7.", 1)[1]

@@ -61,11 +61,22 @@ def parse(lines: Iterable[str]) -> tuple[list[Line], int]:
     return out, bad
 
 
+# The roles the prompt offers, and the neutral words: nothing else is a family role here
+# (`LORE_REVERSED` also maps "apprentice", which is no family).
+ROLES = frozenset(
+    {"mother", "father", "sister", "brother", "son", "daughter", "aunt", "uncle", "niece",
+     "nephew", "cousin", "husband", "wife", "grandmother", "grandfather", "parent", "child",
+     "sibling", "spouse"}
+)  # fmt: skip
+
+
 def _kin(role: str) -> tuple[str, bool] | None:
     """(the role as DMbot keeps it, whether the NAMED end is the first end) for the person's role
     word. "mother" is a parent of the named end (the person is first); "son" is a child of it,
     which is kept as "the named end is the parent" (`LORE_REVERSED`, so it is one fact whichever
     way it is said). A shared role (sibling, spouse, cousin) has no order."""
+    if role.casefold() not in ROLES:
+        return None
     word = bg.KIN_NEUTRAL.get(role.casefold(), role.casefold())
     if word in bg.LORE_REVERSED:
         return bg.LORE_REVERSED[word], True
@@ -82,13 +93,17 @@ def read_unnamed(
     names: Collection[str],
     others: Collection[str],
     dropped: Counter[str],
+    people: Collection[str] = (),
 ) -> list[UnnamedLink]:
     """The unnamed people the text really holds, as links for the existing store path.
 
     `aliases`: each name key of the read and campaign to its other spellings (as for connections).
     `links`: this read's connections, to catch a person the text names elsewhere. `names`: every
     name of the read (a person's words that are one of them are no unnamed person). `others`: the
-    name keys a reach looks for as a third name (`background.reach_names`). Counts go to `dropped`:
+    name keys a reach looks for as a third name (`background.reach_names`). `people`: the name keys
+    of the read's persons: a second person in the quote means the described person may be theirs
+    ("Pell met Tamsin, the son of a ropemaker mother"), so the line is dropped. Counts go to
+    `dropped`:
     `unreadable`, `word_not_allowed` (a role DMbot does not keep), `not_in_text`, `already_named`,
     `same_pair` and `over_cap`; never a word of the text."""
     parsed, bad = parse(lines)
@@ -139,10 +154,13 @@ def read_unnamed(
         if not all(bg._in_quote(shown, w) for w in what_words if len(w) >= 3):
             dropped["not_in_text"] += 1
             continue
-        if name_key(line.what) in name_keys or any(
-            name_key(w) in name_keys for w in what_words if len(w) >= 3
-        ):
+        if name_key(line.what) in name_keys:
             dropped["already_named"] += 1  # (the person's words are a name of this read)
+            continue
+        if people and bg._third_name(
+            " ".join(window), people, bg._own_ends([line.anchor, head], forms)
+        ):
+            dropped["not_in_text"] += 1  # (another person is in the quote: whose parent is it?)
             continue
         if _named_elsewhere(line, links, forms):
             dropped["already_named"] += 1
@@ -174,11 +192,16 @@ def _named_elsewhere(
     line: Line, links: Sequence[bg.Connection], forms: Callable[[str], list[str]]
 ) -> bool:
     """Whether this read already ties the named end to a named person by the same role word: a
-    family connection of the end whose quote says the role ("his father Roceran")."""
+    family connection of the end, with this role, whose quote says the role word ("his father
+    Roceran"). Its limits, on purpose: only this read's connections are seen (a named parent kept
+    by an earlier read is not), and a named and an unnamed sibling of one end are taken for one
+    person; both fail safe towards fewer unnamed entries, never a second entry."""
     mine = {name_key(f) for f in forms(line.anchor)}
-    role = re.compile(rf"(?<![a-z]){re.escape(line.role.casefold())}(?![a-z])")
+    # (a role word inside another word or a hyphenated one, "mother-in-law", is not this role)
+    role = re.compile(rf"(?<![\w-]){re.escape(line.role.casefold())}(?![\w-])")
+    kept = _kin(line.role)
     for c in links:
-        if c.how != "kin_of":
+        if c.how != "kin_of" or (kept is not None and c.words not in (kept[0], "")):
             continue
         if {name_key(c.a), name_key(c.b)} & mine and role.search(c.quote.casefold()):
             return True

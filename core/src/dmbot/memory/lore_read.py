@@ -350,7 +350,9 @@ def shape_request(names: list[str], links: list[str]) -> str:
     return f"<list>\n{body}\n</list>"
 
 
-_HEADING = re.compile(r"^[#*\s]*(NAMES|RELATIONSHIPS|NOT INCLUDED|UNNAMED)[*:\s]*$", re.I)
+_HEADING = re.compile(
+    r"^[#*\s]*(NAMES|RELATIONSHIPS|NOT INCLUDED|UNNAMED(?:\s+PEOPLE)?)[*:\s]*$", re.I
+)
 
 
 @dataclass(slots=True)
@@ -387,7 +389,11 @@ def parse_plain(reply: str, *, complete: bool = True, into: PlainList | None = N
         line = raw.strip()
         heading = _HEADING.match(line)
         if heading:
-            section = heading.group(1).upper()
+            section = (
+                heading.group(1).upper().split()[0]
+                if heading.group(1).upper().startswith("UNNAMED")
+                else heading.group(1).upper()
+            )
             continue
         if section is not None and line.startswith("-"):
             out.add(section, line)
@@ -399,6 +405,19 @@ def _entry_key(line: str) -> str:
     """What makes a list line the same entry as another: a name, or the two ends and the words."""
     head = line.lstrip("- ").split("|")[0]
     return name_key(re.sub(r"\s+", " ", head))
+
+
+def dedupe_unnamed(items: list[str]) -> list[str]:
+    """One line for each person: the named end, the role and the text's words together (a mother
+    and a father of one character are two lines under one named end, #2959)."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for line in items:
+        key = "|".join(name_key(part) for part in line.lstrip("- ").split("|")[:3])
+        if key not in seen:
+            seen.add(key)
+            out.append(line)
+    return out
 
 
 def dedupe(items: list[str]) -> list[str]:
@@ -541,7 +560,7 @@ async def read_list(
         stats.read_cut += 1
     # One line for each name (a name has one kind here) and for each pair and words.
     found.names, found.links = dedupe(found.names), dedupe(found.links)
-    found.unnamed = dedupe(found.unnamed)
+    found.unnamed = dedupe_unnamed(found.unnamed)
     stats.names_listed, stats.links_listed = len(found.names), len(found.links)
     stats.pass1_links = len(found.links)
     stats.left_out = len(found.left_out)
@@ -1053,8 +1072,12 @@ async def read_lore(
     stats.unnamed_listed = len(listed.unnamed)
     # The described-but-unnamed people (#2959): checked against the text here, stored by the caller
     # through the same path the who-is-it check uses. Counts go with the connections' own.
+    # (the persons of this read, to tell a second person in a quote from a place in it)
+    people = bg.reach_names(
+        {name_key(x) for f in names if f.kind == "npc" for x in (f.name, *f.also)}
+    )
     unnamed = read_unnamed(
-        listed.unnamed, text, here, links, [*known_keys, *here], third, stats.dropped
+        listed.unnamed, text, here, links, [*known_keys, *here], third, stats.dropped, people
     )
     log.info(
         "Lore read: pass 1 %d call(s), %d cut, %d continued, %d name line(s), %d relationship "
