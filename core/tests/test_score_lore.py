@@ -37,8 +37,9 @@ class TheScorer(unittest.TestCase):
         self.assertEqual(got["p05"], "kept kind=ok")  # a husband is a spouse
         self.assertEqual(got["p06"], "dropped:word_not_allowed")  # a free label the quote lacks
         self.assertEqual(got["p07"], "no_entry")  # an end that is no name of the read
-        # A pronoun whose name is two sentences back is held for the who-is-it check, not kept.
-        self.assertEqual(got["p08"], "held_for_who_is_it")
+        # A pronoun whose name is two sentences back is read by reaching back (#2757), not held
+        # for the who-is-it check (it was `held_for_who_is_it` before the reach).
+        self.assertEqual(got["p08"], "kept kind=ok")
 
     def test_the_output_has_no_names_or_words_of_the_text(self) -> None:
         out = io.StringIO()

@@ -926,6 +926,16 @@ class TheStore(NamesTest):
         self.assertEqual(await self.store.add(GUILD, self.campaign.id, [link_, link_]), 1)
         self.assertEqual(await self.store.add(GUILD, self.campaign.id, [link_]), 0)
 
+    async def test_the_longest_quote_a_reach_can_make_is_kept_whole(self) -> None:
+        # A reach (#2757) is at most `REACH_CHARS` characters, the queue's quote column, because
+        # the queue cuts the END of a longer quote, which is the pronoun's own sentence.
+        quote = ("Elanor " * 60)[: bg.REACH_CHARS].rstrip()
+        await self.store.add(
+            GUILD, self.campaign.id, [NewLink(self.mirelle, "knows", self.oakmere, quote)]
+        )
+        (w,) = await self.store.waiting(GUILD, self.campaign.id)
+        self.assertEqual(w.quote, quote)
+
     async def test_one_with_a_waiting_name_is_not_ready_and_stays(self) -> None:
         await self.store.add(
             GUILD, self.campaign.id, [NewLink(self.mirelle, "knows", self.brannoch, "q")]
