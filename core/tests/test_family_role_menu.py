@@ -49,12 +49,6 @@ class TheRoleMenu(unittest.IsolatedAsyncioTestCase):
         for role in ("grandparent", "grandson", "granddaughter", "grandchild"):
             self.assertIn(role, values)
 
-    def test_the_other_way_round_puts_the_other_name_first(self) -> None:
-        menu = nc.FamilyRole(CAMPAIGN.id, MIRA, ALDRIC, "kin_of" + nc.BACK, ("Mira", "Aldric"),
-                             secret=False, forced=False)  # fmt: skip
-        sister = next(o for o in menu.role.options if o.value == "sister")
-        self.assertEqual(sister.description, "Aldric is the sister of Mira")
-
     async def test_is_family_of_asks_the_role_and_saves_nothing_yet(self) -> None:
         found = (CAMPAIGN, "Mira")
         other = (CAMPAIGN, "Aldric")
@@ -115,6 +109,7 @@ class TheSave(unittest.IsolatedAsyncioTestCase):
         memory.add_relation = AsyncMock(
             return_value=Written((SimpleNamespace(secret=False), []), None)
         )
+        memory.relations = AsyncMock(return_value=[])  # no family link between them yet
         with (
             patch.object(nc, "_answer_first", AsyncMock()),
             patch.object(
@@ -147,20 +142,10 @@ class TheSave(unittest.IsolatedAsyncioTestCase):
         _, kwargs = await self.save("kin_of", "")
         self.assertEqual((kwargs["detail"], kwargs["directional"]), ("", False))
 
-    async def test_the_other_way_round_swaps_who_holds_the_role(self) -> None:
-        args, kwargs = await self.save("kin_of" + nc.BACK, "sister")
-        self.assertEqual((kwargs["detail"], kwargs["directional"]), ("sister", True))
-        self.assertEqual((args[2], args[4]), (ALDRIC, MIRA))  # Aldric holds the role
-
     async def test_the_saved_note_reads_with_the_role_in_the_order_it_was_saved(self) -> None:
         await self.save("kin_of", "sister")
         self.assertIn("is the sister of", self.note)
         self.assertIn("**Mira** is the sister of **Aldric**", self.note)  # Mira holds the role
-
-    async def test_the_saved_note_reads_the_other_way_round_for_the_other_way_round(self) -> None:
-        await self.save("kin_of" + nc.BACK, "sister")
-        self.assertIn("is the sister of", self.note)
-        self.assertIn("Aldric", self.note.split("is the sister of")[0])  # Aldric holds the role
 
 
 class TheSecretPassThrough(unittest.IsolatedAsyncioTestCase):

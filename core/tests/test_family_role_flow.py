@@ -60,6 +60,23 @@ class TheFamilyRoleFlow(NamesTest):
         self.assertEqual(await self.card_words(mira, aldric), "is family of Aldric")
         self.assertEqual(await self.card_words(aldric, mira), "is family of Mira")
 
+    async def test_a_pair_already_linked_as_family_gets_no_second_link(self) -> None:
+        mira, aldric = await self.name("Mira"), await self.name("Aldric")
+        await self.pick(mira, aldric, "sister")
+        menu = name_card.FamilyRole(
+            self.campaign.id, mira.id, aldric.id, "kin_of", (mira.name, aldric.name),
+            secret=False, forced=False,
+        )  # fmt: skip
+        menu.role = SimpleNamespace(values=["cousin"])  # type: ignore[assignment]
+        it = self.it()
+        await menu._picked(it)
+        rels = await self.memory.relations(GUILD, self.campaign.id, entity_id=mira.id)
+        self.assertEqual([r.detail for r in rels], ["sister"])
+        self.assertIn(
+            "Already linked as sister. Change it from the card.",
+            [text for text, _ in it.response.sent],
+        )
+
     async def test_a_mother_and_a_brother_offer_the_parent_as_a_worked_out_suggestion(self) -> None:
         aldric, bryn, mira = (
             await self.name("Aldric"),

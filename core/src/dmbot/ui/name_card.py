@@ -2387,8 +2387,8 @@ class FamilyRole(_Menu):
         self.how = how
         self.secret = secret
         self.forced = forced
-        # The card's name first when it is the subject; the other way round swaps them.
-        first, second = (names[1], names[0]) if how.endswith(BACK) else names
+        # The card's name first: family has no "the other way round" (kin_of has no back entry).
+        first, second = names
         options = [
             discord.SelectOption(
                 label=role.capitalize(),
@@ -2688,6 +2688,18 @@ class Connect(_Menu):
         await show_card(interaction, self.campaign_id, self.entity_id, replace=True)
 
 
+async def _family_link_word(
+    memory: MemoryStore, guild_id: int, campaign_id: str, a_id: str, b_id: str
+) -> str | None:
+    """The role of the family link already between two names ("" for Just family), or None when
+    they are not linked as family. Either direction; a secret link counts too, since the reply
+    goes only to the DM who is making it."""
+    for rel in await memory.relations(guild_id, campaign_id, entity_id=a_id, include_secret=True):
+        if rel.predicate == KIN and {rel.subject_id, rel.object_id} == {a_id, b_id}:
+            return rel.detail
+    return None
+
+
 async def connect(
     interaction: discord.Interaction,
     campaign_id: str,
@@ -2725,6 +2737,16 @@ async def connect(
     subject_id, object_id = (other_id, entity_id) if how.endswith(BACK) else (entity_id, other_id)
     # A family role (#3102) is stored with its words' direction, the way the edit menu stores it.
     detail = (kin.role_of(detail) or "") if predicate == KIN else ""
+    if predicate == KIN:
+        # One family link per pair: a second role is not added, the DM is told where it is (#3109).
+        linked = await _family_link_word(
+            memory, campaign.guild_id, campaign.id, subject_id, object_id
+        )
+        if linked is not None:
+            await _tell(
+                interaction, f"Already linked as {linked or 'family'}. Change it from the card."
+            )
+            return
     try:
         written = await memory.add_relation(
             campaign.guild_id,
