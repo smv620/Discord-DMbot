@@ -45,6 +45,7 @@ class TheRoleMenu(unittest.IsolatedAsyncioTestCase):
         self.assertLessEqual(len(values), 25)
         sister = next(o for o in menu.role.options if o.value == "sister")
         self.assertEqual(sister.description, "Mira is the sister of Aldric")
+        self.assertEqual(sister.label, "Sister")
         self.assertIn(nc.JUST_FAMILY, values)
         for role in ("grandparent", "grandson", "granddaughter", "grandchild"):
             self.assertIn(role, values)
@@ -178,4 +179,4 @@ class TheSecretPassThrough(unittest.IsolatedAsyncioTestCase):
         menu = nc.FamilyRole(CAMPAIGN.id, MIRA, ALDRIC, "kin_of", ("Mira", "Aldric"),
                              secret=False, forced=False)  # fmt: skip
         just = next(o for o in menu.role.options if o.value == nc.JUST_FAMILY)
-        self.assertEqual(just.description, "Mira is family of Aldric, no role")
+        self.assertEqual(just.description, "Mira and Aldric are family. No role.")

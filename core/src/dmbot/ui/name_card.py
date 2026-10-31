@@ -2391,7 +2391,7 @@ class FamilyRole(_Menu):
         first, second = (names[1], names[0]) if how.endswith(BACK) else names
         options = [
             discord.SelectOption(
-                label=role,
+                label=role.capitalize(),
                 value=role,
                 description=logic.shorten(f"{first} is the {role} of {second}", 100),
             )
@@ -2401,7 +2401,7 @@ class FamilyRole(_Menu):
             discord.SelectOption(
                 label="Just family",
                 value=JUST_FAMILY,
-                description=logic.shorten(f"{first} is family of {second}, no role", 100),
+                description=logic.shorten(f"{first} and {second} are family. No role.", 100),
             )
         )
         self.role = _Select(self._picked, placeholder="Which family role?", options=options)
