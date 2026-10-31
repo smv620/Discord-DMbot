@@ -94,8 +94,8 @@ async def read(read_ai: Any, shape_ai: Any = None, text: str = TEXT) -> lr.LoreR
 class TheExamples(unittest.TestCase):
     def test_their_format_is_pinned(self) -> None:
         text = lr.EXAMPLES
-        self.assertEqual(text.count("NAMES\n"), 5)
-        self.assertEqual(text.count("RELATIONSHIPS\n"), 4)
+        self.assertEqual(text.count("NAMES\n"), 6)
+        self.assertEqual(text.count("RELATIONSHIPS\n"), 5)
         self.assertEqual(text.count("NOT INCLUDED\n"), 1)
         name_line = re.compile(r"^- .+ \| (person|place|group|god|item|event|idea)( \| .+)*$")
         link_line = re.compile(r'^- .+ — .+ — .+ \| quote: ".+"$')
@@ -108,7 +108,7 @@ class TheExamples(unittest.TestCase):
         self.assertIn("Wyrmhold", listed.left_out[0])
 
     def test_the_second_example_is_a_names_list_that_keeps_the_aside_as_another_name(self) -> None:
-        second = lr.EXAMPLES.split("Example 5.", 1)[1]
+        second = lr.EXAMPLES.split("Example 5.", 1)[1].split("Example 6.", 1)[0]
         self.assertNotIn("RELATIONSHIPS", second)
         self.assertIn("other names: the rogue", second)
         self.assertIn("said: kah-ZETH", second)
@@ -187,6 +187,24 @@ class TheExamples(unittest.TestCase):
         self.assertEqual(
             sum("mentors" in x for x in listed.links), 2
         )  # (two apprentices, two lines)
+
+    def test_the_sixth_example_lists_a_special_object_a_message_and_a_group(self) -> None:
+        # (#2757) things the story singles out are listed by the text's own words; the sack of
+        # rope and biscuits (ordinary gear) is not; each name stands whole in the document
+        example = lr.EXAMPLES.split("Example 6.", 1)[1]
+        document = example.split("<document>\n", 1)[1].split("\n</document>", 1)[0]
+        listed = lr.parse_plain(example.split("Output:\n", 1)[1])
+        kinds = {n.split(" | ")[0][2:]: n.split(" | ")[1] for n in listed.names}
+        self.assertEqual(kinds["rusted brass compass"], "item")
+        self.assertEqual(kinds["band of river smugglers"], "group")
+        self.assertNotIn("rope", " ".join(kinds))
+        for name in kinds:
+            self.assertIn(name, " ".join(document.split()))
+
+    def test_the_rule_for_things_and_groups_keeps_its_limits(self) -> None:
+        rules = lr.read_instructions()
+        for word in ("THINGS AND GROUPS WITHOUT A PROPER NAME", "ordinary gear", "the party"):
+            self.assertIn(word, rules)
 
 
 class ThePlainList(unittest.TestCase):

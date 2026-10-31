@@ -152,6 +152,22 @@ Output:
 NAMES
 - Tavin | person | other names: the rogue | quote: "Tavin (the rogue)"
 - Ka'zeth | person | said: kah-ZETH | quote: "Ka'zeth (kah-ZETH)"
+
+Example 6. Input (a special object, a message and a group without proper names; ordinary gear left out):
+<document>
+Wren Calloway carried a rusted brass compass that never pointed north, and a sack of rope and biscuits. \
+A hastily scrawled note warned her that the Ash Court knew where she hid. She had been raised by a band of river smugglers.
+</document>
+Output:
+NAMES
+- Wren Calloway | person | quote: "Wren Calloway carried a rusted"
+- rusted brass compass | item | quote: "a rusted brass compass that never"
+- hastily scrawled note | item | quote: "A hastily scrawled note warned her"
+- Ash Court | group | quote: "that the Ash Court knew where"
+- band of river smugglers | group | quote: "by a band of river smugglers"
+
+RELATIONSHIPS
+- Wren Calloway — owns — rusted brass compass | quote: "Wren Calloway carried a rusted brass compass that never pointed north"
 """  # noqa: E501 (the examples are the prompt's own lines)
 
 
@@ -185,6 +201,15 @@ def read_instructions(own: Mapping[str, str] | None = None) -> str:
         "give 'secret:' only when the text says plainly that a name is a secret identity or "
         f"another name of the SAME person. 'quote:' is {bg.QUOTE_WORDS} words at most, copied "
         "exactly from the text.\n"
+        "- THINGS AND GROUPS WITHOUT A PROPER NAME: also list what the story singles out, by the "
+        "words the text uses for it (copied as written, without 'a' or 'the'): (a) one particular "
+        "object that a character owns, carries, finds or is given and that the text marks as "
+        "unique, magical, inscribed or important (kind item); (b) a message, letter, sign or "
+        "warning that the text quotes or says was left or sent (kind item); (c) a group of people "
+        "the text describes by what it is, such as a traveling circus or a band of thieves (kind "
+        "group). Never ordinary gear, coins, food, weapons or clothes, never a kind of creature, "
+        "never 'the party' or a crowd ('the guards'), and never a person (a person is listed "
+        "only by name). Only the few the story really singles out.\n"
         "- ONE PERSON, TWO NAMES: when the text says a character was first known by another "
         "name (born, originally, formerly, a pseudonym, took the name, now calls himself or "
         "herself, also known as, a.k.a., an alias), that earlier name is NOT a name of its own: "
