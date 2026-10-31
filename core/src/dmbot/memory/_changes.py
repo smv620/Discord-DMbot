@@ -210,15 +210,23 @@ KNOWERS = Table(
         "alias_id",
         "created_at",
         "confidence",
+        "hidden_by",
     ),
-    defaults={"confidence": 1.0},  # how sure that character is, 0.0 to 1.0 (0286)
+    # confidence: how sure that character is, 0.0 to 1.0 (0286). hidden_by (0298): the entries
+    # whose being hidden from the players put this row to sleep; a row with any is DORMANT, and
+    # every reader ignores it (`Scope.select` leaves it out unless asked) until each of them is
+    # shown again and it wakes, so the lists a hide closed come back exactly as they were.
+    defaults={"confidence": 1.0, "hidden_by": []},
 )
 BELIEFS = Table(
     "memory_beliefs",
     "id",
     ("id", "perspective_id", "relation_id", "confidence", "status", "session_at",
-     "evidence_ids", "seq", "recorded_at", "pinned"),
-    defaults={"pinned": False},  # the DM's 📌 100% truth (#2447)
+     "evidence_ids", "seq", "recorded_at", "pinned", "hidden_by"),
+    # pinned: the DM's 📌 100% truth (#2447). hidden_by (0298): on the 0.0 belief that hiding an
+    # entry wrote, the entries whose hiding wrote it (the belief before it comes back when each is
+    # shown again and the 0.0 is still the newest); empty on every other belief.
+    defaults={"pinned": False, "hidden_by": []},
 )  # fmt: skip
 # What a connection or a belief stands on, one typed link each (#2662): unlogged, because an
 # Undo must not bring back a line's reference once the line's words were removed (the link is
@@ -309,11 +317,20 @@ DEPENDENTS: dict[str, tuple[tuple[str, str, bool], ...]] = {
 }
 
 
-def scoped_select(table: Table, where: sql.Composable | None = None) -> sql.Composed:
-    """SELECT a table's columns for one server and campaign, plus `where`."""
-    return sql.SQL("SELECT {} FROM {} WHERE guild_id = %s AND campaign_id = %s{}").format(
+def scoped_select(
+    table: Table, where: sql.Composable | None = None, *, awake_only: bool = False
+) -> sql.Composed:
+    """SELECT a table's columns for one server and campaign, plus `where`. `awake_only`: leave out
+    the rows put to sleep (`hidden_by` set, see KNOWERS)."""
+    asleep = (
+        sql.SQL(" AND cardinality(hidden_by) = 0")
+        if awake_only and table.name == "memory_knowers"
+        else sql.SQL("")
+    )
+    return sql.SQL("SELECT {} FROM {} WHERE guild_id = %s AND campaign_id = %s{}{}").format(
         sql.SQL(", ").join(sql.Identifier(c) for c in table.columns),
         sql.Identifier(table.name),
+        asleep,
         where if where is not None else sql.SQL(""),
     )
 
@@ -344,9 +361,19 @@ class Scope:
         return None if raw is None else row_of(raw, table)
 
     async def select(
-        self, table: Table, where: LiteralString = "", params: Sequence[Any] = ()
+        self,
+        table: Table,
+        where: LiteralString = "",
+        params: Sequence[Any] = (),
+        *,
+        dormant: bool = False,
     ) -> list[dict[str, Any]]:
-        cur = await self.conn.execute(scoped_select(table, sql.SQL(where)), (*self.ids, *params))
+        """The rows matching `where`. A who-knows row put to sleep by a hide (`hidden_by`) is
+        not known to anyone, so it is left out unless `dormant` asks for it (the merge, which has
+        to move it, and the writes that wake or replace it)."""
+        cur = await self.conn.execute(
+            scoped_select(table, sql.SQL(where), awake_only=not dormant), (*self.ids, *params)
+        )
         return [row_of(r, table) for r in await cur.fetchall()]
 
 
@@ -487,7 +514,7 @@ class Changes(Scope):
                 await self.delete(ALIAS_KNOWERS, knower["id"])
         if table.name in _KNOWN_COLUMN:  # who knows a statement goes with it, each logged (#2995)
             column = _KNOWN_COLUMN[table.name]
-            for knower in await self.select(KNOWERS, f" AND {column} = %s", [row_id]):
+            for knower in await self.select(KNOWERS, f" AND {column} = %s", [row_id], dormant=True):
                 await self.delete(KNOWERS, knower["id"])
         for dep_table, column, is_list in DEPENDENTS.get(table.name, ()):
             test = "%s = ANY({})" if is_list else "{} = %s"
@@ -560,6 +587,7 @@ class Changes(Scope):
             table,
             f" AND {column} = ANY(%s)" + where,
             [list(values)] + ([list(perspectives)] if perspectives is not None else []),
+            dormant=True,  # (a row asleep goes with the rest: the statement is gone from them)
         )
         if not found:
             return
@@ -797,6 +825,7 @@ _ADDED_LATER: dict[str, dict[str, Any]] = {
         "unrevealed": False,
         "directional": False,
         "decided": None,
+        "via_alias_id": None,  # no connection came through a name before a join said so (#3037)
     },
     # unique_item: nobody said, the name decides (#1267). audience_limited: off (#1649).
     # made_before_name_gate: a snapshot from before the column is a row from before it (#2358)
@@ -812,7 +841,10 @@ _ADDED_LATER: dict[str, dict[str, Any]] = {
         "unnamed_role": None,
         "unnamed_what": None,
     },
-    "memory_beliefs": {"pinned": False},  # nothing was pinned before the pin (#2447)
+    # nothing was pinned before the pin (#2447); nothing slept before a hide could put it to sleep
+    # (#3082), so an Undo across the migration still finds the row as the batch left it
+    "memory_beliefs": {"pinned": False, "hidden_by": []},
+    "memory_knowers": {"confidence": 1.0, "hidden_by": []},  # (0286 added the certainty)
     "memory_predicates": {
         "covers": [], "not_this": [], "inverse_label": "", "synonyms": [], "version": 1,
         "from_set": None,
