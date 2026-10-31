@@ -558,7 +558,8 @@ export interface PastSessions {
  * refused and nothing here is ever in the players' view. Only DMbot's own words and placeholders, never
  * a person's words or who said them. */
 export interface ReportEvidence {
-  kind: "claim" | "line" | "clue" | "event";
+  /** A "source" holds a name (who told them), never words. */
+  kind: "claim" | "line" | "clue" | "event" | "source";
   session: number;
   /** False: the words are gone; the page says "a line from session N, no longer available". */
   available: boolean;
