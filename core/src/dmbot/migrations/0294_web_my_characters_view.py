@@ -265,9 +265,19 @@ WEB_MY_CHARACTERS_VIEW = (
     RETURNS TABLE (entity_id TEXT, shown_name TEXT, own BOOLEAN, alias_id TEXT)
     LANGUAGE sql STABLE SECURITY DEFINER AS $fn$
         WITH own AS (
+            -- (an entry row does not make a name known when the entry's own name is a secret
+            -- one: only a row on that name does, as the second branch says)
             SELECT k.about_entity_id AS eid FROM memory_knowers k
+            JOIN memory_entities ke ON ke.guild_id = k.guild_id AND ke.campaign_id = k.campaign_id
+                                   AND ke.id = k.about_entity_id
             WHERE k.guild_id = g AND k.campaign_id = c AND k.about_entity_id IS NOT NULL
               AND k.confidence > 0 AND k.perspective_id IN (SELECT dmbot_my_perspectives(g, c))
+              AND NOT EXISTS (
+                  SELECT 1 FROM memory_aliases so
+                  WHERE so.guild_id = g AND so.campaign_id = c AND so.entity_id = ke.id
+                    AND so.secret AND so.status <> 'rejected'
+                    AND regexp_replace(lower(so.text), '[^[:alnum:]]', '', 'g')
+                      = regexp_replace(lower(ke.name), '[^[:alnum:]]', '', 'g'))
             UNION
             SELECT a.entity_id FROM memory_knowers k
             JOIN memory_aliases a ON a.guild_id = k.guild_id AND a.campaign_id = k.campaign_id

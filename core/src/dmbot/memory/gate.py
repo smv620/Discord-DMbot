@@ -391,19 +391,23 @@ async def names_for(
         if anchors
         else {}
     )
-    anchor_secret = (
-        {
-            str(a["entity_id"])
+    secret_own_names = (
+        [
+            a
             for a in await scope.select(
                 ALIASES,
                 " AND entity_id = ANY(%s) AND secret AND status <> 'rejected'",
                 [sorted(anchors)],
             )
             if a["key"] == lookup_key(str(anchor_rows[str(a["entity_id"])]["name"]))
-        }
+        ]
         if anchor_rows
-        else set()
+        else []
     )
+    anchor_secret = {str(a["entity_id"]) for a in secret_own_names}
+    anchor_held = {
+        str(a["entity_id"]) for a in secret_own_names if str(a["id"]) in seen.aliases
+    }  # (a row on the secret name itself is what makes it known)
     # a person joined to a named entry leaves their label as an other name: the merged-away row
     # still says what it described and who it hung off
     merged = await scope.select(
@@ -443,7 +447,10 @@ async def names_for(
             or anchor["merged_into"] is not None
         ):
             return None
-        known = seen.everything or (ENTRY, str(anchor["id"])) in seen.sureness
+        known = seen.everything or (
+            (ENTRY, str(anchor["id"])) in seen.sureness
+            and (str(anchor["id"]) not in anchor_secret or str(anchor["id"]) in anchor_held)
+        )
         if known or _public_entry(anchor, str(anchor["id"]) in anchor_secret):
             return str(anchor["name"])
         return None
@@ -488,6 +495,9 @@ async def names_for(
             main = _unnamed_label(row, anchor_name(row))
         if any(alias in seen.aliases for alias in own_name):
             shown: str | None = main
+        elif own_name_secret and not seen.everything:
+            # (an entry row does not make a secret name known: only a row on that name does)
+            shown = next((text for alias_id, text in others if alias_id in seen.aliases), None)
         else:
             shown = display_name(seen, entity_id, main, others)
             if shown is None and _public_entry(row, own_name_secret):
