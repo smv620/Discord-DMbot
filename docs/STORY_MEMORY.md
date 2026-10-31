@@ -851,7 +851,7 @@ the owner chooses it, one at a time.
   still finds it; the finder lists only the current belief of a live connection (not one on a
   rejected or reworded-away connection), walking through the others.
 
-**Lies: believing a speaker lied** (owner, 2026-10-31, #3091 part 2, migration 0300).
+**Lies: believing a speaker lied** (owner, 2026-10-31, #3091 part 2, migration 0301).
 - Two belief statuses beside `false_evidence` (a statement The truth denies) and
   `evasion_under_magic` (a dodge): `suspected_lie` (this point of view thinks the speaker lied, and is not
   sure) and `known_lie` (it is sure). A lie is about the speaker as well as the statement, which is not

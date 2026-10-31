@@ -1,4 +1,4 @@
-"""0300_lie_statuses
+"""0301_lie_statuses
 
 Two more kinds of belief: a point of view thinks (`suspected_lie`) or knows (`known_lie`) that
 someone lied (#3091, part 2).
