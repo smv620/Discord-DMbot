@@ -17,7 +17,7 @@ import psycopg.errors
 from dmbot import bot as bot_module
 from dmbot.bot import DMBot
 from dmbot.campaigns import Campaign, CampaignStore
-from dmbot.campaigns.models import DM_SCREEN_LEVELS_OFFERED
+from dmbot.campaigns.models import DM_SCREEN_LEVELS_OFFERED, STORY_MODES
 from dmbot.config import Settings as BotSettings
 from dmbot.dm_screen import messages, setup_dm_screen
 from dmbot.dm_screen import web_settings as ws
@@ -71,6 +71,14 @@ class FakeBot:
         self.calls.append(("optional_rule", f"{rule.id}:{turn_on}"))
         await self.store.set_optional_rule(campaign.guild_id, campaign.id, rule.id, turn_on)
         return True
+
+    async def apply_story_mode(
+        self, campaign: Campaign, mode: str, confirmed_by: int | None
+    ) -> Campaign:
+        self.calls.append(("story_mode", f"{mode}:{confirmed_by}"))
+        return await self.store.set_story_mode(
+            campaign.guild_id, campaign.id, mode, confirmed_by=confirmed_by
+        )
 
     async def find_member(self, guild_id: int, user_id: int) -> ws.Member | None:
         return ws.Member("Someone", False)
@@ -306,7 +314,9 @@ class TheDoor(Settings):
             "level": tuple(DM_SCREEN_LEVELS_OFFERED),
             "retention": ws.RETENTION_CHOICES,
         }
-        self.assertEqual(campaign_settings.CHOICES, offered)
+        # (the Shared story switch, #2985, is checked below: its three choices would fill the
+        # campaign's ten open places together with these nine)
+        self.assertEqual(campaign_settings.CHOICES, {**offered, "story_mode": STORY_MODES})
         async with self.web.user(self.session.user_id, session=self.session.id_hash) as conn:
             await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(self.g),))
             for setting, values in offered.items():
@@ -318,6 +328,18 @@ class TheDoor(Settings):
                     row = await cur.fetchone()
                     assert row is not None
                     self.assertEqual(row["r"]["status"], "ok", (setting, value))
+
+    async def test_the_door_accepts_the_story_switch_choices_discord_offers(self) -> None:
+        async with self.web.user(self.session.user_id, session=self.session.id_hash) as conn:
+            await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(self.g),))
+            for value in STORY_MODES:
+                cur = await conn.execute(
+                    "SELECT dmbot_web_setting_add(%s, %s, 'story_mode', %s, true) AS r",
+                    (self.g, self.one.id, value),
+                )
+                row = await cur.fetchone()
+                assert row is not None
+                self.assertEqual(row["r"]["status"], "ok", value)
 
     async def test_the_website_role_cannot_touch_the_table_itself(self) -> None:
         await self.queue(setting="level", value="quiet")

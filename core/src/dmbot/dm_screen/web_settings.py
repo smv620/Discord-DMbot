@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from dmbot.campaigns import Campaign, CampaignError
-from dmbot.campaigns.models import DM_SCREEN_LEVELS_OFFERED
+from dmbot.campaigns.models import DM_SCREEN_LEVELS_OFFERED, STORY_MODES
 from dmbot.campaigns.store import OWNER_STAYS
 from dmbot.db import Database
 from dmbot.dm_screen import game_masters, messages
@@ -41,6 +41,7 @@ KEEP_FOR_S = 3600  # nothing waits on a row longer than this
 
 VISIBILITY, LEVEL, RETENTION, OPTIONAL_RULE = "visibility", "level", "retention", "optional_rule"
 CO_DM = "co_dm"  # a game master added or removed (#2776)
+STORY_MODE = "story_mode"  # the Shared story switch (#3078)
 PERSON_ID_MAX = 19  # digits in a Discord id
 VISIBILITIES = ("private", "peek", "open")
 RETENTION_CHOICES = tuple(choice for choice, _days in CHOICES)
@@ -111,6 +112,14 @@ class Host(Protocol):
         does. True when the DM screen has its line (or the campaign has none); False when the line
         could not be posted: the rule is saved either way. Raises `CampaignError` when the
         campaign is gone."""
+        ...
+
+    async def apply_story_mode(
+        self, campaign: Campaign, mode: str, confirmed_by: int | None
+    ) -> Campaign:
+        """Save the Shared story switch with the store's own rules (#3078): turning it on needs
+        the DM's confirmation on record or `confirmed_by` now. Raises `CampaignError` with the
+        words Discord shows."""
         ...
 
     async def find_member(self, guild_id: int, user_id: int) -> Member | None:
@@ -206,6 +215,8 @@ async def apply(host: Host, guild_id: int, item: Setting) -> Outcome:
         return await _optional_rule(host, campaign, item)
     if item.setting == CO_DM:
         return await _co_dm(host, campaign, item)
+    if item.setting == STORY_MODE:
+        return await _story_mode(host, campaign, item)
     try:
         if item.setting == VISIBILITY:
             if item.value not in VISIBILITIES:
@@ -252,6 +263,20 @@ async def _optional_rule(host: Host, campaign: Campaign, item: Setting) -> Outco
         return Outcome(NOT_FOUND)  # the campaign went while the choice was being saved
     note = f"{chosen.name} is now {'on' if item.turn_on else 'off'}."
     return Outcome(note=note if noted else f"{note} {NO_SCREEN_NOTE}")
+
+
+async def _story_mode(host: Host, campaign: Campaign, item: Setting) -> Outcome:
+    """The Shared story switch (#3078), by the rules of Discord's. Turning it on needs the DM's
+    confirmation of the right to use the material (CLAUDE.md, IP rule): the website sends `flag`
+    when the DM ticked it, and the store records who and when. Without one on record or given
+    now the store refuses and its words go to the page. Off never asks."""
+    if item.value not in STORY_MODES:
+        return Outcome(BAD_VALUE)
+    try:
+        await host.apply_story_mode(campaign, item.value, item.user_id if item.flag else None)
+    except CampaignError as exc:
+        return Outcome(REFUSED, str(exc))
+    return Outcome()
 
 
 async def _co_dm(host: Host, campaign: Campaign, item: Setting) -> Outcome:

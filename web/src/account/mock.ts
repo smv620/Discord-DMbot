@@ -1787,7 +1787,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         ...(role === "player"
           ? {}
           : {
-              settings: { visibility: "peek", level: "normal", keepDays: 90, paused: false, gameMasters: 2 } as const,
+              settings: { visibility: "peek", level: "normal", keepDays: 90, paused: false, storyMode: "off", gameMasters: 2 } as const,
             }),
       };
     },
@@ -1800,6 +1800,8 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       signedIn();
       if (/\.cp-none$/.test(ref)) throw new ApiError("not-found");
       if (/\.cp-player$/.test(ref)) throw new ApiError("not-allowed");
+      // The server's door refuses turning the Shared story switch on without the right-to-use confirmation.
+      if (choice.setting === "story_mode" && choice.value !== "off" && choice.confirm !== true) throw new ApiError("needs-confirm");
       const id = `a${settingAnswers.size + 1}`;
       settingAnswers.set(id, { ref, ...choice });
       return id;
@@ -1940,6 +1942,10 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         if (/\.pa-noroom$/.test(ref) && asked.on === false)
           return { ...base, state: "failed", error: "refused", note: "You have no free place on your plan. Pause another campaign first." };
         return { ...base, state: "done", note: asked.on ? "Paused." : "Unpaused." };
+      }
+      if (asked.setting === "story_mode") {
+        if (/\.sm-refused$/.test(ref)) return { ...base, state: "failed", error: "refused", note: "**Shared story** needs a `confirmation`." };
+        return { ...base, state: "done", note: "" };
       }
       if (asked.setting === "optional_rule") {
         const rule = PRETEND_RULES.find((r) => r.id === asked.value);

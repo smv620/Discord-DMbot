@@ -5849,6 +5849,19 @@ async def _move_relations(w: Changes, keep_id: str, gone_id: str, *, join: bool 
         if pred is not None and moved.status != REJECTED:
             to_check.append((moved, others))
     await w.update_rows(RELATIONS, moves)
+    # (the bulk write skips the flag hooks, and the players' points of view must not carry a
+    # connection over to ends it was not known about: #3073)
+    if not join:  # (a join keeps whoever knew it: the gate shows it under the other name, #3037)
+        by_row = {r["id"]: r for r in rows}
+        await knowers.forget_moved(
+            w,
+            [
+                (by_row[i], {**by_row[i], **change})
+                for i, change in moves.items()
+                if i not in gone_rows
+            ],
+            entities,
+        )
     if join:  # the bulk write does not revoke what The party believed: do it for the secret ones
         for moved_id in moves:
             if moved_id not in gone_rows:
@@ -5868,8 +5881,28 @@ async def _move_relations(w: Changes, keep_id: str, gone_id: str, *, join: bool 
     by_id = {r["id"]: r for r in rows}
     for relation_id in gone_rows:
         if relation_id in folded:  # what was believed of the folded fact is believed of its twin
-            await beliefs.carry(w, by_id[relation_id], folded[relation_id], copy_beliefs=not join)
-            if join:  # and whoever knew the folded fact knows its twin: nothing is lost
+            twin_row = await w.get(RELATIONS, folded[relation_id])
+            # Whether the players were shown each fact is decided by its ENDS alone (a secret
+            # fact between two shown entries is still one the DM can hand to a character).
+            was_shown = knowers.ends_shown(entities, by_id[relation_id])
+            twin_shown = twin_row is not None and knowers.ends_shown(entities, twin_row)
+            # A plain merge never hands a player character a belief in a twin the players were not
+            # shown (the folded fact was shown, its twin is not); every other point of view's
+            # belief and the DM's pin are still carried. A join copies nothing (the twin keeps its
+            # own flag and what is believed of it). Logged, so Undo is the batch.
+            hide_from_players = not join and was_shown and not twin_shown
+            await beliefs.carry(
+                w,
+                by_id[relation_id],
+                folded[relation_id],
+                copy_beliefs=not join,
+                skip_players=hide_from_players,
+            )
+            if not hide_from_players:
+                # whoever knew the folded fact knows its twin: nothing is lost (a join keeps
+                # whoever knew; two facts that say the same to the same people, or that were both
+                # kept from the players, keep the DM's own list). Only a fact the players were
+                # shown, folding into one they were not, hands over nothing.
                 await knowers.move_rows(w, "relation_id", relation_id, folded[relation_id])
         await _delete_relation(w, relation_id)
 
