@@ -429,9 +429,10 @@ class Placing(ConfirmedMemoryTest):
     async def test_two_accusations_of_different_people_are_two_questions(self) -> None:
         one = readings.as_claim(belief("pc:Mira", "suspected_lie", 0.5, liar="Valyra"), "x")
         two = readings.as_claim(belief("pc:Mira", "suspected_lie", 0.5, liar="Corin"), "x")
-        key = lambda c: claims._repeat_key(  # noqa: E731
-            c.subject, c.relationship, c.object, c.how, c.reading
-        )
+
+        def key(c: Any) -> tuple[Any, ...]:
+            return claims._repeat_key(c.subject, c.relationship, c.object, c.how, c.reading)
+
         self.assertNotEqual(key(one), key(two))
 
     async def test_a_suspected_lie_is_placed_for_the_accuser_and_names_who_lied(self) -> None:
