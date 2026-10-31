@@ -65,6 +65,7 @@ from dmbot.memory.models import (
     PROPOSED,
     REVEALED_FACT,
     SECRET_PLOT,
+    SUSPECTED_LIE,
     THEORY,
     TRUTH,
     Belief,
@@ -103,15 +104,17 @@ def _checked(stored: Mapping[str, Any]) -> dict[str, Any]:
     if not 0.0 <= c <= 1.0:  # (also catches NaN)
         raise MemoryRuleError(beliefs.BAD_READING)
     guess = status in (THEORY, ACCUSATION) and 0.0 < c < 1.0
+    lie = status == SUSPECTED_LIE and 0.0 < c <= beliefs.SUSPECTED_MAX and bool(stored.get("liar"))
     ok = {
         TRUTH: (status == FALSE_EVIDENCE and c == 0.0) or (status == SECRET_PLOT and c == 1.0),
         PARTY: guess
         or (status == EVASION_UNDER_MAGIC and 0.0 < c < 1.0)
         or (status in (REVEALED_FACT, MAGICALLY_VERIFIED) and c == 1.0),
-    }.get(view, guess and view.startswith(PC_PREFIX) and len(view) > len(PC_PREFIX))
-    if not ok:
+    }.get(view, (guess or lie) and view.startswith(PC_PREFIX) and len(view) > len(PC_PREFIX))
+    liar = stored.get("liar")
+    if not ok or (status == SUSPECTED_LIE) != isinstance(liar, str) or (liar and not lie):
         raise MemoryRuleError(beliefs.BAD_READING)
-    return {"view": view, "status": status, "confidence": c}
+    return {"view": view, "status": status, "confidence": c, "liar": liar or ""}
 
 
 # Who is recorded now: a snapshot, or a function (plain or awaited) that asks again.
@@ -184,6 +187,12 @@ async def place(
         if isinstance(found, str) or found[0] in waiting or found[0] not in names.roles:
             raise MemoryRuleError(UNKNOWN_CHARACTER)
         holder = found[0]
+    liar_id: str | None = None  # the character a suspected lie names (#3091)
+    if reading["liar"]:
+        found = names.one(str(reading["liar"]))
+        if isinstance(found, str) or found[0] in waiting or found[0] not in names.roles:
+            raise MemoryRuleError(UNKNOWN_CHARACTER)
+        liar_id = found[0]
     reasons = _reasons(claim.reading or {}, names, waiting)
     stopped = False
     async with store._write(guild_id, campaign_id, DM) as w:
@@ -195,7 +204,7 @@ async def place(
         if await _recorded(claim, opted_in):
             relation_id, belief, flags = await _place_in(
                 store, w, claim, reading, subject_id, term.key, object_id,
-                label, holder, names.roles, reasons,
+                label, holder, names.roles, reasons, liar_id,
             )  # fmt: skip
             row = await w.update(
                 CLAIMS,
@@ -263,6 +272,7 @@ async def _place_in(
     holder: str | None,
     roles: Mapping[str, tuple[str | None, int | None]],
     reasons: Sequence[tuple[str, str]] = (),
+    liar_id: str | None = None,
 ) -> tuple[str, Belief | None, list[Flag]]:
     """The write: find or make the connection, then the belief, in the one open write."""
     status, confidence, view = str(reading["status"]), float(reading["confidence"]), reading["view"]
@@ -317,6 +327,7 @@ async def _place_in(
     belief = await beliefs.place_belief(
         w, perspective, host, confidence, status,
         evidence=[claim.id], session_at=claim.session_started_at,
+        sources=[liar_id] if liar_id else (),
     )  # fmt: skip
     await _link_reasons(w, reasons, belief_id=belief.id, session_at=claim.session_started_at)
     return host, belief, list(flags)

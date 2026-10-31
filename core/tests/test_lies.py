@@ -104,6 +104,28 @@ class MoreRules(Lies):
         done = await self.think(self.truth, "known_lie", 0.0, [self.valyra])
         self.assertEqual(done.value.status, "known_lie")
 
+    async def test_forgetting_the_accusers_words_takes_the_lie_they_made_with_them(self) -> None:
+        from psycopg.types.json import Jsonb
+
+        from dmbot.memory import forget_readings
+
+        claim = "e" * 32
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "INSERT INTO memory_claims (guild_id, campaign_id, id, subject, relationship,"
+                " object, how, lines, speaker_ids, source, prompt_version, model, status,"
+                " created_at, reading) VALUES (%s, %s, %s, 'Morn', 'knows', 'Bruno', 'player_said',"
+                " %s, %s, 'extractor', 'v1', 'm', 'confirmed', 1, %s)",
+                (GUILD_A, self.c, claim, [], [777], Jsonb({"view": "pc:Cerric",
+                    "status": "suspected_lie", "confidence": 0.5, "liar": "Valyra"})),
+            )  # fmt: skip
+        view = await self.pc_view()
+        await self.think(view, "suspected_lie", 0.5, [self.valyra], evidence=[claim])
+        self.assertEqual(len(await self.memory.lies(GUILD_A, self.c, source="dm")), 1)
+        async with self.db.guild(GUILD_A) as conn:
+            await forget_readings.forget(conn, GUILD_A, 777)
+        self.assertEqual(await self.memory.lies(GUILD_A, self.c, source="dm"), [])
+
     async def test_an_npcs_point_of_view_can_hold_a_lie(self) -> None:
         await self.memory.set_connection_knowers(GUILD_A, self.c, self.rel, [self.pc], source="dm")
         await self.memory.set_statement_knowers(

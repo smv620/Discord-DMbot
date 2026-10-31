@@ -84,6 +84,36 @@ class TheFourRules(unittest.TestCase):
         (also,) = proposals(read({**THEORY_A, "who": "party", "shared": True})).beliefs
         self.assertEqual(also.view, "party")
 
+    def test_she_is_lying_is_a_suspected_lie_at_most_a_guess_in_the_accusers_view(self) -> None:
+        lie = {**THEORY_A, "liar": "Valyra", "strength": "surely"}
+        (belief,) = proposals(read(lie)).beliefs
+        self.assertEqual(
+            (belief.view, belief.status, belief.liar), ("pc:Mira", "suspected_lie", "Valyra")
+        )
+        self.assertEqual(belief.confidence, 0.5)  # (even "surely" is a doubt, never above 50%)
+        self.assertFalse(belief.dm_confirms)
+        (unlikely,) = proposals(read({**lie, "strength": "unlikely"})).beliefs
+        self.assertEqual(unlikely.confidence, 0.25)
+        self.assertEqual(readings.reading_of(belief)["liar"], "Valyra")
+        (plain,) = proposals(read(THEORY_A)).beliefs
+        self.assertNotIn(
+            "liar", readings.reading_of(plain)
+        )  # (a file from before lies stays valid)
+
+    def test_a_lie_needs_a_named_liar_who_is_not_the_accuser_and_never_the_whole_table(
+        self,
+    ) -> None:
+        for field in (
+            {"liar": "she"},  # a pronoun
+            {"liar": "mira"},  # the accuser
+            {"liar": "Valyra", "shared": True},  # a lie is one character's belief
+        ):
+            with self.subTest(field):
+                got, bad = parse_readings(answer({**THEORY_A, **field}), REFS, dm_lines=DM_LINES)
+                self.assertEqual((got, bad), ([], 1))
+        got, bad = parse_readings(answer({**REVEAL_B, "liar": "Valyra"}), REFS, dm_lines=DM_LINES)
+        self.assertEqual((got, bad), ([], 1))  # (only a theory can be a lie)
+
     def test_a_resisted_spell_proposes_nothing(self) -> None:
         got = proposals(read({**EVASION_D, "outcome": "resisted"}))
         self.assertEqual((got.beliefs, got.protections), ((), ()))

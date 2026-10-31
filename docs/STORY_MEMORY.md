@@ -595,6 +595,12 @@ what players see.
   "surely" or "unlikely"), as Theory or Accusation, with the line as evidence. **A guess is never a
   reveal:** a guessed name may become a lone name in the players' view, and a guessed connection is
   drawn as uncertain.
+  **"She's lying!"** (#3091) is a theory that also names who lied (`liar`): it is proposed as a
+  Suspected Lie at most 50% (never higher, even for "surely"), in the accuser's own view only (never the
+  whole party's), with the line as evidence and the named character as the `source`. Being wrong is not
+  lying: the model sets `liar` only when the speaker says it was on purpose. A liar who is not a known
+  character refuses the reading whole. It waits for the DM like every guess, and a person's Stop recording
+  me removes it with their other guesses.
 - **B. Revealed facts:** the DM lets the characters find a clue or see an event that confirms something.
   The party's belief becomes 1.0, Revealed Fact, justified by that clue or event.
 - **C. Framing and secrets:** the DM says a revealed clue is fake, or someone is framed. The truth holds
