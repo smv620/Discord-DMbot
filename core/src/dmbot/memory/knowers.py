@@ -677,6 +677,8 @@ async def _open(w: Changes, column: str, items: Sequence[tuple[str, bool]]) -> N
         await w.insert_unlogged(KNOWERS, made)  # new statements: gone with them on Undo
     else:
         await w.insert_many(KNOWERS, made)
+        if column == "relation_id":
+            await _restore_beliefs(w, made)
 
 
 async def follow_flags(
@@ -785,19 +787,6 @@ async def forget_moved(
     if not lost:
         return
     await _close(w, "relation_id", lost)
-    views = await _player_views(w)
-    if not views:
-        return
-    newest: dict[tuple[str, str], float] = {}
-    for row in await w.select(
-        BELIEFS,
-        " AND relation_id = ANY(%s) AND perspective_id = ANY(%s) ORDER BY seq",
-        [lost, views],
-    ):
-        newest[(row["relation_id"], row["perspective_id"])] = row["confidence"]
-    for (relation_id, view), confidence in newest.items():
-        if confidence >= KNOWN:
-            await beliefs.add_belief(w, view, relation_id, 0.0, SECRET_PLOT)
 
 
 async def _close(w: Changes, column: str, ids: Sequence[str]) -> None:
@@ -805,8 +794,51 @@ async def _close(w: Changes, column: str, ids: Sequence[str]) -> None:
     them. An NPC's or a group's row stays: secret means kept from the players, not unknown to the
     world (Supervisor, #3018). Logged, so Undo brings the rows back."""
     views = await _player_views(w)
-    if views:
-        await w.delete_where_in(KNOWERS, column, ids, views)
+    if not views:
+        return
+    await w.delete_where_in(KNOWERS, column, ids, views)
+    if column == "relation_id":
+        await _forget_beliefs(w, ids, views)
+
+
+async def _forget_beliefs(w: Changes, relation_ids: Sequence[str], views: Sequence[str]) -> None:
+    """The player characters' points of view stop believing these connections (a 0.0 belief, so
+    the history stays and Undo brings it back): their rows went, and a belief left behind would
+    still list a connection of a hidden entry (#3082)."""
+    newest: dict[tuple[str, str], float] = {}
+    for row in await w.select(
+        BELIEFS,
+        " AND relation_id = ANY(%s) AND perspective_id = ANY(%s) ORDER BY seq",
+        [list(relation_ids), list(views)],
+    ):
+        newest[(row["relation_id"], row["perspective_id"])] = row["confidence"]
+    for (relation_id, view), confidence in newest.items():
+        if confidence >= KNOWN:
+            await beliefs.add_belief(w, view, relation_id, 0.0, SECRET_PLOT)
+
+
+async def _restore_beliefs(w: Changes, made: Sequence[dict[str, Any]]) -> None:
+    """Connections shown to the players again (`made`: the knower rows just given): each point of
+    view whose belief was closed by `_forget_beliefs` believes what it did before. Only the pairs
+    given a row again, so a belief the DM set to "doesn't know" by hand stays as it is when the
+    row is theirs to keep."""
+    pairs = {(r["relation_id"], r["perspective_id"]) for r in made if r.get("relation_id")}
+    if not pairs:
+        return
+    held: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for row in await w.select(
+        BELIEFS,
+        " AND relation_id = ANY(%s) AND perspective_id = ANY(%s) ORDER BY seq",
+        [sorted({r for r, _ in pairs}), sorted({v for _, v in pairs})],
+    ):
+        held.setdefault((row["relation_id"], row["perspective_id"]), []).append(row)
+    for pair in pairs:
+        rows = held.get(pair, [])
+        if not rows or rows[-1]["confidence"] > 0.0:
+            continue
+        before = [r for r in rows if r["confidence"] >= KNOWN]
+        if before:
+            await beliefs.add_belief(w, pair[1], pair[0], KNOWN, REVEALED_FACT)
 
 
 def ends_shown(ends: Mapping[str, Mapping[str, Any]], relation: Mapping[str, Any]) -> bool:
