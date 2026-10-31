@@ -11,6 +11,7 @@ from unittest.mock import patch
 
 import httpx
 
+from dmbot.memory.gate import ALIAS, CONNECTION, ENTRY
 from dmbot.memory.models import DM as DM_SOURCE
 from dmbot.memory.who_resolve import checked_line
 from dmbot.web import relationships, sessions
@@ -26,6 +27,8 @@ BOB_USER = DiscordUser(id=BOB.id, name=BOB.name, email=BOB.email)
 
 
 class Web(Listing):
+    bob_has_a_hero = True  # (the tests that build Bob's characters themselves turn it off)
+
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
         # Mira (npc) knows the Keep and is an ally of Rook; Rook is in the Keep; the Keep is in the
@@ -38,6 +41,77 @@ class Web(Listing):
         await self.link("located_in", self.rook, self.keep, "rook-keep")
         await self.link("located_in", self.keep, self.hall, "keep-hall")
         self.player = await self.signed(BOB_USER, MEMBER)
+        # Bob plays a character, which (like every new player character) starts out knowing what
+        # the table already knows: a player's page is what their own characters know (#3143)
+        self.hero = (
+            await self.add(
+                "Bob's hero", "character", role="player_character", played_by=BOB_USER.id
+            )
+            if self.bob_has_a_hero
+            else None
+        )
+        if self.hero is not None:
+            await self.tell_the_table(self.hero)
+
+    async def tell_the_table(self, hero: str) -> None:
+        """Let `hero` know every name the players are not kept from and every connection that is
+        not held back: what the old flags used to show a player. Secret and hidden things are left
+        out, so a test of what a player must not see still means something."""
+        async with self.db.guild(self.g) as conn:
+            cur = await conn.execute(
+                "SELECT e.id FROM memory_entities e WHERE e.campaign_id = %s"
+                " AND e.status = 'confirmed' AND e.merged_into IS NULL"
+                " AND NOT e.hidden_from_players AND NOT e.audience_limited AND NOT e.unnamed"
+                " AND e.id <> %s",
+                (self.one.id, hero),
+            )
+            entries = [r["id"] for r in await cur.fetchall()]
+            cur = await conn.execute(
+                "SELECT r.id FROM memory_relations r WHERE r.campaign_id = %s"
+                " AND r.status = 'confirmed' AND NOT r.secret AND NOT r.unrevealed",
+                (self.one.id,),
+            )
+            links = [r["id"] for r in await cur.fetchall()]
+        for kind, ids in ((ENTRY, entries), (CONNECTION, links)):
+            known = await self.memory.statement_knowers(self.g, self.one.id, kind, ids)
+            for i in ids:
+                await self.memory.set_statement_knowers(
+                    self.g, self.one.id, kind, i, sorted({*known.get(i, []), hero}),
+                    source=DM_SOURCE,
+                )  # fmt: skip
+
+    async def keep_from_bob(self, entry: str) -> None:
+        """The DM keeps this name (and every connection to it) from Bob's hero: the hero stops
+        knowing it. (The players' page is what their characters know, not a flag.)"""
+        assert self.hero is not None
+        async with self.db.guild(self.g) as conn:
+            cur = await conn.execute(
+                "SELECT r.id FROM memory_relations r WHERE r.campaign_id = %s"
+                " AND (r.subject_id = %s OR r.object_id = %s)",
+                (self.one.id, entry, entry),
+            )
+            links = [r["id"] for r in await cur.fetchall()]
+            cur = await conn.execute(
+                "SELECT a.id FROM memory_aliases a WHERE a.campaign_id = %s AND a.entity_id = %s",
+                (self.one.id, entry),
+            )
+            names = [r["id"] for r in await cur.fetchall()]  # (knowing a name is knowing it exists)
+        for kind, ids in ((ENTRY, [entry]), (CONNECTION, links), (ALIAS, names)):
+            known = await self.memory.statement_knowers(self.g, self.one.id, kind, ids)
+            for i in ids:
+                await self.memory.set_statement_knowers(
+                    self.g, self.one.id, kind, i,
+                    sorted(set(known.get(i, [])) - {self.hero}), source=DM_SOURCE,
+                )  # fmt: skip
+
+    async def keep_link_from_bob(self, link: str) -> None:
+        """The DM has not told this connection to Bob's hero (a held-back one)."""
+        assert self.hero is not None
+        known = await self.memory.statement_knowers(self.g, self.one.id, CONNECTION, [link])
+        await self.memory.set_statement_knowers(
+            self.g, self.one.id, CONNECTION, link,
+            sorted(set(known.get(link, [])) - {self.hero}), source=DM_SOURCE,
+        )  # fmt: skip
 
     async def link(self, predicate: str, a: str, b: str, tag: str, *, secret: bool = False) -> str:
         made = await self.memory.add_relation(
@@ -300,6 +374,7 @@ class WhoSeesWhat(Web):
         await self.sql(
             "UPDATE memory_entities SET hidden_from_players = true WHERE id = %s", self.hall
         )
+        await self.keep_from_bob(self.hall)
         player = await self.graph(self.player, center=self.mira, hops=2)
         self.assertNotIn("Far Hall", {n["name"] for n in player["nodes"]})
         dm = await self.graph(center=self.mira, hops=2)
@@ -403,11 +478,12 @@ class Refusals(Web):
             self.one.id,
             ALICE.id,
         )
-        got = await self.graph(center=self.mira, hops=2)  # the same session, the next call
-        self.assertFalse(got["canEdit"])
-        self.assertNotIn(
-            self.links["secret-link"], [x["id"] for e in got["edges"] for x in e["links"]]
+        # the same session, the next call: now a member with no character, who sees nothing
+        self.assertEqual(
+            await self.refused_web(self.session, center=self.mira, hops=2), "not_found"
         )
+        got = await self.graph()
+        self.assertEqual((got["canEdit"], got["nodes"], got["edges"]), (False, [], []))
 
     async def test_the_steps_are_one_to_the_most(self) -> None:
         for hops in (0, relationships.MAX_HOPS + 1, -1):
@@ -447,6 +523,7 @@ class TheRoute(Web):
         await self.sql(
             "UPDATE memory_entities SET hidden_from_players = true WHERE id = %s", self.hall
         )
+        await self.keep_from_bob(self.hall)
         async with await self.client(self.session) as client:
             base = f"/me/campaigns/{self.cref}/web/find"
             full = await client.get(base, params={"q": "far"})
