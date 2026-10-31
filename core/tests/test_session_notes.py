@@ -308,6 +308,32 @@ class TheStoryBudget(NotesTest):
         self.assertLessEqual(len(told[2]), NOTES_ENTRY_CHARS)
         self.assertTrue(told[2].endswith("x" * 90))  # cut after a whole beat, never in the middle
 
+    async def test_many_notes_only_sessions_keep_within_their_total_and_both_recaps_whole(
+        self,
+    ) -> None:
+        from dmbot.recaps.accepted import AcceptedStore
+        from dmbot.recaps.inputs import NOTES_TOTAL_CHARS
+
+        recaps = {100: "The first recap. " * 100, 200: "The second recap. " * 100}
+        async with self.db.guild(GUILD) as conn:
+            for at, text in recaps.items():
+                await conn.execute(
+                    "INSERT INTO recap_accepted (guild_id, campaign_id, session_at, version,"
+                    " text_hash, title, summary, accepted_by, accepted_at)"
+                    " VALUES (%s, %s, %s, 1, %s, 'T', %s, %s, 1)",
+                    (GUILD, self.camp.id, at, "a" * 64, text.strip(), DM),
+                )
+        long = [beat(f"Beat number {n} " + "x" * 90, [n]) for n in range(1, 160)]
+        for at in range(1000, 1000 + 22):  # 22 more sessions, each with a full-size sheet
+            await self.beats_step(self.camp, at, long)
+        told = await story_so_far(AcceptedStore(self.db), GUILD, self.camp.id, 9000, self.notes)
+        self.assertEqual(told[0], recaps[100].strip())
+        self.assertEqual(told[1], recaps[200].strip())
+        notes_told = told[2:]
+        self.assertTrue(notes_told)
+        self.assertLess(len(notes_told), 22)  # the older ones did not fit
+        self.assertLessEqual(sum(len(t) for t in notes_told), NOTES_TOTAL_CHARS)
+
     async def test_a_session_whose_transcript_still_exists_is_not_told_by_its_notes(self) -> None:
         from dmbot.recaps.accepted import AcceptedStore
 

@@ -18,7 +18,7 @@ from dmbot.memory.secret_aloud import MIN_KEY as MIN_SECRET_LETTERS
 from dmbot.recaps import familiar as fam
 from dmbot.recaps import fixed_lines
 from dmbot.recaps import split as sp
-from dmbot.recaps.pipeline import Inputs
+from dmbot.recaps.pipeline import STORY_CHARS_MAX, Inputs
 from dmbot.recaps.style import NoteStore, StyleStore
 from dmbot.recaps.text import strip_cues
 from dmbot.timebot.clock import day_of as clock_day_of
@@ -255,6 +255,9 @@ async def load_inputs(
 
 STORY_RECAPS = 24  # the latest earlier recaps the writer can be given (#2954)
 NOTES_ENTRY_CHARS = 2_000  # one session's notes in the story: its share, so recaps always fit
+# All the notes entries together: a third of the story's room, newest kept, so a long run of
+# sessions known only by their notes never pushes accepted recaps out of the prompt (#3086).
+NOTES_TOTAL_CHARS = STORY_CHARS_MAX // 3
 
 
 def notes_entry(n: Any) -> str:
@@ -283,7 +286,8 @@ async def story_so_far(
     has kept session notes (#3026, which outlive the transcript), is told by its notes, so the
     story does not lose it (a session whose transcript still exists is not told this way). Only
     the beats' own words (`what`) are used, never PlotBot's notes, cut to `NOTES_ENTRY_CHARS` at a
-    beat; the entry says it is notes, so the writer does not copy it as a recap."""
+    beat; the entries together fit `NOTES_TOTAL_CHARS`, the newest kept (#3086). The entry says it
+    is notes, so the writer does not copy it as a recap."""
     try:
         found = await accepted.newest(guild_id, campaign_id, before=session_at, last=STORY_RECAPS)
     except Exception as exc:  # optional context: the type, never the text
@@ -305,9 +309,14 @@ async def story_so_far(
         for a in found
         if a.session_at < session_at
     }
-    for n in kept:
+    room = NOTES_TOTAL_CHARS
+    for n in sorted(kept, key=lambda k: k.session_at, reverse=True):  # newest first
         if n.session_at < session_at and not told.get(n.session_at, "").strip():
-            told[n.session_at] = notes_entry(n)
+            entry = notes_entry(n)
+            if len(entry) > room:
+                break  # (the older ones are dropped whole; an accepted recap is never touched)
+            told[n.session_at] = entry
+            room -= len(entry)
     latest = sorted(told)[-STORY_RECAPS:]
     return tuple(told[at] for at in latest if told[at].strip())
 
