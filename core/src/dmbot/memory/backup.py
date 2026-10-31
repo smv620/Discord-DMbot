@@ -47,6 +47,7 @@ from dmbot.memory.models import (
     ALIAS_KINDS,
     BELIEF_STATUSES,
     CHANGE_KINDS,
+    LIE_STATUSES,
     CLAIM_STATUSES,
     CONDITIONS,
     DESCRIPTION_MAX,
@@ -434,6 +435,10 @@ def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
     # point of view the file holds; anything else is damage. A row for a point of view that is not
     # a character's cannot exist (the party is never a knower), so it is damage too.
     _check_knowers(by_tag, views)
+    # A belief that someone lied names who: a source link beside it, as the writer requires (#3091)
+    told = {r["belief_id"] for r in by_tag["evidence"] if r["kind"] == evidence.SOURCE}
+    if any(b["status"] in LIE_STATUSES and b["id"] not in told for b in by_tag["belief"]):
+        raise CampaignError(DAMAGED)
     # A row asleep waits for entries of this campaign: a name in the mark that is not an entry of
     # the file is dropped from it (a row left with none is awake), never a reason to refuse.
     entry_ids = {r["id"] for r in by_tag["entity"]}

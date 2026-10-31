@@ -42,12 +42,15 @@ from dmbot.memory.models import (
     EVIDENCE_MAX,
     FALSE_EVIDENCE,
     KNOWN,
+    KNOWN_LIE,
+    LIE_STATUSES,
     MAGICALLY_VERIFIED,
     PARTY,
     PC_VIEW,
     RETRACTION,
     REVEALED_FACT,
     SECRET_PLOT,
+    SUSPECTED_LIE,
     THEORY,
     TOLD,
     TRUTH,
@@ -109,6 +112,10 @@ async def _newest(
 
 BAD_LINEAGE = "That belief doesn't come from that one."
 NOT_A_SOURCE = "Pick someone from this campaign who said it."
+PINNED_RETRACTION = "That is pinned as 100% true. Unpin it first, then take it back."
+SAY_WHO_LIED = "Say which character lied."
+NOT_A_LIE = "A lie is held as false: sure it was a lie, or not sure but doubting it."
+LIE_NOT_HERE = "The players' view as a whole can't hold a lie; a character can."
 
 
 async def _check_lineage(
@@ -131,6 +138,8 @@ async def _check_lineage(
     earlier = await w.get(BELIEFS, derived_from)
     if earlier is None:
         raise MemoryRuleError(BAD_LINEAGE)
+    if change_kind == RETRACTION and earlier["pinned"]:
+        raise MemoryRuleError(PINNED_RETRACTION)
     same_view = earlier["perspective_id"] == perspective_id
     same_relation = earlier["relation_id"] == relation_id
     shape = {
@@ -141,6 +150,22 @@ async def _check_lineage(
     }[change_kind]
     if not shape:
         raise MemoryRuleError(BAD_LINEAGE)
+
+
+async def _check_lie(w: Changes, status: str, confidence: float, sources: Sequence[str]) -> None:
+    """A belief that someone lied (#3091): false for whoever holds it, so a known lie is held at
+    0.0 and a suspected one strictly between 0 and 1 (its confidence is still how sure the
+    connection is TRUE), and it names who lied: characters of this campaign, never nobody."""
+    if status == KNOWN_LIE and confidence != 0.0:
+        raise MemoryRuleError(NOT_A_LIE)
+    if status == SUSPECTED_LIE and not 0.0 < confidence < KNOWN:
+        raise MemoryRuleError(NOT_A_LIE)
+    liars = set(sources)
+    if not liars:
+        raise MemoryRuleError(SAY_WHO_LIED)
+    found = await w.select(ENTITIES, " AND id = ANY(%s) AND type = 'character'", [sorted(liars)])
+    if len(found) != len(liars):
+        raise MemoryRuleError(NOT_A_SOURCE)
 
 
 async def _add(
@@ -170,14 +195,18 @@ async def _add(
         raise MemoryRuleError("That is not a kind of belief.")
     if len(evidence) > EVIDENCE_MAX or any(not e or len(e) > EVIDENCE_ID_MAX for e in evidence):
         raise MemoryRuleError("That evidence is not in the right shape.")
+    if copy_from is not None and (derived_from is not None or change_kind is not None):
+        raise ValueError("A copy keeps the lineage of the belief it copies; it is never given one.")
     if copy_from is None:
         await _check_lineage(w, perspective_id, relation_id, confidence, derived_from, change_kind)
-    elif derived_from is None and change_kind is None:
+    else:
         # a copy (a reworded connection's, a pin's) is the same belief: it keeps where it came
         # from, whatever connection it now sits on (#3091)
         origin = await w.get(BELIEFS, copy_from)
         if origin is not None:
             derived_from, change_kind = origin["derived_from"], origin["change_kind"]
+    if status in LIE_STATUSES and copy_from is None:
+        await _check_lie(w, status, confidence, sources)
     for who in dict.fromkeys(sources):
         if not await evidence_links.resolves(
             w.conn, w.guild_id, w.campaign_id, evidence_links.SOURCE, who
@@ -313,6 +342,10 @@ async def believe_in(
         raise MemoryRuleError(NOT_THERE)
     if perspective["kind"] == TRUTH and w.source != DM:
         raise MemoryRuleError(ONLY_THE_DM)
+    if perspective["kind"] == PARTY and status in LIE_STATUSES:
+        raise MemoryRuleError(LIE_NOT_HERE)
+    if perspective["kind"] == TRUTH and status == SUSPECTED_LIE:
+        raise MemoryRuleError(NOT_A_LIE)  # (The truth knows: it confirms a lie, it never suspects)
     if perspective["kind"] == PARTY and (
         confidence < KNOWN
         or relation["secret"]

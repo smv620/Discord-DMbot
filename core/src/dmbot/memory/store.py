@@ -40,6 +40,7 @@ from dmbot.memory import (
     gate,
     kin,
     knowers,
+    lies,
     lineage,
     merge_restore,
     notify,
@@ -4068,6 +4069,24 @@ class MemoryStore:
             raise MemoryRuleError("Only the DM can ask what rests on this.")
         async with self._read(guild_id, campaign_id, snapshot=True) as scope:
             return await lineage.resting_on(scope, source_id=entity_id, belief_id=belief_id)
+
+    async def lies(self, guild_id: int, campaign_id: str, *, source: str) -> list[lies.Lie]:
+        """Who thinks a speaker lied (#3091): every current lie, for the DM only. Ids and numbers;
+        the caller makes the words from names it may use."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can see every lie.")
+        async with self._read(guild_id, campaign_id, snapshot=True) as scope:
+            return await lies.all_lies(scope)
+
+    async def lies_my_characters_think(
+        self, guild_id: int, campaign_id: str, user_id: int
+    ) -> list[lies.Lie]:
+        """What this player's own characters think about who lied, and nothing else: through the
+        gate, so it names only a connection and a character they may know. `user_id` must be the
+        signed-in person's own (it trusts it, like `what_my_characters_know`)."""
+        async with self._read(guild_id, campaign_id, snapshot=True) as scope:
+            mine = await knowers.characters_of(scope, user_id)
+            return await lies.lies_my_characters_think(scope, list(mine))
 
     async def perspectives(self, guild_id: int, campaign_id: str) -> list[Perspective]:
         """Who holds beliefs in this campaign: The truth and The party, then any character's."""
