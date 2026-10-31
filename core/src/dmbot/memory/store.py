@@ -158,6 +158,7 @@ from dmbot.memory.ontology import (
     ACTIVE,
     CORE_PREDICATES,
     DEPRECATED,
+    DISGUISED_AS,
     DM_WORD_REFUSED,
     MAX_NEW_TERMS_PER_SESSION,
     PERSON_NOT_LISTED,
@@ -2891,6 +2892,15 @@ class MemoryStore:
             )
             aliases = await scope.select(ALIASES, " AND status = 'confirmed'")
             links = await scope.select(RELATIONS, " AND status = 'confirmed'")
+            # A disguise joins two people at any status but rejected (a proposed one is a guess
+            # the DM has not judged yet), and is read apart: a proposed link is no evidence of
+            # "the same person", only a reason never to offer it (#3091)
+            disguises = {
+                (str(r["subject_id"]), str(r["object_id"]))
+                for r in await scope.select(
+                    RELATIONS, " AND predicate = %s AND status <> 'rejected'", [DISGUISED_AS]
+                )
+            }
             cur = await scope.conn.execute(
                 "SELECT a_id, b_id FROM name_not_same WHERE guild_id = %s AND campaign_id = %s",
                 scope.ids,
@@ -2898,7 +2908,9 @@ class MemoryStore:
             apart = {(str(r["a_id"]), str(r["b_id"])) for r in await cur.fetchall()}
         # Off the event loop: it compares every unnamed entry with every named one, and the bot's
         # other work (voice, consent) must not wait for a campaign of thousands.
-        return await asyncio.to_thread(same_person_mod.from_rows, entries, aliases, links, apart)
+        return await asyncio.to_thread(
+            same_person_mod.from_rows, entries, aliases, links, apart, disguises
+        )
 
     async def not_the_same_person(
         self, guild_id: int, campaign_id: str, unnamed_id: str, named_id: str, *, user_id: int
@@ -3952,9 +3964,13 @@ class MemoryStore:
             and kin.role_of(detail)
         )
         s, o = ordered(pred, subject_id, object_id, detail, directional)
+        # A disguise is hidden by nature (#3091): a NEW one is made secret however it is made, and
+        # the DM reveals it with the connection's own switch. One that already exists keeps the
+        # DM's choice (the upgrade below reads the caller's `secret`).
         new = Relation(
             new_id(), s, predicate, o, " ".join(detail.split()), confidence, status, source,
-            tuple(mention_ids), from_session_at, to_session_at, None, None, secret, w.now,
+            tuple(mention_ids), from_session_at, to_session_at, None, None,
+            secret or pred.key == DISGUISED_AS, w.now,
             pred.version, unrevealed, directional, (decided or None),
         )  # fmt: skip
         existing = await _relations_touching(w, s, o)
@@ -3979,6 +3995,8 @@ class MemoryStore:
             row = await w.update(RELATIONS, same.id, upgrade)
             return _relation(row), []
         await w.insert(RELATIONS, _relation_row(new))
+        if pred.key == DISGUISED_AS:  # the one in disguise knows it, on every path (#3091)
+            await knowers.know_own_disguise(w, new.id, s)
         for mention in found:  # what it was said in: typed links (#2662), beside the old list
             await evidence.add_in(
                 w, kind=evidence.LINE, target_id=str(mention["line_ref"]), relation_id=new.id,

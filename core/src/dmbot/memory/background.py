@@ -25,7 +25,7 @@ from typing import Any
 from dmbot.memory import kin
 from dmbot.memory.end_match import FILLER, SHORTEST, Ends
 from dmbot.memory.models import name_key
-from dmbot.memory.ontology import FALLBACK_PREDICATE
+from dmbot.memory.ontology import DISGUISED_AS, FALLBACK_PREDICATE, SYNONYMS
 from dmbot.memory.pronouns import PRONOUNS, speaker_end
 from dmbot.memory.scan import COMMON, GAME_TERMS
 from dmbot.names import not_names
@@ -74,6 +74,9 @@ CONNECTIONS = {
     "founded": "founded",
     "captive": "captive_of",  # a is held captive by b
     "contains": "contains",  # a contains b
+    # A second character posing as another (a doppelganger, an impostor): two people, never a name
+    # of one (#3091). A secret identity of ONE person stays a secret name; this is a connection.
+    "disguised as": "disguised_as",  # a is disguised as b
 }
 # The relationships lore is mostly made of (#2757), built in so the AI never has to word them
 # itself (a free label may use only the quote's own words, which "mentors" or "is a rival of"
@@ -755,6 +758,8 @@ def read_connections(
             how, label = FALLBACK_PREDICATE, LORE_WORDS[word]
         elif how is None and word in LORE_KIN:  # family by role
             how, label = "kin_of", word
+        elif how is None and SYNONYMS.get("_".join(word.split())) == DISGUISED_AS:
+            how = DISGUISED_AS  # "poses as", "impersonates": a disguise, never a public link
         if word == OTHER:  # the catch-all, kept with the words the text used
             label = at_word_end(" ".join(str(item.get("words") or "").split()), WORDS_CHARS)
             if not label or "|" in label:
@@ -767,6 +772,8 @@ def read_connections(
                 lost["word_not_allowed"] += 1
                 continue
             how = FALLBACK_PREDICATE
+            if SYNONYMS.get("_".join(label.casefold().split())) == DISGUISED_AS:
+                how, label = DISGUISED_AS, ""  # (a disguise word said as "other": still secret)
         if how is None:
             lost["word_not_allowed"] += 1
             continue

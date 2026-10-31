@@ -504,7 +504,12 @@ def _repeat_key(
     (point of view and status tell them apart)."""
     # (Only the point of view and the status: two readings of the same words that differ only in
     # the clue they name are one question. Slice 2b may need the clue here.)
-    held = None if reading is None else (reading.get("view"), reading.get("status"))
+    # (a lie also names who lied: two accusations of different people are two questions)
+    held = (
+        None
+        if reading is None
+        else (reading.get("view"), reading.get("status"), reading.get("liar"))
+    )
     return name_key(subject), _phrase(relationship), name_key(obj), how == HOW_PLAN, held
 
 

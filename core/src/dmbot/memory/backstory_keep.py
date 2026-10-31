@@ -28,7 +28,7 @@ from dmbot.memory.models import (
     MemoryRuleError,
     Relation,
 )
-from dmbot.memory.ontology import Ontology
+from dmbot.memory.ontology import DISGUISED_AS, Ontology
 from dmbot.memory.store import MemoryStore
 
 log = logging.getLogger(__name__)
@@ -203,7 +203,12 @@ async def keep_all(
                 directional=kin.directional(c.detail),  # a family role keeps who holds it
                 unrevealed=kept_unrevealed(c, c.secret, shown), decided=c.decided or None,
                 # the uploader's character knows it, unless it uses a secret name (#2935)
-                known_by=[c.known_by] if c.known_by and not c.secret else (),
+                # (a disguise is secret by nature, yet its character knows it, #3091)
+                known_by=(
+                    [c.known_by]
+                    if c.known_by and (not c.secret or c.predicate == DISGUISED_AS)
+                    else ()
+                ),
                 from_session_at=start if old else None,  # (starts as the old one ends)
                 keep_flags=keep_flags,
             )  # fmt: skip
