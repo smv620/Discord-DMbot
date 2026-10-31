@@ -32,23 +32,51 @@ GAME_CLOCK_LOG = (
     """
     + _isolate("game_clock_log")
     + """
-    -- Runs as whoever changed the clock, so the same server rules apply to the log row.
-    CREATE FUNCTION game_clock_log_change() RETURNS trigger
+    -- Runs as whoever changed the clock, so the same server rules apply to the log row. A trigger
+    -- failing makes the clock write fail with it (a future backfill of `minute` would need the
+    -- `migrate_backfill` policy to open this table's row-level security too).
+    -- A group's clock: a row whenever it is set or moves.
+    CREATE FUNCTION game_clock_log_group() RETURNS trigger
         LANGUAGE plpgsql AS $fn$
     BEGIN
         IF TG_OP = 'INSERT' OR NEW.minute IS DISTINCT FROM OLD.minute THEN
             INSERT INTO game_clock_log (guild_id, campaign_id, position, at, minute)
-            VALUES (NEW.guild_id, NEW.campaign_id,
-                    (to_jsonb(NEW) ->> 'position')::INTEGER,  -- (only a group has one)
+            VALUES (NEW.guild_id, NEW.campaign_id, NEW.position,
                     floor(extract(epoch FROM clock_timestamp()))::BIGINT, NEW.minute);
         END IF;
         RETURN NULL;
     END
     $fn$;
-    CREATE TRIGGER game_clocks_log AFTER INSERT OR UPDATE OF minute ON game_clocks
-        FOR EACH ROW EXECUTE FUNCTION game_clock_log_change();
+    -- The main clock: a row when it is set or moves, and when the party splits or comes back
+    -- together, so the log knows which clock the table was on. While split the main clock stands
+    -- still (it is the clock from before the split), so its minute is not logged then. At a split
+    -- every group's minute is logged again; at a rejoin or an Undo of a split the main clock's.
+    CREATE FUNCTION game_clock_log_main() RETURNS trigger
+        LANGUAGE plpgsql AS $fn$
+    DECLARE
+        now_s BIGINT := floor(extract(epoch FROM clock_timestamp()))::BIGINT;
+    BEGIN
+        IF TG_OP = 'INSERT' THEN
+            INSERT INTO game_clock_log (guild_id, campaign_id, position, at, minute)
+            VALUES (NEW.guild_id, NEW.campaign_id, NULL, now_s, NEW.minute);
+        ELSIF OLD.picked_group IS NULL AND NEW.picked_group IS NOT NULL THEN
+            INSERT INTO game_clock_log (guild_id, campaign_id, position, at, minute)
+            SELECT g.guild_id, g.campaign_id, g.position, now_s, g.minute
+              FROM game_clock_groups g
+             WHERE g.guild_id = NEW.guild_id AND g.campaign_id = NEW.campaign_id
+             ORDER BY g.position;
+        ELSIF NEW.picked_group IS NULL
+              AND (OLD.picked_group IS NOT NULL OR NEW.minute IS DISTINCT FROM OLD.minute) THEN
+            INSERT INTO game_clock_log (guild_id, campaign_id, position, at, minute)
+            VALUES (NEW.guild_id, NEW.campaign_id, NULL, now_s, NEW.minute);
+        END IF;
+        RETURN NULL;
+    END
+    $fn$;
+    CREATE TRIGGER game_clocks_log AFTER INSERT OR UPDATE OF minute, picked_group ON game_clocks
+        FOR EACH ROW EXECUTE FUNCTION game_clock_log_main();
     CREATE TRIGGER game_clock_groups_log AFTER INSERT OR UPDATE OF minute ON game_clock_groups
-        FOR EACH ROW EXECUTE FUNCTION game_clock_log_change();
+        FOR EACH ROW EXECUTE FUNCTION game_clock_log_group();
     """
 )
 

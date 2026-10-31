@@ -204,6 +204,13 @@ class ReadingPass(unittest.IsolatedAsyncioTestCase):
         # clock's log at that moment (#3091)
         self.assertEqual(claims[0].reading["spoken_at"], 1)  # type: ignore[index]
 
+    async def test_an_imported_sessions_readings_carry_no_moment_to_read_the_clock_at(self) -> None:
+        ai, store = Believing(), Kept()
+        await go(ai, store, session(10), readings=True, imported=True)
+        ((claims, _, _),) = store.calls
+        self.assertNotIn("spoken_at", claims[0].reading)  # type: ignore[arg-type]
+        self.assertEqual(claims[0].reading["view"], "pc:Mira")  # type: ignore[index]
+
     async def test_the_reading_call_is_held_to_the_same_call_limit_and_counted(self) -> None:
         counted: list[int] = []
 

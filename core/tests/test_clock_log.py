@@ -5,6 +5,7 @@ splits and the campaign. Invented names."""
 from __future__ import annotations
 
 from typing import Any
+from unittest.mock import patch
 
 from dmbot.timebot.clock import Clock
 from dmbot.timebot.stamp import game_time_at
@@ -47,9 +48,16 @@ class Logging(base.Clocks):
     async def test_a_split_writes_a_row_for_each_group_and_a_rejoin_the_main_clock(self) -> None:
         await self.clocks.change(GUILD_A, self.a.id, DM, lambda _c: Clock(2000, 0))
         await self.clocks.split(GUILD_A, self.a.id, DM, ["Tower", "Camp"])
-        self.assertEqual(await self.rows(GUILD_A, self.a.id), [(None, 2000), (1, 2000), (2, 2000)])
+        rows = await self.rows(GUILD_A, self.a.id)
+        self.assertEqual(rows[0], (None, 2000))
+        self.assertEqual(
+            sorted(set(rows[1:])), [(1, 2000), (2, 2000)]
+        )  # (each group, at the split)
         await self.clocks.change(GUILD_A, self.a.id, DM, lambda c: Clock(2060, 0))
         self.assertEqual((await self.rows(GUILD_A, self.a.id))[-1], (1, 2060))
+        before = len(await self.rows(GUILD_A, self.a.id))
+        await self.clocks.rejoin(GUILD_A, self.a.id, DM, 1)
+        self.assertEqual((await self.rows(GUILD_A, self.a.id))[before:], [(None, 2060)])
 
     async def minute(self, guild: int, campaign: str, at: int, group: int | None = None) -> Any:
         async with self.db.guild(guild) as conn:
@@ -88,10 +96,78 @@ class Logging(base.Clocks):
         await self.at(GUILD_A, self.a.id, 300)
         m = self.minute
         self.assertEqual(await m(GUILD_A, self.a.id, 150), 2000)  # before the split: the main clock
+        self.assertEqual(await m(GUILD_A, self.a.id, 150, 1), 2000)  # together: one clock for all
         self.assertEqual(await m(GUILD_A, self.a.id, 350, 1), 2090)  # group 1, its own clock
         self.assertEqual(await m(GUILD_A, self.a.id, 350, 2), 2000)  # group 2, still where it was
         self.assertIsNone(await m(GUILD_A, self.a.id, 350))  # no group given: not the stale main
         self.assertIsNone(await m(GUILD_A, self.a.id, 350, 3))  # a group that was never there
+
+    async def stamp_in_order(self) -> int:
+        """Give the rows increasing real times (the test cannot wait), and return the last."""
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "UPDATE game_clock_log SET at = 1000 + seq"
+                " WHERE guild_id = %s AND campaign_id = %s",
+                (GUILD_A, self.a.id),
+            )
+            cur = await conn.execute(
+                "SELECT max(at) AS last FROM game_clock_log"
+                " WHERE guild_id = %s AND campaign_id = %s",
+                (GUILD_A, self.a.id),
+            )
+            row = await cur.fetchone()
+        assert row is not None
+        return int(row["last"])
+
+    async def test_a_rejoin_that_keeps_a_group_that_never_moved_is_the_main_clock_again(
+        self,
+    ) -> None:
+        await self.clocks.change(GUILD_A, self.a.id, DM, lambda _c: Clock(2000, 0))
+        await self.clocks.split(GUILD_A, self.a.id, DM, ["Tower", "Camp"])
+        await self.clocks.rejoin(GUILD_A, self.a.id, DM, 2)  # group 2 never moved
+        last = await self.stamp_in_order()
+        self.assertEqual(await self.minute(GUILD_A, self.a.id, last), 2000)
+        self.assertEqual(
+            await self.minute(GUILD_A, self.a.id, last, 1), 2000
+        )  # (gone: the one clock)
+
+    async def test_undoing_a_split_is_the_main_clock_again(self) -> None:
+        await self.clocks.change(GUILD_A, self.a.id, DM, lambda _c: Clock(2000, 0))
+        _, token = await self.clocks.split(GUILD_A, self.a.id, DM, ["Tower", "Camp"])
+        self.assertTrue(await self.clocks.undo_split(GUILD_A, self.a.id, DM, token))
+        last = await self.stamp_in_order()
+        self.assertEqual(await self.minute(GUILD_A, self.a.id, last), 2000)
+
+    async def test_undoing_a_rejoin_is_split_again_so_the_main_clock_is_not_known(self) -> None:
+        await self.clocks.change(GUILD_A, self.a.id, DM, lambda _c: Clock(2000, 0))
+        await self.clocks.split(GUILD_A, self.a.id, DM, ["Tower", "Camp"])
+        await self.clocks.change(GUILD_A, self.a.id, DM, lambda c: Clock(2090, 0))  # group 1
+        rejoined = await self.clocks.rejoin(GUILD_A, self.a.id, DM, 1)
+        self.assertTrue(await self.clocks.undo_rejoin(GUILD_A, self.a.id, DM, rejoined.token))
+        last = await self.stamp_in_order()
+        self.assertIsNone(await self.minute(GUILD_A, self.a.id, last))  # not the frozen 2000
+        self.assertEqual(await self.minute(GUILD_A, self.a.id, last, 1), 2090)
+        self.assertEqual(await self.minute(GUILD_A, self.a.id, last, 2), 2000)
+
+    async def test_a_group_asked_for_after_a_rejoin_gets_the_main_minute(self) -> None:
+        await self.clocks.change(GUILD_A, self.a.id, DM, lambda _c: Clock(2000, 0))
+        await self.clocks.split(GUILD_A, self.a.id, DM, ["Tower", "Camp"])
+        await self.clocks.change(GUILD_A, self.a.id, DM, lambda c: Clock(2090, 0))
+        await self.clocks.rejoin(GUILD_A, self.a.id, DM, 1)
+        last = await self.stamp_in_order()
+        self.assertEqual(await self.minute(GUILD_A, self.a.id, last, 2), 2090)
+
+    async def test_a_log_longer_than_the_cap_loads_keeping_the_newest_rows(self) -> None:
+        await self.clocks.change(GUILD_A, self.a.id, DM, lambda _c: Clock(1000, 0))
+        section = ClockSection()
+        async with self.db.guild(GUILD_A) as conn:
+            good = (await section.dump(conn, GUILD_A, self.a.id))[0]
+        long = [{"position": None, "at": 10 + n, "minute": 100 + n} for n in range(7)]
+        copy = await self.campaigns.create(GUILD_B, "Long", DM)
+        with patch.object(ClockSection, "_LOG_MAX", 3):
+            async with self.db.guild(GUILD_B) as conn:
+                await section.load(conn, GUILD_B, copy.id, [{**good, "log": long}])
+        self.assertEqual(await self.rows(GUILD_B, copy.id), [(None, 104), (None, 105), (None, 106)])
 
     async def test_the_log_goes_with_a_backup_and_a_file_from_before_has_none(self) -> None:
         await self.clocks.change(GUILD_A, self.a.id, DM, lambda _c: Clock(1000, 0))

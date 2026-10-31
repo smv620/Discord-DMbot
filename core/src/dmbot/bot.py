@@ -8539,6 +8539,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 after_ms=after_ms,
                 readings=self.settings.story_readings_on,
                 family_only=self.settings.story_family_only,
+                imported=await transcripts.is_import(gid, sid),
                 count_call=lambda: transcripts.record_extraction(
                     gid, sid, through_ms=0, calls=1, now=int(time.time())
                 ),
@@ -8696,6 +8697,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 after_ms=0,
                 readings=self.settings.story_readings_on,
                 family_only=self.settings.story_family_only,
+                imported=await transcripts.is_import(gid, sid),
                 count_call=lambda: transcripts.record_extraction(
                     gid, sid, through_ms=0, calls=1, now=int(time.time())
                 ),
