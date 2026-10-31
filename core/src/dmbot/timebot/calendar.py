@@ -122,3 +122,20 @@ def date_words(minute: int, kind: str = DAYS, start: DayOne | None = None) -> st
 def minute_of(day_number: int, hour: int = 0, minute: int = 0) -> int:
     """The game minute at the start of day `day_number` (the clock's own arithmetic)."""
     return (day_number - 1) * MINUTES_PER_DAY + hour * 60 + minute
+
+
+@dataclass(frozen=True, slots=True)
+class Calendar:
+    """A campaign's calendar setting: which one, and (for Harptos) the date of Day 1. The default,
+    Day N, needs neither."""
+
+    kind: str = DAYS
+    start: DayOne | None = None
+
+    def __post_init__(self) -> None:
+        if self.kind not in KINDS or (self.kind == HARPTOS and self.start is None):
+            raise ValueError("calendar")
+
+    def words(self, minute: int) -> str:
+        """The date of this game minute: Day N, or the Harptos date."""
+        return date_words(minute, self.kind, self.start)
