@@ -80,6 +80,8 @@ class TheCampaignPage(Base):
                 "paused",
                 "storyMode",
                 "dndbeyondInvite",
+                "mainRules",
+                "fallbackRules",
                 "gameMasters",
             },
         )
@@ -107,7 +109,8 @@ class TheCampaignPage(Base):
         self.assertEqual(
             co["settings"],
             {"visibility": "private", "level": "quiet", "keepDays": 90, "paused": True,
-             "storyMode": "guide", "dndbeyondInvite": "", "gameMasters": 2},
+             "storyMode": "guide", "dndbeyondInvite": "", "mainRules": "2024",
+             "fallbackRules": "2014", "gameMasters": 2},
         )  # fmt: skip
 
     async def test_importing_is_said_for_the_campaigns_server(self) -> None:
@@ -185,6 +188,8 @@ class TheCampaignRoute(Base):
                     "paused": False,
                     "storyMode": "off",
                     "dndbeyondInvite": "",
+                    "mainRules": "2024",
+                    "fallbackRules": "2014",
                     "gameMasters": 1,
                 },
             },
