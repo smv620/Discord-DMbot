@@ -123,9 +123,15 @@ class Host(Protocol):
         words Discord shows."""
         ...
 
-    async def apply_rulesets(self, campaign: Campaign, main: str, fallback: str) -> Campaign:
-        """Save the main rules and the fallback with the store's own check (`check_rulesets`).
-        Raises `CampaignError` with the store's words."""
+    async def apply_rulesets(self, campaign: Campaign, main: str, fallback: str) -> bool:
+        """Save the main rules and the fallback with the store's own check (`check_rulesets`),
+        then get the new pair ready for lookups (a failure there costs only speed). Raises
+        `CampaignError` with the store's words. True when a session of this campaign is live: it
+        keeps the pair it started with, so the change applies from the next one."""
+        ...
+
+    async def optional_overrides(self, campaign: Campaign) -> dict[str, bool]:
+        """The optional rules the DM switched away from the campaign default."""
         ...
 
     async def find_member(self, guild_id: int, user_id: int) -> Member | None:
@@ -287,20 +293,49 @@ async def _story_mode(host: Host, campaign: Campaign, item: Setting) -> Outcome:
     return Outcome()
 
 
+RULESETS_NEXT_SESSION = "Saved. It takes effect from your next session."
+
+
+def unused_optional_rules(
+    old_main: str, new_main: str, overrides: dict[str, bool], default: bool
+) -> list[str]:
+    """Names of the optional rules that were on for the old main rules and do not add to the new
+    ones. They stay saved (switching back brings them back) but do nothing meanwhile, so the DM
+    is told: turning a chosen rule off silently is not OK."""
+    now = {r.id for r in optional.applying(new_main)}
+    return [
+        r.name
+        for r in optional.applying(old_main)
+        if r.id not in now and optional.is_on(r.id, overrides, default)
+    ]
+
+
 async def _rulesets(host: Host, campaign: Campaign, item: Setting) -> Outcome:
     """The main rules and the fallback (#3112), as "<main>/<fallback>". The store checks the pair
     again (both words offered, the fallback not the main rules) and its words go to the page.
-    Everything built on the rules (optional rules, lookups) reads the campaign's saved pair each
-    time, so saving it is the whole change, as in Discord. Applying the same pair twice is the
-    same save."""
+    A live session captured its pair when it started (spotter, lookups, clashes, legacy tags), so
+    it keeps it and the note says the change applies from the next session. Optional rules that
+    do not add to the new main rules are named. Applying the same row twice is the same save."""
     if item.value.count("/") != 1:
         return Outcome(BAD_VALUE)
     main, fallback = item.value.split("/")
     try:
-        await host.apply_rulesets(campaign, main, fallback)
+        live = await host.apply_rulesets(campaign, main, fallback)
+        overrides = (
+            await host.optional_overrides(campaign) if main != campaign.target_ruleset else {}
+        )
     except CampaignError as exc:
         return Outcome(REFUSED, str(exc))
-    return Outcome()
+    notes = [RULESETS_NEXT_SESSION] if live else []
+    unused = unused_optional_rules(
+        campaign.target_ruleset, main, overrides, campaign.optional_rules_default
+    )
+    if unused:
+        notes.append(
+            f"These optional rules do not add to the {optional.main_rules(main)} and do nothing "
+            f"until you switch back: {', '.join(unused)}."
+        )
+    return Outcome(note=" ".join(notes))
 
 
 async def _co_dm(host: Host, campaign: Campaign, item: Setting) -> Outcome:
