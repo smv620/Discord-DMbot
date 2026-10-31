@@ -73,6 +73,33 @@ class TheMutualRoles(unittest.TestCase):
         self.assertEqual(kin.parse("is the grandmother of"), ("grandmother", False))
 
 
+class TheMutualRolesWhateverTheDirection(unittest.TestCase):
+    """#3102: a sibling, cousin or spouse reads in full from both cards even when it was stored
+    without a direction; a one-way role and a role-less family link keep their old words."""
+
+    def test_a_mutual_role_reads_in_full_when_stored_undirected(self) -> None:
+        for word in sorted(kin.MUTUAL):
+            with self.subTest(word):
+                self.assertEqual(link_words("kin_of", word, False), f"is the {word} of")
+                self.assertIsNone(back_words("kin_of", word, False))
+                self.assertTrue(reads_both_ways("kin_of", word, False))
+
+    def test_a_one_way_role_is_unchanged_when_stored_undirected(self) -> None:
+        for word in kin.ROLES:
+            if word in kin.MUTUAL:
+                continue
+            with self.subTest(word):
+                self.assertEqual(link_words("kin_of", word, False), "is family of")
+                self.assertIsNone(back_words("kin_of", word, False))
+
+    def test_no_role_or_an_unknown_one_is_family_of(self) -> None:
+        for detail in ("", "friend"):
+            with self.subTest(detail=detail):
+                self.assertEqual(link_words("kin_of", detail, False), "is family of")
+                self.assertEqual(link_words("kin_of", detail, True), "is family of")
+                self.assertIsNone(back_words("kin_of", detail, True))
+
+
 class TheConnectionWords(unittest.TestCase):
     def test_a_role_reads_with_the_role_and_an_empty_one_as_before(self) -> None:
         self.assertEqual(link_words("kin_of", "niece", True), "is the niece of")
