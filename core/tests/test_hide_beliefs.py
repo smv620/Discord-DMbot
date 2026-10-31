@@ -192,6 +192,214 @@ class HidingAndShowingAgain(Base):
         self.assertLess(shown, 60, f"{shown} statements to show")
 
 
+DAY = 24 * 60 * 60
+
+
+class WhatTheHideKeeps(Base):
+    """The mark lives in the row, so pruning, the order of shows and many edits cannot lose it."""
+
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        self.claim = "c" * 32
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "INSERT INTO memory_claims (guild_id, campaign_id, id, subject, relationship,"
+                " object, how, lines, source, prompt_version, model, status, created_at)"
+                " VALUES (%s, %s, %s, 'Arlo', 'knows', 'Brin', 'dm_said', %s, 'extractor', 'v1',"
+                " 'm', 'confirmed', 1)",
+                (GUILD_A, self.c, self.claim, []),
+            )
+
+    async def krows(self, rel: str) -> list[Any]:
+        async with self.db.guild(GUILD_A) as conn:
+            cur = await conn.execute(
+                "SELECT perspective_id, confidence, hidden_by FROM memory_knowers"
+                " WHERE guild_id = %s AND campaign_id = %s AND relation_id = %s"
+                " ORDER BY perspective_id",
+                (GUILD_A, self.c, rel),
+            )
+            return list(await cur.fetchall())
+
+    async def two_ends(self, *, first_hidden: bool = False) -> tuple[str, str, str]:
+        a = await self.add(
+            "Arlo", type="character", role="npc", status=CONFIRMED, hidden_from_players=first_hidden
+        )
+        b = await self.add("Brin", type="character", role="npc", status=CONFIRMED)
+        made = await self.memory.add_relation(
+            GUILD_A, self.c, a, "knows", b, source="dm", confidence=1.0,
+            status=CONFIRMED, secret=True,
+        )  # fmt: skip
+        rel = str(made.value[0].id)
+        await self.memory.set_connection_knowers(GUILD_A, self.c, rel, [self.pc], source="dm")
+        return a, b, rel
+
+    async def test_a_hide_a_month_old_and_pruned_still_comes_back(self) -> None:
+        rel = await self.listed()
+        await self.hide(self.arlo)
+        self.now += 31 * DAY
+        await self.memory.prune_changes(GUILD_A, self.c)
+        await self.hide(self.arlo, False)
+        self.assertEqual(await self.knowers(rel), [self.pc])
+        self.assertTrue(await self.believes(rel))
+
+    async def test_many_edits_while_hidden_do_not_lose_it(self) -> None:
+        rel = await self.listed()
+        await self.hide(self.arlo)
+        for i in range(25):
+            await self.memory.rename_entity(
+                GUILD_A, self.c, self.arlo, f"Arlo {i}", source="dm", keep_old=False
+            )
+        await self.hide(self.arlo, False)
+        self.assertEqual(await self.knowers(rel), [self.pc])
+        self.assertTrue(await self.believes(rel))
+
+    async def test_a_dm_change_to_the_row_while_hidden_leaves_row_and_belief_as_set(self) -> None:
+        rel = await self.listed()
+        await self.hide(self.arlo)
+        await self.memory.set_statement_knowers(
+            GUILD_A, self.c, CONNECTION, rel, {self.pc: 0.5}, source="dm"
+        )
+        mid = await self.krows(rel), await self.newest(rel, self.pc)
+        await self.hide(self.arlo, False)
+        self.assertEqual((await self.krows(rel), await self.newest(rel, self.pc)), mid)
+
+    async def test_a_list_the_dm_names_while_hidden_is_the_list(self) -> None:
+        rel = await self.listed()
+        await self.hide(self.arlo)
+        await self.memory.set_connection_knowers(
+            GUILD_A, self.c, rel, [self.ids["mara"]], source="dm"
+        )
+        await self.hide(self.arlo, False)
+        known = await self.knowers(rel)
+        self.assertEqual(known, [self.ids["mara"]])  # (and not Okthandom, who slept)
+        self.assertFalse(await self.believes(rel))
+
+    async def test_hiding_and_showing_twice_restores_once(self) -> None:
+        rel = await self.listed()
+        first = await self.newest(rel, self.pc)
+        for _ in range(2):
+            await self.hide(self.arlo)
+            await self.hide(self.arlo, False)
+        self.assertEqual(await self.knowers(rel), [self.pc])
+        self.assertEqual(await self.newest(rel, self.pc), first)
+        self.assertIn(rel, await self.mine())
+
+    async def test_two_hidden_ends_come_back_in_either_order(self) -> None:
+        for order in ((0, 1), (1, 0)):
+            with self.subTest(order=order):
+                a, b, rel = await self.two_ends()
+                ends = (a, b)
+                await self.hide(a)
+                await self.hide(b)
+                await self.hide(ends[order[0]], False)
+                self.assertEqual(await self.knowers(rel), [])  # one end is still hidden
+                self.assertFalse(await self.believes(rel))
+                await self.hide(ends[order[1]], False)
+                self.assertEqual(await self.knowers(rel), [self.pc])
+                self.assertTrue(await self.believes(rel))
+
+    async def test_an_end_hidden_from_the_start_keeps_the_list_through_hiding_the_other(
+        self,
+    ) -> None:
+        _, b, rel = await self.two_ends(first_hidden=True)
+        before = await self.knowers(rel), await self.believes(rel)
+        await self.hide(b)
+        self.assertEqual(await self.knowers(rel), [])
+        await self.hide(b, False)
+        self.assertEqual((await self.knowers(rel), await self.believes(rel)), before)
+
+    async def test_a_player_character_made_an_npc_meanwhile_gets_nothing_back(self) -> None:
+        rel = await self.listed()
+        await self.hide(self.arlo)
+        await self.memory.set_entity_type(
+            GUILD_A, self.c, self.pc, "character", role="npc", source="dm"
+        )
+        await self.hide(self.arlo, False)
+        self.assertEqual(await self.knowers(rel), [])
+
+    async def test_a_merge_into_a_hidden_entry_then_showing_the_kept_one(self) -> None:
+        rel = await self.listed()
+        await self.hide(self.arlo)
+        other = await self.add(
+            "Arlo Two", type="character", role="npc", status=CONFIRMED, hidden_from_players=True
+        )
+        await self.memory.merge(GUILD_A, self.c, self.arlo, other, source="dm", dm_said_same=True)
+        await self.hide(self.arlo, False)
+        self.assertEqual(await self.knowers(rel), [self.pc])
+        self.assertTrue(await self.believes(rel))
+
+    async def test_undoing_a_show_and_showing_again_restores_once(self) -> None:
+        rel = await self.listed()
+        await self.hide(self.arlo)
+        shown = await self.hide(self.arlo, False)
+        assert shown.batch is not None
+        await self.memory.undo(GUILD_A, self.c, shown.batch, source="dm")
+        self.assertEqual(await self.knowers(rel), [])
+        await self.hide(self.arlo, False)
+        self.assertEqual(await self.knowers(rel), [self.pc])
+        self.assertTrue(await self.believes(rel))
+
+    async def test_a_sleeping_row_is_known_to_no_reader(self) -> None:
+        rel = await self.listed()
+        await self.hide(self.arlo)
+        self.assertEqual(await self.krows_hidden_by(rel), [[self.arlo]])
+        self.assertEqual(await self.knowers(rel), [])
+        got = await self.memory.connection_knowers(GUILD_A, self.c, [rel])
+        self.assertEqual(got.get(rel, []), [])
+        self.assertNotIn(rel, await self.mine())
+
+    async def krows_hidden_by(self, rel: str) -> list[Any]:
+        return [list(r["hidden_by"]) for r in await self.krows(rel)]
+
+    async def test_the_belief_comes_back_with_its_status_and_evidence(self) -> None:
+        rel = await self.listed()
+        persp = {p.entity_id: p.id for p in await self.memory.perspectives(GUILD_A, self.c)}
+        await self.memory.believe(
+            GUILD_A, self.c, persp[self.pc], rel, 1.0, "secret_plot", source="dm",
+            evidence=[self.claim],
+        )  # fmt: skip
+        before = await self.newest(rel, self.pc)
+        await self.hide(self.arlo)
+        await self.hide(self.arlo, False)
+        self.assertEqual(await self.newest(rel, self.pc), before)
+        self.assertEqual(await self.evidence_of_newest(rel), [("claim", self.claim)])
+
+    async def evidence_of_newest(self, rel: str) -> list[tuple[str, str | None]]:
+        async with self.db.guild(GUILD_A) as conn:
+            cur = await conn.execute(
+                "SELECT e.kind, e.target_id FROM memory_evidence e WHERE e.guild_id = %s"
+                " AND e.campaign_id = %s AND e.belief_id = (SELECT b.id FROM memory_beliefs b"
+                " JOIN memory_perspectives p ON p.guild_id = b.guild_id"
+                " AND p.campaign_id = b.campaign_id AND p.id = b.perspective_id"
+                " WHERE b.guild_id = %s AND b.campaign_id = %s AND b.relation_id = %s"
+                " AND p.entity_id = %s ORDER BY b.seq DESC LIMIT 1)",
+                (GUILD_A, self.c, GUILD_A, self.c, rel, self.pc),
+            )
+            return [(r["kind"], r["target_id"]) for r in await cur.fetchall()]
+
+    async def test_a_backup_carries_the_sleep_and_a_stranger_in_the_mark_is_dropped(self) -> None:
+        from dmbot.memory.backup import MemorySection
+
+        rel = await self.listed()
+        await self.hide(self.arlo)
+        section = MemorySection()
+        async with self.db.guild(GUILD_A) as conn:
+            rows = await section.dump(conn, GUILD_A, self.c)
+        for r in rows:
+            if r.get("table") == "knower" and r["relation_id"] == rel:
+                r["hidden_by"] = [*r["hidden_by"], "f" * 32]  # an entry the file does not hold
+        copy = (await self.campaigns.create(GUILD_A, "Copy", 7)).id
+        async with self.db.guild(GUILD_A) as conn:
+            await section.load(conn, GUILD_A, copy, rows)
+            cur = await conn.execute(
+                "SELECT hidden_by FROM memory_knowers WHERE campaign_id = %s"
+                " AND relation_id IS NOT NULL AND cardinality(hidden_by) > 0",
+                (copy,),
+            )
+            kept = [list(r["hidden_by"]) for r in await cur.fetchall()]
+        self.assertEqual(kept, [[self.arlo]])
+
+
 class JoinedThroughTheGuardsName(MyCharacters):
     """Ken hidden or shown does not take away what a character knew through the guard's name."""
 
@@ -227,6 +435,7 @@ class JoinedThroughTheGuardsName(MyCharacters):
         await self.join()
         await self.kept("joined")
         held = await self.holds_guard_name()
+        self.assertTrue(held)  # (Okra does hold the guard's name to begin with)
         await self.hide(self.ken, True)
         await self.kept("Ken hidden")
         self.assertEqual(await self.holds_guard_name(), held)
@@ -245,10 +454,22 @@ class JoinedThroughTheGuardsName(MyCharacters):
         await self.hide(self.ken, False)
         await self.kept("hidden and shown")
 
-    async def test_hiding_the_other_end_still_closes_the_link(self) -> None:
+    async def test_the_websites_helpers_leave_a_sleeping_row_out(self) -> None:
+        found = await self.sql_one(
+            "SELECT count(*) FILTER (WHERE strpos(prosrc, 'memory_knowers k') > 0) AS bare,"
+            " count(*) FILTER (WHERE strpos(prosrc, 'cardinality(hidden_by) = 0') > 0) AS guarded"
+            " FROM pg_proc WHERE pronamespace = current_schema()::regnamespace"
+            " AND left(proname, 6) = 'dmbot_'"
+        )
+        self.assertEqual(found["bare"], 0)  # (every read of the table is the awake rows only)
+        self.assertGreater(found["guarded"], 0)
+
+    async def test_hiding_the_other_end_closes_the_link_and_showing_it_gives_it_back(self) -> None:
         await self.join()
         await self.hide(self.mira, True)
         rows = await self.memory.statement_knowers(
             self.g, self.one.id, CONNECTION, [self.guard_link]
         )
         self.assertNotIn(self.okra, rows.get(self.guard_link, []))
+        await self.hide(self.mira, False)
+        await self.kept("Mira shown again")
