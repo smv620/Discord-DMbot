@@ -488,10 +488,20 @@ PERSPECTIVE_KINDS = (TRUTH, PARTY, PC_VIEW, NPC_VIEW)
 THEORY, ACCUSATION, REVEALED_FACT = "theory", "accusation", "revealed_fact"
 FALSE_EVIDENCE, SECRET_PLOT = "false_evidence", "secret_plot"
 MAGICALLY_VERIFIED, EVASION_UNDER_MAGIC = "magically_verified", "evasion_under_magic"
+# A point of view believes a speaker deliberately lied (#3091): not the same as being mistaken, the
+# lie is about the speaker as well as the statement. Both say the connection is false for that
+# point of view (so the confidence, how sure it is TRUE, is below 1.0), and both name who lied.
+SUSPECTED_LIE, KNOWN_LIE = "suspected_lie", "known_lie"
+LIE_STATUSES = (SUSPECTED_LIE, KNOWN_LIE)
 BELIEF_STATUSES = (
     THEORY, ACCUSATION, REVEALED_FACT, FALSE_EVIDENCE, SECRET_PLOT, MAGICALLY_VERIFIED,
-    EVASION_UNDER_MAGIC,
+    EVASION_UNDER_MAGIC, SUSPECTED_LIE, KNOWN_LIE,
 )  # fmt: skip
+# Why a belief changed (#3091): it revises an earlier belief of the same point of view (`update`,
+# `retraction`), is a competing theory beside it on another connection (`branch`), or was passed on
+# from another point of view (`told`).
+UPDATE, BRANCH, RETRACTION, TOLD = "update", "branch", "retraction", "told"
+CHANGE_KINDS = (UPDATE, BRANCH, RETRACTION, TOLD)
 KNOWN = 1.0  # a belief at this confidence is something the perspective holds as fact
 EVIDENCE_MAX = 20  # pointers a belief may cite
 EVIDENCE_ID_MAX = 100
@@ -522,6 +532,8 @@ class Belief:
     seq: int
     recorded_at: int
     pinned: bool = False  # the DM's 📌 100% truth (#2447): only on The truth's belief
+    derived_from: str | None = None  # the earlier belief this one revises or came from (#3091)
+    change_kind: str | None = None  # how: one of CHANGE_KINDS; kept when the earlier one is gone
 
     @property
     def known(self) -> bool:

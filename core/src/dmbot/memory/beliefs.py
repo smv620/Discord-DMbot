@@ -33,6 +33,8 @@ from dmbot.memory.evidence import CLAIM, LINE
 from dmbot.memory.models import (
     ACCUSATION,
     BELIEF_STATUSES,
+    BRANCH,
+    CHANGE_KINDS,
     CONFIRMED,
     DM,
     EVASION_UNDER_MAGIC,
@@ -40,13 +42,19 @@ from dmbot.memory.models import (
     EVIDENCE_MAX,
     FALSE_EVIDENCE,
     KNOWN,
+    KNOWN_LIE,
+    LIE_STATUSES,
     MAGICALLY_VERIFIED,
     PARTY,
     PC_VIEW,
+    RETRACTION,
     REVEALED_FACT,
     SECRET_PLOT,
+    SUSPECTED_LIE,
     THEORY,
+    TOLD,
     TRUTH,
+    UPDATE,
     Belief,
     MemoryRuleError,
     new_id,
@@ -61,7 +69,8 @@ def belief_of(row: dict[str, Any]) -> Belief:
     return Belief(
         row["id"], row["perspective_id"], row["relation_id"], float(row["confidence"]),
         row["status"], row["session_at"], tuple(row["evidence_ids"]), int(row["seq"]),
-        row["recorded_at"], bool(row.get("pinned", False)),
+        row["recorded_at"], bool(row.get("pinned", False)), row.get("derived_from"),
+        row.get("change_kind"),
     )  # fmt: skip
 
 
@@ -101,6 +110,67 @@ async def _newest(
     return newest
 
 
+BAD_LINEAGE = "That belief doesn't come from that one."
+NOT_A_SOURCE = "Pick someone from this campaign who said it."
+PINNED_RETRACTION = "That is pinned as 100% true. Unpin it first, then take it back."
+SAY_WHO_LIED = "Say which character lied."
+SUSPECTED_MAX = 0.5  # a suspected lie is doubted, never leaned towards (the accusation rule: 0.5)
+NOT_A_LIE = (
+    "A lie is believed false: a sure lie is 0%, a suspected one is above 0% and at most 50%."
+)
+LIE_NOT_HERE = "The players' view as a whole can't hold a lie; a character can."
+
+
+async def _check_lineage(
+    w: Changes,
+    perspective_id: str,
+    relation_id: str,
+    confidence: float,
+    derived_from: str | None,
+    change_kind: str | None,
+) -> None:
+    """Where a belief came from (#3091), checked before it is written. A change kind needs the
+    belief it comes from, in this campaign, and each kind has its shape: an `update` or a
+    `retraction` revises the same point of view's belief in the same connection (a retraction is
+    no longer held as fact); a `branch` is the same point of view's competing theory on ANOTHER
+    connection; `told` passes the same connection on from ANOTHER point of view."""
+    if derived_from is None and change_kind is None:
+        return
+    if derived_from is None or change_kind not in CHANGE_KINDS:
+        raise MemoryRuleError(BAD_LINEAGE)
+    earlier = await w.get(BELIEFS, derived_from)
+    if earlier is None:
+        raise MemoryRuleError(BAD_LINEAGE)
+    if change_kind == RETRACTION and earlier["pinned"]:
+        raise MemoryRuleError(PINNED_RETRACTION)
+    same_view = earlier["perspective_id"] == perspective_id
+    same_relation = earlier["relation_id"] == relation_id
+    shape = {
+        UPDATE: same_view and same_relation,
+        RETRACTION: same_view and same_relation and confidence < KNOWN,
+        BRANCH: same_view and not same_relation,
+        TOLD: same_relation and not same_view,
+    }[change_kind]
+    if not shape:
+        raise MemoryRuleError(BAD_LINEAGE)
+
+
+async def _check_lie(w: Changes, status: str, confidence: float, sources: Sequence[str]) -> None:
+    """A belief that someone lied (#3091): false for whoever holds it, so a known lie is held at
+    0.0 and a suspected one strictly between 0 and 1 (its confidence is still how sure the
+    connection is TRUE), and it names who lied: characters of this campaign, never nobody."""
+    if status == KNOWN_LIE and confidence != 0.0:
+        raise MemoryRuleError(NOT_A_LIE)
+    if status == SUSPECTED_LIE and not 0.0 < confidence <= SUSPECTED_MAX:
+        raise MemoryRuleError(NOT_A_LIE)
+    liars = set(sources)
+    if not liars:
+        raise MemoryRuleError(SAY_WHO_LIED)
+    found = await w.select(ENTITIES, " AND id = ANY(%s) AND type = 'character'", [sorted(liars)])
+    if len(found) != len(liars):
+        raise MemoryRuleError(NOT_A_SOURCE)
+
+
 async def _add(
     w: Changes,
     perspective_id: str,
@@ -111,18 +181,40 @@ async def _add(
     session_at: int | None = None,
     pinned: bool | None = None,
     copy_from: str | None = None,
+    derived_from: str | None = None,
+    change_kind: str | None = None,
+    sources: Sequence[str] = (),
 ) -> dict[str, Any]:
     """The checked insert behind `believe_in` and `follow`. `pinned` (the DM's 📌, #2447): None
     keeps what the pair's last belief said, so a new belief never silently unpins.
     `copy_from`: the id of an earlier belief of this campaign whose evidence links this one
     carries on (a placeholder stays a placeholder); `evidence` is then that belief's old list.
-    Without it `evidence` is new and each item must be a claim or line of this campaign (#2662)."""
+    Without it `evidence` is new and each item must be a claim or line of this campaign (#2662).
+    `derived_from` and `change_kind`: the belief this one revises, and how (#3091).
+    `sources`: the entries of this campaign that said it (a `source` link each)."""
     if not 0.0 <= confidence <= 1.0:
         raise MemoryRuleError("A confidence runs from 0 to 1.")
     if status not in BELIEF_STATUSES:
         raise MemoryRuleError("That is not a kind of belief.")
     if len(evidence) > EVIDENCE_MAX or any(not e or len(e) > EVIDENCE_ID_MAX for e in evidence):
         raise MemoryRuleError("That evidence is not in the right shape.")
+    if copy_from is not None and (derived_from is not None or change_kind is not None):
+        raise ValueError("A copy keeps the lineage of the belief it copies; it is never given one.")
+    if copy_from is None:
+        await _check_lineage(w, perspective_id, relation_id, confidence, derived_from, change_kind)
+    else:
+        # a copy (a reworded connection's, a pin's) is the same belief: it keeps where it came
+        # from, whatever connection it now sits on (#3091)
+        origin = await w.get(BELIEFS, copy_from)
+        if origin is not None:
+            derived_from, change_kind = origin["derived_from"], origin["change_kind"]
+    if status in LIE_STATUSES and copy_from is None:
+        await _check_lie(w, status, confidence, sources)
+    for who in dict.fromkeys(sources):
+        if not await evidence_links.resolves(
+            w.conn, w.guild_id, w.campaign_id, evidence_links.SOURCE, who
+        ):
+            raise MemoryRuleError(NOT_A_SOURCE)
     kinds: dict[str, str] = {}
     if copy_from is None:  # new evidence: each item a claim or a line of THIS campaign, or refused
         for item in dict.fromkeys(evidence):
@@ -153,6 +245,8 @@ async def _add(
             "seq": seq,
             "recorded_at": w.now,
             "pinned": bool(last[0]["pinned"]) if pinned is None and last else bool(pinned),
+            "derived_from": derived_from,
+            "change_kind": change_kind,
         },
     )
     if copy_from is not None:
@@ -167,6 +261,11 @@ async def _add(
     for item, kind in kinds.items():
         await evidence_links.add_in(
             w, kind=kind, target_id=item, belief_id=row["id"],
+            session_started_at=session_at, trusted=True,
+        )  # fmt: skip
+    for who in dict.fromkeys(sources):
+        await evidence_links.add_in(
+            w, kind=evidence_links.SOURCE, target_id=who, belief_id=row["id"],
             session_started_at=session_at, trusted=True,
         )  # fmt: skip
     return row
@@ -233,15 +332,28 @@ async def believe_in(
     *,
     evidence: Sequence[str] = (),
     session_at: int | None = None,
+    derived_from: str | None = None,
+    change_kind: str | None = None,
+    sources: Sequence[str] = (),
 ) -> Belief:
     """A perspective comes to believe a connection (or stops, at 0.0), inside an open write. Both
-    ends must be in this campaign; only the DM writes The truth."""
+    ends must be in this campaign; only the DM writes The truth. `derived_from`, `change_kind`
+    and `sources` say where the belief came from (#3091)."""
     perspective = await w.get(PERSPECTIVES, perspective_id)
     relation = await w.get(RELATIONS, relation_id)
     if perspective is None or relation is None:
         raise MemoryRuleError(NOT_THERE)
     if perspective["kind"] == TRUTH and w.source != DM:
         raise MemoryRuleError(ONLY_THE_DM)
+    if perspective["kind"] == PARTY and status in LIE_STATUSES:
+        raise MemoryRuleError(LIE_NOT_HERE)
+    if perspective["kind"] == TRUTH and status == SUSPECTED_LIE:
+        raise MemoryRuleError(NOT_A_LIE)  # (The truth knows: it confirms a lie, it never suspects)
+    if perspective["kind"] == TRUTH:
+        held = (await _newest(w, [relation_id])).get((relation_id, perspective_id))
+        if held is not None and held["pinned"] and (confidence < KNOWN or status in LIE_STATUSES):
+            # 📌 is the DM's word that it is 100% true, whatever the lineage of the write
+            raise MemoryRuleError(PINNED_RETRACTION)
     if perspective["kind"] == PARTY and (
         confidence < KNOWN
         or relation["secret"]
@@ -253,7 +365,18 @@ async def believe_in(
         # own switch, and a guess is not recorded here.
         raise MemoryRuleError(NOT_A_REVEAL)
     return belief_of(
-        await _add(w, perspective_id, relation_id, confidence, status, evidence, session_at)
+        await _add(
+            w,
+            perspective_id,
+            relation_id,
+            confidence,
+            status,
+            evidence,
+            session_at,
+            derived_from=derived_from,
+            change_kind=change_kind,
+            sources=sources,
+        )
     )
 
 
@@ -291,6 +414,10 @@ async def place_belief(
         if w.source != DM:
             raise MemoryRuleError(ONLY_THE_DM)
         ok = status == FALSE_EVIDENCE and confidence == 0.0
+        held = (await _newest(w, [relation_id])).get((relation_id, perspective_id))
+        if ok and held is not None and held["pinned"]:
+            # 📌 is the DM's word that it is 100% true; a reading never takes that back (#3116)
+            raise MemoryRuleError(PINNED_RETRACTION)
     elif kind == PARTY:
         if status in (REVEALED_FACT, MAGICALLY_VERIFIED):
             if confidence != KNOWN:

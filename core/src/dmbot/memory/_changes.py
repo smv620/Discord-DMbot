@@ -210,15 +210,24 @@ KNOWERS = Table(
         "alias_id",
         "created_at",
         "confidence",
+        "hidden_by",
     ),
-    defaults={"confidence": 1.0},  # how sure that character is, 0.0 to 1.0 (0286)
+    # confidence: how sure that character is, 0.0 to 1.0 (0286). hidden_by (0298): the entries
+    # whose being hidden from the players put this row to sleep; a row with any is DORMANT, and
+    # every reader ignores it (`Scope.select` leaves it out unless asked) until each of them is
+    # shown again and it wakes, so the lists a hide closed come back exactly as they were.
+    defaults={"confidence": 1.0, "hidden_by": []},
 )
 BELIEFS = Table(
     "memory_beliefs",
     "id",
     ("id", "perspective_id", "relation_id", "confidence", "status", "session_at",
-     "evidence_ids", "seq", "recorded_at", "pinned"),
-    defaults={"pinned": False},  # the DM's 📌 100% truth (#2447)
+     "evidence_ids", "seq", "recorded_at", "pinned", "hidden_by", "derived_from", "change_kind"),
+    # pinned: the DM's 📌 100% truth (#2447). hidden_by (0298): on the 0.0 belief that hiding an
+    # entry wrote, the entries whose hiding wrote it (the belief before it comes back when each is
+    # shown again and the 0.0 is still the newest); empty on every other belief. derived_from and
+    # change_kind (0297): the belief this one revises or came from, and how (#3091).
+    defaults={"pinned": False, "hidden_by": [], "derived_from": None, "change_kind": None},
 )  # fmt: skip
 # What a connection or a belief stands on, one typed link each (#2662): unlogged, because an
 # Undo must not bring back a line's reference once the line's words were removed (the link is
@@ -309,11 +318,20 @@ DEPENDENTS: dict[str, tuple[tuple[str, str, bool], ...]] = {
 }
 
 
-def scoped_select(table: Table, where: sql.Composable | None = None) -> sql.Composed:
-    """SELECT a table's columns for one server and campaign, plus `where`."""
-    return sql.SQL("SELECT {} FROM {} WHERE guild_id = %s AND campaign_id = %s{}").format(
+def scoped_select(
+    table: Table, where: sql.Composable | None = None, *, awake_only: bool = False
+) -> sql.Composed:
+    """SELECT a table's columns for one server and campaign, plus `where`. `awake_only`: leave out
+    the rows put to sleep (`hidden_by` set, see KNOWERS)."""
+    asleep = (
+        sql.SQL(" AND cardinality(hidden_by) = 0")
+        if awake_only and table.name == "memory_knowers"
+        else sql.SQL("")
+    )
+    return sql.SQL("SELECT {} FROM {} WHERE guild_id = %s AND campaign_id = %s{}{}").format(
         sql.SQL(", ").join(sql.Identifier(c) for c in table.columns),
         sql.Identifier(table.name),
+        asleep,
         where if where is not None else sql.SQL(""),
     )
 
@@ -344,9 +362,19 @@ class Scope:
         return None if raw is None else row_of(raw, table)
 
     async def select(
-        self, table: Table, where: LiteralString = "", params: Sequence[Any] = ()
+        self,
+        table: Table,
+        where: LiteralString = "",
+        params: Sequence[Any] = (),
+        *,
+        dormant: bool = False,
     ) -> list[dict[str, Any]]:
-        cur = await self.conn.execute(scoped_select(table, sql.SQL(where)), (*self.ids, *params))
+        """The rows matching `where`. A who-knows row put to sleep by a hide (`hidden_by`) is
+        not known to anyone, so it is left out unless `dormant` asks for it (the merge, which has
+        to move it, and the writes that wake or replace it)."""
+        cur = await self.conn.execute(
+            scoped_select(table, sql.SQL(where), awake_only=not dormant), (*self.ids, *params)
+        )
         return [row_of(r, table) for r in await cur.fetchall()]
 
 
@@ -487,7 +515,7 @@ class Changes(Scope):
                 await self.delete(ALIAS_KNOWERS, knower["id"])
         if table.name in _KNOWN_COLUMN:  # who knows a statement goes with it, each logged (#2995)
             column = _KNOWN_COLUMN[table.name]
-            for knower in await self.select(KNOWERS, f" AND {column} = %s", [row_id]):
+            for knower in await self.select(KNOWERS, f" AND {column} = %s", [row_id], dormant=True):
                 await self.delete(KNOWERS, knower["id"])
         for dep_table, column, is_list in DEPENDENTS.get(table.name, ()):
             test = "%s = ANY({})" if is_list else "{} = %s"
@@ -497,13 +525,18 @@ class Changes(Scope):
             cur = await self.conn.execute(query, (*self.ids, row_id))
             if await cur.fetchone() is not None:
                 raise MemoryRuleError(CHANGED_SINCE)
+        logged = before
+        if table is BELIEFS:  # who said it travels with the belief, for an Undo or a redo
+            links = (await _entry_links(self.conn, self.ids, [row_id])).get(row_id)
+            if links:
+                logged = {**before, "entry_links": links}
         await self.conn.execute(
             sql.SQL("DELETE FROM {} WHERE guild_id = %s AND campaign_id = %s AND {} = %s").format(
                 sql.Identifier(table.name), sql.Identifier(table.key)
             ),
             (*self.ids, row_id),
         )
-        await self._log(table, row_id, "delete", before, None)
+        await self._log(table, row_id, "delete", logged, None)
 
     # ---- many rows in one statement (#164, #253) -------------------------------------
     # Each row is still logged on its own, with its before and after values, exactly as
@@ -560,6 +593,7 @@ class Changes(Scope):
             table,
             f" AND {column} = ANY(%s)" + where,
             [list(values)] + ([list(perspectives)] if perspectives is not None else []),
+            dormant=True,  # (a row asleep goes with the rest: the statement is gone from them)
         )
         if not found:
             return
@@ -797,6 +831,7 @@ _ADDED_LATER: dict[str, dict[str, Any]] = {
         "unrevealed": False,
         "directional": False,
         "decided": None,
+        "via_alias_id": None,  # no connection came through a name before a join said so (#3037)
     },
     # unique_item: nobody said, the name decides (#1267). audience_limited: off (#1649).
     # made_before_name_gate: a snapshot from before the column is a row from before it (#2358)
@@ -812,7 +847,11 @@ _ADDED_LATER: dict[str, dict[str, Any]] = {
         "unnamed_role": None,
         "unnamed_what": None,
     },
-    "memory_beliefs": {"pinned": False},  # nothing was pinned before the pin (#2447)
+    # nothing was pinned before the pin (#2447); nothing slept before a hide could put it to sleep
+    # (#3082), so an Undo across the migration still finds the row as the batch left it
+    # (and no belief came from another before lineage, #3091)
+    "memory_beliefs": {"pinned": False, "hidden_by": [], "derived_from": None, "change_kind": None},
+    "memory_knowers": {"confidence": 1.0, "hidden_by": []},  # (0286 added the certainty)
     "memory_predicates": {
         "covers": [], "not_this": [], "inverse_label": "", "synonyms": [], "version": 1,
         "from_set": None,
@@ -855,6 +894,17 @@ def _unchanged_since(table: Table, current: dict[str, Any] | None, after: Any) -
     after = _filled(table, after)
     if current == after:
         return True
+    if (
+        table is BELIEFS
+        and current is not None
+        and isinstance(after, dict)
+        and after.get("derived_from") is not None
+        and current["derived_from"] is None
+        and {**current, "derived_from": after["derived_from"]} == after
+    ):
+        # (the belief it came from was deleted since, which clears the link outside the log: the
+        # later belief is otherwise as the batch left it, and its kind is still there)
+        return True
     return (
         table is FLAGS
         and current is not None
@@ -891,6 +941,7 @@ async def undo_batch(changes: Changes, batch: int) -> None:
     rows = await cur.fetchall()
     if not rows:
         raise TooLateToUndo(NOT_FOUND)  # pruned (#164); the store says how long Undo works
+    rows = await _without_lost_parents(conn, ids, rows)
     start = 0
     while start < len(rows):
         end = start + 1
@@ -904,6 +955,87 @@ async def undo_batch(changes: Changes, batch: int) -> None:
     # a merge's notes and sheet live outside the log: they come back with the name (#2438)
     await merge_restore.restore(conn, ids, batch, changes.batch)
     await merge_restore.redo(conn, ids, batch, changes.batch)
+
+
+ENTRY_LINK_KINDS = ("source", "clue", "event")  # links to entries: ids, never words
+
+
+async def _entry_links(
+    conn: Conn, ids: tuple[int, str], belief_ids: Sequence[str]
+) -> dict[str, list[dict[str, Any]]]:
+    """The links of these beliefs to entries (who said it, a clue, an event). They hold entry ids
+    and never words, so unlike a line's or a claim's link (which stays out of the log so an erased
+    person's words never come back) they travel in the log with the belief, and an Undo of its
+    removal, or a redo, gives them back (#3091)."""
+    cur = await conn.execute(
+        "SELECT belief_id, kind, target_id, session_started_at, added_at FROM memory_evidence"
+        " WHERE guild_id = %s AND campaign_id = %s AND belief_id = ANY(%s) AND kind = ANY(%s)"
+        " AND target_id IS NOT NULL ORDER BY added_at, id",
+        (*ids, list(belief_ids), list(ENTRY_LINK_KINDS)),
+    )
+    out: dict[str, list[dict[str, Any]]] = {}
+    for r in await cur.fetchall():
+        out.setdefault(str(r["belief_id"]), []).append(
+            {
+                "kind": r["kind"],
+                "target_id": r["target_id"],
+                "session_started_at": r["session_started_at"],
+                "added_at": r["added_at"],
+            }
+        )
+    return out
+
+
+async def _give_back_links(conn: Conn, ids: tuple[int, str], belief_id: str, links: Any) -> None:
+    for link in links or ():
+        await conn.execute(
+            "INSERT INTO memory_evidence (guild_id, campaign_id, belief_id, kind, target_id,"
+            " session_started_at, added_at) VALUES (%s, %s, %s, %s, %s, %s, %s)"
+            " ON CONFLICT DO NOTHING",
+            (
+                *ids,
+                belief_id,
+                link["kind"],
+                link["target_id"],
+                link["session_started_at"],
+                link["added_at"],
+            ),
+        )
+
+
+async def _without_lost_parents(
+    conn: Conn, ids: tuple[int, str], rows: Sequence[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """A belief that comes back (an Undo of its removal or of a change to it) may name the belief
+    it came from, and that one can be gone since (deleted, or forgotten with its connection): the
+    link is then a placeholder, `derived_from` cleared with its kind kept, as the database does
+    when the parent is deleted. One that comes back in this same batch is not lost (#3091)."""
+    wanted = {
+        str(r["before"]["derived_from"])
+        for r in rows
+        if r["table_name"] == BELIEFS.name
+        and isinstance(r["before"], dict)
+        and r["before"].get("derived_from")
+    }
+    if not wanted:
+        return list(rows)
+    back = {
+        str(r["row_id"]) for r in rows if r["table_name"] == BELIEFS.name and r["op"] == "delete"
+    }
+    cur = await conn.execute(
+        "SELECT id FROM memory_beliefs WHERE guild_id = %s AND campaign_id = %s AND id = ANY(%s)",
+        (*ids, sorted(wanted - back)),
+    )
+    alive = back | {str(r["id"]) for r in await cur.fetchall()}
+    return [
+        {**r, "before": {**r["before"], "derived_from": None}}
+        if r["table_name"] == BELIEFS.name
+        and isinstance(r["before"], dict)
+        and r["before"].get("derived_from")
+        and str(r["before"]["derived_from"]) not in alive
+        else dict(r)
+        for r in rows
+    ]
 
 
 async def _undo_rows(changes: Changes, run: Sequence[dict[str, Any]]) -> None:
@@ -944,6 +1076,10 @@ async def _undo_row(changes: Changes, change: dict[str, Any]) -> None:
         await changes.update(table, change["row_id"], _filled(table, change["before"]))
     else:
         await changes.insert(table, _filled(table, change["before"]))
+        if table is BELIEFS:  # who said it comes back with the belief (#3091)
+            await _give_back_links(
+                changes.conn, changes.ids, change["row_id"], change["before"].get("entry_links")
+            )
 
 
 async def _undo_run_or_not(changes: Changes, run: Sequence[dict[str, Any]]) -> bool:
@@ -986,13 +1122,22 @@ async def _undo_run(changes: Changes, run: Sequence[dict[str, Any]]) -> bool:
             cur = await conn.execute(query + sql.SQL(" LIMIT 1"), params)
             if await cur.fetchone() is not None:
                 return False
+        # (their links to entries are read first: the delete cascades them away)
+        carried = await _entry_links(conn, ids, keys) if table is BELIEFS else {}
         await conn.execute(
             sql.SQL(
                 "DELETE FROM {} WHERE guild_id = %s AND campaign_id = %s AND {} = ANY(%s)"
             ).format(sql.Identifier(table.name), sql.Identifier(table.key)),
             (*ids, keys),
         )
-        await changes._log_many(table, "delete", [(k, current[k], None) for k in keys])
+        await changes._log_many(
+            table,
+            "delete",
+            [
+                (k, {**current[k], "entry_links": carried[k]} if k in carried else current[k], None)
+                for k in keys
+            ],
+        )
     elif op == "update":  # undo: put every row back as it was
         others = [c for c in table.columns if c != table.key]
         await changes.update_rows(
@@ -1010,4 +1155,9 @@ async def _undo_run(changes: Changes, run: Sequence[dict[str, Any]]) -> bool:
         )
         back = {r[table.key]: row_of(r, table) for r in await cur.fetchall()}
         await changes._log_many(table, "insert", [(k, None, back[k]) for k in keys])
+        if table is BELIEFS:  # who said it comes back with the belief (#3091)
+            for change in run:
+                await _give_back_links(
+                    conn, ids, change["row_id"], (change["before"] or {}).get("entry_links")
+                )
     return True

@@ -40,12 +40,14 @@ from dmbot.memory import (
     gate,
     kin,
     knowers,
+    lineage,
     merge_restore,
     notify,
     report_fixed,
     standing,
     states,
 )
+from dmbot.memory import lies as lies_mod
 from dmbot.memory import party as party_mod
 from dmbot.memory import same_person as same_person_mod
 from dmbot.memory import threads as threads_mod
@@ -4069,6 +4071,41 @@ class MemoryStore:
 
     # ---- beliefs: who believes a connection (#2409; docs/STORY_MEMORY.md, section 9) -----------
 
+    async def what_rests_on(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        *,
+        source: str,
+        entity_id: str | None = None,
+        belief_id: str | None = None,
+    ) -> list[lineage.Resting]:
+        """The DM's finder (#3091): every current belief that rests on this entry (it said it, or
+        a belief that did was revised, retracted, branched or passed on into this one), or on
+        this belief. Only the DM asks; nothing is changed, and nothing returned holds a word."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can ask what rests on this.")
+        async with self._read(guild_id, campaign_id, snapshot=True) as scope:
+            return await lineage.resting_on(scope, source_id=entity_id, belief_id=belief_id)
+
+    async def lies(self, guild_id: int, campaign_id: str, *, source: str) -> list[lies_mod.Lie]:
+        """Who thinks a speaker lied (#3091): every current lie, for the DM only. Ids and numbers;
+        the caller makes the words from names it may use."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can see every lie.")
+        async with self._read(guild_id, campaign_id, snapshot=True) as scope:
+            return await lies_mod.all_lies(scope)
+
+    async def lies_my_characters_think(
+        self, guild_id: int, campaign_id: str, user_id: int
+    ) -> list[lies_mod.Lie]:
+        """What this player's own characters think about who lied, and nothing else: through the
+        gate, so it names only a connection and a character they may know. `user_id` must be the
+        signed-in person's own (it trusts it, like `what_my_characters_know`)."""
+        async with self._read(guild_id, campaign_id, snapshot=True) as scope:
+            mine = await knowers.characters_of(scope, user_id)
+            return await lies_mod.lies_my_characters_think(scope, list(mine))
+
     async def perspectives(self, guild_id: int, campaign_id: str) -> list[Perspective]:
         """Who holds beliefs in this campaign: The truth and The party, then any character's."""
         async with self._read(guild_id, campaign_id, snapshot=True) as scope:
@@ -4087,16 +4124,22 @@ class MemoryStore:
         source: str,
         evidence: Sequence[str] = (),
         session_at: int | None = None,
+        derived_from: str | None = None,
+        change_kind: str | None = None,
+        sources: Sequence[str] = (),
     ) -> Written[Belief]:
         """A perspective comes to believe a connection at `confidence` (0.0 certainly false to 1.0
         certainly true), with a status and the evidence it points at by id. A new row, never an
         edit, so the history stays; logged, so Undo takes it back. Only the DM writes The truth.
-        The one way every writer records a belief."""
+        The one way every writer records a belief. `derived_from` and `change_kind` say which
+        belief this one revises or came from, and how; `sources` are the entries that said it
+        (#3091)."""
         async with self._write(guild_id, campaign_id, source) as w:
             await beliefs.perspective_ids(w)  # The truth and The party exist before anything else
             belief = await beliefs.believe_in(
                 w, perspective_id, relation_id, confidence, status,
-                evidence=evidence, session_at=session_at,
+                evidence=evidence, session_at=session_at, derived_from=derived_from,
+                change_kind=change_kind, sources=sources,
             )  # fmt: skip
             return Written(belief, w.batch)
 

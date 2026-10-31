@@ -196,6 +196,14 @@ class TheCard(unittest.TestCase):
         self.assertEqual(self.words("mira", "niece"), "is the niece of Aldric")
         self.assertEqual(self.words("aldric", "niece"), "has a niece Mira")
 
+    def test_the_grandson_granddaughter_grandchild_and_grandparent_roles_read_on_both_cards(
+        self,
+    ) -> None:
+        for role in ("grandson", "granddaughter", "grandchild", "grandparent"):
+            with self.subTest(role=role):
+                self.assertEqual(self.words("mira", role), f"is the {role} of Aldric")
+                self.assertEqual(self.words("aldric", role), f"has a {role} Mira")
+
     def test_an_older_row_with_a_role_word_reads_as_plain_family_on_both_cards(self) -> None:
         old = relation("mira", "aldric", "niece", directional=False)
         rows = name_card._rows(self.lookup, "aldric", [old], True)  # type: ignore[arg-type]

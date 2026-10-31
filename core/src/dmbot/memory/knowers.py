@@ -160,6 +160,7 @@ async def set_statement_knowers(
         raise MemoryRuleError(BAD_CERTAINTY)
     chosen = await _known_characters(w, list(sure))
     views = {i: await _view_for(w, i, player) for i, player in chosen.items()}
+    await _drop_asleep(w, column, statement_id)
     have = {
         r["perspective_id"]: r
         for r in await w.select(KNOWERS, f" AND {column} = %s", [statement_id])
@@ -308,6 +309,7 @@ async def _follow_player_list(
     certainty of a player character who stays (#2995, slice 2b)."""
     column, _ = _COLUMNS[kind]
     views = {i: await _view_of(w, i) for i in chosen}
+    await _drop_asleep(w, column, statement_id)
     pcs = {str(r["id"]) for r in await w.select(PERSPECTIVES, " AND kind = %s", [PC_VIEW])}
     have = {
         r["perspective_id"]: r
@@ -643,9 +645,13 @@ async def fold_knowers(
     gone_view, keep_view = views if views is not None else ("", "")
     rows = await w.select(
         KNOWERS,
-        " AND (about_entity_id = ANY(%s) OR perspective_id = ANY(%s))",
-        [[keep_id, gone_id], [gone_view, keep_view]],
+        " AND (about_entity_id = ANY(%s) OR perspective_id = ANY(%s) OR %s = ANY(hidden_by))",
+        [[keep_id, gone_id], [gone_view, keep_view], gone_id],
+        dormant=True,
     )
+    rows.sort(
+        key=lambda r: bool(r["hidden_by"])
+    )  # (a row in use keeps its place over a sleeping one)
     columns = ("about_entity_id", "state_id", "relation_id", "alias_id")
 
     def after(row: dict[str, Any]) -> dict[str, Any]:
@@ -687,6 +693,7 @@ async def fold_knowers(
         else:
             seen.add(k)
             await w.update(KNOWERS, row["id"], moved)
+    await rehome_hidden_by(w, keep_id, gone_id, rows)
 
 
 async def move_rows(w: Changes, column: str, old_id: str, new_id: str) -> None:
@@ -694,9 +701,10 @@ async def move_rows(w: Changes, column: str, old_id: str, new_id: str) -> None:
     whoever knew the folded one knows the twin, and nothing is lost with the copy that goes. A
     character the twin already lists keeps its own row. `column`: which statement column of the
     list (`relation_id` or `alias_id`)."""
-    mine = await w.select(KNOWERS, f" AND {column} = %s", [new_id])
+    mine = await w.select(KNOWERS, f" AND {column} = %s", [new_id], dormant=True)
     have = {r["perspective_id"] for r in mine}
-    for row in await w.select(KNOWERS, f" AND {column} = %s", [old_id]):
+    folded = await w.select(KNOWERS, f" AND {column} = %s", [old_id], dormant=True)
+    for row in sorted(folded, key=lambda r: bool(r["hidden_by"])):
         if row["perspective_id"] in have:
             await w.delete(KNOWERS, row["id"])
         else:
@@ -759,6 +767,55 @@ def _row(column: str, statement_id: str, view_id: str, now: int) -> dict[str, An
     }  # fmt: skip
 
 
+async def _drop_asleep(w: Changes, column: str, statement_id: str) -> None:
+    """The DM names who knows a statement: the rows a hide put to sleep for it are final now, the
+    DM's list replaces them (they go, Undo brings them back), and a hide's 0.0 belief in a
+    connection becomes the DM's own, so nothing the hide marked comes back over what the DM said
+    (#3082). A (statement, point of view) is one thing: the row and the belief change together."""
+    asleep = await w.select(
+        KNOWERS,
+        f" AND {column} = %s AND cardinality(hidden_by) > 0",
+        [statement_id],
+        dormant=True,
+    )
+    if not asleep:
+        return
+    await w.delete_where_in(KNOWERS, "id", [r["id"] for r in asleep])
+    if column != "relation_id":
+        return
+    marked: dict[str, dict[str, Any]] = {}
+    for row in await w.select(
+        BELIEFS,
+        " AND relation_id = %s AND perspective_id = ANY(%s) ORDER BY seq",
+        [statement_id, [r["perspective_id"] for r in asleep]],
+    ):
+        if row["hidden_by"]:
+            marked[row["perspective_id"]] = row
+        else:
+            marked.pop(row["perspective_id"], None)  # (a newer belief is the DM's already)
+    await w.update_rows(BELIEFS, {r["id"]: {"hidden_by": []} for r in marked.values()})
+
+
+async def rehome_hidden_by(
+    w: Changes, keep_id: str, gone_id: str, knowers: Sequence[dict[str, Any]]
+) -> None:
+    """Two entries merged: whatever slept because the merged-away entry was hidden now waits for
+    the kept one (#3082). `knowers`: the rows the merge already read (those marked with the
+    merged-away entry among them; nothing is read again, so a merge with nothing asleep costs no
+    statement). A hide's belief marks are looked for only when a row was marked: both are written
+    by the same hide."""
+
+    def moved(held: Sequence[str]) -> list[str]:
+        return sorted({keep_id if h == gone_id else h for h in held})
+
+    marked = [r for r in knowers if gone_id in r["hidden_by"]]
+    if not marked:
+        return
+    await w.update_rows(KNOWERS, {r["id"]: {"hidden_by": moved(r["hidden_by"])} for r in marked})
+    believed = await w.select(BELIEFS, " AND %s = ANY(hidden_by)", [gone_id])
+    await w.update_rows(BELIEFS, {r["id"]: {"hidden_by": moved(r["hidden_by"])} for r in believed})
+
+
 async def _entities_by_id(w: Scope, ids: Collection[str]) -> dict[str, dict[str, Any]]:
     wanted = sorted(set(ids))
     if not wanted:
@@ -775,8 +832,10 @@ async def _open(w: Changes, column: str, items: Sequence[tuple[str, bool]]) -> N
     have: set[tuple[str, str]] = set()
     old = [i for i, new in items if not new]
     if old:
-        for r in await w.select(KNOWERS, f" AND {column} = ANY(%s)", [old]):
-            have.add((r[column], r["perspective_id"]))
+        for r in await w.select(KNOWERS, f" AND {column} = ANY(%s)", [old], dormant=True):
+            have.add(
+                (r[column], r["perspective_id"])
+            )  # (a sleeping row counts: it wakes by itself)
     made = [_row(column, i, v, w.now) for i, _ in items for v in views if (i, v) not in have]
     if all(new for _, new in items):
         await w.insert_unlogged(KNOWERS, made)  # new statements: gone with them on Undo
@@ -882,36 +941,177 @@ async def forget_moved(
     """Connections whose ends changed in a plain merge (`moved`: before, after; `entities`: the
     ends as they stand now, the merge's flags already applied). The player characters knew each
     one about its OLD ends, so one that stopped being shown (its ends were shown and one is kept
-    from the players now) is forgotten by them: their knower rows go and so does what their point
-    of view believed. A DM's own list on a connection whose ends stay as hidden as they were is
+    from the players now) is put to sleep for them: their who-knows rows and what their point of
+    view believed wait, marked with the end that is hidden (`hidden_by`), and come back when it
+    is shown again. A DM's own list on a connection whose ends stay as hidden as they were is
     left alone, and nothing is ever opened here. A join does not call this: it keeps whoever knew.
     Logged, so Undo brings it all back (#3073)."""
-    lost = [a["id"] for b, a in moved if ends_shown(entities, b) and not ends_shown(entities, a)]
-    if not lost:
-        return
-    await _close(w, "relation_id", lost)
-    views = await _player_views(w)
-    if not views:
-        return
-    newest: dict[tuple[str, str], float] = {}
-    for row in await w.select(
-        BELIEFS,
-        " AND relation_id = ANY(%s) AND perspective_id = ANY(%s) ORDER BY seq",
-        [lost, views],
-    ):
-        newest[(row["relation_id"], row["perspective_id"])] = row["confidence"]
-    for (relation_id, view), confidence in newest.items():
-        if confidence >= KNOWN:
-            await beliefs.add_belief(w, view, relation_id, 0.0, SECRET_PLOT)
+    lost = {
+        a["id"]: {
+            e
+            for e in (a["subject_id"], a["object_id"])
+            if e not in entities or not entry_shown_end(entities[e])
+        }
+        for b, a in moved
+        if ends_shown(entities, b) and not ends_shown(entities, a)
+    }
+    if lost:
+        await _sleep(w, "relation_id", lost)
 
 
 async def _close(w: Changes, column: str, ids: Sequence[str]) -> None:
-    """These statements stopped being shown to the players: the player characters stop knowing
-    them. An NPC's or a group's row stays: secret means kept from the players, not unknown to the
-    world (Supervisor, #3018). Logged, so Undo brings the rows back."""
+    """These statements stopped being shown to the players on their own flags: the player
+    characters stop knowing them. An NPC's or a group's row stays: secret means kept from the
+    players, not unknown to the world (Supervisor, #3018). Logged, so Undo brings the rows back."""
     views = await _player_views(w)
-    if views:
-        await w.delete_where_in(KNOWERS, column, ids, views)
+    if not views:
+        return
+    await w.delete_where_in(KNOWERS, column, ids, views)
+
+
+def _joined(held: Collection[str], more: Collection[str]) -> list[str]:
+    return sorted({*held, *more})
+
+
+async def _sleep(w: Changes, column: str, hiders: Mapping[str, Collection[str]]) -> None:
+    """Hiding an entry puts to sleep what its player characters knew of what hangs off it
+    (#3082): `hiders` is, for each name, condition or connection, the entries whose hiding closed
+    it. A who-knows row of a player character is kept, marked with them (`hidden_by`), and every
+    reader ignores it while any is set; the point of view's belief in a connection it held as fact
+    is followed by a 0.0 belief carrying the same mark. Several entries can close the same row
+    (a connection with two hidden ends), and the mark is what lets each be shown again in any
+    order. Everything is logged, and one statement per table however many."""
+    views = await _player_views(w)
+    if not views or not hiders:
+        return
+    rows = await w.select(
+        KNOWERS,
+        f" AND {column} = ANY(%s) AND perspective_id = ANY(%s)",
+        [list(hiders), views],
+        dormant=True,
+    )
+    await w.update_rows(
+        KNOWERS,
+        {
+            r["id"]: {"hidden_by": _joined(r["hidden_by"], hiders[r[column]])}
+            for r in rows
+            if not set(hiders[r[column]]) <= set(r["hidden_by"])
+        },
+    )
+    if column != "relation_id":
+        return
+    last: dict[tuple[str, str], dict[str, Any]] = {}
+    for row in await w.select(
+        BELIEFS,
+        " AND relation_id = ANY(%s) AND perspective_id = ANY(%s) ORDER BY seq",
+        [list(hiders), views],
+    ):
+        last[(row["relation_id"], row["perspective_id"])] = row
+    await w.insert_many(
+        BELIEFS,
+        [
+            {
+                "id": new_id(),
+                "perspective_id": view,
+                "relation_id": relation_id,
+                "confidence": 0.0,
+                "status": SECRET_PLOT,
+                "session_at": None,
+                "evidence_ids": [],
+                "seq": max(w.version + 1, int(held["seq"]) + 1),
+                "recorded_at": w.now,
+                "pinned": bool(held["pinned"]),
+                "hidden_by": _joined((), hiders[relation_id]),
+            }
+            for (relation_id, view), held in last.items()
+            if held["confidence"] >= KNOWN
+        ],
+    )
+    await w.update_rows(  # (a 0.0 an earlier hide wrote also waits for this one)
+        BELIEFS,
+        {
+            held["id"]: {"hidden_by": _joined(held["hidden_by"], hiders[relation_id])}
+            for (relation_id, _), held in last.items()
+            if held["hidden_by"] and not set(hiders[relation_id]) <= set(held["hidden_by"])
+        },
+    )
+
+
+async def _wake(
+    w: Changes, shown: Sequence[str], statements: Mapping[str, Collection[str]]
+) -> None:
+    """Entries shown to the players again (`shown`; `statements`: the names, conditions and
+    connections hanging off them, by column). Each is taken off the mark of every row and belief
+    it put to sleep. A row wakes when no entry that closed it is still hidden: it is exactly the
+    row the hide closed, with its own certainty. A belief wakes the point of view's earlier
+    belief (its confidence, status, evidence and pin) when its 0.0 is still the newest belief of
+    the pair and the pair has no row the DM made since: a belief or row the DM wrote while it
+    slept stays as the DM left it, both of them, since a (statement, point of view) is one
+    thing (#3082)."""
+    views = await _player_views(w)
+    gone = set(shown)
+    if not views or not gone:
+        return
+    woken: set[tuple[str, str]] = set()  # (relation, view) whose row woke now
+    awake: set[tuple[str, str]] = set()  # (relation, view) with a row the DM made meanwhile
+    for column, ids in statements.items():
+        if not ids:
+            continue
+        rows = await w.select(
+            KNOWERS,
+            f" AND {column} = ANY(%s) AND perspective_id = ANY(%s)",
+            [sorted(ids), views],
+            dormant=True,
+        )
+        changes: dict[str, dict[str, Any]] = {}
+        for r in rows:
+            if not r["hidden_by"]:
+                awake.add((r[column], r["perspective_id"]))
+            elif gone & set(r["hidden_by"]):
+                left = sorted(set(r["hidden_by"]) - gone)
+                changes[r["id"]] = {"hidden_by": left}
+                if not left:
+                    woken.add((r[column], r["perspective_id"]))
+        await w.update_rows(KNOWERS, changes)
+    relations = sorted(statements.get("relation_id", ()))
+    if not relations:
+        return
+    held: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for row in await w.select(
+        BELIEFS,
+        " AND relation_id = ANY(%s) AND perspective_id = ANY(%s) ORDER BY seq",
+        [relations, views],
+    ):
+        held.setdefault((row["relation_id"], row["perspective_id"]), []).append(row)
+    marks: dict[str, dict[str, Any]] = {}
+    back: list[dict[str, Any]] = []
+    copies: list[tuple[str, str]] = []  # (new belief, the belief it is copied from)
+    for pair, rows in held.items():
+        newest = rows[-1]
+        if not newest["hidden_by"] or not gone & set(newest["hidden_by"]):
+            continue
+        left = sorted(set(newest["hidden_by"]) - gone)
+        marks[newest["id"]] = {"hidden_by": left}
+        if left or (pair in awake and pair not in woken) or len(rows) < 2:
+            continue
+        was = rows[-2]
+        fresh = new_id()
+        back.append(
+            {**was, "id": fresh, "seq": max(w.version + 1, int(newest["seq"]) + 1),
+             "recorded_at": w.now}
+        )  # fmt: skip
+        copies.append((fresh, was["id"]))
+    await w.update_rows(BELIEFS, marks)
+    await w.insert_many(BELIEFS, back)
+    if copies:
+        await w.conn.execute(
+            "INSERT INTO memory_evidence (guild_id, campaign_id, belief_id, kind, target_id,"
+            " session_started_at, added_at) SELECT e.guild_id, e.campaign_id, m.fresh, e.kind,"
+            " e.target_id, e.session_started_at, e.added_at FROM memory_evidence e"
+            " JOIN unnest(%s::text[], %s::text[]) AS m(fresh, was) ON e.belief_id = m.was"
+            " WHERE e.guild_id = %s AND e.campaign_id = %s ON CONFLICT DO NOTHING",
+            ([c[0] for c in copies], [c[1] for c in copies], *w.ids),
+        )
 
 
 def ends_shown(ends: Mapping[str, Mapping[str, Any]], relation: Mapping[str, Any]) -> bool:
@@ -926,8 +1126,12 @@ async def _follow_dependents(
     w: Changes, shown_now: Sequence[str], hidden_now: Sequence[str]
 ) -> None:
     """Entries that were shown or hidden just now: their names, conditions and connections go with
-    them (a name or a connection of an entry the players are shown again is known again only when
-    its own flags and its other end allow it)."""
+    them. Hiding an entry puts what the player characters knew of them to sleep (`_sleep`);
+    showing it wakes exactly that (`_wake`), and then a name or connection that is shown to the
+    players is known again when its own flags and its other end allow it. A name belongs to the
+    fact (#3037): a connection a join moved (it has a confirmed `via_alias_id`) and the secret name
+    it was moved through are known through that name, not through the entry it now hangs on, so
+    hiding that entry does not close them (hiding the connection's other end still does)."""
     for ids, opening in ((shown_now, True), (hidden_now, False)):
         if not ids:
             continue
@@ -940,6 +1144,15 @@ async def _follow_dependents(
             ends = await _entities_by_id(
                 w, {x for r in relations for x in (r["subject_id"], r["object_id"])}
             )
+            await _wake(
+                w,
+                ids,
+                {
+                    "alias_id": {a["id"] for a in aliases},
+                    "state_id": {s["id"] for s in states},
+                    "relation_id": {r["id"] for r in relations},
+                },
+            )
             await _open(w, "alias_id", [(a["id"], False) for a in aliases if alias_shown(a)])
             await _open(w, "state_id", [(s["id"], False) for s in states])
             await _open(
@@ -948,13 +1161,59 @@ async def _follow_dependents(
                 [(r["id"], False) for r in relations if relation_shown(r) and ends_shown(ends, r)],
             )
         else:
-            for column, found in (
-                ("alias_id", aliases),
-                ("state_id", states),
-                ("relation_id", relations),
+            hidden = set(ids)
+            held = await _joined_through(w, aliases, relations, hidden)
+            for column, hiders in (
+                (
+                    "alias_id",
+                    {a["id"]: {a["entity_id"]} for a in aliases if a["id"] not in held[0]},
+                ),
+                ("state_id", {s["id"]: {s["entity_id"]} for s in states}),
+                (
+                    "relation_id",
+                    {
+                        r["id"]: {r["subject_id"], r["object_id"]} & hidden
+                        for r in relations
+                        if r["id"] not in held[1]
+                    },
+                ),
             ):
-                if found:
-                    await _close(w, column, [r["id"] for r in found])
+                if hiders:
+                    await _sleep(w, column, hiders)
+
+
+async def _joined_through(
+    w: Changes,
+    aliases: Sequence[dict[str, Any]],
+    relations: Sequence[dict[str, Any]],
+    hidden: set[str],
+) -> tuple[set[str], set[str]]:
+    """What hiding these entries leaves alone because a join made it belong to the fact: the
+    secret names some confirmed connection was moved through, and the connections moved through a
+    confirmed name of a hidden entry whose other end is not hidden as well."""
+    names = {a["id"] for a in aliases}
+    via = [r for r in relations if r.get("via_alias_id")]
+    wanted = sorted({str(r["via_alias_id"]) for r in via} | names)
+    found = (
+        {str(a["id"]): a for a in await w.select(ALIASES, " AND id = ANY(%s)", [wanted])}
+        if wanted
+        else {}
+    )
+    moved_names: set[str] = set()
+    if names:
+        for r in await w.select(
+            RELATIONS, " AND via_alias_id = ANY(%s) AND status = %s", [sorted(names), CONFIRMED]
+        ):
+            moved_names.add(str(r["via_alias_id"]))
+    kept_relations: set[str] = set()
+    for r in via:
+        alias = found.get(str(r["via_alias_id"]))
+        if alias is None or alias["status"] != CONFIRMED or alias["entity_id"] not in hidden:
+            continue
+        if r["subject_id"] in hidden and r["object_id"] in hidden:
+            continue  # (both ends hidden at once: nothing shown is left to know it)
+        kept_relations.add(str(r["id"]))
+    return {n for n in moved_names if n in names}, kept_relations
 
 
 async def move_flags(conn: Any, guild_id: int, campaign_id: str) -> int:
@@ -1081,5 +1340,14 @@ async def _bulk(
             "INSERT INTO {} (guild_id, campaign_id, {}) SELECT %s, %s, {}"
             " FROM jsonb_populate_recordset(NULL::{}, %s) ON CONFLICT DO NOTHING"
         ).format(sql.Identifier(table.name), cols, cols, sql.Identifier(table.name)),
-        (guild_id, campaign_id, Jsonb([{c: row.get(c) for c in table.columns} for row in rows])),
+        (
+            guild_id,
+            campaign_id,
+            Jsonb(
+                [
+                    {c: row[c] if c in row else table.defaults.get(c) for c in table.columns}
+                    for row in rows
+                ]
+            ),
+        ),
     )
