@@ -26,7 +26,7 @@ const alertText = () => screen.getByRole("alert").textContent;
 describe("What people believe", () => {
   it("lists each belief in DMbot's words: what kind, whose, how sure, from which session", async () => {
     await open();
-    expect(screen.getByText(w.count(6))).toBeTruthy();
+    expect(screen.getByText(w.count(8))).toBeTruthy();
     const c = card("Mira Voss took the key");
     expect(c.textContent).toContain(w.rules["theory"]);
     expect(c.textContent).toContain(w.believedBy("the party"));
@@ -35,13 +35,27 @@ describe("What people believe", () => {
     expect(card("The ferryman plans to sink the barge").textContent).toContain(w.rules["plot"]);
   });
 
+  it("says who lied on a suspected lie, in the exact words, before Keep", async () => {
+    await open();
+    const c = card("The ferryman sold the map");
+    expect(c.textContent).toContain("Rook thinks Valyra lied about this");
+    expect(c.textContent).toContain(w.rules["lie"]);
+    expect(within(c).getByRole("button", { name: w.place })).toBeTruthy();
+  });
+
+  it("words the party's view and a liar who is gone", () => {
+    expect(w.lied("the party", "Valyra")).toBe("The party thinks Valyra lied about this");
+    expect(w.lied("Mira", "Valyra")).toBe("Mira thinks Valyra lied about this");
+    expect(w.lied("Mira", null)).toBe("Mira thinks someone lied about this");
+  });
+
   it("keeps one as a belief, and the list no longer shows it", async () => {
     const api = await open();
     press(card("Mira Voss took the key"), w.place);
     await waitFor(() => expect(screen.getByText(w.keptFor("the party"))).toBeTruthy());
     expect(api.calls).toContain(`answerReading:${REF}:place:r1`);
     await waitFor(() => expect(screen.queryByText("Mira Voss took the key")).toBeNull());
-    expect(screen.getByText(w.count(5))).toBeTruthy();
+    expect(screen.getByText(w.count(7))).toBeTruthy();
   });
 
   it("takes a keep back with Undo, and the belief waits again", async () => {
@@ -81,6 +95,13 @@ describe("What people believe", () => {
     press(card("Far Hall hid the second key"), w.place);
     await waitFor(() => expect(alertText()).toBe(w.errors["cannot-write"]));
     expect(screen.getByText("Far Hall hid the second key")).toBeTruthy();
+  });
+
+  it("words a lie whose liar DMbot can't find, and leaves it on the list", async () => {
+    await open();
+    press(card("The innkeeper hid the ledger"), w.place);
+    await waitFor(() => expect(alertText()).toBe("DMbot doesn't know who lied. Name them in Check new names first, or drop this one."));
+    expect(screen.getByText("The innkeeper hid the ledger")).toBeTruthy();
   });
 
   it("shows the wait with its stage while an answer is sent, and sends one answer at a time", async () => {
@@ -194,6 +215,6 @@ describe("What people believe", () => {
     render(<WebReadings api={flaky} campaignRef={REF} />);
     await waitFor(() => expect(alertText()).toBe(w.loadFailed));
     fireEvent.click(screen.getByRole("button", { name: w.reload }));
-    await screen.findByText(w.count(6));
+    await screen.findByText(w.count(8));
   });
 });

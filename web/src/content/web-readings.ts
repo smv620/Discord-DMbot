@@ -15,6 +15,7 @@ export const readingWords = {
   rules: {
     theory: "A theory",
     accusation: "An accusation",
+    lie: "A suspected lie",
     reveal: "Something revealed",
     confession: "Said under a spell",
     evasion: "Avoided an answer under a spell",
@@ -22,6 +23,10 @@ export const readingWords = {
     plot: "A secret plot",
   } as Record<string, string>,
   other: "Something noticed",
+  // A suspected lie (#3121): who thinks it and who lied, so the DM sees the name before Keep. The party's own view
+  // starts with "The party"; a liar who is gone or unknown is "someone".
+  lied: (who: string, liar: string | null): string =>
+    `${who === "the party" ? "The party" : who} thinks ${liar ?? "someone"} lied about this`,
   believedBy: (who: string): string => `Believed by ${who}`,
   sure: (how: string): string => `How sure: ${how}`,
   saidAt: (day: string): string => `Session of ${day}`,
@@ -52,6 +57,7 @@ export const readingWords = {
     "stopped-recording": "A player asked to stop being recorded, so this was removed. Nothing for you to do.",
     "cannot-write": "DMbot couldn't save that. It is still in the list. Try again in a minute, or press Drop it.",
     "bad-reading": "DMbot can't keep this one. The list has been refreshed.",
+    "unknown-liar": "DMbot doesn't know who lied. Name them in Check new names first, or drop this one.",
     "unknown-character": "It names a character who isn't in this campaign, so it can't be kept. Drop it, or add the character first.",
     "waiting-already": "That belief is already waiting for you in Waiting for you.",
     "plot-is-known": "You already know about this plot, so there is nothing to save.",

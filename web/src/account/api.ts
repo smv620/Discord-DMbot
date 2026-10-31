@@ -1787,7 +1787,7 @@ export interface Waiting {
 }
 /** What people believe (#2412 slice 3b; core PR 2693): readings DMbot found that the DM may keep as a belief.
  * DMbot's own words only: names, a relationship, whose view and how sure; never a line or a speaker. */
-export type ReadingRule = "theory" | "accusation" | "reveal" | "confession" | "evasion" | "false_clue" | "plot";
+export type ReadingRule = "theory" | "accusation" | "lie" | "reveal" | "confession" | "evasion" | "false_clue" | "plot";
 export interface Reading {
   id: string;
   rule: ReadingRule;
@@ -1796,6 +1796,8 @@ export interface Reading {
   statement: string;
   /** In words: "fairly sure", "doubtful", "a guess", "seen", "dodged", "false", "secret plot". */
   sureness: string;
+  /** Who lied, for a suspected lie only (#3121): a name, or null when it is gone or unknown. Null on any other rule. */
+  liar: string | null;
   /** The session's day (Unix seconds). */
   sessionAt: number;
   /** False while a new name in it has to be answered first, in Check new names. */
@@ -1873,6 +1875,7 @@ export type ApiErrorKind =
   | "queue-full" // too many connections wait already: answer some first (#2652)
   | "bad-reading" // the reading is not one DMbot can keep (#2412)
   | "unknown-character" // a character in it is not in this campaign (#2412)
+  | "unknown-liar" // the one who lied is not known, or is not a character in this campaign (#3121)
   | "waiting-already" // the belief is already waiting to be kept (#2412)
   | "plot-is-known" // the secret plot is already known (#2412)
   | "already-known" // the belief is already kept (#2412)
@@ -2519,6 +2522,7 @@ export const errorKinds: Record<string, ApiErrorKind> = {
   stale: "stale",
   bad_reading: "bad-reading",
   unknown_character: "unknown-character",
+  unknown_liar: "unknown-liar",
   waiting_already: "waiting-already",
   plot_is_known: "plot-is-known",
   already_known: "already-known",
