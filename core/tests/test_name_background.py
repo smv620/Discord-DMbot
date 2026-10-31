@@ -319,9 +319,12 @@ class ThePath(NamesTest):
         self.assertIn("does not keep it, only a short line", text)
         self.assertEqual(
             [b.label for b in view.children],
-            ["🤖 Find names", ui_bg.TRUTH_OFF, "Cancel", ui_bg.KNOWS_LABELS["spoilers"]],
+            ["🤖 Find names", ui_bg.TRUTH_OFF, "Cancel", ui_bg.KNOWS_LABELS["world"]],
         )
-        self.assertIn("Players don't know it yet", text)  # (#2959: the default)
+        # (#3098, owner 2026-10-31: the form starts on "Everyone knows it", marked Default)
+        self.assertIn("Everyone knows it", text)
+        self.assertIn("(Default)", ui_bg.KNOWS_TEXT["world"])
+        self.assertNotIn("(Default)", ui_bg.KNOWS_TEXT["spoilers"])
         self.assertIn("Tap the Players button to switch", text)
         self.ai.complete.assert_not_awaited()  # nothing is sent until the DM presses
 
@@ -336,8 +339,8 @@ class ThePath(NamesTest):
             seen.append(view.knows)
             shown = press.response.edited[0][0]
             self.assertIn(ui_bg.KNOWS_TEXT[view.knows], shown)
-        self.assertEqual(seen, ["spoilers", "world", "smart", "spoilers"])
-        await view.knows_button.callback(self.it())  # world
+        # The form starts on world (#3098), and three presses come back to it.
+        self.assertEqual(seen, ["world", "smart", "spoilers", "world"])
         with patch.object(
             ui_bg, "read_background", AsyncMock(side_effect=RuntimeError("stop"))
         ) as r:
@@ -505,7 +508,9 @@ class ThePath(NamesTest):
         it = self.it()
         await ui_bg.offer(it, self.campaign.id, Upload(text, "my notes"))
         press = self.it()
-        await it.response.sent[0][1]["view"]._read(press)
+        view = it.response.sent[0][1]["view"]
+        view.knows = "spoilers"  # the disguise is hidden only when they are spoilers
+        await view._read(press)
         view = press.edit_original_response.await_args.kwargs["view"]
         (button,) = [b for b in view.children if getattr(b, "label", "") == "✅ Add all 1 NPC"]
         await button.callback(self.it())

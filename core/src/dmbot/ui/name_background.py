@@ -281,8 +281,8 @@ KNOWS_LABELS = {
     lore_knowledge.SMART: "Players: DMbot sorts",
 }
 KNOWS_TEXT = {
-    lore_knowledge.SPOILERS: "**Players don't know it yet.** They find it out in play. (Default)",
-    lore_knowledge.WORLD: "**Everyone knows it.** Every character knows all of it.",
+    lore_knowledge.SPOILERS: "**Players don't know it yet.** They find it out in play.",
+    lore_knowledge.WORLD: "**Everyone knows it.** Every character knows all of it. (Default)",
     lore_knowledge.SMART: "**DMbot sorts it.** It guesses what everyone would know. If unsure, "
     "players don't know it yet.",
 }
@@ -304,7 +304,7 @@ def offer_text(
     *,
     ask: bool = False,
     speaker: str | None = None,
-    knows: str = lore_knowledge.DEFAULT,
+    knows: str = lore_knowledge.PICKED_FIRST,
 ) -> str:
     """The question before the AI reads a lore upload. Asked once per upload (#2447): lore that
     may change in play (the default), or 📌 100% truth, the DM's word, so DMbot tells the DM when
@@ -393,7 +393,7 @@ class BackgroundOffer(_Menu):
         self.add_item(
             _Button(self._cancel, label="Cancel", style=discord.ButtonStyle.secondary, row=1)
         )
-        self.knows = lore_knowledge.DEFAULT  # what the players know of it (#2959)
+        self.knows = lore_knowledge.PICKED_FIRST  # what the players know of it (#2959, #3098)
         self.knows_button = _Button(
             self._cycle,
             label=KNOWS_LABELS[self.knows],
