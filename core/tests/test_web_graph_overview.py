@@ -23,6 +23,8 @@ class Overview(Web):
 
 
 class TheNumbers(Overview):
+    bob_has_a_hero = False  # (the counts are of the DM's names, so Bob has no character here)
+
     async def test_fifty_one_names_and_one_connection_show_every_name(self) -> None:
         # The owner's case: nearly every name has no connection. The fixture has 5 names (Mira, the
         # Keep, Rook, the Far Hall and Dawnbreaker); with 46 lonely ones that is 51.
@@ -93,6 +95,7 @@ class WhoSeesWhat(Overview):
         await self.sql(
             "UPDATE memory_entities SET hidden_from_players = true WHERE id = %s", secret_place
         )
+        await self.keep_from_bob(secret_place)
         mine = {n["id"]: n for n in (await self.overview())["tray"]}
         self.assertFalse(mine[secret_place]["revealed"])
         theirs = await self.overview(self.player)
@@ -123,6 +126,7 @@ class WhoSeesWhat(Overview):
         await self.sql(
             "UPDATE memory_entities SET hidden_from_players = true WHERE id = %s", secret_place
         )
+        await self.keep_from_bob(secret_place)
         got = await self.overview(view="players")
         self.assertEqual(got["view"], "players")
         self.assertFalse(got["canEdit"])
@@ -159,6 +163,8 @@ class Refusals(Overview):
 
 
 class TheCaps(Overview):
+    bob_has_a_hero = False
+
     async def test_a_name_cap_says_it_cut_and_keeps_the_true_totals(self) -> None:
         await self.lonely(10)
         got = await relationships.read_overview(self.web, self.session, self.cref, max_names=6)
@@ -199,6 +205,7 @@ class WhatAPlayerNeverGets(Overview):
         await self.sql("UPDATE memory_entities SET audience_limited = true WHERE id = %s", limited)
         await self.link("knows", self.mira, limited, "mira-door")
         await self.link("owns", self.mira, self.hall, "mira-hall", secret=True)
+        await self.keep_from_bob(limited)  # (the DM limited it: the hero no longer knows it)
         theirs = await self.overview(self.player)
         listed = {n["id"] for n in theirs["tray"]}
         self.assertNotIn(limited, listed)

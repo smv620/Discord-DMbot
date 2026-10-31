@@ -22,6 +22,8 @@ OTHER_PLAYER = 7777  # a player who is not signed in
 
 
 class MyCharacters(Web):
+    bob_has_a_hero = False  # (these tests give Bob his own characters)
+
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
         # Bob plays Okra; someone else plays Wen. Ken is hidden from the players.
@@ -40,6 +42,10 @@ class MyCharacters(Web):
         self.guard_link = await self.link("knows", self.guard, self.mira, "guard-mira", secret=True)
         await self.know(ENTRY, self.guard, [self.okra])
         await self.know(CONNECTION, self.guard_link, [self.okra])
+        # both players' characters were told what the table was told (the DM kept Ken, the guard
+        # and the guard's secret link back); the page is what each character knows (#3143)
+        await self.tell_the_table(self.okra)
+        await self.tell_the_table(self.wen)
 
     async def sql_one(self, statement: str, *args: Any) -> dict[str, Any]:
         async with self.db.guild(self.g) as conn:
@@ -122,17 +128,17 @@ class NobodyElses(MyCharacters):
         got = await self.graph(center=self.mira, hops=2)
         self.assertEqual(self.names(got)[self.ken], "Ken")
 
-    async def test_the_table_wide_view_shows_neither(self) -> None:
-        """A player who plays no character (the table's view, what a shared link shows) sees only
-        what the flags show everyone."""
+    async def test_a_player_with_no_character_sees_nothing(self) -> None:
+        """A member who plays no character gets an empty page, never the full graph (#3143): the
+        page is what a player's own characters know, and they have none."""
         await self.know(ENTRY, self.guard, [])  # nobody
         await self.join()
         stranger = await self.signed(
             type(BOB_USER)(id=4242, name="Stranger", email="s@example.org"), MEMBER
         )
-        got = await self.graph(stranger, center=self.mira, hops=2)
-        self.assertNotIn(self.ken, self.names(got))
-        self.assertNotIn(self.label, str(got))
+        self.assertEqual(await self.refused_web(stranger, center=self.mira, hops=2), "not_found")
+        got = await self.graph(stranger)
+        self.assertEqual((got["nodes"], got["edges"]), ([], []))
         self.assertNotIn("Ken", str(got))
 
     async def test_a_peek_behind_the_dm_screen_is_as_before(self) -> None:

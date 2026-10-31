@@ -2036,6 +2036,18 @@ names panel nor the speech-to-text hints can be a fixed list.
   `open`, else 403 `peek_off`. The answer carries `view`, `visibility` and `canPeek`. `POST .../web/peek`
   (after the page's warning) records the visit; the bot posts "<name> peeked at the relationship web" once
   for each visit on the DM screen. Revealed names and their automatic changes are slice 2.
+  *Changed (#3143, Supervisor ruling 2026-10-31, migration 0311):* **the players' view is the gate's, not a
+  second rule.** What a player sees on the Story graph (and its overview, size and name search) is what their
+  own characters know: the API reads the graph's source and the knowers (`dmbot_web_graph_source`,
+  `dmbot_web_knowers_data`), and `web/graph_view.py` keeps what `memory.gate` lets that viewer know, with the
+  gate's names (`name_entries`) and its split of facts learned through a secret other name onto a node of
+  their own (`split_connections`, `drawn_connections`). The viewer's characters come only from who plays them
+  in the database, never from the request. A member with no character sees nothing; a DM in Players View sees
+  what the party knows (what every player character knows); a peek stays the DM's full graph behind its own
+  switch. The old table-wide flags (`hidden_from_players`, `audience_limited`, the party's belief) no longer
+  decide what a player sees on this page: a character added late learns nothing of what was shown before, a
+  statement limited to one character is not shown to the others, a group's knowledge and a row of 0.0
+  certainty count. The two graph doors keep only the full view; the SQL copy of the player rules is gone.
 - **Merging names, the easy way** (owner, 2026-10-22, after the NPC list showed one creature under four
   spellings). Today a merge is one pair at a time (🔗 Same as… on a card, typing the other name). Three
   easier ways, all the same merge underneath, so the kept name collects the others as "Also called", their
