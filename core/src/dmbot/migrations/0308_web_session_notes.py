@@ -5,6 +5,16 @@ A session's notes on the website, for the campaign's game masters (#3027).
 
 from __future__ import annotations
 
+# A beat the bot would keep (`recaps.beats.from_json`): an object with its words as text and its
+# people and line pointers as lists. Anything else is left out, and the rest renumbered. Both doors
+# use this one test, so the list's count is the number of beats the session page shows. (The bot
+# also turns a number into text; here a beat whose words are not text is left out instead.)
+_KEPT = """jsonb_typeof(e.item) = 'object'
+                        AND jsonb_typeof(e.item->'what') = 'string'
+                        AND jsonb_typeof(e.item->'who') = 'array'
+                        AND jsonb_typeof(e.item->'lines') = 'array'
+                        AND jsonb_typeof(e.item->'kind') = 'string'"""
+
 WEB_SESSION_NOTES = r"""
     -- Session notes (#3026) are a session's beat sheet, kept for good: they survive the deletion
     -- of transcript lines and go only with the campaign. The website shows them to the campaign's
@@ -27,7 +37,8 @@ WEB_SESSION_NOTES = r"""
         RETURN jsonb_build_object('status', 'ok', 'sessions', COALESCE((
             SELECT jsonb_agg(jsonb_build_object(
                        'at', n.session_at, 'writtenAt', n.written_at,
-                       'beats', jsonb_array_length(n.beats))
+                       'beats', (SELECT count(*) FROM jsonb_array_elements(n.beats) AS e(item)
+                                 WHERE {kept}))
                    ORDER BY n.session_at DESC)
             FROM (SELECT * FROM session_notes s
                   WHERE s.guild_id = g AND s.campaign_id = c
@@ -62,15 +73,11 @@ WEB_SESSION_NOTES = r"""
                            'where', b.place, 'kind', b.kind) ORDER BY b.number)
                 FROM (SELECT row_number() OVER (ORDER BY e.ord)::INT AS number,
                              e.item->>'what' AS what,
-                             CASE WHEN jsonb_typeof(e.item->'who') = 'array'
-                                  THEN e.item->'who' ELSE '[]'::jsonb END AS who,
+                             e.item->'who' AS who,
                              COALESCE(e.item->>'where', '') AS place,
                              e.item->>'kind' AS kind
                       FROM jsonb_array_elements(r.beats) WITH ORDINALITY AS e(item, ord)
-                      WHERE jsonb_typeof(e.item) = 'object'
-                        AND jsonb_typeof(e.item->'what') = 'string'
-                        AND e.item ? 'who' AND e.item ? 'lines'
-                        AND jsonb_typeof(e.item->'kind') = 'string'
+                      WHERE {kept}
                       ORDER BY e.ord LIMIT 200) b), '[]'::jsonb));
     END
     $fn$;
@@ -91,7 +98,7 @@ WEB_SESSION_NOTES = r"""
     REVOKE ALL ON FUNCTION dmbot_web_session_notes(BIGINT, TEXT, BIGINT) FROM PUBLIC;
 """
 
-SQL = WEB_SESSION_NOTES
+SQL = WEB_SESSION_NOTES.replace("{kept}", _KEPT)
 
 WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     # A campaign's session notes, for its game masters (#3027).

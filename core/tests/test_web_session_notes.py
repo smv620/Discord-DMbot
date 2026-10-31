@@ -81,6 +81,18 @@ class TheList(Notes):
                          (1, 2, START + 100))  # fmt: skip
         self.assertEqual((newest["sessionNumber"], newest["beats"]), (None, 1))
 
+    async def test_a_campaign_with_no_notes_has_an_empty_list(self) -> None:
+        bob = await self.signed_in(BOB)  # Bob DMs "Two", which has one session with notes
+        got = await session_notes.read_notes_list(self.web, bob, f"{THURSDAY.id}.{self.two.id}")
+        self.assertEqual([s["sessionAt"] for s in got["sessions"]], [START])
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "DELETE FROM session_notes WHERE guild_id = %s AND campaign_id = %s",
+                (THURSDAY.id, self.two.id),
+            )
+        got = await session_notes.read_notes_list(self.web, bob, f"{THURSDAY.id}.{self.two.id}")
+        self.assertEqual(got["sessions"], [])
+
     async def test_only_this_campaigns_notes_are_listed(self) -> None:
         got = await session_notes.read_notes_list(self.web, self.session, self.cref)
         self.assertNotIn("OTHER CAMPAIGN", repr(got))
@@ -127,14 +139,21 @@ class OneSession(Notes):
             self.assertNotIn(word, text)
 
     async def test_a_damaged_entry_is_left_out_and_the_rest_renumbered(self) -> None:
-        await self.keep(
-            self.one.id,
-            START + 40_000,
-            [{"what": 5}, "nonsense", SHEET[1]],  # (neither is a beat; the third is)
-        )
+        broken = [
+            {"what": 5},
+            "nonsense",
+            {"what": "lines are not a list", "who": [], "lines": None, "kind": "talk"},
+            {"what": "who is not a list", "who": None, "lines": [], "kind": "talk"},
+            {"what": "kind is missing", "who": [], "lines": []},
+        ]
+        await self.keep(self.one.id, START + 40_000, [*broken, SHEET[1]])
         got = await session_notes.read_notes(self.web, self.session, self.cref, START + 40_000)
         self.assertEqual([(b["number"], b["what"]) for b in got["beats"]],
                          [(1, "Cerric swears an oath")])  # fmt: skip
+        # and the list counts the beats the page shows, not the damaged entries
+        everything = await session_notes.read_notes_list(self.web, self.session, self.cref)
+        listed = everything["sessions"]
+        self.assertEqual({s["sessionAt"]: s["beats"] for s in listed}[START + 40_000], 1)
 
     async def test_a_session_with_no_notes_is_not_found(self) -> None:
         with self.assertRaises(RecapError) as caught:
