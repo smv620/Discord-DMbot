@@ -354,10 +354,17 @@ class TheKnowWordsAlone(SeeAs):
             "playerCharacters": ["pc1", "pc2"],
             "liveEntries": ["e1", "e2"],
             "connections": {"c1": ["e1", "e2"]},
+            "states": {},
+            "aliases": {},
             "groups": [["pc1", "g"], ["pc2", "g"]],
         }
         got = relationships.know_words({**base, "knowers": [["entry", "e1", "g", 1.0]]})
         self.assertEqual(got[0], {"e1": gate.KNOWN_TO_THE_PARTY, "e2": gate.SECRET})
+        # (a member's own row wins, and a group's row reaches a member who has none)
+        got = relationships.know_words(
+            {**base, "knowers": [["entry", "e1", "g", 1.0], ["entry", "e1", "pc1", 0.5]]}
+        )
+        self.assertEqual(got[0]["e1"], gate.KNOWN_TO_THE_PARTY)
         got = relationships.know_words({**base, "knowers": [["connection", "c1", "npc", 1.0]]})
         self.assertEqual(got[1], {"c1": gate.KNOWN_TO_ONE_NPC})  # (an entry id is not a link id)
         got = relationships.know_words({**base, "knowers": [["property", "e1", "pc1", 1.0]]})

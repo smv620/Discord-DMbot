@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import re
-from collections.abc import Collection
+from collections.abc import Collection, Mapping
 from typing import Any
 
 from dmbot.db import Database
@@ -293,25 +293,22 @@ async def read_web(
 
 def know_words(known: dict[str, Any]) -> tuple[dict[str, str], dict[str, str]]:
     """The word for each name and each connection, worked out from who knows it (§9b item 3) by
-    the one function the bot uses (`gate.word_of`), never from a stored flag. Returns
-    (names by entry id, connections by connection id). A statement a group knows is known to the
-    group's members too, as in the bot's gate. Only ids that are in the data get a word: the
-    others are left out, so the page never says "secret" of something this read does not know."""
-    groups: dict[str, set[str]] = {}
-    for member, group in known["groups"]:
-        groups.setdefault(str(member), set()).add(str(group))
-    who: dict[tuple[str, str], set[str]] = {}
-    for kind, statement, character, _sure in known["knowers"]:
-        who.setdefault((str(kind), str(statement)), set()).add(str(character))
-    party = [str(i) for i in known["playerCharacters"]]
+    the gate's own rules, never from a stored flag: the same input as the rest of the page
+    (`graph_view.statements_of`), `gate.reach` for who knows a statement (a group's members know
+    what their group knows) and `gate.word_of` for the word. Returns (names by entry id,
+    connections by connection id). Only ids that are in the data get a word, so the page never
+    says "secret" of something this read does not know."""
+    data = graph_view.statements_of(known)
+    party = data.player_characters
 
     def word(kind: str, statement: str) -> str:
-        listed = who.get((kind, statement), set())
-        through = {m for m, held in groups.items() if held & listed}
-        return gate.word_of(listed | through, party)
+        listed = data.knowers.get((kind, statement), {})
+        sure = listed if isinstance(listed, Mapping) else dict.fromkeys(listed, 1.0)
+        who = {c for c in {*sure, *data.groups} if gate.reach(c, sure, data.groups) is not None}
+        return gate.word_of(who, party)
 
-    entries = {str(e): word("entry", str(e)) for e in known["liveEntries"]}
-    links = {str(c): word("connection", str(c)) for c in known["connections"]}
+    entries = {str(e): word(gate.ENTRY, str(e)) for e in known["liveEntries"]}
+    links = {str(c): word(gate.CONNECTION, str(c)) for c in data.connections}
     return entries, links
 
 
