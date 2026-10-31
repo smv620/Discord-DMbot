@@ -27,6 +27,7 @@ NOT_A_MESSAGE = {
     "memory/story_plan.py": "the most nodes read from one document",
     "memory/who_ask.py": "characters of story text shown to the who-is-it check",
     "recaps/draft.py": "characters of the last recap given to the next draft's prompt",
+    "recaps/inputs.py": "characters of one session's notes given to the recap writer's prompt",
     "recaps/critics.py": "characters of the earlier recap shown to the critics",
     "recaps/motives.py": "characters of the earlier recap shown to the motive check",
     "recaps/requests.py": "the longest transcribed voice note",

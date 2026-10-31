@@ -400,6 +400,48 @@ class WhatTheHideKeeps(Base):
         self.assertEqual(kept, [[self.arlo]])
 
 
+class UndoAcrossTheMigration(Base):
+    """A change made before the column existed is still undone after it (#3082): the log's
+    snapshots lack `hidden_by`, and a row now has it empty."""
+
+    async def strip(self, batch: int) -> None:
+        async with self.db.guild(GUILD_A) as conn:
+            for column in ("before", "after"):
+                await conn.execute(
+                    f"UPDATE memory_changes SET {column} = {column} - 'hidden_by'"
+                    f" - 'via_alias_id' WHERE guild_id = %s AND campaign_id = %s AND batch = %s"
+                    f" AND {column} IS NOT NULL",
+                    (GUILD_A, self.c, batch),
+                )
+
+    async def test_a_batch_whose_snapshots_lack_hidden_by_can_still_be_undone(self) -> None:
+        arlo = await self.add("Arlo", type="character", role="npc", status=CONFIRMED)
+        rel = await self.connect(arlo)
+        written = await self.memory.set_connection_knowers(
+            GUILD_A, self.c, rel, [self.pc], source="dm"
+        )
+        assert written.batch is not None
+        await self.strip(written.batch)
+        self.assertTrue(await self.believes(rel))
+        await self.memory.undo(GUILD_A, self.c, written.batch, source="dm")
+        self.assertEqual(await self.knowers(rel), [])
+        self.assertFalse(await self.believes(rel))
+
+    async def test_a_removal_logged_before_the_column_can_still_be_undone(self) -> None:
+        arlo = await self.add("Arlo", type="character", role="npc", status=CONFIRMED)
+        rel = await self.connect(arlo)
+        await self.memory.set_connection_knowers(GUILD_A, self.c, rel, [self.pc], source="dm")
+        removed = await self.memory.set_connection_knowers(
+            GUILD_A, self.c, rel, [], source="dm"
+        )  # (a row deleted and a 0.0 belief written: what a hide logged before this release)
+        assert removed.batch is not None
+        await self.strip(removed.batch)
+        self.assertEqual(await self.knowers(rel), [])
+        await self.memory.undo(GUILD_A, self.c, removed.batch, source="dm")
+        self.assertEqual(await self.knowers(rel), [self.pc])
+        self.assertTrue(await self.believes(rel))
+
+
 class JoinedThroughTheGuardsName(MyCharacters):
     """Ken hidden or shown does not take away what a character knew through the guard's name."""
 

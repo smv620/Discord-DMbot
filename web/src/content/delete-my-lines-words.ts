@@ -12,7 +12,7 @@ export const deleteMyLinesWords = {
   checkAgain: "Check again",
   /** The one warning: plain facts, what it covers and that it can't be undone. */
   warning: (server: string, lines: number, sessions: number): string =>
-    `This deletes everything you said that DMbot wrote down in ${server}: ${plural(lines, "line", "lines")} in ${plural(sessions, "session", "sessions")}. Other people's lines and the DM's story notes stay. Copies people already downloaded stay too. This can't be undone.`,
+    `This deletes everything you said that DMbot wrote down in ${server}: ${plural(lines, "line", "lines")} in ${plural(sessions, "session", "sessions")}. Other people's lines stay. Recaps and session notes DMbot made stay with the campaign. Copies people already downloaded stay too. This can't be undone.`,
   yes: "Yes, delete my lines",
   cancel: "Cancel",
   kept: "OK, nothing was deleted.",
