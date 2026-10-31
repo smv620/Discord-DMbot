@@ -61,7 +61,12 @@ export const reportWords = {
     line: "a line",
     clue: "a clue",
     event: "an event",
+    source: "something someone told them",
   } as Record<string, string>,
+  // A name, not words: the session only, like a line (#3134).
+  sourceHere: (kind: string, session: number): string => `${kind} from session ${session}`,
+  // A kind the page does not know yet: said plainly, never by its own raw name (#3134).
+  unknownKind: "something DMbot noted",
   // A line is a person's words: only that it exists, never what it said.
   lineHere: (session: number): string => `a line from session ${session}`,
   gone: (kind: string, session: number): string => `${kind} from session ${session}, no longer available`,
