@@ -427,7 +427,9 @@ class BackgroundOffer(_Menu):
         pcs = {c for c, _ in await player_characters(memory, campaign)} if memory else set()
         self.known_by = picked if picked in pcs else ""
         # The three choices are for campaign lore: a character's backstory stays as it was (#2959)
-        self.knows = lore_knowledge.DEFAULT if self.speaker else self.knows
+        # A character's backstory is that character's own knowledge, never campaign lore, so it
+        # is always spoilers here, whatever the form would otherwise start on (#3098).
+        self.knows = lore_knowledge.SPOILERS if self.speaker else self.knows
         self.knows_button.label = KNOWS_LABELS[self.knows]
         self.knows_button.disabled = bool(self.speaker)
         for option in self.whose.options:
