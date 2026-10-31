@@ -187,6 +187,21 @@ class TheHistory(GroupCase):
         self.assertTrue(await self.clocks.undo_rejoin(GUILD_A, self.a.id, DM, rejoined.token))
         self.assertEqual(await self.clocks.members(GUILD_A, self.a.id), {self.tuck: 2})
 
+    async def test_a_late_undo_does_not_place_a_character_that_is_no_longer_a_player_character(
+        self,
+    ) -> None:
+        await self.split()
+        await self.place(vell=1, tuck=2)
+        rejoined = await self.clocks.rejoin(GUILD_A, self.a.id, DM, 1)
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "UPDATE memory_entities SET role = 'npc' WHERE guild_id = %s AND campaign_id = %s"
+                " AND id = %s",
+                (GUILD_A, self.a.id, self.vell),
+            )
+        self.assertTrue(await self.clocks.undo_rejoin(GUILD_A, self.a.id, DM, rejoined.token))
+        self.assertEqual(await self.clocks.members(GUILD_A, self.a.id), {self.tuck: 2})
+
     async def test_another_campaigns_history_is_never_read(self) -> None:
         await self.split()
         await self.place(vell=1)
@@ -214,20 +229,38 @@ class TheSpeakersGroup(GroupCase):
         await self.moments()
         self.assertEqual(await self.group(BEN), 2)
 
-    async def test_not_known_when_unplaced_or_split_across_groups_or_no_character(self) -> None:
+    async def test_unplaced_characters_are_ignored_and_one_group_among_the_rest_is_the_answer(
+        self,
+    ) -> None:
         await self.split()
         await self.place(vell=1, tuck=2)  # (Anna's other character, Mara, is not placed)
         await self.moments()
-        self.assertIsNone(await self.group(ANNA))  # Mara has no group: whose voice was it?
-        await self.place(mara=2)
+        self.assertEqual(await self.group(ANNA), 1)  # only Vell is in a group: that one
+        await self.place(vell=None)  # taken out: now none of Anna's characters is in a group
         await self.moments()
-        self.assertIsNone(await self.group(ANNA))  # Vell in 1, Mara in 2
-        await self.place(mara=1)
+        self.assertIsNone(await self.group(ANNA))
+        await self.place(vell=1, mara=1)
         await self.moments()
-        self.assertEqual(await self.group(ANNA), 1)  # both in 1: unambiguous
-        self.assertIsNone(await self.group(ANNA, BEN))  # two speakers in different groups
+        self.assertEqual(await self.group(ANNA), 1)  # both in 1
+
+    async def test_not_known_when_in_different_groups_or_none_or_no_speaker(self) -> None:
+        await self.split()
+        await self.place(vell=1, mara=2, tuck=2)
+        await self.moments()
+        self.assertIsNone(await self.group(ANNA))  # Vell in 1, Mara in 2: whose voice was it?
+        self.assertIsNone(await self.group(ANNA, BEN))  # speakers in different groups
+        self.assertEqual(await self.group(BEN), 2)
         self.assertIsNone(await self.group(OTHER))  # plays no character here
         self.assertIsNone(await self.group())  # a line with no known speaker
+
+    async def test_a_speaker_who_plays_no_character_here_is_skipped_not_fatal(self) -> None:
+        await self.split()
+        await self.place(tuck=2)
+        await self.moments()
+        # the DM spoke the line too (a reading's lines can cite the DM and a player)
+        self.assertEqual(await self.group(BEN, DM), 2)
+        self.assertEqual(await self.group(DM, BEN, OTHER), 2)
+        self.assertIsNone(await self.group(DM))  # the DM alone: nobody to place
 
     async def test_the_clock_of_the_speakers_group_is_the_lines_game_time(self) -> None:
         await self.split()
