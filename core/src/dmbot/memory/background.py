@@ -416,6 +416,7 @@ def _widen(
     lost: Dropped | None = None,
     others: Collection[str] | None = None,
     ends: Collection[str] = (),
+    needs_pronoun: bool = True,
 ) -> list[str] | None:
     """A quote that holds only one of the two names (the sentence says "his sister", #2757) made
     the sentence before it too: the text from the start of the previous sentence to the end of the
@@ -440,8 +441,11 @@ def _widen(
     earlier sentence that holds both names. Only when `others` (the name keys of the campaign
     and of this read, `reach_names`) is given, and only when no name in `others` but the pair's
     own `ends` stands anywhere in the window: another name there could be the one the pronoun
-    means, so the line is left to the who-is-it check. Counted as `quote_reach`."""
-    if not any(w.strip(".,;:!?\"'“”‘’()").casefold() in PRONOUNS for w in words):
+    means, so the line is left to the who-is-it check. Counted as `quote_reach`.
+
+    `needs_pronoun` False is for a description with no named subject ("…the son of a weaver
+    mother", #2959): the person's own word then stands in for the second name."""
+    if needs_pronoun and not any(w.strip(".,;:!?\"'“”‘’()").casefold() in PRONOUNS for w in words):
         return None  # (no pronoun: the quote names what it names, and nothing is borrowed)
     holds = holds or _in_quote
     pattern = r"\s+".join(re.escape(w) for w in words)
