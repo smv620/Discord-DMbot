@@ -35,7 +35,7 @@ export default function Lore({ api, path }: { api: AccountApi; path: string }) {
   const [fileName, setFileName] = useState("");
   const [fileProblem, setFileProblem] = useState("");
   const [speaker, setSpeaker] = useState("");
-  const [known, setKnown] = useState<Known>("smart");
+  const [known, setKnown] = useState<Known>("world");
   const [rights, setRights] = useState(false);
   const [people, setPeople] = useState<NameRow[] | null>(null);
   const [busy, setBusy] = useState(false);
