@@ -6,6 +6,7 @@ they now hang on does not close them (#3037). Invented names."""
 from __future__ import annotations
 
 from typing import Any
+from unittest.mock import patch
 
 import psycopg
 
@@ -181,15 +182,12 @@ class HidingAndShowingAgain(Base):
             count["n"] += 1
             return await original(conn, *args, **kwargs)
 
-        psycopg.AsyncConnection.execute = counting  # type: ignore[method-assign]
-        try:
+        with patch.object(psycopg.AsyncConnection, "execute", counting):
             await self.hide(arlo)
             hid = count["n"]
             count["n"] = 0
             await self.hide(arlo, False)
             shown = count["n"]
-        finally:
-            psycopg.AsyncConnection.execute = original  # type: ignore[method-assign]
         self.assertLess(hid, 60, f"{hid} statements to hide")
         self.assertLess(shown, 60, f"{shown} statements to show")
 
