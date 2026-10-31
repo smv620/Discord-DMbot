@@ -111,7 +111,7 @@ Add the other fields only for the kinds that use them. Answer {"readings": []} i
 # `liar` in an answer is dropped, so the reading stays the plain accusation it was. One line turns
 # it on.
 READ_LIES = False
-_LIAR_ASK = """   When the speaker says someone is lying or lied about it ("she's lying!", "he lied"),
+_LIAR_ASK = """   When the speaker says someone is lying or lied ("she's lying!", "he lied to us"),
    give that person's name in "liar" (never a pronoun, never the speaker) and leave "shared"
    false. Being wrong or mistaken is not lying: use "liar" only when the speaker says it was on
    purpose.
