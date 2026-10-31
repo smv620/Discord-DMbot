@@ -716,6 +716,7 @@ WAITING_COUNT_KEYS = ("claims", "backstory", "which")
 READING_RULES = {
     "theory": "theory",
     "accusation": "accusation",
+    "suspected_lie": "accusation",  # (no word of its own on the page yet)
     "revealed_fact": "reveal",
     "magically_verified": "confession",
     "evasion_under_magic": "evasion",
@@ -736,7 +737,7 @@ def _who_believes(view: str) -> str:
 
 def _sureness(status: str, confidence: object) -> str:
     """How sure the belief is, in words (the numbers are set by code from the rule)."""
-    if status in ("theory", "accusation"):
+    if status in ("theory", "accusation", "suspected_lie"):
         value = confidence if isinstance(confidence, (int, float)) else 0.5
         return "fairly sure" if value > 0.5 else "doubtful" if value < 0.5 else "a guess"
     return {

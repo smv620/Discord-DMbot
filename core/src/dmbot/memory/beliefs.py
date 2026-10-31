@@ -394,6 +394,7 @@ async def place_belief(
     *,
     evidence: Sequence[str] = (),
     session_at: int | None = None,
+    sources: Sequence[str] = (),
 ) -> Belief:
     """A belief the DM placed from a reading (#2412), inside an open write. `believe_in` is for
     the DM's own beliefs and refuses a guess on the party's view; this is the one door a reading
@@ -402,7 +403,8 @@ async def place_belief(
     - **The party**: a guess or an accusation or a dodge under a spell (above 0 and below 1) on
       any connection; or, at 1.0, a Revealed Fact or a Magically Verified word on a connection that
       is confirmed and shown (a secret one is revealed first, which is the DM's own step).
-    - **A character** (a player's or an NPC): a guess or an accusation, above 0 and below 1.
+    - **A character** (a player's or an NPC): a guess or an accusation, above 0 and below 1; or
+      a suspected lie (above 0 and at most 50%) that names who lied in `sources` (#3091).
     The relation it hangs on is whatever the caller found; this never changes it."""
     perspective = await w.get(PERSPECTIVES, perspective_id)
     relation = await w.get(RELATIONS, relation_id)
@@ -435,11 +437,22 @@ async def place_belief(
                 # connection they already know)
                 raise MemoryRuleError(ALREADY_KNOWN)
     else:
-        ok = status in guess and 0.0 < confidence < KNOWN
-    if not ok:
+        ok = (status in guess and 0.0 < confidence < KNOWN) or (
+            status == SUSPECTED_LIE and bool(sources)  # (_check_lie holds the range)
+        )
+    if not ok or (sources and status != SUSPECTED_LIE):
         raise MemoryRuleError(BAD_READING)
     return belief_of(
-        await _add(w, perspective_id, relation_id, confidence, status, evidence, session_at)
+        await _add(
+            w,
+            perspective_id,
+            relation_id,
+            confidence,
+            status,
+            evidence,
+            session_at,
+            sources=sources,
+        )
     )
 
 
