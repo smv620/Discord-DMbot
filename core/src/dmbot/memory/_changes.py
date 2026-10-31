@@ -525,13 +525,18 @@ class Changes(Scope):
             cur = await self.conn.execute(query, (*self.ids, row_id))
             if await cur.fetchone() is not None:
                 raise MemoryRuleError(CHANGED_SINCE)
+        logged = before
+        if table is BELIEFS:  # who said it travels with the belief, for an Undo or a redo
+            links = (await _entry_links(self.conn, self.ids, [row_id])).get(row_id)
+            if links:
+                logged = {**before, "entry_links": links}
         await self.conn.execute(
             sql.SQL("DELETE FROM {} WHERE guild_id = %s AND campaign_id = %s AND {} = %s").format(
                 sql.Identifier(table.name), sql.Identifier(table.key)
             ),
             (*self.ids, row_id),
         )
-        await self._log(table, row_id, "delete", before, None)
+        await self._log(table, row_id, "delete", logged, None)
 
     # ---- many rows in one statement (#164, #253) -------------------------------------
     # Each row is still logged on its own, with its before and after values, exactly as
@@ -952,6 +957,52 @@ async def undo_batch(changes: Changes, batch: int) -> None:
     await merge_restore.redo(conn, ids, batch, changes.batch)
 
 
+ENTRY_LINK_KINDS = ("source", "clue", "event")  # links to entries: ids, never words
+
+
+async def _entry_links(
+    conn: Conn, ids: tuple[int, str], belief_ids: Sequence[str]
+) -> dict[str, list[dict[str, Any]]]:
+    """The links of these beliefs to entries (who said it, a clue, an event). They hold entry ids
+    and never words, so unlike a line's or a claim's link (which stays out of the log so an erased
+    person's words never come back) they travel in the log with the belief, and an Undo of its
+    removal, or a redo, gives them back (#3091)."""
+    cur = await conn.execute(
+        "SELECT belief_id, kind, target_id, session_started_at, added_at FROM memory_evidence"
+        " WHERE guild_id = %s AND campaign_id = %s AND belief_id = ANY(%s) AND kind = ANY(%s)"
+        " AND target_id IS NOT NULL ORDER BY added_at, id",
+        (*ids, list(belief_ids), list(ENTRY_LINK_KINDS)),
+    )
+    out: dict[str, list[dict[str, Any]]] = {}
+    for r in await cur.fetchall():
+        out.setdefault(str(r["belief_id"]), []).append(
+            {
+                "kind": r["kind"],
+                "target_id": r["target_id"],
+                "session_started_at": r["session_started_at"],
+                "added_at": r["added_at"],
+            }
+        )
+    return out
+
+
+async def _give_back_links(conn: Conn, ids: tuple[int, str], belief_id: str, links: Any) -> None:
+    for link in links or ():
+        await conn.execute(
+            "INSERT INTO memory_evidence (guild_id, campaign_id, belief_id, kind, target_id,"
+            " session_started_at, added_at) VALUES (%s, %s, %s, %s, %s, %s, %s)"
+            " ON CONFLICT DO NOTHING",
+            (
+                *ids,
+                belief_id,
+                link["kind"],
+                link["target_id"],
+                link["session_started_at"],
+                link["added_at"],
+            ),
+        )
+
+
 async def _without_lost_parents(
     conn: Conn, ids: tuple[int, str], rows: Sequence[dict[str, Any]]
 ) -> list[dict[str, Any]]:
@@ -1025,6 +1076,10 @@ async def _undo_row(changes: Changes, change: dict[str, Any]) -> None:
         await changes.update(table, change["row_id"], _filled(table, change["before"]))
     else:
         await changes.insert(table, _filled(table, change["before"]))
+        if table is BELIEFS:  # who said it comes back with the belief (#3091)
+            await _give_back_links(
+                changes.conn, changes.ids, change["row_id"], change["before"].get("entry_links")
+            )
 
 
 async def _undo_run_or_not(changes: Changes, run: Sequence[dict[str, Any]]) -> bool:
@@ -1067,13 +1122,22 @@ async def _undo_run(changes: Changes, run: Sequence[dict[str, Any]]) -> bool:
             cur = await conn.execute(query + sql.SQL(" LIMIT 1"), params)
             if await cur.fetchone() is not None:
                 return False
+        # (their links to entries are read first: the delete cascades them away)
+        carried = await _entry_links(conn, ids, keys) if table is BELIEFS else {}
         await conn.execute(
             sql.SQL(
                 "DELETE FROM {} WHERE guild_id = %s AND campaign_id = %s AND {} = ANY(%s)"
             ).format(sql.Identifier(table.name), sql.Identifier(table.key)),
             (*ids, keys),
         )
-        await changes._log_many(table, "delete", [(k, current[k], None) for k in keys])
+        await changes._log_many(
+            table,
+            "delete",
+            [
+                (k, {**current[k], "entry_links": carried[k]} if k in carried else current[k], None)
+                for k in keys
+            ],
+        )
     elif op == "update":  # undo: put every row back as it was
         others = [c for c in table.columns if c != table.key]
         await changes.update_rows(
@@ -1091,4 +1155,9 @@ async def _undo_run(changes: Changes, run: Sequence[dict[str, Any]]) -> bool:
         )
         back = {r[table.key]: row_of(r, table) for r in await cur.fetchall()}
         await changes._log_many(table, "insert", [(k, None, back[k]) for k in keys])
+        if table is BELIEFS:  # who said it comes back with the belief (#3091)
+            for change in run:
+                await _give_back_links(
+                    conn, ids, change["row_id"], (change["before"] or {}).get("entry_links")
+                )
     return True
