@@ -125,8 +125,8 @@ def build(src: dict[str, Any], kn: dict[str, Any], viewer: gate.Viewer) -> Graph
             continue
         if via is not None:
             touched.add(via)
-        # the DM's own note on a connection could name a main name (the players' graph has always
-        # blanked it): it is sent only when both ends are shown by their main names
+        # a connection's own words (a catch-all label, a family role) could name a main name, so
+        # they are sent only when both ends are shown by their main names
         changed = via is not None or any(
             end.startswith(ALIAS) or shown[end] != mains[end] for end in (a, b)
         )

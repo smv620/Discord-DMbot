@@ -226,6 +226,27 @@ _OVERVIEW = (
 )
 
 
+# The comment over the connections list described the player's rules, which the door no longer has.
+_INDENT = " " * 8
+_OLD_COMMENT = (
+    _INDENT + "-- The connections the caller may see, worked out once"
+    " (every use below reads this list).\n"
+    + _INDENT
+    + "-- A member sees what the NPC pages show (memory/recall.py): no secret one,"
+    " none that has\n"
+    + _INDENT
+    + "-- ended, none that came from the story plan. A DM sees all the confirmed ones.\n"
+)
+_NEW_COMMENT = (
+    _INDENT
+    + "-- The connections shown, worked out once (every use below reads this list): all\n"
+    + _INDENT
+    + "-- the confirmed ones, for the full view. A player's graph is not read here: the\n"
+    + _INDENT
+    + "-- API works it out through the gate (web/graph_view.py).\n"
+)
+
+
 def _dollar(text: str) -> str:
     return "$q$" + text + "$q$"
 
@@ -245,6 +266,9 @@ def _cuts(name: str, after: str, extra: tuple[tuple[str, str, str, str], ...]) -
         lines.append(
             f"        def := pg_temp.cut(def, {_dollar(start)}, {_dollar(stop)}, {_dollar(new)});"
         )
+    lines.append(
+        f"        def := pg_temp.swap(def, {_dollar(_OLD_COMMENT)}, {_dollar(_NEW_COMMENT)}, 1, 1);"
+    )
     for declared in _DECLARED:
         # (each declaration is there once; `center_alias` is the relationships door's alone)
         low = 0 if declared.startswith("center_alias") and name.endswith("overview") else 1

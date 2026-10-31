@@ -198,6 +198,29 @@ class TheSplitNode(OneCampaign):
         self.assertIn(label, str(page))
 
 
+class TheSisterOfAHiddenMan(OneCampaign):
+    """The case from the #3147 review: Bruno and Ken are hidden, Okra knows "Bruno's sister (name
+    unknown)", and the DM joins her into Ken. Okra's page reads "someone's sister (name unknown)";
+    neither hidden man's name nor id is anywhere in what the page sends."""
+
+    async def test_the_joined_sister_reads_as_someones_sister_and_names_no_one(self) -> None:
+        await self.memory.join_same_person(self.g, self.one.id, self.sister, self.ken)
+        label = "someone's sister (name unknown)"
+        bodies = [str(await self.full_page(center=c, hops=8)) for c in (None, self.mira, self.okra)]
+        overview = await relationships.read_overview(self.web, self.player, self.cref)
+        bodies.append(str(overview))
+        found = []
+        for word in ("sister", "Ken", "Bruno", "someone"):
+            found.append(await relationships.find_names(self.web, self.player, self.cref, word))
+        bodies.append(str(found))
+        self.assertTrue(any(label in body for body in bodies))
+        self.assertEqual([n["name"] for n in found[0]], [label])  # "sister" finds her
+        self.assertEqual((found[1], found[2]), ([], []))  # and "Ken" and "Bruno" find no one
+        for body in bodies:
+            for hidden in ("Bruno", "Ken", self.bruno, self.ken):
+                self.assertNotIn(hidden, body)
+
+
 class AnOtherNameThatSplitsNothing(OneCampaign):
     async def test_a_person_known_only_by_a_secret_name_is_still_there_under_it(self) -> None:
         """A plain connection learned through a secret other name is not split onto a node of its
