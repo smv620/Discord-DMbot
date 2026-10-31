@@ -8,6 +8,7 @@ from typing import Any
 
 import httpx
 
+from dmbot.memory import gate
 from dmbot.memory.gate import ALIAS, CONNECTION, ENTRY
 from dmbot.memory.models import DM as DM_SOURCE
 from dmbot.memory.ontology import FALLBACK_PREDICATE
@@ -104,6 +105,10 @@ class AMainNameStaysSecret(SeeAs):
     async def test_knowing_a_connection_does_not_give_away_a_main_name(self) -> None:
         # Rook knows the Keep and Mira's link to it exists only through "mira-keep"; Rook does not
         # know Mira under her own name (no row of its own for her), only the connection.
+        async with self.db.guild(self.g) as conn:  # (a name every player may read is shown)
+            await conn.execute(
+                "UPDATE memory_entities SET hidden_from_players = true WHERE id = %s", (self.mira,)
+            )
         await self.know(ENTRY, self.mira, [])
         await self.know(CONNECTION, self.links["mira-keep"], [self.rook])
         got = await self.seen(self.rook)
@@ -152,20 +157,83 @@ class NothingSecretInTheWords(SeeAs):
         self.assertNotIn("Mira Voss", str(got))
         self.assertEqual(got["edges"], [])
 
-    async def test_people_not_yet_named_are_left_out(self) -> None:
-        made = await self.memory.add_unnamed(
-            self.g, self.one.id, what="guard at the north gate", role="guard"
-        )
-        await self.know(ENTRY, made.entity.id, [self.rook])
-        await self.know(
-            CONNECTION, await self.link("knows", self.mira, made.entity.id, "g"), [self.rook]
-        )
-        got = await self.seen(self.rook)
-        self.assertNotIn("guard", str(got).lower())
-
     async def test_the_centre_and_the_npc_page_are_not_given_away(self) -> None:
         got = await self.seen(self.okra)  # nothing known; the DM graph centres on Mira
         self.assertEqual((got["nodes"], got["center"]), ([], None))
+
+
+class NamedAsTheBotNamesThem(SeeAs):
+    """Every name in the view is the one the bot's own `display_names` gives that viewer, for a
+    campaign with a hidden person, a joined unnamed person, an unnamed person off a known name, a
+    secret other name, a partial reveal and a sleeping knower."""
+
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        self.bruno = await self.add("Bruno", "character", role="npc", hidden_from_players=True)
+        self.ken = await self.add("Ken", "character", role="npc", hidden_from_players=True)
+        sister = await self.memory.add_unnamed(
+            self.g, self.one.id, what="sister", role="sibling", anchor_id=self.bruno
+        )
+        self.sister = sister.entity.id
+        brother = await self.memory.add_unnamed(
+            self.g, self.one.id, what="brother", role="sibling", anchor_id=self.mira
+        )
+        self.brother = brother.entity.id
+        self.sister_link = await self.link("knows", self.mira, self.sister, "sister")
+        self.brother_link = await self.link("knows", self.mira, self.brother, "brother")
+        for who in ([self.okra], [self.rook, self.okra]):
+            await self.know(ENTRY, self.sister, who)
+            await self.know(CONNECTION, self.sister_link, who)
+        await self.know(ENTRY, self.mira, [self.okra])
+        await self.know(ENTRY, self.brother, [self.okra])
+        await self.know(CONNECTION, self.brother_link, [self.okra])
+        await self.know(ENTRY, self.keep, [self.rook])  # (a partial reveal: Okra does not)
+        await self.memory.join_same_person(self.g, self.one.id, self.sister, self.ken)
+        made = await self.memory.add_alias(
+            self.g, self.one.id, self.keep, "the old fort",
+            kind="nickname", source=DM_SOURCE, status="confirmed", secret=True,
+        )  # fmt: skip
+        await self.know(ALIAS, made.value.id, [self.rook])
+        async with self.db.guild(self.g) as conn:  # a knower put to sleep grants nothing
+            await conn.execute(
+                "UPDATE memory_knowers SET hidden_by = ARRAY['x'] WHERE campaign_id = %s"
+                " AND about_entity_id = %s",
+                (self.one.id, self.hall),
+            )
+
+    async def test_every_name_is_the_one_the_bot_gives(self) -> None:
+        full = await self.graph(center=self.mira, hops=6, view="full")
+        ids = [n["id"] for n in full["nodes"]]
+        for label, viewer, who in (
+            ("okra", self.okra, gate.Viewer.character(self.okra)),
+            ("rook", self.rook, gate.Viewer.character(self.rook)),
+            ("mira", self.mira, gate.Viewer.character(self.mira)),
+            ("party", see_as.PARTY, gate.Viewer.the_party()),
+        ):
+            with self.subTest(label):
+                expected = await self.memory.display_names(self.g, self.one.id, who, ids)
+                got = await see_as.read_see_as(
+                    self.web, self.session, self.cref, viewer, center=self.mira, hops=6
+                )
+                async with self.memory._read(self.g, self.one.id) as scope:
+                    knows = await gate.visible_to(scope, who)
+                shown = {n["id"]: n["name"] for n in got["nodes"]}
+                # the same people, under the same names: known to the gate and nameable by it
+                self.assertEqual(
+                    shown,
+                    {
+                        i: name
+                        for i, name in expected.items()
+                        if name is not None and knows.knows(gate.ENTRY, i)
+                    },
+                )
+                links = {x["id"] for e in got["edges"] for x in e["links"]}
+                self.assertTrue(all(knows.knows(gate.CONNECTION, i) for i in links))
+
+    async def test_a_hidden_persons_name_never_comes_through_a_joined_label(self) -> None:
+        got = await self.seen(self.okra)
+        self.assertNotIn("Bruno", str(got))
+        self.assertIn("someone's sister (name unknown)", self.names(got))
 
 
 class WhoMayLook(SeeAs):
@@ -189,31 +257,6 @@ class WhoMayLook(SeeAs):
             row = await cur.fetchone()
             assert row is not None
             self.assertIsNone(row["r"])
-
-
-class NeverMoreThanThePlayerSees(SeeAs):
-    async def test_seeing_as_a_player_character_is_inside_that_players_own_view(self) -> None:
-        # Bob plays Okra. Okra knows Mira and her link to the Keep, and nothing else. The player's
-        # own page still adds what the table is shown by the older flags (the Keep, Rook), so the
-        # two are not equal yet; this view must never show MORE than the player is shown.
-        async with self.db.guild(self.g) as conn:
-            await conn.execute(
-                "UPDATE memory_entities SET played_by = %s WHERE id = %s", (BOB.id, self.okra)
-            )
-        await self.know(ENTRY, self.mira, [self.okra])
-        await self.know(ENTRY, self.keep, [self.okra])
-        await self.know(CONNECTION, self.links["mira-keep"], [self.okra])
-        theirs = await self.graph(self.player, center=self.mira, hops=3)
-        ours = await self.seen(self.okra)
-        self.assertEqual(self.names(ours), {"Mira Voss", "Greywater Keep"})
-        self.assertLessEqual(
-            {(n["id"], n["name"]) for n in ours["nodes"]},
-            {(n["id"], n["name"]) for n in theirs["nodes"]},
-        )
-        self.assertLessEqual(
-            {(e["a"], e["b"], tuple(x["id"] for x in e["links"])) for e in ours["edges"]},
-            {(e["a"], e["b"], tuple(x["id"] for x in e["links"])) for e in theirs["edges"]},
-        )
 
 
 class TheRoute(SeeAs):

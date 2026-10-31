@@ -50,16 +50,11 @@ WEB_KNOWERS_DATA = r"""
                                 WHEN k.relation_id IS NOT NULL THEN 'connection'
                                 ELSE 'alias' END,
                            COALESCE(k.about_entity_id, k.state_id, k.relation_id, k.alias_id),
-                           p.entity_id, k.confidence, k.created_at))
+                           p.entity_id, k.confidence))
                 FROM memory_knowers k
                 JOIN memory_perspectives p ON p.id = k.perspective_id
                 WHERE k.guild_id = g AND k.campaign_id = c AND cardinality(k.hidden_by) = 0
                   AND p.entity_id IS NOT NULL), '[]'::jsonb),
-            -- people not yet named ("the guard at the gate"): their label is rebuilt by the bot and
-            -- hangs off another entry, so this view leaves them out for a character
-            'unnamed', COALESCE((
-                SELECT jsonb_agg(x.id ORDER BY x.id) FROM memory_entities x
-                WHERE x.guild_id = g AND x.campaign_id = c AND x.unnamed), '[]'::jsonb),
             'liveEntries', COALESCE((
                 SELECT jsonb_agg(x.id ORDER BY x.id) FROM memory_entities x
                 WHERE x.guild_id = g AND x.campaign_id = c
@@ -79,16 +74,31 @@ WEB_KNOWERS_DATA = r"""
                 FROM memory_aliases a
                 WHERE a.guild_id = g AND a.campaign_id = c AND a.status <> 'rejected'),
                 '{}'::jsonb),
-            -- the other names' words, in the order they were made: a character known only by an
-            -- other name is shown by the first one the viewer knows
-            -- with each name's lookup key and whether it is secret, so a secret own name can be
-            -- told from an other name (the bot's `names_for` does the same)
-            'aliasNames', COALESCE((
-                SELECT jsonb_agg(jsonb_build_array(a.id, a.entity_id, a.text, a.key, a.secret)
-                                 ORDER BY a.created_at, a.id)
+            -- the rows the bot's `gate.name_entries` reads to name an entry for a viewer, so the
+            -- website names exactly as Discord does: every entry (what an unnamed person hangs
+            -- off and the rows joined into one included), every other name with its key and
+            -- whether it is secret, and when each character learned each other name
+            'entities', COALESCE((
+                SELECT jsonb_agg(jsonb_build_object(
+                           'id', x.id, 'name', x.name, 'status', x.status,
+                           'merged_into', x.merged_into, 'unnamed', x.unnamed,
+                           'unnamed_anchor', x.unnamed_anchor, 'unnamed_what', x.unnamed_what,
+                           'hidden_from_players', x.hidden_from_players,
+                           'audience_limited', x.audience_limited) ORDER BY x.id)
+                FROM memory_entities x WHERE x.guild_id = g AND x.campaign_id = c), '[]'::jsonb),
+            'aliasRows', COALESCE((
+                SELECT jsonb_agg(jsonb_build_object(
+                           'id', a.id, 'entity_id', a.entity_id, 'text', a.text, 'key', a.key,
+                           'secret', a.secret) ORDER BY a.created_at, a.id)
                 FROM memory_aliases a
                 WHERE a.guild_id = g AND a.campaign_id = c AND a.status <> 'rejected'),
                 '[]'::jsonb),
+            'learned', COALESCE((
+                SELECT jsonb_agg(jsonb_build_array(k.alias_id, p.entity_id, k.created_at))
+                FROM memory_knowers k
+                JOIN memory_perspectives p ON p.id = k.perspective_id
+                WHERE k.guild_id = g AND k.campaign_id = c AND k.alias_id IS NOT NULL
+                  AND cardinality(k.hidden_by) = 0 AND p.entity_id IS NOT NULL), '[]'::jsonb),
             -- member -> group, a confirmed member_of connection
             'groups', COALESCE((
                 SELECT jsonb_agg(jsonb_build_array(r.subject_id, r.object_id))

@@ -6,14 +6,18 @@ only removes the rest. Nothing is worked out twice: the rules live in the gate, 
 database role has no right on the memory tables, and one DM-only door
 (`dmbot_web_knowers_data`, migration 0309) hands over who knows what.
 
-A name the viewer knows only through a connection or an other name is shown by the first other name
-they know, or not at all (`gate.display_name`): knowing that a connection exists never reveals a
-main name. The DM's own marks (secret, held back, pinned, DMbot's checks, who knows) are removed
-from everything shown, so the picture is the viewer's, not the DM's. Read-only; DM only.
+Names are the bot's own (`gate.name_entries`, the pure half of `gate.names_for`, fed by the same
+rows from the door): a name the viewer knows only through a connection or an other name is shown by
+the first other name they know, an unnamed person by the label the viewer may read, and knowing
+that a connection exists never reveals a main name. The DM's own marks (secret, held back, pinned,
+DMbot's checks, who knows) are removed from everything shown, so the picture is the viewer's, not
+the DM's. Read-only; DM only.
 
-Not here yet: people not yet named are left out. The player view also splits a name into its own
-node when a viewer knows some connections only through a secret other name; this view shows such a
-name once, by the other name.
+Not here yet: the player's own page (migration 0294) still ORs the older table-wide flags into what
+a player sees, so it is not the same as this view: it can show a player more than the gate allows
+(Supervisor's ruling on #3142: the gate is the rule, and the player page moves onto this view in
+#3143). The player view also splits a name into its own node when a viewer knows some connections
+only through a secret other name; this view shows such a name once, by the other name.
 """
 
 from __future__ import annotations
@@ -23,7 +27,6 @@ from typing import Any
 from dmbot.db import Database
 from dmbot.memory import gate
 from dmbot.memory.link_words import connection_words
-from dmbot.memory.models import lookup_key
 from dmbot.memory.ontology import FALLBACK_PREDICATE
 from dmbot.web.names import _parse
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
@@ -42,7 +45,7 @@ def statements_of(data: dict[str, Any]) -> gate.Statements:
     connections = {i: (ends[0], ends[1]) for i, ends in data["connections"].items()}
     aliases = {i: tuple(ends) for i, ends in data["aliases"].items()}
     knowers: dict[tuple[str, str], dict[str, float]] = {}
-    for kind, statement, character, sure, _learned in data["knowers"]:
+    for kind, statement, character, sure in data["knowers"]:
         if (
             (kind == gate.ENTRY and statement in live)
             or (kind == gate.PROPERTY and statement in states)
@@ -74,45 +77,23 @@ def viewer_of(data: dict[str, Any], viewer: str) -> tuple[gate.Viewer, str]:
     raise RecapError("not_found")
 
 
-def _shown_name(
-    seen: gate.Visible, node: dict[str, Any], data: dict[str, Any], learned: dict[str, int]
-) -> str | None:
-    """The name a character is shown for a node, or None to leave it out. The bot's rule
-    (`gate.names_for`): the main name needs a row on the entry, and when the entry's own name is a
-    secret one, a row on that name itself; otherwise the first other name the viewer knows, in the
-    order its characters learned them. People not yet named are left out: their label is rebuilt
-    from what they hang off, which this view does not read."""
-    node_id, main = str(node["id"]), str(node["name"])
-    if node_id in data["unnamed"]:
-        return None
-    key = lookup_key(main)
-    own = [a for a in data["aliasNames"] if a[1] == node_id and a[3] == key]
-    others = sorted(
-        ((str(a[0]), str(a[2])) for a in data["aliasNames"] if a[1] == node_id and a[3] != key),
-        key=lambda pair: (learned.get(pair[0], 0), pair[0]),
-    )
-    if any(a[0] in seen.aliases for a in own):
-        return main
-    if any(a[4] for a in own):  # a secret own name: an entry row does not make it known
-        return next((text for alias_id, text in others if alias_id in seen.aliases), None)
-    return gate.display_name(seen, node_id, main, others)
-
-
 def narrow(
     graph: dict[str, Any], seen: gate.Visible, data: dict[str, Any], viewer: gate.Viewer
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """The nodes and edges of the DM's graph that `seen` may know, with the DM's marks removed."""
-    # when this viewer's own characters learned each other name (the party has no order: by id)
-    learned: dict[str, int] = {}
-    for kind, statement, character, _sure, at in data["knowers"]:
-        if kind == gate.ALIAS and character in viewer.characters:
-            learned[statement] = min(learned.get(statement, int(at)), int(at))
+    # the names are the bot's own (`gate.name_entries`): never decided here
+    rows = gate.NameRows(
+        {str(e["id"]): e for e in data["entities"]},
+        data["aliasRows"],
+        [(str(a), str(c), int(t)) for a, c, t in data["learned"]],
+    )
+    named = gate.name_entries(seen, viewer, [str(n["id"]) for n in graph["nodes"]], rows)
     shown: dict[str, str] = {}
     changed: set[str] = set()  # shown under a name other than the main one
     nodes = []
     for node in graph["nodes"]:
         node_id = str(node["id"])
-        name = _shown_name(seen, node, data, learned)
+        name = named.get(node_id)
         if node_id not in seen.entries or name is None:
             continue
         shown[node_id] = name
@@ -193,7 +174,9 @@ async def read_see_as(
     # the DM graph's centre may be a name this viewer is not shown
     shown_ids = {n["id"] for n in nodes}
     return {
-        **graph,
+        # (the DM graph's own `view`, `visibility`, `canPeek` and `truncated` describe the DM's
+        # picture, not this one, so they are not passed on)
+        "maxHops": graph["maxHops"],
         "center": graph["center"] if graph["center"] in shown_ids else None,
         "nodes": nodes,
         "edges": edges,
