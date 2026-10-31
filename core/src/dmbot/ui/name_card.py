@@ -2722,7 +2722,7 @@ async def connect(
     subject, obj = (other, found) if how.endswith(BACK) else (found, other)
     subject_id, object_id = (other_id, entity_id) if how.endswith(BACK) else (entity_id, other_id)
     # A family role (#3102) is stored with its words' direction, the way the edit menu stores it.
-    detail = detail if predicate == KIN else ""
+    detail = (kin.role_of(detail) or "") if predicate == KIN else ""
     try:
         written = await memory.add_relation(
             campaign.guild_id,

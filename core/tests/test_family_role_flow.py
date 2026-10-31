@@ -40,7 +40,7 @@ class TheFamilyRoleFlow(NamesTest):
         (rel,) = await self.memory.relations(GUILD, self.campaign.id, entity_id=mira.id)
         self.assertEqual((rel.detail, rel.directional), ("grandson", True))
 
-    async def test_a_sister_reads_as_one_name_on_one_card_and_the_other_on_the_other(self) -> None:
+    async def test_a_niece_reads_as_one_name_on_one_card_and_the_other_on_the_other(self) -> None:
         mira, aldric = await self.name("Mira"), await self.name("Aldric")
         await self.pick(mira, aldric, "niece")
         self.assertEqual(await self.card_words(mira, aldric), "is the niece of Aldric")

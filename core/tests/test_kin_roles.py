@@ -196,7 +196,9 @@ class TheCard(unittest.TestCase):
         self.assertEqual(self.words("mira", "niece"), "is the niece of Aldric")
         self.assertEqual(self.words("aldric", "niece"), "has a niece Mira")
 
-    def test_the_grandchild_and_grandparent_roles_read_their_own_way_on_both_cards(self) -> None:
+    def test_the_grandson_granddaughter_grandchild_and_grandparent_roles_read_on_both_cards(
+        self,
+    ) -> None:
         for role in ("grandson", "granddaughter", "grandchild", "grandparent"):
             with self.subTest(role=role):
                 self.assertEqual(self.words("mira", role), f"is the {role} of Aldric")

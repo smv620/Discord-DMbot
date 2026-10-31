@@ -1227,7 +1227,7 @@ class NameCards(NamesTest):
         view.pick = SimpleNamespace(values=[vessa.id])
         it = self.it()
         await view._picked(it)
-        # "is family of" asks the role first, then saves (#3105)
+        # "is family of" asks the role first, then saves (#3102)
         role: Any = it.response.edited[0][1]
         role.role = SimpleNamespace(values=["sister"])
         it = self.it()
@@ -1268,7 +1268,7 @@ class NameCards(NamesTest):
         dropdown.pick = picked
         asked = self.it()
         await dropdown._picked(asked)
-        role: Any = asked.response.edited[0][1]  # which family role, before it is saved (#3105)
+        role: Any = asked.response.edited[0][1]  # which family role, before it is saved (#3102)
         role.role = SimpleNamespace(values=["sister"])
         done = self.it()
         await role._picked(done)

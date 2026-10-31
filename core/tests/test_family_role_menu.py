@@ -76,8 +76,10 @@ class TheRoleMenu(unittest.IsolatedAsyncioTestCase):
         assert await_args is not None
         menu = await_args.args[2]
         self.assertIsInstance(menu, nc.FamilyRole)
+        self.assertEqual((menu.entity_id, menu.other_id, menu.how), (MIRA, ALDRIC, "kin_of"))
+        self.assertEqual((menu.secret, menu.forced), (False, False))
 
-    async def test_a_picked_role_saves_with_that_role_and_its_direction(self) -> None:
+    async def test_a_picked_role_passes_the_role_on_to_connect(self) -> None:
         menu = nc.FamilyRole(CAMPAIGN.id, MIRA, ALDRIC, "kin_of", ("Mira", "Aldric"),
                              secret=False, forced=False)  # fmt: skip
         connect = AsyncMock()
@@ -163,7 +165,7 @@ class TheSave(unittest.IsolatedAsyncioTestCase):
 
 
 class TheSecretPassThrough(unittest.IsolatedAsyncioTestCase):
-    async def test_a_forced_secret_role_is_saved_secret_with_the_forced_flag(self) -> None:
+    async def test_a_forced_secret_role_passes_secret_and_forced_to_connect(self) -> None:
         menu = nc.FamilyRole(CAMPAIGN.id, MIRA, ALDRIC, "kin_of", ("Mira", "Aldric"),
                              secret=True, forced=True)  # fmt: skip
         connect = AsyncMock()

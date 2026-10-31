@@ -66,8 +66,8 @@ class TheWorkedOutLinks(ConfirmedMemoryTest):
         )
 
     async def test_a_mother_and_a_brother_offer_the_parent_too(self) -> None:
-        # The same rule as the sister case, with the other sibling word: "brother" is read as the
-        # neutral sibling, so the derived link is the neutral parent (#2959).
+        # The same rule as the sister case: kin_derive reads "brother" as a sibling (kin_derive.py
+        # _SIBLING_WORDS), so the derived link is the neutral parent (#2959).
         await self.state(self.aldric, "mother", self.bryn)
         await self.state(self.bryn, "brother", self.mira)
         done = await self.memory.rework_family(GUILD_A, self.c)
