@@ -16,7 +16,7 @@ from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from dmbot.memory import beliefs
+from dmbot.memory import beliefs, gate
 from dmbot.memory._changes import (
     ALIAS_KNOWERS,
     ALIASES,
@@ -430,6 +430,14 @@ async def what_my_characters_know(scope: Scope, user_id: int) -> Mine:
         ):
             newest[(row["relation_id"], row["perspective_id"])] = row["confidence"]
         knows = {rel for (rel, _), c in newest.items() if c >= KNOWN}
+        knows |= {  # (and the who-knows lists: a character's row on a connection)
+            str(r["relation_id"])
+            for r in await scope.select(
+                KNOWERS,
+                " AND perspective_id = ANY(%s) AND relation_id IS NOT NULL AND confidence > 0",
+                [list(views)],
+            )
+        }
     hidden = (
         await scope.select(
             RELATIONS,
@@ -448,6 +456,14 @@ async def what_my_characters_know(scope: Scope, user_id: int) -> Mine:
                     ALIAS_KNOWERS, " AND perspective_id = ANY(%s)", [list(views)]
                 )
             }
+            | {  # (the who-knows lists a join writes: a character's row on a name)
+                r["alias_id"]
+                for r in await scope.select(
+                    KNOWERS,
+                    " AND perspective_id = ANY(%s) AND alias_id IS NOT NULL AND confidence > 0",
+                    [list(views)],
+                )
+            }
         )
         if views
         else []
@@ -461,6 +477,29 @@ async def what_my_characters_know(scope: Scope, user_id: int) -> Mine:
         if alias_ids
         else []
     )
+    # A name belongs to the fact (#3037): `via_alias_id` says WHERE a known connection is drawn
+    # (on the name it came through), never WHETHER it is theirs: only the connections these
+    # characters know are listed. One that came through a name that is secret and held by them is
+    # drawn on that name; through a name that is not secret, on the entry; through a name that was
+    # rejected or is gone, or a secret one they do not hold, it is not shown.
+    owner_of = {str(a["id"]): str(a["entity_id"]) for a in aliases}
+    via_ids = sorted({str(r["via_alias_id"]) for r in hidden if r.get("via_alias_id")})
+    via_rows = (
+        {str(a["id"]): a for a in await scope.select(ALIASES, " AND id = ANY(%s)", [via_ids])}
+        if via_ids
+        else {}
+    )
+
+    def drawn(r: dict[str, Any]) -> bool:
+        via = r.get("via_alias_id")
+        if not via:
+            return True
+        a = via_rows.get(str(via))
+        if a is None or a["status"] != CONFIRMED:
+            return False
+        return not a["secret"] or str(via) in owner_of
+
+    hidden = [r for r in hidden if drawn(r)]
     who = await connection_knowers(scope, [r["id"] for r in hidden])
     a_who = await alias_knowers(scope, [a["id"] for a in aliases])
     wanted = {*mine}
@@ -484,26 +523,74 @@ async def what_my_characters_know(scope: Scope, user_id: int) -> Mine:
             )
         )
 
+    # Each end is named the way THIS player's characters know it (#3037): the main name only when
+    # one of them knows the entry under its own name, else the first other name they learned. An
+    # end none of them may name is not shown, so a joined person never reads as the named one.
+    safe_texts: dict[str, str] = {}
+    shown_names = await gate.names_for(
+        scope,
+        gate.Viewer.player(mine),
+        sorted(
+            {r["subject_id"] for r in hidden}
+            | {r["object_id"] for r in hidden}
+            | {a["entity_id"] for a in aliases}
+        ),
+        texts_out=safe_texts,
+    )
+
     def name(entity_id: str) -> str | None:
-        found = entries.get(entity_id)
-        return None if found is None else str(found["name"])
+        if entity_id not in entries:
+            return None
+        return shown_names.get(entity_id)
 
     connections = []
     for r in hidden:
-        subject, target = name(r["subject_id"]), name(r["object_id"])
+        through = r.get("via_alias_id") if r.get("via_alias_id") in owner_of else None
+        alias_end = owner_of.get(through) if through else None
+
+        def end(
+            entity_id: str, through: str | None = through, alias_end: str | None = alias_end
+        ) -> str | None:
+            if through is not None and entity_id == alias_end:
+                return safe_texts.get(through, "someone (name unknown)")
+            return name(entity_id)
+
+        subject, target = end(r["subject_id"]), end(r["object_id"])
         if subject is None or target is None:
             continue
+        # (the DM's own words on a connection may name a main name: sent only when both ends are
+        # shown under their main names, as the website's doors do)
+        plain = (
+            subject == entries[r["subject_id"]]["name"]
+            and target == entries[r["object_id"]]["name"]
+        )
         connections.append(
             MineConnection(
-                r["id"], subject, r["predicate"], r["detail"] or "", target,
+                r["id"], subject, r["predicate"], (r["detail"] or "") if plain else "", target,
                 bool(r.get("directional")), others(who.get(r["id"], [])),
             )
         )  # fmt: skip
+    # (every name a join moved connections through, whether they know those connections or not)
+    joined_names = (
+        {
+            str(r["via_alias_id"])
+            for r in await scope.select(
+                RELATIONS,
+                " AND via_alias_id = ANY(%s) AND status = %s",
+                [[str(a["id"]) for a in aliases], CONFIRMED],
+            )
+        }
+        if aliases
+        else set()
+    )
     names = []
     for a in aliases:
+        if str(a["id"]) in joined_names:
+            continue  # a person of their own for them (#3037): "a name of Ken" would say who
         owner = name(a["entity_id"])
         if owner is not None:
-            names.append(MineName(a["id"], a["text"], owner, others(a_who.get(a["id"], []))))
+            text = safe_texts.get(str(a["id"]), "someone (name unknown)")
+            names.append(MineName(a["id"], text, owner, others(a_who.get(a["id"], []))))
     return Mine(
         characters=tuple(sorted(str(entries[c]["name"]) for c in mine if c in entries)),
         connections=tuple(connections),
