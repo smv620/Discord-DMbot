@@ -65,6 +65,19 @@ class TheWorkedOutLinks(ConfirmedMemoryTest):
             (self.aldric, "parent", self.mira, PROPOSED, True),
         )
 
+    async def test_a_mother_and_a_brother_offer_the_parent_too(self) -> None:
+        # The same rule as the sister case, with the other sibling word: "brother" is read as the
+        # neutral sibling, so the derived link is the neutral parent (#2959).
+        await self.state(self.aldric, "mother", self.bryn)
+        await self.state(self.bryn, "brother", self.mira)
+        done = await self.memory.rework_family(GUILD_A, self.c)
+        self.assertEqual((done.added, done.removed, done.waiting), (1, 0, 1))
+        (link,) = await self.mine()
+        self.assertEqual(
+            (link.subject_id, link.detail, link.object_id, link.status, link.directional),
+            (self.aldric, "parent", self.mira, PROPOSED, True),
+        )
+
     async def test_recomputing_changes_nothing(self) -> None:
         await self.mother_and_sisters()
         await self.memory.rework_family(GUILD_A, self.c)

@@ -2355,11 +2355,12 @@ async def show_picks(
 
 
 # The family roles the Connect menu offers after "is family of" (#3102): the DM picks which one, or
-# "Just family" for no role. Nineteen roles and "Just family" fit one menu (Discord holds 25).
+# "Just family" for no role. Twenty-three roles and "Just family" make 24 options, under Discord's
+# limit of 25.
 FAMILY_ROLES = (
     "mother", "father", "parent", "son", "daughter", "child", "sister", "brother", "sibling",
-    "wife", "husband", "spouse", "grandmother", "grandfather", "aunt", "uncle", "niece", "nephew",
-    "cousin",
+    "wife", "husband", "spouse", "grandparent", "grandmother", "grandfather", "grandson",
+    "granddaughter", "grandchild", "aunt", "uncle", "niece", "nephew", "cousin",
 )  # fmt: skip
 JUST_FAMILY = "just_family"  # a value no role has: the family link with no role
 

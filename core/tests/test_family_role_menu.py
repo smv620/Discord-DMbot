@@ -46,6 +46,8 @@ class TheRoleMenu(unittest.IsolatedAsyncioTestCase):
         sister = next(o for o in menu.role.options if o.value == "sister")
         self.assertEqual(sister.description, "Mira is the sister of Aldric")
         self.assertIn(nc.JUST_FAMILY, values)
+        for role in ("grandparent", "grandson", "granddaughter", "grandchild"):
+            self.assertIn(role, values)
 
     def test_the_other_way_round_puts_the_other_name_first(self) -> None:
         menu = nc.FamilyRole(CAMPAIGN.id, MIRA, ALDRIC, "kin_of" + nc.BACK, ("Mira", "Aldric"),
