@@ -308,7 +308,7 @@ export const storyModeHelpSteps: Step[] = [
 
 export const inviteHelpSteps: Step[] = [
   {
-    text: "To pass on your campaign's invite from dndbeyond.com, open your campaign's page here and find Campaign invite from dndbeyond.com under Settings. Paste the invite link from your campaign there and press Save the link. Anyone in your Discord server then sees a Join button where DMbot talks about the game. DMbot can't add anyone to your campaign for you. To take the button away, press Remove the link.",
+    text: "To pass on your campaign's invite from dndbeyond.com, open your campaign's page here and find Campaign invite from dndbeyond.com under Settings. Paste the invite link from your campaign there and press Save the link. Players then see a Join button on new messages from DMbot. It opens your campaign's invite on dndbeyond.com. DMbot can't add anyone to your campaign for you. To take the button away, press Remove the link.",
     link: { text: "Open your campaigns", href: "/account/campaigns" },
   },
 ];
