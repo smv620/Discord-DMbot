@@ -30,7 +30,14 @@ from dmbot.memory.checks import (
     check_relation,
     waiting_guess,
 )
-from dmbot.memory.models import CONFIRMED, FALSE_EVIDENCE, Belief, Entity, Relation
+from dmbot.memory.models import (
+    CONFIRMED,
+    FALSE_EVIDENCE,
+    LIE_STATUSES,
+    Belief,
+    Entity,
+    Relation,
+)
 from dmbot.memory.ontology import Ontology
 
 if TYPE_CHECKING:
@@ -74,8 +81,13 @@ class Candidate:
 
 def asserts(belief: Belief) -> bool:
     """Does this belief say the connection is so? Not a denial (The truth at 0.0, False Evidence)
-    and not a long shot."""
-    return belief.confidence >= ASSERTS_FROM and belief.status != FALSE_EVIDENCE
+    and not a long shot. A lie status never says the connection is so: it says someone lied about
+    it (a suspected one held at 50% would otherwise read as a belief that it is true, #3091)."""
+    return (
+        belief.confidence >= ASSERTS_FROM
+        and belief.status != FALSE_EVIDENCE
+        and belief.status not in LIE_STATUSES
+    )
 
 
 def spans(history: Sequence[Belief]) -> list[tuple[Belief, int | None, int | None]]:

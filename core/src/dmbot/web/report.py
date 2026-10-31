@@ -145,7 +145,9 @@ def shape(got: dict[str, Any], at: int, listed: list[dict[str, Any]]) -> dict[st
         if d["sort"] not in by_sort:
             continue
         believes = d.get("believes")
-        if not believes:
+        if not believes or d.get("kind") == "lie":
+            # (a lie the party got wrong is not shown until the page has words for it, #3124: as a
+            # plain "believes" line it would say the opposite)
             continue
         truth = d.get("truth")
         by_sort[d["sort"]].append(
@@ -154,6 +156,10 @@ def shape(got: dict[str, Any], at: int, listed: list[dict[str, Any]]) -> dict[st
                 "reason": d["reason"],
                 "view": _who(d.get("who")),
                 "believes": _words(believes),
+                # a lie the party got wrong (#3091): the page words it "<who> thinks <liar> lied
+                # about this"; a liar who is gone or not a kept character is "someone"
+                "kind": d.get("kind"),
+                "liar": (d.get("liar") or "someone") if d.get("kind") == "lie" else None,
                 "truth": _words(truth) if truth else NOT_SO,
                 "evidence": _evidence(believes, numbers, number),
                 "answer": _answer(d["answer"]),
