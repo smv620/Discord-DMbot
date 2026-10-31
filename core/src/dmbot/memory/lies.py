@@ -40,8 +40,8 @@ JOIN memory_perspectives p ON p.guild_id = b.guild_id AND p.campaign_id = b.camp
 JOIN memory_relations r ON r.guild_id = b.guild_id AND r.campaign_id = b.campaign_id
                        AND r.id = b.relation_id AND r.status = ANY(%(statuses)s)
                        AND r.to_session_at IS NULL
-JOIN memory_evidence e ON e.guild_id = b.guild_id AND e.campaign_id = b.campaign_id
-                      AND e.belief_id = b.id AND e.kind = 'source'
+LEFT JOIN memory_evidence e ON e.guild_id = b.guild_id AND e.campaign_id = b.campaign_id
+                           AND e.belief_id = b.id AND e.kind = 'source'
 LEFT JOIN memory_entities x ON x.guild_id = e.guild_id AND x.campaign_id = e.campaign_id
                            AND x.id = e.target_id AND x.type = 'character'
 WHERE b.guild_id = %(g)s AND b.campaign_id = %(c)s AND b.status = ANY(%(lies)s)

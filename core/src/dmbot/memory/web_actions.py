@@ -92,6 +92,7 @@ READING_REFUSALS = {
     placing.WAITING_ALREADY: "waiting_already",
     placing.PLOT_IS_KNOWN: "plot_is_known",
     placing.UNKNOWN_CHARACTER: "unknown_character",
+    placing.UNKNOWN_LIAR: "unknown_liar",
     placing.A_STATE: "bad_reading",
     placing.NOT_A_READING: "gone",
     beliefs.BAD_READING: "bad_reading",

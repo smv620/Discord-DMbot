@@ -994,8 +994,29 @@ async def _entry_links(
     return out
 
 
+async def _kept_entry(conn: Conn, ids: tuple[int, str], entry_id: str) -> str:
+    """The entry a link should name now: one merged into another is given back as the one it was
+    merged into, so a Redo after a merge names the kept character, not one that no longer exists
+    (#3116). Follows the chain, with a guard against a loop."""
+    seen: set[str] = set()
+    current = entry_id
+    while current not in seen:
+        seen.add(current)
+        cur = await conn.execute(
+            "SELECT merged_into FROM memory_entities WHERE guild_id = %s AND campaign_id = %s"
+            " AND id = %s",
+            (*ids, current),
+        )
+        row = await cur.fetchone()
+        if row is None or row["merged_into"] is None:
+            break
+        current = str(row["merged_into"])
+    return current
+
+
 async def _give_back_links(conn: Conn, ids: tuple[int, str], belief_id: str, links: Any) -> None:
     for link in links or ():
+        target = await _kept_entry(conn, ids, str(link["target_id"]))
         await conn.execute(
             "INSERT INTO memory_evidence (guild_id, campaign_id, belief_id, kind, target_id,"
             " session_started_at, added_at) VALUES (%s, %s, %s, %s, %s, %s, %s)"
@@ -1004,7 +1025,7 @@ async def _give_back_links(conn: Conn, ids: tuple[int, str], belief_id: str, lin
                 *ids,
                 belief_id,
                 link["kind"],
-                link["target_id"],
+                target,
                 link["session_started_at"],
                 link["added_at"],
             ),

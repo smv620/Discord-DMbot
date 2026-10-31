@@ -13,6 +13,11 @@ NOW (the newest belief, at 0.5 or more and not a denial) and The truth either
 Not a difference: a guess about something The truth neither holds nor denies (nobody knows yet),
 or The truth's own doubt (a belief below even odds is not a denial), or a belief The truth shares.
 
+A third kind (#3091): **a lie the party got wrong.** The party or a player's character thinks
+(or is sure) that someone lied about a connection, and The truth holds that very connection at 1.0.
+The accusation is the mistake. A lie The truth also denies is the table being right, so it is not
+listed. Only the party's and players' characters' lies are offered; an NPC's are the DM's own story.
+
 Ids, numbers and a status only: no name, no words. Each (point of view, connection) is reported
 once.
 """
@@ -25,7 +30,7 @@ from typing import TYPE_CHECKING
 
 from dmbot.memory.checks import conflicts, same_pair, same_time
 from dmbot.memory.contradictions import Held, asserts, load
-from dmbot.memory.models import FALSE_EVIDENCE
+from dmbot.memory.models import FALSE_EVIDENCE, LIE_STATUSES
 from dmbot.memory.ontology import Ontology
 
 if TYPE_CHECKING:
@@ -35,7 +40,7 @@ TRUTH = "truth"
 # Only the party and the players' characters are the table's to be corrected; what an NPC believes
 # (or lies about) is the DM's own story, and is never offered as "what the party has wrong".
 SORTED_VIEWS = ("party", "pc")
-DENIED, CLASHES = "denied", "clashes"
+DENIED, CLASHES, LIE = "denied", "clashes", "lie"
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,7 +51,8 @@ class Difference:
     view_kind: str  # party or pc
     relation_id: str  # the connection the point of view believes
     truth_relation_id: str | None  # the connection The truth holds instead (None when it denies)
-    kind: str  # DENIED or CLASHES
+    kind: str  # DENIED, CLASHES or LIE (a lie The truth says was none: truth_relation_id is then
+    # the same connection)
     times_unknown: bool  # no game time on one of the two: "The game times aren't known"
     involves_guess: bool  # what is believed is a waiting guess nobody has kept
 
@@ -54,6 +60,12 @@ class Difference:
 def _denies(truth: Held) -> bool:
     b = truth.belief
     return b.confidence == 0.0 or b.status == FALSE_EVIDENCE
+
+
+def _holds_true(truth: Held) -> bool:
+    """The DM's view is sure the connection is so (newest belief at 1.0, not a lie status)."""
+    b = truth.belief
+    return b.confidence >= 1.0 and b.status != FALSE_EVIDENCE and b.status not in LIE_STATUSES
 
 
 def differences(onto: Ontology, held: Sequence[Held]) -> list[Difference]:
@@ -67,9 +79,22 @@ def differences(onto: Ontology, held: Sequence[Held]) -> list[Difference]:
     out: list[Difference] = []
     seen: set[tuple[str, str]] = set()
     for mine in now:
-        if mine.kind not in SORTED_VIEWS or not asserts(mine.belief):
+        if mine.kind not in SORTED_VIEWS:
             continue
         key = (mine.belief.perspective_id, mine.relation.id)
+        if mine.belief.status in LIE_STATUSES:
+            truth = truth_now.get(mine.relation.id)
+            if key not in seen and truth is not None and _holds_true(truth):
+                seen.add(key)
+                out.append(
+                    Difference(
+                        mine.belief.perspective_id, mine.kind, mine.relation.id, mine.relation.id,
+                        LIE, mine.relation.from_game_time is None, mine.guess,
+                    )
+                )  # fmt: skip
+            continue
+        if not asserts(mine.belief):
+            continue
         if key in seen:
             continue
         theirs = truth_now.get(mine.relation.id)
