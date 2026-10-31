@@ -269,6 +269,38 @@ class WhoMayLook(SeeAs):
             self.assertEqual((row["r"]["isDm"], row["r"]["viewers"]), (False, []))
 
 
+class ThePicker(SeeAs):
+    """The characters a DM may pick to see as (#2999)."""
+
+    async def viewers(self, who: Any = None, query: str = "") -> dict[str, Any]:
+        return await see_as.read_viewers(self.web, who or self.session, self.cref, query)
+
+    async def test_a_dm_gets_player_characters_first_then_by_name(self) -> None:
+        got = await self.viewers()
+        names = [(v["kind"], v["name"]) for v in got["viewers"]]
+        self.assertEqual(names, [("pc", "Okra"), ("pc", "Rook"), ("npc", "Mira Voss")])
+        self.assertEqual(got["total"], 3)
+        self.assertEqual(set(got["viewers"][0]), {"id", "name", "kind"})  # nothing about who plays
+
+    async def test_a_search_narrows_a_big_cast_in_any_case(self) -> None:
+        got = await self.viewers(query="  MIRA ")
+        self.assertEqual([v["name"] for v in got["viewers"]], ["Mira Voss"])
+        self.assertEqual((await self.viewers(query="zzz"))["viewers"], [])
+
+    async def test_no_more_than_a_menu_full_is_offered_and_the_total_says_so(self) -> None:
+        for n in range(30):
+            await self.add(f"Extra {n:02d}", "character", role="npc")
+        got = await self.viewers()
+        self.assertEqual(len(got["viewers"]), see_as.VIEWERS_SHOWN)
+        self.assertEqual(got["total"], 33)
+
+    async def test_a_player_and_a_stranger_are_refused(self) -> None:
+        for who, ref in ((self.player, None), (self.session, f"{THURSDAY.id}.{'0' * 32}")):
+            with self.assertRaises(RecapError) as caught:
+                await see_as.read_viewers(self.web, who, ref or self.cref)
+            self.assertEqual(caught.exception.code, "not_allowed")
+
+
 class TheRoute(SeeAs):
     async def client(self, user: Any) -> httpx.AsyncClient:
         app = create_app(
@@ -298,3 +330,16 @@ class TheRoute(SeeAs):
         async with await self.client(BOB) as client:
             refused = await client.get(path, params={"viewer": self.rook})
             self.assertEqual(refused.status_code, 403)
+
+    async def test_the_picker_list_is_for_the_dm_only(self) -> None:
+        from tests.test_web_api import ALICE
+
+        path = f"/me/campaigns/{self.cref}/web/viewers"
+        async with await self.client(ALICE) as client:
+            ok = await client.get(path)
+            self.assertEqual(ok.status_code, 200)
+            self.assertEqual(ok.json()["total"], 3)
+            narrowed = await client.get(path, params={"q": "mira"})
+            self.assertEqual([v["name"] for v in narrowed.json()["viewers"]], ["Mira Voss"])
+        async with await self.client(BOB) as client:
+            self.assertEqual((await client.get(path)).status_code, 403)
