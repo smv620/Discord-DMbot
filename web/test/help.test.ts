@@ -358,7 +358,7 @@ describe("Help: the website's read-only pages (#1588)", () => {
   });
 
   it("says a backup keeps how often names were said, only for people still recorded (#1754)", () => {
-    const step = dmSteps.map((x) => x.text).find((t) => t.includes("/dmbot backup (paid campaigns only)")) ?? "";
+    const step = dmSteps.map((x) => x.text).find((t) => t.includes("type /dmbot backup in Discord (paid campaigns only)")) ?? "";
     expect(step).toContain("how often names were said and by whom");
     expect(step).toContain("only for people who are still recorded");
   });
