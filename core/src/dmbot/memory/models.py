@@ -416,6 +416,9 @@ class Relation:
     directional: bool = False
     # How a pronoun was settled (#2790), in fixed words: the DM's card only, never a player's.
     decided: str | None = None
+    # The secret other name a join moved it through (#3037): a character that holds that name
+    # sees this connection on that name's own node, whatever else it knows. None for the rest.
+    via_alias_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
