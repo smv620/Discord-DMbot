@@ -16,6 +16,7 @@ from typing import Any
 
 import discord
 
+from dmbot.discord_limits import MESSAGE_MAX
 from dmbot.memory.embedding import split_text
 from dmbot.mentions import NO_PINGS
 from dmbot.recaps import approval, cues
@@ -42,7 +43,7 @@ NOTES_LABEL = "📝 Session notes"  # the recap line's button (#3026)
 NO_NOTES = "There are no notes for this session yet."
 NOTES_FAILED = "I couldn't read the notes just now. Nothing was changed. Try again in a minute."
 NOTES_HEADING = "**Session notes**"
-NOTES_PART_CHARS = 1900  # Discord allows 2,000 characters a message; the heading takes the rest
+NOTES_PART_CHARS = MESSAGE_MAX - 100  # the most a part holds, leaving room for the heading
 
 _TEMPLATE = (
     r"dmbot:recap:(?P<act>read|post|yes|notes|no|drop|tell|approve|ap|aa|ak|cv|cm|cb|ct):"
