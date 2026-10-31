@@ -1,6 +1,8 @@
 // The words of the Story Graph page (#2324; docs/PLAN.md, "The Story Graph on the website"):
 // the names of a campaign as dots, the connections between them as lines. Plain words. DMbot never
 // decides: a DM changes what DMbot remembers, and Undo is on the name's card in Discord.
+import type { KnowWord } from "../account/api";
+
 /** Over this many names the page asks before drawing (PLAN: "about 300"). */
 export const BIG_WEB = 300;
 
@@ -167,6 +169,15 @@ export const webPage = {
   peekCancel: "Cancel",
   peeking: "You are peeking. This shows what your DM hasn't told you. Turn the switch off to go back.",
   notRevealed: "players don't know yet",
+  // Who knows a name or connection, in the DM's full view (#3167). Plain words; the mark is 🤫 for secret only.
+  knowWords: {
+    secret: "Secret: only you know this",
+    hidden_from_the_players: "Hidden from the players: only NPCs know this",
+    known_to_an_npc: "Only one NPC knows this",
+    partly_revealed: "Some of the party know this",
+    known_to_the_party: "The whole party knows this",
+  } as Record<KnowWord, string>,
+  knowHint: "Worked out from what happened in your sessions. Only you see these marks.",
   notRevealedFull: "Players don't know this yet",
   legendNotRevealed: "Faded: players don't know this yet",
   legendTheory: "Dotted line with ?: something the party suspects",

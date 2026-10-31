@@ -893,10 +893,45 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
           : { id: n.id, name: current(n).name, kind: current(n).kind, page: current(n).kind === "npc" },
       );
     const edges = edgesOf(usable.filter((l) => near.has(l.a) && near.has(l.b)), all, all, view === "dm" && all);
+    // Who knows (#3167): in the DM's full view the first five names and the first five connections carry one
+    // state each, so every state is on the page; a player's and a peek's web carry none.
+    const knowStates = ["secret", "hidden_from_the_players", "known_to_an_npc", "partly_revealed", "known_to_the_party"] as const;
+    // The states go on the names and connections drawn here that the players already see, so every state is on the
+    // page and the older words on the others stay.
+    const openNames = nodes
+      .filter((n) => {
+        const s = state.nodes.find((x) => x.id === n.id);
+        return s !== undefined && !s.secret && s.revealed !== false;
+      })
+      .slice(0, knowStates.length)
+      .map((n) => n.id);
+    const openLinks = edges
+      .flatMap((e) => e.links)
+      .filter((l) => {
+        const s = state.links.find((x) => x.id === l.id);
+        return s !== undefined && !s.secret && s.revealed !== false;
+      })
+      .slice(0, knowStates.length)
+      .map((l) => l.id);
+    const knownNodes = dm && all
+      ? nodes.map((n) => {
+          const slot = openNames.indexOf(n.id);
+          return slot >= 0 ? { ...n, knowWord: knowStates[slot]! } : n;
+        })
+      : nodes;
+    const knownEdges = dm && all
+      ? edges.map((e) => ({
+          ...e,
+          links: e.links.map((l) => {
+            const slot = openLinks.indexOf(l.id);
+            return slot >= 0 ? { ...l, knowWord: knowStates[slot]! } : l;
+          }),
+        }))
+      : edges;
     return {
       center: centre,
-      nodes,
-      edges,
+      nodes: knownNodes,
+      edges: knownEdges,
       truncated: false,
       maxHops: 8,
       canEdit: dm && all,
