@@ -2738,12 +2738,11 @@ async def connect(
     # A family role (#3102) is stored with its words' direction, the way the edit menu stores it.
     detail = (kin.role_of(detail) or "") if predicate == KIN else ""
     if predicate == KIN:
-        # One family link per pair: a different role is not added as a second link; the DM is told
-        # where it is (#3109). The same role again goes on to the usual save and its notes.
+        # One family link per pair: a second role is not added, the DM is told where it is (#3109).
         linked = await _family_link_word(
             memory, campaign.guild_id, campaign.id, subject_id, object_id
         )
-        if linked is not None and linked != detail:
+        if linked is not None:
             await _tell(
                 interaction, f"Already linked as {linked or 'family'}. Change it from the card."
             )
