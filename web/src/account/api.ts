@@ -1875,6 +1875,7 @@ export type ApiErrorKind =
   | "queue-full" // too many connections wait already: answer some first (#2652)
   | "bad-reading" // the reading is not one DMbot can keep (#2412)
   | "unknown-character" // a character in it is not in this campaign (#2412)
+  | "unknown-liar" // the one who lied is not known, or is not a character in this campaign (#3121)
   | "waiting-already" // the belief is already waiting to be kept (#2412)
   | "plot-is-known" // the secret plot is already known (#2412)
   | "already-known" // the belief is already kept (#2412)
@@ -2521,6 +2522,7 @@ export const errorKinds: Record<string, ApiErrorKind> = {
   stale: "stale",
   bad_reading: "bad-reading",
   unknown_character: "unknown-character",
+  unknown_liar: "unknown-liar",
   waiting_already: "waiting-already",
   plot_is_known: "plot-is-known",
   already_known: "already-known",

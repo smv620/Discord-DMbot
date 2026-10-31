@@ -57,6 +57,7 @@ export const readingWords = {
     "stopped-recording": "A player asked to stop being recorded, so this was removed. Nothing for you to do.",
     "cannot-write": "DMbot couldn't save that. It is still in the list. Try again in a minute, or press Drop it.",
     "bad-reading": "DMbot can't keep this one. The list has been refreshed.",
+    "unknown-liar": "DMbot doesn't know who lied. Name them in Check new names first, or drop this one.",
     "unknown-character": "It names a character who isn't in this campaign, so it can't be kept. Drop it, or add the character first.",
     "waiting-already": "That belief is already waiting for you in Waiting for you.",
     "plot-is-known": "You already know about this plot, so there is nothing to save.",

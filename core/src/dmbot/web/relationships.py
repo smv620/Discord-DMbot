@@ -790,8 +790,9 @@ async def queue_reading(db: Database, session: Session, ref: str, body: object) 
     DM screen would (`ClaimStore.place`, `reject`, the store's Undo), so consent and every rule
     are checked there again. Returns the answer's id. The answer ends with an `error` word the
     page can word: `gone` (not waiting any more, or nothing left to undo), `name_first`,
-    `stopped_recording`, `cannot_write`, `bad_reading`, `unknown_character`, `waiting_already`,
-    `plot_is_known` or `already_known`."""
+    `stopped_recording`, `cannot_write`, `bad_reading`, `unknown_character`, `unknown_liar` (the
+    one who lied is unknown, or is not a character), `waiting_already`, `plot_is_known` or
+    `already_known`."""
     if not isinstance(body, dict):
         raise RecapError("bad_action")
     action = READING_QUEUE.get(str(body.get("action")))

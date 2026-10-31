@@ -688,6 +688,7 @@ function pretendReadings(): Reading[] {
     { ...base, id: "r-busy", rule: "false_clue", who: "the DM's view", statement: "Far Hall hid the second key", sureness: "false" },
     { ...base, id: "r-name", rule: "theory", who: "the party", statement: "Newcomer sent the letter", sureness: "a guess", canPlace: false, why: "name_first", waitingOn: ["Newcomer"] },
     { ...base, id: "r-lie", rule: "lie", who: "Rook", liar: "Valyra", statement: "The ferryman sold the map", sureness: "a guess" },
+    { ...base, id: "r-lie-unknown", rule: "lie", who: "the party", statement: "The innkeeper hid the ledger", sureness: "a guess" },
     { ...base, id: "r-plot", rule: "plot", who: "the DM's view", statement: "The ferryman plans to sink the barge", sureness: "secret plot" },
   ];
 }
@@ -1631,7 +1632,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
     },
     // What people believe (#2412), the shapes of core PR 2693: DM only (anyone else gets not-found). Placing a
     // reading answers `a-<id>` and can be undone with that answer's id; `r-gone` is already gone,
-    // `r-busy` can't be written now, `r-name` waits on a new name.
+    // `r-busy` can't be written now, `r-lie-unknown` names a liar DMbot can't find, `r-name` waits on a new name.
     async webReadings(ref) {
       calls.push(`webReadings:${ref}`);
       await reachable();
@@ -1663,6 +1664,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       }
       if (!found.canPlace) throw new ApiError("name-first");
       if (answer.id === "r-busy") throw new ApiError("cannot-write");
+      if (answer.id === "r-lie-unknown") throw new ApiError("unknown-liar");
       state.list = state.list.filter((r) => r.id !== answer.id);
       if (answer.action === "no") return { answerId: `a-${answer.id}`, undoable: false };
       state.kept.set(`a-${answer.id}`, found);
