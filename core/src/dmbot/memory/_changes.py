@@ -825,6 +825,7 @@ _ADDED_LATER: dict[str, dict[str, Any]] = {
         "unrevealed": False,
         "directional": False,
         "decided": None,
+        "via_alias_id": None,  # no connection came through a name before a join said so (#3037)
     },
     # unique_item: nobody said, the name decides (#1267). audience_limited: off (#1649).
     # made_before_name_gate: a snapshot from before the column is a row from before it (#2358)
@@ -840,7 +841,10 @@ _ADDED_LATER: dict[str, dict[str, Any]] = {
         "unnamed_role": None,
         "unnamed_what": None,
     },
-    "memory_beliefs": {"pinned": False},  # nothing was pinned before the pin (#2447)
+    # nothing was pinned before the pin (#2447); nothing slept before a hide could put it to sleep
+    # (#3082), so an Undo across the migration still finds the row as the batch left it
+    "memory_beliefs": {"pinned": False, "hidden_by": []},
+    "memory_knowers": {"confidence": 1.0, "hidden_by": []},  # (0286 added the certainty)
     "memory_predicates": {
         "covers": [], "not_this": [], "inverse_label": "", "synonyms": [], "version": 1,
         "from_set": None,
