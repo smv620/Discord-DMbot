@@ -377,6 +377,8 @@ class BackgroundOffer(_Menu):
         self.upload = upload
         self.choices = dict(choices)  # entity id -> name
         self.speaker: str | None = None  # whose backstory it is, once the DM says (#2650)
+        # The choice to go back to when the DM picks no backstory after one (#3103).
+        self.knows_before_speaker = lore_knowledge.PICKED_FIRST
         # ...and, when that is a player character, their entry id: what the kept connections start
         # as known by (#2935). Empty for an NPC's backstory or none picked.
         self.known_by = ""
@@ -422,6 +424,7 @@ class BackgroundOffer(_Menu):
             await _tell(interaction, ONLY_DMS)
             return
         picked = self.whose.values[0]
+        was_speaker = self.speaker is not None
         self.speaker = self.choices.get(picked)
         memory = _memory(interaction)
         pcs = {c for c, _ in await player_characters(memory, campaign)} if memory else set()
@@ -429,7 +432,12 @@ class BackgroundOffer(_Menu):
         # The three choices are for campaign lore: a character's backstory stays as it was (#2959)
         # A character's backstory is that character's own knowledge, never campaign lore, so it
         # is always spoilers here, whatever the form would otherwise start on (#3098).
-        self.knows = lore_knowledge.SPOILERS if self.speaker else self.knows
+        if self.speaker:
+            if not was_speaker:  # remember the DM's choice before the backstory took it
+                self.knows_before_speaker = self.knows
+            self.knows = lore_knowledge.SPOILERS
+        elif was_speaker:  # "not one": the form is back on what it was before the backstory
+            self.knows = self.knows_before_speaker
         self.knows_button.label = KNOWS_LABELS[self.knows]
         self.knows_button.disabled = bool(self.speaker)
         for option in self.whose.options:

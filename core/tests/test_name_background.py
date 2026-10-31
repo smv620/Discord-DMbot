@@ -10,7 +10,7 @@ import unittest
 from collections import Counter
 from datetime import UTC, datetime
 from typing import Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, PropertyMock, patch
 
 from dmbot.memory import background as bg
 from dmbot.memory import lore_read
@@ -327,6 +327,23 @@ class ThePath(NamesTest):
         self.assertNotIn("(Default)", ui_bg.KNOWS_TEXT["spoilers"])
         self.assertIn("Tap the Players button to switch", text)
         self.ai.complete.assert_not_awaited()  # nothing is sent until the DM presses
+
+    async def test_a_backstory_pick_then_not_one_puts_the_choice_back(self) -> None:
+        # (#3103) The form starts on world. A backstory sets it to spoilers, and "not one" puts
+        # back what the DM had, so the form is on world again unless the DM changed it.
+        view = ui_bg.BackgroundOffer(
+            self.campaign.id, Upload(TEXT, "your background"), [("c1", "Tavin")]
+        )
+        self.assertEqual(view.knows, "world")
+        with patch.object(type(view.whose), "values", new_callable=PropertyMock) as values:
+            values.return_value = ["c1"]
+            await view._whose(self.it())
+            self.assertEqual(view.knows, "spoilers")
+            self.assertTrue(view.knows_button.disabled)
+            values.return_value = [ui_bg.NOT_ONE_VALUE]
+            await view._whose(self.it())
+        self.assertEqual(view.knows, "world")
+        self.assertFalse(view.knows_button.disabled)
 
     async def test_the_players_button_goes_round_the_three_choices_and_the_read_gets_it(
         self,
