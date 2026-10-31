@@ -2321,9 +2321,6 @@ names panel nor the speech-to-text hints can be a fixed list.
   from before it restores as false) and in the website's door; no row is updated. With no role,
   or any detail that is not one of these words, it reads "is family of" both ways. The lore read's
   pass 2 is not changed (follow-up).
-  **Family role menu (CloudDev-lead, 2026-10-31, #3102):** Family: the Connect menu asks for the role first
-  (or 'Just family'), then saves one family link between the two names; a pair already linked as family is
-  told so, never given a second link.
   **What a lore or backstory read keeps** (owner, 2026-10-29, the five lore questions after the lore test,
   #2757; built in #2959, the import side in #2960):
   1. **Two names for one person** ("X is now Y", "X is really Y"): one entry, the other name kept on it.
