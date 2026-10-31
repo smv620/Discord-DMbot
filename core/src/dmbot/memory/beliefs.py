@@ -416,6 +416,10 @@ async def place_belief(
         if w.source != DM:
             raise MemoryRuleError(ONLY_THE_DM)
         ok = status == FALSE_EVIDENCE and confidence == 0.0
+        held = (await _newest(w, [relation_id])).get((relation_id, perspective_id))
+        if ok and held is not None and held["pinned"]:
+            # 📌 is the DM's word that it is 100% true; a reading never takes that back (#3116)
+            raise MemoryRuleError(PINNED_RETRACTION)
     elif kind == PARTY:
         if status in (REVEALED_FACT, MAGICALLY_VERIFIED):
             if confidence != KNOWN:

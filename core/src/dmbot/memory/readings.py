@@ -72,7 +72,7 @@ PRONOUNS = frozenset(
      "somebody", "who", "dm", "player", "party"}
 )  # fmt: skip
 
-READING_SYSTEM = """You help a Dungeon Master keep track of what the characters believe in their
+_READING_SYSTEM = """You help a Dungeon Master keep track of what the characters believe in their
 tabletop role-playing game, apart from what is true.
 
 You get a stretch of a session's transcript between <transcript> and </transcript>. Each line has
@@ -85,9 +85,7 @@ List only these four kinds of reading, and only when the transcript clearly says
    (the character's own name, as named in the transcript: never "Player", "DM" or a pronoun). Set
    "shared" true only if the whole table agreed out loud. Set "strength" to "surely" or "unlikely"
    when the speaker said so, else "". Set "accusation" true when it blames someone for a wrong.
-   When the speaker says someone is lying or lied about it ("she's lying!", "he lied to us"), give
-   that person's name in "liar" (never a pronoun, and never the speaker) and leave "shared" false.
-   Being wrong or mistaken is not lying: use "liar" only when the speaker says it was on purpose.
+{liar}
 2. "reveal": the DM, never a player, lets the characters find a clue or see an event that shows
    something is so. Give the clue or event in "because" (its name, as said).
 3. "framing": the DM, never a player, says a clue the characters found is fake, or that someone
@@ -107,6 +105,25 @@ Answer with JSON only, in this shape:
 {"readings": [{"rule": "theory", "who": "...", "shared": false, "strength": "", "accusation": false,
 "subject": "...", "relationship": "...", "object": "...", "lines": [1]}]}
 Add the other fields only for the kinds that use them. Answer {"readings": []} if there are none."""
+
+# "She's lying!" is read as a suspected lie only once the website can show the DM who was blamed
+# (the readings door returns `liar`, #3121): until then the model is not asked for it, and a
+# `liar` in an answer is dropped, so the reading stays the plain accusation it was. One line turns
+# it on.
+READ_LIES = False
+_LIAR_ASK = """   When the speaker says someone is lying or lied about it ("she's lying!", "he lied"),
+   give that person's name in "liar" (never a pronoun, never the speaker) and leave "shared"
+   false. Being wrong or mistaken is not lying: use "liar" only when the speaker says it was on
+   purpose.
+"""
+
+
+def reading_system(lies: bool = READ_LIES) -> str:
+    """The prompt for the four rules, with the question about a lie only when lies are read."""
+    return _READING_SYSTEM.replace("{liar}\n", _LIAR_ASK if lies else "")
+
+
+READING_SYSTEM = reading_system()
 
 
 @dataclass(frozen=True, slots=True)
@@ -264,6 +281,8 @@ def _reading(item: Any, known: set[str], dm_lines: set[str]) -> Reading | None:
             "framed", "deception", "spell", "target", "outcome", "protection",
         )
     }  # fmt: skip
+    if not READ_LIES:
+        fields["liar"] = ""  # (not read yet: the reading stays the accusation it would be)
     for word in ("strength", "outcome"):  # "Surely" and "surely" are the same word
         fields[word] = fields[word].casefold()
     if not lines or not _complete(rule, fields, _flag(item.get("shared"))):

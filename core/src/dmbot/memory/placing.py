@@ -80,6 +80,7 @@ PLOT_IS_KNOWN = "The players already know that, so it cannot also be a secret pl
 NOT_A_READING = "That is a fact to keep, not a belief to place."
 A_STATE = "That is how something is, not a connection, so there is nothing to place."
 UNKNOWN_CHARACTER = "DMbot doesn't know which character believes that."
+UNKNOWN_LIAR = "DMbot doesn't know who lied."
 PC_PREFIX = "pc:"
 HOST_CONFIDENCE = 0.5  # a proposed connection that only holds beliefs: nobody has kept it
 
@@ -190,9 +191,13 @@ async def place(
     liar_id: str | None = None  # the character a suspected lie names (#3091)
     if reading["liar"]:
         found = names.one(str(reading["liar"]))
-        if isinstance(found, str) or found[0] in waiting or found[0] not in names.roles:
-            raise MemoryRuleError(UNKNOWN_CHARACTER)
+        if not isinstance(found, str) and found[0] in waiting:
+            raise MemoryRuleError(NAME_FIRST)  # (the liar's name is still waiting for the DM)
+        if isinstance(found, str) or found[0] not in names.roles:
+            raise MemoryRuleError(UNKNOWN_LIAR)
         liar_id = found[0]
+        if liar_id == holder:  # ("Mimi" for Mira): no one tells a lie on themself
+            raise MemoryRuleError(beliefs.BAD_READING)
     reasons = _reasons(claim.reading or {}, names, waiting)
     stopped = False
     async with store._write(guild_id, campaign_id, DM) as w:

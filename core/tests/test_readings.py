@@ -9,6 +9,7 @@ import inspect
 import json
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from dmbot.memory import readings
 from dmbot.memory.models import (
@@ -84,6 +85,7 @@ class TheFourRules(unittest.TestCase):
         (also,) = proposals(read({**THEORY_A, "who": "party", "shared": True})).beliefs
         self.assertEqual(also.view, "party")
 
+    @patch.object(readings, "READ_LIES", True)
     def test_she_is_lying_is_a_suspected_lie_at_most_a_guess_in_the_accusers_view(self) -> None:
         lie = {**THEORY_A, "liar": "Valyra", "strength": "surely"}
         (belief,) = proposals(read(lie)).beliefs
@@ -100,6 +102,7 @@ class TheFourRules(unittest.TestCase):
             "liar", readings.reading_of(plain)
         )  # (a file from before lies stays valid)
 
+    @patch.object(readings, "READ_LIES", True)
     def test_a_lie_needs_a_named_liar_who_is_not_the_accuser_and_never_the_whole_table(
         self,
     ) -> None:
@@ -113,6 +116,14 @@ class TheFourRules(unittest.TestCase):
                 self.assertEqual((got, bad), ([], 1))
         got, bad = parse_readings(answer({**REVEAL_B, "liar": "Valyra"}), REFS, dm_lines=DM_LINES)
         self.assertEqual((got, bad), ([], 1))  # (only a theory can be a lie)
+
+    def test_while_lies_are_not_read_a_liar_is_dropped_and_the_prompt_does_not_ask(self) -> None:
+        self.assertFalse(readings.READ_LIES)  # (the website cannot show who was blamed yet, #3121)
+        (belief,) = proposals(read({**THEORY_A, "liar": "Valyra"})).beliefs
+        self.assertEqual((belief.status, belief.liar), (ACCUSATION, ""))  # the plain accusation
+        self.assertNotIn("liar", readings.reading_system(False))
+        self.assertIn('"liar"', readings.reading_system(True))
+        self.assertEqual(readings.READING_SYSTEM, readings.reading_system(False))
 
     def test_a_resisted_spell_proposes_nothing(self) -> None:
         got = proposals(read({**EVASION_D, "outcome": "resisted"}))

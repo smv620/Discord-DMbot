@@ -7,7 +7,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from dmbot.memory import readings
+from dmbot.memory import beliefs, claims, readings
 from dmbot.memory.claims import ClaimStore
 from dmbot.memory.models import MemoryRuleError
 from tests.test_memory_store import DM, GUILD_A, ConfirmedMemoryTest
@@ -402,6 +402,38 @@ class Placing(ConfirmedMemoryTest):
         self.assertEqual((rel["status"], rel["secret"]), ("confirmed", True))
         self.assertEqual((await self.beliefs_of(again.relation_id))[0]["status"], "secret_plot")
 
+    async def test_a_liar_who_is_the_accuser_by_another_spelling_is_refused(self) -> None:
+        await self.memory.add_alias(
+            GUILD_A, self.c, self.mira, "Mimi", kind="nickname", source="dm", status="confirmed"
+        )
+        lie = await self.waiting_reading(belief("pc:Mira", "suspected_lie", 0.5, liar="Mimi"))
+        with self.assertRaises(MemoryRuleError) as why:
+            await self.place(lie)
+        self.assertEqual(str(why.exception), beliefs.BAD_READING)
+
+    async def test_an_unknown_liar_says_so_and_one_still_waiting_for_a_name_is_asked_first(
+        self,
+    ) -> None:
+        lie = await self.waiting_reading(belief("pc:Mira", "suspected_lie", 0.5, liar="Nobody"))
+        with self.assertRaises(MemoryRuleError) as why:
+            await self.place(lie)
+        self.assertEqual(str(why.exception), "DMbot doesn't know who lied.")
+        await self.add("Pell", type="character", status="proposed")
+        waiting = readings.BeliefProposal(
+            "pc:Mira", "Bram", "carries", "Heartseeker", 0.4, "suspected_lie", ("1",), liar="Pell"
+        )
+        with self.assertRaises(MemoryRuleError) as again:
+            await self.place(await self.waiting_reading(waiting))
+        self.assertEqual(str(again.exception), claims.NAME_FIRST)
+
+    async def test_two_accusations_of_different_people_are_two_questions(self) -> None:
+        one = readings.as_claim(belief("pc:Mira", "suspected_lie", 0.5, liar="Valyra"), "x")
+        two = readings.as_claim(belief("pc:Mira", "suspected_lie", 0.5, liar="Corin"), "x")
+        key = lambda c: claims._repeat_key(  # noqa: E731
+            c.subject, c.relationship, c.object, c.how, c.reading
+        )
+        self.assertNotEqual(key(one), key(two))
+
     async def test_a_suspected_lie_is_placed_for_the_accuser_and_names_who_lied(self) -> None:
         valyra = await self.add("Valyra", type="character")
         lie = await self.waiting_reading(belief("pc:Mira", "suspected_lie", 0.5, liar="Valyra"))
@@ -422,6 +454,18 @@ class Placing(ConfirmedMemoryTest):
                 with self.assertRaises(MemoryRuleError):
                     await self.place(await self.waiting_reading(proposal))
         self.assertEqual(await self.rows("memory_beliefs"), before)
+
+    async def test_a_pinned_connection_is_not_taken_back_by_a_zero_reading(self) -> None:
+        made = await self.relate(self.bram, "carries", self.sword, status="confirmed", secret=False)
+        rel = made.value[0].id
+        await self.memory.pin(GUILD_A, self.c, rel, True, source="dm")
+        before = await self.beliefs_of(rel)
+        false = await self.waiting_reading(belief("truth", "false_evidence", 0.0, dm_confirms=True))
+        with self.assertRaises(MemoryRuleError) as why:
+            await self.place(false)
+        self.assertIn("Unpin it first", str(why.exception))
+        self.assertEqual(await self.beliefs_of(rel), before)
+        self.assertIn(rel, await self.memory.pinned_connections(GUILD_A, self.c))
 
     async def test_an_unknown_character_or_a_state_is_refused_before_anything_is_written(
         self,
