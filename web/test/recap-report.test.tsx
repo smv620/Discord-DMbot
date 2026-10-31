@@ -80,6 +80,99 @@ describe("the report", () => {
     expect(document.body.textContent).not.toContain("THE WORDS A PLAYER SAID");
   });
 
+  it("a source reads something someone told them", async () => {
+    await open();
+    await waitFor(() => expect(screen.getByText("something someone told them from session 4")).toBeTruthy());
+  });
+
+  it("a source whose words are gone says no longer available", async () => {
+    await open();
+    await waitFor(() => expect(screen.getByText("something someone told them from session 4, no longer available")).toBeTruthy());
+  });
+
+  it("a source never shows a quote even if the API sends one", async () => {
+    const api = mockApi("table");
+    const real = api.sessionReport!;
+    api.sessionReport = async (...args) => {
+      const got = await real(...args);
+      got.differences.disguised[0]!.evidence = [{ kind: "source", session: 5, available: true, quote: "THE NAME OF A PLAYER" }];
+      return got;
+    };
+    await open("100.cmp1", api);
+    await screen.findByText(/Aldric has hidden it/);
+    expect(document.body.textContent).toContain("something someone told them from session 5");
+    expect(document.body.textContent).not.toContain("THE NAME OF A PLAYER");
+  });
+
+  it("an unknown kind reads something DMbot noted and never its own word or a quote", async () => {
+    const api = mockApi("table");
+    const real = api.sessionReport!;
+    api.sessionReport = async (...args) => {
+      const got = await real(...args);
+      got.differences.disguised[0]!.evidence = [{ kind: "mystery" as never, session: 2, available: true, quote: "A SECRET LINE" }];
+      return got;
+    };
+    await open("100.cmp1", api);
+    await screen.findByText(/Aldric has hidden it/);
+    expect(document.body.textContent).toContain("something DMbot noted from session 2");
+    expect(document.body.textContent).not.toContain("mystery");
+    expect(document.body.textContent).not.toContain("A SECRET LINE");
+    expect(document.body.textContent).not.toContain("a fact from session 2");
+  });
+
+  it("an unknown kind with no words left says something DMbot noted, no longer available", async () => {
+    const api = mockApi("table");
+    const real = api.sessionReport!;
+    api.sessionReport = async (...args) => {
+      const got = await real(...args);
+      got.differences.disguised[0]!.evidence = [{ kind: "mystery" as never, session: 2, available: false }];
+      return got;
+    };
+    await open("100.cmp1", api);
+    await waitFor(() => expect(screen.getByText("something DMbot noted from session 2, no longer available")).toBeTruthy());
+  });
+
+  it("an inherited name such as toString is an unknown kind, never its code", async () => {
+    const api = mockApi("table");
+    const real = api.sessionReport!;
+    api.sessionReport = async (...args) => {
+      const got = await real(...args);
+      got.differences.disguised[0]!.evidence = [{ kind: "toString" as never, session: 2, available: true, quote: "A SECRET LINE" }];
+      return got;
+    };
+    await open("100.cmp1", api);
+    await screen.findByText(/Aldric has hidden it/);
+    expect(document.body.textContent).toContain("something DMbot noted from session 2");
+    expect(document.body.textContent).not.toContain("function");
+    expect(document.body.textContent).not.toContain("A SECRET LINE");
+  });
+
+  it("the four existing kinds read as before", async () => {
+    const api = mockApi("table");
+    const real = api.sessionReport!;
+    api.sessionReport = async (...args) => {
+      const got = await real(...args);
+      got.differences.disguised[0]!.evidence = [
+        { kind: "claim", session: 1, available: false },
+        { kind: "line", session: 2, available: true, quote: "NOT SHOWN" },
+        { kind: "clue", session: 3, available: false },
+        { kind: "event", session: 4, available: false },
+      ];
+      return got;
+    };
+    await open("100.cmp1", api);
+    await screen.findByText(/Aldric has hidden it/);
+    for (const words of [
+      "a fact from session 1, no longer available",
+      "a line from session 2",
+      "a clue from session 3, no longer available",
+      "an event from session 4, no longer available",
+    ]) {
+      expect(document.body.textContent).toContain(words);
+    }
+    expect(document.body.textContent).not.toContain("NOT SHOWN");
+  });
+
   it("a report the call limit cut short never reads as nothing to check", async () => {
     await open("100.cmp1.report-cut");
     await screen.findByText(w.leftForNextTime);
