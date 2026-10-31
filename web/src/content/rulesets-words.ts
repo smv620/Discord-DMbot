@@ -27,7 +27,7 @@ export const rulesetsPanel = {
   done: "Saved. DMbot uses these rules from now on.",
   failed: "Nothing was changed.",
   failedNext: "Try again in a minute. If it keeps happening, ask for help.",
-  timedOut: "DMbot hasn't answered yet. It may still save this. Check back in a minute: the 'Now:' line changes when it does.",
+  timedOut: "DMbot hasn't answered yet. It may still save this. Reload the page in a minute to see where it got to.",
   problems: {
     "not-allowed": "Only a DM of this campaign can do this. Ask your DM.",
     "bad-value": "The second set of rules can't be the same as your main rules. Pick the other set, or choose to skip it.",

@@ -154,6 +154,27 @@ class TheDoor(RulesBase):
             [("visibility", "peek"), ("dndbeyond_invite", "")],
         )
 
+    async def test_the_earlier_settings_keep_working_through_the_replaced_door(self) -> None:
+        long_invite = "https://www.dndbeyond.com/campaigns/join/" + "A" * 64  # (105 characters)
+        self.assertEqual(len(long_invite), 105)
+        async with self.web.user(self.session.user_id, session=self.session.id_hash) as conn:
+            await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(THURSDAY.id),))
+            for setting, value, confirmed, status in (
+                ("dndbeyond_invite", long_invite, False, "ok"),  # (0296's longer limit still holds)
+                ("level", "x" * 41, False, "bad_value"),  # (and the others stay at their words)
+                ("story_mode", "watch", False, "needs_confirm"),
+                ("story_mode", "watch", True, "ok"),
+                ("retention", "90", True, "ok"),
+                ("nonsense", "x", False, "bad_setting"),
+            ):
+                cur = await conn.execute(
+                    "SELECT dmbot_web_setting_add(%s, %s, %s, %s, %s) AS r",
+                    (THURSDAY.id, self.one.id, setting, value, confirmed),
+                )
+                row = await cur.fetchone()
+                assert row is not None
+                self.assertEqual(row["r"]["status"], status, (setting, value[:20]))
+
     async def test_the_campaign_page_gives_the_pair_to_a_dm_only(self) -> None:
         page = await campaign_page.read_campaign(self.web, self.session, self.cref())
         self.assertEqual(
