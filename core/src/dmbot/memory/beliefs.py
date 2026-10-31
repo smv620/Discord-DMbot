@@ -70,7 +70,7 @@ def belief_of(row: dict[str, Any]) -> Belief:
         row["id"], row["perspective_id"], row["relation_id"], float(row["confidence"]),
         row["status"], row["session_at"], tuple(row["evidence_ids"]), int(row["seq"]),
         row["recorded_at"], bool(row.get("pinned", False)), row.get("derived_from"),
-        row.get("change_kind"),
+        row.get("change_kind"), row.get("game_time"),
     )  # fmt: skip
 
 
@@ -184,6 +184,7 @@ async def _add(
     derived_from: str | None = None,
     change_kind: str | None = None,
     sources: Sequence[str] = (),
+    game_time: int | None = None,
 ) -> dict[str, Any]:
     """The checked insert behind `believe_in` and `follow`. `pinned` (the DM's 📌, #2447): None
     keeps what the pair's last belief said, so a new belief never silently unpins.
@@ -191,9 +192,13 @@ async def _add(
     carries on (a placeholder stays a placeholder); `evidence` is then that belief's old list.
     Without it `evidence` is new and each item must be a claim or line of this campaign (#2662).
     `derived_from` and `change_kind`: the belief this one revises, and how (#3091).
-    `sources`: the entries of this campaign that said it (a `source` link each)."""
+    `sources`: the entries of this campaign that said it (a `source` link each). `game_time`: the
+    game minute a LIVE session's clock read when it was made (#3091), else None; a copy keeps its
+    origin's, because it is the same belief."""
     if not 0.0 <= confidence <= 1.0:
         raise MemoryRuleError("A confidence runs from 0 to 1.")
+    if game_time is not None and (isinstance(game_time, bool) or game_time < 0):
+        raise MemoryRuleError("A game time is a number of minutes from 0.")
     if status not in BELIEF_STATUSES:
         raise MemoryRuleError("That is not a kind of belief.")
     if len(evidence) > EVIDENCE_MAX or any(not e or len(e) > EVIDENCE_ID_MAX for e in evidence):
@@ -208,6 +213,7 @@ async def _add(
         origin = await w.get(BELIEFS, copy_from)
         if origin is not None:
             derived_from, change_kind = origin["derived_from"], origin["change_kind"]
+            game_time = origin["game_time"]
     if status in LIE_STATUSES and copy_from is None:
         await _check_lie(w, status, confidence, sources)
     for who in dict.fromkeys(sources):
@@ -247,6 +253,7 @@ async def _add(
             "pinned": bool(last[0]["pinned"]) if pinned is None and last else bool(pinned),
             "derived_from": derived_from,
             "change_kind": change_kind,
+            "game_time": game_time,
         },
     )
     if copy_from is not None:
@@ -335,10 +342,11 @@ async def believe_in(
     derived_from: str | None = None,
     change_kind: str | None = None,
     sources: Sequence[str] = (),
+    game_time: int | None = None,
 ) -> Belief:
     """A perspective comes to believe a connection (or stops, at 0.0), inside an open write. Both
     ends must be in this campaign; only the DM writes The truth. `derived_from`, `change_kind`
-    and `sources` say where the belief came from (#3091)."""
+    and `sources` say where the belief came from; `game_time` is the live game minute (#3091)."""
     perspective = await w.get(PERSPECTIVES, perspective_id)
     relation = await w.get(RELATIONS, relation_id)
     if perspective is None or relation is None:
@@ -376,6 +384,7 @@ async def believe_in(
             derived_from=derived_from,
             change_kind=change_kind,
             sources=sources,
+            game_time=game_time,
         )
     )
 
