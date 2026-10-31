@@ -65,6 +65,17 @@ class Storing(ConfirmedMemoryTest):
         (row,) = await self.store.differences(GUILD_A, self.c)
         self.assertEqual((row.kind, row.truth_relation_id, row.times_unknown), (DENIED, None, True))
 
+    async def test_a_lie_names_the_same_connection_twice_and_is_kept(self) -> None:
+        lie = Difference(self.party, "party", self.held, self.held, "lie", False, False)
+        saved = await self.store.save_differences(
+            GUILD_A, self.c, [rs.SortedDifference(lie, rs.MISUNDERSTOOD, "Not so.", 500)]
+        )
+        self.assertEqual(saved, 1)  # (two ids that are one: the count is of distinct ones, #3091)
+        (row,) = await self.store.differences(GUILD_A, self.c)
+        self.assertEqual(
+            (row.kind, row.relation_id, row.truth_relation_id), ("lie", self.held, self.held)
+        )
+
     async def test_an_unknown_sort_is_not_sorted_never_false(self) -> None:
         await self.store.save_differences(
             GUILD_A, self.c, [rs.SortedDifference(self.clash(), "whatever")]

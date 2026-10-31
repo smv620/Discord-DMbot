@@ -13,19 +13,19 @@ import importlib
 _OLD = importlib.import_module("dmbot.migrations.0249_report_read_door").REPORT_READ_DOOR
 _TRUTH_WORD = "'truth', CASE WHEN m.truth_relation_id IS NULL"
 _LIAR = r"""'liar', CASE WHEN m.kind = 'lie' THEN (
-                                   SELECT x.name FROM memory_beliefs lb
-                                   JOIN memory_evidence le
+                                   SELECT x.name
+                                   FROM (SELECT lb.id FROM memory_beliefs lb
+                                         WHERE lb.guild_id = g AND lb.campaign_id = c
+                                           AND lb.perspective_id = m.perspective_id
+                                           AND lb.relation_id = m.relation_id
+                                         ORDER BY lb.seq DESC LIMIT 1) nb
+                                   LEFT JOIN memory_evidence le
                                      ON le.guild_id = g AND le.campaign_id = c
-                                    AND le.belief_id = lb.id AND le.kind = 'source'
-                                   JOIN memory_entities x
+                                    AND le.belief_id = nb.id AND le.kind = 'source'
+                                   LEFT JOIN memory_entities x
                                      ON x.guild_id = g AND x.campaign_id = c
                                     AND x.id = le.target_id AND x.type = 'character'
-                                    AND x.status = 'confirmed'
-                                   WHERE lb.guild_id = g AND lb.campaign_id = c
-                                     AND lb.perspective_id = m.perspective_id
-                                     AND lb.relation_id = m.relation_id
-                                     AND lb.status IN ('suspected_lie', 'known_lie')
-                                   ORDER BY lb.seq DESC, le.added_at LIMIT 1) END,
+                                   ORDER BY (x.name IS NULL), le.added_at LIMIT 1) END,
                                """
 assert _OLD.count(_TRUTH_WORD) == 1 and _OLD.count("CREATE FUNCTION dmbot_web_report") == 1
 

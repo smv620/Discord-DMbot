@@ -88,6 +88,49 @@ class Making(ConfirmedMemoryTest):
             session_started_at=500, **kw,
         )  # fmt: skip
 
+    async def test_a_lie_the_party_got_wrong_is_found_sorted_and_kept(self) -> None:
+        # Bram and Mira are allies in the DM's view (the setup made it so, then said "not allies"):
+        # put the DM's view back at 1.0, and let a player's character suspect a lie about it
+        async with self.db.guild(GUILD_A) as conn:
+            cur = await conn.execute(
+                "SELECT id FROM memory_perspectives WHERE guild_id = %s AND campaign_id = %s"
+                " AND kind = 'truth'",
+                (GUILD_A, self.c),
+            )
+            truth = (await cur.fetchone() or {})["id"]
+            rook = new_id()
+            await conn.execute(
+                "INSERT INTO memory_perspectives (guild_id, campaign_id, id, kind, entity_id,"
+                " created_at) VALUES (%s, %s, %s, 'pc', %s, 1)",
+                (GUILD_A, self.c, rook, self.bram),
+            )
+            for view, confidence, status in (
+                (truth, 1.0, "revealed_fact"),
+                (rook, 0.5, "suspected_lie"),
+            ):
+                await conn.execute(
+                    "INSERT INTO memory_beliefs (guild_id, campaign_id, id, perspective_id,"
+                    " relation_id, confidence, status, session_at, evidence_ids, seq,"
+                    " recorded_at) SELECT %s, %s, %s, %s, %s, %s, %s, 1, '{}',"
+                    " COALESCE(max(seq), 0) + 1, 1 FROM memory_beliefs"
+                    " WHERE guild_id = %s AND campaign_id = %s",
+                    (
+                        GUILD_A,
+                        self.c,
+                        new_id(),
+                        view,
+                        self.ally,
+                        confidence,
+                        status,
+                        GUILD_A,
+                        self.c,
+                    ),
+                )
+        made = await self.go(Canned())
+        stored = await self.reports.differences(GUILD_A, self.c)
+        self.assertIn("lie", [d.kind for d in stored])
+        self.assertEqual(made.differences, len(stored))
+
     async def run_of(self) -> rs.Run:
         run = await self.reports.run(GUILD_A, self.c, SESSION)
         assert run is not None

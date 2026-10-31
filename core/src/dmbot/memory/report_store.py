@@ -114,6 +114,10 @@ class ReportStore:
             for item in sorted_:
                 d = item.difference
                 sort = item.sort if item.sort in SORTS else NOT_SORTED
+                # (a lie names the same connection twice: count the distinct ones, #3091)
+                ids = sorted(
+                    {d.relation_id, *([d.truth_relation_id] if d.truth_relation_id else [])}
+                )
                 cur = await conn.execute(
                     "INSERT INTO memory_differences (guild_id, campaign_id, perspective_id,"
                     " relation_id, truth_relation_id, kind, sort, reason, times_unknown,"
@@ -142,8 +146,8 @@ class ReportStore:
                         item.session_started_at,
                         guild_id, campaign_id, d.perspective_id,
                         guild_id, campaign_id,
-                        [d.relation_id, *([d.truth_relation_id] if d.truth_relation_id else [])],
-                        2 if d.truth_relation_id else 1,
+                        ids,
+                        len(ids),
                     ),
                 )  # fmt: skip
                 kept += cur.rowcount

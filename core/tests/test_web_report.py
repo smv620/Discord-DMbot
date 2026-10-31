@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 from typing import Any
+from unittest.mock import patch
 
 import httpx
 
@@ -213,20 +214,42 @@ class TheReport(Reading):
         )  # fmt: skip
         return view
 
-    async def test_a_lie_the_party_got_wrong_names_who_thinks_it_and_who_they_blame(self) -> None:
-        await self.a_lie_difference()
-        (d,) = (await self.read())["differences"]["misunderstood"]
-        self.assertEqual((d["kind"], d["liar"], d["view"]), ("lie", "Valyra", "Cerric"))
-        self.assertEqual(d["believes"], d["truth"])  # (The truth holds the statement itself)
+    async def door(self) -> dict[str, Any]:
+        """What the door itself sent for the first session (before the page's shaping)."""
+        with patch.object(report, "shape", wraps=report.shape) as spy:
+            await self.read()
+        return dict(spy.call_args.args[0])
 
-    async def test_a_liar_who_is_gone_reads_as_someone_and_other_kinds_have_no_liar(self) -> None:
-        await self.a_lie_difference(liar=False)
+    async def test_the_door_names_the_liar_and_the_holder_of_a_lie_the_party_got_wrong(
+        self,
+    ) -> None:
+        await self.a_lie_difference()
+        (d,) = (await self.door())["differences"]
+        self.assertEqual((d["kind"], d["liar"], d["who"]["name"]), ("lie", "Valyra", "Cerric"))
+        self.assertEqual(d["believes"]["id"], d["truth"]["id"])  # (The truth holds the statement)
+
+    async def test_the_page_leaves_a_lie_out_until_it_has_words_for_it(self) -> None:
+        await self.a_lie_difference()
         await self.difference("false", denied=True)
-        got = (await self.read())["differences"]
-        (lie,) = got["misunderstood"]
-        (plain,) = got["false"]
-        self.assertEqual((lie["kind"], lie["liar"]), ("lie", "someone"))
-        self.assertEqual((plain["kind"], plain["liar"]), ("denied", None))
+        shown = (await self.read())["differences"]
+        self.assertEqual(shown["misunderstood"], [])
+        self.assertEqual(len(shown["false"]), 1)  # (the other kinds are untouched)
+
+    async def test_a_lost_liar_is_null_and_only_the_newest_belief_names_one(self) -> None:
+        view = await self.a_lie_difference()
+        await self.sql("DELETE FROM memory_evidence WHERE kind = 'source'")
+        self.assertIsNone((await self.door())["differences"][0]["liar"])
+        # a newer belief of that view with no source does not borrow the older lie's liar
+        valyra = await self.name("Mina", self.one.id)
+        await self.memory.believe(
+            GUILD, self.one.id, view, self.ally, 0.4, "suspected_lie", source=DM_SOURCE,
+            sources=[valyra],
+        )  # fmt: skip
+        await self.sql("DELETE FROM memory_evidence WHERE kind = 'source'")
+        await self.memory.believe(
+            GUILD, self.one.id, view, self.ally, 0.3, "theory", source=DM_SOURCE
+        )
+        self.assertIsNone((await self.door())["differences"][0]["liar"])
 
     async def test_a_difference_never_sorted_is_counted_and_not_listed(self) -> None:
         await self.difference("not_sorted")
