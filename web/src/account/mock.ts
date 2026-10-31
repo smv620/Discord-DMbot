@@ -1001,7 +1001,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
   // The after-session report (#2661) the pretend API keeps by campaign and session.
   const reports = new Map<string, { made: boolean; failed?: boolean; tries: number; answers: Map<string, ReportAnswer>; looks?: number }>();
   const reportItems = (): { contradictions: ReportContradiction[]; differences: SessionReport["differences"] } => {
-    const ev = (kind: "claim" | "line" | "clue" | "event", session: number, available: boolean, quote?: string) => ({
+    const ev = (kind: "claim" | "line" | "clue" | "event" | "source", session: number, available: boolean, quote?: string) => ({
       kind, session, available, ...(quote ? { quote } : {}),
     });
     const contradictions: ReportContradiction[] = [
@@ -1024,8 +1024,18 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
     const differences = {
       disguised: [
         diff("d-lie", "The party", "Aldric is loyal to the Lantern Circle.", "Aldric serves the Ashen Crown.", "Aldric has hidden it on purpose.", { a: "n2", b: "n12" }),
-        { ...diff("d-lie2", "Cerric", "Valyra hid the key", "", "Cerric swore it was true.", null), kind: "lie" as const, liar: "Valyra" },
-        { ...diff("d-lie3", "The party", "The harbour master sold the map", "", "The party thinks someone is lying.", null), kind: "lie" as const, liar: null },
+        {
+          ...diff("d-lie2", "Cerric", "Valyra hid the key", "", "Cerric swore it was true.", null),
+          evidence: [ev("source", 4, true), ev("claim", 3, true, "swore on the Circle")],
+          kind: "lie" as const,
+          liar: "Valyra",
+        },
+        {
+          ...diff("d-lie3", "The party", "The harbour master sold the map", "", "The party thinks someone is lying.", null),
+          evidence: [ev("source", 4, false)],
+          kind: "lie" as const,
+          liar: null,
+        },
       ],
       misunderstood: [diff("d-mix", "Tamsin, a player character", "The shrine key opens the keep.", "The shrine key opens the shrine only.", "They saw it fit a lock and guessed the rest.", { a: "n1", b: "n20" })],
       false: [diff("d-plan", "The party", "Old Pell is a priest.", "Old Pell is a smuggler.", "Nothing said so, but they all say it.", null)],
