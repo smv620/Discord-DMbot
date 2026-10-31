@@ -308,13 +308,15 @@ class TheStoryBudget(NotesTest):
         self.assertLessEqual(len(told[2]), NOTES_ENTRY_CHARS)
         self.assertTrue(told[2].endswith("x" * 90))  # cut after a whole beat, never in the middle
 
-    async def test_many_notes_only_sessions_keep_within_their_total_and_both_recaps_whole(
+    async def test_many_notes_only_sessions_never_push_out_a_recap_in_either_trimmer(
         self,
     ) -> None:
         from dmbot.recaps.accepted import AcceptedStore
-        from dmbot.recaps.inputs import NOTES_TOTAL_CHARS
+        from dmbot.recaps.critics import STORY_CHARS, plot_message
+        from dmbot.recaps.draft import trim_story
+        from dmbot.recaps.pipeline import STORY_CHARS_MAX
 
-        recaps = {100: "The first recap. " * 100, 200: "The second recap. " * 100}
+        recaps = {100: "The first recap. " * 80, 200: "The second recap. " * 250}  # 1,360; 4,500
         async with self.db.guild(GUILD) as conn:
             for at, text in recaps.items():
                 await conn.execute(
@@ -327,12 +329,26 @@ class TheStoryBudget(NotesTest):
         for at in range(1000, 1000 + 22):  # 22 more sessions, each with a full-size sheet
             await self.beats_step(self.camp, at, long)
         told = await story_so_far(AcceptedStore(self.db), GUILD, self.camp.id, 9000, self.notes)
-        self.assertEqual(told[0], recaps[100].strip())
-        self.assertEqual(told[1], recaps[200].strip())
-        notes_told = told[2:]
-        self.assertTrue(notes_told)
-        self.assertLess(len(notes_told), 22)  # the older ones did not fit
-        self.assertLessEqual(sum(len(t) for t in notes_told), NOTES_TOTAL_CHARS)
+        self.assertEqual(len(told), 24)
+        whole = [r.strip() for r in recaps.values()]
+        writers = trim_story(
+            told, STORY_CHARS_MAX
+        )  # the writer's trimmer: notes only fill the rest
+        self.assertEqual(writers[:2], whole)
+        self.assertLessEqual(sum(len(r) for r in writers), STORY_CHARS_MAX)
+        self.assertLess(len(writers), 24)
+        self.assertLessEqual(sum(len(r) for r in whole), STORY_CHARS)
+        asked = plot_message([], [], "", [], told)  # PlotBot's trimmer
+        for recap in whole:
+            self.assertIn(recap, asked)
+        self.assertNotIn("Notes of a session", asked)
+
+    async def test_notes_with_nothing_to_say_are_skipped_and_do_not_count_as_recaps(self) -> None:
+        from dmbot.recaps.accepted import AcceptedStore
+
+        await self.beats_step(self.camp, 1000, [beat("x" * 2_500, [1])])  # one beat over its share
+        told = await story_so_far(AcceptedStore(self.db), GUILD, self.camp.id, 5000, self.notes)
+        self.assertEqual(told, ())
 
     async def test_a_session_whose_transcript_still_exists_is_not_told_by_its_notes(self) -> None:
         from dmbot.recaps.accepted import AcceptedStore
