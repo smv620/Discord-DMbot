@@ -796,6 +796,15 @@ one, otherwise the main clock; nothing stamps until the clock log lands (#3091).
 session from anything but a spoken line (an import, lore, the DM's edit) stays empty ("time not known",
 as before), and nothing is ever stamped with the clock as it reads at a later time. A copy of a belief (a
 pin, a reworded connection) keeps its origin's minute, and Undo and backups carry it.
+**The clock log (migration 0305, `game_clock_log`):** every change to a game clock (a group or the main
+one, with the real time and the game minute) is appended by a database trigger, so no button, phrase,
+Undo, split or rejoin can miss it; it is numbers only, kept for good, in backups and following a campaign
+that moves. `stamp.game_time_at(conn, guild, campaign, spoken_at, group)` gives the newest row at or
+before `spoken_at`: the speaker's group if one is given, otherwise the main clock; before the first row, or
+with no clock, it is not known. While the party is split the main clock stands still, so a line with no
+known group is not known then either (nothing records which group a character is in yet). The extractor
+notes each reading's newest cited line moment (`spoken_at`, Unix seconds) and **placing a reading stamps
+the belief from that moment**, never from the clock as it reads when the DM presses Place.
 
 **The after-session report** (DM only; it is full of spoilers, and nothing in it reaches players):
 - the minor contradictions;

@@ -74,7 +74,7 @@ from dmbot.memory.models import (
     new_id,
 )
 from dmbot.memory.store import _check_led_to_live, _load_ontology, flag_kept
-from dmbot.timebot.clocklog import minute_at
+from dmbot.timebot.stamp import game_time_at
 
 WAITING_ALREADY = "That is already waiting for your answer. Answer it there first."
 PLOT_IS_KNOWN = "The players already know that, so it cannot also be a secret plot."
@@ -345,7 +345,7 @@ async def _place_in(
     # The game clock as it stood when the line was spoken (None: no clock, or nothing logged yet
     # at that moment); never the clock as it reads now (#3091).
     at_that_moment = (
-        await minute_at(w.conn, w.guild_id, w.campaign_id, spoken_at) if spoken_at else None
+        await game_time_at(w.conn, w.guild_id, w.campaign_id, spoken_at) if spoken_at else None
     )
     belief = await beliefs.place_belief(
         w, perspective, host, confidence, status,

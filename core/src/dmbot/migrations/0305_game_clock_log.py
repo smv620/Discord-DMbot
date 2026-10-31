@@ -12,7 +12,7 @@ GAME_CLOCK_LOG = (
     -- Every change to a campaign's game clock, kept for good: which clock (NULL is the main
     -- clock, 1 to 3 a split-party group), the real time (Unix seconds) and the game minute it
     -- moved to. A line spoken at a real time then has the game time of the newest row at or
-    -- before it (`timebot/clocklog.py`), so a belief formed from that line can be stamped from the
+    -- before it (`timebot/stamp.py`), so a belief formed from that line can be stamped from the
     -- line itself and never with the clock as it reads later. Written by a trigger on the two
     -- clock tables, so no way of changing a clock (a button, a phrase, Undo, a split, a rejoin)
     -- can miss it. Numbers only, never any words; one campaign's, deleted with it, in its backups,
