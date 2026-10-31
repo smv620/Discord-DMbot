@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from dmbot.memory.models import name_key
+from dmbot.memory.ontology import DISGUISED_AS
 
 STATED = "the text says so"
 CONNECTIONS = "they share connections"
@@ -147,11 +148,14 @@ def from_rows(
     aliases: Sequence[dict[str, Any]],
     relations: Sequence[dict[str, Any]],
     apart: Collection[tuple[str, str]],
+    disguises: Collection[tuple[str, str]] = (),
 ) -> list[Offer]:
     """The offers for one campaign's rows (the store reads them, scoped to the campaign). An
     unnamed entry is the left side, a named confirmed one of the same kind the right (a player's
     character may be either: "the hooded stranger" can turn out to be one); a declined
     pair is kept as `name_not_same` keeps it, in id order, and turned back into (unnamed, named).
+    `disguises`: (disguised, copied) pairs of a `disguised_as` connection at any status but
+    rejected: a disguise is two people, so such a pair is never offered, in either direction.
     `stated` is empty until a reading records "the text says it is": that is a later slice."""
     # (the store hands over entries that are not players: a link through a person would let a
     # shared player count as evidence for two different characters, so it is left out below)
@@ -161,8 +165,11 @@ def from_rows(
         if a["status"] == "confirmed":  # only names the DM said yes to count as evidence
             spoken.setdefault(str(a["entity_id"]), []).append(str(a["text"]))
     links: dict[str, set[Link]] = {}
+    disguised: set[tuple[str, str]] = {(a, b) for x, y in disguises for a, b in ((x, y), (y, x))}
     for r in relations:
         subject, other = str(r["subject_id"]), str(r["object_id"])
+        if r["predicate"] == DISGUISED_AS and r.get("status") != "rejected":
+            disguised |= {(subject, other), (other, subject)}  # (a confirmed one, in the rows)
         if subject not in live or other not in live:
             continue  # a connection to a rejected or merged entry says nothing
         links.setdefault(subject, set()).add((str(r["predicate"]), other, True))
@@ -184,4 +191,5 @@ def from_rows(
     declined = {(a, b) for a, b in apart if a in left and b in right} | {
         (b, a) for a, b in apart if b in left and a in right
     }
+    declined |= {(a, b) for a, b in disguised if a in left and b in right}
     return offers(unnamed, named, declined=declined)

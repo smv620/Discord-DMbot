@@ -107,6 +107,26 @@ class KnownBy(_Table):
         await keep.keep_all(self.memory, self.store, GUILD, self.campaign.id, [waiting])
         self.assertEqual(await self.knowers([await self.written()]), {})
 
+    async def test_a_disguise_is_secret_yet_its_uploaders_character_keeps_knowing_it(self) -> None:
+        ids = await self.ids()
+        nox = await self.memory.add_entity(
+            GUILD,
+            self.campaign.id, name="Nox", type="npc", status=CONFIRMED, source="dm",
+        )  # fmt: skip
+        await self.store.add(
+            GUILD, self.campaign.id,
+            [NewLink(nox.value.id, "disguised_as", ids["Voss"], "q", True, known_by=ids["Tavin"])],
+        )  # fmt: skip
+        (waiting,) = await self.store.waiting(GUILD, self.campaign.id)
+        await keep.keep_all(self.memory, self.store, GUILD, self.campaign.id, [waiting])
+        (rel,) = [
+            r
+            for r in await self.memory.relations(GUILD, self.campaign.id, include_secret=True)
+            if r.predicate == "disguised_as"
+        ]
+        self.assertTrue(rel.secret)
+        self.assertIn(ids["Tavin"], (await self.knowers([str(rel.id)]))[str(rel.id)])
+
     async def test_a_connection_that_exists_keeps_the_characters_already_chosen(self) -> None:
         ids = await self.ids()
         mara = await self.memory.add_entity(

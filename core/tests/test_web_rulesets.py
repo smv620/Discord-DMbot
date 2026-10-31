@@ -98,9 +98,8 @@ class TheDoor(RulesBase):
                     row = await cur.fetchone()
                     assert row is not None
                     got = row["r"]["status"]
-                    self.assertEqual(got if got == "bad_value" else "ok", expected, value)
-                    if got == "too_soon":  # (ten open at once is the most: stop before it matters)
-                        return
+                    # (only four pairs pass the checks, so the ten-open limit never applies)
+                    self.assertEqual(got, expected, value)
 
     def test_the_sql_list_is_the_codes_list(self) -> None:
         sql = next(m.SQL for m in _MODULES if m.__name__.endswith("0300_rulesets_setting"))
@@ -118,6 +117,18 @@ class TheDoor(RulesBase):
         )
         assert bob is not None
         self.assertEqual(await self.refused("2024/2014", bob), "not_allowed")
+        self.assertEqual(await self.rows(), [])
+
+    async def test_someone_outside_the_server_gets_nothing(self) -> None:
+        who: Any = BOB
+        outsider = await sessions.find(
+            self.web,
+            await sessions.sign_in(self.web, who, [], now=NOW, days=30),  # (no server)
+            now=NOW,
+        )
+        assert outsider is not None
+        # (this is the Python guard on the session's servers; the database door has its own check)
+        self.assertEqual(await self.refused("2024/2014", outsider), "not_found")
         self.assertEqual(await self.rows(), [])
 
     async def test_a_dm_cannot_queue_rules_for_a_campaign_they_do_not_run(self) -> None:
