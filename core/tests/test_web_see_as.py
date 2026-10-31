@@ -301,6 +301,49 @@ class ThePicker(SeeAs):
             self.assertEqual(caught.exception.code, "not_allowed")
 
 
+class TheKnowWords(SeeAs):
+    """The word for each name and connection in the DM's full view, from who knows it (§9b)."""
+
+    async def words(self) -> tuple[dict[str, str], dict[str, str]]:
+        from dmbot.web import relationships
+
+        got = await relationships.read_web(
+            self.web, self.session, self.cref, center=self.mira, hops=3, view="full"
+        )
+        nodes = {n["name"]: n["knowWord"] for n in got["nodes"]}
+        links = {x["id"]: x["knowWord"] for e in got["edges"] for x in e["links"]}
+        return nodes, links
+
+    async def test_a_name_nobody_but_the_dm_knows_is_secret_and_the_rest_are_worded_by_who(
+        self,
+    ) -> None:
+        nodes, links = await self.words()
+        self.assertEqual(nodes["Greywater Keep"], gate.SECRET)
+        self.assertEqual(nodes["Mira Voss"], gate.PARTLY_REVEALED)  # (Rook knows her, Okra not)
+        self.assertEqual(links[self.links["mira-rook"]], gate.PARTLY_REVEALED)
+        await self.know(ENTRY, self.mira, [self.rook, self.okra])
+        self.assertEqual((await self.words())[0]["Mira Voss"], gate.KNOWN_TO_THE_PARTY)
+
+    async def test_what_only_npcs_know_is_hidden_from_the_players_not_secret(self) -> None:
+        tran = await self.add("Tran", "character", role="npc")
+        await self.know(ENTRY, self.keep, [tran])
+        self.assertEqual((await self.words())[0]["Greywater Keep"], gate.KNOWN_TO_ONE_NPC)
+        bruno = await self.add("Bruno", "character", role="npc")
+        await self.know(ENTRY, self.keep, [tran, bruno])
+        self.assertEqual((await self.words())[0]["Greywater Keep"], gate.HIDDEN_FROM_THE_PLAYERS)
+
+    async def test_the_players_view_is_never_sent_the_words(self) -> None:
+        from dmbot.web import relationships
+
+        await self.know(ENTRY, self.mira, [self.rook, self.okra])  # (the party knows her)
+        got = await relationships.read_web(
+            self.web, self.session, self.cref, center=self.mira, hops=3, view="players"
+        )
+        self.assertTrue(got["nodes"])
+        self.assertTrue(all("knowWord" not in n for n in got["nodes"]))
+        self.assertTrue(all("knowWord" not in x for e in got["edges"] for x in e["links"]))
+
+
 class TheRoute(SeeAs):
     async def client(self, user: Any) -> httpx.AsyncClient:
         app = create_app(

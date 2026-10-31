@@ -285,7 +285,49 @@ async def read_web(
         got = {**shaped, "pageIds": found}
     else:
         got = await _door(db, session, ref, center, hops, size_only=False, view=view)
-    return page_of(got)
+    page = page_of(got)
+    if got["canEdit"] and got["seesAll"]:
+        await with_know_words(db, session, ref, page)
+    return page
+
+
+def know_words(known: dict[str, Any]) -> tuple[dict[str, str], dict[str, str]]:
+    """The word for each name and each connection, worked out from who knows it (§9b item 3) by
+    the one function the bot uses (`gate.word_of`), never from a stored flag. Returns
+    (names by entry id, connections by connection id). Ids only; the words are fixed vocabulary."""
+    who: dict[tuple[str, str], set[str]] = {}
+    for kind, statement, character, _sure in known["knowers"]:
+        who.setdefault((str(kind), str(statement)), set()).add(str(character))
+    party = [str(i) for i in known["playerCharacters"]]
+    entries = {k[1]: gate.word_of(v, party) for k, v in who.items() if k[0] == "entry"}
+    for entry in known["liveEntries"]:
+        entries.setdefault(str(entry), gate.word_of((), party))
+    links = {k[1]: gate.word_of(v, party) for k, v in who.items() if k[0] == "connection"}
+    for link in known["connections"]:
+        links.setdefault(str(link), gate.word_of((), party))
+    return entries, links
+
+
+async def with_know_words(db: Database, session: Session, ref: str, page: dict[str, Any]) -> None:
+    """Adds `knowWord` to each name and each connection of a DM's full view (#2999, §9b), so the
+    page says "secret" only when nobody but the DM knows it. DM only (the door gives nobody else
+    its data); the knowers are read, worked into words here and not sent on."""
+    guild_id, campaign_id = _parse(ref)
+    _guild_of(session, guild_id)
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        cur = await conn.execute(
+            "SELECT dmbot_web_knowers_data(%s, %s) AS k", (guild_id, campaign_id)
+        )
+        found = await cur.fetchone()
+    if found is None or found["k"] is None:
+        raise RecapError("not_found")
+    names, links = know_words(dict(found["k"]))
+    for node in page["nodes"]:
+        node["knowWord"] = names.get(str(node["id"]), gate.SECRET)
+    for edge in page["edges"]:
+        for link in edge["links"]:
+            link["knowWord"] = links.get(str(link["id"]), gate.SECRET)
 
 
 def page_of(got: dict[str, Any]) -> dict[str, Any]:
