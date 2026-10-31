@@ -17,6 +17,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from dmbot.campaigns.invite import parse_invite
+from dmbot.campaigns.models import CampaignError
 from dmbot.campaigns.store import MAX_DMS
 from dmbot.consent import TERMS_VERSION
 from dmbot.db import Database
@@ -40,7 +42,23 @@ OPTIONAL_RULE = "optional_rule"  # a fourth choice: one optional rule on or off 
 CO_DM = "co_dm"  # a fifth: one game master added or removed (#2768)
 PAUSE = "pause"  # a sixth: the campaign paused or unpaused, by its owner (#2985)
 STORY_MODE = "story_mode"  # a seventh: the Shared story switch, off, watch or guide (#2985)
+DNDBEYOND_INVITE = (
+    "dndbeyond_invite"  # an eighth: the D&D Beyond invite link, or empty to remove it
+)
 PERSON_ID = re.compile(r"^[1-9][0-9]{0,18}$")  # a Discord id: digits, never a name
+
+
+def _invite(body: dict[str, Any]) -> str:
+    """The D&D Beyond invite in its standard form, or "" to remove it (#2985). The same parser as
+    Discord's form (`campaigns/invite.py`), so the page and Discord accept exactly the same links;
+    anything else is `bad_value`. The door checks the shape again."""
+    value = body.get("value")
+    if not isinstance(value, str) or len(value) > 200:
+        raise RecapError("bad_value")
+    try:
+        return parse_invite(value) or ""
+    except CampaignError:
+        raise RecapError("bad_value") from None
 
 
 def _arguments(body: object) -> tuple[str, str, bool]:
@@ -48,6 +66,8 @@ def _arguments(body: object) -> tuple[str, str, bool]:
     if not isinstance(body, dict):
         raise RecapError("bad_setting")
     setting = body.get("setting")
+    if setting == DNDBEYOND_INVITE:
+        return DNDBEYOND_INVITE, _invite(body), False
     if not isinstance(setting, str) or setting not in CHOICES:
         raise RecapError("bad_setting")
     value = body.get("value")
@@ -109,6 +129,7 @@ async def queue_setting(
     co_dms_on: bool = False,
     pause_on: bool = False,
     story_mode_on: bool = False,
+    invite_on: bool = False,
 ) -> str:
     """Queue one choice of the signed-in DM for the bot and return its id. A server the person is
     not in is "not found"; a member who is not a DM of the campaign is "not allowed". A shorter
@@ -122,6 +143,10 @@ async def queue_setting(
         raise RecapError("not_found")  # off until the bot applies it too (DMBOT_WEB_PAUSE)
     if isinstance(body, dict) and body.get("setting") == STORY_MODE and not story_mode_on:
         raise RecapError("not_found")  # off until the bot applies it too (DMBOT_WEB_STORY_MODE)
+    if isinstance(body, dict) and body.get("setting") == DNDBEYOND_INVITE and not invite_on:
+        raise RecapError(
+            "not_found"
+        )  # off until the bot applies it too (DMBOT_WEB_DNDBEYOND_INVITE)
     rule = _optional_rule(body)
     master = _co_dm(body)
     pause = _pause(body)
