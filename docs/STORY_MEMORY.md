@@ -796,6 +796,22 @@ one, otherwise the main clock; nothing stamps until the clock log lands (#3091).
 session from anything but a spoken line (an import, lore, the DM's edit) stays empty ("time not known",
 as before), and nothing is ever stamped with the clock as it reads at a later time. A copy of a belief (a
 pin, a reworded connection) keeps its origin's minute, and Undo and backups carry it.
+**The clock log (migration 0305, `game_clock_log`):** every change to a game clock (a group or the main
+one, with the real time and the game minute) is appended by a database trigger, so no button, phrase,
+Undo, split or rejoin can miss it; it also logs when the party splits (each group's minute) and comes back
+together (the main clock's), because the log has to know which clock the table was on. It is numbers only,
+kept for good, in backups and following a campaign that moves. A backup longer than 200,000 rows loads
+with the newest rows (the oldest moments then read as "not known"; a backup is never refused for it).
+`stamp.game_time_at(conn, guild, campaign, spoken_at, group)` reads the newest row at or before
+`spoken_at`: a main-clock row is the one clock whatever group is asked for; a group row means the party
+was split, and then the asked group's newest row since the last main row is its clock, or "not known" when
+no group is given (the main clock stands still while split). Before the first row, or with no clock, it is
+not known. Nothing records which group a character is in yet (#3131). The extractor notes each reading's
+newest cited line moment (`spoken_at`, Unix seconds) and **placing a reading stamps the belief from that
+moment**, never from the clock as it reads when the DM presses Place; a session loaded from a file
+(`session_imports`) carries no moment, because its lines hold the dates the DM chose. **Watch for:** the
+trigger runs as whoever changes the clock, so a clock write fails if the log insert does, and a future
+backfill of `minute` under `migrate_backfill` must open this table's row-level security too.
 
 **"As of" in story time (#3091 part 3, `memory/as_of.py`):** "what did the party believe on Flamerule 10th?"
 is answered from each belief's game time, next to the session-order readers (which answer by the session a
