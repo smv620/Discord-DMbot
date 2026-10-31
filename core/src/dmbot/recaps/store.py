@@ -31,6 +31,7 @@ from dmbot.audio_due import AUDIO_MAX_TRIES as AUDIO_MAX_TRIES
 from dmbot.campaigns.models import CampaignError
 from dmbot.db import Conn, Database
 from dmbot.memory.models import name_key
+from dmbot.recaps import notes
 from dmbot.recaps.allowance import Usage, month_bounds
 from dmbot.recaps.approval import CHOICES, TEXT, text_hash
 from dmbot.recaps.fixed_lines import STORY_COLUMN_MAX
@@ -459,7 +460,7 @@ class RecapStore:
             else:
                 values.append(value)
         async with self._db.guild(guild_id) as conn:
-            await conn.execute(
+            cur = await conn.execute(
                 f"UPDATE recap_jobs SET {', '.join(parts)}, updated_at = %s WHERE guild_id = %s"
                 " AND campaign_id = %s AND session_at = %s AND status = 'draft'" + guard,
                 (
@@ -471,6 +472,10 @@ class RecapStore:
                     *([] if approval is None else [approval]),
                 ),
             )
+            if cur.rowcount > 0 and "beats" in fields and fields.get("state") == "checked":
+                # the beat sheet is final for this try: it is the session's notes now (#3026).
+                # (only when the write took: a late write to a job that moved on changes nothing)
+                await notes.keep_from_job(conn, guild_id, campaign_id, session_at)
 
     # --- the audio tracks (#1383) -------------------------------------------------------
 

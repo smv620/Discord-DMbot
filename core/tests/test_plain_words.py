@@ -118,6 +118,11 @@ ALLOWED: list[tuple[str, str, str]] = [
         "a piece of a database question (SQL) shared by two queries, never shown",
     ),
     (
+        "recaps/notes.py",
+        "null",
+        "a piece of a database question (SQL) that does not begin with a SQL word, never shown",
+    ),
+    (
         "recaps/plot_talk_run.py",
         "null",
         "a piece of a database question (SQL) that does not begin with a SQL word, never shown",
