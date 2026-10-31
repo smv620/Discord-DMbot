@@ -77,12 +77,13 @@ class TheMutualRolesWhateverTheDirection(unittest.TestCase):
     """#3102: a sibling, cousin or spouse reads in full from both cards even when it was stored
     without a direction; a one-way role and a role-less family link keep their old words."""
 
-    def test_a_mutual_role_reads_in_full_when_stored_undirected(self) -> None:
+    def test_a_mutual_role_reads_in_full_whichever_way_it_is_stored(self) -> None:
         for word in sorted(kin.MUTUAL):
-            with self.subTest(word):
-                self.assertEqual(link_words("kin_of", word, False), f"is the {word} of")
-                self.assertIsNone(back_words("kin_of", word, False))
-                self.assertTrue(reads_both_ways("kin_of", word, False))
+            for directional in (False, True):
+                with self.subTest(word, directional=directional):
+                    self.assertEqual(link_words("kin_of", word, directional), f"is the {word} of")
+                    self.assertIsNone(back_words("kin_of", word, directional))
+                    self.assertTrue(reads_both_ways("kin_of", word, directional))
 
     def test_a_one_way_role_is_unchanged_when_stored_undirected(self) -> None:
         for word in kin.ROLES:
@@ -91,6 +92,21 @@ class TheMutualRolesWhateverTheDirection(unittest.TestCase):
             with self.subTest(word):
                 self.assertEqual(link_words("kin_of", word, False), "is family of")
                 self.assertIsNone(back_words("kin_of", word, False))
+
+    def test_a_sibling_edge_on_the_website_reads_in_full_both_ways(self) -> None:
+        (edge,) = relationships.edges_from(
+            [TheWebEdges().row("1", "b", "a", "sibling", False)], can_edit=True
+        )
+        (link,) = edge["links"]
+        self.assertEqual((link["words"], link["back"], link["direction"]),
+                         ("is the sibling of", None, "both"))  # fmt: skip
+
+    def test_a_sibling_row_on_each_card_reads_in_full(self) -> None:
+        sibling = relation("mira", "aldric", "sibling", directional=False)
+        for card_of, other in (("mira", "Aldric"), ("aldric", "Mira")):
+            with self.subTest(card_of):
+                rows = name_card._rows(TheCard.lookup, card_of, [sibling], True)  # type: ignore[arg-type]
+                self.assertEqual(f"{rows[0].words} {rows[0].other}", f"is the sibling of {other}")
 
     def test_no_role_or_an_unknown_one_is_family_of(self) -> None:
         for detail in ("", "friend"):
