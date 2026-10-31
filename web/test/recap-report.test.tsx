@@ -82,7 +82,7 @@ describe("the report", () => {
 
   it("a source reads something someone told them", async () => {
     await open();
-    await waitFor(() => expect(screen.getAllByText("something someone told them from session 4").length).toBeGreaterThan(0));
+    await waitFor(() => expect(screen.getByText("something someone told them from session 4")).toBeTruthy());
   });
 
   it("a source whose words are gone says no longer available", async () => {
@@ -118,6 +118,33 @@ describe("the report", () => {
     expect(document.body.textContent).not.toContain("mystery");
     expect(document.body.textContent).not.toContain("A SECRET LINE");
     expect(document.body.textContent).not.toContain("a fact from session 2");
+  });
+
+  it("an unknown kind with no words left says something DMbot noted, no longer available", async () => {
+    const api = mockApi("table");
+    const real = api.sessionReport!;
+    api.sessionReport = async (...args) => {
+      const got = await real(...args);
+      got.differences.disguised[0]!.evidence = [{ kind: "mystery" as never, session: 2, available: false }];
+      return got;
+    };
+    await open("100.cmp1", api);
+    await waitFor(() => expect(screen.getByText("something DMbot noted from session 2, no longer available")).toBeTruthy());
+  });
+
+  it("an inherited name such as toString is an unknown kind, never its code", async () => {
+    const api = mockApi("table");
+    const real = api.sessionReport!;
+    api.sessionReport = async (...args) => {
+      const got = await real(...args);
+      got.differences.disguised[0]!.evidence = [{ kind: "toString" as never, session: 2, available: true, quote: "A SECRET LINE" }];
+      return got;
+    };
+    await open("100.cmp1", api);
+    await screen.findByText(/Aldric has hidden it/);
+    expect(document.body.textContent).toContain("something DMbot noted from session 2");
+    expect(document.body.textContent).not.toContain("function");
+    expect(document.body.textContent).not.toContain("A SECRET LINE");
   });
 
   it("the four existing kinds read as before", async () => {

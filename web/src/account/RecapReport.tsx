@@ -46,7 +46,8 @@ function evidenceWords(e: ReportEvidence): string {
     const kind = w.evidenceKinds.source ?? "";
     return e.available ? w.sourceHere(kind, e.session) : w.gone(kind, e.session);
   }
-  const known: string | undefined = w.evidenceKinds[e.kind];
+  // Only the map's own keys count: a kind such as "toString" must not pick up an inherited property (#3135).
+  const known: string | undefined = Object.hasOwn(w.evidenceKinds, e.kind) ? w.evidenceKinds[e.kind] : undefined;
   // A kind the page does not know reads as DMbot's note, never its own name or a quote.
   if (known === undefined) return e.available ? w.sourceHere(w.unknownKind, e.session) : w.gone(w.unknownKind, e.session);
   // The words are gone: say the session and the kind, never the words or who said them.
