@@ -1834,7 +1834,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         ...(role === "player"
           ? {}
           : {
-              settings: { visibility: "peek", level: "normal", keepDays: 90, paused: false, storyMode: "off", dndbeyondInvite: "", gameMasters: 2 } as const,
+              settings: { visibility: "peek", level: "normal", keepDays: 90, paused: false, storyMode: "off", dndbeyondInvite: "", mainRules: "2024", fallbackRules: "2014", gameMasters: 2 } as const,
             }),
       };
     },
@@ -1849,6 +1849,9 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       if (/\.cp-player$/.test(ref)) throw new ApiError("not-allowed");
       // The server's door refuses turning the Shared story switch on without the right-to-use confirmation.
       if (choice.setting === "story_mode" && choice.value !== "off" && choice.confirm !== true) throw new ApiError("needs-confirm");
+      // The server's door: "<main>/<fallback>", both offered, the fallback not the main rules.
+      if (choice.setting === "rulesets" && !/^(2024|2014)\/(2024|2014|none)$/.test(choice.value)) throw new ApiError("bad-value");
+      if (choice.setting === "rulesets" && choice.value.split("/")[0] === choice.value.split("/")[1]) throw new ApiError("bad-value");
       // The server's door: the one standard invite shape, or empty to remove it.
       if (choice.setting === "dndbeyond_invite" && choice.value !== "" && !/^https:\/\/(www\.)?dndbeyond\.com\/campaigns\/join\/[A-Za-z0-9]{4,64}$/.test(choice.value)) throw new ApiError("bad-value");
       const id = `a${settingAnswers.size + 1}`;
@@ -1991,6 +1994,10 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         if (/\.pa-noroom$/.test(ref) && asked.on === false)
           return { ...base, state: "failed", error: "refused", note: "You have no free place on your plan. Pause another campaign first." };
         return { ...base, state: "done", note: asked.on ? "Paused." : "Unpaused." };
+      }
+      if (asked.setting === "rulesets") {
+        if (/\.rs-refused$/.test(ref)) return { ...base, state: "failed", error: "refused", note: "**Your plan** can't change the `rules`." };
+        return { ...base, state: "done", note: "" };
       }
       if (asked.setting === "dndbeyond_invite") {
         if (/\.di-refused$/.test(ref)) return { ...base, state: "failed", error: "refused", note: "**Your plan** doesn't allow a `join` button." };
