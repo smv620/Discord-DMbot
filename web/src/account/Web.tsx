@@ -77,6 +77,9 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
   // API's own pick. Kept in a ref too, so a read started before a switch is not mixed up with it.
   const [asked, setAsked] = useState<WebView | undefined>(undefined);
   const askedNow = useRef<WebView | undefined>(undefined);
+  // The character the web is read as (#2999), or "party"; a ref, like askedNow, so a read in flight uses it.
+  const seeAsNow = useRef<string | undefined>(undefined);
+  const [seeAsNote, setSeeAsNote] = useState("");
   // Once a response says the person is a DM they stay one for this visit, even in the players' view.
   const [isDm, setIsDm] = useState(false);
   const [meta, setMeta] = useState<{ visibility?: WebGraph["visibility"] | undefined; canPeek?: boolean | undefined }>({});
@@ -103,7 +106,12 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
           return;
         }
       }
-      const read = await api.webGraph(ref, { center: at, hops: steps, ...(view ? { view } : {}) });
+      const read = await api.webGraph(ref, {
+        center: at,
+        hops: steps,
+        ...(view ? { view } : {}),
+        ...(seeAsNow.current !== undefined ? { seeAs: seeAsNow.current } : {}),
+      });
       if (mine !== latest.current) return;
       setGraph(read);
       if (read.canEdit) setIsDm(true);
@@ -119,6 +127,13 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
     } catch (error) {
       if (mine !== latest.current) return;
       const kind = error instanceof ApiError ? error.kind : "network";
+      if (kind === "not-found" && seeAsNow.current !== undefined) {
+        // The character is no longer in the story: say so, and read the DM's Players View again.
+        seeAsNow.current = undefined;
+        setSeeAsNote(words.seeAsGone);
+        void load(center, hops, true);
+        return;
+      }
       if (kind === "peek-off") {
         // The DM turned peeking off while it was on: back to the normal view, with the reason.
         switchTo(undefined);
@@ -141,12 +156,23 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
     setAsked(next);
   }
   function chooseView(next: WebView | undefined): void {
+    seeAsNow.current = undefined; // Full View, or the Players View, is never "as someone" (#2999)
+    setSeeAsNote("");
     switchTo(next);
     setLine(null);
     setAlone(null);
     setOverview(null); // never leave the other view's names on screen while this one loads
     void load(center, hops, true);
     void loadOverview();
+  }
+
+  /** Reads the web as one character, or the party, knows it (#2999); undefined goes back to the Players View. */
+  function chooseSeeAs(next: string | undefined): void {
+    seeAsNow.current = next;
+    setSeeAsNote("");
+    setLine(null);
+    setAlone(null);
+    void load(center, hops, true);
   }
 
   /** A player agreed to the warning: tell the API they peek, then read the full web. */
@@ -325,6 +351,8 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
   const showAll = asked === "players" ? false : graph.canEdit || asked === "full";
   // Changing anything is for a DM, and not in the players' view (read-only, so what they see is checked).
   const canEdit = graph.canEdit && asked !== "players";
+  // Set while the web is read as one character (#2999): read-only, like the Players View.
+  const seeing = graph.seeAs ?? null;
   const peeking = !isDm && asked === "full";
   // Nor what the players haven't been told yet: the page may still hold the full web for a moment
   // after a switch to the players' view, and this keeps it off the screen.
@@ -371,6 +399,9 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
             <span>{words.playersView}</span>
           </label>
           <p class="small muted">{asked === "players" ? words.playersViewNote : words.fullViewNote}</p>
+          {asked === "players" && api.webViewers && (
+            <SeeAsPicker api={api} refId={ref} seeing={seeing} note={seeAsNote} onPick={(id) => chooseSeeAs(id)} onBack={() => chooseSeeAs(undefined)} />
+          )}
         </fieldset>
       )}
       {!isDm && api.webPeek && (
@@ -651,6 +682,94 @@ function WebLines({ lines, onOpen }: { lines: WebLine[]; onOpen: (a: string, b: 
 }
 
 /** Find a name by typing; choosing one puts it in the middle. */
+/** "See as…" (#2999): a DM looks at the web as one character, or the party, knows it. Shown in the Players View only. */
+function SeeAsPicker({
+  api,
+  refId,
+  seeing,
+  note,
+  onPick,
+  onBack,
+}: {
+  api: AccountApi;
+  refId: string;
+  seeing: { viewer: string; name: string } | null;
+  note: string;
+  onPick: (id: string) => void;
+  onBack: () => void;
+}) {
+  const [q, setQ] = useState("");
+  const [list, setList] = useState<{ id: string; name: string }[]>([]);
+  const [total, setTotal] = useState(0);
+  const [failed, setFailed] = useState(false);
+  const latest = useRef(0);
+
+  useEffect(() => {
+    if (!api.webViewers) return;
+    const mine = ++latest.current;
+    // The first look is at once; after that the list waits for the last key (300 ms).
+    const timer = setTimeout(() => {
+      api
+        .webViewers!(refId, q.trim())
+        .then((got) => {
+          if (mine !== latest.current) return;
+          setList(got.viewers);
+          setTotal(got.total);
+          setFailed(false);
+        })
+        .catch(() => {
+          if (mine === latest.current) setFailed(true);
+        });
+    }, q === "" ? 0 : 300);
+    return () => clearTimeout(timer);
+  }, [api, refId, q]);
+
+  return (
+    <div class="field">
+      <label>
+        {words.seeAsLabel}
+        <input
+          type="search"
+          value={q}
+          placeholder={words.seeAsPlaceholder}
+          autoComplete="off"
+          spellcheck={false}
+          aria-describedby="web-see-as-hint"
+          onInput={(e) => setQ((e.target as HTMLInputElement).value)}
+        />
+      </label>
+      <p id="web-see-as-hint" class="small muted">
+        {words.seeAsHint}
+      </p>
+      {seeing && (
+        <p role="status">
+          {words.seeAsNow(seeing.name)}{" "}
+          <button type="button" class="button secondary" onClick={onBack}>
+            {words.seeAsBack}
+          </button>
+        </p>
+      )}
+      {note && <p role="status">{note}</p>}
+      <ul class="web-found" aria-label={words.seeAsListLabel}>
+        <li>
+          <button type="button" class="button secondary" onClick={() => onPick("party")}>
+            {words.seeAsParty}
+          </button>
+        </li>
+        {list.map((v) => (
+          <li key={v.id}>
+            <button type="button" class="button secondary" onClick={() => onPick(v.id)}>
+              {v.name}
+            </button>
+          </li>
+        ))}
+      </ul>
+      {failed && <p role="status">{words.seeAsLoadFailed}</p>}
+      {total > list.length && <p class="small muted">{words.seeAsMore(list.length, total)}</p>}
+    </div>
+  );
+}
+
 function CentrePicker({
   api,
   refId,
