@@ -1787,7 +1787,7 @@ export interface Waiting {
 }
 /** What people believe (#2412 slice 3b; core PR 2693): readings DMbot found that the DM may keep as a belief.
  * DMbot's own words only: names, a relationship, whose view and how sure; never a line or a speaker. */
-export type ReadingRule = "theory" | "accusation" | "reveal" | "confession" | "evasion" | "false_clue" | "plot";
+export type ReadingRule = "theory" | "accusation" | "lie" | "reveal" | "confession" | "evasion" | "false_clue" | "plot";
 export interface Reading {
   id: string;
   rule: ReadingRule;
@@ -1796,6 +1796,8 @@ export interface Reading {
   statement: string;
   /** In words: "fairly sure", "doubtful", "a guess", "seen", "dodged", "false", "secret plot". */
   sureness: string;
+  /** Who lied, for a suspected lie only (#3121): a name, or null when it is gone or unknown. Null on any other rule. */
+  liar: string | null;
   /** The session's day (Unix seconds). */
   sessionAt: number;
   /** False while a new name in it has to be answered first, in Check new names. */

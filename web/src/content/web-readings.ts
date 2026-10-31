@@ -15,6 +15,7 @@ export const readingWords = {
   rules: {
     theory: "A theory",
     accusation: "An accusation",
+    lie: "A suspected lie",
     reveal: "Something revealed",
     confession: "Said under a spell",
     evasion: "Avoided an answer under a spell",
@@ -22,6 +23,10 @@ export const readingWords = {
     plot: "A secret plot",
   } as Record<string, string>,
   other: "Something noticed",
+  // A suspected lie (#3121): who thinks it and who lied, so the DM sees the name before Keep. The party's own view
+  // starts with "The party"; a liar who is gone or unknown is "someone".
+  lied: (who: string, liar: string | null): string =>
+    `${who === "the party" ? "The party" : who} thinks ${liar ?? "someone"} lied about this`,
   believedBy: (who: string): string => `Believed by ${who}`,
   sure: (how: string): string => `How sure: ${how}`,
   saidAt: (day: string): string => `Session of ${day}`,

@@ -680,13 +680,14 @@ function webVisibility(ref: string): "private" | "peek" | "open" {
 
 /** The pretend readings (#2412): `r-gone` is not waiting any more when answered, `r-busy` can't be written now. */
 function pretendReadings(): Reading[] {
-  const base = { why: null, waitingOn: [] as string[], canPlace: true, sessionAt: 1791000000 };
+  const base = { why: null, waitingOn: [] as string[], canPlace: true, sessionAt: 1791000000, liar: null };
   return [
     { ...base, id: "r1", rule: "theory", who: "the party", statement: "Mira Voss took the key", sureness: "fairly sure" },
     { ...base, id: "r2", rule: "reveal", who: "Rook", statement: "Roan is the one who warned the harbour", sureness: "seen" },
     { ...base, id: "r-gone", rule: "accusation", who: "the party", statement: "Brannoch burned the ferry", sureness: "doubtful" },
     { ...base, id: "r-busy", rule: "false_clue", who: "the DM's view", statement: "Far Hall hid the second key", sureness: "false" },
     { ...base, id: "r-name", rule: "theory", who: "the party", statement: "Newcomer sent the letter", sureness: "a guess", canPlace: false, why: "name_first", waitingOn: ["Newcomer"] },
+    { ...base, id: "r-lie", rule: "lie", who: "Rook", liar: "Valyra", statement: "The ferryman sold the map", sureness: "a guess" },
     { ...base, id: "r-plot", rule: "plot", who: "the DM's view", statement: "The ferryman plans to sink the barge", sureness: "secret plot" },
   ];
 }
