@@ -300,9 +300,28 @@ class TheChecks(unittest.TestCase):
 
     def test_a_third_name_is_a_whole_name_or_a_first_word_only_one_name_starts(self) -> None:
         names = bg.reach_names({"pell ashe", "pell voss", "mara ketch", "ox"})
-        self.assertIn("mara", names)  # only one name starts with it
-        self.assertNotIn("pell", names)  # two do: a bare "Pell" would be a guess
-        self.assertNotIn("ox", names - {"ox"})
+        self.assertIn("mara", names)  # a first word is a name in the text
+        self.assertIn("pell", names)  # two names share it: it is a third name either way
+        self.assertNotIn("ox", names - {"ox"})  # (a short key has no first word of its own)
+
+    def test_a_first_name_two_known_names_share_still_stops_a_reach(self) -> None:
+        names = bg.reach_names(
+            {name_key(n) for n in ("Corvin Hale", "Daric", "Pell Ashe", "Pell Voss")}
+        )
+        text = (
+            "Corvin Hale hunted wolves. Old stories say Pell and his family were cursed. "
+            "His brother, Daric, vanished at forty."
+        )
+        reply = json.dumps({"connections": [link(
+            "Corvin Hale", "brother", "Daric", "His brother, Daric, vanished at forty"
+        )]})  # fmt: skip
+        got = bg.read_connections(reply, text, others=names)
+        self.assertEqual(got, [])
+
+    def test_a_reach_is_never_longer_than_the_queue_keeps(self) -> None:
+        from dmbot.memory import backstory_links
+
+        self.assertEqual(bg.REACH_CHARS, backstory_links.QUOTE_MAX)
 
 
 class ThePath(NamesTest):
@@ -410,6 +429,35 @@ class ThePath(NamesTest):
         )
 
     # ---- the card and the presses -----------------------------------------------------------
+
+    async def test_a_card_for_a_reach_quote_keeps_the_name_and_the_sentence_that_matters(
+        self,
+    ) -> None:
+        # (#2757) a reach quote can be 400 characters and the card shows 200: the middle goes, the
+        # start (the name) and the end (the pronoun's sentence) stay, and no word is cut.
+        made = await self.memory.add_names(
+            GUILD, self.campaign.id,
+            [NewName("Corvin", "npc", CONFIRMED), NewName("Daric", "npc", CONFIRMED)],
+            source="dm",
+        )  # fmt: skip
+        corvin, daric = made.value
+        assert corvin and daric
+        quote = (
+            "Corvin hunted wolves. "
+            + "Old stories say it was cold and grey. " * 8
+            + ("His brother, Daric, vanished at forty.")
+        )
+        self.assertGreater(len(quote), ui_bg.QUOTE_SHOWN)
+        await self.store.add(
+            GUILD, self.campaign.id, [NewLink(corvin, "kin_of", daric, quote, detail="sibling")]
+        )
+        _, view = await self.offer()
+        shown = view.text().split("From your text: \u201c", 1)[1].split("\u201d", 1)[0]
+        self.assertLessEqual(len(shown), ui_bg.QUOTE_SHOWN)
+        self.assertTrue(shown.startswith("Corvin hunted wolves."))
+        self.assertTrue(shown.endswith("His brother, Daric, vanished at forty."))
+        self.assertIn(" … ", shown)
+        self.assertTrue(all(w in quote for w in shown.replace(" … ", " ").split()))  # whole words
 
     async def test_keep_stores_the_dms_word_and_the_row_goes(self) -> None:
         await self.read()

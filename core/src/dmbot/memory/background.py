@@ -23,6 +23,7 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from dmbot.memory import kin
+from dmbot.memory.backstory_links import QUOTE_MAX
 from dmbot.memory.end_match import FILLER, SHORTEST, Ends
 from dmbot.memory.models import name_key
 from dmbot.memory.ontology import DISGUISED_AS, FALLBACK_PREDICATE, SYNONYMS
@@ -373,17 +374,20 @@ _BREAK = re.compile(r"[\n\r\u2028\u2029\x85]")
 
 REACH_SENTENCES = 3  # how many sentences back a pronoun's name may stand (#2757)
 REACH_WORDS = 60  # the most words of a quote that reaches back (the AI's own: `QUOTE_WORDS`)
-# The waiting-connection queue keeps a quote to 400 characters and cuts the END (the pronoun's
-# own sentence), so a window that long is never offered.
-REACH_CHARS = 400
+# The waiting-connection queue keeps a quote to `QUOTE_MAX` characters and cuts the END (the
+# pronoun's own sentence), so a window longer than that is never offered.
+REACH_CHARS = QUOTE_MAX
 
 
 def reach_names(keys: Iterable[str]) -> set[str]:
-    """The name keys a reach looks for as a third name: every key given, and a first word that
-    only one key starts with ("Brannoch" for "Brannoch Ashe"), since a text says a name short."""
+    """The name keys a reach looks for as a third name: every key given, and the first word of
+    every longer key ("Brannoch" for "Brannoch Ashe"), since a text says a name short. A first word
+    that two names share ("Pell" for Pell Ashe and Pell Voss) counts too: it is a name in the text
+    whichever of them is meant, and either way it is not the pair's own."""
     full = {k for k in keys if k}
-    firsts = Counter(k.split()[0] for k in full if len(k.split()) > 1)
-    return full | {w for w, n in firsts.items() if n == 1 and len(w) > SHORTEST}
+    return full | {
+        k.split()[0] for k in full if len(k.split()) > 1 and len(k.split()[0]) > SHORTEST
+    }
 
 
 def _third_name(span: str, others: Collection[str], ends: Collection[str]) -> bool:
