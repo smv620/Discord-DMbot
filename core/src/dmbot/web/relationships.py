@@ -20,13 +20,13 @@ from collections.abc import Collection
 from typing import Any
 
 from dmbot.db import Database
-from dmbot.memory import kin
+from dmbot.memory import gate, kin
 from dmbot.memory.claims import Extracted, condition_of
 from dmbot.memory.link_kinds import link_kind
 from dmbot.memory.link_words import back_words, link_words, reads_both_ways
 from dmbot.memory.web_actions import RETAKE_AFTER_S
 from dmbot.memory.who_resolve import checked_line
-from dmbot.web import all_names
+from dmbot.web import all_names, graph_view
 from dmbot.web.names import _parse
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
 from dmbot.web.sessions import Session
@@ -202,6 +202,66 @@ async def _page_ids(conn: Any, guild_id: int, campaign_id: str) -> set[str]:
     return {str(i) for i in ids} if isinstance(ids, list) else set()
 
 
+async def _is_dm(db: Database, session: Session, ref: str) -> bool:
+    guild_id, campaign_id = _parse(ref)
+    _guild_of(session, guild_id)
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        cur = await conn.execute(
+            "SELECT 1 FROM campaign_dms WHERE guild_id = %s AND campaign_id = %s AND user_id = %s",
+            (guild_id, campaign_id, session.user_id),
+        )
+        return await cur.fetchone() is not None
+
+
+async def gated(db: Database, session: Session, ref: str, view: str | None) -> bool:
+    """Whether this look at the graph is worked out by the gate (#3143) rather than read straight
+    from the graph door: everything but the full view. A DM asking for no view sees everything; a
+    DM asking for Players View sees what the party knows; a player sees what their own characters
+    know; a peek ("full") is still the DM's graph, behind its own switch."""
+    if view == "full":
+        return False
+    if view == "players":
+        return True
+    return not await _is_dm(db, session, ref)
+
+
+async def source_of(
+    db: Database, session: Session, ref: str
+) -> tuple[dict[str, Any], dict[str, Any], set[str]]:
+    """The graph's source and the knowers (two doors, one statement, so one snapshot), and the
+    names that have a page. They go to the gate and no further: nothing here is sent to a browser,
+    logged or kept, and an error never carries them."""
+    guild_id, campaign_id = _parse(ref)
+    _guild_of(session, guild_id)
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        cur = await conn.execute(
+            "SELECT dmbot_web_graph_source(%s, %s) AS s, dmbot_web_knowers_data(%s, %s) AS k",
+            (guild_id, campaign_id, guild_id, campaign_id),
+        )
+        found = await cur.fetchone()
+        pages = await _page_ids(conn, guild_id, campaign_id)
+    if found is None or found["s"] is None or found["k"] is None:
+        raise RecapError("not_found")
+    return dict(found["s"]), dict(found["k"]), pages
+
+
+def viewer_of(known: dict[str, Any]) -> gate.Viewer:
+    """Who is looking, when nobody asked to see as someone: the party for a DM in Players View,
+    else the caller's own characters (none: nothing). The characters come from who plays them,
+    in the database, never from the request."""
+    if known["isDm"]:
+        return gate.Viewer.the_party()
+    return gate.Viewer.player(str(i) for i in known["mine"])
+
+
+async def graph_of(db: Database, session: Session, ref: str) -> tuple[graph_view.Graph, set[str]]:
+    """The graph this caller may see through the gate, and the names that have a page."""
+    src, known, pages = await source_of(db, session, ref)
+    return graph_view.build(src, known, viewer_of(known)), pages
+
+
 async def read_web(
     db: Database,
     session: Session,
@@ -216,7 +276,22 @@ async def read_web(
     true. `view`: "players" (what a player sees, for anyone) or "full" (everything: a DM's, or a
     player's peek, refused with `peek_off` unless the campaign's DM screen lets players peek);
     none means the person's own. `visibility` and `canPeek` let the page grey out the switch."""
-    got = await _door(db, session, ref, center, hops, size_only=False, view=view)
+    if await gated(db, session, ref, view):
+        _refuse_bad(center, hops, view)
+        graph, found = await graph_of(db, session, ref)
+        shaped = graph_view.web_of(graph, center, hops, MAX_NODES)
+        if shaped is None:
+            raise RecapError("not_found")
+        got = {**shaped, "pageIds": found}
+    else:
+        got = await _door(db, session, ref, center, hops, size_only=False, view=view)
+    return page_of(got)
+
+
+def page_of(got: dict[str, Any]) -> dict[str, Any]:
+    """A graph answer (the door's, or the gate's in the door's shape) as the page gets it: each
+    name with whether it has an NPC page, and the connections between two names grouped into one
+    edge with its words. `pageIds` is dropped."""
     pages: set[str] = got["pageIds"]
     nodes = [
         {
@@ -254,6 +329,13 @@ async def read_size(
     view: str | None = None,
 ) -> dict[str, int]:
     """How many names are within `hops` steps, so the page can warn before drawing."""
+    if await gated(db, session, ref, view):
+        _refuse_bad(center, hops, view)
+        graph, _found = await graph_of(db, session, ref)
+        shaped = graph_view.web_of(graph, center, hops, MAX_NODES)
+        if shaped is None:
+            raise RecapError("not_found")
+        return {"names": int(shaped["names"])}
     got = await _door(db, session, ref, center, hops, size_only=True, view=view)
     return {"names": int(got["names"])}
 
@@ -347,6 +429,9 @@ async def _overview_door(
     _guild_of(session, guild_id)
     if view is not None and view not in VIEWS:
         raise RecapError("bad_view")
+    if await gated(db, session, ref, view):
+        graph, with_pages = await graph_of(db, session, ref)
+        return graph_view.overview_of_graph(graph, max_names, max_pairs), with_pages
     async with db.user(session.user_id, session=session.id_hash) as conn:
         await _scoped(conn, guild_id)
         if view is not None:

@@ -442,6 +442,50 @@ async def names_for(
     return name_entries(seen, viewer, entity_ids, rows, public=public, texts_out=texts_out)
 
 
+@dataclass(frozen=True, slots=True)
+class Split:
+    """The facts a viewer learned through a secret other name, which the website draws on a node
+    of that name ("alias:<id>") beside the person's own node (#3085: a name belongs to the fact)."""
+
+    links: Mapping[str, str]  # connection id -> the other name it was learned through
+    nodes: Mapping[str, tuple[str, str]]  # other name id -> (the entry it names, its text)
+
+
+def split_connections(
+    seen: Visible,
+    links: Sequence[Mapping[str, Any]],
+    aliases: Sequence[Mapping[str, Any]],
+    texts: Mapping[str, str],
+) -> Split:
+    """Which known connections belong on a node of the secret other name they were learned
+    through. `links` are the live confirmed connections (`id`, `via`: the other name it was
+    learned through or None, `secret`, `unrevealed`); `aliases` the other names (`id`, `entity_id`,
+    `secret`, `status`); `texts` each other name as this viewer may read it (`name_entries`).
+
+    A connection is split when the viewer knows it, it was learned through a confirmed secret
+    other name the viewer holds, and it is itself held back (secret or not yet said at the table).
+    Once the other name is made public the two fold back into one person: nothing is split. A node
+    exists only for a name that has such a connection."""
+    by_id = {str(a["id"]): a for a in aliases}
+    held = {
+        i
+        for i, a in by_id.items()
+        if a["secret"] and a["status"] == CONFIRMED and seen.knows(ALIAS, i)
+    }
+    chosen: dict[str, str] = {}
+    for link in links:
+        via = link["via"]
+        if via is None or str(via) not in held:
+            continue
+        if (link["secret"] or link["unrevealed"]) and seen.knows(CONNECTION, str(link["id"])):
+            chosen[str(link["id"])] = str(via)
+    nodes = {
+        a: (str(by_id[a]["entity_id"]), texts.get(a, str(by_id[a]["text"])))
+        for a in set(chosen.values())
+    }
+    return Split(chosen, nodes)
+
+
 def name_entries(
     seen: Visible,
     viewer: Viewer,
