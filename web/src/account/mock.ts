@@ -1022,7 +1022,11 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       id, view, believes, truth, reason, evidence: [ev("line", 4, false), ev("claim", 3, true, "swore on the Circle")], answer: null, open,
     });
     const differences = {
-      disguised: [diff("d-lie", "The party", "Aldric is loyal to the Lantern Circle.", "Aldric serves the Ashen Crown.", "Aldric has hidden it on purpose.", { a: "n2", b: "n12" })],
+      disguised: [
+        diff("d-lie", "The party", "Aldric is loyal to the Lantern Circle.", "Aldric serves the Ashen Crown.", "Aldric has hidden it on purpose.", { a: "n2", b: "n12" }),
+        { ...diff("d-lie2", "Cerric", "Valyra hid the key", "", "Cerric swore it was true.", null), kind: "lie" as const, liar: "Valyra" },
+        { ...diff("d-lie3", "The party", "The harbour master sold the map", "", "The party thinks someone is lying.", null), kind: "lie" as const, liar: null },
+      ],
       misunderstood: [diff("d-mix", "Tamsin, a player character", "The shrine key opens the keep.", "The shrine key opens the shrine only.", "They saw it fit a lock and guessed the rest.", { a: "n1", b: "n20" })],
       false: [diff("d-plan", "The party", "Old Pell is a priest.", "Old Pell is a smuggler.", "Nothing said so, but they all say it.", null)],
     };
