@@ -294,24 +294,32 @@ async def read_web(
 def know_words(known: dict[str, Any]) -> tuple[dict[str, str], dict[str, str]]:
     """The word for each name and each connection, worked out from who knows it (§9b item 3) by
     the one function the bot uses (`gate.word_of`), never from a stored flag. Returns
-    (names by entry id, connections by connection id). Ids only; the words are fixed vocabulary."""
+    (names by entry id, connections by connection id). A statement a group knows is known to the
+    group's members too, as in the bot's gate. Only ids that are in the data get a word: the
+    others are left out, so the page never says "secret" of something this read does not know."""
+    groups: dict[str, set[str]] = {}
+    for member, group in known["groups"]:
+        groups.setdefault(str(member), set()).add(str(group))
     who: dict[tuple[str, str], set[str]] = {}
     for kind, statement, character, _sure in known["knowers"]:
         who.setdefault((str(kind), str(statement)), set()).add(str(character))
     party = [str(i) for i in known["playerCharacters"]]
-    entries = {k[1]: gate.word_of(v, party) for k, v in who.items() if k[0] == "entry"}
-    for entry in known["liveEntries"]:
-        entries.setdefault(str(entry), gate.word_of((), party))
-    links = {k[1]: gate.word_of(v, party) for k, v in who.items() if k[0] == "connection"}
-    for link in known["connections"]:
-        links.setdefault(str(link), gate.word_of((), party))
+
+    def word(kind: str, statement: str) -> str:
+        listed = who.get((kind, statement), set())
+        through = {m for m, held in groups.items() if held & listed}
+        return gate.word_of(listed | through, party)
+
+    entries = {str(e): word("entry", str(e)) for e in known["liveEntries"]}
+    links = {str(c): word("connection", str(c)) for c in known["connections"]}
     return entries, links
 
 
 async def with_know_words(db: Database, session: Session, ref: str, page: dict[str, Any]) -> None:
     """Adds `knowWord` to each name and each connection of a DM's full view (#2999, §9b), so the
-    page says "secret" only when nobody but the DM knows it. DM only (the door gives nobody else
-    its data); the knowers are read, worked into words here and not sent on."""
+    page says "secret" only when nobody but the DM knows it. Changes `page` in place. The door
+    answers every member, so this checks `isDm` itself and adds nothing for anyone else. The
+    knowers are read, worked into words here and not sent on."""
     guild_id, campaign_id = _parse(ref)
     _guild_of(session, guild_id)
     async with db.user(session.user_id, session=session.id_hash) as conn:
@@ -322,12 +330,16 @@ async def with_know_words(db: Database, session: Session, ref: str, page: dict[s
         found = await cur.fetchone()
     if found is None or found["k"] is None:
         raise RecapError("not_found")
+    if not found["k"]["isDm"]:
+        return
     names, links = know_words(dict(found["k"]))
     for node in page["nodes"]:
-        node["knowWord"] = names.get(str(node["id"]), gate.SECRET)
+        if str(node["id"]) in names:  # (one confirmed since the graph was read has no word yet)
+            node["knowWord"] = names[str(node["id"])]
     for edge in page["edges"]:
         for link in edge["links"]:
-            link["knowWord"] = links.get(str(link["id"]), gate.SECRET)
+            if str(link["id"]) in links:
+                link["knowWord"] = links[str(link["id"])]
 
 
 def page_of(got: dict[str, Any]) -> dict[str, Any]:

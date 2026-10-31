@@ -344,6 +344,40 @@ class TheKnowWords(SeeAs):
         self.assertTrue(all("knowWord" not in x for e in got["edges"] for x in e["links"]))
 
 
+class TheKnowWordsAlone(SeeAs):
+    """`know_words` and `with_know_words` on their own: groups, sleeping rows, who may ask."""
+
+    async def test_a_group_the_party_belongs_to_makes_it_known_to_the_party(self) -> None:
+        from dmbot.web import relationships
+
+        base = {
+            "playerCharacters": ["pc1", "pc2"],
+            "liveEntries": ["e1", "e2"],
+            "connections": {"c1": ["e1", "e2"]},
+            "groups": [["pc1", "g"], ["pc2", "g"]],
+        }
+        got = relationships.know_words({**base, "knowers": [["entry", "e1", "g", 1.0]]})
+        self.assertEqual(got[0], {"e1": gate.KNOWN_TO_THE_PARTY, "e2": gate.SECRET})
+        got = relationships.know_words({**base, "knowers": [["connection", "c1", "npc", 1.0]]})
+        self.assertEqual(got[1], {"c1": gate.KNOWN_TO_ONE_NPC})  # (an entry id is not a link id)
+        got = relationships.know_words({**base, "knowers": [["property", "e1", "pc1", 1.0]]})
+        self.assertEqual(got[0]["e1"], gate.SECRET)  # (a property is not the entry)
+
+    async def test_a_name_not_in_the_data_gets_no_word(self) -> None:
+        from dmbot.web import relationships
+
+        page = {"nodes": [{"id": "new"}], "edges": []}
+        await relationships.with_know_words(self.web, self.session, self.cref, page)
+        self.assertNotIn("knowWord", page["nodes"][0])
+
+    async def test_someone_who_is_not_the_dm_gets_no_words(self) -> None:
+        from dmbot.web import relationships
+
+        page = {"nodes": [{"id": self.mira}], "edges": []}
+        await relationships.with_know_words(self.web, self.player, self.cref, page)
+        self.assertNotIn("knowWord", page["nodes"][0])
+
+
 class TheRoute(SeeAs):
     async def client(self, user: Any) -> httpx.AsyncClient:
         app = create_app(
