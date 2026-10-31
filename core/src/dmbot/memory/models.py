@@ -534,6 +534,7 @@ class Belief:
     pinned: bool = False  # the DM's 📌 100% truth (#2447): only on The truth's belief
     derived_from: str | None = None  # the earlier belief this one revises or came from (#3091)
     change_kind: str | None = None  # how: one of CHANGE_KINDS; kept when the earlier one is gone
+    game_time: int | None = None  # game minutes it was made at, live in a session; None: not known
 
     @property
     def known(self) -> bool:

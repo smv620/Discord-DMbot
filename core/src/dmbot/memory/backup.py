@@ -165,14 +165,15 @@ _IDS = {"id", "entity_id", "fact_id", "merged_into", "used_by", "subject_id", "o
         "via_alias_id", "derived_from"}  # fmt: skip
 _INTS = {"played_by", "speaker_id", "session_started_at", "decided_at", "created_at",
          "from_session_at", "to_session_at", "from_game_time", "to_game_time",
-         "max_per_subject", "closed_at", "session_at", "recorded_at", "seq"}  # fmt: skip
+         "game_time", "max_per_subject", "closed_at", "session_at", "recorded_at",
+         "seq"}  # fmt: skip
 _VERSIONS = {"version", "definition_version"}  # from 1 up (#1189)
 _LISTS = {"examples", "subject_types", "object_types", "conflicts_with", "sound_codes",
           "mention_ids", "covers", "not_this", "synonyms", "evidence_ids", "hidden_by"}  # fmt: skip
 _NULLABLE = {
     "role", "edition", "played_by", "merged_into", "used_by", "other_id", "entity_id",
     "replaced_by", "parent", "from_session_at", "to_session_at", "from_game_time",
-    "to_game_time", "max_per_subject", "closed_at", "unique_item", "fact_id",
+    "to_game_time", "game_time", "max_per_subject", "closed_at", "unique_item", "fact_id",
     "session_started_at", "decided_at", "said_as", "from_set", "session_at", "manipulated_by",
     "unnamed_anchor", "unnamed_role", "unnamed_what", "decided", "via_alias_id",
     "derived_from", "change_kind",
@@ -533,6 +534,7 @@ def _with_definition_fields(rows: list[Any]) -> list[Any]:
                 "hidden_by": [],
                 "derived_from": None,
                 "change_kind": None,
+                "game_time": None,  # from before beliefs knew the game time (#3091)
                 **raw,
             }
         elif isinstance(raw, dict) and raw.get("table") == "knower":
