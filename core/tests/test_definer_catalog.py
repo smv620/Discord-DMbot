@@ -41,8 +41,8 @@ class Catalog(DatabaseTest):
     async def test_there_are_definers_to_check(self) -> None:
         names = {d["name"] for d in await self.definers()}
         for expected in (
-            "dmbot_my_own_entries",
-            "dmbot_my_alias_nodes",
+            "dmbot_web_graph_source",
+            "dmbot_web_knowers_data",
             "dmbot_web_backup_add",
             "dmbot_web_users_id",
         ):
@@ -63,8 +63,9 @@ class Catalog(DatabaseTest):
     async def test_the_websites_role_cannot_call_a_helper_but_the_doors_still_work(self) -> None:
         async with self.db.guild(1) as conn:
             cur = await conn.execute(
-                "SELECT has_function_privilege('dmbot_web', 'dmbot_my_own_entries(bigint, text)',"
-                " 'EXECUTE') AS helper, has_function_privilege('dmbot_web',"
+                "SELECT has_function_privilege('dmbot_web',"
+                " 'dmbot_web_peek_note(bigint, text, text)', 'EXECUTE') AS helper,"
+                " has_function_privilege('dmbot_web',"
                 " 'dmbot_web_relationships(bigint, text, text, int, int, boolean)',"
                 " 'EXECUTE') AS door"
             )

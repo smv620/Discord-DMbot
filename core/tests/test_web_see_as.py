@@ -22,6 +22,8 @@ from tests.test_web_relationships import Web
 
 
 class SeeAs(Web):
+    bob_has_a_hero = False  # (the party here is Rook and Okra, whom the tests set up)
+
     """Rook (a player character) knows Mira and her friendship with Rook; the Keep is the DM's
     alone. Okra is a second player character who knows nothing yet."""
 

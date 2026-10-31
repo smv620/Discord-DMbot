@@ -151,7 +151,151 @@ WEB_PLAYER_GATE = (
 """
 )
 
-SQL = WEB_PLAYER_GATE
+# --- the graph doors serve the full view only --------------------------------------------------
+# The two graph doors (`dmbot_web_relationships`, `dmbot_web_graph_overview`) used to work out a
+# player's view in SQL: the old table-wide flags OR'd with what the player's characters know (0294).
+# Now the API does that through the gate, so these doors keep only the full view (the DM's, or a
+# peek): the player branches, the flag rule and the helper functions they used are cut out. They
+# are cut from the doors' own current text with markers that must each be found exactly once, so a
+# change to either door that moves a spot fails here instead of quietly leaving a branch behind.
+_GUARD = (
+    "        IF NOT sees_all THEN\n"
+    "            RETURN jsonb_build_object('status', 'bad_view');\n"
+    "        END IF;\n"
+)
+_VIS = (
+    "        vis := ARRAY(\n"
+    "            SELECT e.id FROM memory_entities e\n"
+    "            WHERE e.guild_id = g AND e.campaign_id = c\n"
+    "              AND e.status = 'confirmed' AND e.type <> 'person');\n"
+)
+_DECLARED = (
+    "flag_vis TEXT[];",
+    "alt_names JSONB := '{}'::jsonb;",
+    "my_rels TEXT[] := '{}';",
+    "split JSONB := '{}'::jsonb;",
+    "split_rels TEXT[] := '{}';",
+    "vedges JSONB := '[]'::jsonb;",
+    "vnodes JSONB := '[]'::jsonb;",
+    "center_alias TEXT;",
+)
+# (kind, from-marker, up-to-marker (kept), replacement); "cut" replaces what lies between
+_COMMON = (
+    (
+        "cut",
+        "        vis := ARRAY(\n            WITH secret_own AS (",
+        "        -- The connections the caller may see, worked out once",
+        _GUARD + _VIS,
+    ),
+    (
+        "cut",
+        "              AND (sees_all OR ((r.id = ANY (my_rels)",
+        None,  # filled in per door: what follows the connections list
+        "              AND sees_all);\n",
+    ),
+)
+_RELATIONSHIPS = (
+    "dmbot_web_relationships",
+    "        IF start_id LIKE 'alias:%' THEN",
+    (
+        (
+            "cut",
+            "        IF start_id LIKE 'alias:%' THEN",
+            "        IF start_id IS NULL THEN\n            SELECT x.id INTO start_id FROM (",
+            "",
+        ),
+        (
+            "cut",
+            "'detail', CASE WHEN sees_all OR NOT EXISTS (",
+            "'directional', r.directional",
+            "'detail', r.detail, ",
+        ),
+        ("cut", "        IF cardinality(split_rels) > 0 THEN", "        RETURN out;", ""),
+    ),
+)
+_OVERVIEW = (
+    "dmbot_web_graph_overview",
+    "        out := jsonb_build_object(",
+    (("cut", "        IF cardinality(split_rels) > 0 THEN", "        RETURN out;", ""),),
+)
+
+
+def _dollar(text: str) -> str:
+    return "$q$" + text + "$q$"
+
+
+def _cuts(name: str, after: str, extra: tuple[tuple[str, str, str, str], ...]) -> str:
+    steps = [
+        _COMMON[0],
+        (_COMMON[1][0], _COMMON[1][1], after, _COMMON[1][3]),
+        *extra,
+    ]
+    lines = [
+        f"        SELECT pg_get_functiondef(p.oid) INTO def FROM pg_proc p\n"
+        f"            WHERE p.pronamespace = current_schema()::regnamespace\n"
+        f"              AND p.proname = '{name}';"
+    ]
+    for _kind, start, stop, new in steps:
+        lines.append(
+            f"        def := pg_temp.cut(def, {_dollar(start)}, {_dollar(stop)}, {_dollar(new)});"
+        )
+    for declared in _DECLARED:
+        lines.append(
+            f"        def := replace(def, {_dollar('        ' + declared + chr(10))}, '');"
+        )
+    lines.append(
+        "        def := replace(def, 'COALESCE(alt_names->>e.id, e.name)', 'e.name');\n"
+        "        EXECUTE def;"
+    )
+    return "\n".join(lines)
+
+
+SERVE_THE_FULL_VIEW_ONLY = (
+    r"""
+    CREATE OR REPLACE FUNCTION pg_temp.cut(def text, a text, b text, new text) RETURNS text
+    LANGUAGE plpgsql AS $f$
+    DECLARE
+        i int;
+        j int;
+    BEGIN
+        IF (length(def) - length(replace(def, a, ''))) <> length(a) THEN
+            RAISE EXCEPTION 'not found exactly once: %', left(a, 80);
+        END IF;
+        i := strpos(def, a);
+        j := strpos(substr(def, i + length(a)), b);
+        IF j = 0 THEN
+            RAISE EXCEPTION 'end marker not found: %', left(b, 80);
+        END IF;
+        RETURN substr(def, 1, i - 1) || new || substr(def, i + length(a) + j - 1);
+    END
+    $f$;
+
+    DO $do$
+    DECLARE
+        def text;
+    BEGIN
+"""
+    + _cuts(_RELATIONSHIPS[0], _RELATIONSHIPS[1], _RELATIONSHIPS[2])
+    + "\n"
+    + _cuts(_OVERVIEW[0], _OVERVIEW[1], _OVERVIEW[2])
+    + r"""
+    END
+    $do$;
+
+    -- Nothing reads these any more: the player's graph is the gate's, not a second rule in SQL.
+    DROP FUNCTION IF EXISTS dmbot_my_alias_nodes(BIGINT, TEXT);
+    DROP FUNCTION IF EXISTS dmbot_my_known_relations(BIGINT, TEXT);
+    DROP FUNCTION IF EXISTS dmbot_my_known_entries(BIGINT, TEXT);
+    DROP FUNCTION IF EXISTS dmbot_my_alias_text(BIGINT, TEXT, TEXT, TEXT);
+    DROP FUNCTION IF EXISTS dmbot_my_own_entries(BIGINT, TEXT);
+    DROP FUNCTION IF EXISTS dmbot_my_label_of(BIGINT, TEXT, TEXT, TEXT);
+    DROP FUNCTION IF EXISTS dmbot_my_anchor_name(BIGINT, TEXT, TEXT);
+    DROP FUNCTION IF EXISTS dmbot_my_perspectives(BIGINT, TEXT);
+    DROP FUNCTION IF EXISTS dmbot_unnamed_label(TEXT, TEXT);
+"""
+)
+
+SQL = WEB_PLAYER_GATE + SERVE_THE_FULL_VIEW_ONLY
 
 WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     # The graph's source for the API to filter through the gate (#3143). The knowers door was

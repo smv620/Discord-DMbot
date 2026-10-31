@@ -78,7 +78,10 @@ def build(src: dict[str, Any], kn: dict[str, Any], viewer: gate.Viewer) -> Graph
     )
     ids = [str(n["id"]) for n in src["names"]]
     texts: dict[str, str] = {}
-    named = gate.name_entries(seen, viewer, ids, rows, texts_out=texts)
+    # an other name that a confirmed connection was learned through is drawn on a node of its own
+    # (the 0294 rule, now the gate's `split_connections`), so it does not also name the person
+    through = {str(link["via"]) for link in src["links"] if link["via"] is not None}
+    named = gate.name_entries(seen, viewer, ids, rows, texts_out=texts, on_their_own=through)
     kinds = {str(n["id"]): str(n["kind"]) for n in src["names"]}
     shown: dict[str, str] = {}  # entry id -> the name the viewer is shown
     mains = {str(n["id"]): str(n["name"]) for n in src["names"]}
@@ -87,11 +90,17 @@ def build(src: dict[str, Any], kn: dict[str, Any], viewer: gate.Viewer) -> Graph
         if name is not None and seen.knows(gate.ENTRY, i):
             shown[i] = name
     # a connection that has ended, or came from the story plan, is not on the NPC pages either
-    live = [
-        link
-        for link in src["links"]
-        if not link["ended"] and not link["plan"] and seen.knows(gate.CONNECTION, str(link["id"]))
-    ]
+    live = gate.drawn_connections(
+        seen,
+        [
+            link
+            for link in src["links"]
+            if not link["ended"]
+            and not link["plan"]
+            and seen.knows(gate.CONNECTION, str(link["id"]))
+        ],
+        kn["aliasRows"],
+    )
     split = gate.split_connections(seen, live, kn["aliasRows"], texts)
     nodes: dict[str, dict[str, Any]] = {
         i: {
