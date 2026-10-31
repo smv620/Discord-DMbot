@@ -1777,6 +1777,17 @@ def create_app(
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 
+    @app.get("/me/campaigns/{ref}/web/viewers")
+    async def me_campaign_web_viewers(ref: str, signed: Signed, q: str = "") -> dict[str, Any]:
+        """The characters a DM may "see as" (#2999), player characters first, searchable by name
+        for a big cast. DM only."""
+        session, _token = signed
+        try:
+            return await see_as.read_viewers(db, session, ref, q)
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
     @app.get("/me/campaigns/{ref}/web/overview")
     async def me_campaign_web_overview(
         ref: str, signed: Signed, view: str | None = None

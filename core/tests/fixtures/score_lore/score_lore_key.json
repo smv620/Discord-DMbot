@@ -1,0 +1,49 @@
+{
+ "aliases": {},
+ "pairs": [
+  {
+   "id": "p01",
+   "a": "Ferran Voss",
+   "b": "Mira",
+   "kind": "mentor"
+  },
+  {
+   "id": "p02",
+   "a": "Ferran Voss",
+   "b": "Odo"
+  },
+  {
+   "id": "p03",
+   "a": "Mira",
+   "b": "Harrowgate"
+  },
+  {
+   "id": "p04",
+   "a": "Brannoch Ashe",
+   "b": "Lenna",
+   "kind": "sibling"
+  },
+  {
+   "id": "p05",
+   "a": "Lenna",
+   "b": "Pell",
+   "kind": "spouse"
+  },
+  {
+   "id": "p06",
+   "a": "Cerro Maddox",
+   "b": "Lenna"
+  },
+  {
+   "id": "p07",
+   "a": "Mira",
+   "b": "Her unnamed mother"
+  },
+  {
+   "id": "p08",
+   "a": "Corvin Hale",
+   "b": "Daric",
+   "kind": "sibling"
+  }
+ ]
+}

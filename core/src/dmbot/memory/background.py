@@ -1067,6 +1067,9 @@ def keep_connections(
                 decided=c.decided,
             )
             role = c.words if c.how == "kin_of" and kin.directional(c.words) else ""
+            # A shared role (sibling, spouse, cousin) has no order to contradict, but it still
+            # beats a plain "family" line for the pair, whichever was read first.
+            shared = c.words if c.how == "kin_of" and kin.role_of(c.words) in kin.MUTUAL else ""
             pair = (min(ka, kb), max(ka, kb))
             if c.how == "kin_of":
                 # Family connections are stored once for a pair, in the order of a role ("a is the
@@ -1086,12 +1089,23 @@ def keep_connections(
                             out[where] = replace(out[where], words="")
                         lost["which_way"] += 1  # and this one is the contradiction
                         continue
-                    if not (role and not held_role and where is not None):
+                    # Only a plain line is replaced, and only by a role: a held shared role or
+                    # free-text label is never swapped (first read wins; two roles conflict anyway).
+                    if (
+                        where is None  # (narrows `where` for the index below)
+                        or not (role or shared)
+                        or held_role
+                        or out[where].words
+                    ):
                         lost["same_pair"] += 1  # (a plain line, or the same role again)
                         continue
                     lost["same_pair"] += 1  # the plain line is dropped for the role
                     out[where] = made
-                    kin_held[pair] = (where, role, (ka, kb))
+                    kin_held[pair] = (
+                        where,
+                        role,
+                        (ka, kb),
+                    )  # (a shared role has no order: role "")
                     continue
                 kin_held[pair] = (None, role, (ka, kb))
             else:
