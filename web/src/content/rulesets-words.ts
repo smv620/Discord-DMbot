@@ -11,7 +11,7 @@ export const rulesetsPanel = {
   intro: "DMbot checks your main rules first. If they don't cover something, it can use a second set of rules or skip it. DMbot only points out what the rules say; you decide.",
   mainLegend: "Which rules come first?",
   main: { "2024": "2024 rules (newest)", "2014": "2014 rules (older)" } as Record<Main, string>,
-  fallbackLegend: "If the main rules don't cover something",
+  fallbackLegend: "If missing (the main rules don't cover something)",
   fallback: {
     "2024": "Use the 2024 rules",
     "2014": "Use the 2014 rules",
