@@ -139,4 +139,15 @@ describe("See as…", () => {
     expect(await screen.findByText(w.seeAsGone)).toBeTruthy();
     expect(screen.queryByText(w.seeAsNow("Cerric"))).toBeNull();
   });
+
+  it("the overview tray and Find a name are hidden while seeing as someone", async () => {
+    await openPlayersView();
+    expect(screen.getByLabelText(w.centreSearch)).toBeTruthy();
+    fireEvent.click(await screen.findByRole("button", { name: "Cerric" }));
+    await screen.findByText(w.seeAsNow("Cerric"));
+    expect(screen.queryByLabelText(w.centreSearch)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: w.seeAsBack }));
+    await waitFor(() => expect(screen.queryByText(w.seeAsNow("Cerric"))).toBeNull());
+    expect(screen.getByLabelText(w.centreSearch)).toBeTruthy();
+  });
 });

@@ -430,7 +430,8 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
       {peeking && <p class="note" role="note">{words.peeking}</p>}
 
       <div class="web-tools-form">
-        <CentrePicker api={api} refId={ref} current={center ? nameOf(center) : ""} onPick={(id) => void load(id, hops)} asPlayers={!canEdit} view={asked} />
+        {/* Hidden while the web is read as someone: the search reads the DM's own names, not theirs (#3161). */}
+        {!seeing && <CentrePicker api={api} refId={ref} current={center ? nameOf(center) : ""} onPick={(id) => void load(id, hops)} asPlayers={!canEdit} view={asked} />}
         <div class="field">
           <label for="web-hops">{words.hopsLabel}</label>
           <div class="row web-spinner">
@@ -531,7 +532,7 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
 
       {askBox}
 
-      {overview && (
+      {overview && !seeing && (
         <WebOverviewPanel
           overview={overview}
           refId={ref}
