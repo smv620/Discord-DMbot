@@ -759,12 +759,12 @@ CORE_PREDICATES: tuple[PredicateTerm, ...] = (
         "is disguised as",
         "One character poses as another: a doppelganger, a changeling or an impostor wearing "
         "someone's face. Two different characters, never one: the first name is the one in "
-        "disguise, the second is the person being copied. Not for a character who has a second "
-        "name (that is one person).",
+        "disguise, the second is the one being copied. Not for a character who has a second "
+        "name (that is one character).",
         ("character",),
         ("character",),
         covers=(
-            "a doppelganger or changeling posing as a real person",
+            "a doppelganger or changeling posing as a real character",
             "an impostor, a spy or a pretender passing as someone else",
         ),
         not_this=(

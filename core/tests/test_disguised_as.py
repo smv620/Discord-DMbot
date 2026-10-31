@@ -4,6 +4,7 @@ synonyms, and shown to a player only when their characters know it. Invented nam
 
 from __future__ import annotations
 
+import json
 import unittest
 from typing import Any
 
@@ -17,7 +18,13 @@ from dmbot.memory.link_words import (
     predicate_for,
 )
 from dmbot.memory.models import CONFIRMED, MemoryRuleError
-from dmbot.memory.ontology import CORE_PREDICATES, DISGUISED_AS, SYNONYMS, Ontology
+from dmbot.memory.ontology import (
+    CORE_PREDICATES,
+    DISGUISED_AS,
+    FALLBACK_PREDICATE,
+    SYNONYMS,
+    Ontology,
+)
 from dmbot.ui import name_card
 from dmbot.ui import names as ui
 from tests import test_memory_names as tmn
@@ -230,6 +237,36 @@ class TheLoreReads(unittest.TestCase):
         )
         (got,) = bg.read_connections(raw, self.TEXT)
         self.assertEqual((got.a, got.how, got.b), ("Jax", DISGUISED_AS, "Valyra"))
+
+    def read(
+        self, how: str, words: str, quote: str = "Jax, a doppelganger, poses as Valyra"
+    ) -> Any:
+        raw = json.dumps(
+            {
+                "connections": [
+                    {"a": "Jax", "how": how, "words": words, "b": "Valyra", "quote": quote}
+                ]
+            }
+        )
+        return bg.read_connections(raw, quote)
+
+    def test_a_disguise_word_said_as_other_or_plain_is_still_the_disguise(self) -> None:
+        for how, words in (("other", "poses as"), ("other", "Poses  as"), ("poses as", "")):
+            with self.subTest(how=how, words=words):
+                (got,) = self.read(how, words)
+                self.assertEqual((got.how, got.words), (DISGUISED_AS, ""))
+        (got,) = self.read(
+            "impersonates", "", "Jax, a doppelganger, poses as Valyra, impersonates her"
+        )
+        self.assertEqual(got.how, DISGUISED_AS)
+
+    def test_other_words_that_are_not_a_disguise_stay_the_public_catch_all(self) -> None:
+        for words in ("goes by", "is hunting"):
+            with self.subTest(words):
+                (got,) = self.read(
+                    "other", words, f"Jax {words} Valyra, a doppelganger, poses as Valyra"
+                )
+                self.assertEqual((got.how, got.words), (FALLBACK_PREDICATE, words))
 
     def test_the_prompts_draw_the_line_between_a_second_name_and_a_second_person(self) -> None:
         first = lore_read.read_instructions()

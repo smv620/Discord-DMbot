@@ -58,7 +58,7 @@ RELEASED = {
     ("founded", 1): "453344314eeb9f97",
     ("captive_of", 1): "60efcb060e24ab3f",
     ("contains", 1): "c50a7cc648af878b",
-    ("disguised_as", 1): "c45d917dbd626e39",  # one character posing as another (#3091)
+    ("disguised_as", 1): "be30056c2bb8d27f",  # one character posing as another (#3091)
 }
 
 
