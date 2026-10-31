@@ -164,7 +164,7 @@ _INTS = {"played_by", "speaker_id", "session_started_at", "decided_at", "created
          "max_per_subject", "closed_at", "session_at", "recorded_at", "seq"}  # fmt: skip
 _VERSIONS = {"version", "definition_version"}  # from 1 up (#1189)
 _LISTS = {"examples", "subject_types", "object_types", "conflicts_with", "sound_codes",
-          "mention_ids", "covers", "not_this", "synonyms", "evidence_ids"}  # fmt: skip
+          "mention_ids", "covers", "not_this", "synonyms", "evidence_ids", "hidden_by"}  # fmt: skip
 _NULLABLE = {
     "role", "edition", "played_by", "merged_into", "used_by", "other_id", "entity_id",
     "replaced_by", "parent", "from_session_at", "to_session_at", "from_game_time",
@@ -372,7 +372,8 @@ def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
                 raw[c] is None or is_id(raw[c])
                 for c in ("about_entity_id", "state_id", "relation_id", "alias_id")
             ) or not all(
-                _valid(c, raw[c]) for c in ("id", "perspective_id", "created_at", "confidence")
+                _valid(c, raw[c])
+                for c in ("id", "perspective_id", "created_at", "confidence", "hidden_by")
             ):
                 raise CampaignError(DAMAGED)
         elif not all(_valid(c, raw[c]) for c in table.columns if c != "reading"):
@@ -428,6 +429,12 @@ def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
     # point of view the file holds; anything else is damage. A row for a point of view that is not
     # a character's cannot exist (the party is never a knower), so it is damage too.
     _check_knowers(by_tag, views)
+    # A row asleep waits for entries of this campaign: a name in the mark that is not an entry of
+    # the file is dropped from it (a row left with none is awake), never a reason to refuse.
+    entry_ids = {r["id"] for r in by_tag["entity"]}
+    for tag in ("knower", "belief"):
+        for row in by_tag[tag]:
+            row["hidden_by"] = [h for h in row["hidden_by"] if h in entry_ids]
     entities = {r["id"]: r for r in by_tag["entity"]}
     if any(r["entity_id"] not in entities for r in by_tag["sheet"]):
         raise CampaignError(DAMAGED)
@@ -500,7 +507,9 @@ def _with_definition_fields(rows: list[Any]) -> list[Any]:
                 **raw,
             }
         elif isinstance(raw, dict) and raw.get("table") == "belief":
-            raw = {"pinned": False, **raw}  # from before the pin (#2447)
+            raw = {"pinned": False, "hidden_by": [], **raw}  # from before the pin (#2447), sleep
+        elif isinstance(raw, dict) and raw.get("table") == "knower":
+            raw = {"hidden_by": [], **raw}  # from before a hide could put a row to sleep (#3082)
         elif isinstance(raw, dict) and raw.get("table") == "claim":
             raw = {"reading": None, **raw}  # from before readings (#2412)
         elif isinstance(raw, dict) and raw.get("table") == "alias":
