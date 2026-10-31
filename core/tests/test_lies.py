@@ -156,6 +156,30 @@ class UndoAndRedo(Lies):
             await MemorySection().load(conn, GUILD_A, copy, rows)
         kept = await self.memory.lies(GUILD_A, copy, source="dm")
         self.assertEqual([lie.status for lie in kept], ["known_lie"])
+        self.assertIsNotNone(kept[0].liar)  # the backup keeps who lied, as the live reader does
+
+    async def test_a_redo_after_the_liar_is_merged_names_the_kept_character(self) -> None:
+        view = await self.pc_view()
+        made = await self.think(view, "known_lie", 0.0, [self.valyra])
+        assert made.batch is not None
+        undone = await self.memory.undo(GUILD_A, self.c, made.batch, source="dm")
+        assert undone.batch is not None
+        kept = await self.add("Corin", type="character", role="npc", status=CONFIRMED)
+        await self.memory.merge(GUILD_A, self.c, kept, self.valyra, source="dm", dm_said_same=True)
+        await self.memory.undo(GUILD_A, self.c, undone.batch, source="dm")
+        got = await self.memory.lies(GUILD_A, self.c, source="dm")
+        self.assertEqual([lie.liar for lie in got], [kept])
+
+    async def test_a_lie_with_no_source_link_is_still_read_with_no_liar(self) -> None:
+        await self.think(self.truth, "known_lie", 0.0, [self.valyra])
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "DELETE FROM memory_evidence WHERE guild_id = %s AND campaign_id = %s"
+                " AND kind = 'source'",
+                (GUILD_A, self.c),
+            )
+        got = await self.memory.lies(GUILD_A, self.c, source="dm")
+        self.assertEqual([(lie.believer, lie.liar) for lie in got], [(None, None)])
 
 
 class ReadingLies(Lies):
