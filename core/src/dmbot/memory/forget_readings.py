@@ -22,7 +22,8 @@ from typing import Any
 
 from dmbot.memory import evidence
 
-GUESSES = ("theory", "accusation", "evasion_under_magic")  # the readings that are not the DM's word
+# the readings that are not the DM's word (a suspected lie is an accusation too, #3091)
+GUESSES = ("theory", "accusation", "suspected_lie", "evasion_under_magic")
 
 
 async def forget(conn: Any, guild_id: int, user_id: int) -> int:
