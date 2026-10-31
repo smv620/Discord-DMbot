@@ -82,6 +82,8 @@ class Restored:
     clock: Clock
     groups: tuple[Group, ...] = ()
     picked: int | None = None
+    # the clock's log (#3091): (position or None, real time, game minute), oldest first
+    log: tuple[tuple[int | None, int, int], ...] = ()
 
 
 def _pack(clock: Clock) -> list[int | None]:
@@ -609,7 +611,12 @@ class ClockSection:
 
     name = "game_clock"
     _KEYS = frozenset({"minute", "last_long_rest"})
-    _OPTIONAL = frozenset({"groups", "picked"})
+    _OPTIONAL = frozenset({"groups", "picked", "log"})
+    _LOG_KEYS = frozenset({"position", "at", "minute"})
+    # A clock changes a few hundred times a session, so this is far above any real log. DMbot
+    # writes its backups without a cap, so a longer one is loaded too: only the newest rows are
+    # kept, and the oldest moments then read as "not known" (never a refused backup).
+    _LOG_MAX = 200_000
     _GROUP_KEYS = frozenset({"position", "name", "minute", "last_long_rest"})
 
     async def dump(self, conn: Conn, guild_id: int, campaign_id: str) -> list[Any]:
@@ -629,6 +636,17 @@ class ClockSection:
                 for g in stored.groups
             ]
             row["picked"] = stored.picked
+        cur = await conn.execute(
+            "SELECT position, at, minute FROM game_clock_log"
+            " WHERE guild_id = %s AND campaign_id = %s ORDER BY seq",
+            (guild_id, campaign_id),
+        )
+        log = [
+            {"position": r["position"], "at": int(r["at"]), "minute": int(r["minute"])}
+            for r in await cur.fetchall()
+        ]
+        if log:
+            row["log"] = log
         return [row]
 
     def check(self, rows: list[Any]) -> Restored | None:
@@ -647,7 +665,9 @@ class ClockSection:
                 raise CampaignError(DAMAGED)
         elif "picked" in row:
             raise CampaignError(DAMAGED)
-        return Restored(Clock(clock[0], clock[1], None), groups, picked)
+        return Restored(
+            Clock(clock[0], clock[1], None), groups, picked, self._log(row.get("log", []))
+        )
 
     @staticmethod
     def _clock(row: dict[str, Any]) -> tuple[int, int]:
@@ -658,6 +678,26 @@ class ClockSection:
         if rest > minute:  # a rest can't be in the future
             raise CampaignError(DAMAGED)
         return minute, rest
+
+    def _log(self, raw: Any) -> tuple[tuple[int | None, int, int], ...]:
+        """The clock's log from a file: numbers only, each in range, in order."""
+        if not isinstance(raw, list):
+            raise CampaignError(DAMAGED)
+        out: list[tuple[int | None, int, int]] = []
+        for item in raw:
+            if not isinstance(item, dict) or set(item) != self._LOG_KEYS:
+                raise CampaignError(DAMAGED)
+            position, at, minute = item["position"], item["at"], item["minute"]
+            if position is not None and (
+                type(position) is not int or not 1 <= position <= split.MAX_GROUPS
+            ):
+                raise CampaignError(DAMAGED)
+            if type(at) is not int or not 0 < at <= 4_102_444_800:  # (before the year 2100)
+                raise CampaignError(DAMAGED)
+            if type(minute) is not int or not 0 <= minute <= game.MAX_MINUTE:
+                raise CampaignError(DAMAGED)
+            out.append((position, at, minute))
+        return tuple(out[-self._LOG_MAX :])
 
     def _groups(self, raw: Any) -> tuple[Group, ...]:
         if not isinstance(raw, list) or len(raw) == 1 or len(raw) > split.MAX_GROUPS:
@@ -718,9 +758,26 @@ class ClockSection:
                 "UPDATE game_clocks SET picked_group = %s WHERE guild_id = %s AND campaign_id = %s",
                 (restored.picked, guild_id, campaign_id),
             )
+        # The inserts above logged "now" for each clock (the log is a trigger's); a restored
+        # campaign keeps the file's own log, or none from a file that had none.
+        await conn.execute(
+            "DELETE FROM game_clock_log WHERE guild_id = %s AND campaign_id = %s",
+            (guild_id, campaign_id),
+        )
+        if restored.log:
+            async with conn.cursor() as cur:
+                await cur.executemany(
+                    "INSERT INTO game_clock_log (guild_id, campaign_id, position, at, minute)"
+                    " VALUES (%s, %s, %s, %s, %s)",
+                    [(guild_id, campaign_id, p, at, m) for p, at, m in restored.log],
+                )
 
     async def clear(self, conn: Conn, guild_id: int, campaign_id: str) -> None:
         # (The groups go with the campaign anyway; cleared here so a replace starts clean.)
+        await conn.execute(
+            "DELETE FROM game_clock_log WHERE guild_id = %s AND campaign_id = %s",
+            (guild_id, campaign_id),
+        )
         await conn.execute(
             "DELETE FROM game_clock_groups WHERE guild_id = %s AND campaign_id = %s",
             (guild_id, campaign_id),
