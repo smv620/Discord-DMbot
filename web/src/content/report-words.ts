@@ -52,6 +52,14 @@ export const reportWords = {
   second: "Another thing DMbot holds",
   believes: "They believe",
   truth: "Your view says",
+  // A lie (#3123): "Cerric thinks Valyra lied about this: Valyra hid the key", then "Your view: it's true.".
+  // The pieces are shown in bold around the names; `lied` is the same sentence as plain text.
+  lieThinks: "thinks",
+  lieSomeone: "someone",
+  lieSaid: "lied about this:",
+  lied: (who: string, liar: string | null, statement = ""): string =>
+    `${who} thinks ${liar ?? "someone"} lied about this:${statement ? ` ${statement}` : ""}`,
+  lieTruth: "Your view: it's true.",
   view: (v: string): string => `From: ${v}`,
   fromSession: (n: number | null | undefined): string => (n ? `Session ${n}` : "An earlier session"),
   evidence: "Where it came from",

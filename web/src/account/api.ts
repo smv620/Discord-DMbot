@@ -597,6 +597,10 @@ export interface ReportDifference {
   /** The connection "Fix the DM's view" opens in the Story Graph; null when there is none. */
   open: { a: string; b: string } | null;
   remindedFrom?: number | null;
+  /** Set only for a lie (#3123); absent from an older API or any other item. */
+  kind?: "lie";
+  /** Who lied: a name, or null when they are gone or unknown. Only meaningful when `kind` is `lie`. */
+  liar?: string | null;
 }
 export interface SessionReport {
   session: { at: number; number?: number | null };
