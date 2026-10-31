@@ -40,6 +40,7 @@ from dmbot.memory import (
     gate,
     kin,
     knowers,
+    lineage,
     merge_restore,
     notify,
     report_fixed,
@@ -4051,6 +4052,23 @@ class MemoryStore:
 
     # ---- beliefs: who believes a connection (#2409; docs/STORY_MEMORY.md, section 9) -----------
 
+    async def what_rests_on(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        *,
+        source: str,
+        entity_id: str | None = None,
+        belief_id: str | None = None,
+    ) -> list[lineage.Resting]:
+        """The DM's finder (#3091): every current belief that rests on this entry (it said it, or
+        a belief that did was revised, retracted, branched or passed on into this one), or on
+        this belief. Only the DM asks; nothing is changed, and nothing returned holds a word."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can ask what rests on this.")
+        async with self._read(guild_id, campaign_id, snapshot=True) as scope:
+            return await lineage.resting_on(scope, source_id=entity_id, belief_id=belief_id)
+
     async def perspectives(self, guild_id: int, campaign_id: str) -> list[Perspective]:
         """Who holds beliefs in this campaign: The truth and The party, then any character's."""
         async with self._read(guild_id, campaign_id, snapshot=True) as scope:
@@ -4069,16 +4087,22 @@ class MemoryStore:
         source: str,
         evidence: Sequence[str] = (),
         session_at: int | None = None,
+        derived_from: str | None = None,
+        change_kind: str | None = None,
+        sources: Sequence[str] = (),
     ) -> Written[Belief]:
         """A perspective comes to believe a connection at `confidence` (0.0 certainly false to 1.0
         certainly true), with a status and the evidence it points at by id. A new row, never an
         edit, so the history stays; logged, so Undo takes it back. Only the DM writes The truth.
-        The one way every writer records a belief."""
+        The one way every writer records a belief. `derived_from` and `change_kind` say which
+        belief this one revises or came from, and how; `sources` are the entries that said it
+        (#3091)."""
         async with self._write(guild_id, campaign_id, source) as w:
             await beliefs.perspective_ids(w)  # The truth and The party exist before anything else
             belief = await beliefs.believe_in(
                 w, perspective_id, relation_id, confidence, status,
-                evidence=evidence, session_at=session_at,
+                evidence=evidence, session_at=session_at, derived_from=derived_from,
+                change_kind=change_kind, sources=sources,
             )  # fmt: skip
             return Written(belief, w.batch)
 
