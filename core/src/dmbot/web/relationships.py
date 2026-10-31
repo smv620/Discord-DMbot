@@ -716,6 +716,7 @@ WAITING_COUNT_KEYS = ("claims", "backstory", "which")
 READING_RULES = {
     "theory": "theory",
     "accusation": "accusation",
+    "suspected_lie": "lie",
     "revealed_fact": "reveal",
     "magically_verified": "confession",
     "evasion_under_magic": "evasion",
@@ -736,7 +737,7 @@ def _who_believes(view: str) -> str:
 
 def _sureness(status: str, confidence: object) -> str:
     """How sure the belief is, in words (the numbers are set by code from the rule)."""
-    if status in ("theory", "accusation"):
+    if status in ("theory", "accusation", "suspected_lie"):
         value = confidence if isinstance(confidence, (int, float)) else 0.5
         return "fairly sure" if value > 0.5 else "doubtful" if value < 0.5 else "a guess"
     return {
@@ -769,6 +770,8 @@ async def read_readings(db: Database, session: Session, ref: str) -> dict[str, A
             "who": _who_believes(str(r["view"] or "")),
             "statement": _claim_statement(r),
             "sureness": _sureness(str(r["status"]), r["confidence"]),
+            # who lied, for a suspected lie only: a name word, or None (the page says "someone")
+            "liar": r.get("liar") or None,
             "sessionAt": r["at"],
             # a new name in it has to be answered first (in Check new names)
             "canPlace": not r["waitingOn"],
@@ -787,8 +790,9 @@ async def queue_reading(db: Database, session: Session, ref: str, body: object) 
     DM screen would (`ClaimStore.place`, `reject`, the store's Undo), so consent and every rule
     are checked there again. Returns the answer's id. The answer ends with an `error` word the
     page can word: `gone` (not waiting any more, or nothing left to undo), `name_first`,
-    `stopped_recording`, `cannot_write`, `bad_reading`, `unknown_character`, `waiting_already`,
-    `plot_is_known` or `already_known`."""
+    `stopped_recording`, `cannot_write`, `bad_reading`, `unknown_character`, `unknown_liar` (the
+    one who lied is unknown, or is not a character), `waiting_already`, `plot_is_known` or
+    `already_known`."""
     if not isinstance(body, dict):
         raise RecapError("bad_action")
     action = READING_QUEUE.get(str(body.get("action")))

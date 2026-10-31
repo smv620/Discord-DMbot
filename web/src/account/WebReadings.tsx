@@ -199,7 +199,7 @@ export default function WebReadings({ api, campaignRef }: { api: AccountApi; cam
         <div key={r.id} class="panel">
           <p id={`wr-${r.id}`}>{r.statement}</p>
           <p class="small">
-            {w.believedBy(r.who)}. {w.sure(r.sureness)}.
+            {r.rule === "lie" ? w.lied(r.who, r.liar) : w.believedBy(r.who)}. {w.sure(r.sureness)}.
           </p>
           <p class="small muted">
             {w.rules[r.rule] ?? w.other}

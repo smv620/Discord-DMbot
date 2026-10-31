@@ -1821,6 +1821,69 @@ class WhatPeopleBelieve(Editing):
             (item["canPlace"], item["why"], item["waitingOn"]), (False, "name_first", ["Zed"])
         )
 
+    async def lie(self, liar: str | None, status: str = "suspected_lie") -> str:
+        """A waiting reading that says `liar` lied (#3121): the accuser's own view, a guess. The
+        reading rule (#3120) stores the name beside the other reading words."""
+        import dataclasses
+
+        from dmbot.memory import readings
+
+        belief = readings.BeliefProposal(
+            "pc:Rook", "Mira Voss", "knows", "Far Hall", 0.5, status, ("1",)
+        )
+        claim = readings.as_claim(belief, "player_said")
+        assert claim.reading is not None
+        claim = dataclasses.replace(claim, reading={**claim.reading, "liar": liar})
+        await self.claims.propose(
+            self.g, self.one.id, [claim], {"1": 7},
+            opted_in={7}, prompt_version="p1", model="m1", session_started_at=500,
+        )  # fmt: skip
+        async with self.db.guild(self.g) as conn:
+            cur = await conn.execute(
+                "SELECT id FROM memory_claims WHERE reading IS NOT NULL AND status = 'proposed'"
+            )
+            (row,) = await cur.fetchall()
+            return str(row["id"])
+
+    async def test_a_suspected_lie_comes_with_its_liar_and_its_own_kind(self) -> None:
+        ident = await self.lie("Mira Voss")
+        (item,) = (await self.listed())["readings"]
+        self.assertEqual(
+            (item["id"], item["rule"], item["who"], item["liar"], item["sureness"]),
+            (ident, "lie", "Rook", "Mira Voss", "a guess"),
+        )
+        self.assertEqual((item["canPlace"], item["waitingOn"]), (True, []))
+
+    async def test_a_lie_whose_liar_is_gone_has_no_name(self) -> None:
+        await self.lie(None)
+        (item,) = (await self.listed())["readings"]
+        self.assertEqual((item["rule"], item["liar"]), ("lie", None))
+
+    async def test_only_a_lie_carries_a_liar(self) -> None:
+        await self.lie("Mira Voss", status="theory")  # (a stray name on any other reading)
+        (item,) = (await self.listed())["readings"]
+        self.assertEqual((item["rule"], item["liar"]), ("theory", None))
+
+    async def test_a_liar_who_still_waits_for_a_name_holds_keep_back(self) -> None:
+        # Valyra is a new name, waiting in Check new names (a plain claim names her)
+        await self.claims.propose(
+            self.g, self.one.id, [said("Valyra", "knows", "Far Hall")], {"1": 7},
+            opted_in={7}, prompt_version="p1", model="m1", session_started_at=500,
+        )  # fmt: skip
+        await self.lie("valyra")  # (the match ignores capitals, like the other two names)
+        (item,) = (await self.listed())["readings"]
+        self.assertEqual(
+            (item["canPlace"], item["why"], item["waitingOn"], item["liar"]),
+            (False, "name_first", ["Valyra"], "valyra"),
+        )
+
+    async def test_a_player_gets_nothing_of_a_lie(self) -> None:
+        ident = await self.lie("Mira Voss")
+        with self.assertRaises(RecapError):
+            await self.listed(self.player)
+        with self.assertRaises(RecapError):
+            await self.answer("place", ident, self.player)
+
     def test_the_wait_says_when_it_has_stopped_moving(self) -> None:
         base = {"state": "working", "error": "", "action": "reading-place", "resultOther": ""}
         slow = {**base, "createdAt": 1000, "claimedAt": 1_000_000, "now": 1000 + 600}
