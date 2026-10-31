@@ -861,6 +861,10 @@ class Backups(Party):
     async def test_a_clock_that_is_not_split_dumps_just_what_it_did_before(self) -> None:
         async with self.db.guild(GUILD_A) as conn:
             rows = await ClockSection().dump(conn, GUILD_A, self.a.id)
+        # (the clock's log, #3091, rides along: the same two numbers, plus the moment it was set)
+        (log,) = rows[0].pop("log")
+        self.assertEqual((log["position"], log["minute"]), (None, NOON4))
+        self.assertGreater(log["at"], 0)
         self.assertEqual(rows, [{"minute": NOON4, "last_long_rest": NOON4}])
 
     async def test_a_backup_from_before_groups_still_restores(self) -> None:
