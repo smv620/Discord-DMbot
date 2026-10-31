@@ -145,9 +145,7 @@ def shape(got: dict[str, Any], at: int, listed: list[dict[str, Any]]) -> dict[st
         if d["sort"] not in by_sort:
             continue
         believes = d.get("believes")
-        if not believes or d.get("kind") == "lie":
-            # (a lie the party got wrong is not shown until the page has words for it, #3124: as a
-            # plain "believes" line it would say the opposite)
+        if not believes:
             continue
         truth = d.get("truth")
         by_sort[d["sort"]].append(
