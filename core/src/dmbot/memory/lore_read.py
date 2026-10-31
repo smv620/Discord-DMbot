@@ -989,9 +989,8 @@ async def read_lore(
     # Every name a pronoun might mean: the campaign's own, this read's, and all their spellings
     # (a quote that reaches back through its paragraph stops at any of them, #2757).
     third = bg.reach_names(
-        {*known_keys, *here, *(name_key(sp) for sps in here.values() for sp in sps)}
+        {name_key(k) for k in (*known_keys, *here, *(sp for sps in here.values() for sp in sps))}
     )
-    third = bg.reach_names({name_key(k) for k in third})
     for reply_text in replies:
         links += bg.read_connections(
             reply_text, text, set(own), stats.dropped, here, stats.unsettled, third

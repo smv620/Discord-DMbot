@@ -15,7 +15,7 @@ from dmbot.ai import Reply
 from dmbot.memory import background as bg
 from dmbot.memory import lore_read
 from dmbot.memory.backstory_links import BackstoryLinks, NewLink, Waiting
-from dmbot.memory.models import CONFIRMED, REJECTED, MemoryRuleError, NewName
+from dmbot.memory.models import CONFIRMED, REJECTED, MemoryRuleError, NewName, name_key
 from dmbot.memory.ontology import PredicateTerm
 from dmbot.ui import name_background as ui_bg
 from dmbot.ui import names as names_ui
@@ -270,6 +270,39 @@ class TheChecks(unittest.TestCase):
         one = "Old stories say Corvin Hale was cursed. His brother, Daric, vanished at forty."
         got, lost = read(one, names)
         self.assertEqual((len(got), lost["quote_widened"], lost["quote_reach"]), (1, 1, 0))
+
+    def test_the_edges_of_a_reach(self) -> None:
+        names = bg.reach_names(
+            {name_key(n) for n in ("Corvin Hale", "Daric", "Pell Ashe", "Ka'zeth")}
+        )  # (the live read normalises its keys the same way)
+        reply = json.dumps({"connections": [link(
+            "Corvin Hale", "brother", "Daric", "His brother, Daric, vanished at forty"
+        )]})  # fmt: skip
+
+        def read(text: str) -> tuple[list[bg.Connection], Counter[str]]:
+            lost: Counter[str] = Counter()
+            return bg.read_connections(reply, text, dropped=lost, others=names), lost
+
+        tail = "His brother, Daric, vanished at forty."
+        # three sentences back is the furthest, and counts as a widening and as a reach
+        got, lost = read(f"Corvin Hale hunted. It was cold. It was dark. {tail}")
+        self.assertEqual((len(got), lost["quote_reach"], lost["quote_widened"]), (1, 1, 1))
+        # a possessive names the person it belongs to ("Pell's", "Ka'zeth's")
+        for third in ("Pell Ashe's", "Ka'zeth's"):
+            self.assertEqual(read(f"Corvin Hale hunted. {third} cousin was cursed. {tail}")[0], [])
+        # the word limit alone (short words) and the character limit alone (few long words)
+        self.assertEqual(read("Corvin Hale hunted. " + "a " * 59 + f"{tail}")[0], [])
+        long_words = " ".join(["extraordinarily"] * 26)  # 26 words, over 400 characters
+        self.assertEqual(read(f"Corvin Hale hunted. {long_words}. {tail}")[0], [])
+        # the same quote twice, the first time opening its paragraph: the second still reaches
+        twice = f"Old words.\n\n{tail}\n\nCorvin Hale hunted. It was cold. {tail}"
+        self.assertEqual(len(read(twice)[0]), 1)
+
+    def test_a_third_name_is_a_whole_name_or_a_first_word_only_one_name_starts(self) -> None:
+        names = bg.reach_names({"pell ashe", "pell voss", "mara ketch", "ox"})
+        self.assertIn("mara", names)  # only one name starts with it
+        self.assertNotIn("pell", names)  # two do: a bare "Pell" would be a guess
+        self.assertNotIn("ox", names - {"ox"})
 
 
 class ThePath(NamesTest):

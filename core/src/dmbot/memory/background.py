@@ -372,7 +372,7 @@ _BREAK = re.compile(r"[\n\r\u2028\u2029\x85]")
 
 
 REACH_SENTENCES = 3  # how many sentences back a pronoun's name may stand (#2757)
-REACH_WORDS = 60  # the most words of a quote that reaches back; the AI's own is 20
+REACH_WORDS = 60  # the most words of a quote that reaches back (the AI's own: `QUOTE_WORDS`)
 # The waiting-connection queue keeps a quote to 400 characters and cuts the END (the pronoun's
 # own sentence), so a window that long is never offered.
 REACH_CHARS = 400
@@ -391,6 +391,8 @@ def _third_name(span: str, others: Collection[str], ends: Collection[str]) -> bo
     (a capitalised run of up to four words, so "boy" in running text is no name): then the
     pronoun may mean that one, and no reach is made."""
     tokens = re.findall(r"\w+(?:['’-]\w+)*", span)
+    # ("Pell's cousin" names Pell: a possessive ending is taken off the last word of a name)
+    tokens = [re.sub(r"['’]s$", "", t, flags=re.I) if t[:1].isupper() else t for t in tokens]
     for i, token in enumerate(tokens):
         if not token[:1].isupper():
             continue
@@ -459,8 +461,8 @@ def _widen(
             earlier = list(_BREAK.finditer(piece, 0, upto))
             before_par = earlier[-1].end() if earlier else 0
             tail = piece[before_par:upto]
-            ends = [m.end() for m in _SENTENCE_END.finditer(tail)]
-            origin = before_par + (ends[-1] if ends else 0)
+            stops = [m.end() for m in _SENTENCE_END.finditer(tail)]
+            origin = before_par + (stops[-1] if stops else 0)
             # (a heading of a word or two is no sentence to borrow)
             borrowed = len(piece[origin:upto].split()) >= MIN_BORROWED_WORDS
             if not borrowed:
@@ -893,7 +895,7 @@ def read_connections(
             out.append(_via(made, said_squashed, seen, forms))
         elif (
             wide := _widen(
-                piece, words, seen[0], seen[1], holds, lost, others, own_ends(seen, forms)
+                piece, words, seen[0], seen[1], holds, lost, others, _own_ends(seen, forms)
             )
         ) is not None:
             # The quote named one end ("his sister…"): the sentence before it joins, word for word.
@@ -909,7 +911,7 @@ def read_connections(
     return out
 
 
-def own_ends(seen: Sequence[str], forms: Callable[[str], list[str]]) -> set[str]:
+def _own_ends(seen: Sequence[str], forms: Callable[[str], list[str]]) -> set[str]:
     """The keys of the pair's own two ends, with their spellings and each word of them: none of
     these is a third name when a reach looks for one."""
     keys = {name_key(f) for end in seen for f in forms(end)}
