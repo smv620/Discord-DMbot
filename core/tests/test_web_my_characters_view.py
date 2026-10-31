@@ -22,6 +22,8 @@ OTHER_PLAYER = 7777  # a player who is not signed in
 
 
 class MyCharacters(Web):
+    bob_has_a_hero = False  # (these tests give Bob his own characters)
+
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
         # Bob plays Okra; someone else plays Wen. Ken is hidden from the players.
