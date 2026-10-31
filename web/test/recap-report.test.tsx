@@ -139,6 +139,14 @@ describe("the answers", () => {
     const p = await lieLine("The harbour master sold the map");
     expect(p.textContent).toBe("The party thinks someone lied about this: The harbour master sold the map");
     expect(Array.from(p.querySelectorAll("strong")).map((s) => s.textContent)).toEqual(["The party", "someone"]);
+    expect(p.parentElement?.textContent).toContain(w.lieTruth);
+  });
+
+  it("the plain sentence in the words matches what the page shows", async () => {
+    await open();
+    const p = await lieLine("Valyra hid the key");
+    expect(p.textContent).toBe(`${w.lied("Cerric", "Valyra")} Valyra hid the key`);
+    expect(w.lied("The party", null)).toBe("The party thinks someone lied about this:");
   });
 
   it("a lie says Your view: it's true. and not Your view says", async () => {

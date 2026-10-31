@@ -431,7 +431,7 @@ function DifferenceItem({
       {item.kind === "lie" ? (
         <>
           <p>
-            <strong>{item.view}</strong> {w.lieThinks} <strong>{item.liar ?? w.lieSomeone}</strong> {w.lieSaid} {item.believes}
+            <strong>{item.view}</strong> {w.lieThinks} <strong>{item.liar || w.lieSomeone}</strong> {w.lieSaid} {item.believes}
           </p>
           <p>{w.lieTruth}</p>
         </>
