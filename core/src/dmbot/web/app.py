@@ -49,6 +49,7 @@ from dmbot.web import (
     game_masters,
     handover_accept,
     handover_offer,
+    house_file,
     imports,
     line_fixes,
     lore,
@@ -1282,6 +1283,56 @@ def create_app(
             return await lore.read(db, session, ref, upload)
         except RecapError as err:
             status, detail = lore_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    house_file_refusals = {
+        "not_allowed": (403, "not_allowed"),
+        "busy": (409, "busy"),
+        "too_soon": (429, "too_soon"),
+        "bad_text": (422, "bad_text"),
+        "too_long": (422, "too_long"),
+    }
+
+    @app.post("/me/campaigns/{ref}/house-file", status_code=202)
+    async def me_house_file_add(ref: str, signed: Signed, request: Request) -> dict[str, Any]:
+        """A request about the campaign's house-rules file (#2985): `{"action": "link"|"unlink"|
+        "check"|"upload", "link": <https address>, "text": <the file's words>}`, queued for the
+        bot, answered with the file's state and the request's progress. DM only (403); 409 `busy`
+        while one is open, 429 `too_soon` past ten an hour, 422 for words the door refuses. 404
+        while DMBOT_WEB_HOUSE_FILE is off."""
+        session, _token = signed
+        if not settings.house_file_on:
+            raise HTTPException(status_code=404, detail="not_found")
+        try:
+            body = await bounded_json(request, 900_000)  # 200,000 characters at up to 4 bytes each
+            return await house_file.add(db, session, ref, body)
+        except RecapError as err:
+            status, detail = house_file_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/house-file")
+    async def me_house_file_latest(ref: str, signed: Signed) -> dict[str, Any]:
+        """Whether a file is connected, the site it is on and the newest request of the last day.
+        Never the address. DM only."""
+        session, _token = signed
+        if not settings.house_file_on:
+            raise HTTPException(status_code=404, detail="not_found")
+        try:
+            return await house_file.read(db, session, ref, None)
+        except RecapError as err:
+            status, detail = house_file_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/house-file/{request_id}")
+    async def me_house_file_read(ref: str, request_id: str, signed: Signed) -> dict[str, Any]:
+        """One request's progress: stage, counts, times; never its words. DM only; 404 if gone."""
+        session, _token = signed
+        if not settings.house_file_on:
+            raise HTTPException(status_code=404, detail="not_found")
+        try:
+            return await house_file.read(db, session, ref, request_id)
+        except RecapError as err:
+            status, detail = house_file_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 
     style_refusals = {

@@ -14,6 +14,7 @@ import {
 } from "./api";
 import { sharingCard } from "../content/sharing";
 import { RULE_SHARING_LIVE } from "../content/rule-sharing-switch";
+import { HOUSE_FILE_LIVE } from "../content/house-file-switch";
 import CampaignNav from "./CampaignNav";
 import LazyPanel from "./LazyPanel";
 
@@ -166,6 +167,13 @@ function Rules({ api, campaignRef }: { api: AccountApi; campaignRef: string }) {
               </ul>
               <Download api={api} campaignRef={campaignRef} fileName={found.fileName} />
             </>
+          )}
+          {HOUSE_FILE_LIVE && api.houseFile && (
+            <LazyPanel
+              load={() => import("./HouseFilePanel")}
+              what="the house-rules file"
+              props={{ api, campaignRef }}
+            />
           )}
           {RULE_SHARING_LIVE && api.ruleSharing && (
             <LazyPanel

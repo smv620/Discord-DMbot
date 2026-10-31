@@ -4,6 +4,7 @@
 import type {
   RecapStyle,
   RecapStyleAction,
+  HouseFileState,
   LoreUpload,
   CampaignPage,
   CampaignSettingAnswer,
@@ -225,6 +226,10 @@ export default function campaignArea({ call }: ApiHelpers): Partial<AccountApi> 
       (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/recap-style/${encodeURIComponent(id)}`)) as RecapStyleAction,
     loreAdd: async (ref, input) =>
       ((await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/lore`, input)) as { upload: LoreUpload }).upload,
+    houseFile: async (ref, id) =>
+      (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/house-file${id ? `/${encodeURIComponent(id)}` : ""}`)) as HouseFileState,
+    houseFileAdd: async (ref, input) =>
+      (await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/house-file`, input)) as HouseFileState,
     loreRead: async (ref, id) =>
       ((await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/lore${id ? `/${encodeURIComponent(id)}` : ""}`)) as { upload: LoreUpload | null }).upload,
   };

@@ -42,6 +42,7 @@ NOT_A_MESSAGE = {
     "memory/web_sheets.py": "the longest list of names a typed sheet from the website holds",
     "web/imports.py": "the earliest year a session date may have",
     "web/lore.py": "the longest link an uploaded lore text may name",
+    "web/house_file.py": "the longest link a house-rules file may name",
     "web/sheets.py": "the longest list of names Discord's typed-sheet form holds",
     "ui/name_lists.py": "the longest link in a form field",
     "ui/rule_lookup.py": "entries kept in a map",
