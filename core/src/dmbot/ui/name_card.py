@@ -2411,6 +2411,8 @@ class FamilyRole(_Menu):
         )
 
     async def _picked(self, interaction: discord.Interaction) -> None:
+        # The menu is done once a role is picked: stop it first so a second press does nothing.
+        # secret and forced come from the card and are checked again in connect.
         value = self.role.values[0]
         detail = "" if value == JUST_FAMILY else value
         self.stop()

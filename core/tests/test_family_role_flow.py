@@ -52,6 +52,14 @@ class TheFamilyRoleFlow(NamesTest):
         self.assertEqual(await self.card_words(mira, aldric), "is the cousin of Aldric")
         self.assertEqual(await self.card_words(aldric, mira), "is the cousin of Mira")
 
+    async def test_just_family_saves_no_role_and_reads_as_family_on_both_cards(self) -> None:
+        mira, aldric = await self.name("Mira"), await self.name("Aldric")
+        await self.pick(mira, aldric, name_card.JUST_FAMILY)
+        (rel,) = await self.memory.relations(GUILD, self.campaign.id, entity_id=mira.id)
+        self.assertEqual(rel.detail, "")
+        self.assertEqual(await self.card_words(mira, aldric), "is family of Aldric")
+        self.assertEqual(await self.card_words(aldric, mira), "is family of Mira")
+
     async def test_a_mother_and_a_brother_offer_the_parent_as_a_worked_out_suggestion(self) -> None:
         aldric, bryn, mira = (
             await self.name("Aldric"),

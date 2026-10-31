@@ -34,8 +34,7 @@ class TheRoleMenu(unittest.IsolatedAsyncioTestCase):
     def test_every_family_role_is_one_of_the_stored_roles(self) -> None:
         from dmbot.memory import kin
 
-        for role in nc.FAMILY_ROLES:
-            self.assertIn(role, kin.ROLES)
+        self.assertEqual(set(nc.FAMILY_ROLES), set(kin.ROLES))
 
     def test_the_menu_holds_the_roles_and_just_family_and_says_how_each_reads(self) -> None:
         menu = nc.FamilyRole(CAMPAIGN.id, MIRA, ALDRIC, "kin_of", ("Mira", "Aldric"),
@@ -156,7 +155,7 @@ class TheSave(unittest.IsolatedAsyncioTestCase):
     async def test_the_saved_note_reads_with_the_role_in_the_order_it_was_saved(self) -> None:
         await self.save("kin_of", "sister")
         self.assertIn("is the sister of", self.note)
-        self.assertIn("Mira", self.note.split("is the sister of")[0])  # Mira holds the role
+        self.assertIn("**Mira** is the sister of **Aldric**", self.note)  # Mira holds the role
 
     async def test_the_saved_note_reads_the_other_way_round_for_the_other_way_round(self) -> None:
         await self.save("kin_of" + nc.BACK, "sister")
