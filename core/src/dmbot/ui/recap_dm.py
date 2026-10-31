@@ -39,7 +39,7 @@ SKIPPED = "👍 Skipped. Nothing was posted. You can still find it on your recap
 POSTED = "✅ Posted to the table. The players can see it now."
 NO_STORE = "Recaps aren't available right now. Try again in a minute."
 NOT_NOW = "Okay, nothing was posted. Press Post to the table whenever you're ready."
-NOTES_LABEL = "📝 Session notes"  # the recap line's button (#3026)
+NOTES_LABEL = "🗒️ Session notes"  # the recap line's button (#3026)
 NO_NOTES = "There are no notes for this session yet."
 NOTES_FAILED = "I couldn't read the notes just now. Nothing was changed. Try again in a minute."
 NOTES_HEADING = "**Session notes**"
@@ -481,7 +481,7 @@ def ready_view(
 ) -> discord.ui.View:
     """The buttons on a new recap line (#2420): the three plain ways to approve it, in the page's
     words, then **📝 Review the recap** (the link to its page, `review_url`) and Share a recap, then
-    **📝 Session notes** (#3026) on the same row in both branches.
+    **🗒️ Session notes** (#3026) on the same row in both branches.
     `audio_off`: audio can't be made now, so that button is greyed (the line says why). "Don't
     post" is gone: a recap the DM doesn't approve simply stays a draft. The older buttons (read,
     approve, post, skip, tell) still work on lines already sent, so nothing breaks. With no website

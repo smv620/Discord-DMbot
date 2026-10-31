@@ -1,4 +1,4 @@
-"""The 📝 Session notes button on a recap line (#3026): DM-only, read-only, a numbered list in
+"""The 🗒️ Session notes button on a recap line (#3026): DM-only, read-only, a numbered list in
 private messages that never shortens a beat, PlotBot's notes never shown, the plain reply when
 there are none, and a button that survives a restart and fits Discord's row limits. Invented names
 and text only; the store is stubbed here (its own tests cover the database)."""
