@@ -4,7 +4,7 @@
 export const INVITE_PATTERN = /^https:\/\/(?:www\.)?dndbeyond\.com\/campaigns\/join\/[A-Za-z0-9]{4,64}\/?$/;
 
 export const invitePanel = {
-  heading: "Campaign invite",
+  heading: "Campaign invite from dndbeyond.com",
   intro: "DMbot can't add anyone to your campaign on dndbeyond.com. It can pass on your invite. Anyone in your Discord server will see a Join button where DMbot talks about the game.",
   none: "No invite link yet.",
   now: (link: string): string => `Current link: ${link}`,

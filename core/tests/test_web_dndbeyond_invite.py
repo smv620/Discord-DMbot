@@ -8,6 +8,7 @@ from __future__ import annotations
 from typing import Any
 
 import httpx
+import psycopg.errors
 
 from dmbot.web import campaign_page, campaign_settings, sessions
 from dmbot.web.app import create_app
@@ -104,6 +105,19 @@ class TheDoor(InviteBase):
         self.assertEqual(await self.refused(STANDARD, bob), "not_allowed")
         self.assertEqual(await self.rows(), [])
 
+    async def test_a_dm_cannot_queue_an_invite_for_a_campaign_they_do_not_run(self) -> None:
+        other = f"{THURSDAY.id}.{self.two.id}"  # (Bob runs this one, Alice does not)
+        with self.assertRaises(RecapError) as err:
+            await campaign_settings.queue_setting(
+                self.web,
+                self.session,
+                other,
+                {"setting": "dndbeyond_invite", "value": STANDARD},
+                invite_on=True,
+            )
+        self.assertEqual(err.exception.code, "not_allowed")
+        self.assertEqual(await self.rows(), [])
+
     async def test_the_switch_keeps_it_closed_before_the_body_is_judged(self) -> None:
         self.assertEqual(await self.refused(STANDARD, on=False), "not_found")
         self.assertEqual(await self.refused("nonsense", on=False), "not_found")
@@ -131,7 +145,7 @@ class TheDoor(InviteBase):
         self.assertGreater(len(STANDARD), 40)
         await self.queue(STANDARD)  # (the old limit of 40 would have refused it)
         async with self.db.guild(THURSDAY.id) as conn:
-            with self.assertRaises(Exception):  # noqa: B017
+            with self.assertRaises(psycopg.errors.CheckViolation):
                 await conn.execute(
                     "INSERT INTO setting_actions (guild_id, campaign_id, id, user_id, setting,"
                     " value, created_at) VALUES (%s, %s, %s, %s, 'level', %s, %s)",

@@ -18,7 +18,7 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-const TITLE = "Pass on your campaign invite";
+const TITLE = "Campaign invite from dndbeyond.com";
 const LINK = "https://www.dndbeyond.com/campaigns/join/AbC123xyz";
 
 async function settle(): Promise<void> {
