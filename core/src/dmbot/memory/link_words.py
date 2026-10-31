@@ -93,7 +93,9 @@ def link_words(predicate: str, detail: str, directional: bool = False) -> str:
     role ("is the niece of")."""
     if predicate == FALLBACK_PREDICATE and detail:
         return detail
-    if predicate == KIN and directional and (role := kin.role_of(detail)):
+    # A role true of both names (sibling, cousin, spouse) reads the same from either card, so it is
+    # shown whatever its stored direction is (#3102). A one-way role is shown only when directional.
+    if predicate == KIN and (role := kin.role_of(detail)) and (directional or role in kin.MUTUAL):
         return kin.forward(role)
     return connection_words(predicate)
 
