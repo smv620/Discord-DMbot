@@ -15,6 +15,8 @@ group a character is in yet, #3131, so a caller has no group to give today.)
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from dmbot.db import Conn
 
 
@@ -47,3 +49,45 @@ async def game_time_at(
     )
     row = await cur.fetchone()
     return None if row is None else int(row["minute"])
+
+
+async def group_at(
+    conn: Conn, guild_id: int, campaign_id: str, character_id: str, at: int
+) -> int | None:
+    """The split-party group this player character was in at real time `at`, or None when they
+    were in none or had not been placed (#3131): their newest row at or before it."""
+    cur = await conn.execute(
+        "SELECT position FROM game_clock_group_log WHERE guild_id = %s AND campaign_id = %s"
+        " AND character_id = %s AND at <= %s ORDER BY at DESC, seq DESC LIMIT 1",
+        (guild_id, campaign_id, character_id, at),
+    )
+    row = await cur.fetchone()
+    return None if row is None or row["position"] is None else int(row["position"])
+
+
+async def group_of_speakers(
+    conn: Conn, guild_id: int, campaign_id: str, user_ids: Sequence[int], spoken_at: int
+) -> int | None:
+    """The group a line's speaker(s) were in when it was spoken, or None when that cannot be told.
+    A line carries a person, never a character, so every character that person plays (and that
+    the campaign keeps) must have been placed, all in the same group; one who was not placed, or
+    characters in different groups, or speakers in different groups, are not known: DMbot never
+    guesses whose voice it was. Outside a split nothing is placed and the answer is None, which
+    `game_time_at` does not need (the party was together)."""
+    if not user_ids:
+        return None
+    groups: set[int | None] = set()
+    for user_id in dict.fromkeys(user_ids):
+        cur = await conn.execute(
+            "SELECT id FROM memory_entities WHERE guild_id = %s AND campaign_id = %s"
+            " AND type = 'character' AND role = 'player_character' AND status = 'confirmed'"
+            " AND played_by = %s ORDER BY id",
+            (guild_id, campaign_id, user_id),
+        )
+        characters = [str(r["id"]) for r in await cur.fetchall()]
+        if not characters:
+            return None
+        for character in characters:
+            groups.add(await group_at(conn, guild_id, campaign_id, character, spoken_at))
+    only = next(iter(groups)) if len(groups) == 1 else None
+    return only

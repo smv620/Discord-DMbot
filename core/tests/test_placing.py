@@ -459,6 +459,55 @@ class Placing(ConfirmedMemoryTest):
         rows = await self.rows("memory_claims")
         return str(rows[-1]["id"])
 
+    async def split_moment(self, *, mira_in: int | None) -> None:
+        """The main clock, then a split (groups 1 and 2 at 6000 and 7000) at real time 20, with
+        Mira in a group (or in none) from then on."""
+        await self.clock_log((10, 5000))
+        async with self.db.guild(GUILD_A) as conn:
+            for position, minute in ((1, 6000), (2, 7000)):
+                await conn.execute(
+                    "INSERT INTO game_clock_log (guild_id, campaign_id, position, at, minute)"
+                    " VALUES (%s, %s, %s, 20, %s)",
+                    (GUILD_A, self.c, position, minute),
+                )
+            if mira_in is not None:
+                await conn.execute(
+                    "INSERT INTO game_clock_group_log (guild_id, campaign_id, character_id,"
+                    " position, at) VALUES (%s, %s, %s, %s, 20)",
+                    (GUILD_A, self.c, self.mira, mira_in),
+                )
+
+    async def place_as_player(self, claim_id: str) -> Any:
+        return await self.claims.place(GUILD_A, self.c, claim_id, opted_in={PLAYER})
+
+    async def said_by_the_player(self, at: int) -> str:
+        claim = readings.as_claim(belief("pc:Mira", "theory", 0.5), "player_said")
+        assert claim.reading is not None
+        claim = replace(claim, reading={**claim.reading, "spoken_at": at})
+        await self.claims.propose(
+            GUILD_A, self.c, [claim], {"1": PLAYER},
+            opted_in={PLAYER}, dms={DM}, prompt_version="r1", model="m1", session_started_at=1_000,
+        )  # fmt: skip
+        return str((await self.rows("memory_claims"))[-1]["id"])
+
+    async def test_a_line_spoken_in_a_split_gets_its_speakers_groups_clock(self) -> None:
+        await self.split_moment(mira_in=2)
+        placed = await self.place_as_player(await self.said_by_the_player(30))
+        assert placed.belief is not None
+        self.assertEqual(placed.belief.game_time, 7000)  # Mira's group, not group 1's 6000
+
+    async def test_a_speaker_nobody_placed_in_a_split_is_not_known(self) -> None:
+        await self.split_moment(mira_in=None)
+        placed = await self.place_as_player(await self.said_by_the_player(30))
+        assert placed.belief is not None
+        self.assertIsNone(placed.belief.game_time)  # (never the frozen main clock's 5000)
+
+    async def test_before_the_split_the_one_clock_is_used_whatever_the_groups_say(self) -> None:
+        await self.split_moment(mira_in=2)
+        placed = await self.place_as_player(await self.said_by_the_player(15))
+        assert placed.belief is not None
+        self.assertEqual(placed.belief.game_time, 5000)
+
     async def test_a_belief_gets_the_game_time_of_the_line_it_came_from(self) -> None:
         await self.clock_log((100, 5000), (200, 5600))
         placed = await self.place(await self.spoken(150))

@@ -806,7 +806,7 @@ with the newest rows (the oldest moments then read as "not known"; a backup is n
 `spoken_at`: a main-clock row is the one clock whatever group is asked for; a group row means the party
 was split, and then the asked group's newest row since the last main row is its clock, or "not known" when
 no group is given (the main clock stands still while split). Before the first row, or with no clock, it is
-not known. Nothing records which group a character is in yet (#3131). The extractor notes each reading's
+not known. Which group a character is in comes from the group history (#3131, below). The extractor notes each reading's
 newest cited line moment (`spoken_at`, Unix seconds) and **placing a reading stamps the belief from that
 moment**, never from the clock as it reads when the DM presses Place; a session loaded from a file
 (`session_imports`) carries no moment, because its lines hold the dates the DM chose. **Watch for:** the
@@ -823,6 +823,19 @@ point of view (`MemoryStore.believed_at`); a player is answered only from their 
 view, and only for connections the one gate lets those characters know
 (`MemoryStore.my_characters_believed_at`). It returns ids and numbers; the caller makes the words, with the
 calendar for the date.
+
+**Who is in each split group (#3131, migration 0310, `game_clock_group_log`):** the DM places the campaign's
+kept player characters in the groups while the party is split (`ClockStore.place_members`: only kept player
+characters of this campaign and groups that exist, otherwise nothing is written). It is a history, one
+append-only row each time a character is placed, moved or released, because a line's group is the one its
+speaker was in **when it was spoken**: a rejoin or an Undo of a split closes every placement (a row with no
+group), and an Undo of a rejoin writes the closed placements back. A character's group at a moment is their
+newest row at or before it. `stamp.group_of_speakers` turns a line's speakers (people, never characters) into
+a group: every kept character the person plays must have been placed, all in the same group, and speakers in
+different groups are one answer too many; anything else is "not known", because DMbot never guesses whose voice
+it was. A character that is erased takes its rows with it. It is not carried in backups (character ids are the
+file's, a restored campaign starts a new history, and a split's placements are a moment of play, not story);
+a line from before the restore reads "not known".
 
 **The campaign's calendar (#3091 part 3, migration 0307):** three columns on the clock's row: `calendar_kind`
 (`days`, the default and what every clock had, or `harptos`) and the date of Day 1 as two numbers (the year

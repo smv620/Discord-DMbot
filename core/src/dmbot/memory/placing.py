@@ -74,7 +74,7 @@ from dmbot.memory.models import (
     new_id,
 )
 from dmbot.memory.store import _check_led_to_live, _load_ontology, flag_kept
-from dmbot.timebot.stamp import game_time_at
+from dmbot.timebot.stamp import game_time_at, group_of_speakers
 
 WAITING_ALREADY = "That is already waiting for your answer. Answer it there first."
 PLOT_IS_KNOWN = "The players already know that, so it cannot also be a secret plot."
@@ -344,9 +344,13 @@ async def _place_in(
     perspective = await _view_id(w, view, holder, roles)
     # The game clock as it stood when the line was spoken (None: no clock, or nothing logged yet
     # at that moment); never the clock as it reads now (#3091).
-    at_that_moment = (
-        await game_time_at(w.conn, w.guild_id, w.campaign_id, spoken_at) if spoken_at else None
-    )
+    # While the party was split it is the clock of the group the speaker was in then (#3131).
+    at_that_moment = None
+    if spoken_at:
+        group = await group_of_speakers(
+            w.conn, w.guild_id, w.campaign_id, claim.speaker_ids, spoken_at
+        )
+        at_that_moment = await game_time_at(w.conn, w.guild_id, w.campaign_id, spoken_at, group)
     belief = await beliefs.place_belief(
         w, perspective, host, confidence, status,
         evidence=[claim.id], session_at=claim.session_started_at,
