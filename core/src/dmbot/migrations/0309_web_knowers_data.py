@@ -36,8 +36,8 @@ WEB_KNOWERS_DATA = r"""
                 FROM (SELECT * FROM memory_entities x
                       WHERE x.guild_id = g AND x.campaign_id = c AND x.type = 'character'
                         AND x.status = 'confirmed' AND x.merged_into IS NULL
-                      ORDER BY (x.role <> 'player_character'), lower(x.name), x.id
-                      LIMIT 2000) e), '[]'::jsonb),
+                      ORDER BY (x.role <> 'player_character'), lower(x.name), x.id) e),
+                '[]'::jsonb),
             'playerCharacters', COALESCE((
                 SELECT jsonb_agg(x.id ORDER BY x.id) FROM memory_entities x
                 WHERE x.guild_id = g AND x.campaign_id = c AND x.type = 'character'
@@ -50,11 +50,16 @@ WEB_KNOWERS_DATA = r"""
                                 WHEN k.relation_id IS NOT NULL THEN 'connection'
                                 ELSE 'alias' END,
                            COALESCE(k.about_entity_id, k.state_id, k.relation_id, k.alias_id),
-                           p.entity_id, k.confidence))
+                           p.entity_id, k.confidence, k.created_at))
                 FROM memory_knowers k
                 JOIN memory_perspectives p ON p.id = k.perspective_id
                 WHERE k.guild_id = g AND k.campaign_id = c AND cardinality(k.hidden_by) = 0
                   AND p.entity_id IS NOT NULL), '[]'::jsonb),
+            -- people not yet named ("the guard at the gate"): their label is rebuilt by the bot and
+            -- hangs off another entry, so this view leaves them out for a character
+            'unnamed', COALESCE((
+                SELECT jsonb_agg(x.id ORDER BY x.id) FROM memory_entities x
+                WHERE x.guild_id = g AND x.campaign_id = c AND x.unnamed), '[]'::jsonb),
             'liveEntries', COALESCE((
                 SELECT jsonb_agg(x.id ORDER BY x.id) FROM memory_entities x
                 WHERE x.guild_id = g AND x.campaign_id = c
@@ -76,8 +81,10 @@ WEB_KNOWERS_DATA = r"""
                 '{}'::jsonb),
             -- the other names' words, in the order they were made: a character known only by an
             -- other name is shown by the first one the viewer knows
+            -- with each name's lookup key and whether it is secret, so a secret own name can be
+            -- told from an other name (the bot's `names_for` does the same)
             'aliasNames', COALESCE((
-                SELECT jsonb_agg(jsonb_build_array(a.id, a.entity_id, a.text)
+                SELECT jsonb_agg(jsonb_build_array(a.id, a.entity_id, a.text, a.key, a.secret)
                                  ORDER BY a.created_at, a.id)
                 FROM memory_aliases a
                 WHERE a.guild_id = g AND a.campaign_id = c AND a.status <> 'rejected'),

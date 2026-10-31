@@ -10,6 +10,7 @@ import httpx
 
 from dmbot.memory.gate import ALIAS, CONNECTION, ENTRY
 from dmbot.memory.models import DM as DM_SOURCE
+from dmbot.memory.ontology import FALLBACK_PREDICATE
 from dmbot.web import see_as, sessions
 from dmbot.web.app import create_app
 from dmbot.web.payments import FakeProvider
@@ -121,6 +122,50 @@ class AMainNameStaysSecret(SeeAs):
         got = await self.seen(self.rook)
         self.assertIn("the Ferrywoman", self.names(got))
         self.assertNotIn("Mira Voss", str(got))
+
+
+class NothingSecretInTheWords(SeeAs):
+    async def test_a_note_that_names_a_main_name_is_not_shown_with_another_name(self) -> None:
+        await self.know(ENTRY, self.mira, [])
+        made = await self.memory.add_alias(
+            self.g, self.one.id, self.mira, "the ferrywoman",
+            kind="nickname", source=DM_SOURCE, status="confirmed", secret=True,
+        )  # fmt: skip
+        await self.know(ALIAS, made.value.id, [self.rook])
+        note = await self.memory.add_relation(
+            self.g, self.one.id, self.rook, FALLBACK_PREDICATE, self.mira,
+            source=DM_SOURCE, confidence=1.0, status="confirmed", detail="serves Mira Voss",
+        )  # fmt: skip
+        await self.know(CONNECTION, note.value[0].id, [self.rook])
+        got = await self.seen(self.rook)
+        self.assertEqual(len(got["edges"]), 1)
+        self.assertNotIn("Mira Voss", str(got))
+        self.assertNotIn("serves", str(got))
+
+    async def test_a_secret_own_name_needs_a_row_on_that_name_itself(self) -> None:
+        async with self.db.guild(self.g) as conn:
+            await conn.execute(
+                "UPDATE memory_aliases SET secret = true WHERE entity_id = %s AND key = %s",
+                (self.mira, "mira voss"),
+            )
+        got = await self.seen(self.rook)  # (knows the entry, not its secret name)
+        self.assertNotIn("Mira Voss", str(got))
+        self.assertEqual(got["edges"], [])
+
+    async def test_people_not_yet_named_are_left_out(self) -> None:
+        made = await self.memory.add_unnamed(
+            self.g, self.one.id, what="guard at the north gate", role="guard"
+        )
+        await self.know(ENTRY, made.entity.id, [self.rook])
+        await self.know(
+            CONNECTION, await self.link("knows", self.mira, made.entity.id, "g"), [self.rook]
+        )
+        got = await self.seen(self.rook)
+        self.assertNotIn("guard", str(got).lower())
+
+    async def test_the_centre_and_the_npc_page_are_not_given_away(self) -> None:
+        got = await self.seen(self.okra)  # nothing known; the DM graph centres on Mira
+        self.assertEqual((got["nodes"], got["center"]), ([], None))
 
 
 class WhoMayLook(SeeAs):
