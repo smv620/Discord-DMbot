@@ -1870,11 +1870,11 @@ class WhatPeopleBelieve(Editing):
             self.g, self.one.id, [said("Valyra", "knows", "Far Hall")], {"1": 7},
             opted_in={7}, prompt_version="p1", model="m1", session_started_at=500,
         )  # fmt: skip
-        await self.lie("Valyra")
+        await self.lie("valyra")  # (the match ignores capitals, like the other two names)
         (item,) = (await self.listed())["readings"]
         self.assertEqual(
             (item["canPlace"], item["why"], item["waitingOn"], item["liar"]),
-            (False, "name_first", ["Valyra"], "Valyra"),
+            (False, "name_first", ["Valyra"], "valyra"),
         )
 
     async def test_a_player_gets_nothing_of_a_lie(self) -> None:
