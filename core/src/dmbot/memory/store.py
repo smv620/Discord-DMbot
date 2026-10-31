@@ -35,6 +35,7 @@ from psycopg import errors, sql
 
 from dmbot.db import Database, row_int
 from dmbot.memory import (
+    as_of,
     beliefs,
     evidence,
     gate,
@@ -4105,6 +4106,26 @@ class MemoryStore:
         async with self._read(guild_id, campaign_id, snapshot=True) as scope:
             mine = await knowers.characters_of(scope, user_id)
             return await lies_mod.lies_my_characters_think(scope, list(mine))
+
+    async def believed_at(
+        self, guild_id: int, campaign_id: str, perspective_id: str, game_time: int, *, source: str
+    ) -> list[as_of.Believed]:
+        """What a point of view believed as of a game time (#3091): for the DM only, any point of
+        view. A belief with no game time is never in it (see `memory/as_of.py`)."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can see any point of view.")
+        async with self._read(guild_id, campaign_id, snapshot=True) as scope:
+            return await as_of.believed_at(scope, perspective_id, game_time)
+
+    async def my_characters_believed_at(
+        self, guild_id: int, campaign_id: str, user_id: int, game_time: int
+    ) -> list[as_of.Believed]:
+        """What this player's own characters believed as of a game time, through the gate and
+        nothing of anyone else's. `user_id` must be the signed-in person's own (it trusts it, like
+        `what_my_characters_know`)."""
+        async with self._read(guild_id, campaign_id, snapshot=True) as scope:
+            mine = await knowers.characters_of(scope, user_id)
+            return await as_of.my_characters_believed_at(scope, list(mine), game_time)
 
     async def perspectives(self, guild_id: int, campaign_id: str) -> list[Perspective]:
         """Who holds beliefs in this campaign: The truth and The party, then any character's."""
