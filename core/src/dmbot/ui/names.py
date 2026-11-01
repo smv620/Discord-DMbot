@@ -157,8 +157,19 @@ async def _campaign_for(interaction: discord.Interaction, campaign_id: str) -> C
     """The campaign, if this person may manage its names; tells them otherwise."""
     guild = interaction.guild
     if guild is None:
-        await _tell(interaction, NOT_IN_SERVER)
-        return None
+        # A question sent to the DM's private chat has no server around it (#3210). The
+        # database says which server the campaign is in, so this survives a restart. Only the
+        # campaign's own DMs are answered there: a server manager's rights need the server.
+        guild_id = await _bot(interaction).campaigns.guild_of(campaign_id)
+        campaign = (
+            None
+            if guild_id is None
+            else await _bot(interaction).campaigns.get(guild_id, campaign_id)
+        )
+        if campaign is None or not logic.can_run(campaign, interaction.user.id, False):
+            await _tell(interaction, NOT_IN_SERVER)
+            return None
+        return campaign
     campaign = await _bot(interaction).campaigns.get(guild.id, campaign_id)
     if campaign is None or not logic.can_run(
         campaign, interaction.user.id, _is_manager(interaction)
