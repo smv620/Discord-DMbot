@@ -45,10 +45,24 @@ def test_the_same_answer_as_reach_for_every_character() -> None:
         for e in entries
         for c in rng.sample(people, rng.randint(0, 5))
     ]
-    pairs = [[m, f"g{rng.randint(0, 3)}"] for m in people[:12] for _ in range(rng.randint(0, 2))]
+    pairs = [[m, f"g{rng.randint(0, 3)}"] for m in people for _ in range(rng.randint(0, 2))]
+    # (a group can itself belong to a group, and then it is both)
     data, who = relationships._knowers(_known(rows, pairs, entries))
     for e in entries:
         found = data.knowers.get((gate.ENTRY, e), {})
         listed = found if isinstance(found, Mapping) else dict.fromkeys(found, 1.0)
         expect = {c for c in people if gate.reach(c, listed, data.groups) is not None}
         assert who(gate.ENTRY, e) == expect
+
+
+def test_sharing_the_work_changes_no_answer() -> None:
+    known = _known(
+        [[gate.ENTRY, "e1", "party", 1.0], [gate.CONNECTION, "x", "ann", 1.0]],
+        [["ann", "party"], ["bob", "party"]],
+        ["e1"],
+    )
+    known["connections"] = {"x": ["e1", "e1"]}
+    known["viewers"] = [{"id": "ann", "name": "Ann"}, {"id": "bob", "name": "Bob"}]
+    shared = relationships._knowers(known)
+    assert relationships.know_words(known, shared) == relationships.know_words(known)
+    assert relationships.link_holders(known, shared) == relationships.link_holders(known)
