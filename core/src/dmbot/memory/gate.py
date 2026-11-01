@@ -315,14 +315,13 @@ async def _by_id(
     return await scope.select(table, " AND id = ANY(%s)" + extra, [ids])
 
 
-async def party_entries(scope: Scope) -> frozenset[str] | None:
-    """The entries the party's view holds as entries in their own right (`(ENTRY, id)` in
-    `visible(Viewer.the_party()).sureness`), without reading every list row: the lookup asks this
-    on each rebuild, and reading a campaign's whole `memory_knowers` costs hundreds of
-    milliseconds (#2995). One aggregate over the entry rows of the player characters' views.
-    None when there is no player character (no party to ask). Exact for lists held by characters;
-    a list held by a group (a faction as a knower) is reach the aggregate does not follow, so then
-    the full gate answers."""
+async def _party_held(scope: Scope, column: str, *, own_entry: bool) -> frozenset[str] | None:
+    """The statements (`column`: `about_entity_id` or `relation_id`) every player character holds
+    a row for, in one aggregate over their rows instead of reading every list row (reading a
+    campaign's whole `memory_knowers` costs hundreds of milliseconds, #2995). `own_entry`: a
+    character knows its own entry without a row (entries only). None when there is no player
+    character, or when a group (a faction as a knower) holds one of these statements, which the
+    aggregate does not follow: the caller then asks the full gate."""
     pcs = {
         str(r["id"]): str(r["id"])
         for r in await scope.select(
@@ -343,36 +342,60 @@ async def party_entries(scope: Scope) -> frozenset[str] | None:
         scope.ids,
     )
     group_views = [str(r["id"]) for r in await cur.fetchall()]
-    # One pass over the entry rows: who among the player characters holds each, and whether a
-    # group (a faction as a knower) holds any, which this does not follow.
     if group_views:
         cur = await scope.conn.execute(
-            "SELECT 1 FROM memory_knowers WHERE guild_id = %s AND campaign_id = %s"
-            " AND about_entity_id IS NOT NULL AND cardinality(hidden_by) = 0"
-            " AND perspective_id = ANY(%s) LIMIT 1",
+            f"SELECT 1 FROM memory_knowers WHERE guild_id = %s AND campaign_id = %s"
+            f" AND {column} IS NOT NULL AND cardinality(hidden_by) = 0"
+            f" AND perspective_id = ANY(%s) LIMIT 1",
             (*scope.ids, group_views),
-        )
+        )  # (the column is one of two names in this module, never a caller's text)
         if await cur.fetchone() is not None:
-            return None  # (a group holds an entry: let the full gate follow its members)
+            return None
     cur = await scope.conn.execute(
-        "SELECT about_entity_id, array_agg(perspective_id) AS holders FROM memory_knowers"
-        " WHERE guild_id = %s AND campaign_id = %s AND about_entity_id IS NOT NULL"
-        " AND cardinality(hidden_by) = 0 AND perspective_id = ANY(%s) GROUP BY about_entity_id",
+        f"SELECT {column} AS statement, array_agg(perspective_id) AS holders FROM memory_knowers"
+        f" WHERE guild_id = %s AND campaign_id = %s AND {column} IS NOT NULL"
+        f" AND cardinality(hidden_by) = 0 AND perspective_id = ANY(%s) GROUP BY {column}",
         (*scope.ids, list(views.values())),
     )
-    rows = await cur.fetchall()
     everyone = set(views.values())
-    own = {entity: view for entity, view in views.items()}
-    seen = set()
-    for row in rows:
-        entry = str(row["about_entity_id"])
+    held = set()
+    for row in await cur.fetchall():
+        statement = str(row["statement"])
         missing = everyone - set(row["holders"] or ())
-        # (a character knows its own entry without a row)
-        if not missing or missing == {own.get(entry)}:
-            seen.add(entry)
-    if len(everyone) == 1:  # a lone player character knows its own entry whatever the lists say
-        seen.update(views)
-    return frozenset(seen)
+        if not missing or (own_entry and missing == {views.get(statement)}):
+            held.add(statement)
+    if own_entry and len(everyone) == 1:  # a lone player character knows its own entry
+        held.update(views)
+    return frozenset(held)
+
+
+async def party_entries(scope: Scope) -> frozenset[str] | None:
+    """The entries the party's view holds as entries in their own right (`(ENTRY, id)` in
+    `visible(Viewer.the_party()).sureness`); see `_party_held`. The lookup asks this on each
+    rebuild (#2995)."""
+    return await _party_held(scope, "about_entity_id", own_entry=True)
+
+
+async def party_connections(scope: Scope) -> frozenset[str] | None:
+    """The connections the party's view holds (`(CONNECTION, id)` in the party's `sureness`): the
+    ones every player character has a row for. See `_party_held`."""
+    return await _party_held(scope, "relation_id", own_entry=False)
+
+
+async def party_view(scope: Scope) -> tuple[frozenset[str], frozenset[str]] | None:
+    """(entries, connections) the party's view holds, by the quick aggregate when it can follow
+    the lists and by the full gate when it cannot. None: no player character, so no party."""
+    entries, connections = await party_entries(scope), await party_connections(scope)
+    if entries is not None and connections is not None:
+        return entries, connections
+    data = await load(scope)
+    if not data.player_characters:
+        return None
+    full = visible(Viewer.the_party(), data)
+    return (
+        frozenset(i for (k, i) in full.sureness if k == ENTRY),
+        frozenset(i for (k, i) in full.sureness if k == CONNECTION),
+    )
 
 
 async def visible_to(scope: Scope, viewer: Viewer) -> Visible:

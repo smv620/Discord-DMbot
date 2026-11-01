@@ -306,6 +306,10 @@ class TheNudgeInTheStore(Base):
         await self.memory.set_hidden_from_players(
             GUILD, self.campaign.id, self.garrick, False, source="dm"
         )
+        # (the party is the player characters: with none there is nobody to be shown anything)
+        await self.memory.confirm_entity(
+            GUILD, self.campaign.id, self.wren, "player_character", source="dm", played_by=77
+        )
 
     async def friends(self, count: int, *, source: str = "dm", secret: bool = False) -> list[str]:
         """`count` other characters, each joined to Garrick by a confirmed connection. `source`
@@ -396,4 +400,28 @@ class TheNudgeInTheStore(Base):
     async def test_connections_made_by_a_rule_from_counted_facts_add_nothing(self) -> None:
         for source in ("worked_out", "party"):
             await self.friends(6, source=source)
+        self.assertEqual((await self.ranks())[self.garrick], ir.BACKGROUND)
+
+    async def test_the_flag_says_shown_but_the_party_does_not_hold_it_so_no_rank(self) -> None:
+        others = await self.friends(6)
+        # (nothing hidden by a flag: the DM only told Garrick's friends to one player character)
+        link_ids = [
+            r.id
+            for r in await self.memory.relations(GUILD, self.campaign.id)
+            if self.garrick in (r.subject_id, r.object_id)
+        ]
+        for statement in link_ids:
+            await self.memory.set_statement_knowers(
+                GUILD, self.campaign.id, "connection", statement, [others[0]], source="dm"
+            )
+        self.assertEqual((await self.ranks())[self.garrick], ir.BACKGROUND)
+
+    async def test_an_end_the_party_does_not_hold_adds_no_rank_though_no_flag_hides_it(
+        self,
+    ) -> None:
+        others = await self.friends(6)
+        for other in others:
+            await self.memory.set_statement_knowers(
+                GUILD, self.campaign.id, "entry", other, [self.garrick], source="dm"
+            )
         self.assertEqual((await self.ranks())[self.garrick], ir.BACKGROUND)

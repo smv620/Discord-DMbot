@@ -153,3 +153,27 @@ class TableRows(MemoryTest):
         await self.entries()
         async with self.memory._read(GUILD_A, self.c, snapshot=True) as scope:
             self.assertIsNone(await gate.party_entries(scope))
+
+    async def test_the_quick_connections_are_the_full_gates_connections(self) -> None:
+        await self.pc("Tavin", 1001)
+        ids = await self.entries()
+        links = []
+        for key in ("place", "faction", "item"):
+            made = await self.memory.add_relation(
+                GUILD_A, self.c, ids["pub"], "knows", ids[key], source="dm", confidence=1.0,
+                status=CONFIRMED,
+            )  # fmt: skip
+            links.append(str(made.value[0].id))
+        await self.pc("Mara", 1002)
+        await self.memory.set_statement_knowers(
+            GUILD_A, self.c, "connection", links[0], [], source="dm"
+        )
+        async with self.memory._read(GUILD_A, self.c, snapshot=True) as scope:
+            quick = await gate.party_connections(scope)
+            full = gate.visible(Viewer.the_party(), await gate.load(scope))
+            both = await gate.party_view(scope)
+        assert quick is not None and both is not None
+        wanted = {i for (k, i) in full.sureness if k == "connection"}
+        self.assertEqual(quick, wanted)
+        self.assertNotIn(links[0], quick)
+        self.assertEqual(both[1], wanted)

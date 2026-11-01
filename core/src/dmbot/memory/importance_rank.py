@@ -21,11 +21,16 @@ Counts and fixed codes only: no word of a transcript is stored.
 
 from __future__ import annotations
 
+import logging
 import time
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 
 from dmbot.db import Conn, Database
+from dmbot.memory import gate
+from dmbot.memory._changes import Scope
+
+log = logging.getLogger(__name__)
 
 BACKGROUND, MINOR, RECURRING, SIGNIFICANT, MAJOR, PLAYER = range(6)
 LEVEL_NAMES = ("Background", "Minor", "Recurring", "Significant", "Major", "Player character")
@@ -205,14 +210,18 @@ class ImportanceStore:
         """For each live character, how many other characters or groups it is joined to by a
         connection that is current and that the players are shown, as (made in play, from a lore
         upload). A pair counts once (in play when any of its connections was), and a merged name
-        counts for the one it became. A hidden fact adds no rank (STORY_MEMORY 9c): a secret,
-        not yet revealed or ended connection counts for nothing, and neither does one to or from
-        an entry the players are not shown (hidden, a limited clue, an unnamed person), judged on
-        the entry each end ended up as. Connections `The party` makes and ones worked out from two
-        stated ones are the same facts counted again, so they count for nothing."""
+        counts for the one it became. A hidden fact adds no rank (STORY_MEMORY 9c): "shown" is
+        the gate's party view (`gate.party_view`, never a flag read here), so a connection counts
+        only when the party holds it and holds both its ends, each judged on the entry it ended
+        up as; an ended one counts for nothing. Connections `The party` makes and ones worked out
+        from two stated ones are the same facts counted again, so they count for nothing."""
+        view = await gate.party_view(Scope(conn, guild_id, campaign_id, 0))
+        if view is None:
+            return {}  # (no player character yet: there is no party to be shown anything)
+        held_entries, held_connections = view
         cur = await conn.execute(
-            "SELECT id, status, merged_into, hidden_from_players, audience_limited, unnamed"
-            " FROM memory_entities WHERE guild_id = %s AND campaign_id = %s"
+            "SELECT id, status, merged_into FROM memory_entities"
+            " WHERE guild_id = %s AND campaign_id = %s"
             " AND type IN ('character', 'faction') AND status IN ('confirmed', 'merged')",
             (guild_id, campaign_id),
         )
@@ -222,21 +231,22 @@ class ImportanceStore:
         def shown(entity_id: str) -> str | None:
             root = ended.get(entity_id)
             row = entries.get(root) if root is not None else None
-            if row is None or row["status"] != "confirmed":
-                return None
-            if row["hidden_from_players"] or row["audience_limited"] or row["unnamed"]:
-                return None
-            return root
+            return (
+                root
+                if row is not None and row["status"] == "confirmed" and (root in held_entries)
+                else None
+            )
 
         cur = await conn.execute(
-            "SELECT subject_id, object_id, bool_or(source <> %s) AS in_play"
-            " FROM memory_relations WHERE guild_id = %s AND campaign_id = %s"
-            " AND status = 'confirmed' AND NOT secret AND NOT unrevealed AND to_session_at IS NULL"
-            " AND predicate <> 'plays' AND source <> ALL(%s) GROUP BY subject_id, object_id",
+            "SELECT id, subject_id, object_id, source <> %s AS in_play FROM memory_relations"
+            " WHERE guild_id = %s AND campaign_id = %s AND status = 'confirmed'"
+            " AND to_session_at IS NULL AND predicate <> 'plays' AND source <> ALL(%s)",
             (LORE_SOURCE, guild_id, campaign_id, list(DERIVED_SOURCES)),
         )
         pairs: dict[frozenset[str], bool] = {}
         for r in await cur.fetchall():
+            if str(r["id"]) not in held_connections:
+                continue
             one, other = shown(str(r["subject_id"])), shown(str(r["object_id"]))
             if one is None or other is None or one == other:
                 continue
@@ -269,6 +279,7 @@ class ImportanceStore:
             if at is not None:
                 sessions.setdefault(at, set()).update(heard.get(entity_id, ()))
         out: dict[str, int] = {}
+        lifted = 0
         for entity_id, row in entities.items():
             if row["status"] == "merged":
                 continue  # (a merged name has no rank of its own)
@@ -279,6 +290,9 @@ class ImportanceStore:
             )
             play, lore = links.get(entity_id, (0, 0))
             out[entity_id] = nudged(base, play, lore)
+            lifted += out[entity_id] > base
+        if lifted:
+            log.info("Importance rank: %d of %d characters lifted by connections", lifted, len(out))
         return out
 
 
