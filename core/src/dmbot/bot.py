@@ -517,6 +517,8 @@ from dmbot.ui.names import (
     ReviewButton,
     after_session_text,
     held_back_text,
+    private_after_session_text,
+    recap_names_dm_view,
     review_view,
 )
 from dmbot.ui.optional_rules import dmbot_optional_rules  # noqa: F401 (registers it)
@@ -550,6 +552,12 @@ from dmbot.ui.transcripts import (
 )
 
 DMBCHAT_STATEMENT_WORDS = 4  # a DM's message this long is a statement; shorter is a reply
+# Added to a question that had to stay on the DM screen (#3210), so a DM whose private messages are
+# closed learns why it is there and how to get it privately.
+NO_PRIVATE_MESSAGE = (
+    "\n_DMbot couldn't message you privately. Allow messages from this server in your Discord "
+    "privacy settings._"
+)
 DMBCHAT_HINT = (
     "To tell DMbot something about the story, write it in your private chat with DMbot. "
     "Players can read this chat."
@@ -9375,10 +9383,16 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         waiting, table.claims_waiting = table.claims_waiting, 0
         table.claim_preview = []
         if waiting and table.campaign_id is not None:
+            # In the DM's private chat (#3210); the DM screen only when no DM can be reached.
+            view = claims_review_view(table.campaign_id)
+            if await self.ask_privately(
+                table.guild_id, table.campaign_id, claims_waiting_text(waiting, private=True), view
+            ):
+                return
             await self.post(
                 table.screen_channel_id,
-                claims_waiting_text(waiting),
-                view=claims_review_view(table.campaign_id),
+                claims_waiting_text(waiting) + NO_PRIVATE_MESSAGE,
+                view=view,
             )
 
     async def ask_about_claims(self, table: Table) -> None:
@@ -9400,10 +9414,14 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             waiting = len(await self.memory.worked_out_waiting(gid, cid))
             log.info("Worked-out family links: %d waiting", waiting)
             if waiting:
+                # In the DM's private chat (#3210); the DM screen only when no DM can be reached.
+                view = links_ready.view(cid)
+                if await self.ask_privately(gid, cid, links_ready.family_notice(waiting), view):
+                    return
                 await self.post(
                     table.screen_channel_id,
-                    links_ready.family_notice(waiting),
-                    view=links_ready.view(cid),
+                    links_ready.family_notice(waiting) + NO_PRIVATE_MESSAGE,
+                    view=view,
                 )
 
     async def warn_about_continuity(self, table: Table) -> None:
@@ -10155,11 +10173,49 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         summary tells them when it is sent, and then empties the list)."""
         names, table.new_names = table.new_names, []
         if names and table.campaign_id is not None:
+            # The question goes to the DM's private chat (owner, 2026-11-01, #3210); the DM screen
+            # keeps the old line only when no DM can be reached, so the question is never lost.
+            if await self.ask_privately(
+                table.guild_id,
+                table.campaign_id,
+                private_after_session_text(names),
+                recap_names_dm_view(table.guild_id, table.campaign_id),
+            ):
+                return
             await self.post(
                 table.screen_channel_id,
-                after_session_text(names),
+                after_session_text(names) + NO_PRIVATE_MESSAGE,
                 view=review_view(table.campaign_id),
             )
+
+    async def ask_privately(
+        self, guild_id: int, campaign_id: str, text: str, view: discord.ui.View
+    ) -> bool:
+        """Send a question to each of the campaign's DMs in their private chat (#3210). True when
+        at least one got it; False (DMs closed, campaign gone) means the caller keeps its old
+        place for the question. Never raises."""
+        try:
+            campaign = await self.campaigns.get(guild_id, campaign_id)
+            if campaign is None:
+                return False
+            sent = False
+            # Marked as from DMbot, with the campaign, so a DM with several campaigns knows which
+            # one is asking (owner, 2026-11-01, #3210).
+            who = discord.utils.escape_markdown(campaign.name)
+            text = f"❓ **DMbot has a question** · {who}\n{text}"
+            for user_id in sorted(campaign.dm_user_ids):
+                # Each DM in its own try: one that fails must not stop the others, nor discard a
+                # send that worked (the caller would then also post on the DM screen, asking
+                # twice). "At least one DM got it" is the contract.
+                try:
+                    if await self.sidebar_send_dm(user_id, text, view) == "sent":
+                        sent = True
+                except Exception:
+                    log.exception("Couldn't ask a DM privately")
+            return sent
+        except Exception:
+            log.exception("Couldn't ask the DM privately")
+            return False
 
     async def _dm_trial_user(self, user_id: int, text: str) -> trial_jobs.DmResult:
         """A private message to a person who is not at a table now. "closed" when Discord

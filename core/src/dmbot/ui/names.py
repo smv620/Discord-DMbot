@@ -157,7 +157,8 @@ def changed(interaction: discord.Interaction, campaign: Campaign) -> None:
 # The server of a campaign whose cards were opened from a private message (#2977): a private message
 # has no server, so the card's buttons would all answer "Use this in a server". Only the campaign's
 # own DM (checked by `can_run` when the card is opened) puts a campaign here, and every press is
-# checked again below. Lost on a restart: a card from before it asks to be opened again.
+# checked again below. Lost on a restart; `_campaign_for` then asks the database (`guild_of`,
+# #3210), so a card from before the restart still works.
 _PRIVATE_SERVERS: dict[str, int] = {}
 
 
@@ -166,6 +167,10 @@ async def _campaign_for(interaction: discord.Interaction, campaign_id: str) -> C
     guild_id = interaction.guild.id if interaction.guild is not None else None
     if guild_id is None:
         guild_id = _PRIVATE_SERVERS.get(campaign_id)
+    if guild_id is None:
+        # Not remembered (a restart, or a question sent to the DM's private chat, #3210): the
+        # database says which server the campaign is in, so old buttons keep working.
+        guild_id = await _bot(interaction).campaigns.guild_of(campaign_id)
     if guild_id is None:
         await _tell(interaction, NOT_IN_SERVER)
         return None
@@ -2005,6 +2010,19 @@ def recap_names_reminder(count: int) -> str:
         f"📝 **{_plural(count, 'new name')}** from the last recap "
         f"{'is' if count == 1 else 'are'} still unchecked. Tap **Check new names** when you "
         "have a moment."
+    )
+
+
+def private_after_session_text(names: list[str], where: str = "your last session") -> str:
+    """The same question, in the DM's private chat (#3210): nobody else reads it, so nothing here
+    is held back. Names only, as on the DM screen. It says "your last session", not "this
+    session", because the DM may read it later."""
+    shown = ", ".join(f"**{_md(n)}**" for n in names[:5])
+    more = f" and {len(names) - 5} more" if len(names) > 5 else ""
+    ask = "say if it is in your game" if len(names) == 1 else "say which are in your game"
+    return (
+        f"📝 **{_plural(len(names), 'new name')} to check** from {where}: {shown}{more}.\n"
+        f"Press the button to {ask}. DMbot will spell {'it' if len(names) == 1 else 'them'} right."
     )
 
 

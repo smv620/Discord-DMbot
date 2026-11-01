@@ -9,7 +9,7 @@ import unittest
 from types import SimpleNamespace
 from typing import Any, cast
 
-from dmbot.bot import DMBot
+from dmbot.bot import NO_PRIVATE_MESSAGE, DMBot
 from dmbot.dm_screen import links_ready
 from dmbot.memory.models import CONFIRMED, REJECTED
 from tests.test_memory_store import GUILD_A, ConfirmedMemoryTest
@@ -20,11 +20,11 @@ SCREEN = 77
 class TheText(unittest.TestCase):
     def test_a_number_and_what_the_button_does_never_a_name(self) -> None:
         one, many = links_ready.family_notice(1), links_ready.family_notice(3)
-        self.assertIn("1 family link worked out", one)
-        self.assertIn("waits for your yes", one)
-        self.assertIn("3 family links worked out", many)
-        self.assertIn("wait for your yes", many)
-        self.assertIn("nothing goes to players", many)
+        self.assertIn("1 family link** DMbot guessed", one)
+        self.assertIn("needs your yes or no", one)
+        self.assertIn("3 family links** DMbot guessed", many)
+        self.assertIn("need your yes or no", many)
+        self.assertIn("players are not told", many)
 
     def test_none_is_no_line(self) -> None:
         self.assertEqual((links_ready.family_notice(0), links_ready.family_notice(-1)), ("", ""))
@@ -42,7 +42,14 @@ class TheLine(ConfirmedMemoryTest):
             self.posted.append((channel, text, view))
             return True
 
-        self.bot = SimpleNamespace(memory=self.memory, post=post)
+        self.asked: list[tuple[int, str, str, Any]] = []
+        self.reachable = False  # no DM can be reached: the DM screen keeps the line
+
+        async def ask_privately(guild_id: int, campaign_id: str, text: str, view: Any) -> bool:
+            self.asked.append((guild_id, campaign_id, text, view))
+            return self.reachable
+
+        self.bot = SimpleNamespace(memory=self.memory, post=post, ask_privately=ask_privately)
         self.table = SimpleNamespace(guild_id=GUILD_A, campaign_id=self.c, screen_channel_id=SCREEN)
 
     async def state(self, a: str, role: str, b: str) -> None:
@@ -60,11 +67,25 @@ class TheLine(ConfirmedMemoryTest):
         await self.run_step()
         [(channel, text, view)] = self.posted
         self.assertEqual(channel, SCREEN)
-        self.assertEqual(text, links_ready.family_notice(1))
+        # (the DM screen's line says why it is not in the private chat)
+        self.assertEqual(text, links_ready.family_notice(1) + NO_PRIVATE_MESSAGE)
         self.assertNotIn("Aldric", text)
         self.assertNotIn("Mira", text)
         [item] = view.children
         self.assertEqual(item.item.label, links_ready.LABEL)
+        self.assertEqual(item.item.custom_id, f"dmbot:linksready:{self.c}")
+
+    async def test_the_line_goes_to_the_dms_private_chat_when_one_can_be_reached(self) -> None:
+        # #3210: asked privately; the DM screen gets nothing when the private message was sent.
+        self.reachable = True
+        await self.state(self.aldric, "mother", self.bryn)
+        await self.state(self.bryn, "sister", self.mira)
+        await self.run_step()
+        self.assertEqual(self.posted, [])
+        [(guild_id, campaign_id, text, view)] = self.asked
+        self.assertEqual((guild_id, campaign_id), (GUILD_A, self.c))
+        self.assertEqual(text, links_ready.family_notice(1))
+        [item] = view.children
         self.assertEqual(item.item.custom_id, f"dmbot:linksready:{self.c}")
 
     async def test_none_waiting_shows_no_line(self) -> None:

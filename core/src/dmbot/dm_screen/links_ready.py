@@ -59,16 +59,17 @@ def notice(counts: Mapping[str, int]) -> str:
 
 
 def family_notice(count: int) -> str:
-    """For the DM screen after a session (#3066): how many family links DMbot worked out from the
-    DM's own are waiting for a yes. A number only, never a name or which links."""
+    """After a session (#3066): how many family links DMbot guessed from the DM's own are waiting
+    for a yes or no. A number only, never a name or which links. "Guessed" keeps it plain that
+    DMbot advises and the DM decides."""
     if count <= 0:
         return ""
     noun = "family link" if count == 1 else "family links"
-    verb = "waits" if count == 1 else "wait"
+    verb = "needs" if count == 1 else "need"
     return (
-        f"👪 {count} {noun} worked out from the ones you gave {verb} for your yes.\n"
+        f"👪 **{count} {noun}** DMbot guessed from your links {verb} your yes or no.\n"
         "Press the button to keep or skip each one. Nothing is added until you say yes, and "
-        "nothing goes to players."
+        "players are not told."
     )
 
 
