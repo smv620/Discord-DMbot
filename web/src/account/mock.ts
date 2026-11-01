@@ -856,6 +856,8 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
     if (n % 4 === 2) return [{ id: "q-heist", name: "The Keep Heist", links: 1 }];
     return [];
   };
+  // Who knows a held connection (#3214): the DM's answers, kept by link id for the pretend web.
+  const linkWho = new Map<string, { who: "dm" | "some" | "all"; knownBy: { id: string; name: string }[] }>();
   const webGraphOf = (ref: string, query: WebQuery): WebGraph => {
     const view = webView(ref);
     if (view === "none") throw new ApiError("not-found");
@@ -935,10 +937,35 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
           }),
         }))
       : edges;
+    // The held connections of the DM's full view carry an answer: the first is "only the DM", the second "some" (two
+    // pretend characters), the third "everyone", unless the DM has answered one (#3214).
+    const heldLinks = edges
+      .flatMap((e) => e.links)
+      .filter((l) => {
+        const s = state.links.find((x) => x.id === l.id);
+        return s !== undefined && (s.secret === true || s.revealed === false);
+      })
+      .map((l) => l.id);
+    const defaultWho: { who: "dm" | "some" | "all"; knownBy: { id: string; name: string }[] }[] = [
+      { who: "dm", knownBy: [] },
+      { who: "some", knownBy: [{ id: "pc-cerric", name: "Cerric" }, { id: "pc-mira", name: "Mira" }] },
+      { who: "all", knownBy: [] },
+    ];
+    const whoEdges =
+      dm && all
+        ? knownEdges.map((e) => ({
+            ...e,
+            links: e.links.map((l) => {
+              const at = heldLinks.indexOf(l.id);
+              const answer = linkWho.get(l.id) ?? (at >= 0 && at < defaultWho.length ? defaultWho[at] : undefined);
+              return answer ? { ...l, who: answer.who, knownBy: answer.knownBy } : l;
+            }),
+          }))
+        : knownEdges;
     return {
       center: centre,
       nodes: knownNodes,
-      edges: knownEdges,
+      edges: whoEdges,
       truncated: false,
       maxHops: 8,
       canEdit: dm && all,
@@ -1820,6 +1847,17 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         link.secret = change.secret;
       } else if (change.action === "pin") {
         link.pinned = change.pinned;
+      } else if (change.action === "who") {
+        // Who knows a held connection (#3214): "everyone" is the table; "some" names the characters picked.
+        const picked = (change.characters ?? []).map((id) => PRETEND_VIEWERS.find((v) => v.id === id)).filter((v) => v !== undefined);
+        linkWho.set(
+          link.id,
+          change.who === "dm"
+            ? { who: "dm", knownBy: [] }
+            : change.who === "everyone"
+              ? { who: "all", knownBy: [] }
+              : { who: "some", knownBy: picked.map((v) => ({ id: v.id, name: v.name })) },
+        );
       } else {
         if (change.confirm !== true) throw new ApiError("needs-confirm");
         state.links.splice(state.links.indexOf(link), 1);
