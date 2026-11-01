@@ -133,6 +133,7 @@ from dmbot.dm_screen import (
 from dmbot.dm_screen import clock as clock_screen
 from dmbot.dm_screen import effects as timer_screen
 from dmbot.dm_screen import house_voice as house_voice_screen
+from dmbot.dm_screen import import_time as import_time_screen
 from dmbot.dm_screen import levels as screen_levels
 from dmbot.dm_screen import messages as screen_messages
 from dmbot.dm_screen import time_suggest as time_suggest_screen
@@ -287,6 +288,7 @@ from dmbot.memory.exposures import (
 )
 from dmbot.memory.heard_backup import HeardSection
 from dmbot.memory.importance import ImportanceCache
+from dmbot.memory.importance_backup import ImportanceSection
 from dmbot.memory.live_heads_up import heads_up as live_heads_up_for
 from dmbot.memory.lookup import CampaignLookup, LookupCache
 from dmbot.memory.models import (
@@ -370,7 +372,7 @@ from dmbot.sidebar import knowledge
 from dmbot.sidebar import rule_clash as sidebar_rule_clash
 from dmbot.sidebar.answer import PROMPT_VERSION as SIDEBAR_PROMPT_VERSION
 from dmbot.sidebar.answer import Sidebar
-from dmbot.sidebar.ask import asks_off_record, request_in
+from dmbot.sidebar.ask import asks_off_record, is_table_question, request_in
 from dmbot.sidebar.people import lines as people_lines
 from dmbot.sidebar.service import SidebarService
 from dmbot.table import HintPeople, Table
@@ -379,7 +381,7 @@ from dmbot.test_recording import library as test_library
 from dmbot.test_recording.session import TestSession
 from dmbot.test_recording.store import TestVoiceStore
 from dmbot.timebot import clock as clock_game
-from dmbot.timebot import combat_phrases, durations, where_are_we
+from dmbot.timebot import combat_phrases, durations, import_time, where_are_we
 from dmbot.timebot import phrases as clock_phrases
 from dmbot.timebot import suggest as time_suggest
 from dmbot.timebot.effects import EffectsSection, EffectStore
@@ -547,6 +549,11 @@ from dmbot.ui.transcripts import (
     transcript_command,
 )
 
+DMBCHAT_STATEMENT_WORDS = 4  # a DM's message this long is a statement; shorter is a reply
+DMBCHAT_HINT = (
+    "To tell DMbot something about the story, write it in your private chat with DMbot. "
+    "Players can read this chat."
+)
 REPORT_CALLS = 8  # AI calls a session may spend on the after-session report (grading and sorting)
 MEANING_RUN_CALLS = 50  # Voyage AI calls one after-session run may make (64 texts each)
 CONTRADICTION_CALLS = 3  # AI calls a session may spend grading contradictions (12 clashes each)
@@ -1299,6 +1306,11 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             if self.ai_client
             else None
         )
+        self.import_time_ai = (  # the game time an imported session ended at (#2979), background
+            self.ai_client.tier(FEATURE_TIERS[Feature.IMPORT_TIME], Feature.IMPORT_TIME)
+            if self.ai_client
+            else None
+        )
         # Pictures posted in the table chat (#2450): off unless the backend switch is on.
         # Messages deleted lately, so a picture still being described when its poster deletes it
         # is not written down afterwards (#2450); id → when.
@@ -1526,6 +1538,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         )
         self.add_dynamic_items(clock_screen.CombatUndoButton)  # #1127
         self.add_dynamic_items(time_suggest_screen.TimeJumpButton)  # #1758
+        self.add_dynamic_items(import_time_screen.ImportTimeButton)  # #2979
         self.add_dynamic_items(clock_screen.ClockPicker, clock_screen.SplitUndoButton)  # #1607
         self.add_dynamic_items(delete_campaign.DeleteButton)  # #1608
         self.add_dynamic_items(fightbot.FightButton)  # #1129
@@ -4531,8 +4544,26 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         ):
             self._wake_off_the_record(table.guild_id, author.id)  # not a question (#2466)
         elif text is not None:
-            self.sidebar.ask_in_chat(table, author.id, text)
+            if (
+                table.is_dm(author.id)
+                and self.consent.has_consent(table.guild_id, author.id)
+                and not is_table_question(text)
+            ):
+                # A DM's statement (#3209): the players read this channel, so it is never a table
+                # question and never stored from here, whatever it says. The DM is told once.
+                self._hint_story_goes_private(table, author.id, text)
+            else:
+                self.sidebar.ask_in_chat(table, author.id, text)
         return True
+
+    def _hint_story_goes_private(self, table: Table, user_id: int, text: str) -> None:
+        """One private line to a DM who typed a story statement in the table's chat: story goes in
+        the private chat with DMbot. Once a session each, and not for a short reply ("yes",
+        "correct"), which gets nothing (it answers a question that lives in the private chat)."""
+        if user_id in table.dmbchat_hinted or len(text.split()) < DMBCHAT_STATEMENT_WORDS:
+            return
+        table.dmbchat_hinted.add(user_id)
+        self._track(self.sidebar_send_dm(user_id, DMBCHAT_HINT), "dmbchat-hint")
 
     async def sidebar_post_chat(self, table: Table, text: str) -> bool:
         """Post in the session's DMbot chat channel (#1187); False if there is none."""
@@ -10237,6 +10268,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                         added = await self._scan_import(gid, ready)
                     await store.finish_scan(gid, ready.session_id, int(time.time()))
                     await self._link_import_party(gid, ready)
+                    await self._offer_import_time(gid, ready)
                     done += 1
                     self._import_names.setdefault(ready.campaign_id, []).extend(added)
                 except Exception:
@@ -10253,6 +10285,90 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         await self._apply_import_plays(gid, store)
         await self._tell_import_news(gid, store)
         return done
+
+    async def _offer_import_time(self, gid: int, ready: Ready) -> None:
+        """After an imported session's scan is done (#2979): work out when in game time it ended
+        and offer the DM to set the clock there, with one button on the DM screen. Never moves
+        the clock. Only when the clock is set, the result is later than it, this is the campaign's
+        newest session (an older one imported later never moves it back) and the party is not
+        split (then the DM is told why nothing is offered). The DM's lines of the game talk only,
+        from speakers who still agree; the strict phrases in code first, and one AI question over
+        the cue lines only when none of them moved it. Its own `try`: a failure here is logged and
+        never reaches the scan's claim. Counts only in the log."""
+        try:
+            await self._offer_import_time_inner(gid, ready)
+        except Exception:
+            log.exception("Import: couldn't work out the game time a session ended at")
+
+    async def _offer_import_time_inner(self, gid: int, ready: Ready) -> None:
+        assert self.import_job is not None
+        if self.clocks is None or self.transcripts is None:
+            return
+        campaign = await self.campaigns.get(gid, ready.campaign_id)
+        if campaign is None or campaign.dm_screen_channel_id is None:
+            return
+        stored = await self.clocks.get(gid, campaign.id)
+        if stored is None:
+            return
+        if await self.transcripts.next_session_start(gid, campaign.id, ready.started_at):
+            return  # a newer session exists: this one never moves the clock
+        rows = await self.import_job.store.scan_lines(gid, ready.session_id)
+        agreed = await self.consent.consenting(gid)
+        lines = [t for uid, t in rows if uid in campaign.dm_user_ids and uid in agreed]
+        if not lines:
+            return
+        walked = import_time.walk(lines, stored.clock, clock_screen.apply_action)
+        target, calls = walked.clock.minute, 0
+        if (
+            not walked.moved
+            and walked.cues
+            and self.settings.time_suggestions
+            and self.import_time_ai is not None
+            and await self.plan_allows("ai", gid, campaign, fail_open=False)
+        ):
+            calls = 1
+            total = await self._import_time_total(walked.cues, stored.clock.minute)
+            if total is not None:
+                target = clock_game.advance(stored.clock, total).minute
+        log.info(  # counts, never words
+            "Import time: %d lines, %d moved by phrases, %d cue lines, %d call(s), %s",
+            len(lines), walked.moved, len(walked.cues), calls,
+            "an offer" if target > stored.clock.minute else "no offer",
+        )  # fmt: skip
+        if target <= stored.clock.minute:
+            return
+        if stored.split:
+            await self.post(campaign.dm_screen_channel_id, import_time_screen.SPLIT_WHY)
+            return
+        await self.post(
+            campaign.dm_screen_channel_id,
+            import_time.offer_text(target),
+            view=import_time_screen.offer_view(campaign.id, target),
+        )
+
+    async def _import_time_total(self, cues: tuple[str, ...], start: int) -> int | None:
+        """The one question over an imported session's cue lines: the minutes they pass in all,
+        or None (the AI failed, said null or answered in the wrong shape)."""
+        assert self.import_time_ai is not None
+        try:
+            # A background call: its own feature, not a live one, so the client sends it with the
+            # output floor whatever small estimate is given here (#2596).
+            reply = await asyncio.wait_for(
+                self.import_time_ai.complete(
+                    import_time.SYSTEM,
+                    import_time.prompt(cues, clock_game.label(start)),
+                    max_tokens=import_time.ANSWER_TOKENS,
+                ),
+                import_time.TIMEOUT_S,
+            )
+        except Exception as exc:
+            log.info("Import time: couldn't ask (%s)", type(exc).__name__)
+            return None
+        if reply.cut or reply.refused:
+            # A cut answer is never read as a smaller one: nothing is offered (#2596).
+            log.info("Import time: the answer stopped early")
+            return None
+        return import_time.read_answer(reply.text)
 
     async def _link_import_party(self, gid: int, ready: Ready) -> None:
         """After an imported session's scan is done: link its party (#3036). Its own `try`: a
@@ -12493,6 +12609,7 @@ def register_backup_sections(
     campaigns.register_section(ReportAnswersSection())  # the DM's report answers (#2661)
     # And how often names were said, kept only for who is recorded now (#1747).
     campaigns.register_section(HeardSection(consenting))
+    campaigns.register_section(ImportanceSection())  # after memory: needs its entries (#3172)
 
 
 async def run(settings: Settings) -> None:

@@ -3,6 +3,7 @@
 // in `NAMES_METHODS` there, and a test keeps the two in step.
 import type {
   CampaignName,
+  ConfirmAnswer,
   MyNpcNote,
   NameAnswer,
   NameCheckList,
@@ -193,6 +194,26 @@ export default function namesArea({ call, waitForAnswer }: ApiHelpers): Partial<
       (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/web/overview${q.view ? `?view=${q.view}` : ""}`)) as WebOverview,
     webFind: async (ref, q) =>
       ((await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/web/find?view=${q.view ?? ""}&q=${encodeURIComponent(q.q)}`)) as { names: { id: string; name: string; kind: string }[] }).names,
+    confirmKinds: async (ref, upload, kinds) => {
+      const queued = (await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/all-names-confirm`, {
+        action: "confirm-kinds",
+        upload,
+        kinds,
+      })) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      return queued;
+    },
+    confirmUndo: async (ref, answer) => {
+      const queued = (await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/all-names-confirm`, {
+        action: "confirm-undo",
+        answer,
+      })) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      return queued;
+    },
+    // The bot's answers to "Add all" are polled where every all-names answer is (app.py, all-names/answers).
+    confirmAnswer: async (ref, answer) =>
+      (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/all-names/answers/${encodeURIComponent(answer)}`)) as ConfirmAnswer,
     webViewers: async (ref, q) =>
       (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/web/viewers?q=${encodeURIComponent(q)}`)) as WebViewers,
     webWaiting: async (ref) =>

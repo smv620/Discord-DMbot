@@ -295,12 +295,18 @@ class Entity:
     unnamed_anchor: str | None = None
     unnamed_role: str | None = None
     unnamed_what: str | None = None
+    # Whether the players are shown this entry, worked out by the lookup from the gate (the party's
+    # view of the lists of who knows what, #2995). None: not asked (a hand-made entry in a test, or
+    # a campaign with no player character yet, or an entry still only suggested): the flags answer.
+    seen_by_party: bool | None = None
 
     @property
     def unseen_by_players(self) -> bool:
         """The DM alone sees this entry: a clue only some know, one the players don't know yet, or
         a person the story never named (#2790). What lists, cards, answers and recaps hide from
         everyone but a DM."""
+        if self.seen_by_party is not None:
+            return not self.seen_by_party
         # (an unnamed person is also kept out of the names a spelling fix may complete: safe, and
         # at worst it fixes one line fewer)
         return self.audience_limited or self.hidden_from_players or self.unnamed
