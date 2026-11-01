@@ -29,6 +29,15 @@ the DM decides.**
    keep the DM from being flooded.
 6. **Least access.** Narrow OAuth scopes, encrypted tokens, and commands to review,
    test, and revoke every access the bot holds.
+8. **Every question DMbot asks goes to the private chat (owner, 2026-11-01, #3210).** Whenever
+   DMbot needs someone to clarify something (a name to check, a family link or a connection to
+   keep, "same person?", a reading to place, a clock to set), it asks in that person's private
+   chat with DMbot, never in the DM screen or a `dmb-` channel, and the message says clearly
+   that it is from DMbot and which campaign it is about. One campaign runs in a server at a time,
+   so the private chat is never ambiguous. Each question is asked in one place only: the DM
+   screen keeps advice and alerts (rules, heads-ups), not questions. Players never see a DM's
+   questions. If a private message can't be delivered, the DM screen says so in one line,
+   without the question.
 
 ## Architecture
 
