@@ -345,18 +345,22 @@ async def party_entries(scope: Scope) -> frozenset[str] | None:
     group_views = [str(r["id"]) for r in await cur.fetchall()]
     # One pass over the entry rows: who among the player characters holds each, and whether a
     # group (a faction as a knower) holds any, which this does not follow.
+    if group_views:
+        cur = await scope.conn.execute(
+            "SELECT 1 FROM memory_knowers WHERE guild_id = %s AND campaign_id = %s"
+            " AND about_entity_id IS NOT NULL AND cardinality(hidden_by) = 0"
+            " AND perspective_id = ANY(%s) LIMIT 1",
+            (*scope.ids, group_views),
+        )
+        if await cur.fetchone() is not None:
+            return None  # (a group holds an entry: let the full gate follow its members)
     cur = await scope.conn.execute(
-        "SELECT about_entity_id,"
-        " array_agg(perspective_id) FILTER (WHERE perspective_id = ANY(%s)) AS holders,"
-        " coalesce(bool_or(perspective_id = ANY(%s)), false) AS by_group"
-        " FROM memory_knowers WHERE guild_id = %s AND campaign_id = %s"
-        " AND about_entity_id IS NOT NULL AND cardinality(hidden_by) = 0"
-        " AND (perspective_id = ANY(%s) OR perspective_id = ANY(%s)) GROUP BY about_entity_id",
-        (list(views.values()), group_views, *scope.ids, list(views.values()), group_views),
+        "SELECT about_entity_id, array_agg(perspective_id) AS holders FROM memory_knowers"
+        " WHERE guild_id = %s AND campaign_id = %s AND about_entity_id IS NOT NULL"
+        " AND cardinality(hidden_by) = 0 AND perspective_id = ANY(%s) GROUP BY about_entity_id",
+        (*scope.ids, list(views.values())),
     )
     rows = await cur.fetchall()
-    if any(row["by_group"] for row in rows):
-        return None  # (a group holds an entry: let the full gate follow its members)
     everyone = set(views.values())
     own = {entity: view for entity, view in views.items()}
     seen = set()
