@@ -93,7 +93,9 @@ class TheDoor(Confirming):
         )
 
     async def test_ideas_bad_words_and_repeats_are_refused_before_the_door(self) -> None:
-        for kinds in (["idea"], ["Place"], [], ["place", "place"], ["a"], "everything", None):
+        for kinds in (
+            ["idea"], ["all"], ["Place"], [], ["place", "place"], ["a"], "everything", None,
+        ):  # fmt: skip
             with self.subTest(kinds=kinds):
                 self.assertEqual(
                     await self.refused_confirm(
@@ -111,6 +113,30 @@ class TheDoor(Confirming):
             await self.refused_confirm({**body, "upload": "b" * 32}), "not_found"
         )  # another campaign's, or none
         self.assertEqual(await self.rows(), [])
+
+    async def test_eight_long_kind_words_fit(self) -> None:
+        kinds = [f"{chr(97 + n) * 20}" for n in range(8)]  # 167 characters
+        await self.queue({"action": "confirm-kinds", "upload": self.upload, "kinds": kinds})
+        self.assertEqual(len((await self.rows())[0]["text"]), 8 * 20 + 7)
+
+    async def test_another_campaigns_finished_upload_is_not_found(self) -> None:
+        other = await self.campaigns.create(self.g, "Other", self.session.user_id)
+        await self.sql(
+            "INSERT INTO lore_uploads (guild_id, campaign_id, id, user_id, source, choice,"
+            " rights_by, rights_at, state, stage, created_at, updated_at)"
+            " VALUES (%s, %s, %s, %s, 'paste', 'world', %s, 1, 'done', 'done', 1, 1)",
+            self.g, other.id, "d" * 32, self.session.user_id, self.session.user_id,
+        )  # fmt: skip
+        body = {"action": "confirm-kinds", "upload": "d" * 32, "kinds": "all"}
+        self.assertEqual(await self.refused_confirm(body), "not_found")
+
+    async def test_a_badly_shaped_found_does_not_break_the_read(self) -> None:
+        await self.sql(
+            "UPDATE lore_uploads SET found = %s::jsonb WHERE id = %s",
+            json.dumps({"place": "x", "npc": None, "item": [self.ids["npc"][0]]}),
+            self.upload,
+        )
+        self.assertEqual(await self.waiting(), {"item": 1})
 
     async def test_a_player_cannot_queue_it(self) -> None:
         body = {"action": "confirm-kinds", "upload": self.upload, "kinds": "all"}
@@ -133,6 +159,7 @@ class TheDoor(Confirming):
         )
         again = await self.queue(undo)
         self.assertRegex(again, r"^[0-9a-f]{32}$")
+        self.assertEqual(await self.refused_confirm(undo), "not_found")  # one Undo for a press
         self.assertEqual(await self.refused_confirm({**undo, "answer": "c" * 32}), "not_found")
         await self.sql("UPDATE name_actions SET result_batches = '{}' WHERE id = %s", first)
         self.assertEqual(await self.refused_confirm(undo), "not_found")  # it made nothing

@@ -24,6 +24,10 @@ _ACTION_SWAPS = (
         "'link-add', 'link-words', 'link-secret', 'link-remove', 'link-pin',\n"
         "                'link-who', 'alias-who', 'confirm-kinds', 'confirm-undo',",
     ),
+    (
+        "'backstory-keep-all', 'link-who', 'alias-who')",
+        "'backstory-keep-all', 'link-who', 'alias-who', 'confirm-kinds')",
+    ),
     # the text: the kinds to add (words, at most eight) or `all`; an Undo has none
     (
         "           OR (act IN ('link-who', 'alias-who')\n"
@@ -33,6 +37,8 @@ _ACTION_SWAPS = (
         "           OR (act = 'confirm-kinds'\n"
         "               AND clean !~ '^(all|[a-z_]{2,20}( [a-z_]{2,20}){0,7})$')\n"
         "           OR (act = 'confirm-kinds' AND ' ' || clean || ' ' LIKE '% idea %')\n"
+        "           OR (act = 'confirm-kinds' AND clean <> 'all'\n"
+        "               AND ' ' || clean || ' ' LIKE '% all %')\n"
         "           OR (act = 'confirm-undo' AND clean <> '')",
     ),
     # a target id for both, no flag
@@ -68,7 +74,12 @@ _ACTION_SWAPS = (
         "                   WHERE p.guild_id = g AND p.campaign_id = c AND p.id = tgt\n"
         "                     AND p.user_id = dmbot_current_user() AND p.action = 'confirm-kinds'\n"
         "                     AND p.state = 'done'\n"
-        "                     AND cardinality(p.result_batches) > 0) THEN\n"
+        "                     AND cardinality(p.result_batches) > 0\n"
+        "                     AND NOT EXISTS (SELECT 1 FROM name_actions u\n"
+        "                                     WHERE u.guild_id = g AND u.campaign_id = c\n"
+        "                                       AND u.action = 'confirm-undo'\n"
+        "                                       AND u.target_id = tgt\n"
+        "                                       AND u.state <> 'failed')) THEN\n"
         "                RETURN jsonb_build_object('status', 'not_found');\n"
         "            END IF;\n"
         "        END IF;\n"
@@ -107,7 +118,9 @@ _LORE_READ_SWAPS = (
         "                CROSS JOIN LATERAL (\n"
         "                    SELECT count(*) AS cnt FROM memory_entities e\n"
         "                    WHERE e.guild_id = g AND e.campaign_id = c AND e.status = 'proposed'\n"
-        "                      AND e.id IN (SELECT jsonb_array_elements_text(f.value))) n\n"
+        "                      AND e.id IN (SELECT jsonb_array_elements_text(\n"
+        "                        CASE WHEN jsonb_typeof(f.value) = 'array' THEN f.value\n"
+        "                             ELSE '[]'::jsonb END))) n\n"
         "                WHERE n.cnt > 0 AND f.key <> 'idea'), '{}'::jsonb));",
     ),
 )
@@ -121,6 +134,11 @@ CONFIRM_KINDS_ACTIONS = (
         ADD COLUMN result_counts TEXT NOT NULL DEFAULT '' CHECK (char_length(result_counts) <= 200),
         ADD COLUMN result_batches BIGINT[] NOT NULL DEFAULT '{}'
             CHECK (cardinality(result_batches) <= 50);
+
+    ALTER TABLE name_actions DROP CONSTRAINT name_actions_text_check;
+    ALTER TABLE name_actions ADD CONSTRAINT name_actions_text_check CHECK (char_length(text) <=
+        CASE WHEN action IN ('merge-many', 'backstory-keep-all', 'link-who', 'alias-who',
+                             'confirm-kinds') THEN 1700 ELSE 100 END);
 
     ALTER TABLE name_actions DROP CONSTRAINT name_actions_action_check;
     ALTER TABLE name_actions ADD CONSTRAINT name_actions_action_check CHECK (action IN

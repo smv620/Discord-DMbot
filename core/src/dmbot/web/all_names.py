@@ -310,7 +310,10 @@ def _arguments(body: object) -> tuple[str, str, str, str, bool]:
         else:
             if not isinstance(kinds, list) or not 1 <= len(kinds) <= KINDS_MAX:
                 raise RecapError("bad_target")
-            if not all(isinstance(k, str) and KIND_WORD.match(k) and k != "idea" for k in kinds):
+            if not all(
+                isinstance(k, str) and KIND_WORD.match(k) and k not in ("idea", "all")
+                for k in kinds
+            ):
                 raise RecapError("bad_target")
             if len(set(kinds)) != len(kinds):
                 raise RecapError("bad_target")
@@ -411,6 +414,7 @@ async def read_action(db: Database, session: Session, ref: str, action_id: str) 
     if got["state"] == "done" and got["action"] == "kind" and got["resultOther"]:
         asked = {"name": got["resultOther"][1:], "inServer": got["resultOther"][0] == "i"}
     # What an "Add all" press did, counts only (#3207): {"place": 5, "npc": 7}; empty otherwise.
+    # The door's `counts` is the bot's own text for it, "place:5 npc:7" (one pair per kind).
     counts = {
         k: int(n)
         for k, _, n in (part.partition(":") for part in str(got.get("counts") or "").split())
