@@ -791,9 +791,29 @@ class MemoryStore:
                 for r in await scope.select(RULE_LINKS, " ORDER BY created_at, id")
                 if r["entity_id"] in live
             ]
+            # Which entries the players are shown, from the gate (the party's view of the lists).
+            # With no player character there is no party to ask, and a suggested entry is on no
+            # list yet: both stay on the flags.
+            shown_entries = await gate.party_entries(scope)
+            if shown_entries is None:
+                # (no player character, or a list held by a group: the full gate answers)
+                statements = await gate.load(scope)
+                if statements.player_characters:
+                    full = gate.visible(gate.Viewer.the_party(), statements)
+                    shown_entries = frozenset(i for (k, i) in full.sureness if k == gate.ENTRY)
+            made = [_entity(r) for r in entities]
+            if shown_entries is not None:
+                made = [
+                    # (the entry's own row: learning a connection or name that mentions an entry
+                    # does not show its main name, `gate.display_name`)
+                    dataclasses.replace(e, seen_by_party=e.id in shown_entries)
+                    if e.status == CONFIRMED
+                    else e
+                    for e in made
+                ]
             return LookupData(
                 scope.version,
-                tuple(_entity(r) for r in entities),
+                tuple(made),
                 tuple(_alias(r) for r in aliases),
                 tuple(_correction(r) for r in corrections),
                 tuple(_relation(r) for r in relations),
