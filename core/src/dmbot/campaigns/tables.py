@@ -37,6 +37,7 @@ SECTION_TABLES: dict[str, tuple[str, ...]] = {
         "memory_flags",
         "character_sheets",
     ),
+    "memory_importance": ("memory_importance",),  # PlotBot's importance ranks (#3172)
     "house_rules": ("house_rules",),
     "house_rule_wins": ("house_rule_wins",),
     "homebrew": ("homebrew_entries",),
@@ -150,10 +151,6 @@ NOT_IN_BACKUP: dict[str, str] = {
     "themselves are in the transcript (#2684)",
     "memory_differences": "what the party has wrong, with PlotBot's sort: made again by the next "
     "check (#2661); the DM's answers to them are the `report_answers` section",
-    "memory_importance": "PlotBot's internal importance assessments of characters (#3172): derived "
-    "from the story and rebuilt by the next session's reading and the floor the code works out, "
-    "never something the DM wrote, and never shown to a player; a restored campaign starts at the "
-    "floor",
     "game_clock_group_log": "who was in which split-party group, by character id: the ids in a "
     "file are the file's, a restored campaign starts a new history, and a split's membership is "
     "a moment of play, not story; lines from before the restore read as not known (#3131)",

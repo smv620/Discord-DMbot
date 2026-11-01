@@ -25,7 +25,7 @@ import time
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 
-from dmbot.db import Database
+from dmbot.db import Conn, Database
 
 BACKGROUND, MINOR, RECURRING, SIGNIFICANT, MAJOR, PLAYER = range(6)
 LEVEL_NAMES = ("Background", "Minor", "Recurring", "Significant", "Major", "Player character")
@@ -77,6 +77,31 @@ class Assessment:
         )
 
 
+def roots(entities: Mapping[str, Mapping[str, object]]) -> dict[str, str | None]:
+    """For every entry, the live character it ended up as (itself when it is live), or None (a
+    cycle, or one that is gone). A merge leaves older merges pointing at the entry that merged
+    later (`MemoryStore.resolve` follows the chain), so the walk follows it too. `entities`: entry
+    id -> a row with `status` and `merged_into`. Pure; the one walk both the reader and the writer
+    use, so they cannot disagree about who a name is."""
+    out: dict[str, str | None] = {}
+    for entity_id in entities:
+        seen: set[str] = set()
+        current: str | None = entity_id
+        found: str | None = None
+        while current is not None and current not in seen:
+            seen.add(current)
+            row = entities.get(current)
+            if row is None:
+                break
+            if row["status"] != "merged":
+                found = current
+                break
+            nxt = row["merged_into"]
+            current = str(nxt) if nxt is not None else None
+        out[entity_id] = found
+    return out
+
+
 class ImportanceStore:
     """Reads and appends assessments. The caller has already checked who may ask; the rows are
     this campaign's only (row-level security and composite keys)."""
@@ -85,103 +110,99 @@ class ImportanceStore:
         self._db = db
         self._now = now
 
+    @staticmethod
+    async def _state(
+        conn: Conn, guild_id: int, campaign_id: str
+    ) -> tuple[dict[str, Mapping[str, object]], dict[str, str | None], dict[str, tuple[int, int]]]:
+        """The campaign's characters (live and merged), who each ended up as, and for each live
+        character the newest assessment of its whole merged group as (seq, rank)."""
+        cur = await conn.execute(
+            "SELECT id, role, status, merged_into FROM memory_entities"
+            " WHERE guild_id = %s AND campaign_id = %s AND type = 'character'"
+            " AND status IN ('proposed', 'confirmed', 'merged')",
+            (guild_id, campaign_id),
+        )
+        entities = {str(r["id"]): r for r in await cur.fetchall()}
+        cur = await conn.execute(
+            "SELECT DISTINCT ON (entity_id) entity_id, seq, rank FROM memory_importance"
+            " WHERE guild_id = %s AND campaign_id = %s ORDER BY entity_id, seq DESC",
+            (guild_id, campaign_id),
+        )
+        newest = {
+            str(r["entity_id"]): (int(r["seq"]), int(r["rank"])) for r in await cur.fetchall()
+        }
+        ended = roots(entities)
+        group: dict[str, tuple[int, int]] = {}
+        for entity_id, at in ended.items():
+            if (
+                at is not None
+                and entity_id in newest
+                and newest[entity_id][0] > group.get(at, (0, 0))[0]
+            ):
+                group[at] = newest[entity_id]
+        return entities, ended, group
+
     async def add(self, guild_id: int, campaign_id: str, assessments: Iterable[Assessment]) -> int:
         """Append these assessments and return how many were written. One that is not valid, names
-        a character the campaign does not have (or an entry that is not a character), or says the
-        rank the character is already assessed at is skipped, so a re-run writes nothing twice (a
-        repeat with another reason code adds no row: the rank is what counts)."""
+        a character the campaign does not have (or an entry that is not a live character), or says
+        the rank the character's whole merged group is already assessed at is skipped, so a re-run
+        writes nothing twice (a repeat with another reason code adds no row: the rank is what
+        counts). The comparison is with the group's newest, as `ranks()` reads it, so a correction
+        back to a rank an older twin once had is still written."""
         wanted = [a for a in assessments if a.valid()]
         if not wanted:
             return 0
         written = 0
         now = int(self._now())
         async with self._db.guild(guild_id) as conn:
-            cur = await conn.execute(
-                "SELECT DISTINCT ON (entity_id) entity_id, rank FROM memory_importance"
-                " WHERE guild_id = %s AND campaign_id = %s ORDER BY entity_id, seq DESC",
-                (guild_id, campaign_id),
-            )
-            latest = {str(r["entity_id"]): int(r["rank"]) for r in await cur.fetchall()}
+            entities, ended, group = await self._state(conn, guild_id, campaign_id)
+            top = max((seq for seq, _ in group.values()), default=0)
             for a in wanted:
-                if latest.get(a.entity_id) == a.rank:
+                row = entities.get(a.entity_id)
+                if row is None or row["status"] == "merged" or ended.get(a.entity_id) is None:
+                    continue  # (not a live character of this campaign)
+                if group.get(a.entity_id, (0, -1))[1] == a.rank:
                     continue
                 cur = await conn.execute(
                     "INSERT INTO memory_importance (guild_id, campaign_id, entity_id, rank, basis,"
                     " source, session_started_at, lines, recorded_at)"
-                    " SELECT %s, %s, e.id, %s, %s, %s, %s, %s, %s FROM memory_entities e"
-                    " WHERE e.guild_id = %s AND e.campaign_id = %s AND e.id = %s"
-                    " AND e.type = 'character' AND e.merged_into IS NULL"
-                    " AND e.status IN ('proposed', 'confirmed')",
+                    " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
                     (
-                        guild_id, campaign_id, a.rank, a.basis, a.source, a.session_started_at,
-                        list(a.lines[:MAX_LINES]), now, guild_id, campaign_id, a.entity_id,
+                        guild_id, campaign_id, a.entity_id, a.rank, a.basis, a.source,
+                        a.session_started_at, list(a.lines[:MAX_LINES]), now,
                     ),
                 )  # fmt: skip
                 if cur.rowcount:
-                    latest[a.entity_id] = a.rank
+                    top += 1
+                    group[a.entity_id] = (top, a.rank)
                     written += 1
         return written
 
     async def ranks(self, guild_id: int, campaign_id: str) -> dict[str, int]:
         """The current rank of every live character of the campaign (entry id -> 0 to 5).
 
-        A merged name counts for the character it ended up in, however many merges that took
-        (A into B, then B into C leaves A pointing at B, as `MemoryStore.resolve` follows): its
-        sessions join the survivor's for the floor, and the newest assessment of the whole group
-        is the current one (by `seq`, so a correction after a merge still lowers the rank)."""
+        A merged name counts for the character it ended up in, however many merges that took:
+        its sessions join the survivor's for the floor, and the newest assessment of the whole
+        group is the current one (by `seq`, so a correction after a merge still lowers the
+        rank)."""
         async with self._db.guild(guild_id) as conn:
-            cur = await conn.execute(
-                "SELECT id, role, status, merged_into FROM memory_entities"
-                " WHERE guild_id = %s AND campaign_id = %s AND type = 'character'"
-                " AND status IN ('proposed', 'confirmed', 'merged')",
-                (guild_id, campaign_id),
-            )
-            rows = await cur.fetchall()
-            cur = await conn.execute(
-                "SELECT DISTINCT ON (entity_id) entity_id, seq, rank FROM memory_importance"
-                " WHERE guild_id = %s AND campaign_id = %s ORDER BY entity_id, seq DESC",
-                (guild_id, campaign_id),
-            )
-            newest = {
-                str(r["entity_id"]): (int(r["seq"]), int(r["rank"])) for r in await cur.fetchall()
-            }
+            entities, ended, group = await self._state(conn, guild_id, campaign_id)
             cur = await conn.execute(
                 "SELECT entity_id, array_agg(DISTINCT session_started_at) AS sessions"
                 " FROM memory_heard WHERE guild_id = %s AND campaign_id = %s GROUP BY entity_id",
                 (guild_id, campaign_id),
             )
             heard = {str(r["entity_id"]): set(r["sessions"]) for r in await cur.fetchall()}
-        by_id = {str(r["id"]): r for r in rows}
-
-        def root(entity_id: str) -> str | None:
-            """The live character an entry ended up as, or None (a cycle, or one that is gone)."""
-            seen: set[str] = set()
-            current: str | None = entity_id
-            while current is not None and current not in seen:
-                seen.add(current)
-                row = by_id.get(current)
-                if row is None:
-                    return None
-                if row["status"] != "merged":
-                    return current
-                current = row["merged_into"]
-            return None
-
-        assessed: dict[str, tuple[int, int]] = {}
         sessions: dict[str, set[int]] = {}
-        for entity_id in by_id:
-            at = root(entity_id)
-            if at is None:
-                continue
-            if entity_id in newest and newest[entity_id][0] > assessed.get(at, (0, 0))[0]:
-                assessed[at] = newest[entity_id]
-            sessions.setdefault(at, set()).update(heard.get(entity_id, ()))
+        for entity_id, at in ended.items():
+            if at is not None:
+                sessions.setdefault(at, set()).update(heard.get(entity_id, ()))
         out: dict[str, int] = {}
-        for entity_id, row in by_id.items():
+        for entity_id, row in entities.items():
             if row["status"] == "merged":
                 continue  # (a merged name has no rank of its own)
             player = row["role"] == "player_character"
-            latest = assessed.get(entity_id)
+            latest = group.get(entity_id)
             out[entity_id] = effective(
                 floor(player, len(sessions.get(entity_id, ()))), latest[1] if latest else None
             )

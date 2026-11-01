@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import unittest
+from typing import Any, cast
 
 from dmbot.memory import importance_rank as ir
+from dmbot.memory.importance_backup import ImportanceSection
 from dmbot.memory.models import CONFIRMED, Heard, NewName
 from tests.test_memory_names import DM, GUILD, NamesTest
 
@@ -185,6 +187,77 @@ class TheStore(NamesTest):
             cur = await conn.execute("SELECT cardinality(lines) AS n FROM memory_importance")
             (row,) = await cur.fetchall()
         self.assertEqual(row["n"], ir.MAX_LINES)
+
+    async def test_a_correction_back_to_a_twins_old_rank_is_still_written(self) -> None:
+        # Garrick 3, the twin 4, merged, then Garrick 3 again: the group's newest is 4, so a 3
+        # is a correction and not a repeat (add() compares with the group, as ranks() reads it).
+        twin = await self.twin("Garrick the Smith")
+        await self.store.add(GUILD, self.campaign.id, [ir.Assessment(self.garrick, 3, "mentor")])
+        await self.store.add(GUILD, self.campaign.id, [ir.Assessment(twin, 4, "antagonist")])
+        await self.merge(self.garrick, twin)
+        self.assertEqual((await self.ranks())[self.garrick], 4)
+        wrote = await self.store.add(
+            GUILD, self.campaign.id, [ir.Assessment(self.garrick, 3, "corrected")]
+        )
+        self.assertEqual(wrote, 1)
+        self.assertEqual((await self.ranks())[self.garrick], 3)
+
+    async def test_the_walk_that_finds_who_a_name_became_is_the_same_for_both(self) -> None:
+        rows: dict[str, dict[str, object]] = {
+            "a": {"status": "merged", "merged_into": "b"},
+            "b": {"status": "merged", "merged_into": "c"},
+            "c": {"status": "confirmed", "merged_into": None},
+            "loop1": {"status": "merged", "merged_into": "loop2"},
+            "loop2": {"status": "merged", "merged_into": "loop1"},
+            "lost": {"status": "merged", "merged_into": "nowhere"},
+        }
+        got = ir.roots(rows)
+        self.assertEqual((got["a"], got["b"], got["c"]), ("c", "c", "c"))
+        self.assertEqual((got["loop1"], got["lost"]), (None, None))
+
+    async def test_a_backup_brings_the_ranks_back_in_the_same_order(self) -> None:
+        twin = await self.twin("Wren the Quiet")
+        await self.store.add(GUILD, self.campaign.id, [ir.Assessment(self.garrick, 3, "mentor")])
+        await self.store.add(
+            GUILD, self.campaign.id, [ir.Assessment(self.garrick, 4, "antagonist")]
+        )
+        await self.store.add(GUILD, self.campaign.id, [ir.Assessment(self.garrick, 2, "corrected")])
+        await self.store.add(
+            GUILD, self.campaign.id, [ir.Assessment(twin, 1, "met_a_pc", lines=(1, 2))]
+        )
+        section = ImportanceSection()
+        async with self.db.guild(GUILD) as conn:
+            rows = await section.dump(conn, GUILD, self.campaign.id)
+        self.assertEqual([r["rank"] for r in rows], [3, 4, 2, 1])  # oldest first
+        self.assertTrue(all("lines" not in r for r in rows))  # (no line numbers in a file)
+        before = await self.ranks()
+        async with self.db.guild(GUILD) as conn:
+            await section.clear(conn, GUILD, self.campaign.id)
+        self.assertEqual((await self.ranks())[self.garrick], ir.BACKGROUND)
+        async with self.db.guild(GUILD) as conn:
+            await section.load(conn, GUILD, self.campaign.id, section.check(rows))
+        self.assertEqual(await self.ranks(), before)  # the newest (2) is still the newest
+        # and a row for an entry the campaign no longer has is dropped, not refused
+        async with self.db.guild(GUILD) as conn:
+            await section.load(conn, GUILD, self.campaign.id, [{**rows[0], "entity_id": "f" * 32}])
+
+    async def test_a_damaged_importance_section_is_refused_whole(self) -> None:
+        from dmbot.campaigns.models import CampaignError
+
+        good = {
+            "entity_id": "a" * 32, "rank": 2, "basis": "mentor", "source": "plotbot",
+            "session_started_at": None, "recorded_at": 5,
+        }  # fmt: skip
+        ImportanceSection().check([good])
+        for bad in (
+            {**good, "rank": 6}, {**good, "rank": True}, {**good, "basis": "cool"},
+            {**good, "source": "dm"}, {**good, "entity_id": "x"}, {**good, "recorded_at": 0},
+            {**good, "extra": 1},
+        ):  # fmt: skip
+            with self.assertRaises(CampaignError):
+                ImportanceSection().check([bad])
+        with self.assertRaises(CampaignError):
+            ImportanceSection().check(cast(Any, "not a list"))
 
     async def test_the_reason_list_in_the_database_is_the_code_list(self) -> None:
         async with self.db.guild(GUILD) as conn:
