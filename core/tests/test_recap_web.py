@@ -91,7 +91,10 @@ class Base(DatabaseTest):
         # Alice DMs "One"; Bob DMs "Two" in the same server.
         self.one = await self.campaigns.create(THURSDAY.id, "One", ALICE.id)
         self.two = await self.campaigns.create(THURSDAY.id, "Two", BOB.id)
-        self.store = RecapStore(self.db)
+        # Rows are dated by `NOW`, not by the real clock: a run that straddles midnight on the 1st
+        # would otherwise write them in another month than `NOW`'s, and the month counts (which
+        # read `NOW`) would find none (#3182).
+        self.store = RecapStore(self.db, clock=lambda: NOW)
         for campaign, dm in ((self.one, ALICE.id), (self.two, BOB.id)):
             await self.store.enqueue(THURSDAY.id, campaign.id, 100, dm_user_id=dm)
             await self.store.update(
