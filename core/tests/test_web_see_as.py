@@ -356,14 +356,27 @@ class TheKnowWordsOnTheTray(SeeAs):
     async def test_the_dm_full_view_tray_has_a_word_for_each_name(self) -> None:
         lone = await self.add("Lone Wolf", "character", role="npc")
         await self.know(ENTRY, lone, [self.rook])
+        hidden = await self.add("Hidden Hermit", "character", role="npc")
+        await self.know(ENTRY, hidden, [])  # (nobody but the DM knows this one)
         tray = {n["name"]: n.get("knowWord") for n in await self.tray(view="full")}
         self.assertEqual(tray["Lone Wolf"], gate.PARTLY_REVEALED)
+        self.assertEqual(tray["Hidden Hermit"], gate.SECRET)
+        self.assertNotIn("Mira Voss", tray)  # (she is connected, so she is not in the tray)
 
     async def test_the_players_view_tray_has_no_words(self) -> None:
         lone = await self.add("Lone Wolf", "character", role="npc")
         await self.know(ENTRY, lone, [self.rook, self.okra])
         tray = await self.tray(view="players")
+        self.assertIn("Lone Wolf", {n["name"] for n in tray})
         self.assertTrue(all("knowWord" not in n for n in tray))
+
+    async def test_a_player_gets_no_words(self) -> None:
+        from dmbot.web import relationships
+
+        lone = await self.add("Lone Wolf", "character", role="npc")
+        await self.know(ENTRY, lone, [self.rook, self.okra])
+        got = await relationships.read_overview(self.web, self.player, self.cref)
+        self.assertTrue(all("knowWord" not in n for n in got["tray"]))
 
 
 class TheKnowWordsAlone(SeeAs):
