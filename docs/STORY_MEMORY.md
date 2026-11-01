@@ -1533,9 +1533,9 @@ shows it); a word off the list is dropped and counted and the connection is kept
 - **Who sees the word.** The feeling word is the connection's own detail, so it follows that connection's
   knowers exactly as "enemy of" did (section 9b): a character who does not know the connection does not
   see the word, and a secret connection is secret with it. The reputation impression (Standing) is a
-  different thing and stays DM-only; nothing here makes one: the word is a proposal that waits with the
-  connection, and storing an impression on the DM's Keep press is a later slice, with the DM's word
-  always winning.
+  different thing and stays DM-only. The word is a proposal that waits with the connection; when the DM
+  presses Keep, the feeling is also stored as a story-sourced impression (weight 30, one Undo for both,
+  #3196), a later opposite feeling closes the earlier one, and a Standing the DM set is never overwritten.
 - **Not changed yet.** The session extractor and the ontology's "not this" lines for `knows`, `ally_of`
   and `enemy_of` still describe the old split; that is the next slice (#3181). The
   website shows a feeling-carrying `knows` as plain "knows" until its own reading learns the word.
