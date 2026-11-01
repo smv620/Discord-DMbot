@@ -19,7 +19,7 @@ The rules, all in `visible` (pure, so they are tested without a database):
 
 from __future__ import annotations
 
-from collections.abc import Collection, Iterable, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal, LiteralString
 
@@ -315,13 +315,34 @@ async def _by_id(
     return await scope.select(table, " AND id = ANY(%s)" + extra, [ids])
 
 
-async def _party_held(scope: Scope, column: str, *, own_entry: bool) -> frozenset[str] | None:
-    """The statements (`column`: `about_entity_id` or `relation_id`) every player character holds
-    a row for, in one aggregate over their rows instead of reading every list row (reading a
-    campaign's whole `memory_knowers` costs hundreds of milliseconds, #2995). `own_entry`: a
-    character knows its own entry without a row (entries only). None when there is no player
-    character, or when a group (a faction as a knower) holds one of these statements, which the
-    aggregate does not follow: the caller then asks the full gate."""
+def knowers_of(data: Statements) -> Callable[[str, str], set[str]]:
+    """A function giving the characters that know one statement (`kind`, `id`): the ones with a row
+    of their own, and the members of every group that has a row. It is the set of characters
+    `reach` gives an answer for, worked out from a map of each group's members built once instead
+    of asking `reach` of every group member for every statement (#3154, #3228). The website's
+    "who knows this" lists and words use it; the gate stays the only place that says who knows."""
+    members_of: dict[str, list[str]] = {}
+    for member, groups in data.groups.items():
+        for group in groups:
+            members_of.setdefault(group, []).append(member)
+
+    def who(kind: str, statement: str) -> set[str]:
+        found = set(_sure(data.knowers.get((kind, statement), {})))
+        for group in tuple(found):
+            found.update(members_of.get(group, ()))
+        return found
+
+    return who
+
+
+async def party_entries(scope: Scope) -> frozenset[str] | None:
+    """The entries the party's view holds as entries in their own right (`(ENTRY, id)` in
+    `visible(Viewer.the_party()).sureness`), without reading every list row: the lookup asks this
+    on each rebuild, and reading a campaign's whole `memory_knowers` costs hundreds of
+    milliseconds (#2995). One aggregate over the entry rows of the player characters' views.
+    None when there is no player character (no party to ask). Exact for lists held by characters;
+    a list held by a group (a faction as a knower) is reach the aggregate does not follow, so then
+    the full gate answers."""
     pcs = {
         str(r["id"]): str(r["id"])
         for r in await scope.select(
@@ -342,60 +363,36 @@ async def _party_held(scope: Scope, column: str, *, own_entry: bool) -> frozense
         scope.ids,
     )
     group_views = [str(r["id"]) for r in await cur.fetchall()]
+    # One pass over the entry rows: who among the player characters holds each, and whether a
+    # group (a faction as a knower) holds any, which this does not follow.
     if group_views:
         cur = await scope.conn.execute(
-            f"SELECT 1 FROM memory_knowers WHERE guild_id = %s AND campaign_id = %s"
-            f" AND {column} IS NOT NULL AND cardinality(hidden_by) = 0"
-            f" AND perspective_id = ANY(%s) LIMIT 1",
+            "SELECT 1 FROM memory_knowers WHERE guild_id = %s AND campaign_id = %s"
+            " AND about_entity_id IS NOT NULL AND cardinality(hidden_by) = 0"
+            " AND perspective_id = ANY(%s) LIMIT 1",
             (*scope.ids, group_views),
-        )  # (the column is one of two names in this module, never a caller's text)
+        )
         if await cur.fetchone() is not None:
-            return None
+            return None  # (a group holds an entry: let the full gate follow its members)
     cur = await scope.conn.execute(
-        f"SELECT {column} AS statement, array_agg(perspective_id) AS holders FROM memory_knowers"
-        f" WHERE guild_id = %s AND campaign_id = %s AND {column} IS NOT NULL"
-        f" AND cardinality(hidden_by) = 0 AND perspective_id = ANY(%s) GROUP BY {column}",
+        "SELECT about_entity_id, array_agg(perspective_id) AS holders FROM memory_knowers"
+        " WHERE guild_id = %s AND campaign_id = %s AND about_entity_id IS NOT NULL"
+        " AND cardinality(hidden_by) = 0 AND perspective_id = ANY(%s) GROUP BY about_entity_id",
         (*scope.ids, list(views.values())),
     )
+    rows = await cur.fetchall()
     everyone = set(views.values())
-    held = set()
-    for row in await cur.fetchall():
-        statement = str(row["statement"])
+    own = {entity: view for entity, view in views.items()}
+    seen = set()
+    for row in rows:
+        entry = str(row["about_entity_id"])
         missing = everyone - set(row["holders"] or ())
-        if not missing or (own_entry and missing == {views.get(statement)}):
-            held.add(statement)
-    if own_entry and len(everyone) == 1:  # a lone player character knows its own entry
-        held.update(views)
-    return frozenset(held)
-
-
-async def party_entries(scope: Scope) -> frozenset[str] | None:
-    """The entries the party's view holds as entries in their own right (`(ENTRY, id)` in
-    `visible(Viewer.the_party()).sureness`); see `_party_held`. The lookup asks this on each
-    rebuild (#2995)."""
-    return await _party_held(scope, "about_entity_id", own_entry=True)
-
-
-async def party_connections(scope: Scope) -> frozenset[str] | None:
-    """The connections the party's view holds (`(CONNECTION, id)` in the party's `sureness`): the
-    ones every player character has a row for. See `_party_held`."""
-    return await _party_held(scope, "relation_id", own_entry=False)
-
-
-async def party_view(scope: Scope) -> tuple[frozenset[str], frozenset[str]] | None:
-    """(entries, connections) the party's view holds, by the quick aggregate when it can follow
-    the lists and by the full gate when it cannot. None: no player character, so no party."""
-    entries, connections = await party_entries(scope), await party_connections(scope)
-    if entries is not None and connections is not None:
-        return entries, connections
-    data = await load(scope)
-    if not data.player_characters:
-        return None
-    full = visible(Viewer.the_party(), data)
-    return (
-        frozenset(i for (k, i) in full.sureness if k == ENTRY),
-        frozenset(i for (k, i) in full.sureness if k == CONNECTION),
-    )
+        # (a character knows its own entry without a row)
+        if not missing or missing == {own.get(entry)}:
+            seen.add(entry)
+    if len(everyone) == 1:  # a lone player character knows its own entry whatever the lists say
+        seen.update(views)
+    return frozenset(seen)
 
 
 async def visible_to(scope: Scope, viewer: Viewer) -> Visible:
@@ -608,12 +605,18 @@ def name_entries(
     names an entry exactly as Discord does. `on_their_own`: other names that facts were learned
     through, which the website draws on a node of their own (`split_connections`); such a name is
     never also the name of the person's own node, or the one person would be drawn twice."""
+    asked = set(entity_ids)
     entries = {
         k: r
         for k, r in rows.entities.items()
-        if k in set(entity_ids) and r["status"] not in ("merged", "rejected")
+        if k in asked and r["status"] not in ("merged", "rejected")
     }
     names = [a for a in rows.aliases if str(a["entity_id"]) in entries]
+    # Each entry's names, grouped once: reading the whole list again for every entry made this
+    # quadratic (about 1.7 s for a player's page on a campaign of 2,000 entries, #3154).
+    names_of: dict[str, list[Mapping[str, Any]]] = {}
+    for a in names:
+        names_of.setdefault(str(a["entity_id"]), []).append(a)
     anchors = {
         str(r["unnamed_anchor"])
         for r in entries.values()
@@ -631,11 +634,10 @@ def name_entries(
     anchor_held = {
         str(a["entity_id"]) for a in secret_own_names if str(a["id"]) in seen.aliases
     }  # (a row on the secret name itself is what makes it known)
-    merged = [
-        r
-        for r in rows.entities.values()
-        if r["merged_into"] is not None and str(r["merged_into"]) in entries and r["unnamed"]
-    ]
+    merged: dict[str, list[Mapping[str, Any]]] = {}  # by the entry each was joined into
+    for r in rows.entities.values():
+        if r["merged_into"] is not None and str(r["merged_into"]) in entries and r["unnamed"]:
+            merged.setdefault(str(r["merged_into"]), []).append(r)
     learned: dict[str, int] = {}
     if not seen.everything and names:
         listed = {str(a["id"]) for a in names}
@@ -667,8 +669,8 @@ def name_entries(
         """An other name as this viewer may read it: a joined person's label is rebuilt."""
         if not text.endswith(" (name unknown)") or seen.everything:
             return text
-        for gone in merged:
-            if str(gone["merged_into"]) == entity_id and str(gone["name"]) == text:
+        for gone in merged.get(entity_id, ()):
+            if str(gone["name"]) == text:
                 return _unnamed_label(gone, anchor_name(gone))
         return "someone (name unknown)"
 
@@ -679,28 +681,20 @@ def name_entries(
             out[entity_id] = None
             continue
         main = str(row["name"])
+        mine = names_of.get(entity_id, ())
+        main_key = lookup_key(main)
         # (an entry's own name is stored as a name too: it stands for the main name, which the
         # entry's own row governs, so it is not one of the "other" names)
         others = sorted(
             (
                 (str(a["id"]), safe_text(entity_id, str(a["text"])))
-                for a in names
-                if str(a["entity_id"]) == entity_id
-                and a["key"] != lookup_key(main)
-                and str(a["id"]) not in on_their_own
+                for a in mine
+                if a["key"] != main_key and str(a["id"]) not in on_their_own
             ),
             key=lambda pair: (learned.get(pair[0], 0), pair[0]),
         )
-        own_name = [
-            str(a["id"])
-            for a in names
-            if str(a["entity_id"]) == entity_id and a["key"] == lookup_key(main)
-        ]
-        own_name_secret = any(
-            a["secret"]
-            for a in names
-            if str(a["entity_id"]) == entity_id and a["key"] == lookup_key(main)
-        )
+        own_name = [str(a["id"]) for a in mine if a["key"] == main_key]
+        own_name_secret = any(a["secret"] for a in mine if a["key"] == main_key)
         if row["unnamed"] and not seen.everything:
             main = _unnamed_label(row, anchor_name(row))
         if any(alias in seen.aliases for alias in own_name):
@@ -714,7 +708,6 @@ def name_entries(
                 shown = main  # (a name every player may read, for a viewer who knows no other)
         out[entity_id] = SOMEONE if shown is None and public else shown
         if texts_out is not None:
-            for a in names:
-                if str(a["entity_id"]) == entity_id:
-                    texts_out[str(a["id"])] = safe_text(entity_id, str(a["text"]))
+            for a in mine:
+                texts_out[str(a["id"])] = safe_text(entity_id, str(a["text"]))
     return out

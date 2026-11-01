@@ -1539,14 +1539,14 @@ gods and royalty, even while their name is hidden), 5 player character.
 - **PlotBot's reading sets the rest:** one assessment at a time in `memory_importance` (append-only; the
   newest is current; never below the floor). The importance call reads only the party's view through the
   one gate, never DM-only lines, secret names or notes, so a hidden fact adds no rank (a test holds it).
-  Connections only nudge, by at most one rank; connections that came from a lore upload at world-knowledge
-  level count a quarter as much as ones made in play. Built (slice 2, `importance_rank.nudged`): each pair of
-  characters or groups joined by a current, confirmed connection the players are shown counts once (a place,
-  a `plays` link, a secret, not yet revealed or ended connection, one The party or a worked-out family link
-  made from facts already counted, and any connection to or from an entry the players are not shown, judged
-  on the entry each end ended up as, count for nothing; a merged name counts for the one it became); one
-  made in play counts 1, one from a lore upload (`source` background) a quarter; six lift the rank by one,
-  and the nudge never goes past Major (a Major or a player character does not move).
+  Connections set a floor from a lookup table (`importance_rank.CONNECTION_FLOORS`): 4 connected entries
+  give at least Minor, 8 Recurring, 12 Significant, never a count of Major or higher and never added to
+  another floor (the highest floor wins). A pair of live entries counts once however many connections
+  join it, a joined entry counts for the one it became (the union), and a lore, secret or not yet
+  revealed connection counts in full (the rank is never shown). An ended connection, a `plays` link and
+  a link The party makes count for nothing; a worked-out family link counts once the DM has confirmed it.
+  Every kind of entry has a rank, not only characters (places, items, events, groups), and a player
+  character's companion (`travels_with`) has a floor of Significant.
 - **Stored with codes, not words:** a fixed list of reasons (`importance_rank.BASES`), session and line
   numbers. A person's erased words leave the rank alone. A backup carries the table in its own section
   (`memory/importance_backup.py`): PlotBot's reading cannot be made again from a backup (the lines are not

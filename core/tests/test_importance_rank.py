@@ -46,23 +46,21 @@ class TheRules(unittest.TestCase):
         self.assertEqual(ir.counts({"a": 0, "b": 0, "c": 5, "d": 2}), [2, 0, 1, 0, 0, 1])
 
 
-class TheNudge(unittest.TestCase):
-    def test_six_in_play_lifts_one_rank(self) -> None:
-        self.assertEqual(ir.nudged(ir.MINOR, 6, 0), ir.RECURRING)
-        self.assertEqual(ir.nudged(ir.MINOR, 5, 0), ir.MINOR)
+class TheFloors(unittest.TestCase):
+    def test_the_connection_table_is_a_lookup_not_a_sum(self) -> None:
+        got = [ir.connection_floor(n) for n in (0, 3, 4, 7, 8, 11, 12, 99)]
+        self.assertEqual(got, [0, 0, 1, 1, 2, 2, 3, 3])
 
-    def test_a_lore_connection_counts_a_quarter(self) -> None:
-        self.assertEqual(ir.nudged(ir.MINOR, 0, 23), ir.MINOR)
-        self.assertEqual(ir.nudged(ir.MINOR, 0, 24), ir.RECURRING)
-        self.assertEqual(ir.nudged(ir.MINOR, 4, 8), ir.RECURRING)  # 4 + 2
+    def test_no_count_of_connections_reaches_major_or_the_players_five(self) -> None:
+        self.assertEqual(ir.connection_floor(10_000), ir.SIGNIFICANT)
 
-    def test_it_never_goes_past_major_and_never_moves_a_major_or_a_player(self) -> None:
-        self.assertEqual(ir.nudged(ir.SIGNIFICANT, 99, 99), ir.MAJOR)
-        self.assertEqual(ir.nudged(ir.MAJOR, 99, 99), ir.MAJOR)
-        self.assertEqual(ir.nudged(ir.PLAYER, 99, 99), ir.PLAYER)
-
-    def test_it_lifts_only_one_rank_however_many_connections(self) -> None:
-        self.assertEqual(ir.nudged(ir.BACKGROUND, 500, 0), ir.MINOR)
+    def test_the_highest_floor_wins_and_they_do_not_add_up(self) -> None:
+        self.assertEqual(ir.floor(False, 2, 4), ir.RECURRING)  # heard twice 2, four pairs 1
+        self.assertEqual(ir.floor(False, 0, 12), ir.SIGNIFICANT)
+        self.assertEqual(ir.floor(False, 5, 12), ir.SIGNIFICANT)  # not 2 + 3
+        self.assertEqual(ir.floor(False, 0, 0, True), ir.SIGNIFICANT)  # a companion
+        self.assertEqual(ir.floor(False, 0, 12, True), ir.SIGNIFICANT)
+        self.assertEqual(ir.floor(True, 0, 0), ir.PLAYER)
 
 
 class Base(NamesTest):
@@ -86,9 +84,9 @@ class Base(NamesTest):
 
 
 class TheStore(Base):
-    async def test_everyone_starts_as_background_and_a_place_has_no_rank(self) -> None:
+    async def test_everyone_starts_as_background_places_included(self) -> None:
         got = await self.ranks()
-        self.assertEqual(got, {self.garrick: 0, self.wren: 0})
+        self.assertEqual(got, {self.garrick: 0, self.wren: 0, self.ashmere: 0})
 
     async def test_a_player_character_is_five_with_no_assessment(self) -> None:
         await self.memory.confirm_entity(
@@ -133,12 +131,13 @@ class TheStore(Base):
         )
         self.assertEqual((await self.ranks())[self.garrick], ir.MAJOR)
 
-    async def test_something_that_is_not_a_character_is_not_assessed(self) -> None:
+    async def test_a_place_is_assessed_like_any_entry_and_an_unknown_id_is_not(self) -> None:
         wrote = await self.store.add(
             GUILD, self.campaign.id,
             [ir.Assessment(self.ashmere, 3, "lore_figure"), ir.Assessment("nope", 3, "mentor")],
         )  # fmt: skip
-        self.assertEqual(wrote, 0)
+        self.assertEqual(wrote, 1)
+        self.assertEqual((await self.ranks())[self.ashmere], ir.SIGNIFICANT)
 
     async def test_a_merged_name_counts_for_the_one_that_stayed(self) -> None:
         made = await self.memory.add_names(
@@ -297,24 +296,12 @@ if __name__ == "__main__":
     unittest.main()
 
 
-class TheNudgeInTheStore(Base):
+class TheFloorsInTheStore(Base):
     made = 0
 
-    async def asyncSetUp(self) -> None:
-        await super().asyncSetUp()
-        # (a name the DM adds starts as "players don't know this one yet", #2404)
-        await self.memory.set_hidden_from_players(
-            GUILD, self.campaign.id, self.garrick, False, source="dm"
-        )
-        # (the party is the player characters: with none there is nobody to be shown anything)
-        await self.memory.confirm_entity(
-            GUILD, self.campaign.id, self.wren, "player_character", source="dm", played_by=77
-        )
-
-    async def friends(self, count: int, *, source: str = "dm", secret: bool = False) -> list[str]:
-        """`count` other characters, each joined to Garrick by a confirmed connection. `source`
-        "background" is a connection that came from a lore upload (written by the DM, then marked
-        as the lore read's, which only the reader itself can confirm)."""
+    async def friends(self, count: int, *, source: str = "dm", kind: str = "npc") -> list[str]:
+        """`count` other entries, each joined to Garrick by a confirmed connection. `source`
+        other than "dm" is set on the rows afterwards (only the readers themselves confirm)."""
         out = []
         for _ in range(count):
             self.made += 1
@@ -322,17 +309,14 @@ class TheNudgeInTheStore(Base):
                 await self.memory.add_names(
                     GUILD,
                     self.campaign.id,
-                    [NewName(f"Friend {self.made}", "npc", CONFIRMED)],
+                    [NewName(f"Friend {self.made}", kind, CONFIRMED)],
                     source="dm",
                 )
             ).value[0]
             assert other
-            await self.memory.set_hidden_from_players(
-                GUILD, self.campaign.id, other, False, source="dm"
-            )
             await self.memory.add_relation(
                 GUILD, self.campaign.id, self.garrick, "rival_of", other, source="dm",
-                confidence=1.0, status=CONFIRMED, secret=secret,
+                confidence=1.0, status=CONFIRMED,
             )  # fmt: skip
             if source != "dm":
                 async with self.db.guild(GUILD) as conn:
@@ -344,21 +328,29 @@ class TheNudgeInTheStore(Base):
             out.append(other)
         return out
 
-    async def test_six_connections_made_in_play_lift_garrick_one_rank(self) -> None:
-        await self.friends(5)
-        self.assertEqual((await self.ranks())[self.garrick], ir.BACKGROUND)
-        await self.friends(1, source="dm")
-        self.assertEqual((await self.ranks())[self.garrick], ir.MINOR)
+    async def garrick_rank(self) -> int:
+        return (await self.ranks())[self.garrick]
 
-    async def test_lore_connections_count_a_quarter(self) -> None:
-        await self.friends(23, source="background")
-        self.assertEqual((await self.ranks())[self.garrick], ir.BACKGROUND)
-        await self.friends(1, source="background")
-        self.assertEqual((await self.ranks())[self.garrick], ir.MINOR)
+    async def test_the_table_lifts_garrick_at_four_eight_and_twelve(self) -> None:
+        seen = {}
+        for step in (3, 1, 3, 1, 3, 1):  # 3, 4, 7, 8, 11, 12 pairs
+            await self.friends(step)
+            seen[self.made] = await self.garrick_rank()
+        self.assertEqual(seen[3], 0)
+        self.assertEqual((seen[4], seen[7]), (1, 1))
+        self.assertEqual((seen[8], seen[11]), (2, 2))
+        self.assertEqual(seen[12], 3)
 
-    async def test_a_secret_connection_adds_no_rank(self) -> None:
-        await self.friends(6, secret=True)
-        self.assertEqual((await self.ranks())[self.garrick], ir.BACKGROUND)
+    async def test_lore_and_secret_connections_count_in_full(self) -> None:
+        await self.friends(2, source="background")
+        for _ in range(2):
+            (other,) = await self.friends(1)
+            async with self.db.guild(GUILD) as conn:
+                await conn.execute(
+                    "UPDATE memory_relations SET secret = true"
+                    " WHERE object_id = %s OR subject_id = %s", (other, other),
+                )  # fmt: skip
+        self.assertEqual(await self.garrick_rank(), ir.MINOR)  # four pairs
 
     async def test_a_pair_counts_once_however_many_connections_join_it(self) -> None:
         (other,) = await self.friends(1)
@@ -367,61 +359,36 @@ class TheNudgeInTheStore(Base):
                 GUILD, self.campaign.id, self.garrick, predicate, other, source="dm",
                 confidence=1.0, status=CONFIRMED,
             )  # fmt: skip
-        self.assertEqual((await self.ranks())[self.garrick], ir.BACKGROUND)
+        await self.friends(2)
+        self.assertEqual(await self.garrick_rank(), ir.BACKGROUND)  # three pairs
 
-    async def test_a_place_is_not_a_connection_that_lifts(self) -> None:
-        for _ in range(6):
-            await self.memory.add_relation(
-                GUILD, self.campaign.id, self.garrick, "located_in", self.ashmere, source="dm",
-                confidence=1.0, status=CONFIRMED,
-            )  # fmt: skip
-        self.assertEqual((await self.ranks())[self.garrick], ir.BACKGROUND)
-
-    async def test_a_connection_to_an_entry_the_players_are_not_shown_adds_no_rank(self) -> None:
-        for other in await self.friends(6):
-            await self.memory.set_hidden_from_players(
-                GUILD, self.campaign.id, other, True, source="dm"
-            )
-        self.assertEqual((await self.ranks())[self.garrick], ir.BACKGROUND)
-
-    async def test_a_hidden_entry_with_many_connections_gains_nothing_either(self) -> None:
-        await self.friends(6)
-        await self.memory.set_hidden_from_players(
-            GUILD, self.campaign.id, self.garrick, True, source="dm"
-        )
-        self.assertEqual((await self.ranks())[self.garrick], ir.BACKGROUND)
-
-    async def test_an_ended_connection_adds_no_rank(self) -> None:
-        await self.friends(6)
+    async def test_an_ended_connection_and_a_plays_or_party_link_count_for_nothing(self) -> None:
+        await self.friends(4)
         async with self.db.guild(GUILD) as conn:
             await conn.execute("UPDATE memory_relations SET to_session_at = 5")
-        self.assertEqual((await self.ranks())[self.garrick], ir.BACKGROUND)
+        self.assertEqual(await self.garrick_rank(), ir.BACKGROUND)
+        await self.friends(4, source="party")
+        self.assertEqual(await self.garrick_rank(), ir.BACKGROUND)
 
-    async def test_connections_made_by_a_rule_from_counted_facts_add_nothing(self) -> None:
-        for source in ("worked_out", "party"):
-            await self.friends(6, source=source)
-        self.assertEqual((await self.ranks())[self.garrick], ir.BACKGROUND)
+    async def test_a_worked_out_link_counts_once_the_dm_has_confirmed_it(self) -> None:
+        await self.friends(4, source="worked_out")
+        self.assertEqual(await self.garrick_rank(), ir.MINOR)
 
-    async def test_the_flag_says_shown_but_the_party_does_not_hold_it_so_no_rank(self) -> None:
-        others = await self.friends(6)
-        # (nothing hidden by a flag: the DM only told Garrick's friends to one player character)
-        link_ids = [
-            r.id
-            for r in await self.memory.relations(GUILD, self.campaign.id)
-            if self.garrick in (r.subject_id, r.object_id)
-        ]
-        for statement in link_ids:
-            await self.memory.set_statement_knowers(
-                GUILD, self.campaign.id, "connection", statement, [others[0]], source="dm"
-            )
-        self.assertEqual((await self.ranks())[self.garrick], ir.BACKGROUND)
-
-    async def test_an_end_the_party_does_not_hold_adds_no_rank_though_no_flag_hides_it(
-        self,
-    ) -> None:
-        others = await self.friends(6)
-        for other in others:
-            await self.memory.set_statement_knowers(
-                GUILD, self.campaign.id, "entry", other, [self.garrick], source="dm"
-            )
-        self.assertEqual((await self.ranks())[self.garrick], ir.BACKGROUND)
+    async def test_a_place_is_ranked_too_and_a_table_person_is_not(self) -> None:
+        for _ in range(4):
+            self.made += 1
+            other = (
+                await self.memory.add_names(
+                    GUILD,
+                    self.campaign.id,
+                    [NewName(f"Hall {self.made}", "place", CONFIRMED)],
+                    source="dm",
+                )
+            ).value[0]
+            assert other
+            await self.memory.add_relation(
+                GUILD, self.campaign.id, other, "located_in", self.ashmere, source="dm",
+                confidence=1.0, status=CONFIRMED,
+            )  # fmt: skip
+        ranks = await self.ranks()
+        self.assertEqual(ranks[self.ashmere], ir.MINOR)  # four places in it

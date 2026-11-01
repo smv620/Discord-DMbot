@@ -1,4 +1,4 @@
-"""An internal importance rank for characters, 0 to 5 (#3172, owner decision 2026-11-01).
+"""An internal importance rank for every entry, 0 to 5 (#3172, owner decision 2026-11-01).
 
 The levels, in the owner's words: 0 background, 1 minor, 2 recurring, 3 significant, 4 major,
 5 player character. The rank only decides which details a recap or PlotBot picks; it states no
@@ -7,7 +7,9 @@ a hidden villain would be a spoiler). Nothing here asks the DM.
 
 Where a rank comes from, strongest first:
 - the FLOOR, worked out from what the code can count and never stored (so it cannot drift): a
-  player character is 5; a character heard in two or more separate sessions is at least 2;
+  player character is 5; a player character's companion at least 3; an entry heard in two or more
+  separate sessions at least 2; and the connection table (`CONNECTION_FLOORS`: the more entries it
+  is joined to, the higher its lowest rank), the highest of them and never their sum;
 - PlotBot's reading of the story, one assessment at a time in `memory_importance` (append-only,
   like the rest of the graph); the newest is current, and the rank is never read below the floor.
 
@@ -21,16 +23,11 @@ Counts and fixed codes only: no word of a transcript is stored.
 
 from __future__ import annotations
 
-import logging
 import time
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 
 from dmbot.db import Conn, Database
-from dmbot.memory import gate
-from dmbot.memory._changes import Scope
-
-log = logging.getLogger(__name__)
 
 BACKGROUND, MINOR, RECURRING, SIGNIFICANT, MAJOR, PLAYER = range(6)
 LEVEL_NAMES = ("Background", "Minor", "Recurring", "Significant", "Major", "Player character")
@@ -45,33 +42,38 @@ BASES = (
 MAX_LINES = 20  # line numbers kept with one assessment
 
 
-def floor(is_player_character: bool, sessions_heard: int) -> int:
-    """The lowest rank a character can have, from facts the code counts. Pure."""
+# Connections set a floor, never a +1 (owner, 2026-11-01): the more pairs of entries an entry is
+# joined to, the higher the lowest rank it can have. A lookup table, so changing it needs no rebuild
+# (the floor is computed on read) and counts never add up on top of each other. No count reaches
+# Major or the player characters' 5: busy is not the same as carrying the plot, which only the
+# story's reading says. (pairs needed, floor), smallest first.
+CONNECTION_FLOORS = ((4, MINOR), (8, RECURRING), (12, SIGNIFICANT))
+COMPANION_FLOOR = SIGNIFICANT  # a player character's companion (`travels_with`, #3176)
+COMPANION_PREDICATE = "travels_with"
+
+
+def connection_floor(pairs: int) -> int:
+    """The lowest rank `pairs` connected entries give an entry, from `CONNECTION_FLOORS`. Pure."""
+    out = BACKGROUND
+    for needed, rank in CONNECTION_FLOORS:
+        if pairs >= needed:
+            out = rank
+    return out
+
+
+def floor(
+    is_player_character: bool, sessions_heard: int, pairs: int = 0, companion: bool = False
+) -> int:
+    """The lowest rank an entry can have, from facts the code counts: a player character is 5, a
+    player character's companion at least Significant, one heard in two separate sessions at
+    least Recurring, and the connection table. The highest of them, never their sum. Pure."""
     if is_player_character:
         return PLAYER
-    return RECURRING if sessions_heard >= SESSIONS_FOR_RECURRING else BACKGROUND
-
-
-# The connection nudge (slice 2): connections only nudge, by at most one rank, and never past Major.
-# A pair of characters or groups joined by a connection the players are shown counts once; one made
-# in play counts 1, one that came from a lore upload (world knowledge, not seen in play) a quarter
-# as much, so a lorebook cannot make everyone in it important. Six in play lifts a rank.
-NUDGE_AT = 6.0
-LORE_WEIGHT = 0.25
-LORE_SOURCE = "background"  # what the lore and backstory readers write (`memory.models.SOURCES`)
-# Written by rules from facts already counted, so they add nothing of their own: The party's links
-# and family links worked out from two stated ones. (A restored backup keeps no record of where a
-# connection came from, and one the DM typed in counts as made in play.)
-DERIVED_SOURCES = ("party", "worked_out")
-
-
-def nudged(rank: int, play: int, lore: int) -> int:
-    """`rank` lifted by one when the connections reach `NUDGE_AT` (`play` in play, `lore` from a
-    lore upload at a quarter each). A player character (5) and a Major (4) never move: the nudge
-    stops short of Major from below, so it can raise a Significant to Major and no further. Pure."""
-    if rank >= MAJOR or play + lore * LORE_WEIGHT < NUDGE_AT:
-        return rank
-    return rank + 1
+    return max(
+        RECURRING if sessions_heard >= SESSIONS_FOR_RECURRING else BACKGROUND,
+        COMPANION_FLOOR if companion else BACKGROUND,
+        connection_floor(pairs),
+    )
 
 
 def effective(floor_rank: int, assessed: int | None) -> int:
@@ -129,6 +131,10 @@ def roots(entities: Mapping[str, Mapping[str, object]]) -> dict[str, str | None]
     return out
 
 
+def _is_player(row: Mapping[str, object]) -> bool:
+    return row["type"] == "character" and row["role"] == "player_character"
+
+
 class ImportanceStore:
     """Reads and appends assessments. The caller has already checked who may ask; the rows are
     this campaign's only (row-level security and composite keys)."""
@@ -141,11 +147,12 @@ class ImportanceStore:
     async def _state(
         conn: Conn, guild_id: int, campaign_id: str
     ) -> tuple[dict[str, Mapping[str, object]], dict[str, str | None], dict[str, tuple[int, int]]]:
-        """The campaign's characters (live and merged), who each ended up as, and for each live
-        character the newest assessment of its whole merged group as (seq, rank)."""
+        """The campaign's entries of every kind but the table's people (live and merged), who each
+        ended up as, and for each live entry the newest assessment of its whole merged group as
+        (seq, rank)."""
         cur = await conn.execute(
-            "SELECT id, role, status, merged_into FROM memory_entities"
-            " WHERE guild_id = %s AND campaign_id = %s AND type = 'character'"
+            "SELECT id, type, role, status, merged_into FROM memory_entities"
+            " WHERE guild_id = %s AND campaign_id = %s AND type <> 'person'"
             " AND status IN ('proposed', 'confirmed', 'merged')",
             (guild_id, campaign_id),
         )
@@ -206,57 +213,46 @@ class ImportanceStore:
         return written
 
     @staticmethod
-    async def _links(conn: Conn, guild_id: int, campaign_id: str) -> dict[str, tuple[int, int]]:
-        """For each live character, how many other characters or groups it is joined to by a
-        connection that is current and that the players are shown, as (made in play, from a lore
-        upload). A pair counts once (in play when any of its connections was), and a merged name
-        counts for the one it became. A hidden fact adds no rank (STORY_MEMORY 9c): "shown" is
-        the gate's party view (`gate.party_view`, never a flag read here), so a connection counts
-        only when the party holds it and holds both its ends, each judged on the entry it ended
-        up as; an ended one counts for nothing. Connections `The party` makes and ones worked out
-        from two stated ones are the same facts counted again, so they count for nothing."""
-        view = await gate.party_view(Scope(conn, guild_id, campaign_id, 0))
-        if view is None:
-            return {}  # (no player character yet: there is no party to be shown anything)
-        held_entries, held_connections = view
+    async def _links(
+        conn: Conn,
+        guild_id: int,
+        campaign_id: str,
+        entities: Mapping[str, Mapping[str, object]],
+        ended: Mapping[str, str | None],
+    ) -> tuple[dict[str, int], set[str]]:
+        """For each live entry, how many other live entries it is joined to by a current,
+        confirmed connection, and which entries are a player character's companion.
+
+        A pair counts once however many connections join it, and a joined (merged) entry counts
+        for the one it became, so the union of their connections is counted. Every source counts
+        in full: a lore upload, play, and a secret or not yet revealed connection (the rank is
+        never shown to a player, STORY_MEMORY 9c). An ended connection, a `plays` link and a link
+        The party makes (a rule's, on facts already counted) count for nothing. A family link
+        worked out from two stated ones counts once the DM has confirmed it, as any other."""
         cur = await conn.execute(
-            "SELECT id, status, merged_into FROM memory_entities"
-            " WHERE guild_id = %s AND campaign_id = %s"
-            " AND type IN ('character', 'faction') AND status IN ('confirmed', 'merged')",
+            "SELECT subject_id, object_id, predicate FROM memory_relations"
+            " WHERE guild_id = %s AND campaign_id = %s AND status = 'confirmed'"
+            " AND to_session_at IS NULL AND predicate <> 'plays' AND source <> 'party'",
             (guild_id, campaign_id),
         )
-        entries: dict[str, Mapping[str, object]] = {str(r["id"]): r for r in await cur.fetchall()}
-        ended = roots(entries)
-
-        def shown(entity_id: str) -> str | None:
-            root = ended.get(entity_id)
-            row = entries.get(root) if root is not None else None
-            return (
-                root
-                if row is not None and row["status"] == "confirmed" and (root in held_entries)
-                else None
-            )
-
-        cur = await conn.execute(
-            "SELECT id, subject_id, object_id, source <> %s AS in_play FROM memory_relations"
-            " WHERE guild_id = %s AND campaign_id = %s AND status = 'confirmed'"
-            " AND to_session_at IS NULL AND predicate <> 'plays' AND source <> ALL(%s)",
-            (LORE_SOURCE, guild_id, campaign_id, list(DERIVED_SOURCES)),
-        )
-        pairs: dict[frozenset[str], bool] = {}
+        pairs: set[frozenset[str]] = set()
+        companions: set[str] = set()
         for r in await cur.fetchall():
-            if str(r["id"]) not in held_connections:
-                continue
-            one, other = shown(str(r["subject_id"])), shown(str(r["object_id"]))
+            one, other = ended.get(str(r["subject_id"])), ended.get(str(r["object_id"]))
             if one is None or other is None or one == other:
                 continue
-            key = frozenset((one, other))
-            pairs[key] = pairs.get(key, False) or bool(r["in_play"])
-        out: dict[str, list[int]] = {}
-        for pair, in_play in pairs.items():
+            if entities[one]["status"] != "confirmed" or entities[other]["status"] != "confirmed":
+                continue
+            pairs.add(frozenset((one, other)))
+            if r["predicate"] == COMPANION_PREDICATE:
+                for mine, theirs in ((one, other), (other, one)):
+                    if _is_player(entities[theirs]) and not _is_player(entities[mine]):
+                        companions.add(mine)
+        count: dict[str, int] = {}
+        for pair in pairs:
             for entity_id in pair:
-                out.setdefault(entity_id, [0, 0])[0 if in_play else 1] += 1
-        return {k: (v[0], v[1]) for k, v in out.items()}
+                count[entity_id] = count.get(entity_id, 0) + 1
+        return count, companions
 
     async def ranks(self, guild_id: int, campaign_id: str) -> dict[str, int]:
         """The current rank of every live character of the campaign (entry id -> 0 to 5).
@@ -273,26 +269,25 @@ class ImportanceStore:
                 (guild_id, campaign_id),
             )
             heard = {str(r["entity_id"]): set(r["sessions"]) for r in await cur.fetchall()}
-            links = await self._links(conn, guild_id, campaign_id)
+            links, companions = await self._links(conn, guild_id, campaign_id, entities, ended)
         sessions: dict[str, set[int]] = {}
         for entity_id, at in ended.items():
             if at is not None:
                 sessions.setdefault(at, set()).update(heard.get(entity_id, ()))
         out: dict[str, int] = {}
-        lifted = 0
         for entity_id, row in entities.items():
             if row["status"] == "merged":
                 continue  # (a merged name has no rank of its own)
-            player = row["role"] == "player_character"
             latest = group.get(entity_id)
-            base = effective(
-                floor(player, len(sessions.get(entity_id, ()))), latest[1] if latest else None
+            out[entity_id] = effective(
+                floor(
+                    _is_player(row),
+                    len(sessions.get(entity_id, ())),
+                    links.get(entity_id, 0),
+                    entity_id in companions,
+                ),
+                latest[1] if latest else None,
             )
-            play, lore = links.get(entity_id, (0, 0))
-            out[entity_id] = nudged(base, play, lore)
-            lifted += out[entity_id] > base
-        if lifted:
-            log.info("Importance rank: %d of %d characters lifted by connections", lifted, len(out))
         return out
 
 
