@@ -91,3 +91,24 @@ class FamilyShapes(unittest.TestCase):
         ]
         derived = kin_derive.derive(stated)
         self.assertEqual([(d.a_id, d.role, d.b_id) for d in derived], [("m", "parent", "w")])
+
+
+class AcrossASentenceEnd(unittest.TestCase):
+    def test_a_relative_named_before_a_full_stop_is_the_new_antecedent(self) -> None:
+        # "His wife, Ana" after the full stop may mean Daric's wife: Daric's name stands between
+        # Corvin Hale and the pronoun, and it is not exempt, so no reach is made (#3155).
+        text = (
+            "Corvin Hale hunted wolves. His brother, Daric, was a smith. "
+            "His wife, Ana, kept the forge."
+        )
+        names = bg.reach_names({"corvin hale", "daric", "ana"})
+        reply = json.dumps(
+            {
+                "connections": [
+                    link("Corvin Hale", "wife", "Ana", "His wife, Ana, kept the forge."),
+                ]
+            }
+        )
+        lost: Counter[str] = Counter()
+        got = bg.read_connections(reply, text, dropped=lost, others=names)
+        self.assertEqual(got, [])

@@ -413,7 +413,12 @@ def _third_name(span: str, others: Collection[str], ends: Collection[str]) -> bo
         for size in range(1, 5):
             gram = name_key(" ".join(t for t, _ in tokens[i : i + size]))
             if gram and gram in others and gram not in ends:
-                if _POSSESSIVE_RELATIVE.search(span[max(0, at - 60) : at]):
+                # (only within one sentence: across a full stop the relative can be the new
+                # antecedent, "His brother, Daric, was a smith. His wife, Ana, ...")
+                if _POSSESSIVE_RELATIVE.search(span[max(0, at - 60) : at]) and not re.search(
+                    r"[.!?]",
+                    span[at:].rstrip(".!?…\"'”’ "),  # (the span's own last stop is no break)
+                ):
                     break  # (this occurrence is "his <relative>, Name": not a new possessor)
                 return True
     return False
