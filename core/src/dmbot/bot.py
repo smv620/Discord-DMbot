@@ -371,7 +371,7 @@ from dmbot.sidebar import knowledge
 from dmbot.sidebar import rule_clash as sidebar_rule_clash
 from dmbot.sidebar.answer import PROMPT_VERSION as SIDEBAR_PROMPT_VERSION
 from dmbot.sidebar.answer import Sidebar
-from dmbot.sidebar.ask import asks_off_record, request_in
+from dmbot.sidebar.ask import asks_off_record, is_table_question, request_in
 from dmbot.sidebar.people import lines as people_lines
 from dmbot.sidebar.service import SidebarService
 from dmbot.table import HintPeople, Table
@@ -548,6 +548,11 @@ from dmbot.ui.transcripts import (
     transcript_command,
 )
 
+DMBCHAT_STATEMENT_WORDS = 4  # a DM's message this long is a statement; shorter is a reply
+DMBCHAT_HINT = (
+    "To tell DMbot something about the story, write it in your private chat with DMbot. "
+    "Players can read this chat."
+)
 REPORT_CALLS = 8  # AI calls a session may spend on the after-session report (grading and sorting)
 MEANING_RUN_CALLS = 50  # Voyage AI calls one after-session run may make (64 texts each)
 CONTRADICTION_CALLS = 3  # AI calls a session may spend grading contradictions (12 clashes each)
@@ -4538,8 +4543,26 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         ):
             self._wake_off_the_record(table.guild_id, author.id)  # not a question (#2466)
         elif text is not None:
-            self.sidebar.ask_in_chat(table, author.id, text)
+            if (
+                table.is_dm(author.id)
+                and self.consent.has_consent(table.guild_id, author.id)
+                and not is_table_question(text)
+            ):
+                # A DM's statement (#3209): the players read this channel, so it is never a table
+                # question and never stored from here, whatever it says. The DM is told once.
+                self._hint_story_goes_private(table, author.id, text)
+            else:
+                self.sidebar.ask_in_chat(table, author.id, text)
         return True
+
+    def _hint_story_goes_private(self, table: Table, user_id: int, text: str) -> None:
+        """One private line to a DM who typed a story statement in the table's chat: story goes in
+        the private chat with DMbot. Once a session each, and not for a short reply ("yes",
+        "correct"), which gets nothing (it answers a question that lives in the private chat)."""
+        if user_id in table.dmbchat_hinted or len(text.split()) < DMBCHAT_STATEMENT_WORDS:
+            return
+        table.dmbchat_hinted.add(user_id)
+        self._track(self.sidebar_send_dm(user_id, DMBCHAT_HINT), "dmbchat-hint")
 
     async def sidebar_post_chat(self, table: Table, text: str) -> bool:
         """Post in the session's DMbot chat channel (#1187); False if there is none."""

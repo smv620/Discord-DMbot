@@ -203,6 +203,8 @@ class Table:
     dmbchat_channel_id: int | None = None
     # People who typed there without having agreed, already shown the agree button this session.
     dmbchat_nudged: set[int] = field(default_factory=set)
+    # DMs told once this session that a story statement belongs in the private chat (#3209).
+    dmbchat_hinted: set[int] = field(default_factory=set)
     # Questions per person (at most ASK_PER_PERSON_PER_MINUTE a minute), so one player can't use
     # up the table's questions.
     person_limits: dict[int, AskLimiter] = field(default_factory=dict)
