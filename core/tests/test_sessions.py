@@ -3485,7 +3485,7 @@ class SaveAndResume(SessionTests):
         with self.assertRaises(RuntimeError):
             await first
         self.assertTrue(table.questions.is_open(asked.id))  # open again, buttons still work
-        self.assertIsNotNone(table.question_message)
+        self.assertTrue(table.question_messages)
 
     async def test_someone_who_stops_while_the_answer_saves_stays_hidden(self) -> None:
         table, message, _, memory = await self.asked_about_marin()

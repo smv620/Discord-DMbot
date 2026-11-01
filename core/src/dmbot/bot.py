@@ -6986,13 +6986,13 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             )
         else:
             text = name_questions.question_text(speaker, md(asked.heard), md(asked.context))
-        message = await self.ask_live(table, text, question_view(table.guild_id, asked))
-        if message is None:
+        messages = await self.ask_live(table, text, lambda: question_view(table.guild_id, asked))
+        if not messages:
             if book.is_open(asked.id):  # not posted: free the slot, and ask again later
                 book.close(name_questions.NOT_POSTED, time.monotonic())
             return
         if book.is_open(asked.id):
-            table.question_message = message
+            table.question_messages = messages
             return
         # Closed while posting: say how, without their words if they stopped.
         closed = (
@@ -7000,8 +7000,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             if book.why_closed(asked.id) == name_questions.STOPPED
             else self._not_answered(table, asked)
         )
-        with contextlib.suppress(discord.HTTPException):
-            await message.edit(content=closed, view=None)
+        for message in messages:
+            with contextlib.suppress(discord.HTTPException):
+                await message.edit(content=closed, view=None)
 
     async def _rank_question(
         self, table: Table, asked: name_questions.Asked
@@ -7061,8 +7062,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
     async def _close_question(self, table: Table, text: str = name_questions.GONE) -> None:
         """Take the open question's buttons down, saying why (they stopped being
         recorded, nobody answered, or the session ended)."""
-        message, table.question_message = table.question_message, None
-        if message is not None:
+        messages, table.question_messages = table.question_messages, []
+        for message in messages:  # every copy, in every DM's chat
             with contextlib.suppress(discord.HTTPException):
                 await message.edit(content=text, view=None)
 
@@ -7728,13 +7729,13 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         now = time.monotonic
         if not self.consent.has_consent(guild_id, asked.speaker):
             book.close(name_questions.STOPPED, now())
-            table.question_message = None
+            self._retire_copies(table, question_id)
             return name_questions.GONE, True, None
         keep = pick == name_questions.KEEP
         if chosen is None and not keep:
             if not (pick.isdigit() and int(pick) < len(asked.options)):
                 book.close(name_questions.ANSWERED, now())
-                table.question_message = None
+                self._retire_copies(table, question_id)
                 return name_questions.EXPIRED, True, None
             chosen = asked.options[int(pick)]
         campaign_id, name = table.campaign_id, ""
@@ -7761,7 +7762,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             # The name was removed since: asking again won't help.
             if book.is_open(question_id):
                 book.close(name_questions.ANSWERED, now())
-                table.question_message = None
+                self._retire_copies(table, question_id)
             return name_questions.NAME_GONE, True, None
         except Exception:
             book.failed(question_id)  # open again for another try, if still theirs
@@ -7776,7 +7777,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 table.rank_picked += 1
         if book.is_open(question_id):
             book.close(name_questions.ANSWERED, now())
-            table.question_message = None
+            self._retire_copies(table, question_id)
         # After the save: if they stopped being recorded meanwhile, their words stay down
         # (Stop already took the message down). A session that ended meanwhile is fine.
         if book.why_closed(question_id) == name_questions.STOPPED or not self.consent.has_consent(
@@ -10226,27 +10227,60 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 log.exception("Couldn't post a question for the DM on the DM screen")
 
     async def ask_live(
-        self, table: Table, text: str, view: discord.ui.View
-    ) -> discord.Message | None:
-        """A question asked while the game runs, in a DM's private chat (#3210). The campaign's
-        owner is asked first, then the other DMs, and the first who can be reached gets it: the
-        message is edited as the question is answered or runs out, so it lives in one chat.
-        Only if no DM can be reached does it go on the DM screen, with the line saying why.
-        None when it could not be posted anywhere."""
+        self, table: Table, text: str, make_view: Callable[[], discord.ui.View]
+    ) -> list[discord.Message]:
+        """A question asked while the game runs, in the private chat of every DM who can be
+        reached (#3210): the first answer settles it, and every copy is edited when it is answered
+        or runs out. Each copy gets its own view. Only if no DM can be reached does it go on the DM
+        screen, with the line saying why. An empty list when it could not be posted anywhere."""
         campaign = (
             await self.campaigns.get(table.guild_id, table.campaign_id)
             if table.campaign_id is not None
             else None
         )
+        messages: list[discord.Message] = []
         if campaign is not None:
             who = discord.utils.escape_markdown(campaign.name)
             marked = f"❓ **DMbot has a question** · {who}\n{text}"
             order = sorted(campaign.dm_user_ids, key=lambda u: (u != campaign.owner_user_id, u))
             for user_id in order:
-                message = await self._dm_message(user_id, marked, view)
+                try:  # one DM failing must not stop the others
+                    message = await self._dm_message(user_id, marked, make_view())
+                except Exception:
+                    log.exception("Couldn't ask a DM a live question privately")
+                    continue
                 if message is not None:
-                    return message
-        return await self.post_message(table.screen_channel_id, text + NO_PRIVATE_MESSAGE, view)
+                    messages.append(message)
+        if messages:
+            return messages
+        screen = await self.post_message(
+            table.screen_channel_id, text + NO_PRIVATE_MESSAGE, make_view()
+        )
+        return [screen] if screen is not None else []
+
+    def _retire_copies(self, table: Table, question_id: str) -> None:
+        """The open question was answered or taken down: keep its copies until the answering DM's
+        own message has been dealt with (`finish_copies`), so the others can be edited too."""
+        copies, table.question_messages = table.question_messages, []
+        if copies:
+            table.closed_copies[question_id] = copies
+
+    async def finish_copies(
+        self, guild_id: int, question_id: str, pressed_message_id: int | None, text: str
+    ) -> None:
+        """After a DM answered a live question (#3210): edit every other copy of it, in the other
+        DMs' chats, to the same words with no buttons. The answering DM's own message was already
+        edited (with Undo); without its id nothing is touched, so Undo is never taken away."""
+        table = self._session_table(guild_id, question_id)
+        if table is None:
+            return
+        copies = table.closed_copies.pop(question_id, [])
+        if pressed_message_id is None:
+            return
+        for message in copies:
+            if message.id != pressed_message_id:
+                with contextlib.suppress(discord.HTTPException):
+                    await message.edit(content=text, view=None)
 
     async def send_collected_asks(self, table: Table) -> None:
         """The after-session step that sends what the steps before it collected (#3210). After it,

@@ -124,7 +124,7 @@ class Sending(unittest.IsolatedAsyncioTestCase):
 
 
 class Live(unittest.IsolatedAsyncioTestCase):
-    """`DMBot.ask_live` (#3210): a question asked while the game runs."""
+    """`DMBot.ask_live` and the copies of a live question (#3210)."""
 
     def bot(self, reach: dict[int, bool]) -> Any:
         campaign = SimpleNamespace(name="The *Table*", owner_user_id=8, dm_user_ids=set(reach))
@@ -132,37 +132,98 @@ class Live(unittest.IsolatedAsyncioTestCase):
 
         async def dm_message(user_id: int, text: str, view: Any) -> Any:
             order.append(user_id)
-            return SimpleNamespace(text=text) if reach[user_id] else None
+            if not reach[user_id]:
+                return None
+            return SimpleNamespace(id=100 + user_id, text=text, edit=AsyncMock())
 
         return SimpleNamespace(
             campaigns=SimpleNamespace(get=AsyncMock(return_value=campaign)),
             _dm_message=dm_message,
-            post_message=AsyncMock(return_value="on the screen"),
+            post_message=AsyncMock(return_value=SimpleNamespace(id=1, edit=AsyncMock())),
             order=order,
         )
 
     def table(self) -> Any:
-        return SimpleNamespace(guild_id=1, campaign_id="c" * 32, screen_channel_id=9)
-
-    async def test_the_owner_is_asked_first_and_the_first_who_can_be_reached_gets_it(self) -> None:
-        me = self.bot({7: True, 8: False, 9: True})
-        message = await DMBot.ask_live(
-            cast(Any, me), self.table(), "Did they mean…?", cast(Any, None)
+        return SimpleNamespace(
+            guild_id=1,
+            campaign_id="c" * 32,
+            screen_channel_id=9,
+            question_messages=[],
+            closed_copies={},
         )
-        self.assertEqual(me.order, [8, 7])  # the owner (8) first, then the next id
-        text = getattr(message, "text", "")  # (the stand-in's message carries the text it was sent)
-        self.assertTrue(text.startswith("❓ **DMbot has a question** · "))
-        self.assertIn("\\*Table\\*", text)
+
+    async def ask(self, me: Any) -> list[Any]:
+        make_view: Any = lambda: discord.ui.View(timeout=None)  # noqa: E731
+        return await DMBot.ask_live(cast(Any, me), self.table(), "Did they mean…?", make_view)
+
+    async def test_every_dm_who_can_be_reached_gets_it_the_owner_first(self) -> None:
+        me = self.bot({7: True, 8: True, 9: False})
+        messages = await self.ask(me)
+        self.assertEqual(me.order, [8, 7, 9])  # the owner (8) first, then by id
+        self.assertEqual([m.id for m in messages], [108, 107])  # the two who could be reached
+        for message in messages:
+            self.assertTrue(message.text.startswith("❓ **DMbot has a question** · "))
+            self.assertIn("\\*Table\\*", message.text)
         me.post_message.assert_not_awaited()  # nothing on the screen
+
+    async def test_a_dm_who_fails_does_not_stop_the_others(self) -> None:
+        me = self.bot({7: True, 8: True})
+        real = me._dm_message
+
+        async def flaky(user_id: int, text: str, view: Any) -> Any:
+            if user_id == 8:
+                raise RuntimeError("boom")
+            return await real(user_id, text, view)
+
+        me._dm_message = flaky
+        with self.assertLogs("dmbot.bot", level="ERROR"):
+            messages = await self.ask(me)
+        self.assertEqual([m.id for m in messages], [107])
 
     async def test_when_no_dm_can_be_reached_it_goes_on_the_screen_with_the_reason(self) -> None:
         me = self.bot({7: False})
-        message = await DMBot.ask_live(
-            cast(Any, me), self.table(), "Did they mean…?", cast(Any, None)
-        )
-        self.assertEqual(message, "on the screen")
+        messages = await self.ask(me)
+        self.assertEqual(len(messages), 1)
         text = me.post_message.await_args.args[1]
         self.assertEqual(text, "Did they mean…?" + NO_PRIVATE_MESSAGE)
+
+    async def test_nowhere_to_post_is_an_empty_list(self) -> None:
+        me = self.bot({7: False})
+        me.post_message = AsyncMock(return_value=None)
+        self.assertEqual(await self.ask(me), [])
+
+    async def test_answering_in_one_dm_edits_the_other_copy_but_not_the_answerers(self) -> None:
+        me = self.bot({7: True, 8: True})
+        table = self.table()
+        mine, theirs = await self.ask(me)
+        table.question_messages = [mine, theirs]
+        me._session_table = lambda guild_id, question_id: table
+        DMBot._retire_copies(cast(Any, me), table, "q1")  # the question was answered
+        self.assertEqual(table.question_messages, [])
+        await DMBot.finish_copies(cast(Any, me), 1, "q1", mine.id, "Saved: Maren.")
+        mine.edit.assert_not_awaited()  # the answerer's own copy keeps its Undo
+        theirs.edit.assert_awaited_once_with(content="Saved: Maren.", view=None)
+
+    async def test_without_the_pressed_message_nothing_is_touched(self) -> None:
+        me = self.bot({7: True, 8: True})
+        table = self.table()
+        copies = await self.ask(me)
+        table.question_messages = copies
+        me._session_table = lambda guild_id, question_id: table
+        DMBot._retire_copies(cast(Any, me), table, "q1")
+        await DMBot.finish_copies(cast(Any, me), 1, "q1", None, "Saved.")
+        for copy in copies:
+            copy.edit.assert_not_awaited()  # so Undo is never taken away by mistake
+
+    async def test_a_question_that_runs_out_edits_every_copy(self) -> None:
+        me = self.bot({7: True, 8: True})
+        table = self.table()
+        copies = await self.ask(me)
+        table.question_messages = copies
+        await DMBot._close_question(cast(Any, me), table, "Nobody answered.")
+        for copy in copies:
+            copy.edit.assert_awaited_once_with(content="Nobody answered.", view=None)
+        self.assertEqual(table.question_messages, [])
 
 
 if __name__ == "__main__":

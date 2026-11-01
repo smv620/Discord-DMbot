@@ -125,6 +125,14 @@ async def _answer(
         await interaction.edit_original_response(
             content=answer, view=view, allowed_mentions=NO_PINGS
         )
+    # The same question may sit in other DMs' chats (#3210): they show the answer too.
+    finish = getattr(bot, "finish_copies", None)
+    if finish is not None:
+        pressed = interaction.message.id if interaction.message is not None else None
+        try:
+            await finish(guild_id, question_id, pressed, answer)
+        except Exception:
+            log.exception("Couldn't update the other copies of a name question")
 
 
 class NameAnswerUndoButton(
