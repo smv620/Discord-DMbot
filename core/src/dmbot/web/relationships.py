@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import re
-from collections.abc import Callable, Collection, Mapping
+from collections.abc import Callable, Collection
 from typing import Any
 
 from dmbot.db import Database
@@ -299,22 +299,8 @@ def _knowers(
     one statement: the ones with a row of their own and the members of a group with a row
     (`gate.reach`)."""
     data = graph_view.statements_of(known)
-    # The members of each group, built once: a statement's knowers are then its own rows plus the
-    # members of the groups that have a row, which is what `gate.reach` answers for every
-    # character, without asking it of every group member for every statement.
-    members_of: dict[str, list[str]] = {}
-    for member, groups in data.groups.items():
-        for group in groups:
-            members_of.setdefault(group, []).append(member)
-
-    def who(kind: str, statement: str) -> set[str]:
-        listed = data.knowers.get((kind, statement), {})
-        sure = listed if isinstance(listed, Mapping) else dict.fromkeys(listed, 1.0)
-        found = set(sure)
-        for group in sure:
-            found.update(members_of.get(group, ()))
-        return found
-
+    # (the gate's own function: a map of each group's members built once, #3154, #3228)
+    who = gate.knowers_of(data)
     return data, who
 
 
