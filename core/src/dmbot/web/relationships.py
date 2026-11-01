@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import re
-from collections.abc import Collection, Mapping
+from collections.abc import Callable, Collection, Mapping
 from typing import Any
 
 from dmbot.db import Database
@@ -292,6 +292,22 @@ async def read_web(
     return page
 
 
+def _knowers(
+    known: dict[str, Any],
+) -> tuple[gate.Statements, Callable[[str, str], set[str]]]:
+    """The gate's own input for the door's lists, and a function giving the characters that know
+    one statement: the ones with a row of their own and the members of a group with a row
+    (`gate.reach`)."""
+    data = graph_view.statements_of(known)
+
+    def who(kind: str, statement: str) -> set[str]:
+        listed = data.knowers.get((kind, statement), {})
+        sure = listed if isinstance(listed, Mapping) else dict.fromkeys(listed, 1.0)
+        return {c for c in {*sure, *data.groups} if gate.reach(c, sure, data.groups) is not None}
+
+    return data, who
+
+
 def know_words(known: dict[str, Any]) -> tuple[dict[str, str], dict[str, str]]:
     """The word for each name and each connection, worked out from who knows it (§9b item 3) by
     the gate's own rules, never from a stored flag: the same input as the rest of the page
@@ -299,18 +315,26 @@ def know_words(known: dict[str, Any]) -> tuple[dict[str, str], dict[str, str]]:
     what their group knows) and `gate.word_of` for the word. Returns (names by entry id,
     connections by connection id). Only ids that are in the data get a word, so the page never
     says "secret" of something this read does not know."""
-    data = graph_view.statements_of(known)
+    data, who = _knowers(known)
     party = data.player_characters
-
-    def word(kind: str, statement: str) -> str:
-        listed = data.knowers.get((kind, statement), {})
-        sure = listed if isinstance(listed, Mapping) else dict.fromkeys(listed, 1.0)
-        who = {c for c in {*sure, *data.groups} if gate.reach(c, sure, data.groups) is not None}
-        return gate.word_of(who, party)
-
-    entries = {str(e): word(gate.ENTRY, str(e)) for e in known["liveEntries"]}
-    links = {str(c): word(gate.CONNECTION, str(c)) for c in data.connections}
+    entries = {str(e): gate.word_of(who(gate.ENTRY, str(e)), party) for e in known["liveEntries"]}
+    links = {str(c): gate.word_of(who(gate.CONNECTION, str(c)), party) for c in data.connections}
     return entries, links
+
+
+def link_holders(known: dict[str, Any]) -> dict[str, list[dict[str, str]]]:
+    """For each connection, the characters who know it, player characters and NPCs alike, as
+    {id, name} by name (the DM's own view, so the campaign's own names): the "Who knows this?"
+    control's current answer (#2999). Only characters the door lists as confirmed are named."""
+    data, who = _knowers(known)
+    names = {str(v["id"]): str(v["name"]) for v in known["viewers"]}
+    out: dict[str, list[dict[str, str]]] = {}
+    for link in data.connections:
+        holders = [
+            {"id": c, "name": names[c]} for c in who(gate.CONNECTION, str(link)) if c in names
+        ]
+        out[str(link)] = sorted(holders, key=lambda h: (h["name"].casefold(), h["id"]))
+    return out
 
 
 async def with_know_words(db: Database, session: Session, ref: str, page: dict[str, Any]) -> None:
@@ -331,6 +355,7 @@ async def with_know_words(db: Database, session: Session, ref: str, page: dict[s
     if not found["k"]["isDm"]:
         return
     names, links = know_words(dict(found["k"]))
+    holders = link_holders(dict(found["k"]))
     # (a graph page has nodes and edges, an overview page its tray of unconnected names; one
     # confirmed since the page was read is not in the data and has no word yet)
     for node in [*page.get("nodes", []), *page.get("tray", [])]:
@@ -340,6 +365,12 @@ async def with_know_words(db: Database, session: Session, ref: str, page: dict[s
         for link in edge["links"]:
             if str(link["id"]) in links:
                 link["knowWord"] = links[str(link["id"])]
+                # "Who knows this?": a connection the table may know is `all`; a held one is
+                # `some` when any character knows it, else `dm`. From the lists, not a flag (#2999).
+                held = bool(link.get("secret")) or link.get("revealed") is False
+                now = holders.get(str(link["id"]), [])
+                link["who"] = ("some" if now else "dm") if held else "all"
+                link["knownBy"] = now if held and now else []
 
 
 def page_of(got: dict[str, Any]) -> dict[str, Any]:
