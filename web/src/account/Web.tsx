@@ -25,6 +25,8 @@ import {
 } from "./api";
 import WebMap from "./WebMap";
 import WebOverviewPanel from "./WebOverview";
+import { dimmedName, markSecret, plainGraph, plainOverview } from "./know";
+import { WHO_KNOWS_LIVE } from "../content/who-knows-switch";
 import WebReadings from "./WebReadings";
 import WebWaiting from "./WebWaiting";
 import { WEB_READINGS_LIVE } from "../content/web-readings";
@@ -116,7 +118,7 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
         ...(seeAsNow.current !== undefined ? { seeAs: seeAsNow.current } : {}),
       });
       if (mine !== latest.current) return;
-      setGraph(read);
+      setGraph(read.canEdit ? read : plainGraph(read));
       if (read.canEdit) setIsDm(true);
       setMeta((now) => ({
         visibility: read.visibility ?? now.visibility,
@@ -235,7 +237,7 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
     const view = askedNow.current;
     try {
       const got = await api.webOverview(ref, view ? { view } : {});
-      if (mine === overviewLatest.current) setOverview(got);
+      if (mine === overviewLatest.current) setOverview(got.canEdit ? got : plainOverview(got));
     } catch {
       if (mine === overviewLatest.current) setOverview(null);
     }
@@ -513,6 +515,8 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
                   canEdit={canEdit}
                   act={act}
                   reveal={reveal} revealing={revealing}
+                  api={api}
+                  refId={ref}
                   onClose={() => setLine(null)}
                 />
               )}
@@ -566,11 +570,14 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
             {words.collapseAll}
           </button>
         </div>
+        {(nodes.some((n) => n.knowWord) || graph.edges.some((e) => e.links.some((l) => l.knowWord))) && (
+          <p class="small muted">{words.knowHint}</p>
+        )}
         <ul class="web-names">
           {nodes.map((n) => {
             const open = openRows.has(n.id);
             return (
-              <li key={n.id} class={`web-name${n.revealed === false ? " web-dim" : ""}`}>
+              <li key={n.id} class={`web-name${dimmedName(n) ? " web-dim" : ""}`}>
                 <button
                   type="button"
                   class="web-name-toggle"
@@ -586,11 +593,12 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
                 >
                   <span aria-hidden="true">{open ? "▾" : "▸"}</span>
                   <span class="campaign-name">
-                    {n.secret && <span aria-hidden="true">{words.secretMark} </span>}
+                    {markSecret(n) && <span aria-hidden="true">{words.secretMark} </span>}
                     {n.name}
                   </span>
-                  {n.secret && <span class="visually-hidden"> ({words.secretWords})</span>}
-                  {n.revealed === false && <span class="small muted"> ({words.notRevealed})</span>}
+                  {!n.knowWord && n.secret && <span class="visually-hidden"> ({words.secretWords})</span>}
+                  {!n.knowWord && n.revealed === false && <span class="small muted"> ({words.notRevealed})</span>}
+                  {n.knowWord && words.knowWords[n.knowWord] && <span class="small muted"> ({words.knowWords[n.knowWord]})</span>}
                   <span class="tag">{kindWords(n.kind)}</span>
                   {n.id === center && <span class="small muted">{words.inMiddle}</span>}
                 </button>
@@ -663,14 +671,15 @@ function WebLines({ lines, onOpen }: { lines: WebLine[]; onOpen: (a: string, b: 
     <ul class="web-lines">
       {lines.map((l) => (
         <li key={l.key} class="name-row">
-          {l.link.secret && <span aria-hidden="true">{words.secretMark} </span>}
+          {markSecret(l.link) && <span aria-hidden="true">{words.secretMark} </span>}
           {l.link.belief && <span aria-hidden="true">{words.theoryMark} </span>}
           <span aria-hidden="true">
             {l.from} → {l.words} → {l.to}
           </span>
+          {l.link.knowWord && words.knowWords[l.link.knowWord] && <span class="small muted"> ({words.knowWords[l.link.knowWord]})</span>}
           <span class="visually-hidden">
             {words.lineText(l.from, l.words, l.to)}
-            {l.link.secret ? ` (${words.secretWords})` : ""}
+            {!l.link.knowWord && l.link.secret ? ` (${words.secretWords})` : ""}
             {l.link.belief ? ` (${words.theoryWords})` : ""}
           </span>{" "}
           <button
@@ -896,6 +905,8 @@ function LinePanel({
   act,
   reveal,
   revealing,
+  api,
+  refId,
   onClose,
 }: {
   edge: WebEdge;
@@ -904,6 +915,8 @@ function LinePanel({
   act: (change: WebLinkChange, ok: string) => Promise<string | null>;
   reveal: (target: WebRevealTarget) => Promise<string | null>;
   revealing: Set<string>;
+  api: AccountApi;
+  refId: string;
   onClose: () => void;
 }) {
   const a = nameOf(edge.a);
@@ -922,7 +935,7 @@ function LinePanel({
             <ol class="stack">
               {edge.links.map((l, i) =>
                 l.direction === "both" ? (
-                  <LinkRow key={l.id} n={i + 1} link={l} a={a} b={b} canEdit={canEdit} act={act} reveal={reveal} revealing={revealing} />
+                  <LinkRow key={l.id} n={i + 1} link={l} a={a} b={b} canEdit={canEdit} act={act} reveal={reveal} revealing={revealing} api={api} refId={refId} />
                 ) : null,
               )}
             </ol>
@@ -936,7 +949,7 @@ function LinePanel({
                 <ol class="stack">
                   {edge.links.map((l, i) =>
                     l.direction === way ? (
-                      <LinkRow key={l.id} n={i + 1} link={l} a={a} b={b} canEdit={canEdit} act={act} reveal={reveal} revealing={revealing} />
+                      <LinkRow key={l.id} n={i + 1} link={l} a={a} b={b} canEdit={canEdit} act={act} reveal={reveal} revealing={revealing} api={api} refId={refId} />
                     ) : null,
                   )}
                 </ol>
@@ -953,6 +966,179 @@ function LinePanel({
   );
 }
 
+/** "Who knows this?" on a held connection (#2935 D4, #3214): the DM says only the DM, some characters, or everyone at
+ * the table, and the bot applies it. Shown to the DM's full view only, behind WHO_KNOWS_LIVE. */
+function WhoKnows({
+  api,
+  refId,
+  link,
+  act,
+}: {
+  api: AccountApi;
+  refId: string;
+  link: WebEdge["links"][number];
+  act: (change: WebLinkChange, ok: string) => Promise<string | null>;
+}) {
+  const [picking, setPicking] = useState(false);
+  const [chosen, setChosen] = useState<Set<string>>(new Set());
+  const [names, setNames] = useState<Map<string, string>>(new Map()); // the names of the characters, by id
+  const [q, setQ] = useState("");
+  const [list, setList] = useState<{ id: string; name: string }[]>([]);
+  const [total, setTotal] = useState(0);
+  const [failed, setFailed] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+  const [already, setAlready] = useState("");
+  const [busy, setBusy] = useState(false); // a change is with the bot: no second press until it is answered
+  const latest = useRef(0);
+  // Undefined from an older API: no answer is pressed, and nothing is said about one (#3214).
+  const current = link.who;
+  const holders = link.knownBy ?? [];
+
+  // The character search: the same wait and list as the See as… picker.
+  useEffect(() => {
+    if (!picking || !api.webViewers) return;
+    const mine = ++latest.current;
+    const timer = setTimeout(
+      () => {
+        api
+          .webViewers!(refId, q.trim())
+          .then((got) => {
+            if (mine !== latest.current) return;
+            setList(got.viewers);
+            setTotal(got.total);
+            setFailed(false);
+          })
+          .catch(() => {
+            if (mine !== latest.current) return;
+            setList([]);
+            setTotal(0);
+            setFailed(true);
+          });
+      },
+      q === "" ? 0 : 300,
+    );
+    return () => clearTimeout(timer);
+  }, [api, refId, q, picking]);
+
+  const stateLine =
+    current === undefined
+      ? null
+      : current === "dm"
+        ? words.whoStateDm
+        : current === "some" && holders.length > 0
+          ? words.whoStateSome(words.whoNames(holders.map((h) => h.name)))
+          : current === "all"
+            ? words.whoStateAll
+            : words.whoStateDm;
+
+  /** Only the DM, or everyone at the table: sent at once. Pressing the answer already set says so, and sends nothing. */
+  async function choose(who: "dm" | "everyone"): Promise<void> {
+    if (busy) return;
+    const now = current === "dm" ? "dm" : current === "all" ? "everyone" : null;
+    setAlready("");
+    if (now === who) return setAlready(words.whoAlready);
+    setBusy(true);
+    try {
+      setProblem(await act({ action: "who", id: link.id, who }, who === "dm" ? words.whoDoneDm : words.whoDoneAll));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function toggle(v: { id: string; name: string }): void {
+    setChosen((was) => {
+      const next = new Set(was);
+      if (next.has(v.id)) next.delete(v.id);
+      else next.add(v.id);
+      return next;
+    });
+    setNames((was) => new Map(was).set(v.id, v.name));
+  }
+
+  async function save(): Promise<void> {
+    if (busy) return;
+    const ids = [...chosen];
+    // The same set as already holds it: nothing is sent, and the page says so.
+    const same = current === "some" && ids.length === holders.length && holders.every((h) => chosen.has(h.id));
+    setAlready("");
+    if (same) return setAlready(words.whoAlready);
+    const named = ids.map((id) => names.get(id) ?? holders.find((h) => h.id === id)?.name ?? "");
+    setBusy(true);
+    try {
+      const problemNow = await act({ action: "who", id: link.id, who: "some", characters: ids }, words.whoDoneSome(words.whoNames(named)));
+      setProblem(problemNow);
+      if (problemNow === null) setPicking(false); // a failure keeps the picker and the ticks
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div class="stack">
+      <p>
+        <strong>{words.whoKnowsHeading}</strong>
+      </p>
+      {stateLine && <p class="small">{stateLine}</p>}
+      <div class="row" role="group" aria-label={words.whoKnowsHeading}>
+        <button type="button" class="button secondary" aria-pressed={current === "dm"} disabled={busy} onClick={() => void choose("dm")}>
+          {words.whoOnlyDm}
+        </button>
+        <button
+          type="button"
+          class="button secondary"
+          aria-pressed={current === "some"}
+          disabled={busy}
+          onClick={() => {
+            setChosen(new Set(holders.map((h) => h.id)));
+            setNames(new Map(holders.map((h) => [h.id, h.name])));
+            setPicking(true);
+          }}
+        >
+          {words.whoSome}
+        </button>
+        <button type="button" class="button secondary" aria-pressed={current === "all"} disabled={busy} onClick={() => void choose("everyone")}>
+          {words.whoEveryone}
+        </button>
+      </div>
+      {already && <p role="status">{already}</p>}
+      {problem && <p role="status">{problem}</p>}
+      {picking && (
+        <div class="stack">
+          <label>
+            {words.whoSearch}
+            <input
+              type="search"
+              value={q}
+              placeholder={words.whoSearch}
+              autoComplete="off"
+              spellcheck={false}
+              onInput={(e) => setQ((e.target as HTMLInputElement).value)}
+            />
+          </label>
+          {failed && <p role="status">{words.seeAsLoadFailed}</p>}
+          <ul class="web-found" aria-label={words.whoSomeLabel}>
+            {list.map((v) => (
+              <li key={v.id}>
+                <label class="choice">
+                  <input type="checkbox" checked={chosen.has(v.id)} onChange={() => toggle(v)} />
+                  <span>{v.name}</span>
+                </label>
+              </li>
+            ))}
+          </ul>
+          {total > list.length && <p class="small muted">{words.seeAsMore(list.length, total)}</p>}
+          <div class="row">
+            <button type="button" class="button" disabled={chosen.size === 0 || busy} onClick={() => void save()}>
+              {words.whoSave}
+            </button>
+            {chosen.size === 0 && <span class="small muted">{words.whoPickOne}</span>}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function LinkRow({
   n,
   link,
@@ -962,6 +1148,8 @@ function LinkRow({
   act,
   reveal,
   revealing,
+  api,
+  refId,
 }: {
   n: number;
   link: WebEdge["links"][number];
@@ -971,24 +1159,27 @@ function LinkRow({
   act: (change: WebLinkChange, ok: string) => Promise<string | null>;
   reveal: (target: WebRevealTarget) => Promise<string | null>;
   revealing: Set<string>;
+  api: AccountApi;
+  refId: string;
 }) {
   const [text, setText] = useState(link.words);
   const [problem, setProblem] = useState<string | null>(null);
   const [asking, setAsking] = useState(false);
   const run = async (change: WebLinkChange, ok: string): Promise<void> => setProblem(await act(change, ok));
   return (
-    <li class={link.revealed === false ? "stack web-dim" : "stack"}>
+    <li class={dimmedName(link) ? "stack web-dim" : "stack"}>
       {link.kind && (
         <p class={`small web-kindmark web-link-${link.kind}`}>
           <span class="web-dot" aria-hidden="true" /> {words.linkKind[link.kind]}
         </p>
       )}
       <p>
-        {link.secret && <span aria-hidden="true">{words.secretMark} </span>}
+        {markSecret(link) && <span aria-hidden="true">{words.secretMark} </span>}
         {link.belief && <span aria-hidden="true">{words.theoryMark} </span>}
         {words.linkText(a, b, link.words, link.direction)}
-        {link.secret && <span class="visually-hidden"> ({words.secretWords})</span>}
+        {!link.knowWord && link.secret && <span class="visually-hidden"> ({words.secretWords})</span>}
       </p>
+      {link.knowWord && words.knowWords[link.knowWord] && <p class="small muted">{words.knowWords[link.knowWord]}</p>}
       {canEdit && link.pinned && <p class="small">{words.pinMark} {words.pinnedWords}</p>}
       {canEdit && link.check && <p class="small">{words.checkLine(link.check)}</p>}
       {link.belief && (
@@ -997,7 +1188,7 @@ function LinkRow({
         </p>
       )}
       {link.belief?.contradicted && <p class="small warn">{words.believesFalse}</p>}
-      {link.revealed === false && <p class="small muted">{words.notRevealedFull}</p>}
+      {!link.knowWord && link.revealed === false && <p class="small muted">{words.notRevealedFull}</p>}
       {canEdit && link.revealed === false && (
         <div class="row">
           <button
@@ -1054,6 +1245,9 @@ function LinkRow({
             )}
           </div>
           <p class="small muted">{words.pinHint}</p>
+          {canEdit && WHO_KNOWS_LIVE && (link.secret || link.revealed === false) && (
+            <WhoKnows api={api} refId={refId} link={link} act={act} />
+          )}
           {asking && (
             <div class="row" role="group" aria-label={words.removeShort}>
               <span>{words.removeAsk(a, b)}</span>

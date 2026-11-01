@@ -791,9 +791,29 @@ class MemoryStore:
                 for r in await scope.select(RULE_LINKS, " ORDER BY created_at, id")
                 if r["entity_id"] in live
             ]
+            # Which entries the players are shown, from the gate (the party's view of the lists).
+            # With no player character there is no party to ask, and a suggested entry is on no
+            # list yet: both stay on the flags.
+            shown_entries = await gate.party_entries(scope)
+            if shown_entries is None:
+                # (no player character, or a list held by a group: the full gate answers)
+                statements = await gate.load(scope)
+                if statements.player_characters:
+                    full = gate.visible(gate.Viewer.the_party(), statements)
+                    shown_entries = frozenset(i for (k, i) in full.sureness if k == gate.ENTRY)
+            made = [_entity(r) for r in entities]
+            if shown_entries is not None:
+                made = [
+                    # (the entry's own row: learning a connection or name that mentions an entry
+                    # does not show its main name, `gate.display_name`)
+                    dataclasses.replace(e, seen_by_party=e.id in shown_entries)
+                    if e.status == CONFIRMED
+                    else e
+                    for e in made
+                ]
             return LookupData(
                 scope.version,
-                tuple(_entity(r) for r in entities),
+                tuple(made),
                 tuple(_alias(r) for r in aliases),
                 tuple(_correction(r) for r in corrections),
                 tuple(_relation(r) for r in relations),
@@ -1357,6 +1377,53 @@ class MemoryStore:
         return await self._set_opinion(
             guild_id, campaign_id, viewer_id, subject_id, step, source, from_session_at, False
         )
+
+    async def add_feeling(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        viewer_id: str,
+        subject_id: str,
+        score: int,
+    ) -> int | None:
+        """How a viewer feels about a subject, from a connection the DM kept ("knows (hostile)",
+        #3175): a dated impression from the story, of weight `standing.FEELING_WEIGHT`. It never
+        takes the DM's word's place: a standing the DM set for the pair stays as it is, and one from
+        the story is closed (the history stays) and replaced. Nothing is written, and None comes
+        back, when the ends cannot hold a standing (a place as the one judged, a person at the
+        table), a DM's word is there, or the pair already says so. Returns the change-log batch,
+        for Undo."""
+        if viewer_id == subject_id or not -100 <= score <= 100:
+            return None
+        async with self._write(guild_id, campaign_id, BACKGROUND_SOURCE) as w:
+            a = await _entity_row(w, viewer_id)
+            b = await _entity_row(w, subject_id)
+            if (
+                a["type"] not in STANDING_VIEWERS
+                or b["type"] not in STANDING_SUBJECTS
+                or "person" in (a["type"], b["type"])
+            ):
+                return None
+            old = await w.select(
+                IMPRESSIONS, " AND viewer_id = %s AND subject_id = %s AND closed_at IS NULL",
+                [viewer_id, subject_id],
+            )  # fmt: skip
+            if any(r["source"] == DM for r in old):
+                return None  # the DM's word is there: it always wins
+            if any(r["score"] == score and r["weight"] == standing.FEELING_WEIGHT for r in old):
+                return None  # already so
+            for row in old:
+                await w.update(IMPRESSIONS, row["id"], {"closed_at": w.now})
+            await w.insert(
+                IMPRESSIONS,
+                {
+                    "id": new_id(), "viewer_id": viewer_id, "subject_id": subject_id,
+                    "score": score, "weight": standing.FEELING_WEIGHT,
+                    "source": BACKGROUND_SOURCE, "from_session_at": None,
+                    "created_at": w.now, "closed_at": None,
+                },
+            )  # fmt: skip
+            return w.batch
 
     async def set_attitude(
         self,
@@ -4173,12 +4240,15 @@ class MemoryStore:
         character_ids: Sequence[str],
         *,
         source: str,
+        players_only: bool = False,
     ) -> Written[list[str]]:
         """ "Who knows this?" for a hidden connection (#2935): exactly these player characters know
         it, or only the DM when none. One change, so Undo takes it back. Only the DM."""
         async with self._write(guild_id, campaign_id, source) as w:
             await beliefs.perspective_ids(w)
-            chosen = await knowers.set_connection_knowers(w, relation_id, character_ids)
+            chosen = await knowers.set_connection_knowers(
+                w, relation_id, character_ids, players_only=players_only
+            )
             return Written(chosen, w.batch)
 
     async def set_alias_knowers(
@@ -4189,10 +4259,14 @@ class MemoryStore:
         character_ids: Sequence[str],
         *,
         source: str,
+        players_only: bool = False,
     ) -> Written[list[str]]:
-        """ "Who knows this?" for a secret other name (#2935). Only the DM."""
+        """ "Who knows this?" for a secret other name (#2935). Only the DM. `players_only`: the
+        list holds player characters only, so an NPC who knows it keeps knowing (#3197)."""
         async with self._write(guild_id, campaign_id, source) as w:
-            chosen = await knowers.set_alias_knowers(w, alias_id, character_ids)
+            chosen = await knowers.set_alias_knowers(
+                w, alias_id, character_ids, players_only=players_only
+            )
             return Written(chosen, w.batch)
 
     async def set_statement_knowers(
@@ -4261,8 +4335,8 @@ class MemoryStore:
     async def check_knowers(
         self, guild_id: int, campaign_id: str, character_ids: Sequence[str]
     ) -> None:
-        """Raise `MemoryRuleError` if these are not all this campaign's confirmed player
-        characters (or are too many), writing nothing (#2935)."""
+        """Raise `MemoryRuleError` if these are not all this campaign's confirmed characters
+        (NPCs included, at most 60), writing nothing (#2935, #3197)."""
         async with self._read(guild_id, campaign_id, snapshot=True) as scope:
             await knowers.check_characters(scope, character_ids)
 

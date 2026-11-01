@@ -2582,6 +2582,15 @@ class Adding(NamesTest):
         self.assertIn("Kept secret: **the hooded stranger** is really **Belleros**", text)
         self.assertIn("never puts it in the transcript", text)
 
+    async def test_the_saved_text_says_hidden_only_when_the_dm_asked_for_it(self) -> None:
+        entity = await ui.save_name(
+            self.memory, self.campaign, "Belleros", "npc", [], [], hidden=True
+        )
+        # (the line is the choice just made; it is not read back from the entry's flag)
+        self.assertIn("Hidden from players", ui.saved_text(entity, [], [], hidden=True))
+        self.assertNotIn("Hidden from players", ui.saved_text(entity, [], []))
+        self.assertTrue(entity.hidden_from_players)  # and the flag alone does not say it
+
     async def test_the_kind_picker_saves(self) -> None:
         view = ui.KindPicker(self.campaign.id, "Thornewick", ["Thorn Wick"], [])
         view.pick = SimpleNamespace(values=["place"])  # type: ignore[assignment]

@@ -153,9 +153,10 @@ describe("the page", () => {
     expect(hrefs().some((h) => h?.startsWith("/account/recaps"))).toBe(false);
   });
 
-  it("gives a player only the table's pages and no Settings", async () => {
+  it("gives a player only the table's pages and no Settings, and a way to keep a copy", async () => {
     await open(PLAYER);
-    expect(groups()).toEqual([w.groups.story, w.groups.rules]);
+    expect(groups()).toEqual([w.groups.story, w.groups.rules, campaignBackupWords.heading]);
+    expect(screen.getByRole("button", { name: campaignBackupWords.button })).toBeTruthy();
     expect(screen.queryByRole("heading", { name: w.groups.settings })).toBeNull();
     expect(screen.queryByRole("link", { name: w.groups.settings })).toBeNull(); // not in the tabs either
     const all = hrefs();

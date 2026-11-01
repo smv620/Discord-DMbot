@@ -151,6 +151,7 @@ AUDIENCE: dict[str, str] = {
             "dm_screen.house_sync.HouseSyncButton",
             "dm_screen.house_voice.HouseVoiceButton",
             "dm_screen.import_button.ImportButton",
+            "dm_screen.import_time.ImportTimeButton",  # the game time an import ended at (#2979)
             "dm_screen.left_out.PutBackButton",
             "dm_screen.name_questions.FixUndoButton",
             "dm_screen.name_questions.NameAnswerUndoButton",

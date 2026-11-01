@@ -116,6 +116,7 @@ from dmbot.dm_screen import (
     dm_bot_buttons,
     ensure_dm_screen,
     game_masters,
+    house_file_web,
     house_sync,
     import_button,
     links_ready,
@@ -132,6 +133,7 @@ from dmbot.dm_screen import (
 from dmbot.dm_screen import clock as clock_screen
 from dmbot.dm_screen import effects as timer_screen
 from dmbot.dm_screen import house_voice as house_voice_screen
+from dmbot.dm_screen import import_time as import_time_screen
 from dmbot.dm_screen import levels as screen_levels
 from dmbot.dm_screen import messages as screen_messages
 from dmbot.dm_screen import time_suggest as time_suggest_screen
@@ -324,7 +326,7 @@ from dmbot.off_the_record import NOT_TOLD, WAKE_MINUTES, OffTheRecord, Paused, p
 from dmbot.recaps import discord as recaps_discord
 from dmbot.recaps import feedback as recap_feedback
 from dmbot.recaps import hold as recap_hold
-from dmbot.recaps import name_answers
+from dmbot.recaps import name_answers, web_style
 from dmbot.recaps.accepted import AcceptedSection, AcceptedStore
 from dmbot.recaps.audio.eleven import ElevenLabs, HttpTransport
 from dmbot.recaps.audio.files import AudioFiles
@@ -333,6 +335,7 @@ from dmbot.recaps.discord import (
     HINTS_WAIT_S,
     LORE_SWEEP_EVERY_S,
     NAME_ANSWERS_PER_ROUND,
+    WEB_STYLE_PER_ROUND,
     RecapFeatures,
 )
 from dmbot.recaps.notes import SessionNotesSection
@@ -356,6 +359,7 @@ from dmbot.rules.homebrew_sources import SiteApprovalsSection, SourceStore
 from dmbot.rules.homebrew_spotter import HomebrewMention, HomebrewSpotter
 from dmbot.rules.house import HouseRule, HouseRulesSection, HouseRuleStore
 from dmbot.rules.house_file_link import HouseFileLinkStore
+from dmbot.rules.house_file_queue import HouseFileQueue
 from dmbot.rules.optional import OptionalRule
 from dmbot.rules.pack_suggestions import PackSuggestionStore
 from dmbot.rules.rule_set_backup import RuleSetsSection
@@ -367,7 +371,7 @@ from dmbot.sidebar import knowledge
 from dmbot.sidebar import rule_clash as sidebar_rule_clash
 from dmbot.sidebar.answer import PROMPT_VERSION as SIDEBAR_PROMPT_VERSION
 from dmbot.sidebar.answer import Sidebar
-from dmbot.sidebar.ask import asks_off_record, request_in
+from dmbot.sidebar.ask import asks_off_record, is_table_question, request_in
 from dmbot.sidebar.people import lines as people_lines
 from dmbot.sidebar.service import SidebarService
 from dmbot.table import HintPeople, Table
@@ -376,7 +380,7 @@ from dmbot.test_recording import library as test_library
 from dmbot.test_recording.session import TestSession
 from dmbot.test_recording.store import TestVoiceStore
 from dmbot.timebot import clock as clock_game
-from dmbot.timebot import combat_phrases, durations, where_are_we
+from dmbot.timebot import combat_phrases, durations, import_time, where_are_we
 from dmbot.timebot import phrases as clock_phrases
 from dmbot.timebot import suggest as time_suggest
 from dmbot.timebot.effects import EffectsSection, EffectStore
@@ -544,6 +548,11 @@ from dmbot.ui.transcripts import (
     transcript_command,
 )
 
+DMBCHAT_STATEMENT_WORDS = 4  # a DM's message this long is a statement; shorter is a reply
+DMBCHAT_HINT = (
+    "To tell DMbot something about the story, write it in your private chat with DMbot. "
+    "Players can read this chat."
+)
 REPORT_CALLS = 8  # AI calls a session may spend on the after-session report (grading and sorting)
 MEANING_RUN_CALLS = 50  # Voyage AI calls one after-session run may make (64 texts each)
 CONTRADICTION_CALLS = 3  # AI calls a session may spend grading contradictions (12 clashes each)
@@ -897,6 +906,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self.lore_uploads = lore_queue.LoreQueue(recaps.db) if recaps is not None else None
         self._lore_reads: dict[int, asyncio.Task[None]] = {}  # server -> its read in progress
         self._lore_swept: dict[int, float] = {}  # server -> when its queue was last swept
+        # The website's House-rules file requests (#3087), one at a time per server like lore.
+        self.house_file_queue = HouseFileQueue(recaps.db) if recaps is not None else None
+        self._house_file_runs: dict[int, asyncio.Task[None]] = {}  # server -> its request running
+        self._house_file_swept: dict[int, float] = {}  # server -> when its queue was last swept
         # What DMs chose on the website's Settings page, waiting to be applied (#2463).
         self.web_settings = web_settings.SettingStore(recaps.db) if recaps is not None else None
         # What DMs chose on the website's rule sharing section, waiting to be applied (#2793).
@@ -929,6 +942,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         ] = {}  # a spoken note being written down, by server (#2161)
         self._voice_next = 0  # where the next voice round starts looking, so servers take turns
         self.recap_styles = recap_styles  # the examples for how recaps sound (#2075)
+        # The website's Recap style choices (#3060), applied with the stores above.
+        self.web_recap_style = web_style.StyleQueue(recaps.db) if recaps is not None else None
+        self._web_style_swept: dict[int, float] = {}  # server -> when its queue was last swept
         self.installs = installs  # which servers the bot is in, and when it left (#2163)
         self.recap_holds = recap_holds  # recaps waiting for the DM's name answers (#2169)
         self.recap_feedback_limit = recap_feedback.FeedbackLimit()
@@ -1289,6 +1305,11 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             if self.ai_client
             else None
         )
+        self.import_time_ai = (  # the game time an imported session ended at (#2979), background
+            self.ai_client.tier(FEATURE_TIERS[Feature.IMPORT_TIME], Feature.IMPORT_TIME)
+            if self.ai_client
+            else None
+        )
         # Pictures posted in the table chat (#2450): off unless the backend switch is on.
         # Messages deleted lately, so a picture still being described when its poster deletes it
         # is not written down afterwards (#2450); id → when.
@@ -1516,6 +1537,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         )
         self.add_dynamic_items(clock_screen.CombatUndoButton)  # #1127
         self.add_dynamic_items(time_suggest_screen.TimeJumpButton)  # #1758
+        self.add_dynamic_items(import_time_screen.ImportTimeButton)  # #2979
         self.add_dynamic_items(clock_screen.ClockPicker, clock_screen.SplitUndoButton)  # #1607
         self.add_dynamic_items(delete_campaign.DeleteButton)  # #1608
         self.add_dynamic_items(fightbot.FightButton)  # #1129
@@ -1629,6 +1651,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         # Website lore uploads being read: each puts its claim back to waiting (the next start reads
         # it again) and is waited for here, so the write is not lost with the process (#3022).
         reads = list(getattr(self, "_lore_reads", {}).values())  # a test stub skips __init__
+        reads += list(getattr(self, "_house_file_runs", {}).values())  # (#3087, the same way)
         for read in reads:
             read.cancel()
         with contextlib.suppress(Exception):
@@ -2899,6 +2922,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             ("secret summary", lambda: self.send_exposure_summary(table)),
             ("new names", lambda: self.post_new_names(table)),
             ("new connections", lambda: self.post_claims(table)),
+            ("family links", lambda: self.warn_about_family(table)),
             ("heads-ups", lambda: self.warn_about_continuity(table)),
             # The biggest clashes PlotBot graded, up to three; no AI call here (#2660)
             ("big clashes", lambda: self.tell_contradictions(table)),
@@ -4519,8 +4543,26 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         ):
             self._wake_off_the_record(table.guild_id, author.id)  # not a question (#2466)
         elif text is not None:
-            self.sidebar.ask_in_chat(table, author.id, text)
+            if (
+                table.is_dm(author.id)
+                and self.consent.has_consent(table.guild_id, author.id)
+                and not is_table_question(text)
+            ):
+                # A DM's statement (#3209): the players read this channel, so it is never a table
+                # question and never stored from here, whatever it says. The DM is told once.
+                self._hint_story_goes_private(table, author.id, text)
+            else:
+                self.sidebar.ask_in_chat(table, author.id, text)
         return True
+
+    def _hint_story_goes_private(self, table: Table, user_id: int, text: str) -> None:
+        """One private line to a DM who typed a story statement in the table's chat: story goes in
+        the private chat with DMbot. Once a session each, and not for a short reply ("yes",
+        "correct"), which gets nothing (it answers a question that lives in the private chat)."""
+        if user_id in table.dmbchat_hinted or len(text.split()) < DMBCHAT_STATEMENT_WORDS:
+            return
+        table.dmbchat_hinted.add(user_id)
+        self._track(self.sidebar_send_dm(user_id, DMBCHAT_HINT), "dmbchat-hint")
 
     async def sidebar_post_chat(self, table: Table, text: str) -> bool:
         """Post in the session's DMbot chat channel (#1187); False if there is none."""
@@ -9343,6 +9385,26 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         await self.note_claims(table)
         await self.post_claims(table)
 
+    async def warn_about_family(self, table: Table) -> None:
+        """After a session (#3066): if family links worked out from the DM's own (#2960) wait for a
+        yes, the DM screen says how many, never which, with the 📜 button only a DM can use. Nothing
+        is posted with none waiting. Counts only in the log and on the screen. No AI call."""
+        if self.memory is None or table.campaign_id is None:
+            return
+        gid, cid = table.guild_id, table.campaign_id
+        with log_context(guild_id=gid, campaign_id=cid):
+            await self.memory.rework_family(
+                gid, cid
+            )  # (so the count follows the links as they are)
+            waiting = len(await self.memory.worked_out_waiting(gid, cid))
+            log.info("Worked-out family links: %d waiting", waiting)
+            if waiting:
+                await self.post(
+                    table.screen_channel_id,
+                    links_ready.family_notice(waiting),
+                    view=links_ready.view(cid),
+                )
+
     async def warn_about_continuity(self, table: Table) -> None:
         """After a session: if what was said clashes with the story the DM already confirmed
         (#1320), the DM screen says how many, never what, with a button only the DM can use.
@@ -10205,6 +10267,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                         added = await self._scan_import(gid, ready)
                     await store.finish_scan(gid, ready.session_id, int(time.time()))
                     await self._link_import_party(gid, ready)
+                    await self._offer_import_time(gid, ready)
                     done += 1
                     self._import_names.setdefault(ready.campaign_id, []).extend(added)
                 except Exception:
@@ -10221,6 +10284,90 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         await self._apply_import_plays(gid, store)
         await self._tell_import_news(gid, store)
         return done
+
+    async def _offer_import_time(self, gid: int, ready: Ready) -> None:
+        """After an imported session's scan is done (#2979): work out when in game time it ended
+        and offer the DM to set the clock there, with one button on the DM screen. Never moves
+        the clock. Only when the clock is set, the result is later than it, this is the campaign's
+        newest session (an older one imported later never moves it back) and the party is not
+        split (then the DM is told why nothing is offered). The DM's lines of the game talk only,
+        from speakers who still agree; the strict phrases in code first, and one AI question over
+        the cue lines only when none of them moved it. Its own `try`: a failure here is logged and
+        never reaches the scan's claim. Counts only in the log."""
+        try:
+            await self._offer_import_time_inner(gid, ready)
+        except Exception:
+            log.exception("Import: couldn't work out the game time a session ended at")
+
+    async def _offer_import_time_inner(self, gid: int, ready: Ready) -> None:
+        assert self.import_job is not None
+        if self.clocks is None or self.transcripts is None:
+            return
+        campaign = await self.campaigns.get(gid, ready.campaign_id)
+        if campaign is None or campaign.dm_screen_channel_id is None:
+            return
+        stored = await self.clocks.get(gid, campaign.id)
+        if stored is None:
+            return
+        if await self.transcripts.next_session_start(gid, campaign.id, ready.started_at):
+            return  # a newer session exists: this one never moves the clock
+        rows = await self.import_job.store.scan_lines(gid, ready.session_id)
+        agreed = await self.consent.consenting(gid)
+        lines = [t for uid, t in rows if uid in campaign.dm_user_ids and uid in agreed]
+        if not lines:
+            return
+        walked = import_time.walk(lines, stored.clock, clock_screen.apply_action)
+        target, calls = walked.clock.minute, 0
+        if (
+            not walked.moved
+            and walked.cues
+            and self.settings.time_suggestions
+            and self.import_time_ai is not None
+            and await self.plan_allows("ai", gid, campaign, fail_open=False)
+        ):
+            calls = 1
+            total = await self._import_time_total(walked.cues, stored.clock.minute)
+            if total is not None:
+                target = clock_game.advance(stored.clock, total).minute
+        log.info(  # counts, never words
+            "Import time: %d lines, %d moved by phrases, %d cue lines, %d call(s), %s",
+            len(lines), walked.moved, len(walked.cues), calls,
+            "an offer" if target > stored.clock.minute else "no offer",
+        )  # fmt: skip
+        if target <= stored.clock.minute:
+            return
+        if stored.split:
+            await self.post(campaign.dm_screen_channel_id, import_time_screen.SPLIT_WHY)
+            return
+        await self.post(
+            campaign.dm_screen_channel_id,
+            import_time.offer_text(target),
+            view=import_time_screen.offer_view(campaign.id, target),
+        )
+
+    async def _import_time_total(self, cues: tuple[str, ...], start: int) -> int | None:
+        """The one question over an imported session's cue lines: the minutes they pass in all,
+        or None (the AI failed, said null or answered in the wrong shape)."""
+        assert self.import_time_ai is not None
+        try:
+            # A background call: its own feature, not a live one, so the client sends it with the
+            # output floor whatever small estimate is given here (#2596).
+            reply = await asyncio.wait_for(
+                self.import_time_ai.complete(
+                    import_time.SYSTEM,
+                    import_time.prompt(cues, clock_game.label(start)),
+                    max_tokens=import_time.ANSWER_TOKENS,
+                ),
+                import_time.TIMEOUT_S,
+            )
+        except Exception as exc:
+            log.info("Import time: couldn't ask (%s)", type(exc).__name__)
+            return None
+        if reply.cut or reply.refused:
+            # A cut answer is never read as a smaller one: nothing is offered (#2596).
+            log.info("Import time: the answer stopped early")
+            return None
+        return import_time.read_answer(reply.text)
 
     async def _link_import_party(self, gid: int, ready: Ready) -> None:
         """After an imported session's scan is done: link its party (#3036). Its own `try`: a
@@ -10670,6 +10817,34 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     if not done.error and self.lookup is not None:
                         self.lookup.mark_stale(guild.id, action.campaign_id)
 
+    async def run_web_recap_style(self) -> None:
+        """The Recap style choices DMs made on the website (#3060): for each server, sweep its
+        queue (the DM's pasted words never wait on a DM who did not come back), then apply the
+        oldest waiting choices in the order made. Each is a quick store call; a typed note is one
+        fast AI sort. The word of the outcome only in the log, never the words or who asked."""
+        queue = self.web_recap_style
+        if queue is None:
+            return
+        for guild in list(self.guilds):
+            if self._closing:
+                return
+            now = time.monotonic()
+            if now - self._web_style_swept.get(guild.id, -LORE_SWEEP_EVERY_S) >= LORE_SWEEP_EVERY_S:
+                self._web_style_swept[guild.id] = now
+                await queue.sweep(guild.id)
+            for _ in range(WEB_STYLE_PER_ROUND):
+                claim = await queue.claim_next(guild.id)
+                if claim is None:
+                    break
+                with log_context(guild_id=guild.id, campaign_id=claim.campaign_id):
+                    try:
+                        error = await web_style.apply(self, queue, guild.id, claim)
+                    except Exception as exc:  # the row must never stay "working" for a bug
+                        log.warning("A recap style choice failed: %s", type(exc).__name__)
+                        error = web_style.FAILED
+                    await queue.finish(guild.id, claim, error)
+                    log.info("Recap style %s: %s", claim.action, error or "done")
+
     async def run_lore_uploads(self) -> None:
         """The lore DMs uploaded on the website (#3022): for each server, sweep its queue (words
         never stay just because the DM did not come back), and when no read is running there, take
@@ -10697,6 +10872,39 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             with log_context(guild_id=guild.id, campaign_id=claim.campaign_id):
                 self._lore_reads[guild.id] = asyncio.ensure_future(
                     lore_upload.run_upload(self, queue, claim, guild.id)
+                )
+
+    async def run_house_file_requests(self) -> None:
+        """The House-rules file requests DMs made on the website (#3087): for each server, sweep
+        its queue (the link and file's words never stay just because the DM did not come back),
+        and when none is running there, take the oldest waiting one and do it in its own task. A
+        read of a file can take minutes, so it must not hold this loop, which every other website
+        action shares. One at a time per server."""
+        queue = self.house_file_queue
+        if queue is None:
+            return
+        for guild in list(self.guilds):
+            if self._closing:
+                return
+            running = self._house_file_runs.get(guild.id)
+            if running is not None and running.done():
+                del self._house_file_runs[guild.id]
+                running = None
+            now = time.monotonic()
+            if (
+                now - self._house_file_swept.get(guild.id, -LORE_SWEEP_EVERY_S)
+                >= LORE_SWEEP_EVERY_S
+            ):
+                self._house_file_swept[guild.id] = now
+                await queue.sweep(guild.id)
+            if running is not None:
+                continue
+            claim = await queue.claim_next(guild.id)
+            if claim is None:
+                continue
+            with log_context(guild_id=guild.id, campaign_id=claim.campaign_id):
+                self._house_file_runs[guild.id] = asyncio.ensure_future(
+                    house_file_web.run_request(self, queue, claim, guild.id)
                 )
 
     # ---- the website's Settings page (#2463): the Host of dm_screen.web_settings ----
@@ -10741,6 +10949,11 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         saved = await self.campaigns.set_dndbeyond_invite(campaign.guild_id, campaign.id, invite)
         await self.after_invite_change(saved)
         return saved
+
+    async def apply_pause(self, campaign: Campaign, paused: bool, user_id: int) -> Campaign:
+        """Pause or unpause chosen on the website (#3062): `set_paused` itself, under the session
+        lock like Discord's button, so a running session is never paused under its feet."""
+        return await self.set_paused(campaign.guild_id, campaign.id, user_id, paused)
 
     async def apply_rulesets(self, campaign: Campaign, main: str, fallback: str) -> bool:
         """The main rules chosen on the website (#3112): saved, the new pair's names built ahead

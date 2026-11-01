@@ -4,7 +4,7 @@ Pure: no Discord, no database."""
 
 from __future__ import annotations
 
-from dmbot.memory import kin
+from dmbot.memory import kin, reputation_words
 from dmbot.memory.ontology import DISGUISED_AS, FALLBACK_PREDICATE, SYNONYMS
 
 CONNECTION_WORDS = {
@@ -97,6 +97,9 @@ def link_words(predicate: str, detail: str, directional: bool = False) -> str:
     role ("is the niece of")."""
     if predicate == FALLBACK_PREDICATE and detail:
         return detail
+    # "knows" with the feeling a reader gave it (#3175): "knows (hostile)", the old friend and enemy
+    if predicate == "knows" and reputation_words.word_of(detail) in reputation_words.WORDS:
+        return f"knows ({detail})"
     # A role true of both names (sibling, cousin, spouse) reads the same from either card, so it is
     # shown whatever its stored direction is (#3102). A one-way role is shown only when directional.
     if predicate == KIN and (role := kin.role_of(detail)) and (directional or role in kin.MUTUAL):
