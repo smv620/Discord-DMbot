@@ -9,6 +9,7 @@ from dmbot.memory import background as bg
 from dmbot.memory import lore_read as lr
 from dmbot.memory import unnamed_read as ur
 from dmbot.memory.models import name_key
+from dmbot.memory.who_resolve import UnnamedLink
 
 PLAIN = (
     "Garrick Pell was born in Ashmere, the son of a stern ropemaker mother and an absent father."
@@ -25,7 +26,7 @@ def run(
     text: str = PLAIN,
     links: list[bg.Connection] | None = None,
     names: tuple[str, ...] = ("Garrick Pell", "Ashmere"),
-) -> tuple[list[ur.UnnamedLink], Counter[str]]:
+) -> tuple[list[UnnamedLink], Counter[str]]:
     lost: Counter[str] = Counter()
     keys = {name_key(n) for n in names}
     got = ur.read_unnamed(
