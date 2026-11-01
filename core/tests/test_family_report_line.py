@@ -12,6 +12,7 @@ from typing import Any, cast
 from dmbot.bot import NO_PRIVATE_MESSAGE, DMBot
 from dmbot.dm_screen import links_ready
 from dmbot.memory.models import CONFIRMED, REJECTED
+from tests.asking import with_asking
 from tests.test_memory_store import GUILD_A, ConfirmedMemoryTest
 
 SCREEN = 77
@@ -49,8 +50,12 @@ class TheLine(ConfirmedMemoryTest):
             self.asked.append((guild_id, campaign_id, text, view))
             return self.reachable
 
-        self.bot = SimpleNamespace(memory=self.memory, post=post, ask_privately=ask_privately)
-        self.table = SimpleNamespace(guild_id=GUILD_A, campaign_id=self.c, screen_channel_id=SCREEN)
+        self.bot = with_asking(
+            SimpleNamespace(memory=self.memory, post=post, ask_privately=ask_privately)
+        )
+        self.table = SimpleNamespace(
+            guild_id=GUILD_A, campaign_id=self.c, screen_channel_id=SCREEN, asks=None
+        )
 
     async def state(self, a: str, role: str, b: str) -> None:
         await self.memory.add_relation(
