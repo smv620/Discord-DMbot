@@ -243,6 +243,20 @@ async def keep_all(
                 await progress(tried, total)
             continue
         made = written.value[0]
+        # A feeling kept with a "knows" (#3175) is how the first name feels about the second: the
+        # DM's press stores it as a reputation from the story (a standing the DM set still wins).
+        # Its batch joins the ones Undo takes back, so one press and one Undo cover both.
+        word = feeling_words.word_of(c.detail) if c.predicate == "knows" else None
+        score = feeling_words.score_of(word) if word is not None else None
+        if score is not None:
+            try:
+                batch = await memory.add_feeling(
+                    guild_id, campaign_id, c.subject_id, c.object_id, score
+                )
+            except MemoryRuleError:  # the ends cannot hold one: the connection stands without it
+                batch = None
+            if batch is not None:
+                ended.append(batch)
         # (only a connection made just now: an older twin's rows are the DM's, not this guess's)
         if c.world == lore_knowledge.GUESS and not made.unrevealed and made.created_at >= now:
             await mark_guess(memory, guild_id, campaign_id, "connection", [made.id])

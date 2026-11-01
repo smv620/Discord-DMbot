@@ -1358,6 +1358,54 @@ class MemoryStore:
             guild_id, campaign_id, viewer_id, subject_id, step, source, from_session_at, False
         )
 
+    async def add_feeling(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        viewer_id: str,
+        subject_id: str,
+        score: int,
+        *,
+        from_session_at: int | None = None,
+    ) -> int | None:
+        """How a viewer feels about a subject, from a connection the DM kept ("knows (hostile)",
+        #3175): a dated impression from the story, of weight `standing.FEELING_WEIGHT`. It never
+        takes the DM's word's place: a standing the DM set for the pair stays as it is, and one from
+        the story is closed (the history stays) and replaced. Nothing is written, and None comes
+        back, when the ends cannot hold a standing (a place for a subject, a person at the table), a
+        DM's word is there, or the pair already says so. Returns the change-log batch, for Undo."""
+        if viewer_id == subject_id or not -100 <= score <= 100:
+            return None
+        async with self._write(guild_id, campaign_id, BACKGROUND_SOURCE) as w:
+            a = await _entity_row(w, viewer_id)
+            b = await _entity_row(w, subject_id)
+            if (
+                a["type"] not in STANDING_VIEWERS
+                or b["type"] not in STANDING_SUBJECTS
+                or "person" in (a["type"], b["type"])
+            ):
+                return None
+            old = await w.select(
+                IMPRESSIONS, " AND viewer_id = %s AND subject_id = %s AND closed_at IS NULL",
+                [viewer_id, subject_id],
+            )  # fmt: skip
+            if any(r["source"] == DM for r in old):
+                return None  # the DM's word is there: it always wins
+            if any(r["score"] == score and r["weight"] == standing.FEELING_WEIGHT for r in old):
+                return None  # already so
+            for row in old:
+                await w.update(IMPRESSIONS, row["id"], {"closed_at": w.now})
+            await w.insert(
+                IMPRESSIONS,
+                {
+                    "id": new_id(), "viewer_id": viewer_id, "subject_id": subject_id,
+                    "score": score, "weight": standing.FEELING_WEIGHT,
+                    "source": BACKGROUND_SOURCE, "from_session_at": from_session_at,
+                    "created_at": w.now, "closed_at": None,
+                },
+            )  # fmt: skip
+            return w.batch
+
     async def set_attitude(
         self,
         guild_id: int,
