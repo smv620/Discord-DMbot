@@ -23,6 +23,7 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from dmbot.memory import kin
+from dmbot.memory import reputation_words as feeling_words
 from dmbot.memory.end_match import FILLER, SHORTEST, Ends
 from dmbot.memory.models import name_key
 from dmbot.memory.ontology import DISGUISED_AS, FALLBACK_PREDICATE, SYNONYMS
@@ -61,6 +62,9 @@ CONNECTIONS = {
     "family": "kin_of",
     "member": "member_of",
     "in": "located_in",
+    # ("friend" and "enemy" are read as knows with a feeling before this table is looked at, #3175:
+    # these two entries only keep the words understood; the readers no longer produce ally_of or
+    # enemy_of, and rows stored earlier stay as they are)
     "friend": "ally_of",
     "enemy": "enemy_of",
     "owns": "owns",
@@ -84,6 +88,10 @@ CONNECTIONS = {
 # catch-all relationship with these fixed words as the label, which read from the first name to
 # the second ("a mentors b"). Plain words for a DM: nothing here is a technical term.
 LORE_KEPT = {"serves": "serves", "ally": "ally_of"}
+# Friend, ally and enemy are no kinds any more (#3175): two characters KNOW each other, and the
+# feeling is a reputation word. An AI that still says one of these old words is read as knows with
+# the feeling it stood for, so no line is lost; they are no longer offered to it.
+LEGACY_FEELING = {"friend": "friendly", "ally": "friendly", "enemy": "hostile"}
 LORE_WORDS = {
     "worships": "worships",
 }
@@ -104,6 +112,8 @@ KIN_NEUTRAL = {
 # kept that way round, so the two ways of saying it are one fact and are never offered twice.
 LORE_REVERSED = {"apprentice": "mentor", "child": "parent", "grandchild": "grandparent"}
 ALL_WORDS = (*CONNECTIONS, *LORE_KEPT, *LORE_WORDS, *LORE_KIN, *LORE_REVERSED)  # `how` answers
+# What the AI is offered: the old feeling words are still understood but not asked for (#3175).
+OFFERED_WORDS = tuple(w for w in ALL_WORDS if w not in LEGACY_FEELING)
 MAX_OWN_KINDS = 20  # the campaign's own relationships offered to the AI as well
 # A stated relationship no fixed kind and no campaign term fits (#2454): kept on the catch-all
 # relationship, with the words the text used as its label ("pays", "sworn on the ashes of").
@@ -139,7 +149,9 @@ def schema(own: Mapping[str, str] | None = None) -> dict[str, Any]:
                         "a": {"type": "string"},
                         "how": {
                             "type": "string",
-                            "enum": list(dict.fromkeys([*ALL_WORDS, *(own or {}), OTHER])),
+                            "enum": list(
+                                dict.fromkeys([*OFFERED_WORDS, *(own or {}), OTHER])
+                            ),  # (not the old feeling words)
                         },
                         "words": {"type": "string"},
                         "b": {"type": "string"},
@@ -746,6 +758,9 @@ def read_connections(
         a, b, quote = item.get("a"), item.get("b"), item.get("quote")
         word = str(item.get("how", "")).strip().lower()
         word = KIN_NEUTRAL.get(word, word)  # (a gendered role word is kept as its neutral one)
+        old_feeling = LEGACY_FEELING.get(word)  # "friend", "ally", "enemy" (#3175)
+        if old_feeling is not None:
+            word = "knows"
         reverse = word in LORE_REVERSED
         word = LORE_REVERSED.get(word, word)
         how = (
@@ -754,6 +769,20 @@ def read_connections(
             or next((k for k in own if k.lower() == word), None)
         )
         label = ""
+        if how == "knows":
+            # How the one feels about the other: one of nine words (a reputation, #3175), in the
+            # line's "words". One off the list is dropped and counted; the connection is kept
+            # without it. "neutral" is the plain "they know each other" and stores no word.
+            raw = item.get("words")
+            said_feeling = feeling_words.word_of(raw)
+            if (
+                said_feeling is None
+                and raw not in (None, "")
+                and not (isinstance(raw, str) and not raw.strip())
+            ):
+                lost["feeling_off_list"] += 1  # (a word off the list, or not even text)
+            said_feeling = said_feeling or old_feeling
+            label = "" if said_feeling in (None, feeling_words.NEUTRAL) else said_feeling
         if how is None and word in LORE_WORDS:  # a lore word with its own fixed words (#2757)
             how, label = FALLBACK_PREDICATE, LORE_WORDS[word]
         elif how is None and word in LORE_KIN:  # family by role
@@ -954,6 +983,7 @@ def keep_connections(
     # kin_of, by unordered pair: (its place in `out` or None, its role or "", the order it was said)
     kin_held: dict[tuple[str, str], tuple[int | None, str, tuple[str, str]]] = {}
     contradicted: set[tuple[str, str]] = set()
+    knows_held: dict[tuple[str, str], int] = {}  # a kept `knows` line, by direction (#3175)
     # kin_of picks ("Which Mara?") with a role, by (the end that is a name, the end as written):
     # the pick itself and the way round it was said, so opposite roles are caught here too
     kin_picks: dict[tuple[str, str], tuple[Pick, bool]] = {}
@@ -1109,6 +1139,20 @@ def keep_connections(
                     continue
                 kin_held[pair] = (None, role, (ka, kb))
             else:
+                if c.how == "knows" and (ka, kb) in knows_held:
+                    # A plain "knows" read first must not swallow a later one that says how the
+                    # one feels (#3175): the word is added to the held line. Two different
+                    # words for the same direction clash: the first stays and the clash is counted.
+                    held_at = knows_held[(ka, kb)]
+                    held_words = out[held_at].words
+                    if c.words and not held_words:
+                        out[held_at] = replace(out[held_at], words=c.words)
+                        lost["feeling_added"] += 1
+                    elif c.words and held_words != c.words:
+                        lost["feeling_clash"] += 1
+                    else:
+                        lost["same_pair"] += 1
+                    continue
                 if c.how in both_ways and kb < ka:
                     ka, kb = kb, ka
                 # One fact per pair and kind: the queue's key has no words, so a second
@@ -1148,4 +1192,6 @@ def keep_connections(
             out.append(made)
             if c.how == "kin_of":
                 kin_held[pair] = (len(out) - 1, role, (ka, kb))
+            if c.how == "knows":
+                knows_held[(ka, kb)] = len(out) - 1
     return out

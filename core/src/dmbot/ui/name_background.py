@@ -34,6 +34,7 @@ from dmbot.memory import (
     who_ask,
     who_resolve,
 )
+from dmbot.memory import reputation_words as feeling_words
 from dmbot.memory import unnamed as unnamed_mod
 from dmbot.memory.backstory_links import (
     DONE,
@@ -1313,12 +1314,28 @@ async def queue_links(
         if r.to_session_at is None  # (an ended one can be offered again: the DM may change back)
     }
     symmetric = await symmetric_kinds(memory, campaign)
+    # the feeling each held "knows" carries, by direction (#3175)
+    knows_feeling = {
+        (r.subject_id, r.object_id): r.detail
+        for r in await memory.relations(campaign.guild_id, campaign.id, include_secret=True)
+        if r.predicate == "knows" and r.to_session_at is None
+    }
 
     def known(c: bg.Connection) -> bool:
         a, b = entry(c.a), entry(c.b)
         if a is None or b is None:
             return True  # an end that is no entry of the campaign (a name that was refused)
-        return (a, c.how, b) in have or (c.how in symmetric and (b, c.how, a) in have)
+        if c.how == "knows" and (a, "knows", b) in have:
+            # the same way round: known only when it says the same about the feeling (#3175)
+            return feeling_words.sign_of(knows_feeling.get((a, b), "")) == feeling_words.sign_of(
+                c.words
+            )
+        if (a, c.how, b) in have or (c.how in symmetric and (b, c.how, a) in have):
+            return True
+        # A friendship or enmity stored the old way (ally_of, enemy_of) is the same fact as
+        # "knows" with the feeling that matches it (#3175): not offered a second time.
+        old = feeling_words.old_kind_of(c.words) if c.how == "knows" else None
+        return old is not None and ((a, old, b) in have or (b, old, a) in have)
 
     settled = who_resolve.Settled()
     if unsettled:
@@ -1933,12 +1950,17 @@ class ConnectionOffer(_Menu):
     def _old(self, c: Waiting) -> list[Relation]:
         return self.changes.get((c.subject_id, c.predicate, c.object_id), [])
 
+    def _reads(self, r: Relation) -> str:
+        """How a held connection reads here ("ally of", "knows (hostile)")."""
+        plain = self.words.get(r.predicate, r.predicate.replace("_", " "))
+        if r.predicate != "knows":
+            return plain
+        return link_words(r.predicate, r.detail, r.directional)
+
     def _change_line(self, c: Waiting, how: str) -> str:
         """What is there now, then what the text says. Nothing changes until the DM says yes, and
         the old connection is ended, not deleted (#3021)."""
-        old = ", ".join(
-            self.words.get(r.predicate, r.predicate.replace("_", " ")) for r in self._old(c)
-        )
+        old = ", ".join(self._reads(r) for r in self._old(c))
         return (
             f"🔁 Now: **{_md(c.subject)}** {_md(old)} **{_md(c.object)}**\n"
             f"Your text: **{_md(c.subject)}** {how} **{_md(c.object)}**\n"

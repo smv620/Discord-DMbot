@@ -18,6 +18,7 @@ from unittest.mock import AsyncMock
 from dmbot.ai import BUSY, OUT_OF_FUNDS, AIError, AIOutOfFunds, Reply, max_output
 from dmbot.memory import background as bg
 from dmbot.memory import lore_read as lr
+from dmbot.memory import reputation_words as feeling_words
 from dmbot.memory.ontology import FALLBACK_PREDICATE
 
 TEXT = (
@@ -626,7 +627,8 @@ class TheLoreWords(unittest.TestCase):
                 ),
             ]
         )
-        self.assertEqual([c.how for c in got], ["serves", "ally_of"])
+        # (ally is no kind any more, #3175: it is read as knows, with the feeling it stood for)
+        self.assertEqual([(c.how, c.words) for c in got], [("serves", ""), ("knows", "friendly")])
 
     def test_a_lore_word_still_needs_both_names_in_the_text(self) -> None:
         got, lost = connections(
@@ -637,15 +639,21 @@ class TheLoreWords(unittest.TestCase):
     def test_the_answer_may_use_them_and_the_instructions_say_what_they_mean(self) -> None:
         enum = bg.schema()["properties"]["connections"]["items"]["properties"]["how"]["enum"]
         self.assertEqual(len(enum), len(set(enum)))
-        for word in bg.ALL_WORDS:
+        for word in bg.OFFERED_WORDS:
             self.assertIn(word, enum)
+        for old in bg.LEGACY_FEELING:
+            self.assertNotIn(old, enum)  # (still understood when read, no longer offered)
         asked = lr.shape_instructions({"serves": "servant"})
-        for word in (*bg.LORE_WORDS, "ally", "serves"):
+        for word in (*bg.LORE_WORDS, "serves", "knows"):
             self.assertIn(word, asked)
+        for word in ("friend =", "ally =", "enemy ="):
+            self.assertNotIn(word, asked)  # (no longer offered, #3175)
         self.assertEqual(
             asked.count("serves,"), 1
         )  # (listed once, though the campaign has its own)
         reading = lr.read_instructions()
+        for feeling in feeling_words.WORDS:
+            self.assertIn(feeling, reading)  # (pass 1 lists all nine feeling words)
         for words in ("mentors", "is an apprentice of", "is a rival of", "founded", "worships"):
             self.assertIn(words, reading)
 

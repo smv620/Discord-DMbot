@@ -63,3 +63,28 @@ def step_of_word(word: str) -> str | None:
     """The DM's step name for the word ("Friendly"), or None as for `score_of` (also a word
     already passed through `word_of`)."""
     return _STEP.get(word)
+
+
+def old_kind_of(word: str) -> str | None:
+    """The kind an old friend or enemy was stored as that this feeling is the same fact as
+    ("ally_of" for a good word, "enemy_of" for a bad one), or None for neutral or a word off the
+    list. Rows stored before friend and enemy became knows (#3175) stay as they are, so a reader
+    comparing a new connection with what the campaign holds asks this."""
+    score = score_of(word)
+    if score is None or score == 0:
+        return None
+    return "ally_of" if score > 0 else "enemy_of"
+
+
+def opposite_old_kind_of(word: str) -> str | None:
+    """The old kind that cannot stand beside this feeling ("enemy_of" against a good word)."""
+    kind = old_kind_of(word)
+    return None if kind is None else ("enemy_of" if kind == "ally_of" else "ally_of")
+
+
+def sign_of(detail: str) -> int:
+    """-1, 0 or 1 for a connection's detail read as a feeling: 0 for none, neutral or a word that
+    is not a feeling. For comparing a held `knows` with a waiting one."""
+    word = word_of(detail)
+    score = score_of(word) if word is not None else None
+    return 0 if not score else (score > 0) - (score < 0)
