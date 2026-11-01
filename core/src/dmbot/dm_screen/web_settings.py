@@ -42,6 +42,7 @@ KEEP_FOR_S = 3600  # nothing waits on a row longer than this
 VISIBILITY, LEVEL, RETENTION, OPTIONAL_RULE = "visibility", "level", "retention", "optional_rule"
 CO_DM = "co_dm"  # a game master added or removed (#2776)
 STORY_MODE = "story_mode"  # the Shared story switch (#3078)
+RULESETS = "rulesets"  # the main rules and what to use if they miss, "2024/2014" (#3112)
 PERSON_ID_MAX = 19  # digits in a Discord id
 VISIBILITIES = ("private", "peek", "open")
 RETENTION_CHOICES = tuple(choice for choice, _days in CHOICES)
@@ -120,6 +121,17 @@ class Host(Protocol):
         """Save the Shared story switch with the store's own rules (#3078): turning it on needs
         the DM's confirmation on record or `confirmed_by` now. Raises `CampaignError` with the
         words Discord shows."""
+        ...
+
+    async def apply_rulesets(self, campaign: Campaign, main: str, fallback: str) -> bool:
+        """Save the main rules and the fallback with the store's own check (`check_rulesets`),
+        then get the new pair ready for lookups (a failure there costs only speed). Raises
+        `CampaignError` with the store's words. True when a session of this campaign is live: it
+        keeps the pair it started with, so the change applies from the next one."""
+        ...
+
+    async def optional_overrides(self, campaign: Campaign) -> dict[str, bool]:
+        """The optional rules the DM switched away from the campaign default."""
         ...
 
     async def find_member(self, guild_id: int, user_id: int) -> Member | None:
@@ -217,6 +229,8 @@ async def apply(host: Host, guild_id: int, item: Setting) -> Outcome:
         return await _co_dm(host, campaign, item)
     if item.setting == STORY_MODE:
         return await _story_mode(host, campaign, item)
+    if item.setting == RULESETS:
+        return await _rulesets(host, campaign, item)
     try:
         if item.setting == VISIBILITY:
             if item.value not in VISIBILITIES:
@@ -277,6 +291,51 @@ async def _story_mode(host: Host, campaign: Campaign, item: Setting) -> Outcome:
     except CampaignError as exc:
         return Outcome(REFUSED, str(exc))
     return Outcome()
+
+
+RULESETS_NEXT_SESSION = "Saved. It takes effect from your next session."
+
+
+def unused_optional_rules(
+    old_main: str, new_main: str, overrides: dict[str, bool], default: bool
+) -> list[str]:
+    """Names of the optional rules that were on for the old main rules and do not add to the new
+    ones. They stay saved (switching back brings them back) but do nothing meanwhile, so the DM
+    is told: turning a chosen rule off silently is not OK."""
+    now = {r.id for r in optional.applying(new_main)}
+    return [
+        r.name
+        for r in optional.applying(old_main)
+        if r.id not in now and optional.is_on(r.id, overrides, default)
+    ]
+
+
+async def _rulesets(host: Host, campaign: Campaign, item: Setting) -> Outcome:
+    """The main rules and the fallback (#3112), as "<main>/<fallback>". The store checks the pair
+    again (both words offered, the fallback not the main rules) and its words go to the page.
+    A live session captured its pair when it started (spotter, lookups, clashes, legacy tags), so
+    it keeps it and the note says the change applies from the next session. Optional rules that
+    do not add to the new main rules are named. Applying the same row twice is the same save."""
+    if item.value.count("/") != 1:
+        return Outcome(BAD_VALUE)
+    main, fallback = item.value.split("/")
+    try:
+        live = await host.apply_rulesets(campaign, main, fallback)
+        overrides = (
+            await host.optional_overrides(campaign) if main != campaign.target_ruleset else {}
+        )
+    except CampaignError as exc:
+        return Outcome(REFUSED, str(exc))
+    notes = [RULESETS_NEXT_SESSION] if live else []
+    unused = unused_optional_rules(
+        campaign.target_ruleset, main, overrides, campaign.optional_rules_default
+    )
+    if unused:
+        notes.append(
+            f"These optional rules do not add to the {optional.main_rules(main)} and do nothing "
+            f"until you switch back: {', '.join(unused)}."
+        )
+    return Outcome(note=" ".join(notes))
 
 
 async def _co_dm(host: Host, campaign: Campaign, item: Setting) -> Outcome:
