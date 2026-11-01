@@ -762,6 +762,8 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   let houseFileNow: HouseFileRequest | null = null;
   let houseFileLooks = 0;
   let loreLooks = 0;
+  // "Add all" answers under a finished upload (#3222): each press is an answer the page polls; Undo takes it back.
+  const confirmAnswers = new Map<string, { action: "add" | "undo"; counts: Record<string, number>; looks: number; createdAt: number; at: number }>();
   // The pretend recap style (#2985): a change takes effect after two looks, as the bot's would.
   const styleNow = { examples: [{ id: "11", text: "The silver lock clicked and Mira let out her breath." }] as { id: string; text: string }[], notes: [] as { id: string; text: string }[] };
   const styleChanges = new Map<string, { action: RecapStyleAction["action"]; arg: string; looks: number; at: number }>();
@@ -1960,9 +1962,47 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       loreLooks += 1;
       const at = Math.floor(Date.now() / 1000);
       if (loreNow.state === "waiting" && loreLooks >= 2) loreNow = { ...loreNow, state: "working", stage: "reading", updatedAt: at };
-      else if (loreNow.state === "working" && loreLooks >= 4) loreNow = { ...loreNow, state: "done", stage: "done", namesFound: 4, linksFound: 3, updatedAt: at };
+      else if (loreNow.state === "working" && loreLooks >= 4)
+        loreNow = { ...loreNow, state: "done", stage: "done", namesFound: 4, linksFound: 3, updatedAt: at, waiting: { place: 5, character: 7, group: 2 } };
       loreNow = { ...loreNow, serverNow: at };
       return loreNow;
+    },
+    async confirmKinds(ref, upload, kinds) {
+      calls.push(`confirmKinds:${ref}:${upload}:${kinds === "all" ? "all" : kinds.join(",")}`);
+      await reachable();
+      signedIn();
+      if (!loreNow || upload !== loreNow.id) throw new ApiError("not-found");
+      const waiting = loreNow.waiting ?? {};
+      const chosen = kinds === "all" ? Object.keys(waiting) : kinds;
+      const counts = Object.fromEntries(chosen.filter((k) => (waiting[k] ?? 0) > 0).map((k) => [k, waiting[k]!]));
+      const at = Math.floor(Date.now() / 1000);
+      const id = `confirm-${confirmAnswers.size + 1}`;
+      confirmAnswers.set(id, { action: "add", counts, looks: 0, createdAt: at, at });
+      return { answer: id };
+    },
+    async confirmUndo(ref, answer) {
+      calls.push(`confirmUndo:${ref}:${answer}`);
+      await reachable();
+      signedIn();
+      const added = confirmAnswers.get(answer);
+      if (!added || added.action !== "add") throw new ApiError("not-found");
+      const at = Math.floor(Date.now() / 1000);
+      const id = `confirm-${confirmAnswers.size + 1}`;
+      confirmAnswers.set(id, { action: "undo", counts: added.counts, looks: 0, createdAt: at, at });
+      return { answer: id };
+    },
+    async confirmAnswer(ref, answer) {
+      calls.push(`confirmAnswer:${ref}:${answer}`);
+      await reachable();
+      signedIn();
+      const got = confirmAnswers.get(answer);
+      if (!got) throw new ApiError("not-found");
+      got.looks += 1;
+      const at = Math.floor(Date.now() / 1000);
+      const progress = { done: Math.min(got.looks, 2), total: 2, at, createdAt: got.createdAt, now: at };
+      if (got.looks < 2) return { state: "running", stage: "adding", progress };
+      const text = Object.entries(got.counts).map(([k, n]) => `${k}:${n}`).join(" ");
+      return { state: "done", stage: "done", counts: text, undo: got.action === "add", progress };
     },
     // The pretend campaign page (#2416): a ref ending `.cp-none` is one nobody may see, `.cp-player` one
     // the person plays in without running it, `.cp-co` one they help run.
