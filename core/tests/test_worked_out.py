@@ -65,6 +65,50 @@ class TheWorkedOutLinks(ConfirmedMemoryTest):
             (self.aldric, "parent", self.mira, PROPOSED, True),
         )
 
+    async def test_a_sibling_of_a_sibling_is_suggested_once_and_not_again(self) -> None:
+        # (#3238) The two-way link is stored smaller id first, and a recompute finds it there.
+        await self.state(self.bryn, "sister", self.mira)
+        await self.state(self.bryn, "brother", self.aldric)
+        done = await self.memory.rework_family(GUILD_A, self.c)
+        self.assertEqual((done.added, done.removed, done.waiting), (1, 0, 1))
+        (link,) = await self.mine()
+        first, second = sorted((self.aldric, self.mira))
+        self.assertEqual(
+            (link.subject_id, link.detail, link.object_id, link.status),
+            (first, "sibling", second, PROPOSED),
+        )
+        again = await self.memory.rework_family(GUILD_A, self.c)
+        self.assertEqual((again.added, again.removed, again.waiting), (0, 0, 1))
+        self.assertEqual(len(await self.mine()), 1)
+
+    async def test_a_parents_sibling_is_suggested_as_an_aunt_or_uncle_with_a_direction(
+        self,
+    ) -> None:
+        await self.state(self.aldric, "parent", self.mira)
+        await self.state(self.aldric, "brother", self.bryn)
+        await self.memory.rework_family(GUILD_A, self.c)
+        got = {(r.subject_id, r.detail, r.object_id, r.directional) for r in await self.mine()}
+        self.assertIn((self.bryn, "aunt or uncle", self.mira, True), got)
+
+    async def test_a_rejected_uncle_is_not_offered_again_as_an_aunt_or_uncle(self) -> None:
+        await self.state(self.aldric, "parent", self.mira)
+        await self.state(self.aldric, "brother", self.bryn)
+        await self.memory.rework_family(GUILD_A, self.c)
+        (link,) = [r for r in await self.mine() if r.detail == "aunt or uncle"]
+        # (the DM rejects it; the same fact stated from the other side must not come back)
+        await self.memory.update_relation(GUILD_A, self.c, link.id, source="dm", status=REJECTED)
+        await self.memory.rework_family(GUILD_A, self.c)
+        self.assertEqual(len([r for r in await self.mine() if r.detail == "aunt or uncle"]), 1)
+
+    async def test_a_derived_sibling_goes_when_its_source_goes(self) -> None:
+        first = await self.state(self.bryn, "sister", self.mira)
+        await self.state(self.bryn, "brother", self.aldric)
+        await self.memory.rework_family(GUILD_A, self.c)
+        self.assertEqual(len(await self.mine()), 1)
+        await self.memory.update_relation(GUILD_A, self.c, first.id, source="dm", status=REJECTED)
+        done = await self.memory.rework_family(GUILD_A, self.c)
+        self.assertEqual((done.removed, done.waiting), (1, 0))
+
     async def test_a_mother_and_a_brother_offer_the_parent_too(self) -> None:
         # The same rule as the sister case: kin_derive reads "brother" as a sibling (kin_derive.py
         # _SIBLING_WORDS), so the derived link is the neutral parent (#2959).

@@ -95,12 +95,16 @@ async def rework(
     derived = kin_derive.derive(_stated(rows, set(entities)))
     by_id = {str(r["id"]): r for r in rows}
     held = {
-        (str(r["subject_id"]), kin.role_of(str(r["detail"] or "")), str(r["object_id"])): r
+        kin.same_fact(
+            str(r["subject_id"]), kin.role_of(str(r["detail"] or "")), str(r["object_id"])
+        ): r
         for r in rows
         if r["source"] == WORKED_OUT_SOURCE
     }
     any_state = {
-        (str(r["subject_id"]), kin.role_of(str(r["detail"] or "")), str(r["object_id"]))
+        kin.same_fact(
+            str(r["subject_id"]), kin.role_of(str(r["detail"] or "")), str(r["object_id"])
+        )
         for r in rows
     }
     wanted: set[tuple[str, str, str]] = {(d.a_id, d.role, d.b_id) for d in derived}
