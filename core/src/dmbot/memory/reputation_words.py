@@ -2,10 +2,11 @@
 
 Two characters KNOW each other, and how well and how kindly is a reputation: the scale DMbot calls
 Standing today, -100 to 100, whose five steps the DM sets (Hostile -80, Unfriendly -40, Wary 0,
-Friendly 40, Devoted 80; `standing.py`). A reader (the lore read or the session reader) returns one of NINE plain words for the feeling,
-never a number, and this module is the one place the words become the DM's stored steps. The word
-is only a proposal: it waits with the connection and is stored by the DM's press, and a standing
-the DM set always wins (`standing.DM_WEIGHT`). Pure; nothing here touches the story.
+Friendly 40, Devoted 80; `standing.py`). A reader (the lore read or the session reader) returns
+one of NINE plain words for the feeling, never a number, and this module is the one place the
+words become the DM's stored steps. The word is only a proposal: it waits with the connection and
+is stored by the DM's press, and a standing the DM set always wins (`standing.DM_WEIGHT`).
+Pure; nothing here touches the story.
 """
 
 from __future__ import annotations
