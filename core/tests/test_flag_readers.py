@@ -54,7 +54,11 @@ FILES: dict[str, tuple[str, str, str]] = {
     "ui/name_card.py": (READS, "CloudDev-lead", "the card's hidden line, audience line, toggle"),
     "ui/name_lists.py": (READS, "CloudDev-lead", "a list's secret-name rule"),
     "ui/name_unnamed.py": (DEFINES, "CloudDev-lead", "a docstring naming `unseen_by_players`"),
-    "ui/names.py": (READS, "CloudDev-lead", "the saved-name text says 'hidden'"),
+    "ui/names.py": (
+        WRITES,
+        "CloudDev-lead",
+        "save_name passes the DM's hidden choice to add_entity",
+    ),
     "ui/threads.py": (WRITES, "CloudDev-lead", "makes a thread the DM typed start hidden"),
 }
 
@@ -96,4 +100,4 @@ class TheFlagReaders(unittest.TestCase):
     def test_the_readers_still_to_convert_are_counted_for_the_record(self) -> None:
         # (a number to watch go down, not a limit: the slice is done when it reaches zero)
         reading = sorted(path for path, (kind, _, _) in FILES.items() if kind == READS)
-        self.assertEqual(len(reading), 13, reading)
+        self.assertEqual(len(reading), 12, reading)
