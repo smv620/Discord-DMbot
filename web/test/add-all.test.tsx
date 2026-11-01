@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import AddAll from "../src/account/AddAll";
 import { ApiError, type AccountApi, type ConfirmAnswer, type LoreUpload } from "../src/account/api";
-import { addAllWords as w, countsList, sumCounts } from "../src/content/add-all-words";
+import { addAllWords as w, countsList, plainKindSingular, sumCounts } from "../src/content/add-all-words";
 
 const live = vi.hoisted(() => ({ on: true }));
 vi.mock("../src/content/confirm-kinds-switch", () => ({
@@ -58,8 +58,21 @@ describe("the words for the counts", () => {
     expect(countsList({ place: 5, character: 7 })).toBe("7 characters and 5 places");
     expect(countsList({ place: 5, character: 7, group: 2 })).toBe("7 characters and 5 places, and 1 other kind");
     expect(countsList({ place: 5, character: 7, group: 2, item: 1 })).toBe("7 characters and 5 places, and 2 other kinds");
+    expect(countsList({ place: 2, character: 2 })).toBe("2 characters and 2 places");
+    expect(countsList({ place: 2, character: 2 })).toBe(countsList({ character: 2, place: 2 }));
+    expect(countsList({ place: 1, character: 3 })).toBe("3 characters and 1 place");
+    expect(countsList({ place: 0, character: 4 })).toBe("4 characters");
     expect(w.found(1)).toBe("1 name found in your document is waiting for your OK.");
     expect(w.found(3)).toBe("3 names found in your document are waiting for your OK.");
+  });
+});
+
+describe("every plural kind has a singular", () => {
+  it("names one of each kind in the singular", async () => {
+    const { webPage } = await import("../src/content/web-words");
+    for (const key of Object.keys(webPage.kinds)) {
+      expect(webPage.kindOne, key).toHaveProperty(key);
+    }
   });
 });
 
@@ -220,5 +233,30 @@ describe("the answers from the server, and what a failure says", () => {
     fireEvent.click(screen.getByRole("button", { name: w.addAll(5) }));
     expect(await screen.findByText(w.added(5, "5 places"))).toBeTruthy();
     expect(asked).toBe(1);
+  });
+
+  it("a kind with one name gets its own button with the singular word", () => {
+    const { container } = render(<AddAll api={apiWith([])} campaign="100.cmp1" upload={upload({ character: 3, place: 1 })} />);
+    expect(Array.from(container.querySelectorAll("button")).map((b) => b.textContent)).toEqual([
+      w.addAll(4),
+      "Add all 3 characters",
+      "Add 1 place",
+    ]);
+  });
+
+  it("a kind with several names keeps the plural", () => {
+    const { container } = render(<AddAll api={apiWith([])} campaign="100.cmp1" upload={upload({ place: 2, character: 3 })} />);
+    expect(Array.from(container.querySelectorAll("button")).map((b) => b.textContent)).toContain("Add all 2 places");
+  });
+
+  it("a kind with no singular word falls back to the key with spaces", () => {
+    expect(plainKindSingular("zz_unknown_kind")).toBe("zz unknown kind");
+    expect(plainKindSingular("npc")).toBe("NPC");
+  });
+
+  it("the done line for one name uses the singular word", async () => {
+    render(<AddAll api={apiWith([done({ place: 1 })], { confirmAnswer: async () => done({ place: 1 }) })} campaign="100.cmp1" upload={upload({ place: 1 })} />);
+    fireEvent.click(screen.getByRole("button", { name: w.addOne }));
+    expect(await screen.findByText("Added 1 name: 1 place.")).toBeTruthy();
   });
 });

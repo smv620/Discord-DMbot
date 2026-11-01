@@ -1,6 +1,6 @@
 // The words of "Add all" on the Upload lore page (#3207, #3222). Plain words: the DM adds the names a document
 // found, watches the wait, and can take them back. DMbot never adds a name it did not find, and ideas are never counted.
-import { kindWords } from "./web-words";
+import { kindWord, kindWords } from "./web-words";
 
 export const addAllWords = {
   found: (n: number): string =>
@@ -8,6 +8,7 @@ export const addAllWords = {
   addOne: "Add 1 name",
   addAll: (n: number): string => `Add all ${n} names`,
   addKind: (n: number, kind: string): string => `Add all ${n} ${kind}`,
+  addOneKind: (kind: string): string => `Add 1 ${kind}`,
   checkOneByOne: "Check them one by one",
   ideas: "Ideas are not included. Check those yourself.",
   nothingLeft: "Nothing left to add.",
@@ -36,10 +37,18 @@ export function plainKindWord(key: string): string {
   return /^[A-Z]{2}/.test(word) ? word : word.toLowerCase();
 }
 
+/** A kind's singular in a sentence: "1 place"; capitals that open a word, such as "NPC", stay. */
+export function plainKindSingular(key: string): string {
+  const word = kindWord(key);
+  return /^[A-Z]{2}/.test(word) ? word : word.toLowerCase();
+}
+
 /** The biggest kinds first, the two biggest named and the rest counted: "5 places and 7 characters, and 2 other kinds". */
 export function countsList(counts: Record<string, number>): string {
-  const sorted = Object.entries(counts).filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1]);
-  const named = sorted.slice(0, 2).map(([k, n]) => `${n} ${plainKindWord(k)}`);
+  const sorted = Object.entries(counts)
+    .filter(([, n]) => n > 0)
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])); // ties by name, so the order never depends on the object's keys
+  const named = sorted.slice(0, 2).map(([k, n]) => `${n} ${n === 1 ? plainKindSingular(k) : plainKindWord(k)}`);
   const others = sorted.length - named.length;
   const head = named.join(" and ");
   if (others === 0) return head;
