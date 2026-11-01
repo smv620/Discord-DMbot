@@ -26,6 +26,7 @@ from dmbot.sessions import SessionStore
 from dmbot.transcript import questions as name_questions
 from dmbot.transcript import speaker_question as speaker_q
 from dmbot.ui.logic import NO_CAMPAIGN_ACCESS
+from tests.asking import live_on_screen
 from tests.pg import DatabaseTest
 
 GUILD, VOICE, SCREEN, OTHER_TEXT, TRANSCRIPT = 1, 2, 3, 4, 5
@@ -80,6 +81,7 @@ class SessionTests(DatabaseTest):
             self.campaigns,
             self.sessions,
         )
+        live_on_screen(self.bot)  # live questions are asked on the screen here (#3210)
         self.ears = FakeEarsConnection()
         self.bot.ears._active = self.ears  # type: ignore[assignment]
 

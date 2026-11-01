@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import unittest
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock
 
 import discord
@@ -121,6 +121,47 @@ class Sending(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(table.asks)
         await DMBot.ask_dm(me, table, make(FAMILY, "Links"))
         me.ask_privately.assert_awaited_once()
+
+
+class Live(unittest.IsolatedAsyncioTestCase):
+    """`DMBot.ask_live` (#3210): a question asked while the game runs."""
+
+    def bot(self, reach: dict[int, bool]) -> Any:
+        campaign = SimpleNamespace(name="The *Table*", owner_user_id=8, dm_user_ids=set(reach))
+        order: list[int] = []
+
+        async def dm_message(user_id: int, text: str, view: Any) -> Any:
+            order.append(user_id)
+            return SimpleNamespace(text=text) if reach[user_id] else None
+
+        return SimpleNamespace(
+            campaigns=SimpleNamespace(get=AsyncMock(return_value=campaign)),
+            _dm_message=dm_message,
+            post_message=AsyncMock(return_value="on the screen"),
+            order=order,
+        )
+
+    def table(self) -> Any:
+        return SimpleNamespace(guild_id=1, campaign_id="c" * 32, screen_channel_id=9)
+
+    async def test_the_owner_is_asked_first_and_the_first_who_can_be_reached_gets_it(self) -> None:
+        me = self.bot({7: True, 8: False, 9: True})
+        message = await DMBot.ask_live(
+            cast(Any, me), self.table(), "Did they mean…?", cast(Any, None)
+        )
+        self.assertEqual(me.order, [8, 7])  # the owner (8) first, then the next id
+        self.assertTrue(message.text.startswith("❓ **DMbot has a question** · "))
+        self.assertIn("\\*Table\\*", message.text)
+        me.post_message.assert_not_awaited()  # nothing on the screen
+
+    async def test_when_no_dm_can_be_reached_it_goes_on_the_screen_with_the_reason(self) -> None:
+        me = self.bot({7: False})
+        message = await DMBot.ask_live(
+            cast(Any, me), self.table(), "Did they mean…?", cast(Any, None)
+        )
+        self.assertEqual(message, "on the screen")
+        text = me.post_message.await_args.args[1]
+        self.assertEqual(text, "Did they mean…?" + NO_PRIVATE_MESSAGE)
 
 
 if __name__ == "__main__":

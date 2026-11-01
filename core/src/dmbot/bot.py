@@ -6986,9 +6986,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             )
         else:
             text = name_questions.question_text(speaker, md(asked.heard), md(asked.context))
-        message = await self.post_message(
-            table.screen_channel_id, text, question_view(table.guild_id, asked)
-        )
+        message = await self.ask_live(table, text, question_view(table.guild_id, asked))
         if message is None:
             if book.is_open(asked.id):  # not posted: free the slot, and ask again later
                 book.close(name_questions.NOT_POSTED, time.monotonic())
@@ -10226,6 +10224,29 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 )
             except Exception:
                 log.exception("Couldn't post a question for the DM on the DM screen")
+
+    async def ask_live(
+        self, table: Table, text: str, view: discord.ui.View
+    ) -> discord.Message | None:
+        """A question asked while the game runs, in a DM's private chat (#3210). The campaign's
+        owner is asked first, then the other DMs, and the first who can be reached gets it: the
+        message is edited as the question is answered or runs out, so it lives in one chat.
+        Only if no DM can be reached does it go on the DM screen, with the line saying why.
+        None when it could not be posted anywhere."""
+        campaign = (
+            await self.campaigns.get(table.guild_id, table.campaign_id)
+            if table.campaign_id is not None
+            else None
+        )
+        if campaign is not None:
+            who = discord.utils.escape_markdown(campaign.name)
+            marked = f"❓ **DMbot has a question** · {who}\n{text}"
+            order = sorted(campaign.dm_user_ids, key=lambda u: (u != campaign.owner_user_id, u))
+            for user_id in order:
+                message = await self._dm_message(user_id, marked, view)
+                if message is not None:
+                    return message
+        return await self.post_message(table.screen_channel_id, text + NO_PRIVATE_MESSAGE, view)
 
     async def send_collected_asks(self, table: Table) -> None:
         """The after-session step that sends what the steps before it collected (#3210). After it,

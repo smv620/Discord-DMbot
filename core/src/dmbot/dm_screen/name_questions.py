@@ -59,7 +59,10 @@ class NameQuestionButton(
 
     async def callback(self, interaction: discord.Interaction) -> Any:
         bot: Any = interaction.client
-        if interaction.guild_id != self.guild_id or not hasattr(bot, "answer_name_question"):
+        # In the DM's private chat there is no server on the press (#3210): the server is in the
+        # button's id, and `answer_name_question` still checks that the presser is a DM.
+        wrong_server = interaction.guild_id not in (None, self.guild_id)
+        if wrong_server or not hasattr(bot, "answer_name_question"):
             await _tell(interaction, questions.EXPIRED)
             return
         if self.pick == questions.TYPE:
@@ -151,10 +154,12 @@ class NameAnswerUndoButton(
     async def callback(self, interaction: discord.Interaction) -> Any:
         bot: Any = interaction.client
         campaigns, memory = getattr(bot, "campaigns", None), getattr(bot, "memory", None)
-        guild = interaction.guild
+        guild_id = interaction.guild.id if interaction.guild is not None else None
+        if guild_id is None and campaigns is not None:  # the DM's private chat (#3210)
+            guild_id = await campaigns.guild_of(self.campaign_id)
         campaign = (
-            await campaigns.get(guild.id, self.campaign_id)
-            if guild is not None and campaigns is not None
+            await campaigns.get(guild_id, self.campaign_id)
+            if guild_id is not None and campaigns is not None
             else None
         )
         if campaign is None or memory is None:
