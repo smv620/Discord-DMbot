@@ -25,7 +25,7 @@ import {
 } from "./api";
 import WebMap from "./WebMap";
 import WebOverviewPanel from "./WebOverview";
-import { dimmedName, markSecret, plainGraph } from "./know";
+import { dimmedName, markSecret, plainGraph, plainOverview } from "./know";
 import WebReadings from "./WebReadings";
 import WebWaiting from "./WebWaiting";
 import { WEB_READINGS_LIVE } from "../content/web-readings";
@@ -236,7 +236,7 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
     const view = askedNow.current;
     try {
       const got = await api.webOverview(ref, view ? { view } : {});
-      if (mine === overviewLatest.current) setOverview(got);
+      if (mine === overviewLatest.current) setOverview(got.canEdit ? got : plainOverview(got));
     } catch {
       if (mine === overviewLatest.current) setOverview(null);
     }
