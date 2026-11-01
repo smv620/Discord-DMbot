@@ -626,7 +626,8 @@ class TheLoreWords(unittest.TestCase):
                 ),
             ]
         )
-        self.assertEqual([c.how for c in got], ["serves", "ally_of"])
+        # (ally is no kind any more, #3175: it is read as knows, with the feeling it stood for)
+        self.assertEqual([(c.how, c.words) for c in got], [("serves", ""), ("knows", "friendly")])
 
     def test_a_lore_word_still_needs_both_names_in_the_text(self) -> None:
         got, lost = connections(
@@ -638,10 +639,12 @@ class TheLoreWords(unittest.TestCase):
         enum = bg.schema()["properties"]["connections"]["items"]["properties"]["how"]["enum"]
         self.assertEqual(len(enum), len(set(enum)))
         for word in bg.ALL_WORDS:
-            self.assertIn(word, enum)
+            self.assertIn(word, enum)  # (the old feeling words are still understood)
         asked = lr.shape_instructions({"serves": "servant"})
-        for word in (*bg.LORE_WORDS, "ally", "serves"):
+        for word in (*bg.LORE_WORDS, "serves", "knows"):
             self.assertIn(word, asked)
+        for word in ("friend =", "ally =", "enemy ="):
+            self.assertNotIn(word, asked)  # (no longer offered, #3175)
         self.assertEqual(
             asked.count("serves,"), 1
         )  # (listed once, though the campaign has its own)

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import unittest
+from collections import Counter
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -228,6 +229,50 @@ class TheChecks(unittest.TestCase):
         found = [bg.Found("Mirelle", "npc", (), (), "")]
         links = [bg.Connection("She", "knows", "Mirelle", "She knows Mirelle")]
         self.assertEqual(bg.keep_connections([links], found, {}), [])
+
+    def test_friends_and_enemies_are_knows_with_a_feeling_word(self) -> None:
+        # (#3175) invented text; the feeling rides in the line's "words", read as a reputation word
+        text = "Pell and Orrin were sworn enemies. Orrin and Mara grew close."
+
+        def read(
+            how: str, words: str | None, a: str = "Pell", b: str = "Orrin"
+        ) -> tuple[list[bg.Connection], Counter[str]]:
+            lost: Counter[str] = Counter()
+            item = {"a": a, "how": how, "b": b, "quote": "Pell and Orrin were sworn enemies"}
+            if words is not None:
+                item["words"] = words
+            reply = json.dumps({"connections": [item]})
+            return bg.read_connections(reply, text, dropped=lost), lost
+
+        got, lost = read("knows", "Sworn-Enemy")
+        self.assertEqual([(c.how, c.words) for c in got], [("knows", "sworn enemy")])
+        self.assertEqual(lost["feeling_off_list"], 0)
+        # neutral is the plain "they know each other": no word is kept
+        self.assertEqual([c.words for c in read("knows", "neutral")[0]], [""])
+        # a word off the list is dropped and counted; the connection stays without it
+        got, lost = read("knows", "best buddies")
+        self.assertEqual([(c.how, c.words) for c in got], [("knows", "")])
+        self.assertEqual(lost["feeling_off_list"], 1)
+        # no word at all is no off-list word
+        self.assertEqual(read("knows", None)[1]["feeling_off_list"], 0)
+        # the old words are still understood, as knows with the feeling they stood for
+        for old, feeling in (("friend", "friendly"), ("ally", "friendly"), ("enemy", "hostile")):
+            got, _ = read(old, None)
+            self.assertEqual([(c.how, c.words) for c in got], [("knows", feeling)], old)
+        # a feeling word the AI gave beats the old word's default
+        self.assertEqual([c.words for c in read("enemy", "sworn enemy")[0]], ["sworn enemy"])
+        # only knows takes a feeling: a word on another kind is not read as one
+        got, _ = read("owns", "friendly")
+        self.assertEqual([(c.how, c.words) for c in got], [("owns", "")])
+
+    def test_each_way_of_a_mutual_feeling_is_its_own_connection_and_keeps_its_word(self) -> None:
+        names = [bg.Found(n, "person", (), (), "q") for n in ("Pell", "Orrin")]
+        ab = bg.Connection("Pell", "knows", "Orrin", "q1", words="hostile")
+        ba = bg.Connection("Orrin", "knows", "Pell", "q2", words="distrusts")
+        kept = bg.keep_connections([[ab, ba]], names, {})
+        self.assertEqual(
+            [(c.a, c.words) for c in kept], [("Pell", "hostile"), ("Orrin", "distrusts")]
+        )
 
     def test_a_shared_role_beats_plain_family_whichever_is_read_first(self) -> None:
         # Invented names. A pair read as plain "family" and as "sibling" keeps the sibling role,
@@ -611,6 +656,31 @@ class ThePath(NamesTest):
         await view._read(self.it())
         (queued,) = await self.waiting()
         self.assertTrue(queued.secret)
+
+    async def test_a_feeling_word_is_kept_with_the_connection_and_old_words_become_knows(
+        self,
+    ) -> None:
+        # (#3175) Brannoch "friend" Mirelle in the old word, Mirelle toward Brannoch in the new
+        text = "Mirelle and Brannoch are the best of friends, though Mirelle fears him."
+        names = [name("Mirelle", "person", "Mirelle and Brannoch"),
+                 name("Brannoch", "person", "Mirelle and Brannoch")]  # fmt: skip
+        quote = "Mirelle and Brannoch are the best of friends"
+        both = [
+            {**link("Brannoch", "friend", "Mirelle", quote), "words": ""},
+            {**link("Mirelle", "knows", "Brannoch", quote), "words": "wary"},
+        ]
+        lore_fake.set_answer(self.ai, {"names": names, "connections": both})
+        it = self.it()
+        await ui_bg.offer(it, self.campaign.id, Upload(text, "your background"))
+        await it.response.sent[0][1]["view"]._read(self.it())
+        got = {(w.subject, w.predicate, w.object): w.detail for w in await self.waiting()}
+        self.assertEqual(
+            got,
+            {
+                ("Brannoch", "knows", "Mirelle"): "friendly",
+                ("Mirelle", "knows", "Brannoch"): "wary",
+            },
+        )
 
     async def test_a_second_character_posing_as_another_is_a_secret_connection_under_world(
         self,

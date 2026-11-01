@@ -23,6 +23,7 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from dmbot.memory import kin
+from dmbot.memory import reputation_words as feeling_words
 from dmbot.memory.end_match import FILLER, SHORTEST, Ends
 from dmbot.memory.models import name_key
 from dmbot.memory.ontology import DISGUISED_AS, FALLBACK_PREDICATE, SYNONYMS
@@ -84,6 +85,10 @@ CONNECTIONS = {
 # catch-all relationship with these fixed words as the label, which read from the first name to
 # the second ("a mentors b"). Plain words for a DM: nothing here is a technical term.
 LORE_KEPT = {"serves": "serves", "ally": "ally_of"}
+# Friend, ally and enemy are no kinds any more (#3175): two characters KNOW each other, and the
+# feeling is a reputation word. An AI that still says one of these old words is read as knows with
+# the feeling it stood for, so no line is lost; they are no longer offered to it.
+LEGACY_FEELING = {"friend": "friendly", "ally": "friendly", "enemy": "hostile"}
 LORE_WORDS = {
     "worships": "worships",
 }
@@ -104,6 +109,8 @@ KIN_NEUTRAL = {
 # kept that way round, so the two ways of saying it are one fact and are never offered twice.
 LORE_REVERSED = {"apprentice": "mentor", "child": "parent", "grandchild": "grandparent"}
 ALL_WORDS = (*CONNECTIONS, *LORE_KEPT, *LORE_WORDS, *LORE_KIN, *LORE_REVERSED)  # `how` answers
+# What the AI is offered: the old feeling words are still understood but not asked for (#3175).
+OFFERED_WORDS = tuple(w for w in ALL_WORDS if w not in LEGACY_FEELING)
 MAX_OWN_KINDS = 20  # the campaign's own relationships offered to the AI as well
 # A stated relationship no fixed kind and no campaign term fits (#2454): kept on the catch-all
 # relationship, with the words the text used as its label ("pays", "sworn on the ashes of").
@@ -746,6 +753,9 @@ def read_connections(
         a, b, quote = item.get("a"), item.get("b"), item.get("quote")
         word = str(item.get("how", "")).strip().lower()
         word = KIN_NEUTRAL.get(word, word)  # (a gendered role word is kept as its neutral one)
+        old_feeling = LEGACY_FEELING.get(word)  # "friend", "ally", "enemy" (#3175)
+        if old_feeling is not None:
+            word = "knows"
         reverse = word in LORE_REVERSED
         word = LORE_REVERSED.get(word, word)
         how = (
@@ -754,6 +764,16 @@ def read_connections(
             or next((k for k in own if k.lower() == word), None)
         )
         label = ""
+        if how == "knows":
+            # How the one feels about the other: one of nine words (a reputation, #3175), in the
+            # line's "words". One off the list is dropped and counted; the connection is kept
+            # without it. "neutral" is the plain "they know each other" and stores no word.
+            raw = item.get("words")
+            said_feeling = feeling_words.word_of(raw)
+            if isinstance(raw, str) and raw.strip() and said_feeling is None:
+                lost["feeling_off_list"] += 1
+            said_feeling = said_feeling or old_feeling
+            label = "" if said_feeling in (None, feeling_words.NEUTRAL) else said_feeling
         if how is None and word in LORE_WORDS:  # a lore word with its own fixed words (#2757)
             how, label = FALLBACK_PREDICATE, LORE_WORDS[word]
         elif how is None and word in LORE_KIN:  # family by role

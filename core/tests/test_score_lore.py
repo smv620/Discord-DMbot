@@ -39,6 +39,9 @@ class TheScorer(unittest.TestCase):
         self.assertEqual(got["p07"], "no_entry")  # an end that is no name of the read
         # A pronoun whose name is two sentences back is held for the who-is-it check, not kept.
         self.assertEqual(got["p08"], "held_for_who_is_it")
+        # A mutual feeling is two lines (one in the old word "enemy", one in the new): friend and
+        # enemy are read as knows with a feeling (#3175), and the key scores its sign.
+        self.assertEqual(got["p09"], "kept kind=ok feeling=ok")
 
     def test_the_output_has_no_names_or_words_of_the_text(self) -> None:
         out = io.StringIO()
