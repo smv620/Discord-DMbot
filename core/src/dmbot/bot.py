@@ -549,7 +549,7 @@ from dmbot.ui.transcripts import (
 DMBCHAT_STATEMENT_WORDS = 4  # a DM's message this long is a statement; shorter is a reply
 DMBCHAT_HINT = (
     "To tell DMbot something about the story, write it in your private chat with DMbot. "
-    "Players can read dmb-chat."
+    "Players can read this chat."
 )
 REPORT_CALLS = 8  # AI calls a session may spend on the after-session report (grading and sorting)
 MEANING_RUN_CALLS = 50  # Voyage AI calls one after-session run may make (64 texts each)

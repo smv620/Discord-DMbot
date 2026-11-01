@@ -314,7 +314,7 @@ class TheDmsStatements(unittest.IsolatedAsyncioTestCase):
         self.asked.assert_not_called()
         self.assertEqual(self.sent, [(DM, bot_module.DMBCHAT_HINT)])
         self.assertIn("private chat with DMbot", bot_module.DMBCHAT_HINT)
-        self.assertIn("Players can read dmb-chat", bot_module.DMBCHAT_HINT)
+        self.assertIn("Players can read this chat", bot_module.DMBCHAT_HINT)
 
     async def test_a_question_to_dmbot_or_with_a_question_mark_is_still_answered(self) -> None:
         for text in (
