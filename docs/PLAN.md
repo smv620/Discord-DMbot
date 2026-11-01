@@ -38,6 +38,15 @@ the DM decides.**
    screen keeps advice and alerts (rules, heads-ups), not questions. Players never see a DM's
    questions. If a private message can't be delivered, the DM screen says so in one line,
    without the question.
+9. **No `dmb-chat` channel: the table's own chat is where players talk to DMbot (owner,
+   2026-11-01, #3212).** Simple is best: DMbot makes no `dmb-chat-<short name>` channel. It
+   listens to the table's voice channel and that voice channel's own text chat, and to one more
+   text channel only if the DM picks one (⚙️ Manage DMbot, the table chat choice). Everything
+   that went to `dmb-chat` (table questions and their answers, the 🕰️ game-time line, a recap
+   posted to the table, the players' links) goes to the table's chat: the channel the DM picked,
+   else the voice channel's text chat. Wherever this plan says `dmb-chat`, read "the table's chat".
+   A campaign that already has a `dmb-chat` channel stops using it; DMbot never deletes it by
+   itself, and offers the DM one button to remove it.
 
 ## Architecture
 
@@ -1368,7 +1377,7 @@ so the docs always show names the way Discord does. For the campaign
 | Live transcript (cleaned lines, view only) | `dmb-transcript-rmfthfrstmdn` | Phase 1 (#124, built 2026-10-06; misheard names fixed since 2026-10-07, #127) |
 | ~~Rules archive~~ (removed, owner 2026-10-28, #2874) | ~~`dmb-rules-rmfthfrstmdn`~~ | Was #1752; see "Two channels removed" below |
 | ~~Game time~~ (removed, owner 2026-10-28, #2877: the clock is a small 🕰️ line in `dmb-chat`) | ~~`dmb-gametime-rmfthfrstmdn`~~ | Was #1116 |
-| DMbot chat (table questions and their answers; owner, 2026-10-14) | `dmb-chat-rmfthfrstmdn` | Phase 4 |
+| ~~DMbot chat~~ (removed, owner 2026-11-01, #3212: table questions go to the table's chat, principle 9) | ~~`dmb-chat-rmfthfrstmdn`~~ | Was Phase 4 |
 | ~~NPCs~~ (removed, owner 2026-10-28, #2874) | ~~`dmb-npcs-rmfthfrstmdn`~~ | Was #1761; see "Two channels removed" below |
 | Plot (story beats, places, hooks) | `dmb-plot-rmfthfrstmdn` | Phase 5 |
 
@@ -3719,7 +3728,7 @@ answer goes to `dmb-chat`; see "Table questions: anyone may ask".* Speech-to-tex
 DM-bot, Dee em bot, the M bot (a constant in `sidebar/ask.py`). The answer stays private (the DM's chat only) and
 the raw transcript keeps its `[DM Sidebar]` lines.
 
-**Table questions: anyone may ask (owner, 2026-10-14).** Until now only the DM could ask DMbot, and
+*Since 2026-11-01 (#3212, principle 9) there is no `dmb-chat` channel: read every `dmb-chat` below as "the table's chat" (the chat channel the DM picked, else the voice channel's own text chat).* **Table questions: anyone may ask (owner, 2026-10-14).** Until now only the DM could ask DMbot, and
 only the DM saw the answer. Now **anyone at the table** may ask, and a question asked at the table gets its
 answer **where the whole table can read it**, so nobody waits while someone looks something up.
 - **Two ways to ask:**
