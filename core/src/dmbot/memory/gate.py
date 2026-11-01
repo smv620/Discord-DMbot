@@ -315,6 +315,60 @@ async def _by_id(
     return await scope.select(table, " AND id = ANY(%s)" + extra, [ids])
 
 
+async def party_entries(scope: Scope) -> frozenset[str] | None:
+    """The entries the party's view holds as entries in their own right (`(ENTRY, id)` in
+    `visible(Viewer.the_party()).sureness`), without reading every list row: the lookup asks this
+    on each rebuild, and reading a campaign's whole `memory_knowers` costs hundreds of
+    milliseconds (#2995). One aggregate over the entry rows of the player characters' views.
+    None when there is no player character (no party to ask). Exact for lists held by characters;
+    a list held by a group (a faction as a knower) is reach the aggregate does not follow, so then
+    the full gate answers."""
+    pcs = {
+        str(r["id"]): str(r["id"])
+        for r in await scope.select(
+            ENTITIES, " AND type = 'character' AND role = %s AND status = %s",
+            [PLAYER_CHARACTER, CONFIRMED],
+        )
+    }  # fmt: skip
+    if not pcs:
+        return None
+    views = {
+        str(r["entity_id"]): str(r["id"])
+        for r in await scope.select(PERSPECTIVES, " AND entity_id = ANY(%s)", [list(pcs)])
+    }
+    cur = await scope.conn.execute(
+        "SELECT 1 FROM memory_knowers k"
+        " JOIN memory_perspectives p ON p.guild_id = k.guild_id AND p.campaign_id = k.campaign_id"
+        "   AND p.id = k.perspective_id"
+        " JOIN memory_entities e ON e.guild_id = p.guild_id AND e.campaign_id = p.campaign_id"
+        "   AND e.id = p.entity_id"
+        " WHERE k.guild_id = %s AND k.campaign_id = %s AND k.about_entity_id IS NOT NULL"
+        " AND cardinality(k.hidden_by) = 0 AND e.type <> 'character' LIMIT 1",
+        scope.ids,
+    )
+    if await cur.fetchone() is not None:
+        return None  # (a group holds an entry: let the full gate follow its members)
+    cur = await scope.conn.execute(
+        "SELECT about_entity_id, array_agg(DISTINCT perspective_id) AS holders"
+        " FROM memory_knowers WHERE guild_id = %s AND campaign_id = %s"
+        " AND about_entity_id IS NOT NULL AND cardinality(hidden_by) = 0"
+        " AND perspective_id = ANY(%s) GROUP BY about_entity_id",
+        (*scope.ids, list(views.values())),
+    )
+    everyone = set(views.values())
+    own = {entity: view for entity, view in views.items()}
+    seen = set()
+    for row in await cur.fetchall():
+        entry = str(row["about_entity_id"])
+        missing = everyone - set(row["holders"])
+        # (a character knows its own entry without a row)
+        if not missing or missing == {own.get(entry)}:
+            seen.add(entry)
+    if len(everyone) == 1:  # a lone player character knows its own entry whatever the lists say
+        seen.update(views)
+    return frozenset(seen)
+
+
 async def visible_to(scope: Scope, viewer: Viewer) -> Visible:
     """What `viewer` may know of this campaign. The DM's answer needs no read at all."""
     if viewer.dm:

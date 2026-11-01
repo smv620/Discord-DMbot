@@ -130,3 +130,26 @@ class TableRows(MemoryTest):
 
         self.assertIn("memory_knowers", notify.LOOKUP_TABLES)
         self.assertIn("memory_perspectives", notify.LOOKUP_TABLES)
+
+    async def test_the_quick_answer_is_the_full_gates_answer(self) -> None:
+        await self.pc("Tavin", 1001)
+        ids = await self.entries()
+        for name, player in (("Mara", 1002), ("Kesh", 1003)):
+            await self.pc(name, player)
+            async with self.memory._read(GUILD_A, self.c, snapshot=True) as scope:
+                quick = await gate.party_entries(scope)
+                full = gate.visible(Viewer.the_party(), await gate.load(scope))
+            assert quick is not None
+            self.assertEqual(quick, {i for (k, i) in full.sureness if k == ENTRY})
+        # a group that holds an entry is reach the quick answer does not follow: the full gate
+        # answers instead (the lookup falls back)
+        await self.memory.set_statement_knowers(
+            GUILD_A, self.c, ENTRY, ids["hidden"], [ids["faction"]], source="dm"
+        )
+        async with self.memory._read(GUILD_A, self.c, snapshot=True) as scope:
+            self.assertIsNone(await gate.party_entries(scope))
+
+    async def test_no_player_character_means_no_quick_answer(self) -> None:
+        await self.entries()
+        async with self.memory._read(GUILD_A, self.c, snapshot=True) as scope:
+            self.assertIsNone(await gate.party_entries(scope))
