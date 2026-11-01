@@ -194,7 +194,9 @@ def visible(viewer: Viewer, data: Statements) -> Visible:
 
     sureness: dict[tuple[str, str], float] = {}
     for key, listed in data.knowers.items():
-        sure = [reach(c, _sure(listed), data.groups) for c in who]
+        # (a character knows its own entry without a row, so in the party's view it counts for
+        # itself, with one player character or many)
+        sure = [1.0 if key == (ENTRY, c) else reach(c, _sure(listed), data.groups) for c in who]
         known = [x for x in sure if x is not None]
         if viewer.mode == "any":
             if known:
@@ -311,6 +313,66 @@ async def _by_id(
     if not ids:
         return []
     return await scope.select(table, " AND id = ANY(%s)" + extra, [ids])
+
+
+async def party_entries(scope: Scope) -> frozenset[str] | None:
+    """The entries the party's view holds as entries in their own right (`(ENTRY, id)` in
+    `visible(Viewer.the_party()).sureness`), without reading every list row: the lookup asks this
+    on each rebuild, and reading a campaign's whole `memory_knowers` costs hundreds of
+    milliseconds (#2995). One aggregate over the entry rows of the player characters' views.
+    None when there is no player character (no party to ask). Exact for lists held by characters;
+    a list held by a group (a faction as a knower) is reach the aggregate does not follow, so then
+    the full gate answers."""
+    pcs = {
+        str(r["id"]): str(r["id"])
+        for r in await scope.select(
+            ENTITIES, " AND type = 'character' AND role = %s AND status = %s",
+            [PLAYER_CHARACTER, CONFIRMED],
+        )
+    }  # fmt: skip
+    if not pcs:
+        return None
+    views = {
+        str(r["entity_id"]): str(r["id"])
+        for r in await scope.select(PERSPECTIVES, " AND entity_id = ANY(%s)", [list(pcs)])
+    }
+    cur = await scope.conn.execute(
+        "SELECT p.id FROM memory_perspectives p JOIN memory_entities e"
+        " ON e.guild_id = p.guild_id AND e.campaign_id = p.campaign_id AND e.id = p.entity_id"
+        " WHERE p.guild_id = %s AND p.campaign_id = %s AND e.type <> 'character'",
+        scope.ids,
+    )
+    group_views = [str(r["id"]) for r in await cur.fetchall()]
+    # One pass over the entry rows: who among the player characters holds each, and whether a
+    # group (a faction as a knower) holds any, which this does not follow.
+    if group_views:
+        cur = await scope.conn.execute(
+            "SELECT 1 FROM memory_knowers WHERE guild_id = %s AND campaign_id = %s"
+            " AND about_entity_id IS NOT NULL AND cardinality(hidden_by) = 0"
+            " AND perspective_id = ANY(%s) LIMIT 1",
+            (*scope.ids, group_views),
+        )
+        if await cur.fetchone() is not None:
+            return None  # (a group holds an entry: let the full gate follow its members)
+    cur = await scope.conn.execute(
+        "SELECT about_entity_id, array_agg(perspective_id) AS holders FROM memory_knowers"
+        " WHERE guild_id = %s AND campaign_id = %s AND about_entity_id IS NOT NULL"
+        " AND cardinality(hidden_by) = 0 AND perspective_id = ANY(%s) GROUP BY about_entity_id",
+        (*scope.ids, list(views.values())),
+    )
+    rows = await cur.fetchall()
+    everyone = set(views.values())
+    own = {entity: view for entity, view in views.items()}
+    seen = set()
+    for row in rows:
+        entry = str(row["about_entity_id"])
+        missing = everyone - set(row["holders"] or ())
+        # (a character knows its own entry without a row)
+        if not missing or missing == {own.get(entry)}:
+            seen.add(entry)
+    if len(everyone) == 1:  # a lone player character knows its own entry whatever the lists say
+        seen.update(views)
+    return frozenset(seen)
 
 
 async def visible_to(scope: Scope, viewer: Viewer) -> Visible:
