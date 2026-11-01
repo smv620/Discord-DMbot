@@ -226,6 +226,9 @@ def _apply(
     return None
 
 
+apply_action = _apply  # the press's own rule, for a caller that walks a whole session (#2979)
+
+
 def _speaks(action: str) -> bool:
     """Dawn, noon and dusk are said when time passes by a button or a rest; not when the
     DM says what time it is (the DM already knows)."""

@@ -133,6 +133,7 @@ from dmbot.dm_screen import (
 from dmbot.dm_screen import clock as clock_screen
 from dmbot.dm_screen import effects as timer_screen
 from dmbot.dm_screen import house_voice as house_voice_screen
+from dmbot.dm_screen import import_time as import_time_screen
 from dmbot.dm_screen import levels as screen_levels
 from dmbot.dm_screen import messages as screen_messages
 from dmbot.dm_screen import time_suggest as time_suggest_screen
@@ -378,7 +379,7 @@ from dmbot.test_recording import library as test_library
 from dmbot.test_recording.session import TestSession
 from dmbot.test_recording.store import TestVoiceStore
 from dmbot.timebot import clock as clock_game
-from dmbot.timebot import combat_phrases, durations, where_are_we
+from dmbot.timebot import combat_phrases, durations, import_time, where_are_we
 from dmbot.timebot import phrases as clock_phrases
 from dmbot.timebot import suggest as time_suggest
 from dmbot.timebot.effects import EffectsSection, EffectStore
@@ -1522,6 +1523,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         )
         self.add_dynamic_items(clock_screen.CombatUndoButton)  # #1127
         self.add_dynamic_items(time_suggest_screen.TimeJumpButton)  # #1758
+        self.add_dynamic_items(import_time_screen.ImportTimeButton)  # #2979
         self.add_dynamic_items(clock_screen.ClockPicker, clock_screen.SplitUndoButton)  # #1607
         self.add_dynamic_items(delete_campaign.DeleteButton)  # #1608
         self.add_dynamic_items(fightbot.FightButton)  # #1129
@@ -10212,6 +10214,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                         added = await self._scan_import(gid, ready)
                     await store.finish_scan(gid, ready.session_id, int(time.time()))
                     await self._link_import_party(gid, ready)
+                    await self._offer_import_time(gid, ready)
                     done += 1
                     self._import_names.setdefault(ready.campaign_id, []).extend(added)
                 except Exception:
@@ -10228,6 +10231,84 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         await self._apply_import_plays(gid, store)
         await self._tell_import_news(gid, store)
         return done
+
+    async def _offer_import_time(self, gid: int, ready: Ready) -> None:
+        """After an imported session's scan is done (#2979): work out when in game time it ended
+        and offer the DM to set the clock there, with one button on the DM screen. Never moves
+        the clock. Only when the clock is set, the result is later than it, this is the campaign's
+        newest session (an older one imported later never moves it back) and the party is not
+        split (then the DM is told why nothing is offered). The DM's lines of the game talk only,
+        from speakers who still agree; the strict phrases in code first, and one AI question over
+        the cue lines only when none of them moved it. Its own `try`: a failure here is logged and
+        never reaches the scan's claim. Counts only in the log."""
+        try:
+            await self._offer_import_time_inner(gid, ready)
+        except Exception:
+            log.exception("Import: couldn't work out the game time a session ended at")
+
+    async def _offer_import_time_inner(self, gid: int, ready: Ready) -> None:
+        assert self.import_job is not None
+        if self.clocks is None or self.transcripts is None:
+            return
+        campaign = await self.campaigns.get(gid, ready.campaign_id)
+        if campaign is None or campaign.dm_screen_channel_id is None:
+            return
+        stored = await self.clocks.get(gid, campaign.id)
+        if stored is None:
+            return
+        if await self.transcripts.next_session_start(gid, campaign.id, ready.started_at):
+            return  # a newer session exists: this one never moves the clock
+        rows = await self.import_job.store.scan_lines(gid, ready.session_id)
+        agreed = await self.consent.consenting(gid)
+        lines = [t for uid, t in rows if uid in campaign.dm_user_ids and uid in agreed]
+        if not lines:
+            return
+        walked = import_time.walk(lines, stored.clock, clock_screen.apply_action)
+        target, calls = walked.clock.minute, 0
+        if (
+            not walked.moved
+            and walked.cues
+            and self.settings.time_suggestions
+            and self.time_ai is not None
+            and await self.plan_allows("ai", gid, campaign, fail_open=False)
+        ):
+            calls = 1
+            total = await self._import_time_total(walked.cues, stored.clock.minute)
+            if total is not None:
+                target = clock_game.advance(stored.clock, total).minute
+        log.info(  # counts, never words
+            "Import time: %d lines, %d moved by phrases, %d cue lines, %d call(s), %s",
+            len(lines), walked.moved, len(walked.cues), calls,
+            "an offer" if target > stored.clock.minute else "no offer",
+        )  # fmt: skip
+        if target <= stored.clock.minute:
+            return
+        if stored.split:
+            await self.post(campaign.dm_screen_channel_id, import_time_screen.SPLIT_WHY)
+            return
+        await self.post(
+            campaign.dm_screen_channel_id,
+            import_time.offer_text(target),
+            view=import_time_screen.offer_view(campaign.id, target),
+        )
+
+    async def _import_time_total(self, cues: tuple[str, ...], start: int) -> int | None:
+        """The one question over an imported session's cue lines: the minutes they pass in all,
+        or None (the AI failed, said null or answered in the wrong shape)."""
+        assert self.time_ai is not None
+        try:
+            reply = await asyncio.wait_for(
+                self.time_ai.complete(
+                    import_time.SYSTEM,
+                    import_time.prompt(cues, clock_game.label(start)),
+                    max_tokens=import_time.ANSWER_TOKENS,
+                ),
+                import_time.TIMEOUT_S,
+            )
+        except Exception as exc:
+            log.info("Import time: couldn't ask (%s)", type(exc).__name__)
+            return None
+        return import_time.read_answer(reply.text)
 
     async def _link_import_party(self, gid: int, ready: Ready) -> None:
         """After an imported session's scan is done: link its party (#3036). Its own `try`: a
