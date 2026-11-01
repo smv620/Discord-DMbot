@@ -9,7 +9,9 @@ Roles, from the strongest to the weakest:
 - **game master**: in the campaign's DM list. ⚙️ Manage DMbot, 🌐 Manage campaign, 🙋 My data and
   ❓ Help.
 - **player**: tied to *this* campaign (a confirmed character in it, or recorded in one of its
-  sessions). 🙋 My data and ❓ Help.
+  sessions). 🙋 My data and ❓ Help, after a link to the campaign's website page for each
+  campaign in the server they play in (#3024; links have no callback, so they are not in
+  `_BUTTONS`, and `dm_bot_buttons.role_view` draws them).
 - **member**: consented in this server, but not tied to this campaign. The same two.
 - **guest**: anyone else in the server. ❓ Help, whose card has looking up a rule and the
   transcripts link, which are open to the whole server anyway (#1691).

@@ -7,6 +7,7 @@
 import { kindWords, webPage as words } from "../content/web-words";
 import type { WebOverview as Overview } from "./api";
 import { npcPageHref } from "./webNodes";
+import { dimmedName, markSecret } from "./know";
 
 export default function WebOverview({
   overview,
@@ -82,6 +83,7 @@ export default function WebOverview({
             {words.trayHeading} ({tray.length})
           </h2>
           <p class="small muted">{words.trayLead}</p>
+          {tray.some((n) => n.knowWord) && <p class="small muted">{words.knowHint}</p>}
           {/* Right under the lead, so a tap on a name below is answered where the person is looking. */}
           <p class="small" role="status">
             {picked ? words.noConnectionsYet(picked.name) : ""}
@@ -91,17 +93,18 @@ export default function WebOverview({
               <h3 class="small">{words.trayKind(kindWords(k.key), k.names.length)}</h3>
               <ul class="row web-tray">
                 {k.names.map((n) => (
-                  <li key={n.id} class={n.revealed === false ? "web-dim" : undefined}>
+                  <li key={n.id} class={dimmedName(n) ? "web-dim" : undefined}>
                     <button
                       type="button"
                       class="button secondary"
                       aria-pressed={n.id === alone}
                       onClick={() => onAlone(n.id === alone ? null : n.id)}
                     >
-                      {n.secret && <span aria-hidden="true">{words.secretMark} </span>}
+                      {markSecret(n) && <span aria-hidden="true">{words.secretMark} </span>}
                       {n.name}
-                      {n.secret && <span class="visually-hidden"> ({words.secretWords})</span>}
-                      {n.revealed === false && <span class="small muted"> ({words.notRevealed})</span>}
+                      {!n.knowWord && n.secret && <span class="visually-hidden"> ({words.secretWords})</span>}
+                      {!n.knowWord && n.revealed === false && <span class="small muted"> ({words.notRevealed})</span>}
+                      {n.knowWord && words.knowWords[n.knowWord] && <span class="small muted"> ({words.knowWords[n.knowWord]})</span>}
                     </button>
                     {n.page === true && npcPageHref(refId, n.id) && (
                       <>

@@ -1454,6 +1454,11 @@ export interface WebLink {
   secret: boolean;
   /** Who knows the connection, in the DM's full view only (#3167). */
   knowWord?: KnowWord;
+  /** Who may know a held connection, for the DM's full view (#2935 D4, #3214): only the DM, some characters, or
+   * everyone at the table. Absent from an older API. */
+  who?: "dm" | "some" | "all";
+  /** The characters that know it, when `who` is "some". */
+  knownBy?: { id: string; name: string }[];
   direction: "a-b" | "b-a" | "both";
   /** The kind of connection, for the map's colours and filters (#2942). Absent from an older API. */
   kind?: WebLinkKind;
@@ -1566,6 +1571,9 @@ export type WebLinkChange =
   | { action: "words"; id: string; words: string }
   | { action: "secret"; id: string; secret: boolean }
   | { action: "pin"; id: string; pinned: boolean }
+  // "everyone" is the table's answer; the read side calls the same answer "all" (WebLink.who). The bot's door takes
+  // these names with #3202, so this change is not sent while WHO_KNOWS_LIVE is off.
+  | { action: "who"; id: string; who: "dm" | "some" | "everyone"; characters?: string[] }
   | { action: "remove"; id: string; confirm: true };
 
 /** One name in a campaign's memory, as the Names page lists it (#2295). */
@@ -2167,7 +2175,7 @@ export interface AccountApi {
   restoreStatus?(serverId: string, id?: string): Promise<RestoreStatus | null>;
   /** Take a staged copy back before DMbot starts it, or clear one that has ended. */
   restoreCancel?(serverId: string, id: string): Promise<void>;
-  /** The whole campaign as a backup file, offered before Delete (owner and co-DMs; not Try It). DMbot builds it
+  /** The whole campaign as a backup file, offered on the campaign's page and before Delete (anyone in the server; not Try It). DMbot builds it
    * from its database (#2554): asked for with a POST, polled in the shared progress shape (`onProgress` hears each
    * answer: stage, how long, last moved), then fetched once. Refusals: `no-backup` (the plan has no copies),
    * `too-big`, `not-allowed`, `not-found`, `too-soon`, `backup-too-many-files` (more transcripts files than one
