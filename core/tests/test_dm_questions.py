@@ -16,10 +16,10 @@ from tests.asking import with_asking
 
 
 def make(kind: str, label: str) -> Ask:
-    def button() -> discord.ui.Item[discord.ui.View]:
+    def button() -> discord.ui.Item[Any]:
         return discord.ui.Button(label=label, custom_id=f"test:{kind}")
 
-    def screen_button() -> discord.ui.Item[discord.ui.View]:
+    def screen_button() -> discord.ui.Item[Any]:
         return discord.ui.Button(label=label, custom_id=f"screen:{kind}")
 
     return Ask(
@@ -27,24 +27,31 @@ def make(kind: str, label: str) -> Ask:
     )
 
 
+def ids(view: discord.ui.View) -> list[str | None]:
+    """The custom ids of a view's buttons, in order."""
+    return [getattr(child, "custom_id", None) for child in view.children]
+
+
 class Combining(unittest.TestCase):
     def test_nothing_to_ask_is_no_message(self) -> None:
         self.assertIsNone(combine([]))
 
     def test_one_question_keeps_its_own_words_and_button(self) -> None:
-        text, view = combine([make(CLAIMS, "Check")]) or ("", None)
+        combined = combine([make(CLAIMS, "Check")])
+        assert combined is not None
+        text, view = combined
         self.assertEqual(text, "claims alone")
         self.assertEqual(len(view.children), 1)
 
     def test_several_become_one_list_in_a_fixed_order_with_a_button_each(self) -> None:
         asks = [make(FAMILY, "Links"), make(NAMES, "Names"), make(CLAIMS, "Said")]
-        text, view = combine(asks) or ("", None)
+        combined = combine(asks)
+        assert combined is not None
+        text, view = combined
         self.assertTrue(text.startswith("**3 questions** about your last session:"))
         self.assertLess(text.index("names line"), text.index("claims line"))
         self.assertLess(text.index("claims line"), text.index("family line"))
-        self.assertEqual([c.custom_id for c in view.children], [  # type: ignore[attr-defined]
-            "test:names", "test:claims", "test:family",
-        ])  # fmt: skip
+        self.assertEqual(ids(view), ["test:names", "test:claims", "test:family"])
 
 
 class Sending(unittest.IsolatedAsyncioTestCase):
@@ -89,9 +96,7 @@ class Sending(unittest.IsolatedAsyncioTestCase):
         views = [call.kwargs["view"] for call in me.post.await_args_list]
         self.assertTrue(all(len(v.children) == 1 for v in views))  # a fresh button each
         # the screen's own buttons, not the private chat's
-        self.assertEqual(
-            [v.children[0].custom_id for v in views], ["screen:names", "screen:claims"]
-        )  # type: ignore[attr-defined]
+        self.assertEqual([ids(v)[0] for v in views], ["screen:names", "screen:claims"])
 
     async def test_one_failed_post_does_not_skip_the_questions_after_it(self) -> None:
         me, table = self.bot(False), self.table(True)

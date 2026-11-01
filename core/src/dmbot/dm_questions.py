@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any
 
 import discord
 
@@ -28,11 +29,11 @@ class Ask:
     line: str  # one short line when it is one of several ("3 new names to check")
     # A maker, not a button: one button belongs to one view, and the same question may need a
     # second view (the DM screen) if the private message could not be sent.
-    button: Callable[[], discord.ui.Item[discord.ui.View]]
+    button: Callable[[], discord.ui.Item[Any]]
     # The button for the DM screen fallback: it can differ from the private chat's (the names
     # question has a screen button that finds the server from the press, the private one has it in
     # its id).
-    screen_button: Callable[[], discord.ui.Item[discord.ui.View]]
+    screen_button: Callable[[], discord.ui.Item[Any]]
     screen: str  # the DM screen's words, if the private message could not be sent
 
 

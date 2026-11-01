@@ -9401,8 +9401,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     CLAIMS,
                     claims_waiting_text(waiting, private=True),
                     f"{waiting} {'thing' if waiting == 1 else 'things'} said at the table to check",
-                    lambda c=table.campaign_id: ClaimsReviewButton(c),
-                    lambda c=table.campaign_id: ClaimsReviewButton(c),
+                    partial(ClaimsReviewButton, table.campaign_id),
+                    partial(ClaimsReviewButton, table.campaign_id),
                     claims_waiting_text(waiting),
                 ),
             )
@@ -9432,8 +9432,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                         FAMILY,
                         links_ready.family_notice(waiting),
                         f"{waiting} family {'link' if waiting == 1 else 'links'} to keep or skip",
-                        lambda c=cid: links_ready.ReadyButton(c),
-                        lambda c=cid: links_ready.ReadyButton(c),
+                        partial(links_ready.ReadyButton, cid),
+                        partial(links_ready.ReadyButton, cid),
                         links_ready.family_notice(waiting),
                     ),
                 )
@@ -10193,8 +10193,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     NAMES,
                     private_after_session_text(names),
                     f"{len(names)} new {'name' if len(names) == 1 else 'names'} to check",
-                    lambda g=table.guild_id, c=table.campaign_id: RecapNamesButton(g, c),
-                    lambda c=table.campaign_id: ReviewButton(c),
+                    partial(RecapNamesButton, table.guild_id, table.campaign_id),
+                    partial(ReviewButton, table.campaign_id),
                     after_session_text(names),
                 ),
             )

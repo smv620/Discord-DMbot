@@ -11,8 +11,9 @@ from dmbot.bot import DMBot
 
 
 def with_asking(fake: SimpleNamespace) -> SimpleNamespace:
-    fake.ask_dm = partial(DMBot.ask_dm, fake)  # type: ignore[attr-defined]
-    fake.send_asks = partial(DMBot.send_asks, fake)  # type: ignore[attr-defined]
+    me: Any = fake  # (a stand-in for the bot: typed loosely on purpose)
+    fake.ask_dm = partial(DMBot.ask_dm, me)
+    fake.send_asks = partial(DMBot.send_asks, me)
     return fake
 
 
