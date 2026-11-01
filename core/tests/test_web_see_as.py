@@ -344,6 +344,28 @@ class TheKnowWords(SeeAs):
         self.assertTrue(all("knowWord" not in x for e in got["edges"] for x in e["links"]))
 
 
+class TheKnowWordsOnTheTray(SeeAs):
+    """The overview's "Not connected yet" tray says who knows each name too (#3168)."""
+
+    async def tray(self, **kw: Any) -> list[dict[str, Any]]:
+        from dmbot.web import relationships
+
+        got = await relationships.read_overview(self.web, self.session, self.cref, **kw)
+        return list(got["tray"])
+
+    async def test_the_dm_full_view_tray_has_a_word_for_each_name(self) -> None:
+        lone = await self.add("Lone Wolf", "character", role="npc")
+        await self.know(ENTRY, lone, [self.rook])
+        tray = {n["name"]: n.get("knowWord") for n in await self.tray(view="full")}
+        self.assertEqual(tray["Lone Wolf"], gate.PARTLY_REVEALED)
+
+    async def test_the_players_view_tray_has_no_words(self) -> None:
+        lone = await self.add("Lone Wolf", "character", role="npc")
+        await self.know(ENTRY, lone, [self.rook, self.okra])
+        tray = await self.tray(view="players")
+        self.assertTrue(all("knowWord" not in n for n in tray))
+
+
 class TheKnowWordsAlone(SeeAs):
     """`know_words` and `with_know_words` on their own: groups, sleeping rows, who may ask."""
 
