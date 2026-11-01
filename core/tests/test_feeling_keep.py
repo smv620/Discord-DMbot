@@ -94,6 +94,29 @@ class TheFeeling(NamesTest):
             len(await self.memory.relations(GUILD, self.campaign.id, include_secret=True)), 1
         )
 
+    async def test_the_same_word_twice_is_one_reputation_and_no_extra_history(self) -> None:
+        await self.press(self.bel, self.cer, "hostile")
+        await self.press(self.bel, self.cer, "hostile")  # (the same pair again: kept as it was)
+        rows = await self.history(self.bel, self.cer)
+        self.assertEqual([(r.score, r.closed_at is None) for r in rows], [(-80, True)])
+
+    async def test_a_place_as_the_one_judged_or_an_out_of_range_score_stores_nothing(self) -> None:
+        feel = self.memory.add_feeling
+        c = self.campaign.id
+        self.assertIsNone(await feel(GUILD, c, self.bel, self.oak, -80))  # (a place is not judged)
+        self.assertIsNone(await feel(GUILD, c, self.bel, self.bel, -80))  # (the same name)
+        self.assertIsNone(await feel(GUILD, c, self.bel, self.cer, 500))  # (not a score)
+        self.assertIsNotNone(await feel(GUILD, c, self.oak, self.bel, -40))  # (a place may judge)
+
+    async def test_a_standing_set_after_the_press_does_not_break_undo(self) -> None:
+        done = await self.press(self.bel, self.cer, "hostile")
+        await self.memory.set_impression(
+            GUILD, self.campaign.id, self.bel, self.cer, standing.FRIENDLY, source="dm"
+        )
+        await keep.undo_all(self.memory, self.store, GUILD, self.campaign.id, done)  # no crash
+        open_rows = [r for r in await self.history(self.bel, self.cer) if r.closed_at is None]
+        self.assertEqual([r.source for r in open_rows], ["dm"])  # the DM's word is still there
+
     async def test_a_word_off_the_list_stores_nothing(self) -> None:
         await self.press(self.bel, self.cer, "best buddies")
         self.assertEqual(await self.history(self.bel, self.cer), [])

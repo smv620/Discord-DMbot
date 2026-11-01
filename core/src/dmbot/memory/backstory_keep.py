@@ -253,7 +253,10 @@ async def keep_all(
                 batch = await memory.add_feeling(
                     guild_id, campaign_id, c.subject_id, c.object_id, score
                 )
-            except MemoryRuleError:  # the ends cannot hold one: the connection stands without it
+            except Exception as exc:  # the connection is kept whatever happens to the feeling
+                log.warning(
+                    "A kept connection's feeling could not be stored (%s)", type(exc).__name__
+                )
                 batch = None
             if batch is not None:
                 ended.append(batch)

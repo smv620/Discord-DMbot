@@ -1365,15 +1365,14 @@ class MemoryStore:
         viewer_id: str,
         subject_id: str,
         score: int,
-        *,
-        from_session_at: int | None = None,
     ) -> int | None:
         """How a viewer feels about a subject, from a connection the DM kept ("knows (hostile)",
         #3175): a dated impression from the story, of weight `standing.FEELING_WEIGHT`. It never
         takes the DM's word's place: a standing the DM set for the pair stays as it is, and one from
         the story is closed (the history stays) and replaced. Nothing is written, and None comes
-        back, when the ends cannot hold a standing (a place for a subject, a person at the table), a
-        DM's word is there, or the pair already says so. Returns the change-log batch, for Undo."""
+        back, when the ends cannot hold a standing (a place as the one judged, a person at the
+        table), a DM's word is there, or the pair already says so. Returns the change-log batch,
+        for Undo."""
         if viewer_id == subject_id or not -100 <= score <= 100:
             return None
         async with self._write(guild_id, campaign_id, BACKGROUND_SOURCE) as w:
@@ -1400,7 +1399,7 @@ class MemoryStore:
                 {
                     "id": new_id(), "viewer_id": viewer_id, "subject_id": subject_id,
                     "score": score, "weight": standing.FEELING_WEIGHT,
-                    "source": BACKGROUND_SOURCE, "from_session_at": from_session_at,
+                    "source": BACKGROUND_SOURCE, "from_session_at": None,
                     "created_at": w.now, "closed_at": None,
                 },
             )  # fmt: skip
