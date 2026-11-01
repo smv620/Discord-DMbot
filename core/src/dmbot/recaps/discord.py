@@ -41,6 +41,7 @@ from dmbot.campaigns import Campaign
 from dmbot.dm_screen.recap_panel import PlanFacts, audio_how
 from dmbot.entitlements import RECAP_AUDIO_PLANS
 from dmbot.logs import log_context
+from dmbot.memory import gate
 from dmbot.memory.exposures import secret_connections
 from dmbot.memory.lookup import CampaignLookup
 from dmbot.memory.models import (
@@ -2410,15 +2411,23 @@ class RecapFeatures:
             log.exception("Recap: couldn't read the open story threads")
             return ()
         live = (OPEN, GOING, HINTED)
-        # Only threads the players may know: one hidden from them or limited to some of them is the
-        # DM's own plot and never goes to the writer (a recap is read aloud to the table).
+        # Only threads the party knows: one that only the DM, an NPC or some of the player
+        # characters know is the DM's own plot and never goes to the writer (a recap is read aloud
+        # to the table). Asked of the one gate, never of the old flags (#2995): the viewer is "what
+        # every player character knows", so a limited or hidden thread is not among them.
+        try:
+            seen = await self.memory.visible_to(gid, cid, gate.Viewer.the_party())
+        except Exception:
+            log.exception("Recap: couldn't ask what the party knows of the story threads")
+            return ()
         return tuple(
             t.thread.name
             for t in found
             if t.state is not None
             and t.state.condition in live
-            and not t.thread.hidden_from_players
-            and not t.thread.audience_limited
+            # (the thread's own entry row, not `knows`: that also counts an entry a known
+            # property of it implies, and a thread's state is its own statement)
+            and seen.how_sure(gate.ENTRY, t.thread.id) is not None
         )
 
     async def run_audio_notices(self) -> None:
