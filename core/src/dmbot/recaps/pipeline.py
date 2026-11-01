@@ -373,6 +373,8 @@ class RecapWorker:
         self._heard: dict[tuple[int, str, int], str] = {}  # the transcript the writer was shown
         # the sheet, threads and earlier recaps the writer was shown (#2954): the checks read them
         self._given: dict[tuple[int, str, int], rd.Given] = {}
+        # the who-and-what sheet of each job, read once (#2965): every prose try and revise uses it
+        self._sheets: dict[tuple[int, str, int], tuple[str, ...]] = {}
         self._critics = critics  # the critics loop after the prose (#2255); off for small tools
         self._creative = creative
         self._formatting = formatting
@@ -1130,11 +1132,20 @@ class RecapWorker:
     async def _who_and_what(
         self, gid: int, cid: str, job: Job, inputs: Inputs, shown: Sequence[bt.Beat]
     ) -> tuple[str, ...]:
-        """What the players know of the names in the beats, one line each (#2950): the players'
-        view of story memory around the beats' names (kind, role and the connections the players
-        know), with no note of the DM's, nothing secret, and nothing the players have not been
-        shown. Empty when there is no story memory to read or it fails: the writer then explains
-        only from the transcript and the earlier recaps."""
+        """What the players know of the names in the beats, one line each (#2950), read once per
+        job (#2965): every prose try and revise of the job gets the same sheet."""
+        key = (gid, cid, job.session_at)
+        if key not in self._sheets:
+            self._sheets[key] = await self._read_sheet(gid, cid, job, inputs, shown)
+        return self._sheets[key]
+
+    async def _read_sheet(
+        self, gid: int, cid: str, job: Job, inputs: Inputs, shown: Sequence[bt.Beat]
+    ) -> tuple[str, ...]:
+        """The players' view of story memory around the beats' names (kind, role and the
+        connections the players know), with no note of the DM's, nothing secret, and nothing the
+        players have not been shown. Empty when there is no story memory to read or it fails: the
+        writer then explains only from the transcript and the earlier recaps."""
         if self._story is None:
             return ()
         seeds = sorted({n for b in shown for n in (*b.who, b.where) if n})[:40]
