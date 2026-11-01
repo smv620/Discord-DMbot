@@ -27,8 +27,9 @@ player version says nothing of rank or roles. `needs_peek` is the spoiler check.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from dmbot.memory import reputation_words
 
@@ -55,31 +56,98 @@ _ROLE_KINDS = frozenset({"mentor_of", "rival_of", "leads", "serves", "travels_wi
 _STANDING_KINDS = frozenset({"knows", "ally_of", "enemy_of"})  # (the old two read as feelings)
 
 # Free-text links carry their meaning in the detail. Until the meaning match exists (#3236 slice 4),
-# a short word list puts the obvious ones in the right category; anything else is "other".
-_KEYWORDS: tuple[tuple[int, tuple[str, ...]], ...] = (
-    (LIFE_AND_DEATH, ("kill", "murder", "saved", "rescued", "assassin")),
+# whole words (never parts of a word: "skilled" is not "kill") put the obvious ones in the right
+# category; anything else is "other". Negation ("never killed") is not understood: that is the
+# meaning match's job.
+_WORDS: tuple[tuple[int, frozenset[str]], ...] = (
     (
-        LASTING,
-        (
-            "sibling",
-            "brother",
-            "sister",
-            "spouse",
-            "husband",
-            "wife",
-            "married",
-            "lover",
-            "parent",
-            "mother",
-            "father",
-            "child",
-            "cousin",
-            "twin",
+        LIFE_AND_DEATH,
+        frozenset(
+            [
+                "kill",
+                "kills",
+                "killed",
+                "killer",
+                "murder",
+                "murdered",
+                "murderer",
+                "saved",
+                "rescued",
+                "assassin",
+                "assassinated",
+            ]
         ),
     ),
-    (ROLES, ("mentor", "apprentice", "student", "teacher", "employer", "boss", "leader", "patron")),
-    (OTHER_DEEDS, ("stole", "betrayed", "helped", "robbed", "deceived")),
-    (STANDING, ("friend", "enemy", "ally", "trust", "hate", "rival")),
+    (
+        LASTING,
+        frozenset(
+            [
+                "sibling",
+                "siblings",
+                "brother",
+                "brothers",
+                "sister",
+                "sisters",
+                "spouse",
+                "husband",
+                "wife",
+                "married",
+                "lover",
+                "lovers",
+                "parent",
+                "parents",
+                "mother",
+                "father",
+                "child",
+                "children",
+                "cousin",
+                "cousins",
+                "twin",
+                "twins",
+            ]
+        ),
+    ),
+    (
+        ROLES,
+        frozenset(
+            [
+                "mentor",
+                "mentors",
+                "apprentice",
+                "student",
+                "teacher",
+                "employer",
+                "boss",
+                "leader",
+                "patron",
+            ]
+        ),
+    ),
+    (
+        OTHER_DEEDS,
+        frozenset(["stole", "stolen", "betrayed", "betrayal", "helped", "robbed", "deceived"]),
+    ),
+    (
+        STANDING,
+        frozenset(
+            [
+                "friend",
+                "friends",
+                "enemy",
+                "enemies",
+                "ally",
+                "allies",
+                "trust",
+                "trusts",
+                "trusted",
+                "hate",
+                "hates",
+                "hated",
+                "rival",
+                "rivals",
+            ]
+        ),
+    ),
 )
 
 # How a connection reads when the neighbour is the object (`focal` is the subject) and when the
@@ -109,6 +177,11 @@ _FEELING_IN = {  # the neighbour toward the node
     "trusts": "trusts them", "friendly": "likes them", "close": "close to them",
     "devoted": "devoted to them",
 }  # fmt: skip
+_ADJECTIVE = {  # the nine words, as they read in "was ___ toward them, now ___"
+    "sworn enemy": "a sworn enemy", "hostile": "hostile", "distrusts": "distrustful",
+    "wary": "wary", "neutral": "neutral", "trusts": "trusting", "friendly": "friendly",
+    "close": "close", "devoted": "devoted",
+}  # fmt: skip
 _DEED_OUT = {  # the node did it to the neighbour
     "attack": "attacked by them", "kill": "killed by them", "rescue": "rescued by them",
     "save": "saved by them", "steal": "robbed by them", "help": "helped by them",
@@ -129,9 +202,10 @@ class Fact:
     deed: str = ""  # a deed's kind: attack, kill, rescue, steal, help
     belief: bool = False  # what one character believes of the other, not a fact
     session: int | None = None  # the newest session it was in (for "most recent first")
-    ended: bool = False
-    players_know: bool = True  # some player character knows it (the caller decides, via the gate)
-    viewer_knows: bool = True  # the person who clicked has a character that knows it
+    ended: bool = False  # said as "formerly ...", after the current ones of its category
+    # Both default to False: a fact the caller has not marked is never shown to a player.
+    players_know: bool = False  # some player character knows it (the caller decides, via the gate)
+    viewer_knows: bool = False  # the person who clicked has a character that knows it
 
 
 @dataclass(frozen=True, slots=True)
@@ -142,9 +216,12 @@ class Neighbour:
     name: str
     kind: str  # the entry's kind ("character", "place", ...)
     rank: int = 0  # 0 to 5; used for eligibility and order in the DM version only
-    score: float = 0.0  # the connection score (`importance.py`), for the audience's own view
+    score: float = 0.0  # the connection score (`importance.py`) over every connection: DM order
+    # The same score over the connections the players can see only: the player order. Separate
+    # fields, so an order for players can never be built from a hidden connection.
+    player_score: float = 0.0
     facts: tuple[Fact, ...] = ()
-    players_know: bool = True  # the players know this entry exists (and may be told its name)
+    players_know: bool = False  # the players know this entry exists (and may be told its name)
     further: tuple[Neighbour, ...] = ()  # entries joined to this one, for the second hop
 
 
@@ -179,9 +256,9 @@ def category_of(fact: Fact) -> int:
         return STANDING
     if fact.kind in _ROLE_KINDS:
         return ROLES
-    text = fact.detail.casefold()
-    for category, words in _KEYWORDS:
-        if any(w in text for w in words):
+    tokens = set(re.findall(r"[a-z]+", fact.detail.casefold()))
+    for category, words in _WORDS:
+        if tokens & words:
             return category
     return OTHER
 
@@ -202,130 +279,138 @@ def _wording(fact: Fact) -> str:
     return fact.detail.strip()
 
 
-def _key(fact: Fact) -> tuple[int, int, int, str]:
-    return (
-        category_of(fact),
-        -(fact.session if fact.session is not None else -1),
-        0 if fact.detail else 1,
-        _wording(fact),
-    )
+def _when(fact: Fact) -> int:
+    return fact.session if fact.session is not None else -1
 
 
-def facts_to_show(facts: Sequence[Fact]) -> list[Fact]:
-    """The facts between two entries as they are worded: a fact a stronger one already says is
-    dropped (a plain "knows" next to a family tie), the history of a feeling is one line, and the
-    rest are sorted. Pure."""
-    live = [f for f in facts if _wording(f)]
-    strong = any(category_of(f) in (LASTING, ROLES) for f in live)
-    keep = [f for f in live if not (f.kind == "knows" and not f.detail and strong)]
-    feelings = sorted((f for f in keep if f.kind == "knows"), key=lambda f: f.session or 0)
-    if len(feelings) > 1:  # keep the newest only; the change is told in `_standing_line`
-        keep = [f for f in keep if f.kind != "knows"] + [feelings[-1]]
-    return sorted(keep, key=_key)
+def _key(item: tuple[Fact, str]) -> tuple[int, bool, int, int, str]:
+    fact, text = item
+    return (category_of(fact), fact.ended, -_when(fact), 0 if fact.detail else 1, text)
 
 
-def _sign(fact: Fact) -> int:
-    return reputation_words.sign_of(fact.detail)
-
-
-def _standing_line(facts: Sequence[Fact]) -> str | None:
-    """ "was hostile, now friendly" when the feeling between two entries changed over time."""
-    feelings = sorted(
-        (f for f in facts if f.kind == "knows" and _sign(f)), key=lambda f: f.session or 0
-    )
-    if len(feelings) < 2 or _sign(feelings[0]) == _sign(feelings[-1]):
+def _change(group: Sequence[Fact], focus: str) -> str | None:
+    """ "Mira was hostile toward them, now friendly" when a feeling changed sign (one direction)."""
+    ordered = sorted(group, key=_when)
+    first, last = ordered[0], ordered[-1]
+    if reputation_words.sign_of(first.detail) == reputation_words.sign_of(last.detail):
         return None
-    before = reputation_words.word_of(feelings[0].detail) or ""
-    after = reputation_words.word_of(feelings[-1].detail) or ""
-    return f"was {before}, now {after}"
+    before = _ADJECTIVE.get(reputation_words.word_of(first.detail) or "", "neutral")
+    after = _ADJECTIVE.get(reputation_words.word_of(last.detail) or "", "neutral")
+    if last.outward:
+        return f"{focus} was {before} toward them, now {after}"
+    return f"was {before} toward {focus}, now {after}"
 
 
-def _best_category(n: Neighbour) -> int:
-    shown = facts_to_show(n.facts)
-    return min((category_of(f) for f in shown), default=OTHER + 1)
+def facts_to_show(facts: Sequence[Fact], focus: str = "") -> list[tuple[Fact, str]]:
+    """The facts between two entries as (fact, words), sorted. The history of a feeling is one line
+    for each direction (the newest feeling, or the change when its sign turned), a neutral one that
+    changed nothing says nothing, and a fact with no words is left out. Pure."""
+    out: list[tuple[Fact, str]] = []
+    feelings: dict[bool, list[Fact]] = {}
+    for f in facts:
+        if f.kind == "knows":
+            feelings.setdefault(f.outward, []).append(f)
+        elif text := _wording(f):
+            out.append((f, f"formerly {text}" if f.ended else text))
+    for group in feelings.values():
+        newest = max(group, key=_when)
+        text = _change(group, focus or "they") or _wording(newest)
+        if text:
+            out.append((newest, text))
+    return sorted(out, key=_key)
+
+
+def _best_category(n: Neighbour, focus: str) -> int:
+    return min((category_of(f) for f, _ in facts_to_show(n.facts, focus)), default=OTHER + 1)
 
 
 def _newest(n: Neighbour) -> int:
     return max((f.session for f in n.facts if f.session is not None), default=-1)
 
 
-def _order(audience: str) -> Callable[[Neighbour], tuple[int, int, float, int, str]]:
-    def key(n: Neighbour) -> tuple[int, int, float, int, str]:
+def _order(
+    audience: str, focus: str
+) -> Callable[[Neighbour], tuple[int, int, float, int, str, str]]:
+    def key(n: Neighbour) -> tuple[int, int, float, int, str, str]:
         rank = -n.rank if audience == DM else 0  # (the player order never sees the rank)
-        return (rank, _best_category(n), -n.score, -_newest(n), n.name.casefold())
+        score = n.score if audience == DM else n.player_score
+        return (rank, _best_category(n, focus), -score, -_newest(n), n.name.casefold(), n.id)
 
     return key
 
 
 def _visible(n: Neighbour, audience: str) -> Neighbour | None:
-    """The neighbour as this audience may see it, or None. The DM sees everything; a player sees
-    only what some player character knows, and a neighbour is dropped when the players do not know
-    it exists or know none of the ways it is joined."""
+    """The neighbour as this audience may see it, or None; its own neighbours are cut the same way.
+    The DM sees everything at Minor or above; a player sees only what some player character knows,
+    and a neighbour is dropped when the players do not know it exists or know none of the ways it
+    is joined."""
+    further = tuple(v for v in (_visible(x, audience) for x in n.further) if v is not None)
     if audience == DM:
-        return n if n.rank >= MIN_RANK else None
+        return replace(n, further=further) if n.rank >= MIN_RANK else None
     facts = tuple(f for f in n.facts if f.players_know)
     if not n.players_know or not facts:
         return None
-    seen_further = tuple(v for v in (_visible(x, audience) for x in n.further) if v is not None)
-    return Neighbour(n.id, n.name, n.kind, 0, n.score, facts, True, seen_further)
+    return Neighbour(n.id, n.name, n.kind, 0, 0.0, n.player_score, facts, True, further)
 
 
 def needs_peek(neighbours: Sequence[Neighbour]) -> bool:
-    """Whether this node has a fact the players hold that the person who clicked does not: the
-    summary then sits behind "Contains spoilers … let me peek anyway". Looks at every neighbour the
-    players know, whatever the caps leave out of the text."""
-    return any(
-        f.players_know and not f.viewer_knows for n in neighbours if n.players_know for f in n.facts
-    )
+    """Whether this node has a fact the players hold that the person who clicked does not, in the
+    neighbours or in the second hop: the summary then sits behind "Contains spoilers … let me peek
+    anyway". Looks at every entry the players know, whatever the caps leave out of the text."""
+    for n in neighbours:
+        if not n.players_know:
+            continue
+        if any(f.players_know and not f.viewer_knows for f in n.facts) or needs_peek(n.further):
+            return True
+    return False
 
 
-def _clause(n: Neighbour, audience: str) -> tuple[str, int]:
-    shown = facts_to_show(n.facts)
-    words = [w for w in (_wording(f) for f in shown) if w]
-    extra = _standing_line(n.facts)
-    if extra:
-        words = [w for w in words if w] + [extra]
+def _clause(n: Neighbour, focus: str) -> str:
+    words = [text for _, text in facts_to_show(n.facts, focus)]
     kept = words[:MAX_FACTS]
     left = len(words) - len(kept)
-    text = (
-        n.name if not kept else f"{n.name} ({'; '.join(kept)}{f'; +{left} more' if left else ''})"
-    )
-    return text, left
-
-
-def summarize(
-    focus: Focus, neighbours: Sequence[Neighbour], audience: str, *, peek: bool = False
-) -> Summary:
-    """The summary text for `focus` as `audience` (`DM` or `PLAYER`) may read it. `neighbours` are
-    the entries joined to the node, each with its facts and, optionally, its own neighbours. Pure.
-    """
-    pool = [v for v in (_visible(n, audience) for n in neighbours) if v is not None]
-    pool.sort(key=_order(audience))
-    shown, rest = pool[:MAX_NEIGHBOURS], pool[MAX_NEIGHBOURS:]
-    head = f"{focus.name} is a {focus.kind}."
-    if audience == DM and focus.roles:
-        head += f" Roles: {', '.join(focus.roles)}."
-    if not shown:
-        return Summary(head, (), len(rest), peek)
-    named = [n.name for n in shown]
-    parts: list[str] = []
-    for n in shown:
-        clause, _ = _clause(n, audience)
-        also = [
-            x for x in sorted(n.further, key=_order(audience))
-            if x.id != focus.id and x.name not in named and x.name != n.name
-        ]  # fmt: skip
-        if also:
-            clause += f", through them {also[0].name}"
-            named.append(also[0].name)
-        parts.append(clause)
-    body = f"Joined to {_join(parts)}"
-    if rest:
-        body += f", and {len(rest)} more"
-    return Summary(f"{head} {body}.", tuple(named), len(rest), peek)
+    if not kept:
+        return n.name
+    return f"{n.name} ({'; '.join(kept)}{f'; +{left} more' if left else ''})"
 
 
 def _join(parts: Sequence[str]) -> str:
     if len(parts) <= 2:
         return " and ".join(parts)
     return ", ".join(parts[:-1]) + ", and " + parts[-1]
+
+
+def summarize(focus: Focus, neighbours: Sequence[Neighbour], audience: str) -> Summary:
+    """The summary text for `focus` as `audience` (`DM` or `PLAYER`) may read it. `neighbours` are
+    the entries joined to the node, each with its facts and, optionally, its own neighbours. The
+    spoiler check (`Summary.needs_peek`) is worked out here for a player, from the same entries the
+    text is built from, so a caller cannot forget it. Pure."""
+    pool = [
+        v for v in (_visible(n, audience) for n in neighbours if n.id != focus.id) if v is not None
+    ]
+    pool.sort(key=_order(audience, focus.name))
+    shown, rest = pool[:MAX_NEIGHBOURS], pool[MAX_NEIGHBOURS:]
+    peek = audience == PLAYER and needs_peek(list(neighbours))
+    head = f"{focus.name} ({focus.kind})."
+    if audience == DM and focus.roles:
+        head += f" Roles: {', '.join(focus.roles)}."
+    if not shown:
+        return Summary(head, (), len(rest), peek)
+    named = [n.name for n in shown]
+    taken = {x.casefold() for x in named} | {focus.name.casefold()}
+    parts: list[str] = []
+    for n in shown:
+        clause = _clause(n, focus.name)
+        also = [
+            x
+            for x in sorted(n.further, key=_order(audience, focus.name))
+            if x.id != focus.id and x.name.casefold() not in taken
+        ]
+        if also:
+            clause += f", through them {also[0].name}"
+            named.append(also[0].name)
+            taken.add(also[0].name.casefold())
+        parts.append(clause)
+    if rest:
+        parts.append(f"{len(rest)} more")
+    return Summary(f"{head} Joined to {_join(parts)}.", tuple(named), len(rest), peek)
