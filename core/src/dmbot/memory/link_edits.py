@@ -48,6 +48,8 @@ async def set_who_knows(
     link: Relation,
     who: str,
     characters: Sequence[str] = (),
+    *,
+    players_only: bool = False,
 ) -> Written[object]:
     """ "Who knows this?" for one connection (#2935), the one call the name card and the website
     share. Only the DM (hidden from the party, no knowers), only these player characters (hidden
@@ -66,20 +68,24 @@ async def set_who_knows(
             link.id, []
         )
         if before:
-            await memory.set_connection_knowers(guild_id, campaign_id, link.id, [], source=DM)
+            await memory.set_connection_knowers(
+                guild_id, campaign_id, link.id, [], source=DM, players_only=players_only
+            )
         try:
             return await set_secret(memory, guild_id, campaign_id, link, False)
         except MemoryRuleError:  # (refused until its names are shown): put who knew it back
             if before:
                 await memory.set_connection_knowers(
-                    guild_id, campaign_id, link.id, before, source=DM
+                    guild_id, campaign_id, link.id, before, source=DM, players_only=players_only
                 )
             raise
     chosen = list(characters) if who == SOME_CHARACTERS else []
     await memory.check_knowers(guild_id, campaign_id, chosen)  # nothing is hidden on a bad pick
     if not (link.secret or link.unrevealed):
         await set_secret(memory, guild_id, campaign_id, link, True)
-    return await memory.set_connection_knowers(guild_id, campaign_id, link.id, chosen, source=DM)
+    return await memory.set_connection_knowers(
+        guild_id, campaign_id, link.id, chosen, source=DM, players_only=players_only
+    )
 
 
 async def remove(
