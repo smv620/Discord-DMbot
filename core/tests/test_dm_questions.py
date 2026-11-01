@@ -150,8 +150,9 @@ class Live(unittest.IsolatedAsyncioTestCase):
             cast(Any, me), self.table(), "Did they mean…?", cast(Any, None)
         )
         self.assertEqual(me.order, [8, 7])  # the owner (8) first, then the next id
-        self.assertTrue(message.text.startswith("❓ **DMbot has a question** · "))
-        self.assertIn("\\*Table\\*", message.text)
+        text = getattr(message, "text", "")  # (the stand-in's message carries the text it was sent)
+        self.assertTrue(text.startswith("❓ **DMbot has a question** · "))
+        self.assertIn("\\*Table\\*", text)
         me.post_message.assert_not_awaited()  # nothing on the screen
 
     async def test_when_no_dm_can_be_reached_it_goes_on_the_screen_with_the_reason(self) -> None:
