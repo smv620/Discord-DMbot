@@ -301,7 +301,7 @@ class TheDmsStatements(unittest.IsolatedAsyncioTestCase):
             return "sent"
 
         self.bot.sidebar_send_dm = send_dm  # type: ignore[method-assign]
-        self.bot._track = lambda coro, name: asyncio.ensure_future(coro)  # type: ignore[method-assign]
+        cast(Any, self.bot)._track = lambda work, name: asyncio.ensure_future(work)
 
     async def say(self, text: str, author: int = DM) -> None:
         self.bot._hear_dmbchat(message(text, author=author))
