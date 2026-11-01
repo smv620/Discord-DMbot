@@ -9403,10 +9403,12 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             waiting = len(await self.memory.worked_out_waiting(gid, cid))
             log.info("Worked-out family links: %d waiting", waiting)
             if waiting:
+                # In the DM's private chat (#3210); the DM screen only when no DM can be reached.
+                view = links_ready.view(cid)
+                if await self.ask_privately(gid, cid, links_ready.family_notice(waiting), view):
+                    return
                 await self.post(
-                    table.screen_channel_id,
-                    links_ready.family_notice(waiting),
-                    view=links_ready.view(cid),
+                    table.screen_channel_id, links_ready.family_notice(waiting), view=view
                 )
 
     async def warn_about_continuity(self, table: Table) -> None:
