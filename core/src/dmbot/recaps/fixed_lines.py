@@ -1,6 +1,6 @@
 """The fixed opening and closing lines of every recap DMbot writes (#2253).
 
-A recap opens with "Previously, on <campaign>…" and closes with "And so we continue, the <epic
+A recap opens with "Previously, on <campaign>…" and closes with "And so continues the <epic
 adventure> of <campaign>." (one of ten endings; a recap takes the one that fits its place in the
 campaign, so two in a row end differently) so that next session, when the DM or a player reads it
 aloud, DMbot can find it in the transcript and not retell it as news. The lines are added by code
@@ -32,9 +32,12 @@ ENDINGS = (
     "perilous adventure",
     "epic quest",
 )
-CLOSING = "And so we continue, the {ending} of {name}."
+CLOSING = "And so continues the {ending} of {name}."
 OPENING_BARE = "Previously…"
-CLOSING_BARE = "And so we continue, the {ending}."
+CLOSING_BARE = "And so continues the {ending}."
+# What recaps written before #2951 end with. They are already posted and may be read aloud at the
+# table, so every finder takes both forms.
+OLD_CLOSING_START = "And so we continue, the "
 # What the database's recap columns hold (`recap_jobs.summary` and `original`; migration 0225, the
 # last to set them, holds the same number, and 0221 held 30,000 before it): a guard, not a target,
 # so no story is cut for its length in practice (#2601, #2609).
@@ -48,11 +51,11 @@ _DOTS = re.compile(r"…|\.{2,}")
 # line is never taken for them: the opening must be the text's first paragraph and end in an
 # ellipsis (three dots too, since a DM may retype it), and the closing the last paragraph.
 _OPENS = re.compile(r"\A\s*Previously(?:,\s+on [^\n]{1,200}?)?(?:…|\.{3})[ \t]*(?:\n\s*\n|\Z)")
-# The closing is found by its shape, loosely ("and so we continue … of <name>."), so any of the ten
-# endings and a garbled one are all taken for it. It must be the last
-# paragraph and stay on one line.
+# The closing is found by its shape, loosely ("and so continues the … of <name>.", or the older
+# "and so we continue …"), so any of the ten endings and a garbled one are all taken for it. It
+# must be the last paragraph and stay on one line.
 _CLOSES = re.compile(
-    r"(?:\A|\n\s*\n)[ \t]*And so we continue\b[^\n]{0,300}?[.!…][ \t]*\Z",
+    r"(?:\A|\n\s*\n)[ \t]*And so (?:we continue|continues)\b[^\n]{0,300}?[.!…][ \t]*\Z",
     re.IGNORECASE,
 )
 
@@ -70,8 +73,10 @@ def usable_name(name: str, secret_names: Collection[str]) -> str:
 
 def is_closing(paragraph: str) -> bool:
     """Whether a paragraph is the recap's fixed closing line (#2627): the same wording as
-    `CLOSING` and `CLOSING_BARE`, whichever ending and campaign name it was made with."""
-    return paragraph.strip().startswith(CLOSING_BARE.split("{")[0])
+    `CLOSING` and `CLOSING_BARE` (or the older wording a recap written before #2951 ends with),
+    whichever ending and campaign name it was made with."""
+    text = paragraph.strip()
+    return text.startswith(CLOSING_BARE.split("{")[0]) or text.startswith(OLD_CLOSING_START)
 
 
 def ending_for(earlier_sessions: int) -> int:
