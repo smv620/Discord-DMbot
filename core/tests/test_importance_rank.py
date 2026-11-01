@@ -54,8 +54,11 @@ class TheStore(NamesTest):
              NewName("Ashmere", "place", CONFIRMED)],
             source="dm",
         )  # fmt: skip
-        self.garrick, self.wren, self.ashmere = made.value
-        assert self.garrick and self.wren and self.ashmere
+        garrick, wren, ashmere = made.value
+        assert garrick and wren and ashmere
+        self.garrick: str = garrick  # (typed, so a test can pass them on)
+        self.wren: str = wren
+        self.ashmere: str = ashmere
 
     async def ranks(self) -> dict[str, int]:
         return await self.store.ranks(GUILD, self.campaign.id)
