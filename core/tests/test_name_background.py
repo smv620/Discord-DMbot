@@ -564,6 +564,63 @@ class ThePath(NamesTest):
         self.assertIn("✅ Add all 2 places", labels)
         self.assertIn("📝 Check them one by one", labels)
 
+    async def test_an_overall_add_all_with_the_total_comes_first_when_there_are_several_kinds(
+        self,
+    ) -> None:
+        press = await self.read()
+        view = press.edit_original_response.await_args.kwargs["view"]
+        labels = [str(getattr(b, "label", "")) for b in view.children]
+        total = sum(len(v) for k, v in view.ids.items() if k != "concept")
+        self.assertEqual(labels[0], f"✅ Add all {total}")
+        self.assertIn("✅ Add all 2 places", labels)  # and each kind keeps its own
+
+    async def test_the_overall_add_all_answers_every_kind_but_ideas_and_undo_takes_all_back(
+        self,
+    ) -> None:
+        press = await self.read()
+        view = press.edit_original_response.await_args.kwargs["view"]
+        waiting = {e.id for e in await self.entities()}
+        concepts = set(view.ids.get("concept", []))
+        total = sum(len(v) for k, v in view.ids.items() if k != "concept")
+        it = self.it()
+        await view.children[0].callback(it)
+        confirmed = {e.id for e in await self.entities(CONFIRMED)}
+        self.assertEqual(confirmed, waiting - concepts)
+        self.assertEqual(len(confirmed), total)
+        sent = [text for text, _ in it.response.sent] + [
+            str(c.args[0]) for c in it.followup.send.await_args_list if c.args
+        ]
+        self.assertTrue(any(f"Added {total} names" in t for t in sent), sent)
+        labels = [str(getattr(b, "label", "")) for b in view.children]
+        self.assertTrue(any(label.startswith("↩️ Undo") for label in labels), labels)
+        self.assertFalse(any(label.startswith("✅ Add all") for label in labels), labels)
+        undo = next(b for b in view.children if str(getattr(b, "label", "")).startswith("↩️ Undo"))
+        await undo.callback(self.it())
+        self.assertEqual(await self.entities(CONFIRMED), [])  # all of it, in one press
+        labels = [str(getattr(b, "label", "")) for b in view.children]
+        self.assertEqual(labels[0], f"✅ Add all {total}")  # offered again
+
+    async def test_only_a_dm_may_use_the_overall_add_all(self) -> None:
+        press = await self.read()
+        view = press.edit_original_response.await_args.kwargs["view"]
+        await view.children[0].callback(self.it(MANAGER))
+        self.assertEqual(await self.entities(CONFIRMED), [])
+
+    async def test_a_single_kind_has_no_second_button_for_the_same_names(self) -> None:
+        view = ui_bg.BulkConfirm(self.campaign.id, {"place": ["a", "b"]})
+        labels = [str(getattr(b, "label", "")) for b in view.children]
+        self.assertIn("✅ Add all 2 places", labels)
+        self.assertFalse(
+            any(label.startswith("✅ Add all") and "places" not in label for label in labels)
+        )
+        both = ui_bg.BulkConfirm(self.campaign.id, {"place": ["a"], "npc": ["b", "c"]})
+        self.assertEqual(str(getattr(both.children[0], "label", "")), "✅ Add all 3")
+
+    async def test_ideas_are_not_in_the_overall_count(self) -> None:
+        view = ui_bg.BulkConfirm(self.campaign.id, {"concept": ["a", "b"], "place": ["c"]})
+        labels = [str(getattr(b, "label", "")) for b in view.children]
+        self.assertFalse(any(label == "✅ Add all 3" for label in labels), labels)
+
     async def test_yes_to_all_places_confirms_only_the_places(self) -> None:
         press = await self.read()
         view = press.edit_original_response.await_args.kwargs["view"]
