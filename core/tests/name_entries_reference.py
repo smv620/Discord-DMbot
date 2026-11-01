@@ -1,4 +1,7 @@
-"""The `gate.name_entries` as it was before the grouping rewrite (#3228): kept as the reference the
+"""Never edit this file: it is the old behaviour, verbatim, and can be deleted once the new
+`gate.name_entries` has shipped.
+
+The `gate.name_entries` as it was before the grouping rewrite (#3228): kept as the reference the
 equivalence test checks the fast one against. Not used anywhere else."""
 
 from __future__ import annotations

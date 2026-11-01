@@ -122,6 +122,31 @@ class Equivalent(unittest.TestCase):
         )
 
 
+class JoinedPerson(unittest.TestCase):
+    def test_a_joined_unnamed_persons_label_is_rebuilt_for_a_player(self) -> None:
+        keen = row(1, name="Ken")
+        gone = row(
+            2, name="the guard (name unknown)", unnamed=True, merged_into="e1", status="merged",
+            unnamed_anchor=None, unnamed_what="the guard",
+        )  # fmt: skip
+        rows = NameRows(
+            {"e1": keen, "e2": gone},
+            [alias(1, "e1", "Ken"), alias(2, "e1", "the guard (name unknown)")],
+        )
+        seen = Visible(
+            entries=frozenset({"e1"}),
+            aliases=frozenset({"a1", "a2"}),
+            sureness={(ENTRY, "e1"): 1.0, (ALIAS, "a1"): 1.0, (ALIAS, "a2"): 1.0},
+        )
+        texts: dict[str, str] = {}
+        got = gate.name_entries(seen, Viewer.player({"e1"}), ["e1"], rows, texts_out=texts)
+        want_texts: dict[str, str] = {}
+        want = reference_name_entries(
+            seen, Viewer.player({"e1"}), ["e1"], rows, texts_out=want_texts
+        )
+        self.assertEqual((got, texts), (want, want_texts))
+
+
 class NotQuadratic(unittest.TestCase):
     def test_four_times_the_entries_costs_far_less_than_sixteen_times(self) -> None:
         def took(size: int) -> float:
