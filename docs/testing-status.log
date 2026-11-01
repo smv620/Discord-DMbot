@@ -1,6 +1,6 @@
 DMbot - TESTING STATUS (current testing only)
 =============================================
-Last updated: 2026-10-31 02:20 UTC by dev1
+Last updated: 2026-11-01 UTC by dev1
 
 For the people at the table: docs/next-test-step.md has the one next small test (#569).
 Short by design: see CLAUDE.md "Testing logs". Full record: docs/testing-history.log.
@@ -9,15 +9,15 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 LIVE NOW
 ------------------------------------------------------------------------------
-core + web-api at b1fb7f8d (eleventh deploy, part A, 2026-10-31 02:12 UTC). No migrations (288 rows, last 0291_pause_setting).
+core + web-api at 0fcaf7fc (eleventh deploy, part B, 2026-11-01). Migration 0292_story_mode_setting (289 rows).
   Bot connected to 2 servers, 0 errors; web-api healthy. Full entry: docs/testing-history.log.
+
 Switches off: DMBOT_WEB_LORE, DMBOT_WEB_RECAP_STYLE, DMBOT_WEB_PAUSE, DMBOT_STORY_FAMILY_ONLY (unset = off).
 
 ------------------------------------------------------------------------------
 READY TO DEPLOY
 ------------------------------------------------------------------------------
-Part B: 0fcaf7fc (merge of #3080), migration 0292. Waits until Part A is checked; then it needs the owner's OK in dev1's session.
-  Part C waits for 0293 (#3083) and 0294 (#3085), so 0295 (#3088, live in dev1's view of development) goes out with them, in order.
+Part C: waits for migrations 0293 (#3083) and 0294 (#3085) to be merged, so all of them run together, in order. Nothing to deploy yet.
 
 ------------------------------------------------------------------------------
 OWNER CHECKS (not done yet)
@@ -25,7 +25,8 @@ OWNER CHECKS (not done yet)
 Part A (eleventh deploy, b1fb7f8d): on a test campaign, "Lia is the mother of Mira" and "Tam is the brother of Mira" give
   "Lia is the mother of Tam?" with Yes, No, Not now; No is final; a player sees nothing of the suggestion.
   Earlier, still open: Story Graph clicks; the three-way upload choice; "Who knows this?"; start-up sweep at 0 waiting.
-Part B: "Is X another name of Y?" on a lore text; secrecy follows the upload choice; new connection kinds in the connect menu;
+Part B (eleventh deploy, 0fcaf7fc): same-person prompt (Yes, No, Later); public stays public (Keep / Keep as secret); Shared story panel no longer says not working yet; start-up log clean.
+  Earlier: Is X another name of Y? on a lore text; secrecy follows the upload choice; new connection kinds in the connect menu;
   the website shows no Recap style or Pause controls; the party after a short live session with two consenting players.
 
 ------------------------------------------------------------------------------
