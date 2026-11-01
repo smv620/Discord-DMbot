@@ -9276,11 +9276,13 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         waiting, table.claims_waiting = table.claims_waiting, 0
         table.claim_preview = []
         if waiting and table.campaign_id is not None:
-            await self.post(
-                table.screen_channel_id,
-                claims_waiting_text(waiting),
-                view=claims_review_view(table.campaign_id),
-            )
+            # In the DM's private chat (#3210); the DM screen only when no DM can be reached.
+            view = claims_review_view(table.campaign_id)
+            if await self.ask_privately(
+                table.guild_id, table.campaign_id, claims_waiting_text(waiting, private=True), view
+            ):
+                return
+            await self.post(table.screen_channel_id, claims_waiting_text(waiting), view=view)
 
     async def ask_about_claims(self, table: Table) -> None:
         """Count and tell in one go: the two steps above, for a caller that wants both."""
