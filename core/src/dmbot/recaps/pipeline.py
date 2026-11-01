@@ -1296,6 +1296,7 @@ class RecapWorker:
             allowed_names=inputs.allowed_names,
             secret_names=inputs.secret_names,
             previous=inputs.previous,
+            **self._given_args(gid, cid, job),
             setting=inputs.setting,
             transcript="\n".join(s.text for s in said),
             aliases=inputs.aliases,
@@ -1510,30 +1511,34 @@ class RecapWorker:
                 allowed_names=inputs.allowed_names,
                 secret_names=inputs.secret_names,
                 previous=inputs.previous,
+                **self._given_args(gid, cid, job),
                 setting=inputs.setting,
                 transcript=transcript,
                 aliases=inputs.aliases,
             )
+            # Runs copied from an earlier recap are counted on the call, never a retry (#2965).
+            copies: list[str] = []
+            found = rd.check_prose(
+                prose,
+                beats=sheet,
+                transcript=transcript,
+                allowed_names=inputs.allowed_names,
+                secret_names=inputs.secret_names,
+                **self._given_args(gid, cid, job),
+                previous=inputs.previous,
+                setting=inputs.setting,
+                length=length,
+                last=True,
+                refused=refused,
+                style=inputs.style,
+                corrections=inputs.corrections,
+                pcs=inputs.pcs,
+                identity_ties=inputs.identity_ties,
+                advisory=copies,
+            )
+            self._annotate(gid, cid, job, self._draft_stage, copies=len(copies))
             # (a kept draft whose flagged ending was already cut stands without it: #2741)
-            if not hard_after_cut(
-                rd.check_prose(
-                    prose,
-                    beats=sheet,
-                    transcript=transcript,
-                    allowed_names=inputs.allowed_names,
-                    secret_names=inputs.secret_names,
-                    **self._given_args(gid, cid, job),
-                    previous=inputs.previous,
-                    setting=inputs.setting,
-                    length=length,
-                    last=True,
-                    refused=refused,
-                    style=inputs.style,
-                    corrections=inputs.corrections,
-                    pcs=inputs.pcs,
-                    identity_ties=inputs.identity_ties,
-                )
-            ):
+            if not hard_after_cut(found):
                 flags = self._flags.pop(key, None)
                 self._revised.discard(key)
                 if flags is not None:  # the kept draft still has its flagged sentences: cut them
@@ -2174,6 +2179,7 @@ class RecapWorker:
                 allowed_names=inputs.allowed_names,
                 secret_names=inputs.secret_names,
                 previous=inputs.previous,
+                **self._given_args(gid, cid, job),
                 setting=inputs.setting,
                 transcript=transcript,
                 aliases=inputs.aliases,
@@ -2315,6 +2321,7 @@ class RecapWorker:
             allowed_names=inputs.allowed_names,
             secret_names=inputs.secret_names,
             previous=inputs.previous,
+            **self._given_args(gid, cid, job),
             setting=inputs.setting,
             transcript=transcript,
             aliases=inputs.aliases,
@@ -2644,6 +2651,7 @@ class RecapWorker:
                 allowed_names=inputs.allowed_names,
                 secret_names=inputs.secret_names,
                 previous=inputs.previous,
+                **self._given_args(gid, cid, job),
                 transcript=transcript,
                 aliases=inputs.aliases,
             )
