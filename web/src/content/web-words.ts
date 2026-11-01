@@ -204,6 +204,30 @@ export const webPage = {
   pinnedDone: "Pinned. Only you see it. Unpin any time.",
   unpinnedDone: "Unpinned.",
   pinHint: "Only you see pins. Players never do.",
+  // "Who knows this?" on a held connection (#2935 D4, #3214). Plain words; the bot applies the answer.
+  whoKnowsHeading: "Who knows this?",
+  whoOnlyDm: "🤫 Only the DM",
+  whoSome: "👥 Only some characters",
+  whoEveryone: "👁️ Everyone at the table",
+  whoStateDm: "Hidden from the party. Only you know it.",
+  whoStateSome: (names: string): string => `Hidden from the party. Only ${names} know it.`,
+  whoStateAll: "Everyone at the table can see it.",
+  whoSearch: "Search a character",
+  whoSomeLabel: "Characters who know it",
+  whoPickOne: "Pick at least one character.",
+  whoSave: "Save",
+  whoDoneDm: "Now only you know this.",
+  whoDoneSome: (names: string): string => `Now only ${names} know this.`,
+  whoDoneAll: "Now everyone at the table can see this.",
+  whoAlready: "It was already like that.",
+  // Names in a list: "Mara, Tavin and Brann"; past five, the first four and how many more.
+  whoNames: (names: string[]): string => {
+    if (names.length <= 5) {
+      if (names.length <= 1) return names[0] ?? "";
+      return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+    }
+    return `${names.slice(0, 4).join(", ")} and ${names.length - 4} more`;
+  },
   legendPinned: "📌: pinned as 100% truth (only you see this)",
   believesFalse: "⚠️ The party believes this; it's false",
   reveal: "👁️ Reveal to players",
