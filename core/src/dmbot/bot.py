@@ -10735,6 +10735,13 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             campaign.guild_id, campaign.id, mode, confirmed_by=confirmed_by
         )
 
+    async def apply_invite(self, campaign: Campaign, invite: str | None) -> Campaign:
+        """The D&D Beyond invite chosen on the website (#3095), as Discord's form saves it: the
+        store call, then the running session and the transcript card follow."""
+        saved = await self.campaigns.set_dndbeyond_invite(campaign.guild_id, campaign.id, invite)
+        await self.after_invite_change(saved)
+        return saved
+
     async def apply_rulesets(self, campaign: Campaign, main: str, fallback: str) -> bool:
         """The main rules chosen on the website (#3112): saved, the new pair's names built ahead
         of use (in its own try: a failure there costs only the first lookup's wait), and whether

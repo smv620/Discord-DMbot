@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from dmbot.campaigns import Campaign, CampaignError
+from dmbot.campaigns.invite import parse_invite
 from dmbot.campaigns.models import DM_SCREEN_LEVELS_OFFERED, STORY_MODES
 from dmbot.campaigns.store import OWNER_STAYS
 from dmbot.db import Database
@@ -42,6 +43,7 @@ KEEP_FOR_S = 3600  # nothing waits on a row longer than this
 VISIBILITY, LEVEL, RETENTION, OPTIONAL_RULE = "visibility", "level", "retention", "optional_rule"
 CO_DM = "co_dm"  # a game master added or removed (#2776)
 STORY_MODE = "story_mode"  # the Shared story switch (#3078)
+DNDBEYOND_INVITE = "dndbeyond_invite"  # the DM's D&D Beyond invite link (#3095)
 RULESETS = "rulesets"  # the main rules and what to use if they miss, "2024/2014" (#3112)
 PERSON_ID_MAX = 19  # digits in a Discord id
 VISIBILITIES = ("private", "peek", "open")
@@ -121,6 +123,12 @@ class Host(Protocol):
         """Save the Shared story switch with the store's own rules (#3078): turning it on needs
         the DM's confirmation on record or `confirmed_by` now. Raises `CampaignError` with the
         words Discord shows."""
+        ...
+
+    async def apply_invite(self, campaign: Campaign, invite: str | None) -> Campaign:
+        """Save (or with None remove) the D&D Beyond invite with the store's own check, then do
+        what Discord's form does: a running session and the transcript channel's pinned card
+        follow at once. Raises `CampaignError` with the store's words."""
         ...
 
     async def apply_rulesets(self, campaign: Campaign, main: str, fallback: str) -> bool:
@@ -231,6 +239,8 @@ async def apply(host: Host, guild_id: int, item: Setting) -> Outcome:
         return await _story_mode(host, campaign, item)
     if item.setting == RULESETS:
         return await _rulesets(host, campaign, item)
+    if item.setting == DNDBEYOND_INVITE:
+        return await _invite(host, campaign, item)
     try:
         if item.setting == VISIBILITY:
             if item.value not in VISIBILITIES:
@@ -288,6 +298,19 @@ async def _story_mode(host: Host, campaign: Campaign, item: Setting) -> Outcome:
         return Outcome(BAD_VALUE)
     try:
         await host.apply_story_mode(campaign, item.value, item.user_id if item.flag else None)
+    except CampaignError as exc:
+        return Outcome(REFUSED, str(exc))
+    return Outcome()
+
+
+async def _invite(host: Host, campaign: Campaign, item: Setting) -> Outcome:
+    """The D&D Beyond invite link (#3095): the standard form, or empty to remove it. The store
+    reads it again with Discord's own check (`parse_invite`), and its words go to the page. The
+    follow-up (running session, pinned card) runs on every apply, even for the saved value, so a
+    retry after a half-done try still catches up and a removed link never lingers. The link is
+    never logged."""
+    try:
+        await host.apply_invite(campaign, parse_invite(item.value))
     except CampaignError as exc:
         return Outcome(REFUSED, str(exc))
     return Outcome()
