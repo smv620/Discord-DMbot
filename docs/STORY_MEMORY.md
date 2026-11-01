@@ -838,6 +838,7 @@ group), and an Undo of a rejoin writes the closed placements back. A character's
 newest row at or before it. `stamp.group_of_speakers` turns a line's speakers (people, never characters) into a group: only the kept characters those people play that were in a group at that moment count; exactly one group among them gives it. Characters who were not placed, and a speaker who plays none here (the DM), are ignored; two or more different groups, or none at all, are "not known", because DMbot never guesses whose voice it was. A character that is erased takes its rows with it. It is not carried in backups (character ids are the
 file's, a restored campaign starts a new history, and a split's placements are a moment of play, not story);
 a line from before the restore reads "not known".
+**The DM's buttons for it:** after a split the DM is asked privately, one picker per group ("Who is in Tower?"; the campaign's kept player characters only, at most 25 shown) and a Skip for now button; **Who is where** in **Rests & time…** reopens it any time while split. A pick says who is in that group now: someone taken off the pick is released. Words: "Pick who is in each group. Anyone you skip gets no game time on their lines until you do." Nothing here is shown to players.
 
 **The campaign's calendar (#3091 part 3, migration 0307):** three columns on the clock's row: `calendar_kind`
 (`days`, the default and what every clock had, or `harptos`) and the date of Day 1 as two numbers (the year

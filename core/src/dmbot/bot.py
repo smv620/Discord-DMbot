@@ -10736,6 +10736,22 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             campaign.guild_id, campaign.id, mode, confirmed_by=confirmed_by
         )
 
+    async def apply_rulesets(self, campaign: Campaign, main: str, fallback: str) -> bool:
+        """The main rules chosen on the website (#3112): saved, the new pair's names built ahead
+        of use (in its own try: a failure there costs only the first lookup's wait), and whether
+        a session of this campaign is live. A live table keeps the pair it captured at its start
+        (`rules_rulesets`), so the change reaches it from the next session."""
+        await self.campaigns.set_rulesets(campaign.guild_id, campaign.id, main, fallback)
+        try:
+            self._warm_rules((main, fallback))
+        except Exception as exc:  # the type only
+            log.warning("Warming the new rules failed: %s", type(exc).__name__)
+        table = self.tables.get(campaign.guild_id)
+        return table is not None and table.campaign_id == campaign.id
+
+    async def optional_overrides(self, campaign: Campaign) -> dict[str, bool]:
+        return await self.campaigns.optional_rule_overrides(campaign.guild_id, campaign.id)
+
     async def apply_optional_rule(
         self, campaign: Campaign, rule: OptionalRule, turn_on: bool, sender_id: int
     ) -> bool:

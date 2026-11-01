@@ -13,6 +13,7 @@ import type {
   SmartNamesAnswer,
   Waiting,
   WebGraph,
+  WebViewers,
   WebOverview,
 } from "./api";
 import {
@@ -166,6 +167,11 @@ export default function namesArea({ call, waitForAnswer }: ApiHelpers): Partial<
     webGraph: async (ref, q) => {
       const params = new URLSearchParams({ hops: String(q.hops) });
       if (q.center) params.set("center", q.center);
+      if (q.seeAs) {
+        // The web as one character (or the party) knows it (#2999): the same shape, plus whose it is.
+        params.set("viewer", q.seeAs);
+        return (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/web/see-as?${params.toString()}`)) as WebGraph;
+      }
       if (q.view) params.set("view", q.view);
       return (await call(
         "GET",
@@ -187,6 +193,8 @@ export default function namesArea({ call, waitForAnswer }: ApiHelpers): Partial<
       (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/web/overview${q.view ? `?view=${q.view}` : ""}`)) as WebOverview,
     webFind: async (ref, q) =>
       ((await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/web/find?view=${q.view ?? ""}&q=${encodeURIComponent(q.q)}`)) as { names: { id: string; name: string; kind: string }[] }).names,
+    webViewers: async (ref, q) =>
+      (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/web/viewers?q=${encodeURIComponent(q)}`)) as WebViewers,
     webWaiting: async (ref) =>
       (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/web/waiting`)) as Waiting,
     // The answer is queued for the bot (202 {answer}) like every other edit; this waits for it.
