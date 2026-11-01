@@ -262,6 +262,12 @@ def _done(campaign: Campaign) -> None:
     _busy.discard((campaign.guild_id, campaign.id))
 
 
+# The same turn-taking for the website's requests (#3087), so Discord and the website share one
+# cooldown and never compare one campaign's file twice at once.
+take_turn = _take
+give_back_turn = _done
+
+
 async def check_now(interaction: discord.Interaction, campaign: Campaign) -> None:
     """Read the linked file now and offer what differs, privately."""
     from dmbot.dm_screen import house_sync

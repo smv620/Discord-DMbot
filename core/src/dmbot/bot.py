@@ -116,6 +116,7 @@ from dmbot.dm_screen import (
     dm_bot_buttons,
     ensure_dm_screen,
     game_masters,
+    house_file_web,
     house_sync,
     import_button,
     links_ready,
@@ -356,6 +357,7 @@ from dmbot.rules.homebrew_sources import SiteApprovalsSection, SourceStore
 from dmbot.rules.homebrew_spotter import HomebrewMention, HomebrewSpotter
 from dmbot.rules.house import HouseRule, HouseRulesSection, HouseRuleStore
 from dmbot.rules.house_file_link import HouseFileLinkStore
+from dmbot.rules.house_file_queue import HouseFileQueue
 from dmbot.rules.optional import OptionalRule
 from dmbot.rules.pack_suggestions import PackSuggestionStore
 from dmbot.rules.rule_set_backup import RuleSetsSection
@@ -897,6 +899,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self.lore_uploads = lore_queue.LoreQueue(recaps.db) if recaps is not None else None
         self._lore_reads: dict[int, asyncio.Task[None]] = {}  # server -> its read in progress
         self._lore_swept: dict[int, float] = {}  # server -> when its queue was last swept
+        # The website's House-rules file requests (#3087), one at a time per server like lore.
+        self.house_file_queue = HouseFileQueue(recaps.db) if recaps is not None else None
+        self._house_file_runs: dict[int, asyncio.Task[None]] = {}  # server -> its request running
+        self._house_file_swept: dict[int, float] = {}  # server -> when its queue was last swept
         # What DMs chose on the website's Settings page, waiting to be applied (#2463).
         self.web_settings = web_settings.SettingStore(recaps.db) if recaps is not None else None
         # What DMs chose on the website's rule sharing section, waiting to be applied (#2793).
@@ -1629,6 +1635,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         # Website lore uploads being read: each puts its claim back to waiting (the next start reads
         # it again) and is waited for here, so the write is not lost with the process (#3022).
         reads = list(getattr(self, "_lore_reads", {}).values())  # a test stub skips __init__
+        reads += list(getattr(self, "_house_file_runs", {}).values())  # (#3087, the same way)
         for read in reads:
             read.cancel()
         with contextlib.suppress(Exception):
@@ -10697,6 +10704,39 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             with log_context(guild_id=guild.id, campaign_id=claim.campaign_id):
                 self._lore_reads[guild.id] = asyncio.ensure_future(
                     lore_upload.run_upload(self, queue, claim, guild.id)
+                )
+
+    async def run_house_file_requests(self) -> None:
+        """The House-rules file requests DMs made on the website (#3087): for each server, sweep
+        its queue (the link and file's words never stay just because the DM did not come back),
+        and when none is running there, take the oldest waiting one and do it in its own task. A
+        read of a file can take minutes, so it must not hold this loop, which every other website
+        action shares. One at a time per server."""
+        queue = self.house_file_queue
+        if queue is None:
+            return
+        for guild in list(self.guilds):
+            if self._closing:
+                return
+            running = self._house_file_runs.get(guild.id)
+            if running is not None and running.done():
+                del self._house_file_runs[guild.id]
+                running = None
+            now = time.monotonic()
+            if (
+                now - self._house_file_swept.get(guild.id, -LORE_SWEEP_EVERY_S)
+                >= LORE_SWEEP_EVERY_S
+            ):
+                self._house_file_swept[guild.id] = now
+                await queue.sweep(guild.id)
+            if running is not None:
+                continue
+            claim = await queue.claim_next(guild.id)
+            if claim is None:
+                continue
+            with log_context(guild_id=guild.id, campaign_id=claim.campaign_id):
+                self._house_file_runs[guild.id] = asyncio.ensure_future(
+                    house_file_web.run_request(self, queue, claim, guild.id)
                 )
 
     # ---- the website's Settings page (#2463): the Host of dm_screen.web_settings ----
