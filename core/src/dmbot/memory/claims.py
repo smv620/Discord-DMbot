@@ -20,7 +20,7 @@ from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 
-from dmbot.memory import evidence, forget_readings, kin, link
+from dmbot.memory import evidence, forget_readings, kin, link, reputation_words
 from dmbot.memory._changes import ALIASES, CLAIMS, ENTITIES, Changes
 from dmbot.memory.models import (
     CLAIM_CONFIRMED,
@@ -317,8 +317,50 @@ def resolve_relationship(onto: Ontology, text: str) -> tuple[PredicateTerm, bool
     return None
 
 
+# Two characters KNOW each other and how kindly is a reputation word (#3175, #3181): the old
+# friend, ally and enemy relationships are read as `knows` with the word they always meant.
+_FILLER = frozenset({"is", "are", "was", "were", "a", "an", "the"})
+_OLD_FEELING = {"ally_of": reputation_words.FRIENDLY, "enemy_of": reputation_words.HOSTILE}
+
+
+def feeling_of(
+    onto: Ontology, text: str, details: str = "", ends: tuple[str, str] = ("character", "character")
+) -> tuple[PredicateTerm, str] | None:
+    """`knows` and the reputation word, when a claim's relationship says how two characters feel:
+    "knows" with a word from the nine in its details, the old "friend of", "ally of" and "enemy of"
+    (read as friendly and hostile), or one of the nine words said as the relationship ("trusts",
+    "distrusts"). None: not a feeling, the relationship goes on as it is. The word is a proposal
+    that waits for the DM's yes like the claim; an off-list word is dropped, never guessed.
+    Only between two characters (`ends`): an alliance or a war between groups stays `ally_of` and
+    `enemy_of`, and a character knowing a place or an item has no feeling to carry."""
+    knows = onto.predicates.get("knows")
+    if knows is None or knows.status != "active" or set(ends) != {"character"}:
+        return None
+    word = reputation_words.word_of(text)
+    if word is not None:
+        return knows, word
+    known = resolve_relationship(onto, text)
+    if known is None:
+        # ("is a friend of", "are enemies of": the wording around the old kind is not part of it)
+        bare = [w for w in re.findall(r"[a-z0-9]+", text.casefold()) if w not in _FILLER]
+        known = resolve_relationship(onto, " ".join(bare)) if bare else None
+        if known is None or known[0].key not in _OLD_FEELING:
+            return None
+    term = known[0]
+    if term.key in _OLD_FEELING:
+        return knows, _OLD_FEELING[term.key]
+    if term.key == "knows":
+        return knows, reputation_words.word_of(details) or ""
+    return None
+
+
 def place_relationship(
-    onto: Ontology, text: str, subject_kind: str, object_kind: str, tally: Tally | None = None
+    onto: Ontology,
+    text: str,
+    subject_kind: str,
+    object_kind: str,
+    tally: Tally | None = None,
+    details: str = "",
 ) -> tuple[PredicateTerm, bool, str]:
     """The relationship a claim's words go on, whether they are said from the object's side,
     and the label to keep with the fact ("" when the relationship's own wording is the label).
@@ -329,6 +371,13 @@ def place_relationship(
     catch-all `associated_with` with the claim's own words as the label. A claim is never lost
     for its relationship, and DMbot never makes a new relationship term from a claim yet:
     until the meaning check (embeddings) exists, an unchecked new term counts as refused."""
+    feeling = feeling_of(onto, text, details, (subject_kind, object_kind))
+    if feeling is not None:
+        return (
+            feeling[0],
+            False,
+            feeling[1],
+        )  # (both ways: a feeling is said once, from the subject)
     known = resolve_relationship(onto, text)
     if known is not None:
         return known[0], known[1], ""
@@ -440,8 +489,8 @@ def judge(
         return other
     if who[0] == other[0]:
         return SAME_ENTRY_REASON
-    term, said_from_object, _label = place_relationship(
-        onto, claim.relationship, who[1], other[1], tally
+    term, said_from_object, label = place_relationship(
+        onto, claim.relationship, who[1], other[1], tally, claim.details or ""
     )
     s_kind, o_kind = (other[1], who[1]) if said_from_object else (who[1], other[1])
     if term.subject_types and not onto.is_any(s_kind, term.subject_types):
@@ -451,7 +500,7 @@ def judge(
     # Who speaks for a character (#2562): a PC's own choice and feeling come from its player, an
     # NPC's from the DM. A player's word about someone else's character is what they believe, never
     # the character's own, so it is not offered to the DM as a truth.
-    if _voice_of(names, who, other, said_from_object, term, claim, speakers, dms) == PARTY:
+    if _voice_of(names, who, other, said_from_object, term, claim, speakers, dms, label) == PARTY:
         return PARTY_REASON
     return ""
 
@@ -465,13 +514,15 @@ def _voice_of(
     claim: Extracted,
     speakers: Sequence[int | None],
     dms: Collection[int],
+    feeling: str = "",
 ) -> str:
-    """`own`, `effect` or `party` (`memory.voice`) for a claim about the character it is about."""
+    """`own`, `effect` or `party` (`memory.voice`) for a claim about the character it is about.
+    `feeling`: the reputation word a `knows` claim carries ("" when it carries none)."""
     holder = other if said_from_object else who
     if holder[1] != "character":
         return OWN  # (a group's attitude stays the DM's)
     role, plays = names.roles.get(holder[0], (None, None))
-    return voice(role, term.key, claim.how, speakers, plays, dms)
+    return voice(role, term.key, claim.how, speakers, plays, dms, feeling=bool(feeling))
 
 
 def effect_note(
@@ -484,8 +535,10 @@ def effect_note(
     other = names.one(claim.object)
     if isinstance(who, str) or isinstance(other, str):
         return ""
-    term, said_from_object, _ = place_relationship(onto, claim.relationship, who[1], other[1])
-    if _voice_of(names, who, other, said_from_object, term, claim, speakers, dms) != EFFECT:
+    term, said_from_object, label = place_relationship(
+        onto, claim.relationship, who[1], other[1], details=claim.details or ""
+    )
+    if _voice_of(names, who, other, said_from_object, term, claim, speakers, dms, label) != EFFECT:
         return ""
     holder = other if said_from_object else who
     return (
@@ -1169,7 +1222,9 @@ class ClaimStore:
                 raise MemoryRuleError(f"Can't write that now: {other}.")
             if other[0] in waiting_ids:
                 raise MemoryRuleError(NAME_FIRST)
-            resolved = place_relationship(onto, claim.relationship, who[1], other[1])
+            resolved = place_relationship(
+                onto, claim.relationship, who[1], other[1], details=claim.details or ""
+            )
         # One transaction (#1301): the question is taken, the fact written and the claim told
         # which fact it became, or none of it happens. The campaign's write lock is held, so a
         # second press waits and then finds the question gone. A fact the rules refuse rolls
@@ -1194,7 +1249,8 @@ class ClaimStore:
                 # else: the card sets `detail` between the two names, so side notes can't go there.
                 relation, flags = await self._store.add_relation_in(
                     w, subject_id, term.key, object_id, confidence=1.0, status=CONFIRMED,
-                    detail=label or claim.details, from_session_at=claim.session_started_at,
+                    detail=label or claim.details,
+                    from_session_at=claim.session_started_at,
                     secret=secret,
                 )  # fmt: skip
                 fact_id = relation.id

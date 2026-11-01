@@ -288,6 +288,7 @@ from dmbot.memory.exposures import (
 )
 from dmbot.memory.heard_backup import HeardSection
 from dmbot.memory.importance import ImportanceCache
+from dmbot.memory.importance_backup import ImportanceSection
 from dmbot.memory.live_heads_up import heads_up as live_heads_up_for
 from dmbot.memory.lookup import CampaignLookup, LookupCache
 from dmbot.memory.models import (
@@ -10999,6 +11000,13 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             campaign.guild_id, campaign.id, mode, confirmed_by=confirmed_by
         )
 
+    async def apply_invite(self, campaign: Campaign, invite: str | None) -> Campaign:
+        """The D&D Beyond invite chosen on the website (#3095), as Discord's form saves it: the
+        store call, then the running session and the transcript card follow."""
+        saved = await self.campaigns.set_dndbeyond_invite(campaign.guild_id, campaign.id, invite)
+        await self.after_invite_change(saved)
+        return saved
+
     async def apply_pause(self, campaign: Campaign, paused: bool, user_id: int) -> Campaign:
         """Pause or unpause chosen on the website (#3062): `set_paused` itself, under the session
         lock like Discord's button, so a running session is never paused under its feet."""
@@ -12664,6 +12672,7 @@ def register_backup_sections(
     campaigns.register_section(ReportAnswersSection())  # the DM's report answers (#2661)
     # And how often names were said, kept only for who is recorded now (#1747).
     campaigns.register_section(HeardSection(consenting))
+    campaigns.register_section(ImportanceSection())  # after memory: needs its entries (#3172)
 
 
 async def run(settings: Settings) -> None:
