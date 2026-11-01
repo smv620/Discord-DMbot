@@ -330,10 +330,12 @@ async def with_know_words(db: Database, session: Session, ref: str, page: dict[s
     if not found["k"]["isDm"]:
         return
     names, links = know_words(dict(found["k"]))
-    for node in page["nodes"]:
-        if str(node["id"]) in names:  # (one confirmed since the graph was read has no word yet)
+    # (a graph page has nodes and edges, an overview page its tray of unconnected names; one
+    # confirmed since the page was read is not in the data and has no word yet)
+    for node in [*page.get("nodes", []), *page.get("tray", [])]:
+        if str(node["id"]) in names:
             node["knowWord"] = names[str(node["id"])]
-    for edge in page["edges"]:
+    for edge in page.get("edges", []):
         for link in edge["links"]:
             if str(link["id"]) in links:
                 link["knowWord"] = links[str(link["id"])]
@@ -518,7 +520,10 @@ async def read_overview(
     people see the same names as in `read_web` (the door shares that door's checks); `view` as
     there."""
     got, pages = await _overview_door(db, session, ref, view, max_names, max_pairs)
-    return overview_of(got, pages)
+    page = overview_of(got, pages)
+    if page["canEdit"]:  # a DM in the full view; the Players View and a peek can't edit
+        await with_know_words(db, session, ref, page)
+    return page
 
 
 SEARCH_MAX = 100  # the longest name; a longer search matches nothing anyway
