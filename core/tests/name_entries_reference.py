@@ -10,7 +10,6 @@ from collections.abc import Collection, Mapping, Sequence
 from typing import Any
 
 from dmbot.memory.gate import (
-    CONFIRMED,
     ENTRY,
     SOMEONE,
     NameRows,
@@ -19,8 +18,8 @@ from dmbot.memory.gate import (
     _public_entry,
     _unnamed_label,
     display_name,
-    lookup_key,
 )
+from dmbot.memory.models import CONFIRMED, lookup_key
 
 
 def reference_name_entries(

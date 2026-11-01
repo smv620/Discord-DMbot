@@ -56,9 +56,9 @@ def world(size: int, seed: int) -> tuple[NameRows, list[str], Visible]:
             )  # fmt: skip
         else:
             entities[f"e{i}"] = row(i, hidden_from_players=rng.random() < 0.15)
-    for i, e in entities.items():
+    for entity_id, e in entities.items():
         counter += 1
-        aliases.append(alias(counter, i, str(e["name"]), secret=rng.random() < 0.1))
+        aliases.append(alias(counter, entity_id, str(e["name"]), secret=rng.random() < 0.1))
         for _ in range(rng.randrange(0, 4)):
             counter += 1
             text = (
@@ -66,7 +66,7 @@ def world(size: int, seed: int) -> tuple[NameRows, list[str], Visible]:
             )
             if e["merged_into"] is not None and rng.random() < 0.5:
                 text = str(e["name"])
-            aliases.append(alias(counter, i, text, secret=rng.random() < 0.3))
+            aliases.append(alias(counter, entity_id, text, secret=rng.random() < 0.3))
     learned = [
         (a["id"], f"e{rng.randrange(min(size, 6))}", rng.randrange(1, 50))
         for a in aliases
@@ -74,9 +74,9 @@ def world(size: int, seed: int) -> tuple[NameRows, list[str], Visible]:
     ]
     sureness: dict[tuple[str, str], float] = {}
     seen_aliases = set()
-    for i in entities:
+    for entity_id in entities:
         if rng.random() < 0.5:
-            sureness[(ENTRY, i)] = 1.0
+            sureness[(ENTRY, entity_id)] = 1.0
     for a in aliases:
         if rng.random() < 0.4:
             seen_aliases.add(a["id"])
