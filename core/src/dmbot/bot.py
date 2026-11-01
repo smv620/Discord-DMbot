@@ -551,6 +551,12 @@ from dmbot.ui.transcripts import (
 )
 
 DMBCHAT_STATEMENT_WORDS = 4  # a DM's message this long is a statement; shorter is a reply
+# Added to a question that had to stay on the DM screen (#3210), so a DM whose private messages are
+# closed learns why it is there and how to get it privately.
+NO_PRIVATE_MESSAGE = (
+    "\n_DMbot couldn't message you privately. Allow messages from this server in your Discord "
+    "privacy settings._"
+)
 DMBCHAT_HINT = (
     "To tell DMbot something about the story, write it in your private chat with DMbot. "
     "Players can read this chat."
@@ -9382,7 +9388,11 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 table.guild_id, table.campaign_id, claims_waiting_text(waiting, private=True), view
             ):
                 return
-            await self.post(table.screen_channel_id, claims_waiting_text(waiting), view=view)
+            await self.post(
+                table.screen_channel_id,
+                claims_waiting_text(waiting) + NO_PRIVATE_MESSAGE,
+                view=view,
+            )
 
     async def ask_about_claims(self, table: Table) -> None:
         """Count and tell in one go: the two steps above, for a caller that wants both."""
@@ -9408,7 +9418,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 if await self.ask_privately(gid, cid, links_ready.family_notice(waiting), view):
                     return
                 await self.post(
-                    table.screen_channel_id, links_ready.family_notice(waiting), view=view
+                    table.screen_channel_id,
+                    links_ready.family_notice(waiting) + NO_PRIVATE_MESSAGE,
+                    view=view,
                 )
 
     async def warn_about_continuity(self, table: Table) -> None:
@@ -10171,7 +10183,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 return
             await self.post(
                 table.screen_channel_id,
-                after_session_text(names),
+                after_session_text(names) + NO_PRIVATE_MESSAGE,
                 view=review_view(table.campaign_id),
             )
 
@@ -10189,10 +10201,16 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             # Marked as from DMbot, with the campaign, so a DM with several campaigns knows which
             # one is asking (owner, 2026-11-01, #3210).
             who = discord.utils.escape_markdown(campaign.name)
-            text = f"❓ **DMbot needs your answer** · {who}\n{text}"
+            text = f"❓ **DMbot has a question** · {who}\n{text}"
             for user_id in sorted(campaign.dm_user_ids):
-                if await self.sidebar_send_dm(user_id, text, view) == "sent":
-                    sent = True
+                # Each DM in its own try: one that fails must not stop the others, nor discard a
+                # send that worked (the caller would then also post on the DM screen, asking
+                # twice). "At least one DM got it" is the contract.
+                try:
+                    if await self.sidebar_send_dm(user_id, text, view) == "sent":
+                        sent = True
+                except Exception:
+                    log.exception("Couldn't ask a DM privately")
             return sent
         except Exception:
             log.exception("Couldn't ask the DM privately")

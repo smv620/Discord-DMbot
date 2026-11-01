@@ -49,12 +49,19 @@ def _is_condition(claim: Claim) -> bool:
 
 def waiting_text(count: int, *, private: bool = False) -> str:
     """For the DM after a session: how many, never what. `private` is the DM's own chat (#3210),
-    where nobody else reads it, so it drops the line about who will see the button."""
+    where nobody else reads it, so it says what to do next and drops the line about who will see
+    the button."""
+    if private:
+        what = "thing said at the table needs" if count == 1 else "things said at the table need"
+        return (
+            f"🗣️ **{count} {what} your yes or no.** Nothing is remembered until you say so. "
+            "Press the button."
+        )
     what = "thing" if count == 1 else "things"
-    line = (
-        f"🗣️ **{count} {what} said at the table to check.** Nothing is remembered until you say so."
+    return (
+        f"🗣️ **{count} {what} said at the table to check.** Nothing is remembered until you "
+        "say so. Press the button; only you will see it."
     )
-    return line if private else f"{line} Press the button; only you will see it."
 
 
 def statement(claim: Claim) -> str:

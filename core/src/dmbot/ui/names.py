@@ -157,7 +157,8 @@ def changed(interaction: discord.Interaction, campaign: Campaign) -> None:
 # The server of a campaign whose cards were opened from a private message (#2977): a private message
 # has no server, so the card's buttons would all answer "Use this in a server". Only the campaign's
 # own DM (checked by `can_run` when the card is opened) puts a campaign here, and every press is
-# checked again below. Lost on a restart: a card from before it asks to be opened again.
+# checked again below. Lost on a restart; `_campaign_for` then asks the database (`guild_of`,
+# #3210), so a card from before the restart still works.
 _PRIVATE_SERVERS: dict[str, int] = {}
 
 
@@ -2012,14 +2013,16 @@ def recap_names_reminder(count: int) -> str:
     )
 
 
-def private_after_session_text(names: list[str], where: str = "this session") -> str:
+def private_after_session_text(names: list[str], where: str = "your last session") -> str:
     """The same question, in the DM's private chat (#3210): nobody else reads it, so nothing here
-    is held back. Names only, as on the DM screen."""
+    is held back. Names only, as on the DM screen. It says "your last session", not "this
+    session", because the DM may read it later."""
     shown = ", ".join(f"**{_md(n)}**" for n in names[:5])
     more = f" and {len(names) - 5} more" if len(names) > 5 else ""
+    ask = "say if it is in your game" if len(names) == 1 else "say which are in your game"
     return (
         f"📝 **{_plural(len(names), 'new name')} to check** from {where}: {shown}{more}.\n"
-        "Say which are in your game, so DMbot spells them right."
+        f"Press the button to {ask}. DMbot will spell {'it' if len(names) == 1 else 'them'} right."
     )
 
 

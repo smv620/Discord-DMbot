@@ -9,7 +9,7 @@ import unittest
 from types import SimpleNamespace
 from typing import Any, cast
 
-from dmbot.bot import DMBot
+from dmbot.bot import NO_PRIVATE_MESSAGE, DMBot
 from dmbot.dm_screen import links_ready
 from dmbot.memory.models import CONFIRMED, REJECTED
 from tests.test_memory_store import GUILD_A, ConfirmedMemoryTest
@@ -20,11 +20,11 @@ SCREEN = 77
 class TheText(unittest.TestCase):
     def test_a_number_and_what_the_button_does_never_a_name(self) -> None:
         one, many = links_ready.family_notice(1), links_ready.family_notice(3)
-        self.assertIn("1 family link worked out", one)
-        self.assertIn("waits for your yes", one)
-        self.assertIn("3 family links worked out", many)
-        self.assertIn("wait for your yes", many)
-        self.assertIn("nothing goes to players", many)
+        self.assertIn("1 family link** DMbot guessed", one)
+        self.assertIn("needs your yes or no", one)
+        self.assertIn("3 family links** DMbot guessed", many)
+        self.assertIn("need your yes or no", many)
+        self.assertIn("players are not told", many)
 
     def test_none_is_no_line(self) -> None:
         self.assertEqual((links_ready.family_notice(0), links_ready.family_notice(-1)), ("", ""))
@@ -67,7 +67,8 @@ class TheLine(ConfirmedMemoryTest):
         await self.run_step()
         [(channel, text, view)] = self.posted
         self.assertEqual(channel, SCREEN)
-        self.assertEqual(text, links_ready.family_notice(1))
+        # (the DM screen's line says why it is not in the private chat)
+        self.assertEqual(text, links_ready.family_notice(1) + NO_PRIVATE_MESSAGE)
         self.assertNotIn("Aldric", text)
         self.assertNotIn("Mira", text)
         [item] = view.children
