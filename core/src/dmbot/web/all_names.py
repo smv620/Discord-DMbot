@@ -211,7 +211,9 @@ ACTIONS = (
     "confirm-undo",  # takes back one press of it: {answer}
 )
 
-KIND_WORD = re.compile(r"^[a-z_]{2,20}$")  # the reader's kind words ("place", "npc"); never "idea"
+KIND_WORD = re.compile(
+    r"^[a-z_]{2,20}$"
+)  # the stored kind keys ("place", "character"); never "concept" (an idea)
 KINDS_MAX = 8
 
 
@@ -311,7 +313,7 @@ def _arguments(body: object) -> tuple[str, str, str, str, bool]:
             if not isinstance(kinds, list) or not 1 <= len(kinds) <= KINDS_MAX:
                 raise RecapError("bad_target")
             if not all(
-                isinstance(k, str) and KIND_WORD.match(k) and k not in ("idea", "all")
+                isinstance(k, str) and KIND_WORD.match(k) and k not in ("idea", "concept", "all")
                 for k in kinds
             ):
                 raise RecapError("bad_target")

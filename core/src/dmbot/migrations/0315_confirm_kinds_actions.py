@@ -9,11 +9,14 @@ from __future__ import annotations
 
 from dmbot.migrations._shared import _swaps
 
-# `found` is the reading's own answer, kind by kind: {"place": [ids], "npc": [ids]} (the kinds the
-# reader gave them, as Discord's "Add all" buttons group them; ideas are listed but never added at
-# once). Ids only, never a name or a word of the text; written by the statement that finishes the
-# upload and kept with the row, which is cleaned up after a day. The bot answers a press from it,
-# keeping only the names still waiting in this campaign, so a name answered since is left alone.
+# `found` is the reading's own answer, kind by kind, keyed by the stored kind key
+# ({"place": [ids], "character": [ids]}, as `memory/kinds.py` names them and as Discord's "Add all"
+# buttons group them). Ideas are stored as "concept": they are listed here but never added at once
+# (an idea needs a look), so "concept" (and the label "idea") is left out of every count and of
+# every press. Ids only, never a name or a word of the text; written by the statement that
+# finishes the upload and kept with the row, which is cleaned up after a day. The bot answers a
+# press from it, keeping only the names still waiting in this campaign, so a name answered since
+# is left alone.
 #
 # `result_counts` is what a press did, as counts only ("place:5 npc:7"); `result_batches` are the
 # memory changes it made, so one Undo can take back everything that press added.
@@ -36,7 +39,9 @@ _ACTION_SWAPS = (
         "               AND clean !~ '^(dm|everyone|some( [0-9a-f]{32}){1,50})$')\n"
         "           OR (act = 'confirm-kinds'\n"
         "               AND clean !~ '^(all|[a-z_]{2,20}( [a-z_]{2,20}){0,7})$')\n"
-        "           OR (act = 'confirm-kinds' AND ' ' || clean || ' ' LIKE '% idea %')\n"
+        "           OR (act = 'confirm-kinds'\n"
+        "               AND (' ' || clean || ' ' LIKE '% idea %'\n"
+        "                    OR ' ' || clean || ' ' LIKE '% concept %'))\n"
         "           OR (act = 'confirm-kinds' AND clean <> 'all'\n"
         "               AND ' ' || clean || ' ' LIKE '% all %')\n"
         "           OR (act = 'confirm-undo' AND clean <> '')",
@@ -121,7 +126,7 @@ _LORE_READ_SWAPS = (
         "                      AND e.id IN (SELECT jsonb_array_elements_text(\n"
         "                        CASE WHEN jsonb_typeof(f.value) = 'array' THEN f.value\n"
         "                             ELSE '[]'::jsonb END))) n\n"
-        "                WHERE n.cnt > 0 AND f.key <> 'idea'), '{}'::jsonb));",
+        "                WHERE n.cnt > 0 AND f.key NOT IN ('idea', 'concept')), '{}'::jsonb));",
     ),
 )
 

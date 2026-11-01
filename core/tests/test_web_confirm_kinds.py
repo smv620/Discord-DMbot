@@ -17,16 +17,16 @@ class Confirming(Web):
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
         self.upload = "a" * 32
-        self.ids: dict[str, list[str]] = {"place": [], "npc": [], "idea": []}
+        self.ids: dict[str, list[str]] = {"place": [], "character": [], "concept": []}
         for kind, names in {
             "place": ["Rivermouth", "The Grey Pier"],
-            "npc": ["Old Hob", "Sister Wren", "Captain Dace"],
-            "idea": ["A debt unpaid"],
+            "character": ["Old Hob", "Sister Wren", "Captain Dace"],
+            "concept": ["A debt unpaid"],
         }.items():
             for name in names:
                 made = await self.memory.add_entity(  # proposed: still waiting for a yes
-                    self.g, self.one.id, type={"npc": "character", "idea": "event"}.get(kind, kind),
-                    name=name, source="background", role="npc" if kind == "npc" else None,
+                    self.g, self.one.id, type=kind,
+                    name=name, source="background", role="npc" if kind == "character" else None,
                 )  # fmt: skip
                 self.ids[kind].append(made.value.id)
         await self.put_upload("done")
@@ -66,13 +66,13 @@ class Confirming(Web):
 
 class TheCounts(Confirming):
     async def test_the_read_says_how_many_of_each_kind_still_wait_and_never_ideas(self) -> None:
-        self.assertEqual(await self.waiting(), {"place": 2, "npc": 3})
+        self.assertEqual(await self.waiting(), {"place": 2, "character": 3})
 
     async def test_a_name_answered_since_is_not_counted(self) -> None:
         await self.memory.confirm_kinds(
             self.g, self.one.id, [self.ids["place"][0]], "place", source=DM_SOURCE
         )
-        self.assertEqual(await self.waiting(), {"place": 1, "npc": 3})
+        self.assertEqual(await self.waiting(), {"place": 1, "character": 3})
 
     async def test_a_player_never_gets_the_counts(self) -> None:
         with self.assertRaises(RecapError):
@@ -94,7 +94,8 @@ class TheDoor(Confirming):
 
     async def test_ideas_bad_words_and_repeats_are_refused_before_the_door(self) -> None:
         for kinds in (
-            ["idea"], ["all"], ["Place"], [], ["place", "place"], ["a"], "everything", None,
+            ["idea"], ["concept"], ["all"], ["Place"], [], ["place", "place"], ["a"],
+            "everything", None,
         ):  # fmt: skip
             with self.subTest(kinds=kinds):
                 self.assertEqual(
@@ -133,7 +134,7 @@ class TheDoor(Confirming):
     async def test_a_badly_shaped_found_does_not_break_the_read(self) -> None:
         await self.sql(
             "UPDATE lore_uploads SET found = %s::jsonb WHERE id = %s",
-            json.dumps({"place": "x", "npc": None, "item": [self.ids["npc"][0]]}),
+            json.dumps({"place": "x", "character": None, "item": [self.ids["character"][0]]}),
             self.upload,
         )
         self.assertEqual(await self.waiting(), {"item": 1})
@@ -148,12 +149,12 @@ class TheDoor(Confirming):
 
     async def test_undo_needs_your_own_finished_press_that_made_something(self) -> None:
         first = await self.queue(
-            {"action": "confirm-kinds", "upload": self.upload, "kinds": ["npc"]}
+            {"action": "confirm-kinds", "upload": self.upload, "kinds": ["character"]}
         )
         undo = {"action": "confirm-undo", "answer": first}
         self.assertEqual(await self.refused_confirm(undo), "not_found")  # still waiting
         await self.sql(
-            "UPDATE name_actions SET state = 'done', result_counts = 'npc:3',"
+            "UPDATE name_actions SET state = 'done', result_counts = 'character:3',"
             " result_batches = ARRAY[7, 8] WHERE id = %s",
             first,
         )
@@ -166,18 +167,18 @@ class TheDoor(Confirming):
 
     async def test_the_answer_reads_back_the_counts_and_offers_undo(self) -> None:
         first = await self.queue(
-            {"action": "confirm-kinds", "upload": self.upload, "kinds": ["place", "npc"]}
+            {"action": "confirm-kinds", "upload": self.upload, "kinds": ["place", "character"]}
         )
         waiting = await all_names.read_action(self.web, self.session, self.cref, first)
         self.assertEqual(
             (waiting["state"], waiting["counts"], waiting["undo"]), ("waiting", {}, False)
         )
         await self.sql(
-            "UPDATE name_actions SET state = 'done', result_counts = 'place:2 npc:3',"
+            "UPDATE name_actions SET state = 'done', result_counts = 'place:2 character:3',"
             " result_batches = ARRAY[9], progress_done = 2, progress_total = 2 WHERE id = %s",
             first,
         )
         done = await all_names.read_action(self.web, self.session, self.cref, first)
-        self.assertEqual(done["counts"], {"place": 2, "npc": 3})
+        self.assertEqual(done["counts"], {"place": 2, "character": 3})
         self.assertTrue(done["undo"])
         self.assertEqual((done["progress"]["done"], done["progress"]["total"]), (2, 2))
