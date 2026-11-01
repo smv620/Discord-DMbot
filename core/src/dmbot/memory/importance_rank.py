@@ -47,6 +47,23 @@ def floor(is_player_character: bool, sessions_heard: int) -> int:
     return RECURRING if sessions_heard >= SESSIONS_FOR_RECURRING else BACKGROUND
 
 
+# The connection nudge (slice 2): connections only nudge, by at most one rank, and never past Major.
+# A pair of characters or groups joined by a connection the players are shown counts once; one made
+# in play counts 1, one that came from a lore upload (world knowledge, not seen in play) a quarter
+# as much, so a lorebook cannot make everyone in it important. Six in play lifts a rank.
+NUDGE_AT = 6.0
+LORE_WEIGHT = 0.25
+
+
+def nudged(rank: int, play: int, lore: int) -> int:
+    """`rank` lifted by one when the connections reach `NUDGE_AT` (`play` in play, `lore` from a
+    lore upload at a quarter each). A player character (5) and a Major (4) never move: the nudge
+    stops short of Major from below, so it can raise a Significant to Major and no further. Pure."""
+    if rank >= MAJOR or play + lore * LORE_WEIGHT < NUDGE_AT:
+        return rank
+    return rank + 1
+
+
 def effective(floor_rank: int, assessed: int | None) -> int:
     """The current rank: the newest assessment, never below the floor. Pure."""
     return max(floor_rank, assessed if assessed is not None else BACKGROUND)
@@ -178,6 +195,43 @@ class ImportanceStore:
                     written += 1
         return written
 
+    @staticmethod
+    async def _links(
+        conn: Conn, guild_id: int, campaign_id: str, ended: Mapping[str, str | None]
+    ) -> dict[str, tuple[int, int]]:
+        """For each live character, how many other characters or groups it is joined to by a
+        connection the players are shown, as (made in play, from a lore upload). A pair counts once
+        (in play when any of its connections was), and a merged name counts for the one it became.
+        A secret or not yet revealed connection counts for nothing: a hidden fact adds no rank."""
+        cur = await conn.execute(
+            "SELECT r.subject_id, r.object_id, bool_or(r.source <> 'background') AS in_play"
+            " FROM memory_relations r"
+            " JOIN memory_entities a ON a.guild_id = r.guild_id AND a.campaign_id = r.campaign_id"
+            "  AND a.id = r.subject_id AND a.type IN ('character', 'faction')"
+            " AND a.status IN ('confirmed', 'merged')"
+            " JOIN memory_entities b ON b.guild_id = r.guild_id AND b.campaign_id = r.campaign_id"
+            "  AND b.id = r.object_id AND b.type IN ('character', 'faction')"
+            " AND b.status IN ('confirmed', 'merged')"
+            " WHERE r.guild_id = %s AND r.campaign_id = %s AND r.status = 'confirmed'"
+            " AND NOT r.secret AND NOT r.unrevealed AND r.predicate <> 'plays'"
+            " GROUP BY r.subject_id, r.object_id",
+            (guild_id, campaign_id),
+        )
+        pairs: dict[frozenset[str], bool] = {}
+        for r in await cur.fetchall():
+            # (a group is not a character, so it is not in `ended`: it stands for itself)
+            ids = (str(r["subject_id"]), str(r["object_id"]))
+            one, other = (ended.get(i, i) for i in ids)
+            if one is None or other is None or one == other:
+                continue
+            key = frozenset((one, other))
+            pairs[key] = pairs.get(key, False) or bool(r["in_play"])
+        out: dict[str, list[int]] = {}
+        for pair, in_play in pairs.items():
+            for entity_id in pair:
+                out.setdefault(entity_id, [0, 0])[0 if in_play else 1] += 1
+        return {k: (v[0], v[1]) for k, v in out.items()}
+
     async def ranks(self, guild_id: int, campaign_id: str) -> dict[str, int]:
         """The current rank of every live character of the campaign (entry id -> 0 to 5).
 
@@ -193,6 +247,7 @@ class ImportanceStore:
                 (guild_id, campaign_id),
             )
             heard = {str(r["entity_id"]): set(r["sessions"]) for r in await cur.fetchall()}
+            links = await self._links(conn, guild_id, campaign_id, ended)
         sessions: dict[str, set[int]] = {}
         for entity_id, at in ended.items():
             if at is not None:
@@ -203,9 +258,11 @@ class ImportanceStore:
                 continue  # (a merged name has no rank of its own)
             player = row["role"] == "player_character"
             latest = group.get(entity_id)
-            out[entity_id] = effective(
+            base = effective(
                 floor(player, len(sessions.get(entity_id, ()))), latest[1] if latest else None
             )
+            play, lore = links.get(entity_id, (0, 0))
+            out[entity_id] = nudged(base, play, lore)
         return out
 
 
