@@ -501,7 +501,7 @@ These are for the lead to decide. The page does not pick a side.
 
 **Key** (after `guild_id`, `campaign_id`): `seq` (a generated, ever-rising number).
 
-**Logged for Undo:** no (append-only; the newest row is current; not in backups, see `campaigns/tables.py`).
+**Logged for Undo:** no (append-only; the newest row is current). Carried in its own backup section (`memory/importance_backup.py`), oldest first, without line numbers.
 
 | column | type | null? | default | meaning |
 |---|---|---|---|---|

@@ -1529,8 +1529,9 @@ gods and royalty, even while their name is hidden), 5 player character.
   Connections only nudge, by at most one rank; connections that came from a lore upload at world-knowledge
   level count a quarter as much as ones made in play.
 - **Stored with codes, not words:** a fixed list of reasons (`importance_rank.BASES`), session and line
-  numbers. A person's erased words leave the rank alone. The table is not in a backup: a restored campaign
-  starts at the floor and the next session's reading rebuilds the rest.
+  numbers. A person's erased words leave the rank alone. A backup carries the table in its own section
+  (`memory/importance_backup.py`): PlotBot's reading cannot be made again from a backup (the lines are not
+  in it), so a restore would otherwise drop an off-stage villain to the floor. Line numbers stay out.
 - **Built in slices (#3172):** 1 the table, the floor and the reader (`memory/importance_rank.py`, this
   section); 2 the connection nudge; 3 PlotBot's call, behind a switch; 4 recaps pick by rank. Slice 5,
   unnamed creatures as quiet rank-0 entries (the mouse in the dark), changes the rule in section 3 that
