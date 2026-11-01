@@ -1510,6 +1510,32 @@ Each step is useful on its own and ships behind the existing phases.
 TimeBot (Phase 4) makes game-time checks exact; until then facts are ordered by session,
 as today.
 
+### 9c. Importance: an internal rank for characters (owner, 2026-11-01; #3172)
+
+Every character has a rank from 0 to 5 that only decides which details a recap or PlotBot picks. It
+states no story fact, nobody sets it (no DM control), and it is never shown to a player, a card or a
+recap: "Major" beside a hidden villain would be a spoiler. The levels are the owner's: 0 background
+(anyone or anything met; kept so it can be raised later), 1 minor (a one-time encounter that interacts
+with a PC), 2 recurring (shown to the PCs more than once), 3 significant (mentors, rivals, mini-bosses,
+henchmen, recurring quest givers), 4 major (named companions, the main protagonists and antagonists,
+gods and royalty, even while their name is hidden), 5 player character.
+
+- **The floor is counted by code and never stored:** a player character is 5; a character heard in two
+  or more separate sessions (`memory_heard`) is at least 2. A god cannot be counted (it is an NPC "in its
+  words"), so it comes from PlotBot's reading.
+- **PlotBot's reading sets the rest:** one assessment at a time in `memory_importance` (append-only; the
+  newest is current; never below the floor). The importance call reads only the party's view through the
+  one gate, never DM-only lines, secret names or notes, so a hidden fact adds no rank (a test holds it).
+  Connections only nudge, by at most one rank; connections that came from a lore upload at world-knowledge
+  level count a quarter as much as ones made in play.
+- **Stored with codes, not words:** a fixed list of reasons (`importance_rank.BASES`), session and line
+  numbers. A person's erased words leave the rank alone. The table is not in a backup: a restored campaign
+  starts at the floor and the next session's reading rebuilds the rest.
+- **Built in slices (#3172):** 1 the table, the floor and the reader (`memory/importance_rank.py`, this
+  section); 2 the connection nudge; 3 PlotBot's call, behind a switch; 4 recaps pick by rank. Slice 5,
+  unnamed creatures as quiet rank-0 entries (the mouse in the dark), changes the rule in section 3 that
+  unnamed monsters are not entries; it is for play only and waits until slices 1 to 3 have merged.
+
 ## Decided
 
 All of the open decisions were answered by the owner on 2026-10-06: see "Decisions"
