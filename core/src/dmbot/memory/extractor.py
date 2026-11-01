@@ -101,6 +101,14 @@ Rules for what counts as a claim:
    "the old bridge", relationship "is", object "destroyed". If only a cause is told and
    no result is stated, give the cause as a claim and no state change.
 
+6. How two characters feel about each other is the relationship "knows" with the feeling as
+   the claim's "details", one of these words and no other: sworn enemy, hostile, distrusts,
+   wary, neutral, trusts, friendly, close, devoted. "Cerric and Belleros are friends" is two
+   claims, each way, with "friendly" (or "close" when it says so). "Strahd is Cerric's sworn
+   enemy" is one claim with "sworn enemy". Use the word only when a line says or plainly shows
+   the feeling; a plain meeting is "knows" with no details. Never use "ally", "friend" or
+   "enemy" as a relationship.
+
 For each claim say how it was said:
 - "dm_said": the DM narrating, or the DM speaking as a character.
 - "player_said": a player's words or belief about the game world.

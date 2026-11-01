@@ -439,7 +439,9 @@ CORE_PREDICATES: tuple[PredicateTerm, ...] = (
     PredicateTerm(
         "ally_of",
         "is an ally of",
-        "On the same side, and acting on it: friends, partners, allied groups. Both ways.",
+        "On the same side, and acting on it: partners, allied groups. Both ways. How kindly two "
+        "characters feel is `knows` with a reputation word; this is kept for old rows and for "
+        "groups that act together.",
         (*_BEINGS, "faction"),
         (*_BEINGS, "faction"),
         symmetric=True,
@@ -451,17 +453,20 @@ CORE_PREDICATES: tuple[PredicateTerm, ...] = (
         not_this=(
             ("one side works for the other", "serves"),
             ("a formal oath binds one to the other", "sworn_to"),
-            ("they merely know each other", "knows"),
+            ("they merely know each other, or are friends", "knows"),
         ),
         examples=("Cerric is an ally of Belleros.", "The Harpers are an ally of the Order."),
         inverse_label="is an ally of",
         synonyms=("friend_of", "friends_with", "allied_with", "allies_with"),
         inner_state=True,
+        version=2,  # friends are `knows` with a reputation word now (#3181)
     ),
     PredicateTerm(
         "enemy_of",
         "is an enemy of",
-        "On opposite sides, and acting on it: rivals, enemies, groups at war. Both ways.",
+        "On opposite sides, and acting on it: groups at war. Both ways. A person's hatred of "
+        "another is `knows` with a reputation word; this is kept for old rows and for groups at "
+        "war.",
         (*_BEINGS, "faction"),
         (*_BEINGS, "faction"),
         symmetric=True,
@@ -471,14 +476,14 @@ CORE_PREDICATES: tuple[PredicateTerm, ...] = (
             "two groups at war or in a feud",
         ),
         not_this=(
-            ("they merely dislike each other in passing", "knows"),
+            ("they dislike or hate each other, as people", "knows"),
             ("one of them rules the other", "serves"),
         ),
         examples=("Strahd is an enemy of Cerric.", "The Zhentarim are an enemy of the Harpers."),
         inverse_label="is an enemy of",
         synonyms=("enemies_with", "hates", "opposes"),
         inner_state=True,
-        version=2,  # a rival is its own kind now: `rival_of` is no longer a synonym (#3035)
+        version=3,  # a rival is its own kind (#3035); a person's hatred is `knows` now (#3181)
     ),
     PredicateTerm(
         "rival_of",
@@ -641,7 +646,9 @@ CORE_PREDICATES: tuple[PredicateTerm, ...] = (
     PredicateTerm(
         "knows",
         "knows",
-        "Knows someone or about something: has met them, or has learned of it. The weakest tie "
+        "Knows someone or about something: has met them, or has learned of it. For two people it "
+        "carries how kindly they feel, as one reputation word in its details (sworn enemy, "
+        "hostile, distrusts, wary, neutral, trusts, friendly, close, devoted). The weakest tie "
         "between two entries; use a stronger one when it fits.",
         (*_BEINGS, "faction"),  # (a group knows who someone is, #3033)
         _ANY,
@@ -650,14 +657,14 @@ CORE_PREDICATES: tuple[PredicateTerm, ...] = (
             "a character who knows about a place, an item, an event or a secret",
         ),
         not_this=(
-            ("they fight on the same side", "ally_of"),
-            ("they are on opposite sides", "enemy_of"),
+            ("two groups that fight together or trade as partners", "ally_of"),
+            ("two groups at war", "enemy_of"),
             ("a character who is in a place", "located_in"),
         ),
         examples=("Belleros knows Cerric.", "Cerric knows the Sun Blade."),
         inverse_label="is known by",
         synonyms=("knows_of", "met", "acquainted_with"),
-        version=2,  # a group may know too (#3033)
+        version=3,  # a group may know too (#3033); two people carry a reputation word (#3181)
     ),
     PredicateTerm(
         "serves",

@@ -191,7 +191,9 @@ async def place(
             raise MemoryRuleError(NAME_FIRST)
         ends.append(found)
     who, other = ends
-    term, from_object, label = place_relationship(onto, claim.relationship, who[1], other[1])
+    term, from_object, label = place_relationship(
+        onto, claim.relationship, who[1], other[1], details=claim.details or ""
+    )
     subject_id, object_id = (other[0], who[0]) if from_object else (who[0], other[0])
     holder: str | None = None  # the character whose point of view it is
     view = str(reading["view"])
