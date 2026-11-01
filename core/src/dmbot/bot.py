@@ -106,7 +106,7 @@ from dmbot.consent_dm import (
 from dmbot.consent_site import SiteStops
 from dmbot.db import Database, DatabaseError
 from dmbot.discord_limits import tree_problems
-from dmbot.dm_questions import CLAIMS, FAMILY, NAMES, ORDER, Ask, combine, view_of
+from dmbot.dm_questions import CLAIMS, FAMILY, NAMES, Ask, combine, ordered, view_of
 from dmbot.dm_screen import (
     DMScreenError,
     HideButton,
@@ -9402,6 +9402,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     claims_waiting_text(waiting, private=True),
                     f"{waiting} {'thing' if waiting == 1 else 'things'} said at the table to check",
                     lambda c=table.campaign_id: ClaimsReviewButton(c),
+                    lambda c=table.campaign_id: ClaimsReviewButton(c),
                     claims_waiting_text(waiting),
                 ),
             )
@@ -9431,6 +9432,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                         FAMILY,
                         links_ready.family_notice(waiting),
                         f"{waiting} family {'link' if waiting == 1 else 'links'} to keep or skip",
+                        lambda c=cid: links_ready.ReadyButton(c),
                         lambda c=cid: links_ready.ReadyButton(c),
                         links_ready.family_notice(waiting),
                     ),
@@ -10192,6 +10194,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     private_after_session_text(names),
                     f"{len(names)} new {'name' if len(names) == 1 else 'names'} to check",
                     lambda g=table.guild_id, c=table.campaign_id: RecapNamesButton(g, c),
+                    lambda c=table.campaign_id: ReviewButton(c),
                     after_session_text(names),
                 ),
             )
@@ -10215,17 +10218,22 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         text, view = combined
         if await self.ask_privately(table.guild_id, table.campaign_id, text, view):
             return
-        for ask in sorted(asks, key=lambda a: ORDER.index(a.kind) if a.kind in ORDER else 99):
-            await self.post(
-                table.screen_channel_id,
-                ask.screen + NO_PRIVATE_MESSAGE,
-                view=view_of(ask),
-            )
+        for ask in ordered(asks):
+            # Each in its own try: one failed post must not skip the questions after it.
+            try:
+                await self.post(
+                    table.screen_channel_id, ask.screen + NO_PRIVATE_MESSAGE, view=view_of(ask)
+                )
+            except Exception:
+                log.exception("Couldn't post a question for the DM on the DM screen")
 
     async def send_collected_asks(self, table: Table) -> None:
-        """The after-session step that sends what the steps before it collected (#3210)."""
-        asks, table.asks = table.asks or [], []
+        """The after-session step that sends what the steps before it collected (#3210). After it,
+        a question asked later goes out at once. If sending fails the list is kept, and the
+        `finally` of `_after_session` tries once more, so nothing is lost."""
+        asks = table.asks or []
         await self.send_asks(table, asks)
+        table.asks = None
 
     async def ask_privately(
         self, guild_id: int, campaign_id: str, text: str, view: discord.ui.View

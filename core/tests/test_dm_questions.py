@@ -19,7 +19,12 @@ def make(kind: str, label: str) -> Ask:
     def button() -> discord.ui.Item[discord.ui.View]:
         return discord.ui.Button(label=label, custom_id=f"test:{kind}")
 
-    return Ask(kind, f"{kind} alone", f"{kind} line", button, f"{kind} on the screen")
+    def screen_button() -> discord.ui.Item[discord.ui.View]:
+        return discord.ui.Button(label=label, custom_id=f"screen:{kind}")
+
+    return Ask(
+        kind, f"{kind} alone", f"{kind} line", button, screen_button, f"{kind} on the screen"
+    )
 
 
 class Combining(unittest.TestCase):
@@ -34,7 +39,7 @@ class Combining(unittest.TestCase):
     def test_several_become_one_list_in_a_fixed_order_with_a_button_each(self) -> None:
         asks = [make(FAMILY, "Links"), make(NAMES, "Names"), make(CLAIMS, "Said")]
         text, view = combine(asks) or ("", None)
-        self.assertTrue(text.startswith("❓ **3 questions** about your last session:"))
+        self.assertTrue(text.startswith("**3 questions** about your last session:"))
         self.assertLess(text.index("names line"), text.index("claims line"))
         self.assertLess(text.index("claims line"), text.index("family line"))
         self.assertEqual([c.custom_id for c in view.children], [  # type: ignore[attr-defined]
@@ -65,7 +70,7 @@ class Sending(unittest.IsolatedAsyncioTestCase):
         me.ask_privately.assert_awaited_once()
         self.assertIn("2 questions", me.ask_privately.await_args.args[2])
         me.post.assert_not_awaited()
-        self.assertEqual(table.asks, [])  # nothing is sent twice
+        self.assertIsNone(table.asks)  # nothing is sent twice; later questions go at once
 
     async def test_not_collecting_sends_the_question_at_once(self) -> None:
         me, table = self.bot(True), self.table(False)
@@ -83,6 +88,34 @@ class Sending(unittest.IsolatedAsyncioTestCase):
                                  "claims on the screen" + NO_PRIVATE_MESSAGE])  # fmt: skip
         views = [call.kwargs["view"] for call in me.post.await_args_list]
         self.assertTrue(all(len(v.children) == 1 for v in views))  # a fresh button each
+        # the screen's own buttons, not the private chat's
+        self.assertEqual(
+            [v.children[0].custom_id for v in views], ["screen:names", "screen:claims"]
+        )  # type: ignore[attr-defined]
+
+    async def test_one_failed_post_does_not_skip_the_questions_after_it(self) -> None:
+        me, table = self.bot(False), self.table(True)
+        me.post = AsyncMock(side_effect=[RuntimeError("boom"), True])
+        await DMBot.ask_dm(me, table, make(NAMES, "Names"))
+        await DMBot.ask_dm(me, table, make(CLAIMS, "Said"))
+        with self.assertLogs("dmbot.bot", level="ERROR"):
+            await DMBot.send_collected_asks(me, table)
+        self.assertEqual(me.post.await_count, 2)  # both were tried
+
+    async def test_a_failed_send_keeps_the_questions_for_the_final_retry(self) -> None:
+        me, table = self.bot(True), self.table(True)
+        me.ask_privately = AsyncMock(side_effect=RuntimeError("boom"))
+        await DMBot.ask_dm(me, table, make(NAMES, "Names"))
+        with self.assertRaises(RuntimeError):
+            await DMBot.send_collected_asks(me, table)
+        self.assertEqual(len(table.asks), 1)  # still there, for the `finally` in `_after_session`
+
+    async def test_after_sending_a_later_question_goes_out_at_once(self) -> None:
+        me, table = self.bot(True), self.table(True)
+        await DMBot.send_collected_asks(me, table)
+        self.assertIsNone(table.asks)
+        await DMBot.ask_dm(me, table, make(FAMILY, "Links"))
+        me.ask_privately.assert_awaited_once()
 
 
 if __name__ == "__main__":

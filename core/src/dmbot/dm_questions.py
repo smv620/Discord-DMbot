@@ -29,7 +29,16 @@ class Ask:
     # A maker, not a button: one button belongs to one view, and the same question may need a
     # second view (the DM screen) if the private message could not be sent.
     button: Callable[[], discord.ui.Item[discord.ui.View]]
+    # The button for the DM screen fallback: it can differ from the private chat's (the names
+    # question has a screen button that finds the server from the press, the private one has it in
+    # its id).
+    screen_button: Callable[[], discord.ui.Item[discord.ui.View]]
     screen: str  # the DM screen's words, if the private message could not be sent
+
+
+def ordered(asks: list[Ask]) -> list[Ask]:
+    """The questions in the fixed order; a kind not in the list goes last."""
+    return sorted(asks, key=lambda a: ORDER.index(a.kind) if a.kind in ORDER else len(ORDER))
 
 
 def combine(asks: list[Ask]) -> tuple[str, discord.ui.View] | None:
@@ -37,20 +46,21 @@ def combine(asks: list[Ask]) -> tuple[str, discord.ui.View] | None:
     words; several become a list under a count, each with its button."""
     if not asks:
         return None
-    asks = sorted(asks, key=lambda a: ORDER.index(a.kind) if a.kind in ORDER else len(ORDER))
+    asks = ordered(asks)
     view = discord.ui.View(timeout=None)
     for ask in asks:
         view.add_item(ask.button())
     if len(asks) == 1:
         return asks[0].alone, view
     lines = "\n".join(f"• {ask.line}" for ask in asks)
-    head = f"❓ **{len(asks)} questions** about your last session:"
+    # (no ❓ here: the private message already opens with DMbot's own "has a question" line)
+    head = f"**{len(asks)} questions** about your last session:"
     text = f"{head}\n{lines}\nPress a button to answer."
     return text, view
 
 
 def view_of(ask: Ask) -> discord.ui.View:
-    """A view with just this question's button, for the DM screen's fallback."""
+    """A view with just this question's screen button, for the DM screen's fallback."""
     view = discord.ui.View(timeout=None)
-    view.add_item(ask.button())
+    view.add_item(ask.screen_button())
     return view
