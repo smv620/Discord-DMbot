@@ -3,6 +3,7 @@ link allowlist and the bot's hook for messages typed in the DMbot chat."""
 
 from __future__ import annotations
 
+import asyncio
 import unittest
 from collections.abc import Sequence
 from types import SimpleNamespace
@@ -11,6 +12,7 @@ from unittest.mock import MagicMock, patch
 
 import discord
 
+from dmbot import bot as bot_module
 from dmbot.campaigns import Campaign
 from dmbot.memory.lookup import CampaignLookup
 from dmbot.rules.house import HouseRule
@@ -280,6 +282,86 @@ class TheChatHook(unittest.TestCase):
         self.asked.assert_not_called()
 
 
+class TheDmsStatements(unittest.IsolatedAsyncioTestCase):
+    """#3209: the players read dmb-chat, so a DM's statement there is never a table question and is
+    never stored from it. The DM is told once, privately, where story goes."""
+
+    def setUp(self) -> None:
+        self.bot = make_bot()
+        self.table = make_table()
+        self.table.dmbchat_channel_id = CHAT
+        self.table.listening = True
+        self.bot.tables[GUILD] = self.table
+        self.asked = MagicMock()
+        self.bot.sidebar.ask_in_chat = self.asked  # type: ignore[method-assign]
+        self.sent: list[tuple[int, str]] = []
+
+        async def send_dm(user_id: int, text: str, view: Any = None) -> str:
+            self.sent.append((user_id, text))
+            return "sent"
+
+        self.bot.sidebar_send_dm = send_dm  # type: ignore[method-assign]
+        self.bot._track = lambda coro, name: asyncio.ensure_future(coro)  # type: ignore[method-assign]
+
+    async def say(self, text: str, author: int = DM) -> None:
+        self.bot._hear_dmbchat(message(text, author=author))
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+
+    async def test_a_statement_gets_no_question_and_one_private_hint_once(self) -> None:
+        await self.say("Mira and Tam are the children of the old smith of Redfall")
+        await self.say("Also the smith is the brother of the mayor of the town")
+        self.asked.assert_not_called()
+        self.assertEqual(self.sent, [(DM, bot_module.DMBCHAT_HINT)])
+        self.assertIn("private chat with DMbot", bot_module.DMBCHAT_HINT)
+        self.assertIn("Players can read dmb-chat", bot_module.DMBCHAT_HINT)
+
+    async def test_a_question_to_dmbot_or_with_a_question_mark_is_still_answered(self) -> None:
+        for text in (
+            "does fireball need line of sight?",
+            "Hey DMbot, what does grappling need",
+            "DMbot, how far can a rogue jump",
+        ):
+            self.asked.reset_mock()
+            await self.say(text)
+            self.asked.assert_called_once_with(self.table, DM, text)
+        self.assertEqual(self.sent, [])
+
+    async def test_a_short_yes_or_correct_gets_nothing_at_all(self) -> None:
+        for text in ("yes", "no", "correct", "yes please do"):
+            await self.say(text)
+        self.asked.assert_not_called()
+        self.assertEqual(self.sent, [])
+
+    async def test_a_players_message_is_unchanged_whatever_it_says(self) -> None:
+        await self.say("Mira and Tam are the children of the old smith of Redfall", PLAYER)
+        self.asked.assert_called_once_with(
+            self.table, PLAYER, "Mira and Tam are the children of the old smith of Redfall"
+        )
+        self.assertEqual(self.sent, [])
+
+    async def test_a_dm_who_has_not_agreed_is_treated_as_before_nothing_of_theirs_is_read(
+        self,
+    ) -> None:
+        self.bot.consent.has_consent = lambda *_: False  # type: ignore[method-assign]
+        await self.say("Mira and Tam are the children of the old smith of Redfall")
+        self.assertEqual(self.sent, [])
+        self.asked.assert_called_once()  # (the old path: it shows them the agree button)
+
+    async def test_the_hint_is_once_for_each_dm(self) -> None:
+        self.table.dm_user_ids = frozenset({DM, DM + 1})
+        for author in (DM, DM + 1, DM, DM + 1):
+            await self.say("Mira and Tam are the children of the old smith of Redfall", author)
+        self.assertEqual(sorted(u for u, _ in self.sent), [DM, DM + 1])
+
+    async def test_a_chat_message_is_handled_once_never_also_as_table_chat(self) -> None:
+        typed = MagicMock()
+        self.bot._hear_typed = typed  # type: ignore[method-assign]
+        for text in ("a statement of more than four words here", "a question here?"):
+            await self.bot.on_message(message(text, author=DM))
+        typed.assert_not_called()
+
+
 class TheChatThroughOnMessage(unittest.IsolatedAsyncioTestCase):
     async def test_a_chat_message_is_not_also_read_as_table_chat(self) -> None:
         bot = make_bot()
@@ -302,5 +384,5 @@ class TheChatThroughOnMessage(unittest.IsolatedAsyncioTestCase):
         bot.tables[GUILD] = table
         asked = MagicMock()
         bot.sidebar.ask_in_chat = asked  # type: ignore[method-assign]
-        await bot.on_message(message(author=DM))
-        asked.assert_called_once_with(table, DM, "does fireball need line of sight")
+        await bot.on_message(message("does fireball need line of sight?", author=DM))
+        asked.assert_called_once_with(table, DM, "does fireball need line of sight?")
