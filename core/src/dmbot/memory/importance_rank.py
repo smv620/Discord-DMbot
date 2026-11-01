@@ -122,7 +122,7 @@ class ImportanceStore:
             " AND status IN ('proposed', 'confirmed', 'merged')",
             (guild_id, campaign_id),
         )
-        entities = {str(r["id"]): r for r in await cur.fetchall()}
+        entities: dict[str, Mapping[str, object]] = {str(r["id"]): r for r in await cur.fetchall()}
         cur = await conn.execute(
             "SELECT DISTINCT ON (entity_id) entity_id, seq, rank FROM memory_importance"
             " WHERE guild_id = %s AND campaign_id = %s ORDER BY entity_id, seq DESC",
