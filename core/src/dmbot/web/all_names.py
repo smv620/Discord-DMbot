@@ -22,6 +22,7 @@ from dmbot.memory.models import MERGE_MANY_MAX, PRONOUNCED
 from dmbot.web.names import _parse
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
 from dmbot.web.sessions import Session
+from dmbot.web.who_knows import who_text
 
 PAGE_SIZE = 50  # the page's usual size (it was Discord's 20 until the compact list, 2026-10-27)
 PAGE_SIZES = (20, 50, 200, 500)  # what the page's "Names per page" offers; nothing else is asked
@@ -205,6 +206,7 @@ ACTIONS = (
     "name",
     "name-join",
     "name-undo",
+    "alias-who",  # who knows an other name (#2999): {alias, who, characters}
 )
 
 
@@ -288,6 +290,11 @@ def _arguments(body: object) -> tuple[str, str, str, str, bool]:
         target = str(body.get("answer") or "")
         if not ID_PATTERN.match(target):
             raise RecapError("bad_target")
+    elif action == "alias-who":  # the other name's id, and the answer in the text (#2999)
+        target = str(body.get("alias") or "")
+        if not ID_PATTERN.match(target):
+            raise RecapError("not_found")
+        text = who_text(body)
     elif action == "remove":
         flag = body.get("confirm") is True
         if not flag:
