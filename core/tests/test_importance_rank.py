@@ -300,6 +300,13 @@ if __name__ == "__main__":
 class TheNudgeInTheStore(Base):
     made = 0
 
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        # (a name the DM adds starts as "players don't know this one yet", #2404)
+        await self.memory.set_hidden_from_players(
+            GUILD, self.campaign.id, self.garrick, False, source="dm"
+        )
+
     async def friends(self, count: int, *, source: str = "dm", secret: bool = False) -> list[str]:
         """`count` other characters, each joined to Garrick by a confirmed connection. `source`
         "background" is a connection that came from a lore upload (written by the DM, then marked
@@ -316,6 +323,9 @@ class TheNudgeInTheStore(Base):
                 )
             ).value[0]
             assert other
+            await self.memory.set_hidden_from_players(
+                GUILD, self.campaign.id, other, False, source="dm"
+            )
             await self.memory.add_relation(
                 GUILD, self.campaign.id, self.garrick, "rival_of", other, source="dm",
                 confidence=1.0, status=CONFIRMED, secret=secret,
@@ -361,4 +371,29 @@ class TheNudgeInTheStore(Base):
                 GUILD, self.campaign.id, self.garrick, "located_in", self.ashmere, source="dm",
                 confidence=1.0, status=CONFIRMED,
             )  # fmt: skip
+        self.assertEqual((await self.ranks())[self.garrick], ir.BACKGROUND)
+
+    async def test_a_connection_to_an_entry_the_players_are_not_shown_adds_no_rank(self) -> None:
+        for other in await self.friends(6):
+            await self.memory.set_hidden_from_players(
+                GUILD, self.campaign.id, other, True, source="dm"
+            )
+        self.assertEqual((await self.ranks())[self.garrick], ir.BACKGROUND)
+
+    async def test_a_hidden_entry_with_many_connections_gains_nothing_either(self) -> None:
+        await self.friends(6)
+        await self.memory.set_hidden_from_players(
+            GUILD, self.campaign.id, self.garrick, True, source="dm"
+        )
+        self.assertEqual((await self.ranks())[self.garrick], ir.BACKGROUND)
+
+    async def test_an_ended_connection_adds_no_rank(self) -> None:
+        await self.friends(6)
+        async with self.db.guild(GUILD) as conn:
+            await conn.execute("UPDATE memory_relations SET to_session_at = 5")
+        self.assertEqual((await self.ranks())[self.garrick], ir.BACKGROUND)
+
+    async def test_connections_made_by_a_rule_from_counted_facts_add_nothing(self) -> None:
+        for source in ("worked_out", "party"):
+            await self.friends(6, source=source)
         self.assertEqual((await self.ranks())[self.garrick], ir.BACKGROUND)

@@ -53,6 +53,11 @@ def floor(is_player_character: bool, sessions_heard: int) -> int:
 # as much, so a lorebook cannot make everyone in it important. Six in play lifts a rank.
 NUDGE_AT = 6.0
 LORE_WEIGHT = 0.25
+LORE_SOURCE = "background"  # what the lore and backstory readers write (`memory.models.SOURCES`)
+# Written by rules from facts already counted, so they add nothing of their own: The party's links
+# and family links worked out from two stated ones. (A restored backup keeps no record of where a
+# connection came from, and one the DM typed in counts as made in play.)
+DERIVED_SOURCES = ("party", "worked_out")
 
 
 def nudged(rank: int, play: int, lore: int) -> int:
@@ -196,32 +201,43 @@ class ImportanceStore:
         return written
 
     @staticmethod
-    async def _links(
-        conn: Conn, guild_id: int, campaign_id: str, ended: Mapping[str, str | None]
-    ) -> dict[str, tuple[int, int]]:
+    async def _links(conn: Conn, guild_id: int, campaign_id: str) -> dict[str, tuple[int, int]]:
         """For each live character, how many other characters or groups it is joined to by a
-        connection the players are shown, as (made in play, from a lore upload). A pair counts once
-        (in play when any of its connections was), and a merged name counts for the one it became.
-        A secret or not yet revealed connection counts for nothing: a hidden fact adds no rank."""
+        connection that is current and that the players are shown, as (made in play, from a lore
+        upload). A pair counts once (in play when any of its connections was), and a merged name
+        counts for the one it became. A hidden fact adds no rank (STORY_MEMORY 9c): a secret,
+        not yet revealed or ended connection counts for nothing, and neither does one to or from
+        an entry the players are not shown (hidden, a limited clue, an unnamed person), judged on
+        the entry each end ended up as. Connections `The party` makes and ones worked out from two
+        stated ones are the same facts counted again, so they count for nothing."""
         cur = await conn.execute(
-            "SELECT r.subject_id, r.object_id, bool_or(r.source <> 'background') AS in_play"
-            " FROM memory_relations r"
-            " JOIN memory_entities a ON a.guild_id = r.guild_id AND a.campaign_id = r.campaign_id"
-            "  AND a.id = r.subject_id AND a.type IN ('character', 'faction')"
-            " AND a.status IN ('confirmed', 'merged')"
-            " JOIN memory_entities b ON b.guild_id = r.guild_id AND b.campaign_id = r.campaign_id"
-            "  AND b.id = r.object_id AND b.type IN ('character', 'faction')"
-            " AND b.status IN ('confirmed', 'merged')"
-            " WHERE r.guild_id = %s AND r.campaign_id = %s AND r.status = 'confirmed'"
-            " AND NOT r.secret AND NOT r.unrevealed AND r.predicate <> 'plays'"
-            " GROUP BY r.subject_id, r.object_id",
+            "SELECT id, status, merged_into, hidden_from_players, audience_limited, unnamed"
+            " FROM memory_entities WHERE guild_id = %s AND campaign_id = %s"
+            " AND type IN ('character', 'faction') AND status IN ('confirmed', 'merged')",
             (guild_id, campaign_id),
+        )
+        entries: dict[str, Mapping[str, object]] = {str(r["id"]): r for r in await cur.fetchall()}
+        ended = roots(entries)
+
+        def shown(entity_id: str) -> str | None:
+            root = ended.get(entity_id)
+            row = entries.get(root) if root is not None else None
+            if row is None or row["status"] != "confirmed":
+                return None
+            if row["hidden_from_players"] or row["audience_limited"] or row["unnamed"]:
+                return None
+            return root
+
+        cur = await conn.execute(
+            "SELECT subject_id, object_id, bool_or(source <> %s) AS in_play"
+            " FROM memory_relations WHERE guild_id = %s AND campaign_id = %s"
+            " AND status = 'confirmed' AND NOT secret AND NOT unrevealed AND to_session_at IS NULL"
+            " AND predicate <> 'plays' AND source <> ALL(%s) GROUP BY subject_id, object_id",
+            (LORE_SOURCE, guild_id, campaign_id, list(DERIVED_SOURCES)),
         )
         pairs: dict[frozenset[str], bool] = {}
         for r in await cur.fetchall():
-            # (a group is not a character, so it is not in `ended`: it stands for itself)
-            ids = (str(r["subject_id"]), str(r["object_id"]))
-            one, other = (ended.get(i, i) for i in ids)
+            one, other = shown(str(r["subject_id"])), shown(str(r["object_id"]))
             if one is None or other is None or one == other:
                 continue
             key = frozenset((one, other))
@@ -247,7 +263,7 @@ class ImportanceStore:
                 (guild_id, campaign_id),
             )
             heard = {str(r["entity_id"]): set(r["sessions"]) for r in await cur.fetchall()}
-            links = await self._links(conn, guild_id, campaign_id, ended)
+            links = await self._links(conn, guild_id, campaign_id)
         sessions: dict[str, set[int]] = {}
         for entity_id, at in ended.items():
             if at is not None:

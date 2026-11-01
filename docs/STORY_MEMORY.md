@@ -1541,10 +1541,12 @@ gods and royalty, even while their name is hidden), 5 player character.
   one gate, never DM-only lines, secret names or notes, so a hidden fact adds no rank (a test holds it).
   Connections only nudge, by at most one rank; connections that came from a lore upload at world-knowledge
   level count a quarter as much as ones made in play. Built (slice 2, `importance_rank.nudged`): each pair of
-  characters or groups joined by a confirmed connection the players are shown counts once (a place, a
-  `plays` link, a secret or not yet revealed connection counts for nothing, and a merged name counts for the
-  one it became); one made in play counts 1, one from a lore upload (`source` background) a quarter; six
-  lift the rank by one, and the nudge never goes past Major (a Major or a player character does not move).
+  characters or groups joined by a current, confirmed connection the players are shown counts once (a place,
+  a `plays` link, a secret, not yet revealed or ended connection, one The party or a worked-out family link
+  made from facts already counted, and any connection to or from an entry the players are not shown, judged
+  on the entry each end ended up as, count for nothing; a merged name counts for the one it became); one
+  made in play counts 1, one from a lore upload (`source` background) a quarter; six lift the rank by one,
+  and the nudge never goes past Major (a Major or a player character does not move).
 - **Stored with codes, not words:** a fixed list of reasons (`importance_rank.BASES`), session and line
   numbers. A person's erased words leave the rank alone. A backup carries the table in its own section
   (`memory/importance_backup.py`): PlotBot's reading cannot be made again from a backup (the lines are not
