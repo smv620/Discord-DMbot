@@ -156,6 +156,7 @@ WEB_RESTORE_TIDY_EVERY = 30  # rounds (about a minute) between the restore rows'
 RECAP_REQUEST_ROUND_S = 2  # how often the bot looks for what a DM typed on the recap page
 RECAP_REQUESTS_PER_ROUND = 3  # for one server, so one busy server can't hold the others
 RECAP_VOICE_AT_ONCE = 3  # spoken notes written down at the same time, in all servers (#2161)
+WEB_STYLE_PER_ROUND = 5  # recap style choices applied for one server in one round (#3060)
 LORE_SWEEP_EVERY_S = 30.0  # how often a server's lore upload queue is swept for stale rows (#3022)
 NAME_ANSWERS_PER_ROUND = 10  # a page of names answered at once, for one server
 CLIP_SWEEP_EVERY = (
@@ -322,6 +323,7 @@ class RecapFeatures:
         async def run_web_report_requests(self) -> None: ...
         async def run_web_sheets(self) -> None: ...
         async def run_web_line_fixes(self) -> None: ...
+        async def run_web_recap_style(self) -> None: ...
         async def run_web_restores(self) -> None: ...
         async def tidy_web_restores(self) -> None: ...
         async def keep_web_restores_alive(self) -> None: ...
@@ -1952,6 +1954,10 @@ class RecapFeatures:
                 await self.run_web_line_fixes()
             except Exception as exc:
                 log.warning("The website line fixes failed: %s", type(exc).__name__)
+            try:
+                await self.run_web_recap_style()
+            except Exception as exc:
+                log.warning("The website recap style choices failed: %s", type(exc).__name__)
             try:
                 await self.run_peek_notices()
             except Exception as exc:
