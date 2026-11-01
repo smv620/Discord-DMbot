@@ -51,7 +51,7 @@ class FakeBot:
     def __init__(self, store: CampaignStore) -> None:
         self.store = store
         self.calls: list[tuple[str, str]] = []
-        self.followed: list[str | None] = []  # the link the session and card were told about
+        self.invite_followed: list[str | None] = []  # the link the session and card were told about
 
     async def get_campaign(self, guild_id: int, campaign_id: str) -> Campaign | None:
         return await self.store.get(guild_id, campaign_id)
@@ -87,7 +87,7 @@ class FakeBot:
     async def apply_invite(self, campaign: Campaign, invite: str | None) -> Campaign:
         self.calls.append(("invite", "set" if invite else "removed"))
         saved = await self.store.set_dndbeyond_invite(campaign.guild_id, campaign.id, invite)
-        self.followed.append(saved.dndbeyond_invite)
+        self.invite_followed.append(saved.dndbeyond_invite)
         return saved
 
     live = False  # a session of the campaign is running
@@ -176,7 +176,7 @@ class TheChoices(Settings):
         answer = await self.queue_invite(self.LINK)
         self.assertEqual([o.error for o in await self.run_bot()], [""])
         self.assertEqual((await self.campaign()).dndbeyond_invite, self.LINK)
-        self.assertEqual(self.bot.followed, [self.LINK])
+        self.assertEqual(self.bot.invite_followed, [self.LINK])
         self.assertEqual((await self.poll(answer))["state"], "done")
 
     async def test_an_empty_value_removes_the_invite_and_everything_follows(self) -> None:
@@ -184,14 +184,14 @@ class TheChoices(Settings):
         await self.queue_invite("")
         await self.run_bot()
         self.assertIsNone((await self.campaign()).dndbeyond_invite)
-        self.assertEqual(self.bot.followed, [None])
+        self.assertEqual(self.bot.invite_followed, [None])
 
     async def test_an_invite_of_another_shape_is_refused_with_the_stores_words(self) -> None:
         item = ws.Setting("x", self.one.id, ALICE.id, ws.DNDBEYOND_INVITE, "https://example.com/x")
         outcome = await ws.apply(self.bot, self.g, item)
         self.assertEqual((outcome.error, outcome.note), (ws.REFUSED, NOT_AN_INVITE))
         self.assertIsNone((await self.campaign()).dndbeyond_invite)
-        self.assertEqual(self.bot.followed, [])
+        self.assertEqual(self.bot.invite_followed, [])
 
     async def test_a_sender_who_is_no_longer_a_dm_cannot_set_the_invite(self) -> None:
         item = ws.Setting("x", self.one.id, 4242, ws.DNDBEYOND_INVITE, self.LINK)
