@@ -988,8 +988,10 @@ function WhoKnows({
   const [failed, setFailed] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const [already, setAlready] = useState("");
+  const [busy, setBusy] = useState(false); // a change is with the bot: no second press until it is answered
   const latest = useRef(0);
-  const current = link.who ?? "dm";
+  // Undefined from an older API: no answer is pressed, and nothing is said about one (#3214).
+  const current = link.who;
   const holders = link.knownBy ?? [];
 
   // The character search: the same wait and list as the See as… picker.
@@ -1019,18 +1021,28 @@ function WhoKnows({
   }, [api, refId, q, picking]);
 
   const stateLine =
-    current === "dm"
-      ? words.whoStateDm
-      : current === "some"
-        ? words.whoStateSome(words.whoNames(holders.map((h) => h.name)))
-        : words.whoStateAll;
+    current === undefined
+      ? null
+      : current === "dm"
+        ? words.whoStateDm
+        : current === "some" && holders.length > 0
+          ? words.whoStateSome(words.whoNames(holders.map((h) => h.name)))
+          : current === "all"
+            ? words.whoStateAll
+            : words.whoStateDm;
 
   /** Only the DM, or everyone at the table: sent at once. Pressing the answer already set says so, and sends nothing. */
   async function choose(who: "dm" | "everyone"): Promise<void> {
+    if (busy) return;
     const now = current === "dm" ? "dm" : current === "all" ? "everyone" : null;
     setAlready("");
     if (now === who) return setAlready(words.whoAlready);
-    setProblem(await act({ action: "who", id: link.id, who }, who === "dm" ? words.whoDoneDm : words.whoDoneAll));
+    setBusy(true);
+    try {
+      setProblem(await act({ action: "who", id: link.id, who }, who === "dm" ? words.whoDoneDm : words.whoDoneAll));
+    } finally {
+      setBusy(false);
+    }
   }
 
   function toggle(v: { id: string; name: string }): void {
@@ -1044,10 +1056,21 @@ function WhoKnows({
   }
 
   async function save(): Promise<void> {
+    if (busy) return;
     const ids = [...chosen];
+    // The same set as already holds it: nothing is sent, and the page says so.
+    const same = current === "some" && ids.length === holders.length && holders.every((h) => chosen.has(h.id));
+    setAlready("");
+    if (same) return setAlready(words.whoAlready);
     const named = ids.map((id) => names.get(id) ?? holders.find((h) => h.id === id)?.name ?? "");
-    setProblem(await act({ action: "who", id: link.id, who: "some", characters: ids }, words.whoDoneSome(words.whoNames(named))));
-    setPicking(false);
+    setBusy(true);
+    try {
+      const problemNow = await act({ action: "who", id: link.id, who: "some", characters: ids }, words.whoDoneSome(words.whoNames(named)));
+      setProblem(problemNow);
+      if (problemNow === null) setPicking(false); // a failure keeps the picker and the ticks
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
@@ -1055,15 +1078,16 @@ function WhoKnows({
       <p>
         <strong>{words.whoKnowsHeading}</strong>
       </p>
-      <p class="small">{stateLine}</p>
+      {stateLine && <p class="small">{stateLine}</p>}
       <div class="row" role="group" aria-label={words.whoKnowsHeading}>
-        <button type="button" class="button secondary" aria-pressed={current === "dm"} onClick={() => void choose("dm")}>
+        <button type="button" class="button secondary" aria-pressed={current === "dm"} disabled={busy} onClick={() => void choose("dm")}>
           {words.whoOnlyDm}
         </button>
         <button
           type="button"
           class="button secondary"
           aria-pressed={current === "some"}
+          disabled={busy}
           onClick={() => {
             setChosen(new Set(holders.map((h) => h.id)));
             setNames(new Map(holders.map((h) => [h.id, h.name])));
@@ -1072,7 +1096,7 @@ function WhoKnows({
         >
           {words.whoSome}
         </button>
-        <button type="button" class="button secondary" aria-pressed={current === "all"} onClick={() => void choose("everyone")}>
+        <button type="button" class="button secondary" aria-pressed={current === "all"} disabled={busy} onClick={() => void choose("everyone")}>
           {words.whoEveryone}
         </button>
       </div>
@@ -1104,7 +1128,7 @@ function WhoKnows({
           </ul>
           {total > list.length && <p class="small muted">{words.seeAsMore(list.length, total)}</p>}
           <div class="row">
-            <button type="button" class="button" disabled={chosen.size === 0} onClick={() => void save()}>
+            <button type="button" class="button" disabled={chosen.size === 0 || busy} onClick={() => void save()}>
               {words.whoSave}
             </button>
             {chosen.size === 0 && <span class="small muted">{words.whoPickOne}</span>}

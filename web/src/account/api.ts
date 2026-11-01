@@ -1571,6 +1571,8 @@ export type WebLinkChange =
   | { action: "words"; id: string; words: string }
   | { action: "secret"; id: string; secret: boolean }
   | { action: "pin"; id: string; pinned: boolean }
+  // "everyone" is the table's answer; the read side calls the same answer "all" (WebLink.who). The bot's door takes
+  // these names with #3202, so this change is not sent while WHO_KNOWS_LIVE is off.
   | { action: "who"; id: string; who: "dm" | "some" | "everyone"; characters?: string[] }
   | { action: "remove"; id: string; confirm: true };
 

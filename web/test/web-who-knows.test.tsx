@@ -116,6 +116,8 @@ describe("who knows this, on a held connection", () => {
     const panel = await openPanel(pageWith(graph([held({ who: "some", knownBy: [{ id: "pc-cerric", name: "Cerric" }] })]), changes));
     fireEvent.click(within(panel).getByRole("button", { name: w.whoOnlyDm }));
     await waitFor(() => expect(changes).toEqual([{ action: "who", id: "l1", who: "dm" }]));
+    // The bot answers before the next press: the controls are held until then.
+    expect(await screen.findByText(w.whoDoneDm)).toBeTruthy();
     fireEvent.click(within(panel).getByRole("button", { name: w.whoEveryone }));
     await waitFor(() => expect(changes).toEqual([{ action: "who", id: "l1", who: "dm" }, { action: "who", id: "l1", who: "everyone" }]));
   });
@@ -145,14 +147,21 @@ describe("who knows this, on a held connection", () => {
     expect(w.whoNames(["Mara", "Tavin", "Brann", "Lio", "Oda", "Pell"])).toBe("Mara, Tavin, Brann, Lio and 2 more");
   });
 
-  it("the done words for each answer, and \"already like that\" when the answer is set", async () => {
+  it("the done words for the DM and for everyone, and \"already like that\" when the answer is set", async () => {
     const changes: WebLinkChange[] = [];
     const panel = await openPanel(pageWith(graph([held({ who: "some", knownBy: [{ id: "pc-cerric", name: "Cerric" }] })]), changes));
     fireEvent.click(within(panel).getByRole("button", { name: w.whoOnlyDm }));
     expect(await screen.findByText(w.whoDoneDm)).toBeTruthy();
     // Already the DM's: pressing it again sends nothing and says so.
+    await waitFor(() => expect((within(panel).getByRole("button", { name: w.whoOnlyDm }) as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(within(panel).getByRole("button", { name: w.whoOnlyDm }));
     expect(await within(panel).findByText(w.whoAlready)).toBeTruthy();
     expect(changes).toHaveLength(1);
+  });
+
+  it("a rendered state line names six characters as four and how many more", async () => {
+    const six = ["Mara", "Tavin", "Brann", "Lio", "Oda", "Pell"].map((name, i) => ({ id: `c${i}`, name }));
+    const panel = await openPanel(pageWith(graph([held({ who: "some", knownBy: six })])));
+    expect(within(panel).getByText(w.whoStateSome("Mara, Tavin, Brann, Lio and 2 more"))).toBeTruthy();
   });
 });
