@@ -2000,9 +2000,14 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       got.looks += 1;
       const at = Math.floor(Date.now() / 1000);
       const progress = { done: Math.min(got.looks, 2), total: 2, at, createdAt: got.createdAt, now: at };
-      if (got.looks < 2) return { state: "running", stage: "adding", progress };
-      const text = Object.entries(got.counts).map(([k, n]) => `${k}:${n}`).join(" ");
-      return { state: "done", stage: "done", counts: text, undo: got.action === "add", progress };
+      if (got.looks < 2) return { state: "working", stage: "adding", progress };
+      if (got.action === "add" && loreNow?.waiting) {
+        // A done add takes its names off the waiting counts, as the bot does (#3222).
+        const left = { ...loreNow.waiting };
+        for (const [k, n] of Object.entries(got.counts)) left[k] = Math.max(0, (left[k] ?? 0) - n);
+        loreNow = { ...loreNow, waiting: left };
+      }
+      return { state: "done", stage: "done", counts: got.counts, undo: got.action === "add", progress };
     },
     // The pretend campaign page (#2416): a ref ending `.cp-none` is one nobody may see, `.cp-player` one
     // the person plays in without running it, `.cp-co` one they help run.

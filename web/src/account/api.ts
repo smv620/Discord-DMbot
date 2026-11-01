@@ -1111,11 +1111,12 @@ export interface LoreUpload {
 }
 /** The bot's answer to "Add all" or its Undo (#3222): counts and progress only, never a name. */
 export interface ConfirmAnswer {
-  state: "running" | "done" | "failed";
+  /** The server's states (all_names.read_action): waiting and working are still going; done and failed are not. */
+  state: "waiting" | "working" | "done" | "failed";
   stage: string;
   error?: string;
-  /** The counts that were added, as the bot sends them: "place:5 character:7". */
-  counts?: string;
+  /** What an "Add all" press did, counts only: {place: 5, npc: 7}; empty otherwise (#3207). */
+  counts?: Record<string, number>;
   progress?: { done: number; total: number; at: number; createdAt: number; now: number };
   /** True when this answer can be taken back with Undo. */
   undo?: boolean;

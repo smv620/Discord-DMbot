@@ -2,12 +2,12 @@
 // @vitest-environment happy-dom
 // "Add all" under a finished upload on the Upload lore page (#3207, #3222), behind CONFIRM_KINDS_LIVE: the DM adds
 // the names a document found, watches the wait, and can take them back. A player sees nothing; ideas are never counted.
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/preact";
+import { cleanup, fireEvent, render, screen } from "@testing-library/preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import AddAll from "../src/account/AddAll";
 import { ApiError, type AccountApi, type ConfirmAnswer, type LoreUpload } from "../src/account/api";
-import { addAllWords as w, countsList, parseCounts, sumCounts } from "../src/content/add-all-words";
+import { addAllWords as w, countsList, sumCounts } from "../src/content/add-all-words";
 
 const live = vi.hoisted(() => ({ on: true }));
 vi.mock("../src/content/confirm-kinds-switch", () => ({
@@ -50,13 +50,14 @@ function apiWith(looks: ConfirmAnswer[], over: Partial<AccountApi> = {}): Accoun
   } as unknown as AccountApi;
 }
 
-const done = (counts: string, undo = true): ConfirmAnswer => ({ state: "done", stage: "done", counts, undo });
+const done = (counts: Record<string, number>, undo = true): ConfirmAnswer => ({ state: "done", stage: "done", counts, undo });
 
 describe("the words for the counts", () => {
   it("reads the bot's text and names the biggest kinds", () => {
-    expect(parseCounts("place:5 character:7")).toEqual({ place: 5, character: 7 });
     expect(sumCounts({ place: 5, character: 7 })).toBe(12);
-    expect(countsList({ place: 5, character: 7, group: 2 })).toBe("7 characters and 5 places, and 1 other kinds");
+    expect(countsList({ place: 5, character: 7 })).toBe("7 characters and 5 places");
+    expect(countsList({ place: 5, character: 7, group: 2 })).toBe("7 characters and 5 places, and 1 other kind");
+    expect(countsList({ place: 5, character: 7, group: 2, item: 1 })).toBe("7 characters and 5 places, and 2 other kinds");
     expect(w.found(1)).toBe("1 name found in your document is waiting for your OK.");
     expect(w.found(3)).toBe("3 names found in your document are waiting for your OK.");
   });
@@ -68,7 +69,7 @@ describe("the buttons", () => {
       <AddAll api={apiWith([])} campaign="100.cmp1" upload={upload({ place: 5, character: 7, group: 2, item: 3, npc: 1 })} />,
     );
     const buttons = Array.from(container.querySelectorAll("button")).map((b) => b.textContent);
-    // The biggest four kinds; the one-name kind is left out of the buttons (its singular word is not in the Names words yet).
+    // The biggest four kinds: the one-name kind is the fifth biggest, so it is left out of the buttons.
     expect(buttons).toEqual([w.addAll(18), "Add all 7 characters", "Add all 5 places", "Add all 3 items", "Add all 2 groups"]);
     expect(container.querySelector("a")?.textContent).toBe(w.checkOneByOne);
   });
@@ -95,9 +96,9 @@ describe("the buttons", () => {
 
 describe("the press and its wait", () => {
   it("running disables the buttons and shows the wait", async () => {
-    const running: ConfirmAnswer = { state: "running", stage: "adding", progress: { done: 1, total: 2, at: 10, createdAt: 1, now: 10 } };
+    const running: ConfirmAnswer = { state: "working", stage: "adding", progress: { done: 1, total: 2, at: 10, createdAt: 1, now: 10 } };
     const { container } = render(
-      <AddAll api={apiWith([running, running, done("place:5")])} campaign="100.cmp1" upload={upload({ place: 5 })} />,
+      <AddAll api={apiWith([running, running, done({ place: 5 })])} campaign="100.cmp1" upload={upload({ place: 5 })} />,
     );
     fireEvent.click(screen.getByRole("button", { name: w.addAll(5) }));
     expect(await screen.findByText(w.adding)).toBeTruthy();
@@ -106,8 +107,8 @@ describe("the press and its wait", () => {
   });
 
   it("done shows the counts, and Undo takes them back", async () => {
-    const api = apiWith([done("place:5 character:7")], {
-      confirmAnswer: async () => done("place:5 character:7"),
+    const api = apiWith([done({ place: 5, character: 7 })], {
+      confirmAnswer: async () => done({ place: 5, character: 7 }),
     });
     render(<AddAll api={api} campaign="100.cmp1" upload={upload({ place: 5, character: 7 })} />);
     fireEvent.click(screen.getByRole("button", { name: w.addAll(12) }));
@@ -117,9 +118,9 @@ describe("the press and its wait", () => {
   });
 
   it("a failed press with counts says how many were added, and without counts says none", async () => {
-    const failed = (counts?: string): ConfirmAnswer =>
+    const failed = (counts?: Record<string, number>): ConfirmAnswer =>
       counts === undefined ? { state: "failed", stage: "failed", error: "x" } : { state: "failed", stage: "failed", error: "x", counts };
-    render(<AddAll api={apiWith([failed("place:2")], { confirmAnswer: async () => failed("place:2") })} campaign="100.cmp1" upload={upload({ place: 5 })} />);
+    render(<AddAll api={apiWith([failed({ place: 2 })], { confirmAnswer: async () => failed({ place: 2 }) })} campaign="100.cmp1" upload={upload({ place: 5 })} />);
     fireEvent.click(screen.getByRole("button", { name: w.addAll(5) }));
     expect(await screen.findByText(w.failedSome(2, 5))).toBeTruthy();
     cleanup();
@@ -144,7 +145,7 @@ describe("the press and its wait", () => {
 
   it("a wait that stops moving for a minute says it is slower than usual", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: false });
-    const still: ConfirmAnswer = { state: "running", stage: "adding", progress: { done: 1, total: 2, at: 10, createdAt: 1, now: 10 } };
+    const still: ConfirmAnswer = { state: "working", stage: "adding", progress: { done: 1, total: 2, at: 10, createdAt: 1, now: 10 } };
     render(<AddAll api={apiWith([still], { confirmAnswer: async () => still })} campaign="100.cmp1" upload={upload({ place: 5 })} />);
     fireEvent.click(screen.getByRole("button", { name: w.addAll(5) }));
     await vi.advanceTimersByTimeAsync(61_000);
@@ -167,6 +168,57 @@ describe("the switch and the DM", () => {
   });
 });
 
-// Keep the two imports used even when the tests above change.
-void waitFor;
-void sumCounts;
+describe("the answers from the server, and what a failure says", () => {
+  it("a failed Undo offers Undo again, never the add", async () => {
+    const api = apiWith([done({ place: 5 })], {
+      confirmAnswer: async () => done({ place: 5 }),
+    });
+    api.confirmUndo = async () => ({ answer: "u-1" });
+    api.confirmAnswer = async (_c, id) => (id === "u-1" ? { state: "failed", stage: "failed", error: "x" } : done({ place: 5 }));
+    render(<AddAll api={api} campaign="100.cmp1" upload={upload({ place: 5 })} />);
+    fireEvent.click(screen.getByRole("button", { name: w.addAll(5) }));
+    fireEvent.click(await screen.findByRole("button", { name: w.undo }));
+    expect(await screen.findByText(w.undoFailed)).toBeTruthy();
+    expect(screen.queryByText(w.failedNone)).toBeNull();
+    expect(screen.getByRole("button", { name: w.tryAgain })).toBeTruthy();
+  });
+
+  it("a look that fails says the bot may still be adding, not that nothing was added", async () => {
+    const api = apiWith([], { confirmAnswer: async () => { throw new ApiError("server"); } });
+    render(<AddAll api={api} campaign="100.cmp1" upload={upload({ place: 5 })} />);
+    fireEvent.click(screen.getByRole("button", { name: w.addAll(5) }));
+    expect(await screen.findByText(w.lostTouch, { exact: false })).toBeTruthy();
+    expect(screen.queryByText(w.failedNone)).toBeNull();
+  });
+
+  it("a done add with nothing in it says nothing was added", async () => {
+    render(<AddAll api={apiWith([done({})], { confirmAnswer: async () => done({}) })} campaign="100.cmp1" upload={upload({ place: 5 })} />);
+    fireEvent.click(screen.getByRole("button", { name: w.addAll(5) }));
+    expect(await screen.findByText(w.nothingAdded)).toBeTruthy();
+  });
+
+  it("a second press before the first is answered sends nothing more", async () => {
+    const sent: string[] = [];
+    const api = apiWith([], {
+      confirmKinds: async (_c, _u, kinds) => {
+        sent.push(String(kinds));
+        return { answer: "a-1" };
+      },
+      confirmAnswer: async () => ({ state: "working", stage: "adding" }),
+    });
+    render(<AddAll api={api} campaign="100.cmp1" upload={upload({ place: 5 })} />);
+    const button = screen.getByRole("button", { name: w.addAll(5) });
+    fireEvent.click(button);
+    fireEvent.click(button);
+    expect(sent).toEqual(["all"]);
+  });
+
+  it("a done add asks for the waiting counts again, so the page shows what is left", async () => {
+    let asked = 0;
+    const api = apiWith([done({ place: 5 })], { confirmAnswer: async () => done({ place: 5 }) });
+    render(<AddAll api={api} campaign="100.cmp1" upload={upload({ place: 5 })} onChanged={() => (asked += 1)} />);
+    fireEvent.click(screen.getByRole("button", { name: w.addAll(5) }));
+    expect(await screen.findByText(w.added(5, "5 places"))).toBeTruthy();
+    expect(asked).toBe(1);
+  });
+});

@@ -211,9 +211,9 @@ export default function namesArea({ call, waitForAnswer }: ApiHelpers): Partial<
       if (!queued?.answer) throw new ApiError("server");
       return queued;
     },
-    // The bot's answers are read under the campaign's answers route, as the names queue's are.
+    // The bot's answers to "Add all" are polled where every all-names answer is (app.py, all-names/answers).
     confirmAnswer: async (ref, answer) =>
-      (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/web/answers/${encodeURIComponent(answer)}`)) as ConfirmAnswer,
+      (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/all-names/answers/${encodeURIComponent(answer)}`)) as ConfirmAnswer,
     webViewers: async (ref, q) =>
       (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/web/viewers?q=${encodeURIComponent(q)}`)) as WebViewers,
     webWaiting: async (ref) =>

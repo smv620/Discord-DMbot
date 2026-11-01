@@ -4,7 +4,7 @@
 // Only the DM sees it. It never names a thing the document did not find, and ideas are never counted.
 import { useEffect, useRef, useState } from "preact/hooks";
 
-import { addAllWords as w, countsList, parseCounts, plainKindWord, sumCounts } from "../content/add-all-words";
+import { addAllWords as w, countsList, plainKindWord, sumCounts } from "../content/add-all-words";
 import { CONFIRM_KINDS_LIVE } from "../content/confirm-kinds-switch";
 import { ApiError, type AccountApi, type ConfirmAnswer, type LoreUpload } from "./api";
 import WorkProgress from "./WorkProgress";
@@ -14,9 +14,8 @@ const STALL_MS = 60_000;
 
 /** What the last answer said: the names it added or took back, and whether Undo can take them back. */
 type Result = { state: "done" | "failed"; action: "add" | "undo"; counts: Record<string, number>; undo: boolean; answer: string };
-type Problem = "" | "notFound" | "refused" | "failed";
-
-const plainKind = plainKindWord;
+/** "lost" is a look that failed while the bot may still be working: not the same as nothing added. */
+type Problem = "" | "notFound" | "refused" | "failed" | "lost";
 
 function problemOf(error: unknown): Problem {
   if (error instanceof ApiError && error.kind === "not-found") return "notFound";
@@ -24,8 +23,20 @@ function problemOf(error: unknown): Problem {
   return "failed";
 }
 
-export default function AddAll({ api, campaign, upload }: { api: AccountApi; campaign: string; upload: LoreUpload }) {
+export default function AddAll({
+  api,
+  campaign,
+  upload,
+  onChanged,
+}: {
+  api: AccountApi;
+  campaign: string;
+  upload: LoreUpload;
+  /** Called after an add or an Undo is done, so the page reads the waiting counts again. */
+  onChanged?: () => void;
+}) {
   const [busy, setBusy] = useState<"add" | "undo" | null>(null);
+  const pending = useRef(false); // set at once on a press, so a second press before the render is ignored
   const [answer, setAnswer] = useState<string | null>(null);
   const [action, setAction] = useState<"add" | "undo">("add");
   const [lastKinds, setLastKinds] = useState<"all" | string[]>("all");
@@ -52,23 +63,27 @@ export default function AddAll({ api, campaign, upload }: { api: AccountApi; cam
         }
         setProgress(got.progress ?? null);
         setNow(Date.now());
-        if (got.state === "running") {
+        if (got.state === "waiting" || got.state === "working") {
           timer = setTimeout(look, POLL_MS);
           return;
         }
         setResult({
           state: got.state === "done" ? "done" : "failed",
           action,
-          counts: parseCounts(got.counts),
+          counts: got.counts ?? {},
           undo: got.undo === true,
           answer,
         });
         setAnswer(null);
+        pending.current = false;
         setBusy(null);
+        if (got.state === "done") onChanged?.();
       } catch (error) {
         if (!live) return;
-        setProblem(problemOf(error));
+        // A look that fails may still be working on the bot's side: say so, rather than that nothing was added.
+        setProblem(problemOf(error) === "failed" ? "lost" : problemOf(error));
         setAnswer(null);
+        pending.current = false;
         setBusy(null);
       }
     };
@@ -83,44 +98,38 @@ export default function AddAll({ api, campaign, upload }: { api: AccountApi; cam
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api, campaign, answer]);
 
-  async function press(kinds: "all" | string[]): Promise<void> {
-    if (busy || !api.confirmKinds) return;
-    const waiting = upload.waiting ?? {};
-    const chosen = kinds === "all" ? Object.keys(waiting) : kinds;
-    setBusy("add");
-    setAction("add");
-    setLastKinds(kinds);
-    setRequested(sumCounts(Object.fromEntries(chosen.map((k) => [k, waiting[k] ?? 0]))));
+  function start(kind: "add" | "undo", queue: () => Promise<{ answer: string }>, kinds: "all" | string[] | null): void {
+    pending.current = true;
+    setBusy(kind);
+    setAction(kind);
+    if (kinds !== null) setLastKinds(kinds);
     setResult(null);
     setProblem("");
     setProgress(null);
-    try {
-      const queued = await api.confirmKinds(campaign, upload.id, kinds);
-      lastAt.current = null;
-      setMoved(Date.now());
-      setAnswer(queued.answer);
-    } catch (error) {
-      setProblem(problemOf(error));
-      setBusy(null);
-    }
+    void queue()
+      .then((queued) => {
+        lastAt.current = null;
+        setMoved(Date.now());
+        setAnswer(queued.answer);
+      })
+      .catch((error: unknown) => {
+        setProblem(problemOf(error));
+        pending.current = false;
+        setBusy(null);
+      });
   }
 
-  async function undo(): Promise<void> {
-    if (!result || busy || !api.confirmUndo) return;
-    setBusy("undo");
-    setAction("undo");
-    setResult(null);
-    setProblem("");
-    setProgress(null);
-    try {
-      const queued = await api.confirmUndo(campaign, result.answer);
-      lastAt.current = null;
-      setMoved(Date.now());
-      setAnswer(queued.answer);
-    } catch (error) {
-      setProblem(problemOf(error));
-      setBusy(null);
-    }
+  function press(kinds: "all" | string[]): void {
+    if (pending.current || !api.confirmKinds) return;
+    const waiting = upload.waiting ?? {};
+    const chosen = kinds === "all" ? Object.keys(waiting) : kinds;
+    setRequested(sumCounts(Object.fromEntries(chosen.map((k) => [k, waiting[k] ?? 0]))));
+    start("add", () => api.confirmKinds!(campaign, upload.id, kinds), kinds);
+  }
+
+  function undo(): void {
+    if (!result || pending.current || !api.confirmUndo) return;
+    start("undo", () => api.confirmUndo!(campaign, result.answer), null);
   }
 
   if (!CONFIRM_KINDS_LIVE || !api.confirmKinds) return null;
@@ -132,6 +141,7 @@ export default function AddAll({ api, campaign, upload }: { api: AccountApi; cam
   const total = sumCounts(waiting);
   const stalled = busy !== null && now - moved > STALL_MS;
   const checkLink = <a href={`/account/names/${encodeURIComponent(campaign)}`}>{w.checkOneByOne}</a>;
+  const added = result?.state === "done" && result.action === "add" ? sumCounts(result.counts) : 0;
 
   return (
     <div class="stack">
@@ -141,20 +151,14 @@ export default function AddAll({ api, campaign, upload }: { api: AccountApi; cam
         <>
           <p role="status">{w.found(total)}</p>
           <div class="stack">
-            {total === 1 ? (
-              <button type="button" class="button" disabled={busy !== null} onClick={() => void press("all")}>
-                {w.addOne}
-              </button>
-            ) : (
-              <button type="button" class="button" disabled={busy !== null} onClick={() => void press("all")}>
-                {w.addAll(total)}
-              </button>
-            )}
+            <button type="button" class="button" disabled={busy !== null} onClick={() => press("all")}>
+              {total === 1 ? w.addOne : w.addAll(total)}
+            </button>
             {total > 1 &&
               kinds.length > 1 &&
               kinds.slice(0, 4).map(([k, n]) => (
-                <button key={k} type="button" class="button secondary" disabled={busy !== null} onClick={() => void press([k])}>
-                  {w.addKind(n, plainKind(k))}
+                <button key={k} type="button" class="button secondary" disabled={busy !== null} onClick={() => press([k])}>
+                  {w.addKind(n, plainKindWord(k))}
                 </button>
               ))}
             <p>{checkLink}</p>
@@ -183,32 +187,40 @@ export default function AddAll({ api, campaign, upload }: { api: AccountApi; cam
       {result?.state === "done" && result.action === "add" && (
         <div class="stack">
           <p role="status">
-            {sumCounts(result.counts) === 1
-              ? w.added(1, countsList(result.counts))
-              : lastKinds !== "all" && lastKinds.length === 1
-                ? w.addedKind(sumCounts(result.counts), plainKind(lastKinds[0]!))
-                : w.added(sumCounts(result.counts), countsList(result.counts))}
+            {added === 0
+              ? w.nothingAdded
+              : added === 1
+                ? w.added(1, countsList(result.counts))
+                : lastKinds !== "all" && lastKinds.length === 1
+                  ? w.addedKind(added, plainKindWord(lastKinds[0]!))
+                  : w.added(added, countsList(result.counts))}
           </p>
           {result.undo && (
-            <button type="button" class="button secondary" disabled={busy !== null} onClick={() => void undo()}>
+            <button type="button" class="button secondary" disabled={busy !== null} onClick={() => undo()}>
               {w.undo}
             </button>
           )}
         </div>
       )}
-      {result?.state === "done" && result.action === "undo" && (
-        <p role="status">{w.undone(sumCounts(result.counts))}</p>
-      )}
-      {result?.state === "failed" && (
+      {result?.state === "done" && result.action === "undo" && <p role="status">{w.undone(sumCounts(result.counts))}</p>}
+      {result?.state === "failed" && result.action === "add" && (
         <div class="stack">
-          <p role="status">
-            {sumCounts(result.counts) > 0 ? w.failedSome(sumCounts(result.counts), requested) : w.failedNone}
-          </p>
+          <p role="status">{sumCounts(result.counts) > 0 ? w.failedSome(sumCounts(result.counts), requested) : w.failedNone}</p>
           <div class="row">
-            <button type="button" class="button" disabled={busy !== null} onClick={() => void press(lastKinds)}>
+            <button type="button" class="button" disabled={busy !== null} onClick={() => press(lastKinds)}>
               {w.tryAgain}
             </button>
             {checkLink}
+          </div>
+        </div>
+      )}
+      {result?.state === "failed" && result.action === "undo" && (
+        <div class="stack">
+          <p role="status">{w.undoFailed}</p>
+          <div class="row">
+            <button type="button" class="button" disabled={busy !== null} onClick={() => undo()}>
+              {w.tryAgain}
+            </button>
           </div>
         </div>
       )}
@@ -219,11 +231,16 @@ export default function AddAll({ api, campaign, upload }: { api: AccountApi; cam
         </p>
       )}
       {problem === "refused" && <p role="status">{w.refused}</p>}
+      {problem === "lost" && (
+        <p role="status">
+          {w.lostTouch} {checkLink}
+        </p>
+      )}
       {problem === "failed" && (
         <div class="stack">
           <p role="status">{w.failedNone}</p>
           <div class="row">
-            <button type="button" class="button" disabled={busy !== null} onClick={() => void press(lastKinds)}>
+            <button type="button" class="button" disabled={busy !== null} onClick={() => press(lastKinds)}>
               {w.tryAgain}
             </button>
             {checkLink}

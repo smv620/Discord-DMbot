@@ -212,7 +212,17 @@ export default function Lore({ api, path }: { api: AccountApi; path: string }) {
             )}
           </div>
         )}
-        {done && <AddAll api={api} campaign={ref} upload={upload} />}
+        {done && (
+          <AddAll
+            api={api}
+            campaign={ref}
+            upload={upload}
+            onChanged={() => {
+              // The waiting counts changed: read the upload again, so the buttons show what is left.
+              void api.loreRead?.(ref, upload.id).then((got) => got && setUpload(got)).catch(() => undefined);
+            }}
+          />
+        )}
         {(done || failed) && (
           <button
             type="button"

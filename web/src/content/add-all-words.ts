@@ -16,6 +16,9 @@ export const addAllWords = {
   part: (done: number, total: number): string => `part ${done} of ${total}`,
   stalled: "Still working, but slower than usual.",
   failedNone: "Adding stopped. No names were added.",
+  nothingAdded: "Nothing was added.",
+  lostTouch: "Lost touch with DMbot. The names may still be added. Check the Names page to see what was added.",
+  undoFailed: "Undo stopped. The names stay added.",
   failedSome: (n: number, total: number): string => `Adding stopped after ${n} of ${total}. The rest are still waiting.`,
   tryAgain: "Try again",
   undo: "Undo",
@@ -33,23 +36,14 @@ export function plainKindWord(key: string): string {
   return /^[A-Z]{2}/.test(word) ? word : word.toLowerCase();
 }
 
-/** The counts the bot sends as text ("place:5 character:7") read back into a map (#3222). */
-export function parseCounts(text: string | undefined): Record<string, number> {
-  const out: Record<string, number> = {};
-  for (const part of (text ?? "").split(/\s+/)) {
-    const m = /^([a-z_]+):(\d+)$/.exec(part);
-    if (m) out[m[1]!] = Number(m[2]);
-  }
-  return out;
-}
-
 /** The biggest kinds first, the two biggest named and the rest counted: "5 places and 7 characters, and 2 other kinds". */
 export function countsList(counts: Record<string, number>): string {
   const sorted = Object.entries(counts).filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1]);
   const named = sorted.slice(0, 2).map(([k, n]) => `${n} ${plainKindWord(k)}`);
   const others = sorted.length - named.length;
   const head = named.join(" and ");
-  return others > 0 ? `${head}, and ${others} other kinds` : head;
+  if (others === 0) return head;
+  return others === 1 ? `${head}, and 1 other kind` : `${head}, and ${others} other kinds`;
 }
 
 export const sumCounts = (counts: Record<string, number>): number => Object.values(counts).reduce((a, b) => a + b, 0);
