@@ -71,6 +71,20 @@
    "also": [],
    "secret": [],
    "quote": "His brother, Daric"
+  },
+  {
+   "name": "Pell",
+   "kind": "person",
+   "also": [],
+   "secret": [],
+   "quote": "Pell and Orrin"
+  },
+  {
+   "name": "Orrin",
+   "kind": "person",
+   "also": [],
+   "secret": [],
+   "quote": "Pell and Orrin"
   }
  ],
  "connections": [
@@ -115,6 +129,20 @@
    "how": "brother",
    "quote": "His brother, Daric, vanished at forty",
    "words": ""
+  },
+  {
+   "a": "Pell",
+   "b": "Orrin",
+   "how": "enemy",
+   "quote": "Pell and Orrin were sworn enemies",
+   "words": ""
+  },
+  {
+   "a": "Orrin",
+   "b": "Pell",
+   "how": "knows",
+   "quote": "Pell and Orrin were sworn enemies",
+   "words": "sworn enemy"
   }
  ]
 }

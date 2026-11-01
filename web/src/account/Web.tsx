@@ -25,6 +25,7 @@ import {
 } from "./api";
 import WebMap from "./WebMap";
 import WebOverviewPanel from "./WebOverview";
+import { dimmedName, markSecret, plainGraph } from "./know";
 import WebReadings from "./WebReadings";
 import WebWaiting from "./WebWaiting";
 import { WEB_READINGS_LIVE } from "../content/web-readings";
@@ -116,7 +117,7 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
         ...(seeAsNow.current !== undefined ? { seeAs: seeAsNow.current } : {}),
       });
       if (mine !== latest.current) return;
-      setGraph(read);
+      setGraph(read.canEdit ? read : plainGraph(read));
       if (read.canEdit) setIsDm(true);
       setMeta((now) => ({
         visibility: read.visibility ?? now.visibility,
@@ -566,11 +567,14 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
             {words.collapseAll}
           </button>
         </div>
+        {(nodes.some((n) => n.knowWord) || graph.edges.some((e) => e.links.some((l) => l.knowWord))) && (
+          <p class="small muted">{words.knowHint}</p>
+        )}
         <ul class="web-names">
           {nodes.map((n) => {
             const open = openRows.has(n.id);
             return (
-              <li key={n.id} class={`web-name${n.revealed === false ? " web-dim" : ""}`}>
+              <li key={n.id} class={`web-name${dimmedName(n) ? " web-dim" : ""}`}>
                 <button
                   type="button"
                   class="web-name-toggle"
@@ -586,11 +590,12 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
                 >
                   <span aria-hidden="true">{open ? "▾" : "▸"}</span>
                   <span class="campaign-name">
-                    {n.secret && <span aria-hidden="true">{words.secretMark} </span>}
+                    {markSecret(n) && <span aria-hidden="true">{words.secretMark} </span>}
                     {n.name}
                   </span>
-                  {n.secret && <span class="visually-hidden"> ({words.secretWords})</span>}
-                  {n.revealed === false && <span class="small muted"> ({words.notRevealed})</span>}
+                  {!n.knowWord && n.secret && <span class="visually-hidden"> ({words.secretWords})</span>}
+                  {!n.knowWord && n.revealed === false && <span class="small muted"> ({words.notRevealed})</span>}
+                  {n.knowWord && words.knowWords[n.knowWord] && <span class="small muted"> ({words.knowWords[n.knowWord]})</span>}
                   <span class="tag">{kindWords(n.kind)}</span>
                   {n.id === center && <span class="small muted">{words.inMiddle}</span>}
                 </button>
@@ -663,14 +668,15 @@ function WebLines({ lines, onOpen }: { lines: WebLine[]; onOpen: (a: string, b: 
     <ul class="web-lines">
       {lines.map((l) => (
         <li key={l.key} class="name-row">
-          {l.link.secret && <span aria-hidden="true">{words.secretMark} </span>}
+          {markSecret(l.link) && <span aria-hidden="true">{words.secretMark} </span>}
           {l.link.belief && <span aria-hidden="true">{words.theoryMark} </span>}
           <span aria-hidden="true">
             {l.from} → {l.words} → {l.to}
           </span>
+          {l.link.knowWord && words.knowWords[l.link.knowWord] && <span class="small muted"> ({words.knowWords[l.link.knowWord]})</span>}
           <span class="visually-hidden">
             {words.lineText(l.from, l.words, l.to)}
-            {l.link.secret ? ` (${words.secretWords})` : ""}
+            {!l.link.knowWord && l.link.secret ? ` (${words.secretWords})` : ""}
             {l.link.belief ? ` (${words.theoryWords})` : ""}
           </span>{" "}
           <button
@@ -977,18 +983,19 @@ function LinkRow({
   const [asking, setAsking] = useState(false);
   const run = async (change: WebLinkChange, ok: string): Promise<void> => setProblem(await act(change, ok));
   return (
-    <li class={link.revealed === false ? "stack web-dim" : "stack"}>
+    <li class={dimmedName(link) ? "stack web-dim" : "stack"}>
       {link.kind && (
         <p class={`small web-kindmark web-link-${link.kind}`}>
           <span class="web-dot" aria-hidden="true" /> {words.linkKind[link.kind]}
         </p>
       )}
       <p>
-        {link.secret && <span aria-hidden="true">{words.secretMark} </span>}
+        {markSecret(link) && <span aria-hidden="true">{words.secretMark} </span>}
         {link.belief && <span aria-hidden="true">{words.theoryMark} </span>}
         {words.linkText(a, b, link.words, link.direction)}
-        {link.secret && <span class="visually-hidden"> ({words.secretWords})</span>}
+        {!link.knowWord && link.secret && <span class="visually-hidden"> ({words.secretWords})</span>}
       </p>
+      {link.knowWord && words.knowWords[link.knowWord] && <p class="small muted">{words.knowWords[link.knowWord]}</p>}
       {canEdit && link.pinned && <p class="small">{words.pinMark} {words.pinnedWords}</p>}
       {canEdit && link.check && <p class="small">{words.checkLine(link.check)}</p>}
       {link.belief && (
@@ -997,7 +1004,7 @@ function LinkRow({
         </p>
       )}
       {link.belief?.contradicted && <p class="small warn">{words.believesFalse}</p>}
-      {link.revealed === false && <p class="small muted">{words.notRevealedFull}</p>}
+      {!link.knowWord && link.revealed === false && <p class="small muted">{words.notRevealedFull}</p>}
       {canEdit && link.revealed === false && (
         <div class="row">
           <button
