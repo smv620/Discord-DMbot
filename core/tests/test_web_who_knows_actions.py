@@ -124,3 +124,34 @@ class TheDoor(Web):
             await all_names.queue_action(self.web, self.player, self.cref, self.keep, body)
         self.assertEqual(player.exception.code, "not_allowed")
         self.assertEqual(len(await self.rows()), 1)
+
+    async def test_an_unconfirmed_character_and_a_stranger_do_not_get_through_for_a_name(
+        self,
+    ) -> None:
+        maybe = await self.memory.add_entity(  # proposed, not confirmed
+            self.g, self.one.id, type="character", name="Maybe", role="npc", source=DM_SOURCE
+        )
+        self.assertEqual(
+            await self.refused_who({"who": "some", "characters": [maybe.value.id]}), "bad_target"
+        )
+        made = await self.memory.add_alias(
+            self.g, self.one.id, self.keep, "the old fort", kind="nickname",
+            source=DM_SOURCE, status="confirmed", secret=True,
+        )  # fmt: skip
+        body = {"action": "alias-who", "alias": made.value.id, "who": "some"}
+        with self.assertRaises(RecapError) as bad:  # a character the campaign does not have
+            await all_names.queue_action(
+                self.web, self.session, self.cref, self.keep, {**body, "characters": ["f" * 32]}
+            )
+        self.assertEqual(bad.exception.code, "bad_target")
+        self.assertEqual(await self.rows(), [])
+
+    async def test_fifty_characters_fit_the_table(self) -> None:
+        """The longest answer the door allows (about 1,650 characters) must also be storable."""
+        ids = []
+        for n in range(50):
+            ids.append(await self.add(f"Extra {n:02d}", "character", role="npc"))
+        await self.link_who({"who": "some", "characters": ids})
+        got = await self.rows()
+        self.assertEqual(len(got), 1)
+        self.assertEqual(len(got[0]["text"]), 5 + 50 * 33 - 1)
