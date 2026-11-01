@@ -29,7 +29,7 @@ import logging
 import re
 import time
 from collections import Counter
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
 from typing import Any
@@ -896,6 +896,7 @@ async def read_lore(
     progress: Callable[[str, int, int], None] | None = None,
     aliases: Mapping[str, Sequence[str]] | None = None,
     hold_open: bool = False,
+    known_keys: Collection[str] = (),
 ) -> LoreRead:
     """Both passes over the whole text. Nothing here stores anything: the caller merges the
     names, keeps what the campaign can hold and shows the DM every suggestion.
@@ -991,9 +992,14 @@ async def read_lore(
     here = {**{k: list(v) for k, v in (aliases or {}).items()}}
     for main, others in spelled.items():
         here.setdefault(main, []).extend(others)
+    # Every name a pronoun might mean: the campaign's own, this read's, and all their spellings
+    # (a quote that reaches back through its paragraph stops at any of them, #2757).
+    third = bg.reach_names(
+        {name_key(k) for k in (*known_keys, *here, *(sp for sps in here.values() for sp in sps))}
+    )
     for reply_text in replies:
         links += bg.read_connections(
-            reply_text, text, set(own), stats.dropped, here, stats.unsettled
+            reply_text, text, set(own), stats.dropped, here, stats.unsettled, third
         )
     secrets = frozenset(name_key(sp) for f in names for sp in f.secret)
     # A name the list also gives as another line's other or secret name is that person, not a

@@ -121,6 +121,11 @@ def score(
     alias_keys = {name_key(f.name): [name_key(x) for x in f.also] for f in found}
     for full, others in aliases.items():
         alias_keys.setdefault(name_key(full), []).extend(name_key(x) for x in others)
+    # The names a pronoun might mean, as the live read gives them (the key's aliases stand for
+    # the campaign's own entries).
+    third = bg.reach_names(
+        {k for k, v in alias_keys.items()} | {x for v in alias_keys.values() for x in v}
+    )
     # (Any: these are parsed JSON objects of the AI's answer, of unknown shape until read)
     lines: list[dict[str, Any]] = []
     for reply in replies:
@@ -137,7 +142,7 @@ def score(
         held: list[bg.Unsettled] = []
         got = bg.read_connections(
             json.dumps({"connections": [line]}), text, dropped=lost, aliases=alias_keys,
-            unsettled=held,
+            unsettled=held, others=third,
         )  # fmt: skip
         if got:
             passed.append(got[0])
