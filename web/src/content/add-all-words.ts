@@ -45,7 +45,9 @@ export function plainKindSingular(key: string): string {
 
 /** The biggest kinds first, the two biggest named and the rest counted: "5 places and 7 characters, and 2 other kinds". */
 export function countsList(counts: Record<string, number>): string {
-  const sorted = Object.entries(counts).filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1]);
+  const sorted = Object.entries(counts)
+    .filter(([, n]) => n > 0)
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])); // ties by name, so the order never depends on the object's keys
   const named = sorted.slice(0, 2).map(([k, n]) => `${n} ${n === 1 ? plainKindSingular(k) : plainKindWord(k)}`);
   const others = sorted.length - named.length;
   const head = named.join(" and ");

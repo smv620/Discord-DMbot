@@ -118,7 +118,7 @@ export const webPage = {
     group: "group",
     item: "item",
     event: "event",
-    faction: "faction",
+    faction: "group",
     creature: "creature",
     deity: "god",
     character: "character",

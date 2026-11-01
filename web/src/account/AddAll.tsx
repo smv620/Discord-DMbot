@@ -193,7 +193,7 @@ export default function AddAll({
               : added === 1
                 ? w.added(1, countsList(result.counts))
                 : lastKinds !== "all" && lastKinds.length === 1
-                  ? w.addedKind(added, added === 1 ? plainKindSingular(lastKinds[0]!) : plainKindWord(lastKinds[0]!))
+                  ? w.addedKind(added, plainKindWord(lastKinds[0]!))
                   : w.added(added, countsList(result.counts))}
           </p>
           {result.undo && (

@@ -58,8 +58,21 @@ describe("the words for the counts", () => {
     expect(countsList({ place: 5, character: 7 })).toBe("7 characters and 5 places");
     expect(countsList({ place: 5, character: 7, group: 2 })).toBe("7 characters and 5 places, and 1 other kind");
     expect(countsList({ place: 5, character: 7, group: 2, item: 1 })).toBe("7 characters and 5 places, and 2 other kinds");
+    expect(countsList({ place: 2, character: 2 })).toBe("2 characters and 2 places");
+    expect(countsList({ place: 2, character: 2 })).toBe(countsList({ character: 2, place: 2 }));
+    expect(countsList({ place: 1, character: 3 })).toBe("3 characters and 1 place");
+    expect(countsList({ place: 0, character: 4 })).toBe("4 characters");
     expect(w.found(1)).toBe("1 name found in your document is waiting for your OK.");
     expect(w.found(3)).toBe("3 names found in your document are waiting for your OK.");
+  });
+});
+
+describe("every plural kind has a singular", () => {
+  it("names one of each kind in the singular", async () => {
+    const { webPage } = await import("../src/content/web-words");
+    for (const key of Object.keys(webPage.kinds)) {
+      expect(webPage.kindOne, key).toHaveProperty(key);
+    }
   });
 });
 
