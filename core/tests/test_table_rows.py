@@ -107,3 +107,26 @@ class TableRows(MemoryTest):
                 }
             )
         )
+
+    async def test_a_hidden_entry_named_by_a_known_connection_stays_unseen(self) -> None:
+        await self.pc("Tavin", 1001)
+        await self.pc("Mara", 1002)
+        pub = await self.add("The Pub", status=CONFIRMED)
+        rook = await self.add("Rook", status=CONFIRMED, hidden_from_players=True)
+        made = await self.memory.add_relation(
+            GUILD_A, self.c, pub, "knows", rook, source="dm", confidence=1.0, status=CONFIRMED
+        )
+        link = str(made.value[0].id)
+        await self.memory.set_statement_knowers(
+            GUILD_A, self.c, "connection", link, [], source="dm"
+        )
+        data = await self.memory.lookup_data(GUILD_A, self.c)
+        by_name = {e.name: e for e in data.entities}
+        self.assertTrue(by_name["Rook"].unseen_by_players)
+        self.assertFalse(by_name["The Pub"].unseen_by_players)
+
+    async def test_a_who_knows_edit_reloads_the_lookup(self) -> None:
+        from dmbot.memory import notify
+
+        self.assertIn("memory_knowers", notify.LOOKUP_TABLES)
+        self.assertIn("memory_perspectives", notify.LOOKUP_TABLES)

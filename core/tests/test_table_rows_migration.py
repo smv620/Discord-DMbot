@@ -65,6 +65,15 @@ class TableRowsMigration(unittest.IsolatedAsyncioTestCase):
                 (entity_id,),
             )
 
+    async def joined(self, entity_id: str, seconds_from_now: int) -> None:
+        """When the character joined, kept apart from the rows made in the same second."""
+        async with self.db.guild(GUILD) as conn:
+            await conn.execute(
+                "UPDATE memory_entities SET created_at = extract(epoch FROM now())::bigint + %s"
+                " WHERE id = %s",
+                (seconds_from_now, entity_id),
+            )
+
     async def seen_by(self, character: str) -> set[str]:
         got = await self.memory.visible_to(GUILD, self.c, Viewer.character(character))
         return set(got.entries)
@@ -79,6 +88,7 @@ class TableRowsMigration(unittest.IsolatedAsyncioTestCase):
             GUILD, self.c, ENTRY, partial, [await self.pc("Orin", 4)], source="dm"
         )
         late = await self.pc("Kesh", 5)
+        await self.joined(late, 1000)
         await self.forget_for(late)
         before = await self.rows()
         await self.db.migrate(MIGRATIONS)
@@ -92,6 +102,7 @@ class TableRowsMigration(unittest.IsolatedAsyncioTestCase):
         await self.pc("Mara", 2)
         await self.add("The Pub")
         late = await self.pc("Kesh", 3)
+        await self.joined(late, 1000)
         await self.forget_for(late)
         await self.db.migrate(MIGRATIONS)
         after = await self.rows()
@@ -105,6 +116,7 @@ class TableRowsMigration(unittest.IsolatedAsyncioTestCase):
         await self.pc("Mara", 2)
         pub = await self.add("The Pub")
         late = await self.pc("Kesh", 3)
+        await self.joined(late, 1000)
         await self.forget_for(late)
         async with self.db.guild(GUILD) as conn:  # the pub is asleep for the late character
             await conn.execute(
@@ -135,3 +147,16 @@ class TableRowsMigration(unittest.IsolatedAsyncioTestCase):
         seen = await self.seen_by(only)
         self.assertIn(pub, seen)
         self.assertNotIn(hidden, seen)
+
+    async def test_a_clue_one_player_character_was_given_is_not_copied_to_the_other(self) -> None:
+        tavin = await self.pc("Tavin", 1)
+        mara = await self.pc("Mara", 2)
+        await self.joined(tavin, -2000)
+        await self.joined(mara, -1000)  # both were at the table before the clues were told
+        clue_a = await self.add("A private clue", hidden_from_players=True)
+        clue_b = await self.add("Another private clue", hidden_from_players=True)
+        await self.memory.set_statement_knowers(GUILD, self.c, ENTRY, clue_a, [tavin], source="dm")
+        await self.memory.set_statement_knowers(GUILD, self.c, ENTRY, clue_b, [mara], source="dm")
+        await self.db.migrate(MIGRATIONS)
+        self.assertNotIn(clue_a, await self.seen_by(mara))
+        self.assertNotIn(clue_b, await self.seen_by(tavin))

@@ -11,12 +11,17 @@ from __future__ import annotations
 # (CLAUDE.md, #704): every table read or written below has a `migrate_backfill` policy for the
 # length of this migration.
 # The rule is the one the app now applies when a player character joins (`inherit_table_rows`):
-#   - a statement every OTHER player character already knows (awake rows only) is given to the
-#     player character that lacks it, at the least sure of theirs: never a "some characters" list,
-#     a DM-only or NPC-only row, or a row a hide put to sleep (a sleeping row of its own also
+#   - a statement every OTHER player character already knew (awake rows only) BEFORE the one that
+#     lacks it joined (the newest of those rows is no newer than that character's entry: the data
+#     cannot tell "joined late" from "left out on purpose", and a row made after the join may
+#     be a partial reveal) is given to it, at the least sure of theirs: never a "some characters"
+#     list, a DM-only or NPC-only row, or a row a hide put to sleep (a sleeping row of its own also
 #     stops it, so nothing is woken here);
 #   - a campaign with exactly one player character has no table to copy: what the flags show the
 #     players (an entry, its conditions and names, a connection with both ends shown) is given.
+# Statement ids are random 32-character hex strings, so one id never names two kinds of statement
+# (the `NOT EXISTS` checks compare the id alone). Two player characters that both lack a row get
+# nothing here ("every other holds it" fails for both): safe, and the app path handles each join.
 # The count of rows added is raised as a notice, counts only.
 TABLE_ROWS = r"""
     CREATE POLICY migrate_backfill ON memory_knowers FOR ALL USING (true) WITH CHECK (true);
@@ -33,7 +38,7 @@ TABLE_ROWS = r"""
     BEGIN
         -- The table: what every other player character knows, given to the one that lacks it.
         WITH pcv AS (
-            SELECT p.guild_id, p.campaign_id, p.id AS view_id
+            SELECT p.guild_id, p.campaign_id, p.id AS view_id, e.created_at AS joined_at
             FROM memory_perspectives p
             JOIN memory_entities e ON e.guild_id = p.guild_id AND e.campaign_id = p.campaign_id
                                   AND e.id = p.entity_id
@@ -42,7 +47,7 @@ TABLE_ROWS = r"""
         ), pcs AS (
             SELECT guild_id, campaign_id, count(*) AS n FROM pcv GROUP BY 1, 2
         ), held AS (
-            SELECT k.guild_id, k.campaign_id, k.perspective_id, k.confidence,
+            SELECT k.guild_id, k.campaign_id, k.perspective_id, k.confidence, k.created_at,
                    CASE WHEN k.about_entity_id IS NOT NULL THEN 'e'
                         WHEN k.state_id IS NOT NULL THEN 's'
                         WHEN k.relation_id IS NOT NULL THEN 'r' ELSE 'a' END AS kind,
@@ -53,7 +58,7 @@ TABLE_ROWS = r"""
             WHERE cardinality(k.hidden_by) = 0
         ), said AS (
             SELECT guild_id, campaign_id, kind, sid, count(*) AS holders,
-                   min(confidence) AS sure
+                   min(confidence) AS sure, max(created_at) AS last_at
             FROM held GROUP BY 1, 2, 3, 4
         )
         INSERT INTO memory_knowers
@@ -71,7 +76,8 @@ TABLE_ROWS = r"""
             JOIN pcs ON pcs.guild_id = s.guild_id AND pcs.campaign_id = s.campaign_id
                     AND pcs.n >= 2 AND s.holders = pcs.n - 1
             JOIN pcv v ON v.guild_id = s.guild_id AND v.campaign_id = s.campaign_id
-            WHERE NOT EXISTS (
+            WHERE s.last_at <= v.joined_at
+              AND NOT EXISTS (
                 SELECT 1 FROM memory_knowers x
                 WHERE x.guild_id = v.guild_id AND x.campaign_id = v.campaign_id
                   AND x.perspective_id = v.view_id

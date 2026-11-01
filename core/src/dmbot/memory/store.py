@@ -803,7 +803,9 @@ class MemoryStore:
             made = [_entity(r) for r in entities]
             if party is not None:
                 made = [
-                    dataclasses.replace(e, seen_by_party=e.id in party.entries)
+                    # (the entry's own row: learning a connection or name that mentions an entry
+                    # does not show its main name, `gate.display_name`)
+                    dataclasses.replace(e, seen_by_party=(gate.ENTRY, e.id) in party.sureness)
                     if e.status == CONFIRMED
                     else e
                     for e in made

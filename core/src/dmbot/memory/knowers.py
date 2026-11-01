@@ -877,6 +877,11 @@ async def inherit_table_rows(w: Changes, joined: Sequence[str]) -> int:
     w.player_views = None  # (made views may have changed the list)
     others = {await _view_of(w, i) for i in ids - set(new)}
     held: dict[tuple[str, str], dict[str, float]] = {}
+    asleep: set[tuple[str, str, str]] = set()  # (column, statement, view) put to sleep by a hide
+    for r in await w.select(KNOWERS, " AND cardinality(hidden_by) > 0", dormant=True):
+        for column in ("about_entity_id", "state_id", "relation_id", "alias_id"):
+            if r[column] is not None:
+                asleep.add((column, r[column], r["perspective_id"]))
     for r in await w.select(KNOWERS):
         for column in ("about_entity_id", "state_id", "relation_id", "alias_id"):
             if r[column] is not None:
@@ -895,6 +900,7 @@ async def inherit_table_rows(w: Changes, joined: Sequence[str]) -> int:
         for (column, statement), sure in wanted.items()
         for view in new_views.values()
         if view not in held.get((column, statement), {})
+        and (column, statement, view) not in asleep  # (a sleeping row wakes by itself)
     ]
     await w.insert_many(KNOWERS, made)
     return len(made)
