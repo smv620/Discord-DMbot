@@ -142,6 +142,24 @@ class Continuity(ConfirmedMemoryTest):
         (conflict,) = (await self.check()).conflicts
         self.assertEqual((conflict.kind, conflict.level), (CONTRADICTION, LIKELY))
 
+    async def test_a_friend_held_as_a_feeling_called_an_enemy_is_a_likely_contradiction(
+        self,
+    ) -> None:
+        await self.relate(
+            self.ulfgar, "knows", self.cerric, status="confirmed", from_session_at=EARLIER,
+            detail="friendly",
+        )  # fmt: skip
+        await self.claim(said("Ulfgar", "enemy of", "Cerric"))
+        (conflict,) = (await self.check()).conflicts
+        self.assertEqual((conflict.kind, conflict.level), (CONTRADICTION, LIKELY))
+
+    async def test_a_plain_acquaintance_called_an_enemy_is_no_contradiction(self) -> None:
+        await self.relate(
+            self.ulfgar, "knows", self.cerric, status="confirmed", from_session_at=EARLIER
+        )
+        await self.claim(said("Ulfgar", "enemy of", "Cerric"))
+        self.assertEqual((await self.check()).conflicts, ())
+
     async def test_raising_the_settings_above_a_rule_silences_it(self) -> None:
         await self.relate(
             self.ulfgar, "ally_of", self.cerric, status="confirmed", from_session_at=EARLIER

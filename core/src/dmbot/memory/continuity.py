@@ -23,11 +23,12 @@ otherwise the conflict is still shown, with the fact in DMbot's own words and no
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import logging
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 
-from dmbot.memory import beliefs, kin
+from dmbot.memory import beliefs, kin, reputation_words
 from dmbot.memory._changes import ALIASES, CLAIMS, ENTITIES, RELATIONS, STATES, Changes
 from dmbot.memory.checks import (
     ACTS_AFTER_END,
@@ -194,6 +195,16 @@ class Report:
     claims: int = 0  # claims looked at
 
 
+def _as_old_kind(r: Relation) -> Relation:
+    """A held feeling (`knows` with a reputation word) as the old ally or enemy it is the same fact
+    as, for the clash check only (#3181); any other row as it is."""
+    if r.predicate != "knows":
+        return r
+    word = reputation_words.word_of(r.detail)
+    legacy = reputation_words.old_kind_of(word) if word is not None else None
+    return r if legacy is None else dataclasses.replace(r, predicate=legacy)
+
+
 def reached_critical_mass(facts: int, sessions: int, levels: Levels) -> bool:
     return facts >= levels.min_facts and sessions >= levels.min_sessions
 
@@ -242,9 +253,17 @@ def claim_conflicts_in(claims: Sequence[Claim], world: World, levels: Levels) ->
         other = world.names.one(claim.object)
         if isinstance(other, str):
             continue
-        term, from_object, _label = place_relationship(
-            world.onto, claim.relationship, who[1], other[1]
+        term, from_object, label = place_relationship(
+            world.onto, claim.relationship, who[1], other[1], details=claim.details or ""
         )
+        # A feeling is `knows` with a word now (#3181), and an ally and an enemy were the two kinds
+        # that cannot stand together: for this check a good word is the old ally and a bad one the
+        # old enemy, on the claim and on what the campaign holds, so old rows and new still clash.
+        checked_term = term
+        if term.key == "knows":
+            legacy = reputation_words.old_kind_of(label)
+            if legacy is not None and legacy in world.onto.predicates:
+                checked_term = world.onto.predicates[legacy]
         subject_id, object_id = (other[0], who[0]) if from_object else (who[0], other[0])
         if subject_id == object_id:
             continue
@@ -253,12 +272,15 @@ def claim_conflicts_in(claims: Sequence[Claim], world: World, levels: Levels) ->
             found.append(outsider)
         s, o = ordered(term, subject_id, object_id)
         candidate = Relation(
-            id=new_id(), subject_id=s, predicate=term.key, object_id=o, detail="", confidence=1.0,
+            id=new_id(), subject_id=s, predicate=checked_term.key, object_id=o, detail="",
+            confidence=1.0,
             status=CONFIRMED, source=DM, mention_ids=(), from_session_at=claim.session_started_at,
             to_session_at=None, from_game_time=None, to_game_time=None, secret=False,
             created_at=claim.created_at,
         )  # fmt: skip
-        touching = list({r.id: r for r in (*by_entry.get(s, ()), *by_entry.get(o, ()))}.values())
+        held = list({r.id: r for r in (*by_entry.get(s, ()), *by_entry.get(o, ()))}.values())
+        touching = [_as_old_kind(r) if checked_term is not term else r for r in held]
+        originals = {r.id: r for r in held}
         for problem in check_relation(
             world.onto,
             candidate,
@@ -271,7 +293,7 @@ def claim_conflicts_in(claims: Sequence[Claim], world: World, levels: Levels) ->
         ):
             if problem.kind not in RULE_PROBABILITY:
                 continue  # types, place loops: structure, not continuity
-            clash = [r for r in touching if r.id == problem.other_id]
+            clash = [originals[r.id] for r in touching if r.id == problem.other_id]
             if problem.kind == ACTS_AFTER_END:
                 actor = next((e for e in (s, o) if e in ended), who[0])
                 found.append(

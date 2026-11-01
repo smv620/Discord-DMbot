@@ -464,9 +464,9 @@ CORE_PREDICATES: tuple[PredicateTerm, ...] = (
     PredicateTerm(
         "enemy_of",
         "is an enemy of",
-        "On opposite sides, and acting on it: groups at war. Both ways. A person's hatred of "
-        "another is `knows` with a reputation word; this is kept for old rows and for groups at "
-        "war.",
+        "On opposite sides, and acting on it: groups at war. Both ways. Hatred between "
+        "characters is `knows` with a reputation word; this is kept for old rows and for "
+        "groups at war.",
         (*_BEINGS, "faction"),
         (*_BEINGS, "faction"),
         symmetric=True,
@@ -476,14 +476,14 @@ CORE_PREDICATES: tuple[PredicateTerm, ...] = (
             "two groups at war or in a feud",
         ),
         not_this=(
-            ("they dislike or hate each other, as people", "knows"),
+            ("two characters who dislike or hate each other", "knows"),
             ("one of them rules the other", "serves"),
         ),
         examples=("Strahd is an enemy of Cerric.", "The Zhentarim are an enemy of the Harpers."),
         inverse_label="is an enemy of",
         synonyms=("enemies_with", "hates", "opposes"),
         inner_state=True,
-        version=3,  # a rival is its own kind (#3035); a person's hatred is `knows` now (#3181)
+        version=3,  # a rival is its own kind (#3035); hatred is `knows` now (#3181)
     ),
     PredicateTerm(
         "rival_of",

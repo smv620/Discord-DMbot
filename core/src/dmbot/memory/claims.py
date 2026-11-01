@@ -319,6 +319,7 @@ def resolve_relationship(onto: Ontology, text: str) -> tuple[PredicateTerm, bool
 
 # Two characters KNOW each other and how kindly is a reputation word (#3175, #3181): the old
 # friend, ally and enemy relationships are read as `knows` with the word they always meant.
+_FILLER = frozenset({"is", "are", "was", "were", "a", "an", "the"})
 _OLD_FEELING = {"ally_of": reputation_words.FRIENDLY, "enemy_of": reputation_words.HOSTILE}
 
 
@@ -336,7 +337,11 @@ def feeling_of(onto: Ontology, text: str, details: str = "") -> tuple[PredicateT
         return knows, word
     known = resolve_relationship(onto, text)
     if known is None:
-        return None
+        # ("is a friend of", "are enemies of": the wording around the old kind is not part of it)
+        bare = [w for w in re.findall(r"[a-z0-9]+", text.casefold()) if w not in _FILLER]
+        known = resolve_relationship(onto, " ".join(bare)) if bare else None
+        if known is None or known[0].key not in _OLD_FEELING:
+            return None
     term = known[0]
     if term.key in _OLD_FEELING:
         return knows, _OLD_FEELING[term.key]
@@ -480,8 +485,8 @@ def judge(
         return other
     if who[0] == other[0]:
         return SAME_ENTRY_REASON
-    term, said_from_object, _label = place_relationship(
-        onto, claim.relationship, who[1], other[1], tally
+    term, said_from_object, label = place_relationship(
+        onto, claim.relationship, who[1], other[1], tally, claim.details or ""
     )
     s_kind, o_kind = (other[1], who[1]) if said_from_object else (who[1], other[1])
     if term.subject_types and not onto.is_any(s_kind, term.subject_types):
@@ -491,7 +496,7 @@ def judge(
     # Who speaks for a character (#2562): a PC's own choice and feeling come from its player, an
     # NPC's from the DM. A player's word about someone else's character is what they believe, never
     # the character's own, so it is not offered to the DM as a truth.
-    if _voice_of(names, who, other, said_from_object, term, claim, speakers, dms) == PARTY:
+    if _voice_of(names, who, other, said_from_object, term, claim, speakers, dms, label) == PARTY:
         return PARTY_REASON
     return ""
 
@@ -505,13 +510,15 @@ def _voice_of(
     claim: Extracted,
     speakers: Sequence[int | None],
     dms: Collection[int],
+    feeling: str = "",
 ) -> str:
-    """`own`, `effect` or `party` (`memory.voice`) for a claim about the character it is about."""
+    """`own`, `effect` or `party` (`memory.voice`) for a claim about the character it is about.
+    `feeling`: the reputation word a `knows` claim carries ("" when it carries none)."""
     holder = other if said_from_object else who
     if holder[1] != "character":
         return OWN  # (a group's attitude stays the DM's)
     role, plays = names.roles.get(holder[0], (None, None))
-    return voice(role, term.key, claim.how, speakers, plays, dms)
+    return voice(role, term.key, claim.how, speakers, plays, dms, feeling=bool(feeling))
 
 
 def effect_note(
@@ -524,8 +531,10 @@ def effect_note(
     other = names.one(claim.object)
     if isinstance(who, str) or isinstance(other, str):
         return ""
-    term, said_from_object, _ = place_relationship(onto, claim.relationship, who[1], other[1])
-    if _voice_of(names, who, other, said_from_object, term, claim, speakers, dms) != EFFECT:
+    term, said_from_object, label = place_relationship(
+        onto, claim.relationship, who[1], other[1], details=claim.details or ""
+    )
+    if _voice_of(names, who, other, said_from_object, term, claim, speakers, dms, label) != EFFECT:
         return ""
     holder = other if said_from_object else who
     return (
