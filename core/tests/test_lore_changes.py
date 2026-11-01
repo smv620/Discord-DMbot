@@ -90,14 +90,15 @@ class TheChange(NamesTest):
         view = await self.card()
         self.assertIn("Change this?", view.text())
         self.assertIn("Now: **Belleros** ally of **Cerric**", view.text())
-        self.assertIn("Your text: **Belleros** is an enemy of **Cerric**", view.text())
+        self.assertIn("Your text: **Belleros** knows (hostile) **Cerric**", view.text())
         # nothing has changed until the DM says yes
         (only,) = await self.relations()
         self.assertIsNone(only.to_session_at)
         await next(b for b in view.children if b.label == "✅ Change it").callback(self.it())
         by_kind = {r.predicate: r for r in await self.relations()}
         self.assertIsNotNone(by_kind["ally_of"].to_session_at)  # ended, not deleted
-        self.assertIsNone(by_kind["enemy_of"].to_session_at)  # live
+        self.assertIsNone(by_kind["knows"].to_session_at)  # live (enemy is knows, hostile, #3175)
+        self.assertEqual(by_kind["knows"].detail, "hostile")
         self.assertEqual(await self.store.waiting(GUILD, self.campaign.id), [])
 
     async def test_a_kind_that_can_hold_beside_the_old_one_is_offered_as_new(self) -> None:
@@ -140,6 +141,20 @@ class TheChange(NamesTest):
         (only,) = await self.relations()
         self.assertEqual((only.predicate, only.to_session_at), ("ally_of", None))
         self.assertEqual(len(await self.store.waiting(GUILD, self.campaign.id)), 1)
+
+    async def test_a_changed_feeling_on_a_held_knows_is_a_change_and_the_same_is_not(self) -> None:
+        # (#3175) the connection now held is "knows (hostile)"; the text first says the same, then
+        # the opposite
+        await self.read("enemy")
+        view = await self.card()
+        await next(b for b in view.children if b.label == "✅ Change it").callback(self.it())
+        again = shown(await self.read("enemy"))
+        self.assertIn("1 already known", again)  # (same feeling: nothing to ask)
+        changed = shown(await self.read("friend"))
+        self.assertIn("1 change ready to check", changed)  # (the opposite feeling is a change)
+        view = await self.card()
+        self.assertIn("Now: **Belleros** knows (hostile) **Cerric**", view.text())
+        self.assertIn("Your text: **Belleros** knows (friendly) **Cerric**", view.text())
 
     async def test_after_a_change_the_old_kind_can_be_offered_back(self) -> None:
         await self.read("enemy")

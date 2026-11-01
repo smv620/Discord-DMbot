@@ -1411,10 +1411,15 @@ export type RecapAudioLinks = Partial<
 
 export type RecapAction = "post" | "again" | "drop";
 
+/** Who knows a name or a connection, for the DM's full view (#3167; core #3166). Five plain states. */
+export type KnowWord = "secret" | "hidden_from_the_players" | "known_to_an_npc" | "partly_revealed" | "known_to_the_party";
+
 /** One name on the Story Graph (#2324). `secret` is sent to the campaign's DMs only. */
 export interface WebNode {
   id: string;
   name: string;
+  /** Who knows it, in the DM's full view only (#3167). With it, the old secret and not-revealed words give way. */
+  knowWord?: KnowWord;
   /** The kind's key ("npc", "place", ...). */
   kind: string;
   secret?: boolean;
@@ -1447,6 +1452,8 @@ export interface WebLink {
   id: string;
   words: string;
   secret: boolean;
+  /** Who knows the connection, in the DM's full view only (#3167). */
+  knowWord?: KnowWord;
   direction: "a-b" | "b-a" | "both";
   /** The kind of connection, for the map's colours and filters (#2942). Absent from an older API. */
   kind?: WebLinkKind;
@@ -1491,6 +1498,8 @@ export interface WebGraph {
   canPeek?: boolean;
   /** Which web this is. */
   view?: WebView;
+  /** The web as one character knows it (#2999): whose it is. Null or left out for the DM's own web. */
+  seeAs?: { viewer: string; name: string } | null;
 }
 
 /** One group of linked names, as the overview lists it (#2632): the name to put in the middle to see it. */
@@ -1529,6 +1538,20 @@ export interface WebQuery {
   /** "players": exactly what a player sees. "full": everything, for a DM or a player who peeks.
    * Left out, the API picks for the person (#2405). */
   view?: WebView;
+  /** A character's id, or "party": read the web as that one knows it (#2999). Left out for the DM's own web. */
+  seeAs?: string;
+}
+
+/** A name a DM may look at the web as (#2999): a player character or an NPC. */
+export interface WebViewer {
+  id: string;
+  name: string;
+  kind: "pc" | "npc";
+}
+export interface WebViewers {
+  viewers: WebViewer[];
+  /** Every name that matches, so the page can say when it shows only some. */
+  total: number;
 }
 
 /** Which web the page asks for (#2405). */
@@ -2295,6 +2318,8 @@ export interface AccountApi {
   /** The names to offer under "Find a name" in this view: only what the caller may see there, so a DM in
    * Players View is never offered a name the players don't know (#2989). Missing from an older API. */
   webFind?(ref: string, query: { q: string; view?: WebView }): Promise<{ id: string; name: string; kind: string }[]>;
+  /** The names a DM may look at the web as, player characters first; `q` narrows them (#2999). */
+  webViewers?(ref: string, q: string): Promise<WebViewers>;
   /** What waits for the DM, and one answer to it (#2635, #2652). `answerWaiting` resolves with how many
    * connections a Keep all kept, when the API says. Missing from an API older than that. */
   webWaiting?(ref: string): Promise<Waiting>;
@@ -2710,7 +2735,7 @@ export interface ApiHelpers {
 /** The calls of each area, by name: what `httpApi` stands in for until the area's file is loaded. */
 export const ACCOUNT_METHODS = ["emailSignInRequest", "emailSignInUse", "offerHandover", "deleteCampaign", "restoreStage", "restorePart", "restoreGo", "restoreStatus", "restoreCancel", "campaignBackup", "takeBackHandover", "handoverLook", "handoverAccept", "handoverDecline", "removeDiscordAccount", "getMoveCode", "myEmail", "changeEmail", "confirmEmail", "cancelEmailChange", "sendSupport", "mySupport", "supportThread", "signOutEverywhere", "startTryIt", "checkoutUrl", "billingPortalUrl", "renewPlan", "extraHoursUrl", "downloadExport", "characters", "linkServer", "acceptOffer", "declineOffer", "withdrawOffer", "stopRecording", "myLines", "deleteMyLines", "myLinesStatus", "requestDelete", "confirmDelete"] as const satisfies readonly (keyof AccountApi)[];
 export const RECAPS_METHODS = ["recapAudioUrl", "recaps", "pastSessions", "sessionReport", "makeSessionReport", "answerReport", "setBeatPresent", "makeRecap", "addRecap", "recapList", "recap", "saveRecap", "approveRecap", "approveUnchecked", "recapAudioLinks", "recapChoices", "setRecapChoice", "askRecapAudioAgain", "plotCheck", "answerPlotIssue", "plotChatSend", "plotChat", "decidePlotProposal", "recapAudioRemake", "sendFix", "fixResult", "sendVoice", "voiceResult", "rewriteWith", "importPreview", "importMembers", "importCheck", "importStart", "importProgress", "shareRecap", "publicRecap", "decideRecap"] as const satisfies readonly (keyof AccountApi)[];
-export const NAMES_METHODS = ["namesFixed", "undoNameFix", "campaignNames", "suggestSaidAs", "respellFromVoice", "saveSaidAs", "nameChecks", "answerNameCheck", "npcPage", "saveNpcNote", "myNpcNotes", "deleteMyNpcNotes", "allNames", "smartNames", "changeName", "nameThem", "webGraph", "webSize", "webOverview", "webFind", "webWaiting", "answerWaiting", "webReadings", "answerReading", "webPeek", "webReveal", "changeWebLink"] as const satisfies readonly (keyof AccountApi)[];
+export const NAMES_METHODS = ["namesFixed", "undoNameFix", "campaignNames", "suggestSaidAs", "respellFromVoice", "saveSaidAs", "nameChecks", "answerNameCheck", "npcPage", "saveNpcNote", "myNpcNotes", "deleteMyNpcNotes", "allNames", "smartNames", "changeName", "nameThem", "webGraph", "webSize", "webOverview", "webFind", "webViewers", "webWaiting", "answerWaiting", "webReadings", "answerReading", "webPeek", "webReveal", "changeWebLink"] as const satisfies readonly (keyof AccountApi)[];
 export const CAMPAIGN_METHODS = ["transcriptCampaigns", "transcriptSessions", "transcript", "transcriptFile", "transcriptStretch", "transcriptPutBack", "transcriptLeaveOut", "sessionNotesList", "sessionNotes", "setCampaignSetting", "campaignOptionalRules", "campaignGameMasters", "campaignSheets", "chooseSheet", "sheetAnswer", "fixTranscriptLine", "fixAnswer", "campaignGameMasterCandidates", "campaignSettingAnswer", "timeline", "sharedRules", "houseRuleCampaigns", "houseRules", "ruleSharing", "chooseRuleSharing", "ruleSharingAnswer", "houseRulesFile", "improvement", "setImprovement", "homebrewCampaigns", "homebrew", "homebrewFile", "campaignPage", "loreAdd", "loreRead", "recapStyle", "changeRecapStyle", "recapStyleAction", "houseFile", "houseFileAdd"] as const satisfies readonly (keyof AccountApi)[];
 
 /** A stand-in for each call of an area: the first use loads the area's file (once), and every call goes to it. */

@@ -1,6 +1,8 @@
 // The words of the Story Graph page (#2324; docs/PLAN.md, "The Story Graph on the website"):
 // the names of a campaign as dots, the connections between them as lines. Plain words. DMbot never
 // decides: a DM changes what DMbot remembers, and Undo is on the name's card in Discord.
+import type { KnowWord } from "../account/api";
+
 /** Over this many names the page asks before drawing (PLAN: "about 300"). */
 export const BIG_WEB = 300;
 
@@ -16,6 +18,17 @@ export const webPage = {
   centreLabel: "Middle of the web",
   centreSearch: "Find a name",
   centreHint: "Type part of a name, then choose it.",
+  // "See as…" (#2999): the DM looks at the web as one character, or the party, knows it. Read-only while on.
+  seeAsLabel: "See as…",
+  seeAsPlaceholder: "Search a character",
+  seeAsHint: "Shows only what that character knows. You can't change anything here.",
+  seeAsMore: (shown: number, total: number): string => `Showing ${shown} of ${total}. Type to narrow.`,
+  seeAsParty: "The party",
+  seeAsNow: (name: string): string => `Seeing the story as ${name}.`,
+  seeAsBack: "Back to the party",
+  seeAsLoadFailed: "Couldn't load the list. Try again.",
+  seeAsGone: "That character isn't in this story any more.",
+  seeAsListLabel: "Characters to see the story as",
   centreNone: "No name matches.",
   centreNow: (name: string): string => `In the middle: ${name}`,
   hopsLabel: "Steps out from the middle",
@@ -167,6 +180,15 @@ export const webPage = {
   peekCancel: "Cancel",
   peeking: "You are peeking. This shows what your DM hasn't told you. Turn the switch off to go back.",
   notRevealed: "players don't know yet",
+  // Who knows a name or connection, in the DM's full view (#3167). Plain words; the mark is 🤫 for secret only.
+  knowWords: {
+    secret: "Secret: only you know this",
+    hidden_from_the_players: "Hidden from the players: only NPCs know this",
+    known_to_an_npc: "Only one NPC knows this",
+    partly_revealed: "Some of the party know this",
+    known_to_the_party: "The whole party knows this",
+  } as Record<KnowWord, string>,
+  knowHint: "Worked out from what happened in your sessions. Only you see these marks.",
   notRevealedFull: "Players don't know this yet",
   legendNotRevealed: "Faded: players don't know this yet",
   legendTheory: "Dotted line with ?: something the party suspects",

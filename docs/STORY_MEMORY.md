@@ -838,6 +838,7 @@ group), and an Undo of a rejoin writes the closed placements back. A character's
 newest row at or before it. `stamp.group_of_speakers` turns a line's speakers (people, never characters) into a group: only the kept characters those people play that were in a group at that moment count; exactly one group among them gives it. Characters who were not placed, and a speaker who plays none here (the DM), are ignored; two or more different groups, or none at all, are "not known", because DMbot never guesses whose voice it was. A character that is erased takes its rows with it. It is not carried in backups (character ids are the
 file's, a restored campaign starts a new history, and a split's placements are a moment of play, not story);
 a line from before the restore reads "not known".
+**The DM's buttons for it:** after a split the DM is asked privately, one picker per group ("Who is in Tower?"; the campaign's kept player characters only, at most 25 shown) and a Skip for now button; **Who is where** in **Rests & time…** reopens it any time while split. A pick says who is in that group now: someone taken off the pick is released. Words: "Pick who is in each group. Anyone you skip gets no game time on their lines until you do." Nothing here is shown to players.
 
 **The campaign's calendar (#3091 part 3, migration 0307):** three columns on the clock's row: `calendar_kind`
 (`days`, the default and what every clock had, or `harptos`) and the date of Day 1 as two numbers (the year
@@ -1509,6 +1510,33 @@ Each step is useful on its own and ships behind the existing phases.
 
 TimeBot (Phase 4) makes game-time checks exact; until then facts are ordered by session,
 as today.
+
+### 9d. Knows and a reputation word instead of friend and enemy (owner, 2026-11-01; #3175)
+
+Two characters just **know** each other, and how well and how kindly is a **reputation**: the scale the
+DM sets as Standing (five steps, -80 to 80, section "Standing"). The readers (the lore read and the
+backstory read) no longer offer friend, ally or enemy. A `knows` line carries one of nine plain words for
+how the first name feels about the second: sworn enemy, hostile, distrusts, wary, neutral, trusts,
+friendly, close, devoted (`memory/reputation_words.py`; the readers return a word, never a number).
+"Friends" or "enemies" is two lines, one each way; "neutral" stores no word (no opinion yet is how DMbot
+shows it); a word off the list is dropped and counted and the connection is kept without it.
+
+- **Old rows are the same fact with a sign.** `ally_of` and `enemy_of` rows already stored stay as they
+  are and read as a positive or negative feeling; nothing migrates and the readers simply stop producing
+  them. An AI or older data that still says friend, ally or enemy is read as `knows` with friendly,
+  friendly or hostile, so no line is lost.
+- **An opposite feeling is a change.** Against a held friendship (old `ally_of` or `knows` with a good
+  word), "enemies" ends it and starts the new one, offered as a change the DM presses, as before; a held
+  `knows` with a different feeling is changed the same way; the same feeling is already known.
+- **Who sees the word.** The feeling word is the connection's own detail, so it follows that connection's
+  knowers exactly as "enemy of" did (section 9b): a character who does not know the connection does not
+  see the word, and a secret connection is secret with it. The reputation impression (Standing) is a
+  different thing and stays DM-only; nothing here makes one: the word is a proposal that waits with the
+  connection, and storing an impression on the DM's Keep press is a later slice, with the DM's word
+  always winning.
+- **Not changed yet.** The session extractor and the ontology's "not this" lines for `knows`, `ally_of`
+  and `enemy_of` still describe the old split; that is the next slice (#3181). The
+  website shows a feeling-carrying `knows` as plain "knows" until its own reading learns the word.
 
 ## Decided
 

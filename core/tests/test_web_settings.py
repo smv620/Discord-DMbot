@@ -6,6 +6,7 @@ by the DM who made them. Invented names throughout."""
 from __future__ import annotations
 
 import unittest
+from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
@@ -23,6 +24,7 @@ from dmbot.dm_screen import messages, setup_dm_screen
 from dmbot.dm_screen import web_settings as ws
 from dmbot.dm_screen.channel import DMScreenError
 from dmbot.dm_screen.transcript_keep import saved_text
+from dmbot.rules import optional
 from dmbot.rules.optional import OptionalRule
 from dmbot.web import campaign_settings, sessions
 from dmbot.web.app import create_app
@@ -79,6 +81,16 @@ class FakeBot:
         return await self.store.set_story_mode(
             campaign.guild_id, campaign.id, mode, confirmed_by=confirmed_by
         )
+
+    live = False  # a session of the campaign is running
+
+    async def apply_rulesets(self, campaign: Campaign, main: str, fallback: str) -> bool:
+        self.calls.append(("rulesets", f"{main}/{fallback}"))
+        await self.store.set_rulesets(campaign.guild_id, campaign.id, main, fallback)
+        return self.live
+
+    async def optional_overrides(self, campaign: Campaign) -> dict[str, bool]:
+        return await self.store.optional_rule_overrides(campaign.guild_id, campaign.id)
 
     async def find_member(self, guild_id: int, user_id: int) -> ws.Member | None:
         return ws.Member("Someone", False)
@@ -141,6 +153,131 @@ class Settings(Base):
 
 
 class TheChoices(Settings):
+    async def queue_rules(self, value: str) -> str:
+        # (the website's switch for this choice is on here: the bot half is what is tested)
+        return await campaign_settings.queue_setting(
+            self.web,
+            self.session,
+            self.cref,
+            {"setting": "rulesets", "value": value},
+            rulesets_on=True,
+        )
+
+    async def test_each_pair_of_main_and_fallback_rules_is_saved(self) -> None:
+        for pair in ("2014/2024", "2024/none", "2014/none", "2024/2014"):
+            answer = await self.queue_rules(pair)
+            self.assertEqual([o.error for o in await self.run_bot()], [""], pair)
+            found = await self.campaign()
+            self.assertEqual(f"{found.target_ruleset}/{found.fallback_ruleset}", pair)
+            self.assertEqual((await self.poll(answer))["state"], "done")
+
+    async def test_rules_of_another_campaign_are_left_alone(self) -> None:
+        before = await self.campaign(self.two)
+        await self.queue_rules("2014/none")
+        await self.run_bot()
+        after = await self.campaign(self.two)
+        self.assertEqual(
+            (after.target_ruleset, after.fallback_ruleset),
+            (before.target_ruleset, before.fallback_ruleset),
+        )
+
+    async def test_a_sender_who_is_no_longer_a_dm_is_refused_and_nothing_is_saved(self) -> None:
+        before = await self.campaign()
+        stranger = ws.Setting("x", self.one.id, 4242, ws.RULESETS, "2014/none")
+        outcome = await ws.apply(self.bot, self.g, stranger)
+        self.assertEqual(outcome.error, ws.NOT_ALLOWED)
+        after = await self.campaign()
+        self.assertEqual(
+            (after.target_ruleset, after.fallback_ruleset),
+            (before.target_ruleset, before.fallback_ruleset),
+        )
+        self.assertEqual(self.bot.calls, [])
+
+    async def test_a_value_that_is_not_two_words_is_refused_before_the_store(self) -> None:
+        item = ws.Setting("x", self.one.id, ALICE.id, ws.RULESETS, "2024")
+        for value in ("2024", "2024/2014/none", ""):
+            outcome = await ws.apply(self.bot, self.g, replace(item, value=value))
+            self.assertEqual(outcome.error, ws.BAD_VALUE, value)
+        self.assertEqual(self.bot.calls, [])
+
+    async def test_a_pair_the_store_refuses_fails_with_the_stores_words(self) -> None:
+        item = ws.Setting("x", self.one.id, ALICE.id, ws.RULESETS, "2024/2024")
+        for value in ("2024/2024", "2024/1999"):
+            outcome = await ws.apply(self.bot, self.g, replace(item, value=value))
+            self.assertEqual(outcome.error, ws.REFUSED, value)
+            self.assertTrue(outcome.note, value)
+
+    async def test_2024_to_2014_and_back_saves_both_ways(self) -> None:
+        for pair in ("2014/2024", "2024/2014"):
+            await self.queue_rules(pair)
+            await self.run_bot()
+            found = await self.campaign()
+            self.assertEqual(f"{found.target_ruleset}/{found.fallback_ruleset}", pair)
+
+    async def test_a_live_session_is_told_it_waits_for_the_next_session(self) -> None:
+        self.bot.live = True
+        answer = await self.queue_rules("2014/none")
+        await self.run_bot()
+        self.assertEqual((await self.poll(answer))["note"], ws.RULESETS_NEXT_SESSION)
+        self.bot.live = False
+        answer = await self.queue_rules("2024/2014")
+        await self.run_bot()
+        self.assertNotIn(ws.RULESETS_NEXT_SESSION, (await self.poll(answer))["note"])
+
+    async def test_an_optional_rule_that_stops_applying_is_named(self) -> None:
+        await self.campaigns.set_rulesets(self.g, self.one.id, "2014", "none")
+        only_2014 = [r for r in optional.CATALOG if r.applies_to == ("2014",)]
+        await self.campaigns.set_optional_rule(self.g, self.one.id, only_2014[0].id, True)
+        answer = await self.queue_rules("2024/2014")
+        await self.run_bot()
+        note = (await self.poll(answer))["note"]
+        self.assertIn(only_2014[0].name, note)
+        self.assertIn("do nothing until you switch back", note)
+
+    async def test_the_pure_check_names_only_rules_that_were_on_and_stop_applying(self) -> None:
+        rule = next(r for r in optional.CATALOG if r.applies_to == ("2014",))
+        self.assertIn(rule.name, ws.unused_optional_rules("2014", "2024", {}, True))
+        self.assertNotIn(
+            rule.name, ws.unused_optional_rules("2014", "2024", {rule.id: False}, True)
+        )
+        self.assertNotIn(rule.name, ws.unused_optional_rules("2014", "2024", {}, False))
+        self.assertEqual(ws.unused_optional_rules("2014", "2014", {}, True), [])
+        self.assertEqual(ws.unused_optional_rules("2024", "2014", {}, True), [])
+
+    async def test_the_real_bot_warms_the_new_pair_and_knows_when_a_session_is_live(self) -> None:
+        warmed: list[tuple[str, str]] = []
+        for tables, expect in (
+            ({}, False),
+            ({self.g: SimpleNamespace(campaign_id=self.one.id)}, True),
+        ):
+            me = SimpleNamespace(
+                campaigns=self.campaigns,
+                tables=tables,
+                _warm_rules=lambda pair, _w=warmed: _w.append(pair),
+            )
+            live = await DMBot.apply_rulesets(cast(Any, me), await self.campaign(), "2014", "none")
+            self.assertIs(live, expect)
+        self.assertEqual(warmed, [("2014", "none")] * 2)
+
+        # A warm-up that breaks does not undo the save.
+        def broken(_pair: tuple[str, str]) -> None:
+            raise RuntimeError("no")
+
+        me = SimpleNamespace(campaigns=self.campaigns, tables={}, _warm_rules=broken)
+        await DMBot.apply_rulesets(cast(Any, me), await self.campaign(), "2024", "2014")
+        self.assertEqual((await self.campaign()).target_ruleset, "2024")
+
+    async def test_applying_the_same_row_twice_changes_nothing_more(self) -> None:
+        await self.queue_rules("2014/none")
+        item = await self.items.claim_next(self.g)
+        assert item is not None
+        first = await ws.apply(self.bot, self.g, item)
+        once = await self.campaign()
+        again = await ws.apply(self.bot, self.g, item)
+        twice = await self.campaign()
+        self.assertEqual((first, again), (ws.Outcome(), ws.Outcome()))
+        self.assertEqual(once, twice)
+
     async def test_visibility_waits_then_changes_what_discord_changes(self) -> None:
         answer = await self.queue(setting="visibility", value="open")
         self.assertEqual((await self.poll(answer))["state"], "waiting")

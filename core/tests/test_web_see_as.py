@@ -301,6 +301,90 @@ class ThePicker(SeeAs):
             self.assertEqual(caught.exception.code, "not_allowed")
 
 
+class TheKnowWords(SeeAs):
+    """The word for each name and connection in the DM's full view, from who knows it (§9b)."""
+
+    async def words(self) -> tuple[dict[str, str], dict[str, str]]:
+        from dmbot.web import relationships
+
+        got = await relationships.read_web(
+            self.web, self.session, self.cref, center=self.mira, hops=3, view="full"
+        )
+        nodes = {n["name"]: n["knowWord"] for n in got["nodes"]}
+        links = {x["id"]: x["knowWord"] for e in got["edges"] for x in e["links"]}
+        return nodes, links
+
+    async def test_a_name_nobody_but_the_dm_knows_is_secret_and_the_rest_are_worded_by_who(
+        self,
+    ) -> None:
+        nodes, links = await self.words()
+        self.assertEqual(nodes["Greywater Keep"], gate.SECRET)
+        self.assertEqual(nodes["Mira Voss"], gate.PARTLY_REVEALED)  # (Rook knows her, Okra not)
+        self.assertEqual(links[self.links["mira-rook"]], gate.PARTLY_REVEALED)
+        await self.know(ENTRY, self.mira, [self.rook, self.okra])
+        self.assertEqual((await self.words())[0]["Mira Voss"], gate.KNOWN_TO_THE_PARTY)
+
+    async def test_what_only_npcs_know_is_hidden_from_the_players_not_secret(self) -> None:
+        tran = await self.add("Tran", "character", role="npc")
+        await self.know(ENTRY, self.keep, [tran])
+        self.assertEqual((await self.words())[0]["Greywater Keep"], gate.KNOWN_TO_ONE_NPC)
+        bruno = await self.add("Bruno", "character", role="npc")
+        await self.know(ENTRY, self.keep, [tran, bruno])
+        self.assertEqual((await self.words())[0]["Greywater Keep"], gate.HIDDEN_FROM_THE_PLAYERS)
+
+    async def test_the_players_view_is_never_sent_the_words(self) -> None:
+        from dmbot.web import relationships
+
+        await self.know(ENTRY, self.mira, [self.rook, self.okra])  # (the party knows her)
+        got = await relationships.read_web(
+            self.web, self.session, self.cref, center=self.mira, hops=3, view="players"
+        )
+        self.assertTrue(got["nodes"])
+        self.assertTrue(all("knowWord" not in n for n in got["nodes"]))
+        self.assertTrue(all("knowWord" not in x for e in got["edges"] for x in e["links"]))
+
+
+class TheKnowWordsAlone(SeeAs):
+    """`know_words` and `with_know_words` on their own: groups, sleeping rows, who may ask."""
+
+    async def test_a_group_the_party_belongs_to_makes_it_known_to_the_party(self) -> None:
+        from dmbot.web import relationships
+
+        base = {
+            "playerCharacters": ["pc1", "pc2"],
+            "liveEntries": ["e1", "e2"],
+            "connections": {"c1": ["e1", "e2"]},
+            "states": {},
+            "aliases": {},
+            "groups": [["pc1", "g"], ["pc2", "g"]],
+        }
+        got = relationships.know_words({**base, "knowers": [["entry", "e1", "g", 1.0]]})
+        self.assertEqual(got[0], {"e1": gate.KNOWN_TO_THE_PARTY, "e2": gate.SECRET})
+        # (a member's own row wins, and a group's row reaches a member who has none)
+        got = relationships.know_words(
+            {**base, "knowers": [["entry", "e1", "g", 1.0], ["entry", "e1", "pc1", 0.5]]}
+        )
+        self.assertEqual(got[0]["e1"], gate.KNOWN_TO_THE_PARTY)
+        got = relationships.know_words({**base, "knowers": [["connection", "c1", "npc", 1.0]]})
+        self.assertEqual(got[1], {"c1": gate.KNOWN_TO_ONE_NPC})  # (an entry id is not a link id)
+        got = relationships.know_words({**base, "knowers": [["property", "e1", "pc1", 1.0]]})
+        self.assertEqual(got[0]["e1"], gate.SECRET)  # (a property is not the entry)
+
+    async def test_a_name_not_in_the_data_gets_no_word(self) -> None:
+        from dmbot.web import relationships
+
+        page = {"nodes": [{"id": "new"}], "edges": []}
+        await relationships.with_know_words(self.web, self.session, self.cref, page)
+        self.assertNotIn("knowWord", page["nodes"][0])
+
+    async def test_someone_who_is_not_the_dm_gets_no_words(self) -> None:
+        from dmbot.web import relationships
+
+        page = {"nodes": [{"id": self.mira}], "edges": []}
+        await relationships.with_know_words(self.web, self.player, self.cref, page)
+        self.assertNotIn("knowWord", page["nodes"][0])
+
+
 class TheRoute(SeeAs):
     async def client(self, user: Any) -> httpx.AsyncClient:
         app = create_app(

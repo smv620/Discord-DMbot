@@ -25,6 +25,7 @@ import {
 } from "./api";
 import WebMap from "./WebMap";
 import WebOverviewPanel from "./WebOverview";
+import { dimmedName, markSecret, plainGraph } from "./know";
 import WebReadings from "./WebReadings";
 import WebWaiting from "./WebWaiting";
 import { WEB_READINGS_LIVE } from "../content/web-readings";
@@ -77,6 +78,9 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
   // API's own pick. Kept in a ref too, so a read started before a switch is not mixed up with it.
   const [asked, setAsked] = useState<WebView | undefined>(undefined);
   const askedNow = useRef<WebView | undefined>(undefined);
+  // The character the web is read as (#2999), or "party"; a ref, like askedNow, so a read in flight uses it.
+  const seeAsNow = useRef<string | undefined>(undefined);
+  const [seeAsNote, setSeeAsNote] = useState("");
   // Once a response says the person is a DM they stay one for this visit, even in the players' view.
   const [isDm, setIsDm] = useState(false);
   const [meta, setMeta] = useState<{ visibility?: WebGraph["visibility"] | undefined; canPeek?: boolean | undefined }>({});
@@ -94,8 +98,10 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
     const mine = ++latest.current;
     const view = askedNow.current;
     setBig(null);
+    let readingSeeAs = false; // only a failed read of the character's web means the character is gone (#3161)
     try {
-      if (!sure && api.webSize) {
+      // The size is of the DM's own web, so it is not asked while the web is read as someone else.
+      if (!sure && api.webSize && seeAsNow.current === undefined) {
         const size = await api.webSize(ref, { center: at, hops: steps, ...(view ? { view } : {}) });
         if (mine !== latest.current) return;
         if (size.names > BIG_WEB) {
@@ -103,9 +109,15 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
           return;
         }
       }
-      const read = await api.webGraph(ref, { center: at, hops: steps, ...(view ? { view } : {}) });
+      readingSeeAs = seeAsNow.current !== undefined;
+      const read = await api.webGraph(ref, {
+        center: at,
+        hops: steps,
+        ...(view ? { view } : {}),
+        ...(seeAsNow.current !== undefined ? { seeAs: seeAsNow.current } : {}),
+      });
       if (mine !== latest.current) return;
-      setGraph(read);
+      setGraph(read.canEdit ? read : plainGraph(read));
       if (read.canEdit) setIsDm(true);
       setMeta((now) => ({
         visibility: read.visibility ?? now.visibility,
@@ -119,6 +131,13 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
     } catch (error) {
       if (mine !== latest.current) return;
       const kind = error instanceof ApiError ? error.kind : "network";
+      if (kind === "not-found" && readingSeeAs) {
+        // The character is no longer in the story: say so, and read the DM's Players View again.
+        seeAsNow.current = undefined;
+        setSeeAsNote(words.seeAsGone);
+        void load(center, hops, true);
+        return;
+      }
       if (kind === "peek-off") {
         // The DM turned peeking off while it was on: back to the normal view, with the reason.
         switchTo(undefined);
@@ -141,12 +160,23 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
     setAsked(next);
   }
   function chooseView(next: WebView | undefined): void {
+    seeAsNow.current = undefined; // Full View, or the Players View, is never "as someone" (#2999)
+    setSeeAsNote("");
     switchTo(next);
     setLine(null);
     setAlone(null);
     setOverview(null); // never leave the other view's names on screen while this one loads
     void load(center, hops, true);
     void loadOverview();
+  }
+
+  /** Reads the web as one character, or the party, knows it (#2999); undefined goes back to the Players View. */
+  function chooseSeeAs(next: string | undefined): void {
+    seeAsNow.current = next;
+    setSeeAsNote("");
+    setLine(null);
+    setAlone(null);
+    void load(center, hops, true);
   }
 
   /** A player agreed to the warning: tell the API they peek, then read the full web. */
@@ -215,6 +245,8 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
   useEffect(() => {
     setOverview(null); // (another campaign's names are never shown under this one)
     setAlone(null);
+    seeAsNow.current = undefined; // and a campaign never inherits the character it was read as (#3161)
+    setSeeAsNote("");
     void load(null, DEFAULT_HOPS);
     void loadOverview();
     // Only the campaign restarts the first read; later reads are the person's choices.
@@ -325,6 +357,8 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
   const showAll = asked === "players" ? false : graph.canEdit || asked === "full";
   // Changing anything is for a DM, and not in the players' view (read-only, so what they see is checked).
   const canEdit = graph.canEdit && asked !== "players";
+  // Set while the web is read as one character (#2999): read-only, like the Players View.
+  const seeing = graph.seeAs ?? null;
   const peeking = !isDm && asked === "full";
   // Nor what the players haven't been told yet: the page may still hold the full web for a moment
   // after a switch to the players' view, and this keeps it off the screen.
@@ -371,6 +405,9 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
             <span>{words.playersView}</span>
           </label>
           <p class="small muted">{asked === "players" ? words.playersViewNote : words.fullViewNote}</p>
+          {asked === "players" && api.webViewers && (
+            <SeeAsPicker api={api} refId={ref} seeing={seeing} note={seeAsNote} onPick={(id) => chooseSeeAs(id)} onBack={() => chooseSeeAs(undefined)} />
+          )}
         </fieldset>
       )}
       {!isDm && api.webPeek && (
@@ -394,7 +431,8 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
       {peeking && <p class="note" role="note">{words.peeking}</p>}
 
       <div class="web-tools-form">
-        <CentrePicker api={api} refId={ref} current={center ? nameOf(center) : ""} onPick={(id) => void load(id, hops)} asPlayers={!canEdit} view={asked} />
+        {/* Hidden while the web is read as someone: the search reads the DM's own names, not theirs (#3161). */}
+        {!seeing && <CentrePicker api={api} refId={ref} current={center ? nameOf(center) : ""} onPick={(id) => void load(id, hops)} asPlayers={!canEdit} view={asked} />}
         <div class="field">
           <label for="web-hops">{words.hopsLabel}</label>
           <div class="row web-spinner">
@@ -495,7 +533,7 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
 
       {askBox}
 
-      {overview && (
+      {overview && !seeing && (
         <WebOverviewPanel
           overview={overview}
           refId={ref}
@@ -529,11 +567,14 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
             {words.collapseAll}
           </button>
         </div>
+        {(nodes.some((n) => n.knowWord) || graph.edges.some((e) => e.links.some((l) => l.knowWord))) && (
+          <p class="small muted">{words.knowHint}</p>
+        )}
         <ul class="web-names">
           {nodes.map((n) => {
             const open = openRows.has(n.id);
             return (
-              <li key={n.id} class={`web-name${n.revealed === false ? " web-dim" : ""}`}>
+              <li key={n.id} class={`web-name${dimmedName(n) ? " web-dim" : ""}`}>
                 <button
                   type="button"
                   class="web-name-toggle"
@@ -549,11 +590,12 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
                 >
                   <span aria-hidden="true">{open ? "▾" : "▸"}</span>
                   <span class="campaign-name">
-                    {n.secret && <span aria-hidden="true">{words.secretMark} </span>}
+                    {markSecret(n) && <span aria-hidden="true">{words.secretMark} </span>}
                     {n.name}
                   </span>
-                  {n.secret && <span class="visually-hidden"> ({words.secretWords})</span>}
-                  {n.revealed === false && <span class="small muted"> ({words.notRevealed})</span>}
+                  {!n.knowWord && n.secret && <span class="visually-hidden"> ({words.secretWords})</span>}
+                  {!n.knowWord && n.revealed === false && <span class="small muted"> ({words.notRevealed})</span>}
+                  {n.knowWord && words.knowWords[n.knowWord] && <span class="small muted"> ({words.knowWords[n.knowWord]})</span>}
                   <span class="tag">{kindWords(n.kind)}</span>
                   {n.id === center && <span class="small muted">{words.inMiddle}</span>}
                 </button>
@@ -626,14 +668,15 @@ function WebLines({ lines, onOpen }: { lines: WebLine[]; onOpen: (a: string, b: 
     <ul class="web-lines">
       {lines.map((l) => (
         <li key={l.key} class="name-row">
-          {l.link.secret && <span aria-hidden="true">{words.secretMark} </span>}
+          {markSecret(l.link) && <span aria-hidden="true">{words.secretMark} </span>}
           {l.link.belief && <span aria-hidden="true">{words.theoryMark} </span>}
           <span aria-hidden="true">
             {l.from} → {l.words} → {l.to}
           </span>
+          {l.link.knowWord && words.knowWords[l.link.knowWord] && <span class="small muted"> ({words.knowWords[l.link.knowWord]})</span>}
           <span class="visually-hidden">
             {words.lineText(l.from, l.words, l.to)}
-            {l.link.secret ? ` (${words.secretWords})` : ""}
+            {!l.link.knowWord && l.link.secret ? ` (${words.secretWords})` : ""}
             {l.link.belief ? ` (${words.theoryWords})` : ""}
           </span>{" "}
           <button
@@ -647,6 +690,121 @@ function WebLines({ lines, onOpen }: { lines: WebLine[]; onOpen: (a: string, b: 
         </li>
       ))}
     </ul>
+  );
+}
+
+/** "See as…" (#2999): a DM looks at the web as one character, or the party, knows it. Shown in the Players View only. */
+function SeeAsPicker({
+  api,
+  refId,
+  seeing,
+  note,
+  onPick,
+  onBack,
+}: {
+  api: AccountApi;
+  refId: string;
+  seeing: { viewer: string; name: string } | null;
+  note: string;
+  onPick: (id: string) => void;
+  onBack: () => void;
+}) {
+  const [q, setQ] = useState("");
+  const [list, setList] = useState<{ id: string; name: string }[]>([]);
+  const [total, setTotal] = useState(0);
+  const [failed, setFailed] = useState(false);
+  const latest = useRef(0);
+  const box = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!api.webViewers) return;
+    const mine = ++latest.current;
+    // The first look is at once; after that the list waits for the last key (300 ms).
+    const timer = setTimeout(() => {
+      api
+        .webViewers!(refId, q.trim())
+        .then((got) => {
+          if (mine !== latest.current) return;
+          setList(got.viewers);
+          setTotal(got.total);
+          setFailed(false);
+        })
+        .catch(() => {
+          // A failed look leaves no results for an older question beside the error (#3161).
+          if (mine !== latest.current) return;
+          setList([]);
+          setTotal(0);
+          setFailed(true);
+        });
+    }, q === "" ? 0 : 300);
+    return () => clearTimeout(timer);
+  }, [api, refId, q]);
+
+  return (
+    <div class="field">
+      <label>
+        {words.seeAsLabel}
+        <input
+          type="search"
+          value={q}
+          placeholder={words.seeAsPlaceholder}
+          autoComplete="off"
+          spellcheck={false}
+          aria-describedby="web-see-as-hint"
+          ref={box}
+          onInput={(e) => setQ((e.target as HTMLInputElement).value)}
+        />
+      </label>
+      <p id="web-see-as-hint" class="small muted">
+        {words.seeAsHint}
+      </p>
+      {seeing && <p role="status">{words.seeAsNow(seeing.name)}</p>}
+      {seeing && (
+        <p>
+          <button
+            type="button"
+            class="button secondary"
+            onClick={() => {
+              onBack();
+              box.current?.focus(); // the button goes away once the character clears, so focus goes to the box
+            }}
+          >
+            {words.seeAsBack}
+          </button>
+        </p>
+      )}
+      {note && <p role="status">{note}</p>}
+      <ul class="web-found" aria-label={words.seeAsListLabel}>
+        <li>
+          <button
+            type="button"
+            class="button secondary"
+            aria-current={seeing?.viewer === "party" ? "true" : undefined}
+            onClick={() => onPick("party")}
+          >
+            {words.seeAsParty}
+          </button>
+        </li>
+        {list.map((v) => (
+          <li key={v.id}>
+            <button
+              type="button"
+              class="button secondary"
+              aria-current={seeing?.viewer === v.id ? "true" : undefined}
+              onClick={() => onPick(v.id)}
+            >
+              {v.name}
+            </button>
+          </li>
+        ))}
+      </ul>
+      {failed && <p role="status">{words.seeAsLoadFailed}</p>}
+      {total > list.length && (
+        <p class="small muted" role="status">
+          {words.seeAsMore(list.length, total)}
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -825,18 +983,19 @@ function LinkRow({
   const [asking, setAsking] = useState(false);
   const run = async (change: WebLinkChange, ok: string): Promise<void> => setProblem(await act(change, ok));
   return (
-    <li class={link.revealed === false ? "stack web-dim" : "stack"}>
+    <li class={dimmedName(link) ? "stack web-dim" : "stack"}>
       {link.kind && (
         <p class={`small web-kindmark web-link-${link.kind}`}>
           <span class="web-dot" aria-hidden="true" /> {words.linkKind[link.kind]}
         </p>
       )}
       <p>
-        {link.secret && <span aria-hidden="true">{words.secretMark} </span>}
+        {markSecret(link) && <span aria-hidden="true">{words.secretMark} </span>}
         {link.belief && <span aria-hidden="true">{words.theoryMark} </span>}
         {words.linkText(a, b, link.words, link.direction)}
-        {link.secret && <span class="visually-hidden"> ({words.secretWords})</span>}
+        {!link.knowWord && link.secret && <span class="visually-hidden"> ({words.secretWords})</span>}
       </p>
+      {link.knowWord && words.knowWords[link.knowWord] && <p class="small muted">{words.knowWords[link.knowWord]}</p>}
       {canEdit && link.pinned && <p class="small">{words.pinMark} {words.pinnedWords}</p>}
       {canEdit && link.check && <p class="small">{words.checkLine(link.check)}</p>}
       {link.belief && (
@@ -845,7 +1004,7 @@ function LinkRow({
         </p>
       )}
       {link.belief?.contradicted && <p class="small warn">{words.believesFalse}</p>}
-      {link.revealed === false && <p class="small muted">{words.notRevealedFull}</p>}
+      {!link.knowWord && link.revealed === false && <p class="small muted">{words.notRevealedFull}</p>}
       {canEdit && link.revealed === false && (
         <div class="row">
           <button

@@ -666,6 +666,13 @@ function startWeb(big: boolean, lonely = false): WebState {
   return { nodes, links, nextLink: links.length + 1 };
 }
 
+/** The pretend names a DM may look at the web as (#2999): two player characters first, then NPCs. */
+const PRETEND_VIEWERS: { id: string; name: string; kind: "pc" | "npc" }[] = [
+  { id: "pc-cerric", name: "Cerric", kind: "pc" },
+  { id: "pc-mira", name: "Mira", kind: "pc" },
+  ...Array.from({ length: 28 }, (_, i) => ({ id: `npc-guard-${i + 1}`, name: `Guard ${i + 1}`, kind: "npc" as const })),
+];
+
 function webView(ref: string): "dm" | "manager" | "none" {
   if (/\.web-none$/.test(ref)) return "none";
   if (/\.web-(manager|player|private|open)$/.test(ref)) return "manager"; // not a DM
@@ -893,10 +900,45 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
           : { id: n.id, name: current(n).name, kind: current(n).kind, page: current(n).kind === "npc" },
       );
     const edges = edgesOf(usable.filter((l) => near.has(l.a) && near.has(l.b)), all, all, view === "dm" && all);
+    // Who knows (#3167): in the DM's full view the first five names and the first five connections carry one
+    // state each, so every state is on the page; a player's and a peek's web carry none.
+    const knowStates = ["secret", "hidden_from_the_players", "known_to_an_npc", "partly_revealed", "known_to_the_party"] as const;
+    // The states go on the names and connections drawn here that the players already see, so every state is on the
+    // page and the older words on the others stay.
+    const openNames = nodes
+      .filter((n) => {
+        const s = state.nodes.find((x) => x.id === n.id);
+        return s !== undefined && !s.secret && s.revealed !== false;
+      })
+      .slice(0, knowStates.length)
+      .map((n) => n.id);
+    const openLinks = edges
+      .flatMap((e) => e.links)
+      .filter((l) => {
+        const s = state.links.find((x) => x.id === l.id);
+        return s !== undefined && !s.secret && s.revealed !== false;
+      })
+      .slice(0, knowStates.length)
+      .map((l) => l.id);
+    const knownNodes = dm && all
+      ? nodes.map((n) => {
+          const slot = openNames.indexOf(n.id);
+          return slot >= 0 ? { ...n, knowWord: knowStates[slot]! } : n;
+        })
+      : nodes;
+    const knownEdges = dm && all
+      ? edges.map((e) => ({
+          ...e,
+          links: e.links.map((l) => {
+            const slot = openLinks.indexOf(l.id);
+            return slot >= 0 ? { ...l, knowWord: knowStates[slot]! } : l;
+          }),
+        }))
+      : edges;
     return {
       center: centre,
-      nodes,
-      edges,
+      nodes: knownNodes,
+      edges: knownEdges,
       truncated: false,
       maxHops: 8,
       canEdit: dm && all,
@@ -1544,10 +1586,33 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
     },
     // The Story Graph (#2324): rings out from a name, the way the real API counts hops.
     async webGraph(ref, query: WebQuery): Promise<WebGraph> {
+      if (query.seeAs !== undefined) {
+        // The web as one character, or the party, knows it: read-only, as the players see it (#2999).
+        calls.push(`seeAs:${ref}:${query.seeAs}`);
+        await reachable();
+        signedIn();
+        if (webView(ref) === "none") throw new ApiError("not-found");
+        if (webView(ref) !== "dm") throw new ApiError("not-allowed");
+        const who = query.seeAs === "party" ? { id: "party", name: "The party" } : PRETEND_VIEWERS.find((v) => v.id === query.seeAs);
+        if (!who) throw new ApiError("not-found");
+        const plain: WebQuery = { center: query.center, hops: query.hops, view: "players" };
+        return { ...webGraphOf(ref, plain), canEdit: false, seeAs: { viewer: who.id, name: who.name } };
+      }
       calls.push(`webGraph:${ref}:center=${query.center ?? ""}:hops=${query.hops}${query.view ? `:view=${query.view}` : ""}`);
       await reachable();
       signedIn();
       return webGraphOf(ref, query);
+    },
+    // The names a DM may look at the web as (#2999): the list narrowed by the box, player characters first.
+    async webViewers(ref, q) {
+      calls.push(`webViewers:${ref}:${q}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) === "none") throw new ApiError("not-found");
+      if (webView(ref) !== "dm") throw new ApiError("not-allowed");
+      const needle = q.trim().toLowerCase();
+      const all = PRETEND_VIEWERS.filter((v) => v.name.toLowerCase().includes(needle));
+      return { viewers: all.slice(0, 25), total: all.length };
     },
     // The overview (#2632): every visible name, the ones with no connection yet, and the groups.
     async webFind(ref, query) {
