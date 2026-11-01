@@ -13,6 +13,8 @@ from unittest.mock import AsyncMock
 
 import discord
 
+from dmbot import ai as ai_module
+from dmbot.ai import Reply
 from dmbot.bot import DMBot
 from dmbot.dm_screen import clock as clock_screen
 from dmbot.dm_screen import import_time as screen
@@ -126,7 +128,7 @@ class Importing(sp.Party):
             ),
             consent=SimpleNamespace(consenting=AsyncMock(side_effect=self.consenting)),
             settings=SimpleNamespace(time_suggestions=True),
-            time_ai=self.ai,
+            import_time_ai=self.ai,
             plan_allows=AsyncMock(return_value=True),
             post=post,
         )
@@ -200,6 +202,33 @@ class Importing(sp.Party):
         self.me.plan_allows = AsyncMock(return_value=False)
         await self.run_step()
         self.assertEqual((self.posts, self.ai.sent), ([], []))
+
+    async def test_the_question_is_a_background_call_with_the_output_floor(self) -> None:
+        # Its own feature, not a live one: the client sends a background call with at least the
+        # floor whatever small estimate it is given (CLAUDE.md "AI output limits", #2596).
+        feature = ai_module.Feature.IMPORT_TIME
+        self.assertNotIn(feature.value, ai_module.LIVE_FEATURES)
+        for model in ("claude-haiku-5-5", "claude-sonnet-5-5"):
+            room = ai_module.answer_room(it.ANSWER_TOKENS, model, live=False)
+            self.assertGreaterEqual(room, min(ai_module.OUTPUT_FLOOR, ai_module.max_output(model)))
+            self.assertGreater(room, it.ANSWER_TOKENS)
+        self.assertIn(feature, ai_module.FEATURE_TIERS)
+        # and the bot asks through that client, not the live suggestion's
+        self.rows = [(DM, "You travel for a while.")]
+        await self.run_step()
+        self.assertEqual(len(self.ai.sent), 1)
+
+    async def test_a_cut_or_refused_answer_offers_nothing_and_says_it_stopped_early(self) -> None:
+        self.rows = [(DM, "You travel for a while.")]
+        for reply in (
+            Reply('{"minutes": 480, "why": "a day"}', True),  # cut at the length limit
+            Reply('{"minutes": 480, "why": "a day"}', False, refused=True),
+        ):
+            self.ai.reply = reply
+            with self.assertLogs("dmbot", level="INFO") as logs:
+                await self.run_step()
+            self.assertIn("the answer stopped early", "\n".join(logs.output))
+        self.assertEqual(self.posts, [])
 
     async def test_an_answer_of_null_or_in_the_wrong_shape_offers_nothing(self) -> None:
         self.rows = [(DM, "You travel for a while.")]

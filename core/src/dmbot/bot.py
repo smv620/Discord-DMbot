@@ -1296,6 +1296,11 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             if self.ai_client
             else None
         )
+        self.import_time_ai = (  # the game time an imported session ended at (#2979), background
+            self.ai_client.tier(FEATURE_TIERS[Feature.IMPORT_TIME], Feature.IMPORT_TIME)
+            if self.ai_client
+            else None
+        )
         # Pictures posted in the table chat (#2450): off unless the backend switch is on.
         # Messages deleted lately, so a picture still being described when its poster deletes it
         # is not written down afterwards (#2450); id → when.
@@ -10269,7 +10274,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             not walked.moved
             and walked.cues
             and self.settings.time_suggestions
-            and self.time_ai is not None
+            and self.import_time_ai is not None
             and await self.plan_allows("ai", gid, campaign, fail_open=False)
         ):
             calls = 1
@@ -10295,10 +10300,12 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
     async def _import_time_total(self, cues: tuple[str, ...], start: int) -> int | None:
         """The one question over an imported session's cue lines: the minutes they pass in all,
         or None (the AI failed, said null or answered in the wrong shape)."""
-        assert self.time_ai is not None
+        assert self.import_time_ai is not None
         try:
+            # A background call: its own feature, not a live one, so the client sends it with the
+            # output floor whatever small estimate is given here (#2596).
             reply = await asyncio.wait_for(
-                self.time_ai.complete(
+                self.import_time_ai.complete(
                     import_time.SYSTEM,
                     import_time.prompt(cues, clock_game.label(start)),
                     max_tokens=import_time.ANSWER_TOKENS,
@@ -10307,6 +10314,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             )
         except Exception as exc:
             log.info("Import time: couldn't ask (%s)", type(exc).__name__)
+            return None
+        if reply.cut or reply.refused:
+            # A cut answer is never read as a smaller one: nothing is offered (#2596).
+            log.info("Import time: the answer stopped early")
             return None
         return import_time.read_answer(reply.text)
 
