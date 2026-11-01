@@ -10775,6 +10775,11 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             campaign.guild_id, campaign.id, mode, confirmed_by=confirmed_by
         )
 
+    async def apply_pause(self, campaign: Campaign, paused: bool, user_id: int) -> Campaign:
+        """Pause or unpause chosen on the website (#3062): `set_paused` itself, under the session
+        lock like Discord's button, so a running session is never paused under its feet."""
+        return await self.set_paused(campaign.guild_id, campaign.id, user_id, paused)
+
     async def apply_rulesets(self, campaign: Campaign, main: str, fallback: str) -> bool:
         """The main rules chosen on the website (#3112): saved, the new pair's names built ahead
         of use (in its own try: a failure there costs only the first lookup's wait), and whether
