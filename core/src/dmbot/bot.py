@@ -2906,6 +2906,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             ("secret summary", lambda: self.send_exposure_summary(table)),
             ("new names", lambda: self.post_new_names(table)),
             ("new connections", lambda: self.post_claims(table)),
+            ("family links", lambda: self.warn_about_family(table)),
             ("heads-ups", lambda: self.warn_about_continuity(table)),
             # The biggest clashes PlotBot graded, up to three; no AI call here (#2660)
             ("big clashes", lambda: self.tell_contradictions(table)),
@@ -9349,6 +9350,26 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         """Count and tell in one go: the two steps above, for a caller that wants both."""
         await self.note_claims(table)
         await self.post_claims(table)
+
+    async def warn_about_family(self, table: Table) -> None:
+        """After a session (#3066): if family links worked out from the DM's own (#2960) wait for a
+        yes, the DM screen says how many, never which, with the 📜 button only a DM can use. Nothing
+        is posted with none waiting. Counts only in the log and on the screen. No AI call."""
+        if self.memory is None or table.campaign_id is None:
+            return
+        gid, cid = table.guild_id, table.campaign_id
+        with log_context(guild_id=gid, campaign_id=cid):
+            await self.memory.rework_family(
+                gid, cid
+            )  # (so the count follows the links as they are)
+            waiting = len(await self.memory.worked_out_waiting(gid, cid))
+            log.info("Worked-out family links: %d waiting", waiting)
+            if waiting:
+                await self.post(
+                    table.screen_channel_id,
+                    links_ready.family_notice(waiting),
+                    view=links_ready.view(cid),
+                )
 
     async def warn_about_continuity(self, table: Table) -> None:
         """After a session: if what was said clashes with the story the DM already confirmed
