@@ -215,6 +215,8 @@ async def _compare(
             return posted is not None
 
         keep.set(q.FETCHING)
+        text: str | None
+        problem: str | None
         if claim.action == q.UPLOAD:
             text, problem = claim.text, None
         else:

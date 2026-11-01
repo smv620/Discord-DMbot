@@ -15,6 +15,7 @@ from dmbot.campaigns import CampaignStore
 from dmbot.dm_screen import house_file_web as web
 from dmbot.dm_screen import house_sync as hs
 from dmbot.rules import house_file_queue as q
+from dmbot.rules.house import HouseRuleError
 from dmbot.rules.house_file_link import HouseFileLinkStore
 from dmbot.rules.house_file_queue import HouseFileQueue
 from dmbot.ui import house_file as file_ui
@@ -152,11 +153,12 @@ class EachAction(Requests):
 
 class WhatTheDmWordsDoNotKeep(Requests):
     async def test_the_link_and_the_text_are_blanked_whichever_way_it_ends(self) -> None:
-        for action, kwargs in (
+        cases: list[tuple[str, dict[str, Any]]] = [
             ("link", {"link": LINK}),
             ("upload", {"text": FILE}),
             ("upload", {"text": "no rules in here"}),
-        ):
+        ]
+        for action, kwargs in cases:
             rid = await self.add(action, **kwargs)
             await self.work()
             done = await self.row(rid)
@@ -192,7 +194,7 @@ class WhyItStops(Requests):
         rid = await self.add("link", link="https://example.com/x")
         claim = await self.queue.claim_next(GUILD)
         assert claim is not None
-        with patch.object(self.links, "set_link", AsyncMock(side_effect=web.HouseRuleError("no"))):
+        with patch.object(self.links, "set_link", AsyncMock(side_effect=HouseRuleError("no"))):
             await web.run_request(self.bot, self.queue, claim, GUILD)
         self.assertEqual(await self.finished(rid), ("failed", "done", q.BAD_LINK))
 
