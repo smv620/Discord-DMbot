@@ -10944,6 +10944,13 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             campaign.guild_id, campaign.id, mode, confirmed_by=confirmed_by
         )
 
+    async def apply_invite(self, campaign: Campaign, invite: str | None) -> Campaign:
+        """The D&D Beyond invite chosen on the website (#3095), as Discord's form saves it: the
+        store call, then the running session and the transcript card follow."""
+        saved = await self.campaigns.set_dndbeyond_invite(campaign.guild_id, campaign.id, invite)
+        await self.after_invite_change(saved)
+        return saved
+
     async def apply_pause(self, campaign: Campaign, paused: bool, user_id: int) -> Campaign:
         """Pause or unpause chosen on the website (#3062): `set_paused` itself, under the session
         lock like Discord's button, so a running session is never paused under its feet."""
