@@ -147,7 +147,7 @@ CI runs all of the above on every pull request. Never merge red CI.
 ## Claude sessions and who does what (owner decision, 2026-10-05, updated 2026-10-12)
 DMbot runs on the cloud test server (VPS), not on the owner's PC. Several Claude
 sessions work on this repo. **Each one has a name, and its name is its issue label:**
-`session: dev1`, `session: CloudDev` (CloudDev-lead), `session: CloudDev-assistant`, `session: WebDev` (WebDev-lead), `session: WebDev-assistant`,
+`session: dev1`, `session: CloudDev` (CloudDev-lead), `session: CloudDev-assistant`, `session: WebDev` (WebDev-lead), `session: WebDev-assistant`, `session: GraphEngineer`,
 `session: RepoManager`, `session: Supervisor` (and `session: pycharm` when the owner's PC is used;
 **pycharm is offline from 2026-10-08 until the owner says otherwise: assign nothing to it**). **Assignments come from the issue
 list:** an open issue labelled with your name is yours; take them lowest number first
@@ -155,7 +155,8 @@ unless an issue says otherwise. Say which session you are in every issue and PR.
 developers can be added by adding a label.
 **Who gets what (owner, 2026-10-12, when dev2 and dev3 were archived):** coding goes to
 **CloudDev**; merges to **RepoManager**; deploys and any test or check that needs the
-server itself to **dev1**; the website's design, building and coding to **WebDev**. An
+server itself to **dev1**; the website's design, building and coding to **WebDev**; the story graph to
+**GraphEngineer** (owner, 2026-10-31). An
 issue that needs both code and the server is CloudDev's, with the server step handed to
 dev1 as a note on the issue.
 - **dev1** (Claude Code on the deployment server, in the main checkout): **the only
@@ -189,6 +190,18 @@ dev1 as a note on the issue.
   the web API's SQL doors and migrations, merge conflicts, and specifying tests. It hands simple,
   fully specified building work to **WebDev-assistant** (`session: WebDev-assistant`, a cloud
   session on the smaller model). See "Leads hand off to assistants" below.
+
+- **GraphEngineer** (Claude Code in the cloud, its own clone, on the larger model; owner,
+  2026-10-31): **the story graph** (story memory). It owns `core/src/dmbot/memory/` (the gate,
+  knowers, beliefs, connections and their readers) and the readers that turn sessions and lore into
+  names and connections (`lore_read.py`, `memory/background.py`, `extractor.py`, `claims.py`,
+  `readings.py`, `placing.py`), and the quality of what they find. Its role skill is
+  `.claude/skills/graph-engineer/SKILL.md`. It works from `docs/STORY_GRAPH_DESIGN.md` and
+  STORY_MEMORY sections 9, 9a and 9b. It may improve the design, but a change to a rule is a
+  design note on the issue first, and Supervisor rules on it before any code. Same rules as the
+  other coding sessions: PRs into `development`, never deploys, never touches the live server.
+  CloudDev-lead keeps the rest of `core/`. Before working in a file the other owns, each checks
+  the other's open PRs there and agrees the order on the issue.
 
 - **Supervisor** (Claude Code in the cloud; took over from the Master Web Session,
   `session: web`, on 2026-10-08): **runs the project and is the owner's point of
@@ -306,6 +319,7 @@ Each role is woken once an hour by a scheduled task (dev1 twice), at staggered m
 | Supervisor | :04 (hourly summary) | long-lived cloud session |
 | WebDev-assistant | :06 (hourly check) | long-lived cloud session (smaller model, from 2026-10-28) |
 | CloudDev-assistant | :07 (hourly check) | long-lived cloud session (smaller model, from 2026-10-28) |
+| GraphEngineer | :09 (hourly check) | long-lived cloud session (from 2026-10-31) |
 | RepoManager | :54 (hourly check) | long-lived cloud session (moved off the owner's computer, 2026-10-16) |
 | dev1 | :12 (hourly check), :42 (twice an hour, owner 2026-10-24) | long-lived, on the server |
 
@@ -323,7 +337,7 @@ that message. Reports still go on #516 or the issue, where nobody is woken by th
 
 **Every round, whatever the role:** read your open issues and your PRs (send-backs first), read #516's
 last comments, act on what is yours, and stop. A round that finds nothing to do ends in one line.
-- **Developers (CloudDev-lead, CloudDev-assistant, WebDev-lead, WebDev-assistant):** fix send-backs
+- **Developers (CloudDev-lead, CloudDev-assistant, WebDev-lead, WebDev-assistant, GraphEngineer):** fix send-backs
   and red CI on your PRs first; then the next issue. If your queue is empty, say so to Supervisor
   once (an assistant tells its lead instead).
 - **Leads (CloudDev-lead, WebDev-lead), every round:** first answer any "Question for <lead>" and
@@ -437,12 +451,15 @@ terminal output or Discord screenshots copied to it.
 - **DM authority:** the bot never posts rulings to players or public channels. Advice
   goes only to `#dm-screen` / the DM. PlotBot and NPCBot record only DM-confirmed facts.
   **Table questions** (owner, 2026-10-14): anyone at the table may ask DMbot ("Hey DMbot…" or
-  typed in the campaign's `dmb-chat` channel), and the answer is posted in `dmb-chat` as
+  typed in the table's chat), and the answer is posted in the table's chat as
   `Q (who asked): <the question, shortened>` / `Answer: <as short as possible>`, with its source and
   at most one link (dndbeyond.com, or a public link shared with the campaign, such as its house
   rules). That is rules information, not a ruling, and it never holds DM-screen content: a
   player's question that needs it, or asks DMbot to decide, gets "That's one for your DM."; a
-  DM's goes to the DM privately. See docs/PLAN.md, "Table questions".
+  DM's goes to the DM privately. See docs/PLAN.md, "Table questions". **The table's chat**
+  (owner, 2026-11-01, #3212): the table's voice channel's own text chat, or the one text channel
+  the DM picked; DMbot makes no `dmb-chat` channel. **Every question DMbot asks** someone goes to
+  that person's private chat with DMbot, marked as from DMbot (owner, 2026-11-01, #3210).
 - **Transcripts are shared; the DM screen is not pushed to players.** Anyone in the
   Discord server may view and download a campaign's session transcripts (decided
   2026-10-05). Only people who agreed are ever recorded, and the consent request tells

@@ -156,6 +156,7 @@ def fake_bot(store: ImportStore, **kw: Any) -> Any:
         repair_names=AsyncMock(return_value=0),  # PlotBot's name pass (#2628): its own tests
         _hold_or_queue=AsyncMock(return_value="held"),
         _link_import_party=AsyncMock(),  # the party link after a scan (#3036): its own tests
+        _offer_import_time=AsyncMock(),  # the game-time offer (#2979): its own tests
     )
     for name in (
         "run_import_followups",

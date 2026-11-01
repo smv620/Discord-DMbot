@@ -52,6 +52,9 @@ RELEASED = {
     ("associated_with", 1): "9b1afee4b882cde9",  # the catch-all for a refused term (#1303)
     ("enemy_of", 2): "c181c37cec9e77cf",  # `rival_of` is its own kind (#3035)
     ("knows", 2): "12c36b3477a99239",  # a group may know too (#3033)
+    ("ally_of", 2): "32c8481fa283b09b",  # friends are knows with a reputation word (#3181)
+    ("enemy_of", 3): "cc748fb91ef3b740",  # hatred is knows with a reputation word (#3181)
+    ("knows", 3): "ba60cedc144ab675",  # two characters carry a reputation word (#3181)
     ("rival_of", 1): "d00c5cc79f11ba80",
     ("mentor_of", 1): "1616325b035b16db",
     ("leads", 1): "ee3de5c3496a20b0",
@@ -223,7 +226,7 @@ class Stored(MemoryTest):
 
     async def test_undo_works_across_the_migration_for_relations_and_predicates(self) -> None:
         a, b = await self.add("Cerric"), await self.add("Belleros")
-        added = await self.relate(a, "ally_of", b)
+        added = await self.relate(a, "serves", b)
         assert added.batch is not None
         # The change log as it was written before 0059: no definition_version in its snapshots.
         async with self.db.guild(GUILD_A) as conn:
@@ -234,7 +237,7 @@ class Stored(MemoryTest):
         await self.memory.undo(GUILD_A, self.c, added.batch)
         self.assertEqual(await self.memory.relations(GUILD_A, self.c), [])
         # And an update from before: undoing it puts the fact back as it was.
-        again = await self.relate(a, "ally_of", b)
+        again = await self.relate(a, "serves", b)
         changed = await self.memory.update_relation(
             GUILD_A, self.c, again.value[0].id, source="dm", status="confirmed"
         )
@@ -276,9 +279,9 @@ class Stored(MemoryTest):
     async def test_a_new_fact_stores_the_current_version(self) -> None:
         a, b = await self.add("Cerric"), await self.add("Belleros")
         written = await self.relate(a, "ally_of", b)
-        self.assertEqual(written.value[0].definition_version, 1)
+        self.assertEqual(written.value[0].definition_version, 2)  # (ally_of v2, #3181)
         facts = await self.memory.relations(GUILD_A, self.c)
-        self.assertEqual({f.definition_version for f in facts}, {1})
+        self.assertEqual({f.definition_version for f in facts}, {2})
 
     async def test_a_fact_from_before_the_column_reads_as_version_1(self) -> None:
         before = [m for m in MIGRATIONS if m[0] < "0059"]

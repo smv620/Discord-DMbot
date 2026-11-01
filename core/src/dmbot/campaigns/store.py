@@ -528,6 +528,16 @@ class CampaignStore:
                 return True
         return False
 
+    async def guild_of(self, campaign_id: str) -> int | None:
+        """The server a campaign is in now, read fresh from the database (#3210). A question sent
+        to a DM's private chat has no server around it, and a lookup kept in memory would be
+        lost on every restart, leaving old buttons dead. A moved campaign keeps its ID, so this
+        finds it in its new server."""
+        for guild_id in await self.guilds_with_campaigns():
+            if await self.has_campaign(guild_id, campaign_id):
+                return guild_id
+        return None
+
     async def forget_guild_if_empty(self, guild_id: int) -> bool:
         """Drop a server from the list once it holds no campaigns and no website-delete note
         waiting for the bot (#2554). Check and delete are one statement in the server's own

@@ -25,6 +25,7 @@ import Recaps, { campaignFromSearch } from "../src/account/Recaps";
 import Transcripts from "../src/account/Transcripts";
 import Timeline from "../src/account/Timeline";
 import Web from "../src/account/Web";
+import { campaignBackupWords } from "../src/content/campaign-backup";
 import { campaignPage as w } from "../src/content/campaign-page";
 
 afterEach(cleanup);
@@ -59,7 +60,10 @@ describe("the page", () => {
     // The campaign's name is the page's heading and title, so the name is what a screen reader hears.
     await waitFor(() => expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("The Brynwater Crossing"));
     expect(document.title).toBe("The Brynwater Crossing · DMbot");
-    expect(groups()).toEqual([w.groups.story, w.groups.add, w.groups.rules, w.groups.settings]);
+    // (the Keep a copy part arrives once /me has said the plan is not Try It)
+    await waitFor(() =>
+      expect(groups()).toEqual([w.groups.story, w.groups.add, w.groups.rules, w.groups.settings, campaignBackupWords.heading]),
+    );
     expect(hrefs()).toEqual(
       expect.arrayContaining([
         "/account/recaps?campaign=100.cmp1",
@@ -149,9 +153,10 @@ describe("the page", () => {
     expect(hrefs().some((h) => h?.startsWith("/account/recaps"))).toBe(false);
   });
 
-  it("gives a player only the table's pages and no Settings", async () => {
+  it("gives a player only the table's pages and no Settings, and a way to keep a copy", async () => {
     await open(PLAYER);
-    expect(groups()).toEqual([w.groups.story, w.groups.rules]);
+    expect(groups()).toEqual([w.groups.story, w.groups.rules, campaignBackupWords.heading]);
+    expect(screen.getByRole("button", { name: campaignBackupWords.button })).toBeTruthy();
     expect(screen.queryByRole("heading", { name: w.groups.settings })).toBeNull();
     expect(screen.queryByRole("link", { name: w.groups.settings })).toBeNull(); // not in the tabs either
     const all = hrefs();

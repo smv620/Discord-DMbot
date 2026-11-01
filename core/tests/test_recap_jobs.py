@@ -415,9 +415,7 @@ class Working(WorkerHarness):
         self.assertEqual(job.state, "ready")
         paragraphs = job.summary.split("\n\n")
         self.assertEqual(paragraphs[0], "Previously, on The Ember Road…")
-        self.assertEqual(
-            paragraphs[-1], "And so we continue, the epic adventure of The Ember Road."
-        )
+        self.assertEqual(paragraphs[-1], "And so continues the epic adventure of The Ember Road.")
         self.assertEqual(fixed_lines.without(job.summary), fx.SUMMARY)  # the story is untouched
         self.assertEqual(job.original, job.summary)  # the DM's edit is compared with what they saw
         self.assertEqual(job.grade["tension"], 4)  # graded as the writer wrote it, before the lines

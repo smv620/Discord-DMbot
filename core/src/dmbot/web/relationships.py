@@ -16,20 +16,21 @@ from __future__ import annotations
 
 import hashlib
 import re
-from collections.abc import Collection
+from collections.abc import Callable, Collection
 from typing import Any
 
 from dmbot.db import Database
-from dmbot.memory import kin
+from dmbot.memory import gate, kin
 from dmbot.memory.claims import Extracted, condition_of
 from dmbot.memory.link_kinds import link_kind
 from dmbot.memory.link_words import back_words, link_words, reads_both_ways
 from dmbot.memory.web_actions import RETAKE_AFTER_S
 from dmbot.memory.who_resolve import checked_line
-from dmbot.web import all_names
+from dmbot.web import all_names, graph_view
 from dmbot.web.names import _parse
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
 from dmbot.web.sessions import Session
+from dmbot.web.who_knows import who_text
 
 # The website's steps spinner goes 1 to 8 (owner, #2934); MAX_NODES still bounds the work.
 MAX_HOPS = 8
@@ -147,7 +148,7 @@ def visit_of(session: Session) -> str:
     return hashlib.sha256(f"{session.id_hash}:peek".encode()).hexdigest()
 
 
-def _refuse_bad(center: str | None, hops: int, view: str | None = None) -> None:
+def refuse_bad(center: str | None, hops: int, view: str | None = None) -> None:
     if view is not None and view not in VIEWS:
         raise RecapError("bad_view")
     if center is not None and not (ID_PATTERN.match(center) or ALIAS_NODE.match(center)):
@@ -168,7 +169,7 @@ async def _door(
 ) -> dict[str, Any]:
     guild_id, campaign_id = _parse(ref)
     _guild_of(session, guild_id)
-    _refuse_bad(center, hops, view)
+    refuse_bad(center, hops, view)
     async with db.user(session.user_id, session=session.id_hash) as conn:
         await _scoped(conn, guild_id)
         if view is not None:  # asked for; the door decides whether this person may have it
@@ -202,6 +203,66 @@ async def _page_ids(conn: Any, guild_id: int, campaign_id: str) -> set[str]:
     return {str(i) for i in ids} if isinstance(ids, list) else set()
 
 
+async def is_dm(db: Database, session: Session, ref: str) -> bool:
+    guild_id, campaign_id = _parse(ref)
+    _guild_of(session, guild_id)
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        cur = await conn.execute(
+            "SELECT 1 FROM campaign_dms WHERE guild_id = %s AND campaign_id = %s AND user_id = %s",
+            (guild_id, campaign_id, session.user_id),
+        )
+        return await cur.fetchone() is not None
+
+
+async def gated(db: Database, session: Session, ref: str, view: str | None) -> bool:
+    """Whether this look at the graph is worked out by the gate (#3143) rather than read straight
+    from the graph door: everything but the full view. A DM asking for no view sees everything; a
+    DM asking for Players View sees what the party knows; a player sees what their own characters
+    know; a peek ("full") is still the DM's graph, behind its own switch."""
+    if view == "full":
+        return False
+    if view == "players":
+        return True
+    return not await is_dm(db, session, ref)
+
+
+async def source_of(
+    db: Database, session: Session, ref: str
+) -> tuple[dict[str, Any], dict[str, Any], set[str]]:
+    """The graph's source and the knowers (two doors, one statement, so one snapshot), and the
+    names that have a page. They go to the gate and no further: nothing here is sent to a browser,
+    logged or kept, and an error never carries them."""
+    guild_id, campaign_id = _parse(ref)
+    _guild_of(session, guild_id)
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        cur = await conn.execute(
+            "SELECT dmbot_web_graph_source(%s, %s) AS s, dmbot_web_knowers_data(%s, %s) AS k",
+            (guild_id, campaign_id, guild_id, campaign_id),
+        )
+        found = await cur.fetchone()
+        pages = await _page_ids(conn, guild_id, campaign_id)
+    if found is None or found["s"] is None or found["k"] is None:
+        raise RecapError("not_found")
+    return dict(found["s"]), dict(found["k"]), pages
+
+
+def viewer_of(known: dict[str, Any]) -> gate.Viewer:
+    """Who is looking, when nobody asked to see as someone: the party for a DM in Players View,
+    else the caller's own characters (none: nothing). The characters come from who plays them,
+    in the database, never from the request."""
+    if known["isDm"]:
+        return gate.Viewer.the_party()
+    return gate.Viewer.player(str(i) for i in known["mine"])
+
+
+async def graph_of(db: Database, session: Session, ref: str) -> tuple[graph_view.Graph, set[str]]:
+    """The graph this caller may see through the gate, and the names that have a page."""
+    src, known, pages = await source_of(db, session, ref)
+    return graph_view.build(src, known, viewer_of(known)), pages
+
+
 async def read_web(
     db: Database,
     session: Session,
@@ -216,7 +277,109 @@ async def read_web(
     true. `view`: "players" (what a player sees, for anyone) or "full" (everything: a DM's, or a
     player's peek, refused with `peek_off` unless the campaign's DM screen lets players peek);
     none means the person's own. `visibility` and `canPeek` let the page grey out the switch."""
-    got = await _door(db, session, ref, center, hops, size_only=False, view=view)
+    if await gated(db, session, ref, view):
+        refuse_bad(center, hops, view)
+        graph, found = await graph_of(db, session, ref)
+        shaped = graph_view.web_of(graph, center, hops, MAX_NODES)
+        if shaped is None:
+            raise RecapError("not_found")
+        got = {**shaped, "pageIds": found}
+    else:
+        got = await _door(db, session, ref, center, hops, size_only=False, view=view)
+    page = page_of(got)
+    if got["canEdit"] and got["seesAll"]:
+        await with_know_words(db, session, ref, page)
+    return page
+
+
+def _knowers(
+    known: dict[str, Any],
+) -> tuple[gate.Statements, Callable[[str, str], set[str]]]:
+    """The gate's own input for the door's lists, and a function giving the characters that know
+    one statement: the ones with a row of their own and the members of a group with a row
+    (`gate.reach`)."""
+    data = graph_view.statements_of(known)
+    # (the gate's own function: a map of each group's members built once, #3154, #3228)
+    who = gate.knowers_of(data)
+    return data, who
+
+
+def know_words(
+    known: dict[str, Any],
+    shared: tuple[gate.Statements, Callable[[str, str], set[str]]] | None = None,
+) -> tuple[dict[str, str], dict[str, str]]:
+    """The word for each name and each connection, worked out from who knows it (§9b item 3) by
+    the gate's own rules, never from a stored flag: the same input as the rest of the page
+    (`graph_view.statements_of`), `gate.reach` for who knows a statement (a group's members know
+    what their group knows) and `gate.word_of` for the word. Returns (names by entry id,
+    connections by connection id). Only ids that are in the data get a word, so the page never
+    says "secret" of something this read does not know."""
+    data, who = shared or _knowers(known)
+    party = data.player_characters
+    entries = {str(e): gate.word_of(who(gate.ENTRY, str(e)), party) for e in known["liveEntries"]}
+    links = {str(c): gate.word_of(who(gate.CONNECTION, str(c)), party) for c in data.connections}
+    return entries, links
+
+
+def link_holders(
+    known: dict[str, Any],
+    shared: tuple[gate.Statements, Callable[[str, str], set[str]]] | None = None,
+) -> dict[str, list[dict[str, str]]]:
+    """For each connection, the characters who know it, player characters and NPCs alike, as
+    {id, name} by name (the DM's own view, so the campaign's own names): the "Who knows this?"
+    control's current answer (#2999). Only characters the door lists as confirmed are named."""
+    data, who = shared or _knowers(known)
+    names = {str(v["id"]): str(v["name"]) for v in known["viewers"]}
+    out: dict[str, list[dict[str, str]]] = {}
+    for link in data.connections:
+        holders = [
+            {"id": c, "name": names[c]} for c in who(gate.CONNECTION, str(link)) if c in names
+        ]
+        out[str(link)] = sorted(holders, key=lambda h: (h["name"].casefold(), h["id"]))
+    return out
+
+
+async def with_know_words(db: Database, session: Session, ref: str, page: dict[str, Any]) -> None:
+    """Adds `knowWord` to each name and each connection of a DM's full view (#2999, §9b), so the
+    page says "secret" only when nobody but the DM knows it. Changes `page` in place. The door
+    answers every member, so this checks `isDm` itself and adds nothing for anyone else. The
+    knowers are read, worked into words here and not sent on."""
+    guild_id, campaign_id = _parse(ref)
+    _guild_of(session, guild_id)
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        cur = await conn.execute(
+            "SELECT dmbot_web_knowers_data(%s, %s) AS k", (guild_id, campaign_id)
+        )
+        found = await cur.fetchone()
+    if found is None or found["k"] is None:
+        raise RecapError("not_found")
+    if not found["k"]["isDm"]:
+        return
+    shared = _knowers(dict(found["k"]))  # worked out once for both
+    names, links = know_words(dict(found["k"]), shared)
+    holders = link_holders(dict(found["k"]), shared)
+    # (a graph page has nodes and edges, an overview page its tray of unconnected names; one
+    # confirmed since the page was read is not in the data and has no word yet)
+    for node in [*page.get("nodes", []), *page.get("tray", [])]:
+        if str(node["id"]) in names:
+            node["knowWord"] = names[str(node["id"])]
+    for edge in page.get("edges", []):
+        for link in edge["links"]:
+            if str(link["id"]) in links:
+                link["knowWord"] = links[str(link["id"])]
+                # "Who knows this?": a connection the table may know is `all`; a held one is
+                # `some` when any character knows it, else `dm`. From the lists, not a flag (#2999).
+                held = bool(link.get("secret")) or link.get("revealed") is False
+                now = holders.get(str(link["id"]), [])
+                link["who"] = ("some" if now else "dm") if held else "all"
+                link["knownBy"] = now if held and now else []
+
+
+def page_of(got: dict[str, Any]) -> dict[str, Any]:
+    """A graph answer (the door's, or the gate's in the door's shape) as the page gets it: each
+    name with whether it has an NPC page, and the connections between two names grouped into one
+    edge with its words. `pageIds` is dropped."""
     pages: set[str] = got["pageIds"]
     nodes = [
         {
@@ -254,6 +417,13 @@ async def read_size(
     view: str | None = None,
 ) -> dict[str, int]:
     """How many names are within `hops` steps, so the page can warn before drawing."""
+    if await gated(db, session, ref, view):
+        refuse_bad(center, hops, view)
+        graph, _found = await graph_of(db, session, ref)
+        shaped = graph_view.web_of(graph, center, hops, MAX_NODES)
+        if shaped is None:
+            raise RecapError("not_found")
+        return {"names": int(shaped["names"])}
     got = await _door(db, session, ref, center, hops, size_only=True, view=view)
     return {"names": int(got["names"])}
 
@@ -347,6 +517,9 @@ async def _overview_door(
     _guild_of(session, guild_id)
     if view is not None and view not in VIEWS:
         raise RecapError("bad_view")
+    if await gated(db, session, ref, view):
+        graph, with_pages = await graph_of(db, session, ref)
+        return graph_view.overview_of_graph(graph, max_names, max_pairs), with_pages
     async with db.user(session.user_id, session=session.id_hash) as conn:
         await _scoped(conn, guild_id)
         if view is not None:
@@ -382,7 +555,10 @@ async def read_overview(
     people see the same names as in `read_web` (the door shares that door's checks); `view` as
     there."""
     got, pages = await _overview_door(db, session, ref, view, max_names, max_pairs)
-    return overview_of(got, pages)
+    page = overview_of(got, pages)
+    if page["canEdit"]:  # a DM in the full view; the Players View and a peek can't edit
+        await with_know_words(db, session, ref, page)
+    return page
 
 
 SEARCH_MAX = 100  # the longest name; a longer search matches nothing anyway
@@ -528,8 +704,8 @@ async def queue_add(db: Database, session: Session, ref: str, body: object) -> s
 
 async def queue_edit(db: Database, session: Session, ref: str, link_id: str, body: object) -> str:
     """Queue a change to one connection: `{action: "words", words}`, `{action: "secret",
-    secret}`, `{action: "pin", pinned}` or `{action: "remove", confirm: true}`. Returns the
-    answer's id."""
+    secret}`, `{action: "who", who, characters}`, `{action: "pin", pinned}` or
+    `{action: "remove", confirm: true}`. Returns the answer's id."""
     if not ID_PATTERN.match(link_id):
         raise RecapError("not_found")
     if not isinstance(body, dict):
@@ -546,6 +722,11 @@ async def queue_edit(db: Database, session: Session, ref: str, link_id: str, bod
         return await _queue(
             db, session, ref, entity=None, action="link-secret", target=link_id,
             text="", flag=bool(body["secret"]),
+        )  # fmt: skip
+    if action == "who":  # "Who knows this?" (#2999): only the DM, some characters, or everyone
+        return await _queue(
+            db, session, ref, entity=None, action="link-who", target=link_id,
+            text=who_text(body), flag=False,
         )  # fmt: skip
     if action == "pin":  # 📌 100% truth (#2447); the door lets only a DM queue it
         if not isinstance(body.get("pinned"), bool):

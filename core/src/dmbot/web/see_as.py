@@ -1,23 +1,11 @@
 """The story graph seen as the party, a player character or an NPC, for the DM (#2999).
 
-The DM's graph is the whole truth. "See as" draws it the way a character knows it: the same
-function the bot uses (`memory.gate.visible`) works out what that viewer may know, and this module
-only removes the rest. Nothing is worked out twice: the rules live in the gate, the website's
-database role has no right on the memory tables, and one DM-only door
-(`dmbot_web_knowers_data`, migration 0309) hands over who knows what.
-
-Names are the bot's own (`gate.name_entries`, the pure half of `gate.names_for`, fed by the same
-rows from the door): a name the viewer knows only through a connection or an other name is shown by
-the first other name they know, an unnamed person by the label the viewer may read, and knowing
-that a connection exists never reveals a main name. The DM's own marks (secret, held back, pinned,
-DMbot's checks, who knows) are removed from everything shown, so the picture is the viewer's, not
-the DM's. Read-only; DM only.
-
-Not here yet: the player's own page (migration 0294) still ORs the older table-wide flags into what
-a player sees, so it is not the same as this view: it can show a player more than the gate allows
-(Supervisor's ruling on #3142: the gate is the rule, and the player page moves onto this view in
-#3143). The player view also splits a name into its own node when a viewer knows some connections
-only through a secret other name; this view shows such a name once, by the other name.
+The DM's graph is the whole truth. "See as" draws it the way a character knows it, by the same
+path every other look at the graph now takes (#3143): the API reads the graph's source and the
+knowers, and `web/graph_view.py` keeps what the gate (`memory.gate`) lets that viewer know. Names
+are the gate's (`gate.name_entries`), and so is the split of facts learned through a secret other
+name onto a node of their own (`gate.split_connections`). This module only says who to look as and
+answers the DM; it decides nothing about who may know what. Read-only; DM only.
 """
 
 from __future__ import annotations
@@ -26,44 +14,12 @@ from typing import Any
 
 from dmbot.db import Database
 from dmbot.memory import gate
-from dmbot.memory.link_words import connection_words
-from dmbot.memory.ontology import FALLBACK_PREDICATE
-from dmbot.web.names import _parse
-from dmbot.web.recaps import RecapError, _guild_of, _scoped
-from dmbot.web.relationships import read_web
+from dmbot.web import graph_view
+from dmbot.web.recaps import RecapError
+from dmbot.web.relationships import MAX_NODES, is_dm, page_of, refuse_bad, source_of
 from dmbot.web.sessions import Session
 
-GENERIC_WORDS = connection_words(FALLBACK_PREDICATE)  # (what a masked connection reads as)
 PARTY = "party"  # the viewer that is every player character at once
-
-
-def statements_of(data: dict[str, Any]) -> gate.Statements:
-    """The door's lists as the gate's input, in the shape `gate.load` makes: only live statements
-    count, and the same character listed twice for one statement keeps its last certainty."""
-    live = set(data["liveEntries"])
-    states = {i: e for i, e in data["states"].items()}
-    connections = {i: (ends[0], ends[1]) for i, ends in data["connections"].items()}
-    aliases = {i: tuple(ends) for i, ends in data["aliases"].items()}
-    knowers: dict[tuple[str, str], dict[str, float]] = {}
-    for kind, statement, character, sure in data["knowers"]:
-        if (
-            (kind == gate.ENTRY and statement in live)
-            or (kind == gate.PROPERTY and statement in states)
-            or (kind == gate.CONNECTION and statement in connections)
-            or (kind == gate.ALIAS and statement in aliases)
-        ):
-            knowers.setdefault((kind, statement), {})[character] = float(sure)
-    groups: dict[str, set[str]] = {}
-    for member, group in data["groups"]:
-        groups.setdefault(member, set()).add(group)
-    return gate.Statements(
-        knowers=knowers,
-        groups={m: frozenset(g) for m, g in groups.items()},
-        states=states,
-        connections=connections,
-        aliases=aliases,
-        player_characters=frozenset(data["playerCharacters"]),
-    )
 
 
 def viewer_of(data: dict[str, Any], viewer: str) -> tuple[gate.Viewer, str]:
@@ -75,74 +31,6 @@ def viewer_of(data: dict[str, Any], viewer: str) -> tuple[gate.Viewer, str]:
         if v["id"] == viewer:
             return gate.Viewer.character(viewer), str(v["name"])
     raise RecapError("not_found")
-
-
-def narrow(
-    graph: dict[str, Any], seen: gate.Visible, data: dict[str, Any], viewer: gate.Viewer
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """The nodes and edges of the DM's graph that `seen` may know, with the DM's marks removed."""
-    # the names are the bot's own (`gate.name_entries`): never decided here
-    rows = gate.NameRows(
-        {str(e["id"]): e for e in data["entities"]},
-        data["aliasRows"],
-        [(str(a), str(c), int(t)) for a, c, t in data["learned"]],
-    )
-    named = gate.name_entries(seen, viewer, [str(n["id"]) for n in graph["nodes"]], rows)
-    shown: dict[str, str] = {}
-    changed: set[str] = set()  # shown under a name other than the main one
-    nodes = []
-    for node in graph["nodes"]:
-        node_id = str(node["id"])
-        name = named.get(node_id)
-        if node_id not in seen.entries or name is None:
-            continue
-        shown[node_id] = name
-        if name != node["name"]:
-            changed.add(node_id)
-        # `secret`, `quests` and the DM's `revealed` mean nothing to a character, and the NPC page
-        # is the DM's
-        nodes.append(
-            {
-                **node,
-                "name": name,
-                "revealed": True,
-                "secret": None,
-                "quests": None,
-                "page": False,
-            }
-        )
-    edges = []
-    for edge in graph["edges"]:
-        if edge["a"] not in shown or edge["b"] not in shown:
-            continue
-        # A connection's words can be the DM's own note, which may name a main name (the players'
-        # graph blanks it the same way): when either end is shown under another name, the words
-        # are the generic ones.
-        masked = edge["a"] in changed or edge["b"] in changed
-        links = [
-            {
-                **{k: v for k, v in link.items() if k not in ("who", "knownBy")},
-                **({"words": GENERIC_WORDS, "back": None} if masked else {}),
-                "secret": False,
-                "revealed": True,
-                "pinned": False,
-                "check": "",
-            }
-            for link in edge["links"]
-            if seen.knows(gate.CONNECTION, str(link["id"]))
-        ]
-        if not links:
-            continue
-        label = edge["label"] if any(x["words"] == edge["label"] for x in links) else None
-        edges.append(
-            {
-                **edge,
-                "label": label if label is not None else links[-1]["words"],
-                "more": len(links) - 1,
-                "links": links,
-            }
-        )
-    return nodes, edges
 
 
 async def read_see_as(
@@ -158,28 +46,46 @@ async def read_see_as(
     player character knows) or the id of a character of this campaign. Same shape as the plain
     graph (`read_web`), plus `seeAs: {viewer, name}`; `canEdit` is false, since this is a look, not
     a place to change anything. DM only: anyone else is `not_allowed`."""
-    guild_id, campaign_id = _parse(ref)
-    _guild_of(session, guild_id)
-    async with db.user(session.user_id, session=session.id_hash) as conn:
-        await _scoped(conn, guild_id)
-        cur = await conn.execute(
-            "SELECT dmbot_web_knowers_data(%s, %s) AS r", (guild_id, campaign_id)
-        )
-        data = (await cur.fetchone() or {}).get("r")
-    if data is None:
+    # the DM check comes first, so a player who asks does not make the server read the whole graph
+    if not await is_dm(db, session, ref):
         raise RecapError("not_allowed")
-    who, words = viewer_of(data, viewer)
-    graph = await read_web(db, session, ref, center=center, hops=hops, view="full")
-    nodes, edges = narrow(graph, gate.visible(who, statements_of(data)), data, who)
-    # the DM graph's centre may be a name this viewer is not shown
-    shown_ids = {n["id"] for n in nodes}
+    refuse_bad(center, hops)
+    src, known, pages = await source_of(db, session, ref)
+    if not known["isDm"]:
+        raise RecapError("not_allowed")
+    who, words = viewer_of(known, viewer)
+    graph = graph_view.build(src, known, who)
+    # A DM looking as someone may ask for a centre that character is not shown: the picture is
+    # then centred on what they do know, never an error (a player asking for such a name is told
+    # "not found", as before).
+    shaped = graph_view.web_of(graph, center, hops, MAX_NODES) or graph_view.web_of(
+        graph, None, hops, MAX_NODES
+    )
+    assert shaped is not None  # (no centre asked for: always an answer)
+    return {**page_of({**shaped, "pageIds": pages}), "seeAs": {"viewer": viewer, "name": words}}
+
+
+VIEWERS_SHOWN = 25  # the most names offered at once; a search narrows a big cast
+
+
+async def read_viewers(db: Database, session: Session, ref: str, query: str = "") -> dict[str, Any]:
+    """The characters a DM may "see as", for the picker (#2999): `{viewers: [{id, name, kind}],
+    total}`, player characters first, then by name, at most `VIEWERS_SHOWN`, narrowed by `query`
+    (letters in the name, any case) for a big cast. The party is always offered by the page and
+    is not listed here. DM only: anyone else is `not_allowed`, and nothing here says who plays
+    whom."""
+    if not await is_dm(db, session, ref):
+        raise RecapError("not_allowed")
+    _src, known, _pages = await source_of(db, session, ref)
+    if not known["isDm"]:
+        raise RecapError("not_allowed")
+    # (the order, player characters first then by name, comes from the SQL door)
+    needle = " ".join(query[:200].split()).casefold()[:100]
+    found = [v for v in known["viewers"] if needle in str(v["name"]).casefold()]
     return {
-        # (the DM graph's own `view`, `visibility`, `canPeek` and `truncated` describe the DM's
-        # picture, not this one, so they are not passed on)
-        "maxHops": graph["maxHops"],
-        "center": graph["center"] if graph["center"] in shown_ids else None,
-        "nodes": nodes,
-        "edges": edges,
-        "canEdit": False,
-        "seeAs": {"viewer": viewer, "name": words},
+        "viewers": [
+            {"id": str(v["id"]), "name": str(v["name"]), "kind": str(v["kind"])}
+            for v in found[:VIEWERS_SHOWN]
+        ],
+        "total": len(found),
     }

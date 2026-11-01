@@ -1777,6 +1777,17 @@ def create_app(
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 
+    @app.get("/me/campaigns/{ref}/web/viewers")
+    async def me_campaign_web_viewers(ref: str, signed: Signed, q: str = "") -> dict[str, Any]:
+        """The characters a DM may "see as" (#2999), player characters first, searchable by name
+        for a big cast. DM only."""
+        session, _token = signed
+        try:
+            return await see_as.read_viewers(db, session, ref, q)
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
     @app.get("/me/campaigns/{ref}/web/overview")
     async def me_campaign_web_overview(
         ref: str, signed: Signed, view: str | None = None
@@ -2002,6 +2013,23 @@ def create_app(
             body = None
         try:
             return {"answer": await all_names.queue_action(db, session, ref, entity_id, body)}
+        except RecapError as err:
+            status, detail = name_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/all-names-confirm", status_code=202)
+    async def me_campaign_names_confirm(
+        ref: str, signed: Signed, request: Request
+    ) -> dict[str, str]:
+        """ "Add all" for the names an upload found, or the Undo of one press (#3207): queued for
+        the bot; the answer is polled at `.../all-names/answers/{answer}` like any name action."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return {"answer": await all_names.queue_confirm(db, session, ref, body)}
         except RecapError as err:
             status, detail = name_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None

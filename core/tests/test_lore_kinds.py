@@ -94,7 +94,7 @@ class TheWords(unittest.TestCase):
         asked = lore_read.shape_instructions()
         for word in ("captive", "contains", "sibling", "spouse", "rival", "leads", "founded"):
             self.assertIn(word, asked)
-        for word in bg.ALL_WORDS:
+        for word in bg.OFFERED_WORDS:
             self.assertIn(word, asked)  # the schema's enum and the explanation agree
         read_text = lore_read.read_instructions()
         for phrase in ("is held captive by", "contains", "sibling of", "spouse of"):
