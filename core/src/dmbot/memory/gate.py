@@ -337,30 +337,32 @@ async def party_entries(scope: Scope) -> frozenset[str] | None:
         for r in await scope.select(PERSPECTIVES, " AND entity_id = ANY(%s)", [list(pcs)])
     }
     cur = await scope.conn.execute(
-        "SELECT 1 FROM memory_knowers k"
-        " JOIN memory_perspectives p ON p.guild_id = k.guild_id AND p.campaign_id = k.campaign_id"
-        "   AND p.id = k.perspective_id"
-        " JOIN memory_entities e ON e.guild_id = p.guild_id AND e.campaign_id = p.campaign_id"
-        "   AND e.id = p.entity_id"
-        " WHERE k.guild_id = %s AND k.campaign_id = %s AND k.about_entity_id IS NOT NULL"
-        " AND cardinality(k.hidden_by) = 0 AND e.type <> 'character' LIMIT 1",
+        "SELECT p.id FROM memory_perspectives p JOIN memory_entities e"
+        " ON e.guild_id = p.guild_id AND e.campaign_id = p.campaign_id AND e.id = p.entity_id"
+        " WHERE p.guild_id = %s AND p.campaign_id = %s AND e.type <> 'character'",
         scope.ids,
     )
-    if await cur.fetchone() is not None:
-        return None  # (a group holds an entry: let the full gate follow its members)
+    group_views = [str(r["id"]) for r in await cur.fetchall()]
+    # One pass over the entry rows: who among the player characters holds each, and whether a
+    # group (a faction as a knower) holds any, which this does not follow.
     cur = await scope.conn.execute(
-        "SELECT about_entity_id, array_agg(DISTINCT perspective_id) AS holders"
+        "SELECT about_entity_id,"
+        " array_agg(perspective_id) FILTER (WHERE perspective_id = ANY(%s)) AS holders,"
+        " coalesce(bool_or(perspective_id = ANY(%s)), false) AS by_group"
         " FROM memory_knowers WHERE guild_id = %s AND campaign_id = %s"
         " AND about_entity_id IS NOT NULL AND cardinality(hidden_by) = 0"
-        " AND perspective_id = ANY(%s) GROUP BY about_entity_id",
-        (*scope.ids, list(views.values())),
+        " AND (perspective_id = ANY(%s) OR perspective_id = ANY(%s)) GROUP BY about_entity_id",
+        (list(views.values()), group_views, *scope.ids, list(views.values()), group_views),
     )
+    rows = await cur.fetchall()
+    if any(row["by_group"] for row in rows):
+        return None  # (a group holds an entry: let the full gate follow its members)
     everyone = set(views.values())
     own = {entity: view for entity, view in views.items()}
     seen = set()
-    for row in await cur.fetchall():
+    for row in rows:
         entry = str(row["about_entity_id"])
-        missing = everyone - set(row["holders"])
+        missing = everyone - set(row["holders"] or ())
         # (a character knows its own entry without a row)
         if not missing or missing == {own.get(entry)}:
             seen.add(entry)
