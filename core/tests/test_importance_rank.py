@@ -128,6 +128,61 @@ class TheStore(NamesTest):
         self.assertEqual(got[self.garrick], 3)
         self.assertNotIn(twin, got)
 
+    async def twin(self, name: str) -> str:
+        made = await self.memory.add_names(
+            GUILD, self.campaign.id, [NewName(name, "npc", CONFIRMED)], source="dm"
+        )
+        (one,) = made.value
+        assert one
+        return one
+
+    async def merge(self, keep: str, gone: str) -> None:
+        await self.memory.merge(GUILD, self.campaign.id, keep, gone, source="dm", dm_said_same=True)
+
+    async def test_a_chain_of_merges_still_reaches_the_character_that_stayed(self) -> None:
+        a, b = await self.twin("Garrick the Smith"), await self.twin("Old Garrick")
+        await self.store.add(GUILD, self.campaign.id, [ir.Assessment(a, 3, "mentor")])
+        await self.memory.add_session_heard(GUILD, self.campaign.id, 100, [Heard(a, DM, 1)])
+        await self.memory.add_session_heard(GUILD, self.campaign.id, 200, [Heard(b, DM, 1)])
+        await self.merge(b, a)  # A into B
+        await self.merge(self.garrick, b)  # then B into the character that stays
+        got = await self.ranks()
+        self.assertEqual(got[self.garrick], 3)  # (A's assessment, two merges away)
+        self.assertEqual({a, b} & set(got), set())
+
+    async def test_sessions_of_merged_names_add_up_toward_the_floor(self) -> None:
+        twin = await self.twin("Garrick the Smith")
+        await self.memory.add_session_heard(
+            GUILD, self.campaign.id, 100, [Heard(self.garrick, DM, 1)]
+        )
+        await self.memory.add_session_heard(GUILD, self.campaign.id, 200, [Heard(twin, DM, 1)])
+        self.assertEqual((await self.ranks())[self.garrick], ir.BACKGROUND)
+        await self.merge(self.garrick, twin)
+        self.assertEqual((await self.ranks())[self.garrick], ir.RECURRING)  # two sessions now
+
+    async def test_a_correction_after_a_merge_lowers_the_rank_again(self) -> None:
+        twin = await self.twin("Garrick the Smith")
+        await self.store.add(GUILD, self.campaign.id, [ir.Assessment(twin, 4, "antagonist")])
+        await self.merge(self.garrick, twin)
+        self.assertEqual((await self.ranks())[self.garrick], 4)
+        await self.store.add(GUILD, self.campaign.id, [ir.Assessment(self.garrick, 1, "corrected")])
+        self.assertEqual((await self.ranks())[self.garrick], 1)  # the newest, not the highest
+
+    async def test_a_merged_or_rejected_entry_is_not_assessed(self) -> None:
+        twin = await self.twin("Garrick the Smith")
+        await self.merge(self.garrick, twin)
+        self.assertEqual(
+            await self.store.add(GUILD, self.campaign.id, [ir.Assessment(twin, 3, "mentor")]), 0
+        )
+
+    async def test_no_more_than_twenty_line_numbers_are_kept(self) -> None:
+        a = ir.Assessment(self.garrick, 3, "mentor", lines=tuple(range(1, 40)))
+        await self.store.add(GUILD, self.campaign.id, [a])
+        async with self.db.guild(GUILD) as conn:
+            cur = await conn.execute("SELECT cardinality(lines) AS n FROM memory_importance")
+            (row,) = await cur.fetchall()
+        self.assertEqual(row["n"], ir.MAX_LINES)
+
     async def test_the_reason_list_in_the_database_is_the_code_list(self) -> None:
         async with self.db.guild(GUILD) as conn:
             cur = await conn.execute(
@@ -136,9 +191,9 @@ class TheStore(NamesTest):
                 " AND pg_get_constraintdef(oid) LIKE '%basis%'"
             )
             (row,) = await cur.fetchall()
-        for code in ir.BASES:
-            self.assertIn(f"'{code}'", row["d"])
-        self.assertEqual(row["d"].count("::text"), len(ir.BASES))
+        import re
+
+        self.assertEqual(set(re.findall(r"'([a-z_]+)'::text", row["d"])), set(ir.BASES))
 
 
 if __name__ == "__main__":
