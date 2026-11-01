@@ -431,10 +431,12 @@ class ThePath(NamesTest):
         press = await self.read()
         view = press.edit_original_response.await_args.kwargs["view"]
         pressed = []
-        for label in [b.label for b in view.children if str(b.label).startswith("✅ Add all")]:
-            it = self.it()
-            await self.button(view, label).callback(it)
-            pressed.append(it)
+        # (the overall "Add all N" answers every kind in one press, so the per-kind buttons are
+        # gone after it: a kind's own button is pressed on a fresh view below)
+        labels = [b.label for b in view.children if str(b.label).startswith("✅ Add all")]
+        it = self.it()
+        await self.button(view, labels[0]).callback(it)
+        pressed.append(it)
         said = [
             str(c.args[0]) if c.args else ""
             for it in pressed
