@@ -15,6 +15,7 @@ EVERY_ACTION = (
     "backstory-which-pick", "backstory-which-neither",
     "reading-place", "reading-no", "reading-undo", "names-fixed-undo",
     "name", "name-join", "name-undo",  # "Not named yet" on the Names page (#2803)
+    "link-who", "alias-who",  # "Who knows this?" (#2999)
 )  # fmt: skip
 
 
