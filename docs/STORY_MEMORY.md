@@ -1075,6 +1075,8 @@ all NPCs:
 - "Bruno → desires → Shela": Bruno 1.0, Shela 0.95. Tran has no row.
 - "Shela → desires → Bruno": Bruno 0.3 (he hopes so), Shela 0.0 (she doesn't), Tran no row.
 
+"Only some characters" (the DM's pick on a connection or another name) may include NPCs, up to 60 of this campaign's confirmed characters; never a merged or rejected entry, a place, or another campaign's (#3197).
+
 A viewer is shown a statement when one of its characters has a row, with that character's confidence, so a guess
 is drawn as uncertain.
 

@@ -4261,8 +4261,8 @@ class MemoryStore:
     async def check_knowers(
         self, guild_id: int, campaign_id: str, character_ids: Sequence[str]
     ) -> None:
-        """Raise `MemoryRuleError` if these are not all this campaign's confirmed player
-        characters (or are too many), writing nothing (#2935)."""
+        """Raise `MemoryRuleError` if these are not all this campaign's confirmed characters
+        (NPCs included, at most 60), writing nothing (#2935, #3197)."""
         async with self._read(guild_id, campaign_id, snapshot=True) as scope:
             await knowers.check_characters(scope, character_ids)
 

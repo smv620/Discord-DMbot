@@ -45,32 +45,9 @@ from dmbot.memory.models import (
 
 ONLY_THE_DM = "Only the DM can say who knows this."
 NOT_HIDDEN = "Everyone at the table already knows this one."
-NOT_A_PLAYER_CHARACTER = "Pick player characters from this campaign."
 NOT_SECRET = "Only a secret name can be known by some characters."
 MAX_KNOWERS = 12  # a table's characters; more than this is a mistake, not a party
 MAX_KNOWERS_ANY = 60  # the characters of a campaign, NPCs included (a whole faction told at once)
-
-
-async def _characters(w: Scope, character_ids: Sequence[str]) -> list[str]:
-    """The confirmed player characters among these ids, in order and without repeats; anything
-    else (another campaign's entry, an NPC, a name not yet confirmed) is refused, so nothing
-    outside this campaign's player characters can hold a point of view."""
-    chosen = list(dict.fromkeys(character_ids))
-    if len(chosen) > MAX_KNOWERS:
-        raise MemoryRuleError(NOT_A_PLAYER_CHARACTER)
-    if not chosen:
-        return []
-    found = {
-        r["id"]
-        for r in await w.select(
-            ENTITIES,
-            " AND id = ANY(%s) AND type = 'character' AND role = %s AND status = %s",
-            [chosen, PLAYER_CHARACTER, CONFIRMED],
-        )
-    }
-    if len(found) != len(chosen):
-        raise MemoryRuleError(NOT_A_PLAYER_CHARACTER)
-    return chosen
 
 
 async def _view_of(w: Changes, entity_id: str) -> str:
@@ -257,11 +234,14 @@ async def set_connection_knowers(
         raise MemoryRuleError(NOT_HIDDEN)
     if not (relation["secret"] or relation["unrevealed"]):
         raise MemoryRuleError(NOT_HIDDEN)
-    chosen = await _characters(w, character_ids)
+    known = await _known_characters(w, character_ids)
+    chosen = list(known)
     now = await connection_knowers(w, [relation_id])
     current = set(now.get(relation_id, []))
+    # The old beliefs are a player character's point of view (what `connection_knowers` reads);
+    # an NPC knower lives only in the table the gate reads, written by `_follow_player_list`.
     for entity_id in chosen:
-        if entity_id not in current:
+        if known[entity_id] and entity_id not in current:
             await beliefs.add_belief(
                 w, await _view_of(w, entity_id), relation_id, KNOWN, REVEALED_FACT
             )
@@ -269,7 +249,7 @@ async def set_connection_knowers(
         await beliefs.add_belief(w, await _view_of(w, entity_id), relation_id, 0.0, SECRET_PLOT)
     # The same list in the one table the gate reads (#2995, slice 2b); the old beliefs stay what
     # the old readers read until slice 3.
-    await _follow_player_list(w, "connection", relation_id, chosen)
+    await _follow_player_list(w, "connection", relation_id, known)
     return chosen
 
 
@@ -281,8 +261,11 @@ async def set_alias_knowers(w: Changes, alias_id: str, character_ids: Sequence[s
     alias = await w.get(ALIASES, alias_id)
     if alias is None or alias["status"] == "rejected" or not alias["secret"]:
         raise MemoryRuleError(NOT_SECRET)
-    chosen = await _characters(w, character_ids)
-    views = {entity_id: await _view_of(w, entity_id) for entity_id in chosen}
+    known = await _known_characters(w, character_ids)
+    chosen = list(known)
+    views = {
+        entity_id: await _view_for(w, entity_id, player) for entity_id, player in known.items()
+    }
     have = {
         r["perspective_id"]: r["id"]
         for r in await w.select(ALIAS_KNOWERS, " AND alias_id = %s", [alias_id])
@@ -297,18 +280,19 @@ async def set_alias_knowers(w: Changes, alias_id: str, character_ids: Sequence[s
     for view_id, row_id in have.items():
         if view_id not in views.values():
             await w.delete(ALIAS_KNOWERS, row_id)
-    await _follow_player_list(w, "alias", alias_id, chosen)
+    await _follow_player_list(w, "alias", alias_id, known)
     return chosen
 
 
 async def _follow_player_list(
-    w: Changes, kind: str, statement_id: str, chosen: Sequence[str]
+    w: Changes, kind: str, statement_id: str, chosen: Mapping[str, bool]
 ) -> None:
-    """The old "Who knows this?" writers pick player characters only: make the player characters
-    in the new list exactly those, keeping every other row (an NPC's, a group's) and the
-    certainty of a player character who stays (#2995, slice 2b)."""
+    """The old "Who knows this?" writers (`chosen`: each character, with whether it is a player's):
+    make the player characters in the new list exactly those, add any NPC picked, and keep every
+    other row (an NPC's not picked, a group's) and the certainty of a character who stays
+    (#2995, slice 2b; NPCs may be picked since #3197)."""
     column, _ = _COLUMNS[kind]
-    views = {i: await _view_of(w, i) for i in chosen}
+    views = {i: await _view_for(w, i, player) for i, player in chosen.items()}
     await _drop_asleep(w, column, statement_id)
     pcs = {str(r["id"]) for r in await w.select(PERSPECTIVES, " AND kind = %s", [PC_VIEW])}
     have = {
@@ -620,9 +604,10 @@ async def what_my_characters_know(scope: Scope, user_id: int) -> Mine:
 
 async def check_characters(scope: Scope, character_ids: Sequence[str]) -> None:
     """Refuse, before anything is written, a pick that `set_connection_knowers` would refuse: too
-    many, or anything but this campaign's confirmed player characters. A multi-step edit calls it
-    first so a bad pick cannot leave it half done."""
-    await _characters(scope, character_ids)
+    many, or anything but this campaign's confirmed characters, NPCs included (one rule with
+    `set_knowers`: `_known_characters`). A multi-step edit calls it first so a bad pick cannot
+    leave it half done."""
+    await _known_characters(scope, character_ids)
 
 
 async def fold_knowers(

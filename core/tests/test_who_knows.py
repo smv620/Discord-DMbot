@@ -75,18 +75,83 @@ class WhoKnows(MemoryTest):
         await self.memory.set_connection_knowers(GUILD_A, self.c, link, [], source=DM)
         self.assertEqual(await self.memory.connection_knowers(GUILD_A, self.c, [link]), {})
 
-    async def test_only_the_dm_and_only_player_characters_of_this_campaign(self) -> None:
+    async def test_only_the_dm_and_only_characters_of_this_campaign(self) -> None:
         ids = await self.setup_table()
         link = await self.hidden_link(ids["voss"], ids["council"])
-        other = await self.add("Elsewhere", campaign=None)  # an NPC of this campaign
-        for who in ([other], [ids["council"]], ["f" * 32]):
-            with self.subTest(who=who), self.assertRaises(MemoryRuleError):
-                await self.memory.set_connection_knowers(GUILD_A, self.c, link, who, source=DM)
+        place = await self.add("Harbor", type="place", status=CONFIRMED)
+        merged = await self.add("Voss twice", status=CONFIRMED)
+        rejected = await self.add("Not a person", status=CONFIRMED)
+        async with self.db.guild(GUILD_A) as conn:  # (the store only adds live entries)
+            await conn.execute(
+                "UPDATE memory_entities SET status = 'merged', merged_into = %s WHERE id = %s",
+                (ids["voss"], merged),
+            )
+            await conn.execute(
+                "UPDATE memory_entities SET status = 'rejected' WHERE id = %s", (rejected,)
+            )
+        for who in ([place], [merged], [rejected], ["f" * 32]):
+            with self.subTest(who=who):
+                with self.assertRaises(MemoryRuleError):
+                    await self.memory.set_connection_knowers(GUILD_A, self.c, link, who, source=DM)
+                with self.assertRaises(MemoryRuleError):
+                    await self.memory.check_knowers(GUILD_A, self.c, who)
         with self.assertRaises(MemoryRuleError):  # a player (or the scan) cannot say who knows
             await self.memory.set_connection_knowers(
                 GUILD_A, self.c, link, [ids["tavin"]], source="character"
             )
         self.assertEqual(await self.memory.connection_knowers(GUILD_A, self.c, [link]), {})
+
+    async def test_an_npc_can_know_a_connection_and_an_other_name(self) -> None:
+        ids = await self.setup_table()
+        link = await self.hidden_link(ids["voss"], ids["council"])
+        npc = await self.add("Brisa", status=CONFIRMED)
+        await self.memory.check_knowers(GUILD_A, self.c, [ids["tavin"], npc])
+        done = await self.memory.set_connection_knowers(
+            GUILD_A, self.c, link, [ids["tavin"], npc], source=DM
+        )
+        self.assertEqual(done.value, [ids["tavin"], npc])
+        # a player's read is unchanged: only the player characters are listed there
+        self.assertEqual(
+            await self.memory.connection_knowers(GUILD_A, self.c, [link]), {link: [ids["tavin"]]}
+        )
+        self.assertEqual(  # the gate's list holds both, and saving again adds no second row
+            sorted(
+                (await self.memory.statement_knowers(GUILD_A, self.c, "connection", [link]))[link]
+            ),
+            sorted([ids["tavin"], npc]),
+        )
+        rows = await self.count("memory_knowers")
+        await self.memory.set_connection_knowers(
+            GUILD_A, self.c, link, [ids["tavin"], npc], source=DM
+        )
+        self.assertEqual(await self.count("memory_knowers"), rows)
+        alias = await self.secret_name(ids["voss"], "Shade")
+        await self.memory.set_alias_knowers(GUILD_A, self.c, alias, [npc], source=DM)
+        self.assertEqual(
+            await self.memory.alias_knowers(GUILD_A, self.c, [alias]), {}
+        )  # (the old reader lists player characters only)
+        self.assertEqual(await self.count("memory_alias_knowers"), 1)
+
+    async def test_an_npc_never_becomes_a_players_view(self) -> None:
+        ids = await self.setup_table()
+        link = await self.hidden_link(ids["voss"], ids["council"])
+        npc = await self.add("Brisa", status=CONFIRMED)
+        await self.memory.set_connection_knowers(GUILD_A, self.c, link, [npc], source=DM)
+        async with self.db.guild(GUILD_A) as conn:
+            cur = await conn.execute(
+                "SELECT kind FROM memory_perspectives WHERE entity_id = %s", (npc,)
+            )
+            self.assertEqual([r["kind"] for r in await cur.fetchall()], ["npc"])
+
+    async def test_at_most_sixty_knowers(self) -> None:
+        ids = await self.setup_table()
+        link = await self.hidden_link(ids["voss"], ids["council"])
+        crowd = [await self.add(f"Guard {i}", status=CONFIRMED) for i in range(61)]
+        with self.assertRaises(MemoryRuleError):
+            await self.memory.check_knowers(GUILD_A, self.c, crowd)
+        await self.memory.check_knowers(GUILD_A, self.c, crowd[:60])
+        with self.assertRaises(MemoryRuleError):
+            await self.memory.set_connection_knowers(GUILD_A, self.c, link, crowd, source=DM)
 
     async def test_another_campaigns_character_cannot_know_this_connection(self) -> None:
         ids = await self.setup_table()
