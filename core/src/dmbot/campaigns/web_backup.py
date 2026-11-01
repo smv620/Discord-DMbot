@@ -8,10 +8,14 @@ a campaign in a server DMbot cannot reach works. The file waits in the row for t
 asked (at most 15 minutes, or until they fetch it).
 
 Checked again when the bot builds it, because the queue-time check can be stale: the sender must
-still be the campaign's owner or one of its game masters, and the campaign's owner's plan must
-include copies (Try It has none; the bot owns the plan rules, `plan_allows`). A campaign too big for
-a restore to take (`BackupTooBig`) fails with `too_big` and nothing is kept. The file is never
-logged; only the outcome word is.
+still be the campaign's owner, one of its game masters, or a member of the campaign's server (as in
+Discord, where anyone in the server may download a paid campaign's copy: owner decision 2026-10-06,
+#229; #3150). A person who has left the server gets none: a copy holds the campaign's secrets, so
+membership is asked of Discord now, and when Discord cannot be asked the copy fails (asking again is
+fine) rather than being given. The campaign's owner's plan must include copies (Try It has none;
+the bot owns the plan rules, `plan_allows`). A campaign too big for a restore to take
+(`BackupTooBig`) fails with `too_big` and nothing is kept. The file is never logged; only the
+outcome word is.
 """
 
 from __future__ import annotations
@@ -37,7 +41,7 @@ RETAKE_AFTER_S = 300  # a claim this old belongs to a bot that stopped
 KEEP_FOR_S = 900  # a request and its file go 15 minutes after it was made
 
 NOT_FOUND = "not_found"  # the campaign is gone
-NOT_ALLOWED = "not_allowed"  # the sender is not the owner or a game master any more
+NOT_ALLOWED = "not_allowed"  # the sender is not the owner, a game master or in the server any more
 PLAN = "plan"  # the owner's plan has no copies (Try It)
 TOO_BIG = "too_big"  # bigger than a restore takes
 TOO_MANY_FILES = "too_many_files"  # more transcripts files than a restore has boxes for
@@ -62,6 +66,11 @@ class Host(Protocol):
     ) -> bool: ...
 
     async def export_campaign(self, guild_id: int, campaign_id: str) -> tuple[Any, list[bytes]]: ...
+
+    async def find_member(self, guild_id: int, user_id: int) -> Any | None:
+        """The person in the server (anything with a `bot` flag), or None when Discord says they
+        are not in it. Raises when Discord cannot be asked: that is a failed try, never "left"."""
+        ...
 
 
 class WebBackups:
@@ -151,8 +160,12 @@ async def build(host: Host, guild_id: int, item: Request, store: WebBackups) -> 
             await store.failed(guild_id, item, NOT_FOUND)
             return NOT_FOUND
         if item.user_id not in campaign.dm_user_ids and item.user_id != campaign.owner_user_id:
-            await store.failed(guild_id, item, NOT_ALLOWED)
-            return NOT_ALLOWED
+            # Anyone in the server may ask, as in Discord; a person who left, or an account that
+            # is a bot, may not. A lookup that fails raises and ends as `failed`, never as a yes.
+            member = await host.find_member(guild_id, item.user_id)
+            if member is None or getattr(member, "bot", False):
+                await store.failed(guild_id, item, NOT_ALLOWED)
+                return NOT_ALLOWED
         # A copy holds the campaign's secrets, so a plan that cannot be checked is a no.
         if not await host.plan_allows("copy", guild_id, campaign, fail_open=False):
             await store.failed(guild_id, item, PLAN)
