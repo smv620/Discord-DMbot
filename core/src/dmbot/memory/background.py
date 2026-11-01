@@ -390,19 +390,31 @@ def reach_names(keys: Iterable[str]) -> set[str]:
     }
 
 
+_POSSESSIVE_RELATIVE = re.compile(
+    r"\b(?:his|her|their)\s+(?:[\w'’-]+\s+){0,2}[\w'’-]+\s*,\s*$", re.I
+)
+
+
 def _third_name(span: str, others: Collection[str], ends: Collection[str]) -> bool:
     """Whether a name of the campaign or the read other than the pair's own stands in the span
     (a capitalised run of up to four words, so "boy" in running text is no name): then the
-    pronoun may mean that one, and no reach is made."""
-    tokens = re.findall(r"\w+(?:['’-]\w+)*", span)
+    pronoun may mean that one, and no reach is made. A name introduced as one of the same
+    person's own ("His elder brother, Vaelrith, vanished, while his younger sister, ...") does
+    not count: "his" before and after it means the same person, and the second relative is the
+    very case a reach is for (#3238)."""
+    tokens = [(m.group(), m.start()) for m in re.finditer(r"\w+(?:['’-]\w+)*", span)]
     # ("Pell's cousin" names Pell: a possessive ending is taken off the last word of a name)
-    tokens = [re.sub(r"['’]s$", "", t, flags=re.I) if t[:1].isupper() else t for t in tokens]
-    for i, token in enumerate(tokens):
+    tokens = [
+        (re.sub(r"['’]s$", "", t, flags=re.I) if t[:1].isupper() else t, at) for t, at in tokens
+    ]
+    for i, (token, at) in enumerate(tokens):
         if not token[:1].isupper():
             continue
         for size in range(1, 5):
-            gram = name_key(" ".join(tokens[i : i + size]))
+            gram = name_key(" ".join(t for t, _ in tokens[i : i + size]))
             if gram and gram in others and gram not in ends:
+                if _POSSESSIVE_RELATIVE.search(span[max(0, at - 60) : at]):
+                    break  # (this occurrence is "his <relative>, Name": not a new possessor)
                 return True
     return False
 
