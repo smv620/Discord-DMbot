@@ -325,7 +325,7 @@ from dmbot.off_the_record import NOT_TOLD, WAKE_MINUTES, OffTheRecord, Paused, p
 from dmbot.recaps import discord as recaps_discord
 from dmbot.recaps import feedback as recap_feedback
 from dmbot.recaps import hold as recap_hold
-from dmbot.recaps import name_answers
+from dmbot.recaps import name_answers, web_style
 from dmbot.recaps.accepted import AcceptedSection, AcceptedStore
 from dmbot.recaps.audio.eleven import ElevenLabs, HttpTransport
 from dmbot.recaps.audio.files import AudioFiles
@@ -334,6 +334,7 @@ from dmbot.recaps.discord import (
     HINTS_WAIT_S,
     LORE_SWEEP_EVERY_S,
     NAME_ANSWERS_PER_ROUND,
+    WEB_STYLE_PER_ROUND,
     RecapFeatures,
 )
 from dmbot.recaps.notes import SessionNotesSection
@@ -935,6 +936,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         ] = {}  # a spoken note being written down, by server (#2161)
         self._voice_next = 0  # where the next voice round starts looking, so servers take turns
         self.recap_styles = recap_styles  # the examples for how recaps sound (#2075)
+        # The website's Recap style choices (#3060), applied with the stores above.
+        self.web_recap_style = web_style.StyleQueue(recaps.db) if recaps is not None else None
+        self._web_style_swept: dict[int, float] = {}  # server -> when its queue was last swept
         self.installs = installs  # which servers the bot is in, and when it left (#2163)
         self.recap_holds = recap_holds  # recaps waiting for the DM's name answers (#2169)
         self.recap_feedback_limit = recap_feedback.FeedbackLimit()
@@ -10676,6 +10680,34 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     log.info("Name action %s: %s", action.action, done.error or "done")
                     if not done.error and self.lookup is not None:
                         self.lookup.mark_stale(guild.id, action.campaign_id)
+
+    async def run_web_recap_style(self) -> None:
+        """The Recap style choices DMs made on the website (#3060): for each server, sweep its
+        queue (the DM's pasted words never wait on a DM who did not come back), then apply the
+        oldest waiting choices in the order made. Each is a quick store call; a typed note is one
+        fast AI sort. The word of the outcome only in the log, never the words or who asked."""
+        queue = self.web_recap_style
+        if queue is None:
+            return
+        for guild in list(self.guilds):
+            if self._closing:
+                return
+            now = time.monotonic()
+            if now - self._web_style_swept.get(guild.id, -LORE_SWEEP_EVERY_S) >= LORE_SWEEP_EVERY_S:
+                self._web_style_swept[guild.id] = now
+                await queue.sweep(guild.id)
+            for _ in range(WEB_STYLE_PER_ROUND):
+                claim = await queue.claim_next(guild.id)
+                if claim is None:
+                    break
+                with log_context(guild_id=guild.id, campaign_id=claim.campaign_id):
+                    try:
+                        error = await web_style.apply(self, queue, guild.id, claim)
+                    except Exception as exc:  # the row must never stay "working" for a bug
+                        log.warning("A recap style choice failed: %s", type(exc).__name__)
+                        error = web_style.FAILED
+                    await queue.finish(guild.id, claim, error)
+                    log.info("Recap style %s: %s", claim.action, error or "done")
 
     async def run_lore_uploads(self) -> None:
         """The lore DMs uploaded on the website (#3022): for each server, sweep its queue (words
