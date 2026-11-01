@@ -1454,6 +1454,11 @@ export interface WebLink {
   secret: boolean;
   /** Who knows the connection, in the DM's full view only (#3167). */
   knowWord?: KnowWord;
+  /** Who may know a held connection, for the DM's full view (#2935 D4, #3214): only the DM, some characters, or
+   * everyone at the table. Absent from an older API. */
+  who?: "dm" | "some" | "all";
+  /** The characters that know it, when `who` is "some". */
+  knownBy?: { id: string; name: string }[];
   direction: "a-b" | "b-a" | "both";
   /** The kind of connection, for the map's colours and filters (#2942). Absent from an older API. */
   kind?: WebLinkKind;
@@ -1566,6 +1571,7 @@ export type WebLinkChange =
   | { action: "words"; id: string; words: string }
   | { action: "secret"; id: string; secret: boolean }
   | { action: "pin"; id: string; pinned: boolean }
+  | { action: "who"; id: string; who: "dm" | "some" | "everyone"; characters?: string[] }
   | { action: "remove"; id: string; confirm: true };
 
 /** One name in a campaign's memory, as the Names page lists it (#2295). */
