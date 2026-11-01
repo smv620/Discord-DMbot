@@ -29,8 +29,11 @@ describe("who knows each unconnected name, in the tray", () => {
     const overview = await api.webOverview!(REF, { view: "full" });
     const states = overview.tray.map((n) => n.knowWord).filter((k): k is NonNullable<typeof k> => k !== undefined);
     expect(states.length).toBeGreaterThan(0);
-    const words = tray().textContent ?? "";
-    for (const k of states) expect(words).toContain(w.knowWords[k]);
+    // Each name is tied to its own state: its button carries the words of its own state.
+    for (const n of overview.tray.filter((x) => x.knowWord)) {
+      const button = Array.from(tray().querySelectorAll("button")).find((b) => b.textContent?.includes(n.name));
+      expect(button?.textContent ?? "", n.name).toContain(w.knowWords[n.knowWord!]);
+    }
   });
 
   it("the tray marks 🤫 for secret only", async () => {
@@ -63,12 +66,12 @@ describe("who knows each unconnected name, in the tray", () => {
       return { ...o, tray: o.tray.map(({ knowWord: _k, ...n }) => n) };
     };
     await open(api);
-    await waitFor(() => expect(tray().textContent).not.toContain(w.knowHint));
+    expect(tray().textContent).not.toContain(w.knowHint);
     for (const word of Object.values(w.knowWords)) expect(tray().textContent).not.toContain(word);
     expect(tray().querySelectorAll("button").length).toBeGreaterThan(0);
   });
 
-  it("the hint shows only when a tray name has a state", async () => {
+  it("the hint shows when a tray name has a state", async () => {
     await open();
     expect(tray().textContent).toContain(w.knowHint);
   });

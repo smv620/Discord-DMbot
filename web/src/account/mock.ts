@@ -1674,7 +1674,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       }
       groups.sort((x, y) => y.size - x.size);
       const tray = seen.filter((n) => (degree.get(n.id) ?? 0) === 0).map(nodeOf);
-      // Who knows each unconnected name (#3192): the DM's full view carries one state on each of the first five, as the graph does.
+      // Who knows each unconnected name (#3192): the DM's full view puts a state on each of the first five (the fixture's tray has four).
       const trayStates = ["secret", "hidden_from_the_players", "known_to_an_npc", "partly_revealed", "known_to_the_party"] as const;
       const knownTray = dm && all ? tray.map((n, i) => (i < trayStates.length ? { ...n, knowWord: trayStates[i]! } : n)) : tray;
       return {
