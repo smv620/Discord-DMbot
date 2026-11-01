@@ -1534,7 +1534,7 @@ shows it); a word off the list is dropped and counted and the connection is kept
   connection, and storing an impression on the DM's Keep press is a later slice, with the DM's word
   always winning.
 - **Not changed yet.** The session extractor and the ontology's "not this" lines for `knows`, `ally_of`
-  and `enemy_of` still describe the old split; that is the next slice (see the follow-up issue). The
+  and `enemy_of` still describe the old split; that is the next slice (#3181). The
   website shows a feeling-carrying `knows` as plain "knows" until its own reading learns the word.
 
 ## Decided
