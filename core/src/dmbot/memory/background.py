@@ -62,6 +62,9 @@ CONNECTIONS = {
     "family": "kin_of",
     "member": "member_of",
     "in": "located_in",
+    # ("friend" and "enemy" are read as knows with a feeling before this table is looked at, #3175:
+    # these two entries only keep the words understood; the readers no longer produce ally_of or
+    # enemy_of, and rows stored earlier stay as they are)
     "friend": "ally_of",
     "enemy": "enemy_of",
     "owns": "owns",
@@ -146,7 +149,9 @@ def schema(own: Mapping[str, str] | None = None) -> dict[str, Any]:
                         "a": {"type": "string"},
                         "how": {
                             "type": "string",
-                            "enum": list(dict.fromkeys([*ALL_WORDS, *(own or {}), OTHER])),
+                            "enum": list(
+                                dict.fromkeys([*OFFERED_WORDS, *(own or {}), OTHER])
+                            ),  # (not the old feeling words)
                         },
                         "words": {"type": "string"},
                         "b": {"type": "string"},
@@ -770,8 +775,12 @@ def read_connections(
             # without it. "neutral" is the plain "they know each other" and stores no word.
             raw = item.get("words")
             said_feeling = feeling_words.word_of(raw)
-            if isinstance(raw, str) and raw.strip() and said_feeling is None:
-                lost["feeling_off_list"] += 1
+            if (
+                said_feeling is None
+                and raw not in (None, "")
+                and not (isinstance(raw, str) and not raw.strip())
+            ):
+                lost["feeling_off_list"] += 1  # (a word off the list, or not even text)
             said_feeling = said_feeling or old_feeling
             label = "" if said_feeling in (None, feeling_words.NEUTRAL) else said_feeling
         if how is None and word in LORE_WORDS:  # a lore word with its own fixed words (#2757)
@@ -974,6 +983,7 @@ def keep_connections(
     # kin_of, by unordered pair: (its place in `out` or None, its role or "", the order it was said)
     kin_held: dict[tuple[str, str], tuple[int | None, str, tuple[str, str]]] = {}
     contradicted: set[tuple[str, str]] = set()
+    knows_held: dict[tuple[str, str], int] = {}  # a kept `knows` line, by direction (#3175)
     # kin_of picks ("Which Mara?") with a role, by (the end that is a name, the end as written):
     # the pick itself and the way round it was said, so opposite roles are caught here too
     kin_picks: dict[tuple[str, str], tuple[Pick, bool]] = {}
@@ -1129,6 +1139,20 @@ def keep_connections(
                     continue
                 kin_held[pair] = (None, role, (ka, kb))
             else:
+                if c.how == "knows" and (ka, kb) in knows_held:
+                    # A plain "knows" read first must not swallow a later one that says how the
+                    # one feels (#3175): the word is added to the held line. Two different
+                    # words for the same direction clash: the first stays and the clash is counted.
+                    held_at = knows_held[(ka, kb)]
+                    held_words = out[held_at].words
+                    if c.words and not held_words:
+                        out[held_at] = replace(out[held_at], words=c.words)
+                        lost["feeling_added"] += 1
+                    elif c.words and held_words != c.words:
+                        lost["feeling_clash"] += 1
+                    else:
+                        lost["same_pair"] += 1
+                    continue
                 if c.how in both_ways and kb < ka:
                     ka, kb = kb, ka
                 # One fact per pair and kind: the queue's key has no words, so a second
@@ -1168,4 +1192,6 @@ def keep_connections(
             out.append(made)
             if c.how == "kin_of":
                 kin_held[pair] = (len(out) - 1, role, (ka, kb))
+            if c.how == "knows":
+                knows_held[(ka, kb)] = len(out) - 1
     return out

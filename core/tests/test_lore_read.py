@@ -18,6 +18,7 @@ from unittest.mock import AsyncMock
 from dmbot.ai import BUSY, OUT_OF_FUNDS, AIError, AIOutOfFunds, Reply, max_output
 from dmbot.memory import background as bg
 from dmbot.memory import lore_read as lr
+from dmbot.memory import reputation_words as feeling_words
 from dmbot.memory.ontology import FALLBACK_PREDICATE
 
 TEXT = (
@@ -638,8 +639,10 @@ class TheLoreWords(unittest.TestCase):
     def test_the_answer_may_use_them_and_the_instructions_say_what_they_mean(self) -> None:
         enum = bg.schema()["properties"]["connections"]["items"]["properties"]["how"]["enum"]
         self.assertEqual(len(enum), len(set(enum)))
-        for word in bg.ALL_WORDS:
-            self.assertIn(word, enum)  # (the old feeling words are still understood)
+        for word in bg.OFFERED_WORDS:
+            self.assertIn(word, enum)
+        for old in bg.LEGACY_FEELING:
+            self.assertNotIn(old, enum)  # (still understood when read, no longer offered)
         asked = lr.shape_instructions({"serves": "servant"})
         for word in (*bg.LORE_WORDS, "serves", "knows"):
             self.assertIn(word, asked)
@@ -649,6 +652,8 @@ class TheLoreWords(unittest.TestCase):
             asked.count("serves,"), 1
         )  # (listed once, though the campaign has its own)
         reading = lr.read_instructions()
+        for feeling in feeling_words.WORDS:
+            self.assertIn(feeling, reading)  # (pass 1 lists all nine feeling words)
         for words in ("mentors", "is an apprentice of", "is a rival of", "founded", "worships"):
             self.assertIn(words, reading)
 

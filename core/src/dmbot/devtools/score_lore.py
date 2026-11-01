@@ -189,6 +189,8 @@ def score(
             ok = p.kind in (best_conn.words, best_conn.how, best_conn.how.removesuffix("_of"))
         if best == KEPT and p.feeling and best_conn is not None and best_conn.how == "knows":
             wanted = _sign(p.feeling)
+            if wanted is None:  # a typo in the key must not read as a miss of the extraction
+                raise ValueError(f"the key's feeling for {p.id} is no reputation word or sign")
             said = _sign(best_conn.words) if best_conn.words else 0
             feels = wanted is not None and wanted == said
         results.append(Score(p.id, best, ok, feels))

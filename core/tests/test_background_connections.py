@@ -265,6 +265,58 @@ class TheChecks(unittest.TestCase):
         got, _ = read("owns", "friendly")
         self.assertEqual([(c.how, c.words) for c in got], [("owns", "")])
 
+    def test_a_plain_knows_does_not_swallow_a_later_one_that_says_how_they_feel(self) -> None:
+        names = [bg.Found(n, "person", (), (), "q") for n in ("Pell", "Orrin")]
+        plain = bg.Connection("Pell", "knows", "Orrin", "q1")
+        hostile = bg.Connection("Pell", "knows", "Orrin", "q2", words="hostile")
+        wary = bg.Connection("Pell", "knows", "Orrin", "q3", words="wary")
+        for order in ([plain, hostile], [hostile, plain]):
+            lost: Counter[str] = Counter()
+            (kept,) = bg.keep_connections([order], names, {}, dropped=lost)
+            self.assertEqual(kept.words, "hostile")
+        # two different words for one direction: the first stays and the clash is counted
+        lost = Counter()
+        (kept,) = bg.keep_connections([[hostile, wary]], names, {}, dropped=lost)
+        self.assertEqual((kept.words, lost["feeling_clash"]), ("hostile", 1))
+        # the same word twice is one line, not a clash
+        lost = Counter()
+        bg.keep_connections([[hostile, hostile]], names, {}, dropped=lost)
+        self.assertEqual((lost["same_pair"], lost["feeling_clash"]), (1, 0))
+
+    def test_old_friend_said_both_ways_is_two_lines_with_the_same_word(self) -> None:
+        text = "Pell and Orrin are friends."
+
+        def line(a: str, b: str) -> dict[str, str]:
+            return {"a": a, "b": b, "how": "friend", "quote": "Pell and Orrin are friends"}
+
+        got = bg.read_connections(
+            json.dumps({"connections": [line("Pell", "Orrin"), line("Orrin", "Pell")]}), text
+        )
+        names = [bg.Found(n, "person", (), (), "q") for n in ("Pell", "Orrin")]
+        kept = bg.keep_connections([got], names, {})
+        self.assertEqual(
+            sorted((c.a, c.words) for c in kept), [("Orrin", "friendly"), ("Pell", "friendly")]
+        )
+
+    def test_a_given_neutral_beats_the_old_words_default_and_a_non_text_word_is_counted(
+        self,
+    ) -> None:
+        text = "Pell and Orrin are enemies."
+
+        def read(words: object) -> tuple[list[bg.Connection], Counter[str]]:
+            lost: Counter[str] = Counter()
+            item = {"a": "Pell", "b": "Orrin", "how": "enemy", "words": words,
+                    "quote": "Pell and Orrin are enemies"}  # fmt: skip
+            return bg.read_connections(
+                json.dumps({"connections": [item]}), text, dropped=lost
+            ), lost
+
+        self.assertEqual([c.words for c in read("neutral")[0]], [""])  # (the AI said neutral)
+        for odd in (["wary"], 5, {"x": 1}):
+            got, lost = read(odd)
+            self.assertEqual(lost["feeling_off_list"], 1, odd)
+            self.assertEqual([c.words for c in got], ["hostile"])  # (the old word's default)
+
     def test_each_way_of_a_mutual_feeling_is_its_own_connection_and_keeps_its_word(self) -> None:
         names = [bg.Found(n, "person", (), (), "q") for n in ("Pell", "Orrin")]
         ab = bg.Connection("Pell", "knows", "Orrin", "q1", words="hostile")

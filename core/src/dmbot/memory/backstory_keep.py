@@ -17,6 +17,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 
 from dmbot.memory import kin, lore_knowledge
+from dmbot.memory import reputation_words as feeling_words
 from dmbot.memory.backstory_links import BackstoryLinks, NewLink, Waiting
 from dmbot.memory.checks import conflicts
 from dmbot.memory.lookup import CampaignLookup
@@ -51,14 +52,34 @@ def replaced_by(onto: Ontology, link: Waiting, existing: Sequence[Relation]) -> 
     pair = {link.subject_id, link.object_id}
     if pred is None:
         return []
+    # A feeling on "knows" (#3175) is what friend and enemy used to say: against a friendship
+    # stored the old way, "enemies" is a change, and the other way round.
+    opposite = (
+        feeling_words.opposite_old_kind_of(link.detail) if link.predicate == "knows" else None
+    )
     return [
         r
         for r in existing
         if r.to_session_at is None
         and r.status != REJECTED
         and {r.subject_id, r.object_id} == pair
-        and conflicts(onto, pred, r.predicate)
+        and (
+            conflicts(onto, pred, r.predicate)
+            or r.predicate == opposite
+            or _feeling_changed(link, r)
+        )
     ]
+
+
+def _feeling_changed(link: Waiting, held: Relation) -> bool:
+    """A held "knows" the same way round whose feeling reads differently from the waiting one's
+    (#3175): hostile now, friendly in the text. The same feeling (or none against none) is no
+    change; a feeling where there was none is one (the word is added)."""
+    if link.predicate != "knows" or held.predicate != "knows":
+        return False
+    if (held.subject_id, held.object_id) != (link.subject_id, link.object_id):
+        return False
+    return feeling_words.sign_of(held.detail) != feeling_words.sign_of(link.detail)
 
 
 async def changes_among(

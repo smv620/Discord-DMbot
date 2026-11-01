@@ -60,5 +60,14 @@ class TheScorer(unittest.TestCase):
         self.assertFalse(sl._same("Mira", "Mirko Tolliver"))
 
 
+class TheFeelingKey(unittest.TestCase):
+    def test_a_typo_in_a_keys_feeling_is_an_error_not_a_miss(self) -> None:
+        self.assertEqual(sl._sign("-"), -1)
+        self.assertEqual(sl._sign("sworn enemy"), -1)
+        self.assertEqual(sl._sign("devoted"), 1)
+        self.assertEqual(sl._sign("neutral"), 0)
+        self.assertIsNone(sl._sign("frendly"))
+
+
 if __name__ == "__main__":
     unittest.main()
