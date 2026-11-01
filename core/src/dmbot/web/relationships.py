@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import re
-from collections.abc import Collection
+from collections.abc import Collection, Mapping
 from typing import Any
 
 from dmbot.db import Database
@@ -285,7 +285,58 @@ async def read_web(
         got = {**shaped, "pageIds": found}
     else:
         got = await _door(db, session, ref, center, hops, size_only=False, view=view)
-    return page_of(got)
+    page = page_of(got)
+    if got["canEdit"] and got["seesAll"]:
+        await with_know_words(db, session, ref, page)
+    return page
+
+
+def know_words(known: dict[str, Any]) -> tuple[dict[str, str], dict[str, str]]:
+    """The word for each name and each connection, worked out from who knows it (§9b item 3) by
+    the gate's own rules, never from a stored flag: the same input as the rest of the page
+    (`graph_view.statements_of`), `gate.reach` for who knows a statement (a group's members know
+    what their group knows) and `gate.word_of` for the word. Returns (names by entry id,
+    connections by connection id). Only ids that are in the data get a word, so the page never
+    says "secret" of something this read does not know."""
+    data = graph_view.statements_of(known)
+    party = data.player_characters
+
+    def word(kind: str, statement: str) -> str:
+        listed = data.knowers.get((kind, statement), {})
+        sure = listed if isinstance(listed, Mapping) else dict.fromkeys(listed, 1.0)
+        who = {c for c in {*sure, *data.groups} if gate.reach(c, sure, data.groups) is not None}
+        return gate.word_of(who, party)
+
+    entries = {str(e): word(gate.ENTRY, str(e)) for e in known["liveEntries"]}
+    links = {str(c): word(gate.CONNECTION, str(c)) for c in data.connections}
+    return entries, links
+
+
+async def with_know_words(db: Database, session: Session, ref: str, page: dict[str, Any]) -> None:
+    """Adds `knowWord` to each name and each connection of a DM's full view (#2999, §9b), so the
+    page says "secret" only when nobody but the DM knows it. Changes `page` in place. The door
+    answers every member, so this checks `isDm` itself and adds nothing for anyone else. The
+    knowers are read, worked into words here and not sent on."""
+    guild_id, campaign_id = _parse(ref)
+    _guild_of(session, guild_id)
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        cur = await conn.execute(
+            "SELECT dmbot_web_knowers_data(%s, %s) AS k", (guild_id, campaign_id)
+        )
+        found = await cur.fetchone()
+    if found is None or found["k"] is None:
+        raise RecapError("not_found")
+    if not found["k"]["isDm"]:
+        return
+    names, links = know_words(dict(found["k"]))
+    for node in page["nodes"]:
+        if str(node["id"]) in names:  # (one confirmed since the graph was read has no word yet)
+            node["knowWord"] = names[str(node["id"])]
+    for edge in page["edges"]:
+        for link in edge["links"]:
+            if str(link["id"]) in links:
+                link["knowWord"] = links[str(link["id"])]
 
 
 def page_of(got: dict[str, Any]) -> dict[str, Any]:
