@@ -106,6 +106,7 @@ from dmbot.consent_dm import (
 from dmbot.consent_site import SiteStops
 from dmbot.db import Database, DatabaseError
 from dmbot.discord_limits import tree_problems
+from dmbot.dm_questions import CLAIMS, FAMILY, NAMES, Ask, combine, ordered, view_of
 from dmbot.dm_screen import (
     DMScreenError,
     HideButton,
@@ -514,11 +515,11 @@ from dmbot.ui.name_lists import UndoListButton
 from dmbot.ui.name_unnamed import UndoNamingButton
 from dmbot.ui.names import (
     SPELLED_OUT,
+    RecapNamesButton,
     ReviewButton,
     after_session_text,
     held_back_text,
     private_after_session_text,
-    recap_names_dm_view,
     review_view,
 )
 from dmbot.ui.optional_rules import dmbot_optional_rules  # noqa: F401 (registers it)
@@ -2932,6 +2933,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             ("new names", lambda: self.post_new_names(table)),
             ("new connections", lambda: self.post_claims(table)),
             ("family links", lambda: self.warn_about_family(table)),
+            # The questions above go out as one private message (#3210).
+            ("questions for the DM", lambda: self.send_collected_asks(table)),
             ("heads-ups", lambda: self.warn_about_continuity(table)),
             # The biggest clashes PlotBot graded, up to three; no AI call here (#2660)
             ("big clashes", lambda: self.tell_contradictions(table)),
@@ -2949,11 +2952,20 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             # (#2664). Off unless the switch is on and the key is set.
             ("meaning search numbers", lambda: self.embed_campaign(table)),
         ]
-        for name, step in steps:
-            try:
-                await step()
-            except Exception:
-                log.exception("After the session: %s failed", name)
+        table.asks = []  # the steps hand their questions over; one step sends them (#3210)
+        try:
+            for name, step in steps:
+                try:
+                    await step()
+                except Exception:
+                    log.exception("After the session: %s failed", name)
+        finally:
+            leftover, table.asks = table.asks or [], None
+            if leftover:  # the sending step itself failed: still ask, so nothing is lost
+                try:
+                    await self.send_asks(table, leftover)
+                except Exception:
+                    log.exception("After the session: the questions could not be sent")
 
     async def refresh_importance(self, table: Table) -> None:
         """After a session (#2411): read how connected each name is again, so the recap that is
@@ -9383,16 +9395,16 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         waiting, table.claims_waiting = table.claims_waiting, 0
         table.claim_preview = []
         if waiting and table.campaign_id is not None:
-            # In the DM's private chat (#3210); the DM screen only when no DM can be reached.
-            view = claims_review_view(table.campaign_id)
-            if await self.ask_privately(
-                table.guild_id, table.campaign_id, claims_waiting_text(waiting, private=True), view
-            ):
-                return
-            await self.post(
-                table.screen_channel_id,
-                claims_waiting_text(waiting) + NO_PRIVATE_MESSAGE,
-                view=view,
+            await self.ask_dm(
+                table,
+                Ask(
+                    CLAIMS,
+                    claims_waiting_text(waiting, private=True),
+                    f"{waiting} {'thing' if waiting == 1 else 'things'} said at the table to check",
+                    partial(ClaimsReviewButton, table.campaign_id),
+                    partial(ClaimsReviewButton, table.campaign_id),
+                    claims_waiting_text(waiting),
+                ),
             )
 
     async def ask_about_claims(self, table: Table) -> None:
@@ -9414,14 +9426,16 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             waiting = len(await self.memory.worked_out_waiting(gid, cid))
             log.info("Worked-out family links: %d waiting", waiting)
             if waiting:
-                # In the DM's private chat (#3210); the DM screen only when no DM can be reached.
-                view = links_ready.view(cid)
-                if await self.ask_privately(gid, cid, links_ready.family_notice(waiting), view):
-                    return
-                await self.post(
-                    table.screen_channel_id,
-                    links_ready.family_notice(waiting) + NO_PRIVATE_MESSAGE,
-                    view=view,
+                await self.ask_dm(
+                    table,
+                    Ask(
+                        FAMILY,
+                        links_ready.family_notice(waiting),
+                        f"{waiting} family {'link' if waiting == 1 else 'links'} to keep or skip",
+                        partial(links_ready.ReadyButton, cid),
+                        partial(links_ready.ReadyButton, cid),
+                        links_ready.family_notice(waiting),
+                    ),
                 )
 
     async def warn_about_continuity(self, table: Table) -> None:
@@ -10173,20 +10187,53 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         summary tells them when it is sent, and then empties the list)."""
         names, table.new_names = table.new_names, []
         if names and table.campaign_id is not None:
-            # The question goes to the DM's private chat (owner, 2026-11-01, #3210); the DM screen
-            # keeps the old line only when no DM can be reached, so the question is never lost.
-            if await self.ask_privately(
-                table.guild_id,
-                table.campaign_id,
-                private_after_session_text(names),
-                recap_names_dm_view(table.guild_id, table.campaign_id),
-            ):
-                return
-            await self.post(
-                table.screen_channel_id,
-                after_session_text(names) + NO_PRIVATE_MESSAGE,
-                view=review_view(table.campaign_id),
+            await self.ask_dm(
+                table,
+                Ask(
+                    NAMES,
+                    private_after_session_text(names),
+                    f"{len(names)} new {'name' if len(names) == 1 else 'names'} to check",
+                    partial(RecapNamesButton, table.guild_id, table.campaign_id),
+                    partial(ReviewButton, table.campaign_id),
+                    after_session_text(names),
+                ),
             )
+
+    async def ask_dm(self, table: Table, ask: Ask) -> None:
+        """A question for the DM after a session (#3210). While the after-session steps run
+        (`table.asks` is a list) it is collected, so the DM gets one message; otherwise it goes
+        out at once, on its own."""
+        if table.asks is not None:
+            table.asks.append(ask)
+        else:
+            await self.send_asks(table, [ask])
+
+    async def send_asks(self, table: Table, asks: list[Ask]) -> None:
+        """Send the collected questions as one private message with a button for each. If no DM
+        can be reached they stay where they were: each on the DM screen with its own words and
+        a line saying why. Nothing is lost."""
+        combined = combine(asks)
+        if combined is None or table.campaign_id is None:
+            return
+        text, view = combined
+        if await self.ask_privately(table.guild_id, table.campaign_id, text, view):
+            return
+        for ask in ordered(asks):
+            # Each in its own try: one failed post must not skip the questions after it.
+            try:
+                await self.post(
+                    table.screen_channel_id, ask.screen + NO_PRIVATE_MESSAGE, view=view_of(ask)
+                )
+            except Exception:
+                log.exception("Couldn't post a question for the DM on the DM screen")
+
+    async def send_collected_asks(self, table: Table) -> None:
+        """The after-session step that sends what the steps before it collected (#3210). After it,
+        a question asked later goes out at once. If sending fails the list is kept, and the
+        `finally` of `_after_session` tries once more, so nothing is lost."""
+        asks = table.asks or []
+        await self.send_asks(table, asks)
+        table.asks = None
 
     async def ask_privately(
         self, guild_id: int, campaign_id: str, text: str, view: discord.ui.View
