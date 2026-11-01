@@ -521,10 +521,10 @@ class FlagsFollow(Helpers):
             GUILD_A, self.c, rel, [ids["okthandom"]], source="dm"
         )
         self.assertEqual(
-            await self.known(CONNECTION, rel), sorted([ids["bruno"], ids["okthandom"]])
-        )  # the NPC's row stays; the player character was added
+            await self.known(CONNECTION, rel), [ids["okthandom"]]
+        )  # the NPC picked now is added, and the one not picked stops knowing (#3197)
         await self.memory.set_connection_knowers(GUILD_A, self.c, rel, [], source="dm")
-        self.assertEqual(await self.known(CONNECTION, rel), [ids["bruno"]])
+        self.assertEqual(await self.known(CONNECTION, rel), [])
         shade = await self.memory.add_alias(
             GUILD_A, self.c, ids["bruno"], "Shade", kind="title", secret=True, source="dm"
         )
