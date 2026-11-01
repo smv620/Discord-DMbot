@@ -1510,6 +1510,33 @@ Each step is useful on its own and ships behind the existing phases.
 TimeBot (Phase 4) makes game-time checks exact; until then facts are ordered by session,
 as today.
 
+### 9d. Knows and a reputation word instead of friend and enemy (owner, 2026-11-01; #3175)
+
+Two characters just **know** each other, and how well and how kindly is a **reputation**: the scale the
+DM sets as Standing (five steps, -80 to 80, section "Standing"). The readers (the lore read and the
+backstory read) no longer offer friend, ally or enemy. A `knows` line carries one of nine plain words for
+how the first name feels about the second: sworn enemy, hostile, distrusts, wary, neutral, trusts,
+friendly, close, devoted (`memory/reputation_words.py`; the readers return a word, never a number).
+"Friends" or "enemies" is two lines, one each way; "neutral" stores no word (no opinion yet is how DMbot
+shows it); a word off the list is dropped and counted and the connection is kept without it.
+
+- **Old rows are the same fact with a sign.** `ally_of` and `enemy_of` rows already stored stay as they
+  are and read as a positive or negative feeling; nothing migrates and the readers simply stop producing
+  them. An AI or older data that still says friend, ally or enemy is read as `knows` with friendly,
+  friendly or hostile, so no line is lost.
+- **An opposite feeling is a change.** Against a held friendship (old `ally_of` or `knows` with a good
+  word), "enemies" ends it and starts the new one, offered as a change the DM presses, as before; a held
+  `knows` with a different feeling is changed the same way; the same feeling is already known.
+- **Who sees the word.** The feeling word is the connection's own detail, so it follows that connection's
+  knowers exactly as "enemy of" did (section 9b): a character who does not know the connection does not
+  see the word, and a secret connection is secret with it. The reputation impression (Standing) is a
+  different thing and stays DM-only; nothing here makes one: the word is a proposal that waits with the
+  connection, and storing an impression on the DM's Keep press is a later slice, with the DM's word
+  always winning.
+- **Not changed yet.** The session extractor and the ontology's "not this" lines for `knows`, `ally_of`
+  and `enemy_of` still describe the old split; that is the next slice (see the follow-up issue). The
+  website shows a feeling-carrying `knows` as plain "knows" until its own reading learns the word.
+
 ## Decided
 
 All of the open decisions were answered by the owner on 2026-10-06: see "Decisions"
