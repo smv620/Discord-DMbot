@@ -38,12 +38,13 @@ def _stated(
     rows: list[dict[str, object]], entity_ids: set[str] | None = None
 ) -> list[kin_derive.Stated]:
     """The confirmed family links a person stated, as "a is the role of b". A role that has a
-    direction but was stored without one is ambiguous, so it is not used; a worked-out link is never
-    a source for another."""
+    direction but was stored without one is ambiguous, so it is not used. A worked-out link the DM
+    confirmed is a stated one from then on (Supervisor, 2026-11-01, #3239); one still waiting is
+    never a source for another."""
     out: list[kin_derive.Stated] = []
     for r in rows:
-        if r["status"] != CONFIRMED or r["source"] == WORKED_OUT_SOURCE:
-            continue
+        if r["status"] != CONFIRMED:
+            continue  # (a suggestion still waiting is no source; one the DM confirmed is stated)
         if entity_ids is not None and not {str(r["subject_id"]), str(r["object_id"])} <= entity_ids:
             continue  # an end was removed or merged away
         role = kin.role_of(str(r["detail"] or ""))

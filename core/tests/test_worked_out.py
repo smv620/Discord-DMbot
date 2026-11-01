@@ -185,13 +185,23 @@ class TheWorkedOutLinks(ConfirmedMemoryTest):
         done = await self.memory.rework_family(GUILD_A, self.c)
         self.assertEqual(done.added, 0)
 
-    async def test_a_worked_out_link_is_never_a_source_for_another(self) -> None:
-        await self.mother_and_sisters()
-        await self.memory.rework_family(GUILD_A, self.c)
-        (link,) = await self.mine()
-        await self.memory.update_relation(GUILD_A, self.c, link.id, source="dm", status=CONFIRMED)
-        done = await self.memory.rework_family(GUILD_A, self.c)
-        self.assertEqual(done.added, 0)
+    async def test_a_waiting_suggestion_is_no_source_and_a_confirmed_one_is(self) -> None:
+        # (#3239) Rolo (aldric) is the parent of Tavin (bryn); Tavin has a sister Vela (mira); Rolo
+        # has a brother Quill. First pass: Rolo parent of Vela, Quill aunt or uncle of Tavin.
+        quill = await self.add("Quill", type="character", status=CONFIRMED)
+        await self.state(self.aldric, "parent", self.bryn)
+        await self.state(self.bryn, "sister", self.mira)
+        await self.state(self.aldric, "brother", quill)
+        first = await self.memory.rework_family(GUILD_A, self.c)
+        self.assertEqual((first.added, first.waiting), (2, 2))
+        again = await self.memory.rework_family(GUILD_A, self.c)  # nothing chains while waiting
+        self.assertEqual((again.added, again.waiting), (0, 2))
+        (parent,) = [r for r in await self.mine() if r.detail == "parent"]
+        await self.confirm(parent)  # the DM says yes to "Rolo is the parent of Vela"
+        later = await self.memory.rework_family(GUILD_A, self.c)
+        self.assertEqual(later.added, 1)  # Quill is an aunt or uncle of Vela too
+        got = {(r.subject_id, r.detail, r.object_id) for r in await self.mine()}
+        self.assertIn((quill, "aunt or uncle", self.mira), got)
 
     async def test_a_source_made_secret_later_makes_the_suggestion_secret(self) -> None:
         _, sister = await self.mother_and_sisters()
