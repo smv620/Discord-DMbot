@@ -14,6 +14,8 @@ from tests.test_web_relationships import TheRoute, Web
 
 
 class WhoKnowsOnTheWeb(Web):
+    bob_has_a_hero = False  # (these tests count the campaign's player characters)
+
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
         self.tavin = await self.add("Tavin", "character", role="player_character")
@@ -129,15 +131,23 @@ class OverHttp(TheRoute):
         async with await self.client(self.session) as client:
             got = await client.get(f"/me/campaigns/{self.cref}/web/characters")
             self.assertEqual(got.status_code, 200)
-            self.assertEqual([c["name"] for c in got.json()["characters"]], ["Rook", "Tavin"])
+            names = [c["name"] for c in got.json()["characters"]]
+            self.assertEqual([n for n in names if n != "Bob's hero"], ["Rook", "Tavin"])
         async with await self.client(self.player) as client:
             no = await client.get(f"/me/campaigns/{self.cref}/web/characters")
             self.assertEqual((no.status_code, no.json()["error"]), (404, "not_found"))
 
 
 class AfterTheCharacterChanges(WhoKnowsOnTheWeb):
-    async def test_a_character_who_is_no_longer_a_player_character_is_not_listed(self) -> None:
+    async def test_a_character_who_is_no_longer_a_player_character_is_still_listed(self) -> None:
+        # (#2999: NPCs know things too, so "Who knows this?" names them with the player characters)
         await self.knowers(self.secret_link, self.rook, self.tavin)
         await self.sql("UPDATE memory_entities SET role = 'npc' WHERE id = %s", self.tavin)
         some = self.link_of(await self.graph(hops=2), "mira-heir")
-        self.assertEqual([k["name"] for k in some["knownBy"]], ["Rook"])
+        self.assertEqual([k["name"] for k in some["knownBy"]], ["Rook", "Tavin"])
+
+    async def test_a_connection_only_an_npc_knows_is_held_by_some_not_the_dm(self) -> None:
+        await self.knowers(self.secret_link, self.tavin)
+        await self.sql("UPDATE memory_entities SET role = 'npc' WHERE id = %s", self.tavin)
+        some = self.link_of(await self.graph(hops=2), "mira-heir")
+        self.assertEqual((some["who"], [k["name"] for k in some["knownBy"]]), ("some", ["Tavin"]))

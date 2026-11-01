@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import Any
 
 from dmbot.memory import background as bg
+from dmbot.memory import reputation_words
 from dmbot.memory.end_match import SHORTEST
 from dmbot.memory.models import name_key
 
@@ -50,6 +51,9 @@ class Pair:
     a: str
     b: str
     kind: str = ""  # the role or kind the person expects ("sibling", "mentor"), or ""
+    # For a `knows` pair, how the first end feels about the second: a reputation word (#3175) or
+    # a sign ("+", "-", "0"). Only the SIGN is scored: "friendly" and "devoted" both fit "+".
+    feeling: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,6 +61,19 @@ class Score:
     pair: str
     status: str  # one of the constants above, or "dropped:<reason>"
     kind_matches: bool | None = None  # for a kept pair with an expected kind
+    feeling_matches: bool | None = None  # for a kept knows pair with an expected feeling
+
+
+def _sign(feeling: str) -> int | None:
+    """-1, 0 or 1 for a reputation word or a "+", "-", "0"; None for anything else. A word that
+    stores nothing (neutral) is 0."""
+    if feeling in ("+", "-", "0"):
+        return {"+": 1, "-": -1, "0": 0}[feeling]
+    word = reputation_words.word_of(feeling)
+    if word is None:
+        return None
+    score = reputation_words.score_of(word)
+    return 0 if score is None else (score > 0) - (score < 0)
 
 
 def _same(end: str, other: str) -> bool:
@@ -150,7 +167,7 @@ def score(
         if ends_a is None or ends_b is None:
             results.append(Score(p.id, NO_ENTRY))
             continue
-        best, best_conn = NOT_LISTED, None
+        best, best_conn, best_forward = NOT_LISTED, None, False
         for line, state, conn in status:
             la, lb = str(line.get("a", "")), str(line.get("b", ""))
             if not ((_is(la, ends_a) and _is(lb, ends_b)) or (_is(la, ends_b) and _is(lb, ends_a))):
@@ -165,12 +182,23 @@ def score(
                 else:
                     state = KEPT
             rank = _RANK["dropped" if state.startswith("dropped") else state]
-            if rank >= _RANK["dropped" if best.startswith("dropped") else best]:
-                best, best_conn = state, conn
+            # (a line that reads the way the key does, first end to second, wins a tie: a mutual
+            # feeling is two lines, and the key's feeling is the first end's)
+            forward = _is(la, ends_a)
+            old = _RANK["dropped" if best.startswith("dropped") else best]
+            if rank > old or (rank == old and (forward or not best_forward)):
+                best, best_conn, best_forward = state, conn, forward
         ok = None
+        feels = None
         if best == KEPT and p.kind and best_conn is not None:
             ok = p.kind in (best_conn.words, best_conn.how, best_conn.how.removesuffix("_of"))
-        results.append(Score(p.id, best, ok))
+        if best == KEPT and p.feeling and best_conn is not None and best_conn.how == "knows":
+            wanted = _sign(p.feeling)
+            if wanted is None:  # a typo in the key must not read as a miss of the extraction
+                raise ValueError(f"the key's feeling for {p.id} is no reputation word or sign")
+            said = _sign(best_conn.words) if best_conn.words else 0
+            feels = wanted is not None and wanted == said
+        results.append(Score(p.id, best, ok, feels))
     return results
 
 
@@ -196,10 +224,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     text = args.text.read_text(encoding="utf-8-sig")
     replies = _replies(json.loads(args.reply.read_text(encoding="utf-8")))
     key = json.loads(args.key.read_text(encoding="utf-8"))
-    pairs = [Pair(p["id"], p["a"], p["b"], p.get("kind", "")) for p in key["pairs"]]
+    pairs = [
+        Pair(p["id"], p["a"], p["b"], p.get("kind", ""), p.get("feeling", "")) for p in key["pairs"]
+    ]
     scores = score(text, replies, pairs, key.get("aliases", {}))
     for s in scores:
         extra = "" if s.kind_matches is None else f" kind={'ok' if s.kind_matches else 'other'}"
+        if s.feeling_matches is not None:
+            extra += f" feeling={'ok' if s.feeling_matches else 'other'}"
         print(f"{s.pair}: {s.status}{extra}")
     counts = tally(scores)
     print(f"pairs={len(scores)} kept={counts[KEPT]}")

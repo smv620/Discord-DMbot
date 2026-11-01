@@ -41,6 +41,7 @@ from dmbot.campaigns import Campaign
 from dmbot.dm_screen.recap_panel import PlanFacts, audio_how
 from dmbot.entitlements import RECAP_AUDIO_PLANS
 from dmbot.logs import log_context
+from dmbot.memory import gate
 from dmbot.memory.exposures import secret_connections
 from dmbot.memory.lookup import CampaignLookup
 from dmbot.memory.models import (
@@ -156,6 +157,7 @@ WEB_RESTORE_TIDY_EVERY = 30  # rounds (about a minute) between the restore rows'
 RECAP_REQUEST_ROUND_S = 2  # how often the bot looks for what a DM typed on the recap page
 RECAP_REQUESTS_PER_ROUND = 3  # for one server, so one busy server can't hold the others
 RECAP_VOICE_AT_ONCE = 3  # spoken notes written down at the same time, in all servers (#2161)
+WEB_STYLE_PER_ROUND = 5  # recap style choices applied for one server in one round (#3060)
 LORE_SWEEP_EVERY_S = 30.0  # how often a server's lore upload queue is swept for stale rows (#3022)
 NAME_ANSWERS_PER_ROUND = 10  # a page of names answered at once, for one server
 CLIP_SWEEP_EVERY = (
@@ -315,6 +317,7 @@ class RecapFeatures:
         ) -> discord.Message | None: ...
         async def run_name_actions(self) -> None: ...
         async def run_lore_uploads(self) -> None: ...
+        async def run_house_file_requests(self) -> None: ...
         async def run_peek_notices(self) -> None: ...
         async def run_web_settings(self) -> None: ...
         async def run_web_rule_sharing(self) -> None: ...
@@ -322,6 +325,7 @@ class RecapFeatures:
         async def run_web_report_requests(self) -> None: ...
         async def run_web_sheets(self) -> None: ...
         async def run_web_line_fixes(self) -> None: ...
+        async def run_web_recap_style(self) -> None: ...
         async def run_web_restores(self) -> None: ...
         async def tidy_web_restores(self) -> None: ...
         async def keep_web_restores_alive(self) -> None: ...
@@ -1937,6 +1941,10 @@ class RecapFeatures:
             except Exception as exc:
                 log.warning("The lore uploads failed: %s", type(exc).__name__)
             try:
+                await self.run_house_file_requests()
+            except Exception as exc:
+                log.warning("The house-rules file requests failed: %s", type(exc).__name__)
+            try:
                 await self.run_web_settings()
             except Exception as exc:
                 log.warning("The website settings failed: %s", type(exc).__name__)
@@ -1952,6 +1960,10 @@ class RecapFeatures:
                 await self.run_web_line_fixes()
             except Exception as exc:
                 log.warning("The website line fixes failed: %s", type(exc).__name__)
+            try:
+                await self.run_web_recap_style()
+            except Exception as exc:
+                log.warning("The website recap style choices failed: %s", type(exc).__name__)
             try:
                 await self.run_peek_notices()
             except Exception as exc:
@@ -2405,15 +2417,23 @@ class RecapFeatures:
             log.exception("Recap: couldn't read the open story threads")
             return ()
         live = (OPEN, GOING, HINTED)
-        # Only threads the players may know: one hidden from them or limited to some of them is the
-        # DM's own plot and never goes to the writer (a recap is read aloud to the table).
+        # Only threads the party knows: one that only the DM, an NPC or some of the player
+        # characters know is the DM's own plot and never goes to the writer (a recap is read aloud
+        # to the table). Asked of the one gate, never of the old flags (#2995): the viewer is "what
+        # every player character knows", so a limited or hidden thread is not among them.
+        try:
+            seen = await self.memory.visible_to(gid, cid, gate.Viewer.the_party())
+        except Exception:
+            log.exception("Recap: couldn't ask what the party knows of the story threads")
+            return ()
         return tuple(
             t.thread.name
             for t in found
             if t.state is not None
             and t.state.condition in live
-            and not t.thread.hidden_from_players
-            and not t.thread.audience_limited
+            # (the thread's own entry row, not `knows`: that also counts an entry a known
+            # property of it implies, and a thread's state is its own statement)
+            and seen.how_sure(gate.ENTRY, t.thread.id) is not None
         )
 
     async def run_audio_notices(self) -> None:

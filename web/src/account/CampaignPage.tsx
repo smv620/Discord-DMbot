@@ -13,7 +13,9 @@ import CampaignFacts from "./CampaignFacts";
 import CampaignNav from "./CampaignNav";
 import { type SectionPage, sectionPages } from "./campaignSections";
 import CampaignSettings from "./CampaignSettings";
+import CampaignBackup from "./CampaignBackup";
 import CampaignDelete from "./CampaignDelete";
+import { campaignBackupWords } from "../content/campaign-backup";
 import { CAMPAIGN_DELETE_LIVE } from "../content/campaign-delete";
 import { rememberDeleted } from "./deleted-notice";
 import LazyPanel from "./LazyPanel";
@@ -40,6 +42,9 @@ export default function CampaignPageView({ api, path }: { api: AccountApi; path:
   const [card, setCard] = useState<Campaign | null>(null);
   // Try It has no backup, so Delete offers none; the plan comes from the same /me answer as the card.
   const [tryIt, setTryIt] = useState(false);
+  // Whether /me has said which plan this is yet: a backup is offered only once it is known not to be Try It. If /me
+  // cannot be read the section stays off (a backup that cannot be made is worse than none offered).
+  const [planKnown, setPlanKnown] = useState(false);
 
   async function load() {
     if (!ref || !api.campaignPage) return setView("none");
@@ -51,6 +56,7 @@ export default function CampaignPageView({ api, path }: { api: AccountApi; path:
         .then((me) => {
           setCard(me?.campaigns.find((c) => c.ref === ref) ?? null);
           setTryIt(me?.plan?.id === "try-it");
+          setPlanKnown(true);
         })
         .catch(() => undefined);
     } catch (error) {
@@ -115,6 +121,9 @@ export default function CampaignPageView({ api, path }: { api: AccountApi; path:
 
   // Fail closed: only a role the API names as a DM role shows the DM tools (a missing or new one does not).
   const isDm = page.role === "owner" || page.role === "co-dm";
+  // A backup is for anyone in the server (CLAUDE.md, "Backups"), so a player has the button too; a role the
+  // API did not name gets none.
+  const mayBackUp = isDm || page.role === "player";
   const parts = sectionPages(ref ?? "", { isDm, importsOn: page.importsOn });
   const mine = card ?? null;
   return (
@@ -129,6 +138,16 @@ export default function CampaignPageView({ api, path }: { api: AccountApi; path:
         <LazyPanel load={() => import("./Sheets")} what="the character sheets" props={{ api, campaignRef: ref }} />
       )}
       {isDm && <CampaignSettings key={ref} api={api} campaignRef={ref} page={page} />}
+      {/* A backup of its own (#3148): before this, the only way to one on the website was inside Delete.
+          A game master's waits for /me to say the plan is not Try It; a player's /me plan is their own, not the
+          campaign's, so DMbot answers for them ("This campaign's plan can't make a backup."). */}
+      {mayBackUp && ref && api.campaignBackup && (!isDm || (planKnown && !tryIt)) && (
+        <section class="stack" aria-labelledby="backup-heading">
+          <h2 id="backup-heading">{campaignBackupWords.heading}</h2>
+          <p class="muted">{campaignBackupWords.lead}</p>
+          <CampaignBackup key={ref} api={api} refId={ref} label={campaignBackupWords.button} />
+        </section>
+      )}
       {/* Delete is the last thing on the page (#2879): the person who holds the plan, and only while the switch is on. */}
       {/* Only a DM is offered it; the plan holder (or the owner, without the flag) within the DMs. */}
       {isDm && CAMPAIGN_DELETE_LIVE && ref && api.deleteCampaign && (card?.canDelete ?? page.role === "owner") && (

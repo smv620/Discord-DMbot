@@ -29,6 +29,24 @@ the DM decides.**
    keep the DM from being flooded.
 6. **Least access.** Narrow OAuth scopes, encrypted tokens, and commands to review,
    test, and revoke every access the bot holds.
+8. **Every question DMbot asks goes to the private chat (owner, 2026-11-01, #3210).** Whenever
+   DMbot needs someone to clarify something (a name to check, a family link or a connection to
+   keep, "same person?", a reading to place, a clock to set), it asks in that person's private
+   chat with DMbot, never in the DM screen or a `dmb-` channel, and the message says clearly
+   that it is from DMbot and which campaign it is about. One campaign runs in a server at a time,
+   so the private chat is never ambiguous. Each question is asked in one place only: the DM
+   screen keeps advice and alerts (rules, heads-ups), not questions. Players never see a DM's
+   questions. If a private message can't be delivered, the DM screen says so in one line,
+   without the question.
+9. **No `dmb-chat` channel: the table's own chat is where players talk to DMbot (owner,
+   2026-11-01, #3212).** Simple is best: DMbot makes no `dmb-chat-<short name>` channel. It
+   listens to the table's voice channel and that voice channel's own text chat, and to one more
+   text channel only if the DM picks one (⚙️ Manage DMbot, the table chat choice). Everything
+   that went to `dmb-chat` (table questions and their answers, the 🕰️ game-time line, a recap
+   posted to the table, the players' links) goes to the table's chat: the channel the DM picked,
+   else the voice channel's text chat. Wherever this plan says `dmb-chat`, read "the table's chat".
+   A campaign that already has a `dmb-chat` channel stops using it; DMbot never deletes it by
+   itself, and offers the DM one button to remove it.
 
 ## Architecture
 
@@ -1359,7 +1377,7 @@ so the docs always show names the way Discord does. For the campaign
 | Live transcript (cleaned lines, view only) | `dmb-transcript-rmfthfrstmdn` | Phase 1 (#124, built 2026-10-06; misheard names fixed since 2026-10-07, #127) |
 | ~~Rules archive~~ (removed, owner 2026-10-28, #2874) | ~~`dmb-rules-rmfthfrstmdn`~~ | Was #1752; see "Two channels removed" below |
 | ~~Game time~~ (removed, owner 2026-10-28, #2877: the clock is a small 🕰️ line in `dmb-chat`) | ~~`dmb-gametime-rmfthfrstmdn`~~ | Was #1116 |
-| DMbot chat (table questions and their answers; owner, 2026-10-14) | `dmb-chat-rmfthfrstmdn` | Phase 4 |
+| ~~DMbot chat~~ (removed, owner 2026-11-01, #3212: table questions go to the table's chat, principle 9) | ~~`dmb-chat-rmfthfrstmdn`~~ | Was Phase 4 |
 | ~~NPCs~~ (removed, owner 2026-10-28, #2874) | ~~`dmb-npcs-rmfthfrstmdn`~~ | Was #1761; see "Two channels removed" below |
 | Plot (story beats, places, hooks) | `dmb-plot-rmfthfrstmdn` | Phase 5 |
 
@@ -2036,6 +2054,18 @@ names panel nor the speech-to-text hints can be a fixed list.
   `open`, else 403 `peek_off`. The answer carries `view`, `visibility` and `canPeek`. `POST .../web/peek`
   (after the page's warning) records the visit; the bot posts "<name> peeked at the relationship web" once
   for each visit on the DM screen. Revealed names and their automatic changes are slice 2.
+  *Changed (#3143, Supervisor ruling 2026-10-31, migration 0311):* **the players' view is the gate's, not a
+  second rule.** What a player sees on the Story graph (and its overview, size and name search) is what their
+  own characters know: the API reads the graph's source and the knowers (`dmbot_web_graph_source`,
+  `dmbot_web_knowers_data`), and `web/graph_view.py` keeps what `memory.gate` lets that viewer know, with the
+  gate's names (`name_entries`) and its split of facts learned through a secret other name onto a node of
+  their own (`split_connections`, `drawn_connections`). The viewer's characters come only from who plays them
+  in the database, never from the request. A member with no character sees nothing; a DM in Players View sees
+  what the party knows (what every player character knows); a peek stays the DM's full graph behind its own
+  switch. The old table-wide flags (`hidden_from_players`, `audience_limited`, the party's belief) no longer
+  decide what a player sees on this page: a character added late learns nothing of what was shown before, a
+  statement limited to one character is not shown to the others, a group's knowledge and a row of 0.0
+  certainty count. The two graph doors keep only the full view; the SQL copy of the player rules is gone.
 - **Merging names, the easy way** (owner, 2026-10-22, after the NPC list showed one creature under four
   spellings). Today a merge is one pair at a time (🔗 Same as… on a card, typing the other name). Three
   easier ways, all the same merge underneath, so the kept name collects the others as "Also called", their
@@ -3704,7 +3734,7 @@ answer goes to `dmb-chat`; see "Table questions: anyone may ask".* Speech-to-tex
 DM-bot, Dee em bot, the M bot (a constant in `sidebar/ask.py`). The answer stays private (the DM's chat only) and
 the raw transcript keeps its `[DM Sidebar]` lines.
 
-**Table questions: anyone may ask (owner, 2026-10-14).** Until now only the DM could ask DMbot, and
+*Since 2026-11-01 (#3212, principle 9) there is no `dmb-chat` channel: read every `dmb-chat` below as "the table's chat" (the chat channel the DM picked, else the voice channel's own text chat).* **Table questions: anyone may ask (owner, 2026-10-14).** Until now only the DM could ask DMbot, and
 only the DM saw the answer. Now **anyone at the table** may ask, and a question asked at the table gets its
 answer **where the whole table can read it**, so nobody waits while someone looks something up.
 - **Two ways to ask:**

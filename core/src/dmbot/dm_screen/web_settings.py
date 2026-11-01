@@ -4,9 +4,10 @@ The website has no right on the campaign tables, so a choice (who can see the DM
 DMbot says, how long transcripts are kept) is queued as a row (`setting_actions`). This module
 claims the rows one at a time in the order made and applies each exactly as Discord's ⚙️ Manage DMbot
 buttons do: the same store calls, so channel permissions, the notice in the DM screen and a running
-session all follow, and the DM is told in the same words. Not here: hand over, pause and delete (the
+session all follow, and the DM is told in the same words. Not here: hand over and delete (the
 page sends the DM to Discord for those). A game master added or removed (#2776) goes through the
-same store calls and the same follow-up as Discord's 👑 Game masters.
+same store calls and the same follow-up as Discord's 👑 Game masters. Pause and unpause (#3062) go
+through the bot's own `set_paused`, as Discord's ⏸️ button does.
 
 Checked again at the moment of use, because the queue-time check can be stale: the sender must still
 be a DM of that campaign (Discord lets a server manager change visibility too; the website asks
@@ -24,6 +25,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from dmbot.campaigns import Campaign, CampaignError
+from dmbot.campaigns.invite import parse_invite
 from dmbot.campaigns.models import DM_SCREEN_LEVELS_OFFERED, STORY_MODES
 from dmbot.campaigns.store import OWNER_STAYS
 from dmbot.db import Database
@@ -42,6 +44,9 @@ KEEP_FOR_S = 3600  # nothing waits on a row longer than this
 VISIBILITY, LEVEL, RETENTION, OPTIONAL_RULE = "visibility", "level", "retention", "optional_rule"
 CO_DM = "co_dm"  # a game master added or removed (#2776)
 STORY_MODE = "story_mode"  # the Shared story switch (#3078)
+DNDBEYOND_INVITE = "dndbeyond_invite"  # the DM's D&D Beyond invite link (#3095)
+PAUSE = "pause"  # pause or unpause the campaign, owner only (#3062)
+RULESETS = "rulesets"  # the main rules and what to use if they miss, "2024/2014" (#3112)
 PERSON_ID_MAX = 19  # digits in a Discord id
 VISIBILITIES = ("private", "peek", "open")
 RETENTION_CHOICES = tuple(choice for choice, _days in CHOICES)
@@ -120,6 +125,29 @@ class Host(Protocol):
         """Save the Shared story switch with the store's own rules (#3078): turning it on needs
         the DM's confirmation on record or `confirmed_by` now. Raises `CampaignError` with the
         words Discord shows."""
+        ...
+
+    async def apply_invite(self, campaign: Campaign, invite: str | None) -> Campaign:
+        """Save (or with None remove) the D&D Beyond invite with the store's own check, then do
+        what Discord's form does: a running session and the transcript channel's pinned card
+        follow at once. Raises `CampaignError` with the store's words."""
+
+    async def apply_pause(self, campaign: Campaign, paused: bool, user_id: int) -> Campaign:
+        """Pause or unpause with the bot's own `set_paused`, never the store's: it refuses while
+        DMbot is listening to the campaign (the session is not stopped for it), checks the
+        plan's room for an unpause, and the store checks the sender is the owner. Raises
+        `CampaignError` with the words Discord shows."""
+        ...
+
+    async def apply_rulesets(self, campaign: Campaign, main: str, fallback: str) -> bool:
+        """Save the main rules and the fallback with the store's own check (`check_rulesets`),
+        then get the new pair ready for lookups (a failure there costs only speed). Raises
+        `CampaignError` with the store's words. True when a session of this campaign is live: it
+        keeps the pair it started with, so the change applies from the next one."""
+        ...
+
+    async def optional_overrides(self, campaign: Campaign) -> dict[str, bool]:
+        """The optional rules the DM switched away from the campaign default."""
         ...
 
     async def find_member(self, guild_id: int, user_id: int) -> Member | None:
@@ -217,6 +245,12 @@ async def apply(host: Host, guild_id: int, item: Setting) -> Outcome:
         return await _co_dm(host, campaign, item)
     if item.setting == STORY_MODE:
         return await _story_mode(host, campaign, item)
+    if item.setting == RULESETS:
+        return await _rulesets(host, campaign, item)
+    if item.setting == DNDBEYOND_INVITE:
+        return await _invite(host, campaign, item)
+    if item.setting == PAUSE:
+        return await _pause(host, campaign, item)
     try:
         if item.setting == VISIBILITY:
             if item.value not in VISIBILITIES:
@@ -277,6 +311,87 @@ async def _story_mode(host: Host, campaign: Campaign, item: Setting) -> Outcome:
     except CampaignError as exc:
         return Outcome(REFUSED, str(exc))
     return Outcome()
+
+
+async def _invite(host: Host, campaign: Campaign, item: Setting) -> Outcome:
+    """The D&D Beyond invite link (#3095): the standard form, or empty to remove it. The store
+    reads it again with Discord's own check (`parse_invite`), and its words go to the page. The
+    follow-up (running session, pinned card) runs on every apply, even for the saved value, so a
+    retry after a half-done try still catches up and a removed link never lingers. The link is
+    never logged."""
+    try:
+        await host.apply_invite(campaign, parse_invite(item.value))
+    except CampaignError as exc:
+        return Outcome(REFUSED, str(exc))
+    return Outcome()
+
+
+PAUSED = "Paused. The campaign can't start until you unpause it."
+UNPAUSED = "Unpaused. The campaign can start again."
+ALREADY_PAUSED = "It's already paused."
+NOT_PAUSED = "It's not paused."
+
+
+async def _pause(host: Host, campaign: Campaign, item: Setting) -> Outcome:
+    """Pause (`turn_on`) or unpause (#3062), as Discord's ⏸️ / ▶️ button does. Only the owner may:
+    the store says so in its own words, which go to the page. A campaign DMbot is listening to is
+    not paused (stop it first) and an unpause needs a free place on the plan: both refuse in the
+    words Discord shows. Already in that state is done, with a note; that is only said to the
+    owner, so a game master who is not one still gets the owner words."""
+    if item.turn_on is None or item.value != "":
+        return Outcome(BAD_VALUE)
+    if item.user_id == campaign.owner_user_id and campaign.paused == item.turn_on:
+        return Outcome(note=ALREADY_PAUSED if item.turn_on else NOT_PAUSED)
+    try:
+        await host.apply_pause(campaign, item.turn_on, item.user_id)
+    except CampaignError as exc:
+        return Outcome(REFUSED, str(exc))
+    return Outcome(note=PAUSED if item.turn_on else UNPAUSED)
+
+
+RULESETS_NEXT_SESSION = "Saved. It takes effect from your next session."
+
+
+def unused_optional_rules(
+    old_main: str, new_main: str, overrides: dict[str, bool], default: bool
+) -> list[str]:
+    """Names of the optional rules that were on for the old main rules and do not add to the new
+    ones. They stay saved (switching back brings them back) but do nothing meanwhile, so the DM
+    is told: turning a chosen rule off silently is not OK."""
+    now = {r.id for r in optional.applying(new_main)}
+    return [
+        r.name
+        for r in optional.applying(old_main)
+        if r.id not in now and optional.is_on(r.id, overrides, default)
+    ]
+
+
+async def _rulesets(host: Host, campaign: Campaign, item: Setting) -> Outcome:
+    """The main rules and the fallback (#3112), as "<main>/<fallback>". The store checks the pair
+    again (both words offered, the fallback not the main rules) and its words go to the page.
+    A live session captured its pair when it started (spotter, lookups, clashes, legacy tags), so
+    it keeps it and the note says the change applies from the next session. Optional rules that
+    do not add to the new main rules are named. Applying the same row twice is the same save."""
+    if item.value.count("/") != 1:
+        return Outcome(BAD_VALUE)
+    main, fallback = item.value.split("/")
+    try:
+        live = await host.apply_rulesets(campaign, main, fallback)
+        overrides = (
+            await host.optional_overrides(campaign) if main != campaign.target_ruleset else {}
+        )
+    except CampaignError as exc:
+        return Outcome(REFUSED, str(exc))
+    notes = [RULESETS_NEXT_SESSION] if live else []
+    unused = unused_optional_rules(
+        campaign.target_ruleset, main, overrides, campaign.optional_rules_default
+    )
+    if unused:
+        notes.append(
+            f"These optional rules do not add to the {optional.main_rules(main)} and do nothing "
+            f"until you switch back: {', '.join(unused)}."
+        )
+    return Outcome(note=" ".join(notes))
 
 
 async def _co_dm(host: Host, campaign: Campaign, item: Setting) -> Outcome:

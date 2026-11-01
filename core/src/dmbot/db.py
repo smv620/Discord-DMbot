@@ -498,14 +498,31 @@ async def _create_schema(url: str, schema: str) -> None:
 
 
 async def drop_schema(url: str, schema: str) -> None:
-    """Remove a schema made with `Database.open(schema=...)` (tests)."""
+    """Remove a schema made with `Database.open(schema=...)` (tests).
+
+    `DROP SCHEMA … CASCADE` locks every object in the schema in one transaction, and a migrated
+    schema holds hundreds, so a Postgres with the default `max_locks_per_transaction` (64) can run
+    out of shared memory when several drops run at once (#3030). Then the tables go one at a time,
+    each in a transaction of its own, and the schema last. Any other error is raised as before."""
     if not _SCHEMA_NAME.match(schema):
         raise ValueError(f"Invalid schema name: {schema!r}")
     conn = await AsyncConnection.connect(url, autocommit=True)
     try:
-        await conn.execute(
-            sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(sql.Identifier(schema))
-        )
+        drop = sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(sql.Identifier(schema))
+        try:
+            await conn.execute(drop)
+        except pg_errors.OutOfMemory:  # out of lock slots (SQLSTATE 53200)
+            cur = await conn.execute(
+                "SELECT tablename FROM pg_tables WHERE schemaname = %s ORDER BY tablename",
+                (schema,),
+            )
+            for (name,) in await cur.fetchall():
+                await conn.execute(
+                    sql.SQL("DROP TABLE IF EXISTS {}.{} CASCADE").format(
+                        sql.Identifier(schema), sql.Identifier(name)
+                    )
+                )
+            await conn.execute(drop)
     finally:
         await conn.close()
 

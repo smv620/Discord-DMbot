@@ -42,6 +42,10 @@ class PlayersViewKeepsHiddenThingsOut(Web):
             status="confirmed", unrevealed=True,
         )  # fmt: skip
         self.links["unrevealed"] = made.value[0].id
+        # the players page is what Bob's hero knows: none of the four, nor the held-back link
+        for hidden in (self.unknown, self.limited, self.held_from):
+            await self.keep_from_bob(hidden)
+        await self.keep_link_from_bob(self.links["unrevealed"])
         self.every_hidden_name = {self.unknown, self.limited, self.held_from, self.behind}
         self.hidden_entities = {self.unknown, self.limited, self.held_from}  # hidden themselves
         self.hidden_links = {

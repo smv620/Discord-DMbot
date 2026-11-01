@@ -1,6 +1,8 @@
 // The words of the Story Graph page (#2324; docs/PLAN.md, "The Story Graph on the website"):
 // the names of a campaign as dots, the connections between them as lines. Plain words. DMbot never
 // decides: a DM changes what DMbot remembers, and Undo is on the name's card in Discord.
+import type { KnowWord } from "../account/api";
+
 /** Over this many names the page asks before drawing (PLAN: "about 300"). */
 export const BIG_WEB = 300;
 
@@ -16,6 +18,17 @@ export const webPage = {
   centreLabel: "Middle of the web",
   centreSearch: "Find a name",
   centreHint: "Type part of a name, then choose it.",
+  // "See as…" (#2999): the DM looks at the web as one character, or the party, knows it. Read-only while on.
+  seeAsLabel: "See as…",
+  seeAsPlaceholder: "Search a character",
+  seeAsHint: "Shows only what that character knows. You can't change anything here.",
+  seeAsMore: (shown: number, total: number): string => `Showing ${shown} of ${total}. Type to narrow.`,
+  seeAsParty: "The party",
+  seeAsNow: (name: string): string => `Seeing the story as ${name}.`,
+  seeAsBack: "Back to the party",
+  seeAsLoadFailed: "Couldn't load the list. Try again.",
+  seeAsGone: "That character isn't in this story any more.",
+  seeAsListLabel: "Characters to see the story as",
   centreNone: "No name matches.",
   centreNow: (name: string): string => `In the middle: ${name}`,
   hopsLabel: "Steps out from the middle",
@@ -97,6 +110,28 @@ export const webPage = {
     people: "Folk and peoples",
     thread: "Story threads",
   } as Record<string, string>,
+  // The singular of each kind, for a kind with one name waiting: "Add 1 place" (#3224). Same keys as `kinds`.
+  kindOne: {
+    npc: "NPC",
+    player_character: "PC",
+    place: "place",
+    group: "group",
+    item: "item",
+    event: "event",
+    faction: "group",
+    creature: "creature",
+    deity: "god",
+    character: "character",
+    concept: "idea",
+    quest: "quest",
+    mystery: "mystery",
+    hook: "hook",
+    goal: "goal",
+    promise: "promise",
+    clue: "clue",
+    people: "people group",
+    thread: "story thread",
+  } as Record<string, string>,
   secretMark: "🤫",
   secretWords: "Secret: only the DM sees this",
   listHeading: "The same web, as a list",
@@ -167,6 +202,15 @@ export const webPage = {
   peekCancel: "Cancel",
   peeking: "You are peeking. This shows what your DM hasn't told you. Turn the switch off to go back.",
   notRevealed: "players don't know yet",
+  // Who knows a name or connection, in the DM's full view (#3167). Plain words; the mark is 🤫 for secret only.
+  knowWords: {
+    secret: "Secret: only you know this",
+    hidden_from_the_players: "Hidden from the players: only NPCs know this",
+    known_to_an_npc: "Only one NPC knows this",
+    partly_revealed: "Some of the party know this",
+    known_to_the_party: "The whole party knows this",
+  } as Record<KnowWord, string>,
+  knowHint: "Worked out from what happened in your sessions. Only you see these marks.",
   notRevealedFull: "Players don't know this yet",
   legendNotRevealed: "Faded: players don't know this yet",
   legendTheory: "Dotted line with ?: something the party suspects",
@@ -182,6 +226,30 @@ export const webPage = {
   pinnedDone: "Pinned. Only you see it. Unpin any time.",
   unpinnedDone: "Unpinned.",
   pinHint: "Only you see pins. Players never do.",
+  // "Who knows this?" on a held connection (#2935 D4, #3214). Plain words; the bot applies the answer.
+  whoKnowsHeading: "Who knows this?",
+  whoOnlyDm: "🤫 Only the DM",
+  whoSome: "👥 Only some characters",
+  whoEveryone: "👁️ Everyone at the table",
+  whoStateDm: "Hidden from the party. Only you know it.",
+  whoStateSome: (names: string): string => `Hidden from the party. Only ${names} know it.`,
+  whoStateAll: "Everyone at the table can see it.",
+  whoSearch: "Search a character",
+  whoSomeLabel: "Characters who know it",
+  whoPickOne: "Pick at least one character.",
+  whoSave: "Save",
+  whoDoneDm: "Now only you know this.",
+  whoDoneSome: (names: string): string => `Now only ${names} know this.`,
+  whoDoneAll: "Now everyone at the table can see this.",
+  whoAlready: "It was already like that.",
+  // Names in a list: "Mara, Tavin and Brann"; past five, the first four and how many more.
+  whoNames: (names: string[]): string => {
+    if (names.length <= 5) {
+      if (names.length <= 1) return names[0] ?? "";
+      return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+    }
+    return `${names.slice(0, 4).join(", ")} and ${names.length - 4} more`;
+  },
   legendPinned: "📌: pinned as 100% truth (only you see this)",
   believesFalse: "⚠️ The party believes this; it's false",
   reveal: "👁️ Reveal to players",
@@ -205,4 +273,9 @@ export const webPage = {
 /** The words for a kind: the API's key if no words are known. */
 export function kindWords(key: string): string {
   return webPage.kinds[key] ?? key;
+}
+
+/** A kind's singular word; a key with no entry shows the key with `_` as a space (#3224). */
+export function kindWord(key: string): string {
+  return webPage.kindOne[key] ?? key.replace(/_/g, " ");
 }

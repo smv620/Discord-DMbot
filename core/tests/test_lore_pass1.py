@@ -129,8 +129,7 @@ class ThePassOnePrompt(unittest.TestCase):
             "mentors",
             "is an apprentice of",
             "is a rival of",
-            "is an ally of",
-            "is an enemy of",
+            "knows (friendly)",  # friends, allies and enemies are knows with a feeling (#3175)
             "owns",
             "lives in",
             "founded",

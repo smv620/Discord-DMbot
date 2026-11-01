@@ -34,6 +34,7 @@ from dmbot.memory import (
     who_ask,
     who_resolve,
 )
+from dmbot.memory import reputation_words as feeling_words
 from dmbot.memory import unnamed as unnamed_mod
 from dmbot.memory.backstory_links import (
     DONE,
@@ -1315,12 +1316,28 @@ async def queue_links(
         if r.to_session_at is None  # (an ended one can be offered again: the DM may change back)
     }
     symmetric = await symmetric_kinds(memory, campaign)
+    # the feeling each held "knows" carries, by direction (#3175)
+    knows_feeling = {
+        (r.subject_id, r.object_id): r.detail
+        for r in await memory.relations(campaign.guild_id, campaign.id, include_secret=True)
+        if r.predicate == "knows" and r.to_session_at is None
+    }
 
     def known(c: bg.Connection) -> bool:
         a, b = entry(c.a), entry(c.b)
         if a is None or b is None:
             return True  # an end that is no entry of the campaign (a name that was refused)
-        return (a, c.how, b) in have or (c.how in symmetric and (b, c.how, a) in have)
+        if c.how == "knows" and (a, "knows", b) in have:
+            # the same way round: known only when it says the same about the feeling (#3175)
+            return feeling_words.sign_of(knows_feeling.get((a, b), "")) == feeling_words.sign_of(
+                c.words
+            )
+        if (a, c.how, b) in have or (c.how in symmetric and (b, c.how, a) in have):
+            return True
+        # A friendship or enmity stored the old way (ally_of, enemy_of) is the same fact as
+        # "knows" with the feeling that matches it (#3175): not offered a second time.
+        old = feeling_words.old_kind_of(c.words) if c.how == "knows" else None
+        return old is not None and ((a, old, b) in have or (b, old, a) in have)
 
     settled = who_resolve.Settled()
     if unsettled:
@@ -1935,12 +1952,17 @@ class ConnectionOffer(_Menu):
     def _old(self, c: Waiting) -> list[Relation]:
         return self.changes.get((c.subject_id, c.predicate, c.object_id), [])
 
+    def _reads(self, r: Relation) -> str:
+        """How a held connection reads here ("ally of", "knows (hostile)")."""
+        plain = self.words.get(r.predicate, r.predicate.replace("_", " "))
+        if r.predicate != "knows":
+            return plain
+        return link_words(r.predicate, r.detail, r.directional)
+
     def _change_line(self, c: Waiting, how: str) -> str:
         """What is there now, then what the text says. Nothing changes until the DM says yes, and
         the old connection is ended, not deleted (#3021)."""
-        old = ", ".join(
-            self.words.get(r.predicate, r.predicate.replace("_", " ")) for r in self._old(c)
-        )
+        old = ", ".join(self._reads(r) for r in self._old(c))
         return (
             f"🔁 Now: **{_md(c.subject)}** {_md(old)} **{_md(c.object)}**\n"
             f"Your text: **{_md(c.subject)}** {how} **{_md(c.object)}**\n"
@@ -2204,12 +2226,27 @@ class BulkConfirm(_Menu):
         self.campaign_id = campaign_id
         self.queued = queued  # connections waiting for these names to be answered
         self.ids = {k: list(v) for k, v in stored.items()}
-        self.last: tuple[str, int, list[str]] | None = None  # (kind, batch, ids) to undo
+        # What the last press added, to undo: (kind, batch, ids) for each kind it covered (one for
+        # a kind's own button, one per kind for the overall Add all).
+        self.last: list[tuple[str, int, list[str]]] = []
         self._build()
 
     def _build(self) -> None:
         self.clear_items()
         by_size = sorted(self.ids.items(), key=lambda x: -len(x[1]))
+        addable = self._addable()
+        if len(addable) > 1:
+            # One press for everything below, first: with several kinds the per-kind buttons
+            # alone mean pressing each one. A single kind needs no second button for the same
+            # names. Ideas (concepts) are left out, as in their own case below.
+            total = sum(len(v) for v in addable.values())
+            self.add_item(
+                _Button(
+                    self._all_kinds,
+                    label=logic.shorten(f"✅ Add all {total}", REVIEW_LABEL_MAX),
+                    style=discord.ButtonStyle.success,
+                )
+            )
         for kind, ids in by_size[:MAX_BULK_BUTTONS]:
             if kind == "concept":
                 continue  # an idea needs a look: no yes-to-all
@@ -2238,15 +2275,24 @@ class BulkConfirm(_Menu):
                     row=1,
                 )
             )
-        if self.last is not None:
+        if self.last:
+            names = (
+                _plural(self.last[0][0], len(self.last[0][2]))
+                if len(self.last) == 1
+                else f"all {sum(len(ids) for _, _, ids in self.last)}"
+            )
             self.add_item(
                 _Button(
                     self._undo,
-                    label=logic.shorten(f"↩️ Undo {_plural(self.last[0], len(self.last[2]))}", 25),
+                    label=logic.shorten(f"↩️ Undo {names}", 25),
                     style=discord.ButtonStyle.secondary,
                     row=1,
                 )
             )
+
+    def _addable(self) -> dict[str, list[str]]:
+        """The names a yes-to-all may cover: every kind but ideas, which need a look."""
+        return {k: v for k, v in self.ids.items() if k != "concept" and v}
 
     async def _open(self, interaction: discord.Interaction) -> None:
         self.stop()
@@ -2257,6 +2303,14 @@ class BulkConfirm(_Menu):
         await ask_connections(interaction, self.campaign_id)
 
     async def _all(self, kind: str, interaction: discord.Interaction) -> None:
+        await self._add(interaction, [kind])
+
+    async def _all_kinds(self, interaction: discord.Interaction) -> None:
+        await self._add(interaction, list(self._addable()))
+
+    async def _add(self, interaction: discord.Interaction, kinds: list[str]) -> None:
+        """Say yes to every name of these kinds from this reading: one change (one Undo batch) for
+        each kind, so Undo takes back exactly what this press added."""
         await interaction.response.defer()  # many writes follow (#351)
         campaign = await _campaign_for(interaction, self.campaign_id)
         memory = _memory(interaction)
@@ -2265,59 +2319,78 @@ class BulkConfirm(_Menu):
         if interaction.user.id not in campaign.dm_user_ids:  # on every press
             await _tell(interaction, ONLY_DMS)
             return
-        ids = self.ids.get(kind, [])
+        done: list[tuple[str, int, list[str]]] = []
+        added: dict[str, int] = {}
         try:
-            written = await memory.confirm_kinds(
-                campaign.guild_id, campaign.id, ids, kind, source=DM
-            )  # this reading's names only; one already answered is left alone
+            for kind in kinds:
+                ids = self.ids.get(kind, [])
+                written = await memory.confirm_kinds(
+                    campaign.guild_id, campaign.id, ids, kind, source=DM
+                )  # this reading's names only; one already answered is left alone
+                self.ids.pop(kind, None)  # (answered, or already answered: not offered again)
+                added[kind] = written.value
+                if written.value and written.batch is not None:
+                    done.append((kind, written.batch, ids))
         except MemoryRuleError:
+            self.last = done  # (what was added before the refusal can still be taken back)
+            self._build()
+            with contextlib.suppress(discord.HTTPException):
+                await interaction.edit_original_response(view=self, allowed_mentions=NO_PINGS)
             await _tell(interaction, "DMbot couldn't add those. Open 📝 Check new names instead.")
             return
         changed(interaction, campaign)
-        self.ids.pop(kind, None)
-        if written.value and written.batch is not None:
-            self.last = (kind, written.batch, ids)
+        self.last = done
         self._build()
         with contextlib.suppress(discord.HTTPException):
             await interaction.edit_original_response(view=self, allowed_mentions=NO_PINGS)
-        done = (
-            f"✅ Added {_plural(kind, written.value)}."
-            if written.value
-            else "Nothing was added: those names were already answered."
-        )
+        total = sum(added.values())
+        if not total:
+            text = "Nothing was added: those names were already answered."
+        elif len(kinds) == 1:
+            text = f"✅ Added {_plural(kinds[0], total)}."
+        else:
+            parts = ", ".join(_plural(k, n) for k, n in added.items() if n)
+            text = f"✅ Added {total} names: {parts}."
         with contextlib.suppress(discord.HTTPException):
-            await interaction.followup.send(
-                done,
-                ephemeral=True,
-                allowed_mentions=NO_PINGS,
-            )
-        if written.value and self.queued:  # their names may be answered now
+            await interaction.followup.send(text, ephemeral=True, allowed_mentions=NO_PINGS)
+        if total and self.queued:  # their names may be answered now
             await offer_ready(interaction, self.campaign_id)
 
     async def _undo(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer()
         campaign = await _campaign_for(interaction, self.campaign_id)
         memory = _memory(interaction)
-        if campaign is None or memory is None or self.last is None:
+        if campaign is None or memory is None or not self.last:
             return
         if interaction.user.id not in campaign.dm_user_ids:
             await _tell(interaction, ONLY_DMS)
             return
-        kind, batch, ids = self.last
+        undone: list[tuple[str, int, list[str]]] = []
         try:
-            await memory.undo(campaign.guild_id, campaign.id, batch)
+            for item in self.last:
+                await memory.undo(campaign.guild_id, campaign.id, item[1])
+                undone.append(item)
         except MemoryRuleError:
+            for kind, _, ids in undone:  # what was taken back is offered again
+                self.ids[kind] = ids
+            self.last = [x for x in self.last if x not in undone]
+            self._build()
+            with contextlib.suppress(discord.HTTPException):
+                await interaction.edit_original_response(view=self, allowed_mentions=NO_PINGS)
             await _tell(interaction, "That can't be undone now: something changed since.")
             return
         changed(interaction, campaign)
-        self.ids[kind] = ids
-        self.last = None
+        for kind, _, ids in undone:
+            self.ids[kind] = ids
+        count = sum(len(ids) for _, _, ids in undone)
+        what = _plural(undone[0][0], count) if len(undone) == 1 else f"{count} names"
+        self.last = []
         self._build()
         with contextlib.suppress(discord.HTTPException):
             await interaction.edit_original_response(view=self, allowed_mentions=NO_PINGS)
         with contextlib.suppress(discord.HTTPException):
             await interaction.followup.send(
-                f"↩️ Took back {_plural(kind, len(ids))}. They're back in 📝 Check new names.",
+                f"↩️ Took back {what}. They're back in 📝 Check new names.",
                 ephemeral=True,
                 allowed_mentions=NO_PINGS,
             )

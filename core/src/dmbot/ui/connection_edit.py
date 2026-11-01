@@ -472,7 +472,13 @@ class WhoKnows(WhoKnowsMenu):
             return
         try:
             written = await link_edits.set_who_knows(
-                found.memory, c.guild_id, c.id, found.relation, who, self.picked
+                found.memory,
+                c.guild_id,
+                c.id,
+                found.relation,
+                who,
+                self.picked,
+                players_only=True,  # (this menu lists player characters only: NPC knowers stay)
             )
         except MemoryRuleError as exc:
             if str(exc) == link_edits.PICK_ONE:

@@ -6,7 +6,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from dmbot.memory import unnamed
 from dmbot.memory.gate import ALIAS, CONNECTION, ENTRY, Viewer
 from tests.test_recap_web import BOB
 from tests.test_web_my_characters_view import MyCharacters
@@ -78,13 +77,17 @@ class Probes(MyCharacters):
         await self.know(ENTRY, self.ken, [self.wen])  # only another player knows him by name
         self.assertNotIn("Ken", await self.everything())
 
-    async def test_a_known_anchor_with_a_confidence_of_nothing_leaks_nothing(self) -> None:
+    async def test_a_known_anchor_with_a_confidence_of_nothing_is_what_the_gate_says(self) -> None:
+        """A knower row of 0.0 certainty is a row: the gate counts it (Supervisor's ruling on
+        #3143, difference D), so the page names Ken exactly as `display_names` does. The page used
+        to ignore such rows, which was a second rule."""
         await self.unnamed_on(self.ken)
         await self.know(ENTRY, self.ken, [self.okra])
         await self.sql(
             "UPDATE memory_knowers SET confidence = 0 WHERE about_entity_id = %s", self.ken
         )
-        self.assertNotIn("Ken", await self.everything())
+        gate_says, page_says = (await self.shown([self.ken]))[self.ken]
+        self.assertEqual(gate_says, page_says)
 
     async def test_a_proposed_rejected_or_secretly_named_anchor_is_someone(self) -> None:
         for status, name in (("proposed", "Pending Pete"), ("rejected", "Rejected Rex")):
@@ -107,17 +110,3 @@ class Probes(MyCharacters):
             self.g, self.one.id, made.value[0].id, [self.okra], source="dm"
         )
         self.assertNotIn("Ken", await self.everything())
-
-    async def test_the_sql_label_is_the_python_label(self) -> None:
-        cases = [
-            ("sister", "Ken"), ("the sister", "Boris"), ("an  heir ", "Ross  "),
-            ("A sister", "x" * 45), ("sister", "abcdefghij" * 3 + "abcdefghis   x"),
-            ("hooded figure", None), ("  The   old man ", "Thomas"), ("theory", "Ann"),
-            ("sister\tof\nsorts", "Al"),
-        ]  # fmt: skip
-        async with self.db.guild(self.g) as conn:
-            for what, anchor in cases:
-                cur = await conn.execute("SELECT dmbot_unnamed_label(%s, %s) AS l", (what, anchor))
-                row = await cur.fetchone()
-                assert row is not None
-                self.assertEqual(row["l"], unnamed.label(what, anchor), (what, anchor))

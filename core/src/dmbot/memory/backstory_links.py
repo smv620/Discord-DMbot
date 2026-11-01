@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from dmbot.db import Database
+from dmbot.memory import reputation_words
 from dmbot.memory.pronouns import is_pronoun
 
 MAX_WAITING = 300  # per campaign: a hostile text cannot grow the table
@@ -34,6 +35,19 @@ DECIDED_ELSE = "who-is-it: kept as someone else"  # the DM chose "someone else"
 UPLOAD_MAX = 120  # the upload's name and date (the column's limit)
 ID_MAX = 40  # an entry id (the column's limit)
 MERGE_HOPS = 6  # a merge chain is followed this far; a longer one is dropped
+
+
+def _already_known(
+    known: dict[tuple[str, str, str], str], a: str, predicate: str, b: str, detail: str
+) -> bool:
+    """Whether the campaign holds this connection already. A "knows" is known only when it says the
+    same about the feeling (#3175): hostile held and friendly waiting is a change, not a repeat."""
+    held = known.get((a, predicate, b))
+    if held is None:
+        return False
+    if predicate == "knows":
+        return reputation_words.sign_of(held) == reputation_words.sign_of(detail)
+    return True
 
 
 @dataclass(frozen=True, slots=True)
@@ -394,7 +408,7 @@ class BackstoryLinks:
                     or a == b
                     or entities[a]["status"] == "rejected"
                     or entities[b]["status"] == "rejected"
-                    or (a, predicate, b) in known
+                    or _already_known(known, a, predicate, b, str(r["detail"]))
                     or (predicate in symmetric and (b, predicate, a) in known)
                     or key in seen
                 )
@@ -567,9 +581,11 @@ class BackstoryLinks:
     @staticmethod
     async def _known(
         conn: Any, guild_id: int, campaign_id: str, ids: set[str]
-    ) -> set[tuple[str, str, str]]:
+    ) -> dict[tuple[str, str, str], str]:
+        """The live confirmed connections among these entries, each with its detail (a `knows`
+        carries a feeling, #3175, so one that says something else is not already known)."""
         cur = await conn.execute(
-            "SELECT subject_id, predicate, object_id FROM memory_relations"
+            "SELECT subject_id, predicate, object_id, detail FROM memory_relations"
             " WHERE guild_id = %s AND campaign_id = %s AND status = 'confirmed'"
             # (a connection that was ended is history: the same kind may be offered again, #3021)
             " AND to_session_at IS NULL"
@@ -577,6 +593,6 @@ class BackstoryLinks:
             (guild_id, campaign_id, list(ids), list(ids)),
         )
         return {
-            (str(r["subject_id"]), str(r["predicate"]), str(r["object_id"]))
+            (str(r["subject_id"]), str(r["predicate"]), str(r["object_id"])): str(r["detail"])
             for r in await cur.fetchall()
         }

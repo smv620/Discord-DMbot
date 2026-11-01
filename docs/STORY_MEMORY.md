@@ -806,11 +806,16 @@ with the newest rows (the oldest moments then read as "not known"; a backup is n
 `spoken_at`: a main-clock row is the one clock whatever group is asked for; a group row means the party
 was split, and then the asked group's newest row since the last main row is its clock, or "not known" when
 no group is given (the main clock stands still while split). Before the first row, or with no clock, it is
-not known. Nothing records which group a character is in yet (#3131). The extractor notes each reading's
+not known. Which group a character is in comes from the group history (#3131, below). The extractor notes each reading's
 newest cited line moment (`spoken_at`, Unix seconds) and **placing a reading stamps the belief from that
 moment**, never from the clock as it reads when the DM presses Place; a session loaded from a file
-(`session_imports`) carries no moment, because its lines hold the dates the DM chose. **Watch for:** the
-trigger runs as whoever changes the clock, so a clock write fails if the log insert does, and a future
+(`session_imports`) carries no moment, because its lines hold the dates the DM chose. The trigger never
+blocks a clock write that would otherwise succeed: its log row has the clock row's server and campaign,
+`minute`'s bound (and, for a group row, `position`'s 1 to 3), the same row-level policy, and the
+campaign's foreign key holds for any campaign with a clock row; the only check the clock tables lack, a
+real time above zero, cannot fail on a running server. **Watch for:** the trigger runs as whoever changes the clock, so a clock write fails only
+if the log insert does, and that stays true only while the log row keeps the clock row's bounds, row-level policy and foreign key:
+a new bound, check, policy or key on `game_clocks` or `game_clock_groups` must be mirrored in `game_clock_log`, and a future
 backfill of `minute` under `migrate_backfill` must open this table's row-level security too.
 
 **"As of" in story time (#3091 part 3, `memory/as_of.py`):** "what did the party believe on Flamerule 10th?"
@@ -823,6 +828,17 @@ point of view (`MemoryStore.believed_at`); a player is answered only from their 
 view, and only for connections the one gate lets those characters know
 (`MemoryStore.my_characters_believed_at`). It returns ids and numbers; the caller makes the words, with the
 calendar for the date.
+
+**Who is in each split group (#3131, migration 0310, `game_clock_group_log`):** the DM places the campaign's
+kept player characters in the groups while the party is split (`ClockStore.place_members`: only kept player
+characters of this campaign and groups that exist, otherwise nothing is written). It is a history, one
+append-only row each time a character is placed, moved or released, because a line's group is the one its
+speaker was in **when it was spoken**: a rejoin or an Undo of a split closes every placement (a row with no
+group), and an Undo of a rejoin writes the closed placements back. A character's group at a moment is their
+newest row at or before it. `stamp.group_of_speakers` turns a line's speakers (people, never characters) into a group: only the kept characters those people play that were in a group at that moment count; exactly one group among them gives it. Characters who were not placed, and a speaker who plays none here (the DM), are ignored; two or more different groups, or none at all, are "not known", because DMbot never guesses whose voice it was. A character that is erased takes its rows with it. It is not carried in backups (character ids are the
+file's, a restored campaign starts a new history, and a split's placements are a moment of play, not story);
+a line from before the restore reads "not known".
+**The DM's buttons for it:** after a split the DM is asked privately, one picker per group ("Who is in Tower?"; the campaign's kept player characters only, at most 25 shown) and a Skip for now button; **Who is where** in **Rests & time…** reopens it any time while split. A pick says who is in that group now: someone taken off the pick is released. Words: "Pick who is in each group. Anyone you skip gets no game time on their lines until you do." Nothing here is shown to players.
 
 **The campaign's calendar (#3091 part 3, migration 0307):** three columns on the clock's row: `calendar_kind`
 (`days`, the default and what every clock had, or `harptos`) and the date of Day 1 as two numbers (the year
@@ -1059,6 +1075,8 @@ all NPCs:
 - "Bruno → desires → Shela": Bruno 1.0, Shela 0.95. Tran has no row.
 - "Shela → desires → Bruno": Bruno 0.3 (he hopes so), Shela 0.0 (she doesn't), Tran no row.
 
+"Only some characters" (the DM's pick on a connection or another name) may include NPCs, up to 60 of this campaign's confirmed characters (factions and other groups included), never a merged or rejected entry, a place, or another campaign's (#3197).
+
 A viewer is shown a statement when one of its characters has a row, with that character's confidence, so a guess
 is drawn as uncertain.
 
@@ -1142,6 +1160,16 @@ A test fails if a reader skips it, as `test_relation_readers.py` does for connec
 **9. Moving to it.** What is revealed today becomes known to every player character. What is secret today becomes
 known to nobody. Today's "Who knows this?" knowers carry over as they are. "The party" point of view is worked out
 from the player characters from then on, never written by itself.
+
+**A player character who joins later** (Supervisor, 2026-11-01, #2995) is given, in the same change, what the
+whole table was shown: every statement all the OTHER player characters know, at the least sure of theirs. Never a
+"some characters" list, a DM-only or NPC-only statement, or one put to sleep by a hide. With no other player
+character, what the flags show the players is given instead. A demoted player character keeps its rows. A
+character knows its own entry, in the party's view too. Migration 0316 adds the rows older campaigns lack (a
+statement every other player character holds, or the flags' answer for a campaign with one), and only adds. The
+lookup then asks the party's view which entries the players are shown (`Entity.unseen_by_players`); an entry still
+only suggested, or a campaign with no player character yet, stays on the flags. One test compares the flags with the
+party's view for every kind of entry as player characters join in turn.
 ## Build order (proposed)
 
 Each step is useful on its own and ships behind the existing phases.
@@ -1494,6 +1522,69 @@ Each step is useful on its own and ships behind the existing phases.
 
 TimeBot (Phase 4) makes game-time checks exact; until then facts are ordered by session,
 as today.
+
+### 9c. Importance: an internal rank for characters (owner, 2026-11-01; #3172)
+
+Every character has a rank from 0 to 5 that only decides which details a recap or PlotBot picks. It
+states no story fact, nobody sets it (no DM control), and it is never shown to a player, a card or a
+recap: "Major" beside a hidden villain would be a spoiler. The levels are the owner's: 0 background
+(anyone or anything met; kept so it can be raised later), 1 minor (a one-time encounter that interacts
+with a PC), 2 recurring (shown to the PCs more than once), 3 significant (mentors, rivals, mini-bosses,
+henchmen, recurring quest givers), 4 major (named companions, the main protagonists and antagonists,
+gods and royalty, even while their name is hidden), 5 player character.
+
+- **The floor is counted by code and never stored:** a player character is 5; a character heard in two
+  or more separate sessions (`memory_heard`) is at least 2. A god cannot be counted (it is an NPC "in its
+  words"), so it comes from PlotBot's reading.
+- **PlotBot's reading sets the rest:** one assessment at a time in `memory_importance` (append-only; the
+  newest is current; never below the floor). The importance call reads the DM's notes and DM-only facts
+  as well (a small recurring character may secretly be a god or a spy, and that is where it is written),
+  because the rank is never shown to a player, a card or a recap. Collecting ranks is live with no switch;
+  the one switch is for USING a rank to choose what goes in a recap (slice 4, off until the owner says
+  go; its default is that the recap writer sees only the party's view).
+  Connections set a floor from a lookup table (`importance_rank.CONNECTION_FLOORS`): 4 connected entries
+  give at least Minor, 8 Recurring, 12 Significant, never a count of Major or higher and never added to
+  another floor (the highest floor wins). A pair of live entries counts once however many connections
+  join it, a joined entry counts for the one it became (the union), and a lore, secret or not yet
+  revealed connection counts in full (the rank is never shown). An ended connection, a `plays` link and
+  a link The party makes count for nothing; a worked-out family link counts once the DM has confirmed it.
+  Every kind of entry has a rank, not only characters (places, items, events, groups), and a player
+  character's companion (`travels_with`) has a floor of Significant.
+- **Stored with codes, not words:** a fixed list of reasons (`importance_rank.BASES`), session and line
+  numbers. A person's erased words leave the rank alone. A backup carries the table in its own section
+  (`memory/importance_backup.py`): PlotBot's reading cannot be made again from a backup (the lines are not
+  in it), so a restore would otherwise drop an off-stage villain to the floor. Line numbers stay out.
+- **Built in slices (#3172):** 1 the table, the floor and the reader (`memory/importance_rank.py`, this
+  section); 2 the connection nudge; 3 PlotBot's call, behind a switch; 4 recaps pick by rank. Slice 5,
+  unnamed creatures as quiet rank-0 entries (the mouse in the dark), changes the rule in section 3 that
+  unnamed monsters are not entries; it is for play only and waits until slices 1 to 3 have merged.
+
+### 9d. Knows and a reputation word instead of friend and enemy (owner, 2026-11-01; #3175)
+
+Two characters just **know** each other, and how well and how kindly is a **reputation**: the scale the
+DM sets as Standing (five steps, -80 to 80, section "Standing"). The readers (the lore read and the
+backstory read) no longer offer friend, ally or enemy. A `knows` line carries one of nine plain words for
+how the first name feels about the second: sworn enemy, hostile, distrusts, wary, neutral, trusts,
+friendly, close, devoted (`memory/reputation_words.py`; the readers return a word, never a number).
+"Friends" or "enemies" is two lines, one each way; "neutral" stores no word (no opinion yet is how DMbot
+shows it); a word off the list is dropped and counted and the connection is kept without it.
+
+- **Old rows are the same fact with a sign.** `ally_of` and `enemy_of` rows already stored stay as they
+  are and read as a positive or negative feeling; nothing migrates and the readers simply stop producing
+  them. An AI or older data that still says friend, ally or enemy is read as `knows` with friendly,
+  friendly or hostile, so no line is lost.
+- **An opposite feeling is a change.** Against a held friendship (old `ally_of` or `knows` with a good
+  word), "enemies" ends it and starts the new one, offered as a change the DM presses, as before; a held
+  `knows` with a different feeling is changed the same way; the same feeling is already known.
+- **Who sees the word.** The feeling word is the connection's own detail, so it follows that connection's
+  knowers exactly as "enemy of" did (section 9b): a character who does not know the connection does not
+  see the word, and a secret connection is secret with it. The reputation impression (Standing) is a
+  different thing and stays DM-only. The word is a proposal that waits with the connection; when the DM
+  presses Keep, the feeling is also stored as a story-sourced impression (weight 30, one Undo for both,
+  #3196), a later opposite feeling closes the earlier one, and a Standing the DM set is never overwritten.
+- **Not changed yet.** The session extractor and the ontology's "not this" lines for `knows`, `ally_of`
+  and `enemy_of` still describe the old split; that is the next slice (#3181). The
+  website shows a feeling-carrying `knows` as plain "knows" until its own reading learns the word.
 
 ## Decided
 

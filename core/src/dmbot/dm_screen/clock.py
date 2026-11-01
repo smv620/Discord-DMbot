@@ -41,6 +41,7 @@ from dmbot.rules import optional
 from dmbot.timebot import clock as game
 from dmbot.timebot import durations, effects, split, where_are_we
 from dmbot.timebot.clock import Clock
+from dmbot.timebot.store import GONE as GROUP_GONE
 from dmbot.timebot.store import MOVED_ON, ClockStore, Rejoined, Stored
 
 log = logging.getLogger(__name__)
@@ -86,6 +87,7 @@ ACTIONS: dict[str, tuple[str, str, discord.ButtonStyle, int]] = {
     # The split party (#1607), in the private Rests & time… panel.
     "split": ("Split the party", "✂️", discord.ButtonStyle.secondary, 1),
     "rejoin": ("Rejoin the party", "🤝", discord.ButtonStyle.primary, 1),
+    "who": ("Who is where", "🧭", discord.ButtonStyle.secondary, 1),
     # Combat (#1127): the DM's correction for what DMbot heard (or missed).
     "cstart": ("Start combat", "⚔️", discord.ButtonStyle.success, 1),
     "cnext": ("Next round", "⏭️", discord.ButtonStyle.primary, 1),
@@ -224,6 +226,9 @@ def _apply(
     return None
 
 
+apply_action = _apply  # the press's own rule, for a caller that walks a whole session (#2979)
+
+
 def _speaks(action: str) -> bool:
     """Dawn, noon and dusk are said when time passes by a button or a rest; not when the
     DM says what time it is (the DM already knows)."""
@@ -337,6 +342,8 @@ def panel_view(campaign_id: str, is_split: bool = False) -> discord.ui.View:
     for action in PANEL:
         view.add_item(ClockButton(campaign_id, action))
     view.add_item(ClockButton(campaign_id, "rejoin" if is_split else "split"))
+    if is_split:
+        view.add_item(ClockButton(campaign_id, "who"))  # who is in each group (#3131)
     return view
 
 
@@ -756,7 +763,7 @@ class ClockButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
     template=(
         rf"dmbot:clock:{_ID}:"
-        r"(?P<action>m10|h1|short|long|dawn|set|typed|timer|open|cstart|cnext|cend|split|rejoin)"
+        r"(?P<action>m10|h1|short|long|dawn|set|typed|timer|open|cstart|cnext|cend|split|rejoin|who)"
     ),
 ):
     """One of the clock's buttons (`open` is the ⚙️ Manage DMbot button that starts or shows it)."""
@@ -803,6 +810,9 @@ class ClockButton(
             if self.action in ("split", "rejoin"):
                 await self._split_or_rejoin(interaction, client, guild.id)
                 return
+            if self.action == "who":
+                await self._who(interaction, client, guild.id)
+                return
             if self.action in ("set", "typed", "open"):
                 await self._form_or_show(interaction, client, guild.id)
                 return
@@ -847,6 +857,26 @@ class ClockButton(
                 view=RejoinView(campaign.id, stored.groups),
                 ephemeral=True,
             )
+
+    async def _who(self, interaction: discord.Interaction, client: Any, guild_id: int) -> None:
+        """Who is in each group: the private question, for a DM, while the party is split."""
+        async with asyncio.timeout(2):
+            campaign = await client.campaigns.get(guild_id, self.campaign_id)
+            if campaign is None:
+                await _reply(interaction, GONE)
+                return
+            if interaction.user.id not in campaign.dm_user_ids:
+                await _reply(interaction, NOT_A_DM)
+                return
+            stored = await client.clocks.get(guild_id, campaign.id)
+        if stored is None or not stored.split:
+            await _reply(interaction, split.NOT_SPLIT)
+            return
+        content, view = await placement_message(client, campaign.id, guild_id, stored.groups)
+        if view is None:  # discord.py cannot take view=None here
+            await _reply(interaction, content)
+            return
+        await interaction.response.send_message(content, view=view, ephemeral=True)
 
     async def _form_or_show(
         self, interaction: discord.Interaction, client: Any, guild_id: int
@@ -950,7 +980,150 @@ async def run_split(interaction: discord.Interaction, campaign_id: str, names: l
         interaction,
         f"✂️ Split into {_names_in_words(names)}." + players_see(campaign, "these names and "),
     )
+    await _ask_who(interaction, client, campaign.guild_id, campaign.id)
     return True
+
+
+# Who is in each group (#3131): so a line spoken in a split gets its speaker's group's game time.
+WHO_ASK = (
+    "Pick who is in each group. Anyone you skip gets no game time on their lines until you do."
+)
+WHO_NONE = "There are no player characters in this campaign yet, so there is nobody to place."
+WHO_SAVED = "Saved."
+WHO_SKIPPED = (
+    "Skipped. Press **Who is where** in **Rests & time…** any time while the party is split."
+)
+SELECT_MAX = 25  # a select shows at most 25 choices
+WHO_CUT = "Showing the first 25 player characters."
+
+
+async def _ask_who(
+    interaction: discord.Interaction, client: Any, guild_id: int, campaign_id: str
+) -> None:
+    """After a split: the private question of who is in each group. Told nothing when the
+    campaign has no player characters, and never an error (the split itself is done)."""
+    try:
+        stored = await client.clocks.get(guild_id, campaign_id)
+        if stored is None or not stored.split:
+            return
+        content, view = await placement_message(client, campaign_id, guild_id, stored.groups)
+        if view is not None:
+            await interaction.followup.send(content, view=view, ephemeral=True)
+    except Exception:
+        log.exception("Couldn't ask who is in each group")
+
+
+async def placement_message(
+    client: Any, campaign_id: str, guild_id: int, groups: tuple[split.Group, ...]
+) -> tuple[str, discord.ui.View | None]:
+    """The words and the view for placing the player characters, as they stand now."""
+    characters = await client.clocks.player_characters(guild_id, campaign_id)
+    if not characters:
+        return WHO_NONE, None
+    members = await client.clocks.members(guild_id, campaign_id)
+    return _who_text(groups, characters, members), WhoView(campaign_id, groups, characters, members)
+
+
+def _who_text(
+    groups: tuple[split.Group, ...], characters: list[tuple[str, str]], members: dict[str, int]
+) -> str:
+    names = dict(characters)
+    lines = [WHO_ASK]
+    if len(characters) > SELECT_MAX:
+        lines.append(WHO_CUT)
+    for g in groups:
+        here = [names[c] for c, p in members.items() if p == g.position and c in names]
+        lines.append(
+            f"**{discord.utils.escape_markdown(g.name)}**: "
+            + (", ".join(sorted(here)) or "nobody yet")
+        )
+    return "\n".join(lines)
+
+
+class WhoView(discord.ui.View):
+    """One picker per group, with the campaign's player characters, and a Skip button. Private
+    and short-lived: it answers one press. Each pick says who is in that group now."""
+
+    def __init__(
+        self,
+        campaign_id: str,
+        groups: tuple[split.Group, ...],
+        characters: list[tuple[str, str]],
+        members: dict[str, int],
+    ) -> None:
+        super().__init__(timeout=600)
+        self.campaign_id, self.groups, self.characters = campaign_id, groups, characters
+        for g in groups:
+            self.add_item(_WhoSelect(g, characters, members))
+        self.add_item(_WhoSkip())
+
+
+class _WhoSelect(discord.ui.Select["WhoView"]):
+    def __init__(
+        self, group: split.Group, characters: list[tuple[str, str]], members: dict[str, int]
+    ) -> None:
+        shown = characters[:SELECT_MAX]
+        super().__init__(
+            placeholder=f"Who is in {group.name}?"[:150],
+            min_values=0,
+            max_values=len(shown),
+            options=[
+                discord.SelectOption(
+                    label=name[:100], value=cid, default=members.get(cid) == group.position
+                )
+                for cid, name in shown
+            ],
+        )
+        self.group = group
+
+    async def callback(self, interaction: discord.Interaction) -> Any:
+        view = self.view
+        client: Any = interaction.client
+        guild = interaction.guild
+        if view is None or guild is None:
+            return
+        chosen = set(self.values)
+        try:
+            # An old picker must not write into groups made since (rejoin, then split again):
+            # the same number can now be another group.
+            now = await client.clocks.get(guild.id, view.campaign_id)
+            if (
+                now is None
+                or not now.split
+                or [(g.position, g.name) for g in now.groups]
+                != [(g.position, g.name) for g in view.groups]
+            ):
+                await interaction.response.send_message(GROUP_GONE, ephemeral=True)
+                return
+            before = await client.clocks.members(guild.id, view.campaign_id)
+            changes: dict[str, int | None] = {c: self.group.position for c in chosen}
+            shown = {cid for cid, _ in view.characters[:SELECT_MAX]}
+            for cid, position in before.items():  # in this group before, not picked now: released
+                # (only among those the picker showed: the rest could never be picked)
+                if position == self.group.position and cid not in chosen and cid in shown:
+                    changes[cid] = None
+            members = await client.clocks.place_members(
+                guild.id, view.campaign_id, interaction.user.id, changes
+            )
+        except CampaignError as exc:
+            await interaction.response.send_message(str(exc), ephemeral=True)
+            return
+        except Exception:
+            log.exception("Couldn't place the player characters")
+            await interaction.response.send_message(FAILED, ephemeral=True)
+            return
+        fresh = WhoView(view.campaign_id, view.groups, view.characters, members)
+        await interaction.response.edit_message(
+            content=_who_text(view.groups, view.characters, members), view=fresh
+        )
+
+
+class _WhoSkip(discord.ui.Button["WhoView"]):
+    def __init__(self) -> None:
+        super().__init__(label="Skip for now", style=discord.ButtonStyle.secondary)
+
+    async def callback(self, interaction: discord.Interaction) -> Any:
+        await interaction.response.edit_message(content=WHO_SKIPPED, view=None)
 
 
 class RejoinView(discord.ui.View):

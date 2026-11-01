@@ -96,8 +96,10 @@ class TheDoors(Reading):
                 )  # fmt: skip
                 got = await house_file.read(self.web, self.session, self.cref, None)
                 self.assertEqual(got["site"], site)
+                # (without the clock: `serverNow` is a timestamp and may hold "8443" by chance)
+                words = repr({k: v for k, v in got.items() if k != "serverNow"})
                 for leaked in ("secret", "token", "k=v", "8443", "@", "/x"):
-                    self.assertNotIn(leaked, repr(got))
+                    self.assertNotIn(leaked, words)
 
     async def test_with_no_file_it_says_so_and_has_no_site(self) -> None:
         got = await house_file.read(self.web, self.session, self.cref, None)
