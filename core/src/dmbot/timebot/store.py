@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import secrets
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from typing import Any
 
@@ -32,6 +32,7 @@ from dmbot.timebot.split import Group
 NOT_A_DM = "Only this campaign's DMs can use the clock."
 DAMAGED = "That backup file's game clock is damaged, so nothing was restored."
 NO_CLOCK = "Set the game clock first (⚙️ Manage DMbot, then Game clock)."
+NOT_A_PLAYER_CHARACTER = "Only this campaign's player characters can be placed in a group."
 BAD_CALENDAR = "That is not a date this calendar has. Check the year, the month and the day."
 GONE = "That group is gone. The party may have rejoined, so check the clock message."
 MOVED_ON = (
@@ -390,6 +391,78 @@ class ClockStore:
         assert stored is not None
         return stored, token
 
+    async def members(self, guild_id: int, campaign_id: str) -> dict[str, int]:
+        """The player characters placed in a group right now (character entry id -> group)."""
+        async with self._db.guild(guild_id) as conn:
+            return await self._current_members(conn, guild_id, campaign_id)
+
+    @staticmethod
+    async def _current_members(conn: Conn, guild_id: int, campaign_id: str) -> dict[str, int]:
+        cur = await conn.execute(
+            "SELECT character_id, position FROM ("
+            " SELECT DISTINCT ON (character_id) character_id, position FROM game_clock_group_log"
+            " WHERE guild_id = %s AND campaign_id = %s ORDER BY character_id, seq DESC) x"
+            " WHERE position IS NOT NULL",
+            (guild_id, campaign_id),
+        )
+        return {str(r["character_id"]): int(r["position"]) for r in await cur.fetchall()}
+
+    async def _write_members(
+        self,
+        conn: Conn,
+        guild_id: int,
+        campaign_id: str,
+        rows: list[tuple[str, int | None]],
+    ) -> None:
+        """Append these (character, group or None) rows. A character the campaign no longer has, or
+        that is no longer a kept player character, is skipped (its rows went with it or it can no
+        longer be placed), so a late Undo cannot fail or place one."""
+        if not rows:
+            return
+        now = int(self._now())
+        async with conn.cursor() as cur:
+            await cur.executemany(
+                "INSERT INTO game_clock_group_log"
+                " (guild_id, campaign_id, character_id, position, at)"
+                " SELECT %s, %s, e.id, %s, %s FROM memory_entities e"
+                " WHERE e.guild_id = %s AND e.campaign_id = %s AND e.id = %s"
+                " AND e.type = 'character' AND e.role = 'player_character'"
+                " AND e.status = 'confirmed'",
+                [(guild_id, campaign_id, p, now, guild_id, campaign_id, c) for c, p in rows],
+            )
+
+    async def place_members(
+        self, guild_id: int, campaign_id: str, user_id: int, placements: Mapping[str, int | None]
+    ) -> dict[str, int]:
+        """The DM says who is in which group while the party is split: character entry id -> the
+        group's position, or None for "in no group". Only this campaign's confirmed player
+        characters, and only groups that exist. A character left out stays as it was, and one
+        already there is not written again. Returns who is placed now. CampaignError for anything
+        else, and nothing is written."""
+        async with self._db.guild(guild_id) as conn:
+            current = await self._locked_dm_state(conn, guild_id, campaign_id, user_id)
+            if current is None or not current.split:
+                raise CampaignError(split.NOT_SPLIT)
+            positions = {g.position for g in current.groups}
+            if any(p is not None and p not in positions for p in placements.values()):
+                raise CampaignError(GONE)
+            cur = await conn.execute(
+                "SELECT id FROM memory_entities WHERE guild_id = %s AND campaign_id = %s"
+                " AND id = ANY(%s) AND type = 'character' AND role = 'player_character'"
+                " AND status = 'confirmed'",
+                (guild_id, campaign_id, list(placements)),
+            )
+            if {str(r["id"]) for r in await cur.fetchall()} != set(placements):
+                raise CampaignError(NOT_A_PLAYER_CHARACTER)
+            before = await self._current_members(conn, guild_id, campaign_id)
+            await self._write_members(
+                conn,
+                guild_id,
+                campaign_id,
+                [(c, p) for c, p in sorted(placements.items()) if before.get(c) != p],
+            )
+            return await self._current_members(conn, guild_id, campaign_id)
+
     async def pick(self, guild_id: int, campaign_id: str, user_id: int, position: int) -> Stored:
         """The buttons act on this group from now on (remembered across restarts)."""
         async with self._db.guild(guild_id) as conn:
@@ -417,6 +490,7 @@ class ClockStore:
             if kept is None:
                 raise CampaignError(GONE)
             clock = split.rejoin(current.groups, keep)
+            placed = await self._current_members(conn, guild_id, campaign_id)
             main = await self._read_main(conn, guild_id, campaign_id)
             cur = await conn.execute(
                 "SELECT number, group_position, ends_minute, told FROM game_effects"
@@ -448,7 +522,11 @@ class ClockStore:
                 "phrase": current.phrase_told,
                 "drift": current.drift_told,
                 "timers": undo_timers,
+                "members": sorted(placed.items()),
             }
+            await self._write_members(
+                conn, guild_id, campaign_id, [(c, None) for c in sorted(placed)]
+            )  # (the groups end: nobody is in one now)
             await conn.execute(
                 "DELETE FROM game_clock_groups WHERE guild_id = %s AND campaign_id = %s",
                 (guild_id, campaign_id),
@@ -483,6 +561,10 @@ class ClockStore:
                 for g in current.groups
             ):
                 return False  # a group moved on: Undo would lose that
+            placed = await self._current_members(conn, guild_id, campaign_id)
+            await self._write_members(
+                conn, guild_id, campaign_id, [(c, None) for c in sorted(placed)]
+            )
             await conn.execute(
                 "DELETE FROM game_clock_groups WHERE guild_id = %s AND campaign_id = %s",
                 (guild_id, campaign_id),
@@ -547,6 +629,12 @@ class ClockStore:
                     (group_position, ends, told, guild_id, campaign_id, number),
                 )
             await self._write_main(conn, guild_id, campaign_id, _unpack(saved["main"]))
+            await self._write_members(
+                conn,
+                guild_id,
+                campaign_id,
+                [(str(c), int(p)) for c, p in saved.get("members", [])],
+            )  # (the placements the rejoin closed)
             await conn.execute(
                 "UPDATE game_clocks SET picked_group = %s, split_phrase_told = %s,"
                 " split_drift_told = %s, split_undo = NULL WHERE guild_id = %s"
