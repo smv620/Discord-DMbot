@@ -165,6 +165,7 @@ class Tiers(unittest.TestCase):
                 Feature.RECAP_FEEDBACK: AIModelTier.FAST,  # the DM's feedback on a recap (#2076)
                 Feature.PLAN_READER: AIModelTier.CAREFUL,
                 Feature.TIME_SUGGEST: AIModelTier.FAST,  # a time jump suggested (#1758)
+                Feature.IMPORT_TIME: AIModelTier.FAST,  # where an imported session ended (#2979)
                 Feature.SUPPORT: AIModelTier.DEEP,
                 Feature.RECAP_WRITE: AIModelTier.CREATIVE,  # the recap as plain text (#2074)
                 Feature.RECAP_FORMAT: AIModelTier.FORMATTING,  # its sections, no word changed
