@@ -132,6 +132,39 @@ class WhoKnows(MemoryTest):
         )  # (the old reader lists player characters only)
         self.assertEqual(await self.count("memory_alias_knowers"), 1)
 
+    async def test_an_npc_not_picked_any_more_stops_knowing(self) -> None:
+        ids = await self.setup_table()
+        link = await self.hidden_link(ids["voss"], ids["council"])
+        alias = await self.secret_name(ids["voss"], "Shade")
+        npc = await self.add("Brisa", status=CONFIRMED)
+        for kind, thing, setter in (
+            ("connection", link, self.memory.set_connection_knowers),
+            ("alias", alias, self.memory.set_alias_knowers),
+        ):
+            with self.subTest(kind=kind):
+                await setter(GUILD_A, self.c, thing, [ids["tavin"], npc], source=DM)
+                await setter(GUILD_A, self.c, thing, [ids["tavin"]], source=DM)
+                got = await self.memory.statement_knowers(GUILD_A, self.c, kind, [thing])
+                self.assertEqual(got.get(thing), [ids["tavin"]])
+                await setter(GUILD_A, self.c, thing, [npc], source=DM)
+                await setter(GUILD_A, self.c, thing, [], source=DM)
+                got = await self.memory.statement_knowers(GUILD_A, self.c, kind, [thing])
+                self.assertEqual(got.get(thing, []), [])
+
+    async def test_an_npcs_certainty_survives_a_save_that_still_picks_it(self) -> None:
+        ids = await self.setup_table()
+        link = await self.hidden_link(ids["voss"], ids["council"])
+        npc = await self.add("Brisa", status=CONFIRMED)
+        await self.memory.set_statement_knowers(
+            GUILD_A, self.c, "connection", link, {npc: 0.4}, source=DM
+        )
+        await self.memory.set_connection_knowers(GUILD_A, self.c, link, [npc], source=DM)
+        async with self.db.guild(GUILD_A) as conn:
+            cur = await conn.execute(
+                "SELECT confidence FROM memory_knowers WHERE relation_id = %s", (link,)
+            )
+            self.assertEqual([r["confidence"] for r in await cur.fetchall()], [0.4])
+
     async def test_an_npc_never_becomes_a_players_view(self) -> None:
         ids = await self.setup_table()
         link = await self.hidden_link(ids["voss"], ids["council"])

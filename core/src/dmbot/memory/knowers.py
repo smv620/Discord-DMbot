@@ -288,13 +288,18 @@ async def _follow_player_list(
     w: Changes, kind: str, statement_id: str, chosen: Mapping[str, bool]
 ) -> None:
     """The old "Who knows this?" writers (`chosen`: each character, with whether it is a player's):
-    make the player characters in the new list exactly those, add any NPC picked, and keep every
-    other row (an NPC's not picked, a group's) and the certainty of a character who stays
-    (#2995, slice 2b; NPCs may be picked since #3197)."""
+    make the characters in the new list exactly those (players and NPCs, #3197: one not picked
+    stops knowing), keep every other view's rows and the certainty of a character who stays
+    (#2995, slice 2b)."""
     column, _ = _COLUMNS[kind]
     views = {i: await _view_for(w, i, player) for i, player in chosen.items()}
     await _drop_asleep(w, column, statement_id)
-    pcs = {str(r["id"]) for r in await w.select(PERSPECTIVES, " AND kind = %s", [PC_VIEW])}
+    # A character's view (a player's or an NPC's) is the DM's to set through this list, so one not
+    # picked any more stops knowing; the table's own and the party's views are never touched.
+    pcs = {
+        str(r["id"])
+        for r in await w.select(PERSPECTIVES, " AND kind IN (%s, %s)", [PC_VIEW, NPC_VIEW])
+    }
     have = {
         r["perspective_id"]: r
         for r in await w.select(KNOWERS, f" AND {column} = %s", [statement_id])
