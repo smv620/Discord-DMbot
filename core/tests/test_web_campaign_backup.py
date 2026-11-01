@@ -3,6 +3,7 @@ ask, the shared progress shape, the file once, the plan and size refusals, the 1
 
 from __future__ import annotations
 
+import dataclasses
 import time
 import unittest
 from types import SimpleNamespace
@@ -97,10 +98,22 @@ class Backing(Base):
         )
         self.assertEqual(await self.refused(bob, self.cref(LOST, self.lost)), "not_found")
 
-    async def test_a_player_and_another_account_get_nothing(self) -> None:
+    async def test_a_player_in_the_server_may_ask_too(self) -> None:
+        # (CLAUDE.md, Backups: anyone in the server may get a copy of a paid campaign; the plan
+        # check is the bot's, so a Try It campaign fails later with the plan word)
         bob = await self.signed(BOB, THURSDAY)  # not a game master of anything
-        self.assertEqual(await self.refused(bob, self.cref(THURSDAY.id, self.one)), "not_found")
-        self.assertEqual(await self.refused(bob, "nonsense"), "not_found")
+        made = await campaign_backup.request(self.web, bob, self.cref(THURSDAY.id, self.one))
+        self.assertRegex(made, r"^[0-9a-f]{32}$")
+        # ... and only for the server on their own list
+        self.assertEqual(await self.refused(bob, self.cref(LOST, self.lost)), "not_found")
+
+    async def test_someone_outside_the_server_and_a_bad_address_get_nothing(self) -> None:
+        elsewhere = dataclasses.replace(THURSDAY, id=LOST)
+        outsider = await self.signed(BOB, elsewhere)  # in another server only
+        self.assertEqual(
+            await self.refused(outsider, self.cref(THURSDAY.id, self.one)), "not_found"
+        )
+        self.assertEqual(await self.refused(outsider, "nonsense"), "not_found")
 
     async def test_asking_again_while_one_is_on_the_way_gives_the_same_copy(self) -> None:
         ref = self.cref(THURSDAY.id, self.one)

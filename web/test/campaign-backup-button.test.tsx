@@ -50,8 +50,18 @@ describe("who is offered it", () => {
     expect(screen.queryByRole("button", { name: w.button })).toBeNull();
   });
 
-  it("shows a player nothing", async () => {
+  it("shows a player the button too: a copy is for anyone in the server", async () => {
     await open(PLAYER);
+    expect(await screen.findByRole("heading", { name: w.heading })).toBeTruthy();
+    expect(screen.getByRole("button", { name: w.button })).toBeTruthy();
+    expect(screen.getByText(w.note)).toBeTruthy(); // players are asked not to open the file
+  });
+
+  it("shows nothing for a role the API did not name", async () => {
+    const api = mockApi("table");
+    const read = api.campaignPage!;
+    api.campaignPage = async (r) => ({ ...(await read(r)), role: "viewer" as never });
+    await open(DM, api);
     expect(screen.queryByRole("heading", { name: w.heading })).toBeNull();
     expect(screen.queryByRole("button", { name: w.button })).toBeNull();
   });

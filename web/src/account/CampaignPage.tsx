@@ -121,6 +121,9 @@ export default function CampaignPageView({ api, path }: { api: AccountApi; path:
 
   // Fail closed: only a role the API names as a DM role shows the DM tools (a missing or new one does not).
   const isDm = page.role === "owner" || page.role === "co-dm";
+  // A backup is for anyone in the server (CLAUDE.md, "Backups"), so a player has the button too; a role the
+  // API did not name gets none.
+  const mayBackUp = isDm || page.role === "player";
   const parts = sectionPages(ref ?? "", { isDm, importsOn: page.importsOn });
   const mine = card ?? null;
   return (
@@ -135,8 +138,10 @@ export default function CampaignPageView({ api, path }: { api: AccountApi; path:
         <LazyPanel load={() => import("./Sheets")} what="the character sheets" props={{ api, campaignRef: ref }} />
       )}
       {isDm && <CampaignSettings key={ref} api={api} campaignRef={ref} page={page} />}
-      {/* A backup of its own (#3148): before this, the only way to one on the website was inside Delete. */}
-      {isDm && ref && api.campaignBackup && planKnown && !tryIt && (
+      {/* A backup of its own (#3148): before this, the only way to one on the website was inside Delete.
+          A game master's waits for /me to say the plan is not Try It; a player's /me plan is their own, not the
+          campaign's, so DMbot answers for them ("This campaign's plan can't make a backup."). */}
+      {mayBackUp && ref && api.campaignBackup && (!isDm || (planKnown && !tryIt)) && (
         <section class="stack" aria-labelledby="backup-heading">
           <h2 id="backup-heading">{campaignBackupWords.heading}</h2>
           <p class="muted">{campaignBackupWords.lead}</p>

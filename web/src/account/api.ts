@@ -2175,7 +2175,7 @@ export interface AccountApi {
   restoreStatus?(serverId: string, id?: string): Promise<RestoreStatus | null>;
   /** Take a staged copy back before DMbot starts it, or clear one that has ended. */
   restoreCancel?(serverId: string, id: string): Promise<void>;
-  /** The whole campaign as a backup file, offered before Delete (owner and co-DMs; not Try It). DMbot builds it
+  /** The whole campaign as a backup file, offered on the campaign's page and before Delete (anyone in the server; not Try It). DMbot builds it
    * from its database (#2554): asked for with a POST, polled in the shared progress shape (`onProgress` hears each
    * answer: stage, how long, last moved), then fetched once. Refusals: `no-backup` (the plan has no copies),
    * `too-big`, `not-allowed`, `not-found`, `too-soon`, `backup-too-many-files` (more transcripts files than one
