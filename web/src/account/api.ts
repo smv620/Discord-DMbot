@@ -1411,10 +1411,15 @@ export type RecapAudioLinks = Partial<
 
 export type RecapAction = "post" | "again" | "drop";
 
+/** Who knows a name or a connection, for the DM's full view (#3167; core #3166). Five plain states. */
+export type KnowWord = "secret" | "hidden_from_the_players" | "known_to_an_npc" | "partly_revealed" | "known_to_the_party";
+
 /** One name on the Story Graph (#2324). `secret` is sent to the campaign's DMs only. */
 export interface WebNode {
   id: string;
   name: string;
+  /** Who knows it, in the DM's full view only (#3167). With it, the old secret and not-revealed words give way. */
+  knowWord?: KnowWord;
   /** The kind's key ("npc", "place", ...). */
   kind: string;
   secret?: boolean;
@@ -1447,6 +1452,8 @@ export interface WebLink {
   id: string;
   words: string;
   secret: boolean;
+  /** Who knows the connection, in the DM's full view only (#3167). */
+  knowWord?: KnowWord;
   direction: "a-b" | "b-a" | "both";
   /** The kind of connection, for the map's colours and filters (#2942). Absent from an older API. */
   kind?: WebLinkKind;

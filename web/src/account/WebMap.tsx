@@ -35,6 +35,7 @@ import {
 } from "./webForce";
 import { readMode, readPlaces, saveMode, savePlaces } from "./webPrefs";
 import { isTheory, zoomAbout, type View } from "./webLayout";
+import { dimmedName, markSecret } from "./know";
 
 const SHAPE_R = 24; // half the width of a name's shape: 48 px across at normal size, a fine thing to tap
 const STEPS_PER_FRAME = 2; // the settle runs a couple of steps each frame: calm, and quick to finish
@@ -448,6 +449,7 @@ export default function WebMap({
             id: l.id,
             kind: l.kind,
             secret: l.secret,
+            ...(l.knowWord ? { knowWord: l.knowWord } : {}),
             belief: l.belief,
             text: words.linkText(byId.get(x.a)?.name ?? "", byId.get(x.b)?.name ?? "", l.words, l.direction),
           })),
@@ -622,7 +624,7 @@ export default function WebMap({
             return (
               <g
                 key={n.id}
-                class={`web-node web-kind-${kindStyle(n.kind)}${n.id === center ? " centre" : ""}${n.revealed === false ? " web-dim" : ""}${faded ? " web-faded" : ""}`}
+                class={`web-node web-kind-${kindStyle(n.kind)}${n.id === center ? " centre" : ""}${dimmedName(n) ? " web-dim" : ""}${faded ? " web-faded" : ""}`}
                 transform={`translate(${place.x.toFixed(1)} ${place.y.toFixed(1)})`}
                 tabIndex={0}
                 role="button"
@@ -674,7 +676,7 @@ export default function WebMap({
                 <Shape kind={n.kind} r={n.id === center ? SHAPE_R * 1.25 : SHAPE_R} />
                 {place.pinned && <circle class="web-pin" r={5} cx={SHAPE_R * 0.8} cy={-SHAPE_R * 0.8} aria-hidden="true" />}
                 <text y={SHAPE_R * 1.25 + 18} text-anchor="middle" class="web-node-text">
-                  {n.secret ? `${words.secretMark} ` : ""}
+                  {markSecret(n) ? `${words.secretMark} ` : ""}
                   {short(n.name)}
                 </text>
               </g>
@@ -698,7 +700,7 @@ export default function WebMap({
                       <span class="web-dot" aria-hidden="true" /> {words.linkKind[l.kind]}:{" "}
                     </span>
                   )}
-                  {l.secret && <span aria-hidden="true">{words.secretMark} </span>}
+                  {markSecret(l) && <span aria-hidden="true">{words.secretMark} </span>}
                   {l.belief && <span aria-hidden="true">{words.theoryMark} </span>}
                   {l.text}
                 </li>
@@ -757,6 +759,11 @@ export default function WebMap({
             </li>
           ))}
           {nodes.some((n) => n.revealed === false) && <li>{words.legendNotRevealed}</li>}
+          {nodes.some((n) => n.knowWord === "secret") && (
+            <li>
+              {words.secretMark} {words.knowWords.secret}
+            </li>
+          )}
           {edges.some(isTheory) && <li>{words.legendTheory}</li>}
           {edges.some((e) => e.links.some((l) => l.pinned)) && <li>{words.legendPinned}</li>}
         </ul>
