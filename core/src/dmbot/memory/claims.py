@@ -323,14 +323,18 @@ _FILLER = frozenset({"is", "are", "was", "were", "a", "an", "the"})
 _OLD_FEELING = {"ally_of": reputation_words.FRIENDLY, "enemy_of": reputation_words.HOSTILE}
 
 
-def feeling_of(onto: Ontology, text: str, details: str = "") -> tuple[PredicateTerm, str] | None:
+def feeling_of(
+    onto: Ontology, text: str, details: str = "", ends: tuple[str, str] = ("character", "character")
+) -> tuple[PredicateTerm, str] | None:
     """`knows` and the reputation word, when a claim's relationship says how two characters feel:
     "knows" with a word from the nine in its details, the old "friend of", "ally of" and "enemy of"
     (read as friendly and hostile), or one of the nine words said as the relationship ("trusts",
     "distrusts"). None: not a feeling, the relationship goes on as it is. The word is a proposal
-    that waits for the DM's yes like the claim; an off-list word is dropped, never guessed."""
+    that waits for the DM's yes like the claim; an off-list word is dropped, never guessed.
+    Only between two characters (`ends`): an alliance or a war between groups stays `ally_of` and
+    `enemy_of`, and a character knowing a place or an item has no feeling to carry."""
     knows = onto.predicates.get("knows")
-    if knows is None or knows.status != "active":
+    if knows is None or knows.status != "active" or set(ends) != {"character"}:
         return None
     word = reputation_words.word_of(text)
     if word is not None:
@@ -367,7 +371,7 @@ def place_relationship(
     catch-all `associated_with` with the claim's own words as the label. A claim is never lost
     for its relationship, and DMbot never makes a new relationship term from a claim yet:
     until the meaning check (embeddings) exists, an unchecked new term counts as refused."""
-    feeling = feeling_of(onto, text, details)
+    feeling = feeling_of(onto, text, details, (subject_kind, object_kind))
     if feeling is not None:
         return (
             feeling[0],
@@ -1245,7 +1249,7 @@ class ClaimStore:
                 # else: the card sets `detail` between the two names, so side notes can't go there.
                 relation, flags = await self._store.add_relation_in(
                     w, subject_id, term.key, object_id, confidence=1.0, status=CONFIRMED,
-                    detail=label if term.key == "knows" else (label or claim.details),
+                    detail=label or claim.details,
                     from_session_at=claim.session_started_at,
                     secret=secret,
                 )  # fmt: skip

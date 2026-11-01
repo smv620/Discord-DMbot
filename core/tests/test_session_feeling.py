@@ -8,7 +8,9 @@ import unittest
 
 from dmbot.memory import extractor, reputation_words
 from dmbot.memory.claims import feeling_of, place_relationship
+from dmbot.memory.models import NPC, PLAYER_CHARACTER
 from dmbot.memory.ontology import Ontology
+from dmbot.memory.voice import OWN, PARTY, voice
 
 
 def onto() -> Ontology:
@@ -64,6 +66,37 @@ class Feelings(unittest.TestCase):
         self.assertEqual((term.key, from_object, label), ("knows", False, "trusts"))
         term, _, label = place_relationship(onto(), "enemy of", "character", "character")
         self.assertEqual((term.key, label), ("knows", "hostile"))
+
+
+class Ends(unittest.TestCase):
+    def test_a_feeling_is_only_between_two_characters(self) -> None:
+        for ends in (("faction", "faction"), ("character", "item"), ("place", "place")):
+            with self.subTest(ends=ends):
+                self.assertIsNone(feeling_of(onto(), "enemy of", "", ends))
+                self.assertIsNone(feeling_of(onto(), "close", "", ends))
+                self.assertIsNone(feeling_of(onto(), "knows", "trusts", ends))
+
+    def test_two_groups_at_war_stay_enemy_of(self) -> None:
+        term, _, label = place_relationship(onto(), "enemy of", "faction", "faction")
+        self.assertEqual((term.key, label), ("enemy_of", ""))
+
+    def test_a_place_close_to_a_place_is_not_a_feeling(self) -> None:
+        term, _, _ = place_relationship(onto(), "close", "place", "place")
+        self.assertNotEqual(term.key, "knows")
+
+
+class WhoSpeaksForTheFeeling(unittest.TestCase):
+    def test_a_player_saying_an_npcs_feeling_is_what_they_believe(self) -> None:
+        self.assertEqual(voice(NPC, "knows", "player_said", {7}, None, {1}, feeling=True), PARTY)
+        self.assertEqual(voice(NPC, "knows", "dm_said", {1}, None, {1}, feeling=True), OWN)
+
+    def test_a_pcs_own_player_speaks_for_its_feeling(self) -> None:
+        self.assertEqual(
+            voice(PLAYER_CHARACTER, "knows", "player_said", {7}, 7, {1}, feeling=True), OWN
+        )
+
+    def test_a_plain_meeting_is_nobodys_to_guard(self) -> None:
+        self.assertEqual(voice(NPC, "knows", "player_said", {7}, None, {1}), OWN)
 
 
 class ThePrompt(unittest.TestCase):

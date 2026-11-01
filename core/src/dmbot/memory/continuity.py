@@ -195,10 +195,12 @@ class Report:
     claims: int = 0  # claims looked at
 
 
-def _as_old_kind(r: Relation) -> Relation:
+def _as_old_kind(r: Relation, subject_id: str, object_id: str) -> Relation:
     """A held feeling (`knows` with a reputation word) as the old ally or enemy it is the same fact
-    as, for the clash check only (#3181); any other row as it is."""
-    if r.predicate != "knows":
+    as, for the clash check only (#3181); any other row as it is. Only a feeling that runs the
+    same way as the claim: how Cerric feels about Belleros says nothing of how Belleros feels
+    about Cerric, though the old ally and enemy were both ways."""
+    if r.predicate != "knows" or (r.subject_id, r.object_id) != (subject_id, object_id):
         return r
     word = reputation_words.word_of(r.detail)
     legacy = reputation_words.old_kind_of(word) if word is not None else None
@@ -279,7 +281,9 @@ def claim_conflicts_in(claims: Sequence[Claim], world: World, levels: Levels) ->
             created_at=claim.created_at,
         )  # fmt: skip
         held = list({r.id: r for r in (*by_entry.get(s, ()), *by_entry.get(o, ()))}.values())
-        touching = [_as_old_kind(r) if checked_term is not term else r for r in held]
+        touching = [
+            _as_old_kind(r, subject_id, object_id) if checked_term is not term else r for r in held
+        ]
         originals = {r.id: r for r in held}
         for problem in check_relation(
             world.onto,

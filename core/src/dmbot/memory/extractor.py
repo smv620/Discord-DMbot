@@ -107,7 +107,8 @@ Rules for what counts as a claim:
    claims, each way, with "friendly" (or "close" when it says so). "Strahd is Cerric's sworn
    enemy" is one claim with "sworn enemy". Use the word only when a line says or plainly shows
    the feeling; a plain meeting is "knows" with no details. Never use "ally", "friend" or
-   "enemy" as a relationship.
+   "enemy" as a relationship between two characters; two groups allied or at war stay "ally of"
+   and "enemy of".
 
 For each claim say how it was said:
 - "dm_said": the DM narrating, or the DM speaking as a character.
