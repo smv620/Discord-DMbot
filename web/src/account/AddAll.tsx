@@ -4,7 +4,7 @@
 // Only the DM sees it. It never names a thing the document did not find, and ideas are never counted.
 import { useEffect, useRef, useState } from "preact/hooks";
 
-import { addAllWords as w, countsList, plainKindWord, sumCounts } from "../content/add-all-words";
+import { addAllWords as w, countsList, plainKindSingular, plainKindWord, sumCounts } from "../content/add-all-words";
 import { CONFIRM_KINDS_LIVE } from "../content/confirm-kinds-switch";
 import { ApiError, type AccountApi, type ConfirmAnswer, type LoreUpload } from "./api";
 import WorkProgress from "./WorkProgress";
@@ -135,9 +135,10 @@ export default function AddAll({
   if (!CONFIRM_KINDS_LIVE || !api.confirmKinds) return null;
 
   const waiting = upload.waiting ?? {};
+  // The biggest kinds first; a tie goes by key, so the buttons do not reorder between reads (#3224).
   const kinds = Object.entries(waiting)
     .filter(([, n]) => n > 0)
-    .sort((a, b) => b[1] - a[1]);
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
   const total = sumCounts(waiting);
   const stalled = busy !== null && now - moved > STALL_MS;
   const checkLink = <a href={`/account/names/${encodeURIComponent(campaign)}`}>{w.checkOneByOne}</a>;
@@ -158,7 +159,7 @@ export default function AddAll({
               kinds.length > 1 &&
               kinds.slice(0, 4).map(([k, n]) => (
                 <button key={k} type="button" class="button secondary" disabled={busy !== null} onClick={() => press([k])}>
-                  {w.addKind(n, plainKindWord(k))}
+                  {n === 1 ? w.addOneKind(plainKindSingular(k)) : w.addKind(n, plainKindWord(k))}
                 </button>
               ))}
             <p>{checkLink}</p>
@@ -192,7 +193,7 @@ export default function AddAll({
               : added === 1
                 ? w.added(1, countsList(result.counts))
                 : lastKinds !== "all" && lastKinds.length === 1
-                  ? w.addedKind(added, plainKindWord(lastKinds[0]!))
+                  ? w.addedKind(added, added === 1 ? plainKindSingular(lastKinds[0]!) : plainKindWord(lastKinds[0]!))
                   : w.added(added, countsList(result.counts))}
           </p>
           {result.undo && (

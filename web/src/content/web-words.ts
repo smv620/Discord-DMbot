@@ -110,6 +110,28 @@ export const webPage = {
     people: "Folk and peoples",
     thread: "Story threads",
   } as Record<string, string>,
+  // The singular of each kind, for a kind with one name waiting: "Add 1 place" (#3224). Same keys as `kinds`.
+  kindOne: {
+    npc: "NPC",
+    player_character: "PC",
+    place: "place",
+    group: "group",
+    item: "item",
+    event: "event",
+    faction: "faction",
+    creature: "creature",
+    deity: "god",
+    character: "character",
+    concept: "idea",
+    quest: "quest",
+    mystery: "mystery",
+    hook: "hook",
+    goal: "goal",
+    promise: "promise",
+    clue: "clue",
+    people: "people group",
+    thread: "story thread",
+  } as Record<string, string>,
   secretMark: "🤫",
   secretWords: "Secret: only the DM sees this",
   listHeading: "The same web, as a list",
@@ -251,4 +273,9 @@ export const webPage = {
 /** The words for a kind: the API's key if no words are known. */
 export function kindWords(key: string): string {
   return webPage.kinds[key] ?? key;
+}
+
+/** A kind's singular word; a key with no entry shows the key with `_` as a space (#3224). */
+export function kindWord(key: string): string {
+  return webPage.kindOne[key] ?? key.replace(/_/g, " ");
 }

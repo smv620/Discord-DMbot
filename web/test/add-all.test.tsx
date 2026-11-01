@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import AddAll from "../src/account/AddAll";
 import { ApiError, type AccountApi, type ConfirmAnswer, type LoreUpload } from "../src/account/api";
-import { addAllWords as w, countsList, sumCounts } from "../src/content/add-all-words";
+import { addAllWords as w, countsList, plainKindSingular, sumCounts } from "../src/content/add-all-words";
 
 const live = vi.hoisted(() => ({ on: true }));
 vi.mock("../src/content/confirm-kinds-switch", () => ({
@@ -220,5 +220,30 @@ describe("the answers from the server, and what a failure says", () => {
     fireEvent.click(screen.getByRole("button", { name: w.addAll(5) }));
     expect(await screen.findByText(w.added(5, "5 places"))).toBeTruthy();
     expect(asked).toBe(1);
+  });
+
+  it("a kind with one name gets its own button with the singular word", () => {
+    const { container } = render(<AddAll api={apiWith([])} campaign="100.cmp1" upload={upload({ character: 3, place: 1 })} />);
+    expect(Array.from(container.querySelectorAll("button")).map((b) => b.textContent)).toEqual([
+      w.addAll(4),
+      "Add all 3 characters",
+      "Add 1 place",
+    ]);
+  });
+
+  it("a kind with several names keeps the plural", () => {
+    const { container } = render(<AddAll api={apiWith([])} campaign="100.cmp1" upload={upload({ place: 2, character: 3 })} />);
+    expect(Array.from(container.querySelectorAll("button")).map((b) => b.textContent)).toContain("Add all 2 places");
+  });
+
+  it("a kind with no singular word falls back to the key with spaces", () => {
+    expect(plainKindSingular("zz_unknown_kind")).toBe("zz unknown kind");
+    expect(plainKindSingular("npc")).toBe("NPC");
+  });
+
+  it("the done line for one name uses the singular word", async () => {
+    render(<AddAll api={apiWith([done({ place: 1 })], { confirmAnswer: async () => done({ place: 1 }) })} campaign="100.cmp1" upload={upload({ place: 1 })} />);
+    fireEvent.click(screen.getByRole("button", { name: w.addOne }));
+    expect(await screen.findByText("Added 1 name: 1 place.")).toBeTruthy();
   });
 });
