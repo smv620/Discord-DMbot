@@ -3309,6 +3309,30 @@ class AfterSession(NamesTest):
         self.assertIn("1 new name to check** from this session: **Bryn Shander**", text)
         self.assertIsInstance(posted.await_args.kwargs["view"], discord.ui.View)  # type: ignore[union-attr]
 
+    async def test_new_names_question_goes_to_the_dms_private_chat(self) -> None:
+        # #3210: the question is asked in the DM's private chat, not on the DM screen.
+        table = self.table()
+        table.new_names = ["Belleros"]
+        posted = AsyncMock(return_value=True)
+        sent = AsyncMock(return_value="sent")
+        self.bot.post = posted  # type: ignore[method-assign]
+        self.bot.sidebar_send_dm = sent  # type: ignore[method-assign]
+        await self.bot.post_new_names(table)
+        posted.assert_not_awaited()  # nothing about it on the DM screen
+        self.assertTrue(sent.await_count >= 1)
+        self.assertIn("Belleros", sent.await_args.args[1])  # type: ignore[union-attr]
+        self.assertIsInstance(sent.await_args.args[2], discord.ui.View)  # type: ignore[union-attr]
+
+    async def test_new_names_question_stays_on_the_screen_when_dms_are_closed(self) -> None:
+        # #3210: private messages closed for every DM: the question is not lost.
+        table = self.table()
+        table.new_names = ["Belleros"]
+        posted = AsyncMock(return_value=True)
+        self.bot.post = posted  # type: ignore[method-assign]
+        self.bot.sidebar_send_dm = AsyncMock(return_value="forbidden")  # type: ignore[method-assign]
+        await self.bot.post_new_names(table)
+        posted.assert_awaited_once()
+
     async def test_a_name_fixed_live_is_not_suggested_again(self) -> None:
         # #394: the scan reads the cleaned line, where "Rothgar" was already fixed
         from dmbot.audio.segmenter import Utterance

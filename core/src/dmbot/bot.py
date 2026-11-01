@@ -507,6 +507,8 @@ from dmbot.ui.names import (
     ReviewButton,
     after_session_text,
     held_back_text,
+    private_after_session_text,
+    recap_names_dm_view,
     review_view,
 )
 from dmbot.ui.optional_rules import dmbot_optional_rules  # noqa: F401 (registers it)
@@ -9986,11 +9988,39 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         summary tells them when it is sent, and then empties the list)."""
         names, table.new_names = table.new_names, []
         if names and table.campaign_id is not None:
+            # The question goes to the DM's private chat (owner, 2026-11-01, #3210); the DM screen
+            # keeps the old line only when no DM can be reached, so the question is never lost.
+            if await self.ask_privately(
+                table.guild_id,
+                table.campaign_id,
+                private_after_session_text(names),
+                recap_names_dm_view(table.guild_id, table.campaign_id),
+            ):
+                return
             await self.post(
                 table.screen_channel_id,
                 after_session_text(names),
                 view=review_view(table.campaign_id),
             )
+
+    async def ask_privately(
+        self, guild_id: int, campaign_id: str, text: str, view: discord.ui.View
+    ) -> bool:
+        """Send a question to each of the campaign's DMs in their private chat (#3210). True when
+        at least one got it; False (DMs closed, campaign gone) means the caller keeps its old
+        place for the question. Never raises."""
+        try:
+            campaign = await self.campaigns.get(guild_id, campaign_id)
+            if campaign is None:
+                return False
+            sent = False
+            for user_id in sorted(campaign.dm_user_ids):
+                if await self.sidebar_send_dm(user_id, text, view) == "sent":
+                    sent = True
+            return sent
+        except Exception:
+            log.exception("Couldn't ask the DM privately")
+            return False
 
     async def _dm_trial_user(self, user_id: int, text: str) -> trial_jobs.DmResult:
         """A private message to a person who is not at a table now. "closed" when Discord
