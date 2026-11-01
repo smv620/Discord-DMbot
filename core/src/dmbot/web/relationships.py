@@ -30,6 +30,7 @@ from dmbot.web import all_names, graph_view
 from dmbot.web.names import _parse
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
 from dmbot.web.sessions import Session
+from dmbot.web.who_knows import who_text
 
 # The website's steps spinner goes 1 to 8 (owner, #2934); MAX_NODES still bounds the work.
 MAX_HOPS = 8
@@ -669,8 +670,8 @@ async def queue_add(db: Database, session: Session, ref: str, body: object) -> s
 
 async def queue_edit(db: Database, session: Session, ref: str, link_id: str, body: object) -> str:
     """Queue a change to one connection: `{action: "words", words}`, `{action: "secret",
-    secret}`, `{action: "pin", pinned}` or `{action: "remove", confirm: true}`. Returns the
-    answer's id."""
+    secret}`, `{action: "who", who, characters}`, `{action: "pin", pinned}` or
+    `{action: "remove", confirm: true}`. Returns the answer's id."""
     if not ID_PATTERN.match(link_id):
         raise RecapError("not_found")
     if not isinstance(body, dict):
@@ -687,6 +688,11 @@ async def queue_edit(db: Database, session: Session, ref: str, link_id: str, bod
         return await _queue(
             db, session, ref, entity=None, action="link-secret", target=link_id,
             text="", flag=bool(body["secret"]),
+        )  # fmt: skip
+    if action == "who":  # "Who knows this?" (#2999): only the DM, some characters, or everyone
+        return await _queue(
+            db, session, ref, entity=None, action="link-who", target=link_id,
+            text=who_text(body), flag=False,
         )  # fmt: skip
     if action == "pin":  # 📌 100% truth (#2447); the door lets only a DM queue it
         if not isinstance(body.get("pinned"), bool):
