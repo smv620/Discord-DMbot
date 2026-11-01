@@ -185,6 +185,21 @@ jobs:
       - name: feature boundaries (import-linter)
         if: ${{ matrix.part == 1 }}
         run: lint-imports
+      - name: more locks per transaction
+        # A migrated test schema holds hundreds of tables, functions and policies, and dropping one
+        # with CASCADE locks them all in one transaction: four drops at once ran the service
+        # container's default (64) out of shared memory, which failed a job with no failing test
+        # or hid the real failure under it (#3030). GitHub service containers take no command line,
+        # so the setting is written and the container restarted (the server needs it at start).
+        run: |
+          psql "postgresql://postgres:postgres@localhost:5432/postgres" \
+            -c "ALTER SYSTEM SET max_locks_per_transaction = 512"
+          docker restart "${{ job.services.postgres.id }}"
+          for _ in $(seq 1 30); do
+            pg_isready -h localhost -p 5432 && break
+            sleep 1
+          done
+          test "$(psql "postgresql://postgres:postgres@localhost:5432/postgres" -tAc 'SHOW max_locks_per_transaction')" = 512
       - name: test database
         run: >-
           psql "postgresql://postgres:postgres@localhost:5432/postgres"
