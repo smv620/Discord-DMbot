@@ -846,6 +846,83 @@ async def _open(w: Changes, column: str, items: Sequence[tuple[str, bool]]) -> N
         await w.insert_many(KNOWERS, made)
 
 
+def _is_player_character(row: Mapping[str, Any]) -> bool:
+    return bool(
+        row["type"] == "character"
+        and row["role"] == PLAYER_CHARACTER
+        and row["status"] == CONFIRMED
+    )
+
+
+async def inherit_table_rows(w: Changes, joined: Sequence[str]) -> int:
+    """Player characters that have just joined (`joined`: entry ids) are given what the whole table
+    was shown (#2995, Supervisor 2026-11-01): a statement every OTHER current player character
+    knows, at the least sure of theirs. Never a "some characters" list (not every other player
+    character holds it), nor a DM-only, NPC-only or sleeping row (those are held by no player
+    character, or are left out of `select`). With no other player character there is no table
+    to copy, so what the flags show the players is given instead (the rule of `follow_flags`).
+    Logged in the joining change, so one Undo takes it back. Returns the rows made."""
+    if not joined:
+        return 0
+    chars = await w.select(
+        ENTITIES,
+        " AND type = 'character' AND role = %s AND status = %s",
+        [PLAYER_CHARACTER, CONFIRMED],
+    )
+    ids = {str(e["id"]) for e in chars}
+    new = [i for i in dict.fromkeys(joined) if i in ids]
+    if not new:
+        return 0
+    new_views = {i: await _view_of(w, i) for i in new}
+    w.player_views = None  # (made views may have changed the list)
+    others = {await _view_of(w, i) for i in ids - set(new)}
+    held: dict[tuple[str, str], dict[str, float]] = {}
+    for r in await w.select(KNOWERS):
+        for column in ("about_entity_id", "state_id", "relation_id", "alias_id"):
+            if r[column] is not None:
+                held.setdefault((column, r[column]), {})[r["perspective_id"]] = float(
+                    r["confidence"]
+                )
+    wanted: dict[tuple[str, str], float] = {}
+    if others:
+        for key, who in held.items():
+            if others <= set(who):
+                wanted[key] = min(who[o] for o in others)
+    else:
+        wanted = await _shown_by_flags(w)
+    made = [
+        _row(column, statement, view, w.now) | {"confidence": sure}
+        for (column, statement), sure in wanted.items()
+        for view in new_views.values()
+        if view not in held.get((column, statement), {})
+    ]
+    await w.insert_many(KNOWERS, made)
+    return len(made)
+
+
+async def _shown_by_flags(w: Changes) -> dict[tuple[str, str], float]:
+    """Every statement the flags show the players (entries, conditions, names, connections), for
+    `inherit_table_rows` when the first player character joins: the same rule as `follow_flags`."""
+    entities = {str(r["id"]): r for r in await w.select(ENTITIES)}
+    out: dict[tuple[str, str], float] = {}
+    for i, e in entities.items():
+        if entry_shown(e):
+            out[("about_entity_id", i)] = 1.0
+    for st in await w.select(STATES):
+        owner = entities.get(str(st["entity_id"]))
+        if owner is not None and entry_shown(owner):
+            out[("state_id", str(st["id"]))] = 1.0
+    for a in await w.select(ALIASES):
+        owner = entities.get(str(a["entity_id"]))
+        if alias_shown(a) and owner is not None and entry_shown(owner):
+            out[("alias_id", str(a["id"]))] = 1.0
+    for rel in await w.select(RELATIONS):
+        ends = (entities.get(str(rel["subject_id"])), entities.get(str(rel["object_id"])))
+        if relation_shown(rel) and all(x is not None and entry_shown_end(x) for x in ends):
+            out[("relation_id", str(rel["id"]))] = 1.0
+    return out
+
+
 async def follow_flags(
     w: Changes, table_name: str, rows: Sequence[tuple[dict[str, Any] | None, dict[str, Any]]]
 ) -> None:
@@ -859,6 +936,7 @@ async def follow_flags(
     column = _KNOWN_COLUMN_OF[table_name]
     opened: list[tuple[str, bool]] = []  # (statement id, is it new)
     closed: list[str] = []
+    joined: list[str] = []  # player characters that became one in this write
     if table_name == "memory_entities":
         for before, after in rows:
             if after["status"] == MERGED:
@@ -871,6 +949,12 @@ async def follow_flags(
             elif was and not now:
                 closed.append(after["id"])
         await _follow_dependents(w, [i for i, new in opened if not new], closed)
+        joined = [
+            str(after["id"])
+            for before, after in rows
+            if _is_player_character(after)
+            and not (before is not None and _is_player_character(before))
+        ]
     elif table_name == "memory_states":  # a condition is shown with its entry, once, when made
         fresh = [after for before, after in rows if before is None]
         owners = await _entities_by_id(w, {a["entity_id"] for a in fresh})
@@ -934,6 +1018,8 @@ async def follow_flags(
         await _open(w, column, opened)
     if closed:
         await _close(w, column, closed)
+    if table_name == "memory_entities" and joined:
+        await inherit_table_rows(w, joined)
 
 
 async def forget_moved(

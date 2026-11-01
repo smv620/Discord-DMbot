@@ -194,7 +194,9 @@ def visible(viewer: Viewer, data: Statements) -> Visible:
 
     sureness: dict[tuple[str, str], float] = {}
     for key, listed in data.knowers.items():
-        sure = [reach(c, _sure(listed), data.groups) for c in who]
+        # (a character knows its own entry without a row, so in the party's view it counts for
+        # itself, with one player character or many)
+        sure = [1.0 if key == (ENTRY, c) else reach(c, _sure(listed), data.groups) for c in who]
         known = [x for x in sure if x is not None]
         if viewer.mode == "any":
             if known:
