@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock
 from dmbot.bot import DMBot
 from dmbot.memory.claims import ClaimStore, Extracted
 from dmbot.ui import claims_review
+from tests.asking import with_asking
 from tests.test_memory_store import DM, GUILD_A, ConfirmedMemoryTest
 
 STRANGER = 99
@@ -218,7 +219,7 @@ class Review(ConfirmedMemoryTest):
 
 class DmScreen(ConfirmedMemoryTest):
     def table(self) -> Any:
-        return SimpleNamespace(guild_id=GUILD_A, campaign_id=self.c, screen_channel_id=9)
+        return SimpleNamespace(guild_id=GUILD_A, campaign_id=self.c, screen_channel_id=9, asks=None)
 
     async def test_the_dm_screen_says_how_many_and_never_what(self) -> None:
         await self.add("Bram", type="character")
@@ -227,11 +228,13 @@ class DmScreen(ConfirmedMemoryTest):
             GUILD_A, self.c, [said("Bram", "carries", "Heartseeker")], {"1": 7}, opted_in={7},
             prompt_version="p", model="m", session_started_at=1,
         )  # fmt: skip
-        fake = SimpleNamespace(
-            memory=self.memory,
-            post=AsyncMock(),
-            ask_privately=AsyncMock(return_value=False),  # no DM can be reached: the screen
-            consent=SimpleNamespace(consenting=AsyncMock(return_value={7})),
+        fake = with_asking(
+            SimpleNamespace(
+                memory=self.memory,
+                post=AsyncMock(),
+                ask_privately=AsyncMock(return_value=False),  # no DM can be reached: the screen
+                consent=SimpleNamespace(consenting=AsyncMock(return_value={7})),
+            )
         )
         table = self.table()
         await DMBot.note_claims(fake, table)  # type: ignore[arg-type]
@@ -249,7 +252,9 @@ class DmScreen(ConfirmedMemoryTest):
 
     async def test_the_question_goes_to_the_dms_private_chat_not_the_screen(self) -> None:
         # #3210: asked in the DM's private chat; the DM screen only when no DM can be reached.
-        fake = SimpleNamespace(post=AsyncMock(), ask_privately=AsyncMock(return_value=True))
+        fake = with_asking(
+            SimpleNamespace(post=AsyncMock(), ask_privately=AsyncMock(return_value=True))
+        )
         table = self.table()
         table.claims_waiting = 2
         table.claim_preview = []
