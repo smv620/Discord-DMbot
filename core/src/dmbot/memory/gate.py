@@ -19,7 +19,7 @@ The rules, all in `visible` (pure, so they are tested without a database):
 
 from __future__ import annotations
 
-from collections.abc import Collection, Iterable, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal, LiteralString
 
@@ -315,6 +315,26 @@ async def _by_id(
     return await scope.select(table, " AND id = ANY(%s)" + extra, [ids])
 
 
+def knowers_of(data: Statements) -> Callable[[str, str], set[str]]:
+    """A function giving the characters that know one statement (`kind`, `id`): the ones with a row
+    of their own, and the members of every group that has a row. It is the set of characters
+    `reach` gives an answer for, worked out from a map of each group's members built once instead
+    of asking `reach` of every group member for every statement (#3154, #3228). The website's
+    "who knows this" lists and words use it; the gate stays the only place that says who knows."""
+    members_of: dict[str, list[str]] = {}
+    for member, groups in data.groups.items():
+        for group in groups:
+            members_of.setdefault(group, []).append(member)
+
+    def who(kind: str, statement: str) -> set[str]:
+        found = set(_sure(data.knowers.get((kind, statement), {})))
+        for group in tuple(found):
+            found.update(members_of.get(group, ()))
+        return found
+
+    return who
+
+
 async def party_entries(scope: Scope) -> frozenset[str] | None:
     """The entries the party's view holds as entries in their own right (`(ENTRY, id)` in
     `visible(Viewer.the_party()).sureness`), without reading every list row: the lookup asks this
@@ -585,12 +605,18 @@ def name_entries(
     names an entry exactly as Discord does. `on_their_own`: other names that facts were learned
     through, which the website draws on a node of their own (`split_connections`); such a name is
     never also the name of the person's own node, or the one person would be drawn twice."""
+    asked = set(entity_ids)
     entries = {
         k: r
         for k, r in rows.entities.items()
-        if k in set(entity_ids) and r["status"] not in ("merged", "rejected")
+        if k in asked and r["status"] not in ("merged", "rejected")
     }
     names = [a for a in rows.aliases if str(a["entity_id"]) in entries]
+    # Each entry's names, grouped once: reading the whole list again for every entry made this
+    # quadratic (about 1.7 s for a player's page on a campaign of 2,000 entries, #3154).
+    names_of: dict[str, list[Mapping[str, Any]]] = {}
+    for a in names:
+        names_of.setdefault(str(a["entity_id"]), []).append(a)
     anchors = {
         str(r["unnamed_anchor"])
         for r in entries.values()
@@ -608,11 +634,10 @@ def name_entries(
     anchor_held = {
         str(a["entity_id"]) for a in secret_own_names if str(a["id"]) in seen.aliases
     }  # (a row on the secret name itself is what makes it known)
-    merged = [
-        r
-        for r in rows.entities.values()
-        if r["merged_into"] is not None and str(r["merged_into"]) in entries and r["unnamed"]
-    ]
+    merged: dict[str, list[Mapping[str, Any]]] = {}  # by the entry each was joined into
+    for r in rows.entities.values():
+        if r["merged_into"] is not None and str(r["merged_into"]) in entries and r["unnamed"]:
+            merged.setdefault(str(r["merged_into"]), []).append(r)
     learned: dict[str, int] = {}
     if not seen.everything and names:
         listed = {str(a["id"]) for a in names}
@@ -644,8 +669,8 @@ def name_entries(
         """An other name as this viewer may read it: a joined person's label is rebuilt."""
         if not text.endswith(" (name unknown)") or seen.everything:
             return text
-        for gone in merged:
-            if str(gone["merged_into"]) == entity_id and str(gone["name"]) == text:
+        for gone in merged.get(entity_id, ()):
+            if str(gone["name"]) == text:
                 return _unnamed_label(gone, anchor_name(gone))
         return "someone (name unknown)"
 
@@ -656,28 +681,20 @@ def name_entries(
             out[entity_id] = None
             continue
         main = str(row["name"])
+        mine = names_of.get(entity_id, ())
+        main_key = lookup_key(main)
         # (an entry's own name is stored as a name too: it stands for the main name, which the
         # entry's own row governs, so it is not one of the "other" names)
         others = sorted(
             (
                 (str(a["id"]), safe_text(entity_id, str(a["text"])))
-                for a in names
-                if str(a["entity_id"]) == entity_id
-                and a["key"] != lookup_key(main)
-                and str(a["id"]) not in on_their_own
+                for a in mine
+                if a["key"] != main_key and str(a["id"]) not in on_their_own
             ),
             key=lambda pair: (learned.get(pair[0], 0), pair[0]),
         )
-        own_name = [
-            str(a["id"])
-            for a in names
-            if str(a["entity_id"]) == entity_id and a["key"] == lookup_key(main)
-        ]
-        own_name_secret = any(
-            a["secret"]
-            for a in names
-            if str(a["entity_id"]) == entity_id and a["key"] == lookup_key(main)
-        )
+        own_name = [str(a["id"]) for a in mine if a["key"] == main_key]
+        own_name_secret = any(a["secret"] for a in mine if a["key"] == main_key)
         if row["unnamed"] and not seen.everything:
             main = _unnamed_label(row, anchor_name(row))
         if any(alias in seen.aliases for alias in own_name):
@@ -691,7 +708,6 @@ def name_entries(
                 shown = main  # (a name every player may read, for a viewer who knows no other)
         out[entity_id] = SOMEONE if shown is None and public else shown
         if texts_out is not None:
-            for a in names:
-                if str(a["entity_id"]) == entity_id:
-                    texts_out[str(a["id"])] = safe_text(entity_id, str(a["text"]))
+            for a in mine:
+                texts_out[str(a["id"])] = safe_text(entity_id, str(a["text"]))
     return out
