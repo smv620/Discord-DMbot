@@ -178,8 +178,8 @@ class ImportanceStore:
 
     async def add(self, guild_id: int, campaign_id: str, assessments: Iterable[Assessment]) -> int:
         """Append these assessments and return how many were written. One that is not valid, names
-        a character the campaign does not have (or an entry that is not a live character), or says
-        the rank the character's whole merged group is already assessed at is skipped, so a re-run
+        an entry the campaign does not have (or one that is not live), or says the rank the
+        entry's whole merged group is already assessed at is skipped, so a re-run
         writes nothing twice (a repeat with another reason code adds no row: the rank is what
         counts). The comparison is with the group's newest, as `ranks()` reads it, so a correction
         back to a rank an older twin once had is still written."""
@@ -194,7 +194,7 @@ class ImportanceStore:
             for a in wanted:
                 row = entities.get(a.entity_id)
                 if row is None or row["status"] == "merged" or ended.get(a.entity_id) is None:
-                    continue  # (not a live character of this campaign)
+                    continue  # (not a live entry of this campaign)
                 if group.get(a.entity_id, (0, -1))[1] == a.rank:
                     continue
                 cur = await conn.execute(
@@ -255,9 +255,9 @@ class ImportanceStore:
         return count, companions
 
     async def ranks(self, guild_id: int, campaign_id: str) -> dict[str, int]:
-        """The current rank of every live character of the campaign (entry id -> 0 to 5).
+        """The current rank of every live entry of the campaign (entry id -> 0 to 5).
 
-        A merged name counts for the character it ended up in, however many merges that took:
+        A merged name counts for the entry it ended up in, however many merges that took:
         its sessions join the survivor's for the floor, and the newest assessment of the whole
         group is the current one (by `seq`, so a correction after a merge still lowers the
         rank)."""
@@ -292,7 +292,7 @@ class ImportanceStore:
 
 
 def counts(ranks: Mapping[str, int]) -> list[int]:
-    """How many characters are at each rank, 0 to 5 (for a log line: counts only)."""
+    """How many entries are at each rank, 0 to 5 (for a log line: counts only)."""
     out = [0] * (PLAYER + 1)
     for rank in ranks.values():
         out[max(BACKGROUND, min(PLAYER, rank))] += 1
