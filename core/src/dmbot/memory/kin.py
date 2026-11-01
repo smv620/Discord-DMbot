@@ -19,7 +19,13 @@ ROLES = (
     "mother", "father", "son", "daughter", "sister", "brother", "wife", "husband",
     "aunt", "uncle", "niece", "nephew", "cousin",
     "grandmother", "grandfather", "granddaughter", "grandson",
+    # Neutral words for a worked-out link, where the text does not say which (#3238)
+    "aunt or uncle", "niece or nephew",
 )  # fmt: skip
+
+# The neutral words, used only for worked-out links: a text that says "uncle" is stored as stated
+# (#3238). They stay out of the DM's role menu, which is at Discord's limit.
+NEUTRAL_ONLY = frozenset({"aunt or uncle", "niece or nephew"})
 
 # Roles that are true of both names alike (Mira is Aldric's cousin and Aldric is Mira's): they read
 # "is the cousin of" from either card, are never swapped on the website, and keep the id-sorted
@@ -37,6 +43,17 @@ def role_of(detail: str) -> str | None:
     """The role a connection's detail is, or None when it is no family word of the list."""
     word = " ".join(detail.split()).casefold()
     return word if word in ROLES else None
+
+
+def same_fact(a_id: str, role: str | None, b_id: str) -> tuple[str, str, str]:
+    """The link as one key whatever the words, so a suggestion is not offered again under another
+    name for it: "A is the niece of U", "U is the uncle of A" and "U is the aunt or uncle of A" are
+    one fact, keyed as (U, "aunt or uncle", A). Other roles are returned as they are."""
+    if role in ("aunt", "uncle", "aunt or uncle"):
+        return a_id, "aunt or uncle", b_id
+    if role in ("niece", "nephew", "niece or nephew"):
+        return b_id, "aunt or uncle", a_id
+    return a_id, role or "", b_id
 
 
 def directional(detail: str) -> bool:
