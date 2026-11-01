@@ -2237,7 +2237,13 @@ class WhoKnowsName(WhoKnowsMenu):
             return
         try:
             await name_edits.set_who_knows(
-                memory, campaign.guild_id, campaign.id, alias, who, self.picked
+                memory,
+                campaign.guild_id,
+                campaign.id,
+                alias,
+                who,
+                self.picked,
+                players_only=True,  # (this menu lists player characters only: NPC knowers stay)
             )
         except MemoryRuleError as exc:
             if str(exc) == name_edits.PICK_ONE:

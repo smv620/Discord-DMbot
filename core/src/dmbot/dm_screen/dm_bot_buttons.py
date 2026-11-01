@@ -18,12 +18,14 @@ import asyncio
 import contextlib
 import logging
 import re
+from collections.abc import Sequence
 from typing import Any
 
 import discord
 
 from dmbot import consent_dm
 from dmbot.campaigns import Campaign
+from dmbot.discord_limits import shorten
 from dmbot.dm_screen import dm_bot_panel as panel
 from dmbot.dm_screen.dm_bot_panel import Button, Role, Standing
 from dmbot.dm_screen.settings import SettingsButton
@@ -32,6 +34,10 @@ from dmbot.mentions import NO_PINGS
 log = logging.getLogger(__name__)
 
 _ID = r"(?P<campaign>[0-9a-f]{32})"
+# A message holds 25 buttons, and a player's card keeps 🙋 My data and ❓ Help after the links
+# (#3024).
+MAX_CAMPAIGN_LINKS = 23
+LABEL_MAX = 80  # Discord's limit for a button's label
 GONE = "DMbot can't find that campaign. Ask your DM."
 WENT_WRONG = "Something went wrong. Please press it again."
 CARD_TEXT = {
@@ -40,7 +46,8 @@ CARD_TEXT = {
         "🙋 is about you."
     ),
     Role.PLAYER: (
-        "You play here. Press 🙋 My data to see or stop your recording, or to link your sheet."
+        "You play here. 🌐 opens your campaign on the website. Press 🙋 My data to see or stop "
+        "your recording, or to link your sheet."
     ),
     Role.MEMBER: "You agreed to be recorded in this server. Press 🙋 My data to stop.",
     Role.GUEST: (
@@ -80,12 +87,56 @@ async def standing_of(client: Any, campaign: Campaign, user_id: int) -> Standing
     )
 
 
+async def player_campaigns(client: Any, campaign: Campaign, user_id: int) -> list[Campaign]:
+    """The campaigns in this server the person plays in, this one included, sorted by name (#3024).
+    Each is asked of the memory store like `standing_of` does, and a failed read counts as "not
+    playing there", so a hiccup hides a link and never adds one. Only this server's campaigns."""
+    found = [campaign]
+    store, memory = getattr(client, "campaigns", None), getattr(client, "memory", None)
+    if store is not None and memory is not None:
+        try:
+            others = [
+                c for c in await store.list_campaigns(campaign.guild_id) if c.id != campaign.id
+            ]
+        except Exception:
+            log.warning("Couldn't list the campaigns for a player's menu", exc_info=True)
+            others = []
+
+        async def plays(other: Campaign) -> bool:
+            try:
+                return bool(await memory.is_player_here(other.guild_id, other.id, user_id))
+            except Exception:
+                log.warning("Couldn't tell whether someone plays in a campaign", exc_info=True)
+                return False
+
+        answers = await asyncio.gather(*map(plays, others))
+        found += [c for c, yes in zip(others, answers, strict=True) if yes]
+    return sorted(found, key=lambda c: (c.name.casefold(), c.id))
+
+
 def role_view(
-    role: Role, campaign: Campaign, *, site_url: str = "", several: bool = False
+    role: Role,
+    campaign: Campaign,
+    *,
+    site_url: str = "",
+    several: bool = False,
+    playing: Sequence[Campaign] = (),
 ) -> discord.ui.View:
     """The buttons that role gets, built from `buttons_for` and nothing else. `several`: the
-    person runs more than one campaign in this server, so 🌐 goes to their list."""
+    person runs more than one campaign in this server, so 🌐 goes to their list. A player also
+    gets one link to each campaign's website page first (`playing`, by name; this campaign alone
+    when none is given), the same address the DM's 🌐 Manage campaign uses (#3024)."""
     view = discord.ui.View(timeout=None)
+    if role is Role.PLAYER:
+        for c in list(playing or [campaign])[:MAX_CAMPAIGN_LINKS]:
+            view.add_item(
+                discord.ui.Button(
+                    label=shorten(c.name, LABEL_MAX),
+                    emoji="🌐",
+                    style=discord.ButtonStyle.link,
+                    url=panel.campaign_url(site_url, c.guild_id, c.id),
+                )
+            )
     for button in panel.buttons_for(role):
         if button is Button.HELP:
             view.add_item(HelpButton(campaign.id))
@@ -203,9 +254,14 @@ class OpenButton(
         role = panel.role_of(who)
         site = _site(interaction)
         several = role is Role.GAME_MASTER and await _runs_several(interaction, campaign)
+        playing = (
+            await player_campaigns(interaction.client, campaign, interaction.user.id)
+            if role is Role.PLAYER
+            else []
+        )
         await interaction.followup.send(
             CARD_TEXT[role],
-            view=role_view(role, campaign, site_url=site, several=several),
+            view=role_view(role, campaign, site_url=site, several=several, playing=playing),
             ephemeral=True,
             allowed_mentions=NO_PINGS,
         )

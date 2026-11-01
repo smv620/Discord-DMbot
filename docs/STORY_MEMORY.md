@@ -1075,6 +1075,8 @@ all NPCs:
 - "Bruno → desires → Shela": Bruno 1.0, Shela 0.95. Tran has no row.
 - "Shela → desires → Bruno": Bruno 0.3 (he hopes so), Shela 0.0 (she doesn't), Tran no row.
 
+"Only some characters" (the DM's pick on a connection or another name) may include NPCs, up to 60 of this campaign's confirmed characters (factions and other groups included), never a merged or rejected entry, a place, or another campaign's (#3197).
+
 A viewer is shown a statement when one of its characters has a row, with that character's confidence, so a guess
 is drawn as uncertain.
 
@@ -1158,6 +1160,16 @@ A test fails if a reader skips it, as `test_relation_readers.py` does for connec
 **9. Moving to it.** What is revealed today becomes known to every player character. What is secret today becomes
 known to nobody. Today's "Who knows this?" knowers carry over as they are. "The party" point of view is worked out
 from the player characters from then on, never written by itself.
+
+**A player character who joins later** (Supervisor, 2026-11-01, #2995) is given, in the same change, what the
+whole table was shown: every statement all the OTHER player characters know, at the least sure of theirs. Never a
+"some characters" list, a DM-only or NPC-only statement, or one put to sleep by a hide. With no other player
+character, what the flags show the players is given instead. A demoted player character keeps its rows. A
+character knows its own entry, in the party's view too. Migration 0316 adds the rows older campaigns lack (a
+statement every other player character holds, or the flags' answer for a campaign with one), and only adds. The
+lookup then asks the party's view which entries the players are shown (`Entity.unseen_by_players`); an entry still
+only suggested, or a campaign with no player character yet, stays on the flags. One test compares the flags with the
+party's view for every kind of entry as player characters join in turn.
 ## Build order (proposed)
 
 Each step is useful on its own and ships behind the existing phases.
@@ -1537,6 +1549,33 @@ gods and royalty, even while their name is hidden), 5 player character.
   section); 2 the connection nudge; 3 PlotBot's call, behind a switch; 4 recaps pick by rank. Slice 5,
   unnamed creatures as quiet rank-0 entries (the mouse in the dark), changes the rule in section 3 that
   unnamed monsters are not entries; it is for play only and waits until slices 1 to 3 have merged.
+
+### 9d. Knows and a reputation word instead of friend and enemy (owner, 2026-11-01; #3175)
+
+Two characters just **know** each other, and how well and how kindly is a **reputation**: the scale the
+DM sets as Standing (five steps, -80 to 80, section "Standing"). The readers (the lore read and the
+backstory read) no longer offer friend, ally or enemy. A `knows` line carries one of nine plain words for
+how the first name feels about the second: sworn enemy, hostile, distrusts, wary, neutral, trusts,
+friendly, close, devoted (`memory/reputation_words.py`; the readers return a word, never a number).
+"Friends" or "enemies" is two lines, one each way; "neutral" stores no word (no opinion yet is how DMbot
+shows it); a word off the list is dropped and counted and the connection is kept without it.
+
+- **Old rows are the same fact with a sign.** `ally_of` and `enemy_of` rows already stored stay as they
+  are and read as a positive or negative feeling; nothing migrates and the readers simply stop producing
+  them. An AI or older data that still says friend, ally or enemy is read as `knows` with friendly,
+  friendly or hostile, so no line is lost.
+- **An opposite feeling is a change.** Against a held friendship (old `ally_of` or `knows` with a good
+  word), "enemies" ends it and starts the new one, offered as a change the DM presses, as before; a held
+  `knows` with a different feeling is changed the same way; the same feeling is already known.
+- **Who sees the word.** The feeling word is the connection's own detail, so it follows that connection's
+  knowers exactly as "enemy of" did (section 9b): a character who does not know the connection does not
+  see the word, and a secret connection is secret with it. The reputation impression (Standing) is a
+  different thing and stays DM-only. The word is a proposal that waits with the connection; when the DM
+  presses Keep, the feeling is also stored as a story-sourced impression (weight 30, one Undo for both,
+  #3196), a later opposite feeling closes the earlier one, and a Standing the DM set is never overwritten.
+- **Not changed yet.** The session extractor and the ontology's "not this" lines for `knows`, `ally_of`
+  and `enemy_of` still describe the old split; that is the next slice (#3181). The
+  website shows a feeling-carrying `knows` as plain "knows" until its own reading learns the word.
 
 ## Decided
 

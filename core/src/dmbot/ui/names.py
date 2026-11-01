@@ -854,7 +854,12 @@ class KindPicker(_Menu):
 
         # What was saved, then the hint, then the rest: the card's note is cut to fit,
         # from the end (#353, #393).
-        saved, *rest = saved_text(entity, self.others, self.secret).split("\n")
+        saved, *rest = saved_text(
+            entity,
+            self.others,
+            self.secret,
+            hidden=self.hidden and sees_secrets(campaign, interaction.user.id),
+        ).split("\n")
         note = "\n".join([saved, MISTAKE_HINT, *rest])
         await show_card(interaction, campaign.id, entity.id, replace=True, note=note)
 
@@ -889,10 +894,15 @@ async def save_name(
     return entity
 
 
-def saved_text(entity: Entity, others: list[str], secret: list[str]) -> str:
+def saved_text(
+    entity: Entity, others: list[str], secret: list[str], *, hidden: bool = False
+) -> str:
+    """What was saved. `hidden`: the DM asked for it hidden from the players (#2321). It is the DM's
+    choice just made, not read back from the entry: who may see an entry is the lists' business
+    (#2995), so this text never looks at a flag."""
     kind = KIND_SHORT.get(entity.kind_key, entity.kind_key)
     lines = [f"✅ DMbot will remember **{_md(entity.name)}** ({kind})."]
-    if entity.hidden_from_players:
+    if hidden:
         lines.append("🙈 Hidden from players. Only you see it.")
     if others:
         lines.append(f"DMbot also listens for: {', '.join(map(_md, others))}.")

@@ -762,6 +762,8 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   let houseFileNow: HouseFileRequest | null = null;
   let houseFileLooks = 0;
   let loreLooks = 0;
+  // "Add all" answers under a finished upload (#3222): each press is an answer the page polls; Undo takes it back.
+  const confirmAnswers = new Map<string, { action: "add" | "undo"; counts: Record<string, number>; looks: number; createdAt: number; at: number }>();
   // The pretend recap style (#2985): a change takes effect after two looks, as the bot's would.
   const styleNow = { examples: [{ id: "11", text: "The silver lock clicked and Mira let out her breath." }] as { id: string; text: string }[], notes: [] as { id: string; text: string }[] };
   const styleChanges = new Map<string, { action: RecapStyleAction["action"]; arg: string; looks: number; at: number }>();
@@ -856,6 +858,8 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
     if (n % 4 === 2) return [{ id: "q-heist", name: "The Keep Heist", links: 1 }];
     return [];
   };
+  // Who knows a held connection (#3214): the DM's answers, kept by link id for the pretend web.
+  const linkWho = new Map<string, { who: "dm" | "some" | "all"; knownBy: { id: string; name: string }[] }>();
   const webGraphOf = (ref: string, query: WebQuery): WebGraph => {
     const view = webView(ref);
     if (view === "none") throw new ApiError("not-found");
@@ -900,10 +904,70 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
           : { id: n.id, name: current(n).name, kind: current(n).kind, page: current(n).kind === "npc" },
       );
     const edges = edgesOf(usable.filter((l) => near.has(l.a) && near.has(l.b)), all, all, view === "dm" && all);
+    // Who knows (#3167): in the DM's full view the first five names and the first five connections carry one
+    // state each, so every state is on the page; a player's and a peek's web carry none.
+    const knowStates = ["secret", "hidden_from_the_players", "known_to_an_npc", "partly_revealed", "known_to_the_party"] as const;
+    // The states go on the names and connections drawn here that the players already see, so every state is on the
+    // page and the older words on the others stay.
+    const openNames = nodes
+      .filter((n) => {
+        const s = state.nodes.find((x) => x.id === n.id);
+        return s !== undefined && !s.secret && s.revealed !== false;
+      })
+      .slice(0, knowStates.length)
+      .map((n) => n.id);
+    const openLinks = edges
+      .flatMap((e) => e.links)
+      .filter((l) => {
+        const s = state.links.find((x) => x.id === l.id);
+        return s !== undefined && !s.secret && s.revealed !== false;
+      })
+      .slice(0, knowStates.length)
+      .map((l) => l.id);
+    const knownNodes = dm && all
+      ? nodes.map((n) => {
+          const slot = openNames.indexOf(n.id);
+          return slot >= 0 ? { ...n, knowWord: knowStates[slot]! } : n;
+        })
+      : nodes;
+    const knownEdges = dm && all
+      ? edges.map((e) => ({
+          ...e,
+          links: e.links.map((l) => {
+            const slot = openLinks.indexOf(l.id);
+            return slot >= 0 ? { ...l, knowWord: knowStates[slot]! } : l;
+          }),
+        }))
+      : edges;
+    // The held connections of the DM's full view carry an answer: the first is "only the DM", the second "some" (two
+    // pretend characters), the third "everyone", unless the DM has answered one (#3214).
+    const heldLinks = edges
+      .flatMap((e) => e.links)
+      .filter((l) => {
+        const s = state.links.find((x) => x.id === l.id);
+        return s !== undefined && (s.secret === true || s.revealed === false);
+      })
+      .map((l) => l.id);
+    const defaultWho: { who: "dm" | "some" | "all"; knownBy: { id: string; name: string }[] }[] = [
+      { who: "dm", knownBy: [] },
+      { who: "some", knownBy: [{ id: "pc-cerric", name: "Cerric" }, { id: "pc-mira", name: "Mira" }] },
+      { who: "all", knownBy: [] },
+    ];
+    const whoEdges =
+      dm && all
+        ? knownEdges.map((e) => ({
+            ...e,
+            links: e.links.map((l) => {
+              const at = heldLinks.indexOf(l.id);
+              const answer = linkWho.get(l.id) ?? (at >= 0 && at < defaultWho.length ? defaultWho[at] : undefined);
+              return answer ? { ...l, who: answer.who, knownBy: answer.knownBy } : l;
+            }),
+          }))
+        : knownEdges;
     return {
       center: centre,
-      nodes,
-      edges,
+      nodes: knownNodes,
+      edges: whoEdges,
       truncated: false,
       maxHops: 8,
       canEdit: dm && all,
@@ -1639,9 +1703,12 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       }
       groups.sort((x, y) => y.size - x.size);
       const tray = seen.filter((n) => (degree.get(n.id) ?? 0) === 0).map(nodeOf);
+      // Who knows each unconnected name (#3192): the DM's full view puts a state on each of the first five (the fixture's tray has four).
+      const trayStates = ["secret", "hidden_from_the_players", "known_to_an_npc", "partly_revealed", "known_to_the_party"] as const;
+      const knownTray = dm && all ? tray.map((n, i) => (i < trayStates.length ? { ...n, knowWord: trayStates[i]! } : n)) : tray;
       return {
         counts: { names: seen.length, connections: usable.length, connectedNames: seen.length - tray.length, notConnected: tray.length },
-        tray,
+        tray: knownTray,
         groups,
         truncated: false,
         canEdit: dm && all,
@@ -1782,6 +1849,17 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         link.secret = change.secret;
       } else if (change.action === "pin") {
         link.pinned = change.pinned;
+      } else if (change.action === "who") {
+        // Who knows a held connection (#3214): "everyone" is the table; "some" names the characters picked.
+        const picked = (change.characters ?? []).map((id) => PRETEND_VIEWERS.find((v) => v.id === id)).filter((v) => v !== undefined);
+        linkWho.set(
+          link.id,
+          change.who === "dm"
+            ? { who: "dm", knownBy: [] }
+            : change.who === "everyone"
+              ? { who: "all", knownBy: [] }
+              : { who: "some", knownBy: picked.map((v) => ({ id: v.id, name: v.name })) },
+        );
       } else {
         if (change.confirm !== true) throw new ApiError("needs-confirm");
         state.links.splice(state.links.indexOf(link), 1);
@@ -1884,9 +1962,52 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       loreLooks += 1;
       const at = Math.floor(Date.now() / 1000);
       if (loreNow.state === "waiting" && loreLooks >= 2) loreNow = { ...loreNow, state: "working", stage: "reading", updatedAt: at };
-      else if (loreNow.state === "working" && loreLooks >= 4) loreNow = { ...loreNow, state: "done", stage: "done", namesFound: 4, linksFound: 3, updatedAt: at };
+      else if (loreNow.state === "working" && loreLooks >= 4)
+        loreNow = { ...loreNow, state: "done", stage: "done", namesFound: 4, linksFound: 3, updatedAt: at, waiting: { place: 5, character: 7, group: 2 } };
       loreNow = { ...loreNow, serverNow: at };
       return loreNow;
+    },
+    async confirmKinds(ref, upload, kinds) {
+      calls.push(`confirmKinds:${ref}:${upload}:${kinds === "all" ? "all" : kinds.join(",")}`);
+      await reachable();
+      signedIn();
+      if (!loreNow || upload !== loreNow.id) throw new ApiError("not-found");
+      const waiting = loreNow.waiting ?? {};
+      const chosen = kinds === "all" ? Object.keys(waiting) : kinds;
+      const counts = Object.fromEntries(chosen.filter((k) => (waiting[k] ?? 0) > 0).map((k) => [k, waiting[k]!]));
+      const at = Math.floor(Date.now() / 1000);
+      const id = `confirm-${confirmAnswers.size + 1}`;
+      confirmAnswers.set(id, { action: "add", counts, looks: 0, createdAt: at, at });
+      return { answer: id };
+    },
+    async confirmUndo(ref, answer) {
+      calls.push(`confirmUndo:${ref}:${answer}`);
+      await reachable();
+      signedIn();
+      const added = confirmAnswers.get(answer);
+      if (!added || added.action !== "add") throw new ApiError("not-found");
+      const at = Math.floor(Date.now() / 1000);
+      const id = `confirm-${confirmAnswers.size + 1}`;
+      confirmAnswers.set(id, { action: "undo", counts: added.counts, looks: 0, createdAt: at, at });
+      return { answer: id };
+    },
+    async confirmAnswer(ref, answer) {
+      calls.push(`confirmAnswer:${ref}:${answer}`);
+      await reachable();
+      signedIn();
+      const got = confirmAnswers.get(answer);
+      if (!got) throw new ApiError("not-found");
+      got.looks += 1;
+      const at = Math.floor(Date.now() / 1000);
+      const progress = { done: Math.min(got.looks, 2), total: 2, at, createdAt: got.createdAt, now: at };
+      if (got.looks < 2) return { state: "working", stage: "adding", progress };
+      if (got.action === "add" && loreNow?.waiting) {
+        // A done add takes its names off the waiting counts, as the bot does (#3222).
+        const left = { ...loreNow.waiting };
+        for (const [k, n] of Object.entries(got.counts)) left[k] = Math.max(0, (left[k] ?? 0) - n);
+        loreNow = { ...loreNow, waiting: left };
+      }
+      return { state: "done", stage: "done", counts: got.counts, undo: got.action === "add", progress };
     },
     // The pretend campaign page (#2416): a ref ending `.cp-none` is one nobody may see, `.cp-player` one
     // the person plays in without running it, `.cp-co` one they help run.
