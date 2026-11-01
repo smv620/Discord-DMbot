@@ -10186,6 +10186,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             if campaign is None:
                 return False
             sent = False
+            # Marked as from DMbot, with the campaign, so a DM with several campaigns knows which
+            # one is asking (owner, 2026-11-01, #3210).
+            who = discord.utils.escape_markdown(campaign.name)
+            text = f"❓ **DMbot needs your answer** · {who}\n{text}"
             for user_id in sorted(campaign.dm_user_ids):
                 if await self.sidebar_send_dm(user_id, text, view) == "sent":
                     sent = True

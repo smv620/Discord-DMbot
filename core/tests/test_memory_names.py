@@ -3412,6 +3412,8 @@ class AfterSession(NamesTest):
         posted.assert_not_awaited()  # nothing about it on the DM screen
         self.assertTrue(sent.await_count >= 1)
         self.assertIn("Belleros", sent.await_args.args[1])  # type: ignore[union-attr]
+        # marked as from DMbot, with the campaign's name
+        self.assertTrue(sent.await_args.args[1].startswith("❓ **DMbot needs your answer** · "))  # type: ignore[union-attr]
         self.assertIsInstance(sent.await_args.args[2], discord.ui.View)  # type: ignore[union-attr]
 
     async def test_new_names_question_stays_on_the_screen_when_dms_are_closed(self) -> None:
