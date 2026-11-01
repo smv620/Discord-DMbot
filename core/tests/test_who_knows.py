@@ -151,6 +151,24 @@ class WhoKnows(MemoryTest):
                 got = await self.memory.statement_knowers(GUILD_A, self.c, kind, [thing])
                 self.assertEqual(got.get(thing, []), [])
 
+    async def test_a_players_only_save_keeps_the_npc_who_knows(self) -> None:
+        ids = await self.setup_table()
+        link = await self.hidden_link(ids["voss"], ids["council"])
+        alias = await self.secret_name(ids["voss"], "Shade")
+        npc = await self.add("Brisa", status=CONFIRMED)
+        for kind, thing, setter in (
+            ("connection", link, self.memory.set_connection_knowers),
+            ("alias", alias, self.memory.set_alias_knowers),
+        ):
+            with self.subTest(kind=kind):
+                await setter(GUILD_A, self.c, thing, [ids["tavin"], npc], source=DM)
+                await setter(GUILD_A, self.c, thing, [ids["mara"]], source=DM, players_only=True)
+                got = await self.memory.statement_knowers(GUILD_A, self.c, kind, [thing])
+                self.assertEqual(sorted(got[thing]), sorted([ids["mara"], npc]))
+                await setter(GUILD_A, self.c, thing, [], source=DM, players_only=True)
+                got = await self.memory.statement_knowers(GUILD_A, self.c, kind, [thing])
+                self.assertEqual(got[thing], [npc])
+
     async def test_an_npcs_certainty_survives_a_save_that_still_picks_it(self) -> None:
         ids = await self.setup_table()
         link = await self.hidden_link(ids["voss"], ids["council"])

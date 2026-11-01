@@ -525,6 +525,14 @@ class FlagsFollow(Helpers):
         )  # the NPC picked now is added, and the one not picked stops knowing (#3197)
         await self.memory.set_connection_knowers(GUILD_A, self.c, rel, [], source="dm")
         self.assertEqual(await self.known(CONNECTION, rel), [])
+        # a player-characters-only list (the Discord menu) never drops an NPC (#3197)
+        await self.memory.set_statement_knowers(
+            GUILD_A, self.c, CONNECTION, rel, {ids["bruno"]: 0.6}, source="dm"
+        )
+        await self.memory.set_connection_knowers(
+            GUILD_A, self.c, rel, [ids["mara"]], source="dm", players_only=True
+        )
+        self.assertEqual(await self.known(CONNECTION, rel), sorted([ids["bruno"], ids["mara"]]))
         shade = await self.memory.add_alias(
             GUILD_A, self.c, ids["bruno"], "Shade", kind="title", secret=True, source="dm"
         )

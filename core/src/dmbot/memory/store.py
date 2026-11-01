@@ -4173,12 +4173,15 @@ class MemoryStore:
         character_ids: Sequence[str],
         *,
         source: str,
+        players_only: bool = False,
     ) -> Written[list[str]]:
         """ "Who knows this?" for a hidden connection (#2935): exactly these player characters know
         it, or only the DM when none. One change, so Undo takes it back. Only the DM."""
         async with self._write(guild_id, campaign_id, source) as w:
             await beliefs.perspective_ids(w)
-            chosen = await knowers.set_connection_knowers(w, relation_id, character_ids)
+            chosen = await knowers.set_connection_knowers(
+                w, relation_id, character_ids, players_only=players_only
+            )
             return Written(chosen, w.batch)
 
     async def set_alias_knowers(
@@ -4189,10 +4192,14 @@ class MemoryStore:
         character_ids: Sequence[str],
         *,
         source: str,
+        players_only: bool = False,
     ) -> Written[list[str]]:
-        """ "Who knows this?" for a secret other name (#2935). Only the DM."""
+        """ "Who knows this?" for a secret other name (#2935). Only the DM. `players_only`: the
+        list holds player characters only, so an NPC who knows it keeps knowing (#3197)."""
         async with self._write(guild_id, campaign_id, source) as w:
-            chosen = await knowers.set_alias_knowers(w, alias_id, character_ids)
+            chosen = await knowers.set_alias_knowers(
+                w, alias_id, character_ids, players_only=players_only
+            )
             return Written(chosen, w.batch)
 
     async def set_statement_knowers(

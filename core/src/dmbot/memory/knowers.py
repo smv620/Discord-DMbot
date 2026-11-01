@@ -221,12 +221,15 @@ async def statement_knowers(
 
 
 async def set_connection_knowers(
-    w: Changes, relation_id: str, character_ids: Sequence[str]
+    w: Changes, relation_id: str, character_ids: Sequence[str], *, players_only: bool = False
 ) -> list[str]:
     """Exactly these characters know this hidden connection (none: only the DM). A character not
     listed who knew it stops knowing (a 0.0 belief, so the history stays). The connection must be
     confirmed and still held back (secret, or not revealed yet): one everyone knows has nothing
-    to choose. Returns the characters now knowing."""
+    to choose. Returns the characters now knowing.
+
+    `players_only`: the caller's list holds player characters only (the Discord menu), so only the
+    player characters' rows are replaced and an NPC who knows it keeps knowing (#3197)."""
     if w.source != DM:
         raise MemoryRuleError(ONLY_THE_DM)
     relation = await w.get(RELATIONS, relation_id)
@@ -249,13 +252,15 @@ async def set_connection_knowers(
         await beliefs.add_belief(w, await _view_of(w, entity_id), relation_id, 0.0, SECRET_PLOT)
     # The same list in the one table the gate reads (#2995, slice 2b); the old beliefs stay what
     # the old readers read until slice 3.
-    await _follow_player_list(w, "connection", relation_id, known)
+    await _follow_player_list(w, "connection", relation_id, known, players_only)
     return chosen
 
 
-async def set_alias_knowers(w: Changes, alias_id: str, character_ids: Sequence[str]) -> list[str]:
+async def set_alias_knowers(
+    w: Changes, alias_id: str, character_ids: Sequence[str], *, players_only: bool = False
+) -> list[str]:
     """Exactly these characters know this secret other name (none: only the DM). Returns the
-    characters now knowing."""
+    characters now knowing. `players_only`: as for `set_connection_knowers`."""
     if w.source != DM:
         raise MemoryRuleError(ONLY_THE_DM)
     alias = await w.get(ALIASES, alias_id)
@@ -277,15 +282,28 @@ async def set_alias_knowers(w: Changes, alias_id: str, character_ids: Sequence[s
                 {"id": new_id(), "alias_id": alias_id, "perspective_id": view_id,
                  "created_at": w.now},
             )  # fmt: skip
+    kept = await _character_views(w, players_only)
     for view_id, row_id in have.items():
-        if view_id not in views.values():
+        if view_id not in views.values() and view_id in kept:
             await w.delete(ALIAS_KNOWERS, row_id)
-    await _follow_player_list(w, "alias", alias_id, known)
+    await _follow_player_list(w, "alias", alias_id, known, players_only)
     return chosen
 
 
+async def _character_views(w: Scope, players_only: bool) -> set[str]:
+    """The views a "who knows" save may replace: every character's, or only the player
+    characters' (a list that never offered an NPC must not drop one, #3197). The table's own and
+    the party's views are never among them."""
+    kinds = [PC_VIEW] if players_only else [PC_VIEW, NPC_VIEW]
+    return {str(r["id"]) for r in await w.select(PERSPECTIVES, " AND kind = ANY(%s)", [kinds])}
+
+
 async def _follow_player_list(
-    w: Changes, kind: str, statement_id: str, chosen: Mapping[str, bool]
+    w: Changes,
+    kind: str,
+    statement_id: str,
+    chosen: Mapping[str, bool],
+    players_only: bool = False,
 ) -> None:
     """The old "Who knows this?" writers (`chosen`: each character, with whether it is a player's):
     make the characters in the new list exactly those (players and NPCs, #3197: one not picked
@@ -294,12 +312,7 @@ async def _follow_player_list(
     column, _ = _COLUMNS[kind]
     views = {i: await _view_for(w, i, player) for i, player in chosen.items()}
     await _drop_asleep(w, column, statement_id)
-    # A character's view (a player's or an NPC's) is the DM's to set through this list, so one not
-    # picked any more stops knowing; the table's own and the party's views are never touched.
-    pcs = {
-        str(r["id"])
-        for r in await w.select(PERSPECTIVES, " AND kind IN (%s, %s)", [PC_VIEW, NPC_VIEW])
-    }
+    pcs = await _character_views(w, players_only)
     have = {
         r["perspective_id"]: r
         for r in await w.select(KNOWERS, f" AND {column} = %s", [statement_id])
