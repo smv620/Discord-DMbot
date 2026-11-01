@@ -22,6 +22,7 @@ from dmbot.memory.models import MERGE_MANY_MAX, PRONOUNCED
 from dmbot.web.names import _parse
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
 from dmbot.web.sessions import Session
+from dmbot.web.who_knows import who_text
 
 PAGE_SIZE = 50  # the page's usual size (it was Discord's 20 until the compact list, 2026-10-27)
 PAGE_SIZES = (20, 50, 200, 500)  # what the page's "Names per page" offers; nothing else is asked
@@ -191,6 +192,7 @@ async def _add_said_as(
 NAME_MAX = 100  # a name or another name: the same limit as the bot's
 KIND_PATTERN = re.compile(r"^[a-z][a-z _-]{0,39}$")
 ID_PATTERN = re.compile(r"^[0-9a-f]{32}$")
+PLAYER_ID = re.compile(r"^[1-9][0-9]{14,18}$")  # a Discord user ID (a snowflake)
 ACTIONS = (
     "spell",
     "kind",
@@ -204,7 +206,15 @@ ACTIONS = (
     "name",
     "name-join",
     "name-undo",
+    "alias-who",  # who knows an other name (#2999): {alias, who, characters}
+    "confirm-kinds",  # "Add all" for what an upload found (#3207): {upload, kinds | "all"}
+    "confirm-undo",  # takes back one press of it: {answer}
 )
+
+KIND_WORD = re.compile(
+    r"^[a-z_]{2,20}$"
+)  # the stored kind keys ("place", "character"); never "concept" (an idea)
+KINDS_MAX = 8
 
 
 def _text(value: object) -> str:
@@ -236,6 +246,23 @@ def _arguments(body: object) -> tuple[str, str, str, str, bool]:
         kind = str(body.get("kind") or "")
         if not KIND_PATTERN.match(kind):
             raise RecapError("bad_kind")
+        player = body.get("player")
+        if player is not None and player != "":
+            # Who plays a player character: a Discord ID, digits only (a name is not one). Asking
+            # who an ID is (`player_lookup`) writes nothing; saving it needs the DM's confirmation
+            # of the name Discord showed (`confirmed`, sent only after "That's them", #3004).
+            # The door and the bot check it again, and the bot asks Discord again before linking.
+            if kind not in ("player_character", "player_lookup") or not isinstance(player, str):
+                raise RecapError("bad_player")
+            text = player.strip()
+            if not PLAYER_ID.match(text):
+                raise RecapError("bad_player")
+            if kind == "player_character":
+                if body.get("confirmed") is not True:
+                    raise RecapError("bad_player")
+                flag = True
+        elif kind == "player_lookup":
+            raise RecapError("bad_player")
     elif action in ("add-other", "remove-other"):
         text = _text(body.get("other"))
     elif action == "secret":  # one other name; the main name can't be secret (as on the card)
@@ -270,6 +297,33 @@ def _arguments(body: object) -> tuple[str, str, str, str, bool]:
         target = str(body.get("answer") or "")
         if not ID_PATTERN.match(target):
             raise RecapError("bad_target")
+    elif action == "alias-who":  # the other name's id, and the answer in the text (#2999)
+        target = str(body.get("alias") or "")
+        if not ID_PATTERN.match(target):
+            raise RecapError("not_found")
+        text = who_text(body)
+    elif action == "confirm-kinds":  # the upload is the target; the kinds, or all, are the text
+        target = str(body.get("upload") or "")
+        if not ID_PATTERN.match(target):
+            raise RecapError("not_found")
+        kinds = body.get("kinds")
+        if kinds == "all":
+            text = "all"
+        else:
+            if not isinstance(kinds, list) or not 1 <= len(kinds) <= KINDS_MAX:
+                raise RecapError("bad_target")
+            if not all(
+                isinstance(k, str) and KIND_WORD.match(k) and k not in ("idea", "concept", "all")
+                for k in kinds
+            ):
+                raise RecapError("bad_target")
+            if len(set(kinds)) != len(kinds):
+                raise RecapError("bad_target")
+            text = " ".join(kinds)
+    elif action == "confirm-undo":  # the answer of the press to take back
+        target = str(body.get("answer") or "")
+        if not ID_PATTERN.match(target):
+            raise RecapError("not_found")
     elif action == "remove":
         flag = body.get("confirm") is True
         if not flag:
@@ -305,6 +359,30 @@ async def queue_action(
     return str(got["id"])
 
 
+async def queue_confirm(db: Database, session: Session, ref: str, body: object) -> str:
+    """Queue "Add all" for the names an upload found, or the Undo of one press (#3207), for the
+    signed-in DM: the same door and the same answer as any name action, with no name to file it
+    under. Only the two actions are taken here."""
+    if not isinstance(body, dict) or body.get("action") not in ("confirm-kinds", "confirm-undo"):
+        raise RecapError("bad_action")
+    guild_id, campaign_id = _parse(ref)
+    _guild_of(session, guild_id)
+    action, kind, target, text, flag = _arguments(body)
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        cur = await conn.execute(
+            "SELECT dmbot_web_name_action_add(%s, %s, %s, %s, %s, %s, %s, %s) AS r",
+            (guild_id, campaign_id, None, action, kind, target, text, flag),
+        )
+        found = await cur.fetchone()
+    got = found["r"] if found else None
+    if got is None:
+        raise RecapError("not_allowed")
+    if got["status"] != "ok":
+        raise RecapError("bad_name" if got["status"] == "bad_text" else str(got["status"]))
+    return str(got["id"])
+
+
 async def read_action(db: Database, session: Session, ref: str, action_id: str) -> dict[str, Any]:
     """Where one of the caller's own actions stands: `state` (waiting, working, done, failed), the
     `error` word when it failed, the changed (or surviving) name's `row`, and `removed`."""
@@ -332,14 +410,37 @@ async def read_action(db: Database, session: Session, ref: str, action_id: str) 
         shown = await read_page(db, session, ref, only=got["resultId"])
         if shown["names"]:
             other = {"id": shown["names"][0]["id"], "name": shown["names"][0]["name"]}
+    # Who an ID is (#3004): a `kind` action that wrote nothing and left the answer in `resultOther`,
+    # a letter for "in this server" or not, then the name Discord shows. Shown once, never kept.
+    asked = None
+    if got["state"] == "done" and got["action"] == "kind" and got["resultOther"]:
+        asked = {"name": got["resultOther"][1:], "inServer": got["resultOther"][0] == "i"}
+    # What an "Add all" press did, counts only (#3207): {"place": 5, "npc": 7}; empty otherwise.
+    # The door's `counts` is the bot's own text for it, "place:5 npc:7" (one pair per kind).
+    counts = {
+        k: int(n)
+        for k, _, n in (part.partition(":") for part in str(got.get("counts") or "").split())
+        if n.isdigit()
+    }
     return {
         "state": got["state"],
+        "counts": counts,
+        "progress": {
+            "done": got["progressDone"],
+            "total": got["progressTotal"],
+            "at": got["progressAt"],
+            "createdAt": got["createdAt"],
+            "now": got["now"],
+        },
         "row": row,
+        "player": asked,
         "removed": got["state"] == "done" and got["action"] == "remove",
         "error": got["error"],
         "other": other,
         # Undo is offered for a name just given (or a join), until the bot's record of it is gone.
         "undo": got["state"] == "done"
-        and got["action"] in ("name", "name-join")
-        and bool(got["resultOther"]),
+        and (
+            (got["action"] in ("name", "name-join") and bool(got["resultOther"]))
+            or (got["action"] == "confirm-kinds" and bool(counts))
+        ),
     }

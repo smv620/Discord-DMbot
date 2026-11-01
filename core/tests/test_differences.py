@@ -60,9 +60,23 @@ class Finding(ConfirmedMemoryTest):
         return relation
 
     async def character(self, name: str, kind: str = "pc") -> str:
-        entity = await self.add(name, type="character", role="player_character", played_by=9)
+        player = kind == "pc"  # (a player's character has its view from the start, #2995)
+        entity = await self.add(
+            name,
+            type="character",
+            role="player_character" if player else "npc",
+            played_by=9 if player else None,
+        )
         made = new_id()
         async with self.db.guild(GUILD_A) as conn:
+            cur = await conn.execute(
+                "SELECT id FROM memory_perspectives WHERE guild_id = %s AND campaign_id = %s"
+                " AND entity_id = %s",
+                (GUILD_A, self.c, entity),
+            )
+            have = await cur.fetchone()
+            if have is not None:
+                return str(have["id"])
             await conn.execute(
                 "INSERT INTO memory_perspectives (guild_id, campaign_id, id, kind, entity_id,"
                 " created_at) VALUES (%s, %s, %s, %s, %s, 1)",
@@ -116,6 +130,50 @@ class Finding(ConfirmedMemoryTest):
             (rook, "pc", ally, enemy),
         )
         self.assertTrue(found.involves_guess)
+
+    async def lied(self, view: str, relation: str, status: str = "suspected_lie") -> None:
+        await self.believe(view, relation, 0.5 if status == "suspected_lie" else 0.0, status)
+
+    async def test_a_lie_the_party_suspects_about_what_the_truth_holds_true_is_one(self) -> None:
+        ally = await self.link("ally_of")  # the truth holds it at 1.0
+        await self.anchor()
+        rook = await self.character("Rook")
+        await self.lied(rook, ally)
+        (found,) = await self.finder.find(GUILD_A, self.c)
+        self.assertEqual(
+            (found.perspective_id, found.view_kind, found.relation_id, found.truth_relation_id),
+            (rook, "pc", ally, ally),
+        )
+        self.assertEqual(found.kind, df.LIE)
+        await self.lied(await self.view("party"), ally, "known_lie")
+        kinds = sorted(d.view_kind for d in await self.finder.find(GUILD_A, self.c))
+        self.assertEqual(kinds, ["party", "pc"])
+
+    async def test_an_npcs_lie_or_one_the_truth_also_denies_is_not_listed(self) -> None:
+        ally = await self.link("ally_of")
+        await self.anchor()
+        npc = await self.character("Mook", "npc")
+        await self.lied(npc, ally)
+        self.assertEqual(await self.finder.find(GUILD_A, self.c), [])  # (the DM's own story)
+        rook = await self.character("Rook")
+        await self.lied(rook, ally)
+        truth = await self.view("truth")
+        await self.believe(truth, ally, 0.0, "false_evidence")  # it was a lie: the table is right
+        self.assertEqual(
+            [d for d in await self.finder.find(GUILD_A, self.c) if d.kind == df.LIE], []
+        )
+
+    async def test_a_suspected_lie_at_half_does_not_assert_the_connection_is_so(self) -> None:
+        # (it would otherwise read as that character believing the connection, and clash with a
+        # truth that holds the opposite)
+        await self.link("enemy_of")
+        ally = await self.link("ally_of")
+        await self.anchor()
+        await self.believe(await self.view("truth"), ally, 0.0, "false_evidence")
+        rook = await self.character("Rook")
+        await self.lied(rook, ally)
+        mine = [d for d in await self.finder.find(GUILD_A, self.c) if d.perspective_id == rook]
+        self.assertEqual(mine, [])
 
     async def test_the_truths_own_doubt_is_not_a_denial(self) -> None:
         ally = await self.link("ally_of")

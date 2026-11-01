@@ -10,7 +10,7 @@ import unittest
 from collections import Counter
 from datetime import UTC, datetime
 from typing import Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, PropertyMock, patch
 
 from dmbot.memory import background as bg
 from dmbot.memory import lore_read
@@ -318,9 +318,52 @@ class ThePath(NamesTest):
         self.assertIn("not a published book", text)
         self.assertIn("does not keep it, only a short line", text)
         self.assertEqual(
-            [b.label for b in view.children], ["🤖 Find names", ui_bg.TRUTH_OFF, "Cancel"]
+            [b.label for b in view.children],
+            ["🤖 Find names", ui_bg.TRUTH_OFF, "Cancel", ui_bg.KNOWS_LABELS["world"]],
         )
+        # (#3098, owner 2026-10-31: the form starts on "Everyone knows it", marked Default)
+        self.assertIn("Everyone knows it", text)
+        self.assertIn("(Default)", ui_bg.KNOWS_TEXT["world"])
+        self.assertNotIn("(Default)", ui_bg.KNOWS_TEXT["spoilers"])
+        self.assertIn("Tap the Players button to switch", text)
         self.ai.complete.assert_not_awaited()  # nothing is sent until the DM presses
+
+    async def test_a_backstory_pick_then_not_one_puts_the_choice_back(self) -> None:
+        # (#3103) The form starts on world. A backstory sets it to spoilers, and "not one" puts
+        # back what the DM had, so the form is on world again unless the DM changed it.
+        view = ui_bg.BackgroundOffer(
+            self.campaign.id, Upload(TEXT, "your background"), [("c1", "Tavin")]
+        )
+        self.assertEqual(view.knows, "world")
+        with patch.object(type(view.whose), "values", new_callable=PropertyMock) as values:
+            values.return_value = ["c1"]
+            await view._whose(self.it())
+            self.assertEqual(view.knows, "spoilers")
+            self.assertTrue(view.knows_button.disabled)
+            values.return_value = [ui_bg.NOT_ONE_VALUE]
+            await view._whose(self.it())
+        self.assertEqual(view.knows, "world")
+        self.assertFalse(view.knows_button.disabled)
+
+    async def test_the_players_button_goes_round_the_three_choices_and_the_read_gets_it(
+        self,
+    ) -> None:
+        _, view = await self.offer()
+        seen = [view.knows]
+        for _ in range(3):
+            press = self.it()
+            await view.knows_button.callback(press)
+            seen.append(view.knows)
+            shown = press.response.edited[0][0]
+            self.assertIn(ui_bg.KNOWS_TEXT[view.knows], shown)
+        # The form starts on world (#3098), and three presses come back to it.
+        self.assertEqual(seen, ["world", "smart", "spoilers", "world"])
+        with patch.object(
+            ui_bg, "read_background", AsyncMock(side_effect=RuntimeError("stop"))
+        ) as r:
+            await view._read(self.it())
+        assert r.await_args is not None
+        self.assertEqual(r.await_args.kwargs["choice"], "world")
 
     async def test_only_a_dm_gets_the_offer(self) -> None:
         it, view = await self.offer(MANAGER)
@@ -482,7 +525,9 @@ class ThePath(NamesTest):
         it = self.it()
         await ui_bg.offer(it, self.campaign.id, Upload(text, "my notes"))
         press = self.it()
-        await it.response.sent[0][1]["view"]._read(press)
+        view = it.response.sent[0][1]["view"]
+        view.knows = "spoilers"  # the disguise is hidden only when they are spoilers
+        await view._read(press)
         view = press.edit_original_response.await_args.kwargs["view"]
         (button,) = [b for b in view.children if getattr(b, "label", "") == "✅ Add all 1 NPC"]
         await button.callback(self.it())
@@ -518,6 +563,63 @@ class ThePath(NamesTest):
         labels = [getattr(b, "label", "") for b in view.children]
         self.assertIn("✅ Add all 2 places", labels)
         self.assertIn("📝 Check them one by one", labels)
+
+    async def test_an_overall_add_all_with_the_total_comes_first_when_there_are_several_kinds(
+        self,
+    ) -> None:
+        press = await self.read()
+        view = press.edit_original_response.await_args.kwargs["view"]
+        labels = [str(getattr(b, "label", "")) for b in view.children]
+        total = sum(len(v) for k, v in view.ids.items() if k != "concept")
+        self.assertEqual(labels[0], f"✅ Add all {total}")
+        self.assertIn("✅ Add all 2 places", labels)  # and each kind keeps its own
+
+    async def test_the_overall_add_all_answers_every_kind_but_ideas_and_undo_takes_all_back(
+        self,
+    ) -> None:
+        press = await self.read()
+        view = press.edit_original_response.await_args.kwargs["view"]
+        waiting = {e.id for e in await self.entities()}
+        concepts = set(view.ids.get("concept", []))
+        total = sum(len(v) for k, v in view.ids.items() if k != "concept")
+        it = self.it()
+        await view.children[0].callback(it)
+        confirmed = {e.id for e in await self.entities(CONFIRMED)}
+        self.assertEqual(confirmed, waiting - concepts)
+        self.assertEqual(len(confirmed), total)
+        sent = [text for text, _ in it.response.sent] + [
+            str(c.args[0]) for c in it.followup.send.await_args_list if c.args
+        ]
+        self.assertTrue(any(f"Added {total} names" in t for t in sent), sent)
+        labels = [str(getattr(b, "label", "")) for b in view.children]
+        self.assertTrue(any(label.startswith("↩️ Undo") for label in labels), labels)
+        self.assertFalse(any(label.startswith("✅ Add all") for label in labels), labels)
+        undo = next(b for b in view.children if str(getattr(b, "label", "")).startswith("↩️ Undo"))
+        await undo.callback(self.it())
+        self.assertEqual(await self.entities(CONFIRMED), [])  # all of it, in one press
+        labels = [str(getattr(b, "label", "")) for b in view.children]
+        self.assertEqual(labels[0], f"✅ Add all {total}")  # offered again
+
+    async def test_only_a_dm_may_use_the_overall_add_all(self) -> None:
+        press = await self.read()
+        view = press.edit_original_response.await_args.kwargs["view"]
+        await view.children[0].callback(self.it(MANAGER))
+        self.assertEqual(await self.entities(CONFIRMED), [])
+
+    async def test_a_single_kind_has_no_second_button_for_the_same_names(self) -> None:
+        view = ui_bg.BulkConfirm(self.campaign.id, {"place": ["a", "b"]})
+        labels = [str(getattr(b, "label", "")) for b in view.children]
+        self.assertIn("✅ Add all 2 places", labels)
+        self.assertFalse(
+            any(label.startswith("✅ Add all") and "places" not in label for label in labels)
+        )
+        both = ui_bg.BulkConfirm(self.campaign.id, {"place": ["a"], "npc": ["b", "c"]})
+        self.assertEqual(str(getattr(both.children[0], "label", "")), "✅ Add all 3")
+
+    async def test_ideas_are_not_in_the_overall_count(self) -> None:
+        view = ui_bg.BulkConfirm(self.campaign.id, {"concept": ["a", "b"], "place": ["c"]})
+        labels = [str(getattr(b, "label", "")) for b in view.children]
+        self.assertFalse(any(label == "✅ Add all 3" for label in labels), labels)
 
     async def test_yes_to_all_places_confirms_only_the_places(self) -> None:
         press = await self.read()

@@ -3,8 +3,8 @@
 Rests & time… and Start a timer. Short rest, Long rest and Skip to dawn are in the private
 panel that **Rests & time…** opens (rests are rare buttons, because DMbot hears them, and
 players who peek behind the DM screen could take them for D&D Beyond sheet links). The players
-see only the day and a rough time of day, "🕰️ Day 4, afternoon", in their own game-time
-channel (#1116).
+see only the day and a rough time of day, a small "-# 🕰️ Day 4, afternoon" line in the campaign's
+DMbot chat channel (#2877; before it, a pinned message in a game-time channel, #1116).
 Only the campaign's DMs can press the buttons (checked on every press, in the database
 transaction that changes the clock), and the buttons keep working after a restart (their
 IDs carry the campaign).
@@ -41,6 +41,7 @@ from dmbot.rules import optional
 from dmbot.timebot import clock as game
 from dmbot.timebot import durations, effects, split, where_are_we
 from dmbot.timebot.clock import Clock
+from dmbot.timebot.store import GONE as GROUP_GONE
 from dmbot.timebot.store import MOVED_ON, ClockStore, Rejoined, Stored
 
 log = logging.getLogger(__name__)
@@ -49,7 +50,7 @@ _ID = r"(?P<campaign>[0-9a-f]{32})"
 NO_REST_RULE = "xge-no-long-rest"  # the optional rule the 24-hour line follows
 
 SET_FIRST = (
-    "The clock isn't set yet. Press **Game clock** in ⚙️ Settings and give the day and the hour."
+    "The clock isn't set yet. Press **Game clock** in ⚙️ Manage DMbot and give the day and the hour."
 )
 GONE = "That campaign isn't here any more."
 FAILED = "That didn't save. Try again in a moment."
@@ -86,6 +87,7 @@ ACTIONS: dict[str, tuple[str, str, discord.ButtonStyle, int]] = {
     # The split party (#1607), in the private Rests & time… panel.
     "split": ("Split the party", "✂️", discord.ButtonStyle.secondary, 1),
     "rejoin": ("Rejoin the party", "🤝", discord.ButtonStyle.primary, 1),
+    "who": ("Who is where", "🧭", discord.ButtonStyle.secondary, 1),
     # Combat (#1127): the DM's correction for what DMbot heard (or missed).
     "cstart": ("Start combat", "⚔️", discord.ButtonStyle.success, 1),
     "cnext": ("Next round", "⏭️", discord.ButtonStyle.primary, 1),
@@ -224,6 +226,9 @@ def _apply(
     return None
 
 
+apply_action = _apply  # the press's own rule, for a caller that walks a whole session (#2979)
+
+
 def _speaks(action: str) -> bool:
     """Dawn, noon and dusk are said when time passes by a button or a rest; not when the
     DM says what time it is (the DM already knows)."""
@@ -337,6 +342,8 @@ def panel_view(campaign_id: str, is_split: bool = False) -> discord.ui.View:
     for action in PANEL:
         view.add_item(ClockButton(campaign_id, action))
     view.add_item(ClockButton(campaign_id, "rejoin" if is_split else "split"))
+    if is_split:
+        view.add_item(ClockButton(campaign_id, "who"))  # who is in each group (#3131)
     return view
 
 
@@ -371,81 +378,120 @@ async def show(client: Any, campaign: Campaign, stored: Stored) -> discord.Messa
 
 
 def players_see(campaign: Campaign, what: str = "the day and ") -> str:
-    """Where the players see the clock: said only when that channel exists. While splitting,
+    """Where the players see the clock: said only when the chat channel exists. While splitting,
     `what` also tells the DM the players read the group names."""
-    if campaign.gametime_channel_id is None:
+    if campaign.dmbchat_channel_id is None:
         return ""
-    return PLAYERS_SEE.format(channel=campaign.gametime_channel_id, what=what)
+    return PLAYERS_SEE.format(channel=campaign.dmbchat_channel_id, what=what)
 
 
-def players_text(clock: Clock) -> str:
-    """The players' clock: the day and a rough time of day, nothing else (no exact time, no
-    timer, no button; those are the DM's)."""
-    head = f"🕰️ **{game.short_label(clock.minute)}**"
-    fight = game.combat_label(clock)  # the players see the round, nothing else of the fight
-    return head if fight is None else f"{head}\n{fight}"
+# ---- the players' clock: a small line in the DMbot chat channel (#2877) -------------------------
+
+MARK = "🕰️"
+SMALL = "-# "  # Discord's small text
+SCAN = 50  # recent messages looked at for DMbot's last clock line (a busier chat may post it again)
+SPLIT_HEAD = "The party is split"
+_VIEW = re.compile(r"Day \d+, [a-z -]+")
 
 
-def players_text_for(stored: Stored) -> str:
-    """The players' clock: `players_text`, or while the party is split one line per group in
-    the same words as the DM's (the day and a rough time, no exact time)."""
+def players_view(stored: Stored) -> list[str]:
+    """What the players are told of the clock, as lines: the day and a rough time of day, nothing
+    else (no exact time, no timer, no button, no fight: those are the DM's), or while the party is
+    split one line per group in the same words."""
     if not stored.split:
-        return players_text(stored.clock)
-    return "\n".join(["🕰️ **The party is split**", *split.players_lines(stored.groups)])
+        return [game.short_label(stored.clock.minute)]
+    return [SPLIT_HEAD, *split.players_lines(stored.groups)]
+
+
+def small(lines: list[str]) -> str:
+    """The lines as Discord's small text, the clock mark on the first."""
+    return "\n".join(
+        f"{SMALL}{MARK} {line}" if i == 0 else f"{SMALL}{line}" for i, line in enumerate(lines)
+    )
+
+
+def _body(content: str) -> str:
+    return "\n".join(
+        line.removeprefix(SMALL).removeprefix(f"{MARK} ") for line in content.splitlines()
+    )
+
+
+def view_of(content: str) -> str:
+    """The clock view a line of DMbot's holds: "Day 5, morning" (also inside "Long rest done.
+    Day 6, dawn."), or the whole split text."""
+    body = _body(content)
+    if body.startswith(SPLIT_HEAD):
+        return body
+    found = _VIEW.search(body)
+    return found.group(0).strip() if found else body
+
+
+def is_plain(content: str) -> bool:
+    """A plain clock line (the day and the word, or the split text), as opposed to a rest, a new
+    day or a correction, which are kept when the next change comes."""
+    body = _body(content)
+    return body.startswith(SPLIT_HEAD) or _VIEW.fullmatch(body) is not None
+
+
+async def put_line(
+    client: Any, campaign: Campaign, lines: list[str], view: str, *, plain: bool
+) -> None:
+    """Say it in the campaign's chat channel as a small line. A plain line says nothing if
+    DMbot's last clock line there already holds this view; if that last line is still the newest
+    message in the channel and a plain one, it is edited, so quick changes stay one line;
+    otherwise a new line is posted. No chat channel, or DMbot cannot read or post there: nothing
+    is said (a counts-only note) and nothing is held up."""
+    channel_id = campaign.dmbchat_channel_id
+    if channel_id is None:
+        log.info("A clock line was not posted: the campaign has no chat channel")
+        return
+    channel = client.get_channel(channel_id)
+    me = getattr(client.user, "id", None)
+    text = small(lines)
+    try:
+        if channel is None and hasattr(client, "fetch_channel"):
+            channel = await client.fetch_channel(
+                channel_id
+            )  # (a new channel may not be cached yet)
+        if not isinstance(channel, discord.abc.Messageable) or me is None:
+            log.info("A clock line was not posted: the chat channel is not available")
+            return
+        recent = [m async for m in channel.history(limit=SCAN)]  # newest first
+        last = next(
+            (m for m in recent if m.author.id == me and m.content.startswith(SMALL + MARK)), None
+        )
+        if plain and last is not None and view_of(last.content) == view:
+            return  # nothing the players see has changed
+        if last is not None and recent[0].id == last.id and is_plain(last.content):
+            await last.edit(content=text, allowed_mentions=NO_PINGS)
+        else:
+            await client.post_message(channel_id, text)
+    except discord.HTTPException:
+        log.info("A clock line was not posted: Discord refused")
 
 
 _players_locks: dict[str, asyncio.Lock] = {}  # one players' clock update at a time per campaign
 
 
 async def show_players(client: Any, campaign: Campaign, stored: Stored | None = None) -> None:
-    """Keep the players' pinned clock in the game-time channel in step: edited in place,
-    posted (and pinned) if it is missing. One at a time per campaign, and the clock is read
-    again inside the lock, so two updates (a press, a spoken rest, the start) can neither
-    post two clocks nor leave older words over newer ones. Never raises and never holds
-    anything up: the DM's clock is the one that matters at the table."""
+    """Tell the players the clock when what they see of it has changed. One at a time per
+    campaign, and the clock is read again inside the lock, so two updates (a press, a spoken rest,
+    the start) can never leave older words over newer ones. Never raises and never holds anything
+    up: the DM's clock is the one that matters at the table."""
     try:
         async with _players_locks.setdefault(campaign.id, asyncio.Lock()):
             current = await client.clocks.get(campaign.guild_id, campaign.id)
             if current is not None:
-                await _show_players(client, campaign, current)
+                lines = players_view(current)
+                await put_line(
+                    client,
+                    campaign,
+                    lines,
+                    "\n".join(lines) if current.split else lines[0],
+                    plain=True,
+                )
     except Exception:
         log.exception("Couldn't update the players' clock")
-
-
-async def _show_players(client: Any, campaign: Campaign, stored: Stored) -> None:
-    channel_id = campaign.gametime_channel_id
-    if channel_id is None:
-        return
-    text = players_text_for(stored)
-    if stored.players_channel_id == channel_id and stored.players_message_id:
-        channel = client.get_channel(channel_id)
-        if not isinstance(channel, discord.abc.Messageable):
-            # Not in the cache (just after a restart or a new channel): that is not "the
-            # message is gone", so post nothing rather than a second clock.
-            log.warning("The game-time channel isn't available to DMbot right now")
-            return
-        try:
-            message = await channel.fetch_message(stored.players_message_id)
-            if message.content != text:
-                await message.edit(content=text, allowed_mentions=NO_PINGS)
-            return
-        except discord.NotFound:
-            pass  # deleted: post a new one below
-        except discord.HTTPException:
-            log.warning("Couldn't edit the players' clock message")
-            return  # a hiccup: don't pile a second clock beside it
-    message = await client.post_message(channel_id, text)
-    if message is None:
-        return
-    with contextlib.suppress(discord.HTTPException):  # pinning needs a permission DMbot may lack
-        await message.pin()
-    try:
-        await client.clocks.set_players_message(
-            campaign.guild_id, campaign.id, message.channel.id, message.id
-        )
-    except Exception:
-        # Posted but not remembered: the next update would post another, so say so.
-        log.exception("Couldn't remember the players' clock message")
 
 
 def players_line(action: str, before: Clock | None, after: Clock) -> str | None:
@@ -465,22 +511,34 @@ def players_line(action: str, before: Clock | None, after: Clock) -> str | None:
 async def update_players(
     client: Any, campaign: Campaign, action: str, result: Result, *, announce: bool = True
 ) -> None:
-    """After a change: redraw the players' clock and, once, say a finished rest or a new
-    day there. Best effort."""
+    """After a change: a finished rest or a new day is said once (it holds the day and the word
+    too, so it stands in for the plain line); otherwise the plain line, if what the players see
+    changed. Best effort."""
     try:
         stored = await client.clocks.get(campaign.guild_id, campaign.id)
         if stored is None:
             return
         fresh = await client.campaigns.get(campaign.guild_id, campaign.id) or campaign
-        await show_players(client, fresh, stored)
         after = result.after or stored.clock
         line = players_line(action, result.before, after) if announce else None
-        if line is not None and result.group is not None:
+        if line is None:
+            await show_players(client, fresh, stored)
+            return
+        if result.group is not None:
             line = f"{result.group.name}: {line}"  # (#1607) which part of the party
-        if line is not None and fresh.gametime_channel_id is not None:
-            await client.post_message(fresh.gametime_channel_id, line)
+        async with _players_locks.setdefault(campaign.id, asyncio.Lock()):
+            await put_line(client, fresh, [line], game.short_label(after.minute), plain=False)
     except Exception:
         log.exception("Couldn't tell the players about the clock")
+
+
+async def correct_players(client: Any, campaign: Campaign, line: str) -> None:
+    """An Undo: the players may have been told a rest finished, so say it was taken back."""
+    try:
+        async with _players_locks.setdefault(campaign.id, asyncio.Lock()):
+            await put_line(client, campaign, [f"Correction: {line}"], view_of(line), plain=False)
+    except Exception:
+        log.exception("Couldn't tell the players about a correction")
 
 
 async def say(
@@ -603,7 +661,8 @@ async def _run_press(
             SET_DONE.format(label=game.short_label(result.after.minute), where=message.jump_url)
             + players_see(campaign),
         )
-    # The game-time channel (#1116): the players get the round, no extra line about a new day.
+    # The players hear a finished rest or a new day in the chat channel (#2877); a fight's rounds
+    # are the DM's, so a combat action says nothing to them.
     await update_players(client, campaign, action, result, announce=action not in COMBAT_ACTIONS)
     if action in COMBAT_ACTIONS and result.before is not None:
         await say(  # one line with Undo, like what is heard at the table (#1127)
@@ -666,7 +725,7 @@ async def _show_here(
     interaction: discord.Interaction, client: Any, campaign: Campaign, stored: Stored
 ) -> discord.Message | None:
     """Redraw the clock in the message that was pressed; if the press came from somewhere
-    else (the form opened from ⚙️ Settings), show it the usual way."""
+    else (the form opened from ⚙️ Manage DMbot), show it the usual way."""
     where_are_we.shown(client, campaign)  # the clock is redrawn right here: shown, and moved
     message = interaction.message
     if message is not None and message.id == stored.message_id:
@@ -704,10 +763,10 @@ class ClockButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
     template=(
         rf"dmbot:clock:{_ID}:"
-        r"(?P<action>m10|h1|short|long|dawn|set|typed|timer|open|cstart|cnext|cend|split|rejoin)"
+        r"(?P<action>m10|h1|short|long|dawn|set|typed|timer|open|cstart|cnext|cend|split|rejoin|who)"
     ),
 ):
-    """One of the clock's buttons (`open` is the ⚙️ Settings button that starts or shows it)."""
+    """One of the clock's buttons (`open` is the ⚙️ Manage DMbot button that starts or shows it)."""
 
     def __init__(self, campaign_id: str, action: str) -> None:
         if action == "open":
@@ -750,6 +809,9 @@ class ClockButton(
                 return
             if self.action in ("split", "rejoin"):
                 await self._split_or_rejoin(interaction, client, guild.id)
+                return
+            if self.action == "who":
+                await self._who(interaction, client, guild.id)
                 return
             if self.action in ("set", "typed", "open"):
                 await self._form_or_show(interaction, client, guild.id)
@@ -795,6 +857,26 @@ class ClockButton(
                 view=RejoinView(campaign.id, stored.groups),
                 ephemeral=True,
             )
+
+    async def _who(self, interaction: discord.Interaction, client: Any, guild_id: int) -> None:
+        """Who is in each group: the private question, for a DM, while the party is split."""
+        async with asyncio.timeout(2):
+            campaign = await client.campaigns.get(guild_id, self.campaign_id)
+            if campaign is None:
+                await _reply(interaction, GONE)
+                return
+            if interaction.user.id not in campaign.dm_user_ids:
+                await _reply(interaction, NOT_A_DM)
+                return
+            stored = await client.clocks.get(guild_id, campaign.id)
+        if stored is None or not stored.split:
+            await _reply(interaction, split.NOT_SPLIT)
+            return
+        content, view = await placement_message(client, campaign.id, guild_id, stored.groups)
+        if view is None:  # discord.py cannot take view=None here
+            await _reply(interaction, content)
+            return
+        await interaction.response.send_message(content, view=view, ephemeral=True)
 
     async def _form_or_show(
         self, interaction: discord.Interaction, client: Any, guild_id: int
@@ -898,7 +980,150 @@ async def run_split(interaction: discord.Interaction, campaign_id: str, names: l
         interaction,
         f"✂️ Split into {_names_in_words(names)}." + players_see(campaign, "these names and "),
     )
+    await _ask_who(interaction, client, campaign.guild_id, campaign.id)
     return True
+
+
+# Who is in each group (#3131): so a line spoken in a split gets its speaker's group's game time.
+WHO_ASK = (
+    "Pick who is in each group. Anyone you skip gets no game time on their lines until you do."
+)
+WHO_NONE = "There are no player characters in this campaign yet, so there is nobody to place."
+WHO_SAVED = "Saved."
+WHO_SKIPPED = (
+    "Skipped. Press **Who is where** in **Rests & time…** any time while the party is split."
+)
+SELECT_MAX = 25  # a select shows at most 25 choices
+WHO_CUT = "Showing the first 25 player characters."
+
+
+async def _ask_who(
+    interaction: discord.Interaction, client: Any, guild_id: int, campaign_id: str
+) -> None:
+    """After a split: the private question of who is in each group. Told nothing when the
+    campaign has no player characters, and never an error (the split itself is done)."""
+    try:
+        stored = await client.clocks.get(guild_id, campaign_id)
+        if stored is None or not stored.split:
+            return
+        content, view = await placement_message(client, campaign_id, guild_id, stored.groups)
+        if view is not None:
+            await interaction.followup.send(content, view=view, ephemeral=True)
+    except Exception:
+        log.exception("Couldn't ask who is in each group")
+
+
+async def placement_message(
+    client: Any, campaign_id: str, guild_id: int, groups: tuple[split.Group, ...]
+) -> tuple[str, discord.ui.View | None]:
+    """The words and the view for placing the player characters, as they stand now."""
+    characters = await client.clocks.player_characters(guild_id, campaign_id)
+    if not characters:
+        return WHO_NONE, None
+    members = await client.clocks.members(guild_id, campaign_id)
+    return _who_text(groups, characters, members), WhoView(campaign_id, groups, characters, members)
+
+
+def _who_text(
+    groups: tuple[split.Group, ...], characters: list[tuple[str, str]], members: dict[str, int]
+) -> str:
+    names = dict(characters)
+    lines = [WHO_ASK]
+    if len(characters) > SELECT_MAX:
+        lines.append(WHO_CUT)
+    for g in groups:
+        here = [names[c] for c, p in members.items() if p == g.position and c in names]
+        lines.append(
+            f"**{discord.utils.escape_markdown(g.name)}**: "
+            + (", ".join(sorted(here)) or "nobody yet")
+        )
+    return "\n".join(lines)
+
+
+class WhoView(discord.ui.View):
+    """One picker per group, with the campaign's player characters, and a Skip button. Private
+    and short-lived: it answers one press. Each pick says who is in that group now."""
+
+    def __init__(
+        self,
+        campaign_id: str,
+        groups: tuple[split.Group, ...],
+        characters: list[tuple[str, str]],
+        members: dict[str, int],
+    ) -> None:
+        super().__init__(timeout=600)
+        self.campaign_id, self.groups, self.characters = campaign_id, groups, characters
+        for g in groups:
+            self.add_item(_WhoSelect(g, characters, members))
+        self.add_item(_WhoSkip())
+
+
+class _WhoSelect(discord.ui.Select["WhoView"]):
+    def __init__(
+        self, group: split.Group, characters: list[tuple[str, str]], members: dict[str, int]
+    ) -> None:
+        shown = characters[:SELECT_MAX]
+        super().__init__(
+            placeholder=f"Who is in {group.name}?"[:150],
+            min_values=0,
+            max_values=len(shown),
+            options=[
+                discord.SelectOption(
+                    label=name[:100], value=cid, default=members.get(cid) == group.position
+                )
+                for cid, name in shown
+            ],
+        )
+        self.group = group
+
+    async def callback(self, interaction: discord.Interaction) -> Any:
+        view = self.view
+        client: Any = interaction.client
+        guild = interaction.guild
+        if view is None or guild is None:
+            return
+        chosen = set(self.values)
+        try:
+            # An old picker must not write into groups made since (rejoin, then split again):
+            # the same number can now be another group.
+            now = await client.clocks.get(guild.id, view.campaign_id)
+            if (
+                now is None
+                or not now.split
+                or [(g.position, g.name) for g in now.groups]
+                != [(g.position, g.name) for g in view.groups]
+            ):
+                await interaction.response.send_message(GROUP_GONE, ephemeral=True)
+                return
+            before = await client.clocks.members(guild.id, view.campaign_id)
+            changes: dict[str, int | None] = {c: self.group.position for c in chosen}
+            shown = {cid for cid, _ in view.characters[:SELECT_MAX]}
+            for cid, position in before.items():  # in this group before, not picked now: released
+                # (only among those the picker showed: the rest could never be picked)
+                if position == self.group.position and cid not in chosen and cid in shown:
+                    changes[cid] = None
+            members = await client.clocks.place_members(
+                guild.id, view.campaign_id, interaction.user.id, changes
+            )
+        except CampaignError as exc:
+            await interaction.response.send_message(str(exc), ephemeral=True)
+            return
+        except Exception:
+            log.exception("Couldn't place the player characters")
+            await interaction.response.send_message(FAILED, ephemeral=True)
+            return
+        fresh = WhoView(view.campaign_id, view.groups, view.characters, members)
+        await interaction.response.edit_message(
+            content=_who_text(view.groups, view.characters, members), view=fresh
+        )
+
+
+class _WhoSkip(discord.ui.Button["WhoView"]):
+    def __init__(self) -> None:
+        super().__init__(label="Skip for now", style=discord.ButtonStyle.secondary)
+
+    async def callback(self, interaction: discord.Interaction) -> Any:
+        await interaction.response.edit_message(content=WHO_SKIPPED, view=None)
 
 
 class RejoinView(discord.ui.View):
@@ -1417,15 +1642,9 @@ class ClockUndoButton(
         stored = await client.clocks.get(guild.id, campaign.id)
         if stored is not None:
             await show(client, campaign, stored)
-            await show_players(client, campaign, stored)
             fresh = await client.campaigns.get(guild.id, campaign.id) or campaign
-            if fresh.gametime_channel_id is not None:
-                # The players may have been told a rest finished: say it was taken back.
-                who = f"{acted.name}: " if acted is not None else ""
-                await client.post_message(
-                    fresh.gametime_channel_id,
-                    f"Correction: {who}{game.short_label(after.minute)}.",
-                )
+            who = f"{acted.name} is" if acted is not None else "it is"
+            await correct_players(client, fresh, f"{who} back to {game.short_label(after.minute)}.")
         with contextlib.suppress(discord.HTTPException):
             await interaction.edit_original_response(
                 content=f"↩️ Undone. Back to {game.short_label(self.before)}.", view=None

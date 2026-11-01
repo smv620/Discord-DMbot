@@ -240,16 +240,13 @@ class Buttons(Setup):
     def labels(self, it: Any) -> list[str]:
         return [str(getattr(getattr(c, "item", c), "label", "")) for c in it.sent["view"].children]
 
-    async def test_the_card_shows_three_buttons_and_says_nothing_reads_it_yet(self) -> None:
+    async def test_the_card_shows_three_buttons_and_says_what_each_does(self) -> None:
         it = self.pressing(DM)
         await ui.StoryButton(self.a.id).callback(it)
         self.assertEqual(self.labels(it), ["Off", "Watch the story", "Guide me"])
         self.assertTrue(it.sent["ephemeral"])
-        self.assertIn(
-            "Not working yet. DMbot can keep your adventure, but nothing reads it",
-            it.sent["content"],
-        )
-        self.assertIn("DMbot remembers your table's story only.", it.sent["content"])
+        self.assertNotIn("Not working yet", it.sent["content"])
+        self.assertIn("DMbot doesn't follow the adventure's story.", it.sent["content"])
 
     async def test_a_non_dm_is_refused_everywhere(self) -> None:
         for button in (
@@ -310,14 +307,16 @@ class Buttons(Setup):
         line.assert_answered_first()
         self.assertIn("slow:set_story_mode", line.events)
 
-    async def test_the_settings_line_says_it_does_not_work_yet(self) -> None:
+    async def test_the_settings_line_says_what_the_choice_does(self) -> None:
         from dataclasses import replace
 
         off = ui.line(self.a)
         on = ui.line(replace(self.a, story_mode=STORY_WATCH))
-        self.assertIn("Coming soon", off)
-        self.assertNotIn("not working yet", off)
-        self.assertIn("(not working yet)", on)
+        self.assertIn("DMbot doesn't follow the adventure's story.", off)
+        self.assertIn("warns you on your DM screen", on)
+        for text in (off, on):
+            self.assertNotIn("not working yet", text.lower())
+            self.assertNotIn("Coming soon", text)
 
     async def test_the_buttons_come_back_from_their_ids_after_a_restart(self) -> None:
         for cls, custom_id in (
@@ -338,10 +337,10 @@ class Buttons(Setup):
         self.assertIn(
             "Shared story", [getattr(getattr(c, "item", c), "label", "") for c in view.children]
         )
-        self.assertIn("Shared story:", settings.settings_text(self.a, None, DM))
         player_view = settings.settings_view(self.a, None, PLAYER)
         self.assertNotIn(
             "Shared story",
             [getattr(getattr(c, "item", c), "label", "") for c in player_view.children],
         )
-        self.assertNotIn("Shared story:", settings.settings_text(self.a, None, PLAYER))
+        # (the card no longer has a line for it: it is on the "Not on the website yet" list, #2986)
+        self.assertIn("Shared story", settings.settings_text(self.a, None, DM))

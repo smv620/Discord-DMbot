@@ -5,7 +5,7 @@ the database."""
 from __future__ import annotations
 
 import re
-from collections.abc import Collection
+from collections.abc import Collection, Sequence
 
 # The secret-name check is one matcher for every caller (#2087); re-exported so the recap stages
 # keep importing it from the text helpers.
@@ -86,3 +86,25 @@ def is_known_name(name: str, allowed_names: Collection[str]) -> bool:
     """The name is one of the confirmed names (all its words are in one of them)."""
     mine = set(words(name))
     return bool(mine) and any(mine <= set(words(a)) for a in allowed_names)
+
+
+NOTES_HEAD = (
+    "(Notes of a session with no recap) "  # tags a story entry as notes, not a recap (#3086)
+)
+
+
+def fit_story(items: Sequence[str], limit: int) -> list[str]:
+    """The story entries (oldest first) that fit `limit` characters, each whole. When they do not
+    all fit, session notes are dropped first, oldest first, and an accepted recap only once no
+    notes are left, oldest first (#3086): a long run of sessions known only by their notes never
+    pushes a recap out of the prompt. Both trimmers (the writer's and PlotBot's) use this."""
+    kept = [" ".join(i.split()) for i in items if i.strip()]
+    total = sum(len(i) for i in kept)
+    for drop_notes in (True, False):
+        index = 0
+        while total > limit and index < len(kept):
+            if kept[index].startswith(NOTES_HEAD) == drop_notes:
+                total -= len(kept.pop(index))
+            else:
+                index += 1
+    return kept

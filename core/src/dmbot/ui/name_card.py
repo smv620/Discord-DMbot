@@ -16,6 +16,7 @@ import asyncio
 import logging
 import re
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -24,11 +25,13 @@ from discord import app_commands
 
 from dmbot.campaigns import Campaign
 from dmbot.discord_limits import MESSAGE_MAX
+from dmbot.memory import kin, link_edits, name_edits
 from dmbot.memory.kinds import kind_phrase
 from dmbot.memory.link_words import (
     CARD_BACK,
     CONNECTION_BACK,
     CONNECTION_WORDS,
+    KIN,
     back_words,
     connection_words,
     link_words,
@@ -52,12 +55,12 @@ from dmbot.memory.models import (
     is_id,
     name_key,
 )
-from dmbot.memory.ontology import CORE_TYPES, FALLBACK_PREDICATE
+from dmbot.memory.ontology import CORE_TYPES, DISGUISED_AS, FALLBACK_PREDICATE
 from dmbot.memory.search import MAX_RESULTS, Match, find, said_lately
 from dmbot.memory.store import SAID_AS_MAX, MemoryStore
 from dmbot.mentions import NO_PINGS
 from dmbot.transcript.respell import contains, done_note, left_note, recaps_note, undone_note
-from dmbot.ui import all_names, logic
+from dmbot.ui import all_names, logic, player_id
 from dmbot.ui.dmbot_commands import (
     VIEW_TIMEOUT_S,
     _answer_first,
@@ -87,8 +90,10 @@ from dmbot.ui.names import (
     sees_secrets,
     split_names,
 )
+from dmbot.ui.who_knows import WhoKnowsMenu, called, player_characters, who_text
 
 log = logging.getLogger(__name__)
+WHO_BUTTON = "👁️ Who knows this?"
 THREAD_KINDS = ("thread", "quest", "mystery", "hook", "goal", "promise")  # story threads (#1662)
 ITEM = "item"  # only an item, or a kind under item, can be one of a kind
 CORE_KINDS = frozenset(t.key for t in CORE_TYPES)
@@ -136,6 +141,7 @@ SECRET_DENIED_SAVE = (
     "Players can see this one, because only the campaign's DM can keep a connection secret."
 )
 SECRET_ALREADY = "It was already secret, so it stays secret. Remove it and add it again to show it."
+DISGUISE_SECRET = "A disguise starts secret. Show it to the players with the 🤫 switch on its card."
 SHOW_ALL = "Show all ▾"
 NOTHING_MORE = "That list has changed. Open the name card again to see it."
 NOTE_MAX = 600  # what just changed, above the card
@@ -162,13 +168,19 @@ def sentence(lookup: CampaignLookup, r: Relation) -> str | None:
     return f"{subject.name} {fact_words(r)} {obj.name}"
 
 
+# Kinds whose "other way round" reading is not offered in the menu: Discord allows 25 options, and
+# these are the rarest ways to say it ("is owed an oath by"). They still read both ways on a
+# card and in the edit menus; the other way round is one tap on the same name's card.
+NO_BACK_OPTION = frozenset({"located_in", "sworn_to", "captive_of", "founded", "disguised_as"})
+
+
 def connect_choices(name: str) -> list[tuple[str, str, str | None]]:
     """(value, label, description) for "How is it connected?": each connection from this
     name's side, each followed by the same one the other way round."""
     out: list[tuple[str, str, str | None]] = []
     for p, w in CONNECTION_WORDS.items():
         out.append((p, logic.shorten(f"{name} {w}…", logic.OPTION_LABEL_MAX), None))
-        if p in CONNECTION_BACK:
+        if p in CONNECTION_BACK and p not in NO_BACK_OPTION:
             label = logic.shorten(f"{name} {CONNECTION_BACK[p]}…", logic.OPTION_LABEL_MAX)
             out.append((p + BACK, label, "The other way round"))
     return out
@@ -1516,6 +1528,13 @@ class KindChange(_Menu):
         if kind == PC:
             self.clear_items()
             self.add_item(_UserSelect(self._player_picked))
+
+            async def allowed(press: discord.Interaction) -> bool:
+                return await _campaign_for(press, self.campaign_id) is not None
+
+            self.add_item(  # (#3004) a player who has not joined the server yet
+                player_id.type_id_button(campaign.guild_id, allowed, self._player_typed, self._back)
+            )
             self.add_item(_Button(self._back, label="Back", style=discord.ButtonStyle.secondary))
             await _replace(interaction, f"**Who plays {_md(self.name)}?**", self)
             return
@@ -1530,12 +1549,20 @@ class KindChange(_Menu):
         self.stop()
         await show_card(interaction, self.campaign_id, self.entity_id, replace=True)
 
+    async def _player_typed(
+        self, interaction: discord.Interaction, user_id: int, name: str
+    ) -> None:
+        await self._link_player(interaction, user_id)
+
     async def _player_picked(
         self, interaction: discord.Interaction, player: discord.User | discord.Member
     ) -> None:
         if player.bot:
             await _tell(interaction, "Pick a person, not a bot.")
             return
+        await self._link_player(interaction, player.id)
+
+    async def _link_player(self, interaction: discord.Interaction, user_id: int) -> None:
         await _answer_first(interaction, in_place=True)
         campaign = await _campaign_for(interaction, self.campaign_id)
         memory = _memory(interaction)
@@ -1543,7 +1570,7 @@ class KindChange(_Menu):
             return
         try:
             await memory.confirm_entity(
-                campaign.guild_id, campaign.id, self.entity_id, PC, source=DM, played_by=player.id
+                campaign.guild_id, campaign.id, self.entity_id, PC, source=DM, played_by=user_id
             )
         except MemoryRuleError:
             await _tell(interaction, GONE)
@@ -2078,8 +2105,7 @@ class OneName(_Menu):
             )
         )
         if secrets:  # only the campaign's DMs deal in secret names
-            label = "👁️ Stop keeping it secret" if alias.secret else "🤫 Keep it secret"
-            self.add_item(_Button(self._secret, label=label, style=grey))
+            self.add_item(_Button(self._who, label=WHO_BUTTON, style=grey))
         self.add_item(_Button(self._not_this, label="✖ Not this name", style=grey))
         self.add_item(_Button(self._back, label="Back", style=grey))
 
@@ -2105,7 +2131,9 @@ class OneName(_Menu):
         )
         await show_card(interaction, campaign.id, self.entity_id, replace=True, note=note)
 
-    async def _secret(self, interaction: discord.Interaction) -> None:
+    async def _who(self, interaction: discord.Interaction) -> None:
+        """Open the three-way answer for this other name (#2935): the old keep-it-secret and stop
+        keeping it secret, and the middle one between them, some player characters."""
         await _answer_first(interaction, in_place=True)
         found = await _one_name(interaction, self.campaign_id, self.entity_id, self.alias_id)
         memory = _memory(interaction)
@@ -2115,22 +2143,28 @@ class OneName(_Menu):
         if not sees_secrets(campaign, interaction.user.id):
             await _tell(interaction, "Only the campaign's DMs can change secret names.")
             return
-        try:
-            await memory.update_alias(
-                campaign.guild_id, campaign.id, alias.id, secret=not alias.secret, source=DM
-            )
-        except MemoryRuleError:
-            await _tell(interaction, "That name isn't there any more.")
-            return
-        changed(interaction, campaign)
-        self.stop()
-        note = (
-            f"👁️ **{_md(alias.text)}** isn't secret any more. Players can see it."
-            if alias.secret
-            else f"🤫 **{_md(alias.text)}** is secret now: hidden from players from now on, "
-            "and DMbot leaves it out of new transcripts. Past transcripts don't change."
+        pcs = await player_characters(memory, campaign)
+        knowing = (await memory.alias_knowers(campaign.guild_id, campaign.id, [alias.id])).get(
+            alias.id, []
         )
-        await show_card(interaction, campaign.id, self.entity_id, replace=True, note=note)
+        who = name_edits.who_knows_now(alias, knowing)
+        names = dict(pcs)
+        view = WhoKnowsName(
+            self.campaign_id, self.entity_id, alias.id, pcs,
+            chosen=[c for c in knowing if c in names], now=who,
+        )  # fmt: skip
+        await _replace(
+            interaction,
+            who_text(
+                f"**{_md(alias.text)}**",
+                who,
+                knowing,
+                names,
+                has_characters=bool(names),
+                thing="name",
+            ),
+            view,
+        )
 
     async def _not_this(self, interaction: discord.Interaction) -> None:
         await _answer_first(interaction, in_place=True)
@@ -2157,6 +2191,88 @@ class OneName(_Menu):
     async def _back(self, interaction: discord.Interaction) -> None:
         self.stop()
         await show_card(interaction, self.campaign_id, self.entity_id, replace=True)
+
+
+class WhoKnowsName(WhoKnowsMenu):
+    """The other name's page (#2935): 🤫 Only the DM, 👥 Only some characters, 👁️ Everyone at the
+    table. Every press checks the campaign, the DM and the name again, and reads where it stands
+    now, so a double press or a stale page writes nothing."""
+
+    def __init__(
+        self,
+        campaign_id: str,
+        entity_id: str,
+        alias_id: str,
+        pcs: Sequence[tuple[str, str]],
+        *,
+        chosen: Sequence[str] = (),
+        now: str = "",
+    ) -> None:
+        super().__init__(pcs, chosen=chosen, now=now)
+        self.campaign_id, self.entity_id, self.alias_id = campaign_id, entity_id, alias_id
+
+    async def _back(self, interaction: discord.Interaction) -> None:
+        self.stop()
+        await show_card(interaction, self.campaign_id, self.entity_id, replace=True)
+
+    async def _set(self, interaction: discord.Interaction, who: str) -> None:
+        await _answer_first(interaction, in_place=True)
+        found = await _one_name(interaction, self.campaign_id, self.entity_id, self.alias_id)
+        memory = _memory(interaction)
+        if found is None or memory is None:
+            return
+        campaign, alias, _ = found
+        if not sees_secrets(campaign, interaction.user.id):  # checked on every press
+            await _tell(interaction, "Only the campaign's DMs can change secret names.")
+            return
+        live = (await memory.alias_knowers(campaign.guild_id, campaign.id, [alias.id])).get(
+            alias.id, []
+        )
+        if who == name_edits.who_knows_now(alias, live) and (
+            who != link_edits.SOME_CHARACTERS or sorted(self.picked) == sorted(live)
+        ):
+            await _tell(
+                interaction, "Already like that. Nothing changed. Press Back to see the card."
+            )
+            return
+        try:
+            await name_edits.set_who_knows(
+                memory,
+                campaign.guild_id,
+                campaign.id,
+                alias,
+                who,
+                self.picked,
+                players_only=True,  # (this menu lists player characters only: NPC knowers stay)
+            )
+        except MemoryRuleError as exc:
+            if str(exc) == name_edits.PICK_ONE:
+                await _tell(
+                    interaction,
+                    "Nothing changed. Choose at least one character in the list, "
+                    "then press 👥 Only some characters.",
+                )
+            else:
+                await _tell(interaction, f"Couldn't change that. {exc}")
+            return
+        text = f"**{_md(alias.text)}**"
+        if who == link_edits.EVERYONE:
+            note = f"👁️ {text} isn't secret any more. Players can see it."
+        elif who == link_edits.SOME_CHARACTERS:
+            mine = [self.names[x] for x in self.picked if x in self.names]
+            verb = "knows" if len(mine) == 1 else "know"
+            note = (
+                f"👥 {text}: only {called(mine)} {verb} it now (and the DM). Hidden from the "
+                "party, and DMbot leaves it out of new transcripts. Not right? Change it again."
+            )
+        else:
+            note = (
+                f"🤫 {text} is secret now: only the DM knows it. Hidden from players from now on, "
+                "and DMbot leaves it out of new transcripts. Past transcripts don't change."
+            )
+        changed(interaction, campaign)
+        self.stop()
+        await show_card(interaction, campaign.id, self.entity_id, replace=True, note=note)
 
 
 # ---- 🔗 Same as… and 🧭 Connect to…: pick the other name --------------------------------
@@ -2245,6 +2361,78 @@ async def show_picks(
     )
 
 
+# The family roles the Connect menu offers after "is family of" (#3102): the DM picks which one, or
+# "Just family" for no role. Twenty-three roles and "Just family" make 24 options, under Discord's
+# limit of 25.
+FAMILY_ROLES = (
+    "mother", "father", "parent", "son", "daughter", "child", "sister", "brother", "sibling",
+    "wife", "husband", "spouse", "grandparent", "grandmother", "grandfather", "grandson",
+    "granddaughter", "grandchild", "aunt", "uncle", "niece", "nephew", "cousin",
+)  # fmt: skip
+JUST_FAMILY = "just_family"  # a value no role has: the family link with no role
+
+
+class FamilyRole(_Menu):
+    """Which family role the DM means, after "is family of" (#3102). Saves nothing until a role
+    (or "Just family") is picked; Cancel saves nothing and goes back to the card."""
+
+    def __init__(
+        self,
+        campaign_id: str,
+        entity_id: str,
+        other_id: str,
+        how: str,
+        names: tuple[str, str],
+        *,
+        secret: bool,
+        forced: bool,
+    ) -> None:
+        super().__init__()
+        self.campaign_id = campaign_id
+        self.entity_id = entity_id
+        self.other_id = other_id
+        self.how = how
+        self.secret = secret
+        self.forced = forced
+        # The card's name first when it is the subject; the other way round swaps them.
+        first, second = (names[1], names[0]) if how.endswith(BACK) else names
+        options = [
+            discord.SelectOption(
+                label=role.capitalize(),
+                value=role,
+                description=logic.shorten(f"{first} is the {role} of {second}", 100),
+            )
+            for role in FAMILY_ROLES
+        ]
+        options.append(
+            discord.SelectOption(
+                label="Just family",
+                value=JUST_FAMILY,
+                description=logic.shorten(f"{first} and {second} are family. No role.", 100),
+            )
+        )
+        self.role = _Select(self._picked, placeholder="Which family role?", options=options)
+        self.add_item(self.role)
+        self.add_item(
+            _Button(self._cancel, label="Cancel", style=discord.ButtonStyle.secondary, row=1)
+        )
+
+    async def _picked(self, interaction: discord.Interaction) -> None:
+        # The menu is done once a role is picked: stop it first so a second press does nothing.
+        # secret and forced come from the card and are checked again in connect.
+        value = self.role.values[0]
+        detail = "" if value == JUST_FAMILY else value
+        self.stop()
+        await connect(
+            interaction, self.campaign_id, self.entity_id, self.how, self.other_id,
+            secret=self.secret, forced=self.forced, detail=detail,
+        )  # fmt: skip
+
+    async def _cancel(self, interaction: discord.Interaction) -> None:
+        self.stop()
+        await show_card(interaction, self.campaign_id, self.entity_id, replace=True)
+
+
 async def choose_other(
     interaction: discord.Interaction,
     view: _Menu,
@@ -2286,6 +2474,25 @@ async def choose_other(
         )
         return
     view.stop()
+    if how.removesuffix(BACK) == KIN:  # "is family of": ask the role first, save after (#3102)
+        found = await _current(interaction, campaign_id, entity_id)
+        other = await _current(interaction, campaign_id, other_id) if found else None
+        if found is None or other is None:
+            return
+        await _replace(
+            interaction,
+            "Which family role is it? Pick one, or **Just family** for no role.",
+            FamilyRole(
+                campaign_id,
+                entity_id,
+                other_id,
+                how,
+                (found[1], other[1]),
+                secret=secret or other_id in hidden,
+                forced=other_id in hidden,
+            ),
+        )
+        return
     await connect(
         interaction, campaign_id, entity_id, how, other_id,
         secret=secret or other_id in hidden, forced=other_id in hidden,
@@ -2497,6 +2704,7 @@ async def connect(
     *,
     secret: bool = False,
     forced: bool = False,
+    detail: str = "",
 ) -> None:
     """Save the connection the DM picked (confirmed: the DM said it), then the card. `secret`:
     hidden from players (🤫); `forced`: it is secret because one end was found through a secret
@@ -2522,6 +2730,8 @@ async def connect(
         secret = False
     subject, obj = (other, found) if how.endswith(BACK) else (found, other)
     subject_id, object_id = (other_id, entity_id) if how.endswith(BACK) else (entity_id, other_id)
+    # A family role (#3102) is stored with its words' direction, the way the edit menu stores it.
+    detail = (kin.role_of(detail) or "") if predicate == KIN else ""
     try:
         written = await memory.add_relation(
             campaign.guild_id,
@@ -2533,19 +2743,28 @@ async def connect(
             confidence=1.0,
             status=CONFIRMED,
             secret=secret,
+            detail=detail,
+            directional=kin.directional(detail),
         )
     except MemoryRuleError as exc:
         await _tell(interaction, f"Couldn't connect them. {exc}")
         return
     changed(interaction, campaign)
     relation, flags = written.value
-    said = f"**{_md(subject[1])}** {connection_words(predicate)} **{_md(obj[1])}**"
+    words = (
+        link_words(predicate, detail, kin.directional(detail))
+        if predicate == KIN
+        else (connection_words(predicate))
+    )
+    said = f"**{_md(subject[1])}** {words} **{_md(obj[1])}**"
     if relation.secret:  # what is stored: a connection already secret is never made public
         note = f"🧭 Saved: {said} 🤫 Secret: players can't see it."
         if forced:
             note += f" {SECRET_FORCED}"
         elif not secret:
-            note += f" {SECRET_ALREADY}"
+            # A disguise is secret by nature, however it is asked for (#3091): the store makes it
+            # so, which is not "already secret". (Rewording a revealed one makes it secret again.)
+            note += f" {DISGUISE_SECRET if predicate == DISGUISED_AS else SECRET_ALREADY}"
     else:
         note = f"🧭 Saved: {said}."
         if denied:

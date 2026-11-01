@@ -23,6 +23,8 @@ READERS = {
     "memory/importance.py": CONFIRMED_ONLY,
     "memory/continuity.py": CONFIRMED_ONLY + ": the counts and the story's world",
     "memory/backstory_links.py": CONFIRMED_ONLY + ": pairs already known",
+    "memory/worked_out.py": "proposes links; players see only confirmed ones, and a link from a "
+    "secret, unrevealed or hidden source starts secret",
     "memory/exposures.py": DM_ONLY + ": secret connections said aloud (confirmed ones)",
     "memory/states.py": "live located_in facts, without secret proposals that only hold guesses",
     "memory/forget_readings.py": "Stop recording me removes a connection made only to hold a guess",
@@ -38,6 +40,17 @@ READERS = {
     "into the campaign's words for PlotBot; ids and names, no transcript",
     "memory/report_store.py": "only checks that the connections of a difference still exist",
     "memory/placing.py": "writes the proposed connections and their beliefs for the DM",
+    "memory/gate.py": "the gate (#2995): reads each connection's ends to say which entries a "
+    "viewer learns, and only for connections its list says that viewer knows",
+    "memory/knowers.py": DM_ONLY + ": who knows a connection; only checks it exists, any status",
+    "memory/as_of.py": "what a point of view believed at a game time: the DM any view, live "
+    "connections; a player only their own characters', on confirmed connections the gate lets "
+    "them know",
+    "memory/lies.py": "who thinks someone lied: the DM sees every live connection's; a player only "
+    "their own characters', on confirmed connections the gate lets them know",
+    "memory/lineage.py": DM_ONLY
+    + ": which beliefs rest on an entry (ids and numbers, no words); live connections, proposed or"
+    " confirmed, because the DM chooses what to change",
     "memory/notify.py": DM_ONLY + ": what the DM is told",
     "memory/health.py": DM_ONLY + ": counts for the DM, not shown to players",
     "memory/set_definitions.py": "is a relationship word in use: any status, on purpose",
@@ -68,6 +81,8 @@ STORE = {
     + ": only counts live connections, to decide a rejection (#2790)",
     "relations": "all live ones, without guess connections (they are not connections yet)",
     "lookup_data": CONFIRMED_ONLY + " (a proposed one only while not secret)",
+    "same_person_offers": CONFIRMED_ONLY
+    + ": evidence for a DM-only question, never a connection shown",
     "set_condition_in": DM_ONLY + ": what an entry's condition touches",
     "set_unique": DM_ONLY + ": one-of-a-kind items",
     "chain": CONFIRMED_ONLY,
@@ -90,6 +105,7 @@ STORE = {
     "relation": DM_ONLY + ": one connection by id",
     "change_relation_words": "requires a confirmed connection",
     "undo_connection": DM_ONLY + ": an Undo",
+    "link_party": DM_ONLY + ": a writer's own check (every status); shows players nothing",
 }
 
 
@@ -110,6 +126,7 @@ class WhoReadsConnections(unittest.TestCase):
             str(path.relative_to(SRC))
             for path in SRC.rglob("*.py")
             if re.search(r"memory_relations|\bRELATIONS\b", path.read_text())
+            and "migrations" not in path.relative_to(SRC).parts  # (the SQL files, #2127)
         } - {"memory/store.py", "schema.py"}  # (store.py by function below; schema.py by door)
         self.assertEqual(
             sorted(found),

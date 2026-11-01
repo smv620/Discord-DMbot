@@ -315,8 +315,9 @@ def delete_warning_text(server: str, lines: int, sessions: int) -> str:
     return (
         f"This deletes everything you said that DMbot wrote down in **{_plain(server)}**: "
         f"{lines} line{'' if lines == 1 else 's'} in {sessions} session"
-        f"{'' if sessions == 1 else 's'}. Other people's lines and the DM's story notes stay. "
-        "Copies people already downloaded stay too. This can't be undone."
+        f"{'' if sessions == 1 else 's'}. Other people's lines stay. Recaps and session notes "
+        "DMbot made stay with the campaign. Copies people already downloaded stay too. "
+        "This can't be undone."
     )
 
 
@@ -958,11 +959,19 @@ class MenuButton(
     lasting message the menu takes its buttons' place; otherwise it comes as an only-you
     message."""
 
-    def __init__(self, guild_id: int, campaign_id: str | None = None) -> None:
+    def __init__(
+        self,
+        guild_id: int,
+        campaign_id: str | None = None,
+        *,
+        label: str = MENU_LABEL,
+        emoji: str = "🗂️",
+    ) -> None:
+        # `label`/`emoji`: the DM Bot channel's menu calls the same menu 🙋 My data (#2986).
         super().__init__(
             discord.ui.Button(
-                label=MENU_LABEL,
-                emoji="🗂️",
+                label=label,
+                emoji=emoji,
                 style=discord.ButtonStyle.secondary,
                 custom_id=f"dmbot:consent:menu:{guild_id}:{campaign_id or '-'}",
             )

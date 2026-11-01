@@ -32,8 +32,16 @@ STALL_AFTER_S: Final[Mapping[str, int | None]] = {
     "writing_recap": 30 * 60,
     "recap_not_written": None,  # the recap was held, declined or removed: a resting end
     "waiting": 2 * 60,  # a copy asked for on the website: the bot takes it within seconds
+    "fixing": 5 * 60,  # a line fixed at a person's asking (#2858)
+    "deleting": 10 * 60,  # a person's lines being deleted at their asking (#2769)
     "reading": 5 * 60,  # ... then reads the campaign
     "packing": 5 * 60,  # ... and packs it
+    # A backup loaded on the website (#2745): the person's own files arriving (waits for them),
+    # the bot taking it, reading the copy, then writing the campaign.
+    "restore_receiving": None,
+    "restore_waiting": 2 * 60,
+    "restore_reading": 5 * 60,
+    "restore_writing": 15 * 60,
     "sharing": 5 * 60,  # a sharing choice the bot is applying (#2783)
     # The steps of a recap being made on the website's page (#2636; `recaps.progress`). The name
     # pass wait is touched every half minute; a part of a long session can take a while.
@@ -43,6 +51,7 @@ STALL_AFTER_S: Final[Mapping[str, int | None]] = {
     "recap_writing": 30 * 60,
     "recap_checking": 30 * 60,
     "recap_check_waiting": None,  # written, and tried again later by design (hours, not minutes)
+    "recap_final_read": 30 * 60,  # one call of the careful tier, up to its long answer
     "recap_finishing": 10 * 60,
     # The audio being made on the recap page (#2630): a part of the voice, the music call (up to
     # 7 minutes), the mix.
@@ -70,6 +79,7 @@ UNITS: Final[Mapping[str, str]] = {
     "cleaning": "lines",
     "audio_voice": "parts",
     "recap_reading": "parts",
+    "restore_writing": "parts",
 }
 
 

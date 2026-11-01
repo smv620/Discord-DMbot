@@ -5,7 +5,7 @@ import QabotPrivacy from "../../components/QabotPrivacy.astro";
 import RecapsPrivacy from "../../components/RecapsPrivacy.astro";
 import { RECAP_AUDIO_LIVE, RECAP_SHARE_LIVE, RECAPS_LIVE } from "../../content/recap-words";
 import { QABOT_LIVE } from "../../content/qabot";
-import { initiativeLine, peopleListLine, storyStatesLine } from "../../content/privacy-channels";
+import { initiativeLine, sessionNotesPrivacy, storyStatesLine } from "../../content/privacy-channels";
 import {
   deletionWarnings,
   geminiPrivacy,
@@ -99,8 +99,10 @@ import {
       An adventure file is the one exception. DMbot keeps its text, not the file, for that campaign
       only. It stays until the game master removes it or the campaign is deleted. A backup holds
       only its name.
-      <strong>What DMbot makes from a session belongs to the campaign.</strong> That means a recap,
-      story facts, notes for the game master, and anything else DMbot writes from what was said.
+      <strong>What DMbot makes from a session belongs to the campaign.</strong>
+      {sessionNotesPrivacy.live
+        ? sessionNotesPrivacy.makes
+        : "That means a recap, story facts, notes for the game master, and anything else DMbot writes from what was said."}
       It is part of the campaign, and is deleted only with the campaign.
     </li>
     <li>
@@ -136,8 +138,8 @@ import {
       🗑 Delete my transcripts. This can't be undone. It does not remove other people's lines, the story notes
       your game master kept, or copies someone already downloaded. A game master can also choose how long a campaign keeps its transcripts:
       forever, 1 year, 90 days or 30 days. Older ones are deleted within a day. A session whose
-      transcript was deleted stays in the list, marked as deleted. Recaps (short summaries of a
-      game) stay.
+      transcript was deleted stays in the list, marked as deleted.
+      {sessionNotesPrivacy.live ? sessionNotesPrivacy.stays : "Recaps (short summaries of a game) stay."}
     </li>
     <li>
       <strong>Your voice is not kept.</strong> The sound is sent to be written down, then thrown
@@ -148,13 +150,13 @@ import {
 
   <h3>When you write notes on a name</h3>
   <p>
-    Each name in the NPC list has its own page on this website (the 📖 Open button in Discord opens
-    it). It shows only what the table already sees in the NPC list, never the DM's secrets; the DM's
+    Each person or group the table knows can have its own page on this website. It shows only what
+    the table already sees, never the DM's secrets; the DM's
     own note on a name is shown to the DM only. The page also has a box called My notes. What you
     write there is for you alone: no other player and no DM can see it on DMbot. DMbot never uses
     it, and it is never put in a transcript, a backup or the campaign's story memory. You can
-    download all your notes in a campaign, or delete them, from the NPC page. If a name is taken
-    off the NPC list, your note on it is kept for 30 days, then deleted. Your notes are deleted when
+    download all your notes in a campaign, or delete them, from the NPC page. If a name is
+    no longer listed, your note on it is kept for 30 days, then deleted. Your notes are deleted when
     the campaign is.
   </p>
 
@@ -202,13 +204,6 @@ import {
       game masters; players who choose to peek (the usual setting, with a spoiler warning first);
       or everyone in the server. When a player peeks, the game masters can see who peeked.
     </li>
-    {
-      peopleListLine.live && (
-        <li>
-          <strong>{peopleListLine.lead}</strong> {peopleListLine.text}
-        </li>
-      )
-    }
     <li>
       <strong>Backups</strong> of a paid campaign hold the campaign, including the game master's
       secrets, but not what was said, and anyone in the server may download one. This keeps a
@@ -250,8 +245,8 @@ import {
       were sent. All your notes are deleted when you delete your account.
     </li>
     <li>
-      <strong>Who sends them.</strong> For now the emails go out through DMbot's own Gmail mailbox,
-      so Google carries them. Every Try It email ends with a link to stop emails like it and the sender's mailing address.
+      <strong>Who sends them.</strong> The emails go out through Resend, a company that sends email
+      for us. It gets the address an email goes to and the words in it, nothing else. Every Try It email ends with a link to stop emails like it and the sender's mailing address.
     </li>
   </ul>
 
@@ -297,6 +292,10 @@ import {
       text, or the campaign, is deleted.
     </li>
     <li><strong>{paymentProvider}</strong>: takes payments.</li>
+    <li>
+      <strong>Resend</strong>: sends DMbot's emails. It gets the address an email goes to and the
+      words in it, nothing else.
+    </li>
     <li><strong>GitHub</strong>: where messages from the Say hello page are posted, for anyone to read.</li>
     <li>
       <strong>Cloudflare</strong>: delivers this website, and checks that a person (not a
@@ -308,7 +307,7 @@ import {
     </li>
   </ul>
   <p>
-    Deepgram, Anthropic, ElevenLabs, Voyage AI (MongoDB), OVH US, Cloudflare, GitHub and {paymentProvider} are companies in the
+    Deepgram, Anthropic, ElevenLabs, Voyage AI (MongoDB), OVH US, Cloudflare, GitHub, Resend and {paymentProvider} are companies in the
     United States, so if you are in the EU or the UK, your information goes there when you use
     DMbot. {paymentProvider} is the seller of record and handles withdrawal rights, invoices and
     tax.

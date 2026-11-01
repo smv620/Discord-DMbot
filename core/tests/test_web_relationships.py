@@ -11,7 +11,9 @@ from unittest.mock import patch
 
 import httpx
 
+from dmbot.memory.gate import ALIAS, CONNECTION, ENTRY
 from dmbot.memory.models import DM as DM_SOURCE
+from dmbot.memory.who_resolve import checked_line
 from dmbot.web import relationships, sessions
 from dmbot.web.app import create_app
 from dmbot.web.discord import DiscordUser
@@ -25,6 +27,8 @@ BOB_USER = DiscordUser(id=BOB.id, name=BOB.name, email=BOB.email)
 
 
 class Web(Listing):
+    bob_has_a_hero = True  # (the tests that build Bob's characters themselves turn it off)
+
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
         # Mira (npc) knows the Keep and is an ally of Rook; Rook is in the Keep; the Keep is in the
@@ -37,6 +41,77 @@ class Web(Listing):
         await self.link("located_in", self.rook, self.keep, "rook-keep")
         await self.link("located_in", self.keep, self.hall, "keep-hall")
         self.player = await self.signed(BOB_USER, MEMBER)
+        # Bob plays a character, which (like every new player character) starts out knowing what
+        # the table already knows: a player's page is what their own characters know (#3143)
+        self.hero = (
+            await self.add(
+                "Bob's hero", "character", role="player_character", played_by=BOB_USER.id
+            )
+            if self.bob_has_a_hero
+            else None
+        )
+        if self.hero is not None:
+            await self.tell_the_table(self.hero)
+
+    async def tell_the_table(self, hero: str) -> None:
+        """Let `hero` know every name the players are not kept from and every connection that is
+        not held back: what the old flags used to show a player. Secret and hidden things are left
+        out, so a test of what a player must not see still means something."""
+        async with self.db.guild(self.g) as conn:
+            cur = await conn.execute(
+                "SELECT e.id FROM memory_entities e WHERE e.campaign_id = %s"
+                " AND e.status = 'confirmed' AND e.merged_into IS NULL"
+                " AND NOT e.hidden_from_players AND NOT e.audience_limited AND NOT e.unnamed"
+                " AND e.id <> %s",
+                (self.one.id, hero),
+            )
+            entries = [r["id"] for r in await cur.fetchall()]
+            cur = await conn.execute(
+                "SELECT r.id FROM memory_relations r WHERE r.campaign_id = %s"
+                " AND r.status = 'confirmed' AND NOT r.secret AND NOT r.unrevealed",
+                (self.one.id,),
+            )
+            links = [r["id"] for r in await cur.fetchall()]
+        for kind, ids in ((ENTRY, entries), (CONNECTION, links)):
+            known = await self.memory.statement_knowers(self.g, self.one.id, kind, ids)
+            for i in ids:
+                await self.memory.set_statement_knowers(
+                    self.g, self.one.id, kind, i, sorted({*known.get(i, []), hero}),
+                    source=DM_SOURCE,
+                )  # fmt: skip
+
+    async def keep_from_bob(self, entry: str) -> None:
+        """The DM keeps this name (and every connection to it) from Bob's hero: the hero stops
+        knowing it. (The players' page is what their characters know, not a flag.)"""
+        assert self.hero is not None
+        async with self.db.guild(self.g) as conn:
+            cur = await conn.execute(
+                "SELECT r.id FROM memory_relations r WHERE r.campaign_id = %s"
+                " AND (r.subject_id = %s OR r.object_id = %s)",
+                (self.one.id, entry, entry),
+            )
+            links = [r["id"] for r in await cur.fetchall()]
+            cur = await conn.execute(
+                "SELECT a.id FROM memory_aliases a WHERE a.campaign_id = %s AND a.entity_id = %s",
+                (self.one.id, entry),
+            )
+            names = [r["id"] for r in await cur.fetchall()]  # (knowing a name is knowing it exists)
+        for kind, ids in ((ENTRY, [entry]), (CONNECTION, links), (ALIAS, names)):
+            known = await self.memory.statement_knowers(self.g, self.one.id, kind, ids)
+            for i in ids:
+                await self.memory.set_statement_knowers(
+                    self.g, self.one.id, kind, i,
+                    sorted(set(known.get(i, [])) - {self.hero}), source=DM_SOURCE,
+                )  # fmt: skip
+
+    async def keep_link_from_bob(self, link: str) -> None:
+        """The DM has not told this connection to Bob's hero (a held-back one)."""
+        assert self.hero is not None
+        known = await self.memory.statement_knowers(self.g, self.one.id, CONNECTION, [link])
+        await self.memory.set_statement_knowers(
+            self.g, self.one.id, CONNECTION, link,
+            sorted(set(known.get(link, [])) - {self.hero}), source=DM_SOURCE,
+        )  # fmt: skip
 
     async def link(self, predicate: str, a: str, b: str, tag: str, *, secret: bool = False) -> str:
         made = await self.memory.add_relation(
@@ -299,6 +374,7 @@ class WhoSeesWhat(Web):
         await self.sql(
             "UPDATE memory_entities SET hidden_from_players = true WHERE id = %s", self.hall
         )
+        await self.keep_from_bob(self.hall)
         player = await self.graph(self.player, center=self.mira, hops=2)
         self.assertNotIn("Far Hall", {n["name"] for n in player["nodes"]})
         dm = await self.graph(center=self.mira, hops=2)
@@ -402,11 +478,12 @@ class Refusals(Web):
             self.one.id,
             ALICE.id,
         )
-        got = await self.graph(center=self.mira, hops=2)  # the same session, the next call
-        self.assertFalse(got["canEdit"])
-        self.assertNotIn(
-            self.links["secret-link"], [x["id"] for e in got["edges"] for x in e["links"]]
+        # the same session, the next call: now a member with no character, who sees nothing
+        self.assertEqual(
+            await self.refused_web(self.session, center=self.mira, hops=2), "not_found"
         )
+        got = await self.graph()
+        self.assertEqual((got["canEdit"], got["nodes"], got["edges"]), (False, [], []))
 
     async def test_the_steps_are_one_to_the_most(self) -> None:
         for hops in (0, relationships.MAX_HOPS + 1, -1):
@@ -441,6 +518,20 @@ class TheRoute(Web):
         if who is self.player:
             return await sessions.sign_in(self.web, BOB_USER, [MEMBER], now=NOW, days=30)
         return await sessions.sign_in(self.web, ALICE, [THURSDAY], now=NOW, days=30)
+
+    async def test_find_a_name_answers_for_the_view_asked_and_refuses_a_bad_one(self) -> None:
+        await self.sql(
+            "UPDATE memory_entities SET hidden_from_players = true WHERE id = %s", self.hall
+        )
+        await self.keep_from_bob(self.hall)
+        async with await self.client(self.session) as client:
+            base = f"/me/campaigns/{self.cref}/web/find"
+            full = await client.get(base, params={"q": "far"})
+            self.assertEqual([n["name"] for n in full.json()["names"]], ["Far Hall"])
+            players = await client.get(base, params={"q": "far", "view": "players"})
+            self.assertEqual((players.status_code, players.json()), (200, {"names": []}))
+            bad = await client.get(base, params={"q": "far", "view": "everything"})
+            self.assertEqual((bad.status_code, bad.json()["error"]), (400, "bad_view"))
 
     async def test_the_routes_answer_and_a_bad_step_count_is_a_plain_400(self) -> None:
         async with await self.client(self.session) as client:
@@ -482,6 +573,59 @@ class TheRoute(Web):
             self.assertEqual((normal.status_code, normal.json()["canPeek"]), (200, False))
             cross = await client.post(f"/me/campaigns/{self.g}.nope/web/peek")
             self.assertEqual(cross.status_code, 404)
+
+
+class TheCheck(Web):
+    """DMbot's check of a pronoun (#2859): a DM's connection says it in words, a member's never."""
+
+    async def test_a_dm_sees_the_check_of_a_connection_and_a_member_does_not(self) -> None:
+        decided = "who-is-it: kept as someone else"
+        made = await self.memory.add_relation(
+            self.g, self.one.id, self.rook, "knows", self.hall, source=DM_SOURCE, confidence=1.0,
+            status="confirmed", decided=decided,
+        )  # fmt: skip
+        mine = made.value[0].id
+
+        def checks(got: dict[str, Any]) -> dict[str, str]:
+            return {x["id"]: x["check"] for e in got["edges"] for x in e["links"]}
+
+        dm = checks(await self.graph())
+        self.assertEqual(dm[mine], checked_line(decided).strip())
+        self.assertEqual(dm[mine], "You chose someone else for this one.")
+        self.assertEqual(dm[self.links["mira-keep"]], "")  # nothing decided: nothing shown
+        member = checks(await self.graph(self.player))
+        self.assertEqual(set(member.values()) - {""}, set())  # a member never gets one
+        as_players = checks(await self.graph(view="players"))  # a DM looking as the players do
+        self.assertEqual(set(as_players.values()) - {""}, set())
+
+
+class TheCheckWords(unittest.TestCase):
+    def test_each_stored_note_is_the_words_discord_shows(self) -> None:
+        for decided in (
+            "who-is-it: picked by the DM",
+            "who-is-it: kept as someone else",
+            "who-is-it: accepted 95%",
+            "who-is-it: asked 60%",
+            "who-is-it: nobody listed",
+            "who-is-it: unsure",
+            "who-is-it: not checked",
+        ):
+            words = relationships.check_words(decided)
+            self.assertEqual(words, checked_line(decided).strip(), decided)
+            self.assertNotEqual(words, "", decided)
+            self.assertNotIn("%", words)  # (a number is never shown)
+
+    def test_an_edge_row_without_a_note_has_no_words(self) -> None:
+        rows = [
+            {"id": "x" * 32, "a": "a" * 32, "b": "b" * 32, "predicate": "knows", "detail": "",
+             "secret": False, "at": 1},
+        ]  # fmt: skip
+        (edge,) = relationships.edges_from(rows, can_edit=True)
+        self.assertEqual(edge["links"][0]["check"], "")
+
+    def test_nothing_or_something_else_is_no_words(self) -> None:
+        for odd in ("", "other", "who-is-it: ", None, 5):
+            self.assertEqual(relationships.check_words(odd), "", repr(odd))
 
 
 if __name__ == "__main__":

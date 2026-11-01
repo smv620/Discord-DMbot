@@ -32,7 +32,7 @@ from dmbot.ai import AIOutOfFunds, Reply
 from dmbot.memory._changes import ENTITIES, PERSPECTIVES, RELATIONS
 from dmbot.memory.claims import reads_like_instruction
 from dmbot.memory.contradiction_grader import _line, _statement, _view_words
-from dmbot.memory.differences import DENIED, Difference
+from dmbot.memory.differences import DENIED, LIE, Difference
 from dmbot.memory.report_store import (
     DISGUISED,
     FALSE,
@@ -105,11 +105,12 @@ async def describe(
         theirs = relations.get(d.truth_relation_id) if d.truth_relation_id else None
         if mine is None or view is None or (d.kind != DENIED and theirs is None):
             continue
+        said = _statement(mine, names, onto.predicates)
         out.append(
             Described(
                 d,
                 _view_words(view, names),
-                _statement(mine, names, onto.predicates),
+                f"that this is a lie: {said}" if d.kind == LIE else said,
                 _statement(theirs, names, onto.predicates) if theirs is not None else NOT_SO,
             )
         )

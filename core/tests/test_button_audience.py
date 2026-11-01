@@ -151,6 +151,7 @@ AUDIENCE: dict[str, str] = {
             "dm_screen.house_sync.HouseSyncButton",
             "dm_screen.house_voice.HouseVoiceButton",
             "dm_screen.import_button.ImportButton",
+            "dm_screen.import_time.ImportTimeButton",  # the game time an import ended at (#2979)
             "dm_screen.left_out.PutBackButton",
             "dm_screen.name_questions.FixUndoButton",
             "dm_screen.name_questions.NameAnswerUndoButton",
@@ -160,6 +161,7 @@ AUDIENCE: dict[str, str] = {
             "dm_screen.quiet_stop.KeepListeningButton",
             "dm_screen.names_button.NamesButton",
             "dm_screen.recap_panel.RecapsButton",
+            "dm_screen.recap_style.RecapStyleButton",  # (the recap choice left in Discord, #2986)
             "dm_screen.rules_cards.RulesCardButton",
             "dm_screen.set_suggestion.SuggestionButton",
             "dm_screen.table_pause.PauseTableButton",  # the table's off the record (#2466)

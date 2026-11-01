@@ -5,6 +5,7 @@
 export const campaignPage = {
   loading: "Loading…",
   signedOut: "You were signed out. Sign in again.",
+  signIn: "Sign in with Discord",
   notFound: "We couldn't find that campaign. Open it from My Campaigns.",
   down: "We couldn't reach DMbot. Check your connection and try again.",
   tryAgain: "Try again",
@@ -41,17 +42,22 @@ export const campaignPage = {
   myAccount: "My Account",
   thisCampaign: "This campaign",
   groups: {
+    overview: "Overview",
     story: "Story",
-    table: "At the table",
+    add: "Add to the story",
     rules: "Rules",
     settings: "Settings",
   },
+  /** The pages inside the part you are in, under the tabs. */
+  pagesLabel: "Pages in this part",
   pages: {
     recaps: "Recaps",
     timeline: "Story timeline",
-    graph: "Story graph",
+    graph: "Story Graph",
     names: "Names and NPCs",
     transcripts: "Transcripts",
+    lore: "Upload lore",
+    recapStyle: "Recap style",
     import: "Import a past session",
     houseRules: "House rules",
     homebrew: "Homebrew",
@@ -62,12 +68,14 @@ export const campaignPage = {
     graph: "How the names in this campaign are connected.",
     names: "Every name DMbot remembers. Search them and fix any that are wrong.",
     transcripts: "Read and download what was said. Everyone in the server can read these.",
+    lore: "Give DMbot a backstory or notes about your world.",
+    recapStyle: "Show DMbot how your recaps should sound.",
     import: "Add a session you played before using DMbot.",
     houseRules: "The rules this campaign plays by.",
     homebrew: "The homebrew this campaign uses.",
   },
   sharedRules: "Shared rules",
-  sharedRulesNote: "Share these, or follow another table's.",
+  sharedRulesNote: "Share this campaign's rules, or follow another table's. Opens your account's sharing page.",
   // The Settings group: the current choice of each, read-only for now. Where the website cannot
   // change it yet, it says where to in Discord, with the names of Discord's own menus.
   settingsLead: "Your campaign's choices. Only game masters see this. Tap a choice to change it here. The rest is done in Discord.",
@@ -78,7 +86,6 @@ export const campaignPage = {
     gameMasters: "Game masters",
     handOver: "Hand over",
     pause: "Pause",
-    delete: "Delete",
   },
   visibility: {
     // Discord's own button names (dm_screen/messages.py VISIBILITY_BUTTONS).
@@ -95,15 +102,14 @@ export const campaignPage = {
   pausedYes: "Paused",
   pausedNo: "Not paused",
   doThisInDiscord: (path: string): string => `Do this in Discord: ${path}`,
-  deleteWarning: "This cannot be undone. Discord asks you to confirm first.",
   paths: {
-    visibility: "⚙️ Settings → 👁️ Who can see the DM screen",
-    level: "⚙️ Settings → the Quiet and Normal buttons",
-    retention: "⚙️ Settings → 🗂️ Campaign management → 🗄️ Transcript retention",
-    gameMasters: "⚙️ Settings → 🗂️ Campaign management → 👑 Game masters",
-    handOver: "⚙️ Settings → 🗂️ Campaign management → 🤝 Hand over",
-    pause: "⚙️ Settings → 🗂️ Campaign management → ⏸️ Pause this campaign (or ▶️ Unpause)",
-    delete: "⚙️ Settings → 🗂️ Campaign management → 🗑 Delete this campaign",
+    visibility: "⚙️ Manage DMbot → 👁️ Who can see the DM screen",
+    level: "⚙️ Manage DMbot → the Quiet and Normal buttons",
+    retention: "⚙️ Manage DMbot → 🗂️ Campaign management → 🗄️ Transcript retention",
+    gameMasters: "⚙️ Manage DMbot → 🗂️ Campaign management → 👑 Game masters",
+    handOver: "⚙️ Manage DMbot → 🗂️ Campaign management → 🤝 Hand over",
+    pause: "⚙️ Manage DMbot → 🗂️ Campaign management → ⏸️ Pause this campaign (or ▶️ Unpause)",
+    delete: "⚙️ Manage DMbot → 🗂️ Campaign management → 🗑 Delete this campaign",
   },
   listeningNow: "Listening now",
 
@@ -147,5 +153,6 @@ export const campaignPage = {
     `Sessions older than ${label} will be deleted every night, with their downloads on the website. The first clean-up is tonight. Recaps and the facts you confirmed stay. Nobody can get the deleted transcripts back.`,
   deleteAfter: (label: string): string => `Delete after ${label}`,
   keepAsIs: "Keep current",
-  ownerOnlyNote: "Hand over, pause and delete are done in Discord by the campaign's owner.",
+  ownerOnlyNote: "Hand over and pause are done in Discord by the campaign's owner.",
+  deleteInDiscord: (path: string): string => `You can also delete it in Discord: ${path}`,
 };

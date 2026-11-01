@@ -634,7 +634,7 @@ class CampaignPickersFitAPhone(unittest.TestCase):
 
 
 class SettingsWhereTheDmLooks(CommandTests):
-    """#1619: ⚙️ Settings on the step after /dmbot start, and /dmbot settings as a fallback."""
+    """#1619: ⚙️ Manage DMbot on the step after /dmbot start, and /dmbot settings as a fallback."""
 
     def interaction(self, user_id: int = DM, **guild: Any) -> Any:
         it = fake_interaction(self.bot, user_id)
@@ -682,7 +682,7 @@ class SettingsWhereTheDmLooks(CommandTests):
         it = self.interaction()
         await cmds.dmbot_settings.callback(it)  # type: ignore[call-arg]
         text, kw = it.response.sent[0]
-        self.assertIn("Settings for Frostmaiden", text)
+        self.assertIn("Manage DMbot for Frostmaiden", text)
         self.assertTrue(kw["ephemeral"])
 
     async def test_the_settings_command_refuses_a_player(self) -> None:
@@ -691,7 +691,7 @@ class SettingsWhereTheDmLooks(CommandTests):
         await cmds.dmbot_settings.callback(it)  # type: ignore[call-arg]
         text, _ = it.response.sent[0]
         self.assertIn("Only this campaign's DM", text)
-        self.assertNotIn("Settings for", text)
+        self.assertNotIn("Manage DMbot for", text)
 
     async def test_the_settings_command_prefers_the_running_campaign_else_the_last_played(
         self,
@@ -701,11 +701,11 @@ class SettingsWhereTheDmLooks(CommandTests):
         await self.campaigns.mark_played(GUILD, second.id)
         it = self.interaction()
         await cmds.dmbot_settings.callback(it)  # type: ignore[call-arg]
-        self.assertIn("Settings for Newer", it.response.sent[0][0])
+        self.assertIn("Manage DMbot for Newer", it.response.sent[0][0])
         self.bot.tables[GUILD] = SimpleNamespace(campaign_id=first.id)  # type: ignore[assignment]
         again = self.interaction()
         await cmds.dmbot_settings.callback(again)  # type: ignore[call-arg]
-        self.assertIn("Settings for Older", again.response.sent[0][0])
+        self.assertIn("Manage DMbot for Older", again.response.sent[0][0])
 
     async def test_the_settings_command_with_no_campaign_points_to_start(self) -> None:
         it = self.interaction()
@@ -824,17 +824,14 @@ class RestoreShowsItsProgress(unittest.IsolatedAsyncioTestCase):
         self.assertIn(cmds.RESTORED_TIDY_FAILED.strip(), last)
         self.assertNotIn("nothing was restored", last)
 
-    async def test_replacing_tells_the_rules_channel_and_a_campaign_error_is_shown(self) -> None:
-        changed = MagicMock()
+    async def test_replacing_says_everything_is_there_and_a_campaign_error_is_shown(self) -> None:
         _e, last = await self.run_restore(
             replace_id="c" * 32,
-            _rules_archive_changed=changed,
             campaigns=SimpleNamespace(
                 import_backup=AsyncMock(return_value=SimpleNamespace(id="c", name="Frostmaiden")),
                 get=AsyncMock(return_value=SimpleNamespace(name="Old")),
             ),
         )
-        changed.assert_called_once()
         self.assertIn("now holds everything", last)
         from dmbot.campaigns import CampaignError
 
@@ -931,14 +928,12 @@ class RestoreShowsItsProgress(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Ask whoever runs DMbot", stalled[-1])
         self.assertIn("waits until the restore ends", stalled[-1])
 
-    async def test_one_tidy_up_step_failing_does_not_skip_the_other(self) -> None:
-        changed = MagicMock()
+    async def test_a_failing_tidy_up_step_is_told_after_the_copy_landed(self) -> None:
         memory = SimpleNamespace(analyze=AsyncMock(side_effect=RuntimeError("x")))
         with self.assertLogs("dmbot.ui.dmbot_commands", "ERROR"):
             _e, last = await self.run_restore(
                 replace_id="c" * 32,
                 memory=memory,
-                _rules_archive_changed=changed,
                 campaigns=SimpleNamespace(
                     import_backup=AsyncMock(
                         return_value=SimpleNamespace(id="c", name="Frostmaiden")
@@ -946,7 +941,6 @@ class RestoreShowsItsProgress(unittest.IsolatedAsyncioTestCase):
                     get=AsyncMock(return_value=SimpleNamespace(name="Old")),
                 ),
             )
-        changed.assert_called_once()
         self.assertIn(cmds.RESTORED_TIDY_FAILED.strip(), last)
 
     async def test_a_cancel_after_the_copy_is_in_still_tells_the_person(self) -> None:

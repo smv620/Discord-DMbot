@@ -110,6 +110,20 @@
     border-color: var(--accent);
   }
 
+  /* The pages inside the part you are in (#2985): lighter than the tabs above them, the current page bold as well as underlined
+     (the row wraps: a sideways scroll fails the phone check). */
+  .account .subtabs a {
+    white-space: nowrap;
+    font-size: var(--text-sm);
+    border-color: transparent;
+    border-bottom: 3px solid transparent;
+    border-radius: 0;
+  }
+
+  .account .subtabs a[aria-current] {
+    border-bottom-color: var(--accent);
+  }
+
   /* The Shared rules page (#2460): a set or pack, its facts under it, and where to change it. */
   .account .shared-rules {
     list-style: none;

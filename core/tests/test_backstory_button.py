@@ -7,10 +7,10 @@ from unittest.mock import AsyncMock
 
 import discord
 
-from dmbot.dm_screen import dm_bot_panel as panel
 from dmbot.dm_screen.backstory_button import BackstoryButton
 from dmbot.dm_screen.dm_bot_buttons import role_view
 from dmbot.dm_screen.dm_bot_panel import Role
+from dmbot.dm_screen.settings import settings_view
 from dmbot.ui import name_background as ui_bg
 from tests.test_dm_screen_settings import CAMPAIGN, DM, PLAYER, campaign
 from tests.test_names_button import _press
@@ -19,16 +19,18 @@ ROWS, PER_ROW = 5, 5
 
 
 class WhoGetsIt(unittest.TestCase):
-    def test_only_the_game_master_card_has_it(self) -> None:
-        for role in Role:
+    def test_only_a_dm_has_it_and_only_on_manage_dmbot(self) -> None:
+        for role in Role:  # (not on the main menu any more: it waits on ⚙️ Manage DMbot, #2986)
             with self.subTest(role):
-                view = role_view(role, campaign(), sheets=True)
-                has = any(isinstance(i, BackstoryButton) for i in view.children)
-                self.assertEqual(has, role is Role.GAME_MASTER)
-                self.assertEqual(panel.may_press(role, panel.Button.BACKSTORY), has)
+                view = role_view(role, campaign())
+                self.assertFalse(any(isinstance(i, BackstoryButton) for i in view.children))
+        for viewer, want in ((DM, True), (PLAYER, False)):
+            view = settings_view(campaign(), None, viewer)
+            has = any(isinstance(i, BackstoryButton) for i in view.children)
+            self.assertEqual(has, want, viewer)
 
     def test_the_card_fits_five_rows_of_five(self) -> None:
-        view = role_view(Role.GAME_MASTER, campaign(), sheets=True)
+        view = settings_view(campaign(), None, DM)
         self.assertLessEqual(len(view.children), ROWS * PER_ROW)
 
     def test_it_is_labelled_in_plain_words(self) -> None:

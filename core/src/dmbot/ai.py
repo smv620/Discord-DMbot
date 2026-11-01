@@ -119,6 +119,9 @@ class Feature(enum.StrEnum):
     SUPPORT = "support"  # DMbot's helper answering a support ticket (#1431); the website's job
     PLAN_READER = "plan_reader"  # the story plan read from an adventure (#1714); the DM's press
     TIME_SUGGEST = "time_suggest"  # a time jump suggested from vague narration (#1758)
+    # The game time an imported session ended at (#2979): a background call, so unlike the live
+    # suggestion above it is not a live feature and gets the generous floor (#2596).
+    IMPORT_TIME = "import_time"
     RECAP_WRITE = "recap_write"  # the recap written as plain text by the creative model (#2074)
     RECAP_FORMAT = "recap_format"  # that text shaped into sections by the small model (#2074)
     RULE_CONFLICTS = "rule_conflicts"  # a saved house rule that disagrees with another (#2284)
@@ -177,6 +180,7 @@ FEATURE_TIERS = {
     Feature.EXTRACTOR: AIModelTier.FAST,
     Feature.RECAP: AIModelTier.FAST,
     Feature.PLAN_READER: AIModelTier.CAREFUL,  # read once and kept; it must not make things up
+    Feature.IMPORT_TIME: AIModelTier.FAST,  # one small answer over a session's cue lines
     Feature.TIME_SUGGEST: AIModelTier.FAST,  # one short line, one small answer, a DM presses
     Feature.SUPPORT: AIModelTier.DEEP,  # a person is reading the answer, and it must not mislead
     Feature.RECAP_RETRY: AIModelTier.CAREFUL,

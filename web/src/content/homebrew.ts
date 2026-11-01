@@ -13,7 +13,7 @@ export const text = {
   rulesNote: "Looking for rules your table made up?",
   rulesLink: "See House rules",
   dmChanges:
-    "You can't change these here. Your DM does that in Discord: ⚙️ Settings → 📚 Homebrew.",
+    "You can't change these here. Your DM does that in Discord: ⚙️ Manage DMbot → 📚 Homebrew.",
   loading: "Loading…",
   empty:
     "Nothing shared yet. When your DM shares homebrew with the table, it will show here.",
@@ -43,7 +43,7 @@ export const text = {
     item: "Items",
     feat: "Feats",
     condition: "Conditions",
-    species: "Species",
+    species: "Lineages",
     subclass: "Subclasses",
     background: "Backgrounds",
     other: "Other",

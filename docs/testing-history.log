@@ -2702,3 +2702,89 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
 
 2026-10-23 04:58 UTC  dev1  DEPLOY 3ed42d18 (Step J stage 1; Supervisor's handover; the owner approved through the prompt; CI green on that head): core first, then web-api. Migrations 0172 to 0196 applied (dry run on a copy of a fresh backup first; a second run changed nothing). 0179 wrote the belief rows for the existing connections; 0187 added a column that defaults to not hidden. Live counts after the deploy: 10 belief rows (5 truth, 5 party), the same as the copy. A backup was taken before the build and again before the restart. Bot connected to 2 servers, ears connected, 0 errors; web-api health 200, 0 errors. Not done by dev1: the on-site checks (My Account, the recap header and buttons, Story graph views, names hidden until shown, NPC list); for the owner or Supervisor. development is at f64f214f, not deployed.
 2026-10-28 05:1x UTC  dev1  DEPLOY f1cd9aaf (owner's OK through the prompt; Supervisor's handover at 02:01 UTC; the head had moved to d93225f0, which was not deployed). Dry run on a copy of a fresh live backup: 30 migrations (0231 to 0258) applied in 1.2 s, the second run applied nothing. Backup taken before the stop (chmod 600). The owner set RECAP_STRUCTURED_OUTPUT_SPLIT and RECAP_STRUCTURED_OUTPUT_BEATS to 1 at the terminal. Core stopped, started: connected to 2 servers, 0 errors since the start; start-up features line: structured split on, structured beats on, handover email off, meaning search off, plot checks off. Live migrations: 255 rows, last 0258_web_backup_parts. web-api stopped, started: Docker health healthy. Ears and cloudflared not restarted. Not done by dev1: the /dmbot check in the test server, and the first 3 live recaps (state, faithful and cut counts) for Supervisor.
+
+DEPLOY 6fe8344c (2026-10-28, dev1, owner's OK through the prompt "Deploy now"; Supervisor's second deploy handover 13:37). Live was f1cd9aaf.
+- CI: every job green on 6fe8344c before the start.
+- Dry run on a copy (restored from a backup taken 14:4x UTC): 11 migrations applied (0257 to 0269), 255 rows to 266, 0.44 s, no error. Second run applied nothing.
+- Backup before the stop (chmod 600, private folder). Bot stopped with web-api, bot started first, web-api after.
+- Live: 266 migration rows, last 0269_report_fixed_remind. Bot connected to 2 servers, ears connected, 0 errors since start. Features line: handover email off, who is he off, recaps on, structured split and beats on, meaning search off, plot checks off, test recordings off. Co-DMs, rule sharing, sheets and report make stay off (their own switches, not on the features line).
+- web-api healthy. Not yet checked: /dmbot in the test server (owner), and the website routes behind the off switches (404).
+
+DEPLOY 6f29673f (2026-10-29, dev1, owner's OK through the prompt "Deploy now"; Supervisor's third deploy handover 21:11 UTC on 2026-10-28). Live was 6fe8344c.
+- CI: every job green on 6f29673f before the start.
+- Dry run on a copy (restored from a backup taken 21:5x UTC): 4 migrations applied (0270 to 0274), 266 to 270 rows, 0.36 s, no error. Second run applied nothing.
+- Backup before the stop (chmod 600, private folder). Bot stopped with web-api, bot started first, web-api after.
+- Live: 270 migration rows, last 0274_web_sheet_typed_document. Bot connected to 2 servers, ears connected, 0 errors since start. Features line: handover email off, who is he off, recaps on, structured split and beats on, meaning search off, plot checks off, test recordings off. Website restore switch (DMBOT_WEB_RESTORE) stays 0.
+- web-api healthy. Not yet checked: /dmbot in the test server (owner), the lore re-read on #2757, and the website routes behind the off switches.
+- The bot logged two warnings at start-up: .env is missing 13 settings that .env.example has (optional, see the start-up warning), and .env has both AI_MODEL and AI_MODEL_FAST (only AI_MODEL_FAST is used). Both are for the owner to tidy; no change made.
+
+WEBSITE DELETE TEST (2026-10-29, dev1, the owner's run on dev.getdmbot.com, #2838). Counts only.
+- The owner deleted test campaigns from the website ("Delete this campaign", backup taken first, name typed). The owner reports it worked.
+- Database check after the delete: the three recent campaigns from the session (the lore test campaign included) are gone; the campaign table holds 1 row. The owner confirmed the summary.
+- Not yet reported: the backup file count, the restored campaign's session, transcript-line and name counts, and the unreachable-server check (steps 1 and 3 of #2838).
+
+LORE TEST (2026-10-29, dev1, owner's live test on the new test campaign, build 6f29673f). Counts only.
+- Re-run of the owner's lore document, same campaign, after #2846 and #2855 went live. Earlier run (14:47 UTC, build 6fe8344c): 23 relationship lines found, 12 not_in_text, 2 word_not_allowed, 9 kept.
+- Re-run (03:09 UTC): 40 relationship lines found (25 from pass 1 alone), 9 not_in_text, 4 same_pair, 1 word_not_allowed; 26 kept in the background line (the pass-2 line reports 30); names kept 48 in both runs.
+- The owner's verdict: "vastly improved". The owner's next need (middle knowledge, names known only by some characters) is #2935.
+- Open for the code side: the 26 vs 30 kept-connection difference between the background line and the pass-2 line (#2757).
+
+DEPLOY 88dbce2b (2026-10-29, dev1, owner's OK through the prompt "Deploy now"; Supervisor's fourth deploy handover, 03:35 UTC on #516). Live was 6f29673f.
+- CI: every job green on 88dbce2b before the start (the merge of #2922).
+- Dry run on a copy (restored from a backup taken before the dry run): 270 to 275 migration rows, no error. Second run applied nothing.
+- Backup before the stop (chmod 600, private folder). Bot stopped with web-api, bot started first, web-api after.
+- Live: 275 migration rows, last 0278_web_waiting_progress. Bot connected to 2 servers, ears connected, 0 errors since start.
+- Start-up channel sweep: 3 old rules, NPC and game-time channels deleted, 0 kept, 0 failed.
+- Features line: handover email off, time suggestions on, recaps on, plot checks off, meaning search off, recap audio on, structured split and beats on, sidebar on, secret reveal on, who is he off, importing sessions on, billing link on, email on. Test recordings on: the owner confirmed (2026-10-29, through Supervisor) that this is deliberate, for reuse across test rounds; they save voice only for people who opted in.
+- web-api healthy.
+- Not yet checked: /dmbot start in the test server (owner; the three old channels should be gone), the game-time line, and the Delete row at the bottom of a campaign page on the website.
+
+DEPLOY d890ea81 (2026-10-29, dev1, owner's OK through the prompt "Deploy now"; Supervisor's fifth deploy handover on #516, 17:21 UTC). Live was 88dbce2b.
+- CI: every job green on d890ea81 (the merge of #2974).
+- Dry run on a copy (restored from a backup taken 17:35 UTC): 275 to 277 migration rows, 0279_who_knows and 0280_link_known_by applied; second run applied nothing.
+- Backup before the stop (chmod 600, private folder). Core stopped with web-api, core started first, web-api after.
+- Live: 277 migration rows, last 0280_link_known_by. Bot connected to 2 servers, ears not restarted, 0 errors since start.
+- Features line: handover email off, time suggestions on, recaps on, plot checks off, meaning search off, recap audio on, structured split on, final read on, structured beats on, sidebar on, sidebar recall on, session-start note on, extractor on, live heads-up off, secret reveal on, plan limits off, importing sessions on, ai helpers on, billing link on, email on, table pictures off, who is he off, test recordings on (the owner's deliberate setting).
+- The start-up channel sweep line was not in the log this time (no old channels were present to delete); not confirmed.
+- web-api healthy.
+- Not yet checked: the Story graph Steps spinner (up to 8 hops) and a deep view, the Who knows this? page for a connection and an other name in the test server, and the owner's recap test (word count, away findings, final read used or kept).
+
+DEPLOY a8805996 (2026-10-29, dev1, owner's OK through the prompt "Deploy now"; Supervisor's sixth deploy handover on #516, 19:08 UTC, a small deploy). Live was d890ea81.
+- CI: all 11 checks green on a8805996 (the merge of #2988).
+- No migrations: live stays at 277 rows (0280_link_known_by). No dry run needed.
+- Backup before the stop (chmod 600, private folder). Bot stopped with web-api, bot started first, web-api after.
+- Bot connected to 2 servers, 0 errors since start.
+- web-api healthy.
+- Brings: #2978 (the "Check new names" buttons from the DM's private message), #2983 and #2984 (Story graph layout and full screen), #2988 (sign-in button on a signed-out campaign page), #1404 (privacy page names Resend).
+- Not yet checked: the "Check new names" buttons (owner, in the DM), the Story graph full screen, the sign-in button, and the privacy page.
+
+DEPLOY fb1b148a (2026-10-29, dev1, owner's OK through the prompt "Deploy now"; Supervisor's seventh deploy handover on #516, 23:05 UTC, a small deploy). Live was a8805996.
+- CI: all 11 checks green on fb1b148a (the merge of #2998).
+- No migrations: live stays at 277 rows (0280_link_known_by). No dry run needed.
+- Backup before the stop (chmod 600, private folder). Bot stopped with web-api, bot started first, web-api after.
+- Bot connected to 2 servers, 0 errors since start.
+- web-api healthy.
+- Brings: #2998, the four-button Discord menu (DMbot Main Menu for a DM, player and guest; Help card; Manage DMbot; My character sheet).
+- Not yet checked (owner, in the test server's DM Bot channel): the main menu's four buttons for a DM, Manage campaign, Manage DMbot with the Discord-live settings at the top, a player seeing only My data and Help, My character sheet opening its form, and an old Settings button opening the new card.
+
+CHECK fb1b148a (2026-10-30, dev1, the owner's check in the test server's DM Bot channel, after the deploy). Owner's verdict: "looks better".
+- The DM's 👤 DMbot Main Menu shows the four buttons for a DM: ⚙️ Manage DMbot, 🌐 Manage campaign, 🙋 My data and ❓ Help, with the one-line intro.
+- Not yet checked: a player seeing only My data and Help, My character sheet opening its form, and an old Settings button opening the new card.
+
+DEPLOY 22f981e9 (2026-10-30, dev1, owner's OK through the prompt "Deploy now"; Supervisor's eighth deploy handover on #516, 01:37 UTC). Live was fb1b148a.
+- CI: all 11 checks green on 22f981e9 (the merge of #3009).
+- Dry run on a copy (restored from a backup taken before the dry run): 277 to 282 migration rows; 0282 to 0286 applied; second run applied nothing.
+- Backup before the stop (chmod 600, private folder). Bot stopped with web-api, bot started first, web-api after.
+- Live: 282 migration rows, last 0286_knowers_confidence. memory_knowers exists and has 0 rows. Bot connected to 2 servers, 0 errors since start.
+- web-api healthy.
+- Not yet checked (owner, on the website and in Discord): Story Graph colours and Cluster by quest; the Player character name check with a confirmed Discord ID; ⚙️ Manage DMbot without the items the website now does.
+
+DEPLOY 8b436302 (2026-10-30, dev1, owner's OK through the prompt "Deploy now"; Supervisor's ninth deploy handover on #516, 04:49 UTC). Live was 22f981e9. Migrations 0281, 0287, 0288 (282 -> 285 rows). Dry run on a copy: 282 -> 285, second run applied nothing; 0287 added 241 knowers rows in 1 campaign. Backup taken before the change. Bot started first (connected to 2 servers, 0 errors), then web-api (healthy). DMBOT_WEB_LORE left at 0 (off). Owner's post-deploy checks still to do: five tabs, Story graph pinch, Who knows this, lore upload stays hidden.
+
+DEPLOY 168857075 (Part A of the tenth deploy, 2026-10-30, dev1, owner's OK "yes" in the dev1 session; Supervisor's tenth deploy handover on #516, 15:55 UTC). Live was 8b436302. Migration 0289_link_world (286 rows). Dry run on a copy: 285 -> 286, second run applied nothing. Backup taken before the change. Bot first (connected to 2 servers, 0 errors), then web-api (healthy). DMBOT_WEB_LORE left at 0. Checks still to do with the owner: Story Graph one click and double click, the three-way upload choice, Who knows this, start-up sweep at 0 waiting.
+
+DEPLOY bb42bc80 (Part B of the tenth deploy, 2026-10-30, dev1, owner's OK "Yes, deploy Part B now" given in the dev1 session; Supervisor's tenth deploy handover on #516, 15:55 UTC). Live was 168857075. Migrations 0290_web_recap_style and 0291_pause_setting (288 rows). Dry run on a copy: 286 -> 288, second run applied nothing. Backup taken before the change. Bot first (connected to 2 servers, 0 errors), then web-api (healthy). DMBOT_WEB_RECAP_STYLE, DMBOT_WEB_PAUSE and DMBOT_WEB_LORE are 0 (off). Checks still to do with the owner: earlier names question, secrecy follows the upload choice, new connection kinds, the website shows no Recap style or Pause controls, and the party after a short live session.
+
+DEPLOY b1fb7f8d (Part A of the eleventh deploy, 2026-10-31, dev1, owner's OK "yes" in the dev1 session; Supervisor's eleventh deploy handover on #516, 02:08 UTC). Live was bb42bc80. No migrations (288 rows). Backup taken before the change (chmod 600, dump complete). One-off image built from the commit, CI green on every job. Bot first (connected to 2 servers, 0 errors), then web-api (healthy). Checks still to do with the owner: "Lia is the mother of Tam?" suggestion with Yes, No, Not now; No is final; a player sees nothing of it.
+
+DEPLOY 0fcaf7fc (Part B of the eleventh deploy, 2026-11-01, dev1, owner's OK "Yes, deploy Part B now" given in the dev1 session; Supervisor's eleventh deploy handover on #516, 02:08 UTC; Part A checked and confirmed by the owner in the dev1 session). Live was b1fb7f8d. Migration 0292_story_mode_setting (288 -> 289 rows). Dry run on a copy: 288 -> 289, second run applied nothing. Backup taken before the change (chmod 600, dump complete). Bot first (connected to 2 servers, 0 errors), then web-api (healthy). DMBOT_WEB_STORY_MODE stays 0 (off). Checks still to do with the owner: same-person prompt, public stays public, Shared story panel text, start-up log.

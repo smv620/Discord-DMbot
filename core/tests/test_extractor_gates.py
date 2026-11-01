@@ -170,10 +170,12 @@ class Gates(unittest.IsolatedAsyncioTestCase):
             extraction=AsyncMock(return_value=used),
             extractor_calls_since=AsyncMock(return_value=day),
             record_extraction=AsyncMock(),
+            is_import=AsyncMock(return_value=False),
         )
         return SimpleNamespace(
             settings=SimpleNamespace(
-                story_extractor_on=True, story_readings_on=False, story_extractor_max_calls=480,
+                story_extractor_on=True, story_readings_on=False, story_family_only=False,
+                story_extractor_max_calls=480,
                 story_extractor_max_calls_day=960,
             ),
             extractor_ai=object(),
@@ -191,6 +193,15 @@ class Gates(unittest.IsolatedAsyncioTestCase):
             campaign_id="c", transcript_session_id="s", guild_id=1, dm_user_id=DM,
             dm_user_ids=frozenset(), steward_tally=None, screen_channel_id=5,
         )  # fmt: skip
+
+    async def test_the_family_only_mode_reaches_the_extractor(self) -> None:
+        me = self.fake()
+        me.settings.story_family_only = True
+        with patch.object(extractor, "run", AsyncMock(return_value=extractor.Report())) as run:
+            await DMBot.extract_claims(me, self.table(), 0)
+        call = run.await_args
+        assert call is not None
+        self.assertIs(call.kwargs["family_only"], True)
 
     async def test_a_campaign_whose_plan_has_no_story_memory_runs_nothing(self) -> None:
         me = self.fake(allowed=False)
@@ -255,6 +266,7 @@ class Contradictions(unittest.IsolatedAsyncioTestCase):
             extraction=AsyncMock(return_value=(0, used)),
             extractor_calls_since=AsyncMock(return_value=day),
             record_extraction=AsyncMock(),
+            is_import=AsyncMock(return_value=False),
         )
         return SimpleNamespace(
             settings=SimpleNamespace(

@@ -14,6 +14,7 @@ whatever happened, and a claimed row that stalled is picked up again.
 
 from __future__ import annotations
 
+import logging
 import time
 from collections.abc import Awaitable, Callable, Collection
 from dataclasses import dataclass, replace
@@ -44,8 +45,10 @@ from dmbot.memory.models import (
     lookup_key,
     name_key,
 )
-from dmbot.memory.store import PERSON, MemoryStore
+from dmbot.memory.store import INT64_MAX, PERSON, MemoryStore
 from dmbot.memory.which_else import COULD_NOT_KEEP, none_of_these
+
+log = logging.getLogger(__name__)
 
 RETAKE_AFTER_S = 120  # a claim this old belongs to a bot that stopped
 KEEP_FOR_S = 3600  # nothing waits on a row longer than this
@@ -55,6 +58,10 @@ NOT_ALLOWED = "not_allowed"  # the sender is not a DM of the campaign any more
 NOT_FOUND = "not_found"  # the name (or the other name) is gone, or no longer confirmed
 BAD_NAME = "bad_name"  # a spelling or another name the rules refuse
 BAD_KIND = "bad_kind"  # a kind the rules do not take
+UNKNOWN_ID = "unknown_id"  # Discord does not know that ID
+LOOKUP_FAILED = "lookup_failed"  # Discord could not be asked: nothing is linked, try again
+BAD_PLAYER = "bad_player"  # not an ID the rules take
+BOT_PLAYER = "bot_player"  # the ID is a bot's: a bot cannot play a character
 EXISTS = "exists"  # the spelling is already another name's
 BAD_TARGET = "bad_target"  # a merge, a secret or a removal the rules refuse
 FAILED = "failed"  # anything unexpected; the action can be sent again
@@ -85,6 +92,7 @@ READING_REFUSALS = {
     placing.WAITING_ALREADY: "waiting_already",
     placing.PLOT_IS_KNOWN: "plot_is_known",
     placing.UNKNOWN_CHARACTER: "unknown_character",
+    placing.UNKNOWN_LIAR: "unknown_liar",
     placing.A_STATE: "bad_reading",
     placing.NOT_A_READING: "gone",
     beliefs.BAD_READING: "bad_reading",
@@ -129,7 +137,10 @@ class ActionStore:
         now = int(self._now() * 1000)  # milliseconds, so two claims of one row never match
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
-                "UPDATE name_actions SET state = 'working', claimed_at = %s WHERE (guild_id, id)"
+                # (a retaken row starts its count again: a dead worker's "12 of 50" is not the new
+                # worker's)
+                "UPDATE name_actions SET state = 'working', claimed_at = %s, progress_done = 0,"
+                " progress_total = 0, progress_at = 0 WHERE (guild_id, id)"
                 " = (SELECT guild_id, id FROM name_actions WHERE guild_id = %s AND"
                 " (state = 'waiting' OR (state = 'working' AND claimed_at < %s))"
                 # Never past an earlier open action of the campaign: waiting (it may be locked by
@@ -185,6 +196,21 @@ class ActionStore:
                     action.id,
                     action.claimed_at,
                 ),
+            )
+            return bool(cur.rowcount)
+
+    async def progress(self, guild_id: int, action: Action, done: int, total: int) -> bool:
+        """How far a Keep all has got, for the page's "12 of 50" (#2924): both counts and the time
+        in ONE update (the table refuses a done above its total), and only from the worker that
+        holds the claim. Counts and times only. False: not its row any more."""
+        total = max(total, 0)
+        done = min(max(done, 0), total)
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "UPDATE name_actions SET progress_done = %s, progress_total = %s,"
+                " progress_at = %s"  # (Unix seconds; claimed_at is milliseconds)
+                " WHERE guild_id = %s AND id = %s AND state = 'working' AND claimed_at = %s",
+                (done, total, int(self._now()), guild_id, action.id, action.claimed_at),
             )
             return bool(cur.rowcount)
 
@@ -270,6 +296,9 @@ class Waiting:
     # Put a name-pass fix back (campaign, Undo number): how many lines went back, 0 when nothing
     # could (#2684). The Discord Undo makes the same calls.
     name_pass_undo: Callable[[str, int], Awaitable[int | None]] | None = None
+    # Tell the page how far a Keep all has got: (the action, done, total). Never needed for the
+    # work itself, so a failure to write it must not fail the keep (#2924).
+    progress: Callable[[Action, int, int], Awaitable[object]] | None = None
 
 
 async def apply(
@@ -279,6 +308,7 @@ async def apply(
     action: Action,
     waiting: Waiting | None = None,
     named_batch: Callable[[str, int, str], Awaitable[int | None]] | None = None,
+    look_up: PlayerLookupFn | None = None,
 ) -> Outcome:
     """Do one action the way Discord's name card does. Nothing here logs the DM's words."""
     if action.user_id not in dm_user_ids:
@@ -311,7 +341,7 @@ async def apply(
     if entity is None or entity.status != CONFIRMED or entity.type == PERSON:
         return _failed(NOT_FOUND)
     try:
-        return await _do(memory, guild_id, cid, entity.id, entity.name, action)
+        return await _do(memory, guild_id, cid, entity.id, entity.name, action, look_up)
     except MemoryRuleError:
         return _failed(NOT_FOUND)  # the name changed under us (another DM, or Discord)
 
@@ -407,8 +437,92 @@ async def _other(
     return None
 
 
+@dataclass(frozen=True)
+class PlayerLookup:
+    """Who a Discord ID belongs to, for the DM to confirm before DMbot links it (#3004). The name is
+    only shown, never kept: what is linked is the ID."""
+
+    name: str
+    bot: bool
+    in_server: bool
+
+
+# Asks Discord about one ID: None when Discord does not know it. A failed lookup raises, so it is
+# never read as "unknown" (and nothing is linked without the name having been shown).
+PlayerLookupFn = Callable[[int], Awaitable[PlayerLookup | None]]
+LOOKUP_KIND = "player_lookup"  # a `kind` action that only looks an ID up and writes nothing
+
+
+def _player_id(text: str) -> int | None:
+    if not (text.isascii() and text.isdigit()) or not 0 < int(text) <= INT64_MAX:
+        return None
+    return int(text)
+
+
+async def _ask_discord(look_up: PlayerLookupFn | None, user_id: int) -> PlayerLookup | Outcome:
+    """The lookup, or the outcome to give when it cannot be used (unknown, a bot, a failure)."""
+    if look_up is None:
+        return _failed(LOOKUP_FAILED)  # no way to ask: nothing is guessed
+    try:
+        found = await look_up(user_id)
+    except Exception as exc:  # the type only: never the ID, never a name
+        log.warning("A player lookup failed: %s", type(exc).__name__)
+        return _failed(LOOKUP_FAILED)
+    if found is None:
+        return _failed(UNKNOWN_ID)
+    if found.bot:
+        return _failed(BOT_PLAYER)
+    return found
+
+
+async def _player_lookup(a: Action, look_up: PlayerLookupFn | None) -> Outcome:
+    """Say who an ID is, for the page's "Please confirm: <name>". The answer rides in `result_other`
+    (a letter for in the server or not, then the name, cut to fit); the row is gone within the hour,
+    and nothing about the character changes."""
+    user_id = _player_id(a.text)
+    if user_id is None:
+        return _failed(BAD_PLAYER)
+    found = await _ask_discord(look_up, user_id)
+    if isinstance(found, Outcome):
+        return found
+    return Outcome(result_other=("i" if found.in_server else "o") + found.name[:31])
+
+
+async def _player_character(
+    memory: MemoryStore,
+    guild_id: int,
+    cid: str,
+    entity_id: str,
+    a: Action,
+    look_up: PlayerLookupFn | None,
+) -> Outcome:
+    """Make a name a player character, as Discord's "What it is" does. With a Discord ID the
+    player is attached too (Discord's "Who plays it?"). The DM has confirmed the name Discord shows
+    for the ID (`flag`: the page sends it only after "That's them"), and the person need not be in
+    the server yet. The ID is asked again here, so a bot or an unknown ID is never linked."""
+    if not a.text:
+        await memory.set_entity_type(guild_id, cid, entity_id, PLAYER_CHARACTER, source=DM)
+        return Outcome(result_id=entity_id)
+    user_id = _player_id(a.text)
+    if user_id is None or not a.flag:  # nothing links without the confirmation
+        return _failed(BAD_PLAYER)
+    found = await _ask_discord(look_up, user_id)
+    if isinstance(found, Outcome):
+        return found
+    await memory.confirm_entity(
+        guild_id, cid, entity_id, PLAYER_CHARACTER, source=DM, played_by=user_id
+    )
+    return Outcome(result_id=entity_id)
+
+
 async def _do(
-    memory: MemoryStore, guild_id: int, cid: str, entity_id: str, name: str, a: Action
+    memory: MemoryStore,
+    guild_id: int,
+    cid: str,
+    entity_id: str,
+    name: str,
+    a: Action,
+    look_up: PlayerLookupFn | None = None,
 ) -> Outcome:
     if a.action == "spell":
         new = " ".join(a.text.split())
@@ -424,8 +538,10 @@ async def _do(
             return _failed(BAD_NAME)
         return Outcome(result_id=entity_id)
     if a.action == "kind":
+        if a.kind == LOOKUP_KIND:
+            return await _player_lookup(a, look_up)
         if a.kind == PLAYER_CHARACTER:
-            return _failed(BAD_KIND)  # who plays them is asked in Discord
+            return await _player_character(memory, guild_id, cid, entity_id, a, look_up)
         try:
             await memory.set_entity_type(guild_id, cid, entity_id, a.kind, source=DM)
         except MemoryRuleError:
@@ -638,7 +754,9 @@ async def _answer_waiting(
         todo = [x for x in ready if x.id in shown]
         if not todo:
             return _failed(NOT_FOUND)
-        done_all = await keep.keep_all(memory, w.backstory, guild_id, cid, todo)
+        done_all = await keep.keep_all(
+            memory, w.backstory, guild_id, cid, todo, progress=_progress_for(w, a)
+        )
         return Outcome(result_id=str(len(done_all.kept))) if done_all.kept else _failed(BAD_TARGET)
     if a.action == "backstory-skip":
         # Skipping writes no fact, so a link may be dismissed while it still waits on a name that
@@ -652,8 +770,25 @@ async def _answer_waiting(
     if link is None:
         return _failed(NOT_FOUND)
     one = replace(link, secret=link.secret or a.flag)  # "keep as secret" only ever hides more
-    kept = await keep.keep_all(memory, w.backstory, guild_id, cid, [one])
+    # (the DM's own "Keep as secret" press hides an existing public twin; a spelling does not)
+    kept = await keep.keep_all(memory, w.backstory, guild_id, cid, [one], keep_flags=not a.flag)
     return Outcome(result_id="1") if kept.kept else _failed(BAD_TARGET)
+
+
+def _progress_for(w: Waiting, a: Action) -> Callable[[int, int], Awaitable[None]] | None:
+    """The count for this Keep all, or None when the host keeps none. A failed write is logged
+    (the count only) and skipped: the connections are kept all the same."""
+    report = w.progress
+    if report is None:
+        return None
+
+    async def tell(done: int, total: int) -> None:
+        try:
+            await report(a, done, total)
+        except Exception as exc:
+            log.info("A Keep all count could not be written: %s", type(exc).__name__)
+
+    return tell
 
 
 def reading_error(why: str) -> str:

@@ -1,0 +1,434 @@
+/* The relationship web map's free layout (#2934). Kept apart from account.css so only the web page
+   loads it: the other account pages are close to their weight budget. */
+/* The map's free layout (#2934): names fade when the pointer is on another name, a moved name shows a dot,
+   and the layout switch sits in the tools row. The fade is the drawing only: the words stay readable in the list. */
+.account .web-faded {
+  opacity: 0.15;
+}
+
+.account .web-edge,
+.account .web-node {
+  transition: opacity 0.15s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .account .web-edge,
+  .account .web-node {
+    transition: none;
+  }
+}
+
+.account .web-node {
+  touch-action: none;
+}
+
+.account .web-node:active {
+  cursor: grabbing;
+}
+
+.account .web-node:focus-visible,
+.account .web-hit:focus-visible {
+  outline: 3px solid var(--accent, currentColor);
+  outline-offset: 2px;
+}
+
+.account .web-pin {
+  fill: var(--accent, currentColor);
+  stroke: none;
+}
+
+.account .web-arrow {
+  fill: var(--link, currentColor);
+  stroke: none;
+  pointer-events: none;
+}
+
+.account .web-edge-text {
+  stroke: var(--surface, transparent);
+  stroke-width: 5px;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+
+.account .web-area circle {
+  fill: var(--accent, currentColor);
+  fill-opacity: 0.06;
+  stroke: var(--accent, currentColor);
+  stroke-opacity: 0.4;
+  stroke-dasharray: 5 5;
+}
+
+.account .web-area-text {
+  fill: var(--muted, currentColor);
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.account .web-seg {
+  display: inline-flex;
+  gap: var(--space-2, 0.5rem);
+}
+
+.account .web-seg .button[aria-pressed="true"] {
+  background: var(--accent, currentColor);
+  color: var(--bg, #fff);
+}
+
+/* A wide page and a tall map (#2981). The signed-in pages are one text column; this page is a picture, so
+   it takes the room there is (up to a sane limit) and the map is as tall as the screen allows. */
+body:has(.account-wide) .wrap {
+  max-width: 110rem;
+}
+
+.account.account-wide {
+  max-width: none;
+}
+
+.account .web-map {
+  container-type: inline-size;
+}
+
+.account .web-svg {
+  aspect-ratio: auto;
+  height: 72vh;
+  min-height: 22rem;
+  max-height: none;
+}
+
+/* The chosen name's details always go under the map, so the map keeps the whole width (owner, #2984). */
+.account .web-stage {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-3, 0.75rem);
+  align-items: start;
+}
+
+.account .web-side {
+  min-width: 0;
+}
+
+@container (min-width: 64rem) {
+  .account .web-svg {
+    height: 78vh;
+  }
+}
+
+/* Full screen: the map and its tools fill the window (no browser API, so it works on every phone);
+   the details sit beside the map if the window is wide, and under it, scrolling, if it is not. */
+.account .web-map.web-full {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2, 0.5rem);
+  padding: var(--space-3, 0.75rem);
+  overflow: auto;
+  background: var(--bg, #fff);
+}
+
+.account .web-map.web-full .web-stage {
+  flex: 1;
+  min-height: 0;
+}
+
+.account .web-map.web-full .web-svg {
+  height: 100%;
+  min-height: 18rem;
+}
+
+.account .web-map.web-full .web-side {
+  max-height: 100%;
+  overflow: auto;
+}
+
+.account .web-sides {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-4, 1rem);
+}
+
+@media (max-width: 40rem) {
+  .account .web-sides {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Kinds of connection (#2934, core #2942): a colour and a line style for each, so colour is never the only
+   signal; the legend and the chips use the same classes. "other" is a neutral, thinner, plain line. */
+.account {
+  --link-family: #9a7b4f;
+  --link-ally: #4f8f86;
+  --link-group: #8a7fb0;
+  --link-work: #6f8fb3;
+  --link-other: var(--text-muted, #6b7770);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .account {
+    --link-family: #c9b27c;
+    --link-ally: #7fc4b8;
+    --link-group: #b4a9d6;
+    --link-work: #9bb8d6;
+  }
+}
+
+:root[data-theme="dark"] .account {
+  --link-family: #c9b27c;
+  --link-ally: #7fc4b8;
+  --link-group: #b4a9d6;
+  --link-work: #9bb8d6;
+}
+
+.account .web-link-family { --link: var(--link-family); }
+.account .web-link-ally { --link: var(--link-ally); }
+.account .web-link-group { --link: var(--link-group); }
+.account .web-link-work { --link: var(--link-work); }
+.account .web-link-other { --link: var(--link-other); }
+
+.account .web-edge.web-link-family .web-line { stroke: var(--link); }
+.account .web-edge.web-link-ally .web-line { stroke: var(--link); stroke-dasharray: 10 5; }
+.account .web-edge.web-link-group .web-line { stroke: var(--link); stroke-dasharray: 14 4 3 4; }
+.account .web-edge.web-link-work .web-line { stroke: var(--link); stroke-dasharray: 4 4; }
+.account .web-edge.web-link-other .web-line { stroke: var(--link); stroke-width: 1.5; stroke-dasharray: 2 4; }
+/* The chosen line keeps its accent colour over its kind colour, as well as being thicker. */
+.account .web-edge.chosen .web-line { stroke: var(--accent, currentColor); stroke-width: 4; }
+/* A theory keeps its own dotted look on top of its colour. */
+.account .web-edge.web-theory .web-line { stroke-dasharray: 2 6; }
+
+.account .web-legend .web-line { stroke: var(--link); }
+.account .web-legend .web-link-ally .web-line { stroke-dasharray: 10 5; }
+.account .web-legend .web-link-group .web-line { stroke-dasharray: 14 4 3 4; }
+.account .web-legend .web-link-work .web-line { stroke-dasharray: 4 4; }
+
+.account .web-dot {
+  display: inline-block;
+  width: 0.7em;
+  height: 0.7em;
+  border-radius: 50%;
+  background: var(--link);
+}
+
+.account .web-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2, 0.5rem);
+  margin: var(--space-2, 0.5rem) 0;
+}
+
+/* Off: the words keep full contrast and stay struck through; only the dot empties to a ring. */
+.account .web-chip[aria-pressed="false"] {
+  text-decoration: line-through;
+}
+
+.account .web-chip[aria-pressed="false"] .web-dot {
+  background: transparent;
+  border: 2px solid var(--link);
+}
+
+.account .web-kindmark {
+  color: inherit;
+}
+
+/* The steps box is a - [n] + row (the page's wide boxes had pushed the buttons onto their own lines), and
+   the search and the steps share a row on a wide page, so the map is near the top of the screen. */
+.account .web-spinner {
+  flex-wrap: nowrap;
+  align-items: center;
+}
+
+.account .web-spinner input {
+  flex: none;
+  width: 5rem;
+  text-align: center;
+}
+
+@media (min-width: 48rem) {
+  .account .web-tools-form {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+}
+
+/* In full screen the two hint lines make way for the map. */
+.account .web-map.web-full > p.small {
+  display: none;
+}
+
+/* The view choice sits in one row on a wide page so the map starts higher up. */
+@media (min-width: 48rem) {
+  .account .web-view {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    column-gap: var(--space-4, 1.25rem);
+    padding-block: var(--space-2, 0.5rem);
+  }
+
+  .account .web-view .choice {
+    width: auto;
+    margin: 0;
+    justify-content: flex-start;
+  }
+
+  .account .web-view > p {
+    flex-basis: 100%;
+    margin: 0;
+  }
+}
+
+/* The list at the bottom: one tight line per name, the buttons only once a name is opened. */
+.account .web-list-box > summary {
+  margin-bottom: 0.5rem;
+  cursor: pointer;
+  font-weight: 600;
+  min-height: var(--tap, 2.75rem);
+  display: flex;
+  align-items: center;
+}
+
+.account .web-list-tools {
+  align-items: center;
+  gap: var(--space-2, 0.5rem);
+}
+
+.account .web-list-tools h3 {
+  margin-right: auto;
+}
+
+.account .web-names {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  /* 8 px between the name buttons, so a thumb never hits the wrong one (the phone check). */
+  gap: 0.5rem;
+}
+
+.account .web-name {
+  border-bottom: 1px solid var(--border);
+}
+
+.account .web-name-toggle {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2, 0.5rem);
+  width: 100%;
+  min-height: var(--tap, 2.75rem);
+  padding: 0 var(--space-2, 0.5rem);
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.account .web-name-more {
+  padding: var(--space-2, 0.5rem) var(--space-4, 1rem);
+  gap: var(--space-2, 0.5rem);
+}
+
+/* Tighter spacing on this page so the map starts as high as it can (owner, #2984). */
+.account .web-page {
+  gap: var(--space-2, 0.5rem);
+}
+
+.account .web-page #web-hops-hint {
+  margin: 0;
+}
+
+/* Kinds of name (#2992): a saturated fill for each, with a shape and a word besides, so colour is never the only
+   signal. The lines of the connections are thinner and softer, so a name's colour and a line's colour are not
+   read as the same thing. */
+.account {
+  --kind-npc: #c62828;
+  --kind-player_character: #3949ab;
+  --kind-place: #00796b;
+  --kind-group: #8e24aa;
+  --kind-item: #ef6c00;
+  --kind-event: #0277bd;
+  --kind-creature: #6d4c41;
+  --kind-quest: #e0a100;
+  --kind-other: #607d8b;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .account {
+    --kind-npc: #ff6b6b;
+    --kind-player_character: #9fa8da;
+    --kind-place: #4db6ac;
+    --kind-group: #ce93d8;
+    --kind-item: #ffb74d;
+    --kind-event: #4fc3f7;
+    --kind-creature: #bcaaa4;
+    --kind-quest: #ffd54f;
+    --kind-other: #b0bec5;
+  }
+}
+
+:root[data-theme="dark"] .account {
+  --kind-npc: #ff6b6b;
+  --kind-player_character: #9fa8da;
+  --kind-place: #4db6ac;
+  --kind-group: #ce93d8;
+  --kind-item: #ffb74d;
+  --kind-event: #4fc3f7;
+  --kind-creature: #bcaaa4;
+  --kind-quest: #ffd54f;
+  --kind-other: #b0bec5;
+}
+
+.account .web-kind-npc { --kind: var(--kind-npc); }
+.account .web-kind-player_character { --kind: var(--kind-player_character); }
+.account .web-kind-place { --kind: var(--kind-place); }
+.account .web-kind-group { --kind: var(--kind-group); }
+.account .web-kind-item { --kind: var(--kind-item); }
+.account .web-kind-event { --kind: var(--kind-event); }
+.account .web-kind-creature { --kind: var(--kind-creature); }
+.account .web-kind-quest { --kind: var(--kind-quest); }
+.account .web-kind-other { --kind: var(--kind-other); }
+
+.account .web-node :where(circle, rect, polygon),
+.account .web-legend svg[class^="web-kind-"] :where(circle, rect, polygon) {
+  fill: var(--kind);
+}
+
+.account .web-legend svg[class^="web-kind-"] :where(circle, rect, polygon) {
+  stroke: var(--text, currentColor);
+  stroke-width: 1.5;
+}
+
+/* In Cluster by kind each area is a light wash of its kind's colour. */
+.account .web-area[class*="web-kind-"] circle {
+  fill: var(--kind);
+  fill-opacity: 0.14;
+  stroke: var(--kind);
+  stroke-opacity: 0.6;
+}
+
+.account .web-edge .web-line {
+  stroke-width: 1.5;
+  stroke-opacity: 0.75;
+}
+
+.account .web-edge.chosen .web-line {
+  stroke-opacity: 1;
+}
+
+/* Names are outlined in the text colour so a light fill (gold, orange) never washes out. */
+.account .web-node :where(circle, rect, polygon) {
+  stroke: var(--text, currentColor);
+}
+
+/* "Something else" lines are dotted in the legend as on the map, so they are not mistaken for family. */
+.account .web-legend .web-link-other .web-line { stroke-dasharray: 2 4; }
+
+/* A player character has a ring inside its circle: not a dashed edge, which a small circle loses. */
+.account .web-pc-ring {
+  fill: none;
+  stroke: var(--text, currentColor);
+  stroke-width: 1.5;
+}

@@ -57,13 +57,15 @@ CI runs all of the above on every pull request. Never merge red CI.
   (same patch-id), RepoManager pushes it and merges on green CI with no new approval or
   author round-trip. A conflict whose resolution touches the PR's own logic goes back to
   the author and needs a fresh "approved".
-  **The migration-list union** (Supervisor, 2026-10-16, after #1539 went dirty on #1536): two
-  PRs that each add a migration conflict only in `schema.py`'s `MIGRATIONS` list (and the
-  constants next to it). RepoManager resolves it as the union, both entries in number order,
-  where its permissions allow a push to the PR's branch; where they refuse, the author merges
-  `development` and keeps both entries. Either way the approval carries over as a merge-only
-  refresh (`git log --no-merges OLD..NEW ^origin/development` empty and the merge commit writes
-  no new line). **The same union for What's new** (Supervisor, 2026-10-21, after #2273 and #2280
+  **Migrations are one file each** (Supervisor, 2026-10-16; one file per migration since 2026-10-28,
+  #2127): a migration is `core/src/dmbot/migrations/NNNN_name.py` with its `SQL` and, if it adds
+  them, the web role functions, isolated tables and routing tables it registers, so two PRs that
+  each add a migration no longer touch the same lines and no union is needed. Two files with one
+  number fail a test (claim the number on #2475). A PR written before the split moves its
+  constant and registrations into a new file when it merges `development`. The approval carries
+  over when that file's `SQL` and registrations are byte-for-byte the approved head's constant and
+  entries (RepoManager compares them), and the PR changes nothing else. Any other difference needs
+  a fresh review. **The same union for What's new** (Supervisor, 2026-10-21, after #2273 and #2280
   were held by it): when both sides only add entries to `web/src/content/whats-new.ts` (`entries` or
   `held`) and its test's expected lists, RepoManager resolves it as the union, keeping every entry
   whole in the file's order, and the approval carries over the same way. Since #2469 (2026-10-23)
@@ -83,6 +85,14 @@ CI runs all of the above on every pull request. Never merge red CI.
   shows the PR's **own commits** unchanged and every line that left the diff is in the merged
   PR's diff. RepoManager notes "approval carried over from <sha> (stacked base merged)".
   Anything else in the range-diff needs a fresh "approved".
+  **A hand-resolved merge that changes nothing of the PR's own** (owner, 2026-10-28, to stop a
+  fresh review for every resolved conflict): RepoManager carries the approval over itself when the
+  head has no commits of its own since the approved one (`git log --no-merges OLD..NEW
+  ^origin/development` is empty) and the PR's own +/- lines against `development` are identical to
+  the approved head's (`git diff $(git merge-base OLD origin/development) OLD` against `git diff
+  origin/development...NEW`, both sorted). It notes "approval carried over from <sha> (net diff
+  identical)". Any difference, a renumbered migration included, goes to Supervisor for a fresh
+  review.
   **Merging a batch** (2026-10-13, Supervisor, to stop one merge per CI cycle): RepoManager
   may merge up to four approved PRs back to back when one CI run is green on a single branch
   of `development` plus all of them merged in the planned order, and each PR's own patch is
@@ -137,7 +147,7 @@ CI runs all of the above on every pull request. Never merge red CI.
 ## Claude sessions and who does what (owner decision, 2026-10-05, updated 2026-10-12)
 DMbot runs on the cloud test server (VPS), not on the owner's PC. Several Claude
 sessions work on this repo. **Each one has a name, and its name is its issue label:**
-`session: dev1`, `session: CloudDev`, `session: WebDev`,
+`session: dev1`, `session: CloudDev` (CloudDev-lead), `session: CloudDev-assistant`, `session: WebDev` (WebDev-lead), `session: WebDev-assistant`, `session: GraphEngineer`,
 `session: RepoManager`, `session: Supervisor` (and `session: pycharm` when the owner's PC is used;
 **pycharm is offline from 2026-10-08 until the owner says otherwise: assign nothing to it**). **Assignments come from the issue
 list:** an open issue labelled with your name is yours; take them lowest number first
@@ -145,7 +155,8 @@ unless an issue says otherwise. Say which session you are in every issue and PR.
 developers can be added by adding a label.
 **Who gets what (owner, 2026-10-12, when dev2 and dev3 were archived):** coding goes to
 **CloudDev**; merges to **RepoManager**; deploys and any test or check that needs the
-server itself to **dev1**; the website's design, building and coding to **WebDev**. An
+server itself to **dev1**; the website's design, building and coding to **WebDev**; the story graph to
+**GraphEngineer** (owner, 2026-10-31). An
 issue that needs both code and the server is CloudDev's, with the server step handed to
 dev1 as a note on the issue.
 - **dev1** (Claude Code on the deployment server, in the main checkout): **the only
@@ -163,12 +174,35 @@ dev1 as a note on the issue.
   no live server. Cloud limits: no server access at all, GitHub only through `gh api`
   (REST; GraphQL is blocked), no deleting branches, and CI is its test runner
   (discord.py, psycopg and pytest aren't installed locally).
+  **Split in two (owner, 2026-10-28, to cut costs):** **CloudDev-lead** (the existing session,
+  still labelled `session: CloudDev`, on the larger model) keeps the design and every judgement
+  call, and hands simple, fully specified building work to **CloudDev-assistant**
+  (`session: CloudDev-assistant`, a cloud session on the smaller model). See "Leads hand off to
+  assistants" below.
 - **WebDev** (Claude Code, its own clone or worktree): the customer website in `web/` and the
   web API in `core/src/dmbot/web/`. Same rules as the other coding sessions: PRs into
   `development`, never deploys the bot, never touches the live server; dev1 deploys the
   API container. It owns the site's words with the ux-critic, never the plan prices or
   rules: those are owner decisions recorded in docs/PLAN.md, and a change to them is a
   question on the issue, not a commit.
+  **Split in two (owner, 2026-10-28, to cut costs):** **WebDev-lead** (the existing session,
+  still labelled `session: WebDev`, on the larger model) keeps everything above: design, words,
+  the web API's SQL doors and migrations, merge conflicts, and specifying tests. It hands simple,
+  fully specified building work to **WebDev-assistant** (`session: WebDev-assistant`, a cloud
+  session on the smaller model). See "Leads hand off to assistants" below.
+
+- **GraphEngineer** (Claude Code in the cloud, its own clone, on the larger model; owner,
+  2026-10-31): **the story graph** (story memory). It owns `core/src/dmbot/memory/` (the gate,
+  knowers, beliefs, connections and their readers) and the readers that turn sessions and lore into
+  names and connections (`lore_read.py`, `memory/background.py`, `extractor.py`, `claims.py`,
+  `readings.py`, `placing.py`), and the quality of what they find. Its role skill is
+  `.claude/skills/graph-engineer/SKILL.md`. It works from `docs/STORY_GRAPH_DESIGN.md` and
+  STORY_MEMORY sections 9, 9a and 9b. It may improve the design, but a change to a rule is a
+  design note on the issue first, and Supervisor rules on it before any code. Same rules as the
+  other coding sessions: PRs into `development`, never deploys, never touches the live server.
+  CloudDev-lead keeps the rest of `core/`. Before working in a file the other owns, each checks
+  the other's open PRs there and agrees the order on the issue.
+
 - **Supervisor** (Claude Code in the cloud; took over from the Master Web Session,
   `session: web`, on 2026-10-08): **runs the project and is the owner's point of
   contact.** It owns the architecture, the design, `docs/PLAN.md` and this file, the
@@ -208,6 +242,65 @@ dev1 as a note on the issue.
   one line under "Ready to deploy" in `docs/testing-status.log` (what to deploy, what to
   check) or comments on the PR, then takes its next issue. dev1 deploys, checks, and
   records it in `docs/testing-history.log`. The log is the queue; nobody waits in chat.
+  **Small deploys, several a day** (owner, 2026-10-29, after a 25-PR deploy): a big batch is
+  harder to check, to pin a fault on and to roll back. Supervisor hands over a deploy on #516
+  whenever `development` holds merged work that users will notice and CI is green on that exact
+  commit, aiming for a few PRs each and no more than about half a day between them. Each handover
+  names the exact commit, its migrations and what to check. dev1 deploys it after the owner's OK
+  in dev1's own session (one OK for each deploy, as before), never during a live session at the
+  table. A later deploy waits until the earlier one has been checked.
+
+### Leads hand off to assistants (owner, 2026-10-28)
+To cut costs, each coding role is two sessions: a **lead** on the larger model and an **assistant**
+on the smaller one. **WebDev-lead** (label `session: WebDev`) hands off to **WebDev-assistant**
+(`session: WebDev-assistant`). **CloudDev-lead** (label `session: CloudDev`) hands off to
+**CloudDev-assistant** (`session: CloudDev-assistant`). The assistant builds; it never decides. The
+lead decides everything before handing off, so the assistant never has to guess.
+- **What may go to WebDev-assistant:** a change to `web/` that follows a pattern already in the code
+  (a page section like an existing one, a button wired to an API call that already exists, its
+  `mock.ts` entry, `api.ts` types), tests whose cases the lead lists, words the lead gives exactly,
+  What's new entries, renames, and small follow-ups from a review.
+- **What may go to CloudDev-assistant:** a change in `core/` that copies a pattern already in the
+  code, with the pattern named: a loop or sweep wired like its neighbours (`_track`, its own `try`,
+  counts-only logs), a store method like an existing one in the same file, a type-only import moved
+  under `TYPE_CHECKING` or to the module the lead names (#2827), a setting read like the others,
+  tests whose cases the lead lists (including adding cases to an existing test file), docstrings and
+  comments the lead words, What's new entries, renames, and small follow-ups from a review (an
+  optional finding, a plainly correct nit).
+- **What stays with the lead:** design and choosing words. Anything that needs a judgement:
+  - migrations, `schema.py`, SQL, row-level security and the web doors;
+  - consent, privacy, campaign isolation, plan rules, keys and sign-in;
+  - the ears ↔ core protocol, AI prompts and AI output handling;
+  - async and concurrency design (locks, leases, retries, what runs once);
+  - a new feature or flow with no pattern yet;
+  - resolving merge conflicts.
+- **How to hand off:** the lead opens one issue per task, labelled with the assistant's name,
+  linking the parent issue, with these sections:
+  1. **Goal:** one sentence.
+  2. **Files:** each file to change, and the existing code to copy the pattern from (path and
+     function).
+  3. **Exact behaviour:** what the user sees and does, or what the code does, every word given in
+     quotes, and what each error or failure does.
+  4. **Tests:** the test file, and each test by name with what it checks.
+  5. **Commands:** the checks to run before pushing (web: `cd web && npm ci && npm run typecheck &&
+     npm test`; core: `cd core && ruff check . && ruff format --check . && mypy && pytest <the test
+     files>`, with CI's core job as the proof for database tests).
+  6. **Out of scope:** what not to touch.
+  7. **Done when:** the PR is open into `development` with `Fixes #N`, those checks pass, and CI is green.
+
+  A task the lead can't write down this way isn't ready to hand off: the lead does it or splits it.
+- **The assistant's rules:** work only from its own issues, lowest number first, exactly as
+  written. If anything is unclear, missing or contradicts the code, ask on the issue (one comment,
+  starting "Question for <lead>", for example "Question for CloudDev-lead") and take the next issue;
+  never guess. Run the `reviewer` agent on the diff before opening the PR. Never add a migration,
+  touch `schema.py` or SQL, resolve a merge conflict, or push to anyone else's branch;
+  WebDev-assistant also never changes `core/`. Merging `development` into its own branch is fine
+  when it merges cleanly; a conflict goes to the lead as a comment on the PR.
+- **Review:** the lead checks each assistant PR against the issue's spec and posts one comment
+  starting "<lead> check: matches the spec" or "<lead> check: changes needed" with a numbered list
+  (for example "CloudDev-lead check: matches the spec"). Supervisor's design review and
+  RepoManager's merge follow as for any PR, and Supervisor reviews only after the lead's check says
+  it matches. A PR sent back twice goes to the lead to finish.
 
 Only one copy of DMbot may be logged in to Discord at a time: they share the bot token.
 On the server that copy is the one in Docker Compose, run by dev1.
@@ -215,22 +308,41 @@ On the server that copy is the one in Docker Compose, run by dev1.
 ## Rounds: how every session finds work and wakes up (owner, 2026-10-16)
 Tasks live only in GitHub: an open issue labelled with your session's name is yours, lowest number
 first; a PR comment or review on your own PR is yours too. Nothing waits on chat memory, so a new
-session of a role works from this file and GitHub alone. **Each session is woken four times an hour (Supervisor once and dev1 twice, owner 2026-10-24)
-by scheduled tasks** (a scheduled task fires at most hourly, so four make the 15 minutes). The minutes
-are staggered so each role finds the others' work done:
+session of a role works from this file and GitHub alone. **Messages move the work; one scheduled
+round an hour is the safety net** (owner, 2026-10-28, to cut costs; it was four an hour from 2026-10-16).
+Each role is woken once an hour by a scheduled task (dev1 twice), at staggered minutes:
 
 | Role | Minutes past the hour | Kind |
 |---|---|---|
-| CloudDev | :01 (hourly check), :16, :31, :46 | long-lived cloud session |
-| WebDev | :02 (hourly check), :17, :32, :47 | long-lived cloud session |
-| Supervisor | :04 (hourly summary; once an hour, owner 2026-10-24) | long-lived cloud session |
-| RepoManager | :09, :24, :39, :54 (hourly check) | long-lived cloud session (moved off the owner's computer, 2026-10-16) |
+| CloudDev (CloudDev-lead) | :01 (hourly check) | long-lived cloud session |
+| WebDev (WebDev-lead) | :02 (hourly check) | long-lived cloud session |
+| Supervisor | :04 (hourly summary) | long-lived cloud session |
+| WebDev-assistant | :06 (hourly check) | long-lived cloud session (smaller model, from 2026-10-28) |
+| CloudDev-assistant | :07 (hourly check) | long-lived cloud session (smaller model, from 2026-10-28) |
+| GraphEngineer | :09 (hourly check) | long-lived cloud session (from 2026-10-31) |
+| RepoManager | :54 (hourly check) | long-lived cloud session (moved off the owner's computer, 2026-10-16) |
 | dev1 | :12 (hourly check), :42 (twice an hour, owner 2026-10-24) | long-lived, on the server |
+
+**Messages between sessions** (owner, 2026-10-28): every message wakes the session it goes to, so a
+message is sent only when the other session has something to do now. Each handoff sends one:
+- a developer who pushes a PR, or a fix to one, tells Supervisor (an assistant tells its lead);
+- a lead who files a handoff issue tells its assistant, and its check on an assistant PR tells
+  Supervisor when it matches;
+- Supervisor's approval or send-back tells RepoManager or the author;
+- RepoManager's send-back tells the author.
+
+Message with the session's id (`send_message`); the ids are in the latest "<role> online" notes on
+#516. **No acknowledgements** ("noted", "checked", "confirmed") unless Supervisor asks for one in
+that message. Reports still go on #516 or the issue, where nobody is woken by them.
 
 **Every round, whatever the role:** read your open issues and your PRs (send-backs first), read #516's
 last comments, act on what is yours, and stop. A round that finds nothing to do ends in one line.
-- **Developers (CloudDev, WebDev):** fix send-backs and red CI on your PRs first; then the next issue.
-  If your queue is empty, say so to Supervisor once.
+- **Developers (CloudDev-lead, CloudDev-assistant, WebDev-lead, WebDev-assistant, GraphEngineer):** fix send-backs
+  and red CI on your PRs first; then the next issue. If your queue is empty, say so to Supervisor
+  once (an assistant tells its lead instead).
+- **Leads (CloudDev-lead, WebDev-lead), every round:** first answer any "Question for <lead>" and
+  check any assistant PR waiting for its check, then hand off what is ready, so the assistant always
+  has two issues; then its own work.
 - **dev1:** deploy what Supervisor handed over (dry run, backup, bot before web-api), check it, write the
   testing logs; then live checks.
 - **RepoManager:** for every open PR, check compliance and the approval record, refresh stale bases,
@@ -238,7 +350,7 @@ last comments, act on what is yours, and stop. A round that finds nothing to do 
   report on #516. **Supervisor's merge lists on #516 are standing instructions**: act on them without
   asking the owner again, within the rules in "Workflow".
 - **Supervisor:** reviews, queues, #516, the owner's questions; on the :04 round, also check that every
-  role above has its four scheduled tasks bound to a live session, and rebind any that died.
+  role above has its scheduled task bound to a live session, and rebind any that died.
 
 **The hourly check** (the first minute in the table): even mid-task, stop at a safe point and post one
 status line on the issue you are working on (done, next, blocked on whom), then carry on.
@@ -339,12 +451,15 @@ terminal output or Discord screenshots copied to it.
 - **DM authority:** the bot never posts rulings to players or public channels. Advice
   goes only to `#dm-screen` / the DM. PlotBot and NPCBot record only DM-confirmed facts.
   **Table questions** (owner, 2026-10-14): anyone at the table may ask DMbot ("Hey DMbot…" or
-  typed in the campaign's `dmb-chat` channel), and the answer is posted in `dmb-chat` as
+  typed in the table's chat), and the answer is posted in the table's chat as
   `Q (who asked): <the question, shortened>` / `Answer: <as short as possible>`, with its source and
   at most one link (dndbeyond.com, or a public link shared with the campaign, such as its house
   rules). That is rules information, not a ruling, and it never holds DM-screen content: a
   player's question that needs it, or asks DMbot to decide, gets "That's one for your DM."; a
-  DM's goes to the DM privately. See docs/PLAN.md, "Table questions".
+  DM's goes to the DM privately. See docs/PLAN.md, "Table questions". **The table's chat**
+  (owner, 2026-11-01, #3212): the table's voice channel's own text chat, or the one text channel
+  the DM picked; DMbot makes no `dmb-chat` channel. **Every question DMbot asks** someone goes to
+  that person's private chat with DMbot, marked as from DMbot (owner, 2026-11-01, #3210).
 - **Transcripts are shared; the DM screen is not pushed to players.** Anyone in the
   Discord server may view and download a campaign's session transcripts (decided
   2026-10-05). Only people who agreed are ever recorded, and the consent request tells

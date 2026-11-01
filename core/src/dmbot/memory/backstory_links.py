@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from dmbot.db import Database
+from dmbot.memory import reputation_words
 from dmbot.memory.pronouns import is_pronoun
 
 MAX_WAITING = 300  # per campaign: a hostile text cannot grow the table
@@ -32,7 +33,21 @@ DECIDED_MAX = 60  # how a pronoun was settled (#2790), in fixed words (the colum
 DECIDED_BY_DM = "who-is-it: picked by the DM"  # the DM chose one of the names offered
 DECIDED_ELSE = "who-is-it: kept as someone else"  # the DM chose "someone else"
 UPLOAD_MAX = 120  # the upload's name and date (the column's limit)
+ID_MAX = 40  # an entry id (the column's limit)
 MERGE_HOPS = 6  # a merge chain is followed this far; a longer one is dropped
+
+
+def _already_known(
+    known: dict[tuple[str, str, str], str], a: str, predicate: str, b: str, detail: str
+) -> bool:
+    """Whether the campaign holds this connection already. A "knows" is known only when it says the
+    same about the feeling (#3175): hostile held and friendly waiting is a change, not a repeat."""
+    held = known.get((a, predicate, b))
+    if held is None:
+        return False
+    if predicate == "knows":
+        return reputation_words.sign_of(held) == reputation_words.sign_of(detail)
+    return True
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,6 +61,10 @@ class NewLink:
     truth: bool = False  # the DM said this upload is 100% truth (#2447): pinned when kept
     upload: str = ""  # the upload's name and date, as the DM saw them (#2650)
     decided: str = ""  # how a pronoun was settled (#2790): "who-is-it: accepted 95%", else ""
+    # The player character whose backstory it is (#2935): kept, it starts as known by them only.
+    known_by: str = ""
+    # Every player character knows it once kept (#2959): the upload's choice, or the AI's call.
+    world: int = 0  # lore_knowledge.NOT_KNOWN/SURE/GUESS
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,6 +83,8 @@ class NewWhich:
     truth: bool = False
     upload: str = ""
     decided: str = ""
+    known_by: str = ""  # as on `NewLink`
+    world: int = 0  # as on `NewLink`
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,6 +127,8 @@ class Waiting:
     upload: str = ""  # the upload it came from ("" for one queued before #2650)
     told: bool = False  # the DM screen has said it is ready (#2650)
     decided: str = ""  # how a pronoun was settled (#2790), else ""
+    known_by: str = ""  # the character who knows it once kept (#2935), else ""
+    world: int = 0  # how the players know it once kept: lore_knowledge.NOT_KNOWN/SURE/GUESS (#2959)
 
 
 class BackstoryLinks:
@@ -137,12 +160,13 @@ class BackstoryLinks:
                     continue
                 cur = await conn.execute(
                     "INSERT INTO backstory_links (guild_id, campaign_id, subject_id, predicate,"
-                    " object_id, quote, secret, detail, truth, created_at, upload, decided)"
-                    " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
-                    " ON CONFLICT DO NOTHING",  # (a pair already waiting keeps its first check)
+                    " object_id, quote, secret, detail, truth, created_at, upload, decided,"
+                    " known_by, world) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,"
+                    " %s) ON CONFLICT DO NOTHING",  # (a pair already waiting keeps its first check)
                     (guild_id, campaign_id, link.subject_id, link.predicate, link.object_id,
                      link.quote[:QUOTE_MAX], link.secret, link.detail, link.truth, now,
-                     link.upload[:UPLOAD_MAX], link.decided[:DECIDED_MAX]),
+                     link.upload[:UPLOAD_MAX], link.decided[:DECIDED_MAX], link.known_by[:ID_MAX],
+                     int(link.world)),
                 )  # fmt: skip
                 added += cur.rowcount
                 if cur.rowcount == 0 and link.truth:  # already waiting: the new word is 100% truth
@@ -206,12 +230,12 @@ class BackstoryLinks:
                 cur = await conn.execute(
                     "INSERT INTO backstory_which (guild_id, campaign_id, other_id,"
                     " other_is_subject, predicate, word, candidates, quote, secret, detail, truth,"
-                    " upload, created_at, decided) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s,"
-                    " %s, %s, %s, %s) ON CONFLICT DO NOTHING",
+                    " upload, created_at, decided, known_by, world) VALUES (%s, %s, %s, %s, %s, %s,"
+                    " %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING",
                     (guild_id, campaign_id, w.other_id, w.other_is_subject, w.predicate,
                      w.word[:80], candidates,
                      w.quote[:QUOTE_MAX], w.secret, w.detail, w.truth, w.upload[:UPLOAD_MAX], now,
-                     w.decided[:DECIDED_MAX]),
+                     w.decided[:DECIDED_MAX], w.known_by[:ID_MAX], int(w.world)),
                 )  # fmt: skip
                 added += cur.rowcount
         return added
@@ -288,8 +312,8 @@ class BackstoryLinks:
             await self._lock(conn, campaign_id)
             cur = await conn.execute(
                 "SELECT other_id, other_is_subject, predicate, candidates, quote, secret, detail,"
-                " truth, upload, created_at, decided FROM backstory_which WHERE guild_id = %s"
-                " AND campaign_id = %s AND id = %s",
+                " truth, upload, created_at, decided, known_by, world FROM backstory_which"
+                " WHERE guild_id = %s AND campaign_id = %s AND id = %s",
                 (guild_id, campaign_id, which_id),
             )
             row = await cur.fetchone()
@@ -331,12 +355,12 @@ class BackstoryLinks:
                     decided = (DECIDED_ELSE if outside else DECIDED_BY_DM) if row["decided"] else ""
                     await conn.execute(
                         "INSERT INTO backstory_links (guild_id, campaign_id, subject_id, predicate,"
-                        " object_id, quote, secret, detail, truth, created_at, upload, decided)"
-                        " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
-                        " ON CONFLICT DO NOTHING",
+                        " object_id, quote, secret, detail, truth, created_at, upload, decided,"
+                        " known_by, world) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,"
+                        " %s, %s) ON CONFLICT DO NOTHING",
                         (guild_id, campaign_id, a, row["predicate"], b, row["quote"],
                          row["secret"], row["detail"], row["truth"], row["created_at"],
-                         row["upload"], decided),
+                         row["upload"], decided, row["known_by"], int(row["world"])),
                     )  # fmt: skip
             await conn.execute(
                 "DELETE FROM backstory_which WHERE guild_id = %s AND campaign_id = %s AND id = %s",
@@ -354,7 +378,7 @@ class BackstoryLinks:
             await self._lock(conn, campaign_id)
             cur = await conn.execute(
                 "SELECT id, subject_id, predicate, object_id, quote, secret, detail, truth,"
-                " created_at, upload, told, decided"
+                " created_at, upload, told, decided, known_by, world"
                 " FROM backstory_links"
                 " WHERE guild_id = %s AND campaign_id = %s ORDER BY created_at, subject_id,"
                 " predicate, object_id",
@@ -384,7 +408,7 @@ class BackstoryLinks:
                     or a == b
                     or entities[a]["status"] == "rejected"
                     or entities[b]["status"] == "rejected"
-                    or (a, predicate, b) in known
+                    or _already_known(known, a, predicate, b, str(r["detail"]))
                     or (predicate in symmetric and (b, predicate, a) in known)
                     or key in seen
                 )
@@ -408,6 +432,7 @@ class BackstoryLinks:
                         str(entities[a]["name"]), str(entities[b]["name"]),
                         ready, str(r["detail"]), bool(r["truth"]), str(r["id"]),
                         str(r["upload"]), bool(r["told"]), str(r["decided"]),
+                        str(r["known_by"]), int(r["world"]),
                     )
                 )  # fmt: skip
             # Deletes first, then inserts: a moved row may land on a key a dropped row had.
@@ -417,12 +442,12 @@ class BackstoryLinks:
                 await conn.execute(
                     "INSERT INTO backstory_links (guild_id, campaign_id, subject_id,"
                     " predicate, object_id, quote, secret, detail, truth, created_at, id, upload,"
-                    " told, decided)"
-                    " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+                    " told, decided, known_by, world)"
+                    " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
                     " ON CONFLICT DO NOTHING",
                     (guild_id, campaign_id, a, predicate, b, r["quote"], r["secret"],
                      r["detail"], r["truth"], r["created_at"], r["id"], r["upload"], r["told"],
-                     r["decided"]),
+                     r["decided"], r["known_by"], int(r["world"])),
                 )  # fmt: skip
         return out
 
@@ -556,14 +581,18 @@ class BackstoryLinks:
     @staticmethod
     async def _known(
         conn: Any, guild_id: int, campaign_id: str, ids: set[str]
-    ) -> set[tuple[str, str, str]]:
+    ) -> dict[tuple[str, str, str], str]:
+        """The live confirmed connections among these entries, each with its detail (a `knows`
+        carries a feeling, #3175, so one that says something else is not already known)."""
         cur = await conn.execute(
-            "SELECT subject_id, predicate, object_id FROM memory_relations"
+            "SELECT subject_id, predicate, object_id, detail FROM memory_relations"
             " WHERE guild_id = %s AND campaign_id = %s AND status = 'confirmed'"
+            # (a connection that was ended is history: the same kind may be offered again, #3021)
+            " AND to_session_at IS NULL"
             " AND subject_id = ANY(%s) AND object_id = ANY(%s)",
             (guild_id, campaign_id, list(ids), list(ids)),
         )
         return {
-            (str(r["subject_id"]), str(r["predicate"]), str(r["object_id"]))
+            (str(r["subject_id"]), str(r["predicate"]), str(r["object_id"])): str(r["detail"])
             for r in await cur.fetchall()
         }

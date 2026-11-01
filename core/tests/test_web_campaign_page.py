@@ -73,11 +73,22 @@ class TheCampaignPage(Base):
         got = await read_campaign(self.web, self.session, self.ref_of(self.one))
         self.assertEqual(
             set(got["settings"]),
-            {"visibility", "level", "keepDays", "paused", "gameMasters"},
+            {
+                "visibility",
+                "level",
+                "keepDays",
+                "paused",
+                "storyMode",
+                "dndbeyondInvite",
+                "mainRules",
+                "fallbackRules",
+                "gameMasters",
+            },
         )
         self.assertEqual(got["settings"]["gameMasters"], 1)
         self.assertIn(got["settings"]["visibility"], ("private", "peek", "open"))
         self.assertFalse(got["settings"]["paused"])
+        self.assertEqual(got["settings"]["storyMode"], "off")  # the Shared story switch (#2985)
         self.assertIsNone(got["settings"]["keepDays"])  # kept for ever until the DM sets a time
         self.assertEqual(got["settings"]["level"], "normal")
         # A player of "One" (Bob only runs "Two") gets none; he is made a co-DM just below.
@@ -89,7 +100,8 @@ class TheCampaignPage(Base):
         async with self.db.guild(THURSDAY.id) as conn:
             await conn.execute(
                 "UPDATE campaigns SET transcript_keep_days = 90, paused = TRUE,"
-                " dm_screen_level = 'quiet', dm_screen_visibility = 'private'"
+                " dm_screen_level = 'quiet', dm_screen_visibility = 'private',"
+                " story_mode = 'guide'"
                 " WHERE guild_id = %s AND id = %s",
                 (THURSDAY.id, self.one.id),
             )
@@ -97,7 +109,8 @@ class TheCampaignPage(Base):
         self.assertEqual(
             co["settings"],
             {"visibility": "private", "level": "quiet", "keepDays": 90, "paused": True,
-             "gameMasters": 2},
+             "storyMode": "guide", "dndbeyondInvite": "", "mainRules": "2024",
+             "fallbackRules": "2014", "gameMasters": 2},
         )  # fmt: skip
 
     async def test_importing_is_said_for_the_campaigns_server(self) -> None:
@@ -173,6 +186,10 @@ class TheCampaignRoute(Base):
                     "level": "normal",
                     "keepDays": None,
                     "paused": False,
+                    "storyMode": "off",
+                    "dndbeyondInvite": "",
+                    "mainRules": "2024",
+                    "fallbackRules": "2014",
                     "gameMasters": 1,
                 },
             },

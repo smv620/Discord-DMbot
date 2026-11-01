@@ -226,6 +226,8 @@ class AnswerFirst(unittest.IsolatedAsyncioTestCase):
         for write in ("set_entity_type", "confirm_entity", "set_main_name", "update_alias",
                       "add_alias", "set_unique"):  # fmt: skip
             setattr(memory, write, self.slow())
+        memory.alias_knowers = self.slow({})  # (the Who-knows page reads these first, #2935)
+        memory.lookup_data = self.slow(LookupData(0, (), (), (), ()))
         memory.update_relation = self.slow(SimpleNamespace(batch=7))  # the Undo needs the batch
         memory.add_entity = self.slow(SimpleNamespace(value=ENTITIES[BELL]))
         memory.confirmed_name_for = AsyncMock(return_value=None)  # a new spelling: no clash
@@ -271,7 +273,7 @@ class AnswerFirst(unittest.IsolatedAsyncioTestCase):
                 "confirm_entity",
             ),
             "OneName._main": (one._main, "set_main_name"),
-            "OneName._secret": (one._secret, "update_alias"),
+            "OneName._who": (one._who, "alias_knowers"),
             "OneName._not_this": (one._not_this, "update_alias"),
             "ConfirmRemove._yes": (removing._yes, "update_relation"),
             "connect": (

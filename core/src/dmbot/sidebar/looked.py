@@ -15,6 +15,8 @@ from collections import OrderedDict
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+from dmbot.discord_limits import PHONE_LABEL_MAX, shorten
+from dmbot.rules import rule_card
 from dmbot.rules.index import Hit, Index
 from dmbot.sidebar.context import Context
 
@@ -49,13 +51,12 @@ def _place(hit: Hit) -> str:
 
 def of(ctx: Context, srd: Index) -> tuple[Looked, ...]:
     """The house rules, then the entries, that the answer was built from, in the order the
-    prompt had them. Lazy imports: the UI modules import the sidebar."""
-    from dmbot.ui import rule_card
-    from dmbot.ui.rule_lookup import choice_value
-
+    prompt had them."""
     items = [Looked(f"House rule {rule.number}", "your table") for rule in ctx.house_rules]
     items += [
-        Looked(rule_card.choice_label(hit.entry), _place(hit), choice_value(srd, hit.entry))
+        Looked(
+            rule_card.choice_label(hit.entry), _place(hit), rule_card.choice_value(srd, hit.entry)
+        )
         for hit in ctx.hits
     ]
     return tuple(items[:LIST_MAX])
@@ -76,13 +77,11 @@ def button_labels(items: Sequence[Looked]) -> list[str]:
     """What each line's button says: the name alone, cut to what a phone shows (25), and with its
     kind in front of the cut when two lines share a name ("Shield (spell)", "Shield (armor)").
     The full label is in the line above the button."""
-    from dmbot.ui import logic  # (the UI imports the sidebar: late)
-
     names = [item.label.split(" (", 1)[0] for item in items]
     out = []
     for item, name in zip(items, names, strict=True):
         shown = item.label.split(":", 1)[0].rstrip(")") + ")" if names.count(name) > 1 else name
-        out.append(logic.shorten(shown, logic.PHONE_LABEL_MAX))
+        out.append(shorten(shown, PHONE_LABEL_MAX))
     return out
 
 

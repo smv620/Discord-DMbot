@@ -25,9 +25,14 @@ FIX, KEEP = "fix", "keep"  # correction actions
 
 # Where a fact came from. "dm" is the DM's own word; everything else needs confirming.
 BACKGROUND_SOURCE = "background"  # a suggestion read from the DM's own story (#2167)
+PARTY_SOURCE = "party"  # the faction "The party", made by the rule that links the players (#3036)
+# A family link worked out from two stated ones (#2959, #2960): proposed for the DM, never stated
+WORKED_OUT_SOURCE = "worked_out"
 SOURCES = (
     *("dm", "character", "scan", "cleaner", "undo", "entitybot", "backup", "extractor"),
     BACKGROUND_SOURCE,
+    PARTY_SOURCE,
+    WORKED_OUT_SOURCE,
 )
 
 # What the story extractor's claims are (docs/STORY_MEMORY.md, section 1; #1297): proposals
@@ -217,6 +222,9 @@ class NewName:
     secrets: tuple[str, ...] = ()
     role: str | None = None  # for a character: player character, NPC or god
     note: str = ""  # shown with a suggestion until the DM decides (a quote, how it was found)
+    # Not held back from the players: the DM said the world knows this name (an upload's "World
+    # general knowledge", #2959). The list of who knows it follows once the DM confirms the name.
+    shown: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -243,6 +251,9 @@ class MoreNames:
     entity_id: str
     others: tuple[str, ...] = ()
     secrets: tuple[str, ...] = ()
+    # Saved as suggestions, not as the DM's word: names an AI read found for a character the DM
+    # confirmed already (#3034). The entry stays as it is.
+    proposed: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -284,12 +295,18 @@ class Entity:
     unnamed_anchor: str | None = None
     unnamed_role: str | None = None
     unnamed_what: str | None = None
+    # Whether the players are shown this entry, worked out by the lookup from the gate (the party's
+    # view of the lists of who knows what, #2995). None: not asked (a hand-made entry in a test, or
+    # a campaign with no player character yet, or an entry still only suggested): the flags answer.
+    seen_by_party: bool | None = None
 
     @property
     def unseen_by_players(self) -> bool:
         """The DM alone sees this entry: a clue only some know, one the players don't know yet, or
         a person the story never named (#2790). What lists, cards, answers and recaps hide from
         everyone but a DM."""
+        if self.seen_by_party is not None:
+            return not self.seen_by_party
         # (an unnamed person is also kept out of the names a spelling fix may complete: safe, and
         # at worst it fixes one line fewer)
         return self.audience_limited or self.hidden_from_players or self.unnamed
@@ -405,6 +422,9 @@ class Relation:
     directional: bool = False
     # How a pronoun was settled (#2790), in fixed words: the DM's card only, never a player's.
     decided: str | None = None
+    # The secret other name a join moved it through (#3037): a character that holds that name
+    # sees this connection on that name's own node, whatever else it knows. None for the rest.
+    via_alias_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -474,10 +494,20 @@ PERSPECTIVE_KINDS = (TRUTH, PARTY, PC_VIEW, NPC_VIEW)
 THEORY, ACCUSATION, REVEALED_FACT = "theory", "accusation", "revealed_fact"
 FALSE_EVIDENCE, SECRET_PLOT = "false_evidence", "secret_plot"
 MAGICALLY_VERIFIED, EVASION_UNDER_MAGIC = "magically_verified", "evasion_under_magic"
+# A point of view believes a speaker deliberately lied (#3091): not the same as being mistaken, the
+# lie is about the speaker as well as the statement. Both say the connection is false for that
+# point of view (so the confidence, how sure it is TRUE, is below 1.0), and both name who lied.
+SUSPECTED_LIE, KNOWN_LIE = "suspected_lie", "known_lie"
+LIE_STATUSES = (SUSPECTED_LIE, KNOWN_LIE)
 BELIEF_STATUSES = (
     THEORY, ACCUSATION, REVEALED_FACT, FALSE_EVIDENCE, SECRET_PLOT, MAGICALLY_VERIFIED,
-    EVASION_UNDER_MAGIC,
+    EVASION_UNDER_MAGIC, SUSPECTED_LIE, KNOWN_LIE,
 )  # fmt: skip
+# Why a belief changed (#3091): it revises an earlier belief of the same point of view (`update`,
+# `retraction`), is a competing theory beside it on another connection (`branch`), or was passed on
+# from another point of view (`told`).
+UPDATE, BRANCH, RETRACTION, TOLD = "update", "branch", "retraction", "told"
+CHANGE_KINDS = (UPDATE, BRANCH, RETRACTION, TOLD)
 KNOWN = 1.0  # a belief at this confidence is something the perspective holds as fact
 EVIDENCE_MAX = 20  # pointers a belief may cite
 EVIDENCE_ID_MAX = 100
@@ -508,6 +538,9 @@ class Belief:
     seq: int
     recorded_at: int
     pinned: bool = False  # the DM's 📌 100% truth (#2447): only on The truth's belief
+    derived_from: str | None = None  # the earlier belief this one revises or came from (#3091)
+    change_kind: str | None = None  # how: one of CHANGE_KINDS; kept when the earlier one is gone
+    game_time: int | None = None  # game minutes it was made at, live in a session; None: not known
 
     @property
     def known(self) -> bool:

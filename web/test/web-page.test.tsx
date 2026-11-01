@@ -1,11 +1,11 @@
 /** @jsxImportSource preact */
 // @vitest-environment happy-dom
-// The relationship web page (#2324): re-centring, steps out, the big-web question, the connection panel
+// The Story Graph page (#2324): re-centring, steps out, the big-web question, the connection panel
 // and its edits, and what a server manager who isn't a DM never sees.
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { BIG_WEB } from "../src/content/web-words";
+import { BIG_WEB, webPage as w } from "../src/content/web-words";
 import type { WebGraph } from "../src/account/api";
 import { mockApi } from "../src/account/mock";
 import Web, { webRefFromPath } from "../src/account/Web";
@@ -53,11 +53,12 @@ describe("reading the web", () => {
     await open();
     // The drawing is hidden from screen readers; the lists carry the same names.
     expect(document.querySelector("svg[aria-label^='A map of']")).toBeTruthy();
-    expect(screen.getByRole("heading", { name: "The same web, as a list" })).toBeTruthy();
+    expect(screen.getByText("The same web, as a list")).toBeTruthy();
   });
 
   it("puts another name in the middle", async () => {
     const api = await open();
+    fireEvent.click(screen.getByRole("button", { name: "Expand all" }));
     const button = screen.getAllByRole("button", { name: /^Put .* in the middle$/ })[0] as HTMLElement;
     fireEvent.click(button);
     await waitFor(() => expect(api.calls.filter((c) => c.startsWith("webGraph")).length).toBeGreaterThan(1));
@@ -231,6 +232,7 @@ describe("saying no to a very big first draw", () => {
 describe("changing a name", () => {
   it("lets a DM change spelling and kind, and shows the change", async () => {
     const api = await open();
+    fireEvent.click(screen.getByRole("button", { name: "Expand all" }));
     fireEvent.click(screen.getAllByRole("button", { name: /^Change / })[0] as HTMLElement);
     const group = screen.getByRole("group", { name: /^About / });
     fireEvent.input(within(group).getByLabelText("Spelling"), { target: { value: "Zed the Bold" } });
@@ -285,17 +287,175 @@ describe("how many more connections a line has", () => {
     render(<Web api={stub(true)} path={at()} />);
     await screen.findByText("3 names, 2 lines");
     for (const w of ["Mira serves Garrick", "Mira owes Garrick", "Mira fears Garrick", "Mira hunts Garrick"]) {
-      expect(screen.getByText(new RegExp(w))).toBeTruthy();
+      expect(within(document.getElementById("web-list")!).getByText(new RegExp(w))).toBeTruthy();
     }
     expect(document.body.textContent).not.toContain("↔");
-    expect(document.querySelector(".web-edge-text")?.textContent).toContain("(+3)");
+    // At rest a line with several connections says how many; hovering a name shows that name's lines in words.
+    await waitFor(() => expect(document.querySelector(".web-edge-text")?.textContent ?? "").toContain("4 connections"));
+    const mira = [...document.querySelectorAll(".web-node")].find((n) => n.textContent?.includes("Mira"))!;
+    fireEvent.pointerEnter(mira);
+    await waitFor(() => expect(document.querySelector(".web-edge-text")?.textContent ?? "").toContain("(+3)"));
   });
 
   it("recounts for someone who is not a DM, and drops a secret name", async () => {
     render(<Web api={stub(false)} path={at()} />);
     await screen.findByText("2 names, 1 line");
-    expect(screen.getByText(/Mira owes Garrick/)).toBeTruthy();
+    expect(within(document.getElementById("web-list")!).getByText(/Mira owes Garrick/)).toBeTruthy();
     expect(document.body.textContent).not.toMatch(/Hidden Heir/);
     expect(document.body.textContent).not.toMatch(/fears|hunts/);
+  });
+});
+
+describe("the Open its page link", () => {
+  it("a name marked page true has the Open its page link, pointing at the NPC page address", async () => {
+    await open();
+    fireEvent.click(screen.getByRole("button", { name: "Expand all" }));
+    fireEvent.click(screen.getByRole("button", { name: "Expand all" }));
+    fireEvent.click(screen.getByRole("button", { name: "Expand all" }));
+    const links = screen.getAllByRole("link", { name: (label: string) => label.startsWith(w.openItsPage) });
+    expect(links.length).toBeGreaterThan(0);
+    expect(links[0]!.getAttribute("href")).toMatch(/^\/account\/npc\/100\.cmp1\/[^/]+$/);
+  });
+
+  it("a name without page, or with page false, has no link", async () => {
+    const api = mockApi("table");
+    const real = api.webGraph!.bind(api);
+    api.webGraph = async (...args) => {
+      const got = await real(...args);
+      return { ...got, nodes: got.nodes.map((n) => ({ ...n, page: false })) };
+    };
+    const overview = api.webOverview!.bind(api);
+    api.webOverview = async (...args) => {
+      const got = await overview(...args);
+      return {
+        ...got,
+        tray: got.tray.map((n) => ({ ...n, page: false })),
+        groups: got.groups.map((g) => ({ ...g, page: false })),
+      };
+    };
+    render(<Web api={api} path={at(".web-lonely")} />);
+    await screen.findByText(/names?, \d+ lines?/);
+    await screen.findByRole("region", { name: new RegExp(w.trayHeading) });
+    expect(screen.queryAllByRole("link", { name: (label: string) => label.startsWith(w.openItsPage) })).toHaveLength(0);
+    expect(screen.queryByText(w.openItsPage)).toBeNull();
+  });
+
+  it("the link's words appear once per link and nowhere else on the page", async () => {
+    await open();
+    fireEvent.click(screen.getByRole("button", { name: "Expand all" }));
+    const shown = (document.body.textContent ?? "").split(w.openItsPage).length - 1;
+    expect(shown).toBe(screen.getAllByRole("link", { name: (label: string) => label.startsWith(w.openItsPage) }).length);
+  });
+});
+
+describe("every connection between two names, in both directions (#2934)", () => {
+  it("groups them as Both ways, then one column for each way", async () => {
+    const api = mockApi("table");
+    api.webSize = async () => ({ names: 2 });
+    api.webGraph = async () => ({
+      center: "a",
+      nodes: [
+        { id: "a", name: "Mira", kind: "npc" },
+        { id: "b", name: "Garrick", kind: "npc" },
+      ],
+      edges: [
+        {
+          a: "a",
+          b: "b",
+          label: "serves",
+          more: 2,
+          links: [
+            { id: "l1", words: "married to", secret: false, direction: "both" },
+            { id: "l2", words: "serves", secret: false, direction: "a-b" },
+            { id: "l3", words: "owes", secret: false, direction: "b-a" },
+          ],
+        },
+      ],
+      truncated: false,
+      maxHops: 3,
+      canEdit: true,
+    });
+    render(<Web api={api} path={at()} />);
+    await screen.findByText("2 names, 1 line");
+    fireEvent.click((await screen.findAllByRole("button", { name: /^See the connections between/ }))[0] as HTMLElement);
+    const panel = (await screen.findByRole("heading", { level: 2, name: /.+ and .+/ })).closest("section") as HTMLElement;
+    const both = within(panel).getByRole("region", { name: "Both ways" });
+    expect(within(both).getByText(/married to/)).toBeTruthy();
+    const forward = within(panel).getByRole("region", { name: "Mira → Garrick" });
+    expect(within(forward).getByText(/Mira serves Garrick/)).toBeTruthy();
+    expect(within(forward).queryByText(/owes/)).toBeNull();
+    const back = within(panel).getByRole("region", { name: "Garrick → Mira" });
+    expect(within(back).getByText(/Garrick owes Mira/)).toBeTruthy();
+    // Each connection keeps its own number, so its words box is still found by "connection N".
+    expect(within(panel).getByLabelText("Words for connection 3")).toBeTruthy();
+  });
+});
+
+describe("the kind of each connection in the line panel (#2934)", () => {
+  it("shows the kind's word and a dot above each connection", async () => {
+    const api = mockApi("table");
+    api.webSize = async () => ({ names: 2 });
+    api.webGraph = async () => ({
+      center: "a",
+      nodes: [
+        { id: "a", name: "Mira", kind: "npc" },
+        { id: "b", name: "Garrick", kind: "npc" },
+      ],
+      edges: [{ a: "a", b: "b", label: "serves", more: 0, links: [{ id: "l1", words: "serves", secret: false, direction: "a-b", kind: "work" }] }],
+      truncated: false,
+      maxHops: 3,
+      canEdit: true,
+    });
+    render(<Web api={api} path={at()} />);
+    await screen.findByText("2 names, 1 line");
+    fireEvent.click((await screen.findAllByRole("button", { name: /^See the connections between/ }))[0] as HTMLElement);
+    const panel = (await screen.findByRole("heading", { level: 2, name: /.+ and .+/ })).closest("section") as HTMLElement;
+    expect(panel.querySelector(".web-kindmark")?.textContent?.trim()).toBe("Work");
+    expect(panel.querySelector(".web-dot")).not.toBeNull();
+  });
+});
+
+
+describe("the list at the bottom (#2984)", () => {
+  const toggles = () => [...document.querySelectorAll<HTMLButtonElement>(".web-name-toggle")];
+
+  it("sits after the map, closed, and the map comes right after the search", async () => {
+    await open();
+    const list = document.getElementById("web-list") as HTMLDetailsElement;
+    expect(list.tagName).toBe("DETAILS");
+    expect(list.open).toBe(false);
+    const map = document.querySelector(".web-map")!;
+    expect(map.compareDocumentPosition(list) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // The two hint lines make way: they come after the map, not before it.
+    const lead = screen.getByText(w.lead);
+    expect(map.compareDocumentPosition(lead) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("shows only the names until one is opened, then its buttons", async () => {
+    await open();
+    expect(toggles().length).toBeGreaterThan(1);
+    expect(screen.queryAllByRole("button", { name: /^Put .* in the middle$/ })).toHaveLength(0);
+    expect(screen.queryAllByRole("button", { name: /^Change / })).toHaveLength(0);
+    const first = toggles().find((t) => !t.textContent?.includes(w.inMiddle))!;
+    expect(first.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(first);
+    expect(first.getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getAllByRole("button", { name: /^Put .* in the middle$/ })).toHaveLength(1);
+    fireEvent.click(first);
+    expect(screen.queryAllByRole("button", { name: /^Put .* in the middle$/ })).toHaveLength(0);
+  });
+
+  it("opens every name with Expand all and closes them with Collapse all", async () => {
+    await open();
+    fireEvent.click(screen.getByRole("button", { name: w.expandAll }));
+    expect(toggles().every((t) => t.getAttribute("aria-expanded") === "true")).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: w.collapseAll }));
+    expect(toggles().every((t) => t.getAttribute("aria-expanded") === "false")).toBe(true);
+  });
+
+  it("opens the list when the skip link is used", async () => {
+    await open();
+    fireEvent.click(screen.getByRole("link", { name: w.skipMap }));
+    expect((document.getElementById("web-list") as HTMLDetailsElement).open).toBe(true);
   });
 });

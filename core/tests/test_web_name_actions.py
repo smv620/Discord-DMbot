@@ -5,10 +5,14 @@ names throughout."""
 
 from __future__ import annotations
 
+import unittest
+from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock, PropertyMock, patch
 
 import httpx
 
+from dmbot.bot import DMBot
 from dmbot.memory import web_actions as wa
 from dmbot.memory.models import DM as DM_SOURCE
 from dmbot.web import all_names, sessions
@@ -30,15 +34,19 @@ class Acting(Listing):
     async def queue(self, entity: str, **body: Any) -> str:
         return await all_names.queue_action(self.web, self.session, self.cref, entity, body)
 
-    async def apply_all(self, dms: Any = None) -> list[wa.Outcome]:
+    async def apply_all(self, dms: Any = None, look_up: Any = None) -> list[wa.Outcome]:
         """The bot's loop for the queue: claim, apply, finish, until it is empty."""
         done = []
         while (action := await self.actions.claim_next(self.g)) is not None:
             outcome = await wa.apply(
-                self.memory, self.g, {ALICE.id} if dms is None else dms, action
+                self.memory, self.g, {ALICE.id} if dms is None else dms, action, look_up=look_up
             )
             await self.actions.finish(
-                self.g, action, error=outcome.error, result_id=outcome.result_id
+                self.g,
+                action,
+                error=outcome.error,
+                result_id=outcome.result_id,
+                result_other=outcome.result_other,
             )
             done.append(outcome)
         return done
@@ -78,14 +86,174 @@ class TheActions(Acting):
         names = [n["name"] for n in (await self.page())["names"]]
         self.assertIn("Mira Voss", names)
 
-    async def test_kind_changes_the_kind_and_refuses_a_players_character(self) -> None:
+    async def test_kind_changes_the_kind(self) -> None:
         answer = await self.queue(self.keep, action="kind", kind="faction")
         await self.apply_all()
         self.assertEqual((await self.poll(answer))["row"]["kind"], "faction")
-        bad = await self.queue(self.keep, action="kind", kind="player_character")
+
+    async def test_a_name_becomes_a_player_character_with_no_player_yet(self) -> None:
+        answer = await self.queue(self.mira, action="kind", kind="player_character")
         await self.apply_all()
-        self.assertEqual((await self.poll(bad))["error"], "bad_kind")
-        self.assertEqual((await self.poll(bad))["state"], "failed")
+        done = await self.poll(answer)
+        self.assertEqual((done["state"], done["error"]), ("done", ""))
+        self.assertEqual(done["row"]["kind"], "player_character")
+        entity = await self.memory.entity(self.g, self.one.id, self.mira)
+        assert entity is not None
+        self.assertTrue(entity.is_player_character)
+        self.assertIsNone(entity.played_by)
+
+    PLAYER = "123456789012345678"
+
+    def looking(self, found: wa.PlayerLookup | None, asked: list[int] | None = None) -> Any:
+        async def look_up(user_id: int) -> wa.PlayerLookup | None:
+            if asked is not None:
+                asked.append(user_id)
+            return found
+
+        return look_up
+
+    async def test_a_discord_id_is_looked_up_for_the_dm_to_confirm_and_nothing_is_written(
+        self,
+    ) -> None:
+        asked: list[int] = []
+        version = await self.memory.version(self.g, self.one.id)
+        answer = await self.queue(
+            self.mira, action="kind", kind="player_lookup", player=self.PLAYER
+        )
+        self.assertEqual((await self.poll(answer))["state"], "waiting")
+        found = wa.PlayerLookup(name="SomeUser", bot=False, in_server=True)
+        await self.apply_all(look_up=self.looking(found, asked))
+        done = await self.poll(answer)
+        self.assertEqual((done["state"], done["error"]), ("done", ""))
+        self.assertEqual(done["player"], {"name": "SomeUser", "inServer": True})
+        self.assertEqual(asked, [int(self.PLAYER)])
+        self.assertEqual(
+            await self.memory.version(self.g, self.one.id), version
+        )  # no change at all
+        entity = await self.memory.entity(self.g, self.one.id, self.mira)
+        assert entity is not None
+        self.assertFalse(entity.is_player_character)
+        self.assertIsNone(entity.played_by)
+
+    async def test_someone_not_in_the_server_yet_is_shown_as_such_and_a_long_name_is_cut(
+        self,
+    ) -> None:
+        found = wa.PlayerLookup(name="N" * 40, bot=False, in_server=False)
+        answer = await self.queue(
+            self.mira, action="kind", kind="player_lookup", player=self.PLAYER
+        )
+        await self.apply_all(look_up=self.looking(found))
+        done = await self.poll(answer)
+        self.assertEqual(done["player"], {"name": "N" * 31, "inServer": False})
+
+    async def test_a_bot_an_unknown_id_and_a_failed_lookup_each_say_so_and_link_nothing(
+        self,
+    ) -> None:
+        async def broken(_user_id: int) -> wa.PlayerLookup | None:
+            raise RuntimeError("Discord is down")
+
+        for look_up, error in (
+            (self.looking(wa.PlayerLookup("Botty", True, True)), "bot_player"),
+            (self.looking(None), "unknown_id"),
+            (broken, "lookup_failed"),
+            (None, "lookup_failed"),
+        ):
+            for kind, extra in (("player_lookup", {}), ("player_character", {"confirmed": True})):
+                answer = await self.queue(
+                    self.mira, action="kind", kind=kind, player=self.PLAYER, **extra
+                )
+                await self.apply_all(look_up=look_up)
+                done = await self.poll(answer)
+                self.assertEqual((done["state"], done["error"]), ("failed", error), kind)
+                self.assertIsNone(done["player"])
+            entity = await self.memory.entity(self.g, self.one.id, self.mira)
+            assert entity is not None
+            self.assertFalse(entity.is_player_character)
+            self.assertIsNone(entity.played_by)
+
+    async def test_a_confirmed_id_links_the_player_whether_or_not_they_are_in_the_server(
+        self,
+    ) -> None:
+        asked: list[int] = []
+        found = wa.PlayerLookup(name="SomeUser", bot=False, in_server=False)
+        answer = await self.queue(
+            self.mira, action="kind", kind="player_character", player=self.PLAYER, confirmed=True
+        )
+        await self.apply_all(look_up=self.looking(found, asked))
+        self.assertEqual((await self.poll(answer))["state"], "done")
+        self.assertEqual(asked, [int(self.PLAYER)])  # asked again before it links
+        entity = await self.memory.entity(self.g, self.one.id, self.mira)
+        assert entity is not None
+        self.assertTrue(entity.is_player_character)
+        self.assertEqual(entity.played_by, int(self.PLAYER))
+
+    async def test_nothing_is_linked_without_the_confirmation_and_no_name_is_kept(self) -> None:
+        self.assertEqual(
+            await self.refused_action(
+                self.mira, action="kind", kind="player_character", player=self.PLAYER
+            ),
+            "bad_player",
+        )
+        self.assertEqual(
+            await self.refused_action(
+                self.mira, action="kind", kind="player_character", player=self.PLAYER,
+                confirmed="yes",
+            ),
+            "bad_player",
+        )  # fmt: skip
+        self.assertEqual(
+            await self.refused_action(self.mira, action="kind", kind="player_lookup"), "bad_player"
+        )
+        # The bot too: a saved action without the confirmation links no one, whatever Discord says.
+        async with self.db.guild(self.g) as conn:
+            await conn.execute(
+                "INSERT INTO name_actions (guild_id, campaign_id, id, entity_id, user_id, action,"
+                " kind, target_id, text, flag, created_at) VALUES (%s, %s, %s, %s, %s, 'kind',"
+                " 'player_character', '', %s, false, 1)",
+                (self.g, self.one.id, "f" * 32, self.mira, ALICE.id, self.PLAYER),
+            )
+        found = wa.PlayerLookup(name="SomeUser", bot=False, in_server=True)
+        await self.apply_all(look_up=self.looking(found))
+        entity = await self.memory.entity(self.g, self.one.id, self.mira)
+        assert entity is not None
+        self.assertIsNone(entity.played_by)
+        # Only the ID is ever stored on the character: no column of its row holds the name.
+        self.assertNotIn("SomeUser", str(entity))
+
+    async def test_a_player_needs_a_player_character_and_a_real_looking_id(self) -> None:
+        for body in (
+            {"kind": "faction", "player": "123456789012345678"},
+            {"kind": "player_character", "player": "Mira", "confirmed": True},
+            {"kind": "player_character", "player": "<@123456789012345678>", "confirmed": True},
+            {"kind": "player_character", "player": "12345", "confirmed": True},
+            {"kind": "player_character", "player": 123456789012345678, "confirmed": True},
+            {"kind": "player_lookup", "player": "Mira"},
+        ):
+            self.assertEqual(
+                await self.refused_action(self.mira, action="kind", **body), "bad_player"
+            )
+
+    async def test_the_door_itself_takes_text_only_for_a_player_character_and_only_digits(
+        self,
+    ) -> None:
+        async with self.db.user(self.session.user_id, session=self.session.id_hash) as conn:
+            await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(self.g),))
+            for kind, text, status in (
+                ("player_character", "123456789012345678", "ok"),
+                ("player_character", "", "ok"),
+                ("player_character", "Mira", "bad_text"),
+                ("player_character", "0123456789012345", "bad_text"),
+                ("player_lookup", "123456789012345678", "ok"),
+                ("player_lookup", "Mira", "bad_text"),
+                ("faction", "123456789012345678", "bad_text"),
+            ):
+                cur = await conn.execute(
+                    "SELECT dmbot_web_name_action_add(%s, %s, %s, 'kind', %s, '', %s, false) AS r",
+                    (self.g, self.one.id, self.mira, kind, text),
+                )
+                row = await cur.fetchone()
+                assert row is not None
+                self.assertEqual(row["r"]["status"], status, (kind, text))
 
     async def test_other_names_are_added_and_removed_and_a_taken_one_is_refused(self) -> None:
         added = await self.queue(self.keep, action="add-other", other="the Old Keep")
@@ -446,6 +614,7 @@ class TheRoutes(Acting):
             ({"action": "remove"}, 400, "needs_confirm"),
             ({"action": "spell", "name": "x" * 101}, 400, "too_long"),
             ({"action": "kind", "kind": "!"}, 400, "bad_kind"),
+            ({"action": "kind", "kind": "player_character", "player": "Mira"}, 400, "bad_player"),
             ({"action": "nope"}, 400, "bad_action"),
         ):
             got = await self.client.post(url, json=body, headers=HEADERS)
@@ -470,3 +639,65 @@ class TheDoors(Acting):
             self.assertEqual(
                 callers(door), {"schema.py", "web/all_names.py", "web/relationships.py"}
             )
+
+
+class WhileClosing(unittest.IsolatedAsyncioTestCase):
+    async def test_while_closing_name_actions_claims_nothing(self) -> None:
+        b: Any = DMBot.__new__(DMBot)
+        b.name_actions = SimpleNamespace(claim_next=AsyncMock(return_value=None))
+        b.memory = object()
+        b._closing = True
+        guilds = PropertyMock(return_value=[SimpleNamespace(id=1)])
+        with patch.object(DMBot, "guilds", guilds):
+            await b.run_name_actions()
+        b.name_actions.claim_next.assert_not_awaited()
+
+
+class ThePlayerLookup(unittest.IsolatedAsyncioTestCase):
+    """The bot's side of "Please confirm: <name>" (#3004): one lookup shared with the Discord half
+    (`ui.player_id.look_up`), on stand-ins for Discord."""
+
+    def lookup(self, user: Any, member: Any = None, member_gone: bool = False) -> Any:
+        import discord
+
+        class FakeGuild:
+            def get_member(self, _id: int) -> Any:
+                return member
+
+            async def fetch_member(self, _id: int) -> Any:
+                if member_gone:
+                    raise discord.NotFound(SimpleNamespace(status=404, reason="Not Found"), "x")
+                return None
+
+        async def fetch_user(_id: int) -> Any:
+            if isinstance(user, Exception):
+                raise user
+            return user
+
+        fake = SimpleNamespace(get_guild=lambda _gid: FakeGuild(), fetch_user=fetch_user)
+        return DMBot._player_lookup(fake, 1)  # type: ignore[arg-type]
+
+    async def test_a_member_is_in_the_server_and_shown_by_display_name(self) -> None:
+        user = SimpleNamespace(global_name="Some User", name="someuser", bot=False)
+        found = await self.lookup(user, member=user)(123456789012345678)
+        self.assertEqual(found, wa.PlayerLookup("Some User", False, True))
+
+    async def test_someone_not_in_the_server_is_found_and_named_by_username(self) -> None:
+        user = SimpleNamespace(global_name=None, name="someuser", bot=False)
+        found = await self.lookup(user, member_gone=True)(123456789012345678)
+        self.assertEqual(found, wa.PlayerLookup("someuser", False, False))
+
+    async def test_a_bot_is_said_to_be_one(self) -> None:
+        user = SimpleNamespace(global_name=None, name="botty", bot=True)
+        found = await self.lookup(user)(123456789012345678)
+        assert found is not None
+        self.assertTrue(found.bot)
+
+    async def test_an_id_discord_does_not_know_is_none_and_a_failure_is_never_none(self) -> None:
+        import discord
+
+        gone = discord.NotFound(SimpleNamespace(status=404, reason="Not Found"), "Unknown User")
+        self.assertIsNone(await self.lookup(gone)(123456789012345678))
+        broken = discord.HTTPException(SimpleNamespace(status=500, reason="Oops"), "down")
+        with self.assertRaises(RuntimeError):
+            await self.lookup(broken)(123456789012345678)

@@ -1,10 +1,13 @@
 """A DM's choices on the website's Settings page (#2463): who can see the DM screen, how much DMbot
 says, how long transcripts are kept. Queued by the website's own database role, applied by the bot
-the way Discord's ⚙️ Settings buttons apply them, re-checked when applied, and read back only by the
-DM who made them. Invented names throughout."""
+the way Discord's ⚙️ Manage DMbot buttons apply them, re-checked when applied, and read back only
+by the DM who made them. Invented names throughout."""
 
 from __future__ import annotations
 
+import time
+import unittest
+from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
@@ -16,12 +19,14 @@ import psycopg.errors
 from dmbot import bot as bot_module
 from dmbot.bot import DMBot
 from dmbot.campaigns import Campaign, CampaignStore
-from dmbot.campaigns.models import DM_SCREEN_LEVELS_OFFERED
+from dmbot.campaigns.models import DM_SCREEN_LEVELS_OFFERED, STORY_MODES, CampaignError
+from dmbot.campaigns.store import NO_ROOM_TO_UNPAUSE, NOT_THE_OWNER_PAUSE
 from dmbot.config import Settings as BotSettings
 from dmbot.dm_screen import messages, setup_dm_screen
 from dmbot.dm_screen import web_settings as ws
 from dmbot.dm_screen.channel import DMScreenError
 from dmbot.dm_screen.transcript_keep import saved_text
+from dmbot.rules import optional
 from dmbot.rules.optional import OptionalRule
 from dmbot.web import campaign_settings, sessions
 from dmbot.web.app import create_app
@@ -70,6 +75,34 @@ class FakeBot:
         self.calls.append(("optional_rule", f"{rule.id}:{turn_on}"))
         await self.store.set_optional_rule(campaign.guild_id, campaign.id, rule.id, turn_on)
         return True
+
+    async def apply_story_mode(
+        self, campaign: Campaign, mode: str, confirmed_by: int | None
+    ) -> Campaign:
+        self.calls.append(("story_mode", f"{mode}:{confirmed_by}"))
+        return await self.store.set_story_mode(
+            campaign.guild_id, campaign.id, mode, confirmed_by=confirmed_by
+        )
+
+    no_room = False  # the owner's plan has no free place for an unpause
+
+    async def apply_pause(self, campaign: Campaign, paused: bool, user_id: int) -> Campaign:
+        self.calls.append(("pause", f"{paused}"))
+        if not paused and self.no_room:  # (the bot asks the plan first, with the plan's words)
+            raise CampaignError(NO_ROOM_TO_UNPAUSE)
+        return await self.store.set_paused(
+            campaign.guild_id, campaign.id, user_id, paused, int(time.time())
+        )
+
+    live = False  # a session of the campaign is running
+
+    async def apply_rulesets(self, campaign: Campaign, main: str, fallback: str) -> bool:
+        self.calls.append(("rulesets", f"{main}/{fallback}"))
+        await self.store.set_rulesets(campaign.guild_id, campaign.id, main, fallback)
+        return self.live
+
+    async def optional_overrides(self, campaign: Campaign) -> dict[str, bool]:
+        return await self.store.optional_rule_overrides(campaign.guild_id, campaign.id)
 
     async def find_member(self, guild_id: int, user_id: int) -> ws.Member | None:
         return ws.Member("Someone", False)
@@ -132,6 +165,237 @@ class Settings(Base):
 
 
 class TheChoices(Settings):
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        # A free place on the plan, as the bot's real check finds for a subscriber; the "no room"
+        # case is the stand-in bot's `no_room`, which gives the plan's own words.
+        self.campaigns._has_free_slot = AsyncMock(return_value=True)
+
+    async def queue_pause(self, on: bool) -> str:
+        # (the website's switch for this choice is on here: the bot half is what is tested)
+        return await campaign_settings.queue_setting(
+            self.web, self.session, self.cref, {"setting": "pause", "on": on}, pause_on=True
+        )
+
+    def pause_item(self, user: int, on: bool | None, value: str = "") -> ws.Setting:
+        return ws.Setting("x", self.one.id, user, ws.PAUSE, value, turn_on=on)
+
+    async def test_the_owner_pauses_then_unpauses(self) -> None:
+        answer = await self.queue_pause(True)
+        self.assertEqual([o.error for o in await self.run_bot()], [""])
+        self.assertTrue((await self.campaign()).paused)
+        self.assertEqual((await self.poll(answer))["state"], "done")
+        await self.queue_pause(False)
+        outcomes = await self.run_bot()
+        self.assertEqual([o.error for o in outcomes], [""])
+        self.assertFalse((await self.campaign()).paused)
+        self.assertEqual(self.bot.calls, [("pause", "True"), ("pause", "False")])
+
+    async def test_a_game_master_who_is_not_the_owner_gets_the_owner_words_and_nothing_changes(
+        self,
+    ) -> None:
+        await self.campaigns.add_dm(self.g, self.one.id, 3003)
+        for on in (True, False):
+            outcome = await ws.apply(self.bot, self.g, self.pause_item(3003, on))
+            self.assertEqual((outcome.error, outcome.note), (ws.REFUSED, NOT_THE_OWNER_PAUSE))
+        self.assertFalse((await self.campaign()).paused)
+
+    async def test_an_unpause_with_no_free_place_fails_with_the_plans_words_and_stays_paused(
+        self,
+    ) -> None:
+        await self.queue_pause(True)
+        await self.run_bot()
+        self.bot.no_room = True
+        outcome = await ws.apply(self.bot, self.g, self.pause_item(ALICE.id, False))
+        self.assertEqual((outcome.error, outcome.note), (ws.REFUSED, NO_ROOM_TO_UNPAUSE))
+        self.assertTrue((await self.campaign()).paused)
+
+    async def test_a_repeat_is_done_with_the_already_note_and_asks_nothing_of_the_bot(self) -> None:
+        paused = await ws.apply(self.bot, self.g, self.pause_item(ALICE.id, False))
+        self.assertEqual((paused.error, paused.note), ("", ws.NOT_PAUSED))
+        await self.queue_pause(True)
+        await self.run_bot()
+        self.bot.calls.clear()
+        again = await ws.apply(self.bot, self.g, self.pause_item(ALICE.id, True))
+        self.assertEqual((again.error, again.note), ("", ws.ALREADY_PAUSED))
+        self.assertEqual(self.bot.calls, [])  # (an unpause without room is not asked either way)
+
+    async def test_the_notes_say_what_happened_in_plain_words(self) -> None:
+        a = await self.queue_pause(True)
+        await self.run_bot()
+        self.assertEqual((await self.poll(a))["state"], "done")
+        done = await ws.apply(self.bot, self.g, self.pause_item(ALICE.id, False))
+        self.assertEqual(done.note, ws.UNPAUSED)
+        again = await ws.apply(self.bot, self.g, self.pause_item(ALICE.id, True))
+        self.assertEqual(again.note, ws.PAUSED)
+
+    async def test_a_pause_without_its_on_off_or_with_a_value_is_refused(self) -> None:
+        for item in (self.pause_item(ALICE.id, None), self.pause_item(ALICE.id, True, "x")):
+            self.assertEqual((await ws.apply(self.bot, self.g, item)).error, ws.BAD_VALUE)
+        self.assertEqual(self.bot.calls, [])
+
+    async def test_a_sender_who_is_no_longer_a_dm_is_refused(self) -> None:
+        outcome = await ws.apply(self.bot, self.g, self.pause_item(4242, True))
+        self.assertEqual(outcome.error, ws.NOT_ALLOWED)
+        self.assertFalse((await self.campaign()).paused)
+
+    async def test_another_campaigns_pause_is_left_alone(self) -> None:
+        await self.queue_pause(True)
+        await self.run_bot()
+        self.assertFalse((await self.campaign(self.two)).paused)
+
+    async def test_the_real_bot_pauses_under_the_lock_and_refuses_while_listening(self) -> None:
+        import contextlib
+
+        @contextlib.asynccontextmanager
+        async def lock(_guild: int) -> Any:
+            yield
+
+        me = SimpleNamespace(
+            campaigns=self.campaigns,
+            session_lock=lock,
+            tables={},
+            unpause_refusal=AsyncMock(return_value=None),
+        )
+
+        async def set_paused(*args: Any) -> Any:
+            return await DMBot.set_paused(cast(Any, me), *args)
+
+        me.set_paused = set_paused
+        paused = await DMBot.apply_pause(cast(Any, me), await self.campaign(), True, ALICE.id)
+        self.assertTrue(paused.paused)
+        await DMBot.apply_pause(cast(Any, me), paused, False, ALICE.id)
+        me.tables = {self.g: SimpleNamespace(campaign_id=self.one.id)}
+        with self.assertRaises(CampaignError) as listening:
+            await DMBot.apply_pause(cast(Any, me), await self.campaign(), True, ALICE.id)
+        self.assertIn("listening to this campaign", str(listening.exception))
+        self.assertFalse((await self.campaign()).paused)  # (a running session is never stopped)
+
+    async def queue_rules(self, value: str) -> str:
+        # (the website's switch for this choice is on here: the bot half is what is tested)
+        return await campaign_settings.queue_setting(
+            self.web,
+            self.session,
+            self.cref,
+            {"setting": "rulesets", "value": value},
+            rulesets_on=True,
+        )
+
+    async def test_each_pair_of_main_and_fallback_rules_is_saved(self) -> None:
+        for pair in ("2014/2024", "2024/none", "2014/none", "2024/2014"):
+            answer = await self.queue_rules(pair)
+            self.assertEqual([o.error for o in await self.run_bot()], [""], pair)
+            found = await self.campaign()
+            self.assertEqual(f"{found.target_ruleset}/{found.fallback_ruleset}", pair)
+            self.assertEqual((await self.poll(answer))["state"], "done")
+
+    async def test_rules_of_another_campaign_are_left_alone(self) -> None:
+        before = await self.campaign(self.two)
+        await self.queue_rules("2014/none")
+        await self.run_bot()
+        after = await self.campaign(self.two)
+        self.assertEqual(
+            (after.target_ruleset, after.fallback_ruleset),
+            (before.target_ruleset, before.fallback_ruleset),
+        )
+
+    async def test_a_sender_who_is_no_longer_a_dm_is_refused_and_nothing_is_saved(self) -> None:
+        before = await self.campaign()
+        stranger = ws.Setting("x", self.one.id, 4242, ws.RULESETS, "2014/none")
+        outcome = await ws.apply(self.bot, self.g, stranger)
+        self.assertEqual(outcome.error, ws.NOT_ALLOWED)
+        after = await self.campaign()
+        self.assertEqual(
+            (after.target_ruleset, after.fallback_ruleset),
+            (before.target_ruleset, before.fallback_ruleset),
+        )
+        self.assertEqual(self.bot.calls, [])
+
+    async def test_a_value_that_is_not_two_words_is_refused_before_the_store(self) -> None:
+        item = ws.Setting("x", self.one.id, ALICE.id, ws.RULESETS, "2024")
+        for value in ("2024", "2024/2014/none", ""):
+            outcome = await ws.apply(self.bot, self.g, replace(item, value=value))
+            self.assertEqual(outcome.error, ws.BAD_VALUE, value)
+        self.assertEqual(self.bot.calls, [])
+
+    async def test_a_pair_the_store_refuses_fails_with_the_stores_words(self) -> None:
+        item = ws.Setting("x", self.one.id, ALICE.id, ws.RULESETS, "2024/2024")
+        for value in ("2024/2024", "2024/1999"):
+            outcome = await ws.apply(self.bot, self.g, replace(item, value=value))
+            self.assertEqual(outcome.error, ws.REFUSED, value)
+            self.assertTrue(outcome.note, value)
+
+    async def test_2024_to_2014_and_back_saves_both_ways(self) -> None:
+        for pair in ("2014/2024", "2024/2014"):
+            await self.queue_rules(pair)
+            await self.run_bot()
+            found = await self.campaign()
+            self.assertEqual(f"{found.target_ruleset}/{found.fallback_ruleset}", pair)
+
+    async def test_a_live_session_is_told_it_waits_for_the_next_session(self) -> None:
+        self.bot.live = True
+        answer = await self.queue_rules("2014/none")
+        await self.run_bot()
+        self.assertEqual((await self.poll(answer))["note"], ws.RULESETS_NEXT_SESSION)
+        self.bot.live = False
+        answer = await self.queue_rules("2024/2014")
+        await self.run_bot()
+        self.assertNotIn(ws.RULESETS_NEXT_SESSION, (await self.poll(answer))["note"])
+
+    async def test_an_optional_rule_that_stops_applying_is_named(self) -> None:
+        await self.campaigns.set_rulesets(self.g, self.one.id, "2014", "none")
+        only_2014 = [r for r in optional.CATALOG if r.applies_to == ("2014",)]
+        await self.campaigns.set_optional_rule(self.g, self.one.id, only_2014[0].id, True)
+        answer = await self.queue_rules("2024/2014")
+        await self.run_bot()
+        note = (await self.poll(answer))["note"]
+        self.assertIn(only_2014[0].name, note)
+        self.assertIn("do nothing until you switch back", note)
+
+    async def test_the_pure_check_names_only_rules_that_were_on_and_stop_applying(self) -> None:
+        rule = next(r for r in optional.CATALOG if r.applies_to == ("2014",))
+        self.assertIn(rule.name, ws.unused_optional_rules("2014", "2024", {}, True))
+        self.assertNotIn(
+            rule.name, ws.unused_optional_rules("2014", "2024", {rule.id: False}, True)
+        )
+        self.assertNotIn(rule.name, ws.unused_optional_rules("2014", "2024", {}, False))
+        self.assertEqual(ws.unused_optional_rules("2014", "2014", {}, True), [])
+        self.assertEqual(ws.unused_optional_rules("2024", "2014", {}, True), [])
+
+    async def test_the_real_bot_warms_the_new_pair_and_knows_when_a_session_is_live(self) -> None:
+        warmed: list[tuple[str, str]] = []
+        for tables, expect in (
+            ({}, False),
+            ({self.g: SimpleNamespace(campaign_id=self.one.id)}, True),
+        ):
+            me = SimpleNamespace(
+                campaigns=self.campaigns,
+                tables=tables,
+                _warm_rules=lambda pair, _w=warmed: _w.append(pair),
+            )
+            live = await DMBot.apply_rulesets(cast(Any, me), await self.campaign(), "2014", "none")
+            self.assertIs(live, expect)
+        self.assertEqual(warmed, [("2014", "none")] * 2)
+
+        # A warm-up that breaks does not undo the save.
+        def broken(_pair: tuple[str, str]) -> None:
+            raise RuntimeError("no")
+
+        me = SimpleNamespace(campaigns=self.campaigns, tables={}, _warm_rules=broken)
+        await DMBot.apply_rulesets(cast(Any, me), await self.campaign(), "2024", "2014")
+        self.assertEqual((await self.campaign()).target_ruleset, "2024")
+
+    async def test_applying_the_same_row_twice_changes_nothing_more(self) -> None:
+        await self.queue_rules("2014/none")
+        item = await self.items.claim_next(self.g)
+        assert item is not None
+        first = await ws.apply(self.bot, self.g, item)
+        once = await self.campaign()
+        again = await ws.apply(self.bot, self.g, item)
+        twice = await self.campaign()
+        self.assertEqual((first, again), (ws.Outcome(), ws.Outcome()))
+        self.assertEqual(once, twice)
+
     async def test_visibility_waits_then_changes_what_discord_changes(self) -> None:
         answer = await self.queue(setting="visibility", value="open")
         self.assertEqual((await self.poll(answer))["state"], "waiting")
@@ -305,7 +569,9 @@ class TheDoor(Settings):
             "level": tuple(DM_SCREEN_LEVELS_OFFERED),
             "retention": ws.RETENTION_CHOICES,
         }
-        self.assertEqual(campaign_settings.CHOICES, offered)
+        # (the Shared story switch, #2985, is checked below: its three choices would fill the
+        # campaign's ten open places together with these nine)
+        self.assertEqual(campaign_settings.CHOICES, {**offered, "story_mode": STORY_MODES})
         async with self.web.user(self.session.user_id, session=self.session.id_hash) as conn:
             await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(self.g),))
             for setting, values in offered.items():
@@ -317,6 +583,18 @@ class TheDoor(Settings):
                     row = await cur.fetchone()
                     assert row is not None
                     self.assertEqual(row["r"]["status"], "ok", (setting, value))
+
+    async def test_the_door_accepts_the_story_switch_choices_discord_offers(self) -> None:
+        async with self.web.user(self.session.user_id, session=self.session.id_hash) as conn:
+            await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(self.g),))
+            for value in STORY_MODES:
+                cur = await conn.execute(
+                    "SELECT dmbot_web_setting_add(%s, %s, 'story_mode', %s, true) AS r",
+                    (self.g, self.one.id, value),
+                )
+                row = await cur.fetchone()
+                assert row is not None
+                self.assertEqual(row["r"]["status"], "ok", value)
 
     async def test_the_website_role_cannot_touch_the_table_itself(self) -> None:
         await self.queue(setting="level", value="quiet")
@@ -528,3 +806,14 @@ class TheDoors(Settings):
     async def test_the_doors_have_one_caller(self) -> None:
         for door in ("dmbot_web_setting_add(", "dmbot_web_setting_read("):
             self.assertEqual(callers(door), {"schema.py", "web/campaign_settings.py"})
+
+
+class WhileClosing(unittest.IsolatedAsyncioTestCase):
+    async def test_while_closing_settings_claims_nothing(self) -> None:
+        b: Any = DMBot.__new__(DMBot)
+        b.web_settings = SimpleNamespace(claim_next=AsyncMock(return_value=None))
+        b._closing = True
+        guilds = PropertyMock(return_value=[SimpleNamespace(id=1)])
+        with patch.object(DMBot, "guilds", guilds):
+            await b.run_web_settings()
+        b.web_settings.claim_next.assert_not_awaited()

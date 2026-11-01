@@ -315,11 +315,11 @@ async def _render(
     *,
     now: int,
     enforce_plans: bool,
-) -> tuple[str, str, int | None, bool, list[export.Skip], str]:
+) -> tuple[str, str, int | None, bool, list[export.Skip], str, list[export.SpokenAt]]:
     """(the file's name, the file's text, when its transcript was deleted, whether anyone is
-    shown as "Speaker N", where the cleaned file's skipped notes are, the session's id). A deleted
-    session has no lines to build a file from, so its name and text are empty and only the time
-    is set."""
+    shown as "Speaker N", where the cleaned file's skipped notes are, the session's id, where its
+    spoken lines are). A deleted session has no lines to build a file from, so its name and text
+    are empty and only the time is set."""
     if version not in VERSIONS:
         raise RecapError("not_found")
     guild_id, campaign_id, found = await _sessions(
@@ -330,7 +330,7 @@ async def _render(
         raise RecapError("not_found")
     deleted = _deleted_at(wanted)
     if deleted is not None:
-        return "", "", deleted, False, [], ""
+        return "", "", deleted, False, [], "", []
     lines = await _all_lines(db, session, guild_id, campaign_id, str(wanted["id"]))
     playing = await _characters(db, session, guild_id, campaign_id)
     kept, dms = await _speakers(db, session, guild_id, campaign_id, str(wanted["id"]))
@@ -348,6 +348,7 @@ async def _render(
     shown = speaker_names(lines, kind, kept)
     # Off the event loop, as the bot does: a long session is a lot of text to build.
     skips: list[export.Skip] = []
+    spoken_at: list[export.SpokenAt] = []
     text = await asyncio.to_thread(
         export.render,
         found["name"],
@@ -358,6 +359,7 @@ async def _render(
         dms=dms,
         version=kind,
         skips=skips,
+        spoken_at=spoken_at,
     )
     if len(text.encode("utf-8")) > FILE_LIMIT:
         raise RecapError("too_big")
@@ -368,6 +370,7 @@ async def _render(
         has_fallback(lines, shown),
         skips,
         stored.id,
+        spoken_at,
     )
 
 
@@ -385,7 +388,7 @@ async def render(
     gives, made by `export.render`. A person outside the server, a missing campaign or session, a
     session whose transcript was deleted (nothing to save) and an unknown version are "not
     found"."""
-    name, text, deleted, _fallback, _skips, _sid = await _render(
+    name, text, deleted, _fallback, _skips, _sid, _spoken = await _render(
         db, session, ref, number, version, now=now, enforce_plans=enforce_plans
     )
     if deleted is not None:
@@ -411,7 +414,7 @@ async def read_session(
 
     A session whose transcript was deleted answers `transcriptsDeletedAt` (Unix seconds) with no
     lines, so a direct link to it says so rather than failing."""
-    name, text, deleted, fallback, skips, sid = await _render(
+    name, text, deleted, fallback, skips, sid, spoken_at = await _render(
         db, session, ref, number, version, now=now, enforce_plans=enforce_plans
     )
     if deleted is not None:
@@ -458,7 +461,29 @@ async def read_session(
             "putBack": choices["putBack"],
         }
         page["putBacks"] = choices["choices"]
+        # Who is looking, and which of this page's lines they may fix (#2858): their own, or any
+        # spoken line for a DM of the campaign. Where each line is, never its words; the fix
+        # itself is checked again by its own door.
+        is_dm = await _is_dm(db, session, guild_id, campaign_id)
+        page["viewer"] = {"id": str(session.user_id), "isDm": is_dm}
+        page["fixable"] = [
+            {"line": k.index - start, "speaker": str(k.speaker), "startedMs": k.started_ms}
+            for k in spoken_at
+            if start <= k.index < end and (is_dm or k.speaker == session.user_id)
+        ]
     return page
+
+
+async def _is_dm(db: Database, session: Session, guild_id: int, campaign_id: str) -> bool:
+    """Whether the signed-in person is a DM of the campaign (the same read as the campaign page)."""
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        cur = await conn.execute(
+            "SELECT 1 AS yes FROM campaign_dms d"
+            " WHERE d.guild_id = %s AND d.campaign_id = %s AND d.user_id = %s",
+            (guild_id, campaign_id, session.user_id),
+        )
+        return await cur.fetchone() is not None
 
 
 async def _choices(

@@ -11,7 +11,7 @@ from dmbot import install
 from dmbot.dm_screen.rules import Exposure
 from dmbot.transcript.export import duration
 
-# Shared by ⚙️ Settings and its hand-over buttons (a DM's screens), so both say the same.
+# Shared by ⚙️ Manage DMbot and its hand-over buttons (a DM's screens), so both say the same.
 # CAMPAIGN_GONE below is the players' version.
 DM_CAMPAIGN_GONE = (
     "DMbot can't find this campaign anymore. It may have been deleted. To start a new one: "
@@ -46,21 +46,6 @@ PEEK_WARNING = (
 )
 
 
-def peek_warning(rules_mention: str | None, npcs_mention: str | None = None) -> str:
-    """The spoiler warning; names every channel a peek opens (docs/PLAN.md, #1752, #1761)."""
-    named = (("House rules", rules_mention), ("People and groups", npcs_mention))
-    opened = [f"• {what}: {mention}" for what, mention in named if mention is not None]
-    if not opened:
-        return PEEK_WARNING
-    return (
-        "**Peek behind the DM screen?**\n"
-        "The DM screen shows the DM's private notes, old ones too. They may spoil surprises.\n"
-        "This also lets you read:\n" + "\n".join(opened) + "\n"
-        "Those only show what your DM has shared.\n"
-        "Your DM will see that you peeked. You can hide it again any time."
-    )
-
-
 PEEK_CANCELLED = "OK, the DM screen stays hidden."
 PEEK_EXPIRED = (
     "This expired. Press 👀 **Peek behind the DM screen** again if you still want to look."
@@ -78,7 +63,7 @@ NOT_LISTENING_NOW = (
     "DMbot isn't listening to this campaign right now. To start, run `/dmbot start`."
 )
 STOP_FAILED = "Something went wrong stopping DMbot. Try `/dmbot stop`."
-# The Stop button asks first (#554): a thumb slip next to ⚙️ Settings mustn't end it.
+# The Stop button asks first (#554): a thumb slip next to ⚙️ Manage DMbot mustn't end it.
 STOP_YES_LABEL = "Yes, stop"
 STOP_CANCEL_LABEL = "Cancel"
 STOP_KEPT = "Still listening."
@@ -479,22 +464,6 @@ TEST_SESSION = (
 )
 
 
-# ---- the players' game-time channel (#1116) ----------------------------------------
-
-GAMETIME_FAILED = (
-    "⚠️ **Couldn't make the game-time channel** ({cause}). The game goes on; players just "
-    "have no clock channel yet. To retry, fix that and run `/dmbot start`."
-)
-
-
-def gametime_failed(cause: str) -> str:
-    return GAMETIME_FAILED.format(cause=cause)
-
-
-def gametime_topic(campaign_name: str) -> str:
-    return f"{campaign_name}: the day and a rough time of day. Posted by DMbot, view only."
-
-
 # ---- the DM Bot channel (#1666) ---------------------------------------------------------
 
 DM_BOT_FAILED = (
@@ -517,42 +486,6 @@ DMBCHAT_FAILED = (
     "⚠️ **Couldn't make the DMbot chat channel** ({cause}). The game goes on; players can still "
     'say "Hey DMbot" at the table. To retry, fix that and run `/dmbot start`.'
 )
-
-# Plain words for the channel's description (CLAUDE.md, "Simple enough for a child").
-RULES_TOPIC = "Your table's house rules. You can read but not post. Your DM decides what applies."
-
-
-def rules_card(campaign_name: str) -> str:
-    return (
-        "📖 **What's this channel?**\n"
-        f"The house rules for **{campaign_name}**, saved by your DM. Only DMbot posts here, so "
-        "you can read but not write. Your DM decides what applies. If a rule isn't clear, ask "
-        "your DM."
-    )
-
-
-NPCS_TOPIC = "People and groups your DM has shared. Read only."
-
-
-def npcs_card(campaign_name: str) -> str:
-    name = discord.utils.escape_markdown(campaign_name)
-    return (
-        "📖 **What's this channel?**\n"
-        f"The people and groups DMbot remembers for **{name}**, as your DM confirmed them. "
-        "Only DMbot posts here, so you can read but not write. Nothing secret is shown. "
-        "If something looks wrong, ask your DM."
-    )
-
-
-def npcs_failed(cause: str) -> str:
-    return (
-        f"⚠️ DMbot couldn't set up the people list channel. {cause} The rest of DMbot still works."
-    )
-
-
-def rules_failed(cause: str) -> str:
-    return f"⚠️ DMbot couldn't set up the house-rules channel. {cause}"
-
 
 DMBCHAT_TOPIC = "Ask DMbot a quick rules question. Your DM has the final say."
 

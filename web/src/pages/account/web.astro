@@ -3,14 +3,15 @@ import WebIsland from "../../account/WebIsland";
 import { webPage } from "../../content/web-words";
 import Base from "../../layouts/Base.astro";
 import "../../styles/account.css";
+import "../../styles/web-map.css";
 ---
 
 <Base
-  title="Relationship web"
+  title="Story Graph"
   description="How the names in a campaign are connected, as a map you can move around."
   noindex
 >
-  <div class="account">
+  <div class="account account-wide">
     <h1>{webPage.heading}</h1>
     <WebIsland client:load />
     <noscript>

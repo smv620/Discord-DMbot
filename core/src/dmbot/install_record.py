@@ -3,7 +3,7 @@ it leaves.
 
 The write contract is in migration 0014 (core/src/dmbot/schema.py): the bot inserts its own row
 as a 'link' row with no installer, or clears `left_at` on a rejoin; the website fills in who added
-it (`dmbot.web.accounts`) and its 'site' row is never overwritten here. Nothing wrote these rows
+it (`dmbot.accounts`) and its 'site' row is never overwritten here. Nothing wrote these rows
 before, so "Link this server" on the website found no install and anything that asks whether the
 bot has left a server (the recap voice door) saw `left_at` always empty.
 """

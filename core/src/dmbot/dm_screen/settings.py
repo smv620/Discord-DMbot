@@ -1,7 +1,7 @@
-"""⚙️ Settings on the DM screen (#515): the campaign's settings, privately, one tap per
-change. The button sits on the DM screen's help card (there between sessions too) and on
-the "Listening" message. Only the campaign's DMs, or a server manager, may open it or
-change anything.
+"""⚙️ Manage DMbot (was ⚙️ Settings, #515; four-button menu, #2986): what DMbot does in this
+Discord server, privately, one tap per change. What the website does not have yet waits on the
+same card. The button sits on the DM screen's help card (there between sessions too) and on the
+"Listening" message. Only the campaign's DMs, or a server manager, may open it or change anything.
 
 - **How much DMbot says** (Quiet / Normal, #504): saved for the campaign, and a running
   session follows the change from now on (`DMBot.set_screen_level`).
@@ -11,7 +11,7 @@ change anything.
   pause, how long transcripts are kept, game masters, delete (#2281).
 
 Each tap redraws the card, so it always shows what's saved. A submenu replaces the card in place
-and has a ↩️ Back to Settings button. The buttons' IDs carry the
+and has a ↩️ Back button. The buttons' IDs carry the
 campaign, so they work after a restart. Register with
 `bot.add_dynamic_items(SettingsButton, LevelButton, SettingsVisibilityButton, VisibilityMenuButton,
 ManagementMenuButton, BackToSettingsButton)`.
@@ -41,19 +41,18 @@ from dmbot.campaigns.models import (
 from dmbot.campaigns.store import QUIET_STOP_CHOICES
 from dmbot.dm_screen import (
     handover,
-    import_button,
     messages,
     quiet_stop,
     story_mode,
     table_chat_panel,
 )
+from dmbot.dm_screen.backstory_button import BackstoryButton
 from dmbot.dm_screen.buttons import may_change_screen, save_visibility
 from dmbot.dm_screen.clock import ClockButton
 from dmbot.dm_screen.delete_campaign import DeleteButton
 from dmbot.dm_screen.game_masters import GameMastersButton
-from dmbot.dm_screen.names_button import NamesButton
 from dmbot.dm_screen.pause import pause_buttons, pause_line
-from dmbot.dm_screen.recap_panel import RecapsButton
+from dmbot.dm_screen.recap_style import RecapStyleButton
 from dmbot.dm_screen.table_chat_panel import TableChatButton
 from dmbot.dm_screen.transcript_keep import TranscriptsButton
 from dmbot.logs import set_log_context
@@ -63,7 +62,7 @@ from dmbot.transcript.keep import KEEP_LABELS
 log = logging.getLogger(__name__)
 
 _ID = r"(?P<campaign>[0-9a-f]{32})"
-SETTINGS_LABEL = "Settings"
+SETTINGS_LABEL = "Manage DMbot"
 RULE_LOOKUP_LABEL = "Look up a rule"
 RULES_CARDS_OFF = (
     "• **Rules cards: Off.** When on, DMbot shows a short card on the DM screen when someone "
@@ -80,21 +79,12 @@ RULES_CARDS_PEEK = " Players who peek can see them too."
 RULES_CARDS_OPEN = " Players can see them too, because your DM screen is open."
 ONLY_DMS = "Only this campaign's DMs can change this."
 RULES_CARDS_ONLY_DMS = ONLY_DMS  # (the old name, kept for its callers)
-RULES_LINE = (
-    "• **Rules:** press 📖 Look up a rule to read a spell, condition, creature or rule from the "
-    "free rules (SRD). Only you see it."
-)
-CAMPAIGN_MANAGEMENT_PATH = "⚙️ Settings → 🗂️ Campaign management"
-ONLY_DM = "Only this campaign's DM (or a server manager) can open or change its settings."
+CAMPAIGN_MANAGEMENT_PATH = "⚙️ Manage DMbot → 🗂️ Campaign management"
+ONLY_DM = "Only this campaign's DM (or a server manager) can open or change this."
 GONE = messages.DM_CAMPAIGN_GONE
 FAILED = "Sorry, that didn't save. Please try again."
 LOAD_FAILED = messages.LOAD_FAILED
-SAVED = "Saved. Press ⚙️ Settings again to see your settings."
-INVITE_SET = "• **D&D Beyond invite:** set. Players get a **Join on D&D Beyond** button."
-INVITE_NOT_SET = (
-    "• **D&D Beyond invite:** not set. Tap **D&D Beyond invite** to add your campaign's link "
-    "for players."
-)
+SAVED = "Saved. Open ⚙️ Manage DMbot again to see it."
 INVITE_SAVED = "✅ Saved. Players get a **Join on D&D Beyond** button on new messages from DMbot."
 INVITE_REMOVED = "✅ Removed. New messages from DMbot won't have the D&D Beyond button."
 
@@ -123,10 +113,6 @@ def _transcripts_line(campaign: Campaign) -> str:
     )
 
 
-MORE_LINE = (
-    "• **More:** hand over, pause, transcript retention, game masters and delete are under "
-    "🗂️ Campaign management."
-)
 PAUSED_LINE = (
     "• **⏸️ Paused:** DMbot won't start a session for this campaign until you unpause it. The "
     "owner can unpause it under 🗂️ Campaign management."
@@ -143,37 +129,45 @@ def _rules_cards_line(campaign: Campaign, viewer: int | None) -> str:
     return RULES_CARDS_ON + who + stop
 
 
+# What waits here until the website has its page (#2986): each leaves this card, and this list,
+# as the website takes it over. Shown as one line under the card's buttons.
+NOT_ON_WEBSITE = (
+    "🧭 Shared story, 🗂️ Campaign management, 📄 House-rules file, "
+    "🔗 D&D Beyond invite, 📚 Shared rules, 📚 Homebrew, "
+    "📜 Upload campaign lore, and `/dmbot optionalrules`"
+)
+MANAGE_INTRO = (
+    "What DMbot does in this Discord server. Everything else about your campaign is on the "
+    "website: 🌐 Manage campaign."
+)
+
+
 def settings_text(
     campaign: Campaign, offer: HandoverOffer | None = None, viewer: int | None = None
 ) -> str:
-    """The settings card (only the person who opened it sees it). `viewer`: who it's for;
-    the line about looking up rules is only for the campaign's DMs, who have its button."""
+    """The ⚙️ Manage DMbot card (only the person who opened it sees it): only what needs Discord
+    to be there (#2986), with the rest listed as not on the website yet. `offer`, `viewer`: kept
+    for the card's callers; a waiting hand-over shows where the owner line lives."""
     level = campaign.dm_screen_level
     recommended = " (recommended)" if level == DEFAULT_DM_SCREEN_LEVEL else ""
     what = DM_SCREEN_LEVELS.get(level, level)
     who = messages.WHO_CAN_SEE.get(campaign.dm_screen_visibility, "")
-    rules = [RULES_LINE] if viewer is not None and viewer in campaign.dm_user_ids else []
     return "\n".join(
         [
-            f"⚙️ **Settings for {discord.utils.escape_markdown(campaign.name)}**",
+            f"⚙️ **Manage DMbot for {discord.utils.escape_markdown(campaign.name)}**",
+            MANAGE_INTRO,
             f"• **How much DMbot says:** {level.capitalize()}{recommended}. "
             f"{what[:1].upper()}{what[1:]}. Warnings always show.",
             f"• **Who can see the DM screen:** {who} Change it with 👁️ Who can see the DM screen.",
             *([PAUSED_LINE] if campaign.paused else []),
+            _rules_cards_line(campaign, viewer),
+            table_chat_panel.line(campaign),
             *(
-                [MORE_LINE]
-                if viewer is not None and management_items(campaign, offer, viewer)
+                [quiet_stop.line(campaign.quiet_stop_minutes)]
+                if viewer in campaign.dm_user_ids
                 else []
             ),
-            *rules,
-            _rules_cards_line(campaign, viewer),
-            *([INVITE_SET if campaign.dndbeyond_invite else INVITE_NOT_SET] if rules else []),
-            table_chat_panel.line(campaign),
-            _combat_line(campaign),
-            *([story_mode.line(campaign)] if rules else []),  # the DMs' (#1692)
-            *([quiet_stop.line(campaign.quiet_stop_minutes)] if rules else []),  # (#2034)
-            "Tap a button to change it. If DMbot is listening now, it follows the change from "
-            "now on.",
+            f"**Not on the website yet:** {NOT_ON_WEBSITE}.",
         ]
     )
 
@@ -198,7 +192,7 @@ def management_text(
             handover.owner_line(campaign, offer),
             pause_line(campaign, viewer),
             _transcripts_line(campaign),
-            "Tap what you need, or ↩️ Back to Settings.",
+            "Tap what you need, or ↩️ Back.",
         ]
     )
 
@@ -232,40 +226,46 @@ def _unpin(item: discord.ui.Item[Any]) -> None:
     item.row = None
 
 
+def _row(item: discord.ui.Item[Any], row: int) -> discord.ui.Item[Any]:
+    """Put a button on a row of the card (a dynamic item wraps the real button)."""
+    inner = getattr(item, "item", item)
+    inner.row = row
+    item.row = row
+    return item
+
+
 def settings_view(
     campaign: Campaign, offer: HandoverOffer | None, viewer: int, site_url: str = ""
 ) -> discord.ui.View:
-    """The card's buttons. `viewer`: who it's for (it's private). `site_url`: the website, for the
-    📥 Import sessions link. The rarely used choices are a
-    tap away: 👁️ Who can see the DM screen, and (when the viewer has anything in it) 🗂️ Campaign
-    management."""
+    """The ⚙️ Manage DMbot card's buttons (#2986). `viewer`: who it's for (it's private).
+    Rows 0 and 1 hold only what needs Discord to be there: how much DMbot says, who can see the DM
+    screen (the one sub-page), rules cards, the game clock, table chat, stop when quiet and what is
+    switched on. From row 2 are the choices that wait here until the website has them; each leaves
+    as its page lands. Nothing is drawn that the viewer could not use."""
     view = discord.ui.View(timeout=None)
     for level in DM_SCREEN_LEVELS_OFFERED:
-        view.add_item(LevelButton(campaign.id, level, current=level == campaign.dm_screen_level))
-    view.add_item(VisibilityMenuButton(campaign.id))
+        view.add_item(
+            _row(LevelButton(campaign.id, level, current=level == campaign.dm_screen_level), 0)
+        )
+    view.add_item(_row(VisibilityMenuButton(campaign.id), 0))
+    is_dm = viewer in campaign.dm_user_ids
+    if is_dm:
+        view.add_item(_row(RulesCardsButton(campaign.id, campaign.rules_cards), 0))
+        view.add_item(_row(ClockButton(campaign.id, "open"), 1))  # the game clock (#965)
+        view.add_item(_row(TableChatButton(campaign.id), 1))  # which typed chat is read (#1118)
+        view.add_item(_row(QuietStopButton(campaign.id, campaign.quiet_stop_minutes), 1))
+        view.add_item(_row(FeaturesButton(campaign.id), 1))  # what is switched on (#1831)
+    # Not on the website yet: each of these moves out as the website's page lands (#2985).
     if management_items(campaign, offer, viewer):
-        view.add_item(ManagementMenuButton(campaign.id))
-    if viewer in campaign.dm_user_ids:  # rules lookup is for the campaign's DMs (#908)
-        view.add_item(RuleLookupButton(campaign.id))
-        view.add_item(RulesCardsButton(campaign.id, campaign.rules_cards))
-        view.add_item(ClockButton(campaign.id, "open"))  # the game clock (#965)
-        view.add_item(HouseFileButton(campaign.id))  # the house-rules file (#969)
-        view.add_item(InviteButton(campaign.id))  # the D&D Beyond invite (#1119)
-        view.add_item(TableChatButton(campaign.id))  # which typed chat is read (#1118)
-        view.add_item(RecapsButton(campaign.id))  # the recap choices (#1421)
-        view.add_item(QuietStopButton(campaign.id, campaign.quiet_stop_minutes))  # (#2034)
-        view.add_item(SharedRulesButton(campaign.id))  # shared house rules (#1190)
-        view.add_item(HomebrewButton(campaign.id))  # the campaign's own homebrew (#1520)
-        view.add_item(NamesButton(campaign.id, row=4))  # names home (#1986)
-        view.add_item(FeaturesButton(campaign.id, row=1))  # what is switched on (#1831)
-        view.add_item(story_mode.StoryButton(campaign.id, row=0))  # Shared story (#1692)
-        # One tap to the website's import page, with no private reply in between (#2300). A link
-        # runs no code: the website's sign-in and the API's DM check are the gate. Only where
-        # importing is on (#2154, #2259) and there is a website to open.
-        if import_button.enabled(campaign.guild_id):
-            url = import_button.page_url(site_url, campaign.guild_id, campaign.id)
-            if url:
-                view.add_item(import_button.link(url))
+        view.add_item(_row(ManagementMenuButton(campaign.id), 2))
+    if is_dm:
+        view.add_item(_row(story_mode.StoryButton(campaign.id), 2))  # Shared story (#1692)
+        view.add_item(_row(HouseFileButton(campaign.id), 2))  # the house-rules file (#969)
+        view.add_item(_row(InviteButton(campaign.id), 2))  # the D&D Beyond invite (#1119)
+        view.add_item(_row(RecapStyleButton(campaign.id), 3))  # (the rest of Recaps: website)
+        view.add_item(_row(SharedRulesButton(campaign.id), 3))  # shared house rules (#1190)
+        view.add_item(_row(HomebrewButton(campaign.id), 3))  # the campaign's own homebrew (#1520)
+        view.add_item(_row(BackstoryButton(campaign.id), 3))  # upload campaign lore
     return view
 
 
@@ -367,7 +367,7 @@ class SettingsButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
     template=rf"dmbot:settings:{_ID}",
 ):
-    """⚙️ Settings: opens the campaign's settings privately."""
+    """⚙️ Manage DMbot: opens the campaign's settings privately."""
 
     def __init__(self, campaign_id: str, *, row: int | None = None) -> None:
         super().__init__(
@@ -411,7 +411,7 @@ class SettingsButton(
             if made is not None:
                 with contextlib.suppress(discord.HTTPException):  # (the owner check follows)
                     await interaction.followup.send(
-                        f"Settings and options now also live in <#{made}>.",
+                        f"The DMbot menu now also lives in <#{made}>.",
                         ephemeral=True,
                         allowed_mentions=NO_PINGS,
                     )
@@ -481,7 +481,7 @@ class RuleLookupButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
     template=rf"dmbot:rulelookup:{_ID}",
 ):
-    """📖 Look up a rule, on ⚙️ Settings: a form with one box; the answer is private. Only
+    """📖 Look up a rule, on ⚙️ Manage DMbot: a form with one box; the answer is private. Only
     the campaign's DMs (a server manager who isn't one doesn't get it)."""
 
     def __init__(self, campaign_id: str) -> None:
@@ -529,7 +529,7 @@ class HouseFileButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
     template=rf"dmbot:housefile:{_ID}",
 ):
-    """📄 House-rules file, on ⚙️ Settings (#969): link a file, check it, or upload one. Only
+    """📄 House-rules file, on ⚙️ Manage DMbot (#969): link a file, check it, or upload one. Only
     the campaign's DMs."""
 
     def __init__(self, campaign_id: str) -> None:
@@ -577,7 +577,7 @@ class SharedRulesButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
     template=rf"dmbot:sharedrules:{_ID}",
 ):
-    """📚 Shared rules, on ⚙️ Settings (#1190): share house rules, or use another table's
+    """📚 Shared rules, on ⚙️ Manage DMbot (#1190): share house rules, or use another table's
     set. Only the campaign's DMs."""
 
     def __init__(self, campaign_id: str) -> None:
@@ -625,7 +625,7 @@ class HomebrewButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
     template=rf"dmbot:homebrew:{_ID}",
 ):
-    """📚 Homebrew, on ⚙️ Settings (#1520): the campaign's own spells, monsters, items and other
+    """📚 Homebrew, on ⚙️ Manage DMbot (#1520): the campaign's own spells, monsters, items and other
     game content. Only the campaign's DMs."""
 
     def __init__(self, campaign_id: str) -> None:
@@ -673,7 +673,7 @@ class InviteButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
     template=rf"dmbot:invite:{_ID}",
 ):
-    """🔗 D&D Beyond invite, on ⚙️ Settings (#1119): set, change or remove the campaign's
+    """🔗 D&D Beyond invite, on ⚙️ Manage DMbot (#1119): set, change or remove the campaign's
     invite link. Only the campaign's DMs."""
 
     def __init__(self, campaign_id: str) -> None:
@@ -1052,7 +1052,7 @@ class BackToSettingsButton(
     def __init__(self, campaign_id: str) -> None:
         super().__init__(
             discord.ui.Button(
-                label="Back to Settings",
+                label="Back",
                 emoji="↩️",
                 style=discord.ButtonStyle.secondary,
                 row=4,

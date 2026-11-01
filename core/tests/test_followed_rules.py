@@ -8,12 +8,11 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 from dmbot.bot import DMBot
-from dmbot.rules import followed
+from dmbot.rules import followed, rule_card
 from dmbot.rules.house import HouseRule
 from dmbot.rules.index import srd
 from dmbot.rules.rule_sets import Follow
 from dmbot.sidebar import context
-from dmbot.ui import rule_card
 
 
 def own(number: int, text: str) -> HouseRule:

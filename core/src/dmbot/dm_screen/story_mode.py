@@ -1,10 +1,9 @@
-"""🧭 Shared story on ⚙️ Settings (#1692; docs/STORY_MEMORY.md, section 6): the DM picks Off,
+"""🧭 Shared story on ⚙️ Manage DMbot (#1692; docs/STORY_MEMORY.md, section 6): the DM picks Off,
 Watch the story or Guide me.
 
-This is only the switch and the DM's confirmation. Nothing reads the mode yet: reading the
-adventure, telling the DM when the table and the book no longer fit ("Watch the story") and
-saying what the book has next ("Guide me") are the next slices of Phase 5d, and the card says
-so, so the DM isn't misled.
+This is the switch and the DM's confirmation; reading the adventure, the warnings ("Watch the
+story") and what the book has next ("Guide me") are built on top of it. The website's panel
+(#3079) uses the same words.
 
 Turning it on the first time shows the warning from CLAUDE.md's IP rule ("Only give DMbot
 material you have the right to use. DMbot doesn't check this.") and saves only on its
@@ -39,41 +38,35 @@ log = logging.getLogger(__name__)
 _ID = r"(?P<campaign>[0-9a-f]{32})"
 _MODE = r"(?P<mode>off|watch|guide)"
 LABEL_OF = {STORY_OFF: "Off", STORY_WATCH: "Watch the story", STORY_GUIDE: "Guide me"}
+# The same words as the website's Shared story panel (#3079).
 MEANING = {
-    STORY_OFF: "DMbot remembers your table's story only.",
-    STORY_WATCH: "DMbot also tells you when your table and the book no longer fit.",
+    STORY_OFF: "DMbot doesn't follow the adventure's story.",
+    STORY_WATCH: (
+        "DMbot warns you on your DM screen, once, if someone the adventure needs is gone or "
+        "something it needs is lost."
+    ),
     STORY_GUIDE: (
-        "Everything in Watch the story, plus: when you ask, DMbot says what the book has next, "
-        "with the page."
+        "Does Watch too, and you can ask DMbot what comes next in your adventure. "
+        "Only you see the answer."
     ),
 }
 ONLY_DMS = "Only this campaign's DMs can change that. Ask one of them."
-GONE = "That campaign isn't here any more. Open ⚙️ Settings again."
+GONE = "That campaign isn't here any more. Open ⚙️ Manage DMbot again."
 COULDNT = "That didn't work, and nothing changed. Please try again in a moment."
 INTRO = "🧭 **Shared story**"
-COMING = (
-    "Not working yet. DMbot can keep your adventure, but nothing reads it, so you get no alerts "
-    "from this."
-)
 RIGHT_LABEL = "I have the right"
 NOT_NOW_LABEL = "Not now"
 
 
 def line(campaign: Campaign) -> str:
     """The Settings card's one line about it."""
-    mode = campaign.story_mode
-    label = LABEL_OF.get(mode, "Off")
-    # Nothing reads the mode yet, and this is the line DMs look at: say so, so no one waits for
-    # alerts that cannot come. Remove with the caveat when the reader ships.
-    pending = "" if mode == STORY_OFF else " (not working yet)"
-    return f"• **Shared story:** {label}{pending}. Coming soon: DMbot will use your adventure."
+    label = LABEL_OF.get(campaign.story_mode, "Off")
+    return f"• **Shared story:** {label}. {MEANING.get(campaign.story_mode, MEANING[STORY_OFF])}"
 
 
 def panel_text(campaign: Campaign) -> str:
     current = LABEL_OF.get(campaign.story_mode, "Off")
-    return (
-        f"{INTRO}: **{current}**\n{MEANING.get(campaign.story_mode, MEANING[STORY_OFF])}\n{COMING}"
-    )
+    return f"{INTRO}: **{current}**\n{MEANING.get(campaign.story_mode, MEANING[STORY_OFF])}"
 
 
 def warning_text(mode: str) -> str:
@@ -81,7 +74,7 @@ def warning_text(mode: str) -> str:
     return (
         f"{STORY_RIGHT_WARNING}\n"
         f"Press **{RIGHT_LABEL}** to turn on **{LABEL_OF[mode]}**. That is your word that you may "
-        "use your adventure. DMbot keeps a note of who said so, and when. Nothing is read yet."
+        "use your adventure. DMbot keeps a note of who said so, and when."
     )
 
 
@@ -167,7 +160,7 @@ class StoryButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
     template=rf"dmbot:story:{_ID}",
 ):
-    """🧭 Shared story, on ⚙️ Settings: opens the private panel above. DMs only."""
+    """🧭 Shared story, on ⚙️ Manage DMbot: opens the private panel above. DMs only."""
 
     def __init__(self, campaign_id: str, *, row: int | None = None) -> None:
         super().__init__(

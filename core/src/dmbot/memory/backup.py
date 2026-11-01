@@ -20,6 +20,7 @@ from dmbot.campaigns.models import CampaignError
 from dmbot.db import Conn
 from dmbot.memory import beliefs, evidence, notify, sheets
 from dmbot.memory._changes import (
+    ALIAS_KNOWERS,
     ALIASES,
     ATTITUDES,
     BELIEFS,
@@ -29,6 +30,7 @@ from dmbot.memory._changes import (
     EVIDENCE,
     FLAGS,
     IMPRESSIONS,
+    KNOWERS,
     PERSPECTIVES,
     PREDICATES,
     RELATIONS,
@@ -44,6 +46,7 @@ from dmbot.memory.checks import FLAG_KINDS
 from dmbot.memory.models import (
     ALIAS_KINDS,
     BELIEF_STATUSES,
+    CHANGE_KINDS,
     CLAIM_STATUSES,
     CONDITIONS,
     DESCRIPTION_MAX,
@@ -54,6 +57,7 @@ from dmbot.memory.models import (
     FIX,
     HOWS,
     KEEP,
+    LIE_STATUSES,
     LINE_REF_MAX,
     LINK_EDITIONS,
     LINK_KINDS,
@@ -66,6 +70,7 @@ from dmbot.memory.models import (
     SOURCES,
     THREAD_STATES,
     is_id,
+    new_id,
 )
 from dmbot.memory.ontology import (
     ACTIVE,
@@ -96,6 +101,8 @@ _TAGS: dict[str, Table] = {
     "alias": ALIASES,
     "relation": RELATIONS,
     "perspective": PERSPECTIVES,  # who holds beliefs (#2409)
+    "alias_knower": ALIAS_KNOWERS,  # which characters know an other name (#2935)
+    "knower": KNOWERS,  # which characters know each statement (#2995)
     "belief": BELIEFS,
     "evidence": EVIDENCE,  # what a connection or belief stands on (#2662)
     "impression": IMPRESSIONS,
@@ -150,22 +157,26 @@ _CHOICES: dict[str, Sequence[str]] = {
     "edition": LINK_EDITIONS,
     "action": (FIX, KEEP),
     "source": SOURCES,
+    "change_kind": CHANGE_KINDS,
 }
 _IDS = {"id", "entity_id", "fact_id", "merged_into", "used_by", "subject_id", "object_id",
         "relation_id", "other_id", "from_set", "viewer_id", "holder_id", "toward_id",
-        "perspective_id", "manipulated_by", "unnamed_anchor"}  # fmt: skip
+        "perspective_id", "manipulated_by", "unnamed_anchor", "alias_id",
+        "via_alias_id", "derived_from"}  # fmt: skip
 _INTS = {"played_by", "speaker_id", "session_started_at", "decided_at", "created_at",
          "from_session_at", "to_session_at", "from_game_time", "to_game_time",
-         "max_per_subject", "closed_at", "session_at", "recorded_at", "seq"}  # fmt: skip
+         "game_time", "max_per_subject", "closed_at", "session_at", "recorded_at",
+         "seq"}  # fmt: skip
 _VERSIONS = {"version", "definition_version"}  # from 1 up (#1189)
 _LISTS = {"examples", "subject_types", "object_types", "conflicts_with", "sound_codes",
-          "mention_ids", "covers", "not_this", "synonyms", "evidence_ids"}  # fmt: skip
+          "mention_ids", "covers", "not_this", "synonyms", "evidence_ids", "hidden_by"}  # fmt: skip
 _NULLABLE = {
     "role", "edition", "played_by", "merged_into", "used_by", "other_id", "entity_id",
     "replaced_by", "parent", "from_session_at", "to_session_at", "from_game_time",
-    "to_game_time", "max_per_subject", "closed_at", "unique_item", "fact_id",
+    "to_game_time", "game_time", "max_per_subject", "closed_at", "unique_item", "fact_id",
     "session_started_at", "decided_at", "said_as", "from_set", "session_at", "manipulated_by",
-    "unnamed_anchor", "unnamed_role", "unnamed_what", "decided",
+    "unnamed_anchor", "unnamed_role", "unnamed_what", "decided", "via_alias_id",
+    "derived_from", "change_kind",
 }  # fmt: skip
 
 
@@ -362,6 +373,15 @@ def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
             raw = _checked_sheet(raw)
         elif table is EVIDENCE:
             _check_evidence(raw)
+        elif table is KNOWERS:  # four statement columns, exactly one set (`_check_knowers`)
+            if not all(
+                raw[c] is None or is_id(raw[c])
+                for c in ("about_entity_id", "state_id", "relation_id", "alias_id")
+            ) or not all(
+                _valid(c, raw[c])
+                for c in ("id", "perspective_id", "created_at", "confidence", "hidden_by")
+            ):
+                raise CampaignError(DAMAGED)
         elif not all(_valid(c, raw[c]) for c in table.columns if c != "reading"):
             # (a claim's reading has its own check, `_check_claim`)
             raise CampaignError(DAMAGED)
@@ -369,6 +389,8 @@ def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
             _check_claim(raw)
         elif raw.get("status") == "dropped":
             raise CampaignError(DAMAGED)  # only a claim can be dropped
+        if table is BELIEFS and raw["derived_from"] is not None and raw["change_kind"] is None:
+            raise CampaignError(DAMAGED)  # a belief came from another, so it says how
         if table is BELIEFS and (
             len(raw["evidence_ids"]) > EVIDENCE_MAX
             or any(len(e) > EVIDENCE_ID_MAX for e in raw["evidence_ids"])
@@ -398,6 +420,42 @@ def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
     if any(b["confidence"] >= 1.0 and rel in secret for rel, b in newest.items()):
         raise CampaignError(DAMAGED)  # the players would hold a secret connection as fact now
     # (an older belief of theirs in one that is hidden again is history, and is kept)
+    # Who knows an other name (#2935): a row for a name or a character the file does not hold is
+    # damage; one for a name that is no longer secret, or a point of view that is not a player
+    # character's, is history and dropped (a backup must always be loadable).
+    aliases = {r["id"]: r for r in by_tag["alias"]}
+    views = {r["id"]: r for r in by_tag["perspective"]}
+    if any(k["alias_id"] not in aliases or k["perspective_id"] not in views
+           for k in by_tag["alias_knower"]):  # fmt: skip
+        raise CampaignError(DAMAGED)
+    by_tag["alias_knower"] = [
+        k
+        for k in by_tag["alias_knower"]
+        if aliases[k["alias_id"]]["secret"] and views[k["perspective_id"]]["kind"] == "pc"
+    ]
+    # Who knows each statement (#2995): a row must name exactly one statement the file holds and a
+    # point of view the file holds; anything else is damage. A row for a point of view that is not
+    # a character's cannot exist (the party is never a knower), so it is damage too.
+    _check_knowers(by_tag, views)
+    # A belief that someone lied names who: a source link beside it, as the writer requires (#3091).
+    # One that lost it (an Undo and a redo once did) loads with a placeholder liar, "someone, no
+    # longer known", never a reason to refuse the file.
+    told = {r["belief_id"] for r in by_tag["evidence"] if r["kind"] == evidence.SOURCE}
+    for b in by_tag["belief"]:
+        if b["status"] in LIE_STATUSES and b["id"] not in told:
+            by_tag["evidence"].append(
+                {
+                    "table": "evidence", "id": new_id(), "relation_id": None, "belief_id": b["id"],
+                    "kind": evidence.SOURCE, "target_id": None, "session_started_at": None,
+                    "added_at": 0,
+                }
+            )  # fmt: skip
+    # A row asleep waits for entries of this campaign: a name in the mark that is not an entry of
+    # the file is dropped from it (a row left with none is awake), never a reason to refuse.
+    entry_ids = {r["id"] for r in by_tag["entity"]}
+    for tag in ("knower", "belief"):
+        for row in by_tag[tag]:
+            row["hidden_by"] = [h for h in row["hidden_by"] if h in entry_ids]
     entities = {r["id"]: r for r in by_tag["entity"]}
     if any(r["entity_id"] not in entities for r in by_tag["sheet"]):
         raise CampaignError(DAMAGED)
@@ -405,6 +463,27 @@ def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
         r for r in by_tag["sheet"] if entities[r["entity_id"]]["played_by"] == r["player_id"]
     ]
     return by_tag
+
+
+def _check_knowers(
+    by_tag: dict[str, list[dict[str, Any]]], views: dict[str, dict[str, Any]]
+) -> None:
+    """Every `memory_knowers` row names one statement in the file and a character's point of
+    view in the file (#2995). A backup must hold the whole list or none of it, so damage refuses
+    the file."""
+    held = {
+        "about_entity_id": {r["id"] for r in by_tag["entity"]},
+        "state_id": {r["id"] for r in by_tag["state"]},
+        "relation_id": {r["id"] for r in by_tag["relation"]},
+        "alias_id": {r["id"] for r in by_tag["alias"]},
+    }
+    for k in by_tag["knower"]:
+        named = [c for c in held if k[c] is not None]
+        if len(named) != 1 or k[named[0]] not in held[named[0]]:
+            raise CampaignError(DAMAGED)
+        view = views.get(k["perspective_id"])
+        if view is None or view["kind"] not in ("pc", "npc"):
+            raise CampaignError(DAMAGED)
 
 
 _OLD_PARENTS = {k: v[0] for k, v in MIGRATED_KINDS.items()}
@@ -449,18 +528,29 @@ def _with_definition_fields(rows: list[Any]) -> list[Any]:
                 **raw,
             }
         elif isinstance(raw, dict) and raw.get("table") == "belief":
-            raw = {"pinned": False, **raw}  # from before the pin (#2447)
+            # from before the pin (#2447), a hide's sleep (#3082) and lineage (#3091)
+            raw = {
+                "pinned": False,
+                "hidden_by": [],
+                "derived_from": None,
+                "change_kind": None,
+                "game_time": None,  # from before beliefs knew the game time (#3091)
+                **raw,
+            }
+        elif isinstance(raw, dict) and raw.get("table") == "knower":
+            raw = {"hidden_by": [], **raw}  # from before a hide could put a row to sleep (#3082)
         elif isinstance(raw, dict) and raw.get("table") == "claim":
             raw = {"reading": None, **raw}  # from before readings (#2412)
         elif isinstance(raw, dict) and raw.get("table") == "alias":
             raw = {"said_as": None, **raw}  # from before the narrator's spelling (#1419)
         elif isinstance(raw, dict) and raw.get("table") == "predicate":
-            old_format = "version" not in raw
             raw = {**_NEW_PREDICATE_FIELDS, **raw}
-            if old_format and raw.get("key") in core_predicates:
-                # A file from before the core took this name: never refused. The campaign's
-                # row is kept as replaced by the core one, and `recheck_definitions` looks at
-                # its facts against the core meaning.
+            if raw.get("key") in core_predicates:
+                # A campaign's own relationship whose name the core has taken since (from an old
+                # file, or a current one made before a release added the term, #3035): never
+                # refused. The campaign's row is kept as replaced by the core one, its
+                # connections use the core term, and `recheck_definitions` looks at its facts
+                # against the core meaning.
                 raw = {**raw, "status": DEPRECATED, "replaced_by": raw["key"], "version": 1}
         elif isinstance(raw, dict) and raw.get("table") == "relation":
             version = raw.get("definition_version", 1)
@@ -475,6 +565,7 @@ def _with_definition_fields(rows: list[Any]) -> list[Any]:
                 "unrevealed": False,
                 "directional": False,
                 "decided": None,
+                "via_alias_id": None,  # from before #3037: no connection came through a name
                 **raw,
                 "definition_version": version,
             }
@@ -756,13 +847,22 @@ def _tidy_evidence(by_tag: dict[str, list[dict[str, Any]]]) -> None:
     lines), and a claim, clue or event must be a row of this same file, else the link is a
     placeholder. A belief's old list and a claim's `lines` are not read from a file for the same
     reason (they hold line references, which name speakers)."""
+    held = {r["id"] for r in by_tag["belief"]}
     for row in by_tag["belief"]:
         row["evidence_ids"] = []
+        # a lineage link to a belief the file does not hold (or to itself) is a placeholder, and
+        # a link always says how (the database's rule); a file is never refused for it
+        if row["derived_from"] is not None and (
+            row["derived_from"] not in held or row["derived_from"] == row["id"]
+        ):
+            row["derived_from"] = None
     for row in by_tag["claim"]:  # an older file's references are not brought back (#2676)
         row["lines"] = []
     claims = {r["id"] for r in by_tag["claim"]}
     entity_kind = {r["id"]: r["type"] for r in by_tag["entity"]}
     for row in by_tag["evidence"]:
+        if row["kind"] == evidence.SOURCE and row["target_id"] not in entity_kind:
+            row["target_id"] = None  # (the entry it names is not in the file)
         kind, target = row["kind"], row["target_id"]
         if (
             kind == evidence.LINE
@@ -784,9 +884,12 @@ def _reading_ok(reading: object) -> bool:
     character's, and short words. Untrusted."""
     if reading is None:
         return True
-    if not isinstance(reading, dict) or set(reading) != set(_READING_KEYS):
+    if not isinstance(reading, dict) or set(reading) - {"liar", "spoken_at"} != set(_READING_KEYS):
         return False
-    for key, kind in _READING_KEYS.items():
+    optional = tuple(
+        (key, kind) for key, kind in (("liar", str), ("spoken_at", int)) if key in reading
+    )
+    for key, kind in (*_READING_KEYS.items(), *optional):
         value = reading[key]
         if not isinstance(value, kind) or (kind is not bool and isinstance(value, bool)):
             return False

@@ -20,7 +20,7 @@ import logging
 import time
 from collections import Counter
 from collections.abc import Awaitable, Callable, Collection, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Protocol
 
 from dmbot.ai import AIOutOfFunds, Reply
@@ -39,6 +39,7 @@ from dmbot.memory.claims import (
     UNKNOWN_NAME_REASON,
     ClaimStore,
     Extracted,
+    is_family,
     parse_answer,
 )
 from dmbot.memory.ontology import Tally
@@ -259,6 +260,8 @@ async def run(
     after_ms: int = 0,
     count_call: Callable[[], Awaitable[None]] | None = None,
     readings: bool = False,
+    family_only: bool = False,
+    imported: bool = False,
 ) -> Report:
     """Read the session's lines and store what the AI found as proposals, all at once at the end
     (the linker picks the most-said new names across the whole session). `consenting` is asked
@@ -277,8 +280,16 @@ async def run(
     reveals, frame-ups, divinations; `readings.py`), inside the same ceilings: it is a call like
     any other, counted before it is made and held to `max_calls`, so turning it on does not raise
     what a session may spend. Its answers wait as claims that carry a reading and are placed by
-    the DM, never written."""
+    the DM, never written.
+
+    `imported`: the session was loaded from a file, so its readings carry no moment for the game
+    clock's log to be read at (#3091).
+
+    `family_only` (#2960; owner, 2026-10-29: families first, allies and enemies not yet): only a
+    claim that says a family role ("is the niece of") is kept, whatever else the AI returned; the
+    rest are counted as `not family` and never stored. No readings are asked in this mode."""
     report = Report()
+    readings = readings and not family_only
     collected: list[Extracted] = []
     believed: list[Extracted] = []
     everyone: dict[str, int | None] = {}  # every line sent, to who said it
@@ -337,6 +348,10 @@ async def run(
             continue
         streak = 0
         found, bad = parse_answer(reply.text, speakers.keys())
+        if family_only:
+            family = [c for c in found if is_family(c)]
+            report.dropped["not family"] += len(found) - len(family)
+            found = family
         collected.extend(found)
         answered_by = reply.model or answered_by
         everyone.update(speakers)
@@ -386,7 +401,16 @@ async def run(
             report.readings_cut += 1
         for belief in proposals(kept).beliefs:
             how = "dm_said" if any(n in dm_lines for n in belief.lines) else "player_said"
-            believed.append(as_claim(belief, how))
+            claim = as_claim(belief, how)
+            # The real moment of the newest line it came from (a line's `started_ms` is Unix
+            # milliseconds): placing it reads the game clock's log at that moment, so the belief
+            # gets the game time of the line, never of the clock as it reads later (#3091).
+            spoken = max((s.started_ms for s in batch if str(s.number) in belief.lines), default=0)
+            # (never for an imported session: its lines carry the dates the DM chose, not the
+            # moments they were spoken at, so no clock log can say what time they had)
+            if spoken > 0 and claim.reading is not None and not imported:
+                claim = replace(claim, reading={**claim.reading, "spoken_at": spoken // 1000})
+            believed.append(claim)
         everyone.update(speakers)
         heard.update((number, text) for number, _who, text in rows)
     # One hand-over for the whole session: the linker picks the most-said new names across all of

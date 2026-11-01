@@ -623,6 +623,33 @@ _ai_reads: dict[tuple[int, str], int] = {}  # (server, day) → reads
 
 
 AI_AT_ONCE = asyncio.Semaphore(3)  # AI requests running at once, across all servers
+BUSY, LIMIT = "busy", "limit"  # why `start_ai_read` said no
+
+
+def start_ai_read(guild_id: int, now: float) -> str | None:
+    """Take one of the server's document reads for the day and mark the server as reading, or say
+    why not: BUSY (one is running; try again soon) or LIMIT (today's are used). The Discord button
+    and the website's Upload lore (#3022) share this, so they share one allowance. The caller ends
+    it with `end_ai_read`."""
+    day = datetime.fromtimestamp(now, UTC).strftime("%Y-%m-%d")
+    if guild_id in _ai_busy:
+        return BUSY
+    if _ai_reads.get((guild_id, day), 0) >= AI_READS_PER_DAY:
+        return LIMIT
+    _ai_busy.add(guild_id)
+    for old in [k for k in _ai_reads if k[1] != day]:
+        del _ai_reads[old]
+    _ai_reads[(guild_id, day)] = _ai_reads.get((guild_id, day), 0) + 1
+    return None
+
+
+def link_is_busy(guild_id: int) -> bool:
+    """A link is being opened for this server right now (one at a time)."""
+    return guild_id in _link_busy
+
+
+def end_ai_read(guild_id: int) -> None:
+    _ai_busy.discard(guild_id)
 
 
 async def take_list(interaction: discord.Interaction, campaign_id: str, upload: Upload) -> None:

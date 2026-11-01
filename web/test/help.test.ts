@@ -12,7 +12,7 @@ import { parsePage } from "./dom";
 import { entries, held } from "../src/content/whats-new";
 import { storyStatesLine } from "../src/content/privacy-channels";
 import { featureSteps, isLive, knownTitle, liveFeatureSteps } from "../src/content/help-features";
-import { WHATS_ON_LIVE, whatsOnSteps, TIME_SUGGESTIONS_LIVE, timeSuggestionSteps, RULES_CHANNEL_LIVE, rulesChannelSteps, INITIATIVE_STYLE_LIVE, initiativeStyleSteps, initiativeStyleDmSteps, NPCS_CHANNEL_LIVE, npcsChannelSteps, DEEDS_LIVE, deedSteps, WHERE_ARE_WE_LIVE, whereAreWeSteps, SHARED_STORY_LIVE, sharedStorySteps, STANDING_LIVE, standingSteps, HOMEBREW_KINDS_LIVE, homebrewKindSteps, STORY_THREADS_LIVE, storyThreadSteps, DM_BOT_CHANNEL_LIVE, dmBotChannelSteps, NAMES_BUTTON_LIVE, SIDEBAR_SOURCES_LIVE, namesButtonSteps, QUIET_STOP_LIVE, quietStopSteps, sidebarSourceSteps, settingsOnDmScreenSteps, HOMEBREW_LINKS_LIVE, SECRET_CLUES_LIVE, PRESESSION_NOTE_LIVE, SECRET_SAID_LIVE, SECRET_REVEAL_LIVE, presessionNoteSteps, secretSaidSteps, secretRevealSteps, RULE_KINDS_LIVE, ruleKindSteps, ruleKindDmSteps, FIGHT_AND_ITEM_RULES_LIVE, fightRuleSteps, magicItemRuleSteps, accountSteps, dmSteps, homebrewLinkSteps, secretClueSteps, emailSteps, recapSteps, quickAnswers, quickAnswersHeading, gettingHelp, playerSteps, snags, snagsHeading, onThisPage, onThisPageHeading, backToTop, STORY_STATES_LIVE, storyStateSteps } from "../src/content/help";
+import { WHATS_ON_LIVE, whatsOnSteps, TIME_SUGGESTIONS_LIVE, timeSuggestionSteps, INITIATIVE_STYLE_LIVE, initiativeStyleSteps, initiativeStyleDmSteps, DEEDS_LIVE, deedSteps, WHERE_ARE_WE_LIVE, whereAreWeSteps, SHARED_STORY_LIVE, sharedStorySteps, STANDING_LIVE, standingSteps, HOMEBREW_KINDS_LIVE, homebrewKindSteps, STORY_THREADS_LIVE, storyThreadSteps, DM_BOT_CHANNEL_LIVE, dmBotChannelSteps, NAMES_BUTTON_LIVE, SIDEBAR_SOURCES_LIVE, namesButtonSteps, QUIET_STOP_LIVE, quietStopSteps, sidebarSourceSteps, settingsOnDmScreenSteps, HOMEBREW_LINKS_LIVE, SECRET_CLUES_LIVE, PRESESSION_NOTE_LIVE, SECRET_SAID_LIVE, SECRET_REVEAL_LIVE, presessionNoteSteps, secretSaidSteps, secretRevealSteps, RULE_KINDS_LIVE, ruleKindSteps, ruleKindDmSteps, FIGHT_AND_ITEM_RULES_LIVE, fightRuleSteps, magicItemRuleSteps, accountSteps, dmSteps, homebrewLinkSteps, secretClueSteps, emailSteps, recapSteps, quickAnswers, quickAnswersHeading, gettingHelp, playerSteps, snags, snagsHeading, onThisPage, onThisPageHeading, backToTop, STORY_STATES_LIVE, storyStateSteps } from "../src/content/help";
 import Help from "../src/pages/help.astro";
 
 const botDir = fileURLToPath(new URL("../../core/src/dmbot/", import.meta.url));
@@ -231,21 +231,21 @@ describe("Help: the website's read-only pages (#1588)", () => {
     expect(held.map((h) => h.title).includes("A DMbot channel for buttons")).toBe(!DM_BOT_CHANNEL_LIVE);
     const shown = dmSteps.map((x) => x.text).join(" ");
     expect(shown.includes("dmb-dm-bot")).toBe(DM_BOT_CHANNEL_LIVE);
-    expect(shown.includes("On your DM screen, press ⚙️ Settings")).toBe(!DM_BOT_CHANNEL_LIVE);
+    expect(shown.includes("On your DM screen, press ⚙️ Manage DMbot")).toBe(!DM_BOT_CHANNEL_LIVE);
     // Mirrors who gets which button in core/src/dmbot/dm_screen/dm_bot_panel.py (_BUTTONS).
     const words = dmBotChannelSteps.map((x) => x.text).join(" ");
     expect(words).toContain("👤 DMbot Main Menu");
-    expect(words).toContain("Everyone also gets 📖 Look up a rule and 📜 Transcripts.");
-    expect(words).toContain("Press 📖 Look up a rule to check a rule. Only you see the answer.");
-    expect(words).toContain("you get 🗂️ Menu, where you can stop being recorded.");
-    expect(words).toContain("Players also get 📜 My character sheet.");
-    expect(words).toContain("Game masters get ⚙️ Settings too.");
+    expect(words).toContain("Everyone gets ❓ Help.");
+    expect(words).toContain("Press ❓ Help, then 📖 Look up a rule to check a rule. Only you see the answer.");
+    expect(words).toContain("get 🙋 My data");
+    expect(words).toContain("opens 📜 My character sheet");
+    expect(words).toContain("Game masters also get ⚙️ Manage DMbot and 🌐 Manage campaign.");
     expect(words).toContain("/dmbot settings");
     expect(words).toContain("Your DM screen is quieter now");
     // Switch off: nothing shown points to the channel. Switch on: nothing shown says Settings is
     // on the DM screen or the pinned card.
     if (DM_BOT_CHANNEL_LIVE) {
-      expect(shown).not.toMatch(/(?:on|from) (?:your|the) DM screen, press ⚙️ Settings|⚙️ Settings[^.]*on (?:your|the) DM screen|pinned card/);
+      expect(shown).not.toMatch(/(?:on|from) (?:your|the) DM screen, press ⚙️ Manage DMbot|⚙️ Manage DMbot[^.]*on (?:your|the) DM screen|pinned card/);
     } else {
       for (const phrase of ["dmb-dm-bot", "DMbot channel", "DMbot Main Menu"]) expect(shown).not.toContain(phrase);
     }
@@ -254,7 +254,7 @@ describe("Help: the website's read-only pages (#1588)", () => {
   it("holds the 📇 Names button step with its held What's new entry, and flips them together (#2002)", () => {
     expect(held.map((h) => h.title).includes("A 📇 Names button")).toBe(!NAMES_BUTTON_LIVE);
     const shown = dmSteps.map((x) => x.text).join(" ");
-    expect(shown.includes("📇 Names")).toBe(NAMES_BUTTON_LIVE);
+    expect(shown.includes("On the website, pick Names.")).toBe(NAMES_BUTTON_LIVE);
     const words = namesButtonSteps.map((x) => x.text).join(" ");
     expect(words).toContain("search the names and fix one");
     expect(words).toContain("Any after-session check you haven't done yet (Check names, Check who is who, Check what was said) waits there.");
@@ -358,19 +358,9 @@ describe("Help: the website's read-only pages (#1588)", () => {
   });
 
   it("says a backup keeps how often names were said, only for people still recorded (#1754)", () => {
-    const step = dmSteps.map((x) => x.text).find((t) => t.includes("/dmbot backup (paid campaigns only)")) ?? "";
+    const step = dmSteps.map((x) => x.text).find((t) => t.includes("type /dmbot backup in Discord (paid campaigns only)")) ?? "";
     expect(step).toContain("how often names were said and by whom");
     expect(step).toContain("only for people who are still recorded");
-  });
-
-  it("holds the rules channel steps with their held What's new entry (#1759)", () => {
-    expect(held.map((h) => h.title).includes("A channel for your house rules")).toBe(!RULES_CHANNEL_LIVE);
-    const shown = dmSteps.map((x) => x.text).join(" ");
-    expect(shown.includes("a channel called dmb-rules")).toBe(RULES_CHANNEL_LIVE);
-    const words = rulesChannelSteps.map((x) => x.text).join(" ");
-    expect(words).toContain("Only DMbot posts in dmb-rules. Players can't, and neither can you.");
-    expect(words).toContain(NPCS_CHANNEL_LIVE ? "closes all three." : "Hiding the DM screen again closes both.");
-    expect(words).toContain("Each rule is shown in your own words.");
   });
 
   it("says to pick /dmbot start from the list, with a tip for when no list pops up (#1770)", () => {
@@ -378,19 +368,6 @@ describe("Help: the website's read-only pages (#1588)", () => {
     expect(words).toContain("Wait for the list to pop up, pick /dmbot start in it, then send it.");
     expect(words).toContain("No list pops up?");
     expect(words).toContain("If it went out as plain chat, DMbot didn't get it.");
-  });
-
-  it("holds the NPC list channel steps with their held What's new entry (#1781)", () => {
-    expect(held.map((h) => h.title).includes("A channel listing the people and groups")).toBe(!NPCS_CHANNEL_LIVE);
-    const shown = dmSteps.map((x) => x.text).join(" ");
-    expect(shown.includes("a channel called dmb-npcs")).toBe(NPCS_CHANNEL_LIVE);
-    const words = npcsChannelSteps.map((x) => x.text).join(" ");
-    expect(words).toContain("Only DMbot posts there.");
-    expect(words).toContain("the next /dmbot start fixes it");
-    // The peek sentence names the NPC list only when the channel is live.
-    const peek = rulesChannelSteps.map((x) => x.text).join(" ");
-    expect(peek.includes("dmb-rules and dmb-npcs too")).toBe(NPCS_CHANNEL_LIVE);
-    for (const step of npcsChannelSteps) expect(step.text.split(" ").length).toBeLessThanOrEqual(40);
   });
 
   it("holds the initiative style steps with their held What's new entry (#1788)", () => {
@@ -464,7 +441,7 @@ describe("Help: the website's read-only pages (#1588)", () => {
 
   it("finds Settings, splits the party and deletes a campaign in plain words (#1659)", () => {
     const steps = dmSteps.map((x) => x.text);
-    const find = steps.find((t) => t.includes("Can't find ⚙️ Settings?")) ?? "";
+    const find = steps.find((t) => t.includes("Can't find ⚙️ Manage DMbot?")) ?? "";
     expect(find).toContain("/dmbot settings");
     // The voice-channel clause belongs to the DM-screen wording; the DMbot channel replaces it (#1676).
     if (!DM_BOT_CHANNEL_LIVE) expect(find).toContain("/dmbot start");

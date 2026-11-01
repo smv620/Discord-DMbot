@@ -41,6 +41,7 @@ from dmbot.campaigns import Campaign
 from dmbot.dm_screen.recap_panel import PlanFacts, audio_how
 from dmbot.entitlements import RECAP_AUDIO_PLANS
 from dmbot.logs import log_context
+from dmbot.memory import gate
 from dmbot.memory.exposures import secret_connections
 from dmbot.memory.lookup import CampaignLookup
 from dmbot.memory.models import (
@@ -60,6 +61,7 @@ from dmbot.recaps import feedback as recap_feedback
 from dmbot.recaps import hold as recap_hold
 from dmbot.recaps import post as recap_post
 from dmbot.recaps import requests as recap_requests
+from dmbot.recaps.accepted import AcceptedStore
 from dmbot.recaps.approval import text_hash
 from dmbot.recaps.audio import names as audio_names
 from dmbot.recaps.audio.files import FILE_NAMES, MUSIC, VOICE, AudioFiles
@@ -70,7 +72,9 @@ from dmbot.recaps.inputs import (
     recap_name_sets,
     recap_recanted,
     recap_said,
+    story_so_far,
 )
+from dmbot.recaps.notes import SessionNotesStore
 from dmbot.recaps.notify import page_link, remind_the_dm, tell_the_dm
 from dmbot.recaps.pipeline import Inputs
 from dmbot.recaps.requests import Request as RecapRequest
@@ -110,7 +114,7 @@ if TYPE_CHECKING:  # (only for annotations: `bot.py` imports this module)
     from dmbot import plan_rules
     from dmbot.ai import TierClient
     from dmbot.bot import DMBot
-    from dmbot.campaigns import web_backup
+    from dmbot.campaigns import web_backup, web_line_delete, web_restore
     from dmbot.campaigns.store import CampaignStore
     from dmbot.campaigns.web_delete import WebDeleteNotices
     from dmbot.config import Settings
@@ -121,8 +125,10 @@ if TYPE_CHECKING:  # (only for annotations: `bot.py` imports this module)
     from dmbot.memory.exposures import ExposureStore
     from dmbot.memory.importance import ImportanceCache
     from dmbot.memory.lookup import LookupCache
+    from dmbot.memory.lore_queue import LoreQueue
     from dmbot.memory.store import MemoryStore
     from dmbot.memory.web_actions import ActionStore
+    from dmbot.memory.web_sheets import ActionStore as SheetActionStore
     from dmbot.recaps.audio.worker import AudioWorker
     from dmbot.recaps.pipeline import RecapWorker
     from dmbot.recaps.plot import PlotRunner
@@ -135,6 +141,7 @@ if TYPE_CHECKING:  # (only for annotations: `bot.py` imports this module)
     from dmbot.transcript.import_job import ImportJob
     from dmbot.transcript.store import TranscriptStore
     from dmbot.transcript.waiting_questions import WaitingQuestionStore
+    from dmbot.transcript.web_line_fixes import ActionStore as LineFixStore
     from dmbot.transcription.pipeline import TranscriptionPipeline
     from dmbot.ui.decision_lines import DecisionLines
     from dmbot.usage import Meter
@@ -145,9 +152,13 @@ log = logging.getLogger("dmbot.bot")
 RECAP_ATTACHMENT_MAX = 24 * 1024 * 1024  # Discord's own most for a message
 RECAP_DEFAULT_FILE_LIMIT = 10 * 1024 * 1024 - 65536  # a server's smallest limit, with some room
 RECAPS_PER_ROUND = 2  # recap jobs worked in one minute, across all servers (a small global limit)
+WEB_RESTORE_ALIVE_EVERY_S = 30  # seconds between touches of the queued website restores
+WEB_RESTORE_TIDY_EVERY = 30  # rounds (about a minute) between the restore rows' upkeep
 RECAP_REQUEST_ROUND_S = 2  # how often the bot looks for what a DM typed on the recap page
 RECAP_REQUESTS_PER_ROUND = 3  # for one server, so one busy server can't hold the others
 RECAP_VOICE_AT_ONCE = 3  # spoken notes written down at the same time, in all servers (#2161)
+WEB_STYLE_PER_ROUND = 5  # recap style choices applied for one server in one round (#3060)
+LORE_SWEEP_EVERY_S = 30.0  # how often a server's lore upload queue is swept for stale rows (#3022)
 NAME_ANSWERS_PER_ROUND = 10  # a page of names answered at once, for one server
 CLIP_SWEEP_EVERY = (
     30  # rounds (about a minute) between sweeps of voice clips older than ten minutes
@@ -227,6 +238,7 @@ class RecapFeatures:
         mailer: Mailer | None
         memory: MemoryStore | None
         meter: Meter | None
+        lore_uploads: LoreQueue | None
         name_actions: ActionStore | None
         name_answers: name_answers.AnswerStore | None
         peek_notices: PeekNotices | None
@@ -246,9 +258,13 @@ class RecapFeatures:
         tables: dict[int, Table]
         transcripts: TranscriptStore | None
         web_backups: web_backup.WebBackups | None
+        web_line_deletions: web_line_delete.WebLineDeletions | None
+        web_restores: web_restore.WebRestores | None
         web_delete_notices: WebDeleteNotices | None
         web_settings: SettingStore | None
         web_rule_actions: RuleActionStore | None
+        web_sheets: SheetActionStore | None
+        web_line_fixes: LineFixStore | None
 
         @property
         def guilds(self) -> Sequence[discord.Guild]: ...
@@ -266,6 +282,7 @@ class RecapFeatures:
         ): ...
         async def fetch_user(self, user_id: int, /) -> discord.User: ...
         async def run_web_backups(self) -> None: ...
+        async def run_web_line_deletions(self) -> None: ...
         async def run_web_delete_notices(self) -> None: ...
         @staticmethod
         def _watched(work: Coroutine[Any, Any, None], name: str) -> asyncio.Task[None]: ...
@@ -299,11 +316,20 @@ class RecapFeatures:
             remember: Hashable | None = None,
         ) -> discord.Message | None: ...
         async def run_name_actions(self) -> None: ...
+        async def run_lore_uploads(self) -> None: ...
+        async def run_house_file_requests(self) -> None: ...
         async def run_peek_notices(self) -> None: ...
         async def run_web_settings(self) -> None: ...
         async def run_web_rule_sharing(self) -> None: ...
         async def read_put_back_lines(self, guild_id: int) -> None: ...
         async def run_web_report_requests(self) -> None: ...
+        async def run_web_sheets(self) -> None: ...
+        async def run_web_line_fixes(self) -> None: ...
+        async def run_web_recap_style(self) -> None: ...
+        async def run_web_restores(self) -> None: ...
+        async def tidy_web_restores(self) -> None: ...
+        async def keep_web_restores_alive(self) -> None: ...
+        async def wait_until_ready(self) -> None: ...
         async def sidebar_send_dm(
             self, user_id: int, text: str, view: discord.ui.View | None = None
         ) -> str: ...
@@ -324,6 +350,14 @@ class RecapFeatures:
             ),
             *(
                 [
+                    self._watched(self._web_restore_loop(), "web-restores"),
+                    self._watched(self._web_restore_alive_loop(), "web-restore-queue"),
+                ]
+                if self.web_restores is not None
+                else []
+            ),
+            *(
+                [
                     self._watched(self._recap_request_loop(), "recap-requests"),
                     self._watched(self._recap_voice_loop(), "recap-voice"),
                 ]
@@ -331,6 +365,37 @@ class RecapFeatures:
                 else []
             ),
         ]
+
+    async def _web_restore_loop(self) -> None:
+        """Apply the copies DMs uploaded on the website (#2746). Its own loop: a big restore takes
+        minutes, and the recap requests, settings and backups must not wait for it. One restore at
+        a time in this process, so a row that stopped moving belongs to a bot that stopped."""
+        # No restore is judged before Discord has said where the bot is.
+        await self.wait_until_ready()
+        rounds = 0
+        while True:
+            if rounds % WEB_RESTORE_TIDY_EVERY == 0:  # about a minute; the first round too
+                try:
+                    await self.tidy_web_restores()
+                except Exception as exc:
+                    log.warning("The website restore upkeep failed: %s", type(exc).__name__)
+            rounds += 1
+            try:
+                await self.run_web_restores()
+            except Exception as exc:  # the type only: a database error can quote a row
+                log.warning("The website restores failed: %s", type(exc).__name__)
+            await asyncio.sleep(RECAP_REQUEST_ROUND_S)
+
+    async def _web_restore_alive_loop(self) -> None:
+        """Keep the queued website restores showing as alive (#2746) while a long restore runs in
+        the other loop: the page calls a queued restore stalled after two minutes."""
+        await self.wait_until_ready()
+        while True:
+            try:
+                await self.keep_web_restores_alive()
+            except Exception as exc:  # the type only
+                log.warning("The website restore queue touch failed: %s", type(exc).__name__)
+            await asyncio.sleep(WEB_RESTORE_ALIVE_EVERY_S)
 
     async def _waiting_recaps(self, table: Table) -> None:
         """A session starts and a finished recap from before is still waiting for the DM (#1474):
@@ -1115,12 +1180,16 @@ class RecapFeatures:
         # What the DM corrected in this one recap, for this try only (#2076).
         if found is None:
             return None
-        threads = (
-            await self._open_threads(gid, cid)
-            if self.settings.recap_writer_reads == "transcript"
-            else ()
+        # The open threads and the earlier accepted recaps are context for the writer (#2954).
+        threads = await self._open_threads(gid, cid)
+        story = await story_so_far(
+            AcceptedStore(self.recaps.db),
+            gid,
+            cid,
+            job.session_at,
+            SessionNotesStore(self.recaps.db),
         )
-        return dataclasses.replace(found, corrections=job.corrections, threads=threads)
+        return dataclasses.replace(found, corrections=job.corrections, threads=threads, story=story)
 
     async def recap_story(self, gid: int, cid: str, job: Job, seeds: Sequence[str]) -> list[Memory]:
         """The confirmed story memory around the beats' names for PlotBot's notes (#2254). Two
@@ -1868,6 +1937,14 @@ class RecapFeatures:
             except Exception as exc:
                 log.warning("The name actions failed: %s", type(exc).__name__)
             try:
+                await self.run_lore_uploads()
+            except Exception as exc:
+                log.warning("The lore uploads failed: %s", type(exc).__name__)
+            try:
+                await self.run_house_file_requests()
+            except Exception as exc:
+                log.warning("The house-rules file requests failed: %s", type(exc).__name__)
+            try:
                 await self.run_web_settings()
             except Exception as exc:
                 log.warning("The website settings failed: %s", type(exc).__name__)
@@ -1875,6 +1952,18 @@ class RecapFeatures:
                 await self.run_web_rule_sharing()
             except Exception as exc:
                 log.warning("The website rule choices failed: %s", type(exc).__name__)
+            try:
+                await self.run_web_sheets()
+            except Exception as exc:
+                log.warning("The website sheet choices failed: %s", type(exc).__name__)
+            try:
+                await self.run_web_line_fixes()
+            except Exception as exc:
+                log.warning("The website line fixes failed: %s", type(exc).__name__)
+            try:
+                await self.run_web_recap_style()
+            except Exception as exc:
+                log.warning("The website recap style choices failed: %s", type(exc).__name__)
             try:
                 await self.run_peek_notices()
             except Exception as exc:
@@ -1891,9 +1980,18 @@ class RecapFeatures:
                 await self.run_web_report_requests()
             except Exception as exc:
                 log.warning("The website report requests failed: %s", type(exc).__name__)
+            try:
+                await self.run_web_line_deletions()
+            except Exception as exc:
+                log.warning("The website line deletions failed: %s", type(exc).__name__)
             sweeps += 1  # counted whatever happened, so the sweep below can't be starved
             if sweeps % 300 == 0 and self.recap_requests is not None:  # about every 10 minutes
                 for guild in list(self.guilds):
+                    if self.web_line_fixes is not None:
+                        try:  # its own try: it carries the promise that words go within a day
+                            await self.web_line_fixes.sweep(guild.id)
+                        except Exception as exc:
+                            log.warning("The line fix sweep failed: %s", type(exc).__name__)
                     try:
                         await self.recap_requests.sweep(guild.id)
                         if self.name_answers is not None:
@@ -1904,6 +2002,10 @@ class RecapFeatures:
                             await self.web_settings.sweep(guild.id)
                         if self.web_rule_actions is not None:
                             await self.web_rule_actions.sweep(guild.id)
+                        if self.web_line_deletions is not None:
+                            await self.web_line_deletions.sweep(guild.id)
+                        if self.web_sheets is not None:
+                            await self.web_sheets.sweep(guild.id)
                         # Lines a DM put back after their session (#2587): read once.
                         await self.read_put_back_lines(guild.id)
                         if self.peek_notices is not None:
@@ -2315,8 +2417,23 @@ class RecapFeatures:
             log.exception("Recap: couldn't read the open story threads")
             return ()
         live = (OPEN, GOING, HINTED)
+        # Only threads the party knows: one that only the DM, an NPC or some of the player
+        # characters know is the DM's own plot and never goes to the writer (a recap is read aloud
+        # to the table). Asked of the one gate, never of the old flags (#2995): the viewer is "what
+        # every player character knows", so a limited or hidden thread is not among them.
+        try:
+            seen = await self.memory.visible_to(gid, cid, gate.Viewer.the_party())
+        except Exception:
+            log.exception("Recap: couldn't ask what the party knows of the story threads")
+            return ()
         return tuple(
-            t.thread.name for t in found if t.state is not None and t.state.condition in live
+            t.thread.name
+            for t in found
+            if t.state is not None
+            and t.state.condition in live
+            # (the thread's own entry row, not `knows`: that also counts an entry a known
+            # property of it implies, and a thread's state is its own statement)
+            and seen.how_sure(gate.ENTRY, t.thread.id) is not None
         )
 
     async def run_audio_notices(self) -> None:

@@ -47,7 +47,7 @@ READ_MAX_BYTES = 4 * house_file.MAX_FILE_CHARS  # as bytes: UTF-8 is up to 4 per
 
 CLOSED = (
     "This offer has ended (DMbot restarted, or it was already handled). To compare again, "
-    "press ⚙️ Settings, then 📄 House-rules file, then 🔄 Compare now, or upload the file again."
+    "press ⚙️ Manage DMbot, then 📄 House-rules file, then 🔄 Compare now, or upload the file again."
 )
 ONLY_DMS = "Only this campaign's DMs can use these buttons."
 FAILED = (
@@ -107,6 +107,18 @@ LABELS = {
     "rest": ("Accept this and the rest", "✅", discord.ButtonStyle.secondary),
     "file": ("Download the full list", "📥", discord.ButtonStyle.secondary),
 }
+
+
+@dataclass(slots=True)
+class Tally:
+    """What a comparison found, for a caller that wants numbers and not words (the website's
+    request, #3087): how many rules it read, and how many changes it offered. Counts only."""
+
+    rules_read: int = 0
+    to_add: int = 0
+    to_change: int = 0
+    to_remove: int = 0
+
 
 Send = Callable[[str, discord.ui.View], Awaitable[bool]]
 Progress = Callable[[str], None]  # told the words of the step that is starting (#2564)
@@ -463,6 +475,7 @@ async def compare_text(
     respect_ignore: bool = True,
     file_name: str | None = None,
     progress: Progress | None = None,
+    tally: Tally | None = None,
 ) -> str | None:
     """Compare a file's text with the campaign's house rules and, if they differ, offer
     the buttons through `send`. Returns words for the DM when there is nothing to offer
@@ -477,16 +490,16 @@ async def compare_text(
     parsed = await asyncio.to_thread(house_file.parse, text)
     if parsed.rules and not parsed.problems:
         return await _compare_numbered(
-            bot, campaign, parsed, send, from_link, respect_ignore, file_name
+            bot, campaign, parsed, send, from_link, respect_ignore, file_name, tally
         )
     if not _ai_may_read(bot, campaign):
         if parsed.rules:
             return await _compare_numbered(
-                bot, campaign, parsed, send, from_link, respect_ignore, file_name
+                bot, campaign, parsed, send, from_link, respect_ignore, file_name, tally
             )
         return no_rules(len(parsed.problems))
     return await _compare_found(
-        bot, campaign, text, send, from_link, respect_ignore, file_name, progress
+        bot, campaign, text, send, from_link, respect_ignore, file_name, progress, tally
     )
 
 
@@ -498,10 +511,13 @@ async def _compare_numbered(
     from_link: bool,
     respect_ignore: bool,
     file_name: str | None,
+    tally: Tally | None = None,
 ) -> str | None:
     unreadable = len(parsed.problems)
     if not parsed.rules:
         return no_rules(unreadable)
+    if tally is not None:
+        tally.rules_read = len(parsed.rules)
     fingerprint = house_file_sync.fingerprint(parsed.rules)
     if from_link and respect_ignore:
         links = bot.house_file_links
@@ -516,6 +532,12 @@ async def _compare_numbered(
     items = house_file_sync.items_of(diff)
     if not items:
         return SAME
+    if tally is not None:
+        tally.to_add, tally.to_change, tally.to_remove = (
+            len(diff.added),
+            len(diff.changed),
+            len(diff.removed),
+        )
     removals = len(diff.removed)
     big = removals >= BIG_REMOVALS or (removals >= 2 and removals * 2 > len(mine))
     pending = Pending(
@@ -573,6 +595,7 @@ async def _compare_found(
     respect_ignore: bool,
     file_name: str | None,
     progress: Progress | None = None,
+    tally: Tally | None = None,
 ) -> str | None:
     """A file that is not in the numbered format: one AI call lists its rules (#2377). `progress`
     is told when the slow step starts, for the DM's waiting message (#2564)."""
@@ -631,6 +654,8 @@ async def _compare_found(
         if remember:  # nothing to offer: this version is done with
             await links.set_read(gid, campaign.id, fingerprint)
         return BOOK if found.published_book else NOTHING_FOUND
+    if tally is not None:
+        tally.rules_read = tally.to_add = len(found.rules)
     first = max((r.number for r in mine), default=0) + 1
     added = tuple(
         house_file.FileRule(first + i, c.text, c.instead_of) for i, c in enumerate(found.rules)

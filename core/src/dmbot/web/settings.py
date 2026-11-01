@@ -119,12 +119,43 @@ class WebSettings:
     imports_on: bool = False
     # The same DMBOT_HANDOVER_EMAIL as the bot's (#2532): off, the email hand-over routes say 404.
     handover_email_on: bool = False
+    # A line fixed from the Transcripts page (#2858; DMBOT_WEB_LINE_FIX): off, its routes answer
+    # 404, so nothing is queued before the bot can act on it.
+    line_fix_on: bool = False
+    # A person's own "Delete my transcripts" on the website (#2769; DMBOT_WEB_LINE_DELETE): off, its
+    # routes answer 404, so nothing is queued before the bot can run it.
+    line_delete_on: bool = False
+    # DMBOT_WEB_RESTORE (#2745): off, the Load a backup routes say 404, so nothing can be staged
+    # until the bot's half, which applies and sweeps staged restores (#2746), is live.
+    web_restore_on: bool = False
     # Game masters added and removed on the website (#2768; DMBOT_WEB_CO_DMS): off, those routes and
     # the queue's `co_dm` choice answer 404, so nothing is queued before the bot can apply it.
     co_dms_on: bool = False
     # "Make it again" on a session's report (#2661; DMBOT_WEB_REPORT_MAKE): off, the route that
     # queues the request answers 404, so nothing is queued before the bot (#2805) takes it.
     report_make_on: bool = False
+    # Upload lore on the website (#3022; DMBOT_WEB_LORE): off, the routes that queue an upload
+    # answer 404, so nothing is queued before the bot's half (#3022) reads it.
+    lore_on: bool = False
+    # Pause and unpause from the website (#2985; DMBOT_WEB_PAUSE): off, a pause choice answers 404,
+    # so nothing is queued before the bot step that applies it is deployed.
+    pause_on: bool = False
+    # The Shared story switch from the website (#2985; DMBOT_WEB_STORY_MODE): off, a story-mode
+    # choice answers 404, so nothing is queued before the bot step that applies it is deployed.
+    story_mode_on: bool = False
+    # The House-rules file from the website (#2985; DMBOT_WEB_HOUSE_FILE): off, its routes answer
+    # 404, so nothing is queued before the bot step that applies a request is deployed.
+    house_file_on: bool = False
+    # The D&D Beyond invite link from the website (#2985; DMBOT_WEB_DNDBEYOND_INVITE): off, an
+    # invite choice answers 404, so nothing is queued before the bot step that applies it is
+    # deployed.
+    invite_on: bool = False
+    # Main and fallback rules from the website (#2985; DMBOT_WEB_RULESETS): off, a rules choice
+    # answers 404, so nothing is queued before the bot step that applies it is deployed.
+    rulesets_on: bool = False
+    # Recap style on the website (#2985; DMBOT_WEB_RECAP_STYLE): off, its routes answer 404, so
+    # nothing is queued before the bot step that applies a change is deployed.
+    recap_style_on: bool = False
     # Sharing house rules from the website (#2783; DMBOT_WEB_RULE_SHARING): off, the routes that
     # queue a choice answer 404, so nothing is queued before the bot can run it.
     rule_sharing_on: bool = False
@@ -342,6 +373,17 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
         raise ConfigError(
             f'DMBOT_HANDOVER_EMAIL must be 1 (on) or 0 (off), got "{handover_email_raw}".'
         )
+    line_fix_raw = (get("DMBOT_WEB_LINE_FIX") or "0").lower()
+    if line_fix_raw not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError(f'DMBOT_WEB_LINE_FIX must be 1 (on) or 0 (off), got "{line_fix_raw}".')
+    line_delete_raw = (get("DMBOT_WEB_LINE_DELETE") or "0").lower()
+    if line_delete_raw not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError(
+            f'DMBOT_WEB_LINE_DELETE must be 1 (on) or 0 (off), got "{line_delete_raw}".'
+        )
+    restore_raw = (get("DMBOT_WEB_RESTORE") or "0").lower()
+    if restore_raw not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError(f'DMBOT_WEB_RESTORE must be 1 (on) or 0 (off), got "{restore_raw}".')
     co_dms_raw = (get("DMBOT_WEB_CO_DMS") or "0").lower()
     if co_dms_raw not in ("0", "1", "true", "false", "on", "off"):
         raise ConfigError(f'DMBOT_WEB_CO_DMS must be 1 (on) or 0 (off), got "{co_dms_raw}".')
@@ -350,6 +392,35 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
         raise ConfigError(
             f'DMBOT_WEB_REPORT_MAKE must be 1 (on) or 0 (off), got "{report_make_raw}".'
         )
+    lore_raw = (get("DMBOT_WEB_LORE") or "0").lower()
+    if lore_raw not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError(f'DMBOT_WEB_LORE must be 1 (on) or 0 (off), got "{lore_raw}".')
+    pause_raw = (get("DMBOT_WEB_PAUSE") or "0").lower()
+    if pause_raw not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError(f'DMBOT_WEB_PAUSE must be 1 (on) or 0 (off), got "{pause_raw}".')
+    recap_style_raw = (get("DMBOT_WEB_RECAP_STYLE") or "0").lower()
+    if recap_style_raw not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError(
+            f'DMBOT_WEB_RECAP_STYLE must be 1 (on) or 0 (off), got "{recap_style_raw}".'
+        )
+    story_mode_raw = (get("DMBOT_WEB_STORY_MODE") or "0").lower()
+    if story_mode_raw not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError(
+            f'DMBOT_WEB_STORY_MODE must be 1 (on) or 0 (off), got "{story_mode_raw}".'
+        )
+    house_file_raw = (get("DMBOT_WEB_HOUSE_FILE") or "0").lower()
+    if house_file_raw not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError(
+            f'DMBOT_WEB_HOUSE_FILE must be 1 (on) or 0 (off), got "{house_file_raw}".'
+        )
+    invite_raw = (get("DMBOT_WEB_DNDBEYOND_INVITE") or "0").lower()
+    if invite_raw not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError(
+            f'DMBOT_WEB_DNDBEYOND_INVITE must be 1 (on) or 0 (off), got "{invite_raw}".'
+        )
+    rulesets_raw = (get("DMBOT_WEB_RULESETS") or "0").lower()
+    if rulesets_raw not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError(f'DMBOT_WEB_RULESETS must be 1 (on) or 0 (off), got "{rulesets_raw}".')
     sheets_raw = (get("DMBOT_WEB_SHEETS") or "0").lower()
     if sheets_raw not in ("0", "1", "true", "false", "on", "off"):
         raise ConfigError(f'DMBOT_WEB_SHEETS must be 1 (on) or 0 (off), got "{sheets_raw}".')
@@ -363,8 +434,18 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
         rule_sharing_on=rule_sharing_raw in ("1", "true", "on"),
         sheets_on=sheets_raw in ("1", "true", "on"),
         handover_email_on=handover_email_raw in ("1", "true", "on"),
+        line_fix_on=line_fix_raw in ("1", "true", "on"),
+        line_delete_on=line_delete_raw in ("1", "true", "on"),
+        web_restore_on=restore_raw in ("1", "true", "on"),
         co_dms_on=co_dms_raw in ("1", "true", "on"),
         report_make_on=report_make_raw in ("1", "true", "on"),
+        lore_on=lore_raw in ("1", "true", "on"),
+        pause_on=pause_raw in ("1", "true", "on"),
+        story_mode_on=story_mode_raw in ("1", "true", "on"),
+        house_file_on=house_file_raw in ("1", "true", "on"),
+        invite_on=invite_raw in ("1", "true", "on"),
+        rulesets_on=rulesets_raw in ("1", "true", "on"),
+        recap_style_on=recap_style_raw in ("1", "true", "on"),
         recaps_on=recaps_raw in ("1", "true", "on"),
         plot_check_on=recaps_raw in ("1", "true", "on")
         and (get("DMBOT_PLOT_CHECK") or "0").lower() in ("1", "true", "on"),

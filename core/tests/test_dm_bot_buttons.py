@@ -24,11 +24,6 @@ from tests.pg import DatabaseTest
 GUILD, OTHER_GUILD = 111, 222
 DM, PLAYER, MEMBER, GUEST, MANAGER = 7, 8, 9, 10, 11
 CHANNEL, MESSAGE = 680000000000000081, 680000000000000082
-OPEN_TO_ALL = [
-    "❓ Help",
-    "📖 Look up a rule",
-    "📜 Transcripts",
-]  # every role's first buttons (#1691)
 
 
 class Fake:
@@ -160,31 +155,147 @@ class Cards(PanelTest):
     async def test_the_card_holds_only_the_buttons_of_that_role(self) -> None:
         await self.make_player()
         expected = {
-            DM: [
-                *OPEN_TO_ALL,
-                "Menu",
-                "📜 My character sheet",
-                "Settings",
-                "Names",
-                "Upload campaign lore",
-            ],
-            PLAYER: [*OPEN_TO_ALL, "Menu", "📜 My character sheet"],
-            MEMBER: [*OPEN_TO_ALL, "Menu"],
-            GUEST: OPEN_TO_ALL,
-            MANAGER: OPEN_TO_ALL,
+            DM: ["Manage DMbot", "Manage campaign", "My data", "❓ Help"],
+            PLAYER: ["Frostmaiden", "My data", "❓ Help"],  # (the campaign's link first, #3024)
+            MEMBER: ["My data", "❓ Help"],
+            GUEST: ["❓ Help"],
+            MANAGER: ["❓ Help"],
         }
         for user, want in expected.items():
             it = self.press(user)
             await buttons.OpenButton(self.campaign.id).callback(it)
             self.assertTrue(it.sent["ephemeral"], user)  # every answer is private
             self.assertEqual(self.labels(it), want, user)
+            self.assertLessEqual(len(want), 4)  # never more than four for these (#2986, #3024)
 
-    async def test_without_sheets_the_character_button_is_not_drawn(self) -> None:
+    async def link_labels(self, it: Any) -> list[tuple[str, str]]:
+        return [
+            (str(c.label), str(c.url))
+            for c in it.sent["view"].children
+            if getattr(c, "style", None) == discord.ButtonStyle.link
+        ]
+
+    async def test_a_player_gets_the_campaigns_page_first_then_my_data_and_help(self) -> None:
         await self.make_player()
-        self.bot.sheets = None
         it = self.press(PLAYER)
         await buttons.OpenButton(self.campaign.id).callback(it)
-        self.assertNotIn("📜 My character sheet", self.labels(it))
+        self.assertEqual(self.labels(it), ["Frostmaiden", "My data", "❓ Help"])
+        self.assertEqual(
+            await self.link_labels(it),
+            [("Frostmaiden", f"https://getdmbot.com/account/campaigns/{GUILD}.{self.campaign.id}")],
+        )  # the address 🌐 Manage campaign uses for a DM of one campaign
+
+    async def test_a_player_in_two_campaigns_gets_two_links_sorted_by_name(self) -> None:
+        await self.make_player()
+        other = await self.campaigns.create(GUILD, "Barrowmoor", DM)
+        await self.memory.add_entity(
+            GUILD, other.id, type="character", name="Tuck", source=MEMORY_DM,
+            status="confirmed", role=PLAYER_CHARACTER, played_by=PLAYER,
+        )  # fmt: skip
+        await self.campaigns.create(GUILD, "Strahd", DM)  # (a third they do not play in)
+        it = self.press(PLAYER)
+        await buttons.OpenButton(self.campaign.id).callback(it)
+        self.assertEqual(self.labels(it), ["Barrowmoor", "Frostmaiden", "My data", "❓ Help"])
+        urls = [url for _, url in await self.link_labels(it)]
+        self.assertEqual(
+            urls,
+            [
+                f"https://getdmbot.com/account/campaigns/{GUILD}.{other.id}",
+                f"https://getdmbot.com/account/campaigns/{GUILD}.{self.campaign.id}",
+            ],
+        )
+
+    async def test_a_campaign_in_another_server_is_never_linked(self) -> None:
+        await self.make_player()
+        elsewhere = await self.campaigns.create(GUILD + 1, "Elsewhere", DM)
+        await self.memory.add_entity(
+            GUILD + 1, elsewhere.id, type="character", name="Rook", source=MEMORY_DM,
+            status="confirmed", role=PLAYER_CHARACTER, played_by=PLAYER,
+        )  # fmt: skip
+        it = self.press(PLAYER)
+        await buttons.OpenButton(self.campaign.id).callback(it)
+        self.assertEqual(self.labels(it), ["Frostmaiden", "My data", "❓ Help"])
+
+    async def test_a_long_name_is_shortened_to_the_button_limit_and_the_links_are_capped(
+        self,
+    ) -> None:
+        # (a campaign's name is at most 80 characters, the label's limit, so the helper is a
+        # backstop: a longer one is cut with an ellipsis rather than refused by Discord)
+        longest = await self.campaigns.create(GUILD, "L" * 80, DM)
+        view = buttons.role_view(panel.Role.PLAYER, longest)
+        self.assertEqual(len(str(getattr(view.children[0], "label", ""))), 80)
+        wide = SimpleNamespace(id="a" * 32, guild_id=GUILD, name="W" * 120)
+        view = buttons.role_view(panel.Role.PLAYER, self.campaign, playing=cast(Any, [wide]))
+        label = str(getattr(view.children[0], "label", ""))
+        self.assertEqual((len(label), label[-1]), (80, "…"))
+        crowd = [
+            SimpleNamespace(id=f"{n:032x}", guild_id=GUILD, name=f"Camp {n:02d}") for n in range(40)
+        ]
+        view = buttons.role_view(panel.Role.PLAYER, self.campaign, playing=cast(Any, crowd))
+        self.assertLessEqual(len(view.children), 25)  # a message holds 25 buttons
+        self.assertEqual(len(view.children), buttons.MAX_CAMPAIGN_LINKS + 2)  # (+ My data, Help)
+
+    async def test_a_failed_read_of_the_other_campaigns_leaves_only_this_ones_link(self) -> None:
+        await self.make_player()
+        self.bot.campaigns = cast(
+            Any,
+            SimpleNamespace(
+                get=self.campaigns.get, list_campaigns=AsyncMock(side_effect=RuntimeError("down"))
+            ),
+        )
+        it = self.press(PLAYER)
+        await buttons.OpenButton(self.campaign.id).callback(it)
+        self.assertEqual(self.labels(it), ["Frostmaiden", "My data", "❓ Help"])
+
+    async def test_the_dms_buttons_are_unchanged_and_a_guest_and_a_member_get_no_link(self) -> None:
+        it = self.press(DM)
+        await buttons.OpenButton(self.campaign.id).callback(it)
+        self.assertEqual(self.labels(it), ["Manage DMbot", "Manage campaign", "My data", "❓ Help"])
+        for user, want in ((GUEST, ["❓ Help"]), (MEMBER, ["My data", "❓ Help"])):
+            it = self.press(user)
+            await buttons.OpenButton(self.campaign.id).callback(it)
+            self.assertEqual(self.labels(it), want, user)
+            self.assertEqual(await self.link_labels(it), [], user)
+
+    async def test_manage_campaign_is_a_link_to_this_campaigns_website_page(self) -> None:
+        it = self.press(DM)
+        await buttons.OpenButton(self.campaign.id).callback(it)
+        (link,) = [
+            c for c in it.sent["view"].children if getattr(c, "label", "") == "Manage campaign"
+        ]
+        self.assertEqual(link.style, discord.ButtonStyle.link)
+        self.assertEqual(
+            link.url, f"https://getdmbot.com/account/campaigns/{GUILD}.{self.campaign.id}"
+        )
+
+    async def test_a_dm_of_several_campaigns_here_gets_their_campaign_list(self) -> None:
+        await self.campaigns.create(GUILD, "Strahd", DM)
+        it = self.press(DM)
+        await buttons.OpenButton(self.campaign.id).callback(it)
+        (link,) = [
+            c for c in it.sent["view"].children if getattr(c, "label", "") == "Manage campaign"
+        ]
+        self.assertEqual(link.url, "https://getdmbot.com/account/campaigns")
+
+    async def test_the_campaign_link_uses_the_configured_site(self) -> None:
+        self.assertEqual(
+            panel.campaign_url("https://site.example.org/", 5, "abc"),
+            "https://site.example.org/account/campaigns/5.abc",
+        )
+        self.assertEqual(
+            panel.campaign_url("http://plain.example.org", 5, "abc"),
+            "https://getdmbot.com/account/campaigns/5.abc",
+        )
+
+    async def test_manage_dmbot_is_the_old_settings_button_with_the_new_name(self) -> None:
+        it = self.press(DM)
+        await buttons.OpenButton(self.campaign.id).callback(it)
+        (button,) = [
+            c
+            for c in it.sent["view"].children
+            if getattr(getattr(c, "item", c), "label", "") == "Manage DMbot"
+        ]
+        self.assertEqual(button.item.custom_id, f"dmbot:settings:{self.campaign.id}")
 
     async def test_help_is_for_anyone_and_private(self) -> None:
         it = self.press(GUEST)
@@ -216,9 +327,15 @@ class Cards(PanelTest):
         await buttons.HelpButton("0" * 32).callback(it)
         self.assertEqual(it.sent["text"], buttons.GONE)
 
-    async def test_the_transcripts_button_is_a_link_to_the_websites_page(self) -> None:
+    async def test_the_help_card_has_the_rule_button_and_the_transcripts_link(self) -> None:
         it = self.press(GUEST)
-        await buttons.OpenButton(self.campaign.id).callback(it)
+        await buttons.HelpButton(self.campaign.id).callback(it)
+        self.assertEqual(self.labels(it), ["📖 Look up a rule", "📜 Transcripts"])
+        await self.the_transcripts_link_goes_to_the_websites_page()
+
+    async def the_transcripts_link_goes_to_the_websites_page(self) -> None:
+        it = self.press(GUEST)
+        await buttons.HelpButton(self.campaign.id).callback(it)
         (link,) = [
             c for c in it.sent["view"].children if getattr(c, "label", "") == "📜 Transcripts"
         ]
@@ -234,7 +351,7 @@ class Cards(PanelTest):
         self.bot.settings = None  # (no settings at all)
         del self.bot.settings
         it = self.press(GUEST)
-        await buttons.OpenButton(self.campaign.id).callback(it)
+        await buttons.HelpButton(self.campaign.id).callback(it)
         (link,) = [
             c for c in it.sent["view"].children if getattr(c, "label", "") == "📜 Transcripts"
         ]

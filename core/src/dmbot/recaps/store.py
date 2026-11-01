@@ -24,12 +24,20 @@ from typing import Any
 
 from psycopg.types.json import Jsonb
 
+# Re-exported with the `as` form, which mypy strict needs: the worker reads AUDIO_MAX_TRIES from
+# here, and the tests read both.
+from dmbot.audio_due import AUDIO_DUE_WHERE as AUDIO_DUE_WHERE
+from dmbot.audio_due import AUDIO_MAX_TRIES as AUDIO_MAX_TRIES
 from dmbot.campaigns.models import CampaignError
 from dmbot.db import Conn, Database
 from dmbot.memory.models import name_key
+from dmbot.recaps import notes
 from dmbot.recaps.allowance import Usage, month_bounds
 from dmbot.recaps.approval import CHOICES, TEXT, text_hash
 from dmbot.recaps.fixed_lines import STORY_COLUMN_MAX
+
+# Re-exported with the `as` form, which mypy strict needs: the tests import it from here.
+from dmbot.transcript.respell import RecapRespelled as RecapRespelled
 from dmbot.transcript.respell import respell
 
 DAMAGED = "That backup file's recaps are damaged, so nothing was restored."
@@ -37,14 +45,6 @@ MAX_TRIES = 2  # "Try again" at most this many times for one session
 MAX_CORRECTIONS = 10  # corrections kept for one recap (#2076)
 MAX_STORED = 50  # recaps kept for one campaign in a backup
 LEASE_S = 15 * 60  # a worker that stops leaves a job free again after this long
-AUDIO_MAX_TRIES = 2  # starts: the first, and one more an hour later
-# A recap whose narration is waiting to be made and may start (placeholders: the tries limit, now).
-# One text for the worker's pick (`audio_due`), its lease (`audio_lease`) and the campaign move
-# (campaigns/moves.py), which must refuse exactly while the worker could start.
-AUDIO_DUE_WHERE = (
-    "state = 'ready' AND audio = 'queued' AND audio_tries < %s"
-    " AND status IN ('draft', 'posting', 'posted') AND audio_next_at <= %s"
-)
 STUCK = "The narration and music were never finished. The text is fine."
 AUDIO_AGAIN_WAIT_S = 600  # "Make it again" at most once in 10 minutes, as the website's door does
 _NOW_HASH = "encode(sha256(convert_to(title || E'\\n' || summary, 'UTF8')), 'hex')"
@@ -65,17 +65,6 @@ COLUMNS = (
 
 
 _LIMITS = {"title": 120, "summary": STORY_COLUMN_MAX, "original": STORY_COLUMN_MAX}  # the table's
-
-
-@dataclass(frozen=True, slots=True)
-class RecapRespelled:
-    """What a fixed spelling did to a campaign's recaps (#2170): counts only."""
-
-    waiting: int = 0  # drafts and approved ones not yet posted
-    posted: int = 0
-    approvals_kept: int = 0
-    audio_old: int = 0  # recaps whose finished audio still says the old spelling
-    skipped: int = 0  # recaps the new spelling would make too long: left as they were
 
 
 _DISCORD_LINK = re.compile(r"^https://discord\.com/channels/[0-9]+/[0-9]+/[0-9]+$")
@@ -471,7 +460,7 @@ class RecapStore:
             else:
                 values.append(value)
         async with self._db.guild(guild_id) as conn:
-            await conn.execute(
+            cur = await conn.execute(
                 f"UPDATE recap_jobs SET {', '.join(parts)}, updated_at = %s WHERE guild_id = %s"
                 " AND campaign_id = %s AND session_at = %s AND status = 'draft'" + guard,
                 (
@@ -483,6 +472,10 @@ class RecapStore:
                     *([] if approval is None else [approval]),
                 ),
             )
+            if cur.rowcount > 0 and "beats" in fields and fields.get("state") == "checked":
+                # the beat sheet is final for this try: it is the session's notes now (#3026).
+                # (only when the write took: a late write to a job that moved on changes nothing)
+                await notes.keep_from_job(conn, guild_id, campaign_id, session_at)
 
     # --- the audio tracks (#1383) -------------------------------------------------------
 

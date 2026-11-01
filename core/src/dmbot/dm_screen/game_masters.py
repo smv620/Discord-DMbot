@@ -1,4 +1,4 @@
-"""👑 Game masters, in ⚙️ Settings → 🗂️ Campaign management (#1600, item 2 of
+"""👑 Game masters, in ⚙️ Manage DMbot → 🗂️ Campaign management (#1600, item 2 of
 #618): a campaign's DMs add and remove each other. Everything in DMbot already checks
 `dm_user_ids`; this is the only way to change them.
 
@@ -9,8 +9,8 @@
   touches their consent to be recorded.
 - **Remove:** pick one, then one confirmation. Never whose plan the campaign uses (hand it over
   first) and never the last game master. A game master may remove themselves.
-- **Access follows at once:** after either change the DM screen's permissions (and an existing
-  game-time channel's) are applied again, and a running session's DM set is updated
+- **Access follows at once:** after either change the DM screen's permissions are applied
+  again, and a running session's DM set is updated
   (`DMBot.after_screen_change`), so a removed game master loses the screen mid-session and a new
   one gets it.
 
@@ -34,7 +34,6 @@ from dmbot.campaigns import Campaign, CampaignError, CampaignStore
 from dmbot.campaigns.store import LAST_DM, MAX_DMS, OWNER_STAYS, TOO_MANY_DMS
 from dmbot.dm_screen import messages
 from dmbot.dm_screen.channel import DMScreenError, setup_dm_screen
-from dmbot.dm_screen.gametime_channel import setup_gametime_channel
 from dmbot.logs import log_context
 from dmbot.mentions import NO_PINGS
 
@@ -45,7 +44,7 @@ LABEL = "Game masters"
 ONLY_DMS = "Only this campaign's game masters can change this list."
 GONE = messages.DM_CAMPAIGN_GONE
 FAILED = (
-    "Sorry, that didn't work. Check the list in ⚙️ Settings → 🗂️ Campaign management "
+    "Sorry, that didn't work. Check the list in ⚙️ Manage DMbot → 🗂️ Campaign management "
     "→ 👑 Game masters, then try again."
 )
 NOT_HERE = "DMbot can't reach the server right now. Try again in a minute."
@@ -59,15 +58,15 @@ TOO_MANY = TOO_MANY_DMS
 # Two voices, because only the plan holder has the 🤝 Hand over button.
 PLAN_HOLDER_SELF = (
     "Your plan runs this campaign, so you can't leave yet. Hand the campaign over first: "
-    "⚙️ Settings → 🗂️ Campaign management → 🤝 Hand over."
+    "⚙️ Manage DMbot → 🗂️ Campaign management → 🤝 Hand over."
 )
 PLAN_HOLDER_OTHER = (
     "**{name}** holds this campaign's plan, so they can't be removed. They can hand the "
-    "campaign over first (⚙️ Settings → 🗂️ Campaign management → 🤝 Hand over)."
+    "campaign over first (⚙️ Manage DMbot → 🗂️ Campaign management → 🤝 Hand over)."
 )
 LAST_ONE = LAST_DM
 GONE_FROM_LIST = (
-    "They aren't a game master any more. Open ⚙️ Settings → 🗂️ Campaign "
+    "They aren't a game master any more. Open ⚙️ Manage DMbot → 🗂️ Campaign "
     "management → 👑 Game masters to see the list."
 )
 ADD_PROMPT = "➕ Who should be a game master of **{campaign}**? Pick a member of this server."
@@ -84,7 +83,7 @@ REMOVED_SELF = "✅ You are no longer a game master of **{campaign}**."
 NOT_TOLD = "\nDMbot couldn't message them, so please tell them yourself."
 ACCESS_LATE = (
     "\nSaved, but DMbot couldn't update who can see the DM screen yet. It will on the next "
-    "session, or when you change who can see the DM screen in ⚙️ Settings → 👁️ Who can see "
+    "session, or when you change who can see the DM screen in ⚙️ Manage DMbot → 👁️ Who can see "
     "the DM screen."
 )
 TOLD = (
@@ -92,7 +91,8 @@ TOLD = (
     "DM screen and change its settings. This doesn't start any recording of you."
 )
 MENU_TIMED_OUT = (
-    "This menu timed out. Press ⚙️ Settings → 🗂️ Campaign management → 👑 Game masters to try again."
+    "This menu timed out. Press ⚙️ Manage DMbot → 🗂️ Campaign management → 👑 Game masters to "
+    "try again."
 )
 
 
@@ -470,7 +470,7 @@ async def follow_access(
 
 async def follow_access_on(client: Any, guild: discord.Guild, campaign: Campaign) -> str:
     """After the game masters changed: a running session takes the new set at once, then the DM
-    screen's permissions (and an existing game-time channel's) are applied again (this creates the
+    screen's permissions are applied again (this creates the
     screen if the campaign has none yet, as a session start would).
     "" when it worked, else the words to add to the reply; the change itself is saved either
     way."""
@@ -491,11 +491,6 @@ async def follow_access_on(client: Any, guild: discord.Guild, campaign: Campaign
     except Exception:
         log.exception("Game masters changed but the DM screen could not be updated")
         return ACCESS_LATE
-    if campaign.gametime_channel_id is not None:
-        try:
-            await setup_gametime_channel(guild, campaign.id, store)
-        except Exception:
-            log.exception("The game-time channel could not be updated after a game master change")
     hook = getattr(client, "after_screen_change", None)
     if hook is not None:
         try:

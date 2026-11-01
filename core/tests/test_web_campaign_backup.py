@@ -3,13 +3,16 @@ ask, the shared progress shape, the file once, the plan and size refusals, the 1
 
 from __future__ import annotations
 
+import dataclasses
 import time
+import unittest
 from types import SimpleNamespace
 from typing import Any
 from unittest import mock
 
 import httpx
 
+from dmbot.bot import DMBot
 from dmbot.campaigns import web_backup
 from dmbot.campaigns.store import BackupTooBig, decode_backup
 from dmbot.campaigns.web_backup import WebBackups
@@ -43,7 +46,12 @@ class Backing(Base):
             await campaign_backup.request(self.web, session, ref)
         return caught.exception.code
 
-    def host(self, *, plan: str | None = None) -> Any:
+    def host(
+        self, *, plan: str | None = None, members: dict[int, bool] | None = None, asking: Any = None
+    ) -> Any:
+        """`members` maps a person to whether they are a bot, for those in the server; anyone not
+        in it has left. `asking` replaces the lookup (to make Discord unreachable)."""
+
         async def get_campaign(g: int, c: str) -> Any:
             return await self.campaigns.get(g, c)
 
@@ -56,8 +64,16 @@ class Backing(Base):
         async def export_campaign(g: int, c: str) -> Any:
             return await self.campaigns.export_set(g, c)
 
+        async def find_member(g: int, user_id: int) -> Any:
+            if user_id not in (members or {}):
+                return None
+            return SimpleNamespace(name="Someone", bot=(members or {})[user_id])
+
         return SimpleNamespace(
-            get_campaign=get_campaign, plan_allows=plan_allows, export_campaign=export_campaign
+            get_campaign=get_campaign,
+            plan_allows=plan_allows,
+            export_campaign=export_campaign,
+            find_member=asking or find_member,
         )
 
     async def build_next(self, guild: int, host: Any = None) -> str:
@@ -82,10 +98,22 @@ class Backing(Base):
         )
         self.assertEqual(await self.refused(bob, self.cref(LOST, self.lost)), "not_found")
 
-    async def test_a_player_and_another_account_get_nothing(self) -> None:
+    async def test_a_player_in_the_server_may_ask_too(self) -> None:
+        # (CLAUDE.md, Backups: anyone in the server may get a copy of a paid campaign; the plan
+        # check is the bot's, so a Try It campaign fails later with the plan word)
         bob = await self.signed(BOB, THURSDAY)  # not a game master of anything
-        self.assertEqual(await self.refused(bob, self.cref(THURSDAY.id, self.one)), "not_found")
-        self.assertEqual(await self.refused(bob, "nonsense"), "not_found")
+        made = await campaign_backup.request(self.web, bob, self.cref(THURSDAY.id, self.one))
+        self.assertRegex(made, r"^[0-9a-f]{32}$")
+        # ... and only for the server on their own list
+        self.assertEqual(await self.refused(bob, self.cref(LOST, self.lost)), "not_found")
+
+    async def test_someone_outside_the_server_and_a_bad_address_get_nothing(self) -> None:
+        elsewhere = dataclasses.replace(THURSDAY, id=LOST)
+        outsider = await self.signed(BOB, elsewhere)  # in another server only
+        self.assertEqual(
+            await self.refused(outsider, self.cref(THURSDAY.id, self.one)), "not_found"
+        )
+        self.assertEqual(await self.refused(outsider, "nonsense"), "not_found")
 
     async def test_asking_again_while_one_is_on_the_way_gives_the_same_copy(self) -> None:
         ref = self.cref(THURSDAY.id, self.one)
@@ -124,6 +152,14 @@ class Backing(Base):
             row = await cur.fetchone()
         assert row is not None
         self.assertFalse(row["can"])
+
+    async def copy_state(self) -> tuple[str, bool]:
+        """(the request's state, whether a file is waiting in it), read from the table itself."""
+        async with self.db.guild(THURSDAY.id) as conn:
+            cur = await conn.execute("SELECT state, file IS NOT NULL AS ready FROM web_backups")
+            row = await cur.fetchone()
+        assert row is not None
+        return row["state"], bool(row["ready"])
 
     async def db_sql(self, guild: int, statement: str, *args: Any) -> None:
         async with self.db.guild(guild) as conn:
@@ -435,15 +471,81 @@ class Backing(Base):
         got = await campaign_backup.status(self.web, self.session, ref, made)
         self.assertEqual((got["state"], got["reason"], got["ready"]), ("failed", "plan", False))
 
-    async def test_a_sender_who_is_no_longer_a_game_master_is_refused_by_the_bot(self) -> None:
+    async def ask_as(self, user: int) -> tuple[str, str]:
+        """A request made by the owner's session, then given to `user` (the website's door lets a
+        member in later, WebDev's half of #3150): the bot's check is what is tested here."""
+        ref = self.cref(THURSDAY.id, self.one)
+        made = await campaign_backup.request(self.web, self.session, ref)
+        await self.db_sql(THURSDAY.id, "UPDATE web_backups SET user_id = %s", user)
+        return ref, made
+
+    async def test_a_sender_who_is_no_longer_a_game_master_or_in_the_server_is_refused(
+        self,
+    ) -> None:
         await self.campaigns.add_dm(THURSDAY.id, self.one.id, BOB.id)
         bob = await self.signed(BOB, THURSDAY)
         ref = self.cref(THURSDAY.id, self.one)
         made = await campaign_backup.request(self.web, bob, ref)
         await self.db_sql(THURSDAY.id, "DELETE FROM campaign_dms WHERE user_id = %s", BOB.id)
-        self.assertEqual(await self.build_next(THURSDAY.id), "not_allowed")
+        self.assertEqual(await self.build_next(THURSDAY.id), "not_allowed")  # (and has left)
         got = await campaign_backup.status(self.web, bob, ref, made)
         self.assertEqual(got["reason"], "not_allowed")
+
+    async def test_a_member_of_the_server_gets_a_copy_as_in_discord(self) -> None:
+        await self.ask_as(BOB.id)  # a player: not the owner, not a game master
+        host = self.host(members={BOB.id: False})
+        self.assertEqual(await self.build_next(THURSDAY.id, host), "")
+        self.assertEqual(await self.copy_state(), ("done", True))
+
+    async def test_a_game_master_who_stopped_being_one_but_is_still_in_the_server_gets_one(
+        self,
+    ) -> None:
+        await self.campaigns.add_dm(THURSDAY.id, self.one.id, BOB.id)
+        await self.ask_as(BOB.id)
+        await self.db_sql(THURSDAY.id, "DELETE FROM campaign_dms WHERE user_id = %s", BOB.id)
+        self.assertEqual(await self.build_next(THURSDAY.id, self.host(members={BOB.id: False})), "")
+
+    async def test_a_former_member_and_a_stranger_get_nothing(self) -> None:
+        for stranger in (BOB.id, 424242):
+            await self.ask_as(stranger)
+            self.assertEqual(
+                await self.build_next(THURSDAY.id, self.host(members={})), "not_allowed", stranger
+            )
+            await self.db_sql(THURSDAY.id, "DELETE FROM web_backups")
+
+    async def test_a_bot_account_gets_nothing(self) -> None:
+        await self.ask_as(BOB.id)
+        host = self.host(members={BOB.id: True})
+        self.assertEqual(await self.build_next(THURSDAY.id, host), "not_allowed")
+
+    async def test_when_discord_cannot_be_asked_a_member_gets_nothing_but_may_ask_again(
+        self,
+    ) -> None:
+        await self.ask_as(BOB.id)
+
+        async def unreachable(g: int, user_id: int) -> Any:
+            raise RuntimeError("the server is not reachable")
+
+        self.assertEqual(
+            await self.build_next(THURSDAY.id, self.host(asking=unreachable)), "failed"
+        )
+        self.assertEqual(await self.copy_state(), ("failed", False))
+
+    async def test_the_owner_and_a_game_master_are_never_asked_of_discord(self) -> None:
+        async def never(g: int, user_id: int) -> Any:
+            raise AssertionError("asked Discord about someone who needs no asking")
+
+        await self.campaigns.add_dm(THURSDAY.id, self.one.id, BOB.id)
+        await self.ask_as(self.one.owner_user_id or ALICE.id)
+        self.assertEqual(await self.build_next(THURSDAY.id, self.host(asking=never)), "")
+        await self.db_sql(THURSDAY.id, "DELETE FROM web_backups")
+        await self.ask_as(BOB.id)
+        self.assertEqual(await self.build_next(THURSDAY.id, self.host(asking=never)), "")
+
+    async def test_a_member_still_gets_no_copy_on_a_plan_without_copies(self) -> None:
+        await self.ask_as(BOB.id)
+        host = self.host(plan="Upgrade to ...", members={BOB.id: False})
+        self.assertEqual(await self.build_next(THURSDAY.id, host), "plan")
 
     async def test_a_campaign_too_big_for_a_restore_fails_and_keeps_nothing(self) -> None:
         ref = self.cref(THURSDAY.id, self.one)
@@ -550,3 +652,13 @@ class TheRoute(Backing):
         self.assertEqual((other.status_code, other.json()["error"]), (404, "not_found"))
         bad = await self.client.get(f"/me/campaigns/{THURSDAY.id}.{self.one.id}/backup/zzz")
         self.assertEqual(bad.status_code, 404)
+
+
+class WhileClosing(unittest.IsolatedAsyncioTestCase):
+    async def test_while_closing_backups_claims_nothing(self) -> None:
+        b: Any = DMBot.__new__(DMBot)
+        b.web_backups = SimpleNamespace(claim_next=mock.AsyncMock(return_value=None))
+        b.campaigns = SimpleNamespace(guilds_with_campaigns=mock.AsyncMock(return_value=[1]))
+        b._closing = True
+        await b.run_web_backups()
+        b.web_backups.claim_next.assert_not_awaited()

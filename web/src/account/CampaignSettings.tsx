@@ -9,6 +9,10 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { campaignPage as words } from "../content/campaign-page";
 import { CO_DMS_LIVE } from "../content/game-masters-switch";
 import { OPTIONAL_RULES_LIVE } from "../content/optional-rules-switch";
+import { PAUSE_LIVE } from "../content/pause-switch";
+import { INVITE_LIVE } from "../content/invite-switch";
+import { RULESETS_LIVE } from "../content/rulesets-switch";
+import { STORY_MODE_LIVE } from "../content/story-mode-switch";
 import { ApiError, type AccountApi, type CampaignPage, type CampaignSettingName } from "./api";
 import LazyPanel from "./LazyPanel";
 import { GIVE_UP_MS, LATE_POLL_MS, OFFLINE_AFTER_MS, POLL_MS, SLOW_AFTER_MS } from "./settings-timing";
@@ -152,6 +156,8 @@ export default function CampaignSettings({
   const s = page.settings;
   const owner = page.role === "owner";
   const [values, setValues] = useState<Record<CampaignSettingName, string> | null>(s ? current(s) : null);
+  // Set when the owner pauses or unpauses from the panel below, so the row above agrees without a reload.
+  const [pausedNow, setPausedNow] = useState<boolean | null>(null);
   const [phases, setPhases] = useState<Record<CampaignSettingName, Phase>>({
     visibility: { kind: "idle" },
     level: { kind: "idle" },
@@ -223,7 +229,7 @@ export default function CampaignSettings({
   }
 
   const settingRows: CampaignSettingName[] = ["visibility", "level", "retention"];
-  const discordOnly: (keyof typeof words.paths)[] = owner ? ["handOver", "delete"] : [];
+  const discordOnly: "handOver"[] = owner ? ["handOver"] : [];
   return (
     <section class="stack" aria-labelledby="settings-heading" id="settings">
       <h2 id="settings-heading">{words.groups.settings}</h2>
@@ -252,19 +258,32 @@ export default function CampaignSettings({
         </li>
         <li>
           <span class="campaign-name">{words.settingsLabels.pause}</span>
-          {s && <span class="block">{s.paused ? words.pausedYes : words.pausedNo}</span>}
+          {s && <span class="block">{(pausedNow ?? s.paused) ? words.pausedYes : words.pausedNo}</span>}
           {/* Every game master sees whether it is paused; only the owner is given the steps. */}
-          {owner && <span class="small muted block">{words.doThisInDiscord(words.paths.pause)}</span>}
+          {owner && !(PAUSE_LIVE && api.setCampaignSetting) && (
+            <span class="small muted block">{words.doThisInDiscord(words.paths.pause)}</span>
+          )}
         </li>
         {discordOnly.map((key) => (
           <li key={key}>
             <span class="campaign-name">{words.settingsLabels[key]}</span>
             <span class="small muted block">{words.doThisInDiscord(words.paths[key])}</span>
-            {key === "delete" && <span class="small muted block">{words.deleteWarning}</span>}
           </li>
         ))}
         {!owner && <li class="small muted">{words.ownerOnlyNote}</li>}
       </ul>
+      {PAUSE_LIVE && owner && s && api.setCampaignSetting && (
+        <LazyPanel load={() => import("./PausePanel")} what="pause" props={{ api, campaignRef, paused: pausedNow ?? s.paused, onChanged: setPausedNow }} />
+      )}
+      {STORY_MODE_LIVE && s?.storyMode && api.setCampaignSetting && (
+        <LazyPanel load={() => import("./StoryModePanel")} what="the shared story" props={{ api, campaignRef, mode: s.storyMode }} />
+      )}
+      {RULESETS_LIVE && s?.mainRules && s.fallbackRules && api.setCampaignSetting && (
+        <LazyPanel load={() => import("./RulesetsPanel")} what="the main rules" props={{ api, campaignRef, main: s.mainRules, fallback: s.fallbackRules }} />
+      )}
+      {INVITE_LIVE && s?.dndbeyondInvite !== undefined && api.setCampaignSetting && (
+        <LazyPanel load={() => import("./InvitePanel")} what="the campaign invite" props={{ api, campaignRef, invite: s.dndbeyondInvite }} />
+      )}
       {CO_DMS_LIVE && api.campaignGameMasters && (
         <LazyPanel load={() => import("./GameMasters")} what="the game masters" props={{ api, campaignRef }} />
       )}

@@ -1,0 +1,148 @@
+{
+ "names": [
+  {
+   "name": "Mira Tolliver",
+   "kind": "person",
+   "also": [
+    "Mira"
+   ],
+   "secret": [],
+   "quote": "Mira Tolliver trained under old Ferran Voss"
+  },
+  {
+   "name": "Ferran Voss",
+   "kind": "person",
+   "also": [],
+   "secret": [],
+   "quote": "old Ferran Voss"
+  },
+  {
+   "name": "Odo",
+   "kind": "person",
+   "also": [],
+   "secret": [],
+   "quote": "also taught Odo"
+  },
+  {
+   "name": "Harrowgate",
+   "kind": "place",
+   "also": [],
+   "secret": [],
+   "quote": "born in Harrowgate"
+  },
+  {
+   "name": "Brannoch Ashe",
+   "kind": "person",
+   "also": [],
+   "secret": [],
+   "quote": "Brannoch Ashe was a smith"
+  },
+  {
+   "name": "Lenna",
+   "kind": "person",
+   "also": [],
+   "secret": [],
+   "quote": "His younger sister, Lenna"
+  },
+  {
+   "name": "Pell",
+   "kind": "person",
+   "also": [],
+   "secret": [],
+   "quote": "husband, Pell"
+  },
+  {
+   "name": "Cerro Maddox",
+   "kind": "person",
+   "also": [],
+   "secret": [],
+   "quote": "Cerro Maddox, a cousin of Lenna"
+  },
+  {
+   "name": "Corvin Hale",
+   "kind": "person",
+   "also": [],
+   "secret": [],
+   "quote": "Corvin Hale hunted wolves in the north"
+  },
+  {
+   "name": "Daric",
+   "kind": "person",
+   "also": [],
+   "secret": [],
+   "quote": "His brother, Daric"
+  },
+  {
+   "name": "Pell",
+   "kind": "person",
+   "also": [],
+   "secret": [],
+   "quote": "Pell and Orrin"
+  },
+  {
+   "name": "Orrin",
+   "kind": "person",
+   "also": [],
+   "secret": [],
+   "quote": "Pell and Orrin"
+  }
+ ],
+ "connections": [
+  {
+   "a": "Ferran Voss",
+   "b": "Mira Tolliver",
+   "how": "mentor",
+   "quote": "Mira Tolliver trained under old Ferran Voss",
+   "words": ""
+  },
+  {
+   "a": "Mira Tolliver",
+   "b": "Harrowgate",
+   "how": "in",
+   "quote": "Mira was born in Harrowgate",
+   "words": ""
+  },
+  {
+   "a": "Brannoch Ashe",
+   "b": "Lenna",
+   "how": "sister",
+   "quote": "His younger sister, Lenna, kept the forge",
+   "words": ""
+  },
+  {
+   "a": "Lenna",
+   "b": "Pell",
+   "how": "husband",
+   "quote": "Lenna's husband, Pell, ran the cart",
+   "words": ""
+  },
+  {
+   "a": "Cerro Maddox",
+   "b": "Lenna",
+   "how": "other",
+   "quote": "Cerro Maddox, a cousin of Lenna",
+   "words": "hired by"
+  },
+  {
+   "a": "Corvin Hale",
+   "b": "Daric",
+   "how": "brother",
+   "quote": "His brother, Daric, vanished at forty",
+   "words": ""
+  },
+  {
+   "a": "Pell",
+   "b": "Orrin",
+   "how": "enemy",
+   "quote": "Pell and Orrin were sworn enemies",
+   "words": ""
+  },
+  {
+   "a": "Orrin",
+   "b": "Pell",
+   "how": "knows",
+   "quote": "Pell and Orrin were sworn enemies",
+   "words": "sworn enemy"
+  }
+ ]
+}

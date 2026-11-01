@@ -228,6 +228,37 @@ class TheBot(unittest.IsolatedAsyncioTestCase):
         wins.record.assert_awaited_once()
 
 
+class TheBotsViews(unittest.IsolatedAsyncioTestCase):
+    """The sidebar builds no Discord screen itself (#2827): the bot does, and these are its two."""
+
+    async def test_the_clash_view_records_the_win_for_that_campaign(self) -> None:
+        from dmbot.bot import DMBot
+
+        sides = rule_clash.named(
+            "House rule 1, House rule 2", [house(1, POTION_A), house(2, POTION_B)]
+        )
+        assert sides is not None
+        record_win = AsyncMock(return_value=True)
+        fake = SimpleNamespace(sidebar_record_win=record_win)
+        mine = SimpleNamespace(guild_id=GUILD, id="c", dm_user_ids=frozenset({DM}))
+        retry = AsyncMock()
+        view = DMBot.sidebar_clash_view(cast(Any, fake), cast(Any, mine), sides, retry)
+        self.assertIsInstance(view, ClashView)
+        done = await view._record(RuleRef("", 1), RuleRef("", 2), DM)  # type: ignore[attr-defined]
+        self.assertTrue(done)
+        record_win.assert_awaited_once_with(mine, RuleRef("", 1), RuleRef("", 2), DM)
+
+    async def test_the_looked_view_is_the_one_kept_under_the_key(self) -> None:
+        from dmbot.bot import DMBot
+        from dmbot.ui import looked_at
+
+        view = DMBot.sidebar_looked_view(cast(Any, SimpleNamespace()), "0123456789ab")
+        self.assertEqual(
+            [type(c) for c in view.children],
+            [type(c) for c in looked_at.view("0123456789ab").children],
+        )
+
+
 class TheButtons(unittest.IsolatedAsyncioTestCase):
     def view(self) -> tuple[ClashView, Any, Any]:
         sides = rule_clash.named(

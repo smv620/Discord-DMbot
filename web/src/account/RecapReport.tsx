@@ -35,12 +35,23 @@ const say = (error: unknown): string => {
 };
 
 function evidenceWords(e: ReportEvidence): string {
-  const kind = w.evidenceKinds[e.kind] ?? w.evidenceKinds["claim"] ?? "";
   // A transcript line is a person's words: it is never quoted here, even while it exists (#2661; the API
   // should not send one, and the page does not trust it to). Only DMbot's own kinds are quoted.
-  if (e.kind === "line") return e.available ? w.lineHere(e.session) : w.gone(kind, e.session);
+  if (e.kind === "line") {
+    const kind = w.evidenceKinds.line ?? "";
+    return e.available ? w.lineHere(e.session) : w.gone(kind, e.session);
+  }
+  // A source is a name, never words: never quoted, even if the API sends one (#3134).
+  if (e.kind === "source") {
+    const kind = w.evidenceKinds.source ?? "";
+    return e.available ? w.sourceHere(kind, e.session) : w.gone(kind, e.session);
+  }
+  // Only the map's own keys count: a kind such as "toString" must not pick up an inherited property (#3135).
+  const known: string | undefined = Object.hasOwn(w.evidenceKinds, e.kind) ? w.evidenceKinds[e.kind] : undefined;
+  // A kind the page does not know reads as DMbot's note, never its own name or a quote.
+  if (known === undefined) return e.available ? w.sourceHere(w.unknownKind, e.session) : w.gone(w.unknownKind, e.session);
   // The words are gone: say the session and the kind, never the words or who said them.
-  return e.available && e.quote ? w.there(kind, e.session, e.quote) : w.gone(kind, e.session);
+  return e.available && e.quote ? w.there(known, e.session, e.quote) : w.gone(known, e.session);
 }
 
 export default function RecapReport({ api, campaignRef, sessionAt }: { api: AccountApi; campaignRef: string; sessionAt: number }) {
@@ -428,12 +439,23 @@ function DifferenceItem({
   return (
     <li class={item.answer ? "stack muted" : "stack"}>
       <p id={`report-item-${item.id}`}>{item.reason}</p>
-      <p>
-        <strong>{w.believes}:</strong> {item.believes}
-      </p>
-      <p>
-        <strong>{w.truth}:</strong> {item.truth}
-      </p>
+      {item.kind === "lie" ? (
+        <>
+          <p>
+            <strong>{item.view}</strong> {w.lieThinks} <strong>{item.liar || w.lieSomeone}</strong> {w.lieSaid} {item.believes}
+          </p>
+          <p>{w.lieTruth}</p>
+        </>
+      ) : (
+        <>
+          <p>
+            <strong>{w.believes}:</strong> {item.believes}
+          </p>
+          <p>
+            <strong>{w.truth}:</strong> {item.truth}
+          </p>
+        </>
+      )}
       <p class="small muted">{w.view(item.view)}</p>
       <Evidence list={item.evidence} />
       {item.remindedFrom ? <p class="small">{w.reminded(item.remindedFrom)}</p> : null}

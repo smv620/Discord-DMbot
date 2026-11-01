@@ -5,9 +5,10 @@ there, one Undo. Needs the test database; invented names throughout."""
 from __future__ import annotations
 
 import json
-from typing import Any
+from dataclasses import replace
+from typing import Any, cast
 
-from dmbot.memory import readings
+from dmbot.memory import beliefs, claims, readings
 from dmbot.memory.claims import ClaimStore
 from dmbot.memory.models import MemoryRuleError
 from tests.test_memory_store import DM, GUILD_A, ConfirmedMemoryTest
@@ -401,6 +402,238 @@ class Placing(ConfirmedMemoryTest):
         rel = next(r for r in await self.connections() if r["id"] == again.relation_id)
         self.assertEqual((rel["status"], rel["secret"]), ("confirmed", True))
         self.assertEqual((await self.beliefs_of(again.relation_id))[0]["status"], "secret_plot")
+
+    async def test_a_liar_who_is_the_accuser_by_another_spelling_is_refused(self) -> None:
+        await self.memory.add_alias(
+            GUILD_A, self.c, self.mira, "Mimi", kind="nickname", source="dm", status="confirmed"
+        )
+        lie = await self.waiting_reading(belief("pc:Mira", "suspected_lie", 0.5, liar="Mimi"))
+        with self.assertRaises(MemoryRuleError) as why:
+            await self.place(lie)
+        self.assertEqual(str(why.exception), beliefs.BAD_READING)
+
+    async def test_an_unknown_liar_says_so_and_one_still_waiting_for_a_name_is_asked_first(
+        self,
+    ) -> None:
+        lie = await self.waiting_reading(belief("pc:Mira", "suspected_lie", 0.5, liar="Nobody"))
+        with self.assertRaises(MemoryRuleError) as why:
+            await self.place(lie)
+        self.assertEqual(str(why.exception), "DMbot doesn't know who lied.")
+        await self.add("Pell", type="character", status="proposed")
+        waiting = readings.BeliefProposal(
+            "pc:Mira", "Bram", "carries", "Heartseeker", 0.4, "suspected_lie", ("1",), liar="Pell"
+        )
+        with self.assertRaises(MemoryRuleError) as again:
+            await self.place(await self.waiting_reading(waiting))
+        self.assertEqual(str(again.exception), claims.NAME_FIRST)
+
+    async def test_two_accusations_of_different_people_are_two_questions(self) -> None:
+        one = readings.as_claim(belief("pc:Mira", "suspected_lie", 0.5, liar="Valyra"), "x")
+        two = readings.as_claim(belief("pc:Mira", "suspected_lie", 0.5, liar="Corin"), "x")
+
+        def key(c: Any) -> tuple[Any, ...]:
+            return claims._repeat_key(c.subject, c.relationship, c.object, c.how, c.reading)
+
+        self.assertNotEqual(key(one), key(two))
+
+    async def clock_log(self, *rows: tuple[int, int]) -> None:
+        """Rows of the game clock's log as the database would have written them: (real time,
+        game minute) of the main clock."""
+        async with self.db.guild(GUILD_A) as conn:
+            for at, minute in rows:
+                await conn.execute(
+                    "INSERT INTO game_clock_log (guild_id, campaign_id, position, at, minute)"
+                    " VALUES (%s, %s, NULL, %s, %s)",
+                    (GUILD_A, self.c, at, minute),
+                )
+
+    async def spoken(self, at: int | None) -> str:
+        proposal = belief("pc:Mira", "theory", 0.5)
+        claim = readings.as_claim(proposal, "player_said")
+        if at is not None and claim.reading is not None:
+            claim = replace(claim, reading={**claim.reading, "spoken_at": at})
+        await self.claims.propose(
+            GUILD_A, self.c, [claim], {"1": DM},
+            opted_in={DM}, dms={DM}, prompt_version="r1", model="m1", session_started_at=1_000,
+        )  # fmt: skip
+        rows = await self.rows("memory_claims")
+        return str(rows[-1]["id"])
+
+    async def split_moment(self, *, mira_in: int | None) -> None:
+        """The main clock, then a split (groups 1 and 2 at 6000 and 7000) at real time 20, with
+        Mira in a group (or in none) from then on."""
+        await self.clock_log((10, 5000))
+        async with self.db.guild(GUILD_A) as conn:
+            for position, minute in ((1, 6000), (2, 7000)):
+                await conn.execute(
+                    "INSERT INTO game_clock_log (guild_id, campaign_id, position, at, minute)"
+                    " VALUES (%s, %s, %s, 20, %s)",
+                    (GUILD_A, self.c, position, minute),
+                )
+            if mira_in is not None:
+                await conn.execute(
+                    "INSERT INTO game_clock_group_log (guild_id, campaign_id, character_id,"
+                    " position, at) VALUES (%s, %s, %s, %s, 20)",
+                    (GUILD_A, self.c, self.mira, mira_in),
+                )
+
+    async def place_as_player(self, claim_id: str) -> Any:
+        return await self.claims.place(GUILD_A, self.c, claim_id, opted_in={PLAYER})
+
+    async def said_by_the_player(self, at: int) -> str:
+        claim = readings.as_claim(belief("pc:Mira", "theory", 0.5), "player_said")
+        assert claim.reading is not None
+        claim = replace(claim, reading={**claim.reading, "spoken_at": at})
+        await self.claims.propose(
+            GUILD_A, self.c, [claim], {"1": PLAYER},
+            opted_in={PLAYER}, dms={DM}, prompt_version="r1", model="m1", session_started_at=1_000,
+        )  # fmt: skip
+        return str((await self.rows("memory_claims"))[-1]["id"])
+
+    async def test_a_line_spoken_in_a_split_gets_its_speakers_groups_clock(self) -> None:
+        await self.split_moment(mira_in=2)
+        placed = await self.place_as_player(await self.said_by_the_player(30))
+        assert placed.belief is not None
+        self.assertEqual(placed.belief.game_time, 7000)  # Mira's group, not group 1's 6000
+
+    async def test_a_speaker_nobody_placed_in_a_split_is_not_known(self) -> None:
+        await self.split_moment(mira_in=None)
+        placed = await self.place_as_player(await self.said_by_the_player(30))
+        assert placed.belief is not None
+        self.assertIsNone(placed.belief.game_time)  # (never the frozen main clock's 5000)
+
+    async def test_before_the_split_the_one_clock_is_used_whatever_the_groups_say(self) -> None:
+        await self.split_moment(mira_in=2)
+        placed = await self.place_as_player(await self.said_by_the_player(15))
+        assert placed.belief is not None
+        self.assertEqual(placed.belief.game_time, 5000)
+
+    async def test_a_belief_gets_the_game_time_of_the_line_it_came_from(self) -> None:
+        await self.clock_log((100, 5000), (200, 5600))
+        placed = await self.place(await self.spoken(150))
+        assert placed.belief is not None
+        self.assertEqual(placed.belief.game_time, 5000)  # (the clock then, not the newest row)
+
+    async def test_no_clock_a_line_before_the_first_row_or_no_time_leaves_it_empty(self) -> None:
+        placed = await self.place(await self.spoken(150))  # no log at all
+        assert placed.belief is not None
+        self.assertIsNone(placed.belief.game_time)
+
+    async def test_a_line_before_the_clock_was_first_set_is_not_known(self) -> None:
+        await self.clock_log((100, 5000))
+        placed = await self.place(await self.spoken(99))
+        assert placed.belief is not None
+        self.assertIsNone(placed.belief.game_time)
+
+    async def test_a_reading_with_no_moment_is_never_stamped_with_the_clock_as_it_is_now(
+        self,
+    ) -> None:
+        await self.clock_log((100, 5000))
+        placed = await self.place(await self.spoken(None))
+        assert placed.belief is not None
+        self.assertIsNone(placed.belief.game_time)
+
+    async def read_session(self, imported: bool) -> tuple[Any, Any]:
+        """The real extractor reads one session (its readings asked for) into the real claim
+        store, the way a live or imported session is read; returns the claims it handed over and
+        the placed belief of the reading (#3091, #3137)."""
+        from dmbot.memory import extractor
+        from dmbot.transcript.models import Line
+        from tests.test_extractor import Believing
+
+        handed: list[Any] = []
+        real = self.claims
+
+        class Handing:
+            async def propose(self, *args: Any, **kw: Any) -> Any:
+                handed.extend(args[2])
+                return await real.propose(*args, **kw)
+
+        async def consenting() -> set[int]:
+            return {DM, PLAYER}
+
+        lines = [Line(20_000 + n * 1000, PLAYER, f"words {n}", f"words {n}") for n in range(10)]
+        await extractor.run(
+            Believing(),
+            cast(ClaimStore, Handing()),
+            lines,
+            guild_id=GUILD_A,
+            campaign_id=self.c,
+            dm_ids={DM},
+            consenting=consenting,
+            model=lambda: "m",
+            session_started_at=1_000,
+            readings=True,
+            imported=imported,
+        )
+        ((reading,),) = [(c,) for c in handed if c.reading is not None][:1]
+        claim_id = str((await self.rows("memory_claims"))[-1]["id"])
+        placed = await self.claims.place(GUILD_A, self.c, claim_id, opted_in={DM, PLAYER})
+        assert placed.belief is not None
+        return reading, placed.belief
+
+    async def test_an_imported_sessions_reading_is_placed_with_no_game_time_after_a_clock_row(
+        self,
+    ) -> None:
+        # The lines of a loaded session carry no moment, so the extractor sends no spoken_at and
+        # placing has nothing to read the clock at, even with a clock row before the line (#3137).
+        await self.clock_log((10, 5000))
+        reading, belief = await self.read_session(imported=True)
+        self.assertNotIn("spoken_at", reading.reading)
+        self.assertIsNone(belief.game_time)
+
+    async def test_a_live_sessions_reading_is_stamped_from_the_clock_row_before_its_line(
+        self,
+    ) -> None:
+        # The control: the same read, not imported, takes the moment and so the game time.
+        await self.clock_log((10, 5000))
+        reading, belief = await self.read_session(imported=False)
+        self.assertIn("spoken_at", reading.reading)
+        self.assertEqual(belief.game_time, 5000)
+
+    async def test_a_moment_that_is_not_a_time_is_refused(self) -> None:
+        await self.clock_log((100, 5000))
+        for bad in (-5, 0, 10**13, True):
+            with self.subTest(bad):
+                claim = readings.as_claim(belief("pc:Mira", "theory", 0.4), "player_said")
+                assert claim.reading is not None
+                from dmbot.memory import placing
+
+                with self.assertRaises(MemoryRuleError):
+                    placing._checked({**claim.reading, "spoken_at": bad})
+
+    async def test_a_suspected_lie_is_placed_for_the_accuser_and_names_who_lied(self) -> None:
+        valyra = await self.add("Valyra", type="character")
+        lie = await self.waiting_reading(belief("pc:Mira", "suspected_lie", 0.5, liar="Valyra"))
+        placed = await self.place(lie)
+        assert placed.belief is not None
+        self.assertEqual((placed.belief.status, placed.belief.confidence), ("suspected_lie", 0.5))
+        (found,) = await self.memory.lies(GUILD_A, self.c, source="dm")
+        self.assertEqual((found.liar, found.status), (valyra, "suspected_lie"))
+
+    async def test_a_lie_that_names_nobody_known_or_a_thing_is_refused_whole(self) -> None:
+        await self.add("Lantern", type="item")
+        before = await self.rows("memory_beliefs")
+        for thing, liar in (("Heartseeker", "Nobody"), ("Lantern", "Heartseeker")):
+            with self.subTest(liar):  # not known; known but not a character
+                proposal = readings.BeliefProposal(
+                    "pc:Mira", "Bram", "carries", thing, 0.5, "suspected_lie", ("1",), liar=liar
+                )
+                with self.assertRaises(MemoryRuleError):
+                    await self.place(await self.waiting_reading(proposal))
+        self.assertEqual(await self.rows("memory_beliefs"), before)
+
+    async def test_a_pinned_connection_is_not_taken_back_by_a_zero_reading(self) -> None:
+        made = await self.relate(self.bram, "carries", self.sword, status="confirmed", secret=False)
+        rel = made.value[0].id
+        await self.memory.pin(GUILD_A, self.c, rel, True, source="dm")
+        before = await self.beliefs_of(rel)
+        false = await self.waiting_reading(belief("truth", "false_evidence", 0.0, dm_confirms=True))
+        with self.assertRaises(MemoryRuleError) as why:
+            await self.place(false)
+        self.assertIn("Unpin it first", str(why.exception))
+        self.assertEqual(await self.beliefs_of(rel), before)
+        self.assertIn(rel, await self.memory.pinned_connections(GUILD_A, self.c))
 
     async def test_an_unknown_character_or_a_state_is_refused_before_anything_is_written(
         self,

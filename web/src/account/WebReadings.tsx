@@ -1,5 +1,5 @@
 /** @jsxImportSource preact */
-// "What people believe" on the Story graph (#2412 slice 3b; core PR 2693): the theories, accusations, reveals
+// "What people believe" on the Story Graph (#2412 slice 3b; core PR 2693): the theories, accusations, reveals
 // and tricks DMbot noticed, each of which the DM may keep as a belief (what someone thinks, never a fact),
 // say is not right, or take back. Each answer is sent to DMbot, which makes the very calls the DM screen
 // makes, so consent and every rule hold the same. Only a DM of the campaign gets the list (a player or a
@@ -199,7 +199,7 @@ export default function WebReadings({ api, campaignRef }: { api: AccountApi; cam
         <div key={r.id} class="panel">
           <p id={`wr-${r.id}`}>{r.statement}</p>
           <p class="small">
-            {w.believedBy(r.who)}. {w.sure(r.sureness)}.
+            {r.rule === "lie" ? w.lied(r.who, r.liar) : w.believedBy(r.who)}. {w.sure(r.sureness)}.
           </p>
           <p class="small muted">
             {w.rules[r.rule] ?? w.other}

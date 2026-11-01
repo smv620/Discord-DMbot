@@ -82,6 +82,14 @@ FEATURES: tuple[Feature, ...] = (
         for_dms=False,  # how the work is done, not something a DM sees (#2714)
     ),
     Feature(
+        "final read",
+        "Recap final read",
+        "",
+        lambda s: s.recap_final_read,
+        ("recap_final_read",),
+        for_dms=False,  # how the work is done, not something a DM chooses (#2952)
+    ),
+    Feature(
         "structured beats",
         "Recap beat sheet in two steps",
         "",
@@ -118,6 +126,7 @@ FEATURES: tuple[Feature, ...] = (
         (
             "story_extractor_on",
             "story_readings_on",
+            "story_family_only",
             "story_contradictions_on",
             "story_report_on",
             "story_extractor_tier",

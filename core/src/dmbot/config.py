@@ -69,6 +69,9 @@ class Settings:
     # What the recap writer reads (#2590): the beat sheet (default) or the cleaned transcript with
     # PlotBot's guide. Apart from the provider, so each change is tested on its own.
     recap_writer_reads: str = "beats"
+    # The careful tier's last editing pass over each finished recap (#2952). On unless
+    # RECAP_FINAL_READ is 0.
+    recap_final_read: bool = True
     # The split of a session's opening through the three-pass structured-output adapter (#2714):
     # a strong model drafts, a fast one fills the schema. Off unless RECAP_STRUCTURED_OUTPUT_SPLIT.
     recap_structured_output_split: bool = False
@@ -95,6 +98,9 @@ class Settings:
     # kept as beliefs for the DM to place. Off until the extractor is; it only runs when the
     # extractor does, inside the same call limits.
     story_readings_on: bool = False
+    # Mine family connections only (#2960; owner, 2026-10-29): a claim that is not a family role
+    # is dropped in code, and no readings are asked. Off: every kind of claim, as before.
+    story_family_only: bool = False
     # After a session, PlotBot grades the contradictions one point of view holds (#2660), major or
     # minor, and the grades are kept for the DM. Off until the extractor is; it runs inside the
     # extractor's plan check and call limits (at most a few calls a session).
@@ -318,6 +324,11 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         raise ConfigError(
             'DMBOT_STORY_EXTRACTOR must be 1 (on) or 0 (off), got "' + extractor_raw + '".'
         )
+    family_raw = (get("DMBOT_STORY_FAMILY_ONLY") or "0").lower()
+    if family_raw not in ("0", "1", "true", "on", "false", "off"):
+        raise ConfigError(
+            'DMBOT_STORY_FAMILY_ONLY must be 1 (on) or 0 (off), got "' + family_raw + '".'
+        )
     readings_raw = (get("DMBOT_STORY_READINGS") or "0").lower()
     if readings_raw not in ("0", "1", "true", "on", "false", "off"):
         raise ConfigError(
@@ -474,6 +485,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         ai_model_notice=ai_notice,
         ai_provider_creative=ai_provider_creative,
         recap_writer_reads=_recap_writer_reads(get),
+        recap_final_read=_on_unless_off(get, "RECAP_FINAL_READ"),
         recap_structured_output_split=_on_off(get, "RECAP_STRUCTURED_OUTPUT_SPLIT"),
         recap_structured_output_beats=_on_off(get, "RECAP_STRUCTURED_OUTPUT_BEATS"),
         gemini_key=get("GEMINI_API_KEY"),
@@ -486,6 +498,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         sidebar_on=sidebar_raw in ("1", "true", "on"),
         story_extractor_on=extractor_raw in ("1", "true", "on"),
         story_readings_on=readings_raw in ("1", "true", "on"),
+        story_family_only=family_raw in ("1", "true", "on"),
         story_contradictions_on=contradictions_raw in ("1", "true", "on"),
         story_report_on=report_raw in ("1", "true", "on"),
         table_images_on=images_raw in ("1", "true", "on"),
@@ -610,6 +623,16 @@ def _on_off(get: Callable[[str], str], name: str) -> bool:
         return False
     if raw in ("1", "on", "true"):
         return True
+    raise ConfigError(f"{name} in .env must be 1 (on) or 0 (off).")
+
+
+def _on_unless_off(get: Callable[[str], str], name: str) -> bool:
+    """A switch that is on unless turned off: 0/off/false. Empty is on; anything else errors."""
+    raw = _unquote(get(name)).lower()
+    if raw in ("", "1", "on", "true"):
+        return True
+    if raw in ("0", "off", "false"):
+        return False
     raise ConfigError(f"{name} in .env must be 1 (on) or 0 (off).")
 
 

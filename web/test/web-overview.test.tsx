@@ -1,6 +1,6 @@
 /** @jsxImportSource preact */
 // @vitest-environment happy-dom
-// The Story graph's overview (#2632): the owner's campaign had 51 names and the page drew 2. The page now says how
+// The Story Graph's overview (#2632): the owner's campaign had 51 names and the page drew 2. The page now says how
 // many names there are, lists the ones with no connection yet beside the map, and offers every other group
 // of linked names; a player sees none of what is hidden from them, and an older API leaves the page as it was.
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
@@ -34,13 +34,13 @@ describe("the Not connected yet tray", () => {
     await open();
     const tray = await screen.findByRole("region", { name: new RegExp(w.trayHeading) });
     expect(within(tray).getByText(w.trayLead)).toBeTruthy();
-    expect(within(tray).getByRole("button", { name: "Old Mill" })).toBeTruthy();
-    expect(within(tray).getByRole("button", { name: "Brother Venn" })).toBeTruthy();
+    expect(within(tray).getByRole("button", { name: /^Old Mill/ })).toBeTruthy();
+    expect(within(tray).getByRole("button", { name: /^Brother Venn/ })).toBeTruthy();
     expect(within(tray).getByText(w.trayKind(w.kinds["place"]!, 2))).toBeTruthy();
-    fireEvent.click(within(tray).getByRole("button", { name: "Old Mill" }));
+    fireEvent.click(within(tray).getByRole("button", { name: /^Old Mill/ }));
     expect(await screen.findByText(w.noConnectionsYet("Old Mill"))).toBeTruthy();
-    expect(within(tray).getByRole("button", { name: "Old Mill" }).getAttribute("aria-pressed")).toBe("true");
-    fireEvent.click(within(tray).getByRole("button", { name: "Old Mill" })); // again: put it away
+    expect(within(tray).getByRole("button", { name: /^Old Mill/ }).getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(within(tray).getByRole("button", { name: /^Old Mill/ })); // again: put it away
     await waitFor(() => expect(screen.queryByText(w.noConnectionsYet("Old Mill"))).toBeNull());
   });
 
@@ -92,5 +92,16 @@ describe("who sees what", () => {
     };
     await open(".web-lonely", failing);
     expect(screen.queryByText(w.trayHeading, { exact: false })).toBeNull();
+  });
+});
+
+describe("the Open its page link on the overview", () => {
+  it("a tray name and a group's centre get the link when marked", async () => {
+    await open();
+    const tray = await screen.findByRole("region", { name: new RegExp(w.trayHeading) });
+    expect(within(tray).getByRole("link", { name: `${w.openItsPage}${w.openItsPageFor("Brother Venn")}` })).toBeTruthy();
+    const groups = document.querySelector(".web-groups");
+    expect(groups).toBeTruthy();
+    expect(within(groups as HTMLElement).getAllByRole("link", { name: (label: string) => label.startsWith(w.openItsPage) }).length).toBeGreaterThan(0);
   });
 });

@@ -6,15 +6,18 @@ function decides what is drawn and what is allowed on a press (the server checks
 the campaign as it is now), so a button hidden from a role can never be used by it either.
 
 Roles, from the strongest to the weakest:
-- **game master**: in the campaign's DM list. Every button.
+- **game master**: in the campaign's DM list. ⚙️ Manage DMbot, 🌐 Manage campaign, 🙋 My data and
+  ❓ Help.
 - **player**: tied to *this* campaign (a confirmed character in it, or recorded in one of its
-  sessions). The personal buttons, plus the campaign ones that are about the player.
-- **member**: consented in this server, but not tied to this campaign. The personal buttons.
-- **guest**: anyone else in the server. Help, looking up a rule and reading the transcripts,
-  which are open to the whole server anyway (#1691).
+  sessions). 🙋 My data and ❓ Help, after a link to the campaign's website page for each
+  campaign in the server they play in (#3024; links have no callback, so they are not in
+  `_BUTTONS`, and `dm_bot_buttons.role_view` draws them).
+- **member**: consented in this server, but not tied to this campaign. The same two.
+- **guest**: anyone else in the server. ❓ Help, whose card has looking up a rule and the
+  transcripts link, which are open to the whole server anyway (#1691).
 
-A server manager who is not a game master is a guest here: the card never offers them Settings.
-(The ⚙️ Settings button itself still lets a manager in, as it does on the DM screen today; the
+A server manager who is not a game master is a guest here: the card never offers them Manage
+DMbot. (The button itself still lets a manager in, as it does on the DM screen today; the
 whole-server decision on that is Supervisor's, slice 3.)
 """
 
@@ -36,39 +39,37 @@ class Button(StrEnum):
     """What a panel button does. The value is the action in its custom id."""
 
     OPEN = "open"  # on the shared panel: opens the person's own buttons, privately
-    HELP = "help"
+    HELP = "help"  # ❓ Help: the help text, with Look up a rule and Transcripts on its card
     RULE = "rule"  # 📖 Look up a rule: the form and private answer of /dmbot rule (#1691)
     TRANSCRIPTS = "transcripts"  # 📜 Transcripts: a link to the website's page, no callback
-    MY_MENU = "my_menu"  # 🗂️ Menu: Stop recording me, Delete my transcripts (about the person)
-    MY_CHARACTER = "my_character"  # the player's character link in this campaign
-    SETTINGS = "settings"  # the campaign's Settings card, game masters only
-    NAMES = "names"  # 📇 Names: the names home card, game masters only (#1986)
-    BACKSTORY = (
-        "backstory"  # 📜 Upload campaign lore: names and connections from the DM's own story
-    )
+    MY_DATA = "my_data"  # 🙋 My data: the old 🗂️ Menu (recording, transcripts, character sheet)
+    MANAGE_DMBOT = "manage_dmbot"  # ⚙️ Manage DMbot: only the Discord-live settings, DMs only
+    MANAGE_CAMPAIGN = "manage_campaign"  # 🌐 Manage campaign: a link to the website, DMs only
 
 
-# Each role's buttons, in the order they are drawn. A role never gets more than the one below it
-# plus its own, which `test_each_role_has_what_the_weaker_ones_have` checks.
-_EVERYONE = (Button.HELP, Button.RULE, Button.TRANSCRIPTS)  # open to the whole server (#1691)
+# Each role's buttons, in the order they are drawn: at most four (owner, 2026-10-29, #2986). A role
+# never gets more than the one below it plus its own, which
+# `test_each_role_has_what_the_weaker_ones_have` checks. 📖 Look up a rule and 📜 Transcripts are
+# on the Help card, so they are not a fifth and sixth button here.
 _BUTTONS: dict[Role, tuple[Button, ...]] = {
-    Role.GUEST: _EVERYONE,
-    Role.MEMBER: (*_EVERYONE, Button.MY_MENU),
-    Role.PLAYER: (*_EVERYONE, Button.MY_MENU, Button.MY_CHARACTER),
+    Role.GUEST: (Button.HELP,),
+    Role.MEMBER: (Button.MY_DATA, Button.HELP),
+    Role.PLAYER: (Button.MY_DATA, Button.HELP),
     Role.GAME_MASTER: (
-        *_EVERYONE,
-        Button.MY_MENU,
-        Button.MY_CHARACTER,
-        Button.SETTINGS,
-        Button.NAMES,
-        Button.BACKSTORY,
+        Button.MANAGE_DMBOT,
+        Button.MANAGE_CAMPAIGN,
+        Button.MY_DATA,
+        Button.HELP,
     ),
 }
 
 # Only the shared panel's own buttons are labelled here; the card's buttons are DMbot's existing
-# menus and keep the labels they have everywhere else (🗂️ Menu, 📜 My character sheet, ⚙️ Settings).
+# menus (🗂️ Menu, ⚙️ Manage DMbot) under the names of #2986.
 LABELS: dict[Button, str] = {
     Button.OPEN: "👤 DMbot Main Menu",
+    Button.MY_DATA: "🙋 My data",
+    Button.MANAGE_DMBOT: "⚙️ Manage DMbot",
+    Button.MANAGE_CAMPAIGN: "🌐 Manage campaign",
     Button.HELP: "❓ Help",
     Button.RULE: "📖 Look up a rule",
     Button.TRANSCRIPTS: "📜 Transcripts",
@@ -76,6 +77,17 @@ LABELS: dict[Button, str] = {
 
 # The website's Transcripts page, used when the bot isn't given its own address (WEB_SITE_URL).
 TRANSCRIPTS_URL = "https://getdmbot.com/account/transcripts"
+
+
+def campaign_url(site_url: str, guild_id: int, campaign_id: str, *, several: bool = False) -> str:
+    """Where 🌐 Manage campaign goes: the website's page for this campaign, or (for a DM of several
+    campaigns in this server) their campaign list. An address that is not a plain https one (what
+    Discord would refuse as a link button) falls back to the public site, so this never returns an
+    empty or broken link."""
+    parts = urlsplit(site_url.strip())
+    host = parts.netloc if parts.scheme.lower() == "https" and parts.netloc else "getdmbot.com"
+    path = "/account/campaigns" if several else f"/account/campaigns/{guild_id}.{campaign_id}"
+    return f"https://{host}{path}"
 
 
 def transcripts_url(site_url: str = "") -> str:

@@ -1,6 +1,7 @@
 /** @jsxImportSource preact */
-// What waits for the DM on the Story graph (#2635, #2652): facts PlotBot heard at the table, connections
-// found in a backstory (grouped by upload, with Keep all) and "Which Mara?" questions. The DM decides
+// What waits for the DM on the Story Graph (#2635, #2652): facts PlotBot heard at the table, connections
+// found in a backstory (grouped by upload, with Keep all), "Which Mara?" questions and "Who is she?" pronoun
+// questions (#2831). The DM decides
 // everything: each answer is sent to DMbot, which makes the very calls the DM screen's buttons make, so
 // consent, secrets and Undo hold the same. Only a DM of the campaign gets the list from the API; a player
 // never sees this part. One answer at a time per item: its buttons wait while it is sent, and the list
@@ -8,12 +9,35 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import { waitingWords as w } from "../content/web-waiting";
-import { ApiError, type AccountApi, type Waiting, type WaitingAnswer } from "./api";
+import { ApiError, type AccountApi, type Waiting, type WaitingAnswer, type WaitingLook } from "./api";
 import WorkProgress from "./WorkProgress";
 
 /** A session's day for a person ("17 October"), from Unix seconds, the same in every time zone. */
 const sessionDay = (seconds: number): string =>
   new Date(seconds * 1000).toLocaleDateString("en-GB", { day: "numeric", month: "long", timeZone: "UTC" });
+
+/** The wait panel's words and times for an answer on the way (#2921): from the bot's looks once it has sent any, else the
+ * page's own clock, so an older API or the first moments before the first look show what they always did. */
+function waitShown(sending: { since: number; stage: string; keepAll: boolean; look: WaitingLook | null }) {
+  const waits = sending.look?.waits ?? null;
+  const progress = sending.look?.progress ?? null;
+  // A Keep all says so from its first look, before any count, so it never reads as a plain save.
+  const keeping = progress !== null || (sending.keepAll && waits !== null);
+  return {
+    stage: waits?.stage === "queued" ? w.queuedStage : keeping ? w.keepingConnections : waits ? w.savingStage : sending.stage,
+    startedAt: waits ? (waits.now ?? sending.since) - waits.waitedSeconds : sending.since,
+    // No time is shown for a look with no server clock or a zero time: a wrong age is worse than none.
+    updatedAt: waits && waits.now !== undefined && waits.lastMovedAt > 0 ? waits.lastMovedAt : undefined,
+    serverNow: waits?.now ?? sending.since,
+    state: waits?.stalled ? ("stalled" as const) : ("running" as const),
+    done: progress?.done,
+    total: progress?.total,
+    unit: progress ? "connections" : undefined,
+  };
+}
+
+/** Capitalises a line that opens a sentence, so "she grew up with Rook" reads "She grew up with Rook". */
+const startCap = (line: string): string => line.charAt(0).toUpperCase() + line.slice(1);
 
 const KEEP_ALL_MAX = 50; // the API keeps at most this many named in one Keep all
 
@@ -36,7 +60,7 @@ export default function WebWaiting({
 }) {
   const [list, setList] = useState<Waiting | null>(null);
   const [failed, setFailed] = useState(false);
-  const [sending, setSending] = useState<{ since: number; stage: string } | null>(null);
+  const [sending, setSending] = useState<{ since: number; stage: string; keepAll: boolean; look: WaitingLook | null } | null>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
   const shown = useRef(campaignRef);
   const [said, setSaid] = useState<Said>(null);
@@ -79,10 +103,10 @@ export default function WebWaiting({
   ): Promise<void> {
     if (!api.answerWaiting || inFlight.current) return;
     inFlight.current = true;
-    setSending({ since: Math.floor(Date.now() / 1000), stage });
+    setSending({ since: Math.floor(Date.now() / 1000), stage, keepAll: answer.action === "keep_all", look: null });
     setSaid(null);
     try {
-      const got = await api.answerWaiting(campaignRef, answer);
+      const got = await api.answerWaiting(campaignRef, answer, (look) => setSending((now) => (now ? { ...now, look } : now)));
       setSaid({ ok: true, text: typeof ok === "function" ? ok(got.kept) : ok, n: ++counter.current });
       onChanged?.();
     } catch (error) {
@@ -114,6 +138,12 @@ export default function WebWaiting({
   const busy = sending !== null;
   const { counts } = list;
   const cut = list.claims.length < counts.claims || list.backstory.length < counts.backstory;
+  // The DMbot's-check lines below are DM-only by the callers: Web.tsx draws this part for a DM alone, and the API
+  // answers only a DM of the campaign. Keep that true before drawing a check anywhere else.
+  // A pronoun question can have one name or none, and its "Someone else" keeps the connection with a person
+  // who isn't named yet, so it gets its own group and words; a name question keeps the "Neither" words.
+  const names = list.which.filter((q) => !q.pronoun);
+  const pronouns = list.which.filter((q) => q.pronoun);
 
   // The backstory connections by upload, in the order the API sent them.
   const uploads: { label: string; items: Waiting["backstory"] }[] = [];
@@ -140,25 +170,33 @@ export default function WebWaiting({
       <p class={said && !said.ok ? "warn" : "visually-hidden"} role="alert">
         {said && !said.ok ? <span key={said.n}>{said.text}</span> : ""}
       </p>
-      {sending && (
-        <WorkProgress
-          stage={sending.stage}
-          startedAt={sending.since}
-          serverNow={sending.since}
-          state="running"
-        />
-      )}
+      {sending && (() => {
+        const wait = waitShown(sending);
+        return (
+          <WorkProgress
+            stage={wait.stage}
+            startedAt={wait.startedAt}
+            updatedAt={wait.updatedAt}
+            serverNow={wait.serverNow}
+            state={wait.state}
+            done={wait.done}
+            total={wait.total}
+            unit={wait.unit}
+          />
+        );
+      })()}
 
-      {list.which.length > 0 && (
+      {names.length > 0 && (
         <div class="stack">
           <h4>{w.whichHeading}</h4>
           <p class="small">{w.whichNote}</p>
-          {list.which.map((q) => (
+          {names.map((q) => (
             <div key={q.id} class="panel">
               <p>
                 <strong>{w.whichQuestion(q.word)}</strong>
               </p>
               <p id={`wq-${q.id}`}>{w.whichLine(q.other, q.how, q.word, q.otherIsSubject)}</p>
+              {q.check && <p class="small muted">{w.checkLine(q.check)}</p>}
               {q.quote && <p class="muted small">“{q.quote}”</p>}
               {q.secret && <p class="small">{w.secretNote}</p>}
               {q.candidates.some((c) => c.limited) && <p class="small">{w.hiddenNote}</p>}
@@ -191,6 +229,62 @@ export default function WebWaiting({
                   onClick={() => void send({ kind: "which", action: "neither", id: q.id }, w.done.neither)}
                 >
                   {w.neither}
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {pronouns.length > 0 && (
+        <div class="stack">
+          <h4>{w.pronounHeading}</h4>
+          <p class="small">{w.pronounNote}</p>
+          {pronouns.map((q) => (
+            <div key={q.id} class="panel">
+              <p>
+                <strong>{w.pronounQuestion(q.word)}</strong>
+              </p>
+              <p id={`wq-${q.id}`}>{startCap(w.whichLine(q.other, q.how, q.word, q.otherIsSubject))}</p>
+              {q.check && <p class="small muted">{w.checkLine(q.check)}</p>}
+              {q.quote && <p class="muted small">“{q.quote}”</p>}
+              {q.secret && <p class="small">{w.secretNote}</p>}
+              {q.candidates.some((c) => c.limited) && <p class="small">{w.hiddenNote}</p>}
+              {q.candidates.length === 0 && (
+                <p class="small" id={`wq-none-${q.id}`}>
+                  {w.pronounNoName}
+                </p>
+              )}
+              <div class="row">
+                {q.candidates.map((c) => (
+                  <button
+                    key={c.id}
+                    type="button"
+                    class="button"
+                    disabled={busy}
+                    aria-describedby={`wq-${q.id}`}
+                    onClick={() => void send({ kind: "which", action: "pick", id: q.id, entity: c.id }, w.done.pick)}
+                  >
+                    {c.limited ? (
+                      <>
+                        <span aria-hidden="true">{w.hiddenMark} </span>
+                        <span class="visually-hidden">{w.hiddenWord} </span>
+                        {c.name}
+                      </>
+                    ) : (
+                      c.name
+                    )}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  class="button secondary"
+                  disabled={busy}
+                  aria-label={w.someoneElseFor(q.word)}
+                  aria-describedby={q.candidates.length === 0 ? `wq-${q.id} wq-none-${q.id}` : `wq-${q.id}`}
+                  onClick={() => void send({ kind: "which", action: "neither", id: q.id }, w.done.someoneElse)}
+                >
+                  {w.someoneElse}
                 </button>
               </div>
             </div>
@@ -275,6 +369,7 @@ export default function WebWaiting({
                 {u.items.map((b) => (
                   <div key={b.id} class="panel">
                     <p id={`wb-${b.id}`}>{`${b.subject} ${b.how} ${b.object}`}</p>
+                    {b.check && <p class="small muted">{w.checkLine(b.check)}</p>}
                     {b.quote && <p class="muted small">“{b.quote}”</p>}
                     {b.secret && <p class="small">{w.secretNote}</p>}
                     {b.ready ? (

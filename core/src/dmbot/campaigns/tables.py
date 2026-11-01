@@ -27,6 +27,8 @@ SECTION_TABLES: dict[str, tuple[str, ...]] = {
         "memory_aliases",
         "memory_relations",
         "memory_perspectives",
+        "memory_alias_knowers",
+        "memory_knowers",
         "memory_beliefs",
         "memory_evidence",
         "memory_impressions",
@@ -47,12 +49,13 @@ SECTION_TABLES: dict[str, tuple[str, ...]] = {
     "import_speakers": ("import_speakers",),
     "rule_set_follows": ("rule_set_follows",),
     "rule_sets": ("rule_sets", "rule_set_versions", "rule_set_editors"),
-    "game_clock": ("game_clocks", "game_clock_groups"),
+    "game_clock": ("game_clocks", "game_clock_groups", "game_clock_log"),
     "game_effects": ("game_effects",),
     # (only ready jobs are carried today, which is part of what #2552 lists)
     "recaps": ("recap_jobs",),
     "recap_rights": ("recap_upload_rights",),
     "recap_accepted": ("recap_accepted",),  # each approved version of a recap (#2122)
+    "session_notes": ("session_notes",),  # each session's beat sheet, kept for good (#3026)
     "plot_issues": ("plot_issues",),  # PlotBot's issues and the DM's answers (#2122)
     "plot_fine": ("plot_fine",),  # what the DM said was not a problem (#2122)
     "memory_heard": ("memory_heard",),
@@ -126,8 +129,12 @@ NOT_IN_BACKUP: dict[str, str] = {
     "name_actions": _WAIT,
     "setting_actions": _WAIT,
     "web_rule_actions": _WAIT,
+    "web_recap_style_actions": _WAIT,
     "web_report_requests": _WAIT,
+    "lore_uploads": _WAIT,
+    "web_house_file_actions": _WAIT,
     "web_sheet_actions": _WAIT,
+    "web_line_fixes": _WAIT,
     "rule_set_codes": "a share code is a bearer secret; a restored publisher gets a new one "
     "(Supervisor, #2553; PLAN:947)",
     "memory_mentions": "where each name was said, made again as lines are read (PLAN:164)",
@@ -143,6 +150,9 @@ NOT_IN_BACKUP: dict[str, str] = {
     "themselves are in the transcript (#2684)",
     "memory_differences": "what the party has wrong, with PlotBot's sort: made again by the next "
     "check (#2661); the DM's answers to them are the `report_answers` section",
+    "game_clock_group_log": "who was in which split-party group, by character id: the ids in a "
+    "file are the file's, a restored campaign starts a new history, and a split's membership is "
+    "a moment of play, not story; lines from before the restore read as not known (#3131)",
     "memory_report_runs": _RUNTIME,
     "memory_contradictions": "PlotBot's contradiction candidates and grades: made again by the "
     "next pass, nothing the DM wrote (#2660)",

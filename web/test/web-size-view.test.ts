@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-// The relationship web's size and peek calls over the real API client (#2405): the size is asked
+// The Story Graph's size and peek calls over the real API client (#2405): the size is asked
 // for the view the page is showing, and a refused peek reads as a plain failure.
 import { describe, expect, it } from "vitest";
 

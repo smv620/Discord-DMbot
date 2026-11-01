@@ -306,8 +306,7 @@ class TheHooks(unittest.IsolatedAsyncioTestCase):
         ]
         bot._note_present = lambda first: DMBot._note_present(bot, first)
         bot._resume_with_retries = AsyncMock()
-        bot._rebuild_rules_archives = AsyncMock()
-        bot._rebuild_npcs = AsyncMock()
+        bot._start_up_campaign_sweep = AsyncMock()
         bot._name_old_speakers = AsyncMock()
         bot._background = []
         await DMBot.on_ready(bot)

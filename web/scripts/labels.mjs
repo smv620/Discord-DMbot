@@ -98,6 +98,8 @@ export const hiddenBotLabels = [
   { label: "DMbot Main Menu", file: "dm_screen/dm_bot_panel.py" },
   { label: "Transcript retention", file: "dm_screen/transcript_keep.py" },
   { label: "Transcripts", file: "dm_screen/dm_bot_panel.py" },
+  { label: "Manage campaign", file: "dm_screen/dm_bot_panel.py" }, // a link button built from LABELS (#2986)
+  { label: "My data", file: "dm_screen/dm_bot_panel.py" },
   { label: "Species", file: "ui/homebrew.py" },
   { label: "Start a timer", file: "dm_screen/clock.py" },
   { label: "Rejoin the party", file: "dm_screen/clock.py" },
@@ -124,6 +126,9 @@ export const hiddenBotLabels = [
 
 /** Buttons and menu items of the website itself, which the bot's code can't hold. */
 export const siteButtons = [
+  "Download a backup", // the campaign page's Keep a copy (#3148), a website button, not in Discord
+  "Save the link", // the campaign invite panel (#2985), a website button, not in Discord
+  "Remove the link", // the campaign invite panel (#2985), a website button, not in Discord
   "Cleaned",
   "House rules",
   "Session transcripts",

@@ -1,6 +1,6 @@
 // The legal drafts (#433): each has the short version, the draft notice, and facts that
 // match the plan file, so the pages and the pricing never disagree.
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 
 import { experimental_AstroContainer as AstroContainer } from "astro/container";
 import type { AstroComponentFactory } from "astro/runtime/server/index.js";
@@ -12,7 +12,7 @@ import facts from "../src/content/plans.json";
 import { aiTrainingSentence, deletionWarnings, notAffiliated, operator, retentionRows } from "../src/content/legal";
 import { QABOT_LIVE } from "../src/content/qabot";
 import { RECAPS_LIVE } from "../src/content/recap-words";
-import { initiativeLine, peopleListLine, storyStatesLine } from "../src/content/privacy-channels";
+import { initiativeLine, storyStatesLine } from "../src/content/privacy-channels";
 import { byId, formatPeriod } from "../src/content/pricing";
 import Privacy from "../src/pages/legal/privacy.astro";
 import Refunds from "../src/pages/legal/refunds.astro";
@@ -123,8 +123,7 @@ describe("the facts #433 asks for", () => {
 
   it("says DMbot learns the names people are called, from people who said yes, and what stop removes (#1210)", () => {
     expect(privacy()).toContain("Names at the table.");
-    // The people list and initiative lines show only while their features are live (#1810).
-    expect(privacy().includes(peopleListLine.lead)).toBe(peopleListLine.live);
+    // The initiative and story-state lines show only while their features are live (#1810).
     expect(privacy().includes(initiativeLine.lead)).toBe(initiativeLine.live);
     expect(privacy().includes(storyStatesLine.lead)).toBe(storyStatesLine.live);
     expect(privacy()).toContain("only from people who said yes to being recorded");
@@ -147,7 +146,7 @@ describe("the facts #433 asks for", () => {
     }
     expect(terms()).toContain("DMbot is run by DMbot LLC");
     expect(privacy()).toContain("DMbot is run by DMbot LLC");
-    expect(terms()).toContain("dmbot.admin@gmail.com");
+    expect(terms()).toContain("admin@getdmbot.com");
     // The owner chose email-only contact (2026-10-10): the address field must not come back.
     expect(Object.keys(operator)).toEqual(["name", "email"]);
     for (const page of ["terms", "privacy", "refunds"]) {
@@ -167,7 +166,7 @@ describe("the facts #433 asks for", () => {
   it("names OVH US as the host and the US companies, with Stripe as seller of record", () => {
     expect(privacy()).toContain("OVH US LLC (OVHcloud, U.S.A.)");
     expect(privacy()).toContain("Its servers are in the United States");
-    expect(privacy()).toMatch(/Deepgram, Anthropic, ElevenLabs, Voyage AI \(MongoDB\), OVH US, Cloudflare, GitHub and Stripe/);
+    expect(privacy()).toMatch(/Deepgram, Anthropic, ElevenLabs, Voyage AI \(MongoDB\), OVH US, Cloudflare, GitHub, Resend and Stripe/);
     expect(privacy()).toContain("Stripe is the seller of record and handles withdrawal rights, invoices and tax");
     expect(privacy()).not.toContain("HOSTING PROVIDER");
   });
@@ -194,7 +193,7 @@ describe("the facts #433 asks for", () => {
     expect(terms()).toContain("Prices may change at any time. The price shown when you buy is the price you pay for that period.");
     expect(terms()).toContain("at least 30 days' notice");
     expect(terms()).toContain("Try It never turns into a paid plan by itself, and it needs no payment details");
-    expect(terms()).toContain("Write to dmbot.admin@gmail.com with a link to the material");
+    expect(terms()).toContain("Write to admin@getdmbot.com with a link to the material");
     expect(terms()).toContain("DMbot is provided as is, with no promise it will always be available.");
   });
 
@@ -247,7 +246,7 @@ describe("the facts #433 asks for", () => {
 
   it("tells people how to ask about their information, with a 30-day answer", () => {
     expect(privacy()).toContain(
-      "You can ask us to show you, correct, send you a copy of, or delete the information we hold about you, by emailing dmbot.admin@gmail.com. We answer within 30 days.",
+      "You can ask us to show you, correct, send you a copy of, or delete the information we hold about you, by emailing admin@getdmbot.com. We answer within 30 days.",
     );
   });
 
@@ -394,7 +393,12 @@ describe("shared house rules (#1254)", () => {
     expect(t).toContain("keeps no record of the sender");
   });
   it("is true: the publisher's table of suggestions has no column for who sent one (#1313)", () => {
-    const schema = readFileSync(new URL("../../core/src/dmbot/schema.py", import.meta.url), "utf8");
+    // (the migrations are one file each since #2127: read them all)
+    const dir = new URL("../../core/src/dmbot/migrations/", import.meta.url);
+    const schema = readdirSync(dir)
+      .filter((f) => f.endsWith(".py"))
+      .map((f) => readFileSync(new URL(f, dir), "utf8"))
+      .join("\n");
     const table = /CREATE TABLE rule_set_suggestions \(([\s\S]*?)\n    \);/.exec(schema)?.[1] ?? "";
     expect(table).toContain("set_id");
     expect(table).not.toMatch(/sent_by|follower|sender|from_guild|from_campaign/);
@@ -530,12 +534,37 @@ describe("generated content belongs to the campaign (#1388)", () => {
   });
 });
 
+describe("the mail goes through Resend (#1402)", () => {
+  // docs/EMAIL.md: outbound mail moves from DMbot's own Gmail mailbox to Resend over SMTP
+  // (core/src/dmbot/mail.py sends the address and the message, nothing else). This change merges
+  // on the day the mail switches, so the page and the mail never disagree.
+  const privacy = (): string => text(doc("privacy").querySelector("main"));
+
+  it("says who sends the emails and what Resend gets", () => {
+    const t = privacy();
+    expect(t).toContain("The emails go out through Resend, a company that sends email for us.");
+    expect(t).toContain("It gets the address an email goes to and the words in it, nothing else.");
+  });
+
+  it("lists Resend as a company that helps us, and as one in the United States", () => {
+    const t = privacy();
+    expect(t).toContain("Resend: sends DMbot's emails.");
+    expect(t).toContain("GitHub, Resend and");
+  });
+
+  it("no longer names Gmail or says Google carries the emails, on any page (the contact is admin@getdmbot.com)", () => {
+    for (const name of ["privacy", "terms", "refunds"]) {
+      const t = text(doc(name).querySelector("main"));
+      expect(t, name).not.toMatch(/gmail|so Google carries|through Google/i);
+    }
+  });
+});
+
 describe("privacy lines for new features (#1810)", () => {
   it("say what they hear and keep, in plain words, with no AI claim for initiative", () => {
     expect(initiativeLine.text).toContain("uses no AI");
     expect(initiativeLine.text).toContain("only people who said yes");
     expect(initiativeLine.text).toContain("not tied to any person");
-    expect(peopleListLine.text).toContain("never shows secrets, notes");
-    for (const line of [initiativeLine, peopleListLine, storyStatesLine]) expect(line.text).not.toMatch(/\bNPC\b|\bAPI\b|database/i);
+    for (const line of [initiativeLine, storyStatesLine]) expect(line.text).not.toMatch(/\bNPC\b|\bAPI\b|database/i);
   });
 });

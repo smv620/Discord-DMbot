@@ -632,8 +632,10 @@ class NameCards(NamesTest):
 
         bell = await self.alias("Bell")
         view = name_card.OneName(self.campaign.id, self.bell.id, bell, secrets=True)
+        opened = self.it()
+        await view._who(opened)
         it = self.it()
-        await view._secret(it)
+        await opened.response.edited[0][1]._only_me(it)
         self.assertIn("🤫 **Bell** is secret now", it.response.edited[0][0])
         self.assertTrue((await self.alias("Bell")).secret)
         it = self.it(MANAGER)  # may be at the table: the secret name is "gone" for them
@@ -966,6 +968,13 @@ class NameCards(NamesTest):
         )
         return brother, stranger
 
+    async def who_view(self, entity_id: str, relation_id: str, who: int = DM) -> Any:
+        """The "Who knows this?" page of one connection, as the DM (or another) opens it."""
+        page = await self.page_of(entity_id, relation_id, who)
+        it = self.it(who)
+        await page._who(it)
+        return it.response.edited[0][1]
+
     async def test_the_secret_toggle_is_for_dms_only_and_flips(self) -> None:
         from dmbot.ui import name_card
 
@@ -989,17 +998,17 @@ class NameCards(NamesTest):
         await name_card.connect(self.it(), self.campaign.id, self.bell.id, "kin_of", corin.id)
         (rel,) = await self.memory.relations(GUILD, self.campaign.id, entity_id=corin.id)
         self.assertFalse(rel.secret)
-        view = await self.page_of(corin.id, rel.id)
+        view = await self.who_view(corin.id, rel.id)
         it = self.it()
-        await view._flip(it)
+        await view._only_me(it)
         self.assertIn("Hidden from players", it.response.edited[0][0])
         (now,) = await self.memory.relations(
             GUILD, self.campaign.id, entity_id=corin.id, include_secret=True
         )
         self.assertTrue(now.secret)
-        view = await self.page_of(corin.id, rel.id)
+        view = await self.who_view(corin.id, rel.id)
         again = self.it()
-        await view._flip(again)
+        await view._everyone(again)
         self.assertIn("Players can see it now", again.response.edited[0][0])
         (shown,) = await self.memory.relations(GUILD, self.campaign.id, entity_id=corin.id)
         self.assertFalse(shown.secret)
@@ -1010,16 +1019,16 @@ class NameCards(NamesTest):
         corin, _ = await self.two_names()
         await name_card.connect(self.it(), self.campaign.id, self.bell.id, "kin_of", corin.id)
         (rel,) = await self.memory.relations(GUILD, self.campaign.id, entity_id=corin.id)
-        view = await self.page_of(corin.id, rel.id)  # one page, pressed twice (a double tap)
+        view = await self.who_view(corin.id, rel.id)  # one page, pressed twice (a double tap)
         for _ in range(2):
             it = self.it()
-            await view._flip(it)
+            await view._only_me(it)
         (now,) = await self.memory.relations(
             GUILD, self.campaign.id, entity_id=corin.id, include_secret=True
         )
         self.assertTrue(now.secret)
         self.assertIn(
-            "already like that",
+            "Already like that",
             it.response.sent[0][0] if it.response.sent else str(it.followup.send.await_args),
         )
 
@@ -1031,8 +1040,8 @@ class NameCards(NamesTest):
         await card._same(self.it())
         self.assertTrue(card.is_finished())
 
-    async def test_the_page_offers_the_flip_in_the_words_of_what_it_will_do(self) -> None:
-        from dmbot.ui import name_card
+    async def test_the_page_offers_who_knows_and_says_where_it_stands(self) -> None:
+        from dmbot.ui import connection_edit, name_card
 
         corin, _ = await self.two_names()
         await name_card.connect(self.it(), self.campaign.id, self.bell.id, "kin_of", corin.id)
@@ -1041,12 +1050,19 @@ class NameCards(NamesTest):
         def labels(view: Any) -> list[str]:
             return [getattr(c, "label", "") for c in view.children]
 
-        self.assertIn("🤫 Hide from players", labels(await self.page_of(corin.id, rel.id)))
+        self.assertIn(connection_edit.WHO_BUTTON, labels(await self.page_of(corin.id, rel.id)))
+        page = await self.page_of(corin.id, rel.id)
+        it = self.it()
+        await page._who(it)
+        self.assertIn("Players can see this connection.", it.response.edited[0][0])
         await self.memory.update_relation(
             GUILD, self.campaign.id, rel.id, secret=True, source=DM_SOURCE
         )
         self.fresh()
-        self.assertIn("👁️ Show to players", labels(await self.page_of(corin.id, rel.id)))
+        page = await self.page_of(corin.id, rel.id)
+        again = self.it()
+        await page._who(again)
+        self.assertIn("Only the DM can see it.", again.response.edited[0][0])
 
     async def test_a_secret_connection_moves_a_name_up_for_a_dm_and_not_for_anyone_else(
         self,
@@ -1100,7 +1116,7 @@ class NameCards(NamesTest):
         )  # past the last page: the last one
         self.assertGreaterEqual(len(later.response.edited[0][1].pick.options), 1)
 
-    async def test_only_a_dm_is_offered_the_flip_and_a_manager_pressing_it_changes_nothing(
+    async def test_only_a_dm_is_offered_who_knows_and_a_manager_pressing_it_changes_nothing(
         self,
     ) -> None:
         from dmbot.ui import name_card
@@ -1109,9 +1125,13 @@ class NameCards(NamesTest):
         await name_card.connect(self.it(), self.campaign.id, self.bell.id, "kin_of", corin.id)
         (rel,) = await self.memory.relations(GUILD, self.campaign.id, entity_id=corin.id)
         plain = await self.page_of(corin.id, rel.id, MANAGER)
-        self.assertNotIn("🤫 Hide from players", [getattr(c, "label", "") for c in plain.children])
-        view = await self.page_of(corin.id, rel.id)  # the DM's page, pressed by a manager
-        await view._flip(self.it(MANAGER))
+        from dmbot.ui import connection_edit
+
+        self.assertNotIn(
+            connection_edit.WHO_BUTTON, [getattr(c, "label", "") for c in plain.children]
+        )
+        view = await self.who_view(corin.id, rel.id)  # the DM's page, pressed by a manager
+        await view._only_me(self.it(MANAGER))
         (same,) = await self.memory.relations(GUILD, self.campaign.id, entity_id=corin.id)
         self.assertFalse(same.secret)
 
@@ -1207,6 +1227,11 @@ class NameCards(NamesTest):
         view.pick = SimpleNamespace(values=[vessa.id])
         it = self.it()
         await view._picked(it)
+        # "is family of" asks the role first, then saves (#3102)
+        role: Any = it.response.edited[0][1]
+        role.role = SimpleNamespace(values=["sister"])
+        it = self.it()
+        await role._picked(it)
         self.assertIn(name_card.SECRET_FORCED, it.response.edited[0][0])
         (rel,) = await self.memory.relations(
             GUILD, self.campaign.id, entity_id=vessa.id, include_secret=True
@@ -1241,8 +1266,12 @@ class NameCards(NamesTest):
         self.assertEqual(again.response.edited[0][1].mode, "az")
         picked = SimpleNamespace(values=[corin.id])
         dropdown.pick = picked
+        asked = self.it()
+        await dropdown._picked(asked)
+        role: Any = asked.response.edited[0][1]  # which family role, before it is saved (#3102)
+        role.role = SimpleNamespace(values=["sister"])
         done = self.it()
-        await dropdown._picked(done)
+        await role._picked(done)
         self.assertIn("🧭 Saved:", done.response.edited[0][0])
         (rel,) = await self.memory.relations(GUILD, self.campaign.id, entity_id=corin.id)
         self.assertEqual({rel.subject_id, rel.object_id}, {self.bell.id, corin.id})
@@ -1298,7 +1327,7 @@ class NameCards(NamesTest):
         labels = [b.label or "" for b in view.children if isinstance(b, discord.ui.Button)]
         self.assertFalse(any("secret" in label for label in labels))
         it = self.it(MANAGER)
-        await view._secret(it)
+        await view._who(it)
         self.assertIn("Only the campaign's DMs", it.response.sent[0][0])
         self.assertFalse((await self.alias("Bell")).secret)
 
@@ -2553,6 +2582,15 @@ class Adding(NamesTest):
         self.assertIn("Kept secret: **the hooded stranger** is really **Belleros**", text)
         self.assertIn("never puts it in the transcript", text)
 
+    async def test_the_saved_text_says_hidden_only_when_the_dm_asked_for_it(self) -> None:
+        entity = await ui.save_name(
+            self.memory, self.campaign, "Belleros", "npc", [], [], hidden=True
+        )
+        # (the line is the choice just made; it is not read back from the entry's flag)
+        self.assertIn("Hidden from players", ui.saved_text(entity, [], [], hidden=True))
+        self.assertNotIn("Hidden from players", ui.saved_text(entity, [], []))
+        self.assertTrue(entity.hidden_from_players)  # and the flag alone does not say it
+
     async def test_the_kind_picker_saves(self) -> None:
         view = ui.KindPicker(self.campaign.id, "Thornewick", ["Thorn Wick"], [])
         view.pick = SimpleNamespace(values=["place"])  # type: ignore[assignment]
@@ -2618,6 +2656,59 @@ class Review(NamesTest):
         text, kw = it.response.sent[0]
         self.assertIn("Is this a name in your game?", text)
         return kw["view"], it
+
+    async def scan_guess(self, name: str, kind: str) -> str:
+        written = await self.memory.add_entity(
+            GUILD,
+            self.campaign.id,
+            type=kind,
+            name=name,
+            source="scan",
+            description="Heard 3 times",
+        )
+        return written.value.id
+
+    def labels_of(self, view: Any) -> list[str]:
+        return [str(getattr(c, "label", "") or "") for c in view.children]
+
+    async def test_check_new_names_offers_add_all_for_the_scans_guessed_kinds(self) -> None:
+        await self.scan_guess("Greyfen", "place")
+        await self.scan_guess("Oakvale", "place")
+        await self.suggest("Kazeth")  # no kind guessed: checked on its own card
+        it = self.it()
+        await ui.start_review(it, self.campaign.id)
+        text, kw = it.response.sent[0]
+        self.assertIn("Nothing is added until you press a button", text)
+        self.assertIn("✅ Add all 2 places", self.labels_of(kw["view"]))
+        again = self.it()  # "Check them one by one" opens the cards, not this offer again
+        await kw["view"]._open(again)
+        self.assertIsInstance(again.response.sent[0][1]["view"], ui.SuggestionReview)
+
+    async def test_add_all_adds_the_guessed_places_as_places(self) -> None:
+        await self.scan_guess("Greyfen", "place")
+        await self.scan_guess("Oakvale", "place")
+        it = self.it()
+        await ui.start_review(it, self.campaign.id)
+        await it.response.sent[0][1]["view"]._all("place", self.it())
+        known = await self.names()
+        self.assertEqual({known["Greyfen"].kind_key, known["Oakvale"].kind_key}, {"place"})
+
+    async def test_a_name_that_sounds_like_a_known_one_is_checked_on_its_own_card(self) -> None:
+        await ui.save_name(self.memory, self.campaign, "Hrothgar", "npc", [], [])
+        await self.scan_guess("Rothgar", "npc")
+        await self.scan_guess("Greyfen", "place")
+        await self.scan_guess("Oakvale", "place")
+        it = self.it()
+        await ui.start_review(it, self.campaign.id)
+        labels = self.labels_of(it.response.sent[0][1]["view"])
+        self.assertIn("✅ Add all 2 places", labels)
+        self.assertFalse(any("NPC" in label for label in labels))
+
+    async def test_one_guessed_name_alone_is_just_its_card(self) -> None:
+        await self.scan_guess("Greyfen", "place")
+        view, _ = await self.review()
+        self.assertIn("✅ Yes, a place", self.labels_of(view))
+        self.assertIn("✏️ Something else", self.labels_of(view))
 
     async def test_yes_asks_what_it_is_then_adds_it(self) -> None:
         await self.suggest("Hrothgar")
@@ -2896,7 +2987,7 @@ class Review(NamesTest):
         await self.spelled("Zorgul")
         it = self.it()
         await ui.start_review(it, self.campaign.id)
-        labels = [b.label for b in it.response.sent[0][1]["view"].children]
+        labels = [getattr(b, "label", "") or "" for b in it.response.sent[0][1]["view"].children]
         self.assertFalse(any("Fix spelling" in label for label in labels))
 
     async def test_a_near_match_comes_pre_filled_and_one_press_adds_it(self) -> None:

@@ -10,6 +10,7 @@ the campaign, the DM and the connection again; only the campaign's DMs deal in s
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 import discord
@@ -43,7 +44,9 @@ from dmbot.ui.name_card import (
     show_card,
 )
 from dmbot.ui.names import _campaign_for, _md, _memory, changed, sees_secrets
+from dmbot.ui.who_knows import WhoKnowsMenu, called, player_characters, who_text
 
+WHO_BUTTON = "👁️ Who knows this?"
 EDIT_BUTTON = "✏️ Edit a connection…"  # (the site's help names it: web/test/button-labels)
 ALL_VALUE = "dmbot:all-links"  # no connection's id looks like this
 ALL_LABEL = "🌐 All connections on the website…"
@@ -199,14 +202,7 @@ class OneConnection(_Menu):
         grey = discord.ButtonStyle.secondary
         self.add_item(_Button(self._other_words, label="Other words…", style=grey, row=1))
         if found.secrets:  # only the campaign's DMs deal in secrets
-            self.add_item(
-                _Button(
-                    self._flip,
-                    label="👁️ Show to players" if self.secret else "🤫 Hide from players",
-                    style=grey,
-                    row=1,
-                )
-            )
+            self.add_item(_Button(self._who, label=WHO_BUTTON, style=grey, row=1))
         if found.secrets:  # the DM's word that it is true in the story (#2447)
             self.pinned = found.pinned
             self.add_item(
@@ -288,7 +284,9 @@ class OneConnection(_Menu):
             OtherWords(self.campaign_id, self.entity_id, self.relation_id, self)
         )
 
-    async def _flip(self, interaction: discord.Interaction) -> None:
+    async def _who(self, interaction: discord.Interaction) -> None:
+        """Open the three-way answer for this connection (#2935): the old 🤫 Hide and 👁️ Show,
+        and the middle one between them, some player characters."""
         await _answer_first(interaction, in_place=True)
         found = await _find(interaction, self.campaign_id, self.entity_id, self.relation_id)
         if found is None:
@@ -296,24 +294,28 @@ class OneConnection(_Menu):
         if not found.secrets:  # checked on every press
             await _tell(interaction, SECRET_DENIED_PRESS)
             return
-        target = not self.secret  # from what the page showed: a double press never flips back
-        if (found.relation.secret or found.relation.unrevealed) == target:
-            await _tell(interaction, "It's already like that. Press Back to see the card.")
-            return
-        c = found.campaign
-        try:
-            written = await link_edits.set_secret(
-                found.memory, c.guild_id, c.id, found.relation, target
-            )
-        except MemoryRuleError as exc:
-            await _tell(interaction, f"Couldn't change that. {exc}")
-            return
-        note = (
-            f"🤫 Hidden from players: {_said(found)}. Not right? Edit it again."
-            if target
-            else f"👁️ Players can see it now: {_said(found)}. {UNDO_NOTE}"
+        pcs = await player_characters(found.memory, found.campaign)
+        knowing = await found.memory.connection_knowers(
+            found.campaign.guild_id, found.campaign.id, [found.relation.id]
         )
-        await self._changed(interaction, found, note, undo=written.batch)
+        who = link_edits.who_knows_now(found.relation, knowing.get(found.relation.id, []))
+        names = dict(pcs)
+        view = WhoKnows(
+            self.campaign_id, self.entity_id, found.relation.id, pcs,
+            chosen=[c for c in knowing.get(found.relation.id, []) if c in names],
+            now=who,
+        )  # fmt: skip
+        await _replace(
+            interaction,
+            who_text(
+                _said(found),
+                who,
+                knowing.get(found.relation.id, []),
+                names,
+                has_characters=bool(names),
+            ),
+            view,
+        )
 
     async def _pin(self, interaction: discord.Interaction) -> None:
         await _answer_first(interaction, in_place=True)
@@ -420,3 +422,94 @@ class OtherWords(discord.ui.Modal, title="Other words"):
             return
         predicate, detail = predicate_for(text)
         await self.page._new_words(interaction, predicate, detail)
+
+
+class WhoKnows(WhoKnowsMenu):
+    """The connection's page (#2935). Each press checks the campaign, the DM and the connection
+    again; the three keep the meaning of the old Hide and Show buttons."""
+
+    def __init__(
+        self,
+        campaign_id: str,
+        entity_id: str,
+        relation_id: str,
+        pcs: Sequence[tuple[str, str]],
+        *,
+        chosen: Sequence[str] = (),
+        now: str = "",
+    ) -> None:
+        super().__init__(pcs, chosen=chosen, now=now)
+        self.campaign_id, self.entity_id, self.relation_id = campaign_id, entity_id, relation_id
+
+    async def _back(self, interaction: discord.Interaction) -> None:
+        await _answer_first(interaction, in_place=True)
+        found = await _find(interaction, self.campaign_id, self.entity_id, self.relation_id)
+        if found is None:
+            return
+        self.stop()
+        await show_one(interaction, self.campaign_id, self.entity_id, self.relation_id)
+
+    async def _set(self, interaction: discord.Interaction, who: str) -> None:
+        await _answer_first(interaction, in_place=True)
+        found = await _find(interaction, self.campaign_id, self.entity_id, self.relation_id)
+        if found is None:
+            return
+        if not found.secrets:  # checked on every press
+            await _tell(interaction, SECRET_DENIED_PRESS)
+            return
+        c = found.campaign
+        # Read now, not from the page: a double press, a stale page or the answer it is already
+        # at writes nothing (and never turns a hidden connection back into a shown one).
+        live = (await found.memory.connection_knowers(c.guild_id, c.id, [found.relation.id])).get(
+            found.relation.id, []
+        )
+        if who == link_edits.who_knows_now(found.relation, live) and (
+            who != link_edits.SOME_CHARACTERS or sorted(self.picked) == sorted(live)
+        ):
+            await _tell(
+                interaction, "Already like that. Nothing changed. Press Back to see the card."
+            )
+            return
+        try:
+            written = await link_edits.set_who_knows(
+                found.memory,
+                c.guild_id,
+                c.id,
+                found.relation,
+                who,
+                self.picked,
+                players_only=True,  # (this menu lists player characters only: NPC knowers stay)
+            )
+        except MemoryRuleError as exc:
+            if str(exc) == link_edits.PICK_ONE:
+                await _tell(
+                    interaction,
+                    "Nothing changed. Choose at least one character in the list, "
+                    "then press 👥 Only some characters.",
+                )
+            else:
+                await _tell(interaction, f"Couldn't change that. {exc}")
+            return
+        said = _said(found)
+        undo: int | None = None
+        if who == link_edits.EVERYONE:
+            note = f"👁️ Players can see it now: {said}. {UNDO_NOTE}"
+            undo = written.batch  # (only showing it can be undone; who knew it is set again)
+        elif who == link_edits.SOME_CHARACTERS:
+            mine = [self.names[x] for x in self.picked if x in self.names]
+            verb = "knows" if len(mine) == 1 else "know"
+            note = (
+                f"👥 Only {called(mine)} {verb} it now (and the DM): {said}. "
+                "Not right? Change it again."
+            )
+        else:
+            note = (
+                f"🤫 Hidden from players. Only the DM can see it now: {said}. "
+                "Not right? Change it again."
+            )
+        changed(interaction, c)
+        self.stop()
+        await show_card(
+            interaction, c.id, self.entity_id, replace=True, note=note,
+            undo_connection=undo,
+        )  # fmt: skip

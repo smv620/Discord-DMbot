@@ -4,12 +4,15 @@ re-checked when applied, and read back only by the DM who made them. Invented na
 
 from __future__ import annotations
 
+import time
 import unittest
+from dataclasses import replace
 from typing import Any
 from unittest.mock import patch
 
 import httpx
 
+from dmbot.memory import backstory_keep
 from dmbot.memory import web_actions as wa
 from dmbot.memory.backstory_links import BackstoryLinks, NewLink, NewWhich
 from dmbot.memory.claims import ClaimStore
@@ -485,6 +488,24 @@ class TheEdits(Editing):
         self.assertEqual((rel.source, rel.status, rel.subject_id), ("dm", "confirmed", self.mira))
         self.assertEqual(await self.backstory.count(self.g, self.one.id), 0)
 
+    async def test_the_websites_single_keep_hands_the_store_the_dms_secret_press_only(self) -> None:
+        # (#3025) a secret spelling leaves an old public fact alone; the DM's own press hides it
+        for pressed in (False, True):
+            with self.subTest(pressed=pressed):
+                waiting = await self.waiting_link(self.mira, self.hall, secret=True)
+                await self.queue(kind="backstory", action="keep", id=waiting, secret=pressed)
+                with patch(
+                    "dmbot.memory.web_actions.keep.keep_all", wraps=backstory_keep.keep_all
+                ) as spy:
+                    self.assertEqual([o.error for o in await self.apply_waiting()], [""])
+                call = spy.await_args
+                assert call is not None
+                self.assertEqual(call.kwargs["keep_flags"], not pressed)
+                for rel in await self.knows_hall():  # clear it for the next round
+                    await self.memory.update_relation(
+                        self.g, self.one.id, rel.id, source=DM_SOURCE, status="rejected"
+                    )
+
     async def test_keep_all_writes_every_ready_one_and_the_discord_undo_takes_them_back(
         self,
     ) -> None:
@@ -511,6 +532,185 @@ class TheEdits(Editing):
             ],
             [],
         )
+
+    async def stamp(self, answer: str, **columns: Any) -> None:
+        """What the bot writes to a queued row while it works (the website never does)."""
+        sets = ", ".join(f"{name} = %s" for name in columns)
+        async with self.db.guild(self.g) as conn:
+            await conn.execute(
+                f"UPDATE name_actions SET {sets} WHERE id = %s", (*columns.values(), answer)
+            )
+
+    async def keep_all_answer(self) -> str:
+        for a in (self.mira, self.rook, self.keep):
+            await self.waiting_link(a, self.hall)
+        ids = [w.id for w in await self.backstory.waiting(self.g, self.one.id)]
+        return await self.queue(kind="backstory", action="keep_all", ids=ids)
+
+    async def test_a_queued_answer_shows_its_wait_and_no_count(self) -> None:
+        answer = await self.keep_all_answer()
+        got = await self.poll(answer)
+        self.assertEqual(got["state"], "waiting")
+        self.assertIsNone(got["progress"])  # nothing written yet: no "0 of 0"
+        waits = got["waits"]
+        self.assertEqual(waits["stage"], "queued")
+        self.assertGreater(waits["lastMovedAt"], 0)
+        self.assertFalse(waits["stalled"])
+        self.assertEqual(
+            set(got), {"state", "error", "edge", "removed", "kept", "waits", "progress"}
+        )
+
+    async def test_keep_all_shows_how_far_it_has_got_and_when_it_last_moved(self) -> None:
+        answer = await self.keep_all_answer()
+        now = int(time.time())
+        await self.stamp(
+            answer, state="working", claimed_at=now * 1000, progress_total=50,
+            progress_done=12, progress_at=now,
+        )  # fmt: skip
+        got = await self.poll(answer)
+        self.assertEqual(got["progress"], {"done": 12, "total": 50})
+        self.assertEqual(got["waits"]["stage"], "working")
+        self.assertEqual(got["waits"]["lastMovedAt"], now)
+        self.assertFalse(got["waits"]["stalled"])
+
+    async def test_a_recent_progress_stamp_keeps_an_old_claim_from_reading_stalled(self) -> None:
+        answer = await self.keep_all_answer()
+        now = int(time.time())
+        await self.stamp(
+            answer, state="working", claimed_at=(now - 3600) * 1000, progress_total=50,
+            progress_done=30, progress_at=now,
+        )  # fmt: skip
+        got = await self.poll(answer)
+        self.assertFalse(got["waits"]["stalled"])
+        self.assertEqual(got["waits"]["lastMovedAt"], now)
+
+    async def test_a_single_claim_answer_keeps_the_old_fields_and_adds_the_wait(self) -> None:
+        yes = await self.claim()
+        answer = await self.queue(kind="claim", action="confirm", id=yes)
+        got = await self.poll(answer)
+        self.assertEqual(
+            (got["state"], got["error"], got["edge"], got["removed"]), ("waiting", "", None, False)
+        )
+        self.assertIsNone(got["kept"])
+        self.assertIsNone(got["progress"])
+        self.assertEqual(got["waits"]["stage"], "queued")
+
+    async def test_a_working_answer_that_has_gone_quiet_reads_stalled(self) -> None:
+        answer = await self.keep_all_answer()
+        long_ago = int(time.time()) - 3600
+        await self.stamp(answer, state="working", claimed_at=long_ago * 1000, progress_at=long_ago)
+        got = await self.poll(answer)
+        self.assertTrue(got["waits"]["stalled"])
+
+    async def test_a_single_answer_has_no_count_even_if_the_bot_wrote_one(self) -> None:
+        keep = await self.waiting_link(self.mira, self.hall)
+        answer = await self.queue(kind="backstory", action="keep", id=keep)
+        await self.stamp(answer, state="working", progress_total=5, progress_done=1)
+        self.assertIsNone((await self.poll(answer))["progress"])  # only Keep all counts
+
+    async def test_the_count_cannot_run_ahead_of_its_total(self) -> None:
+        answer = await self.keep_all_answer()
+        with self.assertRaises(Exception) as caught:
+            await self.stamp(answer, progress_total=3, progress_done=4)
+        self.assertIn("progress", str(caught.exception).lower())
+
+    def counting(self, answer: str, seen: list[Any], *, fail: bool = False) -> wa.Waiting:
+        """Waiting deps whose progress writes through the store, noting what the page then reads."""
+
+        async def now() -> set[int]:
+            return {7}
+
+        async def tell(action: wa.Action, done: int, total: int) -> None:
+            if fail:
+                raise RuntimeError("the count could not be written")
+            await self.actions.progress(self.g, action, done, total)
+            seen.append(((done, total), (await self.poll(answer))["progress"]))
+
+        return wa.Waiting(self.claims, self.backstory, now, progress=tell)
+
+    async def test_keep_all_tells_the_page_each_step_of_its_count(self) -> None:
+        answer = await self.keep_all_answer()
+        seen: list[Any] = []
+        done = await self.apply_all(waiting=self.counting(answer, seen))
+        self.assertEqual([o.error for o in done], [""])
+        self.assertEqual(
+            seen,
+            [((n, 3), {"done": n, "total": 3}) for n in range(4)],  # 0 of 3, 1 of 3 ... 3 of 3
+        )
+        self.assertEqual(len(await self.knows_hall()), 3)
+
+    async def test_a_refused_connection_still_moves_the_count_on(self) -> None:
+        answer = await self.keep_all_answer()
+        real = self.memory.add_relation
+        calls = 0
+
+        async def refuse_the_second(*args: Any, **kwargs: Any) -> Any:
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise MemoryRuleError("refused")
+            return await real(*args, **kwargs)
+
+        seen: list[Any] = []
+        with patch.object(self.memory, "add_relation", refuse_the_second):
+            await self.apply_all(waiting=self.counting(answer, seen))
+        self.assertEqual([step for step, _ in seen], [(n, 3) for n in range(4)])  # to 3 of 3
+        self.assertEqual(len(await self.knows_hall()), 2)  # the refused one stays waiting
+        self.assertEqual(await self.backstory.count(self.g, self.one.id), 1)
+
+    async def test_a_count_that_cannot_be_written_does_not_stop_the_keep(self) -> None:
+        answer = await self.keep_all_answer()
+        done = await self.apply_all(waiting=self.counting(answer, [], fail=True))
+        self.assertEqual([o.error for o in done], [""])
+        self.assertEqual(len(await self.knows_hall()), 3)
+
+    async def test_a_single_keep_writes_no_count(self) -> None:
+        keep = await self.waiting_link(self.mira, self.hall)
+        answer = await self.queue(kind="backstory", action="keep", id=keep)
+        seen: list[Any] = []
+        self.assertEqual(
+            [o.error for o in await self.apply_all(waiting=self.counting(answer, seen))], [""]
+        )
+        self.assertEqual(seen, [])
+
+    async def test_the_store_writes_the_count_together_and_refuses_a_stale_claim(self) -> None:
+        answer = await self.keep_all_answer()
+        action = await self.actions.claim_next(self.g)
+        assert action is not None
+        self.assertTrue(await self.actions.progress(self.g, action, 12, 50))
+        got = await self.poll(answer)
+        self.assertEqual(got["progress"], {"done": 12, "total": 50})
+        self.assertAlmostEqual(got["waits"]["lastMovedAt"], int(time.time()), delta=5)
+        stale = replace(action, claimed_at=action.claimed_at - 1)  # a worker that lost its claim
+        self.assertFalse(await self.actions.progress(self.g, stale, 40, 50))
+        self.assertEqual((await self.poll(answer))["progress"], {"done": 12, "total": 50})
+
+    async def test_done_can_never_run_ahead_of_total_through_the_method(self) -> None:
+        answer = await self.keep_all_answer()
+        action = await self.actions.claim_next(self.g)
+        assert action is not None
+        self.assertTrue(await self.actions.progress(self.g, action, 9, 3))
+        self.assertEqual((await self.poll(answer))["progress"], {"done": 3, "total": 3})
+        self.assertTrue(await self.actions.progress(self.g, action, -2, -1))
+        self.assertIsNone((await self.poll(answer))["progress"])  # 0 of 0: no count
+
+    async def test_a_retaken_row_starts_its_count_again(self) -> None:
+        answer = await self.keep_all_answer()
+        long_ago = int(time.time()) - 3600
+        await self.stamp(
+            answer, state="working", claimed_at=long_ago * 1000, progress_total=50,
+            progress_done=12, progress_at=long_ago,
+        )  # fmt: skip
+        action = await self.actions.claim_next(self.g)  # the dead worker's row, taken again
+        assert action is not None
+        got = await self.poll(answer)
+        self.assertIsNone(got["progress"])
+        self.assertEqual(got["waits"]["stage"], "working")
+
+    async def test_an_answer_never_carries_a_word_of_the_connections(self) -> None:
+        answer = await self.keep_all_answer()
+        await self.stamp(answer, state="working", progress_total=3, progress_done=1)
+        self.assertNotIn("Mira", str(await self.poll(answer)))
 
     async def test_keep_all_keeps_only_the_ids_the_page_showed(self) -> None:
         shown = await self.waiting_link(self.mira, self.hall)
@@ -677,7 +877,9 @@ class TheEdits(Editing):
 
     # ---- "Which Mara?" and the read door for what waits (#2652) ----------------------------------
 
-    async def which_question(self, *, secret: bool = False, upload: str = "Lore, 24 Oct") -> str:
+    async def which_question(
+        self, *, secret: bool = False, upload: str = "Lore, 24 Oct", decided: str = ""
+    ) -> str:
         """Two Maras and a question about "Sister Mara" and Rook, waiting for the DM's pick."""
         self.mara_a = await self.add("Mara Ashgrove", "character", role="npc")
         self.mara_b = await self.add("Mara Vell", "character", role="npc")
@@ -685,7 +887,7 @@ class TheEdits(Editing):
             self.g,
             self.one.id,
             [NewWhich(self.rook, True, "knows", "Sister Mara", (self.mara_a, self.mara_b),
-                      "Rook knows Sister Mara", secret=secret, upload=upload)],
+                      "Rook knows Sister Mara", secret=secret, upload=upload, decided=decided)],
         )  # fmt: skip
         (found,) = await self.backstory.which_waiting(self.g, self.one.id)
         return found.id
@@ -849,6 +1051,82 @@ class TheEdits(Editing):
         self.assertEqual(result, "gone")
         self.assertEqual(len(await self.backstory.which_waiting(self.g, self.one.id)), 1)
         self.assertEqual(await self.backstory.waiting(self.g, self.one.id), [])  # no link made
+
+    async def test_a_pronoun_question_with_one_name_is_listed_and_answerable_on_the_website(
+        self,
+    ) -> None:
+        """#2811: the list showed only questions with two names, so a DM who used only the website
+        never saw "who is she?"; it now shows the one name, and the pick is queued as any other."""
+        which = await self.pronoun_question()
+        got = await self.waiting_now()
+        (question,) = got["which"]
+        self.assertEqual(question["id"], which)
+        self.assertTrue(question["pronoun"])
+        self.assertEqual([c["name"] for c in question["candidates"]], ["Mara Ashgrove"])
+        self.assertEqual(got["counts"]["which"], 1)
+        await self.queue(kind="which", action="pick", id=which, entity=self.mara_a)
+        self.assertEqual([o.error for o in await self.apply_waiting()], [""])
+        self.assertEqual(await self.backstory.which_waiting(self.g, self.one.id), [])
+        self.assertEqual(len(await self.backstory.waiting(self.g, self.one.id)), 1)  # joined
+
+    async def test_a_pronoun_question_with_no_name_offers_only_someone_else(self) -> None:
+        which = await self.pronoun_question()
+        await self.memory.set_entity_status(
+            self.g, self.one.id, self.mara_a, "rejected", source="dm"
+        )
+        (question,) = (await self.waiting_now())["which"]
+        self.assertEqual(
+            (question["id"], question["pronoun"], question["candidates"]), (which, True, [])
+        )
+        await self.queue(kind="which", action="neither", id=which)  # "Someone else"
+        self.assertEqual([o.error for o in await self.apply_waiting()], [""])
+        self.assertEqual(len(await self.memory.unnamed(self.g, self.one.id)), 1)
+
+    async def test_a_question_about_a_name_with_one_name_left_stays_hidden(self) -> None:
+        await self.which_question()
+        await self.memory.set_entity_status(
+            self.g, self.one.id, self.mara_b, "rejected", source="dm"
+        )
+        got = await self.waiting_now()
+        self.assertEqual(got["which"], [])  # nothing can be picked from one name
+        self.assertEqual(got["counts"]["which"], 0)
+
+    async def test_the_website_refuses_a_pick_of_the_questions_own_end(self) -> None:
+        which = await self.pronoun_question()
+        refused = await self.refused_queue(kind="which", action="pick", id=which, entity=self.rook)
+        self.assertEqual(refused, "not_found")  # the bot would refuse it too; nothing is queued
+
+    async def test_a_player_sees_no_pronoun_question_and_cannot_answer_it(self) -> None:
+        which = await self.pronoun_question()
+        for action in ("neither", "pick"):
+            refused = await self.refused_queue(
+                self.player, kind="which", action=action, id=which, entity=self.mara_a
+            )
+            self.assertEqual(refused, "not_allowed")
+        with self.assertRaises(RecapError) as caught:
+            await self.waiting_now(self.player)
+        self.assertEqual(caught.exception.code, "not_found")
+
+    async def test_a_dm_sees_dmbots_check_on_a_waiting_connection_and_a_question(self) -> None:
+        """#2859: the stored note comes back as the words Discord shows, never the stored code."""
+        asked = "DMbot wasn't sure who the text means. Please check."
+        await self.backstory.add(
+            self.g,
+            self.one.id,
+            [
+                NewLink(self.rook, "knows", self.hall, "q", decided="who-is-it: asked 60%"),
+                NewLink(self.mira, "knows", self.hall, "q"),
+            ],
+        )
+        which = await self.which_question(decided="who-is-it: asked 60%")
+        got = await self.waiting_now()
+        checks = {b["subjectId"]: b["check"] for b in got["backstory"]}
+        self.assertEqual(checks[self.rook], asked)
+        self.assertEqual(checks[self.mira], "")  # nothing decided: nothing shown
+        (question,) = [w for w in got["which"] if w["id"] == which]
+        self.assertEqual(question["check"], asked)
+        for item in (*got["backstory"], *got["which"]):
+            self.assertNotIn("decided", item)  # (the stored code stays inside)
 
     async def test_a_pronoun_question_whose_only_name_is_gone_still_waits(self) -> None:
         which = await self.pronoun_question()
@@ -1490,7 +1768,8 @@ class WhatPeopleBelieve(Editing):
         claim = await self.claims.get(self.g, self.one.id, ident)
         assert claim is not None and claim.fact_id
         others = await self.memory.perspectives(self.g, self.one.id)
-        mine = next(p for p in others if p.kind == "npc")  # Rook's point of view
+        # Rook's point of view (a player's character has one from the start since #2995)
+        mine = next(p for p in others if p.entity_id is not None)
         await self.memory.believe(
             self.g, self.one.id, mine.id, claim.fact_id, 0.25, "theory", source="dm"
         )  # something else wrote to the same connection since
@@ -1541,6 +1820,69 @@ class WhatPeopleBelieve(Editing):
         self.assertEqual(
             (item["canPlace"], item["why"], item["waitingOn"]), (False, "name_first", ["Zed"])
         )
+
+    async def lie(self, liar: str | None, status: str = "suspected_lie") -> str:
+        """A waiting reading that says `liar` lied (#3121): the accuser's own view, a guess. The
+        reading rule (#3120) stores the name beside the other reading words."""
+        import dataclasses
+
+        from dmbot.memory import readings
+
+        belief = readings.BeliefProposal(
+            "pc:Rook", "Mira Voss", "knows", "Far Hall", 0.5, status, ("1",)
+        )
+        claim = readings.as_claim(belief, "player_said")
+        assert claim.reading is not None
+        claim = dataclasses.replace(claim, reading={**claim.reading, "liar": liar})
+        await self.claims.propose(
+            self.g, self.one.id, [claim], {"1": 7},
+            opted_in={7}, prompt_version="p1", model="m1", session_started_at=500,
+        )  # fmt: skip
+        async with self.db.guild(self.g) as conn:
+            cur = await conn.execute(
+                "SELECT id FROM memory_claims WHERE reading IS NOT NULL AND status = 'proposed'"
+            )
+            (row,) = await cur.fetchall()
+            return str(row["id"])
+
+    async def test_a_suspected_lie_comes_with_its_liar_and_its_own_kind(self) -> None:
+        ident = await self.lie("Mira Voss")
+        (item,) = (await self.listed())["readings"]
+        self.assertEqual(
+            (item["id"], item["rule"], item["who"], item["liar"], item["sureness"]),
+            (ident, "lie", "Rook", "Mira Voss", "a guess"),
+        )
+        self.assertEqual((item["canPlace"], item["waitingOn"]), (True, []))
+
+    async def test_a_lie_whose_liar_is_gone_has_no_name(self) -> None:
+        await self.lie(None)
+        (item,) = (await self.listed())["readings"]
+        self.assertEqual((item["rule"], item["liar"]), ("lie", None))
+
+    async def test_only_a_lie_carries_a_liar(self) -> None:
+        await self.lie("Mira Voss", status="theory")  # (a stray name on any other reading)
+        (item,) = (await self.listed())["readings"]
+        self.assertEqual((item["rule"], item["liar"]), ("theory", None))
+
+    async def test_a_liar_who_still_waits_for_a_name_holds_keep_back(self) -> None:
+        # Valyra is a new name, waiting in Check new names (a plain claim names her)
+        await self.claims.propose(
+            self.g, self.one.id, [said("Valyra", "knows", "Far Hall")], {"1": 7},
+            opted_in={7}, prompt_version="p1", model="m1", session_started_at=500,
+        )  # fmt: skip
+        await self.lie("valyra")  # (the match ignores capitals, like the other two names)
+        (item,) = (await self.listed())["readings"]
+        self.assertEqual(
+            (item["canPlace"], item["why"], item["waitingOn"], item["liar"]),
+            (False, "name_first", ["Valyra"], "valyra"),
+        )
+
+    async def test_a_player_gets_nothing_of_a_lie(self) -> None:
+        ident = await self.lie("Mira Voss")
+        with self.assertRaises(RecapError):
+            await self.listed(self.player)
+        with self.assertRaises(RecapError):
+            await self.answer("place", ident, self.player)
 
     def test_the_wait_says_when_it_has_stopped_moving(self) -> None:
         base = {"state": "working", "error": "", "action": "reading-place", "resultOther": ""}
