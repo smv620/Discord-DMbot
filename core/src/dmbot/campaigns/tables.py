@@ -37,6 +37,7 @@ SECTION_TABLES: dict[str, tuple[str, ...]] = {
         "memory_flags",
         "character_sheets",
     ),
+    "memory_importance": ("memory_importance",),  # PlotBot's importance ranks (#3172)
     "house_rules": ("house_rules",),
     "house_rule_wins": ("house_rule_wins",),
     "homebrew": ("homebrew_entries",),

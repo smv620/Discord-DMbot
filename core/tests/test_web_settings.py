@@ -19,6 +19,7 @@ import psycopg.errors
 from dmbot import bot as bot_module
 from dmbot.bot import DMBot
 from dmbot.campaigns import Campaign, CampaignStore
+from dmbot.campaigns.invite import NOT_AN_INVITE
 from dmbot.campaigns.models import DM_SCREEN_LEVELS_OFFERED, STORY_MODES, CampaignError
 from dmbot.campaigns.store import NO_ROOM_TO_UNPAUSE, NOT_THE_OWNER_PAUSE
 from dmbot.config import Settings as BotSettings
@@ -52,6 +53,7 @@ class FakeBot:
     def __init__(self, store: CampaignStore) -> None:
         self.store = store
         self.calls: list[tuple[str, str]] = []
+        self.invite_followed: list[str | None] = []  # the link the session and card were told about
 
     async def get_campaign(self, guild_id: int, campaign_id: str) -> Campaign | None:
         return await self.store.get(guild_id, campaign_id)
@@ -83,6 +85,12 @@ class FakeBot:
         return await self.store.set_story_mode(
             campaign.guild_id, campaign.id, mode, confirmed_by=confirmed_by
         )
+
+    async def apply_invite(self, campaign: Campaign, invite: str | None) -> Campaign:
+        self.calls.append(("invite", "set" if invite else "removed"))
+        saved = await self.store.set_dndbeyond_invite(campaign.guild_id, campaign.id, invite)
+        self.invite_followed.append(saved.dndbeyond_invite)
+        return saved
 
     no_room = False  # the owner's plan has no free place for an unpause
 
@@ -165,6 +173,67 @@ class Settings(Base):
 
 
 class TheChoices(Settings):
+    LINK = "https://www.dndbeyond.com/campaigns/join/abc123"
+
+    async def queue_invite(self, value: str) -> str:
+        return await campaign_settings.queue_setting(
+            self.web,
+            self.session,
+            self.cref,
+            {"setting": "dndbeyond_invite", "value": value},
+            invite_on=True,
+        )
+
+    async def test_an_invite_is_saved_in_its_standard_form_and_everything_follows(self) -> None:
+        answer = await self.queue_invite(self.LINK)
+        self.assertEqual([o.error for o in await self.run_bot()], [""])
+        self.assertEqual((await self.campaign()).dndbeyond_invite, self.LINK)
+        self.assertEqual(self.bot.invite_followed, [self.LINK])
+        self.assertEqual((await self.poll(answer))["state"], "done")
+
+    async def test_an_empty_value_removes_the_invite_and_everything_follows(self) -> None:
+        await self.campaigns.set_dndbeyond_invite(self.g, self.one.id, self.LINK)
+        await self.queue_invite("")
+        await self.run_bot()
+        self.assertIsNone((await self.campaign()).dndbeyond_invite)
+        self.assertEqual(self.bot.invite_followed, [None])
+
+    async def test_an_invite_of_another_shape_is_refused_with_the_stores_words(self) -> None:
+        item = ws.Setting("x", self.one.id, ALICE.id, ws.DNDBEYOND_INVITE, "https://example.com/x")
+        outcome = await ws.apply(self.bot, self.g, item)
+        self.assertEqual((outcome.error, outcome.note), (ws.REFUSED, NOT_AN_INVITE))
+        self.assertIsNone((await self.campaign()).dndbeyond_invite)
+        self.assertEqual(self.bot.invite_followed, [])
+
+    async def test_a_sender_who_is_no_longer_a_dm_cannot_set_the_invite(self) -> None:
+        item = ws.Setting("x", self.one.id, 4242, ws.DNDBEYOND_INVITE, self.LINK)
+        self.assertEqual((await ws.apply(self.bot, self.g, item)).error, ws.NOT_ALLOWED)
+        self.assertIsNone((await self.campaign()).dndbeyond_invite)
+
+    async def test_the_same_invite_row_twice_changes_nothing_more(self) -> None:
+        await self.queue_invite(self.LINK)
+        item = await self.items.claim_next(self.g)
+        assert item is not None
+        await ws.apply(self.bot, self.g, item)
+        once = await self.campaign()
+        await ws.apply(self.bot, self.g, item)
+        self.assertEqual(await self.campaign(), once)
+
+    async def test_another_campaigns_invite_is_left_alone(self) -> None:
+        await self.queue_invite(self.LINK)
+        await self.run_bot()
+        self.assertIsNone((await self.campaign(self.two)).dndbeyond_invite)
+
+    async def test_the_real_bot_saves_then_tells_the_session_and_card(self) -> None:
+        told: list[str | None] = []
+
+        async def after(campaign: Campaign) -> None:
+            told.append(campaign.dndbeyond_invite)
+
+        me = SimpleNamespace(campaigns=self.campaigns, after_invite_change=after)
+        saved = await DMBot.apply_invite(cast(Any, me), await self.campaign(), self.LINK)
+        self.assertEqual((saved.dndbeyond_invite, told), (self.LINK, [self.LINK]))
+
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
         # A free place on the plan, as the bot's real check finds for a subscriber; the "no room"

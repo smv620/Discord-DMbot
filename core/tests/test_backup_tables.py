@@ -183,6 +183,12 @@ class EveryClaimedTableComesBack(DatabaseTest):
                 " speaker_id, times) VALUES (%s, %s, %s, 100, %s, 2)",
                 (g, c, A, SPEAKER),
             ),
+            "memory_importance": (
+                "INSERT INTO memory_importance (guild_id, campaign_id, entity_id, rank, basis,"
+                " source, session_started_at, lines, recorded_at)"
+                " VALUES (%s, %s, %s, 3, 'mentor', 'plotbot', 100, '{}', 5)",
+                (g, c, A),
+            ),
             "house_rules": (
                 "INSERT INTO house_rules (guild_id, campaign_id, number, rule, created_by,"
                 " created_at, updated_at) VALUES (%s, %s, 1, 'No flanking', %s, 1, 1),"

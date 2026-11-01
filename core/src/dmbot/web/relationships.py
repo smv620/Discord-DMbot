@@ -299,34 +299,50 @@ def _knowers(
     one statement: the ones with a row of their own and the members of a group with a row
     (`gate.reach`)."""
     data = graph_view.statements_of(known)
+    # The members of each group, built once: a statement's knowers are then its own rows plus the
+    # members of the groups that have a row, which is what `gate.reach` answers for every
+    # character, without asking it of every group member for every statement.
+    members_of: dict[str, list[str]] = {}
+    for member, groups in data.groups.items():
+        for group in groups:
+            members_of.setdefault(group, []).append(member)
 
     def who(kind: str, statement: str) -> set[str]:
         listed = data.knowers.get((kind, statement), {})
         sure = listed if isinstance(listed, Mapping) else dict.fromkeys(listed, 1.0)
-        return {c for c in {*sure, *data.groups} if gate.reach(c, sure, data.groups) is not None}
+        found = set(sure)
+        for group in sure:
+            found.update(members_of.get(group, ()))
+        return found
 
     return data, who
 
 
-def know_words(known: dict[str, Any]) -> tuple[dict[str, str], dict[str, str]]:
+def know_words(
+    known: dict[str, Any],
+    shared: tuple[gate.Statements, Callable[[str, str], set[str]]] | None = None,
+) -> tuple[dict[str, str], dict[str, str]]:
     """The word for each name and each connection, worked out from who knows it (§9b item 3) by
     the gate's own rules, never from a stored flag: the same input as the rest of the page
     (`graph_view.statements_of`), `gate.reach` for who knows a statement (a group's members know
     what their group knows) and `gate.word_of` for the word. Returns (names by entry id,
     connections by connection id). Only ids that are in the data get a word, so the page never
     says "secret" of something this read does not know."""
-    data, who = _knowers(known)
+    data, who = shared or _knowers(known)
     party = data.player_characters
     entries = {str(e): gate.word_of(who(gate.ENTRY, str(e)), party) for e in known["liveEntries"]}
     links = {str(c): gate.word_of(who(gate.CONNECTION, str(c)), party) for c in data.connections}
     return entries, links
 
 
-def link_holders(known: dict[str, Any]) -> dict[str, list[dict[str, str]]]:
+def link_holders(
+    known: dict[str, Any],
+    shared: tuple[gate.Statements, Callable[[str, str], set[str]]] | None = None,
+) -> dict[str, list[dict[str, str]]]:
     """For each connection, the characters who know it, player characters and NPCs alike, as
     {id, name} by name (the DM's own view, so the campaign's own names): the "Who knows this?"
     control's current answer (#2999). Only characters the door lists as confirmed are named."""
-    data, who = _knowers(known)
+    data, who = shared or _knowers(known)
     names = {str(v["id"]): str(v["name"]) for v in known["viewers"]}
     out: dict[str, list[dict[str, str]]] = {}
     for link in data.connections:
@@ -354,8 +370,9 @@ async def with_know_words(db: Database, session: Session, ref: str, page: dict[s
         raise RecapError("not_found")
     if not found["k"]["isDm"]:
         return
-    names, links = know_words(dict(found["k"]))
-    holders = link_holders(dict(found["k"]))
+    shared = _knowers(dict(found["k"]))  # worked out once for both
+    names, links = know_words(dict(found["k"]), shared)
+    holders = link_holders(dict(found["k"]), shared)
     # (a graph page has nodes and edges, an overview page its tray of unconnected names; one
     # confirmed since the page was read is not in the data and has no word yet)
     for node in [*page.get("nodes", []), *page.get("tray", [])]:
