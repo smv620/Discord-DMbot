@@ -169,7 +169,7 @@ class TheChoices(Settings):
         await super().asyncSetUp()
         # A free place on the plan, as the bot's real check finds for a subscriber; the "no room"
         # case is the stand-in bot's `no_room`, which gives the plan's own words.
-        self.campaigns._has_free_slot = AsyncMock(return_value=True)  # type: ignore[assignment]
+        self.campaigns._has_free_slot = AsyncMock(return_value=True)
 
     async def queue_pause(self, on: bool) -> str:
         # (the website's switch for this choice is on here: the bot half is what is tested)
@@ -257,7 +257,11 @@ class TheChoices(Settings):
             tables={},
             unpause_refusal=AsyncMock(return_value=None),
         )
-        me.set_paused = lambda *a: DMBot.set_paused(cast(Any, me), *a)  # type: ignore[attr-defined]
+
+        async def set_paused(*args: Any) -> Any:
+            return await DMBot.set_paused(cast(Any, me), *args)
+
+        me.set_paused = set_paused
         paused = await DMBot.apply_pause(cast(Any, me), await self.campaign(), True, ALICE.id)
         self.assertTrue(paused.paused)
         await DMBot.apply_pause(cast(Any, me), paused, False, ALICE.id)
