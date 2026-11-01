@@ -9,7 +9,7 @@ from dmbot.memory import standing
 
 
 class TheNineWords(unittest.TestCase):
-    def test_there_are_nine_and_the_worst_is_first(self) -> None:
+    def test_there_are_nine_and_those_with_a_score_run_worst_to_best(self) -> None:
         self.assertEqual(len(rw.WORDS), 9)
         scores = [rw.score_of(w) for w in rw.WORDS if rw.score_of(w) is not None]
         self.assertEqual(scores, sorted(scores))  # (worst to best, never out of order)
@@ -26,6 +26,18 @@ class TheNineWords(unittest.TestCase):
             score = rw.score_of(word)
             if score is not None:  # the stored score reads back as the step it came from
                 self.assertEqual(standing.step_of(score), rw.step_of_word(word))
+
+    def test_every_word_survives_word_of_and_the_steps_reached_are_the_scales_five(self) -> None:
+        for word in rw.WORDS:
+            self.assertEqual(rw.word_of(word), word)
+        self.assertEqual({rw.step_of_word(w) for w in rw.WORDS} - {None}, set(standing.STEPS))
+
+    def test_score_of_does_no_tidying_of_its_own(self) -> None:
+        self.assertIsNone(rw.score_of("Friendly"))  # (the caller passes a word from word_of)
+        self.assertEqual(rw.word_of("neutral"), "neutral")
+        for blank in ("   ", "-", "_"):
+            self.assertIsNone(rw.word_of(blank), blank)
+        self.assertIsNone(rw.word_of("sworn\u2013enemy"))  # (an en dash is not a hyphen: dropped)
 
     def test_neutral_stores_nothing_because_no_opinion_is_how_it_is_shown(self) -> None:
         self.assertIsNone(rw.score_of(rw.NEUTRAL))

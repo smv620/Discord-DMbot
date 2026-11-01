@@ -1,9 +1,8 @@
-"""How one character feels about another, as the readers say it (#3175, owner 2026-11-01).
+"""How one character feels about another, as the readers say it (#3175).
 
-Friend and enemy are no connection kinds any more: two characters just KNOW each other, and how
-well and how kindly is a reputation (the scale DMbot calls Standing today, -100 to 100, whose five
-steps the DM sets: Hostile -80, Unfriendly -40, Wary 0, Friendly 40, Devoted 80; `standing.py`).
-A reader (the lore read or the session reader) returns one of NINE plain words for the feeling,
+Two characters KNOW each other, and how well and how kindly is a reputation: the scale DMbot calls
+Standing today, -100 to 100, whose five steps the DM sets (Hostile -80, Unfriendly -40, Wary 0,
+Friendly 40, Devoted 80; `standing.py`). A reader (the lore read or the session reader) returns one of NINE plain words for the feeling,
 never a number, and this module is the one place the words become the DM's stored steps. The word
 is only a proposal: it waits with the connection and is stored by the DM's press, and a standing
 the DM set always wins (`standing.DM_WEIGHT`). Pure; nothing here touches the story.
@@ -20,7 +19,10 @@ SWORN_ENEMY, HOSTILE, DISTRUSTS, WARY, NEUTRAL = (
 )  # fmt: skip
 TRUSTS, FRIENDLY, CLOSE, DEVOTED = "trusts", "friendly", "close", "devoted"
 
-# The nine words, worst first. They are what the readers' prompts offer.
+# These are the readers' lowercase WORDS, not the scale's capitalised step names in `standing`
+# ("wary" is a word; "Wary" is the step). The nine words, worst first by what they say; "wary"
+# stores a real opinion (0) while "neutral" stores none, so those two are not ordered by score.
+# They are what the readers' prompts offer.
 WORDS = (SWORN_ENEMY, HOSTILE, DISTRUSTS, WARY, NEUTRAL, TRUSTS, FRIENDLY, CLOSE, DEVOTED)
 
 # Nine words onto the five steps. "neutral" is no step: they merely know each other, and "no
@@ -50,11 +52,13 @@ def word_of(raw: object) -> str | None:
 
 def score_of(word: str) -> int | None:
     """The score the DM's step for this word is stored as, or None when nothing is stored
-    (neutral, or a word off the list)."""
+    (neutral, or a word off the list). Takes a word already passed through `word_of`: it does no
+    tidying of its own, so "Friendly" is off the list here."""
     step = _STEP.get(word)
     return standing.SCORE_OF[step] if step is not None else None
 
 
 def step_of_word(word: str) -> str | None:
-    """The DM's step name for the word ("Friendly"), or None as for `score_of`."""
+    """The DM's step name for the word ("Friendly"), or None as for `score_of` (also a word
+    already passed through `word_of`)."""
     return _STEP.get(word)
