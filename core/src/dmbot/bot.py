@@ -106,7 +106,7 @@ from dmbot.consent_dm import (
 from dmbot.consent_site import SiteStops
 from dmbot.db import Database, DatabaseError
 from dmbot.discord_limits import tree_problems
-from dmbot.dm_questions import CLAIMS, FAMILY, NAMES, Ask, combine, ordered, view_of
+from dmbot.dm_questions import CLAIMS, FAMILY, NAMES, PEOPLE, Ask, combine, ordered, view_of
 from dmbot.dm_screen import (
     DMScreenError,
     HideButton,
@@ -523,7 +523,7 @@ from dmbot.ui.names import (
     review_view,
 )
 from dmbot.ui.optional_rules import dmbot_optional_rules  # noqa: F401 (registers it)
-from dmbot.ui.people_review import PeopleReviewButton, people_review_view, waiting_text
+from dmbot.ui.people_review import PeopleReviewButton, waiting_line, waiting_text
 from dmbot.ui.recap_again import (
     dmbot_recap,  # noqa: F401 (registers it)
 )
@@ -8521,8 +8521,17 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             kept = [s for s in written.value if s.user_id in agreed]
             log.info("Who is who: %d question(s) from this session", len(kept))
             if kept:
-                await self.post(
-                    table.screen_channel_id, waiting_text(len(kept)), view=people_review_view(cid)
+                count = len(kept)
+                await self.ask_dm(
+                    table,
+                    Ask(
+                        PEOPLE,
+                        waiting_text(count, private=True),
+                        waiting_line(count),
+                        partial(PeopleReviewButton, cid),
+                        partial(PeopleReviewButton, cid),
+                        waiting_text(count),
+                    ),
                 )
 
     def start_plan_read(
