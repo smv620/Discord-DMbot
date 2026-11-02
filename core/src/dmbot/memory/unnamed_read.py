@@ -10,9 +10,9 @@ keeps) and turns it into an `UnnamedLink`, which the existing machinery of the w
 no name, hung off the named end. Pure: no AI, no database. Counts only are logged.
 
 Who may see it (one rule): the entry is a person the story never named, so it is the DM's alone
-(the store keeps it from players) whatever the upload's knowledge choice says; the choice (`known_by`,
-world level) only sets who knows the connection, and that applies once the DM gives the person a
-name. If the two ever disagree, the unnamed entry wins.
+(the store keeps it from players) whatever the upload's knowledge choice says; the choice
+(`known_by`, world level) only sets who knows the connection, and that applies once the DM gives
+the person a name. If the two ever disagree, the unnamed entry wins.
 
 One person is never two entries: a line is dropped when the same read already ties the named end
 to a NAMED person by that role word ("his father Roceran"), wherever in the text the name stands,
