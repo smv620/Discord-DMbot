@@ -8,7 +8,7 @@ import asyncio
 import unittest
 
 from dmbot.campaigns import CampaignStore
-from dmbot.pictures.store import MB, PictureStore, permanent_limit_bytes
+from dmbot.pictures.store import MB, Added, PictureStore, permanent_limit_bytes
 from tests.pg import DatabaseTest
 
 GUILD_A, GUILD_B = 1, 2
@@ -28,7 +28,9 @@ class Kept(DatabaseTest):
         self.two = await self.campaigns.create(GUILD_A, "Two", DM)
         self.far = await self.campaigns.create(GUILD_B, "Far", DM)
 
-    async def keep(self, campaign: str, n: int, mb: int = 1, *, guild: int = GUILD_A, cap: int = 5):
+    async def keep(
+        self, campaign: str, n: int, mb: int = 1, *, guild: int = GUILD_A, cap: int = 5
+    ) -> Added:
         return await self.store.add(
             guild,
             campaign,

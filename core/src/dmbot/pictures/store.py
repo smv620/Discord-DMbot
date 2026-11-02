@@ -239,9 +239,9 @@ class PictureStore:
                     now,
                 ),
             )
-            row = await cur.fetchone()
-            assert row is not None
-            return Added(_picture(row), True, tuple(removed))
+            made = await cur.fetchone()
+            assert made is not None
+            return Added(_picture(made), True, tuple(removed))
 
     async def get(self, guild_id: int, campaign_id: str, picture_id: int) -> Picture | None:
         async with self._db.guild(guild_id) as conn:
