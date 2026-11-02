@@ -2171,11 +2171,18 @@ class ConnectionOffer(_Menu):
                 if self.all_done.refused
                 else ""
             )
+            waiting = self.all_done.worked_out
+            worked_out = (
+                f" DMbot worked out {waiting} more family link{'' if waiting == 1 else 's'} from "
+                "them: press 📜 Check the connections to say yes or no."
+                if waiting
+                else ""
+            )
             with contextlib.suppress(discord.HTTPException):
                 await interaction.edit_original_response(
                     content=(
                         f"📜 Kept {len(self.all_done.kept)} connection"
-                        f"{'' if len(self.all_done.kept) == 1 else 's'}.{refused} "
+                        f"{'' if len(self.all_done.kept) == 1 else 's'}.{refused}{worked_out} "
                         "Press ↩️ Undo to take them all back."
                     ),
                     view=self,
