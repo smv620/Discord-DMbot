@@ -23,7 +23,7 @@ changes nothing, so a failed or empty run never wipes a good script.
 from __future__ import annotations
 
 import time
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -165,3 +165,21 @@ async def forget_session(conn: Any, guild_id: int, session_id: str) -> int:
         "DELETE FROM theatre_lines WHERE guild_id = %s AND session_id = %s", (guild_id, session_id)
     )
     return int(cur.rowcount)
+
+
+async def script_input(
+    db: Database, guild_id: int, session_id: str, agreed: Collection[int]
+) -> list[tuple[int, int, str]]:
+    """(line id, user id, cleaned words) of the session's lines the script may be made from, in
+    the order they were said: speech and typing of people who agree, not the DM sidebar, not
+    pictures, and nothing the off-topic filter hid from the cleaned transcript."""
+    if not agreed:
+        return []
+    async with db.guild(guild_id) as conn:
+        cur = await conn.execute(
+            "SELECT id, user_id, coalesce(text, heard) AS text FROM transcript_lines"
+            " WHERE guild_id = %s AND session_id = %s AND sidebar IS NULL AND NOT image"
+            " AND topic <> 'off_topic' AND user_id = ANY(%s) ORDER BY started_ms, id",
+            (guild_id, session_id, sorted(agreed)),
+        )
+        return [(int(r["id"]), int(r["user_id"]), str(r["text"])) for r in await cur.fetchall()]
