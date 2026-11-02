@@ -14,9 +14,9 @@ from typing import Any
 
 import discord
 
-NAMES, CLAIMS, FAMILY = "names", "claims", "family"
+NAMES, PEOPLE, CLAIMS, FAMILY = "names", "people", "claims", "family"
 # Always listed in this order, so the message reads the same each time.
-ORDER = (NAMES, CLAIMS, FAMILY)
+ORDER = (NAMES, PEOPLE, CLAIMS, FAMILY)
 
 
 @dataclass(frozen=True, slots=True)

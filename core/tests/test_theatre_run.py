@@ -198,7 +198,7 @@ class TheRun(NamesTest):
         )  # (the old one stands)
 
     async def test_no_discord_id_is_ever_a_speakers_label(self) -> None:
-        raw = [(1, 123456789012345678, "x"), (2, 987654321098765432, "y")]
+        raw = [(1, 123456789012345678, "x", False), (2, 987654321098765432, "y", False)]
         labels = tr._labels(raw, {})
         self.assertEqual(sorted(labels.values()), ["Speaker 1", "Speaker 2"])
 
@@ -211,19 +211,28 @@ class TheRun(NamesTest):
         )  # fmt: skip
         self.assertIn("| Alex 2:", ask.asked[0][1])
 
-    async def test_typed_and_picture_lines_never_reach_the_ai(self) -> None:
+    async def test_typed_chat_is_in_the_script_marked_and_pictures_are_not(self) -> None:
         await self.transcripts.add_lines(
             GUILD,
             self.session,
             [
-                Line(MS + 5000, TAVIN, "secret typed", "secret typed", typed=True),
+                Line(MS + 5000, TAVIN, "a typed line", "a typed line", typed=True),
                 Line(MS + 6000, TAVIN, "a map", "a hidden map", typed=True, image=True),
             ],
         )
-        ask = Replies(ok(self.answer()))
+        async with self.db.guild(GUILD) as conn:
+            cur = await conn.execute(
+                "SELECT id FROM transcript_lines WHERE typed AND NOT image AND session_id = %s",
+                (self.session,),
+            )
+            typed_id = int((await cur.fetchone())["id"])  # type: ignore[index]
+        ask = Replies(ok(self.answer() + f"\n{typed_id} | Tavin: A typed line."))
         await self.go(ask, {TAVIN, DM_USER, MIRA})
-        self.assertNotIn("secret typed", ask.asked[0][1])
+        self.assertIn(f"{typed_id} | Tavin (typed): a typed line", ask.asked[0][1])
         self.assertNotIn("hidden map", ask.asked[0][1])
+        texts = [r.text for r in await self.theatre.read(GUILD, self.session)]
+        self.assertIn("(typed) A typed line.", texts)
+        self.assertNotIn("(typed) Yes, [Kell].", texts)  # (spoken lines are not marked)
 
     async def test_rows_are_kept_in_the_order_of_their_sources(self) -> None:
         a, b, c, _ = self.ids
