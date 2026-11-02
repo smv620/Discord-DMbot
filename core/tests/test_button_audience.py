@@ -157,6 +157,7 @@ AUDIENCE: dict[str, str] = {
             "dm_screen.name_questions.NameAnswerUndoButton",
             "dm_screen.name_questions.NameQuestionButton",
             "dm_screen.pack_suggestion.PackSuggestionButton",
+            "dm_screen.old_chat.OldChatButton",
             "dm_screen.pack_update.PackUpdateButton",
             "dm_screen.quiet_stop.KeepListeningButton",
             "dm_screen.names_button.NamesButton",
