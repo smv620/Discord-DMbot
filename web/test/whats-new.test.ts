@@ -199,7 +199,6 @@ describe("What's new", () => {
       ["Import my account", "ui/migrate.py"],
       ["Only one exists", "ui/name_card.py"],
       ["Allow more than one", "ui/name_card.py"],
-      ["dmb-chat", "dm_screen/dmbchat_channel.py"],
     ];
     const all = [...entries, ...held].map((e) => e.what).join(" ");
     for (const [needle, file] of named) {

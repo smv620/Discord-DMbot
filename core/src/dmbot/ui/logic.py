@@ -279,7 +279,8 @@ HELP_TEXT = (
     "• `/dmbot backup`: download a complete copy of a campaign (anyone can)\n"
     "• `/dmbot restore`: bring a campaign back from a copy\n"
     "\n"
-    '**Ask DMbot:** anyone who said yes can say "Hey DMbot…" or type in DMbot\'s chat channel. '
+    '**Ask DMbot:** anyone who said yes can say "Hey DMbot…" '
+    "or type a question in the voice channel's chat. "
     "It gives quick rules information with its source. Your DM decides.\n"
     "\n"
     "**Recording:** DMbot only records people who say yes. When the DM starts a "
@@ -287,7 +288,7 @@ HELP_TEXT = (
     f"with a button that says **{CONSENT_LABEL}**. Only people {MIN_AGE} or older are "
     "recorded; younger players can press **No thanks** and still play. "
     "While it listens, DMbot also reads what those people type in the voice channel's chat "
-    "and in its own chat channel. "
+    "and in the one more channel your DM may pick. "
     "Anyone in this server can read what DMbot writes down. "
     "An AI company (Anthropic) also reads it, with who said it, to give the DM notes. "
     "It isn't used to train their AI.\n"

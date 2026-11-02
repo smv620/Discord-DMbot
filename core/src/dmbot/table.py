@@ -189,6 +189,11 @@ class Table:
     rules: rules_cards.RulesCards = field(default_factory=rules_cards.RulesCards)
     # A house rule the DM said at the table, offered with Save / Edit / Cancel (#953).
     house_voice: house_voice.HouseVoice = field(default_factory=house_voice.HouseVoice)
+    # Every copy of an open house-rule offer, one in each DM's private chat, by offer id (#3210).
+    house_copies: dict[str, list[discord.Message]] = field(default_factory=dict)
+    # Offers settled for good (saved, replaced or cancelled), as opposed to merely claimed while a
+    # DM answers the disagreement question, which can still be given back.
+    house_settled: set[str] = field(default_factory=set)
     # When a rest said at the table last moved the game clock, by kind (monotonic seconds):
     # the same phrase twice in a few minutes is one rest (#965).
     clock_said: dict[str, float] = field(default_factory=dict)
@@ -205,12 +210,9 @@ class Table:
     chat_on: bool = True
     chat_channel_id: int | None = None
     chat_notice_posted: bool = False  # the one line in the extra channel, once a session
-    # The campaign's DMbot chat channel (#1187): where the table asks DMbot and reads the answers.
-    dmbchat_channel_id: int | None = None
-    # People who typed there without having agreed, already shown the agree button this session.
-    dmbchat_nudged: set[int] = field(default_factory=set)
-    # DMs told once this session that a story statement belongs in the private chat (#3209).
-    dmbchat_hinted: set[int] = field(default_factory=set)
+    # People who asked in the table's chat without having agreed, already shown the agree button
+    # this session.
+    chat_nudged: set[int] = field(default_factory=set)
     # Questions per person (at most ASK_PER_PERSON_PER_MINUTE a minute), so one player can't use
     # up the table's questions.
     person_limits: dict[int, AskLimiter] = field(default_factory=dict)
@@ -298,7 +300,8 @@ class Table:
     # time, and the same bookkeeping as the off-topic filter.
     speakers: TopicWindow = field(default_factory=TopicWindow)
     speaker_questions: speaker_q.SpeakerBook = field(default_factory=speaker_q.SpeakerBook)
-    speaker_message: discord.Message | None = None
+    # Every copy of the open "who was speaking?" question, one in each DM's private chat (#3210).
+    speaker_messages: list[discord.Message] = field(default_factory=list)
     speaker_book: speaker_ai.NameBook = field(default_factory=speaker_ai.NameBook)
     speaker_calls: int = 0
     speaker_tokens: list[int] = field(default_factory=lambda: [0, 0])  # in, out
@@ -317,6 +320,13 @@ class Table:
     # Test recordings (#1019): the saved session, only in a test server.
     test_session: TestSession | None = None
     sidebar_limiter: AskLimiter = field(default_factory=AskLimiter)
+
+    @property
+    def chat_id(self) -> int:
+        """The table's chat (#3212): the channel the DM picked, else the voice channel's own text
+        chat. Where table questions are read and answered and where the clock line goes. It follows
+        the DM's choice live, as the choice changes `chat_channel_id`."""
+        return self.chat_channel_id or self.voice_channel_id
 
     def is_dm(self, user_id: int) -> bool:
         return user_id == self.dm_user_id or user_id in self.dm_user_ids
