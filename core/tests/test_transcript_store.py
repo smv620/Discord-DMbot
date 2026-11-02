@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import discord
 
 from dmbot.audio.segmenter import Segmenter, Utterance
-from dmbot.bot import DMBot
+from dmbot.bot import NO_PRIVATE_MESSAGE, DMBot
 from dmbot.campaigns import CampaignStore
 from dmbot.config import Settings
 from dmbot.consent import ConsentStore
@@ -1307,7 +1307,7 @@ class BotTests(DatabaseTest):
         self.assertIn("I saw Belleros 0", text)
         self.assertEqual(
             [c.item.custom_id for c in view.children],
-            [f"dmbot:linefix:yes:{sid}", f"dmbot:linefix:no:{sid}"],
+            [f"dmbot:linefix:yes:{GUILD}:{sid}", f"dmbot:linefix:no:{GUILD}:{sid}"],  # (#3210)
         )
         self.assertEqual(cast(Any, self.bot.post_message).await_args_list[0].args[0], SCREEN)
 
@@ -1327,8 +1327,12 @@ class BotTests(DatabaseTest):
         self.assertEqual(len(shown), 4)
         for i, (text, view) in enumerate(shown[:3]):
             self.assertIn(f"I saw Belleros {i}", text)
-            self.assertEqual(view.children[0].item.custom_id, f"dmbot:linefix:yes:{ids[i]}")
-        self.assertEqual(shown[3], ("…and 2 more that go when this session ends.", None))
+            self.assertEqual(view.children[0].item.custom_id, f"dmbot:linefix:yes:{GUILD}:{ids[i]}")
+        # (no DM can be reached here, so the count is on the screen with the reason, #3210)
+        self.assertEqual(
+            shown[3],
+            ("…and 2 more that go when this session ends." + NO_PRIVATE_MESSAGE, None),
+        )
 
     async def test_nothing_after_a_restart_in_the_middle_of_a_session(self) -> None:
         table, _ = await self.waiting_setup(1)

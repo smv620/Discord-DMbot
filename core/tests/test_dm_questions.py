@@ -134,7 +134,7 @@ class Live(unittest.IsolatedAsyncioTestCase):
             order.append(user_id)
             if not reach[user_id]:
                 return None
-            return SimpleNamespace(id=100 + user_id, text=text, edit=AsyncMock())
+            return SimpleNamespace(id=100 + user_id, text=text, content=text, edit=AsyncMock())
 
         return SimpleNamespace(
             campaigns=SimpleNamespace(get=AsyncMock(return_value=campaign)),
@@ -259,6 +259,36 @@ class Live(unittest.IsolatedAsyncioTestCase):
             table.question_messages = [copy]
             DMBot._retire_copies(cast(Any, me), table, f"q{n}", copy.id)
         self.assertLessEqual(len(table.closed_copies), 20)
+
+    async def test_the_session_start_repost_goes_to_every_dm_and_each_copy_is_remembered(
+        self,
+    ) -> None:
+        # #3210: players' suggested fixes. Both DMs get the line, and each copy is remembered so
+        # the other loses its buttons when one DM answers (`decision_lines`).
+        from dmbot.ui.decision_lines import DecisionLines
+
+        me = self.bot({7: True, 8: True})
+        me.decision_lines = DecisionLines()
+        table = self.table()
+        sent: list[Any] = []
+
+        def remember(message: Any) -> None:
+            sent.append(message)
+            me.decision_lines.remember(("fix", 5), message)
+
+        messages: list[Any] = await DMBot.ask_live(
+            cast(Any, me),
+            table,
+            "✏️ **Ana** suggests a fix",
+            lambda: discord.ui.View(timeout=None),
+            remember,
+        )
+        self.assertEqual(len(messages), 2)
+        self.assertEqual(len(sent), 2)
+        await me.decision_lines.close(("fix", 5), "Accepted.", pressed_id=messages[0].id)
+        messages[0].edit.assert_not_awaited()  # the answerer's own message
+        messages[1].edit.assert_awaited_once()  # the other DM's copy loses its buttons
+        self.assertIsNone(messages[1].edit.await_args.kwargs["view"])
 
     async def test_a_question_that_runs_out_edits_every_copy(self) -> None:
         me = self.bot({7: True, 8: True})
