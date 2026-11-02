@@ -1,8 +1,8 @@
 """The family statements of a lore document, in the shapes the owner's upload used, come out as
 `kin_of` with their role, and two of them work out a third (#3238, Part A). Invented text and names.
 
-A statement that names the person only in an earlier sentence ("Okthandom ... Family members
-historically vanish ... His elder brother, Vaelrith, vanished ...") is the pronoun reach (#2757);
+A statement that names the person only in an earlier sentence ("Bran ... Family members
+historically vanish ... His elder brother, Ivo, vanished ...") is the pronoun reach (#2757);
 "son of" and "whose husband" read in one sentence. Pure: no database, no AI (the AI's answer is
 written out in the shape the reader gets back)."""
 
