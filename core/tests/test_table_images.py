@@ -467,21 +467,22 @@ class TableImages(chat.AtTheTableTyped):
     def keeper(self, result: Any = None, boom: bool = False) -> Any:
         """A stand-in for the picture keeper (#3274) that records what it was given."""
         calls: list[Any] = []
-        answer = result or Result(SimpleNamespace(code="CODE"), True)
+        answer = result or Result(cast(Any, SimpleNamespace(code="CODE")), True)
 
         async def keep(ctx: Any, data: bytes) -> Result:
             calls.append((ctx, data))
             if boom:
                 raise RuntimeError("the bucket fell over")
-            return answer  # type: ignore[no-any-return]
+            return answer
 
         self.discarded: list[Any] = []
 
         async def discard(guild_id: int, campaign_id: str, picture: Any) -> None:
             self.discarded.append(picture)
 
-        self.bot.picture_keeper = SimpleNamespace(keep=keep, discard=discard)
-        self.bot.settings = WithSite(self.bot.settings)
+        self.keeper_stub = SimpleNamespace(keep=keep, discard=discard)
+        self.bot.picture_keeper = cast(Any, self.keeper_stub)
+        self.bot.settings = cast(Any, WithSite(self.bot.settings))
         granted = patch.object(
             self.bot.consent, "agreed_under", AsyncMock(return_value=(900, IMAGE_TERMS_VERSION))
         )
@@ -505,7 +506,7 @@ class TableImages(chat.AtTheTableTyped):
 
     async def test_the_same_picture_again_says_no_second_link(self) -> None:
         said = self.say_into()
-        self.keeper(Result(SimpleNamespace(code="CODE"), False))
+        self.keeper(Result(cast(Any, SimpleNamespace(code="CODE")), False))
         await self.hear(picture())
         said.assert_not_awaited()
 
@@ -525,7 +526,7 @@ class TableImages(chat.AtTheTableTyped):
     async def test_a_poster_who_stops_while_it_is_stored_has_it_taken_back(self) -> None:
         said = self.say_into()
         self.keeper()
-        keep = self.bot.picture_keeper.keep
+        keep = self.keeper_stub.keep
 
         agreed = {"yes": True}
         self.bot.consent.has_image_consent = lambda guild_id, user_id: agreed["yes"]  # type: ignore[method-assign]
@@ -535,7 +536,7 @@ class TableImages(chat.AtTheTableTyped):
             agreed["yes"] = False  # they press Stop recording me
             return result
 
-        self.bot.picture_keeper.keep = stops_meanwhile
+        self.keeper_stub.keep = stops_meanwhile
         await self.hear(picture())
         self.assertEqual(len(self.discarded), 1)
         said.assert_not_awaited()  # and no link is given
@@ -588,7 +589,7 @@ class TableImages(chat.AtTheTableTyped):
 
     async def test_the_dms_hear_once_that_old_pictures_were_removed(self) -> None:
         self.say_into()
-        self.keeper(Result(SimpleNamespace(code="CODE"), True, removed=2))
+        self.keeper(Result(cast(Any, SimpleNamespace(code="CODE")), True, removed=2))
         with patch("dmbot.bot.private_note.send", new=AsyncMock(return_value=True)) as told:
             await self.hear(picture())
             await self.hear(picture())
