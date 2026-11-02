@@ -400,7 +400,8 @@ def sheet_interaction(*, found: list[PlayerCharacter] | None = None) -> Any:
     memory = SimpleNamespace(
         add_entity=AsyncMock(
             return_value=SimpleNamespace(value=SimpleNamespace(id=ENTITY, name="Test Character"))
-        )
+        ),
+        party_on_assignment=AsyncMock(),  # (a character given to a player, #3036)
     )
     campaign = SimpleNamespace(
         id=CAMPAIGN,
@@ -479,6 +480,7 @@ class FromTheSheet(unittest.IsolatedAsyncioTestCase):
             await ui.add_from_sheet(it, GUILD, CAMPAIGN, 42)
         bot = it.client
         bot.memory.add_entity.assert_awaited_once()
+        bot.memory.party_on_assignment.assert_awaited_once_with(GUILD, CAMPAIGN)
         kwargs = bot.memory.add_entity.await_args.kwargs
         self.assertEqual((kwargs["type"], kwargs["played_by"]), ("player_character", PLAYER))
         bot.sheets.link.assert_awaited_once_with(GUILD, CAMPAIGN, ENTITY, 42, player=PLAYER)
