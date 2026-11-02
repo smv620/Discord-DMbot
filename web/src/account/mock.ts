@@ -980,6 +980,19 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   // "Use what I say and type to improve DMbot" (#1610): on until the person turns it off.
   let improve = true;
   const calls: string[] = [];
+  // The clock offer (#3259): the file of the last import, and the DM's answer for each session file. A file name
+  // ending in -split.txt answers "split" and -moved.txt answers "moved_on" once the DM has said set.
+  let lastImportFile: string | null = null;
+  const clockAnswers = new Map<string, "set" | "not-now">();
+  const clockOf = (file: string): { state: "offered" | "set" | "dismissed" | "moved_on" | "split"; label: string } => {
+    const answer = clockAnswers.get(file);
+    const label = "Day 5, evening";
+    if (!answer) return { state: "offered", label };
+    if (answer === "not-now") return { state: "dismissed", label };
+    if (file.endsWith("-split.txt")) return { state: "split", label };
+    if (file.endsWith("-moved.txt")) return { state: "moved_on", label };
+    return { state: "set", label };
+  };
   const lateLooks = new Map<string, number>();
   const lineDeletions: { id: string; serverId: string; looks: number }[] = [];
   const deletedLines = new Set<string>();
@@ -1563,6 +1576,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         `importStart:${ref}:${plan.sessions.map((s) => `${s.order}=${s.file}@${s.date}${s.writeRecap ? "#recap" : ""}`).join(",")}${links.length ? `|links:${links.join(" ")}` : ""}`,
       );
       if (links.some((l) => l.includes("later"))) throw new ApiError("bad-files");
+      lastImportFile = plan.sessions[0]?.file ?? null;
       return {
         importId: "imp1",
         sessions: plan.sessions.map((s) => ({ file: s.file, state: "waiting" as const })),
@@ -1570,11 +1584,18 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         ...recapFacts(ref),
       };
     },
+    async importClock(ref, importId, file, choice) {
+      calls.push(`importClock:${ref}:${importId}:${file}:${choice}`);
+      await reachable();
+      signedIn();
+      clockAnswers.set(file, choice);
+    },
     async importProgress(ref, importId) {
       calls.push(`importProgress:${ref}:${importId}`);
       const seen = calls.filter((c) => c.startsWith("importProgress:")).length;
       const state = seen < 2 ? ("working" as const) : ("done" as const);
       const now = Math.floor(Date.now() / 1000);
+      const file = lastImportFile ?? "session-1-2026-09-14.txt";
       return {
         // The whole import's progress, the shared shape (#2564).
         import: {
@@ -1590,11 +1611,12 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         },
         sessions: [
           {
-            file: "session-1-2026-09-14.txt",
+            file,
             date: "2026-09-14",
             state,
             reason: null,
             stage: state === "done" ? ("done" as const) : ("cleaning" as const),
+            clock: clockOf(file),
           },
         ],
       };
