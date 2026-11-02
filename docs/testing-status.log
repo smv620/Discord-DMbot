@@ -9,7 +9,7 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 LIVE NOW
 ------------------------------------------------------------------------------
-core + web-api at e13018a1 (Supervisor's 2026-11-02 handover: migration 0317_theatre_lines, Keep family links, Story Graph clicks). 314 rows.
+core + web-api at fa10940d (Supervisor's replacement handover, replaces e13018a1, which was live from 2026-11-02). Migrations still 0317 (314 rows).
   Bot connected to 2 servers, 0 errors; web-api healthy. Full entry: docs/testing-history.log.
 
 Switches off: DMBOT_WEB_LORE, DMBOT_WEB_RECAP_STYLE, DMBOT_WEB_PAUSE, DMBOT_STORY_FAMILY_ONLY (unset = off).
