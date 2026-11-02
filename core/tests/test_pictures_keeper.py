@@ -129,6 +129,22 @@ class Keeping(DatabaseTest):
         self.assertTrue(gone.gone)
         self.assertEqual(await self.store.list(GUILD, self.campaign.id), [])
 
+    async def test_deleting_the_message_takes_the_kept_picture_and_its_files(self) -> None:
+        keeper = self.keeper()
+        mine = await keeper.keep(self.ctx(message_id=11), picture(1))
+        other = await keeper.keep(self.ctx(message_id=12), picture(2))
+        assert mine.picture is not None and other.picture is not None
+        await self.store.set_permanent(GUILD, self.campaign.id, mine.picture.id, True, 5)
+        self.assertEqual(await keeper.forget_message(GUILD, 11), 1)  # permanent goes too
+        self.assertEqual(await keeper.forget_message(GUILD, 11), 0)
+        self.assertEqual(
+            [p.id for p in await self.store.list(GUILD, self.campaign.id)], [other.picture.id]
+        )
+        self.assertEqual(
+            sorted(self.bucket.files), sorted([other.picture.object_key, other.picture.preview_key])
+        )
+        self.assertEqual(await keeper.forget_message(GUILD, 0), 0)
+
     async def test_each_campaign_keeps_its_own_copy_of_the_same_file(self) -> None:
         other = await self.campaigns.create(GUILD, "Two", DM)
         a = await self.keeper().keep(self.ctx(), picture())

@@ -41,14 +41,32 @@ PICTURE_SWEEP_ACTIONS = (
     + _isolate("picture_actions")
     + r"""
     -- The leftover-file sweep (#3274) compares the bucket's files with every live picture's keys,
-    -- across all servers, so it must read them without a server set. Like the other narrow
-    -- sweeps (Database.cleanup), the table opens to a read of the rows only inside a transaction
-    -- that set `dmbot.picture_sweep` (Database.picture_sweep()). The website's role has no right
-    -- on either picture table (nothing grants it any), so it reaches pictures only through its
-    -- own doors; no policy names that role here, because it is made outside DMbot and may not
-    -- exist where the migration runs.
-    CREATE POLICY picture_sweep_read ON campaign_pictures FOR SELECT
-        USING (current_setting('dmbot.picture_sweep', true) = 'keys');
+    -- across all servers, so it must read them without a server set. It does that through one
+    -- function that returns the two keys of live rows and nothing else, takes no arguments, and
+    -- can be run only by the role that owns it (the bot's): nobody else is granted it. The rows
+    -- open to that read only for the owner role, only inside the function (it sets the setting
+    -- that the policy asks for), so a role that sets the same setting itself, such as a read-only
+    -- one, still sees nothing outside its own server scope. `search_path` is pinned to the one the
+    -- migration ran with.
+    CREATE FUNCTION dmbot_picture_keys() RETURNS TABLE (object_key TEXT, preview_key TEXT)
+        LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT
+        AS $fn$
+    BEGIN
+        PERFORM set_config('dmbot.picture_sweep', 'keys', true);
+        RETURN QUERY
+            SELECT p.object_key, p.preview_key FROM campaign_pictures p
+            WHERE p.deleted_at IS NULL;
+    END
+    $fn$;
+    REVOKE ALL ON FUNCTION dmbot_picture_keys() FROM PUBLIC;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'CREATE POLICY picture_sweep_read ON campaign_pictures FOR SELECT TO %I'
+            || ' USING (current_setting(''dmbot.picture_sweep'', true) = ''keys'')',
+            current_user);
+    END
+    $do$;
     """
 )
 

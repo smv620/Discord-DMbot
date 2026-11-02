@@ -6,10 +6,13 @@ from __future__ import annotations
 import datetime as dt
 import unittest
 
+import psycopg
+
 from dmbot.campaigns import CampaignStore
 from dmbot.pictures.bucket import BucketError
 from dmbot.pictures.store import MB, PictureStore
 from dmbot.pictures.sweep import MAX_DELETES, live_keys, sweep
+from tests import pg
 from tests.pg import DatabaseTest
 
 DM, POSTER = 7, 8
@@ -83,6 +86,33 @@ class Sweeping(DatabaseTest):
             row = await cur.fetchone()
         assert row is not None
         self.assertEqual(row["n"], 0)
+
+    async def test_a_read_only_role_that_sets_the_setting_itself_reads_nothing(self) -> None:
+        if not pg.SUPERUSER_URL:
+            self.skipTest("needs a superuser to make a role")
+        await self.keep(1, 1)
+        async with self.db.unscoped() as conn:
+            cur = await conn.execute("SELECT current_schema() AS s, current_user AS u")
+            row = await cur.fetchone()
+        assert row is not None
+        schema_name, owner = row["s"], row["u"]
+        admin = pg._admin()
+        admin.execute(pg.create_role_sql("picture_ro_test", "picture_ro_test"))
+        admin.execute(f"GRANT USAGE ON SCHEMA {schema_name} TO picture_ro_test")
+        admin.execute(f"GRANT SELECT ON {schema_name}.campaign_pictures TO picture_ro_test")
+        admin.execute(f"GRANT picture_ro_test TO {owner}")  # so this connection can act as it
+        async with self.db.unscoped() as conn:
+            await conn.execute("SET LOCAL ROLE picture_ro_test")
+            await conn.execute("SELECT set_config('dmbot.picture_sweep', 'keys', true)")
+            await conn.execute("SELECT set_config('dmbot.guild_id', '2', true)")  # another server
+            cur = await conn.execute("SELECT count(*) AS n FROM campaign_pictures")
+            seen = await cur.fetchone()
+        assert seen is not None
+        self.assertEqual(seen["n"], 0)
+        with self.assertRaises(psycopg.errors.InsufficientPrivilege):
+            async with self.db.unscoped() as conn:
+                await conn.execute("SET LOCAL ROLE picture_ro_test")
+                await conn.execute("SELECT * FROM dmbot_picture_keys()")
 
     async def test_only_files_no_row_names_are_deleted(self) -> None:
         await self.keep(1, 1)

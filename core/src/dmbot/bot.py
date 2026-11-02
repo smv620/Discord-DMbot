@@ -5533,12 +5533,18 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             )
 
     async def _forget_map_notes(self, guild_id: int, message_id: int) -> None:
-        """A deleted picture takes the map notes made from it (#2450)."""
+        """A deleted picture takes the map notes made from it (#2450), and the kept picture and
+        its files (#3274)."""
         try:
             assert self.map_notes is not None
             await self.map_notes.forget_message(guild_id, message_id)
         except Exception:
             log.exception("Table image: couldn't delete a deleted picture's map notes")
+        if self.picture_keeper is not None:
+            try:
+                await self.picture_keeper.forget_message(guild_id, message_id)
+            except Exception as exc:  # the type only: a database error can quote a row
+                log.warning("Table image: couldn't delete a kept picture (%s)", type(exc).__name__)
 
     def _note_deleted(self, message_id: int) -> None:
         """Remember a deleted message for a few minutes (a picture takes seconds to describe)."""
@@ -11442,9 +11448,14 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             or not still_ok()
         ):
             return
-        granted = await self.consent.granted_at(gid, user_id)
-        if granted is None or not still_ok():  # no record of the yes: nothing is kept on a guess
+        agreed = await self.consent.agreed_under(gid, user_id)
+        if (
+            agreed is None
+            or agreed[1] < consent_terms.IMAGE_TERMS_VERSION  # a yes to wording that keeps pictures
+            or not still_ok()
+        ):  # no such record of the yes: nothing is kept on a guess
             return
+        granted, agreed_version = agreed
         got = await keeper.keep(
             PictureContext(
                 guild_id=gid,
@@ -11454,7 +11465,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 line_id=None,
                 message_id=message_id,
                 description=images.line_text(read) if read is not None else "",
-                consent_version=consent_terms.TERMS_VERSION,
+                consent_version=agreed_version,
                 right_granted_at=granted,
             ),
             image.data,
@@ -11470,8 +11481,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             return
         if got.new and channel_id and self.settings.site_url:
             # The link under the description: anyone with it can open the picture (the poster or a
-            # DM can make it private or delete it on the website). This line goes when the
-            # picture's message does; the kept picture itself stays until someone deletes it.
+            # DM can make it private or delete it on the website). The picture, its files and this
+            # line all go when the poster deletes the message.
             reply = await self._post_reply(
                 channel_id,
                 message_id,

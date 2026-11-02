@@ -482,7 +482,9 @@ class TableImages(chat.AtTheTableTyped):
 
         self.bot.picture_keeper = SimpleNamespace(keep=keep, discard=discard)
         self.bot.settings = WithSite(self.bot.settings)
-        granted = patch.object(self.bot.consent, "granted_at", AsyncMock(return_value=900))
+        granted = patch.object(
+            self.bot.consent, "agreed_under", AsyncMock(return_value=(900, IMAGE_TERMS_VERSION))
+        )
         granted.start()  # the stored date of the poster's yes
         self.addCleanup(granted.stop)
         return calls
@@ -538,10 +540,27 @@ class TableImages(chat.AtTheTableTyped):
         self.assertEqual(len(self.discarded), 1)
         said.assert_not_awaited()  # and no link is given
 
+    async def test_a_yes_to_older_wording_keeps_nothing_and_the_row_records_the_posters_own(
+        self,
+    ) -> None:
+        self.say_into()
+        calls = self.keeper()
+        older = AsyncMock(return_value=(900, IMAGE_TERMS_VERSION - 1))
+        with patch.object(self.bot.consent, "agreed_under", older):
+            await self.hear(picture())
+        self.assertEqual(calls, [])
+        newer = AsyncMock(return_value=(900, IMAGE_TERMS_VERSION + 3))
+        with patch.object(self.bot.consent, "agreed_under", newer):
+            await self.hear(picture())
+        [(ctx, _)] = calls
+        self.assertEqual(
+            (ctx.consent_version, ctx.right_granted_at), (IMAGE_TERMS_VERSION + 3, 900)
+        )
+
     async def test_a_picture_with_no_record_of_the_yes_is_not_kept(self) -> None:
         self.say_into()
         calls = self.keeper()
-        with patch.object(self.bot.consent, "granted_at", AsyncMock(return_value=None)):
+        with patch.object(self.bot.consent, "agreed_under", AsyncMock(return_value=None)):
             await self.hear(picture())
         self.assertEqual(calls, [])  # (the helper's own patch is replaced for this call)
         self.assertEqual(len(self.lines()), 1)

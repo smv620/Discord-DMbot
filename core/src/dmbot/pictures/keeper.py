@@ -89,6 +89,15 @@ class PictureKeeper:
         if gone is not None:
             await self._delete(gone.object_key, gone.preview_key)
 
+    async def forget_message(self, guild_id: int, message_id: int) -> int:
+        """The poster deleted the Discord message a picture was in: the kept picture goes too,
+        permanent or not (owner / Supervisor, 2026-11-02). How many were taken back."""
+        taken = 0
+        for picture in await self._store.by_message(guild_id, message_id):
+            await self.discard(guild_id, picture.campaign_id, picture)
+            taken += 1
+        return taken
+
     async def keep(self, ctx: Context, data: bytes) -> Result:
         try:
             ready = await self._prepare(data)

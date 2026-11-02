@@ -271,14 +271,6 @@ class Database:
             yield conn
 
     @asynccontextmanager
-    async def picture_sweep(self) -> AsyncIterator[Conn]:
-        """A transaction that can read the keys of every kept picture, across servers, and nothing
-        else (#3274): for the daily sweep of files no row points to. Counts and keys stay in the
-        bot; nothing is logged but counts."""
-        async with self._with(picture_sweep="keys") as conn:
-            yield conn
-
-    @asynccontextmanager
     async def unscoped(self) -> AsyncIterator[Conn]:
         """A transaction with no server set: server tables look empty.
 

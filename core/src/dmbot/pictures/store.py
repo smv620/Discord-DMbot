@@ -254,6 +254,19 @@ class PictureStore:
             row = await cur.fetchone()
         return None if row is None else _picture(row)
 
+    async def by_message(self, guild_id: int, message_id: int) -> list[Picture]:
+        """The kept pictures posted in this Discord message (not removed ones). Message id 0 is a
+        restored picture's, which has no message."""
+        if message_id <= 0:
+            return []
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                f"SELECT {COLUMNS} FROM campaign_pictures WHERE guild_id = %s AND message_id = %s"
+                " AND deleted_at IS NULL",
+                (guild_id, message_id),
+            )
+            return [_picture(r) for r in await cur.fetchall()]
+
     async def get(self, guild_id: int, campaign_id: str, picture_id: int) -> Picture | None:
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(

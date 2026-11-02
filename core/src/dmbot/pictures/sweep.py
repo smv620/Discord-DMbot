@@ -39,10 +39,8 @@ class Swept:
 
 
 async def live_keys(db: Database) -> set[str]:
-    async with db.picture_sweep() as conn:
-        cur = await conn.execute(
-            "SELECT object_key, preview_key FROM campaign_pictures WHERE deleted_at IS NULL"
-        )
+    async with db.unscoped() as conn:  # no server is set: the function reads across them
+        cur = await conn.execute("SELECT object_key, preview_key FROM dmbot_picture_keys()")
         rows = await cur.fetchall()
     keys: set[str] = set()
     for row in rows:
