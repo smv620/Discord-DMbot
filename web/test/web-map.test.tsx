@@ -315,6 +315,66 @@ describe("the map", () => {
     now.mockRestore();
   });
 
+  it("a press and release on a name is a tap even when no click follows (the name drifted from under the pointer)", () => {
+    const onCenter = vi.fn();
+    draw({ onCenter });
+    const now = vi.spyOn(Date, "now").mockReturnValue(3000);
+    // pointer down on the name, pointer up elsewhere (window): the browser sends no click to the name
+    fireEvent.pointerDown(nodeOf("Garrick"), { clientX: 300, clientY: 300, pointerId: 1 });
+    fireEvent.pointerUp(window, { clientX: 303, clientY: 300, pointerId: 1 });
+    expect(document.querySelector("#web-side-h")!.textContent).toBe("Garrick"); // the panel is on it
+    now.mockReturnValue(3000 + 150);
+    fireEvent.pointerDown(nodeOf("Garrick"), { clientX: 300, clientY: 300, pointerId: 1 });
+    fireEvent.pointerUp(window, { clientX: 303, clientY: 300, pointerId: 1 });
+    expect(onCenter).toHaveBeenCalledTimes(1);
+    expect(onCenter).toHaveBeenCalledWith("g");
+    now.mockRestore();
+  });
+
+  it("the click that follows a tap is not counted a second time", () => {
+    const onCenter = vi.fn();
+    draw({ onCenter });
+    vi.useFakeTimers();
+    fireEvent.pointerDown(nodeOf("Garrick"), { clientX: 300, clientY: 300, pointerId: 1 });
+    fireEvent.pointerUp(window, { pointerId: 1 });
+    fireEvent.click(nodeOf("Garrick")); // (the browser's own click, right after the pointer up)
+    expect(onCenter).not.toHaveBeenCalled(); // one tap is a pick, not half of a double tap counted twice
+    expect(document.querySelector("#web-side-h")!.textContent).toBe("Garrick"); // (and the tap did pick it)
+    vi.runAllTimers();
+    vi.useRealTimers();
+    // later, a click on its own counts again (the flag was cleared): a second one soon after is a double click
+    const now = vi.spyOn(Date, "now").mockReturnValue(9000);
+    fireEvent.click(nodeOf("Mira Voss"));
+    now.mockReturnValue(9100);
+    fireEvent.click(nodeOf("Mira Voss"));
+    expect(onCenter).toHaveBeenCalledWith("m");
+    now.mockRestore();
+  });
+
+  it("a right or middle press on a name is not a tap", () => {
+    const onCenter = vi.fn();
+    draw({ onCenter });
+    for (const button of [1, 2]) {
+      fireEvent.pointerDown(nodeOf("Garrick"), { clientX: 300, clientY: 300, pointerId: 1, button });
+      fireEvent.pointerUp(window, { pointerId: 1, button });
+    }
+    expect(document.querySelector("#web-side-h")!.textContent).toBe("Mira Voss"); // nothing was picked
+    expect(onCenter).not.toHaveBeenCalled();
+  });
+
+  it("a pointer the browser cancelled (it took the touch over) is not a tap", () => {
+    const onCenter = vi.fn();
+    draw({ onCenter });
+    fireEvent.pointerDown(nodeOf("Garrick"), { clientX: 300, clientY: 300, pointerId: 1 });
+    fireEvent.pointerCancel(window, { pointerId: 1 });
+    expect(document.querySelector("#web-side-h")!.textContent).toBe("Mira Voss"); // nothing was picked
+  });
+
+  it("a name's label cannot be selected, which cancelled the second press of a double click", () => {
+    const css = readFileSync(resolve(__dirname, "../src/styles/web-map.css"), "utf8");
+    expect(css).toMatch(/\.account \.web-node \{[^}]*user-select: none/);
+  });
+
   it("falls back to the middle name when the picked name is no longer drawn", () => {
     const view = draw();
     fireEvent.click(nodeOf("Garrick"));
