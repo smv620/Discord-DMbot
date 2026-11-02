@@ -26,6 +26,10 @@ def jpeg_with_gps(size: tuple[int, int] = (120, 60), orientation: int = 1) -> by
     return out.getvalue()
 
 
+def frame_count(data: bytes) -> int:
+    return int(getattr(Image.open(io.BytesIO(data)), "n_frames", 1))
+
+
 def png(size: tuple[int, int] = (50, 40), text: bool = False) -> bytes:
     from PIL.PngImagePlugin import PngInfo
 
@@ -74,7 +78,7 @@ class Stripped(unittest.TestCase):
         frames[0].save(out, "GIF", save_all=True, append_images=frames[1:])
         got = prepare(out.getvalue())
         self.assertEqual(got.ext, "gif")
-        self.assertEqual(Image.open(io.BytesIO(got.data)).n_frames, 3)
+        self.assertEqual(frame_count(got.data), 3)
 
     def test_a_colour_profile_in_a_png_does_not_survive(self) -> None:
         out = io.BytesIO()
@@ -104,7 +108,7 @@ class Stripped(unittest.TestCase):
         got = prepare(out.getvalue())
         self.assertNotIn(b"GIFSECRET", got.data)
         again = Image.open(io.BytesIO(got.data))
-        self.assertEqual(again.n_frames, 2)
+        self.assertEqual(frame_count(got.data), 2)
         self.assertEqual(again.info["duration"], 50)
 
     def test_the_same_file_has_the_same_fingerprint(self) -> None:
