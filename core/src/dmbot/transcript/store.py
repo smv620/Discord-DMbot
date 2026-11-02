@@ -332,6 +332,8 @@ class TranscriptStore:
             )
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(query, (text, session_id, user_id, started_ms))
+            if cur.rowcount:  # the cleaned words changed: the script made of them is out of date
+                await theatre_store.forget_session(conn, guild_id, session_id)
             return cur.rowcount
 
     async def image_line(
@@ -383,6 +385,8 @@ class TranscriptStore:
                 " AND sidebar IS NULL",
                 (entity or None, session_id, user_id, started_ms),
             )
+            if cur.rowcount:  # who said it changed: the script made of it is out of date
+                await theatre_store.forget_session(conn, guild_id, session_id)
             return cur.rowcount
 
     async def set_topics(
@@ -550,10 +554,17 @@ class TranscriptStore:
         if not ids:
             return
         async with self._db.guild(guild_id) as conn:
+            # The session's row is locked first, as a script save does, so a save that read these
+            # lines cannot commit a row citing them after this has removed their words.
+            await conn.execute(
+                "SELECT 1 FROM transcript_sessions WHERE guild_id = %s AND id = %s FOR UPDATE",
+                (guild_id, session_id),
+            )
             await conn.execute(
                 "DELETE FROM transcript_lines WHERE session_id = %s AND id = ANY(%s)",
                 (session_id, list(ids)),
             )
+            await theatre_store.forget_sources(conn, guild_id, session_id, list(ids))
             await _drop_note_pointers(conn, guild_id, [session_id])
             await conn.execute(
                 "UPDATE transcript_sessions SET"
@@ -869,6 +880,8 @@ class TranscriptStore:
                     " FROM unnest(%s::bigint[], %s::text[]) AS v(id, text) WHERE t.id = v.id",
                     ([u[0] for u in updates], [u[1] for u in updates]),
                 )
+                for touched in sorted(sessions):  # the scripts made of the old words
+                    await theatre_store.forget_session(conn, guild_id, touched)
                 async with conn.cursor() as ins:
                     await ins.executemany(
                         "INSERT INTO transcript_respells (guild_id, campaign_id, batch, run,"
@@ -970,6 +983,8 @@ class TranscriptStore:
                 )
                 changed += 1
                 sessions.add(str(row["session_id"]))
+            for touched in sorted(sessions):  # the scripts made of the respelled words
+                await theatre_store.forget_session(conn, guild_id, touched)
         return changed, len(sessions)
 
     # ---- Delete my past transcripts (#1532) ---------------------------------------------

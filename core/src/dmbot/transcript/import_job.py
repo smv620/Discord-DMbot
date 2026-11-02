@@ -22,6 +22,7 @@ from dataclasses import dataclass
 
 from dmbot.db import Database
 from dmbot.memory.lookup import CampaignLookup
+from dmbot.transcript import theatre_store
 from dmbot.transcript.cleaner import clean
 from dmbot.transcript.store import Settled, TranscriptStore
 from dmbot.transcript.topic_ai import Completes, classify
@@ -345,6 +346,8 @@ class ImportStore:
                     session_id,
                 ),
             )
+            # a rewritten line makes any script made of the old words out of date
+            await theatre_store.forget_session(conn, guild_id, session_id)
             # (the row's own trigger stamps `updated_at`: this chunk is a step forward)
             await conn.execute(
                 "UPDATE session_imports SET step_done = step_done + %s WHERE session_id = %s",
