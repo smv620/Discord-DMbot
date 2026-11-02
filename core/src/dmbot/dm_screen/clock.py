@@ -380,9 +380,9 @@ async def show(client: Any, campaign: Campaign, stored: Stored) -> discord.Messa
 def players_see(campaign: Campaign, what: str = "the day and ") -> str:
     """Where the players see the clock: said only when the chat channel exists. While splitting,
     `what` also tells the DM the players read the group names."""
-    if campaign.dmbchat_channel_id is None:
+    if campaign.table_chat_id is None:
         return ""
-    return PLAYERS_SEE.format(channel=campaign.dmbchat_channel_id, what=what)
+    return PLAYERS_SEE.format(channel=campaign.table_chat_id, what=what)
 
 
 # ---- the players' clock: a small line in the DMbot chat channel (#2877) -------------------------
@@ -441,9 +441,9 @@ async def put_line(
     message in the channel and a plain one, it is edited, so quick changes stay one line;
     otherwise a new line is posted. No chat channel, or DMbot cannot read or post there: nothing
     is said (a counts-only note) and nothing is held up."""
-    channel_id = campaign.dmbchat_channel_id
+    channel_id = campaign.table_chat_id
     if channel_id is None:
-        log.info("A clock line was not posted: the campaign has no chat channel")
+        log.info("A clock line was not posted: the campaign has no table chat")
         return
     channel = client.get_channel(channel_id)
     me = getattr(client.user, "id", None)

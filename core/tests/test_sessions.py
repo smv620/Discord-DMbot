@@ -372,7 +372,7 @@ class SaveAndResume(SessionTests):
         await self.consent.grant(GUILD, PLAYER)
         await self.consent.grant(GUILD, DM)
         await self.start()
-        self.bot.tables[GUILD].dmbchat_channel_id = 555
+        self.bot.tables[GUILD].chat_channel_id = 555
         done = await self.bot.pause_recording(GUILD, PLAYER, 15)
         assert done.ok
         saved = await self.sessions.get(GUILD)

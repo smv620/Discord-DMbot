@@ -210,12 +210,9 @@ class Table:
     chat_on: bool = True
     chat_channel_id: int | None = None
     chat_notice_posted: bool = False  # the one line in the extra channel, once a session
-    # The campaign's DMbot chat channel (#1187): where the table asks DMbot and reads the answers.
-    dmbchat_channel_id: int | None = None
-    # People who typed there without having agreed, already shown the agree button this session.
-    dmbchat_nudged: set[int] = field(default_factory=set)
-    # DMs told once this session that a story statement belongs in the private chat (#3209).
-    dmbchat_hinted: set[int] = field(default_factory=set)
+    # People who asked in the table's chat without having agreed, already shown the agree button
+    # this session.
+    chat_nudged: set[int] = field(default_factory=set)
     # Questions per person (at most ASK_PER_PERSON_PER_MINUTE a minute), so one player can't use
     # up the table's questions.
     person_limits: dict[int, AskLimiter] = field(default_factory=dict)
@@ -323,6 +320,13 @@ class Table:
     # Test recordings (#1019): the saved session, only in a test server.
     test_session: TestSession | None = None
     sidebar_limiter: AskLimiter = field(default_factory=AskLimiter)
+
+    @property
+    def chat_id(self) -> int:
+        """The table's chat (#3212): the channel the DM picked, else the voice channel's own text
+        chat. Where table questions are read and answered and where the clock line goes. It follows
+        the DM's choice live, as the choice changes `chat_channel_id`."""
+        return self.chat_channel_id or self.voice_channel_id
 
     def is_dm(self, user_id: int) -> bool:
         return user_id == self.dm_user_id or user_id in self.dm_user_ids

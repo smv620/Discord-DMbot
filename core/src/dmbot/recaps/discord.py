@@ -1731,17 +1731,15 @@ class RecapFeatures:
                 "Your plan doesn't include recaps right now, so nothing was posted. "
                 "Your draft is saved."
             )
-        channel = (
-            self.get_channel(campaign.dmbchat_channel_id) if campaign.dmbchat_channel_id else None
-        )
+        channel = self.get_channel(campaign.table_chat_id) if campaign.table_chat_id else None
         if (
             channel is None
             or not hasattr(channel, "send")
             or (getattr(getattr(channel, "guild", None), "id", gid) != gid)
         ):
             return await back(
-                "There's no chat channel for this campaign yet. It's made when a session starts. "
-                "Start one, then press Post."
+                "DMbot has no table chat to post in yet: start a session in a voice channel, or "
+                "pick a chat channel in ⚙️ Manage DMbot. Then press Post."
             )
         secrets = await self.recap_secret_names(campaign, job.session_at)
         if secrets is None:
@@ -1781,7 +1779,7 @@ class RecapFeatures:
                 f.close()
             log.warning("Recap: the send failed")
             return await back(
-                "DMbot couldn't write in the chat channel. Check it can post there, "
+                "DMbot couldn't write in the table's chat. Check it can post there, "
                 "then press Post again."
             )
         await self.recaps.posted(gid, cid, at, url=link)

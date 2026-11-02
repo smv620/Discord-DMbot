@@ -752,9 +752,11 @@ class OnTheScreen(Party):
         assert campaign is not None
         async with self.db.guild(GUILD_A) as conn:
             await conn.execute(
-                "UPDATE campaigns SET dmbchat_channel_id = 777 WHERE id = %s", (self.a.id,)
+                "UPDATE campaigns SET table_chat_channel_id = 777 WHERE id = %s", (self.a.id,)
             )
-        self.fake.channel(777)  # the campaign's chat channel
+        self.fake.channel(777)  # the campaign's table chat (#3212)
+        campaign = await self.campaigns.get(GUILD_A, self.a.id)  # (read again: it has the chat)
+        assert campaign is not None
         result = await self.press("long")
         await ui.update_players(self.fake, campaign, "long", result)
         said = [text for channel, text, _ in self.fake.posted if channel == 777]
