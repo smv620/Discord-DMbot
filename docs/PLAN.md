@@ -36,8 +36,11 @@ the DM decides.**
    that it is from DMbot and which campaign it is about. One campaign runs in a server at a time,
    so the private chat is never ambiguous. Each question is asked in one place only: the DM
    screen keeps advice and alerts (rules, heads-ups), not questions. Players never see a DM's
-   questions. If a private message can't be delivered, the DM screen says so in one line,
-   without the question.
+   questions. A question goes to every DM of the campaign, and the first answer settles it: the
+   other DMs' copies say who answered. If no DM can be reached privately, the question goes on the
+   DM screen with a line saying why (Supervisor, 2026-11-02, as built in #3240 to #3265). Reports
+   of what DMbot already did (the name-fixes list, left-out lines, "pack updated", "Recap ready")
+   stay on the DM screen: they are not questions.
 9. **No `dmb-chat` channel: the table's own chat is where players talk to DMbot (owner,
    2026-11-01, #3212).** Simple is best: DMbot makes no `dmb-chat-<short name>` channel. It
    listens to the table's voice channel and that voice channel's own text chat, and to one more
@@ -3487,6 +3490,31 @@ as what is said, so the clock and the other listeners hear "we take a long rest"
     website's `pictures` promise, privacy page, help and features lines) is a separate PR that merges only on the
     owner's word. The website's transcript view still tags these lines "(typed)" until its database functions
     learn the flag (follow-up).
+  - *Pictures are kept, and shared by link (owner, 2026-11-02, #3268):* a picture posted in the table's chat by
+    someone who agreed is **kept with the campaign**, not only described. At consent, people agree that they only
+    post pictures they have the right to share, and that they let the table use them in this campaign. Every kept
+    picture has a permanent link, `getdmbot.com/pictures/<code>`, with a long code nobody can guess. **By default
+    anyone with the link can open it, with no sign-in**, in a new tab, full size. The picture's poster or a DM of
+    the campaign, signed in, can **make it private to the campaign** (then only signed-in members of the
+    campaign's server may open it, the transcript rule) or **delete** it (gone from storage; old links show that
+    it was removed). Links appear in the website's gallery, beside the transcript line, and on place and person
+    cards; in Discord a command or button posts the picture again in that server.
+  - *How pictures are stored (Supervisor, 2026-11-02):* the files are never in Postgres. They go to object storage
+    (Cloudflare R2, one private bucket, no fees for viewing), filed under the server and campaign and never shared
+    between campaigns. A picture posted twice in one campaign is stored once (by its hash). Each has the full-size
+    file (the 3.75 MB limit stays) and a small preview, with location data stripped from the file. Postgres keeps
+    one isolated row per picture: campaign, poster, session, the transcript line, the description, the link code,
+    public or private, when and under which consent version the right was granted, and where the files are. The
+    permanent link is served by web-api, which answers with a short-lived signed address. Backups include the
+    pictures; deleting the campaign deletes them. Nothing of this ships before the consent wording at version 7 goes
+    live.
+  - *Rolling storage and permanent pictures (owner, 2026-11-02, #3274):* a campaign keeps up to its picture storage, **500 MB**
+    for now (a setting, so it can change). A new picture that would go over makes DMbot delete the **oldest pictures that are not permanent**
+    until it fits, and the DMs are told once. A DM can mark a picture **permanent**, which exempts it, up to
+    **80% of the campaign's picture storage** (400 MB while it is 500 MB; it follows the storage if that changes);
+    past that, marking is refused until one is unmarked. Permanent is
+    set and cleared only by the campaign's DMs, on the website. The website's gallery is a grid of thumbnails that
+    is easy to review; a click opens the full picture's link in a new tab.
 - **Consent:** the consent message says DMbot also reads the table's typed chat while it listens.
   That changes what people agree to, so the consent terms version goes up and everyone is asked
   again.

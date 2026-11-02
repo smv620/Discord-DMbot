@@ -1074,6 +1074,10 @@ class CampaignStore:
             "UPDATE map_notes SET message_id = 0 WHERE guild_id = %s AND campaign_id = %s",
             (guild_id, campaign_id),
         )
+        await conn.execute(
+            "UPDATE campaign_pictures SET message_id = 0 WHERE guild_id = %s AND campaign_id = %s",
+            (guild_id, campaign_id),
+        )
         await conn.execute("SELECT set_config('dmbot.moving_campaign', %s, true)", (campaign_id,))
         await conn.execute("SELECT set_config('dmbot.moving_to', %s, true)", (str(target),))
         cur = await conn.execute(
