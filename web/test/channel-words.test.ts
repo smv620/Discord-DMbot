@@ -1,10 +1,10 @@
-// DMbot no longer has a dmb-rules, dmb-npcs or dmb-gametime channel (owner, 2026-10-28; #2875). No Help, privacy,
+// DMbot no longer has a dmb-rules, dmb-npcs, dmb-gametime or dmb-chat channel (owner, 2026-10-28 and 2026-11-01; #2875, #3212). No Help, privacy,
 // feature, What's new or page text may name them, so the site never points people at a channel that isn't there.
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-const GONE = /dmb-rules|dmb-npcs|dmb-gametime/i;
+const GONE = /dmb-rules|dmb-npcs|dmb-gametime|dmb-chat/i;
 // The players' clock channel is going too (core #2877): its old sentence may stay only behind GAMETIME_IN_CHAT_LIVE.
 const OLD_CLOCK = /in (their|your) own channel/;
 
@@ -29,6 +29,6 @@ describe("the players' clock sentence", () => {
     const clock = features.find((f) => f.title === "The game clock")?.what ?? "";
     expect(OLD_CLOCK.test(playerNote)).toBe(!GAMETIME_IN_CHAT_LIVE);
     expect(OLD_CLOCK.test(clock)).toBe(!GAMETIME_IN_CHAT_LIVE);
-    expect(playerNote.includes("dmb-chat") && clock.includes("dmb-chat")).toBe(GAMETIME_IN_CHAT_LIVE);
+    expect(playerNote.includes("voice channel's chat") && clock.includes("voice channel's chat")).toBe(GAMETIME_IN_CHAT_LIVE);
   });
 });

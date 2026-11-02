@@ -117,7 +117,8 @@ describe("the facts #433 asks for", () => {
   it("says typed chat is read only from people who said yes and kept as typed (#1155)", () => {
     expect(privacy()).toContain("What was typed.");
     expect(privacy()).toContain("people who said yes type in the table's chat");
-    expect(privacy()).toContain("dmb-chat");
+    expect(privacy()).not.toContain("dmb-chat");
+    expect(privacy()).toContain('starting with "Hey DMbot" or "DMbot"');
     expect(privacy()).toContain("marked as typed");
   });
 
