@@ -45,6 +45,7 @@ NARRATING_LABEL = "Narrating"
 SKIP_LABEL = "Not sure"
 SKIPPED = "Okay. That line stays unlabelled."
 
+ANSWERED_ELSEWHERE = "✅ Another DM answered this."
 STOPPED, ENDED, NOT_POSTED, EXPIRED_WHY, ANSWERED = (
     "stopped",
     "ended",
