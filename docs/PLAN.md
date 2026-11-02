@@ -3506,8 +3506,14 @@ as what is said, so the clock and the other listeners hear "we take a long rest"
     one isolated row per picture: campaign, poster, session, the transcript line, the description, the link code,
     public or private, when and under which consent version the right was granted, and where the files are. The
     permanent link is served by web-api, which answers with a short-lived signed address. Backups include the
-    pictures; deleting the campaign deletes them; each plan has a storage cap per campaign. Nothing of this ships
-    before the consent wording at version 7 goes live.
+    pictures; deleting the campaign deletes them. Nothing of this ships before the consent wording at version 7 goes
+    live.
+  - *Rolling storage and permanent pictures (owner, 2026-11-02, #3274):* a campaign keeps up to **500 MB** of
+    pictures. A new picture that would go over makes DMbot delete the **oldest pictures that are not permanent**
+    until it fits, and the DMs are told once. A DM can mark a picture **permanent**, which exempts it, up to
+    **400 MB** of permanent pictures per campaign; past that, marking is refused until one is unmarked. Permanent is
+    set and cleared only by the campaign's DMs, on the website. The website's gallery is a grid of thumbnails that
+    is easy to review; a click opens the full picture's link in a new tab.
 - **Consent:** the consent message says DMbot also reads the table's typed chat while it listens.
   That changes what people agree to, so the consent terms version goes up and everyone is asked
   again.
