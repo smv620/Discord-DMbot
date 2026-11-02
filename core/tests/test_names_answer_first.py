@@ -224,7 +224,7 @@ class AnswerFirst(unittest.IsolatedAsyncioTestCase):
         memory = self.bot.memory
         memory.aliases = self.slow([bell])
         for write in ("set_entity_type", "confirm_entity", "set_main_name", "update_alias",
-                      "add_alias", "set_unique"):  # fmt: skip
+                      "add_alias", "set_unique", "party_on_assignment"):  # fmt: skip
             setattr(memory, write, self.slow())
         memory.alias_knowers = self.slow({})  # (the Who-knows page reads these first, #2935)
         memory.lookup_data = self.slow(LookupData(0, (), (), (), ()))
