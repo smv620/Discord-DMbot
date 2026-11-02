@@ -33,6 +33,42 @@ THEATRE_LINES = """
     );
     -- (forgetting a person finds their rows by their id)
     CREATE INDEX theatre_lines_by_person ON theatre_lines USING gin (user_ids);
+    -- (a deleted line finds the rows that cite it by index too)
+    CREATE INDEX theatre_lines_by_source ON theatre_lines USING gin (source_ids);
+
+    -- Erasing people's words is structural, not something each caller must remember: a deleted
+    -- line takes every script row that cites it, and a change to what a line says, who said it or
+    -- whose it is makes the whole session's script out of date, so it goes (it is made again on
+    -- request). The functions run with the caller's rights, inside the caller's server-scoped
+    -- transaction, like the delete that fired them, and name the line's own server and session.
+    CREATE FUNCTION theatre_drop_for_deleted_line() RETURNS trigger
+        LANGUAGE plpgsql
+        AS $fn$
+    BEGIN
+        DELETE FROM theatre_lines
+            WHERE guild_id = OLD.guild_id AND session_id = OLD.session_id
+              AND source_ids @> ARRAY[OLD.id];
+        RETURN NULL;
+    END
+    $fn$;
+    CREATE TRIGGER transcript_lines_drop_theatre
+        AFTER DELETE ON transcript_lines
+        FOR EACH ROW EXECUTE FUNCTION theatre_drop_for_deleted_line();
+    CREATE FUNCTION theatre_drop_for_changed_line() RETURNS trigger
+        LANGUAGE plpgsql
+        AS $fn$
+    BEGIN
+        DELETE FROM theatre_lines
+            WHERE guild_id = OLD.guild_id AND session_id = OLD.session_id;
+        RETURN NULL;
+    END
+    $fn$;
+    CREATE TRIGGER transcript_lines_stale_theatre
+        AFTER UPDATE OF heard, text, entity, user_id ON transcript_lines
+        FOR EACH ROW
+        WHEN (OLD.heard IS DISTINCT FROM NEW.heard OR OLD.text IS DISTINCT FROM NEW.text
+              OR OLD.entity IS DISTINCT FROM NEW.entity OR OLD.user_id IS DISTINCT FROM NEW.user_id)
+        EXECUTE FUNCTION theatre_drop_for_changed_line();
     """ + _isolate("theatre_lines")
 
 SQL = THEATRE_LINES

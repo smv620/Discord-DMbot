@@ -17,7 +17,7 @@ START = 1_700_000_000
 MS = START * 1000
 
 
-class TheScript(NamesTest):
+class ScriptCase(NamesTest):
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
         self.transcripts = TranscriptStore(self.db)
@@ -59,6 +59,8 @@ class TheScript(NamesTest):
             row: Any = await cur.fetchone()
             return int(row["n"])
 
+
+class TheScript(ScriptCase):
     async def test_a_script_is_saved_in_order_and_read_back(self) -> None:
         done = await self.theatre.replace(GUILD, self.session, self.rows())
         self.assertEqual((done.kept, done.dropped), (4, 0))
@@ -196,3 +198,76 @@ class TheScript(NamesTest):
 
             await theatre_store.forget_person(conn, GUILD + 1, TAVIN)
         self.assertEqual(await self.count(), 4)
+
+
+class TheTriggers(ScriptCase):
+    """Erasing is structural: plain SQL on transcript_lines, no store method involved."""
+
+    async def sql(self, query: str, args: tuple[Any, ...]) -> None:
+        async with self.db.guild(GUILD) as conn:
+            await conn.execute(query, args)
+
+    async def test_deleting_a_line_removes_the_rows_that_cite_it_and_only_those(self) -> None:
+        await self.theatre.replace(GUILD, self.session, self.rows())
+        await self.sql("DELETE FROM transcript_lines WHERE id = %s", (self.ids[1],))
+        got = await self.theatre.read(GUILD, self.session)
+        self.assertEqual(
+            [r.source_ids for r in got], [(self.ids[0],), (self.ids[2],), (self.ids[3],)]
+        )
+
+    async def test_changing_what_a_line_says_removes_the_sessions_script(self) -> None:
+        await self.theatre.replace(GUILD, self.session, self.rows())
+        await self.sql(
+            "UPDATE transcript_lines SET text = 'Changed.' WHERE id = %s", (self.ids[0],)
+        )
+        self.assertEqual(await self.count(), 0)
+
+    async def test_changing_who_said_it_or_whose_it_is_removes_the_sessions_script(self) -> None:
+        for column, value in (("entity", "Kell"), ("user_id", 99), ("heard", "different")):
+            with self.subTest(column):
+                await self.theatre.replace(GUILD, self.session, self.rows())
+                self.assertGreater(await self.count(), 0)
+                await self.sql(
+                    f"UPDATE transcript_lines SET {column} = %s WHERE id = %s",
+                    (value, self.ids[0]),
+                )
+                self.assertEqual(await self.count(), 0)
+
+    async def test_an_update_that_changes_nothing_removes_nothing(self) -> None:
+        await self.theatre.replace(GUILD, self.session, self.rows())
+        await self.sql("UPDATE transcript_lines SET text = text WHERE id = %s", (self.ids[0],))
+        await self.sql("UPDATE transcript_lines SET topic = topic WHERE id = %s", (self.ids[0],))
+        self.assertEqual(await self.count(), 4)
+
+    async def test_another_sessions_script_is_untouched(self) -> None:
+        other = await self.transcripts.open_session(GUILD, self.campaign.id, START + 5000)
+        await self.transcripts.add_lines(GUILD, other, [Line(MS + 9_000_000, TAVIN, "x", "x")])
+        async with self.db.guild(GUILD) as conn:
+            cur = await conn.execute(
+                "SELECT id FROM transcript_lines WHERE session_id = %s", (other,)
+            )
+            theirs = int((await cur.fetchone())["id"])  # type: ignore[index]
+        await self.theatre.replace(GUILD, self.session, self.rows())
+        await self.theatre.replace(GUILD, other, [Row(TAVIN, "Hi.", (theirs,))])
+        await self.sql(
+            "UPDATE transcript_lines SET text = 'Changed.' WHERE id = %s", (self.ids[0],)
+        )
+        self.assertEqual(await self.theatre.read(GUILD, self.session), [])
+        self.assertEqual(len(await self.theatre.read(GUILD, other)), 1)
+
+    async def test_another_servers_script_is_untouched(self) -> None:
+        elsewhere = await self.campaigns.create(GUILD + 1, "Elsewhere", DM_USER)
+        theirs = await self.transcripts.open_session(GUILD + 1, elsewhere.id, START)
+        await self.transcripts.add_lines(GUILD + 1, theirs, [Line(MS + 1000, TAVIN, "hi", "hi")])
+        async with self.db.guild(GUILD + 1) as conn:
+            cur = await conn.execute(
+                "SELECT id FROM transcript_lines WHERE session_id = %s", (theirs,)
+            )
+            line = int((await cur.fetchone())["id"])  # type: ignore[index]
+        await self.theatre.replace(GUILD + 1, theirs, [Row(TAVIN, "Hi.", (line,))])
+        await self.theatre.replace(GUILD, self.session, self.rows())
+        await self.sql(
+            "UPDATE transcript_lines SET text = 'Changed.' WHERE id = %s", (self.ids[0],)
+        )
+        await self.sql("DELETE FROM transcript_lines WHERE id = %s", (self.ids[1],))
+        self.assertEqual(len(await self.theatre.read(GUILD + 1, theirs)), 1)

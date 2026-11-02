@@ -7,11 +7,13 @@ Two promises are kept here and not left to the caller:
   transaction that saves it, and drops a row when any is gone (a person erased their words while
   the AI was away) or when a source is not in this session. It also drops a row whose speaker is not
   one of its sources' speakers. Counts only come back.
-- **A row goes with the words it holds.** `forget_person`, `forget_session` and `forget_sources`
-  are called by the transcript store's own paths in their transaction: `delete_person`, a session's
-  retention, a stopped person's saved lines taken back (`remove_lines`), and every rewrite of a
-  line's cleaned words or speaker (an Undo, a respell and its undo, an import's cleaning), which
-  make the whole session's script out of date. A deleted session or campaign cascades.
+- **A row goes with the words it holds, structurally.** Two triggers on `transcript_lines`
+  (migration 0317) remove the script rows that cite a line when it is deleted, and the session's
+  whole script when a line's words, speaker or owner change, so no path (an Undo, a respell and its
+  undo, an import's cleaning, a stopped person's lines taken back, any future one) can forget.
+  `forget_person` and `forget_session` are called as well by `delete_person` and a session's
+  retention: a person's rows are found by the id they list, whoever else spoke in them. A deleted
+  session or campaign cascades.
 
 The store does not know who still agrees to be recorded: the run (slice 3) builds its scenes only
 from consenting people (`theatre.scenes`) and checks again before it saves. A save with no rows
@@ -161,16 +163,5 @@ async def forget_session(conn: Any, guild_id: int, session_id: str) -> int:
     transcript is deleted by retention; the session row stays, so the cascade does not fire)."""
     cur = await conn.execute(
         "DELETE FROM theatre_lines WHERE guild_id = %s AND session_id = %s", (guild_id, session_id)
-    )
-    return int(cur.rowcount)
-
-
-async def forget_sources(conn: Any, guild_id: int, session_id: str, line_ids: Sequence[int]) -> int:
-    """Every script line made from any of these transcript lines, in the caller's transaction
-    (called when saved lines are taken back out). The caller has locked the session's row first."""
-    cur = await conn.execute(
-        "DELETE FROM theatre_lines WHERE guild_id = %s AND session_id = %s"
-        " AND source_ids && %s::bigint[]",
-        (guild_id, session_id, list(line_ids)),
     )
     return int(cur.rowcount)
