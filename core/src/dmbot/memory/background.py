@@ -24,6 +24,7 @@ from typing import Any
 
 from dmbot.memory import kin
 from dmbot.memory import reputation_words as feeling_words
+from dmbot.memory.backstory_links import QUOTE_MAX
 from dmbot.memory.end_match import FILLER, SHORTEST, Ends
 from dmbot.memory.models import name_key
 from dmbot.memory.ontology import DISGUISED_AS, FALLBACK_PREDICATE, SYNONYMS
@@ -385,32 +386,52 @@ _BREAK = re.compile(r"[\n\r\u2028\u2029\x85]")
 
 REACH_SENTENCES = 3  # how many sentences back a pronoun's name may stand (#2757)
 REACH_WORDS = 60  # the most words of a quote that reaches back (the AI's own: `QUOTE_WORDS`)
-# The waiting-connection queue keeps a quote to 400 characters and cuts the END (the pronoun's
-# own sentence), so a window that long is never offered.
-REACH_CHARS = 400
+# The waiting-connection queue keeps a quote to `QUOTE_MAX` characters and cuts the END (the
+# pronoun's own sentence), so a window longer than that is never offered.
+REACH_CHARS = QUOTE_MAX
 
 
 def reach_names(keys: Iterable[str]) -> set[str]:
-    """The name keys a reach looks for as a third name: every key given, and a first word that
-    only one key starts with ("Brannoch" for "Brannoch Ashe"), since a text says a name short."""
+    """The name keys a reach looks for as a third name: every key given, and the first word of
+    every longer key ("Brannoch" for "Brannoch Ashe"), since a text says a name short. A first word
+    that two names share ("Pell" for Pell Ashe and Pell Voss) counts too: it is a name in the text
+    whichever of them is meant, and either way it is not the pair's own."""
     full = {k for k in keys if k}
-    firsts = Counter(k.split()[0] for k in full if len(k.split()) > 1)
-    return full | {w for w, n in firsts.items() if n == 1 and len(w) > SHORTEST}
+    return full | {
+        k.split()[0] for k in full if len(k.split()) > 1 and len(k.split()[0]) > SHORTEST
+    }
+
+
+_POSSESSIVE_RELATIVE = re.compile(
+    r"\b(?:his|her|their)\s+(?:[\w'’-]+\s+){0,2}[\w'’-]+\s*,\s*$", re.I
+)
 
 
 def _third_name(span: str, others: Collection[str], ends: Collection[str]) -> bool:
     """Whether a name of the campaign or the read other than the pair's own stands in the span
     (a capitalised run of up to four words, so "boy" in running text is no name): then the
-    pronoun may mean that one, and no reach is made."""
-    tokens = re.findall(r"\w+(?:['’-]\w+)*", span)
+    pronoun may mean that one, and no reach is made. A name introduced as one of the same
+    person's own ("His elder brother, Vaelrith, vanished, while his younger sister, ...") does
+    not count: "his" before and after it means the same person, and the second relative is the
+    very case a reach is for (#3238)."""
+    tokens = [(m.group(), m.start()) for m in re.finditer(r"\w+(?:['’-]\w+)*", span)]
     # ("Pell's cousin" names Pell: a possessive ending is taken off the last word of a name)
-    tokens = [re.sub(r"['’]s$", "", t, flags=re.I) if t[:1].isupper() else t for t in tokens]
-    for i, token in enumerate(tokens):
+    tokens = [
+        (re.sub(r"['’]s$", "", t, flags=re.I) if t[:1].isupper() else t, at) for t, at in tokens
+    ]
+    for i, (token, at) in enumerate(tokens):
         if not token[:1].isupper():
             continue
         for size in range(1, 5):
-            gram = name_key(" ".join(tokens[i : i + size]))
+            gram = name_key(" ".join(t for t, _ in tokens[i : i + size]))
             if gram and gram in others and gram not in ends:
+                # (only within one sentence: across a full stop the relative can be the new
+                # antecedent, "His brother, Daric, was a smith. His wife, Ana, ...")
+                if _POSSESSIVE_RELATIVE.search(span[max(0, at - 60) : at]) and not re.search(
+                    r"[.!?]",
+                    span[at:].rstrip(".!?…\"'”’ "),  # (the span's own last stop is no break)
+                ):
+                    break  # (this occurrence is "his <relative>, Name": not a new possessor)
                 return True
     return False
 

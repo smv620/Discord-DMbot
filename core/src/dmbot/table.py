@@ -21,6 +21,7 @@ from dmbot.campaigns.models import (
     DEFAULT_DM_SCREEN_LEVEL,
 )
 from dmbot.capture_log import CaptureLog, SessionTotals
+from dmbot.dm_questions import Ask
 from dmbot.dm_screen import (
     rules_cards,
 )
@@ -230,6 +231,9 @@ class Table:
     # How many things said at the table wait for the DM's check (#2410): counted by the "what was
     # said" step, told by the summary when it goes to the DM screen, else posted on its own.
     claims_waiting: int = 0
+    # The questions the after-session steps have for the DM (#3210), collected so they go out as
+    # one message. None means "not collecting": a question is then sent at once, on its own.
+    asks: list[Ask] | None = None
     # The first few of them in words ("**Bram** carries **Heartseeker**? (a player said)"), for the
     # DM-only summary. Never posted where a player can read: the screen post says the count only.
     claim_preview: list[str] = field(default_factory=list)
