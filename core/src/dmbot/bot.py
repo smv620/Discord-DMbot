@@ -4553,7 +4553,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         this message was one, so no other path looks at it and it is handled once. The table's
         chat is the channel the DM picked, else the voice channel's own text chat, and only this
         campaign's: another campaign's has a different id and is never read. A question calls
-        DMbot ("Hey DMbot, ...") or ends with a question mark (`is_table_question`); anything
+        DMbot ("Hey DMbot, ..." or "DMbot" at the start, `is_table_question`); a question mark alone
+        does not, since it is ordinary talk in the voice channel's chat; anything
         else is ordinary chat, which falls through to the typed-chat path. Only from someone who
         agreed to be recorded; bots, DMbot itself and commands are never answered. A DM's
         statement is never a question, so it gets no Q line (#3209)."""

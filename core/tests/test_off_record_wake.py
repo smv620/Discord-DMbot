@@ -162,8 +162,12 @@ class Wake(unittest.IsolatedAsyncioTestCase):
         self.bot.sidebar.ask_in_chat = lambda table, user, text: asked.append(text)
         self.bot._hear_table_question(self.chat(MIA, "Hey DMbot, off the record"))
         self.assertEqual((self.woken, asked), ([(GUILD, MIA)], []))
-        self.bot._hear_table_question(self.chat(MIA, "does fireball need line of sight?"))
-        self.assertEqual(asked, ["does fireball need line of sight?"])  # a question still is one
+        self.bot._hear_table_question(
+            self.chat(MIA, "Hey DMbot, does fireball need line of sight?")
+        )
+        self.assertEqual(
+            asked, ["Hey DMbot, does fireball need line of sight?"]
+        )  # a question still is one
 
     def chat(self, user: int, text: str) -> Any:
         message = MagicMock()
@@ -216,8 +220,10 @@ class Wake(unittest.IsolatedAsyncioTestCase):
         self.consent.pause(GUILD, MIA, 300)
         asked: list[tuple[int, str]] = []
         self.bot.sidebar.ask_in_chat = lambda table, user, text: asked.append((user, text))
-        self.bot._hear_table_question(self.chat(MIA, "does fireball need line of sight?"))
-        self.assertEqual(asked, [(MIA, "does fireball need line of sight?")])
+        self.bot._hear_table_question(
+            self.chat(MIA, "Hey DMbot, does fireball need line of sight?")
+        )
+        self.assertEqual(asked, [(MIA, "Hey DMbot, does fireball need line of sight?")])
         self.assertEqual(self.kept(), [])  # and the chat line itself is no transcript line
 
     async def test_in_character_off_the_record_never_pauses_anyone(self) -> None:

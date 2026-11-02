@@ -549,7 +549,7 @@ class SidebarService:
 
     def ask_in_chat(self, table: Table, user_id: int, text: str) -> bool:
         """A question typed in the table's chat (#1187, #3212): the caller has already checked that
-        it calls DMbot or ends with a question mark. Only from someone who agreed to be
+        it calls DMbot ("Hey DMbot, …"). Only from someone who agreed to be
         recorded; anyone else is shown the agree button once a session, and what they typed goes
         nowhere."""
         if self.answerer is None or table.campaign_id is None:

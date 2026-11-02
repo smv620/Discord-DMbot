@@ -227,7 +227,7 @@ class LinkAllowlist(unittest.TestCase):
 
 
 def message(
-    text: str = "does fireball need line of sight?",
+    text: str = "Hey DMbot, does fireball need line of sight?",
     *,
     channel: int = CHAT,
     author: int = PLAYER,
@@ -259,7 +259,9 @@ class TheChatHook(unittest.TestCase):
 
     def test_a_question_there_is_asked_for_its_author(self) -> None:
         self.assertTrue(self.bot._hear_table_question(message()))
-        self.asked.assert_called_once_with(self.table, PLAYER, "does fireball need line of sight?")
+        self.asked.assert_called_once_with(
+            self.table, PLAYER, "Hey DMbot, does fireball need line of sight?"
+        )
 
     def test_the_voice_channels_own_chat_counts_when_none_was_picked(self) -> None:
         self.table.chat_channel_id = None
@@ -270,6 +272,17 @@ class TheChatHook(unittest.TestCase):
     def test_ordinary_chat_is_left_to_the_typed_chat_path(self) -> None:
         self.assertFalse(self.bot._hear_table_question(message("we go through the north door")))
         self.asked.assert_not_called()
+
+    def test_a_question_mark_alone_does_not_call_dmbot(self) -> None:
+        for text in ("anyone got a spare d20?", "Mira, are you casting?", "who goes first?"):
+            for who in (PLAYER, DM):
+                self.assertFalse(self.bot._hear_table_question(message(text, author=who)))
+        self.asked.assert_not_called()  # read as ordinary typed chat, no Q line, no limit used
+
+    def test_dmbot_at_the_start_calls_it(self) -> None:
+        text = "DMbot what's the range of misty step?"
+        self.assertTrue(self.bot._hear_table_question(message(text)))
+        self.asked.assert_called_once_with(self.table, PLAYER, text)
 
     def test_bots_webhooks_and_dmbot_itself_are_never_answered(self) -> None:
         cast(Any, self.bot._connection).user = SimpleNamespace(id=999)
@@ -306,7 +319,7 @@ class TheChatHook(unittest.TestCase):
 
 class TheDmsStatements(unittest.IsolatedAsyncioTestCase):
     """#3209 in the table's chat (#3212): a DM's statement is never a table question, so it gets no
-    Q line; only a question (calls DMbot, or ends with a question mark) is answered."""
+    Q line; only a message that calls DMbot is answered."""
 
     def setUp(self) -> None:
         self.bot = make_bot()
@@ -329,7 +342,7 @@ class TheDmsStatements(unittest.IsolatedAsyncioTestCase):
 
     async def test_a_question_to_dmbot_or_with_a_question_mark_is_answered(self) -> None:
         for text in (
-            "does fireball need line of sight?",
+            "Hey DMbot, does fireball need line of sight?",
             "Hey DMbot, what does grappling need",
             "DMbot, how far can a rogue jump",
         ):
@@ -346,7 +359,7 @@ class TheDmsStatements(unittest.IsolatedAsyncioTestCase):
         typed = MagicMock()
         self.bot._hear_typed = typed  # type: ignore[method-assign]
         self.bot._chat_channel_allowed = AsyncMock(return_value=True)  # type: ignore[method-assign]
-        await self.bot.on_message(message("a question here?", author=DM))
+        await self.bot.on_message(message("Hey DMbot, a question here", author=DM))
         typed.assert_not_called()  # a question is not also read as table chat
         await self.bot.on_message(message("a statement of more than four words here", author=DM))
         typed.assert_called_once()  # ordinary chat is, once
@@ -388,5 +401,5 @@ class TheChatThroughOnMessage(unittest.IsolatedAsyncioTestCase):
         asked = MagicMock()
         bot.sidebar.ask_in_chat = asked  # type: ignore[method-assign]
         bot._chat_channel_allowed = AsyncMock(return_value=True)  # type: ignore[method-assign]
-        await bot.on_message(message("does fireball need line of sight?", author=DM))
-        asked.assert_called_once_with(table, DM, "does fireball need line of sight?")
+        await bot.on_message(message("Hey DMbot, does fireball need line of sight?", author=DM))
+        asked.assert_called_once_with(table, DM, "Hey DMbot, does fireball need line of sight?")
