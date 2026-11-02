@@ -149,6 +149,35 @@ R2 = {
 }
 
 
+class TheQuery(unittest.IsolatedAsyncioTestCase):
+    """The signed query must be the encoded one SigV4 wants: every character but A-Z a-z 0-9
+    - _ . ~ as %XX, so a "/" is %2F (a guild/campaign prefix) and a base64 token's "+", "/" and
+    "=" are %2B, %2F and %3D."""
+
+    async def test_a_prefix_and_a_base64_token_are_fully_encoded_and_sorted(self) -> None:
+        ns = 'xmlns="http://s3.amazonaws.com/doc/2006-03-01/"'
+        pages = [
+            f"<ListBucketResult {ns}><IsTruncated>true</IsTruncated>"
+            "<NextContinuationToken>ab/+==</NextContinuationToken></ListBucketResult>",
+            f"<ListBucketResult {ns}><IsTruncated>false</IsTruncated></ListBucketResult>",
+        ]
+        urls: list[str] = []
+
+        async def transport(
+            method: str, url: str, headers: dict[str, str], data: bytes
+        ) -> tuple[int, bytes]:
+            urls.append(url)
+            return 200, pages[len(urls) - 1].encode()
+
+        b = Bucket("acct", "pics", ACCESS, SECRET, transport=transport, clock=lambda: NOW)
+        await b.keys("12/ab c/")
+        self.assertEqual(urls[0].split("?", 1)[1], "list-type=2&prefix=12%2Fab%20c%2F")
+        self.assertEqual(
+            urls[1].split("?", 1)[1],
+            "continuation-token=ab%2F%2B%3D%3D&list-type=2&prefix=12%2Fab%20c%2F",
+        )
+
+
 class ShortList(unittest.IsolatedAsyncioTestCase):
     async def test_a_cut_list_without_a_token_is_an_error_not_a_short_answer(self) -> None:
         ns = 'xmlns="http://s3.amazonaws.com/doc/2006-03-01/"'
