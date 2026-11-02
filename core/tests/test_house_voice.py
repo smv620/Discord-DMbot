@@ -730,9 +730,6 @@ class Words(unittest.TestCase):
 
 from dmbot.rules import house_voice as house_voice_module  # noqa: E402
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class InPrivateChats(TableTest):
     """The offer goes to every DM's private chat (#3210): one DM saves it, the other DM's copy
@@ -768,10 +765,42 @@ class InPrivateChats(TableTest):
         late = MagicMock(id=3, content="proposal", edit=AsyncMock())
 
         async def ask_live(table_: Any, _text: str, _make: Any, on_sent: Any = None) -> Any:
-            self.table.house_voice.proposals.clear()  # answered while sending
+            self.table.house_settled.add(next(iter(self.table.house_voice.proposals)))  # settled
             on_sent(late)
             return [late]
 
         self.bot.ask_live = ask_live  # type: ignore[method-assign,assignment]
         await self.deliver("house rule: potions are a bonus action")
         self.assertIn("Another DM answered", late.edit.await_args.kwargs["content"])
+
+    async def test_a_claimed_offer_is_not_settled_so_copies_sent_meanwhile_stay_live(self) -> None:
+        late = MagicMock(id=3, content="proposal", edit=AsyncMock())
+
+        async def ask_live(_t: Any, _text: str, _make: Any, on_sent: Any = None) -> Any:
+            self.table.house_voice.proposals.clear()  # claimed while a DM answers the disagreement
+            on_sent(late)
+            return [late]
+
+        self.bot.ask_live = ask_live  # type: ignore[method-assign,assignment]
+        await self.deliver("house rule: potions are a bonus action")
+        late.edit.assert_not_awaited()  # the question may be cancelled and the offer given back
+        (pid,) = self.table.house_copies
+        self.assertEqual(self.table.house_copies[pid], [late])
+
+    async def test_cancel_tells_the_other_dm_and_a_non_dm_is_refused(self) -> None:
+        _mine, other, view = await self.offer_to_two_dms()
+        it = self.interaction(PLAYER)
+        it.guild, it.guild_id = None, None
+        it.response.send_message = AsyncMock()
+        await self.button(view, "Cancel").callback(it)
+        other.edit.assert_not_awaited()  # not a DM: nothing happened
+        self.assertIn("Only this campaign's DMs", it.response.send_message.await_args.args[0])
+        it = self.interaction()
+        it.guild, it.guild_id = None, None
+        it.user.display_name = "Sam"
+        await self.button(view, "Cancel").callback(it)
+        self.assertIn("Cancelled", other.edit.await_args.kwargs["content"])
+
+
+if __name__ == "__main__":
+    unittest.main()

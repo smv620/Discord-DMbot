@@ -6064,7 +6064,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         def keep(message: discord.Message) -> None:
             """Known as soon as it is sent, so an answer that comes while the other DMs' copies
             are still going out finds it (`finish_house_copies`)."""
-            if proposal_id in table.house_voice.proposals:
+            if proposal_id not in table.house_settled:
                 table.house_copies.setdefault(proposal_id, []).append(message)
                 registered.append(message)
 
@@ -6079,11 +6079,14 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             log.exception("Couldn't post a house rule proposal")
             posted = []
         if not posted:
+            for message in table.house_copies.pop(proposal_id, []):  # (a partial send)
+                with contextlib.suppress(discord.HTTPException):
+                    await message.edit(content=house_voice_screen.CLOSED, view=None)
             table.house_voice.forget(proposal_id, before, now)
             return
-        if proposal_id not in table.house_voice.proposals:
-            # Answered (or cancelled) while the copies were going out: the ones the answer did
-            # not reach are taken down too.
+        if proposal_id in table.house_settled:
+            # Settled while the copies were going out: the ones the answer did not reach are
+            # taken down too.
             for message in posted:
                 if message not in registered:
                     with contextlib.suppress(discord.HTTPException):
@@ -6097,6 +6100,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         table = self.tables.get(guild_id)
         if table is None:
             return
+        table.house_settled.add(proposal_id)
         name = discord.utils.escape_markdown(who)
         for message in table.house_copies.pop(proposal_id, []):
             if message.id != pressed_message_id:

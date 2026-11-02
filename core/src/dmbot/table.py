@@ -191,6 +191,9 @@ class Table:
     house_voice: house_voice.HouseVoice = field(default_factory=house_voice.HouseVoice)
     # Every copy of an open house-rule offer, one in each DM's private chat, by offer id (#3210).
     house_copies: dict[str, list[discord.Message]] = field(default_factory=dict)
+    # Offers settled for good (saved, replaced or cancelled), as opposed to merely claimed while a
+    # DM answers the disagreement question, which can still be given back.
+    house_settled: set[str] = field(default_factory=set)
     # When a rest said at the table last moved the game clock, by kind (monotonic seconds):
     # the same phrase twice in a few minutes is one rest (#965).
     clock_said: dict[str, float] = field(default_factory=dict)

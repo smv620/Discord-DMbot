@@ -716,7 +716,9 @@ class ProposalForm(AddForm, title="Edit before saving"):
             if message is not None:
                 with contextlib.suppress(discord.HTTPException):
                     await message.edit(content=f"{message.content}\n{note}", view=None)
-                await house_voice_screen.finish_copies(where, self.proposal_id, message.id, note)
+                await house_voice_screen.finish_copies(
+                    where, c.guild_id, self.proposal_id, message.id, note
+                )
             await file_ui.send_after_change(where, c, note)
 
         def give_back() -> None:
@@ -767,7 +769,9 @@ class ProposalForm(AddForm, title="Edit before saving"):
         else:
             await interaction.response.edit_message(content=f"{message.content}\n{note}", view=None)
         if message is not None:
-            await house_voice_screen.finish_copies(interaction, self.proposal_id, message.id, note)
+            await house_voice_screen.finish_copies(
+                interaction, self.campaign.guild_id, self.proposal_id, message.id, note
+            )
 
 
 class EditForm(_RuleForm, title="Edit a house rule"):
