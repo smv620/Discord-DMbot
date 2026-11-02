@@ -134,7 +134,7 @@ class Live(unittest.IsolatedAsyncioTestCase):
             order.append(user_id)
             if not reach[user_id]:
                 return None
-            return SimpleNamespace(id=100 + user_id, text=text, edit=AsyncMock())
+            return SimpleNamespace(id=100 + user_id, text=text, content=text, edit=AsyncMock())
 
         return SimpleNamespace(
             campaigns=SimpleNamespace(get=AsyncMock(return_value=campaign)),
@@ -259,6 +259,82 @@ class Live(unittest.IsolatedAsyncioTestCase):
             table.question_messages = [copy]
             DMBot._retire_copies(cast(Any, me), table, f"q{n}", copy.id)
         self.assertLessEqual(len(table.closed_copies), 20)
+
+    async def test_the_session_start_repost_goes_to_every_dm_and_each_copy_is_remembered(
+        self,
+    ) -> None:
+        # #3210: players' suggested fixes. Both DMs get the line, and each copy is remembered so
+        # the other loses its buttons when one DM answers (`decision_lines`).
+        from dmbot.ui.decision_lines import DecisionLines
+
+        me = self.bot({7: True, 8: True})
+        me.decision_lines = DecisionLines()
+        table = self.table()
+        sent: list[Any] = []
+
+        def remember(message: Any) -> None:
+            sent.append(message)
+            me.decision_lines.remember(("fix", 5), message)
+
+        messages: list[Any] = await DMBot.ask_live(
+            cast(Any, me),
+            table,
+            "✏️ **Ana** suggests a fix",
+            lambda: discord.ui.View(timeout=None),
+            remember,
+        )
+        self.assertEqual(len(messages), 2)
+        self.assertEqual(len(sent), 2)
+        await me.decision_lines.close(("fix", 5), "Accepted.", pressed_id=messages[0].id)
+        messages[0].edit.assert_not_awaited()  # the answerer's own message
+        messages[1].edit.assert_awaited_once()  # the other DM's copy loses its buttons
+        self.assertIsNone(messages[1].edit.await_args.kwargs["view"])
+
+    async def test_tell_dms_names_the_campaign_and_reaches_every_dm(self) -> None:
+        me = self.bot({7: True, 8: True})
+        sent: list[tuple[int, str]] = []
+
+        async def send_dm(user_id: int, text: str, view: Any = None) -> str:
+            sent.append((user_id, text))
+            return "forbidden" if user_id == 7 else "sent"
+
+        me.sidebar_send_dm = send_dm
+        await DMBot.tell_dms(cast(Any, me), self.table(), "…and 2 more.")
+        self.assertEqual([u for u, _ in sent], [7, 8])  # a closed DM does not stop the other
+        self.assertTrue(sent[1][1].startswith("❓ **DMbot has a question** · "))
+        self.assertIn("\\*Table\\*", sent[1][1])
+        me.post_message.assert_not_awaited()  # one DM got it: nothing on the screen
+
+    async def test_tell_dms_falls_back_to_the_screen_and_never_raises(self) -> None:
+        me = self.bot({7: True})
+
+        async def closed(user_id: int, text: str, view: Any = None) -> str:
+            return "forbidden"
+
+        me.sidebar_send_dm = closed
+        await DMBot.tell_dms(cast(Any, me), self.table(), "…and 2 more.")
+        me.post_message.assert_awaited_once()
+        self.assertEqual(me.post_message.await_args.args[1], "…and 2 more." + NO_PRIVATE_MESSAGE)
+
+        async def boom(user_id: int, text: str, view: Any = None) -> str:
+            raise RuntimeError("boom")
+
+        me.sidebar_send_dm = boom
+        me.post_message.reset_mock()
+        with self.assertLogs("dmbot.bot", level="ERROR"):
+            await DMBot.tell_dms(cast(Any, me), self.table(), "…and 2 more.")
+        me.post_message.assert_awaited_once()  # a failing DM counts as not reached
+
+    async def test_more_copies_than_the_old_cap_all_lose_their_buttons(self) -> None:
+        from dmbot.ui.decision_lines import DecisionLines
+
+        lines = DecisionLines()
+        copies = [SimpleNamespace(id=n, content="x", edit=AsyncMock()) for n in range(1, 11)]
+        for copy in copies:
+            lines.remember(("fix", 1), copy)
+        await lines.close(("fix", 1), "Accepted.", pressed_id=copies[-1].id)
+        for copy in copies[:-1]:
+            copy.edit.assert_awaited_once()  # none left with live buttons
 
     async def test_a_question_that_runs_out_edits_every_copy(self) -> None:
         me = self.bot({7: True, 8: True})
