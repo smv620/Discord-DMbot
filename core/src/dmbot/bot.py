@@ -2013,7 +2013,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             if table.questions.drop_speaker(user_id, time.monotonic()) is not None:
                 self._track(self._close_question(table), "name-question")
             if table.speaker_questions.drop_speaker(user_id, time.monotonic()) is not None:
-                self._track(self._close_speaker_question(table, speaker_q.GONE), "speaker-q")
+                self._track(
+                    self._close_speaker_question(self._take_speaker_copies(table), speaker_q.GONE),
+                    "speaker-q",
+                )
             for key in [k for k in table.heard_counts if k[1] == user_id]:
                 del table.heard_counts[key]
 
@@ -2799,7 +2802,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         speaker_book = table.speaker_questions  # likewise "Who was speaking just now?"
         if not speaker_book.answering and speaker_book.close(speaker_q.ENDED, time.monotonic()):
             self._track(
-                self._close_speaker_question(table, speaker_q.not_answered_text()), "speaker-q"
+                self._close_speaker_question(
+                    self._take_speaker_copies(table), speaker_q.not_answered_text()
+                ),
+                "speaker-q",
             )
         table.fix_ended = True  # the fixes stay listed; their Undo buttons go
         self._redraw_fix_notes(table)
@@ -6596,7 +6602,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         now = time.monotonic()
         if table.speaker_questions.expire(now) is not None:
             self._track(
-                self._close_speaker_question(table, speaker_q.not_answered_text()), "speaker-q"
+                self._close_speaker_question(
+                    self._take_speaker_copies(table), speaker_q.not_answered_text()
+                ),
+                "speaker-q",
             )
         guessed = speaker_ai.check_entity(lookup, guess.entity)
         said = speaker_ai.offered(lookup, last_said, table.speaker_book)
@@ -6634,34 +6643,59 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             return
         if book.is_open(asked.id):
             return
-        closed = (  # closed while sending: say how, on the copies the close did not reach
-            speaker_q.GONE
-            if book.why_closed(asked.id) == speaker_q.STOPPED
-            else speaker_q.not_answered_text()
-        )
-        for message in messages:
+        why = book.why_closed(asked.id)
+        if why == speaker_q.ANSWERED:
+            closed = speaker_q.ANSWERED_ELSEWHERE
+        elif why == speaker_q.STOPPED:
+            closed = speaker_q.GONE
+        else:
+            closed = speaker_q.not_answered_text()
+        for message in messages:  # closed while sending: say how, on the copies the close missed
             if message not in registered:
                 with contextlib.suppress(discord.HTTPException):
                     await message.edit(content=closed, view=None)
 
-    async def _close_speaker_question(self, table: Table, text: str) -> None:
+    def _take_speaker_copies(self, table: Table) -> list[discord.Message]:
+        """The open question's copies, taken at the moment it closes (not when the tracked edit
+        runs), so a question asked straight after never has its copies edited away."""
+        copies, table.speaker_messages = table.speaker_messages, []
+        return copies
+
+    async def _close_speaker_question(self, copies: list[discord.Message], text: str) -> None:
         """Take the question's buttons down in every copy, saying why."""
-        messages, table.speaker_messages = table.speaker_messages, []
-        for message in messages:
+        for message in copies:
             with contextlib.suppress(discord.HTTPException):
                 await message.edit(content=text, view=None)
 
+    def _retire_speaker_copies(self, table: Table, question_id: str, closer_id: int | None) -> None:
+        """The question was answered: keep its copies with the id of the message that answered,
+        for `finish_speaker_copies` (the same idea as `_retire_copies`)."""
+        copies = self._take_speaker_copies(table)
+        if copies:
+            table.closed_copies[question_id] = (closer_id, copies)
+            while len(table.closed_copies) > 20:
+                table.closed_copies.pop(next(iter(table.closed_copies)))
+
     async def finish_speaker_copies(
-        self, guild_id: int, pressed_message_id: int | None, text: str, answered_by: str
+        self,
+        guild_id: int,
+        question_id: str,
+        pressed_message_id: int | None,
+        text: str,
+        answered_by: str,
     ) -> None:
-        """A DM answered the speaker question (#3210): edit the copies in the other DMs' chats
-        to "Answered by <name>: <the answer>". The answerer's own message is left alone."""
-        table = self.tables.get(guild_id)
-        if table is None or pressed_message_id is None:
+        """A DM answered the speaker question (#3210): edit the other copies to "Answered by
+        <name>: <the answer>". Only the press that closed the question does this: a stale or
+        failed press finds a different closer (or none) and changes nothing."""
+        table = self._speaker_table(guild_id, question_id)
+        if table is None:
             return
-        messages, table.speaker_messages = table.speaker_messages, []
+        closed = table.closed_copies.get(question_id)
+        if closed is None or pressed_message_id is None or closed[0] != pressed_message_id:
+            return
+        table.closed_copies.pop(question_id, None)
         who = discord.utils.escape_markdown(answered_by)
-        for message in messages:
+        for message in closed[1]:
             if message.id != pressed_message_id:
                 with contextlib.suppress(discord.HTTPException):
                     await message.edit(content=f"Answered by {who}: {text}", view=None)
@@ -6676,7 +6710,13 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         return None
 
     async def answer_speaker_question(
-        self, guild_id: int, question_id: str, pick: str, user_id: int, typed: str | None = None
+        self,
+        guild_id: int,
+        question_id: str,
+        pick: str,
+        user_id: int,
+        typed: str | None = None,
+        message_id: int | None = None,
     ) -> tuple[str, bool]:
         """The DM answered "Who was speaking just now?" (#53): what to tell them, and
         whether the question is now closed (its message then shows the answer). The name
@@ -6701,6 +6741,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         try:
             if pick == speaker_q.SKIP:
                 book.close(speaker_q.ANSWERED, time.monotonic())
+                self._retire_speaker_copies(table, question_id, message_id)
                 return speaker_q.SKIPPED, True
             wanted = typed if pick == speaker_q.TYPE else speaker_q.pick_to_name(asked, pick)
             # As they are now (a name may have been made secret since), and never waited on
@@ -6726,6 +6767,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             raise
         if book.is_open(question_id):
             book.close(speaker_q.ANSWERED, time.monotonic())
+            self._retire_speaker_copies(table, question_id, message_id)
         return speaker_q.answered_text(discord.utils.escape_markdown(name)), True
 
     async def _save_entity(self, table: Table, waiting: Waiting, entity: str) -> None:
