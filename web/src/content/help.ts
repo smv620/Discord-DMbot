@@ -453,7 +453,7 @@ export const deedSteps: Step[] = [
 
 export const WHERE_ARE_WE_LIVE = false;
 
-// The players' game clock moves from its own channel into a small 🕰️ line in dmb-chat (owner, 2026-10-28; core
+// The players' game clock moves from its own channel into a small 🕰️ line in the table's chat (owner, 2026-10-28; core
 // #2877). The new sentences are true only once that is deployed, so they wait behind this switch (#2875).
 export const GAMETIME_IN_CHAT_LIVE = false;
 
@@ -725,8 +725,7 @@ export const dmSteps: Step[] = [
     ],
   },
   {
-    text: 'Ask a quick question out loud: "Hey DMbot, how long does Bless last?" The short answer is posted in the table\'s dmb-chat channel and says how sure DMbot is. You have the final say.',
-    names: [{ name: "dmb-chat", file: "dm_screen/old_chat.py" }],
+    text: 'Ask a quick question out loud: "Hey DMbot, how long does Bless last?" The short answer is posted in the voice channel\'s chat and says how sure DMbot is. You have the final say.',
   },
   {
     text: "When the game is over, type /dmbot stop.",
@@ -835,7 +834,7 @@ export const dmSteps: Step[] = [
   ...(DEEDS_LIVE ? deedSteps : []),
   // Where the rules are now that the rules channel is gone (#2875).
   {
-    text: "Your house rules are on the House rules page here, and anyone can ask DMbot about a rule in the dmb-chat channel.",
+    text: "Your house rules are on the House rules page here, and anyone can ask DMbot about a rule in the voice channel's chat.",
     link: { text: "Read your table's house rules", href: "/account/house-rules" },
   },
   ...(STORY_MODE_LIVE ? storyModeHelpSteps : []),
@@ -934,7 +933,7 @@ export const quickAnswers: Step[] = [
     text: "Quick answers work while your game is running and you have said yes to being recorded.",
   },
   {
-    text: 'Message DMbot privately, by voice or by typing, and the answer comes to you alone. Say "Hey DMbot" when the table has a dmb-chat channel, and the answer is posted there for everyone. It then uses only the free rules, your house rules and what was just said. If it needs your story, you get that answer privately.',
+    text: 'Message DMbot privately, by voice or by typing, and the answer comes to you alone. Say "Hey DMbot" in the voice channel\'s chat, and the answer is posted there for everyone. It then uses only the free rules, your house rules and what was just said. If it needs your story, you get that answer privately.',
   },
   {
     text: "DMbot answers from the free rules, your house rules, what was said in the last few minutes, and the story facts you have confirmed about the names in your question. It leaves out names you marked secret, and your own notes on names and places.",
@@ -994,8 +993,7 @@ export const transcriptStep: Step = {
 };
 
 export const heyDmBotStep: Step = {
-  text: 'Anyone at the table who said yes can ask DMbot a quick rules question: say "Hey DMbot" or type it in the dmb-chat channel. Your question is posted there with your name. Your game master has the final say.',
-  names: [{ name: "dmb-chat", file: "dm_screen/old_chat.py" }],
+  text: 'Anyone at the table who said yes can ask DMbot a quick rules question: say "Hey DMbot" or type it in the voice channel\'s chat (start with "Hey DMbot" or "DMbot"). Your question is posted there with your name. Your game master has the final say.',
 };
 
 export const fightBotStep: Step = {
@@ -1012,7 +1010,7 @@ export const playerSteps: Step[] = [
   },
   heyDmBotStep,
   {
-    text: "When you ask DMbot a question in dmb-chat, it shows the name of the character you play once your game master has said yes to it. Until then it shows your server nickname.",
+    text: "When you ask DMbot a question in the voice channel's chat, it shows the name of the character you play once your game master has said yes to it. Until then it shows your server nickname.",
   },
   transcriptStep,
   {
@@ -1106,7 +1104,7 @@ export const emailNote = "Emails are sent through Resend, a company that sends e
 
 /** Not a step to do: what players may notice at the table. */
 export const playerNote = GAMETIME_IN_CHAT_LIVE
-  ? "The game time shows in the dmb-chat channel as a small 🕰️ line whenever it changes. You do not need to do anything."
+  ? "The game time shows in the voice channel's chat as a small 🕰️ line whenever it changes. You do not need to do anything."
   : 'Your game master may show the story\'s day and time, like "Day 5, morning", in your own channel. You do not need to do anything.';
 
 /** The one support address (docs/EMAIL.md, owner's setup, #1341). Every other place on the site

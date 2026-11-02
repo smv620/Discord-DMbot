@@ -30,13 +30,13 @@ const cards: (Feature & { live?: boolean })[] = [
   },
   {
     title: 'Ask "Hey DMbot"',
-    what: "Anyone at the table who said yes can ask a quick rules question out loud or in the dmb-chat channel. The short answer is posted there, and the game master has the final say. Questions and answers go in the written record.",
+    what: "Anyone at the table who said yes can ask a quick rules question out loud or by typing in the voice channel's chat (start with 'Hey DMbot' or 'DMbot'). The short answer is posted there, and the game master has the final say. Questions and answers go in the written record.",
     example: '"Hey DMbot, how long does Bless last?" The answer says how sure DMbot is.',
   },
   {
     title: "The game clock",
     what: GAMETIME_IN_CHAT_LIVE
-      ? "The game time shows in the dmb-chat channel as a small 🕰️ line whenever it changes. The game master sees the exact time."
+      ? "The game time shows in the voice channel's chat as a small 🕰️ line whenever it changes. The game master sees the exact time."
       : "Players see the story's day and time in their own channel. The game master sees the exact time.",
     example: 'Players see "Day 5, morning". The game master can time a spell like Bless.',
   },
