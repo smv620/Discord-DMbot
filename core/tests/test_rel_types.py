@@ -70,16 +70,16 @@ class TheMatch(unittest.TestCase):
 
     def test_below_the_bar_the_readers_own_type_stands(self) -> None:
         m = rel_types.Match("kin_of", 0.79, "knows", 0.1)
-        got = rel_types.decide("serves", m)
-        self.assertEqual((got.kind, got.source, got.reason), ("serves", "ai", "below_bar"))
+        got = rel_types.decide("serves", m, threshold=0.80)
+        self.assertEqual((got.kind, got.source, got.reason), ("serves", "ai", "below_threshold"))
 
     def test_close_to_the_second_the_readers_own_type_stands(self) -> None:
         m = rel_types.Match("kin_of", 0.9, "knows", 0.89)
-        self.assertEqual(rel_types.decide("serves", m).reason, "close_second")
+        self.assertEqual(rel_types.decide("serves", m, threshold=0.80).reason, "close_second")
 
     def test_at_the_bar_exactly_it_is_used(self) -> None:
         m = rel_types.Match("kin_of", 0.80, "knows", 0.5)
-        self.assertEqual(rel_types.decide("serves", m).kind, "kin_of")
+        self.assertEqual(rel_types.decide("serves", m, threshold=0.80).kind, "kin_of")
 
     def test_no_match_keeps_the_readers_type(self) -> None:
         self.assertEqual(rel_types.decide("serves", None).source, "ai")
@@ -124,8 +124,48 @@ class TheMatch(unittest.TestCase):
         short = rel_types.Match("kin_of", 1.0, "knows", 0.76)
         self.assertEqual(rel_types.decide("serves", short, margin=0.25).reason, "close_second")
 
-    def test_the_bar_is_the_owners_eighty_percent(self) -> None:
-        self.assertEqual(rel_types.BAR, 0.80)
+    def test_the_owners_eighty_percent_is_the_precision_not_a_cosine(self) -> None:
+        self.assertEqual(rel_types.PRECISION_TARGET, 0.80)
+        self.assertNotEqual(rel_types.THRESHOLD, rel_types.PRECISION_TARGET)
+
+
+def sc(key: str, score: float, second: float, expected: str) -> rel_types.Scored:
+    return rel_types.Scored(key, score, second, expected)
+
+
+class TheChoice(unittest.TestCase):
+    """`choose` with a toy set: scores that rise with confidence, wrong ones among the low ones."""
+
+    CASES = (
+        sc("kin_of", 0.95, 0.40, "kin_of"), sc("knows", 0.90, 0.40, "knows"),
+        sc("serves", 0.85, 0.50, "serves"), sc("owns", 0.80, 0.40, "owns"),
+        sc("mentors", 0.75, 0.70, "serves"),  # wrong, but a close second
+        sc("leads", 0.70, 0.30, "member_of"),  # wrong, a clear lead at a low score
+        sc("carries", 0.65, 0.30, "carries"),
+    )  # fmt: skip
+
+    def test_it_takes_the_loosest_pair_that_still_meets_the_target(self) -> None:
+        got = rel_types.choose(self.CASES)
+        assert got is not None
+        # the margin keeps out the close second; one wrong clear lead in six is 83%, enough
+        self.assertGreaterEqual(got.precision, rel_types.PRECISION_TARGET)
+        self.assertEqual((got.used, round(got.precision, 2)), (6, 0.83))
+        self.assertEqual(got.threshold, 0.65)
+
+    def test_a_stricter_target_uses_fewer_matches(self) -> None:
+        loose = rel_types.choose(self.CASES, target=0.80)
+        strict = rel_types.choose(self.CASES, target=1.0)
+        assert loose is not None and strict is not None
+        self.assertLessEqual(strict.used, loose.used)
+        self.assertEqual((strict.precision, strict.used), (1.0, 4))
+
+    def test_when_no_pair_meets_the_target_nothing_is_used(self) -> None:
+        wrong = (sc("kin_of", 0.9, 0.1, "knows"), sc("knows", 0.8, 0.1, "kin_of"))
+        self.assertIsNone(rel_types.choose(wrong))
+
+    def test_non_finite_scores_are_ignored_and_no_cases_is_none(self) -> None:
+        self.assertIsNone(rel_types.choose(()))
+        self.assertIsNone(rel_types.choose((sc("kin_of", float("nan"), 0.1, "kin_of"),)))
 
 
 class TheStance(unittest.TestCase):
