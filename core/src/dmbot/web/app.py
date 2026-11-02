@@ -21,12 +21,13 @@ import logging
 import re
 import time
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
 from typing import Annotated, Any
 from urllib.parse import urlsplit
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 
 from dmbot import consent_notify, entitlements, install, mail, plans
 from dmbot.account_id import from_dmbot_id, to_dmbot_id
@@ -59,6 +60,7 @@ from dmbot.web import (
     offers,
     optional_rules,
     past_sessions,
+    pictures,
     recap_style,
     relationships,
     report,
@@ -1633,6 +1635,89 @@ def create_app(
             media_type="audio/mpeg",
             headers={"Cache-Control": "no-store", "X-Robots-Tag": "noindex, nofollow"},
         )
+
+    # The link of a kept picture (#3274): no sign-in for a public one, the code is the key. Per
+    # address, with the same strict limit as the recap link. Whatever it answers, the code is never
+    # logged and never sent on to the bucket's address as a referrer.
+    picture_limit = RateLimit(60, count=120)
+
+    def picture_signer() -> Callable[[str], str] | None:
+        if not (
+            settings.pictures_r2_account
+            and settings.pictures_r2_bucket
+            and settings.pictures_r2_key
+            and settings.pictures_r2_secret
+        ):
+            return None
+        return lambda key: pictures.presign_get(
+            account=settings.pictures_r2_account,
+            bucket=settings.pictures_r2_bucket,
+            key=key,
+            access_key=settings.pictures_r2_key,
+            secret_key=settings.pictures_r2_secret,
+            now=datetime.fromtimestamp(clock(), UTC),
+        )
+
+    async def picture_link(code: str, request: Request, preview: bool) -> Response:
+        shared_gate(request, picture_limit)
+        viewer: Session | None = None
+        token = request.cookies.get(session_cookie)
+        if token:
+            viewer = await sessions.find(db, token, now=clock())
+        link = await pictures.resolve_link(db, code, viewer, sign=picture_signer(), preview=preview)
+        headers = {
+            "Cache-Control": "no-store",
+            "X-Robots-Tag": "noindex, nofollow",
+            "Referrer-Policy": "no-referrer",
+        }
+        if link is None:
+            raise HTTPException(status_code=404, detail="not_found")
+        if link.kind == "redirect":
+            return RedirectResponse(link.url, status_code=302, headers=headers)
+        status = {"private": 403, "removed": 410, "not_open": 503}[link.kind]
+        return HTMLResponse(
+            "<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width'>"
+            f"<title>Picture</title><p style='font:16px system-ui;padding:2rem'>{link.words}</p>",
+            status_code=status,
+            headers=headers,
+        )
+
+    @app.get("/pictures/{code}")
+    async def picture_open(code: str, request: Request) -> Response:
+        return await picture_link(code, request, preview=False)
+
+    @app.get("/pictures/{code}/preview")
+    async def picture_preview(code: str, request: Request) -> Response:
+        return await picture_link(code, request, preview=True)
+
+    @app.get("/me/campaigns/{ref}/pictures")
+    async def me_pictures(
+        ref: str,
+        signed: Signed,
+        session: str = "",
+        poster: str = "",
+        q: str = "",
+        before: str = "0",
+    ) -> dict[str, Any]:
+        """A campaign's kept pictures for the gallery (#3274), newest first, to any member of its
+        server; `usage` is for the DMs only."""
+        who, _token = signed
+        try:
+            return await pictures.read_pictures(
+                db,
+                who,
+                ref,
+                session_number=session,
+                poster=poster,
+                q=q,
+                before=before,
+                storage_mb=settings.picture_storage_mb,
+                api_url=settings.api_url,
+            )
+        except RecapError as err:
+            if err.code == "not_allowed":
+                raise HTTPException(status_code=403, detail="not_allowed") from None
+            raise HTTPException(status_code=404, detail="not_found") from None
 
     @app.post("/me/recaps/{ref}/share")
     async def me_recap_share(ref: str, signed: Signed, request: Request) -> dict[str, Any]:

@@ -1,0 +1,299 @@
+"""Kept pictures on the website (#3274): the open link and the campaign's gallery list.
+
+The link must answer a public picture with a short-lived signed address, a private one only to a
+signed-in person of the campaign's server, a removed one with a few plain words, and say nothing
+about the poster, the description or the campaign. The list shows any member the campaign's own
+pictures, newest first, with the filters, and the usage line to the game masters only."""
+
+from __future__ import annotations
+
+import datetime as dt
+import secrets
+from typing import Any
+
+from psycopg.types.json import Jsonb
+
+from dmbot.transcript.models import Line
+from dmbot.transcript.store import TranscriptStore
+from dmbot.web import pictures, sessions
+from dmbot.web.recaps import RecapError
+from tests.test_recap_web import BOB, NOW, Base
+from tests.test_web_api import ALICE, THURSDAY
+
+START = 1_700_000_000
+MB = 1024 * 1024
+
+
+def code() -> str:
+    return secrets.token_urlsafe(32)
+
+
+def sign(key: str) -> str:
+    return f"https://bucket.example/{key}?signed"
+
+
+class Kept(Base):
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        self.cref = f"{THURSDAY.id}.{self.one.id}"
+        self.transcripts = TranscriptStore(self.db)
+        self.sid = await self.session_with_lines(START)
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "UPDATE transcript_sessions SET speaker_names = %s WHERE id = %s",
+                (Jsonb({str(ALICE.id): "Mira", str(BOB.id): "Cerric"}), self.sid),
+            )
+
+    async def session_with_lines(self, at: int) -> str:
+        """A session with a line, so the transcripts page numbers it (an empty one has none)."""
+        sid = await self.transcripts.open_session(THURSDAY.id, self.one.id, at)
+        await self.transcripts.add_lines(
+            THURSDAY.id, sid, [Line(at * 1000 + 1000, 1, "we cross the river", "we cross")]
+        )
+        await self.transcripts.end_session(THURSDAY.id, sid, at + 3600)
+        return sid
+
+    async def keep(
+        self,
+        campaign: str | None = None,
+        *,
+        poster: int = 1001,
+        description: str = "a map",
+        public: bool = True,
+        permanent: bool = False,
+        at: int = START + 10,
+        sid: str | None = None,
+        gone: bool = False,
+        for_room: bool = False,
+        size: int = 2 * MB,
+    ) -> str:
+        link = code()
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "INSERT INTO campaign_pictures (guild_id, campaign_id, poster_id, session_id,"
+                " description, code, public, permanent, consent_version, right_granted_at, sha256,"
+                " object_key, preview_key, size_bytes, preview_bytes, made_at, deleted_at,"
+                " removed_for_room) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,7,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                (
+                    THURSDAY.id,
+                    campaign or self.one.id,
+                    poster,
+                    sid if sid is not None else self.sid,
+                    description,
+                    link,
+                    public,
+                    permanent and not gone,
+                    at,
+                    secrets.token_hex(32),
+                    f"{THURSDAY.id}/k/{link[:8]}.png",
+                    f"{THURSDAY.id}/k/{link[:8]}.webp",
+                    size,
+                    size // 10,
+                    at,
+                    at + 1 if gone else None,
+                    for_room,
+                ),
+            )
+        return link
+
+    async def signed_in(self, user: Any) -> Any:
+        token = await sessions.sign_in(self.web, user, [THURSDAY], now=NOW, days=30)
+        found = await sessions.find(self.web, token, now=NOW)
+        assert found is not None
+        return found
+
+    async def gallery(self, who: Any | None = None, **filters: Any) -> dict[str, Any]:
+        return await pictures.read_pictures(
+            self.web,
+            who or self.session,
+            self.cref,
+            storage_mb=500,
+            api_url="https://api.example",
+            **filters,
+        )
+
+
+class TheOpenLink(Kept):
+    async def test_a_public_picture_redirects_to_a_signed_address_with_no_sign_in(self) -> None:
+        link = await self.keep()
+        got = await pictures.resolve_link(self.web, link, None, sign=sign)
+        assert got is not None
+        self.assertEqual(got.kind, "redirect")
+        self.assertTrue(got.url.startswith(f"https://bucket.example/{THURSDAY.id}/k/"))
+        self.assertTrue(got.url.endswith(".png?signed"))
+
+    async def test_the_preview_address_is_the_previews(self) -> None:
+        link = await self.keep()
+        got = await pictures.resolve_link(self.web, link, None, sign=sign, preview=True)
+        assert got is not None
+        self.assertIn(".webp", got.url)
+
+    async def test_a_private_picture_is_for_a_signed_in_person_of_the_server_only(self) -> None:
+        link = await self.keep(public=False)
+        nobody = await pictures.resolve_link(self.web, link, None, sign=sign)
+        assert nobody is not None
+        self.assertEqual((nobody.kind, nobody.words), ("private", pictures.PRIVATE_WORDS))
+        member = await pictures.resolve_link(self.web, link, self.session, sign=sign)
+        assert member is not None
+        self.assertEqual(member.kind, "redirect")
+        token = await sessions.sign_in(self.web, ALICE, [], now=NOW, days=30)  # in no server
+        outsider = await sessions.find(self.web, token, now=NOW)
+        assert outsider is not None
+        refused = await pictures.resolve_link(self.web, link, outsider, sign=sign)
+        assert refused is not None
+        self.assertEqual(refused.kind, "private")
+
+    async def test_a_removed_picture_says_so_and_why_and_gives_no_address(self) -> None:
+        link = await self.keep(gone=True)
+        room = await self.keep(gone=True, for_room=True)
+        a = await pictures.resolve_link(self.web, link, None, sign=sign)
+        b = await pictures.resolve_link(self.web, room, None, sign=sign)
+        assert a is not None and b is not None
+        self.assertEqual((a.kind, a.words, a.url), ("removed", pictures.REMOVED_WORDS, ""))
+        self.assertEqual(b.words, pictures.REMOVED_FOR_ROOM_WORDS)
+
+    async def test_a_code_that_names_nothing_is_not_found(self) -> None:
+        self.assertIsNone(await pictures.resolve_link(self.web, code(), None, sign=sign))
+        self.assertIsNone(await pictures.resolve_link(self.web, "short", None, sign=sign))
+        self.assertIsNone(await pictures.resolve_link(self.web, "x" * 50 + "!", None, sign=sign))
+
+    async def test_without_a_bucket_key_the_link_says_it_is_not_open_yet(self) -> None:
+        link = await self.keep()
+        got = await pictures.resolve_link(self.web, link, None, sign=None)
+        assert got is not None
+        self.assertEqual((got.kind, got.words), ("not_open", pictures.NOT_OPEN_WORDS))
+
+    async def test_the_door_tells_nothing_about_the_table(self) -> None:
+        link = await self.keep(description="THE HIDDEN KING IS THE FERRYMAN")
+        async with self.web.anonymous() as conn:
+            cur = await conn.execute("SELECT dmbot_picture_by_code(%s) AS r", (link,))
+            row = await cur.fetchone()
+        assert row is not None
+        text = repr(row["r"])
+        for word in ("FERRYMAN", "Mira", self.one.id, "poster", "description"):
+            self.assertNotIn(word, text)
+
+    async def test_the_door_never_lists_and_the_table_is_closed_to_the_website_role(self) -> None:
+        await self.keep()
+        async with self.web.anonymous() as conn:
+            cur = await conn.execute("SELECT dmbot_picture_by_code('') AS r")
+            row = await cur.fetchone()
+            assert row is not None
+            self.assertIsNone(row["r"])
+            with self.assertRaises(Exception):  # noqa: B017 (permission denied, whichever error)
+                await conn.execute("SELECT * FROM campaign_pictures")
+
+
+class TheSignedAddress(Kept):
+    def test_it_names_the_object_for_a_few_minutes_and_is_the_same_every_time(self) -> None:
+        now = dt.datetime(2026, 11, 2, 12, 0, 0, tzinfo=dt.UTC)
+        args: dict[str, Any] = {
+            "account": "acct",
+            "bucket": "pics",
+            "key": "1/2/abc.png",
+            "access_key": "AKEXAMPLE",
+            "secret_key": "not-a-real-secret",
+            "now": now,
+        }
+        first = pictures.presign_get(**args)
+        self.assertEqual(first, pictures.presign_get(**args))
+        self.assertTrue(first.startswith("https://acct.r2.cloudflarestorage.com/pics/1/2/abc.png?"))
+        self.assertIn("X-Amz-Expires=300", first)
+        self.assertIn("X-Amz-Date=20261102T120000Z", first)
+        self.assertRegex(first, r"X-Amz-Signature=[0-9a-f]{64}$")
+        other = pictures.presign_get(**{**args, "key": "1/2/other.png"})
+        self.assertNotEqual(first.rsplit("=", 1)[1], other.rsplit("=", 1)[1])
+        self.assertNotIn("not-a-real-secret", first)
+
+
+class TheGallery(Kept):
+    async def test_any_member_sees_the_campaigns_pictures_newest_first_with_names(self) -> None:
+        old = await self.keep(description="old map", at=START + 10)
+        new = await self.keep(description="new map", at=START + 20, poster=2002)
+        got = await self.gallery()
+        self.assertEqual([p["code"] for p in got["pictures"]], [new, old])
+        first = got["pictures"][0]
+        self.assertEqual(
+            (first["poster"], first["sessionNumber"], first["isPublic"], first["mine"]),
+            ("Cerric", 1, True, False),
+        )
+        self.assertEqual(first["previewUrl"], f"https://api.example/pictures/{new}/preview")
+        self.assertTrue(got["pictures"][1]["mine"])  # Alice posted the old one
+        self.assertEqual((got["sessions"], got["posters"]), ([1], ["Cerric", "Mira"]))
+
+    async def test_a_player_sees_them_without_the_usage_and_a_dm_sees_it(self) -> None:
+        await self.keep(size=10 * MB)
+        await self.keep(size=20 * MB, permanent=True)
+        dm = await self.gallery()
+        self.assertTrue(dm["isDm"])
+        self.assertEqual(
+            dm["usage"], {"usedMb": 33, "limitMb": 500, "permanentMb": 22, "permanentLimitMb": 400}
+        )
+        player = await self.gallery(await self.signed_in(BOB))  # Bob only plays in "One"
+        self.assertFalse(player["isDm"])
+        self.assertIsNone(player["usage"])
+        self.assertEqual(len(player["pictures"]), 2)
+
+    async def test_private_pictures_are_listed_to_members_and_marked(self) -> None:
+        await self.keep(public=False)
+        got = await self.gallery(await self.signed_in(BOB))
+        self.assertEqual([p["isPublic"] for p in got["pictures"]], [False])
+
+    async def test_only_this_campaigns_unremoved_pictures_are_listed_and_no_key_leaves(
+        self,
+    ) -> None:
+        mine = await self.keep()
+        await self.keep(self.two.id, description="OTHER CAMPAIGN")
+        await self.keep(gone=True, description="REMOVED ONE")
+        got = await self.gallery()
+        self.assertEqual([p["code"] for p in got["pictures"]], [mine])
+        text = repr(got)
+        for word in ("OTHER CAMPAIGN", "REMOVED ONE", ".png", ".webp", "object_key", "sha256"):
+            self.assertNotIn(word, text)
+
+    async def test_the_filters_narrow_by_session_poster_and_words(self) -> None:
+        other = await self.session_with_lines(START + 5000)
+        a = await self.keep(description="A map of the ford", poster=1001)
+        b = await self.keep(description="Cerric's oath scroll", poster=2002, at=START + 20)
+        c = await self.keep(description="A storm", sid=other, at=START + 30)
+        self.assertEqual(
+            [p["code"] for p in (await self.gallery(session_number=2))["pictures"]], [c]
+        )
+        self.assertEqual(
+            [p["code"] for p in (await self.gallery(poster="Cerric"))["pictures"]], [b]
+        )
+        self.assertEqual([p["code"] for p in (await self.gallery(q="MAP"))["pictures"]], [a])
+        self.assertEqual((await self.gallery(session_number=9))["pictures"], [])
+        self.assertEqual((await self.gallery(session_number="x"))["pictures"], [])
+
+    async def test_a_percent_or_underscore_in_the_search_is_just_that_character(self) -> None:
+        await self.keep(description="plain words")
+        hundred = await self.keep(description="100% sure")
+        self.assertEqual([p["code"] for p in (await self.gallery(q="%"))["pictures"]], [hundred])
+        self.assertEqual((await self.gallery(q="_"))["pictures"], [])
+
+    async def test_it_pages_with_before_and_says_when_more_remain(self) -> None:
+        made = [await self.keep(at=START + 100 + i) for i in range(pictures.PAGE + 3)]
+        first = await self.gallery()
+        self.assertEqual(len(first["pictures"]), pictures.PAGE)
+        self.assertTrue(first["more"])
+        self.assertEqual(first["pictures"][0]["code"], made[-1])
+        rest = await self.gallery(before=first["pictures"][-1]["at"])
+        self.assertEqual(len(rest["pictures"]), 3)
+        self.assertFalse(rest["more"])
+
+    async def test_a_stranger_and_an_unknown_campaign_are_refused(self) -> None:
+        with self.assertRaises(RecapError) as caught:
+            await pictures.read_pictures(
+                self.web, self.session, f"999.{self.one.id}", storage_mb=500, api_url="x"
+            )
+        self.assertEqual(caught.exception.code, "not_found")
+        with self.assertRaises(RecapError) as unknown:
+            await pictures.read_pictures(
+                self.web, self.session, f"{THURSDAY.id}.{'0' * 32}", storage_mb=500, api_url="x"
+            )
+        self.assertEqual(unknown.exception.code, "not_allowed")
+
+    async def test_a_name_the_session_never_kept_reads_someone(self) -> None:
+        await self.keep(poster=7777)
+        self.assertEqual((await self.gallery())["pictures"][0]["poster"], "Someone")
