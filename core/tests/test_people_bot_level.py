@@ -146,6 +146,19 @@ class Buttons(MemoryTest):
         self.assertIn(people_review.NOTHING_WAITING, it.sent[-1])
 
 
+class PrivateAsk(unittest.TestCase):
+    def test_wording_and_order(self) -> None:
+        from dmbot import dm_questions
+
+        self.assertIn("1 quick question", people_review.waiting_text(1, private=True))
+        self.assertNotIn("only you will see", people_review.waiting_text(2, private=True))
+        self.assertIn("only you will see", people_review.waiting_text(2))
+        self.assertEqual(people_review.waiting_line(2), "2 quick questions about who is who")
+        order = dm_questions.ORDER
+        self.assertLess(order.index(dm_questions.NAMES), order.index(dm_questions.PEOPLE))
+        self.assertLess(order.index(dm_questions.PEOPLE), order.index(dm_questions.CLAIMS))
+
+
 class TranscriptLabels(unittest.IsolatedAsyncioTestCase):
     """The download's {character} label (#1208): the entry's player, else the `plays` link;
     a DM keeps the nickname."""

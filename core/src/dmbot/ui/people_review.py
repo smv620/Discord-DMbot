@@ -49,12 +49,18 @@ def waiting_text(count: int, *, private: bool = False) -> str:
     )
 
 
+def waiting_line(count: int) -> str:
+    """The short line for the combined after-session message."""
+    what = "question" if count == 1 else "questions"
+    return f"{count} quick {what} about who is who"
+
+
 class PeopleReviewButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
     template=r"dmbot:names:people:(?P<campaign>[0-9a-f]{32})",
 ):
-    """On the DM screen after a session; works after a restart (the campaign is in the
-    button's ID)."""
+    """In the DM's private chat after a session (or the DM screen if no DM can be reached); works
+    after a restart (the campaign is in the button's ID)."""
 
     def __init__(self, campaign_id: str) -> None:
         super().__init__(
@@ -74,12 +80,6 @@ class PeopleReviewButton(
 
     async def callback(self, interaction: discord.Interaction) -> Any:
         await start_people_review(interaction, self.campaign_id)
-
-
-def people_review_view(campaign_id: str) -> discord.ui.View:
-    view = discord.ui.View(timeout=None)
-    view.add_item(PeopleReviewButton(campaign_id))
-    return view
 
 
 async def start_people_review(interaction: discord.Interaction, campaign_id: str) -> None:
@@ -170,6 +170,7 @@ class PeopleReview(_Menu):
         memory = _memory(interaction)
         if campaign is None or memory is None or self.shown is None:
             return None
+        self.guild_id = campaign.guild_id  # (the campaign may have moved server since this opened)
         return memory, self.shown
 
     async def _yes(self, interaction: discord.Interaction) -> None:
@@ -256,4 +257,4 @@ class PeopleReview(_Menu):
         await self._next(interaction, f"✅ **{_md(s.name)}** is now a name for **{_md(shown)}**.")
 
 
-__all__ = ["PeopleReviewButton", "people_review_view", "start_people_review", "waiting_text"]
+__all__ = ["PeopleReviewButton", "start_people_review", "waiting_line", "waiting_text"]

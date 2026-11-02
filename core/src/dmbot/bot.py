@@ -523,7 +523,7 @@ from dmbot.ui.names import (
     review_view,
 )
 from dmbot.ui.optional_rules import dmbot_optional_rules  # noqa: F401 (registers it)
-from dmbot.ui.people_review import PeopleReviewButton, waiting_text
+from dmbot.ui.people_review import PeopleReviewButton, waiting_line, waiting_text
 from dmbot.ui.recap_again import (
     dmbot_recap,  # noqa: F401 (registers it)
 )
@@ -8460,7 +8460,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     Ask(
                         PEOPLE,
                         waiting_text(count, private=True),
-                        f"{count} quick {'question' if count == 1 else 'questions'} about who is who",  # noqa: E501
+                        waiting_line(count),
                         partial(PeopleReviewButton, cid),
                         partial(PeopleReviewButton, cid),
                         waiting_text(count),
