@@ -173,6 +173,24 @@ class TheOpenLink(Kept):
         for word in ("FERRYMAN", "Mira", self.one.id, "poster", "description"):
             self.assertNotIn(word, text)
 
+    async def test_the_website_role_cannot_read_a_row_even_with_the_setting_set_itself(
+        self,
+    ) -> None:
+        link = await self.keep()
+        async with self.web.anonymous() as conn:
+            await conn.execute("SELECT set_config('dmbot.picture_link_code', %s, true)", (link,))
+            with self.assertRaises(Exception):  # noqa: B017 (permission denied, whichever error)
+                await conn.execute("SELECT count(*) AS n FROM campaign_pictures")
+
+    async def test_the_door_leaves_the_setting_empty_afterwards(self) -> None:
+        link = await self.keep()
+        async with self.web.anonymous() as conn:
+            await conn.execute("SELECT dmbot_picture_by_code(%s)", (link,))
+            cur = await conn.execute("SELECT dmbot_picture_link_code() AS c")
+            row = await cur.fetchone()
+            assert row is not None
+            self.assertIn(row["c"], (None, ""))
+
     async def test_the_door_never_lists_and_the_table_is_closed_to_the_website_role(self) -> None:
         await self.keep()
         async with self.web.anonymous() as conn:
@@ -281,6 +299,35 @@ class TheGallery(Kept):
         rest = await self.gallery(before=first["pictures"][-1]["at"])
         self.assertEqual(len(rest["pictures"]), 3)
         self.assertFalse(rest["more"])
+
+    async def test_pictures_posted_in_the_same_second_are_never_skipped_by_paging(self) -> None:
+        made = [await self.keep(at=START + 500) for _ in range(pictures.PAGE + 5)]
+        first = await self.gallery()
+        self.assertEqual(len(first["pictures"]), pictures.PAGE)
+        rest = await self.gallery(before=first["pictures"][-1]["cursor"])
+        seen = [p["code"] for p in first["pictures"] + rest["pictures"]]
+        self.assertEqual(sorted(seen), sorted(made))
+        self.assertFalse(rest["more"])
+
+    async def test_a_cursor_that_is_not_one_starts_from_the_top(self) -> None:
+        self.assertEqual(pictures._cursor("99999999999999999999"), (0, 0))
+        self.assertEqual(pictures._cursor("1:99999999999999999999"), (0, 0))
+        self.assertEqual(pictures._cursor("nonsense"), (0, 0))
+        self.assertEqual(pictures._cursor(None), (0, 0))
+        self.assertEqual(pictures._cursor("17"), (17, 0))
+        self.assertEqual(pictures._cursor("17:4"), (17, 4))
+
+    async def test_another_servers_campaign_is_refused_by_the_door_itself(self) -> None:
+        async with self.web.user(ALICE.id, session="x") as conn:
+            await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(THURSDAY.id),))
+            cur = await conn.execute(
+                "SELECT dmbot_web_pictures(%s, %s, 0, '', '', 0, 0, 24) AS a,"
+                " dmbot_web_pictures(%s, %s, 0, '', '', 0, 0, 24) AS b",
+                (999, self.one.id, THURSDAY.id, "0" * 32),
+            )
+            row = await cur.fetchone()
+            assert row is not None
+            self.assertEqual((row["a"], row["b"]), (None, None))
 
     async def test_a_stranger_and_an_unknown_campaign_are_refused(self) -> None:
         with self.assertRaises(RecapError) as caught:

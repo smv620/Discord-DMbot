@@ -126,6 +126,19 @@ async def resolve_link(
     return Link("redirect", url=sign(key))
 
 
+def _cursor(raw: object) -> tuple[int, int]:
+    """The page cursor: a picture's `cursor` ("made-at:id", which pages exactly) or just a made-at
+    number. Anything else, or a number too big for the database, starts from the top."""
+    made, _, ident = str(raw or "0").partition(":")
+    try:
+        at, row = int(made), int(ident or 0)
+    except ValueError:
+        return 0, 0
+    if not (0 <= at < 2**62 and 0 <= row < 2**62):
+        return 0, 0
+    return at, row
+
+
 def _bytes_to_mb(n: int) -> int:
     return -(-int(n) // MB)  # rounded up, so a picture never reads as no storage used
 
@@ -159,13 +172,10 @@ async def read_pictures(
                 wanted = by_number.get(int(str(session_number)), -1)
             except ValueError:
                 wanted = -1
-        try:
-            after = max(0, int(str(before or 0)))
-        except ValueError:
-            after = 0
+        after, after_id = _cursor(before)
         cur = await conn.execute(
-            "SELECT dmbot_web_pictures(%s, %s, %s, %s, %s, %s, %s) AS r",
-            (guild_id, campaign_id, wanted, poster[:80], q[:200], after, PAGE),
+            "SELECT dmbot_web_pictures(%s, %s, %s, %s, %s, %s, %s, %s) AS r",
+            (guild_id, campaign_id, wanted, poster[:80], q[:200], after, after_id, PAGE),
         )
         got = (await cur.fetchone() or {}).get("r")
     if got is None:
@@ -177,6 +187,7 @@ async def read_pictures(
             {
                 "code": p["code"],
                 "at": int(p["at"]),
+                "cursor": str(p["cursor"]),
                 "sessionNumber": numbers.get(int(p["sessionAt"])) if p["sessionAt"] else None,
                 "poster": p["poster"],
                 "description": p["description"],

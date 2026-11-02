@@ -1637,7 +1637,8 @@ def create_app(
         )
 
     # The link of a kept picture (#3274): no sign-in for a public one, the code is the key. Per
-    # address, with the same strict limit as the recap link. Whatever it answers, the code is never
+    # address. The limit is looser than the recap link's (120 a minute, not 30) because a gallery
+    # page loads up to 24 previews through it. Whatever it answers, the code is never
     # logged and never sent on to the bucket's address as a referrer.
     picture_limit = RateLimit(60, count=120)
 
@@ -1671,7 +1672,7 @@ def create_app(
             "Referrer-Policy": "no-referrer",
         }
         if link is None:
-            raise HTTPException(status_code=404, detail="not_found")
+            raise HTTPException(status_code=404, detail="not_found", headers=headers)
         if link.kind == "redirect":
             return RedirectResponse(link.url, status_code=302, headers=headers)
         status = {"private": 403, "removed": 410, "not_open": 503}[link.kind]

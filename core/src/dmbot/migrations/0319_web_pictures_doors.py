@@ -54,15 +54,17 @@ WEB_PICTURES_DOORS = (
 
     -- dmbot_web_pictures: the campaign's kept pictures for the gallery, to any member of its server
     -- (a private picture is private to the campaign, not to its game masters). Newest first,
-    -- `lim` a page with `more` when older ones remain; `before_` is the made-at of the last one
-    -- shown (0 for the first page); `sess_at` is a session's start (0 for all), `who` the poster's
+    -- `lim` a page with `more` when older ones remain; `before_` and `before_id` are the made-at
+    -- and id of the last one shown (0 for the first page; the id breaks a tie when several share a
+    -- second); `sess_at` is a session's start (0 for all), `who` the poster's
     -- name as the session kept it ('' for everyone) and `q` a search of the descriptions ('' for
     -- none). A removed picture is not listed. The poster's name is the one the bot kept at the
     -- session (`transcript_sessions.speaker_names`, #2337); a name never kept reads 'Someone'.
     -- `usage` (bytes kept, bytes permanent) is for the campaign's game masters only. Words and
     -- counts only: no file key leaves this door.
     CREATE FUNCTION dmbot_web_pictures(
-        g BIGINT, c TEXT, sess_at BIGINT, who TEXT, q TEXT, before_ BIGINT, lim INT
+        g BIGINT, c TEXT, sess_at BIGINT, who TEXT, q TEXT, before_ BIGINT, before_id BIGINT,
+        lim INT
     ) RETURNS JSONB
     LANGUAGE plpgsql SECURITY DEFINER AS $fn$
     DECLARE
@@ -89,7 +91,8 @@ WEB_PICTURES_DOORS = (
                    ON t.guild_id = p.guild_id AND t.campaign_id = p.campaign_id
                   AND t.id = p.session_id
             WHERE p.guild_id = g AND p.campaign_id = c AND p.deleted_at IS NULL
-              AND (before_ IS NULL OR before_ = 0 OR p.made_at < before_)
+              AND (before_ IS NULL OR before_ = 0 OR p.made_at < before_
+                   OR (p.made_at = before_ AND p.id < COALESCE(before_id, 0)))
               AND (sess_at IS NULL OR sess_at = 0 OR t.started_at = sess_at)
               AND (COALESCE(who, '') = ''
                    OR COALESCE(NULLIF(t.speaker_names ->> p.poster_id::TEXT, ''), 'Someone') = who)
@@ -101,7 +104,8 @@ WEB_PICTURES_DOORS = (
             LIMIT per + 1)
         SELECT (SELECT count(*) FROM page),
                COALESCE((SELECT jsonb_agg(jsonb_build_object(
-                             'code', s.code, 'at', s.made_at, 'sessionAt', s.session_at,
+                             'code', s.code, 'at', s.made_at, 'cursor', s.made_at || ':' || s.id,
+                             'sessionAt', s.session_at,
                              'poster', s.poster, 'description', s.description,
                              'public', s.public, 'permanent', s.permanent, 'mine', s.mine)
                          ORDER BY s.made_at DESC, s.id DESC)
@@ -142,13 +146,14 @@ WEB_PICTURES_DOORS = (
             ' SET search_path = pg_catalog, %I, pg_temp',
             current_schema());
         EXECUTE format(
-            'ALTER FUNCTION dmbot_web_pictures(BIGINT, TEXT, BIGINT, TEXT, TEXT, BIGINT, INT)'
+            'ALTER FUNCTION dmbot_web_pictures'
+            '(BIGINT, TEXT, BIGINT, TEXT, TEXT, BIGINT, BIGINT, INT)'
             ' SET search_path = pg_catalog, %I, pg_temp',
             current_schema());
     END
     $do$;
     REVOKE ALL ON FUNCTION dmbot_picture_by_code(TEXT) FROM PUBLIC;
-    REVOKE ALL ON FUNCTION dmbot_web_pictures(BIGINT, TEXT, BIGINT, TEXT, TEXT, BIGINT, INT)
+    REVOKE ALL ON FUNCTION dmbot_web_pictures(BIGINT, TEXT, BIGINT, TEXT, TEXT, BIGINT, BIGINT, INT)
         FROM PUBLIC;
 """
 )
@@ -159,5 +164,8 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     # The open link's lookup, by code only (#3274).
     ("dmbot_picture_by_code", "dmbot_picture_by_code(TEXT)"),
     # A campaign's kept pictures, for any member of its server (#3274).
-    ("dmbot_web_pictures", "dmbot_web_pictures(BIGINT, TEXT, BIGINT, TEXT, TEXT, BIGINT, INT)"),
+    (
+        "dmbot_web_pictures",
+        "dmbot_web_pictures(BIGINT, TEXT, BIGINT, TEXT, TEXT, BIGINT, BIGINT, INT)",
+    ),
 )

@@ -14,7 +14,8 @@ TOKEN = "Ab1_-" * 8 + "xyz"  # 43 characters, the shape of a real one
 
 class TheMask(unittest.TestCase):
     def test_a_token_in_a_path_is_hidden_and_the_rest_is_kept(self) -> None:
-        for path in (f"/recaps/{TOKEN}", f"/recaps/{TOKEN}/audio/voice", f"/r/{TOKEN}"):
+        for path in (f"/recaps/{TOKEN}", f"/recaps/{TOKEN}/audio/voice", f"/r/{TOKEN}",
+                     f"/pictures/{TOKEN}", f"/pictures/{TOKEN}/preview"):  # fmt: skip
             masked = mask_tokens(f"GET {path}")
             self.assertNotIn(TOKEN, masked)
             self.assertIn("<token>", masked)
