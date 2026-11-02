@@ -39,6 +39,7 @@ from dataclasses import dataclass
 from dmbot.memory.models import name_key
 
 UNKNOWN = "[unknown]"
+TYPED_MARK = " (typed)"  # after a speaker in the input; the stored line starts with it
 SCENE_LINES = 150  # a starting size, set by dev1's measured run (#3244)
 OVERLAP_LINES = 10  # lines of the scene before, read for context only
 BRACKET_CHARS = 80  # a longer bracket is a sentence smuggled in, never a name
@@ -70,6 +71,7 @@ class Said:
     user_id: int
     speaker: str
     text: str
+    typed: bool = False  # typed in the table's chat rather than said: the script marks it (typed)
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,7 +128,8 @@ def instructions(known: Sequence[str]) -> str:
         "could read. Each input line is `number | speaker: words`. Lines marked CONTEXT are for "
         "understanding only: do not write them out.\n\n"
         "For each thought, write one line `numbers | speaker: words`, where numbers are the input "
-        "line numbers it came from, separated by commas, and speaker is who says it. Join pieces "
+        "line numbers it came from, separated by commas, and speaker is who says it (a speaker "
+        "marked (typed) typed it in the chat; write just the name). Join pieces "
         "of one thought, fix the punctuation, drop fillers and false starts, and put a line that "
         "crossed between speakers back with its speaker. Never add anything that was not said.\n\n"
         "After every reference that is not already a name (he, him, it, that one, my cloak, the "
@@ -147,6 +150,7 @@ def render(scene: Scene) -> str:
 
     def row(x: Said, mark: str = "") -> str:
         who = _one_line(x.speaker).replace(":", " ").replace("|", " ")
+        who += TYPED_MARK if x.typed else ""
         return f"{mark}{x.number} | {who}: {_one_line(x.text)}"
 
     return "\n".join([*(row(x, "CONTEXT ") for x in scene.context), *(row(x) for x in scene.lines)])
@@ -312,7 +316,7 @@ def parse(
         if not all(n in by_number for n in numbers):
             count["bad_source"] += 1
             continue
-        named = m.group(2).strip().casefold()
+        named = re.sub(r"\s*\(typed\)\s*$", "", m.group(2).strip(), flags=re.I).casefold()
         speaker = next(
             (by_number[n].speaker for n in numbers if by_number[n].speaker.casefold() == named),
             None,
