@@ -175,5 +175,5 @@ class Bucket:
             if (root.findtext("s:IsTruncated", "false", ns) or "false") != "true":
                 return found
             token = root.findtext("s:NextContinuationToken", "", ns) or ""
-            if not token:
-                return found
+            if not token:  # a partial list must never pass for the whole (the sweep trusts it)
+                raise BucketError("list cut short")

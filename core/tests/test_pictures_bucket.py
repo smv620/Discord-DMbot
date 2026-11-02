@@ -149,6 +149,14 @@ R2 = {
 }
 
 
+class ShortList(unittest.IsolatedAsyncioTestCase):
+    async def test_a_cut_list_without_a_token_is_an_error_not_a_short_answer(self) -> None:
+        ns = 'xmlns="http://s3.amazonaws.com/doc/2006-03-01/"'
+        page = f"<ListBucketResult {ns}><IsTruncated>true</IsTruncated></ListBucketResult>"
+        with self.assertRaises(BucketError):
+            await bucket(body=page.encode()).keys("1/c/")
+
+
 class Setting(unittest.TestCase):
     def test_kept_pictures_are_off_with_500_megabytes_by_default(self) -> None:
         got = load_settings(BASE)
