@@ -2650,15 +2650,20 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                         continue  # stopped while the lines were going up
                     member = guild.get_member(w.user_id) if guild is not None else None
                     who = member.display_name if member is not None else "A player"
-                    await self.post_message(
-                        table.screen_channel_id,
+                    key = ("fix", w.id)
+                    # In every DM's private chat (#3210), each copy remembered so the others lose
+                    # their buttons when one DM answers (`decision_lines`); the server is in the
+                    # buttons' ids because a private chat has none. The DM screen only if no DM
+                    # can be reached.
+                    await self.ask_live(
+                        table,
                         dm_text(who, w.heard, w.text, w.suggested),
-                        suggestion_view(w.id),
-                        remember=("fix", w.id),
+                        partial(suggestion_view, w.id, gid),
+                        partial(self.decision_lines.remember, key),
                     )
                 more = len(waiting) - WAITING_SHOWN
                 if more > 0 and self.tables.get(gid) is table:
-                    await self.post_message(table.screen_channel_id, MORE_WAITING.format(n=more))
+                    await self.tell_dms(table, MORE_WAITING.format(n=more))
             except Exception:
                 log.exception("The waiting-suggestions lines failed")
 
@@ -2673,13 +2678,22 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             return
         if self.tables.get(table.guild_id) is not table:
             return  # the session ended while the clock was read: no line on a closed table
-        view = discord.ui.View(timeout=None)
-        view.add_item(clock_screen.ClockButton(table.campaign_id, "cend"))
-        await self.post(
-            table.screen_channel_id,
+        campaign_id = table.campaign_id
+
+        def end_combat_view() -> discord.ui.View:
+            view = discord.ui.View(timeout=None)
+            view.add_item(clock_screen.ClockButton(campaign_id, "cend"))
+            return view
+
+        # A question for the DM: in every DM's private chat (#3210), each copy remembered so the
+        # others lose their button when one DM ends the fight; the screen only if nobody can be
+        # reached.
+        await self.ask_live(
+            table,
             f"⚔️ A fight from last time is still running (round {stored.clock.combat_round}). "
             "Press **End combat** if it is over.",
-            view,
+            end_combat_view,
+            partial(self.decision_lines.remember, ("fight", campaign_id)),
         )
 
     async def _secret_keys(self, guild_id: int, campaign_id: str) -> frozenset[str] | None:
@@ -10284,6 +10298,32 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         if screen is not None and on_sent is not None:
             on_sent(screen)
         return [screen] if screen is not None else []
+
+    async def tell_dms(self, table: Table, text: str) -> None:
+        """One plain line, with no buttons, to every DM's private chat (#3210); on the DM screen
+        only if no DM can be reached. Never raises."""
+        try:
+            campaign = (
+                await self.campaigns.get(table.guild_id, table.campaign_id)
+                if table.campaign_id is not None
+                else None
+            )
+            sent = False
+            if campaign is not None:
+                # With the campaign's name, like every other question: a DM of two campaigns
+                # must know which one it is about.
+                who = discord.utils.escape_markdown(campaign.name)
+                marked = f"❓ **DMbot has a question** · {who}\n{text}"
+                for user_id in sorted(campaign.dm_user_ids):
+                    try:  # one DM failing must not stop the others
+                        if await self.sidebar_send_dm(user_id, marked) == "sent":
+                            sent = True
+                    except Exception:
+                        log.exception("Couldn't tell a DM privately")
+            if not sent:
+                await self.post_message(table.screen_channel_id, text + NO_PRIVATE_MESSAGE)
+        except Exception:
+            log.exception("Couldn't tell the DMs")
 
     def _retire_copies(self, table: Table, question_id: str, closer_id: int | None = None) -> None:
         """The open question was answered or taken down: keep its copies, with the id of the
