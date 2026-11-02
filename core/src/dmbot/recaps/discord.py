@@ -1765,7 +1765,7 @@ class RecapFeatures:
                 f.close()
             log.warning("Recap: the send failed")
             return await back(
-                "DMbot couldn't write in the chat channel. Check it can post there, "
+                "DMbot couldn't write in the table's chat. Check it can post there, "
                 "then press Post again."
             )
         await self.recaps.posted(gid, cid, at, url=link)
