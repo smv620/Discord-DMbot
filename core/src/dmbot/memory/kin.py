@@ -21,11 +21,14 @@ ROLES = (
     "grandmother", "grandfather", "granddaughter", "grandson",
     # Neutral words for a worked-out link, where the text does not say which (#3238)
     "aunt or uncle", "niece or nephew",
+    # A guardian of a ward under age: a family tie of its own, never a parent (#3244, rule 5)
+    "guardian",
 )  # fmt: skip
 
-# The neutral words, used only for worked-out links: a text that says "uncle" is stored as stated
-# (#3238). They stay out of the DM's role menu, which is at Discord's limit.
-NEUTRAL_ONLY = frozenset({"aunt or uncle", "niece or nephew"})
+# Words DMbot writes itself and does not offer in the DM's role menu (at Discord's limit): the
+# neutral words of worked-out links (a text that says "uncle" is stored as stated, #3238) and
+# "guardian".
+NEUTRAL_ONLY = frozenset({"aunt or uncle", "niece or nephew", "guardian"})
 
 # Roles that are true of both names alike (Mira is Aldric's cousin and Aldric is Mira's): they read
 # "is the cousin of" from either card, are never swapped on the website, and keep the id-sorted

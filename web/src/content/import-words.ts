@@ -234,3 +234,20 @@ export const importPage = {
     server: "Something went wrong on our side. Try again in a minute.",
   } as Record<string, string>,
 } as const;
+
+// The clock offer on an imported session (#3199, #3259): once a session is in, DMbot offers to set the game clock to
+// where it ended, and says what came of the DM's answer. The label is shown in bold by the page, not here.
+export const clockWords = {
+  endedOn: "This session ended on",
+  question: "Set the clock to that?",
+  setIt: "Set it",
+  notNow: "Not now",
+  setting: (n: number): string => `Setting the clock… (${n}s)`,
+  stalled: (n: number): string => `Nothing new yet after ${n}s. Check again in a minute.`,
+  set: (label: string): string => `Clock set to ${label}.`,
+  dismissed: "Not now.",
+  movedOn: "The clock is already at or past that. Nothing moved.",
+  split: "The party is split, so the clock wasn't moved.",
+  error: "DMbot couldn't send that. Try again in a minute.",
+  notDm: "Only the DM can set the clock.",
+} as const;

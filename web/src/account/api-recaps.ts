@@ -195,6 +195,9 @@ export default function recapsArea({ call, url }: ApiHelpers): Partial<AccountAp
         "GET",
         `/me/campaigns/${encodeURIComponent(ref)}/imports/${encodeURIComponent(importId)}`,
       )) as ImportProgress,
+    importClock: async (ref, importId, file, choice) => {
+      await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/imports/${encodeURIComponent(importId)}/clock`, { file, choice });
+    },
     shareRecap: async (ref, action) =>
       (await call("POST", `/me/recaps/${encodeURIComponent(ref)}/share`, {
         action,

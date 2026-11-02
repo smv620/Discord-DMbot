@@ -26,6 +26,7 @@ import {
 } from "./api";
 import CampaignNav from "./CampaignNav";
 import WorkProgress from "./WorkProgress";
+import ClockOffer from "./ClockOffer";
 import { stageWords } from "../content/work-progress";
 
 /** The campaign's address, read from `/account/import/<server>.<campaign>`. */
@@ -699,6 +700,9 @@ export default function Import({
                 >
                   {words.namesLink}
                 </a>
+              )}
+              {importId && isFinal(s) && s.clock && (
+                <ClockOffer api={api} campaignRef={ref} importId={importId} file={s.file} clock={s.clock} />
               )}
               {(s.stage === "recap_ready" || s.stage === "recap_failed") && (
                 <a
