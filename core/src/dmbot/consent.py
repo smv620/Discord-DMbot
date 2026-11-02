@@ -385,6 +385,21 @@ class ConsentStore:
         """When this player consented here (Unix seconds), or None if they haven't."""
         return (await self.granted_times(guild_id, [user_id])).get(user_id)
 
+    async def agreed_under(self, guild_id: int, user_id: int) -> tuple[int, int] | None:
+        """When this player said yes here and under which wording (granted_at, terms_version),
+        from the stored record; None when there is none. A kept picture records the poster's own
+        yes (#3274), not whatever the current wording is."""
+        if user_id in self._held_back.get(guild_id, set()):
+            return None
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT granted_at, terms_version FROM consent"
+                " WHERE guild_id = %s AND user_id = %s",
+                (guild_id, user_id),
+            )
+            row = await cur.fetchone()
+        return None if row is None else (int(row["granted_at"]), int(row["terms_version"]))
+
     def has_consent(self, guild_id: int, user_id: int) -> bool:
         """Fast, synchronous check for the audio path. Unknown servers deny, and so does anyone
         off the record."""

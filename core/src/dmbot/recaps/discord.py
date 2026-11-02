@@ -282,6 +282,8 @@ class RecapFeatures:
         ): ...
         async def fetch_user(self, user_id: int, /) -> discord.User: ...
         async def run_web_backups(self) -> None: ...
+        async def run_picture_actions(self) -> None: ...
+        async def run_picture_sweep(self) -> None: ...
         async def run_web_line_deletions(self) -> None: ...
         async def run_web_delete_notices(self) -> None: ...
         @staticmethod
@@ -1956,6 +1958,14 @@ class RecapFeatures:
                 await self.run_house_file_requests()
             except Exception as exc:
                 log.warning("The house-rules file requests failed: %s", type(exc).__name__)
+            try:
+                await self.run_picture_actions()
+            except Exception as exc:
+                log.warning("The website picture choices failed: %s", type(exc).__name__)
+            try:
+                await self.run_picture_sweep()
+            except Exception as exc:
+                log.warning("The picture sweep failed: %s", type(exc).__name__)
             try:
                 await self.run_web_settings()
             except Exception as exc:

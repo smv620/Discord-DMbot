@@ -131,7 +131,8 @@ class Calls(unittest.IsolatedAsyncioTestCase):
         pages = [
             f"<ListBucketResult {ns}><IsTruncated>true</IsTruncated>"
             "<NextContinuationToken>t1</NextContinuationToken>"
-            "<Contents><Key>1/c/a.png</Key></Contents></ListBucketResult>",
+            "<Contents><Key>1/c/a.png</Key>"
+            "<LastModified>2026-11-02T10:00:00.000Z</LastModified></Contents></ListBucketResult>",
             f"<ListBucketResult {ns}><IsTruncated>false</IsTruncated>"
             "<Contents><Key>1/c/b.png</Key></Contents></ListBucketResult>",
         ]
@@ -188,6 +189,16 @@ class TheQuery(unittest.IsolatedAsyncioTestCase):
 
 
 class ShortList(unittest.IsolatedAsyncioTestCase):
+    async def test_objects_carry_when_they_were_written(self) -> None:
+        ns = 'xmlns="http://s3.amazonaws.com/doc/2006-03-01/"'
+        page = (
+            f"<ListBucketResult {ns}><IsTruncated>false</IsTruncated>"
+            "<Contents><Key>p/a.png</Key><LastModified>2026-11-02T10:00:00.000Z</LastModified>"
+            "</Contents></ListBucketResult>"
+        )
+        got = await bucket(body=page.encode()).objects("p/")
+        self.assertEqual(got, [("p/a.png", dt.datetime(2026, 11, 2, 10, 0, tzinfo=dt.UTC))])
+
     async def test_a_cut_list_without_a_token_is_an_error_not_a_short_answer(self) -> None:
         ns = 'xmlns="http://s3.amazonaws.com/doc/2006-03-01/"'
         page = f"<ListBucketResult {ns}><IsTruncated>true</IsTruncated></ListBucketResult>"

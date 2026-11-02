@@ -81,6 +81,7 @@ LOCKED_TABLES = (
     "recap_requests",
     "secret_exposures",
     "setting_actions",
+    "picture_actions",
 )
 # Of those, the ones that say 'working' while a worker has a row.
 WORKED_TABLES = (
@@ -89,6 +90,7 @@ WORKED_TABLES = (
     "name_answers",
     "recap_requests",
     "setting_actions",
+    "picture_actions",
 )
 
 
