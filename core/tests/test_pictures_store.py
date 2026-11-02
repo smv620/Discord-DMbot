@@ -170,6 +170,21 @@ class Kept(DatabaseTest):
         assert again.picture is not None
         self.assertNotEqual(again.picture.code, added.picture.code)
 
+    async def test_a_refused_picture_leaves_the_removed_one_saying_so(self) -> None:
+        first = await self.keep(self.one.id, 1)
+        assert first.picture is not None
+        await self.store.delete(GUILD_A, self.one.id, first.picture.id)
+        for n in range(2, 6):  # 4 permanent MB = the limit, then one more MB kept
+            added = await self.keep(self.one.id, n)
+            assert added.picture is not None
+            await self.store.set_permanent(GUILD_A, self.one.id, added.picture.id, True, 5)
+        await self.keep(self.one.id, 6)
+        refused = await self.keep(self.one.id, 1, mb=2)  # the deleted file again, too big now
+        self.assertIsNone(refused.picture)
+        old = await self.store.get(GUILD_A, self.one.id, first.picture.id)
+        assert old is not None
+        self.assertTrue(old.gone)
+
     async def test_private_and_public_can_be_changed(self) -> None:
         added = await self.keep(self.one.id, 1)
         assert added.picture is not None

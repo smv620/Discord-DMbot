@@ -186,8 +186,6 @@ class PictureStore:
             same = await cur.fetchone()
             if same is not None and same["deleted_at"] is None:
                 return Added(_picture(same), False, ())
-            if same is not None:  # gone before: its row makes way for a new link
-                await conn.execute("DELETE FROM campaign_pictures WHERE id = %s", (same["id"],))
             limit = storage_mb * MB
             if need > limit:
                 return Added(None, False, ())
@@ -213,6 +211,9 @@ class PictureStore:
                     " description = '' WHERE guild_id = %s AND campaign_id = %s AND id = ANY(%s)",
                     (now, guild_id, campaign_id, [p.id for p in removed]),
                 )
+            if same is not None:  # gone before: its row makes way for a new link, but only now
+                # that the picture fits, so a refusal leaves the old link saying it was removed
+                await conn.execute("DELETE FROM campaign_pictures WHERE id = %s", (same["id"],))
             cur = await conn.execute(
                 "INSERT INTO campaign_pictures (guild_id, campaign_id, poster_id, session_id,"
                 " line_id, message_id, description, code, consent_version, right_granted_at,"
