@@ -303,7 +303,8 @@ class Table:
     # time, and the same bookkeeping as the off-topic filter.
     speakers: TopicWindow = field(default_factory=TopicWindow)
     speaker_questions: speaker_q.SpeakerBook = field(default_factory=speaker_q.SpeakerBook)
-    speaker_message: discord.Message | None = None
+    # Every copy of the open "who was speaking?" question, one in each DM's private chat (#3210).
+    speaker_messages: list[discord.Message] = field(default_factory=list)
     speaker_book: speaker_ai.NameBook = field(default_factory=speaker_ai.NameBook)
     speaker_calls: int = 0
     speaker_tokens: list[int] = field(default_factory=lambda: [0, 0])  # in, out

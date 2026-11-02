@@ -139,17 +139,20 @@ def rows_of(recasts: Sequence[th.Recast], said: Mapping[int, th.Said]) -> list[t
             None,
         )
         if who is not None:
-            rows.append(ts.Row(who, r.text, tuple(r.sources)))
+            text = r.text
+            if all(said[n].typed for n in r.sources) and not text.startswith("(typed)"):
+                text = f"(typed) {text}"  # typed in the chat, not said: the DM sees which
+            rows.append(ts.Row(who, text, tuple(r.sources)))
     return rows
 
 
-def _labels(raw: Sequence[tuple[int, int, str]], names: Mapping[int, str]) -> dict[int, str]:
+def _labels(raw: Sequence[tuple[int, int, str, bool]], names: Mapping[int, str]) -> dict[int, str]:
     """A distinct label for each speaker, in the order they first speak: their display name, or
     "Speaker 2" when there is none (never a Discord id), and "Alex 2" for a second person with the
     same name, so a script line can always be traced to one person."""
     labels: dict[int, str] = {}
     used: set[str] = set()
-    for _, user_id, _ in raw:
+    for _, user_id, _, _ in raw:
         if user_id in labels:
             continue
         base = " ".join((names.get(user_id) or "").split()) or f"Speaker {len(labels) + 1}"
@@ -185,7 +188,7 @@ async def run(
     report = Report()
     raw = await ts.script_input(db, guild_id, session_id, agreed)
     labels = _labels(raw, names)
-    said = [th.Said(line_id, user_id, labels[user_id], text) for line_id, user_id, text in raw]
+    said = [th.Said(i, u, labels[u], text, typed) for i, u, text, typed in raw]
     report.lines = len(said)
     scenes = th.scenes(said, agreed, size=scene_size)
     report.parts = len(scenes)

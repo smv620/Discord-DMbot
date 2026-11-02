@@ -45,6 +45,7 @@ _CHILD_WORDS = frozenset({"child", "son", "daughter"})
 _SIBLING_WORDS = frozenset({"sibling", "sister", "brother"})
 _GRANDPARENT_WORDS = frozenset({"grandparent", "grandmother", "grandfather"})
 _GRANDCHILD_WORDS = frozenset({"grandchild", "granddaughter", "grandson"})
+# ("guardian" is in none of these sets on purpose: a guardian is never a parent, #3244 rule 5)
 _AUNT_UNCLE_WORDS = frozenset({"aunt", "uncle", "aunt or uncle"})
 _NIECE_NEPHEW_WORDS = frozenset({"niece", "nephew", "niece or nephew"})
 
