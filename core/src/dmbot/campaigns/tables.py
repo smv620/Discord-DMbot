@@ -173,7 +173,10 @@ NOT_IN_BACKUP: dict[str, str] = {
 # table can be parked here again while its section is built). `transcript_lines` has no
 # `campaign_id`; it hangs off `transcript_sessions` (the test follows foreign keys to find such
 # tables).
-OWED_TO_BACKUP: tuple[str, ...] = ()
+OWED_TO_BACKUP: tuple[str, ...] = (
+    # kept pictures: the rows and the files go into a backup in the bot step of #3274
+    "campaign_pictures",
+)
 
 
 def backed_up() -> frozenset[str]:
@@ -189,6 +192,7 @@ def backed_up() -> frozenset[str]:
 # are cleared so nothing tries to edit a message that is not there.
 SERVER_BOUND_COLUMNS: dict[str, str] = {
     "campaigns.*_channel_id": "cleared by the move (and the pinned message id with them)",
+    "campaign_pictures.message_id": "set to 0 by the move, which is what a restored picture has",
     "game_clocks.channel_id": "cleared by the move",
     "game_clocks.message_id": "cleared by the move",
     "game_clocks.players_channel_id": "cleared by the move",
