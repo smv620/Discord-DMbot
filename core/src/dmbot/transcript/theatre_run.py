@@ -11,8 +11,10 @@ and a session with no script is exactly as it was. The caller starts it only wit
   builds it from the party's view (`gate.party_view`, names through `gate.display_name`). The AI
   sees nothing else, and every bracket it writes is checked against it afterwards.
 - **Consent twice.** Scenes are cut from the lines of people in `agreed`; before saving,
-  `still_agreed()` is asked again and any script line that holds the words of someone who has
-  since stopped is left out. The store re-checks that its source lines still exist.
+  `still_agreed()` is asked again and any scene that held a person who has since stopped (as a
+  line or as context) is left out whole, because the AI saw their words. The store re-checks that
+  the source lines still exist, and its triggers remove rows when lines go.
+- **No id ever goes to the AI**: speakers are labelled by their display name, or "Speaker 2".
 - **A cut answer is retried in smaller parts**, never taken as "nothing found". If any part still
   cannot be read, the script already kept is left alone and the report says so: a half script
   never replaces a whole one.
@@ -42,6 +44,7 @@ MAX_SPLITS = 3  # a scene that is cut off is halved up to this many times, then 
 STAGE_READING = "reading"
 STAGE_SAVING = "saving"
 STAGE_DONE = "done"
+STAGE_STOPPED = "stopped"  # a part could not be read: nothing was kept, the old script stands
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,32 +73,49 @@ class Report:
 
 
 async def read_scene(
-    ask: Ask, scene: th.Scene, known: Sequence[str], counts: Counter[str], depth: int = 0
+    ask: Ask,
+    scene: th.Scene,
+    known: Sequence[str],
+    counts: Counter[str],
+    depth: int = 0,
+    again: bool = True,
 ) -> list[th.Recast] | None:
-    """The checked script lines of one scene, or None when it cannot be read. A reply that was
-    cut off, or that said nothing readable for a scene of several lines, is retried with the scene
-    halved (the second half reads the end of the first as its context)."""
+    """The checked script lines of one scene, or None when it cannot be read.
+
+    A blank answer means the scene had nothing to say (fillers): an empty success. A cut-off
+    answer, or one that is not blank but cannot be read, is retried with the scene halved (the
+    second half reads the end of the first as its context). A single line that still cannot be read
+    is asked once more and then counted (`lost_line`) and left out: one line never fails the run."""
+    instructions, question = th.instructions(known), th.render(scene)
     try:
-        reply = await ask(th.instructions(known), th.render(scene))
-    except Exception:  # (the client's own errors: out of funds, timeouts: the part is just unread)
-        log.warning("theatre: a scene's call failed")
+        reply = await ask(instructions, question)
+    except Exception as exc:  # (the client's own errors: out of funds, timeouts)
+        log.warning("theatre: a scene's call failed (%s)", type(exc).__name__)
         counts["call_failed"] += 1
         return None
     text = str(getattr(reply, "text", reply) or "")
-    cut = bool(getattr(reply, "cut", False))
-    if not cut:
+    if not bool(getattr(reply, "cut", False)):
+        if not text.strip():
+            return []
         mine = Counter[str]()
         rows = th.parse(text, scene, known, mine)
-        if rows or len(scene.lines) < 2:  # (a one-line scene may truly have nothing to say)
+        if rows:
             counts.update(mine)
             return rows
+        if len(scene.lines) < 2:
+            if again:
+                return await read_scene(ask, scene, known, counts, depth, again=False)
+            counts["lost_line"] += 1
+            return []
     if depth >= MAX_SPLITS or len(scene.lines) < 2:
         counts["stopped_early"] += 1
         return None
     half = len(scene.lines) // 2
     first = th.Scene(scene.context, scene.lines[:half])
-    context = (*scene.context, *scene.lines[:half])[-th.OVERLAP_LINES :]
-    second = th.Scene(tuple(context), scene.lines[half:])
+    before = (*scene.context, *scene.lines[:half])
+    second = th.Scene(
+        before[-th.OVERLAP_LINES :] if th.OVERLAP_LINES > 0 else (), scene.lines[half:]
+    )
     counts["split"] += 1
     out: list[th.Recast] = []
     for part in (first, second):
@@ -123,6 +143,25 @@ def rows_of(recasts: Sequence[th.Recast], said: Mapping[int, th.Said]) -> list[t
     return rows
 
 
+def _labels(raw: Sequence[tuple[int, int, str]], names: Mapping[int, str]) -> dict[int, str]:
+    """A distinct label for each speaker, in the order they first speak: their display name, or
+    "Speaker 2" when there is none (never a Discord id), and "Alex 2" for a second person with the
+    same name, so a script line can always be traced to one person."""
+    labels: dict[int, str] = {}
+    used: set[str] = set()
+    for _, user_id, _ in raw:
+        if user_id in labels:
+            continue
+        base = " ".join((names.get(user_id) or "").split()) or f"Speaker {len(labels) + 1}"
+        label, n = base, 1
+        while label.casefold() in used:
+            n += 1
+            label = f"{base} {n}"
+        labels[user_id] = label
+        used.add(label.casefold())
+    return labels
+
+
 async def run(
     db: Database,
     ask: Ask,
@@ -135,46 +174,56 @@ async def run(
     still_agreed: Callable[[], Awaitable[Collection[int]]],
     progress: Callable[[Progress], Awaitable[None]] | None = None,
     clock: Clock = time.monotonic,
+    scene_size: int = th.SCENE_LINES,
 ) -> Report:
-    """Make and keep the session's script. See the module docstring for what it promises."""
+    """Make and keep the session's script. See the module docstring for what it promises.
+
+    `known` is the table's list (never the DM's hidden names); the speakers' own labels are added
+    to what the AI may bracket. `still_agreed`, the script input and the save raise to the caller;
+    a failing `progress` callback is counted and the run goes on."""
     started = clock()
     report = Report()
     raw = await ts.script_input(db, guild_id, session_id, agreed)
-    said = [
-        th.Said(line_id, user_id, names.get(user_id) or f"Player {user_id}", text)
-        for line_id, user_id, text in raw
-    ]
+    labels = _labels(raw, names)
+    said = [th.Said(line_id, user_id, labels[user_id], text) for line_id, user_id, text in raw]
     report.lines = len(said)
-    scenes = th.scenes(said, agreed)
+    scenes = th.scenes(said, agreed, size=scene_size)
     report.parts = len(scenes)
     by_number = {x.number: x for x in said}
-    moved = started
+    table = [*known, *(x for x in labels.values() if x not in known)]
 
     async def tell(stage: str, part: int) -> None:
-        nonlocal moved
-        moved = clock()
-        if progress is not None:
-            await progress(Progress(stage, part, len(scenes), moved - started, moved))
+        if progress is None:
+            return
+        now = clock()
+        try:
+            await progress(Progress(stage, part, len(scenes), now - started, now))
+        except Exception:  # (a failed progress edit must not throw away the spend)
+            report.counts["progress_failed"] += 1
 
-    recasts: list[th.Recast] = []
+    await tell(STAGE_READING, 0)
+    parts: list[tuple[list[th.Recast], set[int]]] = []  # (script lines, everyone the scene held)
     for n, scene in enumerate(scenes, 1):
-        got = await read_scene(ask, scene, known, report.counts)
+        got = await read_scene(ask, scene, table, report.counts)
         if got is None:
             report.failed_parts += 1
-        else:
-            recasts.extend(got)
+            break  # the result can never be saved: no more spend
+        parts.append((got, {x.user_id for x in (*scene.context, *scene.lines)}))
         await tell(STAGE_READING, n)
-    if report.failed_parts or not recasts:
-        await tell(STAGE_DONE, len(scenes))
+    if report.failed_parts or not any(got for got, _ in parts):
+        await tell(STAGE_STOPPED if report.failed_parts else STAGE_DONE, len(parts))
         return report  # a half script never replaces a whole one
     await tell(STAGE_SAVING, len(scenes))
-    now_agreed = set(await still_agreed())
-    rows = [
-        r
-        for r in rows_of(recasts, by_number)
-        if all(by_number[n].user_id in now_agreed for n in r.source_ids)
-    ]
-    report.counts["left_out_no_longer_agreed"] = len(recasts) - len(rows)
+    stopped = set(agreed) - set(await still_agreed())
+    recasts: list[th.Recast] = []
+    for got, people in parts:
+        if people & stopped:
+            # A scene that held a stopped person's words is left out whole: the AI saw them as
+            # context and may have woven them into any line, whatever the line cites.
+            report.counts["scene_left_out_no_longer_agreed"] += 1
+            continue
+        recasts.extend(got)
+    rows = sorted(rows_of(recasts, by_number), key=lambda r: min(r.source_ids))
     saved = await ts.TheatreStore(db).replace(guild_id, session_id, rows)
     report.kept, report.dropped, report.too_big = saved.kept, saved.dropped, saved.too_big
     report.saved = saved.kept > 0
