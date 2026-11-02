@@ -22,6 +22,7 @@ GONE = "I can't find this campaign any more. Nothing was changed."
 EXPIRED = "Expired: a newer session started."
 EXPIRED_TELL = "This question has expired: a newer session has started. Nothing was changed."
 NOT_NOW = "No recap was written. Recaps are off for this campaign, or not in your plan."
+NO_SCREEN = "Set up the DM screen first (in the server, press ⚙️ Manage DMbot), then try again."
 WRITING = "Writing the recap."
 ALREADY = "Already being written."
 HELD = "Waiting for your answers about names."
@@ -96,7 +97,7 @@ class ShortRecapButton(
                 interaction.channel_id if interaction.guild is not None else None
             )
             if channel_id is None:
-                await _tell(interaction, NOT_NOW)
+                await _tell(interaction, NO_SCREEN)
                 return
             result = await bot.recap_write_anyway(
                 campaign.guild_id, campaign.id, self.session_at, channel_id
@@ -106,7 +107,10 @@ class ShortRecapButton(
                 return
             outcome = {"queued": WRITING, "held": HELD}.get(result, ALREADY)
         else:
-            outcome = NONE_WRITTEN  # nothing is written and nothing is counted
+            # Nothing is written and nothing is counted, so nothing is recorded either: two DMs
+            # pressing "No recap" and "Write a recap" at the same moment end with a recap. The
+            # DM can delete it; recording a "no" would need a stored row, for little gain.
+            outcome = NONE_WRITTEN
         await self._close(interaction, outcome)
         await bot.decision_lines.close(
             key, outcome, pressed_id=message.id if message is not None else None

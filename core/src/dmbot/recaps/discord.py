@@ -106,7 +106,7 @@ from dmbot.ui.recap_again import (
 from dmbot.ui.recap_dm import AUDIO_WHY, RecapButton, ready_text, ready_view
 from dmbot.ui.recap_hold import WriteNowButton, hold_line_key, hold_view
 from dmbot.ui.recap_share import ShareButton
-from dmbot.ui.recap_short import EXPIRED, ShortRecapButton, ask_key, ask_view
+from dmbot.ui.recap_short import EXPIRED, WRITING, ShortRecapButton, ask_key, ask_view
 
 if TYPE_CHECKING:  # (only for annotations: `bot.py` imports this module)
     from collections.abc import Coroutine, Hashable, Sequence
@@ -533,6 +533,11 @@ class RecapFeatures:
                 )
                 if not sent:
                     log.warning("Recap: couldn't ask about a short session")
+                    return
+                if await self.recaps.get(gid, cid, session.started_at) is not None:
+                    # A DM answered "Write a recap" while the other copies were still going out:
+                    # the copies sent after it were remembered only now, so close them too.
+                    await self.decision_lines.close(ask_key(cid, session.started_at), WRITING)
                     return
                 self._short_asks[cid] = session.started_at
                 log.info("Recap: asked first (a short session)")  # no numbers of the table's

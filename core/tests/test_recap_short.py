@@ -130,6 +130,15 @@ class WhenTheSessionEnds(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(kept.id, 1)
         self.assertEqual(bot._short_asks, {CID: AT})
 
+    async def test_copies_sent_after_an_answer_are_closed_too(self) -> None:
+        bot = fake_bot([said(0, 10), said(10, 10)])
+        # A job exists by the time the last copy has been sent: a DM already said "Write a recap".
+        gets = AsyncMock(side_effect=[None, SimpleNamespace()])
+        bot.recaps.get = gets
+        await bot.recap_session(table())
+        bot.decision_lines.close.assert_awaited_once_with(screen.ask_key(CID, AT), screen.WRITING)
+        self.assertEqual(bot._short_asks, {})  # nothing left open to expire
+
     async def test_a_session_of_two_hours_with_an_hour_of_talk_is_queued_as_usual(self) -> None:
         bot = fake_bot([said(i * 2, 1) for i in range(60)] + [said(119, 1)])
         await bot.recap_session(table())
@@ -214,6 +223,27 @@ class TheButtons(unittest.IsolatedAsyncioTestCase):
         await button.callback(i)
         bot.recaps.enqueue.assert_not_awaited()
         self.assertEqual(i.response.send_message.await_args.args[0], screen.GONE)
+
+    async def test_a_private_press_with_no_dm_screen_says_so_not_that_recaps_are_off(self) -> None:
+        bot = fake_bot([said(0, 10)])
+        bot.campaigns.guild_of = AsyncMock(return_value=GUILD)
+        bot.campaigns.get = AsyncMock(
+            return_value=SimpleNamespace(**{**vars(campaign()), "dm_screen_channel_id": None})
+        )
+        button, i = press_on(bot, "go")
+        i.guild = None
+        await button.callback(i)
+        bot.recaps.enqueue.assert_not_awaited()
+        self.assertEqual(i.followup.send.await_args.args[0], screen.NO_SCREEN)  # (answered first)
+
+    async def test_a_private_press_by_a_non_dm_is_refused(self) -> None:
+        bot = fake_bot([said(0, 10)])
+        bot.campaigns.guild_of = AsyncMock(return_value=GUILD)
+        button, i = press_on(bot, "go", user=BOB)
+        i.guild = None
+        await button.callback(i)
+        bot.recaps.enqueue.assert_not_awaited()
+        self.assertEqual(i.response.send_message.await_args.args[0], screen.NOT_YOURS)
 
     async def test_no_recap_writes_nothing(self) -> None:
         bot = fake_bot([said(0, 10)])
