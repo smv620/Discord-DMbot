@@ -23,6 +23,8 @@ dependencies = [
     # Reading a DM's Discord voice message (Ogg Opus) into audio (#935). Its wheels carry
     # their own codecs; nothing else is installed on the server for it.
     "av>=12",
+    # Kept pictures (#3274): re-encoding a picture to drop its location data, and its preview.
+    "pillow>=11.3",
 ]
 
 [project.optional-dependencies]
