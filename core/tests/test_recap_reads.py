@@ -107,6 +107,62 @@ class TheMessage(unittest.TestCase):
         self.assertNotIn("<story_so_far>", bare)
 
 
+class TheMaterialAfterAWait(unittest.IsolatedAsyncioTestCase):
+    """The sheet, the earlier recaps and the transcript are read again after a wait, once, so a
+    check after a wait sees what the writer saw (#2965 item 6)."""
+
+    KEY = (1, "c", 100)
+
+    def worker(self) -> pl.RecapWorker:
+        w = pl.RecapWorker.__new__(pl.RecapWorker)
+        w._given, w._heard, w._beats_instead = {}, {}, {self.KEY}
+        return w
+
+    async def test_the_material_is_read_once_and_again_only_after_a_wait(self) -> None:
+        w: Any = self.worker()
+        job: Any = SimpleNamespace(beats="[]", speakers=[], session_at=100)
+        inputs: Any = SimpleNamespace(hours=None, importance=None)
+        given = rd.Given(who_and_what=("Mira: the party's rogue",))
+        calls: list[int] = []
+
+        async def context(*_: object) -> tuple[str, rd.Given]:
+            calls.append(1)
+            return "Mira: I draw.", given
+
+        w._context_for = context
+        w._parts = lambda job, said: ([], [], None)
+        w._said = lambda inputs, speakers: []
+        with patch.object(rd, "session_hours", return_value=1.0):
+            first = await w._given_for(1, "c", job, inputs)
+            again = await w._given_for(1, "c", job, inputs)
+            self.assertEqual(len(calls), 1)  # kept for the job while it runs
+            self.assertIs(first, again)
+            self.assertEqual(w._heard[self.KEY], "Mira: I draw.")
+
+            w._forget_material(self.KEY)  # what a wait does
+            self.assertEqual((w._given, w._heard), ({}, {}))
+            self.assertIn(self.KEY, w._beats_instead)  # the job's other reads stay
+            back = await w._given_for(1, "c", job, inputs)
+            self.assertEqual(len(calls), 2)  # read again, from the stores
+            self.assertEqual(back.who_and_what, given.who_and_what)
+            self.assertEqual(w._heard[self.KEY], "Mira: I draw.")
+
+    async def test_no_transcript_leaves_none_to_read_after_a_wait(self) -> None:
+        w: Any = self.worker()
+        job: Any = SimpleNamespace(beats="[]", speakers=[], session_at=100)
+        inputs: Any = SimpleNamespace(hours=None, importance=None)
+
+        async def context(*_: object) -> tuple[str, rd.Given]:
+            return "", rd.Given()
+
+        w._context_for = context
+        w._parts = lambda job, said: ([], [], None)
+        w._said = lambda inputs, speakers: []
+        with patch.object(rd, "session_hours", return_value=1.0):
+            await w._given_for(1, "c", job, inputs)
+        self.assertNotIn(self.KEY, w._heard)
+
+
 class TheContext(unittest.TestCase):
     """The pieces the writer is given beside the beats (#2950, #2954)."""
 
