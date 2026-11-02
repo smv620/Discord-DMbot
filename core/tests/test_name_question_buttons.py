@@ -56,6 +56,16 @@ class ButtonsTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(it.response.send_message.await_args.args[0], questions.EXPIRED)
         bot.answer_name_question.assert_not_awaited()
 
+    async def test_a_press_in_the_dms_private_chat_is_answered(self) -> None:
+        # #3210: the question now lives in the DM's private chat, where a press has no server;
+        # the server is in the button's id, and the bot still checks the presser is a DM.
+        bot = MagicMock(answer_name_question=AsyncMock(return_value=("Saved.", True, None)))
+        it = interaction(client=bot)
+        it.guild_id = None
+        await NameQuestionButton(GUILD, ASKED.id, "0", "Maren").callback(it)
+        bot.answer_name_question.assert_awaited_once()
+        self.assertEqual(bot.answer_name_question.await_args.args[0], GUILD)
+
     async def test_an_answer_replaces_the_question_with_undo(self) -> None:
         bot = MagicMock(
             answer_name_question=AsyncMock(return_value=("✅ Got it", True, ("c" * 32, 5)))
@@ -116,7 +126,9 @@ class ButtonsTest(unittest.IsolatedAsyncioTestCase):
         form = TypeNameForm(GUILD, ASKED.id)
         form.name._value = "Maerin"
         await form.on_submit(it)
-        bot.answer_name_question.assert_awaited_once_with(GUILD, ASKED.id, "type", DM_ID, "Maerin")
+        bot.answer_name_question.assert_awaited_once_with(
+            GUILD, ASKED.id, "type", DM_ID, "Maerin", it.message.id
+        )  # (the message id says which copy closed the question, #3210)
         self.assertEqual(it.edit_original_response.await_args.kwargs["content"], "✅ Got it")
 
     async def test_a_typing_mistake_answers_privately(self) -> None:
