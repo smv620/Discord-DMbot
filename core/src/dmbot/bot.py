@@ -10301,9 +10301,13 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             )
             sent = False
             if campaign is not None:
+                # With the campaign's name, like every other question: a DM of two campaigns
+                # must know which one it is about.
+                who = discord.utils.escape_markdown(campaign.name)
+                marked = f"❓ **DMbot has a question** · {who}\n{text}"
                 for user_id in sorted(campaign.dm_user_ids):
                     try:  # one DM failing must not stop the others
-                        if await self.sidebar_send_dm(user_id, text) == "sent":
+                        if await self.sidebar_send_dm(user_id, marked) == "sent":
                             sent = True
                     except Exception:
                         log.exception("Couldn't tell a DM privately")

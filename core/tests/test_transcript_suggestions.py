@@ -362,6 +362,14 @@ class TheButtons(unittest.IsolatedAsyncioTestCase):
             line_fix.LineFixButton("no", 123, 456).item.custom_id, "dmbot:linefix:no:456:123"
         )
         self.assertLessEqual(len("dmbot:linefix:yes:" + "9" * 20 + ":" + "9" * 18), 100)
+        for bad in (
+            "dmbot:linefix:yes:",
+            "dmbot:linefix:yes:1:2:3",
+            f"dmbot:linefix:yes:{'9' * 21}:1",
+            "dmbot:linefix:yes:abc:1",
+            "dmbot:linefix:maybe:1",
+        ):
+            self.assertIsNone(template.fullmatch(bad), bad)
 
     async def test_a_missing_or_answered_suggestion_changes_nothing(self) -> None:
         button, bot, interaction = press("yes", suggestion=None)
