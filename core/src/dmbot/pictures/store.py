@@ -243,6 +243,17 @@ class PictureStore:
             assert made is not None
             return Added(_picture(made), True, tuple(removed))
 
+    async def find(self, guild_id: int, campaign_id: str, sha256: str) -> Picture | None:
+        """The kept picture of this exact file in this campaign, if any (not a removed one)."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                f"SELECT {COLUMNS} FROM campaign_pictures WHERE guild_id = %s AND campaign_id = %s"
+                " AND sha256 = %s AND deleted_at IS NULL",
+                (guild_id, campaign_id, sha256),
+            )
+            row = await cur.fetchone()
+        return None if row is None else _picture(row)
+
     async def get(self, guild_id: int, campaign_id: str, picture_id: int) -> Picture | None:
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
