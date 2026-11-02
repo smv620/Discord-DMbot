@@ -1865,10 +1865,7 @@ class MemoryStore:
             await w.insert(ALIASES, _new_alias(w, row["id"], name, "full", status, False, None))
             if role == PLAYER_CHARACTER and played_by is not None:
                 await _sync_plays(w, row["id"])
-            written = Written(_entity(row), w.batch)
-        if role == PLAYER_CHARACTER and played_by is not None:
-            await self._party_on_assignment(guild_id, campaign_id)
-        return written
+            return Written(_entity(row), w.batch)
 
     async def add_names(
         self,
@@ -2421,10 +2418,7 @@ class MemoryStore:
             )
             row = await _entity_row(w, entity_id)
             await _sync_plays(w, entity_id)
-            written = Written(_entity(row), w.batch)
-        if role == PLAYER_CHARACTER and played_by is not None:
-            await self._party_on_assignment(guild_id, campaign_id)
-        return written
+            return Written(_entity(row), w.batch)
 
     async def confirm_kinds(
         self,
@@ -3877,7 +3871,7 @@ class MemoryStore:
         async with self._read(guild_id, campaign_id, snapshot=True) as scope:
             return await worked_out_mod.waiting(scope)
 
-    async def _party_on_assignment(self, guild_id: int, campaign_id: str) -> None:
+    async def party_on_assignment(self, guild_id: int, campaign_id: str) -> None:
         """The DM gave a player their character (#3036, Supervisor's ruling 2026-11-02): while the
         campaign has had no session and no import, the players are the party being set up, so the
         same step that follows a session links them now (a lore-only start). After the first

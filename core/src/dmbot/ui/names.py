@@ -888,6 +888,8 @@ async def save_name(
         hidden_from_players=hidden,
     )  # fmt: skip
     entity = written.value
+    if played_by is not None:  # a player's character: the party step for a lore-only start (#3036)
+        await memory.party_on_assignment(gid, cid)
     for other in others:
         await memory.add_alias(
             gid, cid, entity.id, other, kind="nickname", source=DM, status=CONFIRMED
@@ -1648,6 +1650,7 @@ class SuggestionReview(_Menu):
         except MemoryRuleError:
             await _tell(interaction, GONE)
             return
+        await memory.party_on_assignment(campaign.guild_id, campaign.id)  # (a lore-only start)
         changed(interaction, campaign)
         note = f"✅ Added {self._added(entity)}, played by **{_md(name)}**."
         await self._saved(interaction, campaign, memory, note)

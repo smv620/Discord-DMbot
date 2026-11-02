@@ -14,9 +14,12 @@ PLAYERS = (101, 102, 103, 104)
 
 class TheParty(ConfirmedMemoryTest):
     async def pc(self, name: str, player: int) -> Any:
-        return await self.add(
+        """A player character given to its player, then the step the assign screens run."""
+        made = await self.add(
             name, type="character", role="player_character", played_by=player, status=CONFIRMED
         )
+        await self.memory.party_on_assignment(GUILD_A, self.c)
+        return made
 
     async def rows(self, predicate: str, *, status: str | None = None) -> list[Any]:
         """Every row of this kind, whatever its status (a removed one is still a row)."""
@@ -73,4 +76,5 @@ class TheParty(ConfirmedMemoryTest):
         await self.memory.confirm_entity(
             GUILD_A, self.c, a, "player_character", source="dm", played_by=PLAYERS[0]
         )
+        await self.memory.party_on_assignment(GUILD_A, self.c)
         self.assertEqual((len(await self.rows("knows")), len(await self.rows("member_of"))), before)
