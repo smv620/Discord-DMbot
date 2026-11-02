@@ -3508,10 +3508,11 @@ as what is said, so the clock and the other listeners hear "we take a long rest"
     permanent link is served by web-api, which answers with a short-lived signed address. Backups include the
     pictures; deleting the campaign deletes them. Nothing of this ships before the consent wording at version 7 goes
     live.
-  - *Rolling storage and permanent pictures (owner, 2026-11-02, #3274):* a campaign keeps up to **500 MB** of
-    pictures. A new picture that would go over makes DMbot delete the **oldest pictures that are not permanent**
+  - *Rolling storage and permanent pictures (owner, 2026-11-02, #3274):* a campaign keeps up to its picture storage, **500 MB**
+    for now (a setting, so it can change). A new picture that would go over makes DMbot delete the **oldest pictures that are not permanent**
     until it fits, and the DMs are told once. A DM can mark a picture **permanent**, which exempts it, up to
-    **400 MB** of permanent pictures per campaign; past that, marking is refused until one is unmarked. Permanent is
+    **80% of the campaign's picture storage** (400 MB while it is 500 MB; it follows the storage if that changes);
+    past that, marking is refused until one is unmarked. Permanent is
     set and cleared only by the campaign's DMs, on the website. The website's gallery is a grid of thumbnails that
     is easy to review; a click opens the full picture's link in a new tab.
 - **Consent:** the consent message says DMbot also reads the table's typed chat while it listens.
