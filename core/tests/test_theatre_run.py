@@ -197,6 +197,25 @@ class TheRun(NamesTest):
             len(await self.theatre.read(GUILD, self.session)), 3
         )  # (the old one stands)
 
+    async def test_a_person_who_stops_between_scenes_is_never_sent_afterwards(self) -> None:
+        everyone = {TAVIN, DM_USER, MIRA}
+        a, b, _, _ = self.ids
+        calls = 0
+
+        async def still() -> set[int]:
+            nonlocal calls
+            calls += 1
+            return everyone if calls <= 4 else {TAVIN, DM_USER}  # (Mira stops after scene 2)
+
+        ask = Replies(ok(f"{a} | Tavin: Yes."), ok(f"{b} | DM: How many charges?"))
+        report = await tr.run(
+            self.db, ask, GUILD, self.session, agreed=everyone, names=NAMES, known=KNOWN,
+            still_agreed=still, scene_size=1,
+        )  # fmt: skip
+        self.assertEqual(len(ask.asked), 2)  # (the third scene, Mira's, was never sent)
+        self.assertNotIn("I nod", " ".join(q for _, q in ask.asked))
+        self.assertEqual(report.counts["scene_left_out_no_longer_agreed"], 1)
+
     async def test_no_discord_id_is_ever_a_speakers_label(self) -> None:
         raw = [(1, 123456789012345678, "x", False), (2, 987654321098765432, "y", False)]
         labels = tr._labels(raw, {})
