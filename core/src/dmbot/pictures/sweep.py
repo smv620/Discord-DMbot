@@ -10,6 +10,7 @@ alone, because an upload puts its files before it writes its row.
 
 from __future__ import annotations
 
+import datetime as dt
 import logging
 from dataclasses import dataclass
 from typing import Protocol
@@ -20,11 +21,12 @@ from dmbot.pictures.keeper import PREFIX
 
 log = logging.getLogger(__name__)
 
+GRACE_S = 3600  # a file younger than this is left alone: an upload puts its files before its row
 MAX_DELETES = 500  # in one run: a sweep that finds more than this stops and says so
 
 
 class SweepBucket(Protocol):
-    async def keys(self, prefix: str) -> list[str]: ...
+    async def objects(self, prefix: str) -> list[tuple[str, dt.datetime]]: ...
     async def delete(self, key: str) -> None: ...
 
 
@@ -50,12 +52,14 @@ async def live_keys(db: Database) -> set[str]:
     return keys
 
 
-async def sweep(db: Database, bucket: SweepBucket) -> Swept:
+async def sweep(db: Database, bucket: SweepBucket, now: dt.datetime | None = None) -> Swept:
+    now = now or dt.datetime.now(dt.UTC)
     try:
-        in_bucket = await bucket.keys(PREFIX)
+        found = await bucket.objects(PREFIX)
     except BucketError as exc:
         log.warning("Pictures sweep: couldn't list the bucket (%s)", exc)
         return Swept(0, 0, 0, "listing failed")
+    in_bucket = [key for key, _ in found]
     try:
         wanted = await live_keys(db)
     except Exception as exc:  # the rows could not be read: delete nothing
@@ -65,7 +69,8 @@ async def sweep(db: Database, bucket: SweepBucket) -> Swept:
         # Every file would look like a leftover: more likely the read is wrong than the bucket.
         log.warning("Pictures sweep: %d files and no rows, so nothing is deleted", len(in_bucket))
         return Swept(len(in_bucket), 0, 0, "no rows")
-    stray = [k for k in in_bucket if k not in wanted]
+    cutoff = now - dt.timedelta(seconds=GRACE_S)
+    stray = [key for key, written in found if key not in wanted and written < cutoff]
     if len(stray) > MAX_DELETES:
         log.warning("Pictures sweep: %d leftover files is too many to delete at once", len(stray))
         return Swept(len(in_bucket), len(wanted), 0, "too many")

@@ -158,8 +158,13 @@ class Bucket:
 
     async def keys(self, prefix: str) -> list[str]:
         """Every key under a prefix (a campaign's folder), in pages."""
-        found: list[str] = []
+        return [key for key, _ in await self.objects(prefix)]
+
+    async def objects(self, prefix: str) -> list[tuple[str, dt.datetime]]:
+        """Every key under a prefix with when it was last written, in pages."""
+        found: list[tuple[str, dt.datetime]] = []
         token = ""
+        ns = {"s": "http://s3.amazonaws.com/doc/2006-03-01/"}
         while True:
             params = {"list-type": "2", "prefix": prefix}
             if token:
@@ -168,12 +173,22 @@ class Bucket:
             reply = await self._call("GET", "/" + self._bucket, query=query)
             try:
                 root = ET.fromstring(reply)
-            except ET.ParseError:
+                for item in root.findall("s:Contents", ns):
+                    key = item.findtext("s:Key", "", ns) or ""
+                    when = item.findtext("s:LastModified", "", ns) or ""
+                    found.append((key, _when(when)))
+            except (ET.ParseError, ValueError):
                 raise BucketError("unreadable list") from None
-            ns = {"s": "http://s3.amazonaws.com/doc/2006-03-01/"}
-            found += [e.text or "" for e in root.findall("s:Contents/s:Key", ns)]
             if (root.findtext("s:IsTruncated", "false", ns) or "false") != "true":
                 return found
             token = root.findtext("s:NextContinuationToken", "", ns) or ""
             if not token:  # a partial list must never pass for the whole (the sweep trusts it)
                 raise BucketError("list cut short")
+
+
+def _when(text: str) -> dt.datetime:
+    """A listing's time ("2026-11-02T12:00:00.000Z"); a missing one counts as just now, so the
+    sweep never treats a file it cannot date as old."""
+    if not text:
+        return dt.datetime.now(dt.UTC)
+    return dt.datetime.fromisoformat(text.replace("Z", "+00:00"))
