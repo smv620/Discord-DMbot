@@ -75,7 +75,7 @@ def make_table(
         recent=Recent.new(),
         sidebar_limiter=AskLimiter(),
         dmbchat_channel_id=chat,
-        dmbchat_nudged=set(),
+        chat_nudged=set(),
         person_limits={},
     )
 
@@ -741,6 +741,33 @@ class SaidAtTheTable(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             [x.sidebar for x in self.host.saved], [SIDEBAR_QUESTION, SIDEBAR_ANSWER]
         )  # the raw transcript keeps its lines, as for "hold on"
+
+    async def test_the_dms_question_is_answered_privately_when_the_chat_cannot_be_written_to(
+        self,
+    ) -> None:
+        async def refuse(_table: Any, _text: str) -> bool:
+            return False
+
+        self.host.sidebar_post_chat = refuse  # type: ignore[method-assign,assignment]
+        self.sidebar.ask_at_table(self.table, DM, "Hey DMbot, what's the range of fireball?")
+        await self.settle()
+        self.assertEqual(len(self.host.dms), 1)  # not dropped: the DM still gets the answer
+
+    async def test_a_players_question_is_not_answered_privately_when_the_chat_fails(self) -> None:
+        async def refuse(_table: Any, _text: str) -> bool:
+            return False
+
+        self.host.sidebar_post_chat = refuse  # type: ignore[method-assign,assignment]
+        self.sidebar.ask_at_table(self.table, PLAYER, "Hey DMbot, what's the range of fireball?")
+        await self.settle()
+        self.assertEqual(self.host.dms, [])
+
+    async def test_nothing_is_posted_in_the_chat_while_table_chat_is_off(self) -> None:
+        self.table.chat_on = False
+        self.sidebar.ask_at_table(self.table, DM, "Hey DMbot, what's the range of fireball?")
+        await self.settle()
+        self.assertEqual(self.host.chat, [])
+        self.assertEqual(len(self.host.dms), 1)  # the DM's answer is private instead
 
     async def test_a_player_saying_hey_dmbot_asks_in_the_table_chat(self) -> None:
         self.assertTrue(

@@ -49,7 +49,10 @@ WRONG_NAME = (
     "That doesn't match **{name}**, so nothing was deleted. "
     "Press **Delete this campaign** to try again."
 )
-DELETED = "🗑 Deleted **{name}**. Its transcript channel stays until a server admin removes them."
+DELETED = (
+    "🗑 Deleted **{name}**. Its transcript channel (and an old chat channel, if it has one) "
+    "stays until a server admin removes them."
+)
 TOLD = "🗑 {who} deleted **{name}**."
 NAME_LIMIT = 100  # a campaign name's longest length; the typed box holds as much
 

@@ -191,7 +191,7 @@ class Host(Protocol):
     # The DM's spoken feedback on a waiting recap (#2076); False when there is none to talk about.
     async def sidebar_recap_feedback(self, table: Table, user_id: int, text: str) -> bool: ...
     def sidebar_house_rule(self, table: Table, user_id: int, text: str) -> str: ...
-    # The table's DMbot chat (#1187): post there; how to name someone (their character's name
+    # The table's chat (#1187, #3212): post there; how to name someone (their character's name
     # if one is linked, else their nickname); the links this campaign (and only it) may show;
     # and the one reply with the agree button for someone who typed there before agreeing.
     async def sidebar_post_chat(self, table: Table, text: str) -> bool: ...
@@ -522,8 +522,8 @@ class SidebarService:
     ) -> bool:
         """A line at the table: if it clearly asks for a look-up, answer it in the background.
         "Hey DMbot, …" works from anyone who agreed to be recorded and is answered in the
-        table's DMbot chat, where everyone reads it (#1187; with no such channel only the DM's
-        is answered, privately, as before). "Hold on, I need to find …" is the DM's alone and
+        table's chat, where everyone reads it (#1187, #3212; when DMbot cannot write there, only the
+        DM's is answered, privately). "Hold on, I need to find …" is the DM's alone and
         stays private. True if a question was started, within the safety limits. `typed`: it
         was typed in the table's chat, and its lineage says so (no speech-to-text; #1118).
         `entity` (#1624): who the DM was voicing in this line, if known (a transcript line's
@@ -539,7 +539,8 @@ class SidebarService:
         # (the DM's "what's next?" is handled before the engine is used).
         if self.answerer is None and not (is_dm and guide_phrase.is_whats_next(request.question)):
             return False
-        public = not request.verb  # answered in the table's chat (#3212)
+        # Answered in the table's chat (#3212), unless the DM switched table chat off.
+        public = not request.verb and getattr(table, "chat_on", True)
         if not public and not is_dm:
             return False  # nowhere everyone can read the answer
         return self._start(
@@ -554,8 +555,8 @@ class SidebarService:
         if self.answerer is None or table.campaign_id is None:
             return False
         if not self._may_ask(table.guild_id, user_id):
-            if user_id not in table.dmbchat_nudged:
-                table.dmbchat_nudged.add(user_id)
+            if user_id not in table.chat_nudged:
+                table.chat_nudged.add(user_id)
                 self._background(self.host.sidebar_nudge_chat(table, user_id), "sidebar-nudge")
             return False
         question = " ".join(text.split())
@@ -639,7 +640,12 @@ class SidebarService:
     ) -> None:
         async def reply(text: str, view: discord.ui.View | None = None) -> bool:
             if public:
-                return await self.host.sidebar_post_chat(table, text)
+                if await self.host.sidebar_post_chat(table, text):
+                    return True
+                # The table's chat is a channel the server controls: DMbot may not be allowed to
+                # write there. A DM's question is then answered privately instead of not at all.
+                if not _is_dm(table, user_id):
+                    return False
             if view is None:
                 status = await self.host.sidebar_send_dm(user_id, text)
             else:
@@ -689,7 +695,7 @@ class SidebarService:
         public: bool = False,
     ) -> None:
         """`via`: how the question came in (VIA_VOICE, VIA_TYPED, VIA_TABLE, VIA_TABLE_CHAT or
-        VIA_CHAT). `public`: it is the table's question, answered in the DMbot chat for everyone
+        VIA_CHAT). `public`: it is the table's question, answered in the table's chat for everyone
         (#1187). Nothing is written to the transcript unless an answer reached its reader: no
         orphan questions."""
         guild_id, campaign_id = table.guild_id, table.campaign_id
@@ -708,8 +714,8 @@ class SidebarService:
         if campaign is None or not self._still(table, user_id, dm=dm_only):
             return
         if (
-            # Not VIA_CHAT (typed in the DMbot chat) or VIA_TABLE_CHAT (typed in the table's text
-            # chat): those are the table's questions, read by everyone.
+            # Not VIA_CHAT (a question typed in the table's chat) or VIA_TABLE_CHAT (typed in the
+            # table's text chat): those are the table's questions, read by everyone.
             via in (VIA_VOICE, VIA_TYPED, VIA_TABLE)
             and _is_dm(table, user_id)
             and guide_phrase.is_whats_next(question)
@@ -885,7 +891,7 @@ class SidebarService:
             if not self._still(table, user_id, dm=True):
                 return True  # (consent can go while parts are sent: nothing more is sent)
             # Always the DM's own chat with DMbot, even when the DM said it at a table that has a
-            # DMbot chat: nobody else may read the DM's story.
+            # table's chat: nobody else may read the DM's story.
             status = await self.host.sidebar_send_dm(user_id, part)
             if status != "sent":
                 if status == "forbidden":
@@ -979,7 +985,7 @@ class SidebarService:
             )
 
     def _chat_line(self, name: str, question: str, answer: str, restated: str = "") -> str:
-        """One message for the DMbot chat, in the owner's form (#1187):
+        """One message for the table's chat, in the owner's form (#1187):
 
             Q (Mira): Does fireball need line of sight?
             Answer: No. You pick a point within 150 feet. (PHB 2024, sure)

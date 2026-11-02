@@ -1,5 +1,5 @@
 """Share a recap (#2118): a DM picks one of the campaign's recaps and gets its public link, to copy
-or to send to the players in `dmb-chat`.
+or to send to the players in the old chat channel.
 
 The link shows only the table version of a recap that was posted. Sharing one that was not posted
 yet counts as posting it, with every check Post makes (`DMBot.recap_share_link`), so nothing here

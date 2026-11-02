@@ -110,11 +110,12 @@ class TheNotice(unittest.IsolatedAsyncioTestCase):
         await DMBot._old_chat_notice(me, guild, campaign(None), 55)
         me.post.assert_not_awaited()
 
-    async def test_a_channel_that_is_gone_is_forgotten_quietly(self) -> None:
+    async def test_a_channel_that_is_not_there_is_not_mentioned_and_not_forgotten(self) -> None:
         me, guild = self.bot(exists=False)
         await DMBot._old_chat_notice(me, guild, campaign(), 55)
         me.post.assert_not_awaited()
-        me.campaigns.set_dmbchat_channel.assert_awaited_once_with(GUILD, CID, None)
+        # (a cache miss is not proof it is gone: the stored id stays; the button forgets it)
+        me.campaigns.set_dmbchat_channel.assert_not_awaited()
 
 
 if __name__ == "__main__":

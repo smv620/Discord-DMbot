@@ -3726,7 +3726,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         transcript_id, transcript_problem = await self._transcript_channel(guild, campaign, screen)
         dm_bot_problem = await self._dm_bot_channel(guild, campaign, screen)
         await self._retire_old_channels(guild, campaign)
-        await self._old_chat_notice(guild, campaign, screen_id)
+        try:
+            await self._old_chat_notice(guild, campaign, screen_id)
+        except Exception:
+            log.exception("Couldn't tell the DM about the old chat channel")  # never blocks a start
         await self._tell_players_the_clock(
             guild.id, campaign.id
         )  # (only if they would see a change)
@@ -4531,9 +4534,11 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         the table (#1118): read only if it is in the table's chat and passes the checks."""
         if message.guild is not None:
             try:
-                if self._hear_table_question(message):
-                    return
+                # The picked channel is checked first, for questions as for typed chat: it may be
+                # any campaign's DM screen or transcript, which are never read or answered in.
                 if await self._chat_channel_allowed(message):
+                    if self._hear_table_question(message):
+                        return
                     self._hear_typed(message)
             except Exception:
                 log.exception("Couldn't handle a typed message")
@@ -4559,6 +4564,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         author = message.author
         if (
             not table.listening
+            or not table.chat_on  # the DM's switch: nothing typed is read when it is off
             or author.bot
             or (self.user is not None and author.id == self.user.id)
             or message.webhook_id is not None
@@ -12385,8 +12391,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         if channel_id is None or campaign.id in self._old_chat_told:
             return
         if guild.get_channel(channel_id) is None:
-            await self.campaigns.set_dmbchat_channel(guild.id, campaign.id, None)
-            return
+            return  # not cached, or gone: say nothing (the button forgets a channel that is gone)
         self._old_chat_told.add(campaign.id)
         await self.post(screen_id, old_chat_notice(channel_id), view=old_chat_view(campaign.id))
 

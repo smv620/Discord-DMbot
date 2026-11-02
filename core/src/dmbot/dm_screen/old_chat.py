@@ -116,7 +116,7 @@ async def press(interaction: discord.Interaction, campaign_id: str, act: str) ->
             await bot.campaigns.set_dmbchat_channel(guild.id, campaign.id, None)
         await _tell(interaction, ALREADY)
         return
-    if not channel.name.startswith(NAME_PREFIX):
+    if not str(getattr(channel, "name", "")).startswith(NAME_PREFIX):
         await _tell(interaction, NOT_OURS)
         return
     if act == "ask":

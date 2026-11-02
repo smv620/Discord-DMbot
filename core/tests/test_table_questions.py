@@ -293,6 +293,11 @@ class TheChatHook(unittest.TestCase):
         )
         self.asked.assert_not_called()
 
+    def test_nothing_is_read_while_the_dm_has_table_chat_off(self) -> None:
+        self.table.chat_on = False
+        self.assertFalse(self.bot._hear_table_question(message()))
+        self.asked.assert_not_called()
+
     def test_without_a_session_nothing_is_read(self) -> None:
         self.bot.tables.clear()
         self.assertFalse(self.bot._hear_table_question(message()))
@@ -348,6 +353,18 @@ class TheDmsStatements(unittest.IsolatedAsyncioTestCase):
 
 
 class TheChatThroughOnMessage(unittest.IsolatedAsyncioTestCase):
+    async def test_a_picked_channel_that_is_another_campaigns_screen_is_never_read(self) -> None:
+        bot = make_bot()
+        table = make_table()
+        table.chat_channel_id = CHAT
+        table.listening = True
+        bot.tables[GUILD] = table
+        asked = MagicMock()
+        bot.sidebar.ask_in_chat = asked  # type: ignore[method-assign]
+        bot._chat_channel_allowed = AsyncMock(return_value=False)  # type: ignore[method-assign]
+        await bot.on_message(message())
+        asked.assert_not_called()
+
     async def test_a_question_is_not_also_read_as_table_chat(self) -> None:
         bot = make_bot()
         table = make_table()
@@ -357,6 +374,7 @@ class TheChatThroughOnMessage(unittest.IsolatedAsyncioTestCase):
         asked, typed = MagicMock(), MagicMock()
         bot.sidebar.ask_in_chat = asked  # type: ignore[method-assign]
         bot._hear_typed = typed  # type: ignore[method-assign]
+        bot._chat_channel_allowed = AsyncMock(return_value=True)  # type: ignore[method-assign]
         await bot.on_message(message())
         asked.assert_called_once()
         typed.assert_not_called()
@@ -369,5 +387,6 @@ class TheChatThroughOnMessage(unittest.IsolatedAsyncioTestCase):
         bot.tables[GUILD] = table
         asked = MagicMock()
         bot.sidebar.ask_in_chat = asked  # type: ignore[method-assign]
+        bot._chat_channel_allowed = AsyncMock(return_value=True)  # type: ignore[method-assign]
         await bot.on_message(message("does fireball need line of sight?", author=DM))
         asked.assert_called_once_with(table, DM, "does fireball need line of sight?")

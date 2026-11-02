@@ -207,7 +207,7 @@ class Table:
     chat_notice_posted: bool = False  # the one line in the extra channel, once a session
     # People who asked in the table's chat without having agreed, already shown the agree button
     # this session.
-    dmbchat_nudged: set[int] = field(default_factory=set)
+    chat_nudged: set[int] = field(default_factory=set)
     # Questions per person (at most ASK_PER_PERSON_PER_MINUTE a minute), so one player can't use
     # up the table's questions.
     person_limits: dict[int, AskLimiter] = field(default_factory=dict)
