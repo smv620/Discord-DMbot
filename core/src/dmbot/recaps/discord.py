@@ -1957,6 +1957,14 @@ class RecapFeatures:
             except Exception as exc:
                 log.warning("The house-rules file requests failed: %s", type(exc).__name__)
             try:
+                await self.run_picture_actions()
+            except Exception as exc:
+                log.warning("The website picture choices failed: %s", type(exc).__name__)
+            try:
+                await self.run_picture_sweep()
+            except Exception as exc:
+                log.warning("The picture sweep failed: %s", type(exc).__name__)
+            try:
                 await self.run_web_settings()
             except Exception as exc:
                 log.warning("The website settings failed: %s", type(exc).__name__)

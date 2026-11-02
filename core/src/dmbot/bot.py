@@ -56,6 +56,7 @@ from dmbot import (
     trial_jobs,
     usage,
 )
+from dmbot import consent as consent_terms
 from dmbot.account_move import AccountMoves
 from dmbot.ai import (
     FEATURE_TIERS,
@@ -134,6 +135,7 @@ from dmbot.dm_screen import (
     pack_suggestion,
     pack_update,
     peek_view,
+    private_note,
     rules_cards,
     secret_posts,
     set_suggestion,
@@ -337,6 +339,12 @@ from dmbot.memory.table_names import NameThenAnswer
 from dmbot.memory.vectors import VectorStore
 from dmbot.mentions import NO_PINGS
 from dmbot.off_the_record import NOT_TOLD, WAKE_MINUTES, OffTheRecord, Paused, paused_text
+from dmbot.pictures import sweep as picture_sweep
+from dmbot.pictures.actions import PictureActions
+from dmbot.pictures.bucket import Bucket
+from dmbot.pictures.keeper import Context as PictureContext
+from dmbot.pictures.keeper import PictureKeeper
+from dmbot.pictures.store import PictureStore
 from dmbot.recaps import discord as recaps_discord
 from dmbot.recaps import feedback as recap_feedback
 from dmbot.recaps import hold as recap_hold
@@ -1331,6 +1339,14 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self._reply_scans: dict[int, list[float]] = {}  # when each server's chat was last read
         self._chat_channels: dict[int, tuple[float, frozenset[int]]] = {}
         self.map_notes: MapNoteStore | None = None  # set where the database is known (#2450)
+        # Kept pictures (#3274): set where the database is known, and only with the switch on and
+        # the bucket fully set up. Without them nothing is stored anywhere.
+        self.picture_keeper: PictureKeeper | None = None
+        self.picture_actions: PictureActions | None = None
+        self.picture_bucket: Bucket | None = None
+        self._picture_db: Database | None = None
+        self._pictures_told: set[str] = set()  # campaigns told this run that old pictures went
+        self._picture_swept = 0.0  # when the leftover-file sweep last ran
         self.image_desk: ImageDesk | None = (
             ImageDesk(
                 self.ai_client.tier(FEATURE_TIERS[Feature.IMAGE], Feature.IMAGE),
@@ -5230,7 +5246,13 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         campaign = await self.campaigns.get(gid, cid)
         if campaign is None or not await self.plan_allows("ai", gid, campaign, fail_open=False):
             return
-        reads = await desk.describe(gid, cid, links, still_ok)
+
+        async def keep(n: int, image: Any, read: images.Read | None) -> None:
+            await self._keep_picture(table, user_id, message_id, channel_id, image, read)
+
+        reads = await desk.describe(
+            gid, cid, links, still_ok, on_image=keep if self.picture_keeper is not None else None
+        )
         if not still_ok():
             return
         maps = [r for r in reads if r is not None and r.kind == images.MAP]
@@ -11391,6 +11413,95 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     if not await web_settings.run_one(self, store, guild.id, item):
                         break
 
+    # ---- kept pictures (#3274) ----
+
+    def _pictures_may_be_kept(self, guild_id: int, user_id: int) -> bool:
+        """Only a yes under the wording that says pictures are kept (`IMAGE_TERMS_VERSION`, the
+        same wording that lets them be described), with the switch on and the bucket set up."""
+        return self.picture_keeper is not None and self.consent.has_image_consent(guild_id, user_id)
+
+    async def _keep_picture(
+        self,
+        table: Table,
+        user_id: int,
+        message_id: int,
+        channel_id: int,
+        image: Any,
+        read: images.Read | None,
+    ) -> None:
+        """Keep one posted picture with its campaign and say where its link is. A picture that is
+        not kept (too big, broken, no room, the bucket down) was still described and keeps its
+        line; the reason is logged as a word and nothing else."""
+        keeper = self.picture_keeper
+        gid, cid = table.guild_id, table.campaign_id
+        if keeper is None or cid is None or not self._pictures_may_be_kept(gid, user_id):
+            return
+        granted = await self.consent.granted_at(gid, user_id)
+        got = await keeper.keep(
+            PictureContext(
+                guild_id=gid,
+                campaign_id=cid,
+                poster_id=user_id,
+                session_id=table.transcript_session_id or "",
+                line_id=None,
+                message_id=message_id,
+                description=images.line_text(read) if read is not None else "",
+                consent_version=consent_terms.TERMS_VERSION,
+                right_granted_at=granted or int(time.time()),
+            ),
+            image.data,
+        )
+        if got.removed:
+            await self._tell_pictures_removed(gid, cid, got.removed)
+        if got.picture is None:
+            log.info("Table image: not kept (%s)", got.why_not)
+            return
+        if got.new and channel_id and self.settings.site_url:
+            # The link under the description: anyone with it can open the picture (the poster or a
+            # DM can make it private on the website). It goes when the picture's message does.
+            reply = await self._post_reply(
+                channel_id,
+                message_id,
+                f"🖼️ {self.settings.site_url}/pictures/{got.picture.code}",
+                discord.ui.View(),
+            )
+            if reply is not None and message_id:
+                self._image_replies.setdefault(message_id, []).append(reply)
+
+    async def _tell_pictures_removed(self, guild_id: int, campaign_id: str, count: int) -> None:
+        """The DMs hear once (a run of the bot) that old pictures were removed to make room."""
+        if campaign_id in self._pictures_told:
+            return
+        campaign = await self.campaigns.get(guild_id, campaign_id)
+        if campaign is None:
+            return
+        self._pictures_told.add(campaign_id)
+        word = "picture" if count == 1 else "pictures"
+        text = (
+            f"DMbot removed {count} old {word} to make room. "
+            "Mark the ones to keep as permanent on the website."
+        )
+        await private_note.send(self, campaign, text, lambda: discord.ui.View())
+
+    async def run_picture_actions(self) -> None:
+        """What posters and DMs chose on the website's Pictures page, applied through the picture
+        store. Each person must still be the poster or a DM; the answer is left for the page."""
+        actions = self.picture_actions
+        if actions is None:
+            return
+        for guild in list(self.guilds):
+            if self._closing:
+                return
+            await actions.run_once(guild.id)
+
+    async def run_picture_sweep(self) -> None:
+        """Once a day, delete the picture files no row points to (counts only in the log)."""
+        db, bucket = self._picture_db, self.picture_bucket
+        if db is None or bucket is None or time.time() - self._picture_swept < 86400:
+            return
+        self._picture_swept = time.time()
+        await picture_sweep.sweep(db, bucket)
+
     async def run_web_report_requests(self) -> None:
         """The reports DMs asked for again on the website (#2805): each asker must still be a DM of
         the campaign, and the report is made the way it is after a session, inside the same plan
@@ -13010,6 +13121,21 @@ async def run(settings: Settings) -> None:
         )
         bot.house_wins = WinsStore(db)
         bot.map_notes = MapNoteStore(db)  # maps put into words, for MapBot (#2450)
+        if settings.pictures_ready:  # kept pictures (#3274): the switch and all four R2 values
+            pictures = PictureStore(db)
+            bot.picture_bucket = Bucket(
+                settings.r2_account_id,
+                settings.r2_bucket,
+                settings.r2_access_key,
+                settings.r2_secret_key,
+            )
+            bot.picture_keeper = PictureKeeper(
+                pictures, bot.picture_bucket, settings.picture_storage_mb
+            )
+            bot.picture_actions = PictureActions(
+                db, pictures, bot.picture_bucket, settings.picture_storage_mb
+            )
+            bot._picture_db = db
         if bot.image_desk is not None:  # the day's count lives in the database (#2450)
             bot.image_desk.counter = ImageUseStore(db)
         _close_on_sigterm(bot)
