@@ -43,6 +43,7 @@ def bot_with(st: Any, *, refusal: str | None = None, mine: Any = None) -> Any:
         homebrew_changed=MagicMock(),
         post=AsyncMock(return_value=True),
         post_message=AsyncMock(return_value=object()),
+        ask_privately=AsyncMock(return_value=False),  # (no DM reachable: the screen is used)
         track=lambda coro, name: coro.close(),
     )
 
@@ -184,6 +185,26 @@ class Notes(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(await ps.post_note(bot, 1, CID, suggestion(), "Frost Pack"))
         self.assertEqual(bot.post_message.await_args.args[0], 55)
         st.mark_pack_noted.assert_awaited_once_with(1, CID, SID)
+
+    async def test_a_note_goes_to_the_dms_privately_and_the_screen_is_the_fallback(self) -> None:
+        st = store(mark_pack_noted=AsyncMock())
+        bot = bot_with(st)
+        bot.ask_privately = AsyncMock(return_value=True)
+        self.assertTrue(await ps.post_note(bot, 1, CID, suggestion(), "Frost Pack"))
+        bot.post_message.assert_not_awaited()  # asked in the DMs' private chats instead
+        st.mark_pack_noted.assert_awaited_once_with(1, CID, SID)
+
+    async def test_a_press_in_a_private_chat_finds_the_server_from_the_campaign(self) -> None:
+        st = store(
+            pack_suggestion=AsyncMock(return_value=suggestion()),
+        )
+        bot = bot_with(st)
+        bot.campaigns.guild_of = AsyncMock(return_value=1)
+        it = interaction(7, bot)
+        it.guild = None
+        await ps.press(it, CID, "no", SID)
+        bot.campaigns.guild_of.assert_awaited_once_with(CID)
+        self.assertNotIn(ps.ONLY_DMS, [t for t, _ in it.sent])
 
     async def test_a_failed_post_is_not_marked_so_it_is_tried_again(self) -> None:
         st = store(mark_pack_noted=AsyncMock())

@@ -62,6 +62,7 @@ def bot_with(s: Any, *, refusal: str | None = None, camp: Any = None, rules: Any
         plan_gate=AsyncMock(return_value=refusal),
         post=AsyncMock(return_value=True),
         post_message=AsyncMock(return_value=object()),
+        ask_privately=AsyncMock(return_value=False),  # (no DM reachable: the screen is used)
         house_rules=SimpleNamespace(list=AsyncMock(return_value=rules or [])),
         tasks=[],
     )
