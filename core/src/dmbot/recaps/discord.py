@@ -106,7 +106,7 @@ from dmbot.ui.recap_again import (
 from dmbot.ui.recap_dm import AUDIO_WHY, RecapButton, ready_text, ready_view
 from dmbot.ui.recap_hold import WriteNowButton, hold_line_key, hold_view
 from dmbot.ui.recap_share import ShareButton
-from dmbot.ui.recap_short import EXPIRED, ShortRecapButton, ask_key, ask_view
+from dmbot.ui.recap_short import EXPIRED, WRITING, ShortRecapButton, ask_key, ask_view
 
 if TYPE_CHECKING:  # (only for annotations: `bot.py` imports this module)
     from collections.abc import Coroutine, Hashable, Sequence
@@ -307,6 +307,13 @@ class RecapFeatures:
             remember: Hashable | None = None,
             secret_of: tuple[int, str] | None = None,
         ) -> bool: ...
+        async def ask_live(
+            self,
+            table: Table,
+            text: str,
+            make_view: Callable[[], discord.ui.View],
+            on_sent: Callable[[discord.Message], None] | None = None,
+        ) -> list[discord.Message]: ...
         async def post_message(
             self,
             channel_id: int,
@@ -516,14 +523,21 @@ class RecapFeatures:
             if short.is_short(span, talk):
                 if await self.recaps.get(gid, cid, session.started_at) is not None:
                     return  # a repeat of the end of session, or already decided: ask once only
-                sent = await self.post_message(
-                    table.screen_channel_id,
+                # In every DM's private chat (#3210); each copy is remembered, so an answer in
+                # one loses the others their buttons and the next session expires them all.
+                sent = await self.ask_live(
+                    table,
                     short.question(span, talk),
-                    ask_view(cid, session.started_at),
-                    remember=ask_key(cid, session.started_at),
+                    lambda: ask_view(cid, session.started_at),
+                    partial(self.decision_lines.remember, ask_key(cid, session.started_at)),
                 )
-                if sent is None:
+                if not sent:
                     log.warning("Recap: couldn't ask about a short session")
+                    return
+                if await self.recaps.get(gid, cid, session.started_at) is not None:
+                    # A DM answered "Write a recap" while the other copies were still going out:
+                    # the copies sent after it were remembered only now, so close them too.
+                    await self.decision_lines.close(ask_key(cid, session.started_at), WRITING)
                     return
                 self._short_asks[cid] = session.started_at
                 log.info("Recap: asked first (a short session)")  # no numbers of the table's
