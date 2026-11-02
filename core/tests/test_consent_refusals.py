@@ -107,6 +107,36 @@ class SpeakerQuestions(Refusals):
         cast(AsyncMock, self.bot.post_message).assert_not_awaited()
         self.assertIsNone(table.speaker_questions.open)  # closed: their words are not on the screen
 
+    async def test_every_copy_is_kept_and_the_others_say_who_answered(self) -> None:
+        table, asked = await self.question_for_the_player()
+        mine, other = MagicMock(id=1, edit=AsyncMock()), MagicMock(id=2, edit=AsyncMock())
+
+        async def ask_live(_t: Any, _text: str, _make: Any, on_sent: Any = None) -> Any:
+            on_sent(mine)
+            on_sent(other)
+            return [mine, other]
+
+        self.bot.ask_live = ask_live  # type: ignore[method-assign,assignment]
+        await self.bot._ask_speaker(table, asked)
+        self.assertEqual(table.speaker_messages, [mine, other])
+        await self.bot.finish_speaker_copies(GUILD, 1, "It was Narrating.", "Sam *DM*")
+        other.edit.assert_awaited_once()
+        self.assertEqual(
+            other.edit.await_args.kwargs["content"], "Answered by Sam \\*DM\\*: It was Narrating."
+        )
+        mine.edit.assert_not_awaited()  # the answerer's own message is theirs to edit
+        self.assertEqual(table.speaker_messages, [])
+
+    async def test_a_question_nobody_could_be_sent_frees_the_slot(self) -> None:
+        table, asked = await self.question_for_the_player()
+
+        async def ask_live(*_a: Any, **_k: Any) -> Any:
+            return []
+
+        self.bot.ask_live = ask_live  # type: ignore[method-assign]
+        await self.bot._ask_speaker(table, asked)
+        self.assertIsNone(table.speaker_questions.open)
+
     async def test_an_answer_about_a_stopped_speaker_saves_nothing(self) -> None:
         table, asked = await self.question_for_the_player()
         self.stop(PLAYER)

@@ -6616,30 +6616,55 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 book.close(speaker_q.STOPPED, time.monotonic())
             return
         text = speaker_q.question_text(discord.utils.escape_markdown(asked.context))
-        message = await self.post_message(
-            table.screen_channel_id, text, speaker_question_view(table.guild_id, asked)
+        registered: list[discord.Message] = []
+
+        def keep(message: discord.Message) -> None:
+            """A copy is known as soon as it is sent, so an answer that arrives while the others
+            are still going out finds it (`finish_speaker_copies`)."""
+            if book.is_open(asked.id):
+                table.speaker_messages.append(message)
+                registered.append(message)
+
+        messages = await self.ask_live(
+            table, text, lambda: speaker_question_view(table.guild_id, asked), keep
         )
-        if message is None:
+        if not messages:
             if book.is_open(asked.id):  # not posted: free the slot, ask again later
                 book.close(speaker_q.NOT_POSTED, time.monotonic())
             return
         if book.is_open(asked.id):
-            table.speaker_message = message
             return
-        closed = (  # closed while posting: say how
+        closed = (  # closed while sending: say how, on the copies the close did not reach
             speaker_q.GONE
             if book.why_closed(asked.id) == speaker_q.STOPPED
             else speaker_q.not_answered_text()
         )
-        with contextlib.suppress(discord.HTTPException):
-            await message.edit(content=closed, view=None)
+        for message in messages:
+            if message not in registered:
+                with contextlib.suppress(discord.HTTPException):
+                    await message.edit(content=closed, view=None)
 
     async def _close_speaker_question(self, table: Table, text: str) -> None:
-        """Take the question's buttons down, saying why."""
-        message, table.speaker_message = table.speaker_message, None
-        if message is not None:
+        """Take the question's buttons down in every copy, saying why."""
+        messages, table.speaker_messages = table.speaker_messages, []
+        for message in messages:
             with contextlib.suppress(discord.HTTPException):
                 await message.edit(content=text, view=None)
+
+    async def finish_speaker_copies(
+        self, guild_id: int, pressed_message_id: int | None, text: str, answered_by: str
+    ) -> None:
+        """A DM answered the speaker question (#3210): edit the copies in the other DMs' chats
+        to "Answered by <name>: <the answer>". The answerer's own message is left alone."""
+        table = self.tables.get(guild_id)
+        if table is None or pressed_message_id is None:
+            return
+        messages, table.speaker_messages = table.speaker_messages, []
+        who = discord.utils.escape_markdown(answered_by)
+        for message in messages:
+            if message.id != pressed_message_id:
+                with contextlib.suppress(discord.HTTPException):
+                    await message.edit(content=f"Answered by {who}: {text}", view=None)
 
     def _speaker_table(self, guild_id: int, question_id: str) -> Table | None:
         for table in [self.tables.get(guild_id), *self._ending.get(guild_id, [])]:

@@ -54,7 +54,9 @@ class SpeakerQuestionButton(
 
     async def callback(self, interaction: discord.Interaction) -> Any:
         bot: Any = interaction.client
-        if interaction.guild_id != self.guild_id or not hasattr(bot, "answer_speaker_question"):
+        if (interaction.guild_id not in (None, self.guild_id)) or not hasattr(
+            bot, "answer_speaker_question"
+        ):
             await _tell(interaction, sq.EXPIRED)
             return
         if self.pick == sq.TYPE:
@@ -104,6 +106,11 @@ async def _answer(
         return
     with contextlib.suppress(discord.HTTPException):
         await interaction.edit_original_response(content=text, view=None, allowed_mentions=NO_PINGS)
+    if interaction.message is not None and hasattr(bot, "finish_speaker_copies"):
+        # The same question sits in every DM's chat: the others now say who answered.
+        await bot.finish_speaker_copies(
+            guild_id, interaction.message.id, text, interaction.user.display_name
+        )
 
 
 async def _tell(interaction: discord.Interaction, text: str) -> None:
