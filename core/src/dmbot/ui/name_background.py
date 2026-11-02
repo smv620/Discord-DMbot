@@ -2171,10 +2171,11 @@ class ConnectionOffer(_Menu):
                 if self.all_done.refused
                 else ""
             )
-            waiting = self.all_done.worked_out
+            waiting = self.all_done.worked_out  # (every one waiting now, not only the new ones)
             worked_out = (
-                f" DMbot worked out {waiting} more family link{'' if waiting == 1 else 's'} from "
-                "them: press 📜 Check the connections to say yes or no."
+                f" {waiting} worked-out family link{'' if waiting == 1 else 's'} now "
+                f"{'waits' if waiting == 1 else 'wait'} for your yes: "
+                "press 📜 Check the connections."
                 if waiting
                 else ""
             )

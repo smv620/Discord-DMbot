@@ -41,7 +41,7 @@ class KeptAll:
     # the batches that ended an old connection for each kept change (same order as `kept`)
     ended: list[list[int | None]] = field(default_factory=list)
     refused: int = 0  # the rules refused it: it stays waiting, to be answered by hand
-    worked_out: int = 0  # family links worked out from what was kept, waiting for the DM's yes
+    worked_out: int = 0  # every worked-out family link waiting for the DM's yes after this keep
 
 
 def replaced_by(onto: Ontology, link: Waiting, existing: Sequence[Relation]) -> list[Relation]:

@@ -64,3 +64,20 @@ class KeepingFamily(NamesTest):
         waiting = await self.store.waiting(GUILD, self.campaign.id)
         done = await keep.keep_all(self.memory, self.store, GUILD, self.campaign.id, waiting)
         self.assertEqual(done.worked_out, 0)
+
+    async def test_the_count_is_every_suggestion_waiting_not_only_the_new_ones(self) -> None:
+        await self.queue()
+        first = await self.kept()
+        self.assertEqual(first.worked_out, 1)
+        extra = await ui.save_name(self.memory, self.campaign, "Wren", "npc", [], [])
+        await self.store.add(
+            GUILD,
+            self.campaign.id,
+            [NewLink(self.rolo.id, "kin_of", extra.id, "Rolo's sister Wren", detail="sibling")],
+        )
+        waiting = await self.store.waiting(GUILD, self.campaign.id, symmetric=["kin_of"])
+        again = await keep.keep_all(self.memory, self.store, GUILD, self.campaign.id, waiting)
+        # the first suggestion still waits and the new sibling adds two more (Quill and Wren are
+        # siblings of each other, and Wren is an aunt or uncle of Tavin too): the total is said
+        self.assertEqual(again.worked_out, len(await self.worked_out()))
+        self.assertGreater(again.worked_out, 1)
