@@ -1,0 +1,224 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://getdmbot.com/schemas/dmbot-campaign-backup.json",
+  "title": "DMbot campaign backup (main file) and transcripts part",
+  "description": "Describes the two JSON documents inside a DMbot backup: the main file (format 'dmbot-campaign', version 4) and each transcripts part (format 'dmbot-transcripts', version 1). Both are gzip-compressed on disk; unpack first (see docs/backup_readme.md). Derived by hand from core/src/dmbot/campaigns/store.py (EXPORT_FORMAT, export_set, _validate_backup) and parts.py (PART_FORMAT, TranscriptParts). The code is the authority; this file is a description, and DMbot does not validate against it. Fields marked 'older files lack this' may be missing in files made by earlier versions, and a reader should use the default given.",
+  "oneOf": [
+    { "$ref": "#/$defs/mainFile" },
+    { "$ref": "#/$defs/transcriptsPart" }
+  ],
+  "$defs": {
+    "discordId": {
+      "type": "string",
+      "pattern": "^[1-9][0-9]*$",
+      "description": "A Discord user id as a decimal string (it must fit a signed 64-bit integer). Stored as text because JavaScript numbers lose precision above 2^53."
+    },
+    "unixSeconds": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9223372036854775807,
+      "description": "Seconds since 1970-01-01 UTC."
+    },
+
+    "mainFile": {
+      "type": "object",
+      "title": "Main file (campaign.json.gz)",
+      "required": ["format", "version", "campaign", "sections"],
+      "properties": {
+        "format": { "const": "dmbot-campaign" },
+        "version": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4,
+          "description": "1: first. 2: written compressed, contents as 1. 3: adds the who-knows lists ('knower' rows) to 'memory'; an older file has none and a restore works them out from old flags. 4: adds the 'session_notes' section. A reader must refuse a version it does not know."
+        },
+        "exported_at": { "$ref": "#/$defs/unixSeconds" },
+        "campaign": { "$ref": "#/$defs/campaignSettings" },
+        "sections": { "$ref": "#/$defs/sections" },
+        "parts": {
+          "type": "object",
+          "description": "Present only when the campaign has transcripts. Names the set of extra transcripts files that go with this file, so a missing file can be told from a campaign that has none. Older files lack this.",
+          "required": ["id", "count"],
+          "properties": {
+            "id": { "type": "string", "minLength": 8, "maxLength": 64, "description": "Matches the 'backup' field of every part." },
+            "count": { "type": "integer", "minimum": 1, "maximum": 24, "description": "How many transcripts files belong to this copy (at most 24: a restore command takes 25 files, one is this file)." }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "campaignSettings": {
+      "type": "object",
+      "description": "The campaign's own settings. Channel, role and message ids are never stored: they mean nothing in another server. The invite link and owner are not restored either (the person restoring becomes the owner/DM).",
+      "required": ["name", "created_at", "target_ruleset", "fallback_ruleset"],
+      "properties": {
+        "name": { "type": "string", "description": "Cleaned on restore; the restore adds a suffix if the server already has this name." },
+        "created_at": { "$ref": "#/$defs/unixSeconds" },
+        "last_played_at": { "oneOf": [{ "$ref": "#/$defs/unixSeconds" }, { "type": "null" }] },
+        "target_ruleset": { "type": "string", "description": "e.g. a 2024 or 2014 ruleset id; checked against the rulesets DMbot knows." },
+        "fallback_ruleset": { "type": "string" },
+        "optional_rules_default": { "type": "boolean", "default": true, "description": "Older files lack this." },
+        "dm_screen_visibility": { "type": "string", "description": "private, opt-in peek or open. Older files lack this; the default is the opt-in peek." },
+        "dm_screen_level": { "type": "string", "description": "Older files lack this; a default applies." },
+        "rules_cards": { "type": "boolean", "default": false, "description": "Older files lack this." },
+        "side_initiative": { "type": "boolean", "default": false, "description": "Older files lack this. Superseded by initiative_style: true with no style means style 'side'." },
+        "initiative_style": { "type": ["string", "null"], "description": "Older files lack this (null = none remembered)." },
+        "story_mode": { "type": "string", "default": "off", "description": "The Shared story switch. Older files lack this. On restore it stays on only for the person who confirmed the right to use the material (see sections.confirmations); anyone else gets 'off'." },
+        "transcript_keep_days": { "enum": [null, 365, 90, 30], "description": "How long transcripts are kept; null = forever. Older files lack this." },
+        "quiet_stop_minutes": { "type": "integer", "enum": [0, 5, 10, 15, 30, 60, 90], "default": 10, "description": "Minutes of silence before a stop. 0, 60 and 90 are old choices that restore as 30. Older files lack this." },
+        "recaps_text": { "type": "boolean", "default": true },
+        "recaps_audio": { "type": "boolean", "default": true },
+        "recaps_email": { "type": "boolean", "default": true },
+        "dndbeyond_invite": { "type": ["string", "null"], "description": "A D&D Beyond campaign invite link, or null. Validated; not restored into a new campaign." },
+        "table_chat": { "type": "boolean", "default": true, "description": "Only the switch; the channel itself is not stored. Older files lack this." }
+      },
+      "additionalProperties": true
+    },
+
+    "sections": {
+      "type": "object",
+      "description": "One entry per kind of campaign data. Every value is an array. A reader that meets a section name it does not know must treat the file as made by a newer DMbot. The three sections spelled out here are the simplest; the rest are listed with their meaning and the source file that defines each row (rows are JSON objects with the fields of that module's dump()).",
+      "properties": {
+        "dms": {
+          "type": "array",
+          "description": "The campaign's game masters.",
+          "items": { "$ref": "#/$defs/discordId" }
+        },
+        "optional_rules": {
+          "type": "array",
+          "description": "Which optional rules (Xanathar's, Tasha's…) are on or off.",
+          "items": {
+            "type": "object",
+            "required": ["rule", "enabled"],
+            "properties": {
+              "rule": { "type": "string", "maxLength": 64, "pattern": "^[A-Za-z0-9_.-]+$" },
+              "enabled": { "type": "boolean" }
+            },
+            "additionalProperties": false
+          }
+        },
+        "confirmations": {
+          "type": "array",
+          "description": "Who confirmed the right to use shared material, and when. Restored rows are marked 'restored' in the database.",
+          "items": {
+            "type": "object",
+            "required": ["id", "user", "purpose", "fingerprint", "at", "restored"],
+            "properties": {
+              "id": { "type": "string", "maxLength": 64, "pattern": "^[A-Za-z0-9]+$" },
+              "user": { "$ref": "#/$defs/discordId" },
+              "purpose": { "type": "string", "description": "What was confirmed, e.g. the Shared story purpose." },
+              "fingerprint": { "type": "string", "pattern": "^[0-9a-f]{64}$", "description": "SHA-256 of the material confirmed. Not the material itself." },
+              "at": { "$ref": "#/$defs/unixSeconds" },
+              "restored": { "type": "boolean" }
+            },
+            "additionalProperties": false
+          }
+        },
+        "memory": {
+          "type": "array",
+          "description": "The campaign's story memory (names, things, relationships, statements, who knows what, evidence). core/src/dmbot/memory/backup.py. A flat list; every row has a 'table' key naming its kind, in load order: type, predicate, entity, rule_link, state, claim, alias, relation, perspective, alias_knower, knower, belief, evidence, impression, attitude, correction, flag, sheet. Rows point at each other by id, so load them in that order. Contains secret names and DM notes: a backup is for the DM's table, not for sharing.",
+          "items": {
+            "type": "object",
+            "required": ["table"],
+            "properties": {
+              "table": { "enum": ["type", "predicate", "entity", "rule_link", "state", "claim", "alias", "relation", "perspective", "alias_knower", "knower", "belief", "evidence", "impression", "attitude", "correction", "flag", "sheet"] }
+            },
+            "additionalProperties": true
+          }
+        },
+        "memory_heard": { "$ref": "#/$defs/rows", "description": "How often names were said, only for people recorded now. memory/heard_backup.py" },
+        "memory_importance": { "$ref": "#/$defs/rows", "description": "How important each remembered thing is. memory/importance_backup.py. Loads after 'memory'." },
+        "report_answers": { "$ref": "#/$defs/rows", "description": "The DM's answers in after-session reports. memory/report_backup.py" },
+        "adventure": { "$ref": "#/$defs/rows", "description": "A shared adventure's text, kept only after the DM confirmed the right to use it. memory/adventure.py" },
+        "plan_spend": { "$ref": "#/$defs/rows", "description": "What reading the adventure cost, amounts only. memory/story_plan.py" },
+        "house_rules": { "$ref": "#/$defs/rows", "description": "The campaign's house rules. rules/house.py" },
+        "house_rule_wins": { "$ref": "#/$defs/rows", "description": "Which of two disagreeing rules wins. rules/wins.py" },
+        "homebrew": { "$ref": "#/$defs/rows", "description": "The campaign's own homebrew. rules/homebrew.py" },
+        "site_approvals": { "$ref": "#/$defs/rows", "description": "Sites the DM approved for homebrew links. rules/homebrew_sources.py" },
+        "rule_set_follows": { "$ref": "#/$defs/rows", "description": "Shared rulesets the campaign follows. rules/rule_sets.py" },
+        "rule_sets": { "$ref": "#/$defs/rows", "description": "Shared rulesets the campaign publishes. rules/rule_set_backup.py" },
+        "map_notes": { "$ref": "#/$defs/rows", "description": "Maps posted at the table. map_notes.py" },
+        "import_speakers": { "$ref": "#/$defs/rows", "description": "Who an imported transcript's speaker labels were. transcript/import_map.py" },
+        "game_clock": { "$ref": "#/$defs/rows", "description": "The in-game clock. timebot/store.py" },
+        "game_effects": { "$ref": "#/$defs/rows", "description": "Timed effects. timebot/effects.py" },
+        "recaps": { "$ref": "#/$defs/rows", "description": "Session recaps (audio files are not inside). recaps/store.py" },
+        "recap_rights": { "$ref": "#/$defs/rows", "description": "Who may use recaps written by the table. recaps/store.py" },
+        "recap_accepted": { "$ref": "#/$defs/rows", "description": "Recaps the DM approved. recaps/accepted.py" },
+        "recap_style_examples": { "$ref": "#/$defs/rows", "description": "How the campaign likes recaps to sound. recaps/style.py" },
+        "recap_style_notes": { "$ref": "#/$defs/rows", "description": "Standing notes on recap style. recaps/style.py" },
+        "session_notes": { "$ref": "#/$defs/rows", "description": "Each session's notes. Version 4 and later. recaps/notes.py" },
+        "plot_issues": { "$ref": "#/$defs/rows", "description": "PlotBot's issues and the DM's answers. recaps/plot_backup.py" },
+        "plot_fine": { "$ref": "#/$defs/rows", "description": "Things the DM said were not a problem. recaps/plot_backup.py" }
+      },
+      "additionalProperties": false
+    },
+
+    "rows": {
+      "type": "array",
+      "items": {}
+    },
+
+    "transcriptsPart": {
+      "type": "object",
+      "title": "Transcripts part (one extra file)",
+      "description": "Whole sessions with their lines. The raw 'heard' words and the DM sidebar lines are unabridged and unredacted (they are shared with everyone who may read transcripts). Ids are not stored: they are made again on restore.",
+      "required": ["format", "version", "backup", "part", "sessions"],
+      "properties": {
+        "format": { "const": "dmbot-transcripts" },
+        "version": { "const": 1 },
+        "backup": { "type": "string", "minLength": 8, "maxLength": 64, "description": "Equals mainFile.parts.id." },
+        "part": { "type": "integer", "minimum": 1, "description": "1-based; restore order is part order." },
+        "guild": { "type": "integer", "minimum": 1, "description": "The server the copy came from; used so lines of people who later erased their transcripts are left out. Older files lack this." },
+        "sessions": {
+          "type": "array",
+          "maxItems": 5000,
+          "items": { "$ref": "#/$defs/transcriptSession" }
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "transcriptSession": {
+      "type": "object",
+      "required": ["session", "lines", "suggestions", "respells", "import"],
+      "properties": {
+        "session": {
+          "type": "object",
+          "description": "One row of the transcript_sessions table without id, guild_id and campaign_id (e.g. started_at). Keys are the table's column names.",
+          "additionalProperties": true
+        },
+        "lines": {
+          "type": "array",
+          "maxItems": 400000,
+          "description": "transcript_lines rows without id, guild_id and session_id, in time order. A line's position in this array (0-based) is how 'respells' refer to it.",
+          "items": { "type": "object", "additionalProperties": true }
+        },
+        "suggestions": {
+          "type": "array",
+          "description": "Suggested fixes to lines (transcript_suggestions) without ids and scope.",
+          "items": { "type": "object", "additionalProperties": true }
+        },
+        "respells": {
+          "type": "array",
+          "description": "Respelling history (transcript_respells) without ids and scope. 'line' is the 0-based position in this session's 'lines'.",
+          "items": {
+            "type": "object",
+            "required": ["line"],
+            "properties": { "line": { "type": "integer", "minimum": 0 } },
+            "additionalProperties": true
+          }
+        },
+        "import": {
+          "oneOf": [
+            { "type": "null" },
+            { "type": "object", "additionalProperties": true }
+          ],
+          "description": "The session's import record (session_imports) without scope, or null if it was not imported."
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}
