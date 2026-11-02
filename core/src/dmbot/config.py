@@ -101,6 +101,10 @@ class Settings:
     # Mine family connections only (#2960; owner, 2026-10-29): a claim that is not a family role
     # is dropped in code, and no readings are asked. Off: every kind of claim, as before.
     story_family_only: bool = False
+    # The theatrical transcript (#3244, stage 1 of #3242): a DM-only working copy of a session with
+    # every "him" and "it" resolved in brackets. Off until dev1's measured run; with it off nothing
+    # is asked of the AI and the session is exactly as it was.
+    theatre_on: bool = False
     # After a session, PlotBot grades the contradictions one point of view holds (#2660), major or
     # minor, and the grades are kept for the DM. Off until the extractor is; it runs inside the
     # extractor's plan check and call limits (at most a few calls a session).
@@ -347,6 +351,9 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         raise ConfigError(
             'DMBOT_STORY_FAMILY_ONLY must be 1 (on) or 0 (off), got "' + family_raw + '".'
         )
+    theatre_raw = (get("DMBOT_THEATRE_ON") or "0").lower()
+    if theatre_raw not in ("0", "1", "true", "on", "false", "off"):
+        raise ConfigError('DMBOT_THEATRE_ON must be 1 (on) or 0 (off), got "' + theatre_raw + '".')
     readings_raw = (get("DMBOT_STORY_READINGS") or "0").lower()
     if readings_raw not in ("0", "1", "true", "on", "false", "off"):
         raise ConfigError(
@@ -529,6 +536,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         story_extractor_on=extractor_raw in ("1", "true", "on"),
         story_readings_on=readings_raw in ("1", "true", "on"),
         story_family_only=family_raw in ("1", "true", "on"),
+        theatre_on=theatre_raw in ("1", "true", "on"),
         story_contradictions_on=contradictions_raw in ("1", "true", "on"),
         story_report_on=report_raw in ("1", "true", "on"),
         table_images_on=images_raw in ("1", "true", "on"),
