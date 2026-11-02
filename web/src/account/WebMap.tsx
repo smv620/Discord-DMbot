@@ -13,7 +13,8 @@ import { mapReadLine } from "./webReading";
 
 import { kindWords, webPage as words } from "../content/web-words";
 import { kindStyle } from "./webKinds";
-import type { WebEdge, WebNode } from "./api";
+import NodeSummary from "./NodeSummary";
+import type { AccountApi, WebEdge, WebNode } from "./api";
 import {
   MAX_SIM_NAMES,
   MAX_SIM_STEPS,
@@ -122,7 +123,10 @@ export default function WebMap({
   onCenter,
   onLine,
   children,
+  api,
 }: {
+  /** The summary of a picked name (#3243); missing from an older page, so the panel shows none. */
+  api?: AccountApi;
   nodes: WebNode[];
   edges: WebEdge[];
   center: string;
@@ -688,6 +692,7 @@ export default function WebMap({
         <aside class="web-side panel stack" aria-labelledby="web-side-h" aria-live="polite">
           <h3 id="web-side-h">{detail.name}</h3>
           <p class="small muted">{kindWords(detail.kind)}</p>
+          {api && <NodeSummary key={detail.id} api={api} refId={refId} id={detail.id} />}
           {(detail.quests?.length ?? 0) > 1 && <p class="small">{words.alsoIn(detail.quests!.slice(1).map((q) => q.name).join(", "))}</p>}
           {sideLines.length === 0 ? (
             <p class="small">{words.sideNone}</p>

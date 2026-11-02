@@ -24,7 +24,7 @@ import {
   READING_POLLS,
   errorKinds,
 } from "./api";
-import type { AccountApi, ApiHelpers } from "./api";
+import type { AccountApi, ApiHelpers, NodeSummary } from "./api";
 
 export default function namesArea({ call, waitForAnswer }: ApiHelpers): Partial<AccountApi> {
   return {
@@ -194,6 +194,8 @@ export default function namesArea({ call, waitForAnswer }: ApiHelpers): Partial<
       (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/web/overview${q.view ? `?view=${q.view}` : ""}`)) as WebOverview,
     webFind: async (ref, q) =>
       ((await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/web/find?view=${q.view ?? ""}&q=${encodeURIComponent(q.q)}`)) as { names: { id: string; name: string; kind: string }[] }).names,
+    webNodeSummary: async (ref, id, peek) =>
+      (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/web/nodes/${encodeURIComponent(id)}/summary${peek ? "?peek=1" : ""}`)) as NodeSummary,
     confirmKinds: async (ref, upload, kinds) => {
       const queued = (await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/all-names-confirm`, {
         action: "confirm-kinds",
