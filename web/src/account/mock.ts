@@ -981,6 +981,17 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   // "Use what I say and type to improve DMbot" (#1610): on until the person turns it off.
   let improve = true;
   const calls: string[] = [];
+  // The kept pictures (#3275): five pretend pictures, each 100 MB; the permanent ones count toward the limit.
+  const pictureRows = [
+    { code: "pic-1", at: 1791004000, sessionNumber: 2, poster: "Mira", description: "A map of the Brass Ford", permanent: false, isPublic: true },
+    { code: "pic-2", at: 1791003000, sessionNumber: 2, poster: "Cerric", description: "Cerric's oath scroll", permanent: true, isPublic: true },
+    { code: "pic-3", at: 1791002000, sessionNumber: 2, poster: "Mira", description: "A storm over the ford", permanent: false, isPublic: false },
+    { code: "pic-4", at: 1790002000, sessionNumber: null as number | null, poster: "Cerric", description: "The ferryman's boat", permanent: false, isPublic: true },
+    { code: "pic-5", at: 1790001000, sessionNumber: null as number | null, poster: "Mira", description: "A torn page from a diary", permanent: false, isPublic: true },
+  ].map((p, i) => ({ ...p, n: i + 1 }));
+  const PICTURE_MB = 100;
+  const PERMANENT_LIMIT_MB = 400;
+  const permanentMb = (): number => pictureRows.filter((p) => p.permanent).length * PICTURE_MB;
   // The clock offer (#3259): the file of the last import, and the DM's answer for each session file. A file name
   // ending in -split.txt answers "split" and -moved.txt answers "moved_on" once the DM has said set.
   let lastImportFile: string | null = null;
@@ -1259,6 +1270,69 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
     },
     // Recaps for past sessions (#2610): the shapes of `GET past-sessions`, `POST /me/recaps/{ref}/again` and
     // `POST /me/campaigns/{ref}/recaps/upload`, and their codes (#2613, #2614).
+    async pictures(campaignRef, filter) {
+      calls.push(`pictures:${campaignRef}:${JSON.stringify(filter)}`);
+      await reachable();
+      signedIn();
+      const dm = !campaignRef.endsWith(".player");
+      // Newest first; a page is three, and `before` is the cursor of the last one shown.
+      let rows = [...pictureRows].sort((a, b) => b.at - a.at || b.n - a.n);
+      if (filter.session !== undefined) rows = rows.filter((p) => p.sessionNumber === filter.session);
+      if (filter.poster) rows = rows.filter((p) => p.poster === filter.poster);
+      if (filter.q) {
+        const needle = filter.q.trim().toLowerCase();
+        rows = rows.filter((p) => p.description.toLowerCase().includes(needle));
+      }
+      const cursorOf = (p: { at: number; n: number }): string => `${p.at}:${p.n}`;
+      if (filter.before) {
+        const at = rows.findIndex((p) => cursorOf(p) === filter.before);
+        rows = at >= 0 ? rows.slice(at + 1) : rows;
+      }
+      const page = rows.slice(0, 3);
+      return {
+        pictures: page.map((p) => ({
+          code: p.code,
+          cursor: cursorOf(p),
+          at: p.at,
+          sessionNumber: p.sessionNumber,
+          poster: p.poster,
+          description: p.description,
+          previewUrl: `/pictures/preview-${p.n}.webp`,
+          permanent: p.permanent,
+          isPublic: p.isPublic,
+          mine: p.poster === "Mira",
+        })),
+        more: rows.length > 3,
+        isDm: dm,
+        usage: dm
+          ? { usedMb: 312, limitMb: 500, permanentMb: permanentMb(), permanentLimitMb: PERMANENT_LIMIT_MB }
+          : null,
+        sessions: [2],
+        posters: ["Cerric", "Mira"],
+      };
+    },
+    async pictureAction(campaignRef, code, action) {
+      calls.push(`pictureAction:${campaignRef}:${code}:${action}`);
+      await reachable();
+      signedIn();
+      const dm = !campaignRef.endsWith(".player");
+      if (!dm && (action === "permanent" || action === "not-permanent")) throw new ApiError("not-allowed");
+      const picture = pictureRows.find((p) => p.code === code);
+      if (!picture) throw new ApiError("not-found");
+      if (action === "delete") {
+        pictureRows.splice(pictureRows.indexOf(picture), 1);
+      } else if (action === "make-private") {
+        picture.isPublic = false;
+      } else if (action === "make-public") {
+        picture.isPublic = true;
+      } else if (action === "permanent") {
+        // Picture 5 is the fifth permanent pick the limit refuses: four pictures fill 400 MB.
+        if (!picture.permanent && permanentMb() + PICTURE_MB > PERMANENT_LIMIT_MB) throw new ApiError("permanent-full");
+        picture.permanent = true;
+      } else {
+        picture.permanent = false;
+      }
+    },
     async sessionNotesList(campaignRef) {
       calls.push(`sessionNotesList:${campaignRef}`);
       await reachable();

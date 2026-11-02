@@ -561,6 +561,47 @@ export interface SessionNotesItem {
   beats: number;
   writtenAt: number;
 }
+/** One kept picture of a campaign (#3275): `code` is its address (`/pictures/<code>`), `cursor` the paging key. */
+export interface PictureItem {
+  code: string;
+  cursor: string;
+  at: number;
+  sessionNumber: number | null;
+  poster: string;
+  description: string;
+  previewUrl: string;
+  permanent: boolean;
+  isPublic: boolean;
+  /** The viewer posted it, so the viewer may make it private or delete it. */
+  mine: boolean;
+}
+/** The storage a game master can see: the campaign's total and its permanent part, in megabytes (#3275). */
+export interface PictureUsage {
+  usedMb: number;
+  limitMb: number;
+  permanentMb: number;
+  permanentLimitMb: number;
+}
+export interface PictureList {
+  pictures: PictureItem[];
+  /** Older pictures remain after this page. */
+  more: boolean;
+  isDm: boolean;
+  /** Only for a game master. */
+  usage: PictureUsage | null;
+  /** The sessions and the posters the two filters offer. */
+  sessions: number[];
+  posters: string[];
+}
+export interface PictureFilter {
+  session?: number;
+  poster?: string;
+  q?: string;
+  /** The `cursor` of the last picture already shown, for the next page. */
+  before?: string;
+}
+export type PictureAction = "make-private" | "make-public" | "delete" | "permanent" | "not-permanent";
+
 export interface SessionNotesList {
   sessions: SessionNotesItem[];
 }
@@ -1979,6 +2020,8 @@ export type ApiErrorKind =
   | "signed-out" // the session ended
   | "no-free-slot" // accepting a hand-over: you have no free campaign slot
   | "not-allowed" // not your campaign, or not allowed right now
+  | "permanent-full" // the permanent pictures are full (400 MB): unmark one to make room (#3275)
+  | "refused" // the bot refused a picture action; the error's `note` says why (#3275)
   | "sign-in-again" // acting for a server or deleting needs a sign-in from the last day
   | "try-it-used" // Try It was used before
   | "has-plan" // a plan already works (Try It or a second checkout)
@@ -2140,6 +2183,8 @@ export interface BackupSet {
 export const safeBackupName = (name: string, fallback: string): string => name.replace(/[^A-Za-z0-9._-]+/g, "-").slice(0, 160) || fallback;
 
 export class ApiError extends Error {
+  /** The words the server gave with a refusal, when it gave some (#3275): shown as they are. */
+  note?: string;
   constructor(
     readonly kind: ApiErrorKind,
     readonly cueProblems: CueProblem[] = [],
@@ -2252,6 +2297,10 @@ export interface AccountApi {
   sessionNotesList?(campaignRef: string): Promise<SessionNotesList>;
   /** One session's numbered notes, `at` in Unix seconds (#3027). Missing from an older API. */
   sessionNotes?(campaignRef: string, at: number): Promise<SessionNotes>;
+  /** The kept pictures of a campaign, three at a time, newest first (#3275). Missing from an older API. */
+  pictures?(campaignRef: string, filter: PictureFilter): Promise<PictureList>;
+  /** One picture's action (#3275): a refusal throws an ApiError whose `note` says why. */
+  pictureAction?(campaignRef: string, code: string, action: PictureAction): Promise<void>;
   /** The after-session report for one session (DMs only; #2661), `at` in Unix seconds. Missing from an
    * API older than the report. */
   sessionReport?(campaignRef: string, at: number): Promise<SessionReport>;
@@ -2615,6 +2664,8 @@ export const fixErrorKinds: Record<string, ApiErrorKind> = {
 };
 
 export const errorKinds: Record<string, ApiErrorKind> = {
+  "permanent-full": "permanent-full", // the picture route's 409 detail (#3275)
+  refused: "refused", // the picture route's 409 detail; its note says why (#3275)
   plan: "plan-needed",
   no_rules: "no-rules",
   not_owner: "not-owner",
@@ -2783,7 +2834,7 @@ export interface ApiHelpers {
 export const ACCOUNT_METHODS = ["emailSignInRequest", "emailSignInUse", "offerHandover", "deleteCampaign", "restoreStage", "restorePart", "restoreGo", "restoreStatus", "restoreCancel", "campaignBackup", "takeBackHandover", "handoverLook", "handoverAccept", "handoverDecline", "removeDiscordAccount", "getMoveCode", "myEmail", "changeEmail", "confirmEmail", "cancelEmailChange", "sendSupport", "mySupport", "supportThread", "signOutEverywhere", "startTryIt", "checkoutUrl", "billingPortalUrl", "renewPlan", "extraHoursUrl", "downloadExport", "characters", "linkServer", "acceptOffer", "declineOffer", "withdrawOffer", "stopRecording", "myLines", "deleteMyLines", "myLinesStatus", "requestDelete", "confirmDelete"] as const satisfies readonly (keyof AccountApi)[];
 export const RECAPS_METHODS = ["recapAudioUrl", "recaps", "pastSessions", "sessionReport", "makeSessionReport", "answerReport", "setBeatPresent", "makeRecap", "addRecap", "recapList", "recap", "saveRecap", "approveRecap", "approveUnchecked", "recapAudioLinks", "recapChoices", "setRecapChoice", "askRecapAudioAgain", "plotCheck", "answerPlotIssue", "plotChatSend", "plotChat", "decidePlotProposal", "recapAudioRemake", "sendFix", "fixResult", "sendVoice", "voiceResult", "rewriteWith", "importPreview", "importMembers", "importCheck", "importStart", "importProgress", "importClock", "shareRecap", "publicRecap", "decideRecap"] as const satisfies readonly (keyof AccountApi)[];
 export const NAMES_METHODS = ["namesFixed", "undoNameFix", "campaignNames", "suggestSaidAs", "respellFromVoice", "saveSaidAs", "nameChecks", "answerNameCheck", "npcPage", "saveNpcNote", "myNpcNotes", "deleteMyNpcNotes", "allNames", "smartNames", "changeName", "nameThem", "webGraph", "webSize", "webOverview", "webFind", "webNodeSummary", "webViewers", "confirmKinds", "confirmUndo", "confirmAnswer", "webWaiting", "answerWaiting", "webReadings", "answerReading", "webPeek", "webReveal", "changeWebLink"] as const satisfies readonly (keyof AccountApi)[];
-export const CAMPAIGN_METHODS = ["transcriptCampaigns", "transcriptSessions", "transcript", "transcriptFile", "transcriptStretch", "transcriptPutBack", "transcriptLeaveOut", "sessionNotesList", "sessionNotes", "setCampaignSetting", "campaignOptionalRules", "campaignGameMasters", "campaignSheets", "chooseSheet", "sheetAnswer", "fixTranscriptLine", "fixAnswer", "campaignGameMasterCandidates", "campaignSettingAnswer", "timeline", "sharedRules", "houseRuleCampaigns", "houseRules", "ruleSharing", "chooseRuleSharing", "ruleSharingAnswer", "houseRulesFile", "improvement", "setImprovement", "homebrewCampaigns", "homebrew", "homebrewFile", "campaignPage", "loreAdd", "loreRead", "recapStyle", "changeRecapStyle", "recapStyleAction", "houseFile", "houseFileAdd"] as const satisfies readonly (keyof AccountApi)[];
+export const CAMPAIGN_METHODS = ["transcriptCampaigns", "transcriptSessions", "transcript", "transcriptFile", "transcriptStretch", "transcriptPutBack", "transcriptLeaveOut", "sessionNotesList", "sessionNotes", "pictures", "pictureAction", "setCampaignSetting", "campaignOptionalRules", "campaignGameMasters", "campaignSheets", "chooseSheet", "sheetAnswer", "fixTranscriptLine", "fixAnswer", "campaignGameMasterCandidates", "campaignSettingAnswer", "timeline", "sharedRules", "houseRuleCampaigns", "houseRules", "ruleSharing", "chooseRuleSharing", "ruleSharingAnswer", "houseRulesFile", "improvement", "setImprovement", "homebrewCampaigns", "homebrew", "homebrewFile", "campaignPage", "loreAdd", "loreRead", "recapStyle", "changeRecapStyle", "recapStyleAction", "houseFile", "houseFileAdd"] as const satisfies readonly (keyof AccountApi)[];
 
 /** A stand-in for each call of an area: the first use loads the area's file (once), and every call goes to it. */
 function lazyArea<K extends keyof AccountApi>(names: readonly K[], load: () => Promise<{ default: (h: ApiHelpers) => Record<string, unknown> }>, h: ApiHelpers): Pick<AccountApi, K> {
@@ -2841,14 +2892,17 @@ export function httpApi(
     }
     if (!response.ok) {
       let code = "";
+      let note: string | undefined;
       let cueProblems: CueProblem[] = [];
       try {
         const body: unknown = await response.json();
         // Most routes answer {"error": code}; the import routes' refusals are {"detail": code}.
-        const found = body as { error?: unknown; detail?: unknown };
+        const found = body as { error?: unknown; detail?: unknown; note?: unknown };
         code = String(
           found.error ?? (typeof found.detail === "string" ? found.detail : ""),
         );
+        // A refusal can carry its own words (the picture route, #3275); they are shown as the server gave them.
+        if (typeof found.note === "string" && found.note) note = found.note;
         cueProblems = readCueProblems(body);
       } catch {
         // No JSON body: a plain server error.
@@ -2872,7 +2926,9 @@ export function httpApi(
       ) {
         throw new ApiError("bad-cues", cueProblems);
       }
-      throw new ApiError(kind);
+      const failure = new ApiError(kind);
+      if (note) failure.note = note;
+      throw failure;
     }
     if (response.status === 204) return null;
     return asFile ? response.blob() : response.json();
