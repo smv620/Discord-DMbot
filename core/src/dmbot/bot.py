@@ -6065,17 +6065,55 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             table.house_voice.forget(proposal_id, before, now)
             return
         table.house_voice.proposals[proposal_id] = proposal
+        registered: list[discord.Message] = []
+
+        def keep(message: discord.Message) -> None:
+            """Known as soon as it is sent, so an answer that comes while the other DMs' copies
+            are still going out finds it (`finish_house_copies`)."""
+            if proposal_id not in table.house_settled:
+                table.house_copies.setdefault(proposal_id, []).append(message)
+                registered.append(message)
+
         try:
-            posted = await self.post_message(
-                table.screen_channel_id,
+            posted = await self.ask_live(
+                table,
                 house_voice_screen.proposal_text(proposal),
-                house_voice_screen.proposal_view(table.guild_id, proposal_id, proposal),
+                lambda: house_voice_screen.proposal_view(table.guild_id, proposal_id, proposal),
+                keep,
             )
         except Exception:
             log.exception("Couldn't post a house rule proposal")
-            posted = None
-        if posted is None:
+            posted = []
+        if not posted:
+            for message in table.house_copies.pop(proposal_id, []):  # (a partial send)
+                with contextlib.suppress(discord.HTTPException):
+                    await message.edit(content=house_voice_screen.CLOSED, view=None)
             table.house_voice.forget(proposal_id, before, now)
+            return
+        if proposal_id in table.house_settled:
+            # Settled while the copies were going out: the ones the answer did not reach are
+            # taken down too.
+            for message in posted:
+                if message not in registered:
+                    with contextlib.suppress(discord.HTTPException):
+                        await message.edit(content=house_voice_screen.ANSWERED_ELSEWHERE, view=None)
+
+    async def finish_house_copies(
+        self, guild_id: int, proposal_id: str, pressed_message_id: int | None, note: str, who: str
+    ) -> None:
+        """A DM settled a house-rule offer (#3210): the same offer in the other DMs' chats says who
+        did and what happened, and loses its buttons. The answerer's own message is theirs."""
+        table = self.tables.get(guild_id)
+        if table is None:
+            return
+        table.house_settled.add(proposal_id)
+        name = discord.utils.escape_markdown(who)
+        for message in table.house_copies.pop(proposal_id, []):
+            if message.id != pressed_message_id:
+                with contextlib.suppress(discord.HTTPException):
+                    await message.edit(
+                        content=f"{message.content}\nAnswered by {name}: {note}", view=None
+                    )
 
     def _warm_rules(self, rulesets: tuple[str, str], table: Table | None = None) -> None:
         """Build the names to look for off the event loop (about 0.15 s), so the first line
