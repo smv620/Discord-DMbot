@@ -411,7 +411,7 @@ def _third_name(span: str, others: Collection[str], ends: Collection[str]) -> bo
     """Whether a name of the campaign or the read other than the pair's own stands in the span
     (a capitalised run of up to four words, so "boy" in running text is no name): then the
     pronoun may mean that one, and no reach is made. A name introduced as one of the same
-    person's own ("His elder brother, Vaelrith, vanished, while his younger sister, ...") does
+    person's own ("His elder brother, Ivo, vanished, while his younger sister, ...") does
     not count: "his" before and after it means the same person, and the second relative is the
     very case a reach is for (#3238)."""
     tokens = [(m.group(), m.start()) for m in re.finditer(r"\w+(?:['’-]\w+)*", span)]
@@ -449,6 +449,7 @@ def _widen(
     lost: Dropped | None = None,
     others: Collection[str] | None = None,
     ends: Collection[str] = (),
+    needs_pronoun: bool = True,
 ) -> list[str] | None:
     """A quote that holds only one of the two names (the sentence says "his sister", #2757) made
     the sentence before it too: the text from the start of the previous sentence to the end of the
@@ -467,14 +468,17 @@ def _widen(
     place in the text gives such a window.
 
     Reach (#2757): when the sentence just before does not name the missing end (a background says
-    "Okthandom found a journal. Family members vanish at a hundred. His brother, Vaelrith, …"),
+    "Bran found a journal. Family members vanish at a hundred. His brother, Ivo, …"),
     the window goes back through the SAME paragraph, up to `REACH_SENTENCES` sentences and
     `REACH_WORDS` words (and `REACH_CHARS` characters, the queue's quote column), to the nearest
     earlier sentence that holds both names. Only when `others` (the name keys of the campaign
     and of this read, `reach_names`) is given, and only when no name in `others` but the pair's
     own `ends` stands anywhere in the window: another name there could be the one the pronoun
-    means, so the line is left to the who-is-it check. Counted as `quote_reach`."""
-    if not any(w.strip(".,;:!?\"'“”‘’()").casefold() in PRONOUNS for w in words):
+    means, so the line is left to the who-is-it check. Counted as `quote_reach`.
+
+    `needs_pronoun` False is for a description with no named subject ("…the son of a weaver
+    mother", #2959): the person's own word then stands in for the second name."""
+    if needs_pronoun and not any(w.strip(".,;:!?\"'“”‘’()").casefold() in PRONOUNS for w in words):
         return None  # (no pronoun: the quote names what it names, and nothing is borrowed)
     holds = holds or _in_quote
     pattern = r"\s+".join(re.escape(w) for w in words)

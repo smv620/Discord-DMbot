@@ -95,8 +95,9 @@ async def read(read_ai: Any, shape_ai: Any = None, text: str = TEXT) -> lr.LoreR
 class TheExamples(unittest.TestCase):
     def test_their_format_is_pinned(self) -> None:
         text = lr.EXAMPLES
-        self.assertEqual(text.count("NAMES\n"), 5)
-        self.assertEqual(text.count("RELATIONSHIPS\n"), 4)
+        self.assertEqual(text.count("NAMES\n"), 6)
+        self.assertEqual(text.count("RELATIONSHIPS\n"), 5)
+        self.assertEqual(text.count("UNNAMED\n"), 1)
         self.assertEqual(text.count("NOT INCLUDED\n"), 1)
         name_line = re.compile(r"^- .+ \| (person|place|group|god|item|event|idea)( \| .+)*$")
         link_line = re.compile(r'^- .+ — .+ — .+ \| quote: ".+"$')
@@ -109,7 +110,7 @@ class TheExamples(unittest.TestCase):
         self.assertIn("Wyrmhold", listed.left_out[0])
 
     def test_the_second_example_is_a_names_list_that_keeps_the_aside_as_another_name(self) -> None:
-        second = lr.EXAMPLES.split("Example 5.", 1)[1]
+        second = lr.EXAMPLES.split("Example 5.", 1)[1].split("\nExample ", 1)[0]
         self.assertNotIn("RELATIONSHIPS", second)
         self.assertIn("other names: the rogue", second)
         self.assertIn("said: kah-ZETH", second)
