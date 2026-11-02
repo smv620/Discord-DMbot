@@ -213,6 +213,27 @@ class NameQuestions(Refusals):
         posted.assert_not_awaited()
         self.assertIsNone(table.questions.open)
 
+    async def test_an_answer_that_arrives_while_the_copies_are_still_being_sent(self) -> None:
+        # #3210: DM 1 answered before DM 2's copy was sent. DM 1's message must not be edited
+        # (it holds their answer and Undo); DM 2's late copy says another DM answered.
+        table, _, _, _ = await self.asked_about_marin()
+        asked = table.questions.open
+        assert asked is not None
+        table.questions.close(name_questions.EXPIRED, 0.0)
+        table.questions.open = asked  # as if it were still waiting to be posted
+        first, late = MagicMock(id=1, edit=AsyncMock()), MagicMock(id=2, edit=AsyncMock())
+
+        async def ask_live(table: Any, text: str, make_view: Any, on_sent: Any = None) -> Any:
+            on_sent(first)  # DM 1's copy is sent and registered
+            table.questions.close(name_questions.ANSWERED, 0.0)  # DM 1 answers
+            self.bot._retire_copies(table, asked.id, first.id)
+            return [first, late]  # DM 2's copy goes out afterwards
+
+        self.bot.ask_live = ask_live  # type: ignore[method-assign]
+        await self.bot._ask_dm(table, asked)
+        first.edit.assert_not_awaited()
+        late.edit.assert_awaited_once_with(content=name_questions.ANSWERED_ELSEWHERE, view=None)
+
     async def test_an_answer_about_a_stopped_speaker_writes_nothing(self) -> None:
         table, _, _, memory = await self.asked_about_marin()
         asked = table.questions.open

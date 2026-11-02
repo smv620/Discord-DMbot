@@ -6986,24 +6986,36 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             )
         else:
             text = name_questions.question_text(speaker, md(asked.heard), md(asked.context))
-        message = await self.post_message(
-            table.screen_channel_id, text, question_view(table.guild_id, asked)
+        registered: list[discord.Message] = []
+
+        def keep(message: discord.Message) -> None:
+            """A copy is known as soon as it is sent: an answer that arrives while the others are
+            still being sent then finds it, and edits it (`finish_copies`)."""
+            if book.is_open(asked.id):
+                table.question_messages.append(message)
+                registered.append(message)
+
+        messages = await self.ask_live(
+            table, text, lambda: question_view(table.guild_id, asked), keep
         )
-        if message is None:
+        if not messages:
             if book.is_open(asked.id):  # not posted: free the slot, and ask again later
                 book.close(name_questions.NOT_POSTED, time.monotonic())
             return
         if book.is_open(asked.id):
-            table.question_message = message
-            return
-        # Closed while posting: say how, without their words if they stopped.
-        closed = (
-            name_questions.GONE
-            if book.why_closed(asked.id) == name_questions.STOPPED
-            else self._not_answered(table, asked)
-        )
-        with contextlib.suppress(discord.HTTPException):
-            await message.edit(content=closed, view=None)
+            return  # every copy is registered, and edited when it is answered or runs out
+        # Closed while sending: the copies sent before that were dealt with when it closed; say
+        # how it closed on the rest, without their words if they stopped.
+        if book.why_closed(asked.id) == name_questions.ANSWERED:
+            closed = name_questions.ANSWERED_ELSEWHERE
+        elif book.why_closed(asked.id) == name_questions.STOPPED:
+            closed = name_questions.GONE
+        else:
+            closed = self._not_answered(table, asked)
+        for message in messages:
+            if message not in registered:
+                with contextlib.suppress(discord.HTTPException):
+                    await message.edit(content=closed, view=None)
 
     async def _rank_question(
         self, table: Table, asked: name_questions.Asked
@@ -7063,8 +7075,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
     async def _close_question(self, table: Table, text: str = name_questions.GONE) -> None:
         """Take the open question's buttons down, saying why (they stopped being
         recorded, nobody answered, or the session ended)."""
-        message, table.question_message = table.question_message, None
-        if message is not None:
+        messages, table.question_messages = table.question_messages, []
+        for message in messages:  # every copy, in every DM's chat
             with contextlib.suppress(discord.HTTPException):
                 await message.edit(content=text, view=None)
 
@@ -7688,7 +7700,13 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         return (entity_id, name) if name is not None else name_questions.TYPED_SECRET
 
     async def answer_name_question(
-        self, guild_id: int, question_id: str, pick: str, user_id: int, typed: str | None = None
+        self,
+        guild_id: int,
+        question_id: str,
+        pick: str,
+        user_id: int,
+        typed: str | None = None,
+        message_id: int | None = None,
     ) -> tuple[str, bool, tuple[str, int] | None]:
         """The DM answered "Did they mean…?": save it for the campaign, so the same words
         are handled silently from now on, and fix the line that was asked about (#503).
@@ -7730,13 +7748,13 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         now = time.monotonic
         if not self.consent.has_consent(guild_id, asked.speaker):
             book.close(name_questions.STOPPED, now())
-            table.question_message = None
+            self._retire_copies(table, question_id, message_id)
             return name_questions.GONE, True, None
         keep = pick == name_questions.KEEP
         if chosen is None and not keep:
             if not (pick.isdigit() and int(pick) < len(asked.options)):
                 book.close(name_questions.ANSWERED, now())
-                table.question_message = None
+                self._retire_copies(table, question_id, message_id)
                 return name_questions.EXPIRED, True, None
             chosen = asked.options[int(pick)]
         campaign_id, name = table.campaign_id, ""
@@ -7763,7 +7781,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             # The name was removed since: asking again won't help.
             if book.is_open(question_id):
                 book.close(name_questions.ANSWERED, now())
-                table.question_message = None
+                self._retire_copies(table, question_id, message_id)
             return name_questions.NAME_GONE, True, None
         except Exception:
             book.failed(question_id)  # open again for another try, if still theirs
@@ -7778,7 +7796,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 table.rank_picked += 1
         if book.is_open(question_id):
             book.close(name_questions.ANSWERED, now())
-            table.question_message = None
+            self._retire_copies(table, question_id, message_id)
         # After the save: if they stopped being recorded meanwhile, their words stay down
         # (Stop already took the message down). A session that ended meanwhile is fine.
         if book.why_closed(question_id) == name_questions.STOPPED or not self.consent.has_consent(
@@ -10226,6 +10244,84 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 )
             except Exception:
                 log.exception("Couldn't post a question for the DM on the DM screen")
+
+    async def ask_live(
+        self,
+        table: Table,
+        text: str,
+        make_view: Callable[[], discord.ui.View],
+        on_sent: Callable[[discord.Message], None] | None = None,
+    ) -> list[discord.Message]:
+        """A question asked while the game runs, in the private chat of every DM who can be
+        reached (#3210): the first answer settles it, and every copy is edited when it is answered
+        or runs out. Each copy gets its own view. Only if no DM can be reached does it go on the DM
+        screen, with the line saying why. An empty list when it could not be posted anywhere."""
+        campaign = (
+            await self.campaigns.get(table.guild_id, table.campaign_id)
+            if table.campaign_id is not None
+            else None
+        )
+        messages: list[discord.Message] = []
+        if campaign is not None:
+            who = discord.utils.escape_markdown(campaign.name)
+            marked = f"❓ **DMbot has a question** · {who}\n{text}"
+            order = sorted(campaign.dm_user_ids, key=lambda u: (u != campaign.owner_user_id, u))
+            for user_id in order:
+                try:  # one DM failing must not stop the others
+                    message = await self._dm_message(user_id, marked, make_view())
+                except Exception:
+                    log.exception("Couldn't ask a DM a live question privately")
+                    continue
+                if message is not None:
+                    messages.append(message)
+                    if on_sent is not None:  # known at once, so an early answer finds it
+                        on_sent(message)
+        if messages:
+            return messages
+        screen = await self.post_message(
+            table.screen_channel_id, text + NO_PRIVATE_MESSAGE, make_view()
+        )
+        if screen is not None and on_sent is not None:
+            on_sent(screen)
+        return [screen] if screen is not None else []
+
+    def _retire_copies(self, table: Table, question_id: str, closer_id: int | None = None) -> None:
+        """The open question was answered or taken down: keep its copies, with the id of the
+        message that closed it, until that DM's own message has been dealt with
+        (`finish_copies`), so the others can be edited too. Bounded: a session asks few questions
+        and the oldest entries are dropped."""
+        copies, table.question_messages = table.question_messages, []
+        if copies:
+            table.closed_copies[question_id] = (closer_id, copies)
+            while len(table.closed_copies) > 20:
+                table.closed_copies.pop(next(iter(table.closed_copies)))
+
+    async def finish_copies(
+        self,
+        guild_id: int,
+        question_id: str,
+        pressed_message_id: int | None,
+        text: str,
+        answered_by: str = "",
+    ) -> None:
+        """After a DM answered a live question (#3210): edit every other copy of it, in the other
+        DMs' chats, to "Answered by <name>: <the answer>" with no buttons. Only the press that
+        closed the question does this: a stale press from another DM (the question was already
+        closed) finds a different closer and changes nothing, so the answerer's message and its
+        Undo are never overwritten. The answerer's own message is skipped for the same reason."""
+        table = self._session_table(guild_id, question_id)
+        if table is None:
+            return
+        closed = table.closed_copies.get(question_id)
+        if closed is None or pressed_message_id is None or closed[0] != pressed_message_id:
+            return
+        table.closed_copies.pop(question_id, None)
+        who = discord.utils.escape_markdown(answered_by)
+        shown = f"Answered by {who}: {text}" if answered_by else text
+        for message in closed[1]:
+            if message.id != pressed_message_id:
+                with contextlib.suppress(discord.HTTPException):
+                    await message.edit(content=shown, view=None)
 
     async def send_collected_asks(self, table: Table) -> None:
         """The after-session step that sends what the steps before it collected (#3210). After it,
