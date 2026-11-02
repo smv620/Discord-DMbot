@@ -106,7 +106,16 @@ from dmbot.consent_dm import (
 from dmbot.consent_site import SiteStops
 from dmbot.db import Database, DatabaseError
 from dmbot.discord_limits import tree_problems
-from dmbot.dm_questions import CLAIMS, FAMILY, NAMES, Ask, combine, ordered, view_of
+from dmbot.dm_questions import (
+    CLAIMS,
+    FAMILY,
+    NAMES,
+    NO_PRIVATE_MESSAGE,
+    Ask,
+    combine,
+    ordered,
+    view_of,
+)
 from dmbot.dm_screen import (
     DMScreenError,
     HideButton,
@@ -553,12 +562,6 @@ from dmbot.ui.transcripts import (
 )
 
 DMBCHAT_STATEMENT_WORDS = 4  # a DM's message this long is a statement; shorter is a reply
-# Added to a question that had to stay on the DM screen (#3210), so a DM whose private messages are
-# closed learns why it is there and how to get it privately.
-NO_PRIVATE_MESSAGE = (
-    "\n_DMbot couldn't message you privately. Allow messages from this server in your Discord "
-    "privacy settings._"
-)
 DMBCHAT_HINT = (
     "To tell DMbot something about the story, write it in your private chat with DMbot. "
     "Players can read this chat."

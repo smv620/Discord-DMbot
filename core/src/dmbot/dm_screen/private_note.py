@@ -9,14 +9,14 @@ from typing import Any
 
 import discord
 
+from dmbot.dm_questions import NO_PRIVATE_MESSAGE
+
 
 async def send(
     bot: Any, campaign: Any, text: str, make_view: Callable[[], discord.ui.View]
 ) -> bool:
     """True when the note went somewhere a DM will see it. A maker, not a view: the private chat
     and the screen each need their own view."""
-    from dmbot.bot import NO_PRIVATE_MESSAGE  # (here, not at the top: bot.py imports this package)
-
     if await bot.ask_privately(campaign.guild_id, campaign.id, text, make_view()):
         return True
     if campaign.dm_screen_channel_id is None:
