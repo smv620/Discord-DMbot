@@ -20,6 +20,7 @@ from typing import Any
 
 from dmbot.db import Database, row_int
 from dmbot.memory import evidence, forget_readings
+from dmbot.transcript import theatre_store
 from dmbot.transcript.export import UNKNOWN_SPEAKER, clean_name
 from dmbot.transcript.models import Line, Lineage, TranscriptSession, line_ref
 from dmbot.transcript.respell import put_back, respell
@@ -549,6 +550,13 @@ class TranscriptStore:
         if not ids:
             return
         async with self._db.guild(guild_id) as conn:
+            # The session's row is locked first, as a script save does, so a save that read these
+            # lines cannot commit a row citing them after this has removed their words (the
+            # trigger on `transcript_lines` then removes any row that already cited them).
+            await conn.execute(
+                "SELECT 1 FROM transcript_sessions WHERE guild_id = %s AND id = %s FOR UPDATE",
+                (guild_id, session_id),
+            )
             await conn.execute(
                 "DELETE FROM transcript_lines WHERE session_id = %s AND id = ANY(%s)",
                 (session_id, list(ids)),
@@ -1027,6 +1035,7 @@ class TranscriptStore:
                 "DELETE FROM transcript_suggestions WHERE guild_id = %s AND user_id = %s",
                 (guild_id, user_id),
             )
+            await theatre_store.forget_person(conn, guild_id, user_id)  # the script made of them
             await conn.execute(  # where a fixed spelling was written into their lines (#2170)
                 "DELETE FROM transcript_respells WHERE guild_id = %s AND user_id = %s",
                 (guild_id, user_id),
@@ -1121,6 +1130,7 @@ class TranscriptStore:
                 "DELETE FROM waiting_name_questions WHERE guild_id = %s AND session_id = %s",
                 (guild_id, session_id),
             )
+            await theatre_store.forget_session(conn, guild_id, session_id)
             await conn.execute(
                 "DELETE FROM transcript_respells WHERE guild_id = %s AND session_id = %s",
                 (guild_id, session_id),

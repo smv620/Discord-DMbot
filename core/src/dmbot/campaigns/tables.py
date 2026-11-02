@@ -91,6 +91,8 @@ _VOICE_CO = (
     "(Supervisor, #2604). A restored campaign makes its own when it makes audio"
 )
 NOT_IN_BACKUP: dict[str, str] = {
+    "theatre_lines": "the theatrical transcript of a session (DM-only): made from the cleaned "
+    "lines by an AI and made again on request, never carries content of its own (#3244)",
     "web_backups": "a request for a copy for the website and the copy made for it, kept 15 "
     "minutes: a copy of a copy, never content (#2554)",
     "web_backup_parts": "the transcripts files of a website copy, kept with it for 15 minutes: a "
