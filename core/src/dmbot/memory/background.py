@@ -99,7 +99,7 @@ LORE_WORDS = {
 # Family by role: kept as a family connection whose detail is the role (#2457), read "a is the
 # parent of b" (the role belongs to the first name, as `kin` reads it).
 LORE_KIN = ("parent", "sibling", "spouse", "grandparent", "aunt", "uncle", "niece", "nephew",
-            "cousin")  # fmt: skip
+            "cousin", "guardian")  # fmt: skip
 # The role words a text uses, in the neutral word DMbot keeps (the gender stays out of the data):
 # "his younger sister" is a sibling, "whose husband" a spouse (#3035). A word of `kin.ROLES` that is
 # neutral already (aunt, cousin…) stands for itself.
