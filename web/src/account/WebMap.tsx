@@ -57,6 +57,9 @@ function arrowhead(from: { x: number; y: number }, to: { x: number; y: number })
 }
 const NUDGE = 24; // how far an arrow key moves the name it is on
 
+/** How many of a line's connections its tooltip lists before "plus n more…" (#3279). */
+const TIP_LINKS = 4;
+
 /** Each style has its own shape (and the plain ones a dashed edge), so a name is known by shape and word as
  * well as by its colour. */
 function Shape({ kind, r }: { kind: string; r: number }) {
@@ -586,6 +589,21 @@ export default function WebMap({
             const dim = edge.links.length > 0 && edge.links.every((l) => l.revealed === false);
             const touches = focus !== null && (edge.a === focus || edge.b === focus);
             const text = `${theory ? `${words.theoryMark} ` : ""}${edge.label}${edge.more > 0 ? ` (+${edge.more})` : ""}`;
+            // Hovering a line that holds several connections lists four of them, then "plus n more…", so "(+6)" on the
+            // line is never a mystery (#3279). The API sends the links oldest first and words the line with the latest
+            // one, so the line's own connection comes first and the others follow newest first. Each reads in full, from
+            // the right end ("Mira serves Gorn"), as the side panel reads it. One connection keeps its words.
+            const aName = byId.get(edge.a)?.name ?? "";
+            const bName = byId.get(edge.b)?.name ?? "";
+            const lead = edge.links.findLastIndex((l) => l.words === edge.label);
+            const ordered = [...(lead >= 0 ? [edge.links[lead]!] : []), ...edge.links.filter((_, i) => i !== lead).reverse()];
+            const tip =
+              edge.links.length > 1
+                ? [
+                    ...ordered.slice(0, TIP_LINKS).map((l, i) => `${theory && i === 0 ? `${words.theoryMark} ` : ""}${words.linkText(aName, bName, l.words, l.direction)}`),
+                    ...(ordered.length > TIP_LINKS ? [words.plusMore(ordered.length - TIP_LINKS)] : []),
+                  ].join("\n")
+                : text;
             // The line of the name in focus (hovered, else picked) says just the verb as that name would say it, with an
             // arrow toward the other name; with no wording from that end it says nothing and has no arrowhead. The
             // chosen line keeps its full words. A line that holds several connections says how many when it has no
@@ -625,7 +643,7 @@ export default function WebMap({
                   class="web-hit"
                   tabIndex={touches ? 0 : -1}
                   role="button"
-                  aria-label={words.lineBetween(byId.get(edge.a)?.name ?? "", byId.get(edge.b)?.name ?? "")}
+                  aria-label={`${words.lineBetween(byId.get(edge.a)?.name ?? "", byId.get(edge.b)?.name ?? "")}${edge.links.length > 1 ? `. ${tip.replace(/\n/g, ". ")}` : ""}`}
                   onClick={open}
                   onKeyDown={(ev) => {
                     if (ev.key === "Enter" || ev.key === " ") {
@@ -633,11 +651,13 @@ export default function WebMap({
                       onLine(edge.a, edge.b);
                     }
                   }}
-                />
+                >
+                  <title>{tip}</title>
+                </line>
                 {arrowFrom && arrowTo && <path d={arrowhead(arrowFrom, arrowTo)} class="web-arrow" aria-hidden="true" />}
                 {shown && (
                   <text x={mx} y={my - 5} transform={`rotate(${upright.toFixed(1)} ${mx} ${my})`} class="web-edge-text" text-anchor="middle" onClick={open}>
-                    <title>{text}</title>
+                    <title>{tip}</title>
                     {short(shown, 26)}
                   </text>
                 )}
