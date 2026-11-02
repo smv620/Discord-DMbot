@@ -34,6 +34,7 @@ DONE = {
     "delete": "It is deleted.",
 }
 EXPIRES_S = 3600  # a queued choice not applied within an hour is dropped
+RECLAIM_S = 300  # a choice a worker took and never finished is taken again after this
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,10 +112,11 @@ class PictureActions:
             cur = await conn.execute(
                 "UPDATE picture_actions SET state = 'working', claimed_at = %s"
                 " WHERE (guild_id, id) = (SELECT guild_id, id FROM picture_actions"
-                " WHERE guild_id = %s AND state = 'waiting' ORDER BY seq LIMIT 1"
+                " WHERE guild_id = %s AND (state = 'waiting'"
+                " OR (state = 'working' AND claimed_at < %s)) ORDER BY seq LIMIT 1"
                 " FOR UPDATE SKIP LOCKED)"
                 " RETURNING id, campaign_id, user_id, picture_id, action",
-                (now, guild_id),
+                (now, guild_id, now - RECLAIM_S),
             )
             row = await cur.fetchone()
         return None if row is None else dict(row)

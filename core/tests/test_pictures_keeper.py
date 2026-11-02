@@ -118,6 +118,17 @@ class Keeping(DatabaseTest):
         Image.frombytes("RGB", (360, 360), os.urandom(360 * 360 * 3)).save(out, "PNG")
         return out.getvalue() + bytes([n])  # distinct bytes: a different file
 
+    async def test_a_picture_taken_back_loses_its_row_content_and_both_files(self) -> None:
+        keeper = self.keeper()
+        got = await keeper.keep(self.ctx(), picture())
+        assert got.picture is not None
+        await keeper.discard(GUILD, self.campaign.id, got.picture)
+        self.assertEqual(self.bucket.files, {})
+        gone = await self.store.get(GUILD, self.campaign.id, got.picture.id)
+        assert gone is not None
+        self.assertTrue(gone.gone)
+        self.assertEqual(await self.store.list(GUILD, self.campaign.id), [])
+
     async def test_each_campaign_keeps_its_own_copy_of_the_same_file(self) -> None:
         other = await self.campaigns.create(GUILD, "Two", DM)
         a = await self.keeper().keep(self.ctx(), picture())

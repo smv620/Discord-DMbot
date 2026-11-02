@@ -82,6 +82,13 @@ class PictureKeeper:
             except BucketError as exc:
                 log.warning("Pictures: couldn't delete a file (%s)", exc)
 
+    async def discard(self, guild_id: int, campaign_id: str, picture: Picture) -> None:
+        """Take back a picture just kept (its poster stopped, or deleted the message, while it was
+        being stored): the row keeps its link so the link says it was removed, the files go."""
+        gone = await self._store.delete(guild_id, campaign_id, picture.id)
+        if gone is not None:
+            await self._delete(gone.object_key, gone.preview_key)
+
     async def keep(self, ctx: Context, data: bytes) -> Result:
         try:
             ready = await self._prepare(data)

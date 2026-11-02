@@ -5248,7 +5248,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             return
 
         async def keep(n: int, image: Any, read: images.Read | None) -> None:
-            await self._keep_picture(table, user_id, message_id, channel_id, image, read)
+            await self._keep_picture(table, user_id, message_id, channel_id, image, read, still_ok)
 
         reads = await desk.describe(
             gid, cid, links, still_ok, on_image=keep if self.picture_keeper is not None else None
@@ -11428,15 +11428,23 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         channel_id: int,
         image: Any,
         read: images.Read | None,
+        still_ok: Callable[[], bool],
     ) -> None:
         """Keep one posted picture with its campaign and say where its link is. A picture that is
         not kept (too big, broken, no room, the bucket down) was still described and keeps its
         line; the reason is logged as a word and nothing else."""
         keeper = self.picture_keeper
         gid, cid = table.guild_id, table.campaign_id
-        if keeper is None or cid is None or not self._pictures_may_be_kept(gid, user_id):
+        if (
+            keeper is None
+            or cid is None
+            or not self._pictures_may_be_kept(gid, user_id)
+            or not still_ok()
+        ):
             return
         granted = await self.consent.granted_at(gid, user_id)
+        if granted is None or not still_ok():  # no record of the yes: nothing is kept on a guess
+            return
         got = await keeper.keep(
             PictureContext(
                 guild_id=gid,
@@ -11447,7 +11455,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 message_id=message_id,
                 description=images.line_text(read) if read is not None else "",
                 consent_version=consent_terms.TERMS_VERSION,
-                right_granted_at=granted or int(time.time()),
+                right_granted_at=granted,
             ),
             image.data,
         )
@@ -11456,9 +11464,14 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         if got.picture is None:
             log.info("Table image: not kept (%s)", got.why_not)
             return
+        if got.new and not still_ok():
+            # The poster stopped, or the message went, while it was stored: take it back.
+            await keeper.discard(gid, cid, got.picture)
+            return
         if got.new and channel_id and self.settings.site_url:
             # The link under the description: anyone with it can open the picture (the poster or a
-            # DM can make it private on the website). It goes when the picture's message does.
+            # DM can make it private or delete it on the website). This line goes when the
+            # picture's message does; the kept picture itself stays until someone deletes it.
             reply = await self._post_reply(
                 channel_id,
                 message_id,
@@ -11466,7 +11479,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 discord.ui.View(),
             )
             if reply is not None and message_id:
-                self._image_replies.setdefault(message_id, []).append(reply)
+                if message_id in self._deleted_messages:  # deleted while the line was sent
+                    await self._delete_reply(reply)
+                else:
+                    self._image_replies.setdefault(message_id, []).append(reply)
 
     async def _tell_pictures_removed(self, guild_id: int, campaign_id: str, count: int) -> None:
         """The DMs hear once (a run of the bot) that old pictures were removed to make room."""

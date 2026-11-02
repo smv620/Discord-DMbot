@@ -475,8 +475,16 @@ class TableImages(chat.AtTheTableTyped):
                 raise RuntimeError("the bucket fell over")
             return answer  # type: ignore[no-any-return]
 
-        self.bot.picture_keeper = SimpleNamespace(keep=keep)
+        self.discarded: list[Any] = []
+
+        async def discard(guild_id: int, campaign_id: str, picture: Any) -> None:
+            self.discarded.append(picture)
+
+        self.bot.picture_keeper = SimpleNamespace(keep=keep, discard=discard)
         self.bot.settings = WithSite(self.bot.settings)
+        granted = patch.object(self.bot.consent, "granted_at", AsyncMock(return_value=900))
+        granted.start()  # the stored date of the poster's yes
+        self.addCleanup(granted.stop)
         return calls
 
     async def test_a_kept_picture_gets_its_link_under_it(self) -> None:
@@ -511,6 +519,47 @@ class TableImages(chat.AtTheTableTyped):
         self.keeper(boom=True)
         await self.hear(picture())
         self.assertEqual(len(self.lines()), 1)
+
+    async def test_a_poster_who_stops_while_it_is_stored_has_it_taken_back(self) -> None:
+        said = self.say_into()
+        self.keeper()
+        keep = self.bot.picture_keeper.keep
+
+        agreed = {"yes": True}
+        self.bot.consent.has_image_consent = lambda guild_id, user_id: agreed["yes"]  # type: ignore[method-assign]
+
+        async def stops_meanwhile(ctx: Any, data: bytes) -> Result:
+            result: Result = await keep(ctx, data)
+            agreed["yes"] = False  # they press Stop recording me
+            return result
+
+        self.bot.picture_keeper.keep = stops_meanwhile
+        await self.hear(picture())
+        self.assertEqual(len(self.discarded), 1)
+        said.assert_not_awaited()  # and no link is given
+
+    async def test_a_picture_with_no_record_of_the_yes_is_not_kept(self) -> None:
+        self.say_into()
+        calls = self.keeper()
+        with patch.object(self.bot.consent, "granted_at", AsyncMock(return_value=None)):
+            await self.hear(picture())
+        self.assertEqual(calls, [])  # (the helper's own patch is replaced for this call)
+        self.assertEqual(len(self.lines()), 1)
+
+    async def test_a_link_sent_for_a_message_deleted_meanwhile_is_taken_back(self) -> None:
+        said = self.say_into()
+        self.keeper()
+        msg = picture()
+        original = said.side_effect
+
+        async def deleted_while_sent(*args: Any, **kw: Any) -> Any:
+            self.bot._deleted_messages[msg.id] = 0.0
+            return original() if original else object()
+
+        said.side_effect = deleted_while_sent
+        with patch.object(self.bot, "_delete_reply", AsyncMock()) as taken:
+            await self.hear(msg)
+        taken.assert_awaited_once()
 
     async def test_nothing_is_kept_without_the_switch(self) -> None:
         self.say_into()

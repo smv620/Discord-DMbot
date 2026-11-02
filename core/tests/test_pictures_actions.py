@@ -147,6 +147,25 @@ class Applying(DatabaseTest):
         )
         self.assertEqual(await self.actions.run_once(GUILD), 0)
 
+    async def test_a_choice_taken_and_never_finished_is_taken_again(self) -> None:
+        await self.queue(DM, "private", "e")
+        async with self.db.guild(GUILD) as conn:  # a worker took it 10 minutes ago and died
+            await conn.execute(
+                "UPDATE picture_actions SET state = 'working', claimed_at = %s", (5000 - 600,)
+            )
+        self.assertEqual(await self.actions.run_once(GUILD), 1)
+        got = await self.store.get(GUILD, self.campaign.id, self.picture.id)
+        assert got is not None
+        self.assertFalse(got.public)
+
+    async def test_a_choice_a_worker_has_just_taken_is_left_to_it(self) -> None:
+        await self.queue(DM, "private", "f")
+        async with self.db.guild(GUILD) as conn:
+            await conn.execute(
+                "UPDATE picture_actions SET state = 'working', claimed_at = %s", (5000 - 10,)
+            )
+        self.assertEqual(await self.actions.run_once(GUILD), 0)
+
     async def test_a_choice_older_than_an_hour_is_dropped_unapplied(self) -> None:
         await self.queue(DM, "delete", "d", created=5000 - 4000)
         self.assertEqual(await self.actions.run_once(GUILD), 0)

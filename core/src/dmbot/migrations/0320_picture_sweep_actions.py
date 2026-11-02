@@ -43,14 +43,12 @@ PICTURE_SWEEP_ACTIONS = (
     -- The leftover-file sweep (#3274) compares the bucket's files with every live picture's keys,
     -- across all servers, so it must read them without a server set. Like the other narrow
     -- sweeps (Database.cleanup), the table opens to a read of the rows only inside a transaction
-    -- that set `dmbot.picture_sweep` (Database.picture_sweep()), and the website's role cannot see
-    -- this table at all: it reaches pictures only through its own doors.
+    -- that set `dmbot.picture_sweep` (Database.picture_sweep()). The website's role has no right
+    -- on either picture table (nothing grants it any), so it reaches pictures only through its
+    -- own doors; no policy names that role here, because it is made outside DMbot and may not
+    -- exist where the migration runs.
     CREATE POLICY picture_sweep_read ON campaign_pictures FOR SELECT
         USING (current_setting('dmbot.picture_sweep', true) = 'keys');
-    CREATE POLICY web_no_pictures ON campaign_pictures AS RESTRICTIVE TO dmbot_web
-        USING (false);
-    CREATE POLICY web_no_picture_actions ON picture_actions AS RESTRICTIVE FOR SELECT
-        TO dmbot_web USING (false);
     """
 )
 
