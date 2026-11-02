@@ -114,6 +114,17 @@ class Settings:
     # image is noted as not described.
     table_images_on: bool = False
     table_images_per_day: int = 40
+    # Kept pictures (#3274): a picture posted by someone who agreed under consent version 7 is kept
+    # with the campaign in a private Cloudflare R2 bucket and gets a link. Off until the consent
+    # wording is live; with it off nothing is stored. `picture_storage_mb` is what one campaign may
+    # keep (a setting so it can change later; the oldest non-permanent pictures go first, and
+    # permanent ones may total 80% of it). The R2 keys come from `.env` and are never logged.
+    pictures_kept: bool = False
+    picture_storage_mb: int = 500
+    r2_account_id: str = ""
+    r2_access_key: str = field(default="", repr=False)
+    r2_secret_key: str = field(default="", repr=False)
+    r2_bucket: str = ""
     # Hand-over by email (#2532): off until slices B to D and the accept page are live. While it is
     # off, 🤝 Hand over keeps its member picker and the email route answers 404.
     handover_email_on: bool = False
@@ -146,6 +157,13 @@ class Settings:
     # The most recaps, and narrated recaps, one campaign may make in a calendar month (#1428).
     recaps_per_month: int = 10
     recap_audio_per_month: int = 8
+
+    @property
+    def pictures_ready(self) -> bool:
+        """Kept pictures are on and the bucket is fully set up (#3274)."""
+        return self.pictures_kept and all(
+            (self.r2_account_id, self.r2_access_key, self.r2_secret_key, self.r2_bucket)
+        )
 
     def imports_enabled_for(self, guild_id: int) -> bool:
         return imports_switch.enabled(self.imports_on, self.imports_servers, guild_id)
@@ -442,6 +460,18 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
             + images_day_raw
             + '".'
         )
+    kept_raw = (get("DMBOT_PICTURES_KEPT") or "0").lower()
+    if kept_raw not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError('DMBOT_PICTURES_KEPT must be 1 (on) or 0 (off), got "' + kept_raw + '".')
+    storage_raw = get("DMBOT_PICTURE_STORAGE_MB") or "500"
+    if not (storage_raw.isascii() and storage_raw.isdigit()) or not (
+        1 <= int(storage_raw) <= 1_000_000
+    ):
+        raise ConfigError(
+            'DMBOT_PICTURE_STORAGE_MB must be a whole number of megabytes from 1 to 1000000, got "'
+            + storage_raw
+            + '".'
+        )
     sidebar_raw = (get("DMBOT_SIDEBAR") or "0").lower()
     if sidebar_raw not in ("0", "1", "true", "false", "on", "off"):
         raise ConfigError('DMBOT_SIDEBAR must be 1 (on) or 0 (off), got "' + sidebar_raw + '".')
@@ -503,6 +533,12 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         story_report_on=report_raw in ("1", "true", "on"),
         table_images_on=images_raw in ("1", "true", "on"),
         table_images_per_day=int(images_day_raw),
+        pictures_kept=kept_raw in ("1", "true", "on"),
+        picture_storage_mb=int(storage_raw),
+        r2_account_id=get("R2_ACCOUNT_ID"),
+        r2_access_key=get("R2_ACCESS_KEY_ID"),
+        r2_secret_key=get("R2_SECRET_ACCESS_KEY"),
+        r2_bucket=get("R2_BUCKET"),
         recaps_on=recaps_raw in ("1", "true", "on"),
         handover_email_on=handover_email_raw in ("1", "true", "on"),
         plot_check_on=recaps_raw in ("1", "true", "on")
