@@ -20,6 +20,11 @@
 
 .account .web-node {
   touch-action: none;
+  /* A press on a name is a tap or a drag, never the start of a text selection: the second press of a double click
+     used to select the name's label and begin a native drag, which cancels the pointer, so the name was never
+     put in the middle. */
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .account .web-node:active {
