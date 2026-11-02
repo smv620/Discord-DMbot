@@ -50,7 +50,8 @@ WRONG_NAME = (
     "Press **Delete this campaign** to try again."
 )
 DELETED = (
-    "🗑 Deleted **{name}**. Its transcript and chat channels stay until a server admin removes them."
+    "🗑 Deleted **{name}**. Its transcript channel (and an old chat channel, if it has one) "
+    "stays until a server admin removes them."
 )
 TOLD = "🗑 {who} deleted **{name}**."
 NAME_LIMIT = 100  # a campaign name's longest length; the typed box holds as much

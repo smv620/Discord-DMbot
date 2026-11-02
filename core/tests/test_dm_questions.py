@@ -10,8 +10,8 @@ from unittest.mock import AsyncMock
 
 import discord
 
-from dmbot.bot import NO_PRIVATE_MESSAGE, DMBot
-from dmbot.dm_questions import CLAIMS, FAMILY, NAMES, Ask, combine
+from dmbot.bot import DMBot
+from dmbot.dm_questions import CLAIMS, FAMILY, NAMES, NO_PRIVATE_MESSAGE, Ask, combine
 from tests.asking import with_asking
 
 

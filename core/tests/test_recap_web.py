@@ -2073,7 +2073,7 @@ def fake_bot(job: Job | None, *, allowed: bool = True, secrets: list[str] | None
         to_post=AsyncMock(return_value=[("c" * 32, 100)]),
     )
     campaign = SimpleNamespace(
-        id="c" * 32, dmbchat_channel_id=55, dm_screen_channel_id=66,
+        id="c" * 32, table_chat_id=55, dm_screen_channel_id=66,
         recaps_text=True, recaps_audio=True, recaps_email=True,
     )  # fmt: skip
     bot = SimpleNamespace(

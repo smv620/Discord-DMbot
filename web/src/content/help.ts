@@ -726,7 +726,7 @@ export const dmSteps: Step[] = [
   },
   {
     text: 'Ask a quick question out loud: "Hey DMbot, how long does Bless last?" The short answer is posted in the table\'s dmb-chat channel and says how sure DMbot is. You have the final say.',
-    names: [{ name: "dmb-chat", file: "dm_screen/dmbchat_channel.py" }],
+    names: [{ name: "dmb-chat", file: "dm_screen/old_chat.py" }],
   },
   {
     text: "When the game is over, type /dmbot stop.",
@@ -995,7 +995,7 @@ export const transcriptStep: Step = {
 
 export const heyDmBotStep: Step = {
   text: 'Anyone at the table who said yes can ask DMbot a quick rules question: say "Hey DMbot" or type it in the dmb-chat channel. Your question is posted there with your name. Your game master has the final say.',
-  names: [{ name: "dmb-chat", file: "dm_screen/dmbchat_channel.py" }],
+  names: [{ name: "dmb-chat", file: "dm_screen/old_chat.py" }],
 };
 
 export const fightBotStep: Step = {
