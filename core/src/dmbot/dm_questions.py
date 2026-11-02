@@ -14,6 +14,14 @@ from typing import Any
 
 import discord
 
+# Added to a question that had to stay on the DM screen (#3210), so a DM whose private messages are
+# closed learns why it is there and how to get it privately. Here, not in bot.py, so the screens can
+# use it without importing the bot.
+NO_PRIVATE_MESSAGE = (
+    "\n_DMbot couldn't message you privately. Allow messages from this server in your Discord "
+    "privacy settings._"
+)
+
 NAMES, PEOPLE, CLAIMS, FAMILY = "names", "people", "claims", "family"
 # Always listed in this order, so the message reads the same each time.
 ORDER = (NAMES, PEOPLE, CLAIMS, FAMILY)

@@ -106,7 +106,17 @@ from dmbot.consent_dm import (
 from dmbot.consent_site import SiteStops
 from dmbot.db import Database, DatabaseError
 from dmbot.discord_limits import tree_problems
-from dmbot.dm_questions import CLAIMS, FAMILY, NAMES, PEOPLE, Ask, combine, ordered, view_of
+from dmbot.dm_questions import (
+    CLAIMS,
+    FAMILY,
+    NAMES,
+    NO_PRIVATE_MESSAGE,
+    PEOPLE,
+    Ask,
+    combine,
+    ordered,
+    view_of,
+)
 from dmbot.dm_screen import (
     DMScreenError,
     HideButton,
@@ -554,12 +564,6 @@ from dmbot.ui.transcripts import (
     transcript_command,
 )
 
-# Added to a question that had to stay on the DM screen (#3210), so a DM whose private messages are
-# closed learns why it is there and how to get it privately.
-NO_PRIVATE_MESSAGE = (
-    "\n_DMbot couldn't message you privately. Allow messages from this server in your Discord "
-    "privacy settings._"
-)
 REPORT_CALLS = 8  # AI calls a session may spend on the after-session report (grading and sorting)
 MEANING_RUN_CALLS = 50  # Voyage AI calls one after-session run may make (64 texts each)
 CONTRADICTION_CALLS = 3  # AI calls a session may spend grading contradictions (12 clashes each)
