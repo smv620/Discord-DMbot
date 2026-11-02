@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock
 from dmbot.bot import DMBot
 from dmbot.memory.models import PeopleSuggestion
 from dmbot.ui import people_review
+from tests.asking import asked, with_asking
 from tests.test_memory_store import DM, GUILD_A, MemoryTest
 from tests.test_people import PLAYER
 
@@ -51,6 +52,7 @@ class Learning(unittest.IsolatedAsyncioTestCase):
             guild_id=1,
             campaign_id=CAMPAIGN,
             screen_channel_id=9,
+            asks=None,  # (not in the after-session steps: asked at once)
             name_answers=SimpleNamespace(answered=lambda: answers),
         )
 
@@ -65,10 +67,12 @@ class Learning(unittest.IsolatedAsyncioTestCase):
             ),
             consent=SimpleNamespace(consenting=AsyncMock(side_effect=[{1, 2}, {1}])),
             post=AsyncMock(),
+            ask_privately=AsyncMock(return_value=True),
         )
+        with_asking(fake)
         await DMBot.learn_people(fake, self.table())  # type: ignore[arg-type]
         fake.memory.forget_learned.assert_awaited_once_with(1, 2)
-        text = fake.post.await_args.args[1]
+        text = asked(fake)[0][2]  # what the DM's private chat was sent
         self.assertIn("1 quick question", text)  # only the one who still agrees
 
     async def test_nobody_who_agrees_means_nothing_is_written(self) -> None:
@@ -115,10 +119,10 @@ class Buttons(MemoryTest):
             GUILD_A, self.c, [("Mike", PLAYER, 2), ("Vera", PLAYER, 2)], limit=10
         )
         it = self.interaction()
+        it.guild = None  # a press in the DM's private chat has no server (#3210)
         # The campaign check is the screen's own; here the DM is let through.
-        real = self.campaigns.get
-        it.client.campaigns.get = real
-        view = people_review.PeopleReview(self.c)
+        it.client.campaigns = self.campaigns
+        view = people_review.PeopleReview(self.c, GUILD_A)
         text = await view.current_text(it)
         assert text is not None
         self.assertIn("another name for **Mia**", text)
@@ -135,7 +139,7 @@ class Buttons(MemoryTest):
         await self.memory.learn_people(GUILD_A, self.c, [("Mike", PLAYER, 2)], limit=10)
         it = self.interaction()
         it.client.campaigns.get = self.campaigns.get
-        view = people_review.PeopleReview(self.c)
+        view = people_review.PeopleReview(self.c, GUILD_A)
         await view.current_text(it)
         await view._later(it)
         self.assertEqual(len(await self.memory.people_suggestions(GUILD_A, self.c)), 1)
