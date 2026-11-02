@@ -24,7 +24,9 @@ from dmbot.mentions import NO_PINGS
 log = logging.getLogger(__name__)
 
 KEYS_KEPT = 300  # items remembered; the oldest go first, so the memory stays small
-COPIES = 4  # messages kept per item
+# Messages kept per item: the original post plus a copy in each DM's private chat, for a few
+# session starts (#3210). Too few and the oldest copy keeps live buttons after the answer.
+COPIES = 16
 
 
 def with_outcome(content: str, outcome: str) -> str:
