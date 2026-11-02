@@ -109,6 +109,14 @@ async def _close_note(interaction: discord.Interaction, text: str) -> None:
         log.warning("Couldn't close a suggestion note", exc_info=True)
 
 
+async def _close_stale(interaction: discord.Interaction) -> None:
+    """Another DM already answered: this copy of the note (the same note sits in each DM's private
+    chat, #3210) loses its buttons too."""
+    message = interaction.message
+    if message is not None:
+        await _close_note(interaction, f"{message.content}\n_Already answered._")
+
+
 async def press(
     interaction: discord.Interaction, campaign_id: str, action: str, suggestion_id: str
 ) -> None:
@@ -134,6 +142,7 @@ async def press(
         await _tell(interaction, EXPIRED)
         return
     if asked is None or asked.status != "open":
+        await _close_stale(interaction)
         await _tell(interaction, ANSWERED)
         return
     if action == "see":
@@ -147,6 +156,7 @@ async def press(
             await _tell(interaction, str(exc))
             return
         if not done:
+            await _close_stale(interaction)
             await _tell(interaction, ANSWERED)
             return
         await _close_note(

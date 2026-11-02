@@ -187,6 +187,14 @@ class Posting(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("Far Away", text)
         s.mark_noted.assert_awaited_once_with(1, CAMPAIGN, SID)
 
+    async def test_a_note_goes_to_the_dms_privately(self) -> None:
+        s = store()
+        bot = bot_with(s)
+        bot.ask_privately = AsyncMock(return_value=True)
+        self.assertTrue(await set_suggestion.post_note(bot, 1, CAMPAIGN, OPEN, "Red Table"))
+        bot.post_message.assert_not_awaited()
+        s.mark_noted.assert_awaited_once_with(1, CAMPAIGN, SID)
+
     async def test_no_screen_or_a_failed_post_is_tried_again_later(self) -> None:
         s = store()
         no_screen = bot_with(s, camp=campaign(screen=None))

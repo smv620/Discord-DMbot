@@ -197,6 +197,7 @@ class Notes(unittest.IsolatedAsyncioTestCase):
     async def test_a_press_in_a_private_chat_finds_the_server_from_the_campaign(self) -> None:
         st = store(
             pack_suggestion=AsyncMock(return_value=suggestion()),
+            decline_pack_suggestion=AsyncMock(return_value=True),
         )
         bot = bot_with(st)
         bot.campaigns.guild_of = AsyncMock(return_value=1)
@@ -205,6 +206,22 @@ class Notes(unittest.IsolatedAsyncioTestCase):
         await ps.press(it, CID, "no", SID)
         bot.campaigns.guild_of.assert_awaited_once_with(CID)
         self.assertNotIn(ps.ONLY_DMS, [t for t, _ in it.sent])
+        st.decline_pack_suggestion.assert_awaited_once()
+
+    async def test_a_private_press_for_an_unknown_campaign_or_by_a_non_dm_is_refused(self) -> None:
+        bot = bot_with(store())
+        bot.campaigns.guild_of = AsyncMock(return_value=None)
+        bot.campaigns.get = AsyncMock(return_value=None)
+        it = interaction(7, bot)
+        it.guild = None
+        await ps.press(it, CID, "no", SID)
+        self.assertIn(ps.GONE, [t for t, _ in it.sent])
+        bot = bot_with(store())
+        bot.campaigns.guild_of = AsyncMock(return_value=1)
+        it = interaction(999, bot)  # not one of the campaign's DMs
+        it.guild = None
+        await ps.press(it, CID, "no", SID)
+        self.assertIn(ps.ONLY_DMS, [t for t, _ in it.sent])
 
     async def test_a_failed_post_is_not_marked_so_it_is_tried_again(self) -> None:
         st = store(mark_pack_noted=AsyncMock())
