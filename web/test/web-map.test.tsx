@@ -339,8 +339,27 @@ describe("the map", () => {
     fireEvent.pointerUp(window, { pointerId: 1 });
     fireEvent.click(nodeOf("Garrick")); // (the browser's own click, right after the pointer up)
     expect(onCenter).not.toHaveBeenCalled(); // one tap is a pick, not half of a double tap counted twice
+    expect(document.querySelector("#web-side-h")!.textContent).toBe("Garrick"); // (and the tap did pick it)
     vi.runAllTimers();
     vi.useRealTimers();
+    // later, a click on its own counts again (the flag was cleared): a second one soon after is a double click
+    const now = vi.spyOn(Date, "now").mockReturnValue(9000);
+    fireEvent.click(nodeOf("Mira Voss"));
+    now.mockReturnValue(9100);
+    fireEvent.click(nodeOf("Mira Voss"));
+    expect(onCenter).toHaveBeenCalledWith("m");
+    now.mockRestore();
+  });
+
+  it("a right or middle press on a name is not a tap", () => {
+    const onCenter = vi.fn();
+    draw({ onCenter });
+    for (const button of [1, 2]) {
+      fireEvent.pointerDown(nodeOf("Garrick"), { clientX: 300, clientY: 300, pointerId: 1, button });
+      fireEvent.pointerUp(window, { pointerId: 1, button });
+    }
+    expect(document.querySelector("#web-side-h")!.textContent).toBe("Mira Voss"); // nothing was picked
+    expect(onCenter).not.toHaveBeenCalled();
   });
 
   it("a pointer the browser cancelled (it took the touch over) is not a tap", () => {

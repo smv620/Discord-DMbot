@@ -660,6 +660,7 @@ export default function WebMap({
                   ev.stopPropagation();
                   touched.current = ev.pointerType === "touch";
                   if (pointers.current.size > 1) return; // a second finger: a pinch, not a drag of this name
+                  if (ev.button !== 0) return; // a right or middle press opens a menu or scrolls: not a tap or a drag
                   dragName.current = { id: n.id, x: ev.clientX, y: ev.clientY, moved: false };
                   dragged.current = false;
                 }}
