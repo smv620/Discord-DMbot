@@ -54,13 +54,17 @@ const DEFAULT_HOPS = 2;
 const AUTO_MS = 5000; // how often the map reads itself again, plus up to a second more
 const AUTO_JITTER_MS = 1000;
 
-/** What a person can see of a web: its names and its connections with their words. Two reads with the same
- * signature draw the same map, so the second changes nothing on the page. */
-function graphSignature(g: WebGraph): string {
-  return JSON.stringify([
-    g.center,
-    g.nodes.map((n) => [n.id, n.name, n.kind, n.revealed]),
-    g.edges.map((e) => [e.a, e.b, e.label, e.links.map((l) => [l.id, l.words, l.secret, l.kind, l.direction, l.revealed])]),
+/** Two reads that are the same text draw the same map, so the second changes nothing on the page. The whole
+ * read is the signature: a secret turned on, a know word, a pin or a belief all show without a reload. */
+const graphSignature = (g: WebGraph): string => JSON.stringify(g);
+
+/** A quiet read that hangs is dropped after this long, so one stuck request cannot stop the next turns. */
+const QUIET_READ_MS = 20000;
+
+function withTimeout<T>(work: Promise<T>): Promise<T> {
+  return Promise.race([
+    work,
+    new Promise<never>((_, reject) => setTimeout(() => reject(new Error("timeout")), QUIET_READ_MS)),
   ]);
 }
 
@@ -109,6 +113,10 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
   const [auto, setAuto] = useState(readAuto);
   const graphNow = useRef<WebGraph | null>(null);
   graphNow.current = graph;
+  const autoNow = useRef(auto);
+  autoNow.current = auto;
+  const alive = useRef(true);
+  useEffect(() => () => void (alive.current = false), []);
   const refreshNow = useRef<() => Promise<void>>(async () => {});
 
   /** Reads the web around `at`. A big one waits for a yes unless `sure`. */
@@ -173,27 +181,43 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
     }
   }
 
-  /** One quiet read of the web as it is shown now: nothing moves unless the story changed. It never
-   * asks about a big web, never shows an error and gives way to any read the person started meanwhile. */
+  /** One quiet read of the web as it is shown now: nothing moves unless the story changed. It never draws a
+   * web that needs the big-web yes (it skips those, and asks only the cheap size first), gives way to any read
+   * the person started meanwhile, and drops its answer if they froze the graph or left. A person who is signed
+   * out, or whose peeking was turned off, is told as a normal read would tell them; any other failure waits
+   * for the next turn. */
   async function refresh(): Promise<void> {
     if (!ref || !api.webGraph || view !== "ok" || big !== null || revealing.size > 0) return;
     const shown = graphNow.current;
     if (!shown) return;
     const stamp = latest.current;
+    const [at, steps] = [center, hops];
+    const query = {
+      center: at,
+      hops: steps,
+      ...(askedNow.current ? { view: askedNow.current } : {}),
+      ...(seeAsNow.current !== undefined ? { seeAs: seeAsNow.current } : {}),
+    };
+    const stale = (): boolean =>
+      !alive.current || !autoNow.current || stamp !== latest.current || graphNow.current !== shown;
     try {
-      const read = await api.webGraph(ref, {
-        center,
-        hops,
-        ...(askedNow.current ? { view: askedNow.current } : {}),
-        ...(seeAsNow.current !== undefined ? { seeAs: seeAsNow.current } : {}),
-      });
-      if (stamp !== latest.current || graphNow.current !== shown) return;
+      if (api.webSize && seeAsNow.current === undefined) {
+        const size = await withTimeout(api.webSize(ref, { center: at, hops: steps, ...(askedNow.current ? { view: askedNow.current } : {}) }));
+        if (stale() || size.names > BIG_WEB) return;
+      }
+      const read = await withTimeout(api.webGraph(ref, query));
+      if (stale()) return;
       const next = read.canEdit ? read : plainGraph(read);
       if (graphSignature(next) === graphSignature(shown)) return;
       setGraph(next);
+      setLine((now) => (now && next.edges.some((e) => (e.a === now.a && e.b === now.b) || (e.a === now.b && e.b === now.a)) ? now : null));
       void loadOverview();
-    } catch {
-      /* a quiet read that fails is simply tried again at the next turn */
+    } catch (error) {
+      if (stale()) return;
+      const kind = error instanceof ApiError ? error.kind : "network";
+      if (kind === "signed-out") setView("signed-out");
+      else if (kind === "peek-off") void load(at, steps, true);
+      /* anything else is simply tried again at the next turn */
     }
   }
   refreshNow.current = refresh;

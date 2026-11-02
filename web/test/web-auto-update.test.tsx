@@ -4,10 +4,10 @@
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/preact";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { AccountApi, WebGraph } from "../src/account/api";
+import { ApiError, type AccountApi, type WebGraph } from "../src/account/api";
 import { mockApi } from "../src/account/mock";
 import Web from "../src/account/Web";
-import { webPage as w } from "../src/content/web-words";
+import { webPage as w, webPage as words } from "../src/content/web-words";
 
 const PATH = "/account/web/100.cmp1";
 
@@ -156,7 +156,7 @@ describe("when nobody is looking", () => {
       document.dispatchEvent(new Event("visibilitychange"));
     });
     await tick(100);
-    expect(reads()).toBe(first + 1);
+    expect(reads()).toBeGreaterThanOrEqual(first + 1); // (at once; the next turn's timer may also fall due)
   });
 
   it("keeps quiet when a read fails, and tries again at the next turn", async () => {
@@ -178,5 +178,95 @@ describe("when nobody is looking", () => {
     expect(screen.queryByRole("alert")?.textContent ?? "").toBe("");
     await tick(5200);
     expect(reads).toBe(3);
+  });
+});
+
+describe("what a read may and may not do", () => {
+  it("shows a change to a secret or a know word, not only new names", async () => {
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    const base = mockApi("table");
+    let reads = 0;
+    const api: AccountApi = {
+      ...base,
+      async webGraph(ref, query): Promise<WebGraph> {
+        reads += 1;
+        const got = await base.webGraph!(ref, query);
+        if (reads < 2) return got;
+        // the same names and lines, with one name turned secret in the meantime
+        return { ...got, nodes: got.nodes.map((n, i) => (i === 0 ? { ...n, name: `${n.name}`, secret: true } : n)) };
+      },
+    };
+    await ready(api);
+    const marks = (): number => (document.body.textContent ?? "").split(words.secretMark).length - 1;
+    const before = marks();
+    await tick(5200);
+    expect(reads).toBeGreaterThan(1);
+    expect(marks()).toBeGreaterThan(before);
+  });
+
+  it("does not read a web that needs the big-web question, and does not draw it", async () => {
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    const base = mockApi("table");
+    let big = false;
+    let graphReads = 0;
+    const api: AccountApi = {
+      ...base,
+      async webSize(ref, query) {
+        const got = await base.webSize!(ref, query);
+        return big ? { ...got, names: 99999 } : got;
+      },
+      async webGraph(ref, query) {
+        graphReads += 1;
+        return base.webGraph!(ref, query);
+      },
+    };
+    await ready(api);
+    const first = graphReads;
+    big = true;
+    await tick(5200);
+    expect(graphReads).toBe(first); // asked the size only, read nothing
+    expect(document.querySelector("svg[aria-label^='A map of']")).toBeTruthy();
+  });
+
+  it("tells a person who has been signed out, as any read would", async () => {
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    const base = mockApi("table");
+    let reads = 0;
+    const api: AccountApi = {
+      ...base,
+      async webGraph(ref, query) {
+        reads += 1;
+        if (reads === 2) throw new ApiError("signed-out");
+        return base.webGraph!(ref, query);
+      },
+    };
+    await ready(api);
+    await tick(5200);
+    expect(document.querySelector("svg[aria-label^='A map of']")).toBeNull();
+  });
+
+  it("drops a read that was in flight when the graph was frozen", async () => {
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    const base = mockApi("table");
+    let reads = 0;
+    let release: () => void = () => {};
+    const api: AccountApi = {
+      ...base,
+      async webGraph(ref, query): Promise<WebGraph> {
+        reads += 1;
+        const got = await base.webGraph!(ref, query);
+        if (reads < 2) return got;
+        await new Promise<void>((resolve) => (release = resolve));
+        return { ...got, nodes: [...got.nodes, { id: "late", name: "Late Arrival", kind: "npc" }] };
+      },
+    };
+    await ready(api);
+    await tick(5200); // the second read is now waiting
+    fireEvent.click(screen.getByRole("button", { name: w.freezeGraph }));
+    await act(async () => {
+      release();
+      await vi.advanceTimersByTimeAsync(50);
+    });
+    expect(screen.queryByText("Late Arrival")).toBeNull();
   });
 });
