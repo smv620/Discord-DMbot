@@ -467,6 +467,86 @@ class SessionStart(AtTheTable):
         self.assertIsNone(message.edit.await_args.kwargs["view"])
         copy.edit.assert_awaited_once()  # the other DM's copy loses its button
 
+    def private_press(self, user: int = DM) -> Any:
+        from unittest.mock import MagicMock
+
+        return SimpleNamespace(
+            client=self.bot,
+            guild=None,
+            user=SimpleNamespace(id=user),
+            message=MagicMock(id=1, edit=AsyncMock()),
+            response=SimpleNamespace(
+                defer=AsyncMock(), is_done=lambda: True, send_message=AsyncMock()
+            ),
+            followup=SimpleNamespace(send=AsyncMock()),
+        )
+
+    async def test_a_non_dm_pressing_in_a_private_chat_changes_nothing(self) -> None:
+        from dmbot.ui.decision_lines import DecisionLines
+
+        await self.press("set", set_to=NOON4)
+        await self.press("cstart")
+        self.bot.decision_lines = DecisionLines()
+        copy = SimpleNamespace(id=2, content="x", edit=AsyncMock())
+        self.bot.decision_lines.remember(("fight", self.a.id), copy)
+        interaction = self.private_press(user=987654)  # not a DM of this campaign
+        await ui.ClockButton(self.a.id, "cend").callback(cast(Any, interaction))
+        self.assertIsNotNone(await self.combat_round())  # still running
+        interaction.message.edit.assert_not_awaited()
+        copy.edit.assert_not_awaited()  # nobody's buttons came down
+
+    async def test_a_press_after_the_fight_was_ended_elsewhere_takes_the_buttons_down(self) -> None:
+        from dmbot.ui.decision_lines import DecisionLines
+
+        await self.press("set", set_to=NOON4)
+        await self.press("cstart")
+        await self.press("cend")  # ended from the DM screen's clock
+        self.bot.decision_lines = DecisionLines()
+        copy = SimpleNamespace(id=2, content="x", edit=AsyncMock())
+        self.bot.decision_lines.remember(("fight", self.a.id), copy)
+        interaction = self.private_press()
+        await ui.ClockButton(self.a.id, "cend").callback(cast(Any, interaction))
+        self.assertIn("already over", interaction.message.edit.await_args.kwargs["content"])
+        self.assertIsNone(interaction.message.edit.await_args.kwargs["view"])
+        copy.edit.assert_awaited_once()  # the other DM's stale question loses its button too
+
+    async def test_the_question_is_asked_with_the_copies_remembered_under_the_fight(self) -> None:
+        from unittest.mock import MagicMock
+
+        from dmbot.ui.decision_lines import DecisionLines
+
+        await self.press("set", set_to=NOON4)
+        await self.press("cstart")
+        table = cast(Any, self.table)
+        table.resumed = False
+        table.screen_channel_id = 555
+        self.bot.decision_lines = DecisionLines()
+        copy = MagicMock(id=7, content="⚔️ …", edit=AsyncMock())
+
+        async def ask_live(table: Any, text: str, make_view: Any, on_sent: Any = None) -> list[Any]:
+            on_sent(copy)  # one DM's copy is sent
+            return [copy]
+
+        self.bot.ask_live = ask_live  # type: ignore[method-assign]
+        await self.bot._fight_left_over(table)
+        await self.bot.decision_lines.close(("fight", self.a.id), "Combat ended.", pressed_id=None)
+        copy.edit.assert_awaited_once()  # remembered under ("fight", campaign id)
+
+    async def test_the_clock_is_shown_on_the_dm_screen_not_in_the_private_chat(self) -> None:
+        from unittest.mock import MagicMock
+
+        await self.press("set", set_to=NOON4)
+        stored = await self.clocks.get(GUILD_A, self.a.id)
+        assert stored is not None
+        private = MagicMock(id=999_999, content="❓ **DMbot has a question** · x\n⚔️ A fight…")
+        interaction = SimpleNamespace(message=private)
+        shown = MagicMock()
+        with patch.object(ui, "show", AsyncMock(return_value=shown)) as show:
+            got = await ui._show_here(cast(Any, interaction), self.bot, self.a, stored)
+        show.assert_awaited_once()
+        self.assertIs(got, shown)  # the usual way, on the DM screen
+        private.edit.assert_not_called()  # the private message is not turned into the clock
+
     async def test_every_other_clock_button_still_needs_a_server(self) -> None:
         from unittest.mock import MagicMock
 
