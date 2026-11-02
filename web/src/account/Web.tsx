@@ -499,6 +499,7 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
             </a>
             <WebMap
               key={ref}
+              api={api}
               nodes={nodes}
               edges={edges}
               center={center}

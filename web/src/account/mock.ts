@@ -1643,6 +1643,26 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       const all = PRETEND_VIEWERS.filter((v) => v.name.toLowerCase().includes(needle));
       return { viewers: all.slice(0, 25), total: all.length };
     },
+    // The short summary of a picked name (#3243): a pretend DM reads it at once; a player's first name is behind a
+    // spoiler gate until they ask with `peek`. An id that is not on the graph is not found.
+    async webNodeSummary(ref, id, peek) {
+      calls.push(`webNodeSummary:${ref}:${id}${peek ? ":peek" : ""}`);
+      await reachable();
+      signedIn();
+      const view = webView(ref);
+      if (view === "none") throw new ApiError("not-found");
+      const nodes = web(ref).nodes;
+      const node = nodes.find((n) => n.id === id);
+      if (!node) throw new ApiError("not-found");
+      const version = view === "dm" ? "dm" : "players";
+      await new Promise((r) => setTimeout(r, 200));
+      if (version === "players" && !peek && node.id === nodes[0]?.id) return { text: "", needsPeek: true, version };
+      return {
+        text: `${node.name} is a pretend ${node.kind.replace(/_/g, " ")} in this story. It has come up in the pretend sessions.`,
+        needsPeek: false,
+        version,
+      };
+    },
     // The overview (#2632): every visible name, the ones with no connection yet, and the groups.
     async webFind(ref, query) {
       calls.push(`webFind:${ref}:${query.q}${query.view ? `:view=${query.view}` : ""}`);
