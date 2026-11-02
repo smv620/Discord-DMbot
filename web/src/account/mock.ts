@@ -1656,10 +1656,9 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       if (!node) throw new ApiError("not-found");
       const version = view === "dm" ? "dm" : "players";
       await new Promise((r) => setTimeout(r, 200));
-      if (version === "players" && !peek && node.id === nodes[0]?.id) return { text: "", more: 0, needsPeek: true, version };
+      if (version === "players" && !peek && node.id === nodes[0]?.id) return { text: "", needsPeek: true, version };
       return {
         text: `${node.name} is a pretend ${node.kind.replace(/_/g, " ")} in this story. It has come up in the pretend sessions.`,
-        more: 0,
         needsPeek: false,
         version,
       };

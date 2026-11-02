@@ -19,6 +19,10 @@ export default function NodeSummary({ api, refId, id }: { api: AccountApi; refId
   const [cooling, setCooling] = useState(false);
   // Each request gets a number; an answer that arrives after a newer pick, or after a retry, is dropped.
   const latest = useRef(0);
+  const cooldown = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (cooldown.current) clearTimeout(cooldown.current);
+  }, []);
 
   const ask = (peek: boolean): void => {
     if (!api.webNodeSummary) return;
@@ -29,6 +33,8 @@ export default function NodeSummary({ api, refId, id }: { api: AccountApi; refId
       (summary) => {
         if (mine !== latest.current) return;
         if (summary.needsPeek && !peek) setState({ kind: "gate" });
+        // An answer with no text is not something to show: it counts as a failure, not an empty paragraph.
+        else if (!summary.text) setState({ kind: "error" });
         else setState({ kind: "text", summary });
       },
       (err: unknown) => {
@@ -60,14 +66,17 @@ export default function NodeSummary({ api, refId, id }: { api: AccountApi; refId
 
   const retry = (): void => {
     setCooling(true);
-    setTimeout(() => setCooling(false), 1000);
+    if (cooldown.current) clearTimeout(cooldown.current);
+    cooldown.current = setTimeout(() => setCooling(false), 1000);
     ask(false);
   };
 
   return (
+    // One live region for the answer as a whole; the counting words are plain text, so a screen reader does not
+    // read the count out every second.
     <section class="stack small" aria-live="polite">
       {state.kind === "loading" && (
-        <p class="small muted" role="status">
+        <p class="small muted">
           {seconds >= 30 ? w.stalled(seconds) : seconds >= 5 ? w.slow(seconds) : w.loading}
         </p>
       )}

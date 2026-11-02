@@ -23,7 +23,7 @@ afterEach(() => {
 });
 
 const REF = "100.cmp1";
-const text = (t: string, version: "dm" | "players" = "dm"): Summary => ({ text: t, more: 0, needsPeek: false, version });
+const text = (t: string, version: "dm" | "players" = "dm"): Summary => ({ text: t, needsPeek: false, version });
 
 /** A request the test settles by hand, so it can come back late. */
 function deferred<T>() {
@@ -86,19 +86,25 @@ describe("the summary of a picked name", () => {
     const api = stub(() => pending.promise);
     render(<NodeSummary api={api} refId={REF} id="n1" />);
     expect(screen.getByText(w.loading)).toBeTruthy();
-    act(() => vi.advanceTimersByTime(5000));
+    act(() => {
+      vi.advanceTimersByTime(5000);
+    });
     expect(screen.getByText(w.slow(5))).toBeTruthy();
-    act(() => vi.advanceTimersByTime(25000));
+    act(() => {
+      vi.advanceTimersByTime(25000);
+    });
     expect(screen.getByText(w.stalled(30))).toBeTruthy();
   });
 
   it("a player's first name is behind a gate, and Show it anyway asks with peek", async () => {
     const api = stub(async (_ref, _id, peek) =>
-      peek ? text("Mara keeps the lantern.", "players") : { text: "", more: 0, needsPeek: true, version: "players" },
+      peek ? text("Mara keeps the lantern.", "players") : { text: "Mara keeps the lantern.", needsPeek: true, version: "players" },
     );
     render(<NodeSummary api={api} refId={REF} id="n1" />);
     expect(await screen.findByText(w.spoilers)).toBeTruthy();
-    expect(screen.queryByText("Mara keeps the lantern.")).toBeNull();
+    // The gated text must not be anywhere in the page, not only out of one query.
+    expect(document.body.textContent ?? "").not.toContain("Mara keeps the lantern.");
+    expect(document.querySelectorAll("p").length).toBe(1);
     fireEvent.click(screen.getByRole("button", { name: w.showAnyway }));
     expect(await screen.findByText("Mara keeps the lantern.")).toBeTruthy();
     expect(api.webNodeSummary).toHaveBeenLastCalledWith(REF, "n1", true);
@@ -128,13 +134,18 @@ describe("the summary of a picked name", () => {
     });
   });
 
-  it("no word about rank, roles or importance appears for either version", async () => {
+  it("no word about rank, roles or importance appears in any word or state", async () => {
+    const banned = /\b(rank|role|roles|important|importance|main character)\b/i;
+    for (const value of Object.values(w)) {
+      if (typeof value === "string") expect(value).not.toMatch(banned);
+      else expect(value(30)).not.toMatch(banned);
+    }
     for (const version of ["dm", "players"] as const) {
       cleanup();
       const api = stub(async () => text("Mara keeps the lantern.", version));
       render(<NodeSummary api={api} refId={REF} id="n1" />);
       await screen.findByText("Mara keeps the lantern.");
-      expect(document.body.textContent ?? "").not.toMatch(/\b(rank|role|roles|important|importance|main character)\b/i);
+      expect(document.body.textContent ?? "").not.toMatch(banned);
     }
   });
 });
