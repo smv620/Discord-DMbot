@@ -512,6 +512,7 @@ async def _player_character(
     await memory.confirm_entity(
         guild_id, cid, entity_id, PLAYER_CHARACTER, source=DM, played_by=user_id
     )
+    await memory.party_on_assignment(guild_id, cid)  # a lore-only start (#3036)
     return Outcome(result_id=entity_id)
 
 

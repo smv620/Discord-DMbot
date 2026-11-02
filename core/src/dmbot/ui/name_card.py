@@ -1575,6 +1575,7 @@ class KindChange(_Menu):
         except MemoryRuleError:
             await _tell(interaction, GONE)
             return
+        await memory.party_on_assignment(campaign.guild_id, campaign.id)  # (a lore-only start)
         changed(interaction, campaign)
         self.stop()
         await show_card(interaction, self.campaign_id, self.entity_id, replace=True)
