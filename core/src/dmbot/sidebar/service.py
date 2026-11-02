@@ -539,7 +539,7 @@ class SidebarService:
         # (the DM's "what's next?" is handled before the engine is used).
         if self.answerer is None and not (is_dm and guide_phrase.is_whats_next(request.question)):
             return False
-        public = not request.verb and table.dmbchat_channel_id is not None
+        public = not request.verb  # answered in the table's chat (#3212)
         if not public and not is_dm:
             return False  # nowhere everyone can read the answer
         return self._start(
@@ -547,10 +547,11 @@ class SidebarService:
         )
 
     def ask_in_chat(self, table: Table, user_id: int, text: str) -> bool:
-        """A message typed in the table's DMbot chat (#1187): every one is a question, no wake
-        phrase needed. Only from someone who agreed to be recorded; anyone else is shown the
-        agree button once a session, and what they typed goes nowhere."""
-        if self.answerer is None or table.campaign_id is None or table.dmbchat_channel_id is None:
+        """A question typed in the table's chat (#1187, #3212): the caller has already checked that
+        it calls DMbot or ends with a question mark. Only from someone who agreed to be
+        recorded; anyone else is shown the agree button once a session, and what they typed goes
+        nowhere."""
+        if self.answerer is None or table.campaign_id is None:
             return False
         if not self._may_ask(table.guild_id, user_id):
             if user_id not in table.dmbchat_nudged:

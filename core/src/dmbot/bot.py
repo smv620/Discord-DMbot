@@ -156,7 +156,6 @@ from dmbot.dm_screen.adventure_card import SeeButton as SeeAdventureButton
 from dmbot.dm_screen.backstory_button import BackstoryButton
 from dmbot.dm_screen.channel import setup_dm_screen, update_help_card
 from dmbot.dm_screen.dm_bot_channel import DmBotChannelError, setup_dm_bot_channel
-from dmbot.dm_screen.dmbchat_channel import DmbchatChannelError, setup_dmbchat_channel
 from dmbot.dm_screen.game_masters import GameMastersButton
 from dmbot.dm_screen.handover import (
     AcceptOfferButton,
@@ -552,16 +551,11 @@ from dmbot.ui.transcripts import (
     transcript_command,
 )
 
-DMBCHAT_STATEMENT_WORDS = 4  # a DM's message this long is a statement; shorter is a reply
 # Added to a question that had to stay on the DM screen (#3210), so a DM whose private messages are
 # closed learns why it is there and how to get it privately.
 NO_PRIVATE_MESSAGE = (
     "\n_DMbot couldn't message you privately. Allow messages from this server in your Discord "
     "privacy settings._"
-)
-DMBCHAT_HINT = (
-    "To tell DMbot something about the story, write it in your private chat with DMbot. "
-    "Players can read this chat."
 )
 REPORT_CALLS = 8  # AI calls a session may spend on the after-session report (grading and sorting)
 MEANING_RUN_CALLS = 50  # Voyage AI calls one after-session run may make (64 texts each)
@@ -3725,7 +3719,6 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         if problems:
             return False, join_blocked_message(problems)
         transcript_id, transcript_problem = await self._transcript_channel(guild, campaign, screen)
-        dmbchat_id, dmbchat_problem = await self._dmbchat_channel(guild, campaign, screen)
         dm_bot_problem = await self._dm_bot_channel(guild, campaign, screen)
         await self._retire_old_channels(guild, campaign)
         await self._tell_players_the_clock(
@@ -3753,7 +3746,6 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             dndbeyond_invite=campaign.dndbeyond_invite,
             chat_on=campaign.table_chat,
             chat_channel_id=campaign.table_chat_channel_id,
-            dmbchat_channel_id=dmbchat_id,
             started_at=started_at,
         )
         if table.rules_on:
@@ -3785,8 +3777,6 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             return False, SAVE_FAILED
         if transcript_problem:
             await self.post(screen_id, transcript_problem)
-        if dmbchat_problem:
-            await self.post(screen_id, dmbchat_problem)
         if dm_bot_problem:
             await self.post(screen_id, dm_bot_problem)
         self._check_house_file(campaign, screen_id)
@@ -4241,13 +4231,6 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             dndbeyond_invite=campaign.dndbeyond_invite,
             chat_on=campaign.table_chat,
             chat_channel_id=campaign.table_chat_channel_id,
-            # After a restart: still there, or the next /dmbot start makes it again.
-            dmbchat_channel_id=(
-                campaign.dmbchat_channel_id
-                if campaign.dmbchat_channel_id is not None
-                and self.get_channel(campaign.dmbchat_channel_id) is not None
-                else None
-            ),
             started_at=saved.started_at,
         )
         if table.rules_on:
@@ -4542,7 +4525,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         the table (#1118): read only if it is in the table's chat and passes the checks."""
         if message.guild is not None:
             try:
-                if self._hear_dmbchat(message):
+                if self._hear_table_question(message):
                     return
                 if await self._chat_channel_allowed(message):
                     self._hear_typed(message)
@@ -4554,15 +4537,18 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         except Exception:
             log.exception("Couldn't handle a private message")
 
-    def _hear_dmbchat(self, message: discord.Message) -> bool:
-        """A message in this session's DMbot chat channel (#1187): True if it was one (read or
-        not), so no other path looks at it. Every message there is a question for DMbot, from
-        anyone who agreed to be recorded; bots, DMbot itself and commands are never answered.
-        Only this campaign's channel counts: another campaign's chat in the same server has a
-        different id and is never read."""
+    def _hear_table_question(self, message: discord.Message) -> bool:
+        """A table question typed in the table's chat (#3212; before it was `dmb-chat`): True if
+        this message was one, so no other path looks at it and it is handled once. The table's
+        chat is the channel the DM picked, else the voice channel's own text chat, and only this
+        campaign's: another campaign's has a different id and is never read. A question calls
+        DMbot ("Hey DMbot, ...") or ends with a question mark (`is_table_question`); anything
+        else is ordinary chat, which falls through to the typed-chat path. Only from someone who
+        agreed to be recorded; bots, DMbot itself and commands are never answered. A DM's
+        statement is never a question, so it gets no Q line (#3209)."""
         guild = message.guild
         table = self.tables.get(guild.id) if guild is not None else None
-        if table is None or message.channel.id != table.dmbchat_channel_id:
+        if table is None or message.channel.id != table.chat_id:
             return False
         author = message.author
         if (
@@ -4572,44 +4558,22 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             or message.webhook_id is not None
             or message.type not in table_chat.READ_TYPES
             or getattr(message, "interaction_metadata", None) is not None
+            or message.channel.id in (table.screen_channel_id, table.transcript_channel_id)
         ):
-            return True
+            return False
         text = table_chat.clean(message.clean_content)  # names, not <@123> markup
-        if (
-            text is not None
-            and asks_off_record(text)
-            and self.consent.agreed_now(
-                table.guild_id, author.id
-            )  # paused or not: it only asks for a pause
-        ):
-            self._wake_off_the_record(table.guild_id, author.id)  # not a question (#2466)
-        elif text is not None:
-            if (
-                table.is_dm(author.id)
-                and self.consent.has_consent(table.guild_id, author.id)
-                and not is_table_question(text)
-            ):
-                # A DM's statement (#3209): the players read this channel, so it is never a table
-                # question and never stored from here, whatever it says. The DM is told once.
-                self._hint_story_goes_private(table, author.id, text)
-            else:
-                self.sidebar.ask_in_chat(table, author.id, text)
+        if text is None or not is_table_question(text):
+            return False  # ordinary chat: the typed-chat path decides
+        if asks_off_record(text) and self.consent.agreed_now(table.guild_id, author.id):
+            # Paused or not: it only asks for a pause, and is not a question (#2466).
+            self._wake_off_the_record(table.guild_id, author.id)
+        else:
+            self.sidebar.ask_in_chat(table, author.id, text)
         return True
 
-    def _hint_story_goes_private(self, table: Table, user_id: int, text: str) -> None:
-        """One private line to a DM who typed a story statement in the table's chat: story goes in
-        the private chat with DMbot. Once a session each, and not for a short reply ("yes",
-        "correct"), which gets nothing (it answers a question that lives in the private chat)."""
-        if user_id in table.dmbchat_hinted or len(text.split()) < DMBCHAT_STATEMENT_WORDS:
-            return
-        table.dmbchat_hinted.add(user_id)
-        self._track(self.sidebar_send_dm(user_id, DMBCHAT_HINT), "dmbchat-hint")
-
     async def sidebar_post_chat(self, table: Table, text: str) -> bool:
-        """Post in the session's DMbot chat channel (#1187); False if there is none."""
-        if table.dmbchat_channel_id is None:
-            return False
-        return await self.post(table.dmbchat_channel_id, text)
+        """Post in the table's chat (#3212); False if it could not be posted."""
+        return bool(await self.post(table.chat_id, text))
 
     async def sidebar_table_name(self, table: Table, user_id: int) -> str:
         """How the table's answer names someone: their linked character's name when a sheet is
@@ -4650,10 +4614,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         return house, ()
 
     async def sidebar_nudge_chat(self, table: Table, user_id: int) -> None:
-        """Someone typed in the DMbot chat before agreeing to be recorded: one short reply with
-        the agree button, once a session. What they typed is not kept or sent anywhere."""
-        if table.dmbchat_channel_id is None:
-            return
+        """Someone asked DMbot in the table's chat before agreeing to be recorded: one short reply
+        with the agree button, once a session. What they typed is not kept or sent anywhere."""
         view = request_view(
             table.guild_id,
             outside=self.outside_engine,
@@ -4661,7 +4623,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             invite=table.dndbeyond_invite,
         )
         await self.post(
-            table.dmbchat_channel_id,
+            table.chat_id,
             f"{discord.utils.escape_markdown(self.name_of(table.guild_id, user_id))}: to ask "
             "DMbot, first say yes to being recorded with the button below. No pressure, you can "
             "still play. DMbot did not keep what you typed.",
@@ -12406,26 +12368,6 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         if running is None or running.done():
             self._npcs_sync.pop(campaign_id, None)
             self._npcs_dirty.discard(campaign_id)
-
-    async def _dmbchat_channel(
-        self, guild: discord.Guild, campaign: Campaign, screen: object
-    ) -> tuple[int | None, str | None]:
-        """The table's DMbot chat channel (#1187), made or repaired at every start: its id, or a
-        note for the DM if it couldn't be set up. A failure here never stops a session."""
-        category = getattr(screen, "category", None)
-        try:
-            channel = await setup_dmbchat_channel(
-                guild,
-                campaign.id,
-                self.campaigns,
-                category=category if isinstance(category, discord.CategoryChannel) else None,
-            )
-        except DmbchatChannelError as exc:
-            return None, screen_messages.dmbchat_failed(str(exc))
-        except Exception:
-            log.exception("Couldn't set up the DMbot chat channel")
-            return None, screen_messages.dmbchat_failed(screen_messages.TRANSCRIPT_NO_ANSWER)
-        return channel.id, None
 
     def _usable_transcript(self, guild: discord.Guild, campaign: Campaign) -> int | None:
         """After a restart: the campaign's transcript channel, if it's still one and

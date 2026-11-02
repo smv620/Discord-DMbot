@@ -478,17 +478,3 @@ def dm_bot_failed(cause: str) -> str:
 
 def dm_bot_topic(campaign_name: str) -> str:
     return f"{campaign_name}: your buttons for settings and help. Only you see the answers."
-
-
-# ---- the table's DMbot chat channel (#1187) -------------------------------------------
-
-DMBCHAT_FAILED = (
-    "⚠️ **Couldn't make the DMbot chat channel** ({cause}). The game goes on; players can still "
-    'say "Hey DMbot" at the table. To retry, fix that and run `/dmbot start`.'
-)
-
-DMBCHAT_TOPIC = "Ask DMbot a quick rules question. Your DM has the final say."
-
-
-def dmbchat_failed(cause: str) -> str:
-    return DMBCHAT_FAILED.format(cause=cause)
