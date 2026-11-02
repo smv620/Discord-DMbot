@@ -1865,7 +1865,10 @@ class MemoryStore:
             await w.insert(ALIASES, _new_alias(w, row["id"], name, "full", status, False, None))
             if role == PLAYER_CHARACTER and played_by is not None:
                 await _sync_plays(w, row["id"])
-            return Written(_entity(row), w.batch)
+            written = Written(_entity(row), w.batch)
+        if role == PLAYER_CHARACTER and played_by is not None:
+            await self._party_on_assignment(guild_id, campaign_id)
+        return written
 
     async def add_names(
         self,
@@ -2418,7 +2421,10 @@ class MemoryStore:
             )
             row = await _entity_row(w, entity_id)
             await _sync_plays(w, entity_id)
-            return Written(_entity(row), w.batch)
+            written = Written(_entity(row), w.batch)
+        if role == PLAYER_CHARACTER and played_by is not None:
+            await self._party_on_assignment(guild_id, campaign_id)
+        return written
 
     async def confirm_kinds(
         self,
@@ -3870,6 +3876,38 @@ class MemoryStore:
         was worked out from. A DM-only reader."""
         async with self._read(guild_id, campaign_id, snapshot=True) as scope:
             return await worked_out_mod.waiting(scope)
+
+    async def _party_on_assignment(self, guild_id: int, campaign_id: str) -> None:
+        """The DM gave a player their character (#3036, Supervisor's ruling 2026-11-02): while the
+        campaign has had no session and no import, the players are the party being set up, so the
+        same step that follows a session links them now (a lore-only start). After the first
+        session it does nothing: a character who joins later joins The party at their first
+        session, not before they have met. Never fails the assignment; a failure is logged by class
+        and the next session's step makes the links."""
+        try:
+            async with self._read(guild_id, campaign_id) as scope:
+                cur = await scope.conn.execute(
+                    "SELECT 1 FROM transcript_sessions WHERE guild_id = %s AND campaign_id = %s"
+                    " LIMIT 1",
+                    (guild_id, campaign_id),
+                )
+                if await cur.fetchone() is not None:
+                    return
+                cur = await scope.conn.execute(
+                    "SELECT DISTINCT played_by FROM memory_entities WHERE guild_id = %s"
+                    " AND campaign_id = %s AND role = %s AND status = %s"
+                    " AND played_by IS NOT NULL AND merged_into IS NULL",
+                    (guild_id, campaign_id, PLAYER_CHARACTER, CONFIRMED),
+                )
+                players = {int(r["played_by"]) for r in await cur.fetchall()}
+            if players:
+                linked = await self.link_party(guild_id, campaign_id, players)
+                log.info(
+                    "Party on assignment: %d characters, %d pairs, %d members",
+                    linked.characters, linked.pairs, linked.members,
+                )  # fmt: skip
+        except Exception as exc:
+            log.warning("The party could not be linked on assignment (%s)", type(exc).__name__)
 
     async def link_party(
         self, guild_id: int, campaign_id: str, user_ids: Collection[int]
