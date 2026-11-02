@@ -212,7 +212,7 @@ export const duringChart: Chart = {
           boxes: [
             b("private", "🛡️ The DM's private screen (rules, time and plot)"),
             b("private", "📩 A private reminder to that player only (FightBot)"),
-            b("chat", "💬 A short answer in the campaign's chat: rules, never secrets (Hey DMbot)"),
+            b("chat", "💬 A short answer in the voice channel's chat: rules, never secrets (Hey DMbot)"),
           ],
         },
         { boxes: [b("dm", "👑 The DM decides")] },

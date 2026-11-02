@@ -10,10 +10,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import discord
 
 from dmbot.audio.segmenter import Segmenter, Utterance
-from dmbot.bot import NO_PRIVATE_MESSAGE, DMBot
+from dmbot.bot import DMBot
 from dmbot.campaigns import CampaignStore
 from dmbot.config import Settings
 from dmbot.consent import ConsentStore
+from dmbot.dm_questions import NO_PRIVATE_MESSAGE
 from dmbot.dm_screen import messages as screen_messages
 from dmbot.sessions import SessionStore
 from dmbot.table import Table

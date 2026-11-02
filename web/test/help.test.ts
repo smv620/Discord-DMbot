@@ -42,7 +42,7 @@ describe("Help", () => {
     expect(all).toContain("your own notes on names and places");
     expect(all).toContain("names you marked secret");
     expect(all).toContain("I don't have that. Your call.");
-    expect(all).toContain("posted there for everyone");
+    expect(all).toContain("chat for everyone");
     expect(all).toContain("Everyone in your Discord server can read that record");
     expect(all).not.toMatch(/knowledge graph|recall|prompt|transcript|AI model/i); // plain words
   });
