@@ -57,7 +57,7 @@ class TheJob(NamesTest):
         out = await self.make(Replies(ok(self.answer())))
         self.assertTrue(out.ok)
         self.assertEqual(
-            self.shown[-1], "Script ready: 3 lines from 1 parts. Only you can read it."
+            self.shown[-1], "Script ready: 3 lines from 1 scene. Only you can read it."
         )
         self.assertEqual(len(await TheatreStore(self.db).read(GUILD, self.session)), 3)
 
@@ -74,8 +74,9 @@ class TheJob(NamesTest):
         await self.make(Replies(ok(self.answer())))
         old = await TheatreStore(self.db).read(GUILD, self.session)
         out = await self.make(Replies(RuntimeError("down")))
-        self.assertEqual((out.text, out.ok), (job.FAILED, False))
-        self.assertEqual(self.shown[-1], job.FAILED)
+        self.assertEqual((out.text, out.ok), (job.stopped_text(0, 1), False))
+        self.assertEqual(self.shown[-1], job.stopped_text(0, 1))  # (it got as far as reading)
+        self.assertTrue(self.shown[-1].endswith(job.FAILED))
         self.assertEqual(await TheatreStore(self.db).read(GUILD, self.session), old)
         again = await self.make(Replies(ok(self.answer())))
         self.assertTrue(again.started and again.ok)
@@ -99,6 +100,63 @@ class TheJob(NamesTest):
         card = "\n".join(self.shown)
         self.assertIn(job.TITLE, card)
         self.assertIn("Reading the session", card)
+        self.assertIn("(1 of 1)", card)
+
+    async def test_a_failure_says_where_it_stopped(self) -> None:
+        self.assertEqual(job.stopped_text(3, 10), "Stopped at part 3 of 10. " + job.FAILED)
+
+    async def test_a_run_that_was_taken_over_stops_and_leaves_the_new_runs_card_alone(self) -> None:
+        runs = TheatreRuns(self.db, clock=lambda: float(START))
+        asked: list[str] = []
+
+        class Takeover(Replies):
+            async def __call__(inner, instructions: str, question: str) -> Any:
+                asked.append(question)
+                # while the first scene is away, the row is taken over by a later press
+                async with self.db.guild(GUILD) as conn:
+                    await conn.execute(
+                        "UPDATE theatre_runs SET token = 'newer' WHERE session_id = %s",
+                        (self.session,),
+                    )
+                return ok(self.answer())
+
+        out = await self.make(Takeover(), scene_size=1)
+        self.assertTrue(out.taken_over)
+        self.assertEqual(len(asked), 1)  # (no more spend after the row was lost)
+        self.assertEqual(self.shown, [])  # (the new run owns the card)
+        self.assertEqual(await TheatreStore(self.db).read(GUILD, self.session), [])
+        del runs
+
+    async def test_a_person_who_stops_while_the_ai_is_away_is_left_out(self) -> None:
+        left = {"agreed": set(self.everyone)}
+
+        class Away(Replies):
+            async def __call__(inner, instructions: str, question: str) -> Any:
+                left["agreed"] = {TAVIN, DM_USER}  # (Mira stops during the call)
+                return ok(self.answer())
+
+        async def still() -> set[int]:
+            return left["agreed"]
+
+        out = await job.make_script(
+            self.db, Away(), GUILD, self.session, agreed=self.everyone, names=NAMES, known=KNOWN,
+            still_agreed=still, edit=self.edit,
+        )  # fmt: skip
+        self.assertEqual(await TheatreStore(self.db).read(GUILD, self.session), [])
+        self.assertIn("Nothing was changed", out.text)
+
+    async def test_a_card_that_cannot_be_edited_does_not_stop_the_job(self) -> None:
+        async def broken(_: str) -> None:
+            raise RuntimeError("gone")
+
+        out = await job.make_script(
+            self.db, Replies(ok(self.answer())), GUILD, self.session, agreed=self.everyone,
+            names=NAMES, known=KNOWN, still_agreed=self.agreed_all, edit=broken,
+        )  # fmt: skip
+        self.assertTrue(out.ok)
+
+    async def agreed_all(self) -> set[int]:
+        return self.everyone
 
     def test_the_cost_line_says_about_how_many_calls(self) -> None:
         self.assertEqual(job.estimate_line(100), "This will take about 1 AI call.")

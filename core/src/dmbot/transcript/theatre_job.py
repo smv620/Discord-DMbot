@@ -16,6 +16,7 @@ Rules from Supervisor's ruling on #3244:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
@@ -54,13 +55,24 @@ def estimate_line(lines: int, scene_size: int = th.SCENE_LINES) -> str:
     return f"This will take about {n} AI call{'' if n == 1 else 's'}."
 
 
+def stopped_text(part: int, of: int) -> str:
+    """What a failure says: where it stopped (when it got anywhere) and what to do next."""
+    where = f"Stopped at part {part} of {of}. " if of else ""
+    return f"{where}{FAILED}"
+
+
 def done_text(report: tr.Report) -> str:
     """What the card ends on after a run that reached the end. Counts only."""
     if report.saved:
-        return f"Script ready: {report.kept} lines from {report.parts} parts. Only you can read it."
+        scenes = f"{report.parts} scene{'' if report.parts == 1 else 's'}"
+        return f"Script ready: {report.kept} lines from {scenes}. Only you can read it."
     if report.parts == 0 or report.lines == 0:
         return "There was nothing to put in a script. Nothing was changed."
     return "No lines were kept. Nothing was changed."
+
+
+class RunTakenOver(Exception):
+    """The run's row is another run's now (it looked dead and was taken over): stop spending."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,6 +80,7 @@ class Outcome:
     text: str  # the last word on the card
     started: bool  # False: another run was going
     ok: bool = False
+    taken_over: bool = False  # another run owns the card now: say nothing more on it
 
 
 async def make_script(
@@ -83,15 +96,21 @@ async def make_script(
     edit: Callable[[str], Awaitable[None]],
     clock: Callable[[], float] = time.monotonic,
     scene_size: int = th.SCENE_LINES,
-    **waiting: Any,
+    every: float | None = None,
+    sleep: Callable[[float], Awaitable[None]] | None = None,
 ) -> Outcome:
     """Make the session's script and end the card. Never raises for a failed run: the outcome's
-    text says what happened. `edit` shows a text on the DM's card; `waiting` is for tests (the
-    waiting message's own clock and sleep)."""
+    text says what happened. `edit` shows a text on the DM's card; `every` and `sleep` are for
+    tests (the waiting message's own refresh)."""
     runs = TheatreRuns(db)
     token = await runs.begin(guild_id, session_id)
     if token is None:
         return Outcome(ALREADY, started=False)
+    extra: dict[str, Any] = {}
+    if every is not None:
+        extra["every"] = every
+    if sleep is not None:
+        extra["sleep"] = sleep
     card = WaitingMessage(
         edit,
         TITLE,
@@ -99,31 +118,56 @@ async def make_script(
         stall_note=STILL_WORKING,
         gone=message_is_gone,
         clock=clock,
-        **waiting,
+        **extra,
     )
+    lost: list[bool] = []
+    where = [0, 0]  # the part the run last got to, for a failure to say
 
     async def progress(p: tr.Progress) -> None:
         card.step(_STAGE.get(p.stage, p.stage), p.part, p.of)
+        where[:] = [p.part, p.of]
         if not await runs.moved(guild_id, session_id, token, p.part, p.of):
-            lost.append(True)  # (`theatre_run` counts a failing callback and goes on, so note it)
+            lost.append(True)
 
-    lost: list[bool] = []
+    async def consent() -> Collection[int]:
+        # `theatre_run` asks before each scene, after each answer and before saving, so this is
+        # where a run that lost its row stops: no more spend and no save over the new run's script.
+        if lost:
+            raise RunTakenOver
+        return await still_agreed()
+
     ok = False
     text = FAILED
     try:
         async with card:
             report = await tr.run(
                 db, ask, guild_id, session_id, agreed=agreed, names=names, known=known,
-                still_agreed=still_agreed, progress=progress, clock=clock, scene_size=scene_size,
+                still_agreed=consent, progress=progress, clock=clock, scene_size=scene_size,
             )  # fmt: skip
-        ok = not report.failed_parts and not lost
-        text = done_text(report) if ok else FAILED
-    except Exception:  # (counts only: nothing from the session goes in the log)
-        log.warning("A script run failed", exc_info=False)
-    await runs.finish(guild_id, session_id, token, ok=ok)
+        ok = not report.failed_parts
+        text = done_text(report) if ok else stopped_text(*where)
+    except RunTakenOver:
+        return Outcome("", started=True, taken_over=True)
+    except asyncio.CancelledError:
+        # (the bot is stopping: free the session at once, not after the stale wait)
+        await asyncio.shield(_finish(runs, guild_id, session_id, token, ok=False))
+        raise
+    except Exception as exc:  # (the type only: a message could carry words of the session)
+        log.warning("A script run failed (%s)", type(exc).__name__)
+        text = stopped_text(*where)
+    await _finish(runs, guild_id, session_id, token, ok=ok)
     try:
         await edit(text)
     except Exception as exc:
         if not message_is_gone(exc):
-            log.warning("Could not end the script card")
+            log.warning("Could not end the script card (%s)", type(exc).__name__)
     return Outcome(text, started=True, ok=ok)
+
+
+async def _finish(
+    runs: TheatreRuns, guild_id: int, session_id: str, token: str, *, ok: bool
+) -> None:
+    try:
+        await runs.finish(guild_id, session_id, token, ok=ok)
+    except Exception as exc:  # (the card still ends; the stale wait frees the session)
+        log.warning("Could not end the script run (%s)", type(exc).__name__)
