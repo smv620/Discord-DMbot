@@ -85,6 +85,16 @@ class WebSettings:
     # Where the bot keeps recap audio on disk, read here only (the volume is mounted read-only).
     # Empty: the page shows no players and the file route answers not_found (#1418).
     recap_audio_dir: str = ""
+    # Kept pictures (#3274). The campaign's picture storage, in MB, as the bot reads it
+    # (DMBOT_PICTURE_STORAGE_MB), for the gallery's usage line. And the read-only key to the one
+    # private bucket the open link signs short-lived addresses with (WEB_PICTURES_R2_*): all four
+    # empty means the link answers "not open yet" instead of guessing, and nothing is ever written
+    # to the bucket from here (the bot applies every change).
+    picture_storage_mb: int = 500
+    pictures_r2_account: str = ""
+    pictures_r2_bucket: str = ""
+    pictures_r2_key: str = ""
+    pictures_r2_secret: str = ""
     # The outside speech-to-text company the bot sends voices to (deepgram, cloud), or None: only
     # consent given for it counts, as in the bot. From TRANSCRIBER, the bot's own setting.
     outside_engine: str | None = None
@@ -487,6 +497,17 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
         voyage_rerank_model=voyage_models[1],
         mail_reply_domain=reply_domain(get("MAIL_REPLY_DOMAIN")),
         recap_audio_dir=get("WEB_RECAP_AUDIO_DIR"),
+        picture_storage_mb=(
+            int(get("DMBOT_PICTURE_STORAGE_MB"))
+            if get("DMBOT_PICTURE_STORAGE_MB").isascii()
+            and get("DMBOT_PICTURE_STORAGE_MB").isdigit()
+            and int(get("DMBOT_PICTURE_STORAGE_MB")) > 0
+            else 500
+        ),
+        pictures_r2_account=get("WEB_PICTURES_R2_ACCOUNT"),
+        pictures_r2_bucket=get("WEB_PICTURES_R2_BUCKET"),
+        pictures_r2_key=get("WEB_PICTURES_R2_KEY"),
+        pictures_r2_secret=get("WEB_PICTURES_R2_SECRET"),
         outside_engine=get("TRANSCRIBER").lower()
         if get("TRANSCRIBER").lower() in OUTSIDE_ENGINES
         else None,
