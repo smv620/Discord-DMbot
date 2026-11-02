@@ -57,6 +57,9 @@ function arrowhead(from: { x: number; y: number }, to: { x: number; y: number })
 }
 const NUDGE = 24; // how far an arrow key moves the name it is on
 
+/** How many of a line's connections its tooltip lists before "plus n more…" (#3279). */
+const TIP_LINKS = 4;
+
 /** Each style has its own shape (and the plain ones a dashed edge), so a name is known by shape and word as
  * well as by its colour. */
 function Shape({ kind, r }: { kind: string; r: number }) {
@@ -586,6 +589,12 @@ export default function WebMap({
             const dim = edge.links.length > 0 && edge.links.every((l) => l.revealed === false);
             const touches = focus !== null && (edge.a === focus || edge.b === focus);
             const text = `${theory ? `${words.theoryMark} ` : ""}${edge.label}${edge.more > 0 ? ` (+${edge.more})` : ""}`;
+            // Hovering a line that holds several connections lists the first four (the API sends the most relevant
+            // first), then "plus n more…", so "(+6)" on the line is never a mystery (#3279). One connection keeps its words.
+            const tip =
+              edge.links.length > 1
+                ? [...edge.links.slice(0, TIP_LINKS).map((l) => l.words), ...(edge.links.length > TIP_LINKS ? [words.plusMore(edge.links.length - TIP_LINKS)] : [])].join("\n")
+                : text;
             // The line of the name in focus (hovered, else picked) says just the verb as that name would say it, with an
             // arrow toward the other name; with no wording from that end it says nothing and has no arrowhead. The
             // chosen line keeps its full words. A line that holds several connections says how many when it has no
@@ -633,11 +642,13 @@ export default function WebMap({
                       onLine(edge.a, edge.b);
                     }
                   }}
-                />
+                >
+                  <title>{tip}</title>
+                </line>
                 {arrowFrom && arrowTo && <path d={arrowhead(arrowFrom, arrowTo)} class="web-arrow" aria-hidden="true" />}
                 {shown && (
                   <text x={mx} y={my - 5} transform={`rotate(${upright.toFixed(1)} ${mx} ${my})`} class="web-edge-text" text-anchor="middle" onClick={open}>
-                    <title>{text}</title>
+                    <title>{tip}</title>
                     {short(shown, 26)}
                   </text>
                 )}

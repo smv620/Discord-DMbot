@@ -224,7 +224,26 @@ describe("the map", () => {
     render(<WebMap nodes={nodes} edges={edges} center="m" refId="1.a" selected={{ a: "m", b: "g" }} onCenter={() => {}} onLine={() => {}} />);
     fireEvent.pointerEnter(nodeOf("Mira"));
     expect(texts()).toContain("serves (+1)"); // (the chosen line: its full words, as the server worded them)
-    expect([...document.querySelectorAll(".web-edge-text title")].map((t) => t.textContent)).toContain("serves (+1)");
+    // (the tooltip now lists the connections, see "lists the first four connections" below, #3279)
+    expect([...document.querySelectorAll(".web-edge-text title")].map((t) => t.textContent)).toContain("serves\nowes");
+  });
+
+  it("lists the first four connections in a line's tooltip and says plus n more…, on the line and its words (#3279)", () => {
+    const many: WebEdge[] = [
+      { a: "m", b: "g", label: "serves", more: 6, links: ["serves", "owes", "fears", "trusts", "hunts", "hides", "sells"].map((w, i) => link(`x${i}`, w)) },
+      { a: "m", b: "h", label: "lives at", more: 0, links: [link("y1", "lives at")] },
+      { a: "g", b: "o", label: "knows", more: 3, links: ["knows", "helps", "pays", "fights"].map((w, i) => link(`z${i}`, w)) },
+    ];
+    render(<WebMap nodes={nodes} edges={many} center="m" refId="1.a" selected={null} onCenter={() => {}} onLine={() => {}} />);
+    const tips = [...document.querySelectorAll(".web-edge")].map((g) => [...g.querySelectorAll("title")].map((t) => t.textContent));
+    // seven connections: four listed, then the rest; both the line and its words say it
+    expect(tips[0]).toHaveLength(2);
+    expect(tips[0]![1]).toBe(tips[0]![0]);
+    expect(tips[0]![0]).toBe("serves\nowes\nfears\ntrusts\nplus 3 more…");
+    // one connection keeps its words
+    expect(tips[1]![0]).toBe("lives at");
+    // exactly four: all listed, no "plus"
+    expect(tips[2]![0]).toBe("knows\nhelps\npays\nfights");
   });
 
   it("says how many when a bundle has no wording from the focused end, and a hover wins over the pick", () => {
