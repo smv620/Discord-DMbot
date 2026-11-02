@@ -298,6 +298,23 @@ export default function WebMap({
   reheatRef.current = reheat;
   const rememberRef = useRef(remember);
   rememberRef.current = remember;
+  // A tap on a name: one picks it (the panel under the map follows), a second on the same name within DOUBLE_MS puts it
+  // in the middle. Counted here, not with `dblclick`, which a phone does not send reliably. Worked out when the pointer
+  // is let go (below), not from the browser's `click`: the names keep drifting while the layout settles, and a
+  // `click` is only sent to a name when the pointer is let go over the same element it went down on, so a name that
+  // moved a little under the pointer got no click, and so no panel and no double click.
+  const tap = (id: string): void => {
+    // A finger leaves no hover behind: the panel follows the pick, not the last name touched.
+    if (touched.current) setFocus(null);
+    const now = Date.now();
+    const again = lastTap.current?.id === id && now - lastTap.current.at < DOUBLE_MS;
+    lastTap.current = again ? null : { id, at: now };
+    if (again) onCenter(id);
+    else setPicked(id);
+  };
+  const tapRef = useRef(tap);
+  tapRef.current = tap;
+  const tapped = useRef(false); // set while the `click` that follows a tap handled on pointer up is still to come
   const start = useRef(new Map<number, { x: number; y: number }>());
   useEffect(() => {
     const pair = (): [{ x: number; y: number }, { x: number; y: number }] =>
@@ -353,6 +370,12 @@ export default function WebMap({
         if (grab.moved) {
           rememberRef.current();
           setExtent(extentOf(sim.current));
+        } else if (u.type === "pointerup") {
+          // Let go without having dragged: a tap on that name, wherever the pointer is now (not for a cancel, which
+          // is the browser taking the touch over to scroll).
+          tapRef.current(grab.id);
+          tapped.current = true;
+          setTimeout(() => (tapped.current = false), 0);
         }
         setTimeout(() => (dragged.current = false), 0);
         return;
@@ -637,6 +660,7 @@ export default function WebMap({
                   ev.stopPropagation();
                   touched.current = ev.pointerType === "touch";
                   if (pointers.current.size > 1) return; // a second finger: a pinch, not a drag of this name
+                  if (ev.button !== 0) return; // a right or middle press opens a menu or scrolls: not a tap or a drag
                   dragName.current = { id: n.id, x: ev.clientX, y: ev.clientY, moved: false };
                   dragged.current = false;
                 }}
@@ -645,19 +669,12 @@ export default function WebMap({
                 onFocus={() => setFocus(n.id)}
                 onBlur={() => setFocus((f) => (f === n.id ? null : f))}
                 onClick={() => {
+                  if (tapped.current) return; // (this click was already counted when the pointer was let go)
                   if (dragged.current) {
                     lastTap.current = null; // (the end of a drag is neither a click nor half of a double click)
                     return;
                   }
-                  // A finger leaves no hover behind: the panel follows the pick, not the last name touched.
-                  if (touched.current) setFocus(null);
-                  // One click picks the name; a second on the same name within DOUBLE_MS puts it in the middle.
-                  // Counted here, not with `dblclick`, which a phone does not send reliably.
-                  const now = Date.now();
-                  const again = lastTap.current?.id === n.id && now - lastTap.current.at < DOUBLE_MS;
-                  lastTap.current = again ? null : { id: n.id, at: now };
-                  if (again) onCenter(n.id);
-                  else setPicked(n.id);
+                  tap(n.id);
                 }}
                 onKeyDown={(ev) => {
                   const step: Record<string, [number, number]> = {

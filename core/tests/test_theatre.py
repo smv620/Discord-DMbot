@@ -66,6 +66,14 @@ class Scenes(unittest.TestCase):
         self.assertIn("3 | DM: how many charges", text)
 
 
+class TypedLines(unittest.TestCase):
+    def test_a_typed_line_is_marked_for_the_ai_and_read_back_by_name(self) -> None:
+        typed = th.Scene((), (th.Said(7, TAVIN, "Tavin", "I search the room", typed=True),))
+        self.assertEqual(th.render(typed), "7 | Tavin (typed): I search the room")
+        (got,) = th.parse("7 | Tavin (typed): I search the room.", typed, KNOWN)
+        self.assertEqual((got.speaker, got.sources), ("Tavin", (7,)))
+
+
 class TheInstructions(unittest.TestCase):
     def test_they_list_the_tables_names_and_nothing_else(self) -> None:
         prompt = th.instructions(["Kell", "Tavin's cloak"])

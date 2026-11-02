@@ -169,20 +169,23 @@ async def forget_session(conn: Any, guild_id: int, session_id: str) -> int:
 
 async def script_input(
     db: Database, guild_id: int, session_id: str, agreed: Collection[int]
-) -> list[tuple[int, int, str]]:
-    """(line id, user id, cleaned words) of the session's lines the script may be made from, in
-    the order they were said: the speech of people who agree, as the cleaned transcript has it. Not
-    the DM sidebar, not typed lines (those are only in the as-heard transcript), not pictures and
-    nothing the off-topic filter hid. A line the cleaner left alone is its heard words, so the
+) -> list[tuple[int, int, str, bool]]:
+    """(line id, user id, cleaned words, typed) of the lines the script may be made from, in
+    the order they were said: the speech and the typed table chat of people who agree (typed lines
+    are marked, #3244). Not the DM sidebar or table questions, not pictures and nothing the
+    off-topic filter hid. A line the cleaner left alone is its heard words, so the
     caller starts a run only for a session that has ended and been cleaned."""
     if not agreed:
         return []
     async with db.guild(guild_id) as conn:
         cur = await conn.execute(
-            "SELECT id, user_id, coalesce(text, heard) AS text FROM transcript_lines"
-            " WHERE guild_id = %s AND session_id = %s AND sidebar IS NULL AND NOT typed"
+            "SELECT id, user_id, coalesce(text, heard) AS text, typed FROM transcript_lines"
+            " WHERE guild_id = %s AND session_id = %s AND sidebar IS NULL"
             " AND NOT image AND topic <> 'off_topic' AND user_id = ANY(%s)"
             " AND coalesce(text, heard) <> '' ORDER BY started_ms, id",
             (guild_id, session_id, sorted(agreed)),
         )
-        return [(int(r["id"]), int(r["user_id"]), str(r["text"])) for r in await cur.fetchall()]
+        return [
+            (int(r["id"]), int(r["user_id"]), str(r["text"]), bool(r["typed"]))
+            for r in await cur.fetchall()
+        ]

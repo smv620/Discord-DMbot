@@ -3693,5 +3693,8 @@ class Store(NamesTest):
         restored = await self.campaigns.import_backup(2, backup, DM)
         copy = await self.memory.entities(2, restored.id, statuses=[CONFIRMED])
         self.assertEqual(
-            [(e.name, e.played_by) for e in copy if e.type != "person"], [("Cerric", PLAYER)]
+            [(e.name, e.played_by) for e in copy if e.type != "person" and e.name != "The party"],
+            [
+                ("Cerric", PLAYER)
+            ],  # (The party, made when the player was given the character, aside)
         )
