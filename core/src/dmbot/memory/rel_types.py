@@ -17,11 +17,13 @@ are not targets (an alliance or enmity is `knows` with a stance word, #3175), an
 from __future__ import annotations
 
 import hashlib
+import math
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 from dmbot.memory import reputation_words
-from dmbot.memory.rel_type_texts import BY_KEY, TERM_OF_ADDRESS, TYPES, RelType
+from dmbot.memory.rel_type_texts import BY_KEY, TERM_OF_ADDRESS, RelType
 from dmbot.memory.voyage import cosine
 
 BAR = 0.80  # the lowest cosine that can be used (owner, 2026-11-02)
@@ -29,7 +31,6 @@ MARGIN = 0.03  # the lead over the second best; a starting value, set on the gol
 
 USED = "embedding"
 AI_PICK = "ai"
-COUNTED = "term_of_address"
 
 # The stance words the type text lists that are not one of the nine feeling words, and the word
 # each is stored as (owner's rule 2 on #3244): the reader returns the word, and the nine are all
@@ -43,6 +44,11 @@ STANCE_TO_NINE: Mapping[str, str] = {
     "companions in a cause": reputation_words.TRUSTS,
     "friends": reputation_words.FRIENDLY,
     "lovers": reputation_words.CLOSE,
+    "lover": reputation_words.CLOSE,
+    "sweethearts": reputation_words.CLOSE,
+    "old flame": reputation_words.CLOSE,
+    "friend": reputation_words.FRIENDLY,
+    "sworn enemies": reputation_words.SWORN_ENEMY,
 }
 
 
@@ -66,11 +72,17 @@ class Match:
     second_score: float
 
 
-def nearest(vector: Sequence[float], types: Mapping[str, Sequence[float]]) -> Match | None:
-    """The closest type and the runner-up, or None when there are fewer than two types."""
-    scored = sorted(((cosine(vector, v), k) for k, v in types.items() if k in BY_KEY), reverse=True)
-    if len(scored) < 2:
+def nearest(vector: Sequence[float], vectors: Mapping[str, Sequence[float]]) -> Match | None:
+    """The closest type and the runner-up, or None when there are fewer than two types, a vector
+    is the wrong length or has a number that is not finite (the reader's own pick then stands).
+    Equal scores are ordered by key, so the result never depends on the order of the input."""
+    try:
+        scored = [(cosine(vector, v), k) for k, v in vectors.items() if k in BY_KEY]
+    except ValueError:  # (a vector of another length)
         return None
+    if len(scored) < 2 or not all(math.isfinite(s) for s, _ in scored):
+        return None
+    scored.sort(key=lambda sk: (-sk[0], sk[1]))
     (s1, k1), (s2, k2) = scored[0], scored[1]
     return Match(k1, s1, k2, s2)
 
@@ -91,24 +103,21 @@ def decide(
 ) -> Decision:
     """The type for a tie. The match decides only when it is at least `bar` and ahead of the second
     by at least `margin`; otherwise the reader's own `ai_kind` stands (counted by `reason`)."""
+    keep = ai_kind != TERM_OF_ADDRESS  # (a form of address is never stored, whoever found it)
     if match is None:
-        return Decision(ai_kind, AI_PICK, "no_match", True)
-    if match.score < bar:
-        return Decision(ai_kind, AI_PICK, "below_bar", True)
-    if match.score - match.second_score < margin:
-        return Decision(ai_kind, AI_PICK, "close_second", True)
-    if match.key == TERM_OF_ADDRESS:
-        return Decision(TERM_OF_ADDRESS, USED, "", False)  # counted, never stored
-    return Decision(match.key, USED, "", True)
+        return Decision(ai_kind, AI_PICK, "no_match", keep)
+    if not match.score >= bar:  # (written so a NaN is below the bar)
+        return Decision(ai_kind, AI_PICK, "below_bar", keep)
+    if not match.score - match.second_score >= margin:
+        return Decision(ai_kind, AI_PICK, "close_second", keep)
+    return Decision(match.key, USED, "", match.key != TERM_OF_ADDRESS)
 
 
-def nine_word(word: str) -> str | None:
+def nine_word(word: object) -> str | None:
     """The one of the nine feeling words a `knows` stance is stored as: the word itself when it is
     one of the nine, the mapped word for a stance the type text lists, otherwise None (nothing is
-    stored, and a standing the DM set always wins)."""
-    clean = " ".join(word.casefold().split())
+    stored, and a standing the DM set always wins). Hyphens and underscores read as spaces."""
+    if not isinstance(word, str):
+        return None
+    clean = " ".join(re.sub(r"[-_]", " ", word.casefold()).split())
     return reputation_words.word_of(clean) or STANCE_TO_NINE.get(clean)
-
-
-def types() -> tuple[RelType, ...]:
-    return TYPES

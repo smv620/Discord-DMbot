@@ -39,8 +39,12 @@ class TheTypes(unittest.TestCase):
         self.assertEqual([t.key for t in TYPES if not t.stored], [TERM_OF_ADDRESS])
 
     def test_a_changed_text_has_another_hash(self) -> None:
-        hashes = {rel_types.text_hash(t) for t in TYPES}
-        self.assertEqual(len(hashes), len(TYPES))
+        import dataclasses
+
+        t = TYPES[0]
+        changed = dataclasses.replace(t, is_text=t.is_text + " One more word.")
+        self.assertNotEqual(rel_types.text_hash(t), rel_types.text_hash(changed))
+        self.assertEqual(len({rel_types.text_hash(x) for x in TYPES}), len(TYPES))
 
 
 class TheMatch(unittest.TestCase):
@@ -80,6 +84,46 @@ class TheMatch(unittest.TestCase):
     def test_no_match_keeps_the_readers_type(self) -> None:
         self.assertEqual(rel_types.decide("serves", None).source, "ai")
 
+    def test_a_form_of_address_the_reader_itself_found_is_not_stored_either(self) -> None:
+        weak = rel_types.Match("kin_of", 0.5, "knows", 0.4)
+        self.assertFalse(rel_types.decide(TERM_OF_ADDRESS, weak).stored)
+        self.assertFalse(rel_types.decide(TERM_OF_ADDRESS, None).stored)
+
+    def test_a_number_that_is_not_finite_never_passes_as_a_confident_match(self) -> None:
+        nan = float("nan")
+        self.assertEqual(
+            rel_types.decide("serves", rel_types.Match("kin_of", nan, "knows", 0.1)).source, "ai"
+        )
+        self.assertIsNone(
+            rel_types.nearest([1.0, 0.0], {"kin_of": [nan, 0.0], "knows": [1.0, 0.0]})
+        )
+
+    def test_a_vector_of_another_length_or_too_few_types_is_no_match(self) -> None:
+        self.assertIsNone(rel_types.nearest([1.0, 0.0, 0.0], self.VECS))
+        self.assertIsNone(rel_types.nearest([1.0, 0.0], {"kin_of": [1.0, 0.0]}))
+
+    def test_legacy_and_place_keys_are_never_a_target(self) -> None:
+        vecs = {
+            "ally_of": [1.0, 0.0],
+            "located_in": [1.0, 0.0],
+            "kin_of": [0.6, 0.8],
+            "knows": [0.0, 1.0],
+        }
+        got = rel_types.nearest([1.0, 0.0], vecs)
+        assert got is not None
+        self.assertEqual((got.key, got.second_key), ("kin_of", "knows"))
+
+    def test_equal_scores_are_ordered_by_key_not_by_input_order(self) -> None:
+        a = rel_types.nearest([1.0, 0.0], {"owns": [1.0, 0.0], "carries": [1.0, 0.0]})
+        b = rel_types.nearest([1.0, 0.0], {"carries": [1.0, 0.0], "owns": [1.0, 0.0]})
+        self.assertEqual(a, b)
+
+    def test_the_margin_is_a_boundary_with_exact_values(self) -> None:
+        enough = rel_types.Match("kin_of", 1.0, "knows", 0.75)
+        self.assertEqual(rel_types.decide("serves", enough, margin=0.25).kind, "kin_of")
+        short = rel_types.Match("kin_of", 1.0, "knows", 0.76)
+        self.assertEqual(rel_types.decide("serves", short, margin=0.25).reason, "close_second")
+
     def test_the_bar_is_the_owners_eighty_percent(self) -> None:
         self.assertEqual(rel_types.BAR, 0.80)
 
@@ -94,6 +138,19 @@ class TheStance(unittest.TestCase):
         for word in reputation_words.WORDS:
             self.assertEqual(rel_types.nine_word(word), word)
 
+    def test_the_mapped_words_are_the_owners(self) -> None:
+        want = {
+            "at war": "hostile", "allies": "friendly", "partners in a plan": "trusts",
+            "companions in a cause": "trusts", "sworn enemies": "sworn enemy",
+        }  # fmt: skip
+        for word, nine in want.items():
+            self.assertEqual(rel_types.nine_word(word), nine)
+        self.assertEqual(rel_types.nine_word("At-War"), "hostile")
+
+    def test_something_that_is_not_text_stores_nothing(self) -> None:
+        self.assertIsNone(rel_types.nine_word(None))
+        self.assertIsNone(rel_types.nine_word(7))
+
     def test_anything_else_stores_nothing(self) -> None:
         self.assertIsNone(rel_types.nine_word("it is complicated"))
 
@@ -106,7 +163,6 @@ class TheGoldenSet(unittest.TestCase):
             self.assertIn(case.expected, allowed, case.description)
 
     def test_every_not_this_line_has_a_case_that_lands_on_the_type_it_names(self) -> None:
-        covered = {c.covers: c.expected for c in rel_golden.CASES if isinstance(c.covers, tuple)}
         for t in TYPES:
             for i, line in enumerate(t.not_this):
                 with self.subTest(f"{t.key}: {line}"):
@@ -117,7 +173,6 @@ class TheGoldenSet(unittest.TestCase):
                     if any(k in target for k in ("located_in", "travels_with", "unlinked")):
                         wanted.add(rel_golden.NONE)
                     self.assertTrue({c.expected for c in cases} & wanted, line)
-        self.assertTrue(covered)
 
     def test_the_epithet_and_surname_rules_have_their_cases(self) -> None:
         notes = {c.covers for c in rel_golden.CASES}
@@ -126,15 +181,31 @@ class TheGoldenSet(unittest.TestCase):
         self.assertEqual({c.expected for c in rel_golden.CASES if c.covers == "note6"}, {"alias"})
 
     def test_a_shared_surname_alone_must_not_land_on_kin(self) -> None:
-        trade = [c for c in rel_golden.CASES if "trade surname" in c.description]
-        self.assertTrue(trade)
-        self.assertTrue(all(c.expected == rel_golden.NONE for c in trade))
+        unrelated = [c for c in rel_golden.CASES if c.covers == "note7" and c.expected != "kin_of"]
+        self.assertGreaterEqual(len(unrelated), 2)
+        self.assertTrue(all(c.expected == rel_golden.NONE for c in unrelated))
 
 
 class TheGuardian(unittest.TestCase):
     def test_a_guardian_is_a_family_role_of_its_own(self) -> None:
         self.assertIn("guardian", kin.ROLES)
         self.assertEqual(kin.role_of("guardian"), "guardian")
+
+    def test_a_guardian_alone_gives_nothing_and_beside_a_real_parent_nothing_extra(self) -> None:
+        alone = [kin_derive.Stated("1", "toris", "guardian", "pip")]
+        self.assertEqual(kin_derive.derive(alone), [])
+        both = [*alone, kin_derive.Stated("2", "bran", "parent", "pip"),
+                kin_derive.Stated("3", "pip", "sibling", "wren")]  # fmt: skip
+        got = {(d.a_id, d.role, d.b_id) for d in kin_derive.derive(both)}
+        self.assertEqual(
+            got, {("bran", "parent", "wren")}
+        )  # (only the real parent's, none for toris)
+
+    def test_the_lore_reader_is_told_which_way_a_guardian_runs(self) -> None:
+        from dmbot.memory import lore_read
+
+        text = " ".join(lore_read.shape_instructions().split())
+        self.assertIn("guardian = a is the guardian of b", text)
 
     def test_a_guardian_is_never_a_parent_for_the_worked_out_rules(self) -> None:
         links = [

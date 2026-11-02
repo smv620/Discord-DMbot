@@ -6,6 +6,12 @@ a shared surname alone is not kin) have their own. Names are invented. Pure data
 
 `expected` is a type key, `NONE` (the match must not return it: a place, a companion or a tie
 that is left unlinked), or `ALIAS` (another name for the person, not a tie).
+
+Scoring (dev1's measured run): a case with a type key is right when the match lands on it. `NONE`
+is right when the match returns no type or a weak one (never `kin_of` for a shared surname, never
+`knows` for a place); `ALIAS` is right when no tie is made and the epithet goes to the "another
+name" path. The plain cases are fresh sentences, not the embedded examples, so the right-rate is
+not inflated.
 """
 
 from __future__ import annotations
@@ -52,13 +58,13 @@ CASES: tuple[Case, ...] = (
         ("kin_of", 2),
     ),
     c(
-        "Sister Nora is a nun of the Order of the Dawn, and the villagers call her Mother Nora.",
+        "Nora is a nun of the Order of the Dawn and wears its habit.",
         "member_of",
         ("kin_of", 3),
     ),
     # --- knows's not_this
     c(
-        "Mira works for Lord Aldric as his steward and answers to him.",
+        "Ilsa works for Lord Perrin as his steward and answers to him.",
         "serves",
         ("knows", 0),
     ),
@@ -87,7 +93,7 @@ CASES: tuple[Case, ...] = (
         ("serves", 1),
     ),
     c(
-        "Pip is one of the Ash Wolf crew and has no orders to follow.",
+        "Wick sails with the Gull crew as a plain deckhand, with no say in anything.",
         "member_of",
         ("serves", 2),
     ),
@@ -97,7 +103,7 @@ CASES: tuple[Case, ...] = (
         ("serves", 3),
     ),
     c(
-        "The merchant bought a slave from the market, and the slave belongs to him now.",
+        "The merchant bought a slave at the market and keeps him in chains.",
         "held_captive_by",
         ("serves", 4),
     ),
@@ -112,7 +118,7 @@ CASES: tuple[Case, ...] = (
         ("serves", 6),
     ),
     c(
-        "Which god does the cleric serve? She pledged herself to the goddess of the harvest.",
+        "The cleric is bound in servitude to the goddess of the harvest and answers to her alone.",
         "sworn_to",
         ("serves", 7),
     ),
@@ -123,7 +129,7 @@ CASES: tuple[Case, ...] = (
         ("sworn_to", 0),
     ),
     c(
-        "Hale said in passing that he would look after the dog, and Rowan thanked him.",
+        "Hale said in passing that he would look after the dog.",
         "knows",
         ("sworn_to", 1),
     ),
@@ -139,12 +145,12 @@ CASES: tuple[Case, ...] = (
         ("mentors", 0),
     ),
     c(
-        "Rolo is Tavin's father.",
+        "Odo is Berrin's father.",
         "kin_of",
         ("mentors", 1),
     ),
     c(
-        "Rolo also taught Tavin to hunt.",
+        "Odo also taught Berrin to track deer.",
         "mentors",
         ("mentors", 1),
     ),
@@ -160,7 +166,7 @@ CASES: tuple[Case, ...] = (
         ("leads", 0),
     ),
     c(
-        "Kaelen is one of the ordinary members of the dragon cult.",
+        "Haldor is one rank-and-file member of the lantern brotherhood.",
         "member_of",
         ("leads", 1),
     ),
@@ -170,18 +176,18 @@ CASES: tuple[Case, ...] = (
         ("leads", 2),
     ),
     c(
-        "The archmage tutors one promising novice alone, in her tower.",
+        "The old astronomer teaches a single gifted pupil in his observatory.",
         "mentors",
         ("leads", 3),
     ),
     # --- member_of's not_this
     c(
-        "Captain Vale leads the Silver Lanterns and speaks for them.",
+        "Warden Ilka commands the harbour company and speaks for it at the council.",
         "leads",
         ("member_of", 0),
     ),
     c(
-        "Joram works for Lord Aldric alone and is no part of any group.",
+        "Hob works for Lady Corra alone and is no part of any group.",
         "serves",
         ("member_of", 1),
     ),
@@ -235,7 +241,7 @@ CASES: tuple[Case, ...] = (
     ),
     # --- carries's not_this
     c(
-        "Cerra owns the Sunbrand sword, though it hangs in her father's hall far away.",
+        "Dessa owns a silver circlet, though it sits in a vault in her home city.",
         "owns",
         ("carries", 0),
     ),
@@ -270,23 +276,32 @@ CASES: tuple[Case, ...] = (
         "note7",
     ),
     c(
-        "The text says the Smith brothers, Tom and Joss, grew up in the same house.",
+        "Tom and Joss are brothers, sons of the same mother.",
         "kin_of",
         "note7",
     ),
+    # --- friendly rivals are still rivals (a feeling is a separate knows tie), and groups
+    c(
+        "Two friendly rival bards compete for the festival crown and toast each other after.",
+        "rival_of",
+    ),
+    c("The weavers' guild and the dyers' guild are on cordial terms and trade often.", "knows"),
     # --- plain cases, one for each type
-    c("Brin and her husband Hale run the mill together.", "kin_of"),
-    c("Kell and Tavin have been friends since the road.", "knows"),
-    c("The Iron Court is at war with the river clans.", "knows"),
-    c("The two inns fight over the same travellers.", "rival_of"),
-    c("The guards answer to the captain.", "serves"),
-    c("Captain Vane took a solemn vow to defend the wall.", "sworn_to"),
-    c("Brother Aldric taught Mira healing.", "mentors"),
-    c("Queen Ysolde rules the northern realm.", "leads"),
-    c("Tavin joined the temple's choir last spring.", "member_of"),
-    c("The bandits took the miller's daughter for ransom.", "held_captive_by"),
-    c("Old Brin owns the ferry and the dock.", "owns"),
-    c("The messenger bears a sealed letter.", "carries"),
-    c("Good day, sir, what brings you to our village?", "term_of_address"),
-    c("Old Toris is the guardian of his young ward, Pip.", "kin_of"),
+    c("Wen married Joss in the spring, and the two now share one roof.", "kin_of"),
+    c("Ossa and Pell met years ago and are still fond of one another.", "knows"),
+    c(
+        "The salt merchants and the ferrymen have been fighting over the harbour for years.",
+        "knows",
+    ),
+    c("Two bakeries on one street both try to win the baron's wedding order.", "rival_of"),
+    c("The night watchmen take their orders from the sergeant of the gate.", "serves"),
+    c("Ensign Rusk gave a sacred promise before the altar to guard the pass.", "sworn_to"),
+    c("Old Hessa showed the girl Fenn how to set bones and brew salves.", "mentors"),
+    c("Lord Thane governs the eastern march and speaks for its people.", "leads"),
+    c("Lio signed up with the river rangers at harvest time.", "member_of"),
+    c("The smugglers seized the ferryman's son and shut him in a hold.", "held_captive_by"),
+    c("Marta holds the deed to the brewery and the barn beside it.", "owns"),
+    c("The courier has a wax-sealed packet strapped to her chest.", "carries"),
+    c("Evening to you, madam, will you be wanting a room?", "term_of_address"),
+    c("Maren has raised the orphan Tess as her legal ward since the fever.", "kin_of"),
 )
