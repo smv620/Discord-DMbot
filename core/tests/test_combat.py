@@ -420,11 +420,69 @@ class SessionStart(AtTheTable):
             return True
 
         self.bot.post = post  # type: ignore[method-assign]
+
+        async def ask_live(table: Any, text: str, make_view: Any, on_sent: Any = None) -> list[Any]:
+            sent.append((text, make_view()))  # (asked in the DMs' private chats, #3210)
+            return []
+
+        self.bot.ask_live = ask_live  # type: ignore[method-assign]
         await self.bot._fight_left_over(table)
         ((text, view),) = sent
         self.assertIn("still running (round 4)", text)
         self.assertEqual([str(i.item.label) for i in view.children], ["End combat"])
         self.assertEqual(await self.combat_round(), 4)  # not ended without the DM
+
+    async def test_end_combat_pressed_in_a_dms_private_chat_ends_it(self) -> None:
+        # #3210: the question about a fight left over is a private message, where a press has no
+        # server; the database says which one. The clock is shown on the DM screen as usual.
+        from unittest.mock import MagicMock
+
+        from dmbot.ui.decision_lines import DecisionLines
+
+        await self.press("set", set_to=NOON4)
+        await self.press("cstart")
+        copy = SimpleNamespace(id=2, content="⚔️ A fight…", edit=AsyncMock())
+        self.bot.decision_lines = DecisionLines()
+        self.bot.decision_lines.remember(("fight", self.a.id), copy)  # the other DM's copy
+        message = MagicMock(id=1, edit=AsyncMock())
+        interaction = SimpleNamespace(
+            client=self.bot,
+            guild=None,
+            user=SimpleNamespace(id=DM),
+            message=message,
+            response=SimpleNamespace(
+                defer=AsyncMock(), is_done=lambda: True, send_message=AsyncMock()
+            ),
+            followup=SimpleNamespace(send=AsyncMock()),
+        )
+        with (
+            patch.object(ui, "_show_here", AsyncMock(return_value=MagicMock())),
+            patch.object(ui, "update_players", AsyncMock()),
+            patch.object(ui, "say", AsyncMock()),
+            patch("dmbot.dm_screen.effects.announce_due", AsyncMock()),
+        ):
+            await ui.ClockButton(self.a.id, "cend").callback(cast(Any, interaction))
+        self.assertIsNone(await self.combat_round())  # the fight is over
+        self.assertIn("The fight is over", message.edit.await_args.kwargs["content"])
+        self.assertIsNone(message.edit.await_args.kwargs["view"])
+        copy.edit.assert_awaited_once()  # the other DM's copy loses its button
+
+    async def test_every_other_clock_button_still_needs_a_server(self) -> None:
+        from unittest.mock import MagicMock
+
+        await self.press("set", set_to=NOON4)
+        interaction = SimpleNamespace(
+            client=self.bot,
+            guild=None,
+            user=SimpleNamespace(id=DM),
+            message=MagicMock(),
+            response=SimpleNamespace(defer=AsyncMock(), is_done=lambda: True),
+            followup=SimpleNamespace(send=AsyncMock()),
+        )
+        before = (await self.clocks.get(GUILD_A, self.a.id)).clock.minute  # type: ignore[union-attr]
+        await ui.ClockButton(self.a.id, "h1").callback(cast(Any, interaction))
+        after = (await self.clocks.get(GUILD_A, self.a.id)).clock.minute  # type: ignore[union-attr]
+        self.assertEqual(before, after)  # nothing moved: no server, no press
 
     async def test_nothing_is_said_without_a_fight_or_after_a_restart(self) -> None:
         await self.press("set", set_to=NOON4)
