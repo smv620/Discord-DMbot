@@ -30,6 +30,7 @@ export default function ClockOffer({
   const [problem, setProblem] = useState<string | null>(null);
   const sentAt = useRef(0);
   const alive = useRef(true);
+  const pending = useRef(false); // a press is in progress: a second press before the re-render is ignored
 
   useEffect(() => {
     alive.current = true;
@@ -37,7 +38,9 @@ export default function ClockOffer({
       alive.current = false;
     };
   }, []);
-  useEffect(() => setCurrent(clock), [clock]);
+  // The page hands in a new object on every look at the import, even when the clock has not changed; follow only
+  // a change of what the clock says, so an older look cannot bring back a question the server has answered.
+  useEffect(() => setCurrent(clock), [clock?.state, clock?.label]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // While a choice is being sent, count the seconds so the wait shows DMbot is still working.
   useEffect(() => {
@@ -49,37 +52,46 @@ export default function ClockOffer({
   // After a press, look again until the answer is no longer "offered", or give up after thirty seconds.
   useEffect(() => {
     if (!sending || !api.importProgress) return;
+    // Cancelled when the press ends for any reason, including a failed press while a look is still in flight.
+    let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const look = async (): Promise<void> => {
       try {
         const next = await api.importProgress!(campaignRef, importId);
-        if (!alive.current) return;
-        const mine = next.sessions.find((s) => s.file === file)?.clock;
-        if (mine && mine.state !== "offered") {
-          setCurrent(mine);
+        if (cancelled || !alive.current) return;
+        const session = next.sessions.find((s) => s.file === file);
+        // No clock any more, or one that is no longer offered, is the answer: the offer ends.
+        if (session && (!session.clock || session.clock.state !== "offered")) {
+          setCurrent(session.clock ?? null);
           setSending(null);
+          pending.current = false;
           return;
         }
       } catch {
         // A failed look is not the answer: keep asking until the time is up.
-        if (!alive.current) return;
+        if (cancelled || !alive.current) return;
       }
       if (Date.now() - sentAt.current >= GIVE_UP_MS) {
         setStalled(true);
         setSending(null);
+        pending.current = false;
         return;
       }
       timer = setTimeout(() => void look(), LOOK_EVERY_MS);
     };
     timer = setTimeout(() => void look(), LOOK_EVERY_MS);
-    return () => clearTimeout(timer);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
   }, [sending, api, campaignRef, importId, file]);
 
   if (!IMPORT_CLOCK_LIVE || !api.importClock || !api.importProgress) return null;
   if (!current || current.state === "expired") return null;
 
   const press = async (choice: "set" | "not-now"): Promise<void> => {
-    if (!api.importClock) return;
+    if (!api.importClock || pending.current) return;
+    pending.current = true;
     setStalled(false);
     setProblem(null);
     setSeconds(0);
@@ -88,6 +100,7 @@ export default function ClockOffer({
     try {
       await api.importClock(campaignRef, importId, file, choice);
     } catch (err) {
+      pending.current = false;
       if (!alive.current) return;
       setSending(null);
       setProblem(err instanceof ApiError && err.kind === "not-allowed" ? w.notDm : w.error);

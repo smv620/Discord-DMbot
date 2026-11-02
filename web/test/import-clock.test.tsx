@@ -120,20 +120,49 @@ describe("the clock offer on an imported session", () => {
     expect((screen.getByRole("button", { name: w.setIt }) as HTMLButtonElement).disabled).toBe(false);
   });
 
-  it("an error shows its words and brings the buttons back; not-allowed says only the DM can", async () => {
+  it("a network error shows its words and brings the buttons back", async () => {
     const failing = stub(async () => {
       throw new ApiError("network");
     });
-    const { unmount } = render(<ClockOffer api={failing} campaignRef={REF} importId="imp1" file={FILE} clock={offered} />);
+    render(<ClockOffer api={failing} campaignRef={REF} importId="imp1" file={FILE} clock={offered} />);
     press(w.setIt);
     expect(await screen.findByText(w.error)).toBeTruthy();
     expect((screen.getByRole("button", { name: w.setIt }) as HTMLButtonElement).disabled).toBe(false);
-    unmount();
+  });
+
+  it("a refused press says only the DM can set the clock", async () => {
     const refused = stub(async () => {
       throw new ApiError("not-allowed");
     });
     render(<ClockOffer api={refused} campaignRef={REF} importId="imp1" file={FILE} clock={offered} />);
     press(w.setIt);
     expect(await screen.findByText(w.notDm)).toBeTruthy();
+  });
+
+  it("Not now is disabled while the choice is sent", async () => {
+    vi.useFakeTimers();
+    const api = stub(async () => undefined, () => offered);
+    render(<ClockOffer api={api} campaignRef={REF} importId="imp1" file={FILE} clock={offered} />);
+    press(w.setIt);
+    expect((screen.getByRole("button", { name: w.notNow }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("a failure that lands after the look has started ends the asking: no more looks after it", async () => {
+    vi.useFakeTimers();
+    const api = stub(
+      async () => {
+        await new Promise((r) => setTimeout(r, 3000));
+        throw new ApiError("network");
+      },
+      () => offered,
+    );
+    render(<ClockOffer api={api} campaignRef={REF} importId="imp1" file={FILE} clock={offered} />);
+    press(w.setIt);
+    await passTime(3500);
+    expect(screen.getByText(w.error)).toBeTruthy();
+    const looksAtFailure = api.importProgress.mock.calls.length;
+    await passTime(10_000);
+    expect(api.importProgress.mock.calls.length).toBe(looksAtFailure);
+    expect(screen.queryByText(w.stalled(30))).toBeNull();
   });
 });

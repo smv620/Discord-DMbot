@@ -62,6 +62,7 @@ import type {
   RuleSharingAnswer,
   RuleSharingChoice,
 } from "./api";
+import type { ImportClock } from "./api";
 import { ApiError, type HouseFileRequest, type HouseFileState, type LoreUpload, type RecapStyle, type RecapStyleAction, type WebLinkKind, type FixAnswer, type FixMode, type PlotIssue, type PlotMessage, type PlotProposal, type WaitingLook } from "./api";
 import { NAME_LIMIT } from "../content/names-words";
 
@@ -984,7 +985,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   // ending in -split.txt answers "split" and -moved.txt answers "moved_on" once the DM has said set.
   let lastImportFile: string | null = null;
   const clockAnswers = new Map<string, "set" | "not-now">();
-  const clockOf = (file: string): { state: "offered" | "set" | "dismissed" | "moved_on" | "split"; label: string } => {
+  const clockOf = (file: string): ImportClock => {
     const answer = clockAnswers.get(file);
     const label = "Day 5, evening";
     if (!answer) return { state: "offered", label };
