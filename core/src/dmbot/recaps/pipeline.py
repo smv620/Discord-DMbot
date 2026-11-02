@@ -1364,7 +1364,7 @@ class RecapWorker:
                 gid, cid, job,
                 rd.pick_beats(sheet, length.beats, importance=inputs.importance), prose,
                 {*inputs.allowed_names, *(w for b in sheet for w in b.who)},
-                inputs.corrections, False, consenting,
+                inputs.corrections, False, consenting, previous=inputs.previous,
             )  # fmt: skip
         except AIOutOfFunds:
             return await self._fail(gid, cid, job, FUNDS)
@@ -1650,6 +1650,7 @@ class RecapWorker:
         corrections: Sequence[str] = (),
         free: bool = False,
         consenting: Consenting | None = None,
+        previous: str = "",
     ) -> tuple[rd.Facts | None, bool]:
         """The fact check's flags with the compass directions found in code added (#2067): the
         rule is checked in code, not only asked of the AI, so it holds when the AI's check fails.
@@ -1657,7 +1658,9 @@ class RecapWorker:
         shipped unchecked, whatever the code found)."""
         key = (gid, cid, job.session_at, "facts")
         before = self._last.get(key)
-        asked = await self._ask_facts(gid, cid, job, shown, prose, corrections, free, consenting)
+        asked = await self._ask_facts(
+            gid, cid, job, shown, prose, corrections, free, consenting, previous
+        )
         facts = rd.with_directions(asked, prose.summary, names)
         if facts is not asked and facts is not None and self._last.get(key) is not before:
             self._annotate(gid, cid, job, "facts", facts=facts.counts())  # (this try's own event)
@@ -1673,6 +1676,7 @@ class RecapWorker:
         corrections: Sequence[str] = (),
         free: bool = False,
         consenting: Consenting | None = None,
+        previous: str = "",
     ) -> rd.Facts | None:
         """The fact check (#2064): the careful tier reads the numbered sentences against the
         beats the writer was shown and answers with numbers and fixed kinds, never text. None when
@@ -1722,6 +1726,7 @@ class RecapWorker:
                         heard,
                         who_and_what=given.who_and_what,
                         story=given.story,
+                        previous=previous,
                     ),
                     max_tokens=room,
                     schema=rd.facts_schema(),
@@ -2200,7 +2205,7 @@ class RecapWorker:
                     gid, cid, job,
                     rd.pick_beats(sheet, length.beats, importance=inputs.importance), revised,
                     {*inputs.allowed_names, *(w for b in sheet for w in b.who)},
-                    inputs.corrections, loop.waits > 0, consenting,
+                    inputs.corrections, loop.waits > 0, consenting, previous=inputs.previous,
                 )  # fmt: skip
             except AIOutOfFunds:
                 return await self._fail(gid, cid, job, FUNDS)
@@ -2352,7 +2357,7 @@ class RecapWorker:
             facts, asked = await self._facts(
                 gid, cid, job, shown, edited,
                 {*inputs.allowed_names, *(w for b in sheet for w in b.who)},
-                inputs.corrections, False, consenting,
+                inputs.corrections, False, consenting, previous=inputs.previous,
             )  # fmt: skip
         except AIOutOfFunds:
             return await self._fail(gid, cid, job, FUNDS)

@@ -89,6 +89,23 @@ class TheMessage(unittest.TestCase):
         plain = rd.facts_message([self.BEAT], "Mira drew her blade.")
         self.assertNotIn("<transcript>", plain)
 
+    def test_the_fact_check_gets_the_bridge_when_no_earlier_recap_is_kept(self) -> None:
+        # With the story trimmed to nothing, the bridge recap is what the check can read (#2965).
+        bridged = rd.facts_message([self.BEAT], "Mira drew her blade.", previous="Mira met Orin.")
+        self.assertIn("<story_so_far>\n<recap>Mira met Orin.</recap>\n</story_so_far>", bridged)
+
+    def test_a_kept_story_is_read_instead_of_the_bridge(self) -> None:
+        both = rd.facts_message(
+            [self.BEAT], "Mira drew her blade.", story=("Earlier, a ferryman.",),
+            previous="Mira met Orin.",
+        )  # fmt: skip
+        self.assertIn("<recap>Earlier, a ferryman.</recap>", both)
+        self.assertNotIn("Mira met Orin.", both)
+
+    def test_no_bridge_and_no_story_adds_no_block(self) -> None:
+        bare = rd.facts_message([self.BEAT], "Mira drew her blade.", previous="   ")
+        self.assertNotIn("<story_so_far>", bare)
+
 
 class TheContext(unittest.TestCase):
     """The pieces the writer is given beside the beats (#2950, #2954)."""

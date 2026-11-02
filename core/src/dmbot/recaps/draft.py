@@ -1684,8 +1684,13 @@ def facts_message(
     *,
     who_and_what: Sequence[str] = (),
     story: Sequence[str] = (),
+    previous: str = "",
 ) -> str:
     numbered = "\n".join(f"[{i}] {t}" for i, t in enumerate(sentences_of(summary), start=1))
+    # The earlier recaps the writer was given; with none trimmed to the story (#2965 item 3),
+    # the bridge recap stands in for them, so a name only it mentions is not called invented.
+    recaps = list(story) or [" ".join(previous.split())[:PREVIOUS_MAX]]
+    recaps = [r for r in recaps if r]
     confirmed = (
         f"\n<confirmed>\n{_data(chr(10).join(corrections))}\n</confirmed>" if corrections else ""
     )
@@ -1699,9 +1704,9 @@ def facts_message(
     )
     earlier = (
         "\n<story_so_far>\n"
-        + "\n".join(f"<recap>{_data(r)}</recap>" for r in story)
+        + "\n".join(f"<recap>{_data(r)}</recap>" for r in recaps)
         + "\n</story_so_far>"
-        if story
+        if recaps
         else ""
     )
     return (
