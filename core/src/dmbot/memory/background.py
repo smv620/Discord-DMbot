@@ -411,7 +411,7 @@ def _third_name(span: str, others: Collection[str], ends: Collection[str]) -> bo
     """Whether a name of the campaign or the read other than the pair's own stands in the span
     (a capitalised run of up to four words, so "boy" in running text is no name): then the
     pronoun may mean that one, and no reach is made. A name introduced as one of the same
-    person's own ("His elder brother, Vaelrith, vanished, while his younger sister, ...") does
+    person's own ("His elder brother, Ivo, vanished, while his younger sister, ...") does
     not count: "his" before and after it means the same person, and the second relative is the
     very case a reach is for (#3238)."""
     tokens = [(m.group(), m.start()) for m in re.finditer(r"\w+(?:['’-]\w+)*", span)]
@@ -468,7 +468,7 @@ def _widen(
     place in the text gives such a window.
 
     Reach (#2757): when the sentence just before does not name the missing end (a background says
-    "Okthandom found a journal. Family members vanish at a hundred. His brother, Vaelrith, …"),
+    "Bran found a journal. Family members vanish at a hundred. His brother, Ivo, …"),
     the window goes back through the SAME paragraph, up to `REACH_SENTENCES` sentences and
     `REACH_WORDS` words (and `REACH_CHARS` characters, the queue's quote column), to the nearest
     earlier sentence that holds both names. Only when `others` (the name keys of the campaign

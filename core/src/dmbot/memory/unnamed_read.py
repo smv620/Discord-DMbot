@@ -15,7 +15,7 @@ Who may see it (one rule): the entry is a person the story never named, so it is
 the person a name. If the two ever disagree, the unnamed entry wins.
 
 One person is never two entries: a line is dropped when the same read already ties the named end
-to a NAMED person by that role word ("his father Roceran"), wherever in the text the name stands,
+to a NAMED person by that role word ("his father Rolo"), wherever in the text the name stands,
 before or after the description, and when the person's words are themselves a name of the read.
 """
 
@@ -193,7 +193,7 @@ def _named_elsewhere(
 ) -> bool:
     """Whether this read already ties the named end to a named person by the same role word: a
     family connection of the end, with this role, whose quote says the role word ("his father
-    Roceran"). Its limits, on purpose: only this read's connections are seen (a named parent kept
+    Rolo"). Its limits, on purpose: only this read's connections are seen (a named parent kept
     by an earlier read is not), and a named and an unnamed sibling of one end are taken for one
     person; both fail safe towards fewer unnamed entries, never a second entry."""
     mine = {name_key(f) for f in forms(line.anchor)}
