@@ -36,7 +36,7 @@ export const webPage = {
   freezeGraph: "Freeze the graph",
   autoUpdateGraph: "Auto update graph",
   updatingNote: "The graph updates by itself every few seconds.",
-  frozenNote: "The graph is frozen. It stays as it is until you press Auto update graph.",
+  frozenNote: "The graph is frozen. Press Auto update graph to see new names.",
   hopsLabel: "Steps out from the middle",
   hopsLess: "One step fewer",
   hopsMore: "One step more",

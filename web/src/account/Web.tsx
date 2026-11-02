@@ -551,7 +551,7 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
           {words.hopsHint(maxHops)}
         </p>
         <div class="field">
-          <button type="button" class="secondary" onClick={toggleAuto}>
+          <button type="button" class="button secondary" onClick={toggleAuto}>
             {auto ? words.freezeGraph : words.autoUpdateGraph}
           </button>
           <p class="small muted" role="status" aria-live="polite">
