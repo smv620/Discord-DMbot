@@ -1008,7 +1008,7 @@ export const playerSteps: Step[] = [
   noThanksStep,
   stopStep,
   {
-    text: "While DMbot is listening, it also reads what you type in the table's chat, if you said yes. Nothing is read from anyone who said no.",
+    text: "While DMbot is listening, it also reads what you type in the table's chat, if you said yes. A picture you post there is sent to the AI to be described, and the picture itself is not kept. Nothing is read from anyone who said no.",
   },
   heyDmBotStep,
   {

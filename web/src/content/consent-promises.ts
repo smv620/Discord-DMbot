@@ -5,7 +5,7 @@
 // except "dm-screen", which is the hard rule in CLAUDE.md (Transcripts are shared; the DM screen is not
 // pushed to players).
 //
-// TERMS_VERSION: 6
+// TERMS_VERSION: 7
 // That line must equal TERMS_VERSION in core/src/dmbot/consent.py. core/tests/test_consent_promises.py
 // fails when the bot's terms version goes up and this number does not, so whoever changes the terms
 // has to read this list and the two pages that show it, then bump the number here.
@@ -21,11 +21,15 @@ export const consentPromisesLead = "When you press the button to say yes:";
 export const consentPromises: ConsentPromise[] = [
   {
     id: "only-yes",
-    text: "DMbot records only people who say yes. It listens to your voice and reads what you type in the table's chat. It never records another bot.",
+    text: "DMbot records only people who say yes. It listens to your voice and reads what you type in the table's chat: the voice channel's chat, and one more channel if your game master picks one. It never records another bot.",
+  },
+  {
+    id: "pictures",
+    text: "If you post a picture in the table's chat, DMbot sends it to the AI to be described, and the description is added to the text. The picture itself is not kept.",
   },
   {
     id: "questions",
-    text: "If you ask DMbot a question in its chat channel, your name and the question are posted there for everyone to read.",
+    text: "If you ask DMbot a question in the table's chat (\"Hey DMbot, …\"), your name and the question are posted there for everyone to read.",
   },
   {
     id: "ai",
