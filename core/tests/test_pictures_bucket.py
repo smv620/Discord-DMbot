@@ -38,7 +38,7 @@ def bucket(
 
 class Signing(unittest.TestCase):
     def sign(self, **over: str) -> dict[str, str]:
-        args = {
+        args: dict[str, str] = {
             "method": "GET",
             "host": "acct.r2.cloudflarestorage.com",
             "path": "/pics/a.png",
@@ -48,7 +48,16 @@ class Signing(unittest.TestCase):
             "secret_key": SECRET,
         }
         args.update(over)
-        return authorization(now=NOW, **args)
+        return authorization(
+            method=args["method"],
+            host=args["host"],
+            path=args["path"],
+            query=args["query"],
+            payload_hash=args["payload_hash"],
+            access_key=args["access_key"],
+            secret_key=args["secret_key"],
+            now=NOW,
+        )
 
     def test_it_is_the_same_every_time_for_the_same_request(self) -> None:
         self.assertEqual(self.sign(), self.sign())
