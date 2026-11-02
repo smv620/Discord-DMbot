@@ -576,7 +576,7 @@ export const FIGHT_AND_ITEM_RULES_LIVE = false;
 // ENCOUNTER_NOTE), so the words promise neither.
 export const fightRuleSteps: Step[] = [
   {
-    text: "To check how hard a fight is, ask for the XP budget. Type /dmbot rule, then \"xp budget\", or ask out loud or in chat: \"Hey DMbot, what's the XP budget for level 3 characters?\" DMbot shows the rule for the levels you name, with its source. It doesn't add up the monsters or say if the fight is easy or deadly: that's your call. /dmbot rule answers only you; if a player asks, DMbot says \"That's one for your DM.\"",
+    text: "To check how hard a fight is, ask for the XP budget. Type /dmbot rule, then \"xp budget\", or ask out loud or in the voice channel's chat: \"Hey DMbot, what's the XP budget for level 3 characters?\" DMbot shows the rule for the levels you name, with its source. It doesn't add up the monsters or say if the fight is easy or deadly: that's your call. /dmbot rule answers only you; if a player asks, DMbot says \"That's one for your DM.\"",
   },
 ];
 
@@ -933,7 +933,7 @@ export const quickAnswers: Step[] = [
     text: "Quick answers work while your game is running and you have said yes to being recorded.",
   },
   {
-    text: 'Message DMbot privately, by voice or by typing, and the answer comes to you alone. Say "Hey DMbot" in the voice channel\'s chat, and the answer is posted there for everyone. It then uses only the free rules, your house rules and what was just said. If it needs your story, you get that answer privately.',
+    text: 'Message DMbot privately, by voice or by typing, and the answer comes to you alone. Say or type "Hey DMbot", and the answer is posted in the voice channel\'s chat for everyone. It then uses only the free rules, your house rules and what was just said. If it needs your story, you get that answer privately.',
   },
   {
     text: "DMbot answers from the free rules, your house rules, what was said in the last few minutes, and the story facts you have confirmed about the names in your question. It leaves out names you marked secret, and your own notes on names and places.",
@@ -993,7 +993,7 @@ export const transcriptStep: Step = {
 };
 
 export const heyDmBotStep: Step = {
-  text: 'Anyone at the table who said yes can ask DMbot a quick rules question: say "Hey DMbot" or type it in the voice channel\'s chat (start with "Hey DMbot" or "DMbot"). Your question is posted there with your name. Your game master has the final say.',
+  text: 'Anyone at the table who said yes can ask DMbot a quick rules question: say or type "Hey DMbot" (or just "DMbot" at the start of a message). Your question is posted in the voice channel\'s chat with your name. Your game master has the final say.',
 };
 
 export const fightBotStep: Step = {
