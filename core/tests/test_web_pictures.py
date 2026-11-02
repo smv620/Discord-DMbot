@@ -10,15 +10,19 @@ from __future__ import annotations
 import datetime as dt
 import secrets
 from typing import Any
+from unittest.mock import patch
 
+import httpx
 from psycopg.types.json import Jsonb
 
 from dmbot.transcript.models import Line
 from dmbot.transcript.store import TranscriptStore
 from dmbot.web import pictures, sessions
+from dmbot.web.app import create_app
+from dmbot.web.payments import FakeProvider
 from dmbot.web.recaps import RecapError
 from tests.test_recap_web import BOB, NOW, Base
-from tests.test_web_api import ALICE, THURSDAY
+from tests.test_web_api import ALICE, API, THURSDAY, FakeDiscord, settings
 
 START = 1_700_000_000
 MB = 1024 * 1024
@@ -441,13 +445,26 @@ class TheActions(Kept):
         self.assertEqual(caught.exception.code, "permanent-full")
         self.assertIn("Permanent pictures are full (400 MB)", caught.exception.words)
 
-    async def test_the_queue_is_capped_and_a_stranger_gets_nothing(self) -> None:
+    async def test_one_person_cannot_fill_the_queue_and_the_campaign_has_a_cap_too(self) -> None:
         link = await self.keep()
-        for _ in range(20):
+        for _ in range(5):
             await self.act(self.session, link, "private")
         with self.assertRaises(pictures.PictureRefused) as caught:
-            await self.act(self.session, link, "private")
+            await self.act(self.session, link, "private")  # a sixth of one person's
         self.assertEqual(caught.exception.code, "too_soon")
+        bob = await self.signed_in(BOB)
+        own = await self.keep(poster=BOB.id)
+        await self.act(bob, own, "private")  # someone else still gets in
+        async with self.db.guild(THURSDAY.id) as conn:  # fill the campaign to its 20
+            for n in range(14):
+                await conn.execute(
+                    "INSERT INTO picture_actions (guild_id, campaign_id, id, user_id, picture_id,"
+                    " action, created_at) VALUES (%s, %s, %s, 77, 1, 'private', %s)",
+                    (THURSDAY.id, self.one.id, f"{n:032x}", NOW),
+                )
+        with self.assertRaises(pictures.PictureRefused) as full:
+            await self.act(bob, own, "private")
+        self.assertEqual(full.exception.code, "too_soon")
         with self.assertRaises(RecapError):
             await pictures.act_on_picture(
                 self.web, self.session, f"999.{self.one.id}", link, "private", sleep=_no_sleep
@@ -480,3 +497,93 @@ class TheActions(Kept):
             await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(THURSDAY.id),))
             with self.assertRaises(Exception):  # noqa: B017 (permission denied, whichever error)
                 await conn.execute("SELECT * FROM picture_actions")
+
+
+class TheActionRoute(Kept):
+    """POST /me/campaigns/{ref}/pictures/{code}: the statuses the page relies on."""
+
+    async def client(self, user: Any, *, header: bool = True) -> httpx.AsyncClient:
+        app = create_app(
+            settings(), self.web, FakeDiscord(), payments=FakeProvider(b"h" * 32, "https://x"),
+            clock=lambda: NOW,
+        )  # fmt: skip
+        client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url=API,
+            headers={"X-DMbot-Request": "1"} if header else {},
+        )  # fmt: skip
+        token = await sessions.sign_in(self.web, user, [THURSDAY], now=NOW, days=30)
+        client.cookies.set("__Host-dmbot_session", token, domain="api.dmbot.example")
+        return client
+
+    async def post(self, client: httpx.AsyncClient, link: str, body: Any) -> httpx.Response:
+        return await client.post(f"/me/campaigns/{self.cref}/pictures/{link}", json=body)
+
+    async def test_a_queued_change_answers_202_waiting_when_the_bot_has_not_answered(self) -> None:
+        link = await self.keep()
+        async with await self.client(ALICE) as client:
+            with patch.object(pictures, "WAIT_SECONDS", 0.0):
+                got = await self.post(client, link, {"action": "private"})
+        self.assertEqual((got.status_code, got.json()["state"]), (202, "waiting"))
+
+    async def test_a_refusal_a_stranger_and_a_bad_request_get_their_own_status(self) -> None:
+        link = await self.keep(poster=BOB.id)
+        async with await self.client(BOB) as client:
+            denied = await self.post(client, link, {"action": "permanent"})  # a player
+            self.assertEqual((denied.status_code, denied.json()["detail"]), (403, "not_allowed"))
+            missing = await self.post(client, code(), {"action": "delete"})
+            self.assertEqual(missing.status_code, 404)
+            bad = await self.post(client, link, {"action": "explode"})
+            self.assertEqual(bad.status_code, 400)
+            nothing = await client.post(
+                f"/me/campaigns/{self.cref}/pictures/{link}", content=b"not json"
+            )
+            self.assertEqual(nothing.status_code, 400)
+        async with await self.client(ALICE) as client:
+            for _ in range(5):
+                with patch.object(pictures, "WAIT_SECONDS", 0.0):
+                    await self.post(client, link, {"action": "private"})
+            slow = await self.post(client, link, {"action": "private"})
+            self.assertEqual(slow.status_code, 429)
+
+    async def test_the_bots_refusal_comes_back_as_409_with_its_words(self) -> None:
+        link = await self.keep()
+        words = "Permanent pictures are full (400 MB). Unmark one to make room."
+
+        async def bot_refuses(_s: float) -> None:
+            async with self.db.guild(THURSDAY.id) as conn:
+                await conn.execute(
+                    "UPDATE picture_actions SET state = 'refused', note = %s"
+                    " WHERE state = 'waiting'",
+                    (words,),
+                )
+
+        async with await self.client(ALICE) as client:
+            with patch("dmbot.web.pictures.asyncio.sleep", bot_refuses):
+                got = await self.post(client, link, {"action": "permanent"})
+        self.assertEqual(got.status_code, 409)
+        self.assertEqual((got.json()["detail"], got.json()["note"]), ("permanent-full", words))
+
+    async def test_a_post_without_the_request_header_is_refused(self) -> None:
+        link = await self.keep()
+        async with await self.client(ALICE, header=False) as client:
+            got = await self.post(client, link, {"action": "private"})
+        self.assertEqual(got.status_code, 403)
+        self.assertEqual(await TheActions.queued(self), [])  # type: ignore[arg-type]
+
+    async def test_a_signed_out_post_is_401(self) -> None:
+        link = await self.keep()
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(
+                app=create_app(
+                    settings(),
+                    self.web,
+                    FakeDiscord(),
+                    payments=FakeProvider(b"h" * 32, "https://x"),
+                    clock=lambda: NOW,
+                )
+            ),
+            base_url=API,
+            headers={"X-DMbot-Request": "1"},
+        ) as client:
+            got = await self.post(client, link, {"action": "private"})
+        self.assertEqual(got.status_code, 401)

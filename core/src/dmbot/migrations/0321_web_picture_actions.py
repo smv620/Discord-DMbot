@@ -12,7 +12,9 @@ WEB_PICTURE_ACTIONS = r"""
     -- which holds the per-campaign lock, the 80% permanent limit and the file deletion, and checks
     -- again from the database who may do it. Who may ask: the poster or a game master for private,
     -- public and delete; a game master only for permanent (owner, 2026-11-02: only the campaign's
-    -- DMs set or clear it, on the website). NULL for anyone not in the campaign's server.
+    -- DMs set or clear it, on the website). NULL for anyone not in the campaign's server. A picture
+    -- someone may not touch answers 'not_allowed', one that is not there 'not_found': a member can
+    -- tell a code exists, which the 256-bit random codes make no use.
     CREATE FUNCTION dmbot_web_picture_act(g BIGINT, c TEXT, link TEXT, act TEXT)
     RETURNS JSONB
     LANGUAGE plpgsql SECURITY DEFINER AS $fn$
@@ -33,7 +35,7 @@ WEB_PICTURE_ACTIONS = r"""
         END IF;
         SELECT * INTO p FROM campaign_pictures
             WHERE guild_id = g AND campaign_id = c AND code = link AND deleted_at IS NULL;
-        IF p.id IS NULL THEN  -- (not FOUND: nothing above resets it, but this reads the same)
+        IF p.id IS NULL THEN
             RETURN jsonb_build_object('status', 'not_found');
         END IF;
         is_dm := EXISTS (SELECT 1 FROM campaign_dms d
@@ -49,10 +51,14 @@ WEB_PICTURE_ACTIONS = r"""
         PERFORM pg_advisory_xact_lock(hashtextextended('picture_action:' || g::TEXT || c, 0));
         DELETE FROM picture_actions a
             WHERE a.guild_id = g AND a.campaign_id = c AND a.created_at < now_s - 3600;
+        -- (a stuck row older than an hour is dropped here even if the bot never answered it)
         IF (SELECT count(*) FROM picture_actions a
             WHERE a.guild_id = g AND a.campaign_id = c AND a.state IN ('waiting', 'working')) >= 20
+           OR (SELECT count(*) FROM picture_actions a
+               WHERE a.guild_id = g AND a.campaign_id = c AND a.user_id = dmbot_current_user()
+                 AND a.state IN ('waiting', 'working')) >= 5
         THEN
-            RETURN jsonb_build_object('status', 'too_soon');
+            RETURN jsonb_build_object('status', 'too_soon');  -- (one person cannot fill the queue)
         END IF;
         INSERT INTO picture_actions (guild_id, campaign_id, id, user_id, picture_id, action,
                                      created_at)

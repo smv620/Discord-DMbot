@@ -1709,7 +1709,9 @@ def create_app(
         try:
             got = await pictures.act_on_picture(db, who, ref, code, action)
         except pictures.PictureRefused as err:
-            status = {"not_found": 404, "not_allowed": 403}.get(err.code, 409)
+            status = {"not_found": 404, "not_allowed": 403, "too_soon": 429, "bad_action": 400}.get(
+                err.code, 409
+            )
             return JSONResponse({"detail": err.code, "note": err.words}, status_code=status)
         except RecapError as err:
             if err.code == "not_allowed":

@@ -23,6 +23,7 @@ import datetime as dt
 import hashlib
 import hmac
 import re
+import time
 import urllib.parse
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -216,6 +217,16 @@ async def read_pictures(
     }
 
 
+class PictureRefused(Exception):
+    """The bot or the door said no. `code` is for the page (`permanent-full` has its own words
+    there); `words` is what to show."""
+
+    def __init__(self, code: str, words: str) -> None:
+        super().__init__(code)
+        self.code = code
+        self.words = words
+
+
 ACTIONS = ("public", "private", "permanent", "unpermanent", "delete")
 WAIT_SECONDS = 8.0  # how long a click waits for the bot before the page is told "working on it"
 _REFUSALS = {
@@ -233,7 +244,7 @@ async def act_on_picture(
     code: str,
     action: str,
     *,
-    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    sleep: Callable[[float], Awaitable[None]] | None = None,
     wait: float = WAIT_SECONDS,
 ) -> dict[str, Any]:
     """Queue a picture's Make private/public, Permanent, Not permanent or Delete for the bot, then
@@ -256,7 +267,7 @@ async def act_on_picture(
         raise RecapError("not_allowed")
     if got["status"] != "ok":
         raise PictureRefused(got["status"], _REFUSALS.get(got["status"], "Couldn't do that."))
-    waited = 0.0
+    started = time.monotonic()  # (a deadline, not a count of sleeps: each poll takes time too)
     while True:
         async with db.user(session.user_id, session=session.id_hash) as conn:
             await _scoped(conn, guild_id)
@@ -273,17 +284,6 @@ async def act_on_picture(
                 "permanent-full" if words.startswith("Permanent pictures are full") else "refused",
                 words,
             )
-        if waited >= wait:
+        if time.monotonic() - started >= wait:
             return {"state": "waiting", "note": ""}
-        await sleep(0.5)
-        waited += 0.5
-
-
-class PictureRefused(Exception):
-    """The bot or the door said no. `code` is for the page (`permanent-full` has its own words
-    there); `words` is what to show."""
-
-    def __init__(self, code: str, words: str) -> None:
-        super().__init__(code)
-        self.code = code
-        self.words = words
+        await (sleep or asyncio.sleep)(0.5)
