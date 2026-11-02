@@ -2,9 +2,10 @@
 
 A small signed-request client over aiohttp (AWS Signature V4; aiohttp is already a dependency),
 so core takes no cloud SDK. It does four things: put an object, get one, delete one, and list
-the keys under a prefix (for the sweep that removes files no row points to). The keys and secret come from `.env`, are never logged and
-never put in an error; a failure raises `BucketError` carrying only the status code or the error
-class, because the words of a response could hold a key name.
+the keys under a prefix (for the sweep that removes files no row points to). The keys and secret
+come from `.env`, are never logged and never put in an error; a failure raises `BucketError`
+carrying only the status code or the error class, because the words of a response could hold a
+key name.
 """
 
 from __future__ import annotations
