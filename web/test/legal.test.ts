@@ -121,10 +121,11 @@ describe("the facts #433 asks for", () => {
     expect(privacy()).toContain("marked as typed");
   });
 
-  it("says a picture is sent to the AI to be described, and not kept, only for people who said yes (#3268)", () => {
+  it("says a picture is described, kept with the campaign, open by its link until made private or deleted, only for people who said yes (#3268)", () => {
     expect(privacy()).toContain("Pictures.");
     expect(privacy()).toContain("sends it to the AI to be described");
-    expect(privacy()).toContain("The picture itself is not kept");
+    expect(privacy()).toContain("keeps it with the campaign");
+    expect(privacy()).toContain("until you or your DM make it private or delete it");
   });
 
   it("says DMbot learns the names people are called, from people who said yes, and what stop removes (#1210)", () => {

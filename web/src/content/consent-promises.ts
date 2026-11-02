@@ -25,7 +25,7 @@ export const consentPromises: ConsentPromise[] = [
   },
   {
     id: "pictures",
-    text: "If you post a picture in the table's chat, DMbot sends it to the AI to be described, and the description is added to the text. The picture itself is not kept.",
+    text: "If you post a picture in the table's chat, DMbot sends it to the AI to be described and keeps it with the campaign. Only post pictures you have the right to share: by posting one, you let your table use it in this game. Anyone with its link can see it, until you or your DM make it private or delete it.",
   },
   {
     id: "questions",

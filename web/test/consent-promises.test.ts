@@ -35,7 +35,8 @@ describe("the consent promises", () => {
     expect(all).toContain("Everyone in your Discord server can read and download");
     expect(all).toContain("your name and the question are posted there for everyone to read");
     expect(all).toContain("sends it to the AI to be described");
-    expect(all).toContain("The picture itself is not kept");
+    expect(all).toContain("Only post pictures you have the right to share");
+    expect(all).toContain("until you or your DM make it private or delete it");
     expect(all).not.toContain("chat channel");
     expect(all).toContain("another company turns your voice into text");
     expect(all).toContain("Yes, stop recording me");
