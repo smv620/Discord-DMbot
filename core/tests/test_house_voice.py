@@ -212,7 +212,7 @@ class TableTest(unittest.IsolatedAsyncioTestCase):
         user.id = user_id
         return SimpleNamespace(
             client=self.bot, guild=SimpleNamespace(id=GUILD), guild_id=GUILD, user=user,
-            message=SimpleNamespace(content=content), response=FakeResponse(),
+            message=SimpleNamespace(content=content, id=1), response=FakeResponse(),
             followup=SimpleNamespace(send=AsyncMock()), edit_original_response=AsyncMock(),
         )  # fmt: skip
 
@@ -732,3 +732,46 @@ from dmbot.rules import house_voice as house_voice_module  # noqa: E402
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class InPrivateChats(TableTest):
+    """The offer goes to every DM's private chat (#3210): one DM saves it, the other DM's copy
+    says who did, and a press with no server still works."""
+
+    async def offer_to_two_dms(self) -> tuple[Any, Any, Any]:
+        mine = MagicMock(id=1, content="proposal", edit=AsyncMock())
+        other = MagicMock(id=2, content="proposal", edit=AsyncMock())
+
+        async def ask_live(_t: Any, _text: str, make: Any, on_sent: Any = None) -> Any:
+            views.append(make())
+            on_sent(mine)
+            on_sent(other)
+            return [mine, other]
+
+        views: list[Any] = []
+        self.bot.ask_live = ask_live  # type: ignore[method-assign,assignment]
+        await self.deliver("house rule: potions are a bonus action")
+        return mine, other, views[0]
+
+    async def test_the_other_dm_is_told_who_saved_it(self) -> None:
+        mine, other, view = await self.offer_to_two_dms()
+        it = self.interaction()
+        it.guild, it.guild_id = None, None  # a press in a private chat has no server
+        it.user.display_name = "Sam"
+        await self.button(view, "Save rule").callback(it)
+        self.assertEqual(len(self.store.added), 1)
+        other.edit.assert_awaited_once()
+        self.assertIn("Answered by Sam", other.edit.await_args.kwargs["content"])
+        mine.edit.assert_not_awaited()  # the pressed message is edited by the press itself
+
+    async def test_copies_sent_after_the_answer_are_taken_down(self) -> None:
+        late = MagicMock(id=3, content="proposal", edit=AsyncMock())
+
+        async def ask_live(table_: Any, _text: str, _make: Any, on_sent: Any = None) -> Any:
+            self.table.house_voice.proposals.clear()  # answered while sending
+            on_sent(late)
+            return [late]
+
+        self.bot.ask_live = ask_live  # type: ignore[method-assign,assignment]
+        await self.deliver("house rule: potions are a bonus action")
+        self.assertIn("Another DM answered", late.edit.await_args.kwargs["content"])

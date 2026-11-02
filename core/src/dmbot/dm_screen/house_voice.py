@@ -34,6 +34,7 @@ from dmbot.rules.house_voice import Clash, Proposal, Said
 
 log = logging.getLogger(__name__)
 
+ANSWERED_ELSEWHERE = "✅ Another DM answered this."
 CLOSED = (
     "This offer has ended (the session is over, or DMbot restarted). To add the rule, press "
     "**Add a house rule** in `/dmbot houserules`."
@@ -168,14 +169,29 @@ class HouseVoiceButton(
                 await interaction.response.send_message(FAILED, ephemeral=True)
 
 
-async def _finish(interaction: discord.Interaction, note: str) -> None:
+async def _finish(interaction: discord.Interaction, note: str, proposal_id: str = "") -> None:
     """Take the buttons off the proposal and say what happened to it."""
     message = interaction.message
     words = message.content if message is not None else ""
     if interaction.response.is_done():  # answered first, while the check for a disagreement ran
         await interaction.edit_original_response(content=f"{words}\n{note}", view=None)
-        return
-    await interaction.response.edit_message(content=f"{words}\n{note}", view=None)
+    else:
+        await interaction.response.edit_message(content=f"{words}\n{note}", view=None)
+    if proposal_id and message is not None:
+        await finish_copies(interaction, proposal_id, message.id, note)
+
+
+async def finish_copies(
+    interaction: discord.Interaction, proposal_id: str, message_id: int, note: str
+) -> None:
+    """Tell the same offer in the other DMs' chats that this DM settled it (#3210)."""
+    bot: Any = interaction.client
+    guild_id = getattr(interaction, "guild_id", None)
+    for table_guild in [guild_id] if guild_id else list(getattr(bot, "tables", {})):
+        with contextlib.suppress(Exception):  # (a note to the others never undoes the answer)
+            await bot.finish_house_copies(
+                table_guild, proposal_id, message_id, note, interaction.user.display_name
+            )
 
 
 async def press(
@@ -183,7 +199,8 @@ async def press(
 ) -> None:
     """What a button does. The session and the person are checked again every time."""
     bot: Any = interaction.client
-    table = bot.tables.get(guild_id) if interaction.guild_id == guild_id else None
+    # In the DM's private chat a press has no server: the offer's own id says which table.
+    table = bot.tables.get(guild_id) if interaction.guild_id in (None, guild_id) else None
     proposal: Proposal | None = (
         table.house_voice.proposals.get(proposal_id) if table is not None else None
     )
@@ -201,7 +218,7 @@ async def press(
         if table.house_voice.proposals.pop(proposal_id, None) is None:
             await interaction.response.send_message(CLOSED, ephemeral=True)
             return
-        await _finish(interaction, "_Cancelled. Nothing was saved._")
+        await _finish(interaction, "_Cancelled. Nothing was saved._", proposal_id)
         return
     if action == "edit":
         from dmbot.ui.house_rules import ProposalForm  # (that module imports this one's peers)
@@ -255,7 +272,7 @@ async def press(
                 await interaction.response.send_message(str(exc), ephemeral=True)
             return
         raise
-    await _finish(interaction, note)
+    await _finish(interaction, note, proposal_id)
     # Imported here: `ui.house_file` leads back to this module through `ui.dmbot_commands`.
     from dmbot.ui import house_file as file_ui
 
@@ -296,6 +313,7 @@ async def _ask_which_wins(
         if message is not None:
             with contextlib.suppress(discord.HTTPException):
                 await message.edit(content=f"{message.content}\n{note}", view=None)
+            await finish_copies(where, proposal_id, message.id, note)
         await file_ui.send_after_change(where, campaign, note)
 
     def give_back() -> None:
