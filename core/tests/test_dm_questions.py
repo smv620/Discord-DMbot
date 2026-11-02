@@ -200,9 +200,28 @@ class Live(unittest.IsolatedAsyncioTestCase):
         me._session_table = lambda guild_id, question_id: table
         DMBot._retire_copies(cast(Any, me), table, "q1")  # the question was answered
         self.assertEqual(table.question_messages, [])
-        await DMBot.finish_copies(cast(Any, me), 1, "q1", mine.id, "Saved: Maren.")
+        await DMBot.finish_copies(cast(Any, me), 1, "q1", mine.id, "Saved: Maren.", "Ana *B*")
         mine.edit.assert_not_awaited()  # the answerer's own copy keeps its Undo
-        theirs.edit.assert_awaited_once_with(content="Saved: Maren.", view=None)
+        theirs.edit.assert_awaited_once_with(
+            content="Answered by Ana \\*B\\*: Saved: Maren.", view=None
+        )
+
+    async def test_a_second_press_on_a_stale_copy_changes_nothing(self) -> None:
+        me = self.bot({7: True, 8: True})
+        table = self.table()
+        mine, theirs = await self.ask(me)
+        table.question_messages = [mine, theirs]
+        me._session_table = lambda guild_id, question_id: table
+        DMBot._retire_copies(cast(Any, me), table, "q1")
+        await DMBot.finish_copies(cast(Any, me), 1, "q1", mine.id, "Saved.", "Ana")
+        theirs.edit.reset_mock()
+        # the other DM presses their (stale) copy: the bot says it is closed, and the copies are
+        # already gone, so nothing else is edited
+        await DMBot.finish_copies(
+            cast(Any, me), 1, "q1", theirs.id, "This question is closed.", "Bo"
+        )
+        theirs.edit.assert_not_awaited()
+        mine.edit.assert_not_awaited()
 
     async def test_without_the_pressed_message_nothing_is_touched(self) -> None:
         me = self.bot({7: True, 8: True})

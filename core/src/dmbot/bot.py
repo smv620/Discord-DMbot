@@ -10266,21 +10266,33 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             table.closed_copies[question_id] = copies
 
     async def finish_copies(
-        self, guild_id: int, question_id: str, pressed_message_id: int | None, text: str
+        self,
+        guild_id: int,
+        question_id: str,
+        pressed_message_id: int | None,
+        text: str,
+        answered_by: str = "",
     ) -> None:
         """After a DM answered a live question (#3210): edit every other copy of it, in the other
-        DMs' chats, to the same words with no buttons. The answering DM's own message was already
-        edited (with Undo); without its id nothing is touched, so Undo is never taken away."""
+        DMs' chats, to "Answered by <name>: <the answer>" with no buttons. The answering DM's own
+        message was already edited (with Undo); without its id nothing is touched, so Undo is never
+        taken away. A second press on a stale copy finds the copies already gone and changes
+        nothing."""
         table = self._session_table(guild_id, question_id)
         if table is None:
             return
         copies = table.closed_copies.pop(question_id, [])
         if pressed_message_id is None:
             return
+        shown = (
+            f"Answered by {discord.utils.escape_markdown(answered_by)}: {text}"
+            if answered_by
+            else text
+        )
         for message in copies:
             if message.id != pressed_message_id:
                 with contextlib.suppress(discord.HTTPException):
-                    await message.edit(content=text, view=None)
+                    await message.edit(content=shown, view=None)
 
     async def send_collected_asks(self, table: Table) -> None:
         """The after-session step that sends what the steps before it collected (#3210). After it,

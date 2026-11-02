@@ -130,7 +130,8 @@ async def _answer(
     if finish is not None:
         pressed = interaction.message.id if interaction.message is not None else None
         try:
-            await finish(guild_id, question_id, pressed, answer)
+            who = getattr(interaction.user, "display_name", "") or ""
+            await finish(guild_id, question_id, pressed, answer, who)
         except Exception:
             log.exception("Couldn't update the other copies of a name question")
 
