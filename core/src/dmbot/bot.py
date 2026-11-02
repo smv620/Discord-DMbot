@@ -177,6 +177,9 @@ from dmbot.dm_screen.name_questions import (
 from dmbot.dm_screen.names_button import NamesButton
 from dmbot.dm_screen.npc_pages import NpcRosterStore, pass_delay
 from dmbot.dm_screen.npc_pages import refresh as refresh_npc_pages
+from dmbot.dm_screen.old_chat import OldChatButton
+from dmbot.dm_screen.old_chat import notice_text as old_chat_notice
+from dmbot.dm_screen.old_chat import notice_view as old_chat_view
 from dmbot.dm_screen.pause import PauseButton
 from dmbot.dm_screen.peek_notices import PeekNotices
 from dmbot.dm_screen.peek_notices import notice as peek_notice
@@ -1383,6 +1386,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         # Channels of any campaign that must never be read as table chat, by server, with when
         # the answer runs out (monotonic seconds) (#1118).
         self._chat_blocked: dict[int, tuple[float, frozenset[int]]] = {}
+        self._old_chat_told: set[str] = set()  # campaigns told this run that dmb-chat is retired
         self.test_voice = test_voice  # the second yes, for test servers (#1019)
         # Who chose not to have their words used to improve DMbot (#1609): the recorder asks.
         self.improvement = improvement
@@ -1583,6 +1587,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             RefreshAdventureButton, SeeAdventureButton, BackToAdventureButton,
             MatchAdventureButton,
         )  # fmt: skip
+        self.add_dynamic_items(OldChatButton)  # remove the old dmb-chat channel (#3212)
         self.add_dynamic_items(pack_update.PackUpdateButton)  # a followed pack changed (#1527)
         self.add_dynamic_items(pack_suggestion.PackSuggestionButton)  # an entry suggested (#1537)
         self.add_dynamic_items(set_suggestion.SuggestionButton)  # a table's suggestion (#1259)
@@ -3721,6 +3726,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         transcript_id, transcript_problem = await self._transcript_channel(guild, campaign, screen)
         dm_bot_problem = await self._dm_bot_channel(guild, campaign, screen)
         await self._retire_old_channels(guild, campaign)
+        await self._old_chat_notice(guild, campaign, screen_id)
         await self._tell_players_the_clock(
             guild.id, campaign.id
         )  # (only if they would see a change)
@@ -12368,6 +12374,21 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         if running is None or running.done():
             self._npcs_sync.pop(campaign_id, None)
             self._npcs_dirty.discard(campaign_id)
+
+    async def _old_chat_notice(
+        self, guild: discord.Guild, campaign: Campaign, screen_id: int
+    ) -> None:
+        """A campaign that still has the old `dmb-chat` channel (#3212): DMbot no longer uses it,
+        and says so once, with the button to remove it (never removed by DMbot itself). A channel
+        that is gone already is forgotten. Told once for each run of the bot; nothing is stored."""
+        channel_id = campaign.dmbchat_channel_id
+        if channel_id is None or campaign.id in self._old_chat_told:
+            return
+        if guild.get_channel(channel_id) is None:
+            await self.campaigns.set_dmbchat_channel(guild.id, campaign.id, None)
+            return
+        self._old_chat_told.add(campaign.id)
+        await self.post(screen_id, old_chat_notice(channel_id), view=old_chat_view(campaign.id))
 
     def _usable_transcript(self, guild: discord.Guild, campaign: Campaign) -> int | None:
         """After a restart: the campaign's transcript channel, if it's still one and
