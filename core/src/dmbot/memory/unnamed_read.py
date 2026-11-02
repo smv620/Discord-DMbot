@@ -66,7 +66,7 @@ def parse(lines: Iterable[str]) -> tuple[list[Line], int]:
 ROLES = frozenset(
     {"mother", "father", "sister", "brother", "son", "daughter", "aunt", "uncle", "niece",
      "nephew", "cousin", "husband", "wife", "grandmother", "grandfather", "parent", "child",
-     "sibling", "spouse"}
+     "sibling", "spouse", "grandparent", "grandchild"}
 )  # fmt: skip
 
 

@@ -197,6 +197,40 @@ class TheListParser(unittest.TestCase):
         self.assertEqual(sum(lost.values()), 0)
         self.assertEqual({u.what for u in got}, {"stern ropemaker mother", "absent father"})
 
+    def test_his_sister_his_child_gives_one_unnamed_child_and_the_sister_is_already_named(
+        self,
+    ) -> None:
+        # The owner's shape (#3158): the sister is named elsewhere, the child never is, and the
+        # text does not say a son or a daughter, so the neutral word is the role.
+        text = (
+            "Corvin Hale hunts across the dale before the shadow claims his sister, his child, "
+            "and himself."
+        )
+        quote = "before the shadow claims his sister, his child, and himself"
+        sister = bg.Connection(
+            "Corvin Hale", "kin_of", "Pell", "his younger sister, Pell, hears it", words="sibling"
+        )
+        got, lost = run(
+            [line("Corvin Hale", "sister", "his sister", quote),
+             line("Corvin Hale", "child", "his child", quote)],
+            text,
+            links=[sister],
+            names=("Corvin Hale", "Pell"),
+        )  # fmt: skip
+        self.assertEqual(
+            [(u.what, u.role, u.fixed_is_a) for u in got], [("his child", "parent", True)]
+        )
+        self.assertEqual(lost["already_named"], 1)
+
+    def test_the_prompt_offers_the_neutral_words_and_every_one_is_a_role_here(self) -> None:
+        neutral = ("parent", "child", "sibling", "spouse", "grandparent", "grandchild")
+        prompt = " ".join(lr.read_instructions().split())
+        self.assertIn("use the neutral word when the text does not say", prompt)
+        for word in neutral:
+            self.assertIn(word, prompt)
+            self.assertIn(word, ur.ROLES)
+            self.assertIsNotNone(ur._kin(word))
+
 
 if __name__ == "__main__":
     unittest.main()
