@@ -210,6 +210,14 @@ services:
       # Where it finds the recap audio (#1418): the volume below, read-only. A path inside the
       # container, so not an .env setting.
       WEB_RECAP_AUDIO_DIR: /recap-audio
+      # Kept pictures (#3274): the open link signs short-lived read addresses with a READ-ONLY key
+      # to the one private bucket, and the gallery's usage line reads the campaign storage. All
+      # four blank: the link answers "not open yet".
+      DMBOT_PICTURE_STORAGE_MB: ${DMBOT_PICTURE_STORAGE_MB:-500}
+      WEB_PICTURES_R2_ACCOUNT: ${WEB_PICTURES_R2_ACCOUNT:-}
+      WEB_PICTURES_R2_BUCKET: ${WEB_PICTURES_R2_BUCKET:-}
+      WEB_PICTURES_R2_KEY: ${WEB_PICTURES_R2_KEY:-}
+      WEB_PICTURES_R2_SECRET: ${WEB_PICTURES_R2_SECRET:-}
     volumes:
       - recap-audio:/recap-audio:ro
     expose:
