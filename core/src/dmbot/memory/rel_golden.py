@@ -286,6 +286,19 @@ CASES: tuple[Case, ...] = (
         "rival_of",
     ),
     c("The weavers' guild and the dyers' guild are on cordial terms and trade often.", "knows"),
+    # --- found on the owner's re-upload (#3238): a hire is no service to the target's master, and a
+    # heated debate is not a competition
+    c(
+        "A retired bounty hunter offers the travellers a contract to eliminate Garn, the bodyguard "
+        "of the caravan master Orsa.",
+        NONE,
+        "found3238",
+    ),
+    c(
+        "Hob and Rask had a heated debate over smelting methods in the tavern.",
+        "knows",
+        "found3238",
+    ),
     # --- plain cases, one for each type
     c("Wen married Joss in the spring, and the two now share one roof.", "kin_of"),
     c("Ossa and Pell met years ago and are still fond of one another.", "knows"),
