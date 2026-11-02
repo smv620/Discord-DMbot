@@ -16,6 +16,8 @@ THEATRE_RUNS = """
     CREATE TABLE theatre_runs (
         guild_id    BIGINT NOT NULL,
         session_id  TEXT NOT NULL,
+        -- which run owns the row: a run that was taken over cannot touch its successor's row
+        token       TEXT NOT NULL,
         state       TEXT NOT NULL CHECK (state IN ('running', 'done', 'failed')),
         started_at  BIGINT NOT NULL CHECK (started_at > 0),
         moved_at    BIGINT NOT NULL CHECK (moved_at > 0),
