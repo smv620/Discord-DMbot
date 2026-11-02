@@ -84,6 +84,8 @@ export const webPage = {
   linkKind: { family: "Family", ally: "Friends and allies", group: "Clubs and groups", work: "Work", other: "Something else" } as Record<string, string>,
   letGo: "Let everything move again",
   nConnections: (n: number): string => `${n} connections`,
+  // The last line of a line's tooltip when it holds more connections than the four it lists (#3279).
+  plusMore: (n: number): string => `plus ${n} more…`,
   lineBetween: (a: string, b: string): string => `Open the connections between ${a} and ${b}`,
   nameButton: (name: string): string => `${name}. Press Enter to pick it.`,
   legendHeading: "What the shapes and lines mean",
