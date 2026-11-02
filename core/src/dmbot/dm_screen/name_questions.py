@@ -111,7 +111,12 @@ async def _answer(
     bot: Any = interaction.client
     try:
         answer, done, undo = await bot.answer_name_question(
-            guild_id, question_id, pick, interaction.user.id, typed
+            guild_id,
+            question_id,
+            pick,
+            interaction.user.id,
+            typed,
+            interaction.message.id if interaction.message is not None else None,
         )
     except Exception:
         log.exception("Couldn't save the DM's answer to a name question")

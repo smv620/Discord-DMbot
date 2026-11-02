@@ -26,8 +26,10 @@ def live_on_screen(bot: Any) -> None:
     """Make a stand-in or real bot ask live questions on the screen, through whatever
     `post_message` is at the time of the call. For tests of what is asked, not of where (#3210)."""
 
-    async def ask_live(table: Any, text: str, make_view: Any) -> Any:
+    async def ask_live(table: Any, text: str, make_view: Any, on_sent: Any = None) -> Any:
         message = await bot.post_message(table.screen_channel_id, text, make_view())
+        if message is not None and on_sent is not None:
+            on_sent(message)
         return [message] if message is not None else []
 
     bot.ask_live = ask_live

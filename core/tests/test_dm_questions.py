@@ -192,13 +192,17 @@ class Live(unittest.IsolatedAsyncioTestCase):
         me.post_message = AsyncMock(return_value=None)
         self.assertEqual(await self.ask(me), [])
 
+    async def answered(self, me: Any, table: Any, closer: Any, copies: list[Any]) -> None:
+        """DM `closer` answered: the question closed with its message as the closer."""
+        table.question_messages = list(copies)
+        me._session_table = lambda guild_id, question_id: table
+        DMBot._retire_copies(cast(Any, me), table, "q1", closer.id)
+
     async def test_answering_in_one_dm_edits_the_other_copy_but_not_the_answerers(self) -> None:
         me = self.bot({7: True, 8: True})
         table = self.table()
         mine, theirs = await self.ask(me)
-        table.question_messages = [mine, theirs]
-        me._session_table = lambda guild_id, question_id: table
-        DMBot._retire_copies(cast(Any, me), table, "q1")  # the question was answered
+        await self.answered(me, table, mine, [mine, theirs])
         self.assertEqual(table.question_messages, [])
         await DMBot.finish_copies(cast(Any, me), 1, "q1", mine.id, "Saved: Maren.", "Ana *B*")
         mine.edit.assert_not_awaited()  # the answerer's own copy keeps its Undo
@@ -206,17 +210,32 @@ class Live(unittest.IsolatedAsyncioTestCase):
             content="Answered by Ana \\*B\\*: Saved: Maren.", view=None
         )
 
-    async def test_a_second_press_on_a_stale_copy_changes_nothing(self) -> None:
+    async def test_a_stale_press_while_the_answerer_is_still_being_edited_changes_nothing(
+        self,
+    ) -> None:
+        # DM 7 answered; before its own message was edited, DM 8 pressed their stale copy. The
+        # stale press is not the closer, so it must not touch 7's message (and its Undo).
         me = self.bot({7: True, 8: True})
         table = self.table()
         mine, theirs = await self.ask(me)
-        table.question_messages = [mine, theirs]
-        me._session_table = lambda guild_id, question_id: table
-        DMBot._retire_copies(cast(Any, me), table, "q1")
+        await self.answered(me, table, mine, [mine, theirs])
+        await DMBot.finish_copies(
+            cast(Any, me), 1, "q1", theirs.id, "This question is closed.", "Bo"
+        )
+        mine.edit.assert_not_awaited()
+        theirs.edit.assert_not_awaited()
+        # the true closer then finishes as usual
+        await DMBot.finish_copies(cast(Any, me), 1, "q1", mine.id, "Saved.", "Ana")
+        theirs.edit.assert_awaited_once_with(content="Answered by Ana: Saved.", view=None)
+        mine.edit.assert_not_awaited()
+
+    async def test_a_press_after_everything_is_finished_changes_nothing(self) -> None:
+        me = self.bot({7: True, 8: True})
+        table = self.table()
+        mine, theirs = await self.ask(me)
+        await self.answered(me, table, mine, [mine, theirs])
         await DMBot.finish_copies(cast(Any, me), 1, "q1", mine.id, "Saved.", "Ana")
         theirs.edit.reset_mock()
-        # the other DM presses their (stale) copy: the bot says it is closed, and the copies are
-        # already gone, so nothing else is edited
         await DMBot.finish_copies(
             cast(Any, me), 1, "q1", theirs.id, "This question is closed.", "Bo"
         )
@@ -227,12 +246,19 @@ class Live(unittest.IsolatedAsyncioTestCase):
         me = self.bot({7: True, 8: True})
         table = self.table()
         copies = await self.ask(me)
-        table.question_messages = copies
-        me._session_table = lambda guild_id, question_id: table
-        DMBot._retire_copies(cast(Any, me), table, "q1")
+        await self.answered(me, table, copies[0], copies)
         await DMBot.finish_copies(cast(Any, me), 1, "q1", None, "Saved.")
         for copy in copies:
             copy.edit.assert_not_awaited()  # so Undo is never taken away by mistake
+
+    async def test_only_a_few_closed_questions_are_kept(self) -> None:
+        me = self.bot({7: True})
+        table = self.table()
+        (copy,) = await self.ask(me)
+        for n in range(30):
+            table.question_messages = [copy]
+            DMBot._retire_copies(cast(Any, me), table, f"q{n}", copy.id)
+        self.assertLessEqual(len(table.closed_copies), 20)
 
     async def test_a_question_that_runs_out_edits_every_copy(self) -> None:
         me = self.bot({7: True, 8: True})

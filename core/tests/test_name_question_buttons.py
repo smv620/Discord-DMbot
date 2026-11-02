@@ -126,7 +126,9 @@ class ButtonsTest(unittest.IsolatedAsyncioTestCase):
         form = TypeNameForm(GUILD, ASKED.id)
         form.name._value = "Maerin"
         await form.on_submit(it)
-        bot.answer_name_question.assert_awaited_once_with(GUILD, ASKED.id, "type", DM_ID, "Maerin")
+        bot.answer_name_question.assert_awaited_once_with(
+            GUILD, ASKED.id, "type", DM_ID, "Maerin", it.message.id
+        )  # (the message id says which copy closed the question, #3210)
         self.assertEqual(it.edit_original_response.await_args.kwargs["content"], "✅ Got it")
 
     async def test_a_typing_mistake_answers_privately(self) -> None:
