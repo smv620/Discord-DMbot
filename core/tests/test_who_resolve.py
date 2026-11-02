@@ -472,6 +472,30 @@ class ThePath(NamesTest):
         self.assertIn(self.ken, (w.subject_id, w.object_id))
         self.assertEqual(len(await self.memory.unnamed(GUILD, self.campaign.id)), 1)
 
+    async def test_an_unnamed_person_the_text_describes_is_kept_hidden_and_hung_off_the_end(
+        self,
+    ) -> None:
+        # (#2959) the lore read's UNNAMED lines go the way the who-is-it check's do. The entry is
+        # the DM's alone whatever the upload says is known: the unnamed entry wins over the
+        # knowledge choice until the DM gives the person a name.
+        link = who_resolve.UnnamedLink(
+            "Ken", False, "kin_of", "Ken was the son of a stern mother", "parent",
+            "stern mother", True, "parent",
+        )  # fmt: skip
+        await ui_bg.queue_links(
+            self.bot, self.memory, self.campaign, [], [[]], set(), unnamed=[link],
+            known_by="everyone",
+        )  # fmt: skip
+        ((person, label),) = await self.memory.unnamed(GUILD, self.campaign.id)
+        self.assertEqual(label, "Ken's stern mother (name unknown)")
+        self.assertEqual((person.unnamed_what, person.unnamed_role), ("stern mother", "parent"))
+        self.assertEqual(person.unnamed_anchor, self.ken)
+        self.assertTrue(person.unseen_by_players)
+        (w,) = await self.store.waiting(GUILD, self.campaign.id)
+        # (she is the parent: first end; Ken is the second)
+        self.assertEqual((w.subject_id, w.object_id), (person.id, self.ken))
+        self.assertEqual((w.predicate, w.detail), ("kin_of", "parent"))
+
     async def test_a_secret_spelling_as_the_named_end_keeps_the_link_secret(self) -> None:
         await self.memory.add_names(
             GUILD, self.campaign.id,
