@@ -32,6 +32,7 @@ import WebWaiting from "./WebWaiting";
 import { WEB_READINGS_LIVE } from "../content/web-readings";
 import { WEB_WAITING_LIVE } from "../content/web-waiting";
 import { clampHops } from "./webLayout";
+import { readAuto, saveAuto } from "./webPrefs";
 import { listLines, type WebLine } from "./webLines";
 import CampaignNav from "./CampaignNav";
 import { npcPageHref } from "./webNodes";
@@ -50,6 +51,18 @@ export function webRefFromPath(path: string): string | null {
 type View = "loading" | "ok" | "none" | "down" | "signed-out";
 
 const DEFAULT_HOPS = 2;
+const AUTO_MS = 5000; // how often the map reads itself again, plus up to a second more
+const AUTO_JITTER_MS = 1000;
+
+/** What a person can see of a web: its names and its connections with their words. Two reads with the same
+ * signature draw the same map, so the second changes nothing on the page. */
+function graphSignature(g: WebGraph): string {
+  return JSON.stringify([
+    g.center,
+    g.nodes.map((n) => [n.id, n.name, n.kind, n.revealed]),
+    g.edges.map((e) => [e.a, e.b, e.label, e.links.map((l) => [l.id, l.words, l.secret, l.kind, l.direction, l.revealed])]),
+  ]);
+}
 
 function refusal(error: unknown): string | null {
   const kind = error instanceof ApiError ? error.kind : "network";
@@ -92,6 +105,11 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
   const [alone, setAlone] = useState<string | null>(null);
   const overviewLatest = useRef(0);
   const peekSwitch = useRef<HTMLInputElement>(null);
+  // The map reads itself again every few seconds unless the person froze it; kept in this browser.
+  const [auto, setAuto] = useState(readAuto);
+  const graphNow = useRef<WebGraph | null>(null);
+  graphNow.current = graph;
+  const refreshNow = useRef<() => Promise<void>>(async () => {});
 
   /** Reads the web around `at`. A big one waits for a yes unless `sure`. */
   async function load(at: string | null, steps: number, sure = false): Promise<void> {
@@ -153,6 +171,62 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
       else if (kind === "not-found" || kind === "not-allowed") setView("none");
       else setView("down");
     }
+  }
+
+  /** One quiet read of the web as it is shown now: nothing moves unless the story changed. It never
+   * asks about a big web, never shows an error and gives way to any read the person started meanwhile. */
+  async function refresh(): Promise<void> {
+    if (!ref || !api.webGraph || view !== "ok" || big !== null || revealing.size > 0) return;
+    const shown = graphNow.current;
+    if (!shown) return;
+    const stamp = latest.current;
+    try {
+      const read = await api.webGraph(ref, {
+        center,
+        hops,
+        ...(askedNow.current ? { view: askedNow.current } : {}),
+        ...(seeAsNow.current !== undefined ? { seeAs: seeAsNow.current } : {}),
+      });
+      if (stamp !== latest.current || graphNow.current !== shown) return;
+      const next = read.canEdit ? read : plainGraph(read);
+      if (graphSignature(next) === graphSignature(shown)) return;
+      setGraph(next);
+      void loadOverview();
+    } catch {
+      /* a quiet read that fails is simply tried again at the next turn */
+    }
+  }
+  refreshNow.current = refresh;
+
+  // Every 5 seconds, give or take up to a second so open tabs drift apart; only while the tab is on screen, and
+  // at once when it comes back.
+  useEffect(() => {
+    if (!auto || view !== "ok") return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let stopped = false;
+    const next = (): void => {
+      timer = setTimeout(async () => {
+        if (!document.hidden) await refreshNow.current();
+        if (!stopped) next();
+      }, AUTO_MS + Math.random() * AUTO_JITTER_MS);
+    };
+    const back = (): void => {
+      if (!document.hidden) void refreshNow.current();
+    };
+    document.addEventListener("visibilitychange", back);
+    next();
+    return () => {
+      stopped = true;
+      if (timer !== undefined) clearTimeout(timer);
+      document.removeEventListener("visibilitychange", back);
+    };
+  }, [auto, view]);
+
+  function toggleAuto(): void {
+    const on = !auto;
+    setAuto(on);
+    saveAuto(on);
+    if (on) void refresh();
   }
 
   /** Changes which web is asked for, and reads it (#2405). */
@@ -476,6 +550,14 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
         <p id="web-hops-hint" class="small muted">
           {words.hopsHint(maxHops)}
         </p>
+        <div class="field">
+          <button type="button" class="secondary" onClick={toggleAuto}>
+            {auto ? words.freezeGraph : words.autoUpdateGraph}
+          </button>
+          <p class="small muted" role="status" aria-live="polite">
+            {auto ? words.updatingNote : words.frozenNote}
+          </p>
+        </div>
       </div>
 
       <p class="small" role="status" aria-live="polite">
