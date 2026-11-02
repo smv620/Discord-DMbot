@@ -15,9 +15,7 @@ from dmbot.ui.logic import HELP_TEXT
 # may a change to a version nobody can have agreed to yet (not deployed).
 # The "What's new" note for people asked again (consent_dm.RENEWED) explains a change
 # rather than adding terms, so it isn't part of the fingerprint.
-PINNED_VERSION = (
-    7  # #3268: pictures in the table's chat are described and kept; "the table's chat"
-)
+PINNED_VERSION = 7  # #3268: pictures in the table's chat are described and kept; "the table's chat"
 PINNED_FINGERPRINT = "a9066c074cac8a25464ef35ef4ea83529c7a06e8ce1a34316e6f7758089b2747"
 
 
