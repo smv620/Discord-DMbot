@@ -17,7 +17,9 @@ Rules held in code, not trust:
   new person: the instructions say so, and an epithet that is not on the list is dropped.
 - **Lengths are targets** (CLAUDE.md): nothing is cut for being long or short.
 
-Counts only leave this module; the words of a transcript are never logged.
+Identical ties repeated across rows, and a symmetric tie written both ways, are not merged here:
+stage 2 (storing) de-duplicates them. Counts only leave this module; the words of a transcript are
+never logged.
 """
 
 from __future__ import annotations
@@ -76,7 +78,7 @@ def instructions(known: Sequence[str]) -> str:
 
 _ROW = re.compile(
     r"^\s*([0-9]{1,9}(?:\s*,\s*[0-9]{1,9})*)\s*\|\s*([^|\n]{1,80})\|\s*([^|\n]{1,80})\|"
-    r"\s*([a-z_]{1,30})\s*\|\s*([^|\n]{1,30})\|\s*(.+?)\s*$"
+    r"\s*([A-Za-z_ -]{1,30})\s*\|\s*([^|\n]*)\|\s*(.*?)\s*$"
 )
 
 
@@ -92,7 +94,7 @@ def parse(
     not listed becomes `other` (`unlisted_type`). The feeling word is kept only for `knows`
     (`unset_word` counts one that was not one of the nine or mappable)."""
     count = counts if counts is not None else Counter()
-    allowed = {name_key(k): k.strip() for k in known if k.strip()}
+    allowed = {name_key(" ".join(k.split())): " ".join(k.split()) for k in known if k.strip()}
     out: list[Tie] = []
     for row in answer.splitlines():
         if not row.strip():
@@ -105,7 +107,10 @@ def parse(
         if not all(n in sources for n in numbers):
             count["bad_source"] += 1
             continue
-        a, b = allowed.get(name_key(m.group(2))), allowed.get(name_key(m.group(3)))
+        a, b = (
+            allowed.get(name_key(" ".join(m.group(2).split()))),
+            allowed.get(name_key(" ".join(m.group(3).split()))),
+        )
         if a is None or b is None:
             count["unknown_name"] += 1
             continue
@@ -116,7 +121,7 @@ def parse(
         if not sentence:
             count["empty"] += 1
             continue
-        kind = m.group(4)
+        kind = "_".join(m.group(4).casefold().replace("-", " ").split())
         if kind not in KINDS:
             count["unlisted_type"] += 1
             kind = UNSURE

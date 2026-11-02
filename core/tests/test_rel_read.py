@@ -73,3 +73,21 @@ def test_instructions_list_names_types_and_words_only() -> None:
     assert "- Tavin" in text and "- Vela" in text and "Quill" not in text.split("Names:")[1]
     assert "kin_of" in text and "term_of_address" in text
     assert all(w in text for w in reputation_words.WORDS)
+
+
+def test_a_long_feeling_or_a_capitalised_type_keeps_the_tie() -> None:
+    counts: Counter[str] = Counter()
+    ties = rel_read.parse(
+        "1 | Tavin | Vela | Knows | they are quite wary of each other, honestly | Wary of her.\n"
+        "2 | Grey  Fox | Vela | Kin_Of | - | Cousins.\n"
+        "3 | Tavin | Vela | mentors | - |",
+        {1, 2, 3},
+        ["Tavin", "Vela", "Grey Fox"],
+        counts,
+    )
+    assert [(t.kind, t.word) for t in ties] == [("knows", None), ("kin_of", None)]
+    assert dict(counts) == {"unset_word": 1, "empty": 1}
+
+
+def test_counts_default_and_empty_sources() -> None:
+    assert rel_read.parse("1 | Tavin | Vela | knows | friendly | x", set(), ["Tavin", "Vela"]) == []
