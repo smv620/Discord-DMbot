@@ -34,9 +34,26 @@ import type {
 } from "./api";
 import {
   ApiError,
+  errorKinds,
   fixErrorKinds,
 } from "./api";
-import type { AccountApi, ApiHelpers } from "./api";
+import type { AccountApi, ApiErrorKind, ApiHelpers } from "./api";
+
+/** The picture action's own 409 details (#3275). Only that action reads them, so they stay out of the shared table. */
+const pictureErrorKinds: Record<string, ApiErrorKind> = {
+  ...errorKinds,
+  "permanent-full": "permanent-full",
+  refused: "refused",
+};
+
+/** The route's own action names; the page's names for the same things are mapped here only (#3275). */
+const PICTURE_WIRE_ACTION: Record<PictureAction, string> = {
+  "make-private": "private",
+  "make-public": "public",
+  permanent: "permanent",
+  "not-permanent": "unpermanent",
+  delete: "delete",
+};
 
 export default function campaignArea({ call }: ApiHelpers): Partial<AccountApi> {
   return {
@@ -70,17 +87,15 @@ export default function campaignArea({ call }: ApiHelpers): Partial<AccountApi> 
       )) as PictureList;
     },
     pictureAction: async (campaignRef, code, action) => {
-      // The route's own action names; the page's names for the same things are mapped here only.
-      const wire: Record<PictureAction, string> = {
-        "make-private": "private",
-        "make-public": "public",
-        permanent: "permanent",
-        "not-permanent": "unpermanent",
-        delete: "delete",
-      };
-      await call("POST", `/me/campaigns/${encodeURIComponent(campaignRef)}/pictures/${encodeURIComponent(code)}`, {
-        action: wire[action],
-      });
+      await call(
+        "POST",
+        `/me/campaigns/${encodeURIComponent(campaignRef)}/pictures/${encodeURIComponent(code)}`,
+        { action: PICTURE_WIRE_ACTION[action] },
+        false,
+        undefined,
+        false,
+        pictureErrorKinds,
+      );
     },
     sessionNotes: async (campaignRef, at) =>
       (await call("GET", `/me/campaigns/${encodeURIComponent(campaignRef)}/session-notes/${at}`)) as SessionNotes,

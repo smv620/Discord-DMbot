@@ -33,7 +33,7 @@ describe("the pictures list", () => {
     const list = await api.pictures!(`${REF}.player`, { session: 2 });
     expect(list.isDm).toBe(false);
     expect(list.usage).toBeNull();
-    expect(list.pictures.filter((p) => p.mine).map((p) => p.poster)).toEqual(["Mira", "Mira"]);
+    expect(list.pictures.filter((p) => p.mine).map((p) => p.code)).toEqual(["pic-1", "pic-3"]);
   });
 });
 
@@ -66,6 +66,24 @@ describe("the game master's actions", () => {
     await expect(api.pictureAction!(`${REF}.player`, "pic-1", "permanent")).rejects.toMatchObject({ kind: "not-allowed" });
   });
 
+  it("paging by cursor still works when the cursor's picture was deleted", async () => {
+    const api = mockApi("table");
+    const first = await api.pictures!(REF, {});
+    await api.pictureAction!(REF, "pic-3", "delete");
+    const next = await api.pictures!(REF, { before: first.pictures[2]!.cursor });
+    expect(codes(next)).toEqual(["pic-4", "pic-5"]);
+  });
+
+  it("a player cannot change another poster's picture, and the refusal says why", async () => {
+    const api = mockApi("table");
+    await expect(api.pictureAction!(`${REF}.player`, "pic-2", "delete")).rejects.toMatchObject({
+      kind: "refused",
+      note: "Only the person who posted it or a DM can do that.",
+    });
+    await api.pictureAction!(`${REF}.player`, "pic-1", "make-private");
+    expect((await api.pictures!(REF, { session: 2 })).pictures.find((p) => p.code === "pic-1")!.isPublic).toBe(false);
+  });
+
   it("an unknown picture is not found", async () => {
     await expect(mockApi("table").pictureAction!(REF, "pic-99", "delete")).rejects.toMatchObject({ kind: "not-found" });
   });
@@ -81,13 +99,21 @@ describe("the real client", () => {
     }) as typeof fetch);
     await api.pictures!(REF, { session: 2, q: "map" });
     await api.pictures!(REF, {});
+    await api.pictures!(REF, { before: "1791003000:2", poster: "Cerric" });
     await api.pictureAction!(REF, "pic-1", "make-private");
+    await api.pictureAction!(REF, "pic-1", "make-public");
     await api.pictureAction!(REF, "pic-2", "not-permanent");
+    await api.pictureAction!(REF, "pic-2", "permanent");
+    await api.pictureAction!(REF, "pic-2", "delete");
     expect(seen).toEqual([
       "GET /me/campaigns/100.cmp1/pictures?session=2&q=map ",
       "GET /me/campaigns/100.cmp1/pictures ",
+      "GET /me/campaigns/100.cmp1/pictures?poster=Cerric&before=1791003000%3A2 ",
       'POST /me/campaigns/100.cmp1/pictures/pic-1 {"action":"private"}',
+      'POST /me/campaigns/100.cmp1/pictures/pic-1 {"action":"public"}',
       'POST /me/campaigns/100.cmp1/pictures/pic-2 {"action":"unpermanent"}',
+      'POST /me/campaigns/100.cmp1/pictures/pic-2 {"action":"permanent"}',
+      'POST /me/campaigns/100.cmp1/pictures/pic-2 {"action":"delete"}',
     ]);
   });
 
@@ -100,6 +126,27 @@ describe("the real client", () => {
       (async () => new Response(JSON.stringify({ detail: "permanent-full", note }), { status: 409 })) as typeof fetch,
     );
     await expect(full.pictureAction!(REF, "pic-1", "permanent")).rejects.toMatchObject({ kind: "permanent-full", note });
+  });
+});
+
+describe("the real client's refusals", () => {
+  it.each([
+    [403, "not_allowed", "not-allowed"],
+    [404, "not_found", "not-found"],
+    [409, "refused", "refused"],
+  ])("reads a picture action's %s %s as %s", async (status, code, kind) => {
+    const api = httpApi("https://api.example", (async () => new Response(JSON.stringify({ detail: code }), { status })) as typeof fetch);
+    await expect(api.pictureAction!(REF, "pic-1", "delete")).rejects.toMatchObject({ kind });
+  });
+
+  it("leaves other routes' kinds alone: a 403 'refused' is not-allowed, and a note does not change the kind", async () => {
+    const refused = httpApi("https://api.example", (async () => new Response(JSON.stringify({ error: "refused" }), { status: 403 })) as typeof fetch);
+    await expect(refused.deleteCampaign!(REF, "x")).rejects.toMatchObject({ kind: "not-allowed" });
+    const noted = httpApi(
+      "https://api.example",
+      (async () => new Response(JSON.stringify({ error: "not_found", note: "gone" }), { status: 404 })) as typeof fetch,
+    );
+    await expect(noted.deleteCampaign!(REF, "x")).rejects.toMatchObject({ kind: "not-found" });
   });
 });
 

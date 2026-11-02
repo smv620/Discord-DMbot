@@ -2664,8 +2664,6 @@ export const fixErrorKinds: Record<string, ApiErrorKind> = {
 };
 
 export const errorKinds: Record<string, ApiErrorKind> = {
-  "permanent-full": "permanent-full", // the picture route's 409 detail (#3275)
-  refused: "refused", // the picture route's 409 detail; its note says why (#3275)
   plan: "plan-needed",
   no_rules: "no-rules",
   not_owner: "not-owner",

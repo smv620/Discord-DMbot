@@ -986,8 +986,8 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
     { code: "pic-1", at: 1791004000, sessionNumber: 2, poster: "Mira", description: "A map of the Brass Ford", permanent: false, isPublic: true },
     { code: "pic-2", at: 1791003000, sessionNumber: 2, poster: "Cerric", description: "Cerric's oath scroll", permanent: true, isPublic: true },
     { code: "pic-3", at: 1791002000, sessionNumber: 2, poster: "Mira", description: "A storm over the ford", permanent: false, isPublic: false },
-    { code: "pic-4", at: 1790002000, sessionNumber: null as number | null, poster: "Cerric", description: "The ferryman's boat", permanent: false, isPublic: true },
-    { code: "pic-5", at: 1790001000, sessionNumber: null as number | null, poster: "Mira", description: "A torn page from a diary", permanent: false, isPublic: true },
+    { code: "pic-4", at: 1790002000, sessionNumber: null, poster: "Cerric", description: "The ferryman's boat", permanent: false, isPublic: true },
+    { code: "pic-5", at: 1790001000, sessionNumber: null, poster: "Mira", description: "A torn page from a diary", permanent: false, isPublic: true },
   ].map((p, i) => ({ ...p, n: i + 1 }));
   const PICTURE_MB = 100;
   const PERMANENT_LIMIT_MB = 400;
@@ -1275,18 +1275,19 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       await reachable();
       signedIn();
       const dm = !campaignRef.endsWith(".player");
-      // Newest first; a page is three, and `before` is the cursor of the last one shown.
+      // Newest first; a page is three. `before` is a cursor "at:n": the pictures after it in that order, so a
+      // picture deleted since (or a filter that hides it) does not restart the list, as on the server.
+      const cursorOf = (p: { at: number; n: number }): string => `${p.at}:${p.n}`;
       let rows = [...pictureRows].sort((a, b) => b.at - a.at || b.n - a.n);
+      if (filter.before) {
+        const [at, n] = filter.before.split(":").map(Number);
+        rows = rows.filter((p) => p.at < at! || (p.at === at && p.n < n!));
+      }
       if (filter.session !== undefined) rows = rows.filter((p) => p.sessionNumber === filter.session);
       if (filter.poster) rows = rows.filter((p) => p.poster === filter.poster);
       if (filter.q) {
         const needle = filter.q.trim().toLowerCase();
         rows = rows.filter((p) => p.description.toLowerCase().includes(needle));
-      }
-      const cursorOf = (p: { at: number; n: number }): string => `${p.at}:${p.n}`;
-      if (filter.before) {
-        const at = rows.findIndex((p) => cursorOf(p) === filter.before);
-        rows = at >= 0 ? rows.slice(at + 1) : rows;
       }
       const page = rows.slice(0, 3);
       return {
@@ -1319,6 +1320,10 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       if (!dm && (action === "permanent" || action === "not-permanent")) throw new ApiError("not-allowed");
       const picture = pictureRows.find((p) => p.code === code);
       if (!picture) throw new ApiError("not-found");
+      // Only the poster or a DM may change a picture; the server's refusal says so in its words (#3275).
+      if (!dm && picture.poster !== "Mira") {
+        throw Object.assign(new ApiError("refused"), { note: "Only the person who posted it or a DM can do that." });
+      }
       if (action === "delete") {
         pictureRows.splice(pictureRows.indexOf(picture), 1);
       } else if (action === "make-private") {
