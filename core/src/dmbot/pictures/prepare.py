@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import io
+import warnings
 from dataclasses import dataclass
 
 from PIL import Image, ImageOps, UnidentifiedImageError
@@ -23,7 +24,11 @@ MAX_PIXELS = 40_000_000  # about 40 megapixels
 MAX_BYTES = 25 * 1024 * 1024  # Discord's own upload limit
 MAX_FRAMES = 200  # a GIF with more frames than this is refused
 PREVIEW_PX = 400
+GIF_PIXELS = 60_000_000  # width x height x frames of a GIF: the most that is held in memory
 Image.MAX_IMAGE_PIXELS = MAX_PIXELS  # Pillow warns past this and raises past twice it
+# Our own check below is the exact one and runs before anything is decoded, so Pillow's warning
+# between one and two times the limit is only noise.
+warnings.filterwarnings("ignore", category=Image.DecompressionBombWarning)
 
 _KEPT = {"JPEG": ("JPEG", "jpg"), "PNG": ("PNG", "png"), "WEBP": ("WEBP", "webp")}
 
@@ -40,6 +45,17 @@ class Prepared:
     sha256: str  # of the bytes posted, so the same file is the same picture
     width: int
     height: int
+
+
+def _clean(image: Image.Image) -> Image.Image:
+    """The same pixels in a new image that carries nothing else. A copy keeps `info` (an ICC
+    profile, a GIF comment, XMP) and the writers fall back to it, so a fresh image is the only way
+    to be sure nothing rides along."""
+    if image.mode in ("P", "PA"):
+        image = image.convert(
+            "RGBA" if "transparency" in image.info or "A" in image.mode else "RGB"
+        )
+    return Image.frombytes(image.mode, image.size, image.tobytes())
 
 
 def _save(image: Image.Image, fmt: str) -> bytes:
@@ -81,31 +97,39 @@ def prepare(data: bytes) -> Prepared:
         animated = source == "GIF" and getattr(image, "n_frames", 1) > 1
         if animated:
             frames = getattr(image, "n_frames", 1)
-            if frames > MAX_FRAMES:
-                raise Refused("frames")
-            out = io.BytesIO()
-            first = image.convert("RGBA")
-            rest = []
-            for n in range(1, frames):
+            if frames > MAX_FRAMES or width * height * frames > GIF_PIXELS:
+                raise Refused("frames")  # every frame is held in memory at once
+            durations = []
+            pictures = []
+            for n in range(frames):
                 image.seek(n)
-                rest.append(image.convert("RGBA"))
-            first.save(out, "GIF", save_all=True, append_images=rest, loop=0)
-            image.seek(0)
-            return Prepared(out.getvalue(), "gif", _preview(first), sha, first.width, first.height)
+                durations.append(int(image.info.get("duration", 100)))
+                pictures.append(_clean(image.convert("RGBA")))
+            out = io.BytesIO()
+            pictures[0].save(
+                out,
+                "GIF",
+                save_all=True,
+                append_images=pictures[1:],
+                duration=durations,
+                loop=0,
+                comment=None,
+            )
+            return Prepared(out.getvalue(), "gif", _preview(pictures[0]), sha, width, height)
         image.load()
-        upright = ImageOps.exif_transpose(image)
+        upright = _clean(ImageOps.exif_transpose(image))
     except Refused:
         raise
     except (Image.DecompressionBombError, Image.DecompressionBombWarning):
         raise Refused("pixels") from None
-    except (UnidentifiedImageError, OSError, ValueError, SyntaxError, EOFError) as exc:
+    except (UnidentifiedImageError, OSError, ValueError, SyntaxError, EOFError, MemoryError) as exc:
         raise Refused(type(exc).__name__) from None
     fmt, ext = _KEPT.get(source, ("PNG", "png"))
     if source == "GIF":
         fmt, ext = "PNG", "png"  # a still GIF is kept as a PNG: same pixels, no GIF metadata
     try:
         return Prepared(_save(upright, fmt), ext, _preview(upright), sha, *upright.size)
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, MemoryError) as exc:
         raise Refused(type(exc).__name__) from None
 
 

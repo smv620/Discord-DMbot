@@ -76,6 +76,37 @@ class Stripped(unittest.TestCase):
         self.assertEqual(got.ext, "gif")
         self.assertEqual(Image.open(io.BytesIO(got.data)).n_frames, 3)
 
+    def test_a_colour_profile_in_a_png_does_not_survive(self) -> None:
+        out = io.BytesIO()
+        Image.new("RGB", (20, 20), (4, 5, 6)).save(out, "PNG", icc_profile=b"profile-bytes" * 4)
+        self.assertIn("icc_profile", Image.open(io.BytesIO(out.getvalue())).info)
+        got = prepare(out.getvalue())
+        self.assertNotIn("icc_profile", Image.open(io.BytesIO(got.data)).info)
+        self.assertNotIn(b"iCCP", got.data)
+
+    def test_a_still_gif_with_a_comment_keeps_none(self) -> None:
+        out = io.BytesIO()
+        Image.new("P", (20, 20)).save(out, "GIF", comment=b"GIFSECRET")
+        self.assertIn(b"GIFSECRET", out.getvalue())
+        self.assertNotIn(b"GIFSECRET", prepare(out.getvalue()).data)
+
+    def test_an_animated_gif_comment_is_dropped_and_timing_kept(self) -> None:
+        out = io.BytesIO()
+        frames = [Image.new("RGB", (20, 20), c) for c in ((255, 0, 0), (0, 255, 0))]
+        frames[0].save(
+            out,
+            "GIF",
+            save_all=True,
+            append_images=frames[1:],
+            duration=[50, 200],
+            comment=b"GIFSECRET",
+        )
+        got = prepare(out.getvalue())
+        self.assertNotIn(b"GIFSECRET", got.data)
+        again = Image.open(io.BytesIO(got.data))
+        self.assertEqual(again.n_frames, 2)
+        self.assertEqual(again.info["duration"], 50)
+
     def test_the_same_file_has_the_same_fingerprint(self) -> None:
         source = png()
         self.assertEqual(prepare(source).sha256, prepare(source).sha256)
@@ -100,6 +131,15 @@ class Refusals(unittest.TestCase):
     def test_an_empty_file_is_refused(self) -> None:
         with self.assertRaises(Refused):
             prepare(b"")
+
+    def test_a_gif_whose_frames_together_are_too_big_is_refused(self) -> None:
+        # a big canvas times many frames would be held in memory all at once
+        out = io.BytesIO()
+        frames = [Image.new("1", (2000, 2000), n % 2) for n in range(20)]  # 80 million pixels
+        frames[0].save(out, "GIF", save_all=True, append_images=frames[1:])
+        with self.assertRaises(Refused) as caught:
+            prepare(out.getvalue())
+        self.assertEqual(str(caught.exception), "frames")
 
     def test_a_gif_with_too_many_frames_is_refused(self) -> None:
         out = io.BytesIO()
