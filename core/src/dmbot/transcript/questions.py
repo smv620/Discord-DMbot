@@ -35,6 +35,7 @@ LABEL_MAX = 25  # names on buttons: fits a phone (the full name is in the answer
 NAME_MAX = 60  # a name or heard words in a message, shortened past this
 CONTEXT_MAX = 70  # the bit of the line shown with a question
 EXPIRED = "⌛ This question is closed, so the words stay as heard."
+ANSWERED_ELSEWHERE = "✅ Another DM answered this."
 ONLY_DM = "Only the DM can answer this."
 BUSY = "Already saving an answer to this. One moment."
 NAME_GONE = "That name isn't in the campaign anymore, so the words stay as heard."

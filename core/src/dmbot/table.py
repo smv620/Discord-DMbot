@@ -125,7 +125,12 @@ class Table:
     vocabulary: Vocabulary = field(default_factory=Vocabulary)
     # "Did they mean…?" for the DM (#296): one open at a time, each word once a session.
     questions: name_questions.QuestionBook = field(default_factory=name_questions.QuestionBook)
-    question_message: discord.Message | None = None
+    # Where the open question was asked (#3210): one copy in each reachable DM's private chat.
+    # When one DM answers it, or it runs out, every copy is edited. `closed_copies` keeps the copies
+    # of a question just answered until the answering DM's own message has been dealt with.
+    question_messages: list[discord.Message] = field(default_factory=list)
+    # (question id -> the id of the message that answered it, and the copies to edit afterwards)
+    closed_copies: dict[str, tuple[int | None, list[discord.Message]]] = field(default_factory=dict)
     # How often a line landed near one of the Cleaner's likeness thresholds (#1577): counts only.
     close_calls: CloseCalls = field(default_factory=CloseCalls)
     # Questions that closed with no answer (expired, or the session ended), for the after-session
