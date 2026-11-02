@@ -15,7 +15,7 @@ from dmbot.ai import Reply
 from dmbot.memory import background as bg
 from dmbot.memory import lore_read
 from dmbot.memory.backstory_links import BackstoryLinks, NewLink, Waiting
-from dmbot.memory.models import CONFIRMED, REJECTED, MemoryRuleError, NewName
+from dmbot.memory.models import CONFIRMED, REJECTED, MemoryRuleError, NewName, name_key
 from dmbot.memory.ontology import PredicateTerm
 from dmbot.ui import name_background as ui_bg
 from dmbot.ui import names as names_ui
@@ -229,6 +229,99 @@ class TheChecks(unittest.TestCase):
         found = [bg.Found("Mirelle", "npc", (), (), "")]
         links = [bg.Connection("She", "knows", "Mirelle", "She knows Mirelle")]
         self.assertEqual(bg.keep_connections([links], found, {}), [])
+
+    def test_a_pronoun_reaches_back_through_its_paragraph_for_the_name(self) -> None:
+        # Invented text (#2757). The name is two sentences back; the sentence between names nobody.
+        def read(text: str, others: set[str] | None) -> tuple[list[bg.Connection], Counter[str]]:
+            lost: Counter[str] = Counter()
+            reply = json.dumps({"connections": [link(
+                "Corvin Hale", "brother", "Daric", "His brother, Daric, vanished at forty"
+            )]})  # fmt: skip
+            return bg.read_connections(reply, text, dropped=lost, others=others), lost
+
+        near = (
+            "Corvin Hale hunted wolves. Old stories say his family was cursed. "
+            "His brother, Daric, vanished at forty."
+        )
+        names = bg.reach_names({"corvin hale", "daric", "pell ashe"})
+        got, lost = read(near, names)
+        self.assertEqual([(c.how, c.words) for c in got], [("kin_of", "sibling")])
+        self.assertEqual(lost["quote_reach"], 1)
+        self.assertTrue(got[0].quote.startswith("Corvin Hale hunted"))  # word for word
+        self.assertIn(got[0].quote, near)
+        # (without the names to check against, nothing reaches beyond the sentence before)
+        self.assertEqual(read(near, None)[0], [])
+        # another name in between: the pronoun may mean that one, so nothing is widened
+        between = near.replace("his family", "Pell Ashe and his family")
+        self.assertEqual(read(between, names)[0], [])
+        self.assertEqual(read(between.replace("Pell Ashe", "Pell"), names)[0], [])  # (a first name)
+        # four sentences back is too far; another paragraph is another subject
+        far = (
+            "Corvin Hale hunted wolves. It was cold. It was dark. Old stories say it. "
+            "His brother, Daric, vanished at forty."
+        )
+        self.assertEqual(read(far, names)[0], [])
+        apart = near.replace("wolves. ", "wolves.\n\n")
+        self.assertEqual(read(apart, names)[0], [])
+        # a reach never exceeds the queue's 400-character quote column
+        long = near.replace("hunted wolves", "hunted " + "wolves " * 70)
+        self.assertEqual(read(long, names)[0], [])
+        # the one-sentence widening is unchanged and not counted as a reach
+        one = "Old stories say Corvin Hale was cursed. His brother, Daric, vanished at forty."
+        got, lost = read(one, names)
+        self.assertEqual((len(got), lost["quote_widened"], lost["quote_reach"]), (1, 1, 0))
+
+    def test_the_edges_of_a_reach(self) -> None:
+        names = bg.reach_names(
+            {name_key(n) for n in ("Corvin Hale", "Daric", "Pell Ashe", "Ka'zeth")}
+        )  # (the live read normalises its keys the same way)
+        reply = json.dumps({"connections": [link(
+            "Corvin Hale", "brother", "Daric", "His brother, Daric, vanished at forty"
+        )]})  # fmt: skip
+
+        def read(text: str) -> tuple[list[bg.Connection], Counter[str]]:
+            lost: Counter[str] = Counter()
+            return bg.read_connections(reply, text, dropped=lost, others=names), lost
+
+        tail = "His brother, Daric, vanished at forty."
+        # three sentences back is the furthest, and counts as a widening and as a reach
+        got, lost = read(f"Corvin Hale hunted. It was cold. It was dark. {tail}")
+        self.assertEqual((len(got), lost["quote_reach"], lost["quote_widened"]), (1, 1, 1))
+        # a possessive names the person it belongs to ("Pell's", "Ka'zeth's")
+        for third in ("Pell Ashe's", "Ka'zeth's"):
+            self.assertEqual(read(f"Corvin Hale hunted. {third} cousin was cursed. {tail}")[0], [])
+        # the word limit alone (short words) and the character limit alone (few long words)
+        self.assertEqual(read("Corvin Hale hunted. " + "a " * 59 + f"{tail}")[0], [])
+        long_words = " ".join(["extraordinarily"] * 26)  # 26 words, over 400 characters
+        self.assertEqual(read(f"Corvin Hale hunted. {long_words}. {tail}")[0], [])
+        # the same quote twice, the first time opening its paragraph: the second still reaches
+        twice = f"Old words.\n\n{tail}\n\nCorvin Hale hunted. It was cold. {tail}"
+        self.assertEqual(len(read(twice)[0]), 1)
+
+    def test_a_third_name_is_a_whole_name_or_a_first_word_only_one_name_starts(self) -> None:
+        names = bg.reach_names({"pell ashe", "pell voss", "mara ketch", "ox"})
+        self.assertIn("mara", names)  # a first word is a name in the text
+        self.assertIn("pell", names)  # two names share it: it is a third name either way
+        self.assertNotIn("ox", names - {"ox"})  # (a short key has no first word of its own)
+
+    def test_a_first_name_two_known_names_share_still_stops_a_reach(self) -> None:
+        names = bg.reach_names(
+            {name_key(n) for n in ("Corvin Hale", "Daric", "Pell Ashe", "Pell Voss")}
+        )
+        text = (
+            "Corvin Hale hunted wolves. Old stories say Pell and his family were cursed. "
+            "His brother, Daric, vanished at forty."
+        )
+        reply = json.dumps({"connections": [link(
+            "Corvin Hale", "brother", "Daric", "His brother, Daric, vanished at forty"
+        )]})  # fmt: skip
+        got = bg.read_connections(reply, text, others=names)
+        self.assertEqual(got, [])
+
+    def test_a_reach_is_never_longer_than_the_queue_keeps(self) -> None:
+        from dmbot.memory import backstory_links
+
+        self.assertEqual(bg.REACH_CHARS, backstory_links.QUOTE_MAX)
 
     def test_friends_and_enemies_are_knows_with_a_feeling_word(self) -> None:
         # (#3175) invented text; the feeling rides in the line's "words", read as a reputation word
@@ -457,6 +550,35 @@ class ThePath(NamesTest):
         )
 
     # ---- the card and the presses -----------------------------------------------------------
+
+    async def test_a_card_for_a_reach_quote_keeps_the_name_and_the_sentence_that_matters(
+        self,
+    ) -> None:
+        # (#2757) a reach quote can be 400 characters and the card shows 200: the middle goes, the
+        # start (the name) and the end (the pronoun's sentence) stay, and no word is cut.
+        made = await self.memory.add_names(
+            GUILD, self.campaign.id,
+            [NewName("Corvin", "npc", CONFIRMED), NewName("Daric", "npc", CONFIRMED)],
+            source="dm",
+        )  # fmt: skip
+        corvin, daric = made.value
+        assert corvin and daric
+        quote = (
+            "Corvin hunted wolves. "
+            + "Old stories say it was cold and grey. " * 8
+            + ("His brother, Daric, vanished at forty.")
+        )
+        self.assertGreater(len(quote), ui_bg.QUOTE_SHOWN)
+        await self.store.add(
+            GUILD, self.campaign.id, [NewLink(corvin, "kin_of", daric, quote, detail="sibling")]
+        )
+        _, view = await self.offer()
+        shown = view.text().split("From your text: \u201c", 1)[1].split("\u201d", 1)[0]
+        self.assertLessEqual(len(shown), ui_bg.QUOTE_SHOWN)
+        self.assertTrue(shown.startswith("Corvin hunted wolves."))
+        self.assertTrue(shown.endswith("His brother, Daric, vanished at forty."))
+        self.assertIn(" … ", shown)
+        self.assertTrue(all(w in quote for w in shown.replace(" … ", " ").split()))  # whole words
 
     async def test_keep_stores_the_dms_word_and_the_row_goes(self) -> None:
         await self.read()
@@ -1030,6 +1152,16 @@ class TheStore(NamesTest):
         link_ = NewLink(self.mirelle, "knows", self.oakmere, "q")
         self.assertEqual(await self.store.add(GUILD, self.campaign.id, [link_, link_]), 1)
         self.assertEqual(await self.store.add(GUILD, self.campaign.id, [link_]), 0)
+
+    async def test_the_longest_quote_a_reach_can_make_is_kept_whole(self) -> None:
+        # A reach (#2757) is at most `REACH_CHARS` characters, the queue's quote column, because
+        # the queue cuts the END of a longer quote, which is the pronoun's own sentence.
+        quote = ("Elanor " * 60)[: bg.REACH_CHARS].rstrip()
+        await self.store.add(
+            GUILD, self.campaign.id, [NewLink(self.mirelle, "knows", self.oakmere, quote)]
+        )
+        (w,) = await self.store.waiting(GUILD, self.campaign.id)
+        self.assertEqual(w.quote, quote)
 
     async def test_one_with_a_waiting_name_is_not_ready_and_stays(self) -> None:
         await self.store.add(

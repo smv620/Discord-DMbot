@@ -33,7 +33,7 @@ class ByFactBase(MyCharacters):
     async def report(self) -> dict[str, Any]:
         graph = await self.bob()
         wide = await self.graph(self.player, hops=8)
-        overview, _pages = await relationships._overview_door(
+        overview, _pages, _known = await relationships._overview_door(
             self.web, self.player, self.cref, None, 100, 100
         )
         return {

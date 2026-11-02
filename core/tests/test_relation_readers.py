@@ -21,6 +21,8 @@ DM_ONLY = "DM-side by design"
 READERS = {
     "memory/recall.py": CONFIRMED_ONLY + ": the walk behind NPC pages, table answers and recaps",
     "memory/importance.py": CONFIRMED_ONLY,
+    "memory/importance_rank.py": CONFIRMED_ONLY
+    + ": counts current, confirmed connections for a rank floor; never shown to a player",
     "memory/continuity.py": CONFIRMED_ONLY + ": the counts and the story's world",
     "memory/backstory_links.py": CONFIRMED_ONLY + ": pairs already known",
     "memory/worked_out.py": "proposes links; players see only confirmed ones, and a link from a "

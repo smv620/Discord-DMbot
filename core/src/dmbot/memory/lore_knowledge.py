@@ -24,6 +24,7 @@ from collections.abc import Callable, Sequence
 from typing import Any, Protocol
 
 from dmbot.ai import OUTPUT_FLOOR, Reply
+from dmbot.word_end import at_word_end
 
 log = logging.getLogger(__name__)
 
@@ -84,7 +85,7 @@ def normalize(choice: str | None) -> str:
 def line(kind: str, text: str, quote: str = "") -> str:
     """One statement as the AI sees it: what it is, and the short quote the read keeps."""
     said = f' — "{quote}"' if quote else ""
-    return f"{kind}: {text}{said}"[:LINE_MAX]
+    return at_word_end(f"{kind}: {text}{said}", LINE_MAX)  # (never cut inside a word)
 
 
 def _prompt(lines: Sequence[str]) -> str:

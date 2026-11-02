@@ -1,7 +1,8 @@
-"""`relationships._knowers`: who knows a statement, worked out from the member lists once (#3154).
+"""`relationships._knowers`: who knows a statement, from the member lists the door sends (#3154).
 
-Pure (no database): the faster form must give exactly what `gate.reach` gives for every character,
-since it is the same rule written so it does not ask every group member about every statement."""
+Pure (no database). The rule itself is `gate.knowers_of` (#3228), checked against `gate.reach` in
+`test_gate_knowers_of.py`; this file checks that the page's lists reach it intact and that what it
+gives equals what `gate.reach` gives for every character."""
 
 from __future__ import annotations
 

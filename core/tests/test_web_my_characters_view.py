@@ -69,7 +69,7 @@ class MyCharacters(Web):
         return {n["id"]: n["name"] for n in got["nodes"]}
 
     async def overview_names(self, who: Any) -> dict[str, str]:
-        got, _pages = await relationships._overview_door(
+        got, _pages, _known = await relationships._overview_door(
             self.web, who, self.cref, None, 100, 100
         )  # (the door's own names, before they are grouped for the page)
         return {n["id"]: n["name"] for n in got["names"]}
@@ -168,7 +168,7 @@ class TheEdges(MyCharacters):
 
     async def test_no_page_is_offered_for_an_entry_known_only_by_its_other_name(self) -> None:
         await self.join()
-        _got, pages = await relationships._overview_door(
+        _got, pages, _known = await relationships._overview_door(
             self.web, self.player, self.cref, None, 100, 100
         )
         self.assertNotIn(self.ken, pages)
@@ -331,7 +331,7 @@ class WhenKenIsPublic(MyCharacters):
 
     async def test_the_overview_has_the_separate_node_too(self) -> None:
         await self.join()
-        got, _pages = await relationships._overview_door(
+        got, _pages, _known = await relationships._overview_door(
             self.web, self.player, self.cref, None, 100, 100
         )
         names = {n["id"]: n["name"] for n in got["names"]}

@@ -91,6 +91,7 @@ from dmbot.ui.names import (
 )
 from dmbot.ui.who_knows import player_characters
 from dmbot.waiting import WaitingMessage, message_is_gone
+from dmbot.word_end import in_the_middle
 
 log = logging.getLogger(__name__)
 
@@ -709,6 +710,7 @@ async def read_background(
         progress=progress,
         aliases=aliases,
         hold_open=who_ai is not None,
+        known_keys=known,
     )
     found = bg.merge(
         [read.names],
@@ -774,6 +776,7 @@ async def read_background(
         speaker=speaker,
         known_by=known_by,
         unsettled=read.stats.unsettled or (),
+        unnamed=read.unnamed,
         who_ai=who_ai,
         on_who=on_who,
         until=started + lore_read.LORE_TIME_LIMIT_S - WHO_SUMMARY_MARGIN_S,
@@ -795,7 +798,7 @@ async def read_background(
         ", ".join(
             f"{k}={n}"
             for k, n in sorted(read.stats.dropped.items())
-            if k != "quote_widened"  # (a line kept, not dropped: counted for the log only)
+            if k not in ("quote_widened", "quote_reach")  # (lines kept, not dropped: log only)
         )
         or "nothing",
     )  # (counts only: the questions are the DM's own words, shown only to them)
@@ -1252,6 +1255,7 @@ async def queue_links(
     speaker: str | None = None,
     known_by: str = "",
     unsettled: Sequence[bg.Unsettled] = (),
+    unnamed: Sequence[who_resolve.UnnamedLink] = (),
     who_ai: who_ask.Client | None = None,
     on_who: Callable[[int, int], None] | None = None,
     until: float | None = None,
@@ -1282,7 +1286,7 @@ async def queue_links(
     which also covers the ones made from a settled pronoun, a "Which one?" question and an unnamed
     person. `world_level`: how they are known (`lore_knowledge.SURE`, or `GUESS` for the AI's)."""
     store = getattr(bot, "backstory_links", None)
-    if store is None or not (any(answers) or unsettled):
+    if store is None or not (any(answers) or unsettled or unnamed):
         return 0
     lookup = CampaignLookup.build(await memory.lookup_data(campaign.guild_id, campaign.id))
     ends: dict[str, str] = {}
@@ -1349,6 +1353,9 @@ async def queue_links(
         if dropped is not None:
             dropped["not_in_text"] += settled.unresolved
         answers = [*answers, settled.connections]
+    # People the text describes but never names (#2959) go the way the who-is-it check's do: the
+    # same store call, the same secrecy (below) and the same cap.
+    settled.unnamed = [*settled.unnamed, *unnamed]
     picks: list[bg.Pick] = []
     # (the campaign's own secret names stay secret whatever the upload's choice: the choice only
     # frees the earlier names this read found)
@@ -1747,7 +1754,7 @@ class WhichOffer(_Menu):
         return (
             f"🔎 **Which {asked} is this?**{place}\n"
             f"{pair}\n"
-            f"From your text: \u201c{_md(logic.shorten(c.quote, QUOTE_SHOWN))}\u201d\n"
+            f"From your text: \u201c{_md(in_the_middle(c.quote, QUOTE_SHOWN))}\u201d\n"
             + who_resolve.checked_line(c.decided)
             + (
                 f"It could be {names}. Tap the right one. "
@@ -1993,7 +2000,7 @@ class ConnectionOffer(_Menu):
                 f"📜 **Connection {self.kept + self.left_out + 1} of {self.total}.** "
                 "Change this?\n"
                 + self._change_line(c, how)
-                + f"From your text: \u201c{_md(logic.shorten(c.quote, QUOTE_SHOWN))}\u201d\n"
+                + f"From your text: \u201c{_md(in_the_middle(c.quote, QUOTE_SHOWN))}\u201d\n"
                 + who_resolve.checked_line(c.decided)
                 + f"{note}"
                 + self._scope(c)
@@ -2001,7 +2008,7 @@ class ConnectionOffer(_Menu):
         return (
             f"📜 **Connection {self.kept + self.left_out + 1} of {self.total}.** Keep this?\n"
             f"**{_md(c.subject)}** {how} **{_md(c.object)}**\n"
-            f"From your text: \u201c{_md(logic.shorten(c.quote, QUOTE_SHOWN))}\u201d\n"
+            f"From your text: \u201c{_md(in_the_middle(c.quote, QUOTE_SHOWN))}\u201d\n"
             + who_resolve.checked_line(c.decided)
             + f"{note}"
             + self._scope(c)
