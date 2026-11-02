@@ -2678,13 +2678,22 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             return
         if self.tables.get(table.guild_id) is not table:
             return  # the session ended while the clock was read: no line on a closed table
-        view = discord.ui.View(timeout=None)
-        view.add_item(clock_screen.ClockButton(table.campaign_id, "cend"))
-        await self.post(
-            table.screen_channel_id,
+        campaign_id = table.campaign_id
+
+        def end_combat_view() -> discord.ui.View:
+            view = discord.ui.View(timeout=None)
+            view.add_item(clock_screen.ClockButton(campaign_id, "cend"))
+            return view
+
+        # A question for the DM: in every DM's private chat (#3210), each copy remembered so the
+        # others lose their button when one DM ends the fight; the screen only if nobody can be
+        # reached.
+        await self.ask_live(
+            table,
             f"⚔️ A fight from last time is still running (round {stored.clock.combat_round}). "
             "Press **End combat** if it is over.",
-            view,
+            end_combat_view,
+            partial(self.decision_lines.remember, ("fight", campaign_id)),
         )
 
     async def _secret_keys(self, guild_id: int, campaign_id: str) -> frozenset[str] | None:
