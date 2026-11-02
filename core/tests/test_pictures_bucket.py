@@ -65,6 +65,31 @@ class Signing(unittest.TestCase):
         self.assertEqual(self.sign()["x-amz-date"], "20261102T120000Z")
 
 
+class PublishedVector(unittest.TestCase):
+    def test_aws_get_vanilla_signature(self) -> None:
+        # AWS's published Signature V4 test suite, "get-vanilla": the signature must match exactly,
+        # so the signing is proven and not just round-tripped.
+        got = authorization(
+            method="GET",
+            host="example.amazonaws.com",
+            path="/",
+            query="",
+            payload_hash="e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            access_key="AKIDEXAMPLE",
+            secret_key="wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
+            now=dt.datetime(2015, 8, 30, 12, 36, 0, tzinfo=dt.UTC),
+            region="us-east-1",
+            service="service",
+            sign_content_hash=False,
+        )
+        self.assertEqual(
+            got["Authorization"],
+            "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20150830/us-east-1/service/aws4_request, "
+            "SignedHeaders=host;x-amz-date, "
+            "Signature=5fa00fa31553b73ebf1942676e86291e8372ff2a2260956d9b8aae1d763fbf31",
+        )
+
+
 class Calls(unittest.IsolatedAsyncioTestCase):
     async def test_put_sends_a_signed_request_to_the_key(self) -> None:
         seen: list[Call] = []

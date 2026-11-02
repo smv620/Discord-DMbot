@@ -57,12 +57,17 @@ def authorization(
     access_key: str,
     secret_key: str,
     now: dt.datetime,
+    region: str = REGION,
+    service: str = SERVICE,
+    sign_content_hash: bool = True,
 ) -> dict[str, str]:
     """The signed headers for one request (Signature V4). Pure, so it can be tested against a
     known answer."""
     stamp = now.strftime("%Y%m%dT%H%M%SZ")
     day = now.strftime("%Y%m%d")
-    headers = {"host": host, "x-amz-content-sha256": payload_hash, "x-amz-date": stamp}
+    headers = {"host": host, "x-amz-date": stamp}
+    if sign_content_hash:  # S3 wants it signed; AWS's generic test vectors do not sign it
+        headers["x-amz-content-sha256"] = payload_hash
     signed = ";".join(sorted(headers))
     canonical = "\n".join(
         [
@@ -74,12 +79,12 @@ def authorization(
             payload_hash,
         ]
     )
-    scope = f"{day}/{REGION}/{SERVICE}/aws4_request"
+    scope = f"{day}/{region}/{service}/aws4_request"
     to_sign = "\n".join(
         ["AWS4-HMAC-SHA256", stamp, scope, hashlib.sha256(canonical.encode()).hexdigest()]
     )
     k = _sign(("AWS4" + secret_key).encode(), day)
-    for part in (REGION, SERVICE, "aws4_request"):
+    for part in (region, service, "aws4_request"):
         k = _sign(k, part)
     signature = hmac.new(k, to_sign.encode(), hashlib.sha256).hexdigest()
     return {
