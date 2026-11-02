@@ -224,7 +224,36 @@ describe("the map", () => {
     render(<WebMap nodes={nodes} edges={edges} center="m" refId="1.a" selected={{ a: "m", b: "g" }} onCenter={() => {}} onLine={() => {}} />);
     fireEvent.pointerEnter(nodeOf("Mira"));
     expect(texts()).toContain("serves (+1)"); // (the chosen line: its full words, as the server worded them)
-    expect([...document.querySelectorAll(".web-edge-text title")].map((t) => t.textContent)).toContain("serves (+1)");
+    // (the tooltip now lists the connections, see "lists the first four connections" below, #3279)
+    const tipText = [...document.querySelectorAll(".web-edge-text title")].map((t) => t.textContent ?? "").find((t) => t.includes("\n")) ?? "";
+    expect(tipText.split("\n")[0]).toContain("serves");
+    expect(tipText.split("\n")[1]).toContain("owes");
+  });
+
+  it("lists four connections in a line's tooltip, the one on the line first, then plus n more…, read in full (#3279)", () => {
+    const words7 = ["serves", "owes", "fears", "trusts", "hunts", "hides", "sells"];
+    const many: WebEdge[] = [
+      // the API words the line with the latest link (the last), and sends the links oldest first
+      { a: "m", b: "g", label: "sells", more: 6, links: words7.map((w, i) => link(`x${i}`, w)) },
+      { a: "m", b: "h", label: "lives at", more: 0, links: [link("y1", "lives at")] },
+      { a: "g", b: "o", label: "helps", more: 3, links: ["knows", "pays", "fights", "helps"].map((w, i) => link(`z${i}`, w)) },
+    ];
+    render(<WebMap nodes={nodes} edges={many} center="m" refId="1.a" selected={null} onCenter={() => {}} onLine={() => {}} />);
+    const groups = [...document.querySelectorAll(".web-edge")];
+    const tips = groups.map((g) => [...g.querySelectorAll("title")].map((t) => t.textContent));
+    const [mira, gorn] = [nodes.find((n) => n.id === "m")!.name, nodes.find((n) => n.id === "g")!.name];
+    // seven connections: the line's own ("sells") first, then the newest others, four in all, then the rest counted
+    expect(tips[0]).toHaveLength(2);
+    expect(tips[0]![0]).toBe([`${mira} sells ${gorn}`, `${mira} hides ${gorn}`, `${mira} hunts ${gorn}`, `${mira} trusts ${gorn}`, "plus 3 more…"].join("\n"));
+    expect(tips[0]![1]).toBe(tips[0]![0]);
+    // one connection keeps its words
+    expect(tips[1]![0]).toBe("lives at");
+    // exactly four: all listed, no "plus"
+    expect(tips[2]![0]).not.toContain("plus");
+    expect(tips[2]![0]!.split("\n")).toHaveLength(4);
+    expect(tips[2]![0]!.split("\n")[0]).toContain("helps");
+    // the line's hit area also carries it for screen readers
+    expect(groups[0]!.querySelector(".web-hit")!.getAttribute("aria-label")).toContain("plus 3 more…");
   });
 
   it("says how many when a bundle has no wording from the focused end, and a hover wins over the pick", () => {
@@ -263,7 +292,7 @@ describe("the map", () => {
     const onLine = vi.fn();
     draw({ onLine });
     const hit = document.querySelector(".web-hit") as SVGLineElement;
-    expect(hit.getAttribute("aria-label")).toBe(words.lineBetween("Mira Voss", "Garrick"));
+    expect(hit.getAttribute("aria-label")).toContain(words.lineBetween("Mira Voss", "Garrick"));
     fireEvent.keyDown(hit, { key: "Enter" });
     expect(onLine).toHaveBeenCalledWith("m", "g");
   });
