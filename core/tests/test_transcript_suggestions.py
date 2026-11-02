@@ -323,6 +323,54 @@ class TheButtons(unittest.IsolatedAsyncioTestCase):
             line.assert_answered_first()
             self.assertIn("slow:get", line.events)
 
+    async def test_a_press_in_a_dms_private_chat_takes_the_server_from_the_id(self) -> None:
+        # #3210: a private chat has no server; the id carries it, the DM check stays.
+        _, bot, interaction = press("yes")
+        button = line_fix.LineFixButton("yes", 5, GUILD)
+        interaction.guild = None
+        await button.callback(interaction)
+        bot.apply_line_fix.assert_awaited_once()
+        self.assertEqual(bot.suggestions.get.await_args.args[0], GUILD)
+        _, bot, interaction = press("yes", PLAYER)  # a non-DM gets nothing there either
+        interaction.guild = None
+        await line_fix.LineFixButton("yes", 5, GUILD).callback(interaction)
+        self.assertEqual(said(interaction), line_fix.NOT_YOURS)
+        bot.apply_line_fix.assert_not_awaited()
+
+    async def test_without_a_server_anywhere_the_press_is_closed(self) -> None:
+        button, bot, interaction = press("yes")
+        interaction.guild = None  # and the plain id has no server either
+        await button.callback(interaction)
+        self.assertEqual(said(interaction), line_fix.GONE)
+        bot.suggestions.get.assert_not_awaited()
+
+    async def test_an_id_for_another_server_is_closed_in_a_server(self) -> None:
+        _, bot, interaction = press("yes")
+        await line_fix.LineFixButton("yes", 5, GUILD + 1).callback(interaction)
+        self.assertEqual(said(interaction), line_fix.GONE)
+        bot.suggestions.get.assert_not_awaited()
+
+    def test_the_old_id_and_the_new_one_both_parse(self) -> None:
+        template = line_fix.LineFixButton.__discord_ui_compiled_template__
+        old = template.fullmatch("dmbot:linefix:yes:123")
+        new = template.fullmatch("dmbot:linefix:no:456:123")
+        assert old is not None and new is not None
+        self.assertEqual((old["guild"], old["id"]), (None, "123"))
+        self.assertEqual((new["guild"], new["id"]), ("456", "123"))
+        self.assertEqual(line_fix.LineFixButton("yes", 123).item.custom_id, "dmbot:linefix:yes:123")
+        self.assertEqual(
+            line_fix.LineFixButton("no", 123, 456).item.custom_id, "dmbot:linefix:no:456:123"
+        )
+        self.assertLessEqual(len("dmbot:linefix:yes:" + "9" * 20 + ":" + "9" * 18), 100)
+        for bad in (
+            "dmbot:linefix:yes:",
+            "dmbot:linefix:yes:1:2:3",
+            f"dmbot:linefix:yes:{'9' * 21}:1",
+            "dmbot:linefix:yes:abc:1",
+            "dmbot:linefix:maybe:1",
+        ):
+            self.assertIsNone(template.fullmatch(bad), bad)
+
     async def test_a_missing_or_answered_suggestion_changes_nothing(self) -> None:
         button, bot, interaction = press("yes", suggestion=None)
         await button.callback(interaction)

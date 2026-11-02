@@ -23,7 +23,7 @@ changes nothing, so a failed or empty run never wipes a good script.
 from __future__ import annotations
 
 import time
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -165,3 +165,24 @@ async def forget_session(conn: Any, guild_id: int, session_id: str) -> int:
         "DELETE FROM theatre_lines WHERE guild_id = %s AND session_id = %s", (guild_id, session_id)
     )
     return int(cur.rowcount)
+
+
+async def script_input(
+    db: Database, guild_id: int, session_id: str, agreed: Collection[int]
+) -> list[tuple[int, int, str]]:
+    """(line id, user id, cleaned words) of the session's lines the script may be made from, in
+    the order they were said: the speech of people who agree, as the cleaned transcript has it. Not
+    the DM sidebar, not typed lines (those are only in the as-heard transcript), not pictures and
+    nothing the off-topic filter hid. A line the cleaner left alone is its heard words, so the
+    caller starts a run only for a session that has ended and been cleaned."""
+    if not agreed:
+        return []
+    async with db.guild(guild_id) as conn:
+        cur = await conn.execute(
+            "SELECT id, user_id, coalesce(text, heard) AS text FROM transcript_lines"
+            " WHERE guild_id = %s AND session_id = %s AND sidebar IS NULL AND NOT typed"
+            " AND NOT image AND topic <> 'off_topic' AND user_id = ANY(%s)"
+            " AND coalesce(text, heard) <> '' ORDER BY started_ms, id",
+            (guild_id, session_id, sorted(agreed)),
+        )
+        return [(int(r["id"]), int(r["user_id"]), str(r["text"])) for r in await cur.fetchall()]
