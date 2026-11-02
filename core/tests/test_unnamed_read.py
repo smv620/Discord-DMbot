@@ -81,7 +81,7 @@ class TheUnnamedRead(unittest.TestCase):
     def test_a_person_the_text_names_anywhere_is_never_a_second_entry(self) -> None:
         # The name comes AFTER the description: this read already ties the end to a named father.
         named = bg.Connection(
-            "Garrick Pell", "kin_of", "Roceran", "his father, Roceran, taught him", words="parent"
+            "Garrick Pell", "kin_of", "Hobb", "his father, Hobb, taught him", words="parent"
         )
         got, lost = run(
             [line("Garrick Pell", "mother", "stern ropemaker mother"),
