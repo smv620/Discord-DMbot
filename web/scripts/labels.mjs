@@ -157,7 +157,10 @@ export const siteButtons = [
 /** Buttons the site names before the bot has them: a held Help step written ahead of the code that
  * ships the button (#1958 for #1957). The test fails once core has the label, so the entry is
  * removed in the same change that sees it, and a typo here can't hide a wrong name for long. */
-export const pendingBotLabels = /** @type {{ label: string; issue: number }[]} */ ([]);
+export const pendingBotLabels = /** @type {{ label: string; issue: number }[]} */ ([
+  // The site says "Reputation" (the owner's word, #3177) before the bot's own label is out; the Discord half is CloudDev's.
+  { label: "🤝 Reputation", issue: 3344 },
+]);
 
 /** Discord's own controls, which the bot doesn't label. */
 export const discordControls = ["Save Changes", "Reset Token"];
