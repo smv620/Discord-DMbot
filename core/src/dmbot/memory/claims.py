@@ -20,7 +20,7 @@ from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 
-from dmbot.memory import evidence, forget_readings, kin, link, reputation_words
+from dmbot.memory import evidence, forget_readings, kin, link, place_words, reputation_words
 from dmbot.memory._changes import ALIASES, CLAIMS, ENTITIES, Changes
 from dmbot.memory.models import (
     CLAIM_CONFIRMED,
@@ -378,6 +378,10 @@ def place_relationship(
             False,
             feeling[1],
         )  # (both ways: a feeling is said once, from the subject)
+    # "works in", "grew up in" and the like are the place tie with a word (#3363), not new terms
+    located = onto.predicates.get("located_in")
+    if located is not None and located.status == "active" and place_words.way_of(text) is not None:
+        return located, False, ""
     known = resolve_relationship(onto, text)
     if known is not None:
         return known[0], known[1], ""
@@ -809,6 +813,14 @@ class ClaimStore:
         return Proposed(
             waiting, dropped, repeated, malformed, dict(why), len(new), tuple(new), joined, deferred
         )
+
+    @staticmethod
+    def _detail(predicate: str, claim: Claim) -> str:
+        """What a confirmed fact keeps as its detail: for the place tie, the one wording of the
+        word the table used ("lives in"), so two ways of saying it are one word (#3363)."""
+        if predicate == "located_in":
+            return place_words.canonical(claim.relationship) or claim.details
+        return claim.details
 
     @staticmethod
     def _row(
@@ -1249,7 +1261,7 @@ class ClaimStore:
                 # else: the card sets `detail` between the two names, so side notes can't go there.
                 relation, flags = await self._store.add_relation_in(
                     w, subject_id, term.key, object_id, confidence=1.0, status=CONFIRMED,
-                    detail=label or claim.details,
+                    detail=label or self._detail(term.key, claim),
                     from_session_at=claim.session_started_at,
                     secret=secret,
                 )  # fmt: skip

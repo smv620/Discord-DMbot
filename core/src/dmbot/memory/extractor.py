@@ -110,6 +110,12 @@ Rules for what counts as a claim:
    "enemy" as a relationship between two characters; two groups allied or at war stay "ally of"
    and "enemy of".
 
+7. Where a character, creature, group or item is tied to a place, the relationship is one of
+   these words: "lives in" ("lived in" for the past), "works in", "is kept in" (an item),
+   "comes from" (born or raised there), or "was last seen in" (anything else, or a visit). A
+   place inside a place, or an event held at a place, is "is in". Never use "is in" for someone
+   who can move.
+
 For each claim say how it was said:
 - "dm_said": the DM narrating, or the DM speaking as a character.
 - "player_said": a player's words or belief about the game world.

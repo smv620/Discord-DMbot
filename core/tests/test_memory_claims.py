@@ -301,6 +301,18 @@ class Stored(ConfirmedMemoryTest):
         )
         self.assertEqual(sentence(lookup, rel), "Bram is blood-bound to Hesper")  # type: ignore[arg-type]
 
+    async def test_a_place_word_is_the_place_tie_with_that_word_kept(self) -> None:
+        # (#3363) "works at" is no new relationship: it is `located_in` with its one wording
+        await self.propose(
+            said("Bram", "works at", "Veldmoor"), said("Bram", "was last seen in", "Chapel")
+        )
+        waiting = await self.claims.waiting(GUILD_A, self.c, opted_in=EVERYONE)
+        self.assertEqual(len(waiting), 2)
+        for claim in waiting:
+            await self.claims.confirm(GUILD_A, self.c, claim.id, opted_in={7})
+        got = {r.detail: r.predicate for r in await self.memory.relations(GUILD_A, self.c)}
+        self.assertEqual(got, {"works in": "located_in", "was last seen in": "located_in"})
+
     async def test_such_a_fact_and_its_label_survive_a_backup_and_restore(self) -> None:
         await self.add("Hesper", type="character")
         await self.propose(said("Bram", "is blood-bound to", "Hesper"))

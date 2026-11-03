@@ -202,6 +202,7 @@ class Fact:
     belief: bool = False  # what one character believes of the other, not a fact
     session: int | None = None  # the newest session it was in (for "most recent first")
     ended: bool = False  # said as "formerly ...", after the current ones of its category
+    subject_kind: str = ""  # the connection's first name's kind, so a place tie reads by it (#3363)
     # Both default to False: a fact the caller has not marked is never shown to a player.
     players_know: bool = False  # some player character knows it (the caller decides, via the gate)
     viewer_knows: bool = False  # the person who clicked has a character that knows it
@@ -274,7 +275,7 @@ def _wording(fact: Fact) -> str:
     if fact.kind == "kin_of":
         return fact.detail.strip() or "family"
     if fact.kind == "located_in":  # (by the word it says; never "lives there" for a sighting)
-        return place_words.summary_phrases(fact.detail)[0 if fact.outward else 1]
+        return place_words.summary_phrases(fact.detail, fact.subject_kind)[0 if fact.outward else 1]
     if fact.kind in _PHRASES:
         return _PHRASES[fact.kind][0 if fact.outward else 1]
     return fact.detail.strip()
