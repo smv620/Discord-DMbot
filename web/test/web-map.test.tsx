@@ -939,3 +939,55 @@ describe("Cluster by quest (#2992)", () => {
     expect(labels().filter((l) => l === "Find the Lost Bell")).toHaveLength(1); // the drawn quest and its names share one area
   });
 });
+
+describe("telling the page about a drag (#3324)", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("onDragging is true while a name is dragged and false when it is let go", () => {
+    withBox();
+    const onDragging = vi.fn();
+    draw({ onDragging });
+    drag(nodeOf("Garrick"), [150, 90]);
+    expect(onDragging.mock.calls).toEqual([[true], [false]]);
+  });
+
+  it("a tap does not call onDragging", () => {
+    withBox();
+    const onDragging = vi.fn();
+    draw({ onDragging });
+    fireEvent.pointerDown(nodeOf("Garrick"), { clientX: 300, clientY: 300, pointerId: 1 });
+    fireEvent.pointerUp(window, { clientX: 300, clientY: 300, pointerId: 1 });
+    expect(onDragging).not.toHaveBeenCalled();
+  });
+
+  it("a pointer the browser cancels ends the drag too", () => {
+    withBox();
+    const onDragging = vi.fn();
+    draw({ onDragging });
+    fireEvent.pointerDown(nodeOf("Garrick"), { clientX: 300, clientY: 300, pointerId: 1 });
+    fireEvent.pointerMove(window, { clientX: 330, clientY: 330, pointerId: 1 });
+    fireEvent.pointerCancel(window, { clientX: 330, clientY: 330, pointerId: 1 });
+    expect(onDragging.mock.calls).toEqual([[true], [false]]);
+  });
+
+  it("a second finger turns the drag into a pinch, which ends it", () => {
+    withBox();
+    const onDragging = vi.fn();
+    draw({ onDragging });
+    fireEvent.pointerDown(nodeOf("Garrick"), { clientX: 300, clientY: 300, pointerId: 1 });
+    fireEvent.pointerMove(window, { clientX: 330, clientY: 330, pointerId: 1 });
+    fireEvent.pointerDown(nodeOf("Mira"), { clientX: 200, clientY: 200, pointerId: 2 });
+    expect(onDragging.mock.calls).toEqual([[true], [false]]);
+  });
+
+  it("onDragging(false) is called if the map goes away mid-drag", () => {
+    withBox();
+    const onDragging = vi.fn();
+    const { unmount } = draw({ onDragging });
+    fireEvent.pointerDown(nodeOf("Garrick"), { clientX: 300, clientY: 300, pointerId: 1 });
+    fireEvent.pointerMove(window, { clientX: 330, clientY: 330, pointerId: 1 });
+    expect(onDragging.mock.calls).toEqual([[true]]);
+    unmount();
+    expect(onDragging.mock.calls.at(-1)).toEqual([false]);
+  });
+});

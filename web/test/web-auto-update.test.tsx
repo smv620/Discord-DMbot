@@ -356,3 +356,64 @@ describe("backing off while nothing changes (#3294, until a graph version exists
     expect(reads()).toBe(after + 1); // the quick pace again, not 30 s
   });
 });
+
+describe("not redrawing under a hand (#3324)", () => {
+  afterEach(() => vi.unstubAllGlobals());
+  it("a read is skipped while a name is being dragged and made after it is let go", async () => {
+    // Reduced motion places the names at once, so there are names to take hold of in the test.
+    vi.stubGlobal("matchMedia", (q: string) => ({ matches: q.includes("reduce"), addEventListener() {}, removeEventListener() {} }));
+    vi.spyOn(Math, "random").mockReturnValue(0.5);
+    const { api, reads } = counting(false);
+    await ready(api);
+    await tick(1000);
+    const node = document.querySelector(".web-node") as SVGGElement;
+    const before = reads();
+    fireEvent.pointerDown(node, { clientX: 300, clientY: 300, pointerId: 1 });
+    fireEvent.pointerMove(window, { clientX: 340, clientY: 340, pointerId: 1 });
+    await tick(11000);
+    expect(reads()).toBe(before);
+    fireEvent.pointerUp(window, { clientX: 340, clientY: 340, pointerId: 1 });
+    await tick(6000);
+    expect(reads()).toBeGreaterThan(before);
+  });
+
+  it("a read that was on its way when the drag began does not redraw the map under the hand", async () => {
+    vi.stubGlobal("matchMedia", (q: string) => ({ matches: q.includes("reduce"), addEventListener() {}, removeEventListener() {} }));
+    vi.spyOn(Math, "random").mockReturnValue(0.5);
+    const base = counting(false);
+    // The web changes (a late name appears) from the read that is held onwards. The held read is held until the
+    // test lets it go, so it is still in flight when the drag starts.
+    let grown = false;
+    let release: (() => void) | null = null;
+    let holding = false;
+    const late = (got: WebGraph): WebGraph => ({ ...got, nodes: [...got.nodes, { id: "late", name: "Late Arrival", kind: "npc" }] });
+    const api: AccountApi = {
+      ...base.api,
+      async webGraph(ref, query) {
+        if (!holding && base.reads() >= 2) {
+          holding = true;
+          const got = await base.api.webGraph!(ref, query);
+          await new Promise<void>((resolve) => (release = resolve));
+          return late(got);
+        }
+        const got = await base.api.webGraph!(ref, query);
+        return grown ? late(got) : got;
+      },
+    };
+    await ready(api);
+    await tick(1000);
+    await tick(12000); // the next reads run; the one after them is held
+    expect(holding).toBe(true);
+    fireEvent.pointerDown(document.querySelector(".web-node") as SVGGElement, { clientX: 300, clientY: 300, pointerId: 1 });
+    fireEvent.pointerMove(window, { clientX: 340, clientY: 340, pointerId: 1 });
+    grown = true;
+    await act(async () => {
+      release!();
+    });
+    await tick(100);
+    expect(screen.queryByText("Late Arrival")).toBeNull();
+    fireEvent.pointerUp(window, { clientX: 340, clientY: 340, pointerId: 1 });
+    await tick(6000);
+    expect(screen.getAllByText("Late Arrival").length).toBeGreaterThan(0);
+  });
+});
