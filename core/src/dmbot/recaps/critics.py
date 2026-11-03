@@ -281,6 +281,9 @@ class Loop:
     # The motive check's result for the draft being read, kept so a failed PlotBot call does not
     # make the next try pay for it again; None until it has run.
     motives: tuple[Change, ...] | None = None
+    # PlotBot's changes for the draft being read, kept once it has answered so that a failed
+    # coverage check (#3328) does not make the next try pay for PlotBot again; None until then.
+    plot: tuple[Change, ...] | None = None
     # While no draft can be read, the recap waits for its check (the pipeline's `_hold`): how many
     # waits so far (the backoff), when the first began, and whether the DM was told that it could
     # not be finished (once). All cleared when a reading gets through.
@@ -306,6 +309,7 @@ class Loop:
             "notes": list(self.notes),
             "cut": self.cut,
             "motives": None if self.motives is None else [c.to_json() for c in self.motives],
+            "plot": None if self.plot is None else [c.to_json() for c in self.plot],
             "waits": self.waits,
             "since": self.since,
             "told": self.told,
@@ -328,6 +332,10 @@ def loop_from_json(raw: object) -> Loop:
     motives: tuple[Change, ...] | None = None
     if isinstance(motives_raw, list):
         motives = tuple(c for c in map(change_from_json, motives_raw) if c is not None)
+    plot_raw = raw.get("plot")
+    plot: tuple[Change, ...] | None = None
+    if isinstance(plot_raw, list):
+        plot = tuple(c for c in map(change_from_json, plot_raw) if c is not None)
     return Loop(
         raw["round"] if type(raw.get("round")) is int else 0,
         pending,
@@ -336,6 +344,7 @@ def loop_from_json(raw: object) -> Loop:
         tuple(str(n) for n in notes) if isinstance(notes, list) else (),
         raw["cut"] if type(raw.get("cut")) is int else 0,
         motives,
+        plot,
         raw["waits"] if type(raw.get("waits")) is int and raw["waits"] >= 0 else 0,
         raw["since"] if type(raw.get("since")) is int and raw["since"] >= 0 else 0,
         raw.get("told") is True,

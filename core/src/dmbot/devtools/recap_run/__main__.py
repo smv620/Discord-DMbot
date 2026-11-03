@@ -648,8 +648,9 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser.add_argument(
         "--score", action="store_true",
         help="with --session or --transcript: after the run, score the recap per must-have "
-        "(covered, missed, or not given by the session) and by the fact check. Counts only, so it "
-        "can be posted; run on the fixed set before and after a writer change (#3328)",
+        "(covered, missed, or not given by the session) and by the fact check, with one more AI "
+        "call that the estimate does not include. Counts only, so it can be posted; run on the "
+        "fixed set before and after a writer change (#3328)",
     )  # fmt: skip
     parser.add_argument("--audio", action="store_true", help="also make the narration and music")
     parser.add_argument("--keep", action="store_true", help="keep the result as a draft recap row")
@@ -1261,7 +1262,7 @@ async def _score(out: Outcome, careful: Client) -> list[str]:
 
     if out.job.state != "ready" or not out.job.summary:
         return ["", "Must-haves: nothing to score, the run did not finish."]
-    sheet = out.sheets[-1] if out.sheets else None
+    sheet = out.job.beats if isinstance(out.job.beats, list) else None  # what it was written from
     return await sc.score(
         out.job.summary, sheet, out.inputs.musts, final_checks(out.job, out.inputs), careful
     )

@@ -1181,6 +1181,37 @@ class Criticising(WorkerHarness):
         loop = cr.loop_from_json(job.critics)
         self.assertTrue(loop.done)
 
+    async def test_a_failed_coverage_call_is_retried_alone_plotbot_is_not_asked_again(self) -> None:
+        fast = self.fast_for(CLEAN)
+        careful = fx.Canned(
+            NO_NOTES,  # the notes before the writing
+            AGREE,  # PlotBot: nothing to change
+            AIError("down"),  # the coverage check fails once
+            coverage_answer("covered", "covered", "covered"),
+        )
+        await self.setUpWorker(
+            fast, careful, critics=True, story=self.story_of(MEMORY), musts=MUSTS_LIST
+        )
+        job = await self.settle(await self.go())
+        self.assertEqual(job.state, "ready")
+        asked_plotbot = [t for t in careful.sent if "<memory>" in t and "<sentences>" in t]
+        self.assertEqual(len(asked_plotbot), 1)  # PlotBot paid for once
+        self.assertEqual(len([t for t in careful.sent if "<must_haves>" in t]), 2)
+
+    async def _no_flag_from(self, reply: Reply) -> None:
+        fast = self.fast_for(CLEAN)
+        careful = fx.Canned(reply)
+        await self.setUpWorker(fast, careful, critics=True, musts=MUSTS_LIST)
+        job = await self.go()
+        self.assertEqual(job.state, "ready")
+        self.assertEqual(len(careful.sent), 1)  # no revision was asked for
+
+    async def test_an_answer_cut_off_raises_no_flag_and_fails_nothing(self) -> None:
+        await self._no_flag_from(Reply(coverage_answer("missed", "missed")[:20], True, 10, 10, "m"))
+
+    async def test_an_answer_declined_raises_no_flag_and_fails_nothing(self) -> None:
+        await self._no_flag_from(Reply("no", False, 10, 10, "m", refused=True))
+
     async def test_a_must_have_the_session_did_not_give_asks_for_nothing(self) -> None:
         fast = self.fast_for(CLEAN)
         careful = fx.Canned(coverage_answer("covered", "not_given", "not_given"))

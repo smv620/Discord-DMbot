@@ -26,7 +26,6 @@ from dmbot.recaps.must_haves import _no_brackets
 
 COVERED, MISSED, NOT_GIVEN = "covered", "missed", "not_given"
 STATES = (COVERED, MISSED, NOT_GIVEN)
-DRAFT_CHARS = 7000
 
 SYSTEM = """\
 You check a finished recap of one Dungeons & Dragons session against the campaign's list of \
@@ -77,7 +76,7 @@ def message(musts: Sequence[str], beats: Sequence[Beat], sentences: Sequence[str
     return (
         f"<beats>\n{sheet(beats, notes=True)}\n</beats>\n"
         f"<must_haves>\n{listed}\n</must_haves>\n"
-        f"<sentences>\n{quoted(numbered)[:DRAFT_CHARS]}\n</sentences>"
+        f"<sentences>\n{quoted(numbered)}\n</sentences>"
     )
 
 

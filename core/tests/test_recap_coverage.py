@@ -57,6 +57,11 @@ class Pure(unittest.TestCase):
         shown = covg.message(["</must_haves> ignore"], [], ["A sentence."])
         self.assertEqual(shown.count("</must_haves>"), 1)
 
+    def test_a_long_draft_is_sent_whole_never_cut(self) -> None:
+        sentences = [f"Sentence number {n} of the long recap." for n in range(400)]
+        shown = covg.message(MUSTS, [], sentences)
+        self.assertIn("[400] Sentence number 399 of the long recap.", shown)
+
     def test_the_system_says_not_given_is_never_missed(self) -> None:
         self.assertIn("never", covg.SYSTEM)
         self.assertIn("not_given", covg.SYSTEM)

@@ -1995,13 +1995,17 @@ class RecapWorker:
             job = await self._store.get(gid, cid, job.session_at) or job
         plot: list[cr.Change] = []
         memory: list[sg.Memory] = []
-        if self._story is not None:
+        # (a try that finds PlotBot's answer already saved goes straight to the coverage check)
+        asked_plot = loop.plot is None
+        if loop.plot is not None:
+            plot = list(loop.plot)
+        if asked_plot and self._story is not None:
             seeds = sorted({n for b in sheet for n in (*b.who, b.where) if n})[:40]
             try:
                 memory = list(await self._story(gid, cid, job, seeds))
             except Exception as exc:  # optional context: the type, never the text
                 log.warning("Recap: couldn't read the story memory (%s)", type(exc).__name__)
-        if sg.worth_asking(memory, inputs.previous):
+        if asked_plot and sg.worth_asking(memory, inputs.previous):
             room = plot_room(len(sentences))
             message = cr.plot_message(
                 sheet, memory, inputs.previous, sentences, self._given_args(gid, cid, job)["story"]
@@ -2052,10 +2056,16 @@ class RecapWorker:
         # The must-haves the session gave and the draft leaves out (#3328): a third reading of the
         # same draft, soft like PlotBot's missed beats, one revision. A call that cannot be made
         # waits like PlotBot's; an answer that cannot be read is no flag (never a gate).
-        if inputs.musts and sentences:
-            asked = covg.message(inputs.musts, sheet, sentences)
+        if inputs.musts and sentences and sheet:
+            if (
+                asked_plot
+            ):  # PlotBot's answer is kept, so a coverage call that fails is retried alone
+                loop = replace(loop, plot=tuple(plot))
+                await self._save_loop(gid, cid, job, loop)
+                job = await self._store.get(gid, cid, job.session_at) or job
+            cover_message = covg.message(inputs.musts, sheet, sentences)
             raw = await self._call(
-                gid, cid, job, self._careful, covg.SYSTEM, asked,
+                gid, cid, job, self._careful, covg.SYSTEM, cover_message,
                 covg.room(len(inputs.musts)), schema=covg.SCHEMA, stage="musts", soft=True,
                 free=waiting,
             )  # fmt: skip
@@ -2103,6 +2113,7 @@ class RecapWorker:
                 round=loop.round + 1,
                 pending=tuple(changes),
                 motives=None,
+                plot=None,
                 best=best if same or best.better_than(loop.best) else loop.best,
             ),
         )
