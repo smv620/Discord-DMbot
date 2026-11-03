@@ -560,6 +560,8 @@ export default function Import({
                 {
                   userId: s.suggested.userId,
                   name: s.suggested.name.trim() || s.label,
+                  // The API says when the suggested member said no (#3305 PR 1).
+                  ...(s.blocked ? { blocked: s.blocked } : {}),
                 },
               ]
             : [],
@@ -1049,7 +1051,7 @@ export default function Import({
                   {folded.map((s) => {
                     const chosen = mapping[s.label] ?? (confirmOn ? "" : DROP);
                     const who = known[chosen];
-                    const existing = preview?.files.flatMap((f) => f.speakers).find((x) => x.label === s.label)?.existing;
+                    const existing = preview?.files.flatMap((f) => f.speakers).find((x) => x.label === s.label)?.speaker;
                     return (
                       <li key={s.label}>
                         <span class="campaign-name">{s.label}</span>
