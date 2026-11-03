@@ -785,6 +785,8 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   // The must-haves (#3329): DMbot's own thirteen until the DM saves a list of their own (`own` set).
   const mustsNow: { own: string[] | null } = { own: null };
   const styleNow = { examples: [{ id: "11", text: "The silver lock clicked and Mira let out her breath." }] as { id: string; text: string }[], notes: [] as { id: string; text: string }[] };
+  let speakersNow = [{ id: "-1", name: "Old Pip", lines: 12 }, { id: "-2", name: "The Ferryman", lines: 3 }];
+  const removals = new Map<string, { speaker: string; looks: number; at: number; lines: number }>();
   const styleChanges = new Map<string, { action: RecapStyleAction["action"]; arg: string; looks: number; at: number }>();
   let putBackNow = false; // session 2's left-out stretch has been put back by a DM (#2568)
   const myEmail: MyEmail = {
@@ -2052,6 +2054,46 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       const id = String(styleChanges.size + 1).padStart(32, "0");
       styleChanges.set(id, { action, arg, looks: 0, at: Math.floor(Date.now() / 1000) });
       return { id };
+    },
+    // Pretend removal of a speaker without Discord's lines (#3305 PR 2): the removal moves on by the number of looks.
+    async campaignSpeakers(ref) {
+      calls.push(`campaignSpeakers:${ref}`);
+      await reachable();
+      signedIn();
+      return speakersNow.map((s) => ({ ...s }));
+    },
+    async removeSpeaker(ref, speaker) {
+      calls.push(`removeSpeaker:${ref}:${speaker}`);
+      await reachable();
+      signedIn();
+      const found = speakersNow.find((s) => s.id === speaker);
+      if (!found) throw new ApiError("not-found");
+      if (found.lines === 0) throw new ApiError("nothing");
+      const id = String(removals.size + 1).padStart(32, "0");
+      removals.set(id, { speaker, looks: 0, at: Math.floor(Date.now() / 1000), lines: found.lines });
+      return { id };
+    },
+    async speakerRemoval(ref, id) {
+      calls.push(`speakerRemoval:${ref}:${id}`);
+      await reachable();
+      signedIn();
+      const r = removals.get(id);
+      if (!r) throw new ApiError("not-found");
+      r.looks += 1;
+      const now = Math.floor(Date.now() / 1000);
+      const done = r.looks >= 2;
+      if (done) speakersNow = speakersNow.filter((s) => s.id !== r.speaker);
+      return {
+        stage: "removing",
+        state: done ? "done" : "running",
+        startedAt: r.at,
+        updatedAt: now,
+        serverNow: now,
+        reason: null,
+        speaker: r.speaker,
+        lines: done ? r.lines : null,
+        sessions: done ? 2 : null,
+      };
     },
     async saveRecapMusts(ref, lines) {
       calls.push(`saveRecapMusts:${ref}:${lines.length}`);

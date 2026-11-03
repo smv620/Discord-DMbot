@@ -22,6 +22,7 @@ import {
 import CampaignNav from "./CampaignNav";
 import FixLine from "./FixLine";
 import SessionNotesPanel from "./SessionNotes";
+import SpeakerRemovalPanel from "./SpeakerRemoval";
 import { FIX_LINE_LIVE } from "../content/fix-line-switch";
 import { THEATRE_DOWNLOAD_LIVE } from "../content/theatre-download-switch";
 
@@ -209,6 +210,7 @@ function Sessions({ api, campaignRef }: { api: AccountApi; campaignRef: string }
             </ul>
           )}
           <SessionNotesPanel key={campaignRef} api={api} campaignRef={campaignRef} />
+          <SpeakerRemovalPanel key={`removal-${campaignRef}`} api={api} campaignRef={campaignRef} />
         </>
       )}
     </Shell>
