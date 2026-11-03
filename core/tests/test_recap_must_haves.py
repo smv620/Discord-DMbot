@@ -42,7 +42,7 @@ class TheStore(DatabaseTest):
 
     def test_the_five_plainer_default_lines_are_the_owners_choice(self) -> None:
         # (owner, 2026-11-03, #3328): plain words for a DM; each keeps its group
-        by_group = {}
+        by_group: dict[str, list[str]] = {}
         for d in must_haves.defaults():
             by_group.setdefault(d.group, []).append(d.text)
         self.assertTrue(any(t.startswith("Scene changes:") for t in by_group["travel"]))
