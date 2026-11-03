@@ -1041,6 +1041,15 @@ export interface ImportFileIn {
   name: string;
   text: string;
 }
+/** A member who said no to being recorded (#3306): `opted-out` pressed Stop recording me, `declined` turned DMbot down.
+ * Their lines can never be ticked in; the page shows them greyed out. */
+export type ImportBlocked = "opted-out" | "declined";
+/** The consent wording an uploader confirms for the people they tick (#3306): the current version and the Discord
+ * request's own lines, one sentence or bullet each. The page shows them as they are and sends the version back. */
+export interface ImportConsent {
+  version: number;
+  lines: string[];
+}
 export interface ImportSuggestion {
   userId: string;
   name: string;
@@ -1052,6 +1061,8 @@ export interface ImportSpeaker {
   label: string;
   lines: number;
   suggested: ImportSuggestion | null;
+  /** A speaker without Discord that the campaign already has under this name (#3306); null or missing otherwise. */
+  existing?: { userId: string; name: string } | null;
 }
 export interface ImportPreviewFile {
   name: string;
@@ -1086,6 +1097,8 @@ export interface ImportMember {
   /** Whether they are recorded now: lines of a member who has not agreed are dropped. Missing when
    * only a suggestion has named them: Check says what is dropped. */
   agreed?: boolean;
+  /** Set when they said no to being recorded (#3306); such a member can't be ticked in. */
+  blocked?: ImportBlocked | null;
 }
 export interface ImportDropped {
   not_matched: number;
@@ -1097,7 +1110,7 @@ export interface ImportCheckFile {
   name: string;
   error: string | null;
   leftOut: number;
-  speakers: { label: string; kept: number; dropped: ImportDropped }[];
+  speakers: { label: string; kept: number; dropped: ImportDropped; confirmed?: boolean }[];
 }
 export interface ImportCheck {
   files: ImportCheckFile[];
@@ -1105,7 +1118,11 @@ export interface ImportCheck {
 }
 /** The mapping is `{ label: userId | "drop" }`; `order` starts at 1. */
 export interface ImportPlan {
+  /** `label -> userId | "drop" | "new"`: `"new"` is a speaker without Discord, kept by name (#3306). */
   mapping: Record<string, string>;
+  /** The labels the uploader ticked ("I confirm … agreed to this"), sent with the wording's `consentVersion` (#3306). */
+  confirmed?: string[];
+  consentVersion?: number;
   /** `writeRecap` is sent only as `true`, and only for a session the DM ticked (#2221); the API
    * counts nothing else. */
   sessions: { file: string; date: string; order: number; writeRecap?: true }[];
@@ -2017,7 +2034,10 @@ export type ApiErrorKind =
   | "waiting-already" // the belief is already waiting to be kept (#2412)
   | "plot-is-known" // the secret plot is already known (#2412)
   | "already-known" // the belief is already kept (#2412)
-  | "stale" // the recap changed since the page read it, so its scenes were read again (#2577)
+  | "stale" // the recap (or the consent wording) changed since the page read it (#2577, #3306)
+  | "said-no" // a member who said no to being recorded can't be ticked in (#3306)
+  | "not-ticked" // a speaker was chosen for keeping without the uploader's tick (#3306)
+  | "bot-picked" // a bot can't be kept (#3306)
   | "not-available" // the meaning search can't be used for this campaign yet (no vectors made, or switched off) (#2733)
   | "bad-present" // a name that isn't one of the campaign's characters (#2577)
   | "not-in-server" // an NPC page is for the people in the campaign's Discord server (#2266)
@@ -2598,7 +2618,10 @@ export interface AccountApi {
     files: ImportFileIn[],
     mapping: Record<string, string>,
     links?: string[],
+    confirm?: { confirmed: string[]; consentVersion: number },
   ): Promise<ImportCheck>;
+  /** The consent wording the uploader confirms for people they tick in (#3306). */
+  importConsent?(ref: string): Promise<ImportConsent>;
   importStart?(
     ref: string,
     files: ImportFileIn[],
@@ -2685,6 +2708,9 @@ export const errorKinds: Record<string, ApiErrorKind> = {
   cannot_write: "cannot-write",
   queue_full: "queue-full",
   stale: "stale",
+  blocked: "said-no",
+  not_ticked: "not-ticked",
+  bot: "bot-picked",
   bad_reading: "bad-reading",
   unknown_character: "unknown-character",
   unknown_liar: "unknown-liar",
@@ -2841,7 +2867,7 @@ export interface ApiHelpers {
 
 /** The calls of each area, by name: what `httpApi` stands in for until the area's file is loaded. */
 export const ACCOUNT_METHODS = ["emailSignInRequest", "emailSignInUse", "offerHandover", "deleteCampaign", "restoreStage", "restorePart", "restoreGo", "restoreStatus", "restoreCancel", "campaignBackup", "takeBackHandover", "handoverLook", "handoverAccept", "handoverDecline", "removeDiscordAccount", "getMoveCode", "myEmail", "changeEmail", "confirmEmail", "cancelEmailChange", "sendSupport", "mySupport", "supportThread", "signOutEverywhere", "startTryIt", "checkoutUrl", "billingPortalUrl", "renewPlan", "extraHoursUrl", "downloadExport", "characters", "linkServer", "acceptOffer", "declineOffer", "withdrawOffer", "stopRecording", "myLines", "deleteMyLines", "myLinesStatus", "requestDelete", "confirmDelete"] as const satisfies readonly (keyof AccountApi)[];
-export const RECAPS_METHODS = ["recapAudioUrl", "recaps", "pastSessions", "sessionReport", "makeSessionReport", "answerReport", "setBeatPresent", "makeRecap", "addRecap", "recapList", "recap", "saveRecap", "approveRecap", "approveUnchecked", "recapAudioLinks", "recapChoices", "setRecapChoice", "askRecapAudioAgain", "plotCheck", "answerPlotIssue", "plotChatSend", "plotChat", "decidePlotProposal", "recapAudioRemake", "sendFix", "fixResult", "sendVoice", "voiceResult", "rewriteWith", "importPreview", "importMembers", "importCheck", "importStart", "importProgress", "importClock", "shareRecap", "publicRecap", "decideRecap"] as const satisfies readonly (keyof AccountApi)[];
+export const RECAPS_METHODS = ["recapAudioUrl", "recaps", "pastSessions", "sessionReport", "makeSessionReport", "answerReport", "setBeatPresent", "makeRecap", "addRecap", "recapList", "recap", "saveRecap", "approveRecap", "approveUnchecked", "recapAudioLinks", "recapChoices", "setRecapChoice", "askRecapAudioAgain", "plotCheck", "answerPlotIssue", "plotChatSend", "plotChat", "decidePlotProposal", "recapAudioRemake", "sendFix", "fixResult", "sendVoice", "voiceResult", "rewriteWith", "importPreview", "importMembers", "importConsent", "importCheck", "importStart", "importProgress", "importClock", "shareRecap", "publicRecap", "decideRecap"] as const satisfies readonly (keyof AccountApi)[];
 export const NAMES_METHODS = ["namesFixed", "undoNameFix", "campaignNames", "suggestSaidAs", "respellFromVoice", "saveSaidAs", "nameChecks", "answerNameCheck", "npcPage", "saveNpcNote", "myNpcNotes", "deleteMyNpcNotes", "allNames", "smartNames", "changeName", "nameThem", "webGraph", "webSize", "webOverview", "webFind", "webNodeSummary", "webViewers", "confirmKinds", "confirmUndo", "confirmAnswer", "webWaiting", "answerWaiting", "webReadings", "answerReading", "webPeek", "webReveal", "changeWebLink"] as const satisfies readonly (keyof AccountApi)[];
 export const CAMPAIGN_METHODS = ["transcriptCampaigns", "transcriptSessions", "transcript", "transcriptFile", "transcriptScript", "transcriptStretch", "transcriptPutBack", "transcriptLeaveOut", "sessionNotesList", "sessionNotes", "pictures", "pictureAction", "setCampaignSetting", "campaignOptionalRules", "campaignGameMasters", "campaignSheets", "chooseSheet", "sheetAnswer", "fixTranscriptLine", "fixAnswer", "campaignGameMasterCandidates", "campaignSettingAnswer", "timeline", "sharedRules", "houseRuleCampaigns", "houseRules", "ruleSharing", "chooseRuleSharing", "ruleSharingAnswer", "houseRulesFile", "improvement", "setImprovement", "homebrewCampaigns", "homebrew", "homebrewFile", "campaignPage", "loreAdd", "loreRead", "recapStyle", "changeRecapStyle", "recapStyleAction", "houseFile", "houseFileAdd"] as const satisfies readonly (keyof AccountApi)[];
 

@@ -10,7 +10,9 @@ import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import {
   IMPORT_MAX_FILES,
   IMPORT_MAX_MB,
+  IMPORT_CONFIRM_LIVE,
   IMPORT_LIVE,
+  confirmWords,
   importPage as words,
 } from "../content/import-words";
 import { RECAPS_LIVE } from "../content/recap-words";
@@ -18,6 +20,7 @@ import {
   ApiError,
   type AccountApi,
   type ImportCheck,
+  type ImportConsent,
   type ImportFileIn,
   type ImportMember,
   type ImportPreview,
@@ -36,6 +39,8 @@ export function campaignFromPath(path: string): string | null {
 }
 
 const DROP = "drop";
+/** A speaker without Discord, kept by name (#3306). */
+const NEW_SPEAKER = "new";
 const POLL_MS = 3000;
 /** While every unfinished session is only waiting for the DM's answers about names, nothing on the
  * page changes until they answer, so ask once a minute instead (#2230). */
@@ -181,6 +186,12 @@ export default function Import({
   const [known, setKnown] = useState<Record<string, ImportMember>>({});
   const [query, setQuery] = useState("");
   const [mapping, setMapping] = useState<Record<string, string>>({});
+  // Consent confirmed per speaker (#3306): the words people agree to, as the API gives them, and the labels ticked.
+  const [consent, setConsent] = useState<ImportConsent | null>(null);
+  const [consentFailed, setConsentFailed] = useState(false);
+  const [ticks, setTicks] = useState<Record<string, boolean>>({});
+  const confirmOn = IMPORT_CONFIRM_LIVE && !!api.importConsent;
+  const consentSeq = useRef(0);
   const [check, setCheck] = useState<ImportCheck | null>(null);
   const [dates, setDates] = useState<Record<string, string>>({});
   const [guessed, setGuessed] = useState<Record<string, boolean>>({});
@@ -212,6 +223,7 @@ export default function Import({
   const fail = (error: unknown): void => {
     const kind = error instanceof ApiError ? error.kind : "server";
     if (kind === "signed-out") setSignedOut(true);
+    void wordingChanged(error); // (the consent words changed since they were read: read them again and ask for the ticks again)
     // The message is announced by its role="alert"; moving focus too would read it twice.
     // A doc can stop opening after Preview (sharing turned off), so "the files" is the wrong advice.
     const key = kind === "bad-files" && sentLinks.length > 0 ? "bad-files-docs" : kind;
@@ -366,6 +378,10 @@ export default function Import({
     setCheck(null);
     setOrder([]);
     setMapping({});
+    consentSeq.current++;
+    setConsent(null);
+    setConsentFailed(false);
+    setTicks({});
     setDates({});
     setGuessed({});
     setKnown({});
@@ -524,8 +540,10 @@ export default function Import({
       const start: Record<string, string> = {};
       for (const f of good)
         for (const s of f.speakers)
-          start[s.label] ??= s.suggested?.userId ?? DROP;
+          // With confirming on, a name nobody suggested waits for a choice (the uploader must decide for every speaker).
+          start[s.label] ??= s.suggested?.userId ?? (confirmOn ? "" : DROP);
       setMapping(start);
+      if (confirmOn && api.importConsent) await loadConsent();
       setDates(
         Object.fromEntries(good.map((f) => [f.name, f.suggestedDate ?? ""])),
       );
@@ -570,10 +588,58 @@ export default function Import({
   const sentFiles = (): ImportFileIn[] =>
     texts.filter((t) => order.includes(t.name));
 
+  // The words people agree to are read fresh each time: a stale answer from the API means they changed (#3306).
+  const loadConsent = async (): Promise<void> => {
+    const mine = ++consentSeq.current; // a late answer after the files changed is ignored
+    try {
+      const got = await api.importConsent!(ref);
+      if (mine !== consentSeq.current) return;
+      setConsent(got);
+      setConsentFailed(false);
+    } catch {
+      if (mine !== consentSeq.current) return;
+      setConsent(null);
+      setConsentFailed(true);
+    }
+  };
+  /** The wording changed since it was read (`stale`): show the new words, ask for the ticks again, and make Check run again. */
+  const wordingChanged = async (error: unknown): Promise<void> => {
+    if (confirmOn && error instanceof ApiError && error.kind === "stale") {
+      setTicks({});
+      setCheck(null);
+      await loadConsent();
+    }
+  };
+
+  /** Does this choice need the uploader's tick? A speaker without Discord, or a member who hasn't agreed. */
+  const needsTick = (to: string): boolean => {
+    if (!confirmOn) return false;
+    if (to === NEW_SPEAKER) return true;
+    if (to === "" || to === DROP) return false;
+    // A member whose state isn't known yet needs the tick too (it goes away if they turn out to have agreed).
+    const m = known[to];
+    return m?.agreed !== true && !m?.blocked;
+  };
+  const blockedChoice = (to: string): boolean => confirmOn && !!known[to]?.blocked;
+  /** Everything the plan sends about confirming: the ticked labels that need one, with the wording's version. */
+  const confirmation = (): { confirmed: string[]; consentVersion: number } | undefined => {
+    if (!confirmOn || !consent) return undefined;
+    const confirmed = folded.filter((s) => needsTick(mapping[s.label] ?? "") && ticks[s.label]).map((s) => s.label);
+    return confirmed.length > 0 ? { confirmed, consentVersion: consent.version } : undefined;
+  };
+  /** Every speaker has a choice, nobody who said no is chosen, and every choice that needs a tick has one. */
+  const ready =
+    !confirmOn ||
+    (consent !== null &&
+      folded.every((s) => {
+        const to = mapping[s.label] ?? "";
+        return to !== "" && !blockedChoice(to) && (!needsTick(to) || ticks[s.label] === true);
+      }));
+
   const doCheck = (): Promise<void> =>
     run(async () => {
       if (!api.importCheck) return;
-      setCheck(await api.importCheck(ref, sentFiles(), mapping, sentLinks));
+      setCheck(await api.importCheck(ref, sentFiles(), mapping, sentLinks, confirmation()));
     });
 
   const move = (name: string, by: -1 | 1): void =>
@@ -608,6 +674,7 @@ export default function Import({
         sentFiles(),
         {
           mapping,
+          ...(confirmation() ?? {}),
           sessions: order.map((file, i) => ({
             file: sentName(file),
             date: dates[file] ?? "",
@@ -950,10 +1017,35 @@ export default function Import({
                 <p class="muted small" id="import-find-hint">
                   {words.findHint}
                 </p>
+                {confirmOn && (
+                  <div class="note" role="group" aria-labelledby="import-consent">
+                    <h3 id="import-consent">{confirmWords.heading}</h3>
+                    <p class="small">{confirmWords.lead}</p>
+                    {consent ? (
+                      <ul class="small">
+                        {consent.lines.map((line) => (
+                          <li key={line}>{line}</li>
+                        ))}
+                      </ul>
+                    ) : (
+                      consentFailed && (
+                        <>
+                          <p class="note bad" role="alert">
+                            {confirmWords.loadFailed}
+                          </p>
+                          <button type="button" class="button secondary" onClick={() => void loadConsent()}>
+                            {confirmWords.retry}
+                          </button>
+                        </>
+                      )
+                    )}
+                  </div>
+                )}
                 <ul class="campaigns">
                   {folded.map((s) => {
-                    const chosen = mapping[s.label] ?? DROP;
+                    const chosen = mapping[s.label] ?? (confirmOn ? "" : DROP);
                     const who = known[chosen];
+                    const existing = preview?.files.flatMap((f) => f.speakers).find((x) => x.label === s.label)?.existing;
                     return (
                       <li key={s.label}>
                         <span class="campaign-name">{s.label}</span>
@@ -965,21 +1057,53 @@ export default function Import({
                         </span>
                         <select
                           aria-label={`${s.label}: ${words.matchHeading}`}
+                          aria-invalid={confirmOn && blockedChoice(chosen) ? true : undefined}
                           value={chosen}
                           onChange={(e) => {
                             const value = (e.target as HTMLSelectElement).value;
                             setCheck(null);
+                            // A tick belongs to the choice it was made for.
+                            setTicks((now) => ({ ...now, [s.label]: false }));
                             setMapping((now) => ({ ...now, [s.label]: value }));
                           }}
                         >
+                          {confirmOn && chosen === "" && (
+                            <option value="" disabled>
+                              {confirmWords.choose}
+                            </option>
+                          )}
                           <option value={DROP}>{words.leaveOut}</option>
+                          {confirmOn && <option value={NEW_SPEAKER}>{confirmWords.notInDiscord}</option>}
                           {memberOptions.map((m) => (
-                            <option key={m.userId} value={m.userId}>
-                              {label(m)}
+                            <option key={m.userId} value={m.userId} disabled={confirmOn && !!m.blocked}>
+                              {confirmOn && m.blocked ? confirmWords.blockedOption(m.name) : label(m)}
                             </option>
                           ))}
                         </select>
-                        {who && who.agreed === false && (
+                        {existing && (
+                          <span class="small" role="note">
+                            {confirmWords.sameAs(existing.name)}
+                          </span>
+                        )}
+                        {confirmOn && who?.blocked && (
+                          <span class="small" role="note">
+                            {confirmWords.saidNo(who.name)}
+                          </span>
+                        )}
+                        {needsTick(chosen) && (
+                          <label class="small">
+                            <input
+                              type="checkbox"
+                              checked={ticks[s.label] === true}
+                              onChange={(e) => {
+                                setCheck(null);
+                                setTicks((now) => ({ ...now, [s.label]: (e.target as HTMLInputElement).checked }));
+                              }}
+                            />{" "}
+                            {confirmWords.tick(chosen === NEW_SPEAKER ? s.label : (who?.name ?? s.label))}
+                          </label>
+                        )}
+                        {who && who.agreed === false && !confirmOn && (
                           <span class="small" role="note">
                             {words.droppedReason.not_agreed}
                           </span>
@@ -991,11 +1115,17 @@ export default function Import({
                 <button
                   type="button"
                   class="button secondary"
-                  disabled={busy}
+                  disabled={busy || !ready}
+                  aria-describedby={!ready ? "import-choose-all" : undefined}
                   onClick={() => void doCheck()}
                 >
                   {words.checkButton}
                 </button>
+                {!ready && (
+                  <p class="small" id="import-choose-all">
+                    {confirmWords.chooseAll}
+                  </p>
+                )}
                 {/* A live region that is always there, so the result is announced when it fills in. */}
                 <div role="status" aria-live="polite">
                   {check && (
@@ -1042,6 +1172,7 @@ export default function Import({
                               {f.speakers.map((x) => (
                                 <li class="small" key={x.label}>
                                   {x.label}: {words.kept(x.kept)}
+                                  {x.confirmed && x.kept > 0 ? ` (${confirmWords.keptConfirmed})` : ""}
                                   {Object.entries(x.dropped)
                                     .filter(([, n]) => n > 0)
                                     .map(
