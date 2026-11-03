@@ -68,6 +68,13 @@ Removing every line brings the defaults back, the same way the style examples wo
     story (background, recurring, significant, major). The ones that matter are included; passing
     ones are left out.
 
+## Must-haves and recap examples (owner, 2026-11-03)
+
+The **must-have list decides what goes in** a recap. The **recap examples** on the same page (the DM's
+own, or the four built-in ones) **decide only how it sounds**: tone, rhythm and word choice. A stand-alone
+example can't show whether a recap caught a session's key points, so examples are never used to judge
+coverage, and the page labels them "How your recaps should sound".
+
 ## How the standard is used
 
 - **Writing.** The campaign's current list goes to the recap writer with its instructions. Each line
