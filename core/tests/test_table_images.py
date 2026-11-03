@@ -467,7 +467,7 @@ class TableImages(chat.AtTheTableTyped):
     def keeper(self, result: Any = None, boom: bool = False) -> Any:
         """A stand-in for the picture keeper (#3274) that records what it was given."""
         calls: list[Any] = []
-        answer = result or Result(cast(Any, SimpleNamespace(code="CODE")), True)
+        answer = result or Result(cast(Any, SimpleNamespace(code="CODE", id=77)), True)
 
         async def keep(ctx: Any, data: bytes) -> Result:
             calls.append((ctx, data))
@@ -506,7 +506,7 @@ class TableImages(chat.AtTheTableTyped):
 
     async def test_the_same_picture_again_says_no_second_link(self) -> None:
         said = self.say_into()
-        self.keeper(Result(cast(Any, SimpleNamespace(code="CODE")), False))
+        self.keeper(Result(cast(Any, SimpleNamespace(code="CODE", id=77)), False))
         await self.hear(picture())
         said.assert_not_awaited()
 
@@ -589,7 +589,7 @@ class TableImages(chat.AtTheTableTyped):
 
     async def test_the_dms_hear_once_that_old_pictures_were_removed(self) -> None:
         self.say_into()
-        self.keeper(Result(cast(Any, SimpleNamespace(code="CODE")), True, removed=2))
+        self.keeper(Result(cast(Any, SimpleNamespace(code="CODE", id=77)), True, removed=2))
         with patch("dmbot.bot.private_note.send", new=AsyncMock(return_value=True)) as told:
             await self.hear(picture())
             await self.hear(picture())

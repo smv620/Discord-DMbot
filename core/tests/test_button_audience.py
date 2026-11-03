@@ -199,6 +199,11 @@ AUDIENCE: dict[str, str] = {
             "ui.heard_review.HeardReviewButton",
             # The person who posted the picture, or a DM (`_is_dm`); a stranger is refused (#2450).
             "ui.image_fix.FixTextButton",
+            # The poster or a DM, checked in `PictureActions.apply` and again before the question
+            # (`DeleteButton`); a stranger is refused (#3274).
+            "ui.kept_pictures.DeleteButton",
+            "ui.kept_pictures.DeleteYesButton",
+            "ui.kept_pictures.PrivateButton",
             "ui.line_fix.FixLineButton",
             "ui.line_fix.LineFixButton",
             "ui.name_card.UndoButton",
