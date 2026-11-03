@@ -153,8 +153,6 @@ export const featureSteps: FeatureStep[] = [
     text: "After a session, press 📜 Make a script. DMbot writes a copy of the transcript with every \"he\", \"it\" and \"that one\" named in brackets. It tells you what it will cost before it starts and does nothing until you press Make the script, and only the campaign's game masters can read it. It comes with a paid campaign. Cancel closes the question with nothing spent.",
     names: [
       { name: "Make a script", file: "ui/theatre_button.py" },
-      { name: "Make the script", file: "ui/theatre_button.py" },
-      { name: "Cancel", file: "ui/theatre_button.py" },
     ],
   },
 ];
