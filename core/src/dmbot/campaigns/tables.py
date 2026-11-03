@@ -46,6 +46,7 @@ SECTION_TABLES: dict[str, tuple[str, ...]] = {
     "site_approvals": ("site_approvals",),
     "map_notes": ("map_notes",),
     "recap_style_notes": ("recap_style_notes",),
+    "recap_must_haves": ("recap_must_haves",),  # the list every recap is written to (#3328)
     "recap_style_examples": ("recap_style_examples",),
     "import_speakers": ("import_speakers",),
     "campaign_speakers": ("campaign_speakers",),  # speakers without Discord, negative ids (#3305)

@@ -108,6 +108,9 @@ class Inputs:
     # copy check read them; the beats and the fact check never do.
     style: Sequence[str] = ()
     notes: Sequence[str] = ()  # the DM's standing style notes, oldest first (#2076)
+    # The campaign's must-have list (#3328): for the writer's call (and the coverage check), never
+    # the beats or the fact check.
+    musts: Sequence[str] = ()
     # What the DM corrected in this one recap (#2076): confirmed facts for it alone, never style.
     corrections: Sequence[str] = ()
     # The campaign's display name, for the recap's fixed opening and closing lines (#2253).
@@ -1233,6 +1236,7 @@ class RecapWorker:
                     style=inputs.style,
                     notes=inputs.notes,
                     corrections=inputs.corrections,
+                    musts=inputs.musts,
                 ),
                 message,
                 more_room(rd.write_room(length) if self._two else length.max_tokens, job.attempt),
@@ -2127,7 +2131,7 @@ class RecapWorker:
             self._creative if self._creative is not None and self._two else self._careful,
             rd.prose_system(
                 inputs.setting, length, plain=self._two, style=inputs.style,
-                notes=inputs.notes, corrections=inputs.corrections,
+                notes=inputs.notes, corrections=inputs.corrections, musts=inputs.musts,
             ),
             message,
             more_room(rd.write_room(length) if self._two else length.max_tokens, attempt),

@@ -280,6 +280,11 @@ class EveryClaimedTableComesBack(DatabaseTest):
                 " created_at) VALUES (%s, %s, 1, 'Short', %s, 1)",
                 (g, c, DM),
             ),
+            "recap_must_haves": (
+                "INSERT INTO recap_must_haves (guild_id, campaign_id, position, text, created_by,"
+                " created_at) VALUES (%s, %s, 1, 'Name the tavern.', %s, 1)",
+                (g, c, DM),
+            ),
             "recap_style_examples": (
                 "INSERT INTO recap_style_examples (guild_id, campaign_id, position, text,"
                 " created_by, created_at) VALUES (%s, %s, 1, 'Once...', %s, 1)",
