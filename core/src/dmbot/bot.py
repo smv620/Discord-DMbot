@@ -1334,6 +1334,11 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             if self.ai_client
             else None
         )
+        self.theatre_ai = (  # a session recast as a script (#3244), background, DM only
+            self.ai_client.tier(FEATURE_TIERS[Feature.THEATRE], Feature.THEATRE)
+            if self.ai_client
+            else None
+        )
         # Pictures posted in the table chat (#2450): off unless the backend switch is on.
         # Messages deleted lately, so a picture still being described when its poster deletes it
         # is not written down afterwards (#2450); id → when.
