@@ -227,6 +227,40 @@ describe("the recheck after a waiting answer (#3322)", () => {
     expect(api.pictures.mock.calls.length).toBe(atAction);
   });
 
+  it("an action that answers after the page is left schedules no read", async () => {
+    const api = waitingApi(2);
+    let answer!: (value: { state: "waiting"; note: string }) => void;
+    api.pictureAction.mockImplementationOnce(() => new Promise((resolve) => (answer = resolve)));
+    const { unmount } = render(<Pictures api={api} path={PATH} />);
+    await screen.findByAltText("A map of the Brass Ford");
+    vi.useFakeTimers();
+    fireEvent.click(within(tileFor("A map of the Brass Ford")).getByRole("button", { name: w.makePrivate }));
+    unmount();
+    await act(async () => {
+      answer({ state: "waiting", note: "" });
+    });
+    const atLeaving = api.pictures.mock.calls.length;
+    await passTime(WAITING_RECHECK_MS);
+    expect(api.pictures.mock.calls.length).toBe(atLeaving);
+  });
+
+  it("no extra read is made while the tab is hidden", async () => {
+    const api = waitingApi(2);
+    render(<Pictures api={api} path={PATH} />);
+    await screen.findByAltText("A map of the Brass Ford");
+    vi.useFakeTimers();
+    fireEvent.click(within(tileFor("A map of the Brass Ford")).getByRole("button", { name: w.makePrivate }));
+    await passTime(0);
+    const atAction = api.pictures.mock.calls.length;
+    Object.defineProperty(document, "hidden", { configurable: true, value: true });
+    try {
+      await passTime(WAITING_RECHECK_MS);
+      expect(api.pictures.mock.calls.length).toBe(atAction);
+    } finally {
+      Object.defineProperty(document, "hidden", { configurable: true, value: false });
+    }
+  });
+
   it("no extra read is made after the page is left", async () => {
     const api = waitingApi(2);
     const { unmount } = render(<Pictures api={api} path={PATH} />);

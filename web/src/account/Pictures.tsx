@@ -67,6 +67,8 @@ export default function Pictures({ api, path }: { api: AccountApi; path: string 
   // The same waiting actions, readable from a timer; and one recheck timer per waiting tile (#3322).
   const waitingNow = useRef<Record<string, PictureAction>>({});
   const rechecks = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  // False once the page is left: an action still in flight then must not schedule anything (#3322).
+  const mounted = useRef(true);
   function setWaitingState(next: Record<string, PictureAction>): void {
     waitingNow.current = next;
     setWaiting(next);
@@ -131,13 +133,19 @@ export default function Pictures({ api, path }: { api: AccountApi; path: string 
   }, [api, ref]);
 
   // Leaving the page drops any pending recheck, so nothing reads after the page is gone.
-  useEffect(
-    () => () => {
-      for (const timer of Object.values(rechecks.current)) clearTimeout(timer);
-      rechecks.current = {};
-    },
-    [],
-  );
+  const clearRechecks = (): void => {
+    for (const timer of Object.values(rechecks.current)) clearTimeout(timer);
+    rechecks.current = {};
+  };
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      clearRechecks();
+    };
+  }, []);
+  // A different campaign's list must not be read by a timer started for this one.
+  useEffect(() => clearRechecks, [api, ref]);
 
   if (!PICTURES_LIVE || !api.pictures) return <p class="muted">{words.notOpen}</p>;
 
@@ -184,6 +192,7 @@ export default function Pictures({ api, path }: { api: AccountApi; path: string 
     setConfirming(null);
     try {
       const result = await api.pictureAction(ref, tile.code, action);
+      if (!mounted.current) return; // the page was left while the action was on its way
       if (result.state === "waiting") {
         setWaitingState({ ...waitingNow.current, [tile.code]: action });
         void readFirst(appliedRef.current);
