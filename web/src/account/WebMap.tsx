@@ -180,7 +180,7 @@ export default function WebMap({
   const pinch = useRef<number | null>(null);
   const dragName = useRef<{ id: string; x: number; y: number; moved: boolean } | null>(null);
   // Whether a name is being dragged now, reported to the page once per drag (so its auto update does not redraw
-  // under a hand) (#3324). The callback is read from a ref, because the window listeners are added once.
+  // under a hand, #3324). The callback is read from a ref, because the window listeners are added once.
   const draggingOn = useRef(false);
   const onDraggingRef = useRef(onDragging);
   onDraggingRef.current = onDragging;

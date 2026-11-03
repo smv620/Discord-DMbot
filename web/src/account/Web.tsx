@@ -218,8 +218,9 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
       ...(askedNow.current ? { view: askedNow.current } : {}),
       ...(seeAsNow.current !== undefined ? { seeAs: seeAsNow.current } : {}),
     };
+    // A read that was on its way when a drag began is dropped too, so the map is not redrawn under the hand (#3324).
     const stale = (): boolean =>
-      !alive.current || !autoNow.current || stamp !== latest.current || graphNow.current !== shown;
+      !alive.current || !autoNow.current || stamp !== latest.current || graphNow.current !== shown || dragging.current;
     try {
       if (api.webSize && seeAsNow.current === undefined) {
         const size = await withTimeout(api.webSize(ref, { center: at, hops: steps, ...(askedNow.current ? { view: askedNow.current } : {}) }));
