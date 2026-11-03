@@ -4,8 +4,9 @@
 // and are shown only to a campaign's DM; the API says so too. Nothing is kept on this page after it is sent.
 import { useEffect, useRef, useState } from "preact/hooks";
 
-import { recapStylePage as words, STYLE_EXAMPLE_WORDS, STYLE_MAX_EXAMPLES, STYLE_MAX_NOTES, STYLE_NOTE_CHARS } from "../content/recap-style-words";
+import { RECAP_MUSTS_LIVE, recapStylePage as words, STYLE_EXAMPLE_WORDS, STYLE_MAX_EXAMPLES, STYLE_MAX_NOTES, STYLE_NOTE_CHARS } from "../content/recap-style-words";
 import { type AccountApi, ApiError, type RecapStyle, type RecapStyleAction } from "./api";
+import RecapMustsPanel from "./RecapMusts";
 import WorkProgress from "./WorkProgress";
 
 /** The campaign's address, read from `/account/recap-style/<server>.<campaign>`. */
@@ -103,12 +104,15 @@ export default function RecapStyleView({ api, path }: { api: AccountApi; path: s
 
   if (!ref) return <p>{words.notFound}</p>;
 
-  const send = async (action: Change, arg = ""): Promise<boolean> => {
+  const send = (action: Change, arg = ""): Promise<boolean> =>
+    start(action, () => api.changeRecapStyle!(ref!, action, arg));
+  /** Sends one change (any kind) and starts following it; false when it did not go through. */
+  const start = async (action: Change, call: () => Promise<{ id: string }>): Promise<boolean> => {
     if (!api.changeRecapStyle || !ref) return false;
     setBusy(true);
     setProblem("");
     try {
-      const got = await api.changeRecapStyle(ref, action, arg);
+      const got = await call();
       seen.current = -1;
       idle.current = 0;
       setStopped(false);
@@ -154,6 +158,15 @@ export default function RecapStyleView({ api, path }: { api: AccountApi; path: s
         <p role="alert" ref={alertBox} tabIndex={-1}>
           {problem}
         </p>
+      )}
+
+      {RECAP_MUSTS_LIVE && style?.musts && api.saveRecapMusts && api.recapMustsDefaults && (
+        <RecapMustsPanel
+          musts={style.musts}
+          disabled={busy || pending}
+          onSave={(lines) => void start("save_musts", () => api.saveRecapMusts!(ref, lines))}
+          onDefaults={() => void start("musts_defaults", () => api.recapMustsDefaults!(ref))}
+        />
       )}
 
       <section class="stack" aria-labelledby="rs-examples">

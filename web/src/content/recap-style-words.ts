@@ -8,11 +8,52 @@
 // `held` and RECAP_STYLE_LIVE becomes true in the same change; DMBOT_WEB_RECAP_STYLE=1 is set after the bot (GO_LIVE.md).
 export const RECAP_STYLE_LIVE = false;
 
+/** The recap must-haves list on this page (#3329; docs/RECAP_STANDARD.md). Off until CloudDev-lead's half (#3328: the list in
+ * the recap style read, the save and the defaults) is deployed and dev1 has edited the list and seen a recap follow it;
+ * then the What's new entry "See and change what every recap covers" moves out of `held` and this becomes true. */
+export const RECAP_MUSTS_LIVE = false;
+
+/** Mirror the door's limits (core, #3328): change them together. */
+export const MUSTS_MAX_LINES = 40;
+export const MUSTS_LINE_CHARS = 300;
+
 /** Mirror the limits of Discord's panel and of the door (core web/recap_style.py): change them together. */
 export const STYLE_MAX_EXAMPLES = 3;
 export const STYLE_MAX_NOTES = 10;
 export const STYLE_EXAMPLE_WORDS = 600;
 export const STYLE_NOTE_CHARS = 300;
+
+/** The five headings the default lines sit under (the API's `group`); a line the DM added has no heading. */
+export const mustsPage = {
+  heading: "What every recap covers",
+  intro: "Every recap DMbot writes for this campaign covers these, when the session had them. DMbot never makes any of them up.",
+  groups: { framing: "Framing", travel: "Travel", action: "Action", plot: "Plot", character: "Character" } as Record<string, string>,
+  ownHeading: "Added by you",
+  usingDefaults: "These are DMbot's own. Change, remove or add a line, then save, and the list becomes your campaign's own.",
+  usingOwn: (n: number): string => `Your campaign's list: ${n} ${n === 1 ? "line" : "lines"}.`,
+  lineLabel: (n: number): string => `Line ${n}`,
+  remove: (n: number): string => `Remove line ${n}`,
+  addLabel: "Add a line",
+  addHelp: `One thing every recap should cover when the session had it. Up to ${MUSTS_LINE_CHARS} characters.`,
+  addButton: "Add to the list",
+  full: `A list has up to ${MUSTS_MAX_LINES} lines. Remove one to add another.`,
+  save: "Save the list",
+  unsaved: "You have changes that are not saved yet.",
+  nothing: "Nothing to save yet.",
+  defaultsButton: "Back to the defaults",
+  defaultsAsk: "Put DMbot's own list back? Your lines are removed. It can't be undone.",
+  defaultsYes: "Yes, put it back",
+  keep: "Keep mine",
+  waitingSave: "Saving your list. DMbot will do it in a moment.",
+  workingSave: "Saving your list now.",
+  doneSave: "Saved. Your next recap covers this list.",
+  waitingDefaults: "Putting DMbot's own list back. DMbot will do it in a moment.",
+  workingDefaults: "Putting DMbot's own list back now.",
+  doneDefaults: "Done. Your next recap uses DMbot's own list.",
+  problems: {
+    "ticket-too-long": `A line has up to ${MUSTS_LINE_CHARS} characters.`,
+  } as Record<string, string>,
+};
 
 export const recapStylePage = {
   heading: "Recap style",
@@ -55,6 +96,8 @@ export const recapStylePage = {
     use_defaults: "Deleting your examples. DMbot will do it in a moment.",
     add_note: "Adding your note. DMbot will do it in a moment.",
     remove_note: "Removing that note. DMbot will do it in a moment.",
+    save_musts: mustsPage.waitingSave,
+    musts_defaults: mustsPage.waitingDefaults,
   } as Record<string, string>,
   working: {
     add_example: "Adding your example now.",
@@ -62,6 +105,8 @@ export const recapStylePage = {
     use_defaults: "Deleting your examples now.",
     add_note: "Adding your note now.",
     remove_note: "Removing that note now.",
+    save_musts: mustsPage.workingSave,
+    musts_defaults: mustsPage.workingDefaults,
   } as Record<string, string>,
   doneNote: {
     add_example: "Added. Your next recap will use it.",
@@ -69,6 +114,8 @@ export const recapStylePage = {
     use_defaults: "Deleted. Your next recap uses DMbot's own examples.",
     add_note: "Added. Your next recap will follow it.",
     remove_note: "Removed. Your next recap won't follow it.",
+    save_musts: mustsPage.doneSave,
+    musts_defaults: mustsPage.doneDefaults,
   } as Record<string, string>,
   problems: {
     "bad-choice": "That didn't go through. Check what you pasted and try again.",
