@@ -3,6 +3,7 @@
 // two never disagree. The parts are named for what a DM is doing: read the story, add to it, set the rules.
 import { campaignPage as words } from "../content/campaign-page";
 import { IMPORT_LIVE } from "../content/import-words";
+import { PICTURES_LIVE } from "../content/pictures-switch";
 import { LORE_LIVE } from "../content/lore-words";
 import { RECAP_STYLE_LIVE } from "../content/recap-style-words";
 import { RECAPS_LIVE } from "../content/recap-words";
@@ -20,6 +21,7 @@ export type CampaignPageKey =
   | "lore"
   | "recapStyle"
   | "import"
+  | "pictures"
   | "houseRules"
   | "homebrew";
 
@@ -33,6 +35,7 @@ export const GROUP_OF: Record<CampaignPageKey, CampaignGroup> = {
   lore: "add",
   recapStyle: "story",
   import: "add",
+  pictures: "story",
   houseRules: "rules",
   homebrew: "rules",
 };
@@ -55,6 +58,7 @@ export function sectionPages(ref: string, o: { isDm: boolean; importsOn?: boolea
   story.push({ key: "graph", href: `/account/web/${e}`, label: words.pages.graph, note: words.pageNotes.graph });
   if (o.isDm) story.push({ key: "names", href: `/account/names/${e}`, label: words.pages.names, note: words.pageNotes.names });
   story.push({ key: "transcripts", href: `/account/transcripts/${e}`, label: words.pages.transcripts, note: words.pageNotes.transcripts });
+  if (PICTURES_LIVE) story.push({ key: "pictures", href: `/account/pictures/${e}`, label: words.pages.pictures, note: words.pageNotes.pictures });
   const add: SectionPage[] = [];
   if (o.isDm && LORE_LIVE) add.push({ key: "lore", href: `/account/lore/${e}`, label: words.pages.lore, note: words.pageNotes.lore });
   if (o.isDm && (IMPORT_LIVE || o.importsOn)) add.push({ key: "import", href: `/account/import/${e}`, label: words.pages.import, note: words.pageNotes.import });
