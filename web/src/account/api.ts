@@ -1311,6 +1311,8 @@ export interface CampaignSpeaker {
   id: string;
   name: string;
   lines: number;
+  /** True for a server member the uploader ticked in (#3337); missing or false for a speaker without Discord. */
+  member?: boolean;
 }
 /** Where the removal of one speaker's lines stands (#3305 PR 2): the shared progress shape (stage `removing`), and once it is
  * done how many lines and sessions it touched. Counts only. */

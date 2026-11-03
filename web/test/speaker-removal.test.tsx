@@ -62,6 +62,20 @@ describe("the speakers without Discord", () => {
     expect(screen.getByRole("button", { name: w.buttonFor("The Ferryman") })).toBeTruthy();
   });
 
+  it("lists a ticked-in member under their own heading, and does not say their name is removed", async () => {
+    const api = mockApi("table");
+    render(<SpeakerRemovalPanel api={api} campaignRef={REF} />);
+    expect(await screen.findByText(w.memberHeading)).toBeTruthy();
+    expect(screen.getByText(w.memberIntro)).toBeTruthy();
+    expect(screen.getByText(w.outsideHeading)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: w.buttonFor("Ash") }));
+    expect(screen.getByText(w.confirm("Ash", true))).toBeTruthy();
+    expect(w.confirm("Ash", true)).not.toContain("their name too");
+    expect(w.confirm("Old Pip")).toContain("their name too");
+    fireEvent.click(screen.getByRole("button", { name: w.confirmYes }));
+    await waitFor(() => expect(api.calls).toContain("removeSpeaker:100.cmp1:9001"));
+  });
+
   it("asks once, and Keep sends nothing", async () => {
     const api = mockApi("table");
     render(<SpeakerRemovalPanel api={api} campaignRef={REF} />);
