@@ -1,6 +1,6 @@
 DMbot - TESTING STATUS (current testing only)
 =============================================
-Last updated: 2026-11-02 UTC by dev1
+Last updated: 2026-11-03 UTC by dev1
 
 For the people at the table: docs/next-test-step.md has the one next small test (#569).
 Short by design: see CLAUDE.md "Testing logs". Full record: docs/testing-history.log.
@@ -9,7 +9,7 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 LIVE NOW
 ------------------------------------------------------------------------------
-core + web-api at c70859a4 (Supervisor's 2026-11-02 handover: migrations 0319_web_pictures_doors and 0320_picture_sweep_actions; switches off). 317 rows.
+core + web-api at 14a45b75 (Supervisor's 2026-11-03 handover: migrations 0321 and 0322; Story Graph auto-update). 319 rows.
   Bot connected to 2 servers, 0 errors; web-api healthy. Full entry: docs/testing-history.log.
 
 Switches off: DMBOT_WEB_LORE, DMBOT_WEB_RECAP_STYLE, DMBOT_WEB_PAUSE, DMBOT_STORY_FAMILY_ONLY (unset = off).
