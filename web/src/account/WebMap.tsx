@@ -127,9 +127,12 @@ export default function WebMap({
   onLine,
   children,
   api,
+  onDragging,
 }: {
   /** The summary of a picked name (#3243); missing from an older page, so the panel shows none. */
   api?: AccountApi;
+  /** Told when a drag of a name really starts (it has moved) and when it ends (#3324). */
+  onDragging?: (on: boolean) => void;
   nodes: WebNode[];
   edges: WebEdge[];
   center: string;
@@ -176,6 +179,16 @@ export default function WebMap({
   const pointers = useRef(new Map<number, { x: number; y: number }>());
   const pinch = useRef<number | null>(null);
   const dragName = useRef<{ id: string; x: number; y: number; moved: boolean } | null>(null);
+  // Whether a name is being dragged now, reported to the page once per drag (so its auto update does not redraw
+  // under a hand) (#3324). The callback is read from a ref, because the window listeners are added once.
+  const draggingOn = useRef(false);
+  const onDraggingRef = useRef(onDragging);
+  onDraggingRef.current = onDragging;
+  const setDraggingOn = (on: boolean): void => {
+    if (draggingOn.current === on) return;
+    draggingOn.current = on;
+    onDraggingRef.current?.(on);
+  };
   const viewRef = useRef(view);
   viewRef.current = view;
 
@@ -341,6 +354,7 @@ export default function WebMap({
       if (grab) {
         if (!grab.moved && Math.hypot(m.clientX - grab.x, m.clientY - grab.y) <= 5) return;
         grab.moved = true;
+        setDraggingOn(true);
         dragged.current = true;
         const n = sim.current.find((q) => q.id === grab.id);
         if (!n) return;
@@ -370,6 +384,7 @@ export default function WebMap({
       if (dragName.current) {
         const grab = dragName.current;
         dragName.current = null;
+        setDraggingOn(false);
         if (grab.moved) {
           rememberRef.current();
           setExtent(extentOf(sim.current));
@@ -394,6 +409,8 @@ export default function WebMap({
       window.removeEventListener("pointerup", up);
       window.removeEventListener("pointercancel", up);
       pointers.current.clear();
+      // Going away mid-drag ends it, so the page is not left waiting for a drag that will never end.
+      setDraggingOn(false);
     };
   }, []);
 
@@ -406,6 +423,7 @@ export default function WebMap({
       pinch.current = Math.hypot(p.x - q.x, p.y - q.y);
       // A second finger turns a name's drag into a pinch: the name stays where it was.
       dragName.current = null;
+      setDraggingOn(false);
     }
   };
 

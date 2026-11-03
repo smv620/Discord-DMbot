@@ -129,6 +129,8 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
   const alive = useRef(true);
   useEffect(() => () => void (alive.current = false), []);
   const refreshNow = useRef<() => Promise<"changed" | "same" | "skipped">>(async () => "skipped");
+  // True while a name is being dragged: a read then would redraw the map under the person's hand (#3324).
+  const dragging = useRef(false);
   // Reads in a row that found the same graph; it sets the wait before the next read (autoDelay).
   const unchanged = useRef(0);
   // Bumped when the person reads a web themselves, so a long wait already running starts again at the quick pace.
@@ -204,6 +206,7 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
    * out, or whose peeking was turned off, is told as a normal read would tell them; any other failure waits
    * for the next turn. */
   async function refresh(): Promise<"changed" | "same" | "skipped"> {
+    if (dragging.current) return "skipped";
     if (!ref || !api.webGraph || view !== "ok" || big !== null || revealing.size > 0) return "skipped";
     const shown = graphNow.current;
     if (!shown) return "skipped";
@@ -634,6 +637,9 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
             <WebMap
               key={ref}
               api={api}
+              onDragging={(on) => {
+                dragging.current = on;
+              }}
               nodes={nodes}
               edges={edges}
               center={center}
