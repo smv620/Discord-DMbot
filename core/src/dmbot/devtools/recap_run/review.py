@@ -70,7 +70,7 @@ def write_private(path: Path, text: str) -> None:
 def clear_old(folder: Path) -> None:
     """The files a run writes, removed before a new run writes them, so a page never shows the
     new recap above an earlier run's sound (or the other way round). Only these names go."""
-    names = (RECAP_FILE, REPORT_FILE, PAGE_FILE, *FILE_NAMES.values())
+    names = (RECAP_FILE, REPORT_FILE, PAGE_FILE, "beats.json", *FILE_NAMES.values())
     for name in names:
         with contextlib.suppress(OSError):
             (folder / name).unlink()
