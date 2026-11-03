@@ -134,7 +134,8 @@ def block(lines: list[str]) -> str:
 
 
 def _no_brackets(text: str) -> str:
-    return text.strip().replace("<", "‹").replace(">", "›")
+    """One line, on one line: no bracket can close the tag and no newline can fake another entry."""
+    return " ".join(text.split()).replace("<", "‹").replace(">", "›")
 
 
 INTRO = """\

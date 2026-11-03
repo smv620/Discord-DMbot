@@ -13,7 +13,9 @@ from dmbot.migrations._shared import _isolate
 MAX_LINES = 40
 LINE_CHARS = 300
 # The whole list as the queue holds it: JSON text, so up to 40 lines of 300 characters, each
-# possibly escaped to six characters, plus the quotes and commas.
+# possibly escaped to six characters, plus the quotes and commas. (The website sends it with
+# `ensure_ascii=False`, so a real list is far under this; the door refuses anything over it with
+# `too_long` instead of letting the table's check fail.)
 ARG_CHARS = 80_000
 
 RECAP_MUST_HAVES = (
@@ -83,6 +85,9 @@ RECAP_MUST_HAVES = (
             want := btrim(want, E' \t\r\n\f\v');
         END IF;
         IF act = 'save_musts' THEN
+            IF char_length(want) > @ARG_CHARS@ THEN
+                RETURN jsonb_build_object('status', 'too_long');
+            END IF;
             BEGIN
                 parsed := want::JSONB;
             EXCEPTION WHEN OTHERS THEN

@@ -170,7 +170,7 @@ async def save_musts(db: Database, session: Session, ref: str, body: object) -> 
             raise RecapError("empty")
         if len(text) > MUSTS_LINE_CHARS:
             raise RecapError("too_long")
-    return await _queue(db, session, ref, SAVE_MUSTS, json.dumps(kept))
+    return await _queue(db, session, ref, SAVE_MUSTS, json.dumps(kept, ensure_ascii=False))
 
 
 async def use_musts_defaults(db: Database, session: Session, ref: str) -> dict[str, Any]:
