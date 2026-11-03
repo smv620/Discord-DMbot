@@ -1260,6 +1260,9 @@ export interface ImportProgress {
     namesToAnswer?: number;
     /** True when the name check for this session was given up. */
     namesUnchecked?: boolean;
+    /** The read of this session's connections (#3307), in the shared shape: stage `reading_connections` (piece n of m),
+     * `waiting_for_limit` (carries on by itself) or `connections_read`. Null until it starts; missing from an older API. */
+    story?: JobProgress | null;
   }[];
 }
 
