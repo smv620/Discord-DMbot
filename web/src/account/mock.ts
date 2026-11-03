@@ -1600,6 +1600,8 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
               label,
               lines,
               suggested: label === "Cerric" ? { userId: "1", name: "Stormy", why: "remembered" } : null,
+              // A label the campaign already keeps as a speaker without Discord (#3306).
+              ...(label === "Old Pip" ? { existing: { userId: "-1", name: "Old Pip" } } : {}),
             })),
           };
         }),
@@ -1613,11 +1615,27 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         { userId: "1", name: "Stormy", agreed: true },
         { userId: "2", name: "Ash", agreed: false },
         { userId: "3", name: "Mira", agreed: true },
+        // Said Stop recording me: can never be ticked in (#3306).
+        { userId: "4", name: "Dax", agreed: false, blocked: "opted-out" as const },
       ];
       return all.filter((m) => m.name.toLowerCase().includes(q.toLowerCase()));
     },
-    async importCheck(ref, files, mapping, links = []) {
-      calls.push(`importCheck:${ref}${links.length ? `|links:${links.length}` : ""}`);
+    async importConsent(ref) {
+      calls.push(`importConsent:${ref}`);
+      return {
+        version: 7,
+        lines: [
+          "DMbot records your voice at the table and writes it down.",
+          "Everyone in the Discord server can read the transcripts.",
+        ],
+      };
+    },
+    async importCheck(ref, files, mapping, links = [], confirm) {
+      calls.push(`importCheck:${ref}${links.length ? `|links:${links.length}` : ""}${confirm ? `|confirmed:${confirm.confirmed.join(",")}@${confirm.consentVersion}` : ""}`);
+      if (confirm && confirm.consentVersion !== 7) throw new ApiError("stale");
+      if (Object.entries(mapping).some(([, to]) => to === "4")) throw new ApiError("said-no");
+      for (const [label, to] of Object.entries(mapping))
+        if (to === "new" && !(confirm?.confirmed ?? []).includes(label)) throw new ApiError("not-ticked");
       files = [
         ...files,
         ...links.map((_, i) => ({ name: `Google Doc ${i + 1}.txt`, text: "Cerric: Hello from the doc\nMira: And hello" })),
@@ -1638,13 +1656,15 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
             leftOut: 0,
             speakers: [...counts].map(([label, n]) => {
               const to = mapping[label] ?? "drop";
-              const kept = to !== "drop" && members[to] ? n : 0;
+              const ticked = (confirm?.confirmed ?? []).includes(label);
+              const kept = to !== "drop" && (members[to] || ticked) ? n : 0;
               return {
                 label,
                 kept,
+                ...(ticked ? { confirmed: true } : {}),
                 dropped: {
                   not_matched: to === "drop" ? n : 0,
-                  not_agreed: to !== "drop" && !members[to] ? n : 0,
+                  not_agreed: to !== "drop" && !members[to] && !ticked ? n : 0,
                   bot: 0,
                   left_out: 0,
                 },
