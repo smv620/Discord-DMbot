@@ -1168,7 +1168,7 @@
   vertical-align: middle;
 }
 
-/* The kept pictures' grid (#3276): one or two columns on a phone, never wider than the screen. */
+/* The kept pictures' grid (#3276): as many columns as fit, one on a narrow phone; never wider than the screen. */
 .picture-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr));
@@ -1177,11 +1177,11 @@
   margin: 0;
   padding: 0;
 }
+.picture-grid a {
+  display: block;
+}
 .picture-grid img {
   width: 100%;
   aspect-ratio: 4 / 3;
   object-fit: cover;
-}
-.picture-grid .row {
-  flex-wrap: wrap;
 }

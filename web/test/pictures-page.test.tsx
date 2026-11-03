@@ -87,6 +87,7 @@ describe("the Pictures page", () => {
     await screen.findByAltText("A map of the Brass Ford");
     const tile = tileFor("A map of the Brass Ford");
     fireEvent.click(within(tile).getByRole("button", { name: w.remove }));
+    expect(within(tile).getByRole("button", { name: "Yes, delete it" })).toBeTruthy();
     fireEvent.click(within(tile).getByRole("button", { name: w.confirmRemove }));
     await waitFor(() => expect(alts()).not.toContain("A map of the Brass Ford"));
   });
