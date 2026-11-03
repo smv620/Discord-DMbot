@@ -1099,7 +1099,7 @@ export default function Import({
                         {needsTick(chosen) && (
                           <fieldset class="small">
                             <legend class="visually-hidden">{confirmWords.tickLegend(s.label)}</legend>
-                            <label>
+                            <label class="choice">
                               <input
                                 type="checkbox"
                                 checked={ticks[s.label] === true}
@@ -1107,8 +1107,8 @@ export default function Import({
                                   setCheck(null);
                                   setTicks((now) => ({ ...now, [s.label]: (e.target as HTMLInputElement).checked }));
                                 }}
-                              />{" "}
-                              {confirmWords.tick(chosen === NEW_SPEAKER ? s.label : (who?.name ?? s.label))}
+                              />
+                              <span>{confirmWords.tick(chosen === NEW_SPEAKER ? s.label : (who?.name ?? s.label))}</span>
                             </label>
                           </fieldset>
                         )}
