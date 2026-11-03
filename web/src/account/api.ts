@@ -1049,6 +1049,9 @@ export type ImportBlocked = "said_no";
 export interface ImportConsent {
   version: number;
   text: string;
+  /** The words beside the tick, with `{name}` where the person's name goes. Sent once the uploader's own words are
+   * live (#3305); an older answer has none and the page uses its own tick words. */
+  tick?: string;
 }
 export interface ImportSuggestion {
   userId: string;

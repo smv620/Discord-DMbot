@@ -159,6 +159,11 @@ function reasonLine(state: string, reason: string | null): string {
   return known ?? (state === "failed" ? words.failedFallback : "");
 }
 
+/** The words beside a tick: the server's own once it sends them (`{name}` filled in here), else the page's. */
+function tickWords(fromServer: string | undefined, name: string): string {
+  return fromServer ? fromServer.split("{name}").join(name) : confirmWords.tick(name);
+}
+
 export default function Import({
   api,
   path,
@@ -1109,7 +1114,7 @@ export default function Import({
                                   setTicks((now) => ({ ...now, [s.label]: (e.target as HTMLInputElement).checked }));
                                 }}
                               />
-                              <span>{confirmWords.tick(chosen === NEW_SPEAKER ? s.label : (who?.name ?? s.label))}</span>
+                              <span>{tickWords(consent?.tick, chosen === NEW_SPEAKER ? s.label : (who?.name ?? s.label))}</span>
                             </label>
                           </fieldset>
                         )}
