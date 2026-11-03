@@ -4976,6 +4976,19 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
     - **Taking it back:** a confirmed speaker's lines can be removed later by the campaign's DMs on the
       website ("Remove this speaker's lines"). A server member can also remove them, as with live lines.
       A speaker without Discord asks the DM, and the privacy page says so.
+      - **How a removal works** (Supervisor, 2026-11-03, #3305 part 2): it is for **one campaign**. It
+        takes every trace of that speaker's lines in that campaign (lines, script lines, fix
+        suggestions, story-memory mentions and unconfirmed claims that cite them) and none in another
+        campaign or server; a member's own "Delete my transcripts" stays server-wide. A speaker
+        without Discord loses their name too; their number (a negative one, per campaign) is never
+        given again. What the uploader confirmed stays as a record, marked removed, with no lines.
+        DMbot keeps a small marker (ids and a time, no words) in the campaign, **in its backup**, which
+        every restore reads: an older copy of the same campaign restored over it, in Discord or on
+        the website, leaves those lines out. A copy restored as a *new* campaign carries only the
+        markers it was made with, so it cannot know of a removal made after the copy was taken; the
+        privacy page says "Lines removed from a campaign stay removed in that campaign, including
+        after a restore." It is not held to a paid plan. The wait shows its stage, how long it has run
+        and when it last moved, with counts only.
     - **Counts:** the page says how many lines each choice keeps or drops.
     - **Who can read them:** imported sessions are read by the whole server like any transcript, and the
       consent words on the page say so.
