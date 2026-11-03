@@ -502,6 +502,11 @@ class TableImages(chat.AtTheTableTyped):
         said.assert_awaited_once()
         assert said.await_args is not None
         self.assertEqual(said.await_args.args[2], "🖼️ https://example.org/pictures/CODE")
+        # (Make private and Delete for this very picture, #3274)
+        self.assertEqual(
+            [i.item.custom_id for i in said.await_args.args[3].children],
+            ["dmbot:picpriv:77", "dmbot:picdel:77"],
+        )
         self.assertEqual(len(self.lines()), 1)
 
     async def test_the_same_picture_again_says_no_second_link(self) -> None:

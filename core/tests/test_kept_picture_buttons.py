@@ -9,7 +9,7 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 from dmbot.campaigns import CampaignStore
-from dmbot.pictures.actions import GONE, NOT_YOURS, PictureActions
+from dmbot.pictures.actions import GONE, PictureActions
 from dmbot.pictures.store import MB, PictureStore
 from dmbot.ui import kept_pictures
 from tests.pg import DatabaseTest
@@ -84,13 +84,13 @@ class Pressing(DatabaseTest):
             it = self.press(user)
             await kept_pictures.PrivateButton(self.picture.id).callback(it)
             self.assertFalse((await self.current()).public)
-            self.assertIn("private", self.said(it))
+            self.assertEqual(self.said(it), kept_pictures.SAID["private"])
 
     async def test_a_stranger_cannot_make_it_private(self) -> None:
         it = self.press(STRANGER)
         await kept_pictures.PrivateButton(self.picture.id).callback(it)
         self.assertTrue((await self.current()).public)
-        self.assertEqual(self.said(it), NOT_YOURS)
+        self.assertEqual(self.said(it), kept_pictures.NOT_YOURS)
 
     async def test_delete_asks_once_and_deletes_nothing_yet(self) -> None:
         it = self.press(POSTER)
@@ -106,18 +106,19 @@ class Pressing(DatabaseTest):
     async def test_the_poster_and_a_dm_delete_it_after_the_question(self) -> None:
         it = self.press(DM)
         await kept_pictures.DeleteYesButton(self.picture.id).callback(it)
+        self.assertEqual(self.said(it), kept_pictures.SAID["delete"])
         self.assertIsNotNone((await self.current()).deleted_at)
         self.assertEqual(sorted(self.bucket.deleted), ["p/one-preview.webp", "p/one.png"])
 
     async def test_a_stranger_is_not_even_asked_and_cannot_confirm(self) -> None:
         asked = self.press(STRANGER)
         await kept_pictures.DeleteButton(self.picture.id).callback(asked)
-        self.assertEqual(self.said(asked), NOT_YOURS)
+        self.assertEqual(self.said(asked), kept_pictures.NOT_YOURS)
         self.assertNotIn("view", asked.followup.send.await_args.kwargs)
         # (a forwarded question: the confirmation checks the person again)
         forwarded = self.press(STRANGER)
         await kept_pictures.DeleteYesButton(self.picture.id).callback(forwarded)
-        self.assertEqual(self.said(forwarded), NOT_YOURS)
+        self.assertEqual(self.said(forwarded), kept_pictures.NOT_YOURS)
         self.assertIsNone((await self.current()).deleted_at)
         self.assertEqual(self.bucket.deleted, [])
 
@@ -137,6 +138,51 @@ class Pressing(DatabaseTest):
         await kept_pictures.PrivateButton(self.picture.id).callback(it)
         self.assertEqual(self.said(it), GONE)
         self.assertTrue((await self.current()).public)
+
+    async def test_a_failing_store_gets_a_plain_answer_not_silence(self) -> None:
+        self.bot.picture_actions = SimpleNamespace(apply=AsyncMock(side_effect=RuntimeError("x")))
+        it = self.press(POSTER)
+        with self.assertLogs("dmbot.ui.kept_pictures", "ERROR"):
+            await kept_pictures.PrivateButton(self.picture.id).callback(it)
+        self.assertEqual(self.said(it), kept_pictures.FAILED)
+        self.bot.picture_store = SimpleNamespace(by_id=AsyncMock(side_effect=RuntimeError("x")))
+        asked = self.press(POSTER)
+        with self.assertLogs("dmbot.ui.kept_pictures", "ERROR"):
+            await kept_pictures.DeleteButton(self.picture.id).callback(asked)
+        self.assertEqual(self.said(asked), kept_pictures.FAILED)
+
+    async def test_outside_a_server_nothing_happens(self) -> None:
+        it = self.press(POSTER)
+        it.guild = None
+        for button in (kept_pictures.PrivateButton(1), kept_pictures.DeleteButton(1)):
+            await button.callback(it)
+            self.assertEqual(self.said(it), kept_pictures.NOT_HERE)
+
+    async def test_the_poster_of_one_picture_cannot_touch_anothers(self) -> None:
+        added = await self.store.add(
+            GUILD,
+            self.campaign.id,
+            poster_id=STRANGER,
+            session_id="",
+            line_id=None,
+            message_id=2,
+            description="a blue door",
+            consent_version=7,
+            right_granted_at=900,
+            sha256="b" * 64,
+            object_key="p/two.png",
+            preview_key="",
+            size_bytes=MB,
+            preview_bytes=0,
+            storage_mb=5,
+        )
+        assert added.picture is not None
+        it = self.press(POSTER)
+        await kept_pictures.DeleteYesButton(added.picture.id).callback(it)
+        self.assertEqual(self.said(it), kept_pictures.NOT_YOURS)
+        other = await self.store.get(GUILD, self.campaign.id, added.picture.id)
+        assert other is not None
+        self.assertIsNone(other.deleted_at)
 
     async def test_when_pictures_are_off_it_says_so(self) -> None:
         self.bot.picture_actions = None
