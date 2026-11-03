@@ -34,6 +34,17 @@ TOPIC_CALL_TIMEOUT_S = 30.0
 FAILED_NAMES = "names_failed"  # the campaign's names couldn't be read
 FAILED_ERROR = "error"  # anything else that stopped it
 PARTLY = "partly_labelled"  # done, but the AI was not asked about every line
+# (a scan that is scanned and not finished: a session whose story read is not complete)
+# The story read of an import (#3301) applies to scans finished on or after this time (Unix,
+# 2026-11-03): an import scanned before it is left as it was, so a deploy never spends on old
+# imports all at once.
+READ_IMPORTS_FROM = 1_793_664_000
+_UNREAD = (
+    f"i.scan_finished AND NOT i.scan_gave_up AND i.scan_to >= {READ_IMPORTS_FROM}"
+    " AND t.extracted_through_ms < ("
+    "SELECT coalesce(max(l.started_ms), 0) FROM transcript_lines l"
+    " WHERE l.guild_id = t.guild_id AND l.session_id = t.id)"
+)
 STALE_SCAN_S = 15 * 60  # a name scan claimed this long ago and never finished is taken again
 RETAKE_AFTER_S = 600  # a claim this old belongs to a bot that stopped; it is taken again
 CHUNK_LINES = 120  # lines cleaned between two yields to the bot's other work, and between saves
@@ -172,7 +183,7 @@ class ImportStore:
                 " FROM session_imports i JOIN transcript_sessions t"
                 " ON t.id = i.session_id AND t.guild_id = i.guild_id"
                 " WHERE i.state = 'done' AND NOT i.scan_finished"
-                " AND (NOT i.scanned OR i.scan_from < %s) AND NOT EXISTS ("
+                " AND (NOT i.scanned OR i.scan_to < %s) AND NOT EXISTS ("
                 " SELECT 1 FROM session_imports j JOIN transcript_sessions u"
                 " ON u.id = j.session_id AND u.guild_id = j.guild_id"
                 " WHERE j.campaign_id = i.campaign_id"
@@ -213,10 +224,59 @@ class ImportStore:
             cur = await conn.execute(
                 "UPDATE session_imports SET scanned = TRUE, scan_from = %s, scan_to = %s"
                 " WHERE session_id = %s AND NOT scan_finished"
-                " AND (NOT scanned OR scan_from < %s)",
+                " AND (NOT scanned OR scan_to < %s)",
                 (began, began, session_id, began - STALE_SCAN_S),
             )
             return bool(cur.rowcount)
+
+    async def renew_scan(self, guild_id: int, session_id: str, now: int) -> bool:
+        """Keep a running scan's claim fresh while it does slow work (the story extractor's AI
+        calls), so no other round retakes it after `STALE_SCAN_S`. A running claim's `scan_to` is
+        its last sign of life (the window's start, `scan_from`, stays where the scan began).
+        False when the claim is not running (it finished, or was given up)."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "UPDATE session_imports SET scan_to = %s"
+                " WHERE session_id = %s AND scanned AND NOT scan_finished",
+                (now, session_id),
+            )
+            return bool(cur.rowcount)
+
+    async def unextracted(self, guild_id: int, limit: int = 20) -> list[Ready]:
+        """For each campaign, its earliest scanned import that the story extractor has not
+        finished reading (a call limit stopped it, or it failed part way). One for each campaign,
+        oldest first, so a campaign that cannot be read never crowds out another and a campaign's
+        later sessions wait for its earlier ones. The caller checks which lines are readable."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT DISTINCT ON (i.campaign_id) i.campaign_id, i.session_id, i.write_recap,"
+                " t.started_at, i.import_id"
+                " FROM session_imports i JOIN transcript_sessions t"
+                " ON t.id = i.session_id AND t.guild_id = i.guild_id"
+                f" WHERE {_UNREAD}"
+                " ORDER BY i.campaign_id, t.started_at, i.session_id",
+            )
+            first = [
+                Ready(
+                    r["campaign_id"],
+                    r["session_id"],
+                    int(r["started_at"]),
+                    bool(r["write_recap"]),
+                    r["import_id"],
+                )
+                for r in await cur.fetchall()
+            ]
+        return sorted(first, key=lambda r: (r.started_at, r.session_id))[:limit]
+
+    async def count_unextracted(self, guild_id: int) -> dict[str, int]:
+        """How many scanned imports of each campaign the story extractor has not finished."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT i.campaign_id, count(*) AS n FROM session_imports i"
+                " JOIN transcript_sessions t ON t.id = i.session_id AND t.guild_id = i.guild_id"
+                f" WHERE {_UNREAD} GROUP BY i.campaign_id",
+            )
+            return {r["campaign_id"]: int(r["n"]) for r in await cur.fetchall()}
 
     async def finish_scan(self, guild_id: int, session_id: str, ended: int) -> None:
         """The scan ran to `ended` (seconds): its window is closed."""

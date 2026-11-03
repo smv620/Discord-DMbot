@@ -157,6 +157,9 @@ def fake_bot(store: ImportStore, **kw: Any) -> Any:
         _hold_or_queue=AsyncMock(return_value="held"),
         _link_import_party=AsyncMock(),  # the party link after a scan (#3036): its own tests
         _offer_import_time=AsyncMock(),  # the game-time offer (#2979): its own tests
+        _extract_import=AsyncMock(return_value="done"),  # the story read (#3301): its own tests
+        _extract_imports_left=AsyncMock(return_value={}),
+        _tell_imports_left=AsyncMock(),
     )
     for name in (
         "run_import_followups",
@@ -636,6 +639,23 @@ class TheFollowUp(WithImports):
             self.assertEqual(call.args[3], 66)  # asked on the campaign's DM screen
         starts = sorted(call.args[2] for call in bot._hold_or_queue.await_args_list)
         self.assertEqual(starts, [START + DAY, START + 3 * DAY])
+
+    async def test_the_story_read_follows_each_scan_in_date_order(self) -> None:
+        a, b = await self.imported(1), await self.imported(2)
+        bot, _ = await self.bot()
+        order: list[str] = []
+
+        async def scan(gid: int, ready: Any) -> list[str]:
+            order.append(f"scan {ready.session_id}")
+            return []
+
+        async def read(gid: int, ready: Any) -> str:
+            order.append(f"read {ready.session_id}")
+            return "done"
+
+        bot._scan_import, bot._extract_import = scan, read
+        await rounds(bot)
+        self.assertEqual(order, [f"scan {a}", f"read {a}", f"scan {b}", f"read {b}"])
 
     async def test_the_scan_asks_only_about_lines_of_people_who_still_agree(self) -> None:
         await self.imported(1)
