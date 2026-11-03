@@ -140,7 +140,8 @@ class TheRun(unittest.IsolatedAsyncioTestCase):
     def card(self, me: Any, user: int = DM, *, expired: bool = False) -> Any:
         import discord
 
-        gone = discord.HTTPException(SimpleNamespace(status=404, reason="x"), "gone")  # type: ignore[arg-type]
+        exc: Any = discord.HTTPException  # (built from a stand-in response)
+        gone = exc(SimpleNamespace(status=404, reason="x"), "gone")
         c = pressed(me, user)
         c.edit_original_response = AsyncMock(side_effect=gone if expired else None)
         return c

@@ -3,12 +3,14 @@ given. A secret entry never appears. Invented names."""
 
 from __future__ import annotations
 
+from typing import Any
+
 from dmbot.memory.models import CONFIRMED
 from tests.test_memory_names import GUILD, NamesTest
 
 
 class TheTablesNames(NamesTest):
-    async def add(self, name: str, **kw: object) -> str:
+    async def add(self, name: str, **kw: Any) -> str:
         kw.setdefault("type", "npc")
         written = await self.memory.add_entity(
             GUILD, self.campaign.id, name=name, source="dm", status=CONFIRMED, **kw
