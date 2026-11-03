@@ -123,6 +123,17 @@ describe("confirming consent per speaker", () => {
     expect((screen.getByLabelText(c.tick("Old Pip")) as HTMLInputElement).checked).toBe(false);
   });
 
+  it("two identical consent lines both show, with no key warning", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    const api = mockApi("table");
+    api.importConsent = async () => ({ version: 7, text: "Same.\nSame.\nOther." });
+    await previewed(api);
+    expect(screen.getAllByText("Same.")).toHaveLength(2);
+    expect(screen.getByText("Other.")).toBeTruthy();
+    expect(errors.mock.calls.some((args) => String(args[0]).includes("key"))).toBe(false);
+    errors.mockRestore();
+  });
+
   it("keeps the old choices, with no consent words, while the switch is off", async () => {
     live.confirm = false;
     const api = await previewed();

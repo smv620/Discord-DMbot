@@ -1027,8 +1027,9 @@ export default function Import({
                           .split("\n")
                           .map((line) => line.trim())
                           .filter((line) => line !== "")
-                          .map((line) => (
-                            <li key={line}>{line}</li>
+                          // The position is part of the key, so two identical lines both show (#3323).
+                          .map((line, i) => (
+                            <li key={`${i}-${line}`}>{line}</li>
                           ))}
                       </ul>
                     ) : (
