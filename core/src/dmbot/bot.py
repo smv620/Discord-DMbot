@@ -440,6 +440,7 @@ from dmbot.transcript.cleaner import (
 )
 from dmbot.transcript.close_calls import CloseCalls
 from dmbot.transcript.export import clock
+from dmbot.transcript.import_consent import ImportConsentsSection, SpeakersSection
 from dmbot.transcript.import_job import STALE_SCAN_S, ImportJob, ImportStore, Ready
 from dmbot.transcript.import_map import ImportSpeakersSection
 from dmbot.transcript.improvement import OptOutStore
@@ -13217,6 +13218,8 @@ def register_backup_sections(
     campaigns.register_section(StyleSection())  # and how it likes its recaps to sound (#2075)
     campaigns.register_section(NotesSection())  # and its standing notes on that (#2076)
     campaigns.register_section(ImportSpeakersSection())  # and who its import labels were (#2105)
+    campaigns.register_section(SpeakersSection())  # speakers without Discord (#3305)
+    campaigns.register_section(ImportConsentsSection())  # and what the uploader confirmed
     campaigns.register_section(FollowedSetsSection())  # and the sets it follows (#1260)
     campaigns.register_section(RuleSetsSection())  # and the sets it publishes (#2552)
     campaigns.register_section(ClockSection())  # and the game clock (#965)

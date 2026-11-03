@@ -48,6 +48,8 @@ SECTION_TABLES: dict[str, tuple[str, ...]] = {
     "recap_style_notes": ("recap_style_notes",),
     "recap_style_examples": ("recap_style_examples",),
     "import_speakers": ("import_speakers",),
+    "campaign_speakers": ("campaign_speakers",),  # speakers without Discord, negative ids (#3305)
+    "import_consents": ("import_consents",),  # what the uploader confirmed, per speaker (#3305)
     "rule_set_follows": ("rule_set_follows",),
     "rule_sets": ("rule_sets", "rule_set_versions", "rule_set_editors"),
     "game_clock": ("game_clocks", "game_clock_groups", "game_clock_log"),
