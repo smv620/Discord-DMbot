@@ -40,6 +40,18 @@ class TheLabel(unittest.TestCase):
             "Okthandom Korran's child (name unknown)",
         )
         self.assertEqual(unnamed.label("Hollis' king", "Hollis"), "Hollis' king (name unknown)")
+        self.assertEqual(
+            unnamed.label("His child", "Okthandom"), "Okthandom's child (name unknown)"
+        )
+        self.assertEqual(unnamed.label("Ken’s sister", "Ken"), "Ken's sister (name unknown)")
+        self.assertEqual(
+            unnamed.label("O'Brien's child", "O'Brien"), "O'Brien's child (name unknown)"
+        )
+        # a short first word is not an owner, and a bare owner is left alone
+        self.assertEqual(
+            unnamed.label("Old's heir", "Old Tom"), "Old Tom's Old's heir (name unknown)"
+        )
+        self.assertEqual(unnamed.label("Ken's", "Ken"), "Ken's Ken's (name unknown)")
         # another owner stays, and a lone word is never emptied
         self.assertEqual(
             unnamed.label("the king's guard", "Ken"), "Ken's king's guard (name unknown)"
