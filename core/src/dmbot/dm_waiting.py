@@ -39,6 +39,26 @@ class WaitingChecks:
     def total(self) -> int:
         return self.names + self.people + self.claims + self.connections
 
+    @staticmethod
+    def parse(offered: str) -> WaitingChecks:
+        """The counts a sent message offered, from its stored words (unknown words ignored)."""
+        found: dict[str, int] = {}
+        for word in offered.split():
+            kind, _, count = word.partition("=")
+            if kind in ("names", "people", "claims", "connections") and count.isdigit():
+                found[kind] = int(count)
+        return WaitingChecks(**found)
+
+    def minus(self, earlier: WaitingChecks) -> WaitingChecks:
+        """What waits beyond what an earlier message already offered (never below zero), so a
+        second message does not offer the same checks again."""
+        return WaitingChecks(
+            names=max(0, self.names - earlier.names),
+            people=max(0, self.people - earlier.people),
+            claims=max(0, self.claims - earlier.claims),
+            connections=max(0, self.connections - earlier.connections),
+        )
+
     def offered(self) -> str:
         return " ".join(
             f"{k}={getattr(self, k)}" for k in ("names", "people", "claims", "connections")

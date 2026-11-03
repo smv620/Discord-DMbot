@@ -92,6 +92,36 @@ class TheMessage(WithImports):
         self.assertFalse(await me.tell_dm_waiting(GUILD, self.campaign.id, "lore:1", where="x"))
         self.assertFalse(await WaitingSent(self.db).sent(GUILD, self.campaign.id, "lore:1"))
 
+    async def test_two_different_uploads_each_send_and_the_heading_names_the_upload(self) -> None:
+        me = fake_bot(
+            self, [WaitingChecks(names=1, connections=1), WaitingChecks(names=1, connections=1)]
+        )
+        cid = self.campaign.id
+        self.assertTrue(await me.tell_dm_waiting(GUILD, cid, "lore:1", where="your upload"))
+        self.assertTrue(await me.tell_dm_waiting(GUILD, cid, "lore:2", where="your upload"))
+        text = me.ask_privately.await_args_list[0].args[2]
+        self.assertIn("2 questions** about your upload:", text)
+
+    async def test_a_send_that_raises_gives_the_key_back(self) -> None:
+        me = fake_bot(self, [WaitingChecks(names=1)] * 2)
+        me.ask_privately = AsyncMock(side_effect=[RuntimeError("down"), True])
+        cid = self.campaign.id
+        self.assertFalse(await me.tell_dm_waiting(GUILD, cid, "lore:1", where="x"))
+        self.assertFalse(await WaitingSent(self.db).sent(GUILD, cid, "lore:1"))
+        self.assertTrue(await me.tell_dm_waiting(GUILD, cid, "lore:1", where="x"))  # (next round)
+
+    async def test_a_second_message_leaves_out_what_the_first_already_offered(self) -> None:
+        me = fake_bot(self, [WaitingChecks(names=2, connections=1)])
+        self.assertTrue(
+            await me.tell_dm_waiting(
+                GUILD, self.campaign.id, "k", where="x",
+                already=WaitingChecks.parse("names=2 people=0 claims=0 connections=0 unread=3"),
+            )
+        )  # fmt: skip
+        text = me.ask_privately.await_args.args[2]
+        self.assertIn("connection to check", text)
+        self.assertNotIn("name", text.replace("connection", ""))  # (the 2 names were offered)
+
     async def test_a_restart_does_not_send_it_again(self) -> None:
         cid = self.campaign.id
         await fake_bot(self, [WaitingChecks(names=1)]).tell_dm_waiting(

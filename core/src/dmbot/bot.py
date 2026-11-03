@@ -10418,11 +10418,16 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         await self._send_asks_for(table.guild_id, table.campaign_id, table.screen_channel_id, asks)
 
     async def _send_asks_for(
-        self, guild_id: int, campaign_id: str, screen_channel_id: int | None, asks: list[Ask]
+        self,
+        guild_id: int,
+        campaign_id: str,
+        screen_channel_id: int | None,
+        asks: list[Ask],
+        about: str = "your last session",
     ) -> bool:
         """`send_asks` for a campaign with no table at a session (a lore upload, an import,
         #3314). True when the message reached a DM privately or was posted on the DM screen."""
-        combined = combine(asks)
+        combined = combine(asks, about)
         if combined is None:
             return False
         text, view = combined
@@ -10498,26 +10503,36 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         return WaitingChecks(names=names, people=people, claims=claims, connections=connections)
 
     async def tell_dm_waiting(
-        self, gid: int, cid: str, key: str, *, where: str, note: str = ""
+        self,
+        gid: int,
+        cid: str,
+        key: str,
+        *,
+        where: str,
+        note: str = "",
+        already: WaitingChecks | None = None,
     ) -> bool:
         """After a lore upload or an import finished (#3314): one private message to the
         campaign's DMs saying how many checks of each kind wait, a button for each, the DM screen
         as the fallback. Sent once for each `key` (claimed in the database first, so a restart or
-        a second round does not send it again) and never when nothing waits. `note` is kept with
-        the key (an import's unread count). Counts only. True when a message went out. Never
+        a second round does not send it again) and never when nothing waits; a key with nothing
+        waiting is spent on purpose (what comes later belongs to the next upload or import).
+        `note` is kept with the key (an import's unread count); `already` is what an earlier
+        message offered, left out of this one. Counts only. True when a message went out. A
+        message that could not be sent anywhere gives its key back for the next round. Never
         raises."""
+        claimed = False
+        sent = WaitingSent(self.campaigns.db) if self.campaigns is not None else None
         try:
-            if self.memory is None or self.campaigns is None:
+            if self.memory is None or sent is None:
                 return False
             campaign = await self.campaigns.get(gid, cid)
-            if campaign is None:
-                return False
-            sent = WaitingSent(self.campaigns.db)
-            if await sent.sent(gid, cid, key):
+            if campaign is None or await sent.sent(gid, cid, key):
                 return False
             waiting = await self.count_waiting(gid, cid)
+            shown = waiting.minus(already) if already is not None else waiting
             asks = asks_for(
-                waiting,
+                shown,
                 {
                     NAMES: partial(RecapNamesButton, gid, cid),
                     PEOPLE: partial(PeopleReviewButton, cid),
@@ -10528,15 +10543,23 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             )
             if not await sent.claim(gid, cid, key, f"{waiting.offered()} {note}".strip()):
                 return False  # (another round took it between the look and now)
+            claimed = True
             if not asks:
                 return False  # nothing waits: the key is spent, nothing is sent
-            if await self._send_asks_for(gid, cid, campaign.dm_screen_channel_id, asks):
-                log.info("Waiting checks told (%s)", waiting.offered())
+            if await self._send_asks_for(gid, cid, campaign.dm_screen_channel_id, asks, where):
+                log.info("Waiting checks told (%s)", shown.offered())
                 return True
             await sent.release(gid, cid, key)  # (no DM and no screen: try again at the next round)
             return False
         except Exception as exc:
             log.warning("Waiting checks: the message failed (%s)", type(exc).__name__)
+            if claimed and sent is not None:  # claimed but not sent: give it back
+                try:
+                    await sent.release(gid, cid, key)
+                except Exception as again:
+                    log.warning(
+                        "Waiting checks: couldn't give the key back (%s)", type(again).__name__
+                    )
             return False
 
     async def ask_live(
@@ -10824,11 +10847,14 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                         )
                     elif unread == 0:
                         before = await sent.offered_of(gid, cid, first) or ""
-                        if not before.endswith(
-                            "unread=0"
-                        ):  # the first message went out with some unread
+                        if not before.endswith("unread=0"):  # it went out with some unread
                             await self.tell_dm_waiting(
-                                gid, cid, f"{first}:rest", where="your import", note="unread=0"
+                                gid,
+                                cid,
+                                f"{first}:rest",
+                                where="your import",
+                                note="unread=0",
+                                already=WaitingChecks.parse(before),
                             )
         except Exception as exc:
             log.warning("Waiting checks after an import failed (%s)", type(exc).__name__)

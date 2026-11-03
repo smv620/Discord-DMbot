@@ -622,7 +622,7 @@ class BackgroundOffer(_Menu):
             # The card above is the DM's own, and goes when they close it: what waits for them
             # also comes once to their private chat, like a live session's (#3314).
             await bot.tell_dm_waiting(
-                guild, campaign.id, f"lore:{int(time.time())}", where="your upload"
+                guild, campaign.id, f"lore:{time.time_ns()}", where="your upload"
             )
         except (AIError, CampaignError) as exc:  # CampaignError: the campaign is gone
             with contextlib.suppress(discord.HTTPException):
