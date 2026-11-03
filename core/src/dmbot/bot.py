@@ -1010,6 +1010,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         # campaign -> how many of its import's sessions had their name check given up (told once;
         # best effort across a restart, the website's progress reads the saved flag)
         self._import_unchecked: dict[str, int] = {}
+        self._import_reading: set[int] = set()  # servers whose waiting imports are being read
+        self._import_left_told: dict[str, int] = {}  # campaign -> sessions left, as last told
         # import id -> the sessions of a held group released by answers so far (one line at the end)
         self._group_made: dict[str, list[int]] = {}
         # The earliest hold each import has had (memory only): its waiting emails count their days
@@ -8691,7 +8693,43 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             )
 
     async def extract_claims(self, table: Table, ended_at: int) -> None:
-        """After a session, only with DMBOT_STORY_EXTRACTOR on (it is off until #1282 passes): read
+        """After a live session: see `_extract_session`."""
+        if (
+            not self.settings.story_extractor_on
+            or self.extractor_ai is None
+            or self.memory is None
+            or self.transcripts is None
+            or table.campaign_id is None
+            or table.transcript_session_id is None
+        ):
+            return  # (off means off: nothing is read or built)
+        await self._extract_session(
+            table.guild_id,
+            table.campaign_id,
+            table.transcript_session_id,
+            dm_ids={table.dm_user_id, *table.dm_user_ids},
+            tally=table.steward_tally,
+            notice_channel=table.screen_channel_id,
+        )
+
+    async def _extract_session(
+        self,
+        gid: int,
+        cid: str,
+        sid: str,
+        *,
+        dm_ids: Collection[int],
+        tally: Tally | None,
+        notice_channel: int | None,
+        renew: Callable[[], Awaitable[Any]] | None = None,
+        progress: Callable[[int, int], Awaitable[None]] | None = None,
+    ) -> str:
+        """Read one stored session with the story extractor: "done", "limit" (its call limit is
+        used, or it stopped early: the rest waits for a later round) or "skipped" (off, no plan,
+        nothing to read).
+        `renew` is awaited before each AI call, so an import's claim stays fresh while it runs.
+
+        Only with DMBOT_STORY_EXTRACTOR on (it is off until #1282 passes): read
         the stored transcript in short batches and store what the AI heard as proposals for the DM
         (#1363). Off means off: no AI client, no stored lines read, no prompt built. Only a campaign
         whose plan includes it runs (#1367), within its session and daily call limits, and a
@@ -8703,15 +8741,12 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             or self.extractor_ai is None
             or self.memory is None
             or self.transcripts is None
-            or table.campaign_id is None
-            or table.transcript_session_id is None
         ):
-            return
-        gid, cid = table.guild_id, table.campaign_id
+            return "skipped"
         with log_context(guild_id=gid, campaign_id=cid):
-            session = await self.transcripts.session(gid, table.transcript_session_id)
+            session = await self.transcripts.session(gid, sid)
             if session is None or session.lines == 0:
-                return
+                return "skipped"
             campaign = await self.campaigns.get(gid, cid)
             # Closed, not open: a plan that can't be checked is not run, and nothing is recorded.
             if campaign is None or not await self.plan_allows(
@@ -8720,8 +8755,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 log.info(
                     "Story extractor: not run, the plan does not include it or can't be checked"
                 )
-                return
-            sid = table.transcript_session_id
+                return "skipped"
             after_ms, used = await self.transcripts.extraction(gid, sid)
             now = int(time.time())
             day_used = await self.transcripts.extractor_calls_since(gid, cid, now - 86400)
@@ -8733,37 +8767,44 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             )
             if allowed == 0:
                 log.info("Story extractor: not run, its call limit is used (%d today)", day_used)
-                return
+                return "limit"
             transcripts = self.transcripts
             lines = await transcripts.lines(gid, sid)
             # The people at the table are not story names (as in the name scan).
-            people = {table.dm_user_id, *table.dm_user_ids, *(await self.consent.consenting(gid))}
+            people = {*dm_ids, *(await self.consent.consenting(gid))}
             skip: set[str] = set()
             for uid in people:
                 name = self.name_of(gid, uid)
                 if not name.startswith("<@"):
                     skip.add(name_key(name))
                     skip.update(name_key(word) for word in name.split())
+
+            async def count_call() -> None:
+                await transcripts.record_extraction(
+                    gid, sid, through_ms=0, calls=1, now=int(time.time())
+                )
+                if renew is not None:
+                    await renew()  # (an import's claim: nobody else retakes it while this runs)
+
             report = await extractor.run(
                 self.extractor_ai,
                 ClaimStore(self.memory),
                 lines,
                 guild_id=gid,
                 campaign_id=cid,
-                dm_ids={table.dm_user_id, *table.dm_user_ids},
+                dm_ids=dm_ids,
                 consenting=lambda: self.consent.consenting(gid),
                 model=lambda: self.extractor_ai.model if self.extractor_ai else "",
                 session_started_at=session.started_at,
-                tally=table.steward_tally,
+                tally=tally,
                 max_calls=allowed,
                 skip=skip,
                 after_ms=after_ms,
                 readings=self.settings.story_readings_on,
                 family_only=self.settings.story_family_only,
                 imported=await transcripts.is_import(gid, sid),
-                count_call=lambda: transcripts.record_extraction(
-                    gid, sid, through_ms=0, calls=1, now=int(time.time())
-                ),
+                count_call=count_call,
+                progress=progress,
             )
             log.info(report.line())
             try:  # what a restart resumes from, and what the day's limit counts
@@ -8772,12 +8813,12 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 )  # (the calls were counted as they were made)
             except Exception:
                 log.exception("Story extractor: couldn't note how far it got")
-            if report.named:  # the DM checks them where the name scan's are checked
+            if report.named and notice_channel is not None:
+                # the DM checks them where the name scan's are checked
                 await self.post(
-                    table.screen_channel_id,
-                    held_back_text(report.new_names),
-                    view=review_view(cid),
+                    notice_channel, held_back_text(report.new_names), view=review_view(cid)
                 )
+            return "limit" if report.stopped or report.failed else "done"
 
     async def read_put_back_lines(self, guild_id: int) -> None:
         """Start the read of the lines DMs put back (#2587) as a tracked background task, at most
@@ -10631,6 +10672,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     # already: they are on the review list, just not in the "new names" post.
                     async with asyncio.timeout(STALE_SCAN_S // 3):
                         added = await self._scan_import(gid, ready)
+                    await self._extract_import(gid, ready)  # (its own try; keeps the claim fresh)
                     await store.finish_scan(gid, ready.session_id, int(time.time()))
                     await self._link_import_party(gid, ready)
                     await self._offer_import_time(gid, ready)
@@ -10649,7 +10691,111 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 await self._start_import_recap(gid, store, ready)
         await self._apply_import_plays(gid, store)
         await self._tell_import_news(gid, store)
+        await self._tell_imports_left(gid, store, await self._extract_imports_left(gid))
         return done
+
+    async def _tell_imports_left(self, gid: int, store: ImportStore, left: dict[str, int]) -> None:
+        """Say, once for each change, how many imported sessions the story read has not reached
+        (its call limits ran out): they are read on a later round, so nothing is lost. Only when
+        the import's scans are over, on the DM screen; counts only."""
+        for cid in list(self._import_left_told.keys() | left.keys()):
+            now = left.get(cid, 0)
+            if now == self._import_left_told.get(cid, 0) or await store.pending_scans(gid, cid):
+                continue
+            campaign = await self.campaigns.get(gid, cid)
+            if campaign is None or campaign.dm_screen_channel_id is None:
+                self._import_left_told.pop(cid, None)
+                continue
+            if now:
+                one = now == 1
+                what = "1 imported session" if one else f"{now} imported sessions"
+                text = (
+                    f"📖 The story read has not finished {what} yet. It tries again later on its "
+                    "own; nothing is lost."
+                )
+                await self.post(campaign.dm_screen_channel_id, text)
+            self._import_left_told[cid] = now
+            if not now:
+                self._import_left_told.pop(cid, None)
+
+    async def _extract_import(self, gid: int, ready: Ready) -> str:
+        """The story extractor on one imported session (#3301), after its name scan and with the
+        same gates as a live session (switch, plan, call limits, consent: `_extract_session`).
+        It is given the session's own date, never today's. While it runs the scan's claim is
+        renewed before each AI call, so no other round retakes it. Its own `try`: a failure here
+        is logged (the type only) and never reaches the scan's claim or counts, which are settled.
+        Returns "done", "limit" (the rest waits for a later round) or "skipped"."""
+        assert self.import_job is not None
+        store = self.import_job.store
+        campaign = await self.campaigns.get(gid, ready.campaign_id)
+        if campaign is None:
+            return "skipped"
+        try:
+            noted = False
+
+            async def batch(part: int, parts: int) -> None:  # (the import's progress card)
+                nonlocal noted
+                noted = True
+                await store.set_story(
+                    gid, ready.session_id, "reading", int(time.time()), part=part, parts=parts
+                )
+
+            outcome = await self._extract_session(
+                gid,
+                ready.campaign_id,
+                ready.session_id,
+                dm_ids=set(campaign.dm_user_ids),
+                tally=None,
+                notice_channel=campaign.dm_screen_channel_id,
+                renew=lambda: store.renew_scan(gid, ready.session_id, int(time.time())),
+                progress=batch,
+            )
+            if outcome == "done":
+                # (the card first: if the second write fails the session is read again, which
+                # finds nothing new, rather than the card sticking on "reading")
+                await store.set_story(gid, ready.session_id, "read", int(time.time()))
+                await self._mark_import_read(gid, ready.session_id)
+            elif outcome == "limit":
+                await store.set_story(gid, ready.session_id, "waiting", int(time.time()))
+            return outcome
+        except Exception as exc:  # the type only: a database error can quote a row
+            log.warning("Import: the story read failed (%s)", type(exc).__name__)
+            if noted:  # it was shown as reading: say it waits, since a later round retries it
+                try:
+                    await store.set_story(gid, ready.session_id, "waiting", int(time.time()))
+                except Exception as again:
+                    log.warning("Import: couldn't note the wait (%s)", type(again).__name__)
+            return "skipped"
+
+    async def _extract_imports_left(self, gid: int) -> dict[str, int]:
+        """Imported sessions the story extractor did not finish (a call limit stopped it, or a
+        batch failed) are read on a later round: each round the earliest unread session of each
+        campaign, oldest first, so a campaign's later sessions wait for its earlier ones and a
+        campaign that cannot be read never crowds out another. Returns, for each campaign, how
+        many are still waiting. One sweep a server at a time."""
+        assert self.import_job is not None and self.transcripts is not None
+        if self.extractor_ai is None or not self.settings.story_extractor_on:
+            return {}
+        if gid in self._import_reading:
+            return {}
+        self._import_reading.add(gid)
+        try:
+            for ready in await self.import_job.store.unextracted(gid):
+                with log_context(guild_id=gid, campaign_id=ready.campaign_id):
+                    await self._extract_import(gid, ready)
+            return await self.import_job.store.count_unextracted(gid)
+        finally:
+            self._import_reading.discard(gid)
+
+    async def _mark_import_read(self, gid: int, sid: str) -> None:
+        """A session whose last readable line was read is complete, even when off-topic lines
+        follow it, so it is not asked about again."""
+        assert self.transcripts is not None
+        lines = await self.transcripts.lines(gid, sid)
+        if lines:
+            await self.transcripts.record_extraction(
+                gid, sid, through_ms=max(x.started_ms for x in lines), calls=0, now=int(time.time())
+            )
 
     async def _offer_import_time(self, gid: int, ready: Ready) -> None:
         """After an imported session's scan is done (#2979): work out when in game time it ended

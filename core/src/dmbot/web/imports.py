@@ -770,6 +770,33 @@ def _shapes(found: list[dict[str, Any]], now: int) -> list[dict[str, Any]]:
     return out
 
 
+# (the story read's stages are its own list, not part of the SQL stage CASE above)
+_STORY_STAGES = {
+    "reading": "reading_connections",
+    "waiting": "waiting_for_limit",
+    "read": "connections_read",
+}
+
+
+def _story_shape(story: dict[str, Any] | None, now: int) -> dict[str, Any] | None:
+    """The story read of one imported session (#3307) in the shared shape: reading (batch n of
+    m, how long it has run, when it last moved), waiting (the daily limit or a failed batch
+    stopped it; it carries on by itself) or read. None until it starts. Counts and times only."""
+    stage = _STORY_STAGES.get(str((story or {}).get("state") or ""))
+    if story is None or stage is None:
+        return None
+    reading = stage == "reading_connections"
+    return progress_shape.shape(
+        stage,
+        started_at=int(story["started"]),
+        updated_at=int(story["moved"]),
+        now=now,
+        done=int(story["part"]) if reading else None,
+        total=int(story["parts"]) if reading else None,
+        unit=progress_shape.UNITS.get(stage),
+    )
+
+
 async def progress(
     db: Database,
     session: Session,
@@ -809,6 +836,9 @@ async def progress(
                 "namesToAnswer": int(s["namesToAnswer"]),
                 "namesUnchecked": bool(s["namesUnchecked"]),
                 "progress": part,
+                # The story read (the connections found in what was said) in the same shape, or
+                # None when it has not started (#3307).
+                "story": _story_shape(s.get("story"), now),
                 # Its own recap's reference, for the stages that have a recap or a held one: the
                 # page then links the session's recap, not the list (#2240). The session time is
                 # the door's `date`; the campaign is the one opened above (never another's).
