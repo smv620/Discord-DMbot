@@ -23,6 +23,7 @@ import CampaignNav from "./CampaignNav";
 import FixLine from "./FixLine";
 import SessionNotesPanel from "./SessionNotes";
 import { FIX_LINE_LIVE } from "../content/fix-line-switch";
+import { THEATRE_DOWNLOAD_LIVE } from "../content/theatre-download-switch";
 
 /** Where in the pages the address points: `/account/transcripts`, `/<campaign>`, `/<campaign>/<n>`. */
 export function placeFromPath(path: string): { ref: string; number: number | null } | null {
@@ -293,6 +294,7 @@ function Reading({
         {(view: TranscriptView) => (
           <>
             <Download api={api} campaignRef={campaignRef} view={view} />
+            <ScriptDownload api={api} campaignRef={campaignRef} view={view} />
             <Lines key={`${version}-${number}`} api={api} campaignRef={campaignRef} view={view} />
             <details class="small muted">
               <summary>{text.about}</summary>
@@ -352,6 +354,59 @@ function Download({
       <span role="status" class="warn">
         {state === "failed" ? text.downloadFailed : ""}
       </span>
+    </p>
+  );
+}
+
+/** The game master's button to save a session's script (#3244): a copy of the session where who and what is meant is
+ * written in brackets. Only for a game master, only while the switch is on and the API has the call; a session with
+ * none says so instead of failing. */
+function ScriptDownload({
+  api,
+  campaignRef,
+  view,
+}: {
+  api: AccountApi;
+  campaignRef: string;
+  view: TranscriptView;
+}) {
+  const isDm = useIsDm(api, campaignRef);
+  const [state, setState] = useState<"idle" | "busy" | "failed" | "none" | "big">("idle");
+  const busy = useRef(false);
+  if (!THEATRE_DOWNLOAD_LIVE || !api.transcriptScript || !isDm) return null;
+  async function save() {
+    if (busy.current) return;
+    busy.current = true;
+    setState("busy");
+    try {
+      const blob = await api.transcriptScript!(campaignRef, view.number);
+      const href = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = href;
+      link.download = view.fileName.replace(/-(cleaned|heard)\.txt$/, "-script.txt") || "script.txt";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(href);
+      setState("idle");
+    } catch (error) {
+      const kind = error instanceof ApiError ? error.kind : "";
+      setState(kind === "no-script" ? "none" : kind === "too-big" ? "big" : "failed");
+    } finally {
+      busy.current = false;
+    }
+  }
+  const said = { idle: "", busy: "", failed: text.scriptFailed, none: text.scriptNone, big: text.scriptTooBig }[state];
+  return (
+    <p>
+      <button type="button" class="button secondary" onClick={() => void save()}>
+        {state === "busy" ? text.scriptSaving : text.scriptDownload}
+      </button>{" "}
+      <span role="status" class="warn">
+        {said}
+      </span>
+      <br />
+      <span class="small muted">{text.scriptAbout}</span>
     </p>
   );
 }

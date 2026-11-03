@@ -2655,6 +2655,19 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         type: "text/plain",
       });
     },
+    // The pretend script of a session (#3244): session 1 has one, the rest have none; a ref ending `.player`
+    // is a player's, who may not save it.
+    async transcriptScript(campaignRef, number) {
+      calls.push(`transcriptScript:${campaignRef}:${number}`);
+      await reachable();
+      signedIn();
+      if (campaignRef.endsWith(".player")) throw new ApiError("not-allowed");
+      if (number !== 1) throw new ApiError("no-script");
+      return new Blob(
+        ["The Silver Lock, session 1: the script\n\nMira [Belleros's character] draws her sword.\n"],
+        { type: "text/plain" },
+      );
+    },
     // The pretend Story timeline (#2462): a campaign ending `.tl-empty` has no sessions, `.tl-player`
     // is a player's view (posted recaps only, no address).
     async timeline(campaignRef): Promise<Timeline> {

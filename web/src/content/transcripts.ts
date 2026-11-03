@@ -85,6 +85,14 @@ export const text = {
   download: "Save as a text file",
   downloading: "Saving…",
   downloadFailed: "That didn't save. Try again.",
+  // The game master's script of a session (#3244): a copy with who and what is meant written in brackets.
+  scriptDownload: "Save the script",
+  scriptSaving: "Getting the script…",
+  scriptFailed: "The script didn't save. Try again.",
+  scriptNone: "No script has been made for this session yet.",
+  scriptTooBig: "The script is too big to save in one file.",
+  scriptAbout:
+    "A script is a copy of this session where every he, she and it is spelled out in [brackets]. Only game masters can save it.",
   about: "About this version",
   // The bot's notes mention its /transcript command; on a web page say what to use here.
   webNote: "On this page, use the Cleaned and As heard buttons. The /transcript command is for Discord.",

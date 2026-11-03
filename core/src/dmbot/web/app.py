@@ -74,6 +74,7 @@ from dmbot.web import (
     sheets,
     strays,
     support,
+    theatre_script,
     timeline,
     tokens,
 )
@@ -2924,6 +2925,31 @@ def create_app(
             media_type="text/plain; charset=utf-8",
             # `name` is a slug of letters, digits and dashes (export.file_name): safe in a header.
             headers={"Content-Disposition": f'attachment; filename="{name}"'},
+        )
+
+    @app.get("/me/campaigns/{ref}/transcripts/{number}/script")
+    async def me_transcript_script(ref: str, number: int, signed: Signed) -> Response:
+        """The session's theatrical script as a text file (#3244), for the campaign's DMs only: a
+        player gets 403 `not_allowed`, a session with no script 404 `no_script`."""
+        session, _token = signed
+        try:
+            name, text = await theatre_script.render_script(
+                db, session, ref, number, now=clock(), enforce_plans=settings.enforce_plans
+            )
+        except RecapError as err:
+            status = {"not_allowed": 403, "no_script": 404, "too_big": 413}.get(err.code, 404)
+            detail = (
+                err.code if err.code in ("not_allowed", "no_script", "too_big") else "not_found"
+            )
+            raise HTTPException(status_code=status, detail=detail) from None
+        return Response(
+            text.encode("utf-8"),
+            media_type="text/plain; charset=utf-8",
+            # `name` is a slug of letters, digits and dashes (theatre_script.file_name).
+            headers={
+                "Content-Disposition": f'attachment; filename="{name}"',
+                "Cache-Control": "no-store",
+            },
         )
 
     # A campaign's house rules, for anyone in the server (#1521): the table's rules, which every
