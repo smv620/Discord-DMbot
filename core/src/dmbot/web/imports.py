@@ -770,6 +770,7 @@ def _shapes(found: list[dict[str, Any]], now: int) -> list[dict[str, Any]]:
     return out
 
 
+# (the story read's stages are its own list, not part of the SQL stage CASE above)
 _STORY_STAGES = {
     "reading": "reading_connections",
     "waiting": "waiting_for_limit",

@@ -10731,8 +10731,11 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         if campaign is None:
             return "skipped"
         try:
+            noted = False
 
             async def batch(part: int, parts: int) -> None:  # (the import's progress card)
+                nonlocal noted
+                noted = True
                 await store.set_story(
                     gid, ready.session_id, "reading", int(time.time()), part=part, parts=parts
                 )
@@ -10748,13 +10751,20 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 progress=batch,
             )
             if outcome == "done":
-                await self._mark_import_read(gid, ready.session_id)
+                # (the card first: if the second write fails the session is read again, which
+                # finds nothing new, rather than the card sticking on "reading")
                 await store.set_story(gid, ready.session_id, "read", int(time.time()))
+                await self._mark_import_read(gid, ready.session_id)
             elif outcome == "limit":
                 await store.set_story(gid, ready.session_id, "waiting", int(time.time()))
             return outcome
         except Exception as exc:  # the type only: a database error can quote a row
             log.warning("Import: the story read failed (%s)", type(exc).__name__)
+            if noted:  # it was shown as reading: say it waits, since a later round retries it
+                try:
+                    await store.set_story(gid, ready.session_id, "waiting", int(time.time()))
+                except Exception as again:
+                    log.warning("Import: couldn't note the wait (%s)", type(again).__name__)
             return "skipped"
 
     async def _extract_imports_left(self, gid: int) -> dict[str, int]:

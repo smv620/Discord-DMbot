@@ -290,15 +290,16 @@ class ImportStore:
     ) -> None:
         """Where the story read of this import is (#3307): 'reading' (batch `part` of `parts`),
         'waiting' (the limit, or a failed batch, stopped it; it carries on by itself) or 'read'.
-        Counts and times only. It started when it first went to 'reading'; every call is a move."""
+        Counts and times only. It started when it first went to 'reading' (or went back to an
+        earlier batch: a new try after a restart); every call is a move."""
         async with self._db.guild(guild_id) as conn:
             await conn.execute(
                 "UPDATE session_imports SET story_moved_at = %s,"
-                " story_started_at = CASE WHEN %s = 'reading' AND story_state <> 'reading'"
-                " THEN %s ELSE story_started_at END,"
+                " story_started_at = CASE WHEN %s = 'reading' AND (story_state <> 'reading'"
+                " OR coalesce(%s, 0) < story_part) THEN %s ELSE story_started_at END,"
                 " story_part = coalesce(%s, story_part), story_parts = coalesce(%s, story_parts),"
                 " story_state = %s WHERE guild_id = %s AND session_id = %s",
-                (now, state, now, part, parts, state, guild_id, session_id),
+                (now, state, part, now, part, parts, state, guild_id, session_id),
             )
 
     async def finish_scan(self, guild_id: int, session_id: str, ended: int) -> None:
