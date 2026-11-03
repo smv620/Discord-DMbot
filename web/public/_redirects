@@ -31,6 +31,7 @@
 # An NPC's page (#2266), at the address Discord's 📖 Open button links to (core's dm_screen/npc_pages.py):
 # one page for every NPC; it reads the campaign and the NPC from the address.
 /account/npc/*  /account/npc  200
+/account/pictures/*  /account/pictures  200
 
 # A campaign's own page (#2416): one page for every campaign; it reads which from the address.
 /account/campaigns/*  /account/campaigns  200
