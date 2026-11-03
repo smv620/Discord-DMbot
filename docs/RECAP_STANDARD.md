@@ -42,7 +42,7 @@ Removing every line brings the defaults back, the same way the style examples wo
    compass direction and the time the journey took, as the session stated them.
 5. **Scene segues:** a clean, logical transition whenever the place or the focus changes, so the
    reader always knows where the new scene is.
-   - Wrong: paragraph 1 is at the inn; paragraph 2 opens "Then Belleros was struck with an arrow"
+   - Wrong: paragraph 1 is at the inn; paragraph 2 opens "Then Kael was struck with an arrow"
      when that fight happened on the road.
    - Right: say the party left the inn and was on the road before the arrow.
 6. **Valuable reconnaissance:** scouting, tracking or investigation that gave the party information
