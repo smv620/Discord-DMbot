@@ -65,7 +65,15 @@ function isFinal(s: Session): boolean {
 
 /** The connections read of a session that is still going or waiting for the daily limit (#3307). */
 function storyOpen(s: Session): boolean {
-  return s.story != null && (s.story.stage === "reading_connections" || s.story.stage === "waiting_for_limit");
+  // (a read that has failed or finished is not open whatever its stage says, so the page never polls for it)
+  const st = s.story;
+  return st != null && (st.state === "running" || st.state === "stalled") && (st.stage === "reading_connections" || st.stage === "waiting_for_limit");
+}
+/** A known stage of the read that is still going, waiting or has failed (its failure stays on the page). */
+function storyShown(s: Session): boolean {
+  const st = s.story;
+  if (!st || !Object.hasOwn(words.story, st.stage) || st.stage === "connections_read") return false;
+  return storyOpen(s) || st.state === "failed";
 }
 function storyWaiting(s: Session): boolean {
   return s.story?.stage === "waiting_for_limit";
@@ -75,7 +83,8 @@ function storyWaiting(s: Session): boolean {
  * has, but the others go on: while any can still move it is shown as running (or stalled, when the server
  * says so); once none can, as failed only if every session failed, else done. */
 function shownState(imp: JobProgress, sessions: Session[]): "running" | "stalled" | "failed" | "done" {
-  if (sessions.some((s) => !isFinal(s))) return imp.state === "stalled" ? "stalled" : "running";
+  // (the connections read goes on after a session is imported, and the whole import is still working until it stops)
+  if (sessions.some((s) => !isFinal(s) || storyOpen(s))) return imp.state === "stalled" ? "stalled" : "running";
   return sessions.length > 0 && sessions.every(isFailed) ? "failed" : "done";
 }
 
@@ -196,6 +205,7 @@ export default function Import({
   const [pollTries, setPollTries] = useState(0);
   // The newest `updatedAt` shown: a late reply that is older never moves the page backwards (#2564).
   const lastUpdated = useRef(0);
+  const lastStory = useRef(0); // the latest move of any session's connections read, so a read that moves keeps the page looking quickly
   const idleLooks = useRef(0); // looks in a row where nothing moved forward
   const watchStart = useRef(0);
 
@@ -287,14 +297,19 @@ export default function Import({
         if (!live) return;
         const stamp = next.import?.updatedAt;
         const older = typeof stamp === "number" && stamp < lastUpdated.current;
-        const moved = typeof stamp === "number" ? stamp > lastUpdated.current : true;
+        const storyStamp = Math.max(0, ...next.sessions.map((x) => x.story?.updatedAt ?? 0));
+        const storyMoved = storyStamp > lastStory.current;
+        if (storyStamp > lastStory.current) lastStory.current = storyStamp;
+        const moved = (typeof stamp === "number" ? stamp > lastUpdated.current : true) || storyMoved;
         if (typeof stamp === "number" && !older) lastUpdated.current = stamp;
         if (!older) setProgress(next); // (an older answer: keep what is shown, ask again)
         idleLooks.current = moved && !older ? 0 : idleLooks.current + 1;
         // A session's connections are read after it is imported, so the page keeps looking until that is done or waiting.
         const open = next.sessions.filter((s) => !isFinal(s) || storyOpen(s));
         if (open.length > 0) {
-          if (Date.now() - watchStart.current > WATCH_LIMIT_MS) {
+          // Waiting for the daily limit can take hours and carries on by itself, so it never trips the limit; the page just looks slowly.
+          const onlyLimit = open.every((x) => storyWaiting(x) && isFinal(x));
+          if (!onlyLimit && Date.now() - watchStart.current > WATCH_LIMIT_MS) {
             setProblem(words.stoppedWatching); // the page stops here; "Check again" starts it afresh
             return;
           }
@@ -710,9 +725,9 @@ export default function Import({
                   {words.namesLink}
                 </a>
               )}
-              {s.story && storyOpen(s) && (
+              {storyShown(s) && s.story && (
                 <WorkProgress
-                  stage={words.story[s.story.stage] ?? ""}
+                  stage={stageWords(words.story, s.story.stage)}
                   done={s.story.done}
                   total={s.story.total}
                   unit={s.story.unit ? words.unit[s.story.unit] : undefined}
@@ -722,10 +737,11 @@ export default function Import({
                   state={s.story.state}
                   waiting={storyWaiting(s)}
                   frozen={problem !== null}
-                  whatToDo={words.stalledDo}
+                  reason={s.story.state === "failed" ? words.storyFailed : undefined}
+                  whatToDo={s.story.state === "failed" ? words.storyFailedDo : words.stalledDo}
                 />
               )}
-              {s.story?.stage === "connections_read" && <span class="small">{words.story.connections_read}</span>}
+              {s.story?.stage === "connections_read" && s.story.state !== "failed" && <p class="small">{words.story.connections_read}</p>}
               {importId && isFinal(s) && s.clock && (
                 <ClockOffer api={api} campaignRef={ref} importId={importId} file={s.file} clock={s.clock} />
               )}

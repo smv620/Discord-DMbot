@@ -191,8 +191,10 @@ export const importPage = {
   story: {
     reading_connections: "Reading connections",
     waiting_for_limit: "Waiting for DMbot's daily limit, will carry on by itself",
-    connections_read: "Connections read",
+    connections_read: "Connections ready",
   } as Record<string, string>,
+  storyFailed: "The connections couldn't be read for this session.",
+  storyFailedDo: "The session itself is imported and safe.",
   // What the counts of the whole import's progress count (the API's `unit` code) (#2565).
   unit: { sessions: "sessions", parts: "pieces", lines: "lines" } as Record<string, string>,
   // Said when the server calls the import stalled: it can still move, and the files are safe.

@@ -163,7 +163,41 @@ describe("the read of each session's connections", () => {
       const after = asks();
       await vi.advanceTimersByTimeAsync(120_000);
       expect(asks()).toBe(after);
-      expect(after).toBeGreaterThanOrEqual(3);
+      expect(after).toBe(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not look for a read that has failed, and says it failed", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const { asks } = await importing([answer(story({ state: "failed" }))]);
+      expect(await screen.findByText(w.storyFailed)).toBeTruthy();
+      const after = asks();
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(asks()).toBe(after);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("shows nothing for a stage it does not know", async () => {
+    await importing([answer(story({ stage: "constructor" }))]);
+    expect(screen.queryByText(w.story.reading_connections!)).toBeNull();
+    expect(document.querySelector("progress")).toBeNull();
+  });
+
+  it("picks up a read that starts after the session was already imported", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      // (the session is imported, but its first look says nothing of a read; the import itself is still running)
+      const first = answer(null);
+      first.import = { ...first.import!, stage: "cleaning", state: "running" };
+      first.sessions[0]!.stage = "cleaning";
+      await importing([first, answer(story())]);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(await screen.findByText(w.story.reading_connections!)).toBeTruthy();
     } finally {
       vi.useRealTimers();
     }
