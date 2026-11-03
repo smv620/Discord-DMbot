@@ -270,7 +270,9 @@ class TheJob(DatabaseTest):
     async def test_a_session_gets_at_most_so_many_ai_windows(self) -> None:
 
         job = self.job(FakeAI("1. game"))
-        topics, left, _failures, skipped = await job._topics(GUILD, [(MIRA, "a line")] * 30, 2, 0)
+        topics, left, _failures, skipped = await job._topics(
+            GUILD, self.campaign.id, [(MIRA, "a line")] * 30, 2, 0
+        )
         self.assertEqual((len(topics), left, skipped), (30, 0, True))
 
     async def test_nothing_of_the_transcript_is_logged(self) -> None:

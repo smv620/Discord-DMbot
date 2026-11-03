@@ -234,6 +234,17 @@ class EveryClaimedTableComesBack(DatabaseTest):
                 " %s, 1)",
                 (g, c, text_hash("T", "S"), DM),
             ),
+            "campaign_speakers": (
+                "INSERT INTO campaign_speakers (guild_id, campaign_id, user_id, name, created_by,"
+                " created_at) VALUES (%s, %s, -1, 'Old Greg', %s, 1)",
+                (g, c, DM),
+            ),
+            "import_consents": (
+                "INSERT INTO import_consents (guild_id, campaign_id, id, import_id, user_id, basis,"
+                " confirmed_by, confirmed_at, terms_version, lines)"
+                " VALUES (%s, %s, repeat('c', 32), 'batch', -1, 'uploader_confirmed', %s, 1, 7, 3)",
+                (g, c, DM),
+            ),
             "session_notes": (
                 "INSERT INTO session_notes (guild_id, campaign_id, session_at, beats, written_at,"
                 " job_created_at) VALUES (%s, %s, 1,"

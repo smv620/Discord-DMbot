@@ -726,7 +726,10 @@ class TheStore(WithImports):
         async with self.web.user(self.session.user_id, session=self.session.id_hash) as conn:
             await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(THURSDAY.id),))
             cur = await conn.execute(
-                "SELECT dmbot_import_store(%s, %s, %s, %s, %s, %s::jsonb, %s, NULL) AS r",
+                (
+                    "SELECT dmbot_import_store(%s, %s, %s, %s, %s, %s::jsonb, %s, NULL,"
+                    " '[]'::jsonb) AS r"
+                ),
                 (
                     THURSDAY.id,
                     self.one.id,
@@ -748,7 +751,10 @@ class TheStore(WithImports):
         async with self.web.user(self.session.user_id, session=self.session.id_hash) as conn:
             await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(THURSDAY.id),))
             cur = await conn.execute(
-                "SELECT dmbot_import_store(%s, %s, %s, %s, %s, %s::jsonb, 1, NULL) AS r",
+                (
+                    "SELECT dmbot_import_store(%s, %s, %s, %s, %s, %s::jsonb, 1, NULL,"
+                    " '[]'::jsonb) AS r"
+                ),
                 (THURSDAY.id, self.one.id, "a" * 32, "x.txt", 1_700_000_000,
                  json.dumps([{"ms": 0, "user": MIRA, "text": "hi", "dur": 1}])),
             )  # fmt: skip
