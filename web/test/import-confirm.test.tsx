@@ -197,4 +197,26 @@ describe("the consent routes over the wire (#3305 PR 1)", () => {
     await expect(ask("blocked")).rejects.toMatchObject({ kind: "said-no" });
     await expect(ask("not_ticked")).rejects.toMatchObject({ kind: "not-ticked" });
   });
+
+  it("sends a choice the way PR 1 reads it: objects for ticks, a bare id or drop otherwise", async () => {
+    const bodies: Record<string, unknown>[] = [];
+    const api = httpApi("https://api.example.test", (async (_u: string, init: RequestInit) => {
+      bodies.push(JSON.parse(String(init.body)));
+      return new Response(JSON.stringify({ files: [], estimate: { sessions: 0, fastCalls: 0 } }), { status: 200 });
+    }) as unknown as typeof fetch);
+    const mapping = { Cerric: "1", Ash: "2", "Old Pip": "new", Mira: "drop", Late: "new" };
+    await api.importCheck!("100.cmp1", [], mapping, [], { confirmed: ["Ash", "Old Pip"], consentVersion: 7 });
+    expect(bodies[0]?.mapping).toEqual({
+      Cerric: "1",
+      Ash: { confirmed: true, member: "2" },
+      "Old Pip": { confirmed: true },
+      Mira: "drop",
+      Late: { confirmed: false }, // never ticked: the API refuses it as not_ticked
+    });
+    await api.importStart!("100.cmp1", [], { mapping, confirmed: ["Ash", "Old Pip"], consentVersion: 7, sessions: [] });
+    const plan = bodies[1]?.plan as Record<string, unknown>;
+    expect(plan.consentVersion).toBe(7);
+    expect(plan.confirmed).toBeUndefined();
+    expect((plan.mapping as Record<string, unknown>)["Old Pip"]).toEqual({ confirmed: true });
+  });
 });

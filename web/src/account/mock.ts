@@ -1601,7 +1601,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
               lines,
               suggested: label === "Cerric" ? { userId: "1", name: "Stormy", why: "remembered" } : null,
               // A label the campaign already keeps as a speaker without Discord (#3306).
-              ...(label === "Old Pip" ? { existing: { userId: "-1", name: "Old Pip" } } : {}),
+              ...(label === "Old Pip" ? { speaker: { id: "-1", name: "Old Pip" } } : {}),
             })),
           };
         }),

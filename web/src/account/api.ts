@@ -1061,8 +1061,11 @@ export interface ImportSpeaker {
   label: string;
   lines: number;
   suggested: ImportSuggestion | null;
-  /** A speaker without Discord that the campaign already has under this name (#3306); null or missing otherwise. */
-  existing?: { userId: string; name: string } | null;
+  /** A speaker without Discord that the campaign already has under this name (#3305 PR 1: `speaker`); null or missing
+   * otherwise. The id is a negative number as text and means nothing to the page. */
+  speaker?: { id: string; name: string } | null;
+  /** Set when the member suggested for this name said no to being recorded (#3305 PR 1); they can't be ticked in. */
+  blocked?: ImportBlocked | null;
 }
 export interface ImportPreviewFile {
   name: string;
@@ -1117,6 +1120,25 @@ export interface ImportCheck {
   estimate: { sessions: number; fastCalls: number };
 }
 /** The mapping is `{ label: userId | "drop" }`; `order` starts at 1. */
+/** What the API reads for one name (#3305 PR 1): a member's id as text (as before), `"drop"`, or an object. */
+export type ImportChoiceOnWire =
+  | string
+  | { member: string }
+  | { confirmed: boolean; member?: string }
+  | { leave_out: true };
+/** The page's choices as the API reads them. The page keeps its own simple shape (`label -> id | "drop" | "new"` and
+ * the ticked labels); the objects are made here, the one place that knows the wire. A speaker without Discord that was
+ * not ticked is sent as `{confirmed: false}`, which the API refuses (`not_ticked`) whatever the page did. */
+export function wireMapping(mapping: Record<string, string>, confirmed: readonly string[] = []): Record<string, ImportChoiceOnWire> {
+  const out: Record<string, ImportChoiceOnWire> = {};
+  for (const [label, to] of Object.entries(mapping)) {
+    const ticked = confirmed.includes(label);
+    if (to === "new") out[label] = { confirmed: ticked };
+    else if (ticked) out[label] = { confirmed: true, member: to };
+    else out[label] = to;
+  }
+  return out;
+}
 export interface ImportPlan {
   /** `label -> userId | "drop" | "new"`: `"new"` is a speaker without Discord, kept by name (#3306). */
   mapping: Record<string, string>;
