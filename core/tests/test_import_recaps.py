@@ -160,6 +160,7 @@ def fake_bot(store: ImportStore, **kw: Any) -> Any:
         _extract_import=AsyncMock(return_value="done"),  # the story read (#3301): its own tests
         _extract_imports_left=AsyncMock(return_value={}),
         _tell_imports_left=AsyncMock(),
+        _tell_finished_imports=AsyncMock(),  # the private "what waits" message (#3314): its tests
     )
     for name in (
         "run_import_followups",

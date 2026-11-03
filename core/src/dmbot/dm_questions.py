@@ -23,8 +23,9 @@ NO_PRIVATE_MESSAGE = (
 )
 
 NAMES, PEOPLE, CLAIMS, FAMILY = "names", "people", "claims", "family"
+CONNECTIONS = "connections"  # backstory connections and suggested names (after an upload, #3314)
 # Always listed in this order, so the message reads the same each time.
-ORDER = (NAMES, PEOPLE, CLAIMS, FAMILY)
+ORDER = (NAMES, PEOPLE, CLAIMS, CONNECTIONS, FAMILY)
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,7 +51,9 @@ def ordered(asks: list[Ask]) -> list[Ask]:
     return sorted(asks, key=lambda a: ORDER.index(a.kind) if a.kind in ORDER else len(ORDER))
 
 
-def combine(asks: list[Ask]) -> tuple[str, discord.ui.View] | None:
+def combine(
+    asks: list[Ask], about: str = "your last session"
+) -> tuple[str, discord.ui.View] | None:
     """The one message and its buttons, or None with nothing to ask. One question keeps its own
     words; several become a list under a count, each with its button."""
     if not asks:
@@ -63,7 +66,7 @@ def combine(asks: list[Ask]) -> tuple[str, discord.ui.View] | None:
         return asks[0].alone, view
     lines = "\n".join(f"• {ask.line}" for ask in asks)
     # (no ❓ here: the private message already opens with DMbot's own "has a question" line)
-    head = f"**{len(asks)} questions** about your last session:"
+    head = f"**{len(asks)} questions** about {about}:"
     text = f"{head}\n{lines}\nPress a button to answer."
     return text, view
 

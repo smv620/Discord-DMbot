@@ -9,7 +9,7 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 LIVE NOW
 ------------------------------------------------------------------------------
-core + web-api at 14a45b75 (Supervisor's 2026-11-03 handover: migrations 0321 and 0322; Story Graph auto-update). 319 rows.
+core + web-api at 69b107fc (Supervisor's handover: migration 0325_import_story_read, the import entity extraction fix). 320 rows.
   Bot connected to 2 servers, 0 errors; web-api healthy. Full entry: docs/testing-history.log.
 
 Switches off: DMBOT_WEB_LORE, DMBOT_WEB_RECAP_STYLE, DMBOT_WEB_PAUSE, DMBOT_STORY_FAMILY_ONLY (unset = off).
