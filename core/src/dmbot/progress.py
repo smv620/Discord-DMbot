@@ -27,6 +27,11 @@ STALL_AFTER_S: Final[Mapping[str, int | None]] = {
     "cleaning": 10 * 60,  # a chunk of lines, then the next (waiting to be taken counts too)
     "checking_names": 15 * 60,  # the name scan's own retake window
     "finding_names": 15 * 60,
+    # The story read of an imported session (#3307): a batch is one AI call (up to 5 minutes);
+    # waiting for the daily limit never stalls, it carries on by itself.
+    "reading_connections": 15 * 60,
+    "waiting_for_limit": None,
+    "connections_read": None,
     "waiting_for_names": None,  # waiting for the DM's answers
     "starting_recap": 10 * 60,
     "writing_recap": 30 * 60,
@@ -68,6 +73,7 @@ ENDS: Final[Mapping[str, str]] = {
     "done": DONE,
     "recap_not_written": DONE,
     "recap_ready": DONE,
+    "connections_read": DONE,
     "failed": FAILED,
     "recap_failed": FAILED,
 }
@@ -80,6 +86,7 @@ UNITS: Final[Mapping[str, str]] = {
     "audio_voice": "parts",
     "recap_reading": "parts",
     "restore_writing": "parts",
+    "reading_connections": "parts",
 }
 
 

@@ -47,6 +47,9 @@ const pictureErrorKinds: Record<string, ApiErrorKind> = {
   refused: "refused",
 };
 
+/** The script download's own refusal (#3244): a session with no script. Only that call reads it. */
+const scriptErrorKinds: Record<string, ApiErrorKind> = { ...errorKinds, no_script: "no-script" };
+
 /** The route's own action names; the page's names for the same things are mapped here only (#3275). */
 const PICTURE_WIRE_ACTION: Record<PictureAction, string> = {
   "make-private": "private",
@@ -110,6 +113,16 @@ export default function campaignArea({ call }: ApiHelpers): Partial<AccountApi> 
         `/me/campaigns/${encodeURIComponent(campaignRef)}/transcripts/${number}/download?version=${version}`,
         undefined,
         true,
+      )) as Blob,
+    transcriptScript: async (campaignRef, number) =>
+      (await call(
+        "GET",
+        `/me/campaigns/${encodeURIComponent(campaignRef)}/transcripts/${number}/script`,
+        undefined,
+        true,
+        undefined,
+        false,
+        scriptErrorKinds,
       )) as Blob,
     transcriptStretch: async (campaignRef, number, skip) =>
       (

@@ -58,7 +58,17 @@ _SESSION_DROP = ("id", "guild_id", "campaign_id")
 _LINE_DROP = ("id", "guild_id", "session_id")
 _SUGGESTION_DROP = ("id", "guild_id", "campaign_id", "session_id")
 _RESPELL_DROP = ("id", "guild_id", "campaign_id", "session_id", "line_id")
-_IMPORT_DROP = ("guild_id", "campaign_id", "session_id")
+_IMPORT_DROP = (
+    "guild_id",
+    "campaign_id",
+    "session_id",
+    # where the story read is: a restored session starts blank (0325)
+    "story_state",
+    "story_part",
+    "story_parts",
+    "story_started_at",
+    "story_moved_at",
+)
 _SESSION_KEYS = ("session", "lines", "suggestions", "respells", "import")
 
 
