@@ -130,6 +130,7 @@ if TYPE_CHECKING:  # (only for annotations: `bot.py` imports this module)
     from dmbot.memory.web_actions import ActionStore
     from dmbot.memory.web_sheets import ActionStore as SheetActionStore
     from dmbot.recaps.audio.worker import AudioWorker
+    from dmbot.recaps.must_haves import MustStore
     from dmbot.recaps.pipeline import RecapWorker
     from dmbot.recaps.plot import PlotRunner
     from dmbot.recaps.plot_talk_run import TalkRunner
@@ -250,6 +251,7 @@ class RecapFeatures:
         recap_feedback_limit: recap_feedback.FeedbackLimit
         recap_holds: recap_hold.HoldStore | None
         recap_notes: NoteStore | None
+        recap_musts: MustStore | None
         recap_requests: recap_requests.RequestStore | None
         recap_styles: StyleStore | None
         recap_worker: RecapWorker | None
@@ -1190,6 +1192,7 @@ class RecapFeatures:
             session_at=job.session_at,
             styles=self.recap_styles,
             notes=self.recap_notes,
+            musts=self.recap_musts,
             importance=self.importance,
             recanted=await self._recanted(gid, cid, job.session_at),
             relation_ties=await self._relation_ties(gid, cid),

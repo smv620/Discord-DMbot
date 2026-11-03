@@ -369,6 +369,7 @@ from dmbot.recaps.discord import (
     WEB_STYLE_PER_ROUND,
     RecapFeatures,
 )
+from dmbot.recaps.must_haves import MustSection, MustStore
 from dmbot.recaps.notes import SessionNotesSection
 from dmbot.recaps.pipeline import RecapWorker
 from dmbot.recaps.plot import PlotRunner, PlotStore
@@ -863,6 +864,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         npcs_roster: NpcRosterStore | None = None,
         recap_styles: StyleStore | None = None,
         recap_notes: NoteStore | None = None,
+        recap_musts: MustStore | None = None,
         installs: InstallStore | None = None,
         recap_holds: recap_hold.HoldStore | None = None,
         backstory_links: BackstoryLinks | None = None,
@@ -988,6 +990,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self.recap_holds = recap_holds  # recaps waiting for the DM's name answers (#2169)
         self.recap_feedback_limit = recap_feedback.FeedbackLimit()
         self.recap_notes = recap_notes  # the DM's standing style notes (#2076)
+        self.recap_musts = recap_musts  # the list every recap is written to (#3328)
         # How connected each name is in The truth, to rank the recap's beats (#2411); refreshed
         # after each session.
         self.importance = ImportanceCache(memory) if memory is not None else None
@@ -13482,6 +13485,7 @@ def register_backup_sections(
     campaigns.register_section(MapNotesSection())  # and the maps posted at its table (#2450)
     campaigns.register_section(StyleSection())  # and how it likes its recaps to sound (#2075)
     campaigns.register_section(NotesSection())  # and its standing notes on that (#2076)
+    campaigns.register_section(MustSection())  # and the must-haves its recaps are written to
     campaigns.register_section(ImportSpeakersSection())  # and who its import labels were (#2105)
     campaigns.register_section(SpeakersSection())  # speakers without Discord (#3305)
     campaigns.register_section(ImportConsentsSection())  # and what the uploader confirmed
@@ -13562,6 +13566,7 @@ async def run(settings: Settings) -> None:
             npcs_roster=NpcRosterStore(db),
             recap_styles=StyleStore(db),
             recap_notes=NoteStore(db),
+            recap_musts=MustStore(db),
             installs=InstallStore(db),
             recap_holds=recap_hold.HoldStore(db),
             backstory_links=BackstoryLinks(db),

@@ -1379,6 +1379,8 @@ def create_app(
         "too_long": (422, "too_long"),
         "too_soon": (429, "too_soon"),
         "full": (409, "full"),
+        "empty": (422, "empty"),  # a blank must-have line (#3328)
+        "too_many": (422, "too_many"),  # more than 40 must-have lines
     }
 
     @app.get("/me/campaigns/{ref}/recap-style")
@@ -1408,6 +1410,33 @@ def create_app(
                 request, 128 * 1024
             )  # 8,000 characters, all escaped, with room
             return await recap_style.add(db, session, ref, body)
+        except RecapError as err:
+            status, detail = style_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.put("/me/campaigns/{ref}/recap-style/must-haves", status_code=202)
+    async def me_recap_musts_save(ref: str, signed: Signed, request: Request) -> dict[str, Any]:
+        """Save the campaign's whole must-have list (#3328): `{"lines": [text, ...]}`. Answers
+        `{"id": ...}`; poll `GET …/recap-style/{id}`. An empty list or the defaults word for word
+        brings the defaults back. 422 `empty`, `too_long`, `too_many`, `bad_arg`. DM only."""
+        session, _token = signed
+        if not settings.recap_style_on:
+            raise HTTPException(status_code=404, detail="not_found")
+        try:
+            body = await bounded_json(request, 256 * 1024)  # 40 lines of 300, all escaped
+            return await recap_style.save_musts(db, session, ref, body)
+        except RecapError as err:
+            status, detail = style_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.delete("/me/campaigns/{ref}/recap-style/must-haves", status_code=202)
+    async def me_recap_musts_defaults(ref: str, signed: Signed) -> dict[str, Any]:
+        """Back to DMbot's own must-haves (#3328); answers `{"id": ...}` like a save. DM only."""
+        session, _token = signed
+        if not settings.recap_style_on:
+            raise HTTPException(status_code=404, detail="not_found")
+        try:
+            return await recap_style.use_musts_defaults(db, session, ref)
         except RecapError as err:
             status, detail = style_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
