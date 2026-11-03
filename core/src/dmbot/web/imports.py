@@ -36,6 +36,7 @@ from dmbot.entitlements import plan_grant_access
 from dmbot.recaps.notify import job_ref, parse_ref
 from dmbot.transcript import import_link, importer
 from dmbot.transcript import import_plan as ip
+from dmbot.transcript import uploader_words as uw
 from dmbot.transcript.import_job import MAX_WINDOWS
 from dmbot.transcript.topics import WINDOW_LINES
 from dmbot.web import recap_choices
@@ -367,7 +368,11 @@ async def _members(conn: Conn, c: Campaign, q: str, outside: str | None) -> list
 def consent_words(*, cloud: bool, company: str | None) -> dict[str, Any]:
     """The words the uploader confirms for each speaker (#3305): the same consent request a
     player sees in Discord, which says the whole server can read transcripts, and the version of
-    the wording. The page sends the version back with the import and a stale one is refused."""
+    the wording. The page sends the version back with the import and a stale one is refused.
+    Once `UPLOADER_WORDS_LIVE` is on these are the uploader's own words
+    (`transcript.uploader_words`) and the tick's words, `{name}` filled in by the page."""
+    if uw.UPLOADER_WORDS_LIVE:  # the uploader's own words, with their own version (#3305)
+        return {"version": uw.version(), "text": uw.TEXT, "tick": uw.TICK}
     return {
         "version": TERMS_VERSION,
         "text": request_text("this server", voice=None, dm=None, cloud=cloud, company=company),
@@ -811,7 +816,7 @@ async def confirm(
     choices = choices_of(raw_plan.get("mapping"))
     # The words the uploader saw when ticking: a stale version is refused so the page shows the
     # current ones (#3305). Nothing to confirm, nothing to check.
-    if (choices.ticked or choices.new) and raw_plan.get("consentVersion") != TERMS_VERSION:
+    if (choices.ticked or choices.new) and raw_plan.get("consentVersion") != uw.version():
         raise RecapError("stale_consent")
     entries = raw_plan.get("sessions")
     if not isinstance(entries, list) or not entries:
@@ -871,7 +876,8 @@ async def confirm(
                 for line in plan.lines
             ]
             cur = await conn.execute(
-                "SELECT dmbot_import_store(%s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s::jsonb) AS r",
+                "SELECT dmbot_import_store("
+                "%s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s::jsonb, %s) AS r",
                 (
                     c.guild_id,
                     c.campaign_id,
@@ -882,6 +888,7 @@ async def confirm(
                     TERMS_VERSION,
                     outside,
                     json.dumps([str(t) for t in ticked]),
+                    uw.version(),  # the words the uploader saw, kept with each tick
                 ),
             )
             done = (await cur.fetchone() or {}).get("r")

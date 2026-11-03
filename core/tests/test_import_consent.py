@@ -6,8 +6,10 @@ Invented fixtures only."""
 from __future__ import annotations
 
 from typing import Any
+from unittest.mock import patch
 
 from dmbot.consent import TERMS_VERSION, ConsentStore
+from dmbot.transcript import uploader_words as uw
 from dmbot.web import imports
 from dmbot.web.recaps import RecapError, _scoped
 from tests.test_web_api import ALICE, THURSDAY
@@ -92,13 +94,14 @@ class Confirming(WithImports):
             await _scoped(conn, THURSDAY.id)
             cur = await conn.execute(
                 "SELECT dmbot_import_store(%s, %s, 'x', 'a.txt', 1000, %s::jsonb, %s, NULL,"
-                " %s::jsonb) AS r",
+                " %s::jsonb, %s) AS r",
                 (
                     THURSDAY.id,
                     self.one.id,
                     f'[{{"ms": 0, "user": {TOMAS}, "text": "hello", "dur": 10}}]',
                     TERMS_VERSION,
                     f'["{TOMAS}"]',
+                    TERMS_VERSION,
                 ),
             )
             self.assertEqual((await cur.fetchone() or {}).get("r"), {"error": "blocked"})
@@ -333,12 +336,38 @@ class Confirming(WithImports):
                 await _scoped(conn, THURSDAY.id)
                 cur = await conn.execute(
                     "SELECT dmbot_import_store(%s, %s, 'x', 'a.txt', 1000, %s::jsonb, %s, NULL,"
-                    " %s::jsonb) AS r",
-                    (THURSDAY.id, self.one.id, line, TERMS_VERSION, ticked),
+                    " %s::jsonb, %s) AS r",
+                    (THURSDAY.id, self.one.id, line, TERMS_VERSION, ticked, TERMS_VERSION),
                 )
                 got = (await cur.fetchone() or {}).get("r")
             self.assertEqual((got or {}).get("error"), "unknown_speaker", ticked)
         self.assertEqual(await self.lines(), [])
+
+    # --- the uploader's own words (#3305) ---
+    async def test_a_tick_records_the_uploaders_words_and_a_stale_version_is_refused(self) -> None:
+        mapping = {"Tomas (tomas#1)": {"confirmed": True, "member": str(TOMAS)}}
+        with patch.object(uw, "UPLOADER_WORDS_LIVE", True):
+            with self.assertRaises(RecapError) as err:  # the Discord version is stale now
+                await self.confirm(plan(mapping, consentVersion=TERMS_VERSION), ("a.txt", CRAIG))
+            self.assertEqual(err.exception.code, "stale_consent")
+            await self.confirm(
+                plan(mapping, consentVersion=uw.IMPORT_WORDS_VERSION), ("a.txt", CRAIG)
+            )
+        [record] = await self.rows("import_consents")
+        self.assertEqual(record["terms_version"], uw.IMPORT_WORDS_VERSION)
+        self.assertEqual(record["user_id"], TOMAS)
+
+    async def test_a_member_who_agreed_in_discord_still_counts_under_the_discord_terms(
+        self,
+    ) -> None:
+        # (the import words changing asks nobody's Discord consent again)
+        mapping = {"Mira (mira_v)": str(MIRA)}
+        with patch.object(uw, "UPLOADER_WORDS_LIVE", True):
+            await self.confirm(
+                plan(mapping, consentVersion=uw.IMPORT_WORDS_VERSION), ("a.txt", CRAIG)
+            )
+        self.assertEqual(await self.rows("import_consents"), [])
+        self.assertIn(MIRA, {user for user, _ in await self.lines()})
 
     async def test_stop_recording_me_after_a_tick_removes_them_through_the_real_flow(self) -> None:
         consent = ConsentStore(self.db)
