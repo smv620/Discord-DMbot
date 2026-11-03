@@ -18,12 +18,14 @@ permanent, delete) are queued for the bot, which applies them with its own locks
 
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
 import hashlib
 import hmac
 import re
+import time
 import urllib.parse
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -213,3 +215,75 @@ async def read_pictures(
         ),
         "posters": sorted(str(p) for p in got["posters"]),
     }
+
+
+class PictureRefused(Exception):
+    """The bot or the door said no. `code` is for the page (`permanent-full` has its own words
+    there); `words` is what to show."""
+
+    def __init__(self, code: str, words: str) -> None:
+        super().__init__(code)
+        self.code = code
+        self.words = words
+
+
+ACTIONS = ("public", "private", "permanent", "unpermanent", "delete")
+WAIT_SECONDS = 8.0  # how long a click waits for the bot before the page is told "working on it"
+_REFUSALS = {
+    "not_found": "That picture isn't kept any more.",
+    "not_allowed": "You can't do that to this picture.",
+    "bad_action": "That isn't something this page can do.",
+    "too_soon": "Too many changes are waiting. Try again in a minute.",
+}
+
+
+async def act_on_picture(
+    db: Database,
+    session: Session,
+    ref: str,
+    code: str,
+    action: str,
+    *,
+    sleep: Callable[[float], Awaitable[None]] | None = None,
+    wait: float = WAIT_SECONDS,
+) -> dict[str, Any]:
+    """Queue a picture's Make private/public, Permanent, Not permanent or Delete for the bot, then
+    wait a few seconds for its answer. Returns `{state, note}`: `done`, or `waiting` when the bot
+    has not answered yet (the change still happens). A refusal or failure raises `PictureRefused`
+    with the words to show; the poster or a game master may ask (a game master only, for permanent).
+    The bot checks again from the database before it changes anything."""
+    guild_id, campaign_id = _parse(ref)
+    _guild_of(session, guild_id)
+    if not _CODE.fullmatch(code):
+        raise PictureRefused("not_found", _REFUSALS["not_found"])
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        cur = await conn.execute(
+            "SELECT dmbot_web_picture_act(%s, %s, %s, %s) AS r",
+            (guild_id, campaign_id, code, action),
+        )
+        got = (await cur.fetchone() or {}).get("r")
+    if got is None:
+        raise RecapError("not_allowed")
+    if got["status"] != "ok":
+        raise PictureRefused(got["status"], _REFUSALS.get(got["status"], "Couldn't do that."))
+    started = time.monotonic()  # (a deadline, not a count of sleeps: each poll takes time too)
+    while True:
+        async with db.user(session.user_id, session=session.id_hash) as conn:
+            await _scoped(conn, guild_id)
+            cur = await conn.execute(
+                "SELECT dmbot_web_picture_action(%s, %s, %s) AS r",
+                (guild_id, campaign_id, got["id"]),
+            )
+            state = (await cur.fetchone() or {}).get("r") or {"state": "failed", "note": ""}
+        if state["state"] == "done":
+            return {"state": "done", "note": str(state["note"])}
+        if state["state"] in ("refused", "failed"):
+            words = str(state["note"]) or "Couldn't do that. Try again."
+            raise PictureRefused(
+                "permanent-full" if words.startswith("Permanent pictures are full") else "refused",
+                words,
+            )
+        if time.monotonic() - started >= wait:
+            return {"state": "waiting", "note": ""}
+        await (sleep or asyncio.sleep)(0.5)

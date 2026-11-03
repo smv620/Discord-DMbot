@@ -1691,6 +1691,34 @@ def create_app(
     async def picture_preview(code: str, request: Request) -> Response:
         return await picture_link(code, request, preview=True)
 
+    @app.post("/me/campaigns/{ref}/pictures/{code}")
+    async def me_picture_act(ref: str, code: str, signed: Signed, request: Request) -> JSONResponse:
+        """Make a picture private or public, mark it permanent or not, or delete it (#3274):
+        `{"action": "private" | "public" | "permanent" | "unpermanent" | "delete"}`. The change is
+        queued for the bot, which applies it with its locks and limits; this waits a few seconds for
+        its answer. 200 `done`, 202 `waiting` (it will happen), 409 with the reason and the words
+        for a refusal. The poster or a game master; a game master only for permanent."""
+        who, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        action = body.get("action") if isinstance(body, dict) else None
+        if not isinstance(action, str) or action not in pictures.ACTIONS:
+            raise HTTPException(status_code=400, detail="bad_action")
+        try:
+            got = await pictures.act_on_picture(db, who, ref, code, action)
+        except pictures.PictureRefused as err:
+            status = {"not_found": 404, "not_allowed": 403, "too_soon": 429, "bad_action": 400}.get(
+                err.code, 409
+            )
+            return JSONResponse({"detail": err.code, "note": err.words}, status_code=status)
+        except RecapError as err:
+            if err.code == "not_allowed":
+                raise HTTPException(status_code=403, detail="not_allowed") from None
+            raise HTTPException(status_code=404, detail="not_found") from None
+        return JSONResponse(got, status_code=200 if got["state"] == "done" else 202)
+
     @app.get("/me/campaigns/{ref}/pictures")
     async def me_pictures(
         ref: str,
