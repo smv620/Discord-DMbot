@@ -2386,7 +2386,7 @@ names panel nor the speech-to-text hints can be a fixed list.
   2026-10-30, replacing that limit:* **the Story Graph must catch every node and edge a session or a document
   reveals**, for every connection kind (allies, enemies, rivals, work, membership, leadership, teachers,
   captives, places, items and the rest), not only family:
-  - **Unnamed entities are kept.** "The guard at the gate", "a hooded stranger", "Brewner's daughter" or "the
+  - **Unnamed entities are kept.** "The guard at the gate", "a hooded stranger", "the smith's daughter" or "the
     azure tome" each become an entry marked unnamed, with a plain description as its label, so their
     connections are kept from the first mention.
     The lore read does this for **people the text describes by a family role and never names** (GraphEngineer,
@@ -4957,17 +4957,29 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
     screen's ⚙️ Settings, and `/dmbot import`, both open the website's Import sessions page with a
     link button, for the campaign's DMs only. Nothing is imported in Discord: matching speakers,
     dates and checks need the page.
-  - **Consent is the hard rule, as everywhere.** Before anything is stored, the DM matches each
-    speaker name in a file to a member of the server.
-    - A speaker who matches a member who has agreed to be recorded (the current consent wording)
-      is kept.
-    - Every other speaker's lines are dropped before saving and are never stored: a person not
-      matched, a person who hasn't agreed, and bots.
-    - The page says how many lines each choice keeps or drops.
-    - The DM's word that "everyone agreed" isn't enough. A player who wants their lines kept agrees
-      in Discord first, as for a live session.
-    - Imported sessions are read by the whole server like any transcript. The consent request
-      already says so.
+  - **Consent is the hard rule, as everywhere.** Before anything is stored, the person uploading confirms
+    consent for each speaker named in the file, on the Import sessions page (owner, 2026-11-03: some
+    players aren't on Discord, so their consent is given on the website at upload; this replaces "the
+    DM's word that everyone agreed isn't enough", 2026-10-20). For each speaker the uploader picks one:
+    - **A server member who already agreed** in Discord (the current consent wording): kept, as before.
+    - **"They agreed"**: the uploader confirms that this person agreed to be recorded. The page shows the
+      same consent words a player sees in Discord, including that the whole server can read transcripts,
+      with one tick box per speaker: "I confirm {name} agreed to this." The speaker can be a server member
+      who hasn't agreed in Discord yet, or someone with no Discord account (kept as a speaker of this
+      campaign by name only). DMbot records who confirmed, when, and under which consent wording.
+    - **Leave out:** the speaker's lines are dropped before saving and never stored.
+    - **Limits:**
+      - A server member who has said **Stop recording me**, or turned DMbot down, can't be ticked for
+        them. Their own no always wins, and the page says why the box is greyed out.
+      - Bots are always dropped.
+      - Nothing is kept for a speaker the uploader left unticked.
+    - **Taking it back:** a confirmed speaker's lines can be removed later by the campaign's DMs on the
+      website ("Remove this speaker's lines"). A server member can also remove them, as with live lines.
+      A speaker without Discord asks the DM, and the privacy page says so.
+    - **Counts:** the page says how many lines each choice keeps or drops.
+    - **Who can read them:** imported sessions are read by the whole server like any transcript, and the
+      consent words on the page say so.
+    - **Live sessions don't change.** Recording a voice still needs that person's own yes in Discord.
   - **Each file becomes a stored session.** The DM sets each one's date (the page suggests one from
     the file name) and its place in order. It is marked *imported*, with the file name, who
     imported it and when.
