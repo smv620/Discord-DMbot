@@ -39,6 +39,7 @@ STALL_AFTER_S: Final[Mapping[str, int | None]] = {
     "waiting": 2 * 60,  # a copy asked for on the website: the bot takes it within seconds
     "fixing": 5 * 60,  # a line fixed at a person's asking (#2858)
     "deleting": 10 * 60,  # a person's lines being deleted at their asking (#2769)
+    "removing": 10 * 60,  # a speaker's lines being removed from a campaign by its DM (#3305)
     "reading": 5 * 60,  # ... then reads the campaign
     "packing": 5 * 60,  # ... and packs it
     # A backup loaded on the website (#2745): the person's own files arriving (waits for them),
