@@ -1041,14 +1041,14 @@ export interface ImportFileIn {
   name: string;
   text: string;
 }
-/** A member who said no to being recorded (#3306): `opted-out` pressed Stop recording me, `declined` turned DMbot down.
+/** A member who said no to being recorded (#3306), whichever way they said it: the uploader learns only that they said no.
  * Their lines can never be ticked in; the page shows them greyed out. */
-export type ImportBlocked = "opted-out" | "declined";
+export type ImportBlocked = "said_no";
 /** The consent wording an uploader confirms for the people they tick (#3306): the current version and the Discord
- * request's own lines, one sentence or bullet each. The page shows them as they are and sends the version back. */
+ * request's own text, one sentence or bullet to a line. The page shows it as it is and sends the version back. */
 export interface ImportConsent {
   version: number;
-  lines: string[];
+  text: string;
 }
 export interface ImportSuggestion {
   userId: string;
@@ -2709,6 +2709,7 @@ export const errorKinds: Record<string, ApiErrorKind> = {
   queue_full: "queue-full",
   stale: "stale",
   blocked: "said-no",
+  stale_consent: "stale",
   not_ticked: "not-ticked",
   bot: "bot-picked",
   bad_reading: "bad-reading",

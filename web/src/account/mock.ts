@@ -1616,7 +1616,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         { userId: "2", name: "Ash", agreed: false },
         { userId: "3", name: "Mira", agreed: true },
         // Said Stop recording me: can never be ticked in (#3306).
-        { userId: "4", name: "Dax", agreed: false, blocked: "opted-out" as const },
+        { userId: "4", name: "Dax", agreed: false, blocked: "said_no" as const },
       ];
       return all.filter((m) => m.name.toLowerCase().includes(q.toLowerCase()));
     },
@@ -1624,10 +1624,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       calls.push(`importConsent:${ref}`);
       return {
         version: 7,
-        lines: [
-          "DMbot records your voice at the table and writes it down.",
-          "Everyone in the Discord server can read the transcripts.",
-        ],
+        text: "DMbot records your voice at the table and writes it down.\nEveryone in the Discord server can read the transcripts.",
       };
     },
     async importCheck(ref, files, mapping, links = [], confirm) {
