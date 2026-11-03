@@ -316,7 +316,7 @@ describe("Help: the website's read-only pages (#1588)", () => {
       expect(heldTitles.includes(title), title).toBe(!HOMEBREW_KINDS_LIVE);
     }
     const shown = dmSteps.map((x) => x.text).join(" ");
-    expect(shown.includes("🤝 Standing")).toBe(STANDING_LIVE);
+    expect(shown.includes("🤝 Reputation")).toBe(STANDING_LIVE);
     expect(shown.includes("↩ All kinds")).toBe(HOMEBREW_KINDS_LIVE);
     expect(standingSteps.map((x) => x.text).join(" ")).toContain("Players never see it.");
     expect(homebrewKindSteps.map((x) => x.text).join(" ")).toContain("Spells 10/12, which means 10 of 12 spells are on.");

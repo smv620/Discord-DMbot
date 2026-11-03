@@ -284,9 +284,9 @@ export const STANDING_LIVE = false;
 
 export const standingSteps: Step[] = [
   {
-    text: "To see how an NPC, a group or a place feels about the party, open its name card and press 🤝 Standing. It shows Hostile, Unfriendly, Wary, Friendly or Devoted for each player character, and for the party as a whole, with the reasons. Press Toward a character… to set it yourself, for one character or the party. DMbot only reminds you. You decide how they act. Players never see it.",
+    text: "To see how an NPC, a group or a place feels about the party, open its name card and press 🤝 Reputation. It shows Hostile, Unfriendly, Wary, Friendly or Devoted for each player character, and for the party as a whole, with the reasons. Press Toward a character… to set it yourself, for one character or the party. DMbot only reminds you. You decide how they act. Players never see it.",
     names: [
-      { name: "🤝 Standing", file: "ui/standing.py" },
+      { name: "🤝 Reputation", file: "ui/standing.py" },
       { name: "Hostile", file: "memory/standing.py" },
       { name: "Unfriendly", file: "memory/standing.py" },
       { name: "Wary", file: "memory/standing.py" },
@@ -446,7 +446,7 @@ export const deedSteps: Step[] = [
     ],
   },
   {
-    text: "DMbot records only what you type. It never listens for deeds. A deed shows on the Standing screen as a reason, like \"(session 4, helped)\". It counts for less after ten sessions, and a feeling you set yourself always wins. ↩ Undo that works for a short while after you record. DMbot only reminds you; you decide how they act. Players never see deeds, and they are never in a transcript.",
+    text: "DMbot records only what you type. It never listens for deeds. A deed shows on the Reputation screen as a reason, like \"(session 4, helped)\". It counts for less after ten sessions, and a feeling you set yourself always wins. ↩ Undo that works for a short while after you record. DMbot only reminds you; you decide how they act. Players never see deeds, and they are never in a transcript.",
     names: [{ name: "↩ Undo that", file: "ui/deeds.py" }],
   },
 ];
