@@ -250,6 +250,13 @@ IMPORT_CONSENT = (
                              FROM jsonb_to_recordset(keep)
                                   AS k(ms BIGINT, "user" BIGINT, text TEXT, dur INT) ORDER BY 1)
             WHERE id = sid;
+        -- A speaker without Discord is named in the session itself, as readers take names from
+        -- `speaker_names` (and the start-up fill-in, which asks Discord, skips a named speaker).
+        UPDATE transcript_sessions t SET speaker_names = t.speaker_names || COALESCE((
+            SELECT jsonb_object_agg(s.user_id::TEXT, s.name) FROM campaign_speakers s
+            WHERE s.guild_id = g AND s.campaign_id = c AND s.user_id < 0
+              AND s.user_id = ANY (t.speakers)), '{}'::jsonb)
+            WHERE t.id = sid;
         INSERT INTO session_imports (guild_id, campaign_id, session_id, import_id, file_name,
                                      imported_by, imported_at)
             VALUES (g, c, sid, imp, left(fname, 200), who, now_s);
@@ -338,6 +345,32 @@ IMPORT_CONSENT = (
     END
     $fn$;
 
+    -- dmbot_import_speakers: the campaign's speakers without Discord and how many lines each has
+    -- (the transcripts page lists them for the DMs' "remove this speaker's lines"). NULL unless a
+    -- DM. Names and counts only.
+    CREATE FUNCTION dmbot_import_speakers(g BIGINT, c TEXT) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
+           OR NOT EXISTS (SELECT 1 FROM campaign_dms d
+                          WHERE d.guild_id = g AND d.campaign_id = c
+                            AND d.user_id = dmbot_current_user()) THEN
+            RETURN NULL;
+        END IF;
+        RETURN COALESCE((
+            SELECT jsonb_agg(jsonb_build_object(
+                       'id', s.user_id::TEXT, 'name', s.name,
+                       'lines', (SELECT count(*) FROM transcript_lines l
+                                 JOIN transcript_sessions t
+                                   ON t.id = l.session_id AND t.guild_id = l.guild_id
+                                 WHERE l.guild_id = g AND t.campaign_id = c
+                                   AND l.user_id = s.user_id))
+                       ORDER BY lower(s.name))
+            FROM campaign_speakers s WHERE s.guild_id = g AND s.campaign_id = c), '[]'::jsonb);
+    END
+    $fn$;
+
     DO $do$
     BEGIN
         EXECUTE format(
@@ -346,6 +379,9 @@ IMPORT_CONSENT = (
         -- (CREATE OR REPLACE resets a function's settings, so its search_path is pinned again)
         EXECUTE format(
             'ALTER FUNCTION dmbot_import_members(BIGINT, TEXT, TEXT, INT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_import_speakers(BIGINT, TEXT)'
             ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
         EXECUTE format(
             'ALTER FUNCTION dmbot_import_speaker(BIGINT, TEXT, TEXT)'
@@ -358,6 +394,7 @@ IMPORT_CONSENT = (
     $do$;
     REVOKE ALL ON FUNCTION dmbot_import_agreed(BIGINT, TEXT, INT, TEXT) FROM PUBLIC;
     REVOKE ALL ON FUNCTION dmbot_import_speaker(BIGINT, TEXT, TEXT) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_import_speakers(BIGINT, TEXT) FROM PUBLIC;
     REVOKE ALL ON FUNCTION dmbot_import_store(
         BIGINT, TEXT, TEXT, TEXT, BIGINT, JSONB, INT, TEXT, JSONB) FROM PUBLIC;
     """
@@ -375,4 +412,5 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
         "dmbot_import_store(BIGINT, TEXT, TEXT, TEXT, BIGINT, JSONB, INT, TEXT, JSONB)",
     ),
     ("dmbot_import_speaker", "dmbot_import_speaker(BIGINT, TEXT, TEXT)"),
+    ("dmbot_import_speakers", "dmbot_import_speakers(BIGINT, TEXT)"),
 )

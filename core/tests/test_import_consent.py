@@ -138,6 +138,51 @@ class Confirming(WithImports):
         [record] = await self.rows("import_consents")
         self.assertEqual((record["user_id"], record["lines"]), (speaker["user_id"], 1))
 
+    async def test_a_speaker_without_discord_is_named_in_the_session_and_its_transcript(
+        self,
+    ) -> None:
+        from dmbot.transcript.export import render
+
+        mapping: dict[str, Any] = {"Mira (mira_v)": str(MIRA), GHOST: {"confirmed": True}}
+        await self.confirm(plan(mapping, consentVersion=TERMS_VERSION), ("a.txt", WITH_GHOST))
+        [speaker] = await self.rows("campaign_speakers")
+        ghost = int(speaker["user_id"])
+        [session] = await self.transcripts.sessions(THURSDAY.id, self.one.id)
+        self.assertEqual(session.speaker_names.get(ghost), "Old Greg")
+        # Nothing for the start-up fill-in to ask Discord about: a negative id is never looked up.
+        self.assertEqual(
+            [m for _, ids in await self.transcripts.unnamed(THURSDAY.id) for m in ids if m < 0], []
+        )
+        lines = await self.transcripts.lines(THURSDAY.id, session.id)
+        text = render("One", session, lines, session.speaker_names)
+        self.assertIn("Old Greg", text)
+        self.assertNotIn(f"<@{ghost}>", text)
+
+    async def test_the_consent_words_come_with_their_version(self) -> None:
+        got = imports.consent_words(cloud=True, company="Deepgram")
+        self.assertEqual(got["version"], TERMS_VERSION)
+        self.assertIn("Anyone in this server can read and download that text", got["text"])
+        self.assertIn("Deepgram", got["text"])  # (and what the server sends out, as in Discord)
+
+    async def test_the_speakers_list_has_names_and_line_counts_for_a_dm_only(self) -> None:
+        from typing import cast
+
+        from dmbot.web import sessions as web_sessions
+        from tests.test_recap_web import BOB, NOW
+
+        mapping: dict[str, Any] = {"Mira (mira_v)": str(MIRA), GHOST: {"confirmed": True}}
+        await self.confirm(plan(mapping, consentVersion=TERMS_VERSION), ("a.txt", WITH_GHOST))
+        [speaker] = await self.rows("campaign_speakers")
+        got = await imports.speakers(self.web, self.session, self.ref_c, **self.kw)
+        self.assertEqual(
+            got, {"speakers": [{"id": str(speaker["user_id"]), "name": "Old Greg", "lines": 1}]}
+        )
+        token = await web_sessions.sign_in(self.web, cast(Any, BOB), [THURSDAY], now=NOW, days=30)
+        bob = await web_sessions.find(self.web, token, now=NOW)
+        assert bob is not None  # not a DM of this campaign
+        with self.assertRaises(RecapError):
+            await imports.speakers(self.web, bob, self.ref_c, **self.kw)
+
     async def test_the_same_name_in_the_next_file_is_the_same_speaker(self) -> None:
         mapping: dict[str, Any] = {GHOST: {"confirmed": True}}
         for _file in range(2):

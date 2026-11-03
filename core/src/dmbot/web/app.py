@@ -2674,6 +2674,31 @@ def create_app(
         except RecapError as err:
             raise import_refusal(err) from None
 
+    @app.get("/me/campaigns/{ref}/imports/consent", dependencies=[Depends(imports_enabled)])
+    async def me_import_consent(ref: str, signed: Signed) -> dict[str, Any]:
+        session, _token = signed
+        try:  # only a DM of the campaign (on a plan that imports) is shown the words
+            await imports.authorize(
+                db, session, ref, outside=settings.outside_engine,
+                now=int(clock()), enforce_plans=settings.enforce_plans,
+            )  # fmt: skip
+        except RecapError as err:
+            raise import_refusal(err) from None
+        return imports.consent_words(
+            cloud=settings.transcription.sends_audio_out, company=settings.transcription.company
+        )
+
+    @app.get("/me/campaigns/{ref}/speakers", dependencies=[Depends(imports_enabled)])
+    async def me_speakers(ref: str, signed: Signed) -> dict[str, Any]:
+        session, _token = signed
+        try:
+            return await imports.speakers(
+                db, session, ref, outside=settings.outside_engine,
+                now=int(clock()), enforce_plans=settings.enforce_plans,
+            )  # fmt: skip
+        except RecapError as err:
+            raise import_refusal(err) from None
+
     @app.post("/me/campaigns/{ref}/imports/check", dependencies=[Depends(imports_enabled)])
     async def me_import_check(ref: str, signed: Signed, request: Request) -> dict[str, Any]:
         session, _token = signed

@@ -30,6 +30,7 @@ from typing import Any
 from dmbot import fetch, plan_rules
 from dmbot import progress as progress_shape
 from dmbot.consent import TERMS_VERSION
+from dmbot.consent_dm import request_text
 from dmbot.db import Conn, Database
 from dmbot.entitlements import plan_grant_access
 from dmbot.recaps.notify import job_ref, parse_ref
@@ -361,6 +362,35 @@ async def _members(conn: Conn, c: Campaign, q: str, outside: str | None) -> list
         kind = member.pop("refused", None)  # said no: the page greys them out (#3305)
         out.append({**member, "blocked": BLOCKED_WORDS.get(kind) if kind else None})
     return out
+
+
+def consent_words(*, cloud: bool, company: str | None) -> dict[str, Any]:
+    """The words the uploader confirms for each speaker (#3305): the same consent request a
+    player sees in Discord, which says the whole server can read transcripts, and the version of
+    the wording. The page sends the version back with the import and a stale one is refused."""
+    return {
+        "version": TERMS_VERSION,
+        "text": request_text("this server", voice=None, dm=None, cloud=cloud, company=company),
+    }
+
+
+async def speakers(
+    db: Database, session: Session, ref: str, *, outside: str | None, now: int, enforce_plans: bool
+) -> dict[str, Any]:
+    """The campaign's speakers without Discord: id (a negative number as text, opaque to the
+    page), name and how many lines each has. Names and counts only. DMs only."""
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        c = await _open(conn, session, ref, outside=outside)
+    await _plan_allows(db, c.owner, now, enforce_plans=enforce_plans)
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        c = await _open(conn, session, ref, outside=outside)
+        cur = await conn.execute(
+            "SELECT dmbot_import_speakers(%s, %s) AS r", (c.guild_id, c.campaign_id)
+        )
+        found = (await cur.fetchone() or {}).get("r")
+    if found is None:
+        raise RecapError("not_a_dm")
+    return {"speakers": list(found)}
 
 
 async def authorize(
