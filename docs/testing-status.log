@@ -9,7 +9,7 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 LIVE NOW
 ------------------------------------------------------------------------------
-core + web-api at a00c217c (Supervisor's 2026-11-03 handover: migrations 0323_web_theatre_script and 0326_dm_waiting_sent; DM waiting message after an import; switches off). 322 rows.
+core + web-api at bd8ae13a (Supervisor's owner-priority handover: migrations 0327_import_consent and 0328_speaker_removals; Import consent step on with IMPORT_CONFIRM_LIVE). 324 rows.
   Bot connected to 2 servers, 0 errors; web-api healthy. Full entry: docs/testing-history.log.
 
 Switches off: DMBOT_WEB_LORE, DMBOT_WEB_RECAP_STYLE, DMBOT_WEB_PAUSE, DMBOT_STORY_FAMILY_ONLY (unset = off).

@@ -65,6 +65,7 @@ import type {
 import type { ImportClock } from "./api";
 import { ApiError, type HouseFileRequest, type HouseFileState, type LoreUpload, type RecapStyle, type RecapStyleAction, type WebLinkKind, type FixAnswer, type FixMode, type PlotIssue, type PlotMessage, type PlotProposal, type WaitingLook } from "./api";
 import { NAME_LIMIT } from "../content/names-words";
+import { MUSTS_LINE_CHARS, MUSTS_MAX_LINES } from "../content/recap-style-words";
 
 /** Found in the built files only if the pretend API was included; check-csp fails a real
  * build that contains it. */
@@ -766,7 +767,26 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   // "Add all" answers under a finished upload (#3222): each press is an answer the page polls; Undo takes it back.
   const confirmAnswers = new Map<string, { action: "add" | "undo"; counts: Record<string, number>; looks: number; createdAt: number; at: number }>();
   // The pretend recap style (#2985): a change takes effect after two looks, as the bot's would.
+  const defaultMusts = [
+    ["framing", "Where the session began and how the party felt."],
+    ["framing", "Where the party stood when it ended."],
+    ["framing", "A cliffhanger, when the session ended on one."],
+    ["travel", "Every change of place, with the route and how long it took."],
+    ["travel", "A clear step whenever the scene changes."],
+    ["travel", "Scouting that gave the party something useful."],
+    ["action", "Each fight, and how hard it was."],
+    ["action", "Any moment a character nearly died."],
+    ["action", "Treasure and items gained or lost."],
+    ["plot", "Twists, betrayals and shocking rolls."],
+    ["plot", "The new clue or the puzzle solved."],
+    ["character", "Moments between the player characters."],
+    ["character", "The non-player characters who matter to the story."],
+  ] as const;
+  // The must-haves (#3329): DMbot's own thirteen until the DM saves a list of their own (`own` set).
+  const mustsNow: { own: string[] | null } = { own: null };
   const styleNow = { examples: [{ id: "11", text: "The silver lock clicked and Mira let out her breath." }] as { id: string; text: string }[], notes: [] as { id: string; text: string }[] };
+  let speakersNow: { id: string; name: string; lines: number; member?: boolean }[] = [{ id: "-1", name: "Old Pip", lines: 12 }, { id: "-2", name: "The Ferryman", lines: 3 }, { id: "9001", name: "Ash", lines: 5, member: true }];
+  const removals = new Map<string, { speaker: string; looks: number; at: number; lines: number }>();
   const styleChanges = new Map<string, { action: RecapStyleAction["action"]; arg: string; looks: number; at: number }>();
   let putBackNow = false; // session 2's left-out stretch has been put back by a DM (#2568)
   const myEmail: MyEmail = {
@@ -2013,7 +2033,18 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       calls.push(`recapStyle:${ref}`);
       await reachable();
       signedIn();
-      return { examples: [...styleNow.examples], notes: [...styleNow.notes], defaults: styleNow.examples.length === 0 };
+      return {
+        musts: {
+          defaults: mustsNow.own === null,
+          lines:
+            mustsNow.own === null
+              ? defaultMusts.map(([group, text], i) => ({ id: `d${i + 1}`, text, group }))
+              : mustsNow.own.map((text, i) => ({ id: `m${i + 1}`, text, group: "" })),
+        },
+        examples: [...styleNow.examples],
+        notes: [...styleNow.notes],
+        defaults: styleNow.examples.length === 0,
+      };
     },
     async changeRecapStyle(ref, action, arg = "") {
       calls.push(`changeRecapStyle:${ref}:${action}:${arg.length}`);
@@ -2022,6 +2053,63 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       if (action === "add_example" && styleNow.examples.length >= 3) throw new ApiError("full");
       const id = String(styleChanges.size + 1).padStart(32, "0");
       styleChanges.set(id, { action, arg, looks: 0, at: Math.floor(Date.now() / 1000) });
+      return { id };
+    },
+    // Pretend removal of a speaker without Discord's lines (#3305 PR 2): the removal moves on by the number of looks.
+    async campaignSpeakers(ref) {
+      calls.push(`campaignSpeakers:${ref}`);
+      await reachable();
+      signedIn();
+      return speakersNow.map((s) => ({ ...s }));
+    },
+    async removeSpeaker(ref, speaker) {
+      calls.push(`removeSpeaker:${ref}:${speaker}`);
+      await reachable();
+      signedIn();
+      const found = speakersNow.find((s) => s.id === speaker);
+      if (!found) throw new ApiError("not-found");
+      if (found.lines === 0) throw new ApiError("nothing");
+      const id = String(removals.size + 1).padStart(32, "0");
+      removals.set(id, { speaker, looks: 0, at: Math.floor(Date.now() / 1000), lines: found.lines });
+      return { id };
+    },
+    async speakerRemoval(ref, id) {
+      calls.push(`speakerRemoval:${ref}:${id}`);
+      await reachable();
+      signedIn();
+      const r = removals.get(id);
+      if (!r) throw new ApiError("not-found");
+      r.looks += 1;
+      const now = Math.floor(Date.now() / 1000);
+      const done = r.looks >= 2;
+      if (done) speakersNow = speakersNow.filter((s) => s.id !== r.speaker);
+      return {
+        stage: "removing",
+        state: done ? "done" : "running",
+        startedAt: r.at,
+        updatedAt: now,
+        serverNow: now,
+        reason: null,
+        speaker: r.speaker,
+        lines: done ? r.lines : null,
+        sessions: done ? 2 : null,
+      };
+    },
+    async saveRecapMusts(ref, lines) {
+      calls.push(`saveRecapMusts:${ref}:${lines.length}`);
+      await reachable();
+      signedIn();
+      if (lines.length > MUSTS_MAX_LINES || lines.some((l) => l.length > MUSTS_LINE_CHARS)) throw new ApiError("bad-choice");
+      const id = String(styleChanges.size + 1).padStart(32, "0");
+      styleChanges.set(id, { action: "save_musts", arg: JSON.stringify(lines), looks: 0, at: Math.floor(Date.now() / 1000) });
+      return { id };
+    },
+    async recapMustsDefaults(ref) {
+      calls.push(`recapMustsDefaults:${ref}`);
+      await reachable();
+      signedIn();
+      const id = String(styleChanges.size + 1).padStart(32, "0");
+      styleChanges.set(id, { action: "musts_defaults", arg: "", looks: 0, at: Math.floor(Date.now() / 1000) });
       return { id };
     },
     async recapStyleAction(ref, id): Promise<RecapStyleAction> {
@@ -2036,6 +2124,11 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         if (c.action === "add_example") styleNow.examples.push({ id: String(100 + styleNow.examples.length), text: c.arg });
         else if (c.action === "remove_example") styleNow.examples = styleNow.examples.filter((e) => e.id !== c.arg);
         else if (c.action === "use_defaults") styleNow.examples = [];
+        else if (c.action === "save_musts") {
+          const saved = JSON.parse(c.arg) as string[];
+          mustsNow.own = saved.length === 0 ? null : saved;
+        }
+        else if (c.action === "musts_defaults") mustsNow.own = null;
         else if (c.action === "add_note") styleNow.notes.push({ id: String(200 + styleNow.notes.length), text: c.arg });
         else styleNow.notes = styleNow.notes.filter((n) => n.id !== c.arg);
       }

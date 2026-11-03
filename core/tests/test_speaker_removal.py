@@ -15,7 +15,7 @@ from dmbot.web.recaps import RecapError
 from tests.test_import_consent import GHOST, WITH_GHOST, plan
 from tests.test_recap_web import BOB, NOW
 from tests.test_web_api import ALICE, THURSDAY
-from tests.test_web_imports import MIRA, WithImports
+from tests.test_web_imports import CRAIG, MIRA, TOMAS, WithImports
 
 OTHER_START = 1_700_000_000
 
@@ -173,3 +173,16 @@ class Removing(WithImports):
             (row["state"], row["stage"], row["speaker"]), ("waiting", "waiting", number)
         )
         self.assertEqual({"lines", "sessions"} <= set(row), True)  # counts, never words
+
+    async def test_the_list_also_has_a_member_the_uploader_ticked_in(self) -> None:
+        mapping: dict[str, Any] = {
+            "Mira (mira_v)": str(MIRA),  # agreed in Discord: no record, not listed
+            "Tomas (tomas#1)": {"confirmed": True, "member": str(TOMAS)},  # ticked in
+        }
+        await self.confirm(plan(mapping, consentVersion=TERMS_VERSION), ("a.txt", CRAIG))
+        got = await imports.speakers(self.web, self.session, self.ref_c, **self.kw)
+        [one] = got["speakers"]
+        self.assertEqual(one, {"id": str(TOMAS), "name": "Player 1", "member": True, "lines": 1})
+        await self.transcripts.remove_speaker(THURSDAY.id, self.one.id, TOMAS)
+        again = await imports.speakers(self.web, self.session, self.ref_c, **self.kw)
+        self.assertEqual(again["speakers"], [])  # removed: no longer listed
