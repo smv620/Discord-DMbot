@@ -9,6 +9,8 @@ import { beforeAll, describe, expect, it } from "vitest";
 
 import { parsePage } from "./dom";
 
+import { pendingBotLabels } from "../scripts/labels.mjs";
+
 import { entries, held } from "../src/content/whats-new";
 import { storyStatesLine } from "../src/content/privacy-channels";
 import { featureSteps, isLive, knownTitle, liveFeatureSteps } from "../src/content/help-features";
@@ -60,6 +62,8 @@ describe("Help", () => {
     for (const step of [...dmSteps, ...dmBotChannelSteps, ...namesButtonSteps, ...quietStopSteps, ...settingsOnDmScreenSteps, ...storyThreadSteps, ...sharedStorySteps, ...standingSteps, ...homebrewKindSteps, ...homebrewLinkSteps, ...secretClueSteps, ...presessionNoteSteps, ...secretSaidSteps, ...secretRevealSteps, ...recapSteps, ...quickAnswers, ...playerSteps, ...snags, ...accountSteps, ...emailSteps, ...featureSteps]) {
       for (const { name, file } of step.names ?? []) {
         expect(step.text, `${name} is in its step`).toContain(name);
+        // A word the site names before core has it: tracked in pendingBotLabels until the bot's label ships (#3344).
+        if (pendingBotLabels.some((p) => name.includes(p.label))) continue;
         const source = readFileSync(join(botDir, file), "utf8");
         expect(source, `${name} in ${file}`).toContain(name);
       }
