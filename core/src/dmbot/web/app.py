@@ -2937,11 +2937,9 @@ def create_app(
                 db, session, ref, number, now=clock(), enforce_plans=settings.enforce_plans
             )
         except RecapError as err:
-            status = {"not_allowed": 403, "no_script": 404, "too_big": 413}.get(err.code, 404)
-            detail = (
-                err.code if err.code in ("not_allowed", "no_script", "too_big") else "not_found"
-            )
-            raise HTTPException(status_code=status, detail=detail) from None
+            known = {"not_allowed": 403, "no_script": 404, "too_big": 413}
+            code = err.code if err.code in known else "not_found"
+            raise HTTPException(status_code=known.get(code, 404), detail=code) from None
         return Response(
             text.encode("utf-8"),
             media_type="text/plain; charset=utf-8",

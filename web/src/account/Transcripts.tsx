@@ -405,8 +405,10 @@ function ScriptDownload({
       <span role="status" class="warn">
         {said}
       </span>
-      <br />
-      <span class="small muted">{text.scriptAbout}</span>
+      <details class="small muted">
+        <summary>{text.scriptAboutLabel}</summary>
+        <p>{text.scriptAbout}</p>
+      </details>
     </p>
   );
 }

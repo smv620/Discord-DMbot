@@ -83,7 +83,7 @@ class TheFile(Script):
         name, text = await self.render()
         self.assertEqual(name, "one-session-1-script.txt")
         self.assertTrue(text.startswith("One, session 1: the script\n"))
-        self.assertIn("for the game master only", text)
+        self.assertIn("Only the game master should have it", text)
         body = text.split("\n\n", 2)[2]
         self.assertEqual(
             body.splitlines(),
@@ -106,6 +106,15 @@ class TheFile(Script):
         self.assertEqual(theatre_script.file_name("???", 2), "campaign-session-2-script.txt")
 
 
+class TheText(Script):
+    def test_a_name_cannot_start_a_fake_line(self) -> None:
+        text = theatre_script.render_text(
+            "Camp\naign", 1, [{"user": "7", "text": "hi"}], {7: "Eve\nBob: sneaky"}
+        )
+        self.assertEqual(text.splitlines()[0], "Camp aign, session 1: the script")
+        self.assertEqual(text.splitlines()[-1], "Eve Bob: sneaky: hi")
+
+
 class WhoMayAsk(Script):
     async def test_a_session_with_no_script_says_so(self) -> None:
         self.assertEqual(await self.refused(), "no_script")
@@ -118,6 +127,27 @@ class WhoMayAsk(Script):
         self.assertEqual(await self.refused(bob), "not_allowed")
         self.assertEqual(await self.refused(ref=f"999.{self.one.id}"), "not_found")
         self.assertEqual(await self.refused(number=9), "not_found")
+
+    async def test_a_co_dm_may_save_it_and_another_campaigns_session_is_no_script(self) -> None:
+        await self.make_script()
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "INSERT INTO campaign_dms (campaign_id, guild_id, user_id) VALUES (%s, %s, %s)",
+                (self.one.id, THURSDAY.id, BOB.id),
+            )
+        bob = await self.signed_in(BOB)
+        _name, text = await self.render(bob)
+        self.assertIn("Belleros:", text)
+        # Alice is not a DM of "Two": the door answers her nothing, though the session id is real
+        async with self.web.user(self.session.user_id, session=self.session.id_hash) as conn:
+            await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(THURSDAY.id),))
+            cur = await conn.execute(
+                "SELECT dmbot_web_theatre_script(%s, %s, %s) AS r",
+                (THURSDAY.id, self.two.id, self.sid),
+            )
+            row = await cur.fetchone()
+            assert row is not None
+            self.assertIsNone(row["r"])
 
     async def test_the_door_answers_nothing_to_a_non_dm_even_by_sql(self) -> None:
         await self.make_script()

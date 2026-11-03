@@ -25,9 +25,10 @@ NAME_MAX = 40  # the campaign's name in the file's name, as `export.file_name`
 HEAD = (
     "{campaign}, session {number}: the script\n"
     "\n"
-    "A working copy of this session, made by DMbot from the cleaned transcript, with who and what "
-    "is meant written in [brackets]. It is for the game master only. It can be made again, it is "
-    "not in a backup, and a player's lines leave it when they delete their transcripts.\n"
+    "DMbot made this copy from the cleaned transcript. Where a line says he, she or it, [brackets] "
+    "say who or what is meant. Only the game master should have it. DMbot can make it again, it is "
+    "not in a backup, and a player's lines leave it when they delete their transcripts (a copy "
+    "you already saved does not change).\n"
     "\n"
 )
 
@@ -44,14 +45,17 @@ def render_text(
     """The file's text: the heading, then one line for each line of the script."""
     shown = dict(names)
     unnamed = 0
-    out = [HEAD.format(campaign=campaign, number=number)]
+    out = [HEAD.format(campaign=" ".join(campaign.split()), number=number)]
+    # "Speaker N" counts per file: this file's order of first appearance, which can differ from the
+    # transcript download's numbering.
     for line in lines:
         user = int(line["user"])
         if user not in shown:
             unnamed += 1
             shown[user] = f"Speaker {unnamed}"
         words = " ".join(str(line["text"]).split())
-        out.append(f"{shown[user]}: {words}\n")
+        who = " ".join(shown[user].split()) or "Speaker"  # (a name cannot start a fake line)
+        out.append(f"{who}: {words}\n")
     return "".join(out)
 
 

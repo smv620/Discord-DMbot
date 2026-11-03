@@ -88,11 +88,12 @@ export const text = {
   // The game master's script of a session (#3244): a copy with who and what is meant written in brackets.
   scriptDownload: "Save the script",
   scriptSaving: "Getting the script…",
-  scriptFailed: "The script didn't save. Try again.",
+  scriptFailed: "Couldn't save it. Try again in a minute.",
+  scriptAboutLabel: "What is the script?",
   scriptNone: "No script has been made for this session yet.",
-  scriptTooBig: "The script is too big to save in one file.",
+  scriptTooBig: "This script is too big to save in one file.",
   scriptAbout:
-    "A script is a copy of this session where every he, she and it is spelled out in [brackets]. Only game masters can save it.",
+    "The script is a copy of this session's transcript where each he, she or it is replaced by who or what is meant, in [brackets], like: He [Bram] drew his sword [Bram's sword]. Only game masters can save it.",
   about: "About this version",
   // The bot's notes mention its /transcript command; on a web page say what to use here.
   webNote: "On this page, use the Cleaned and As heard buttons. The /transcript command is for Discord.",
