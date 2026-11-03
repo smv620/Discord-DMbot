@@ -21,7 +21,8 @@ IMPORT_CONSENT = (
     -- down without ever agreeing.
     CREATE TABLE consent_refusals (
         guild_id   BIGINT NOT NULL,
-        user_id    BIGINT NOT NULL CHECK (user_id > 0),
+        -- (no range check on purpose: saying no must never fail to be saved)
+        user_id    BIGINT NOT NULL,
         kind       TEXT NOT NULL CHECK (kind IN ('stopped', 'declined')),
         refused_at BIGINT NOT NULL,
         PRIMARY KEY (guild_id, user_id)
@@ -270,7 +271,7 @@ IMPORT_CONSENT = (
     END
     $fn$;
 
-    -- dmbot_import_members, now also saying who refused (the page greys them out).
+    -- dmbot_import_members (0138's version), now also saying who refused (the page greys them out).
     CREATE OR REPLACE FUNCTION dmbot_import_members(
         g BIGINT, c TEXT, q TEXT, terms INT, outside TEXT
     ) RETURNS JSONB
@@ -286,8 +287,6 @@ IMPORT_CONSENT = (
                             AND d.user_id = dmbot_current_user()) THEN
             RETURN NULL;
         END IF;
-        -- web_users is closed to everyone; a policy TO the owner role opens it only while this
-        -- function has set its own setting, and only this query reads names from it.
         PERFORM set_config('dmbot.import_names', 'on', true);
         SELECT COALESCE((
             SELECT jsonb_agg(jsonb_build_object(
@@ -298,27 +297,41 @@ IMPORT_CONSENT = (
                                          WHERE x.guild_id = g AND x.user_id = m.user_id
                                            AND x.terms_version = terms
                                            AND (outside IS NULL OR x.outside_to = outside)))
-                       ORDER BY lower(m.name))
-            FROM (SELECT n.name, n.user_id FROM (
-                      SELECT e.name, e.played_by AS user_id, 0 AS rank
-                      FROM memory_entities e
-                      WHERE e.guild_id = g AND e.campaign_id = c AND e.type = 'person'
-                        AND e.status = 'confirmed' AND e.played_by IS NOT NULL
-                      UNION ALL
-                      SELECT u.display_name, u.user_id, 1
-                      FROM web_users u
-                      WHERE coalesce(u.display_name, '') <> ''
-                        AND EXISTS (SELECT 1 FROM consent x
-                                    WHERE x.guild_id = g AND x.user_id = u.user_id
+                       ORDER BY (lower(m.name) = lower(q)) DESC, m.rank, lower(m.name))
+            FROM (SELECT one.name, one.user_id, one.rank FROM (
+                      -- One row for each account: the campaign's name for the person if there is
+                      -- one, else the directory's, else the website's. A search matches any of
+                      -- the account's names, so it finds the same person whichever it hits.
+                      SELECT n.user_id,
+                             (array_agg(n.name ORDER BY n.rank, lower(n.name)))[1] AS name,
+                             min(n.rank) AS rank,
+                             lower(string_agg(n.hay, ' ')) AS hay
+                      FROM (
+                          SELECT e.played_by AS user_id, e.name, 0 AS rank, e.name AS hay
+                          FROM memory_entities e
+                          WHERE e.guild_id = g AND e.campaign_id = c AND e.type = 'person'
+                            AND e.status = 'confirmed' AND e.played_by IS NOT NULL
+                          UNION ALL
+                          SELECT d.user_id,
+                                 CASE WHEN d.display_name <> '' THEN d.display_name
+                                      ELSE d.username END,
+                                 1, d.display_name || ' ' || d.username
+                          FROM member_directory d
+                          WHERE d.guild_id = g AND (d.display_name <> '' OR d.username <> '')
+                          UNION ALL
+                          SELECT u.user_id, u.display_name, 2, u.display_name
+                          FROM web_users u
+                          WHERE coalesce(u.display_name, '') <> ''
+                      ) n
+                      WHERE EXISTS (SELECT 1 FROM consent x
+                                    WHERE x.guild_id = g AND x.user_id = n.user_id
                                       AND x.terms_version = terms
                                       AND (outside IS NULL OR x.outside_to = outside))
-                        AND NOT EXISTS (SELECT 1 FROM memory_entities e2
-                                        WHERE e2.guild_id = g AND e2.campaign_id = c
-                                          AND e2.type = 'person' AND e2.status = 'confirmed'
-                                          AND e2.played_by = u.user_id)
-                  ) n
-                  WHERE (q = '' OR position(lower(q) IN lower(n.name)) > 0)
-                  ORDER BY (lower(n.name) = lower(q)) DESC, n.rank, lower(n.name)
+                         OR n.rank = 0
+                      GROUP BY n.user_id
+                  ) one
+                  WHERE q = '' OR position(lower(q) IN one.hay) > 0
+                  ORDER BY (lower(one.name) = lower(q)) DESC, one.rank, lower(one.name)
                   LIMIT 25) m), '[]'::jsonb) INTO found;
         PERFORM set_config('dmbot.import_names', before, true);
         RETURN found;
@@ -329,6 +342,10 @@ IMPORT_CONSENT = (
     BEGIN
         EXECUTE format(
             'ALTER FUNCTION dmbot_import_agreed(BIGINT, TEXT, INT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
+        -- (CREATE OR REPLACE resets a function's settings, so its search_path is pinned again)
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_import_members(BIGINT, TEXT, TEXT, INT, TEXT)'
             ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
         EXECUTE format(
             'ALTER FUNCTION dmbot_import_speaker(BIGINT, TEXT, TEXT)'
