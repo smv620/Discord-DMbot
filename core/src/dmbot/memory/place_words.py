@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import NamedTuple
 
-LIVES, WORKS, BASED, KEPT, FROM, LAST_SEEN = "lives", "works", "based", "kept", "from", "last_seen"
+LIVES, WORKS, KEPT, FROM, LAST_SEEN = "lives", "works", "kept", "from", "last_seen"
 
 
 class Way(NamedTuple):
@@ -23,8 +23,10 @@ _WAYS: dict[str, Way] = {
     "lived in": Way(LIVES, True), "lived": Way(LIVES, True),
     "works in": Way(WORKS), "works": Way(WORKS), "works at": Way(WORKS),
     "worked in": Way(WORKS, True), "worked": Way(WORKS, True),
-    "is based in": Way(BASED), "based in": Way(BASED), "based": Way(BASED),
-    "was based in": Way(BASED, True),
+    # A group "works in" a town like a character does (owner, 2026-11-03): "based in" is a
+    # way of saying it, not a word of its own.
+    "is based in": Way(WORKS), "based in": Way(WORKS), "based": Way(WORKS),
+    "was based in": Way(WORKS, True),
     "is kept in": Way(KEPT), "kept in": Way(KEPT), "kept": Way(KEPT),
     "was kept in": Way(KEPT, True),
     "comes from": Way(FROM), "is from": Way(FROM), "from": Way(FROM), "born in": Way(FROM),
@@ -36,20 +38,30 @@ _WAYS: dict[str, Way] = {
 _FORWARD = {
     LIVES: ("lives in", "lived in"),
     WORKS: ("works in", "worked in"),
-    BASED: ("is based in", "was based in"),
     KEPT: ("is kept in", "was kept in"),
-    FROM: ("comes from", "came from"),
+    FROM: ("comes from", "comes from"),  # where someone began never ends, so it has no past
     LAST_SEEN: ("was last seen in", "was last seen in"),
 }
-# The same from the place's side, before the name: "Aldmoor is home to Tavin".
+# The same from the place's side, before the name: "Aldmoor is home to Tavin". The past stays
+# past here too, so a past home never reads as a present one.
 _BACK = {
-    LIVES: "is home to",
-    WORKS: "is the workplace of",
-    BASED: "is the base of",
-    KEPT: "is where you keep",
-    FROM: "is the origin of",
-    LAST_SEEN: "is where you last saw",
+    LIVES: ("is home to", "was home to"),
+    WORKS: ("is the workplace of", "was the workplace of"),
+    KEPT: ("is where you keep", "was where you kept"),
+    FROM: ("is the origin of", "is the origin of"),
+    LAST_SEEN: ("is where you last saw", "is where you last saw"),
 }
+# How a place tie reads in a node's summary: (when the node is the subject, when it is the object),
+# before any word is known and after ("lives there", "where they live").
+_SUMMARY = {
+    LIVES: (("lives there", "where they live"), ("lived there", "where they lived")),
+    WORKS: (("works there", "where they work"), ("worked there", "where they worked")),
+    KEPT: (("is kept there", "where it is kept"), ("was kept there", "where it was kept")),
+    FROM: (("comes from there", "where they come from"),) * 2,
+    LAST_SEEN: (("was last seen there", "where they were last seen"),) * 2,
+}
+# With no word said and no kind known the summary claims nothing about when or how.
+_SUMMARY_PLAIN = ("tied to it", "tied to this place")
 # Kinds of entry that move. A place, an event or anything else stays "is in".
 _MOBILE = frozenset({
     "character", "person", "npc", "player_character", "deity", "creature", "faction", "item",
@@ -57,6 +69,7 @@ _MOBILE = frozenset({
 
 
 def is_mobile(kind: str) -> bool:
+    """Does this kind of entry move, so that its place needs a word and never "is in"?"""
     return kind in _MOBILE
 
 
@@ -78,5 +91,11 @@ def backward(detail: str, subject_kind: str) -> str:
     """How it reads from the place's side: "is home to", "is where you last saw"."""
     way = way_of(detail)
     if way is not None:
-        return _BACK[way.key]
-    return _BACK[LAST_SEEN] if is_mobile(subject_kind) else "is where you find"
+        return _BACK[way.key][1 if way.past else 0]
+    return _BACK[LAST_SEEN][0] if is_mobile(subject_kind) else "is where you find"
+
+
+def summary_phrases(detail: str) -> tuple[str, str]:
+    """How a place tie reads in a node's summary, by the word its detail says (#3363)."""
+    way = way_of(detail)
+    return _SUMMARY[way.key][1 if way.past else 0] if way is not None else _SUMMARY_PLAIN

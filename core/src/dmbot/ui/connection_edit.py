@@ -17,7 +17,7 @@ import discord
 
 from dmbot.campaigns import Campaign
 from dmbot.memory import link_edits
-from dmbot.memory.link_words import CONNECTION_WORDS, link_words, predicate_for
+from dmbot.memory.link_words import CONNECTION_WORDS, link_words, predicate_for, reads_both_ways
 from dmbot.memory.lookup import CampaignLookup
 from dmbot.memory.models import CONFIRMED, DM, MemoryRuleError, Relation
 from dmbot.memory.store import MemoryStore
@@ -272,7 +272,9 @@ class OneConnection(_Menu):
         # connection with no direction ("is an enemy of") is said from the card the DM is on,
         # whichever way round the row happens to be stored, as the card itself reads it.
         first, second = stored.subject_id, stored.object_id
-        if not stored.directional and second == card_id:
+        if second == card_id and reads_both_ways(
+            stored.predicate, stored.detail, stored.directional
+        ):
             first, second = second, first
         subject = found.names.entities.get(first)
         other = found.names.entities.get(second)
