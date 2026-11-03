@@ -21,6 +21,7 @@ from dmbot.campaigns.models import (
 from dmbot.consent_words import CONSENT_LABEL, MIN_AGE
 from dmbot.discord_limits import PHONE_LABEL_MAX as PHONE_LABEL_MAX
 from dmbot.discord_limits import shorten as shorten
+from dmbot.dm_screen.dm_bot_panel import WHERE_LABEL
 from dmbot.transcription.config import Engine
 
 # Discord limits.
@@ -255,7 +256,42 @@ WELCOME_TEXT = (
     "Let's set up your first campaign. It takes about a minute."
 )
 
-HELP_TEXT = (
+# Every slash command, in the order Help lists them: (the command, what it does, DM only?). A test
+# keeps this in step with the commands the bot registers, so Help can't miss one (or list one that
+# is gone). "DM only" means the campaign's DM (a few also let a server manager in).
+HELP_COMMANDS: tuple[tuple[str, str, bool], ...] = (
+    ("/dmbot help", "this help", False),
+    (
+        "/dmbot rule",
+        "look up a spell, condition, creature or rule",
+        False,
+    ),
+    ("/transcript", "download what was said in a session", False),
+    ("/dmbot fix", "fix a line DMbot heard wrong (a DM can fix any)", False),
+    ("/dmbot backup", "download a copy of a campaign", False),
+    ("/dmbot delete-my-lines", "delete the lines DMbot wrote down from you", False),
+    ("/consent give", "let DMbot record your voice", False),
+    ("/consent revoke", "stop DMbot recording your voice", False),
+    ("/dmbot migrate", "move your plan to a new Discord account", False),
+    (
+        "/dmbot houserules",
+        "see the house rules (the DM edits them)",
+        False,
+    ),
+    ("/dmbot start", "pick a campaign and voice channel, then start", True),
+    ("/dmbot stop", "stop listening", True),
+    ("/dmbot settings", "open ⚙️ Manage DMbot", True),
+    ("/dmbot names", "the names DMbot listens for", True),
+    ("/dmbot optionalrules", "optional rules on or off", True),
+    ("/dmbot homebrew", "your own spells, monsters and items", True),
+    ("/dmbot recap", "make a session's recap again", True),
+    ("/dmbot recap-upload", "add a recap someone wrote", True),
+    ("/dmbot import", "bring in older sessions (website)", True),
+    ("/dmbot restore", "bring a campaign back from a copy", True),
+)
+
+
+HELP_COMMANDS_TEXT = (
     "**🎲 DMbot helps the Dungeon Master.**\n"
     "It listens to your table, writes down what's said, and gives the DM rules tips "
     "in private. It remembers each campaign between sessions.\n"
@@ -264,21 +300,19 @@ HELP_TEXT = (
     "**The menu:** press 👤 DMbot Main Menu in the DM Bot channel. 🙋 My data is about you: "
     "your recording, your transcripts and your character sheet. DMs also get ⚙️ Manage DMbot "
     "(what DMbot does in this server) and 🌐 Manage campaign (your campaign on the website).\n"
+    f"**{WHERE_LABEL}** (the button below) opens a page that shows how to get to anything, in "
+    "Discord or on the website, and marks what is for DMs only.\n"
     "\n"
-    "**Commands**\n"
-    "• `/dmbot start`: pick your campaign and voice channel, then start listening\n"
-    "• `/dmbot stop`: stop listening\n"
-    "• `/dmbot names`: the names DMbot listens for (characters, places, NPCs)\n"
+    "**Commands for everyone**\n"
+    + "\n".join(f"• `{c}`: {d}" for c, d, dm in HELP_COMMANDS if not dm)
+    + "\n\n**Commands for DMs only**\n"
+    + "\n".join(f"• `{c}`: {d}" for c, d, dm in HELP_COMMANDS if dm)
+    + "\n"
     "• 📜 Upload campaign lore (DMs, in ⚙️ Manage DMbot): DMbot finds names and connections in "
     "your notes; you keep what's right\n"
-    "• `/dmbot optionalrules`: turn optional rules from Xanathar's and Tasha's on or off\n"
-    "• `/dmbot houserules`: see this campaign's house rules (its DM adds, edits and removes them)\n"
-    "• `/dmbot rule`: look up a spell, condition, creature or rule in the free rules "
-    "(anyone; only you see the answer)\n"
-    "• `/transcript`: download what was said in a session (anyone in the server)\n"
-    "• `/dmbot backup`: download a complete copy of a campaign (anyone can)\n"
-    "• `/dmbot restore`: bring a campaign back from a copy\n"
-    "\n"
+)
+
+HELP_RECORDING_TEXT = (
     '**Ask DMbot:** anyone who said yes can say "Hey DMbot…" '
     "or type a question in the voice channel's chat. "
     "It gives quick rules information with its source. Your DM decides.\n"
@@ -299,6 +333,11 @@ HELP_TEXT = (
     "**Yes**, or "
     "type `/consent revoke`."
 )
+
+# What Help says, as one text, and as the two messages it is sent in: each is under Discord's own
+# limit (a single message was over it, so Help could not be sent).
+HELP_TEXT = HELP_COMMANDS_TEXT + "\n\n" + HELP_RECORDING_TEXT
+HELP_PARTS = (HELP_COMMANDS_TEXT, HELP_RECORDING_TEXT)
 
 
 def dm_list(campaign: Campaign) -> str:

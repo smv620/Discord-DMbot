@@ -1,0 +1,43 @@
+---
+import Base from "../layouts/Base.astro";
+import WherePlace from "../components/WherePlace.astro";
+import { discordHeading, discordTree, websiteHeading, websiteTree, whereHeading, whereLead, whereLegend } from "../content/where";
+
+// The tree is built when the page is, from the same lists the site and the bot's checks use.
+const discord = discordTree();
+const website = websiteTree();
+---
+
+<Base title={whereHeading} description="How to get to anything in DMbot, in Discord or on the website, with the game master's own paths marked.">
+  <h1>{whereHeading}</h1>
+  <p class="lead">{whereLead}</p>
+  <p class="muted">{whereLegend} The step-by-step is on the <a href="/help">Help page</a>.</p>
+
+  <section aria-labelledby="discord-heading">
+    <h2 id="discord-heading">{discordHeading}</h2>
+    <ul class="tree">
+      {discord.map((place) => <WherePlace place={place} />)}
+    </ul>
+  </section>
+
+  <section aria-labelledby="website-heading">
+    <h2 id="website-heading">{websiteHeading}</h2>
+    <ul class="tree">
+      {website.map((place) => <WherePlace place={place} />)}
+    </ul>
+  </section>
+</Base>
+
+<style>
+  section {
+    margin-top: var(--space-8);
+  }
+  .tree {
+    max-width: var(--text-width);
+    padding-left: var(--space-6);
+  }
+  .tree :global(ul) {
+    padding-left: var(--space-6);
+    margin-top: var(--space-2);
+  }
+</style>

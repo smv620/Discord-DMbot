@@ -8,6 +8,7 @@ export const publicPaths = [
   "/help",
   "/how-it-works",
   "/players",
+  "/where",
   "/whats-new",
   "/hello",
   "/legal/terms",

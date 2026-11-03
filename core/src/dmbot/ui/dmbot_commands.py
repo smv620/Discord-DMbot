@@ -38,6 +38,7 @@ from dmbot.campaigns.store import (
     encode_backup,
 )
 from dmbot.dm_screen import handover
+from dmbot.dm_screen.dm_bot_panel import WHERE_LABEL, where_url
 from dmbot.dm_screen.settings import SettingsButton
 from dmbot.logs import set_log_context
 from dmbot.mentions import NO_PINGS
@@ -955,6 +956,16 @@ class ConfirmReplace(_Menu):
 
 
 class HelpButtons(_Menu):
+    def __init__(self, site_url: str = "") -> None:
+        super().__init__()
+        self.add_item(  # the page that shows how to get to anything (DM-only paths marked)
+            discord.ui.Button(
+                label=WHERE_LABEL,
+                style=discord.ButtonStyle.link,
+                url=where_url(site_url),
+            )
+        )
+
     @discord.ui.button(label="Status", style=discord.ButtonStyle.secondary)
     async def status(
         self, interaction: discord.Interaction, button: discord.ui.Button[Any]
@@ -1034,7 +1045,14 @@ async def dmbot_stop(interaction: discord.Interaction) -> None:
 
 @dmbot_group.command(name="help", description="What DMbot does, and how to use it")
 async def dmbot_help(interaction: discord.Interaction) -> None:
-    await _send(interaction, logic.HELP_TEXT, HelpButtons())
+    """Two messages, each under Discord's limit: the commands with the buttons (Status and the
+    link to 🧭 Where to find everything), then how asking and recording work."""
+    settings = getattr(interaction.client, "settings", None)
+    site = str(getattr(settings, "site_url", "") or "")
+    first, rest = logic.HELP_PARTS[0], logic.HELP_PARTS[1:]
+    await _send(interaction, first, HelpButtons(site))
+    for part in rest:
+        await interaction.followup.send(part, ephemeral=True, allowed_mentions=NO_PINGS)
 
 
 @dmbot_group.command(

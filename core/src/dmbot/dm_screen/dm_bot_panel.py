@@ -98,6 +98,20 @@ def transcripts_url(site_url: str = "") -> str:
     return f"https://{parts.netloc}/account/transcripts"
 
 
+# The website's "Where to find everything" page (the Help card's link): how to get to anything, in
+# Discord or on the website, with what is for DMs only marked.
+WHERE_LABEL = "🧭 Where to find everything"
+WHERE_URL = "https://getdmbot.com/where"
+
+
+def where_url(site_url: str = "") -> str:
+    """Where the Help card's 🧭 button goes: the configured website's page, else the public one."""
+    parts = urlsplit(site_url.strip())
+    if parts.scheme.lower() != "https" or not parts.netloc:  # Discord refuses a bad link whole
+        return WHERE_URL
+    return f"https://{parts.netloc}/where"
+
+
 NOT_YOURS = "Only this campaign's DM can use that. Ask your DM."
 
 # The panel's own words. Short and plain; it never names a person or a secret.

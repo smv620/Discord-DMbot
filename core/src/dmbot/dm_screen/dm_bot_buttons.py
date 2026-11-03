@@ -176,6 +176,13 @@ def help_view(campaign: Campaign, site_url: str = "") -> discord.ui.View:
             url=panel.transcripts_url(site_url),
         )
     )
+    view.add_item(  # the page that shows how to get to anything (DM-only paths marked)
+        discord.ui.Button(
+            label=panel.WHERE_LABEL,
+            style=discord.ButtonStyle.link,
+            url=panel.where_url(site_url),
+        )
+    )
     return view
 
 
@@ -297,12 +304,17 @@ class HelpButton(
         if campaign is None:
             await interaction.followup.send(GONE, ephemeral=True)
             return
+        # Two messages, each under Discord's limit: the commands (with the buttons), then how
+        # asking and recording work.
+        first, rest = logic.HELP_PARTS[0], logic.HELP_PARTS[1:]
         await interaction.followup.send(
-            logic.HELP_TEXT,
+            first,
             view=help_view(campaign, _site(interaction)),
             ephemeral=True,
             allowed_mentions=NO_PINGS,
         )
+        for part in rest:
+            await interaction.followup.send(part, ephemeral=True, allowed_mentions=NO_PINGS)
 
 
 class RuleButton(

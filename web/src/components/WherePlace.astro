@@ -1,0 +1,47 @@
+---
+// One place in the "Where to find everything" tree, and the places under it (recursive). Who can
+// use it is written as words, never by colour alone: "DM only" is text.
+import type { Place } from "../content/where";
+import { dmOnlyBadge } from "../content/where";
+
+interface Props {
+  place: Place;
+}
+const { place } = Astro.props;
+// A path with a placeholder ({server}.{campaign}) is shown as text, not followed.
+const followable = place.href !== undefined && !place.href.includes("{");
+---
+
+<li class="place">
+  <span class="line">
+    {followable ? <a href={place.href}>{place.label}</a> : place.kind === "button" || place.kind === "command" ? <code>{place.label}</code> : <strong>{place.label}</strong>}
+    {place.dmOnly && <span class="badge">{dmOnlyBadge}</span>}
+    {place.who && <span class="who">({place.who})</span>}
+    {place.note && <span class="note"> {place.note}</span>}
+    {place.href && !followable && <span class="path"> <code>{place.href}</code></span>}
+  </span>
+  {place.children && place.children.length > 0 && (
+    <ul>
+      {place.children.map((child) => <Astro.self place={child} />)}
+    </ul>
+  )}
+</li>
+
+<style>
+  .place {
+    margin-bottom: var(--space-2);
+  }
+  .badge {
+    display: inline-block;
+    margin-left: var(--space-2);
+    padding: 0 var(--space-2);
+    border: 1px solid currentColor;
+    border-radius: 0.5rem;
+    font-size: 0.8em;
+    font-weight: 600;
+  }
+  .who,
+  .note {
+    color: var(--muted, inherit);
+  }
+</style>
