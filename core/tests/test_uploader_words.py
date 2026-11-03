@@ -52,12 +52,19 @@ class TheWords(unittest.TestCase):
             "their parent or guardian and they agreed.",
         )
 
+    def test_the_words_have_their_own_number_space(self) -> None:
+        from dmbot.consent import IMAGE_TERMS_VERSION
+
+        # a recorded version must never be mistaken for a Discord or image terms version
+        self.assertGreaterEqual(uw.IMPORT_WORDS_VERSION, 100)
+        self.assertNotIn(uw.IMPORT_WORDS_VERSION, {TERMS_VERSION, IMAGE_TERMS_VERSION})
+        self.assertGreater(uw.IMPORT_WORDS_VERSION, TERMS_VERSION + 1)  # (the held v7 too)
+
     def test_it_is_off_until_turned_on_and_then_has_its_own_version(self) -> None:
         self.assertFalse(uw.UPLOADER_WORDS_LIVE)
         self.assertEqual(uw.version(), TERMS_VERSION)
         with patch.object(uw, "UPLOADER_WORDS_LIVE", True):
             self.assertEqual(uw.version(), uw.IMPORT_WORDS_VERSION)
-        self.assertGreater(uw.IMPORT_WORDS_VERSION, TERMS_VERSION)
 
     def test_the_page_gets_the_discord_words_while_off_and_these_once_on(self) -> None:
         off = imports.consent_words(cloud=False, company=None)

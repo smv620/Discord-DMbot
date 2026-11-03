@@ -6,7 +6,7 @@ are addressed to the uploader and say what ticking means: what DMbot does with t
 read it, which AI company reads it, the age rule, and how a person gets their lines removed. They
 replace the Discord consent request there (which speaks to the person being recorded) and are
 versioned apart from the Discord terms: `IMPORT_WORDS_VERSION` goes up when these words change,
-and nobody's Discord consent is asked again.
+and nobody's Discord consent is asked again. (Version 101 is the first wording; the next is 102.)
 
 They are held back by a switch so that the last promise (a person can ask for their lines to be
 removed) is true from the first day: `UPLOADER_WORDS_LIVE` is turned on in the same change as the
@@ -22,7 +22,10 @@ from __future__ import annotations
 from dmbot.consent import TERMS_VERSION
 
 UPLOADER_WORDS_LIVE = False  # turned on together with the website's SPEAKER_REMOVAL_LIVE
-IMPORT_WORDS_VERSION = 7  # continues the terms numbering; the Discord terms stay at TERMS_VERSION
+# Its own number space, 100 and up: the Discord terms (TERMS_VERSION, and the held next one) and
+# IMAGE_TERMS_VERSION count from 6, so a recorded 7 could mean any of three wordings. A record's
+# `terms_version` is read as an uploader's words version when it is 100 or more.
+IMPORT_WORDS_VERSION = 101
 
 # (owner, 2026-11-03; the final age rule: 16 or older agrees for themselves, 13 to 15 need the
 # uploader to check with a parent or guardian, nobody under 13)
