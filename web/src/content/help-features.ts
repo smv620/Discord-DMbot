@@ -147,6 +147,14 @@ export const featureSteps: FeatureStep[] = [
       { name: "Resume now", file: "dm_screen/table_pause.py" },
     ],
   },
+  {
+    audience: "gameMaster",
+    whatsNew: "A script of your session",
+    text: "After a session, press 📜 Make a script. DMbot writes a copy of the transcript with every \"he\", \"it\" and \"that one\" named in brackets. It tells you what it will cost before it starts and does nothing until you say yes, and only the campaign's game masters can read it. It comes with a paid campaign.",
+    names: [
+      { name: "Make a script", file: "ui/theatre_button.py" },
+    ],
+  },
 ];
 
 /** The steps for one audience that are live now, in order. */
