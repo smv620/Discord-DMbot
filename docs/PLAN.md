@@ -4993,13 +4993,15 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
       > - DMbot turns what they said, or wrote, in the file into text for this campaign.
       > - Anyone in this campaign's server can read and download that text.
       > - An AI company (Anthropic) reads the text, with who said it, to give the DM notes. It is not used to train their AI.
-      > - Only tick for someone who is 16 or older and said yes, or who is 13 to 15 and whose parent or guardian said yes after having the chance to see what they said. Never tick for anyone under 13.
+      > - Only tick for someone who is 16 or older and said yes. For someone who is 13 to 15, you must check with their parent or guardian, and tick only if the parent or guardian agreed. Never tick for anyone under 13.
       > - If they change their mind, their lines stay until they ask for them to be removed. They can ask at any time: on Discord with Delete my transcripts, or, if they are not on Discord, through the DM.
 
       **Age at upload** (owner, 2026-11-03): the same self-declared age as live recording in Discord
-      (16 or older, #1018): a speaker who is 16 or older agrees for themselves. A speaker who is 13 to 15
-      needs the expressed consent of their parent or guardian, given after the parent or guardian had the
-      chance to review the content. **Nobody under 13** (Discord's own minimum, and US law (COPPA) expects
+      (16 or older, #1018): a speaker who is 16 or older agrees for themselves. For a speaker who is 13 to 15,
+      the uploader must check with their parent or guardian and affirms, with the tick, that the parent
+      or guardian consented (owner, 2026-11-03: this replaces "after they had the chance to review the
+      content", which DMbot could not check). The tick reads "I confirm {name} agreed to this, or, if
+      they are 13 to 15, that I checked with their parent or guardian and they agreed." **Nobody under 13** (Discord's own minimum, and US law (COPPA) expects
       checkable parental consent below it, which a tick is not). No age or birthdate is stored. The record
       keeps who ticked, when and under which wording, as before.
     - **Limits:**
