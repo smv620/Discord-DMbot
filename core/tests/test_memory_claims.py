@@ -181,6 +181,22 @@ class Judging(unittest.TestCase):
                 self.judge(said("Bram", words, "Veldmoor")), claims.PREDICTION_REASON, words
             )
 
+    def test_a_belief_or_a_reading_is_a_clue_not_a_one_off(self) -> None:
+        # "Hesper believes Bram shot the duke" and "Hesper expects Bram will strike at midnight"
+        # are what someone thinks, which a mystery runs on: only claims are filtered (#3364)
+        belief = {"view": "Hesper", "status": "believed"}
+        self.assertEqual(
+            self.judge(Extracted("Bram", "shot", "Hesper", "", ("1",), "player_said", belief)), ""
+        )
+        self.assertEqual(
+            self.judge(
+                Extracted("Bram", "will strike at", "Veldmoor", "", ("1",), "player_said", belief)
+            ),
+            "",
+        )
+        # the same words as a claim are still dropped
+        self.assertEqual(self.judge(said("Bram", "shot", "Hesper")), claims.ONE_OFF_REASON)
+
     def test_a_hedge_or_a_promise_is_not_a_prediction(self) -> None:
         for words in ("might be the brother of", "may know", "would die for"):
             self.assertNotEqual(
@@ -321,6 +337,14 @@ class Stored(ConfirmedMemoryTest):
         # the same words in a later session are counted as repeated, not asked again
         again = await self.propose(said("The attackers", "swings at", "Bram"))
         self.assertEqual((again.waiting, again.dropped, again.repeated), (0, 0, 1))
+
+    async def test_a_belief_about_a_shot_is_kept_and_placed_as_before(self) -> None:
+        belief = Extracted(
+            "Bram", "shot", "Veldmoor", "", ("1",), "player_said",
+            {"view": "Bram", "status": "believed"},
+        )  # fmt: skip
+        got = await self.propose(belief)
+        self.assertEqual((got.waiting, got.dropped), (1, 0))
 
     async def test_what_passes_waits_as_a_proposal_and_nothing_is_a_fact_yet(self) -> None:
         got = await self.propose(

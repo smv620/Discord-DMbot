@@ -478,14 +478,17 @@ def judge(
     # decided before the names, so a group that only ever "swings at" someone is never made into
     # an entry (#3244). A phrase DMbot already has a relationship for (held, serves, carries) is
     # a lasting state and goes on as it did: only a phrase it cannot place is dropped.
-    if one_off.is_prediction(claim.relationship):
-        return PREDICTION_REASON
-    if (
-        one_off.is_one_off(claim.relationship)
-        and resolve_relationship(onto, claim.relationship) is None
-        and feeling_of(onto, claim.relationship, claim.details or "") is None
-    ):
-        return ONE_OFF_REASON
+    # A belief or a reading (`claim.reading`) is what someone thinks happened or expects: "Tor
+    # believes Vex shot the duke" is a clue, not a tie, so these checks are for claims only.
+    if claim.reading is None:
+        if one_off.is_prediction(claim.relationship):
+            return PREDICTION_REASON
+        if (
+            one_off.is_one_off(claim.relationship)
+            and resolve_relationship(onto, claim.relationship) is None
+            and feeling_of(onto, claim.relationship, claim.details or "") is None
+        ):
+            return ONE_OFF_REASON
     # A secret name is the DM's: a claim a player said with one in it is not matched (the
     # transcript is open to the server, and a proposal could give the name away).
     if names.secret and any(s not in dms for s in speakers):
