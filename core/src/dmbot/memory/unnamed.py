@@ -29,8 +29,26 @@ _PRONOUN_OWNER = re.compile(r"^(?:his|her|their|its|my|our|your)\s+(?=\S)", re.I
 _POSSESSIVE_ENDS = ("'s ", "’s ", "' ", "’ ")
 # A title is not the owner when it is only the first word of a longer name ("Lord's heir").
 _TITLES = frozenset(
-    "the old lord lady sir king queen prince princess master captain brother sister father mother"
-    " saint elder chief".split()
+    [
+        "the",
+        "old",
+        "lord",
+        "lady",
+        "sir",
+        "king",
+        "queen",
+        "prince",
+        "princess",
+        "master",
+        "captain",
+        "brother",
+        "sister",
+        "father",
+        "mother",
+        "saint",
+        "elder",
+        "chief",
+    ]
 )
 
 
