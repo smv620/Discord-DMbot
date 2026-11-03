@@ -25,7 +25,8 @@ first:
 
 ## The default must-haves
 
-These are the defaults every campaign starts with. They are a list the DM can view, edit, remove lines
+These are the defaults every campaign starts with (five lines reworded in plainer words, owner,
+2026-11-03, from the ux-critic's suggestions on #3328). They are a list the DM can view, edit, remove lines
 from and add lines to, on the website page where the DM gives recap examples (the Recap style page).
 Removing every line brings the defaults back, the same way the style examples work.
 
@@ -40,20 +41,16 @@ Removing every line brings the defaults back, the same way the style examples wo
 ### 🧭 Navigation and travel
 4. **Precise travel logs:** a short, accurate account of every change of place, with the route, the
    compass direction and the time the journey took, as the session stated them.
-5. **Scene segues:** a clean, logical transition whenever the place or the focus changes, so the
-   reader always knows where the new scene is.
-   - Wrong: paragraph 1 is at the inn; paragraph 2 opens "Then Kael was struck with an arrow"
-     when that fight happened on the road.
-   - Right: say the party left the inn and was on the road before the arrow.
-6. **Valuable reconnaissance:** scouting, tracking or investigation that gave the party information
-   of real value.
+5. **Scene changes:** whenever the place or the focus changes, say so, so the reader always knows
+   where the new scene is.
+6. **Scouting and searching:** scouting, tracking or investigating that gave the party information
+   worth knowing.
 
 ### ⚔️ Action and inventory
 7. **Combat summaries:** every combat, summarised, saying how easy or hard the fight was.
-8. **The near-death gauge:** any moment a player character came close to death or faced extreme
-   danger.
-9. **Loot and asset tracking:** every major treasure, magic item or unique asset gained or lost. A
-   large hoard is summed up in a short line.
+8. **Close calls:** any moment a player character came close to death or was in great danger.
+9. **Loot and treasure:** every major treasure, magic item or other prize gained or lost. A large
+   hoard is summed up in one short line.
 
 ### 🧠 Plot and mystery
 10. **The element of surprise:** unexpected twists, betrayals and shocking dice rolls are always
@@ -64,9 +61,8 @@ Removing every line brings the defaults back, the same way the style examples wo
 ### 🎭 Social and character (high priority)
 12. **PC-to-PC development:** moments between the player characters come first: backstory reveals,
     flaws shown, new skills learned, and shifts in ideals, bonds or motivations.
-13. **Weighted NPC interactions:** NPC interactions are chosen by how much the NPC matters to the
-    story (background, recurring, significant, major). The ones that matter are included; passing
-    ones are left out.
+13. **Characters the party meets (NPCs):** include the ones who matter to the story and leave out
+    the ones who only pass by.
 
 ## Must-haves and recap examples (owner, 2026-11-03)
 

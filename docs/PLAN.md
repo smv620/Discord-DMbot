@@ -4986,6 +4986,24 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
       who hasn't agreed in Discord yet, or someone with no Discord account (kept as a speaker of this
       campaign by name only). DMbot records who confirmed, when, and under which consent wording.
     - **Leave out:** the speaker's lines are dropped before saving and never stored.
+    - **The uploader's own words** (owner, 2026-11-03, #3305; they replace the Discord words on the
+      Import sessions page and go live together with "Remove this speaker's lines", so the last promise
+      is true from the first day). Addressed to the uploader, versioned with the terms, with these facts:
+      > **Before you save these sessions:** for each person you tick, you are confirming that they agreed to this.
+      > - DMbot turns what they said, or wrote, in the file into text for this campaign.
+      > - Anyone in this campaign's server can read and download that text.
+      > - An AI company (Anthropic) reads the text, with who said it, to give the DM notes. It is not used to train their AI.
+      > - Only tick for someone who is 16 or older and said yes. For someone who is 13 to 15, you must check with their parent or guardian, and tick only if the parent or guardian agreed. Never tick for anyone under 13.
+      > - If they change their mind, their lines stay until they ask for them to be removed. They can ask at any time: on Discord with Delete my transcripts, or, if they are not on Discord, through the DM.
+
+      **Age at upload** (owner, 2026-11-03): the same self-declared age as live recording in Discord
+      (16 or older, #1018): a speaker who is 16 or older agrees for themselves. For a speaker who is 13 to 15,
+      the uploader must check with their parent or guardian and affirms, with the tick, that the parent
+      or guardian consented (owner, 2026-11-03: this replaces "after they had the chance to review the
+      content", which DMbot could not check). The tick reads "I confirm {name} agreed to this, or, if
+      they are 13 to 15, that I checked with their parent or guardian and they agreed." **Nobody under 13** (Discord's own minimum, and US law (COPPA) expects
+      checkable parental consent below it, which a tick is not). No age or birthdate is stored. The record
+      keeps who ticked, when and under which wording, as before.
     - **Limits:**
       - A server member who has said **Stop recording me**, or turned DMbot down, can't be ticked for
         them. Their own no always wins, and the page says why the box is greyed out.
