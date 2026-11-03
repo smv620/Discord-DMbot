@@ -14,6 +14,7 @@ Both sections are checked before a restore writes anything; a row that is not ex
 
 from __future__ import annotations
 
+import uuid
 from typing import Any
 
 from dmbot.campaigns.models import CampaignError
@@ -44,7 +45,7 @@ def _number(text: object, error: str, *, negative: bool) -> int:
     ):
         raise CampaignError(error)
     number = int(text)
-    if (number >= 0) if negative else (number <= 0) or abs(number) > INT64_MAX:
+    if (number >= 0 if negative else number <= 0) or abs(number) > INT64_MAX:
         raise CampaignError(error)
     return number
 
@@ -184,7 +185,9 @@ class ImportConsentsSection:
                 "INSERT INTO import_consents (guild_id, campaign_id, id, import_id, user_id,"
                 " basis, confirmed_by, confirmed_at, terms_version, lines)"
                 " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
-                [(guild_id, campaign_id, *row) for row in checked],
+                # (a new id for each: they are unique in the server, and a restore may sit next to
+                # the campaign it was copied from)
+                [(guild_id, campaign_id, uuid.uuid4().hex, *row[1:]) for row in checked],
             )
 
     async def clear(self, conn: Conn, guild_id: int, campaign_id: str) -> None:

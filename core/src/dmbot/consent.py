@@ -224,15 +224,16 @@ class ConsentStore:
         """Who counts as recorded in ONE campaign's imported sessions (#3305): everyone
         `consenting` returns, plus the people the uploader confirmed for an import into this
         campaign (a member who had not agreed, or a speaker without Discord, whose number is
-        negative), except anyone who has said no since the tick. It is for readers of a campaign's
+        negative), except anyone who has a "no" on record. (A "no" is removed when the person says
+        yes again, so any one on record is a current one; and a confirmation restored from a
+        backup made in another server never outweighs it.) It is for readers of a campaign's
         stored sessions only. The live allowlist and `consenting` are unchanged: a confirmation
         never lets a voice be recorded, and never counts in another campaign or server."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "SELECT DISTINCT c.user_id FROM import_consents c WHERE c.guild_id = %s"
                 " AND c.campaign_id = %s AND NOT EXISTS (SELECT 1 FROM consent_refusals r"
-                " WHERE r.guild_id = c.guild_id AND r.user_id = c.user_id"
-                " AND r.refused_at >= c.confirmed_at)",
+                " WHERE r.guild_id = c.guild_id AND r.user_id = c.user_id)",
                 (guild_id, campaign_id),
             )
             confirmed = frozenset(int(r["user_id"]) for r in await cur.fetchall())

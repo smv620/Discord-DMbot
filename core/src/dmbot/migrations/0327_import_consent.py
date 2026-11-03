@@ -187,7 +187,14 @@ IMPORT_CONSENT = (
            OR jsonb_typeof(confirmed) IS DISTINCT FROM 'array' THEN
             RETURN NULL;  -- old consent never counts, whatever the caller says (IMPORT_TERMS_FLOOR)
         END IF;
-        ticked := ARRAY(SELECT DISTINCT e::BIGINT FROM jsonb_array_elements_text(confirmed) e);
+        -- Only whole numbers as text; anything else refuses the file, not a database error.
+        IF EXISTS (SELECT 1 FROM jsonb_array_elements(confirmed) e
+                   WHERE jsonb_typeof(e) IS DISTINCT FROM 'string'
+                      OR (e #>> '{}') !~ '^-?[0-9]{1,18}$') THEN
+            RETURN jsonb_build_object('error', 'unknown_speaker');
+        END IF;
+        ticked := ARRAY(
+            SELECT DISTINCT (e #>> '{}')::BIGINT FROM jsonb_array_elements(confirmed) e);
         IF EXISTS (SELECT 1 FROM consent_refusals r
                    WHERE r.guild_id = g AND r.user_id = ANY (ticked)) THEN
             RETURN jsonb_build_object('error', 'blocked');

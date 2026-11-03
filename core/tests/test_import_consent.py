@@ -293,5 +293,80 @@ class Confirming(WithImports):
         plain = ImportJob(ImportStore(self.db), lookup, None, consenting)
         self.assertEqual(await plain._agreed(THURSDAY.id, self.one.id), frozenset())
 
+    async def test_a_speaker_of_another_campaign_or_zero_or_junk_cannot_be_ticked(self) -> None:
+        # The database says no itself, whatever the page sent (a direct call to the door).
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "INSERT INTO campaign_speakers (guild_id, campaign_id, user_id, name, created_by,"
+                " created_at) VALUES (%s, %s, -1, 'Other', %s, 1)",
+                (THURSDAY.id, self.two.id, ALICE.id),
+            )
+        line = f'[{{"ms": 0, "user": {TOMAS}, "text": "hello", "dur": 10}}]'
+        for ticked in ('["-1"]', '["0"]', '["x"]', "[null]", "[12]", '["99999999999999999999"]'):
+            async with self.web.user(self.session.user_id, session=self.session.id_hash) as conn:
+                await _scoped(conn, THURSDAY.id)
+                cur = await conn.execute(
+                    "SELECT dmbot_import_store(%s, %s, 'x', 'a.txt', 1000, %s::jsonb, %s, NULL,"
+                    " %s::jsonb) AS r",
+                    (THURSDAY.id, self.one.id, line, TERMS_VERSION, ticked),
+                )
+                got = (await cur.fetchone() or {}).get("r")
+            self.assertEqual((got or {}).get("error"), "unknown_speaker", ticked)
+        self.assertEqual(await self.lines(), [])
+
+    async def test_stop_recording_me_after_a_tick_removes_them_through_the_real_flow(self) -> None:
+        consent = ConsentStore(self.db)
+        mapping: dict[str, Any] = {"Tomas (tomas#1)": {"confirmed": True, "member": str(TOMAS)}}
+        await self.confirm(plan(mapping, consentVersion=TERMS_VERSION), ("a.txt", CRAIG))
+        self.assertIn(TOMAS, await consent.recorded_in(THURSDAY.id, self.one.id))
+        await consent.revoke(THURSDAY.id, TOMAS)  # the same call as the Stop button
+        self.assertNotIn(TOMAS, await consent.recorded_in(THURSDAY.id, self.one.id))
+        await consent.grant(THURSDAY.id, TOMAS)  # and saying yes again clears the no
+        self.assertIn(TOMAS, await consent.recorded_in(THURSDAY.id, self.one.id))
+
+
+class TheBackup(WithImports):
+    """The new sections in a backup: a round trip, and a damaged file is refused cleanly."""
+
+    async def rows(self, table: str, campaign: str | None = None) -> list[dict[str, Any]]:
+        async with self.db.guild(THURSDAY.id) as conn:
+            cur = await conn.execute(
+                f"SELECT * FROM {table} WHERE guild_id = %s AND campaign_id = %s",
+                (THURSDAY.id, campaign or self.one.id),
+            )
+            return list(await cur.fetchall())
+
+    async def test_speakers_and_records_survive_a_restore_with_their_lines(self) -> None:
+        from dmbot.bot import register_backup_sections
+        from dmbot.campaigns import CampaignStore
+
+        mapping: dict[str, Any] = {"Mira (mira_v)": str(MIRA), GHOST: {"confirmed": True}}
+        await self.confirm(plan(mapping, consentVersion=TERMS_VERSION), ("a.txt", WITH_GHOST))
+        store = CampaignStore(self.db)
+        register_backup_sections(
+            store,
+            forget_audio=lambda g, c: None,
+            consenting=ConsentStore(self.db).consenting,
+        )
+        data, parts = await store.export_set(THURSDAY.id, self.one.id)
+        copy = await store.import_backup(THURSDAY.id, data, ALICE.id, parts=parts)
+        [speaker] = await self.rows("campaign_speakers", copy.id)
+        [record] = await self.rows("import_consents", copy.id)
+        [original] = await self.rows("campaign_speakers")
+        self.assertEqual(speaker["user_id"], original["user_id"])  # the same number, no renumbering
+        self.assertEqual(record["user_id"], speaker["user_id"])
+
+    def test_a_damaged_speaker_or_record_is_refused(self) -> None:
+        from dmbot.campaigns.models import CampaignError
+        from dmbot.transcript.import_consent import ImportConsentsSection, SpeakersSection
+
+        good = {"id": "-3", "name": "Old Greg", "by": "7", "at": 1}
+        self.assertEqual(len(SpeakersSection().check([good])), 1)
+        for bad in ({"id": "-99999999999999999999"}, {"id": "3"}, {"id": "0"}, {"name": ""}):
+            with self.assertRaises(CampaignError, msg=str(bad)):
+                SpeakersSection().check([{**good, **bad}])
+        with self.assertRaises(CampaignError):
+            ImportConsentsSection().check([{"id": "x"}])
+
 
 NOBODY_ID = 7003
