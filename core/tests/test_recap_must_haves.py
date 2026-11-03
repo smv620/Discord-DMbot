@@ -40,6 +40,22 @@ class TheStore(DatabaseTest):
         self.assertEqual({d.group for d in found}, set(must_haves.GROUPS))
         self.assertTrue(all(0 < len(d.text) <= must_haves.LINE_CHARS for d in found))
 
+    def test_the_five_plainer_default_lines_are_the_owners_choice(self) -> None:
+        # (owner, 2026-11-03, #3328): plain words for a DM; each keeps its group
+        by_group = {}
+        for d in must_haves.defaults():
+            by_group.setdefault(d.group, []).append(d.text)
+        self.assertTrue(any(t.startswith("Scene changes:") for t in by_group["travel"]))
+        self.assertTrue(any(t.startswith("Scouting and searching:") for t in by_group["travel"]))
+        self.assertTrue(any(t.startswith("Close calls:") for t in by_group["action"]))
+        self.assertTrue(any(t.startswith("Loot and treasure:") for t in by_group["action"]))
+        self.assertTrue(
+            any(t.startswith("Characters the party meets") for t in by_group["character"])
+        )
+        every = " ".join(d.text for d in must_haves.defaults())
+        for old in ("Belleros", "segue", "reconnaissance", "gauge", "Weighted"):
+            self.assertNotIn(old, every)
+
     def test_the_limits_match_the_door_and_the_page(self) -> None:
         migration = importlib.import_module("dmbot.migrations.0330_recap_must_haves")
         self.assertEqual(
