@@ -1324,6 +1324,9 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       if (!dm && picture.poster !== "Mira") {
         throw Object.assign(new ApiError("refused"), { note: "Only the person who posted it or a DM can do that." });
       }
+      // Deleting pic-5 answers "waiting" (the bot still has it) and still removes the picture, so the page's
+      // "Working on it" state can be tested; every other success answers "done".
+      const waiting = action === "delete" && code === "pic-5";
       if (action === "delete") {
         pictureRows.splice(pictureRows.indexOf(picture), 1);
       } else if (action === "make-private") {
@@ -1337,6 +1340,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       } else {
         picture.permanent = false;
       }
+      return { state: waiting ? ("waiting" as const) : ("done" as const), note: "" };
     },
     async sessionNotesList(campaignRef) {
       calls.push(`sessionNotesList:${campaignRef}`);

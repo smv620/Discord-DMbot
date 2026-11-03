@@ -601,6 +601,11 @@ export interface PictureFilter {
   before?: string;
 }
 export type PictureAction = "make-private" | "make-public" | "delete" | "permanent" | "not-permanent";
+/** The route's answer to a picture action (#3292): "done" when it is finished, "waiting" when the bot still has it. */
+export interface PictureActionResult {
+  state: "done" | "waiting";
+  note: string;
+}
 
 export interface SessionNotesList {
   sessions: SessionNotesItem[];
@@ -2299,8 +2304,8 @@ export interface AccountApi {
   sessionNotes?(campaignRef: string, at: number): Promise<SessionNotes>;
   /** The kept pictures of a campaign, three at a time, newest first (#3275). Missing from an older API. */
   pictures?(campaignRef: string, filter: PictureFilter): Promise<PictureList>;
-  /** One picture's action (#3275): a refusal throws an ApiError whose `note` says why. */
-  pictureAction?(campaignRef: string, code: string, action: PictureAction): Promise<void>;
+  /** One picture's action (#3275): a refusal throws an ApiError whose `note` says why; a 202 answers "waiting". */
+  pictureAction?(campaignRef: string, code: string, action: PictureAction): Promise<PictureActionResult>;
   /** The after-session report for one session (DMs only; #2661), `at` in Unix seconds. Missing from an
    * API older than the report. */
   sessionReport?(campaignRef: string, at: number): Promise<SessionReport>;

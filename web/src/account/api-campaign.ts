@@ -3,6 +3,7 @@
 // in `CAMPAIGN_METHODS` there, and a test keeps the two in step.
 import type {
   PictureAction,
+  PictureActionResult,
   PictureList,
   SessionNotes,
   SessionNotesList,
@@ -86,8 +87,8 @@ export default function campaignArea({ call }: ApiHelpers): Partial<AccountApi> 
         `/me/campaigns/${encodeURIComponent(campaignRef)}/pictures${query ? `?${query}` : ""}`,
       )) as PictureList;
     },
-    pictureAction: async (campaignRef, code, action) => {
-      await call(
+    pictureAction: async (campaignRef, code, action) =>
+      (await call(
         "POST",
         `/me/campaigns/${encodeURIComponent(campaignRef)}/pictures/${encodeURIComponent(code)}`,
         { action: PICTURE_WIRE_ACTION[action] },
@@ -95,8 +96,7 @@ export default function campaignArea({ call }: ApiHelpers): Partial<AccountApi> 
         undefined,
         false,
         pictureErrorKinds,
-      );
-    },
+      )) as PictureActionResult,
     sessionNotes: async (campaignRef, at) =>
       (await call("GET", `/me/campaigns/${encodeURIComponent(campaignRef)}/session-notes/${at}`)) as SessionNotes,
     transcript: async (campaignRef, number, version, offset = 0) =>

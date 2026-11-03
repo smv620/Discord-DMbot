@@ -48,6 +48,13 @@ describe("the game master's actions", () => {
     expect(codes(await api.pictures!(REF, {}))).not.toContain("pic-1");
   });
 
+  it("a done action answers state done, and deleting pic-5 answers waiting and the picture is gone", async () => {
+    const api = mockApi("table");
+    expect(await api.pictureAction!(REF, "pic-3", "make-public")).toEqual({ state: "done", note: "" });
+    expect(await api.pictureAction!(REF, "pic-5", "delete")).toEqual({ state: "waiting", note: "" });
+    expect(codes(await api.pictures!(REF, {}))).not.toContain("pic-5");
+  });
+
   it("permanent is refused with permanent-full on the fifth pick, and not-permanent makes room", async () => {
     const api = mockApi("table");
     // pic-2 is already permanent (100 MB). Picks 1, 3 and 4 fill 400 MB; the fifth (pic-5) is refused.
@@ -117,10 +124,12 @@ describe("the real client", () => {
     ]);
   });
 
-  it("a 202 waiting answer is done, and a 409 permanent-full keeps its note", async () => {
+  it("a 202 answers state waiting and a 200 answers state done, and a 409 permanent-full keeps its note", async () => {
     const note = "Permanent pictures are full (400 MB). Unmark one to make room.";
-    const waiting = httpApi("https://api.example", (async () => new Response(JSON.stringify({ state: "waiting" }), { status: 202 })) as typeof fetch);
-    await expect(waiting.pictureAction!(REF, "pic-1", "permanent")).resolves.toBeUndefined();
+    const waiting = httpApi("https://api.example", (async () => new Response(JSON.stringify({ state: "waiting", note: "" }), { status: 202 })) as typeof fetch);
+    await expect(waiting.pictureAction!(REF, "pic-1", "permanent")).resolves.toEqual({ state: "waiting", note: "" });
+    const done = httpApi("https://api.example", (async () => new Response(JSON.stringify({ state: "done", note: "" }), { status: 200 })) as typeof fetch);
+    await expect(done.pictureAction!(REF, "pic-1", "permanent")).resolves.toEqual({ state: "done", note: "" });
     const full = httpApi(
       "https://api.example",
       (async () => new Response(JSON.stringify({ detail: "permanent-full", note }), { status: 409 })) as typeof fetch,
