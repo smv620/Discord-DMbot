@@ -26,6 +26,10 @@ vi.mock("../src/content/import-words", async (original) => {
     get IMPORT_LIVE() {
       return live.on;
     },
+    // These tests drive the older choices (a member or Leave out); the consent step has its own tests (import-confirm).
+    get IMPORT_CONFIRM_LIVE() {
+      return false;
+    },
   };
 });
 
@@ -106,11 +110,7 @@ describe("the page", () => {
     await pick([s1]);
     fireEvent.click(screen.getByRole("button", { name: w.preview }));
     await screen.findByRole("heading", { name: w.matchHeading });
-    expect(
-      screen.getByText(
-        /A player agrees in Discord, the same as for a live session/,
-      ),
-    ).toBeTruthy();
+    expect(screen.getByText(w.matchLead)).toBeTruthy();
     const ash = await screen.findByLabelText(`Ash: ${w.matchHeading}`);
     fireEvent.change(ash, { target: { value: "2" } });
     expect(
