@@ -1,6 +1,6 @@
 # Lore answer key (sample campaign)
 
-What the graph should hold after the sample lore document is read. Every name here is invented for testing, and the players agreed to its use as a public example. The lore itself is linked in the [README](README.md), not copied here.
+What the graph should hold after the sample lore document is read. Names come from the owner's sample campaign: the player characters and many local characters are invented, and other names (towns, gods, a few non-player characters) are from a published adventure. Only names and short paraphrases are used here, never its text. The players agreed to its use as a public example. The lore itself is linked in the [README](README.md), not copied here.
 
 **Test players** (made-up usernames):
 
@@ -13,11 +13,11 @@ What the graph should hold after the sample lore document is read. Every name he
 
 **Tiers:** `stated` the words are in the text · `inferred` only implied, offered as a suggestion and never extracted · `by_rule` made by a rule, not read · **must find: no** means a good find if present, not a miss if absent. An `inferred` tie marked must-find is scored on whether DMbot *offers* it to the DM as a suggestion.
 
-**Totals:** 131 entries, 159 connections (106 must-find), 14 events.
+**Totals:** 142 entries, 178 connections (102 must-find), 14 events.
 
 ## Connections
 
-### Family (18)
+### Family (19)
 
 | id | from | tie | to | tier | must find | note |
 |---|---|---|---|---|---|---|
@@ -34,13 +34,14 @@ What the graph should hold after the sample lore document is read. Every name he
 | l011 | Okthandom Korran | sibling | Vaelrith Korran | stated | yes | elder brother |
 | l012 | Okthandom Korran | sibling | Nyssara Korran | stated | yes | younger sister; a player character's family must be kept |
 | l013 | Vaelrith Korran | sibling | Nyssara Korran | stated | yes | 'their younger sister' |
-| l014 | Okthandom Korran | parent_of | Okthandom's child | inferred | no | 'his child' is named once, in passing |
+| l014 | Okthandom Korran | parent_of | Okthandom's child | stated | no | 'his child' is named once, in passing |
 | l015 | Lee | parent_of | Claude Ambere | stated | yes | Griz, son of Lee; the owner flagged this as missing |
 | l016 | Oyami Nartok | sibling | Claude Ambere | stated | yes | an adoptive brother of the clan |
 | l017 | Garret Velryn | spouse | Keegan Velryn | stated | yes | her husband |
 | l018 | Bruni Stonewake | sibling | Thorin | stated | yes | brothers |
+| l175 | Brewner | parent_of | Brewner's daughter | stated | no |  |
 
-### Teaching and work (37)
+### Teaching and work (39)
 
 | id | from | tie | to | tier | must find | note |
 |---|---|---|---|---|---|---|
@@ -78,11 +79,13 @@ What the graph should hold after the sample lore document is read. Every name he
 | l130 | Naerth Maxildanarr | leads | Zhentarim | stated | yes |  |
 | l132 | Markham Southwell | leads | Bryn Shander guards | stated | yes |  |
 | l134 | Knights of the Black Sword | leads | The Caer | stated | yes | they control the keep |
-| l136 | Kadroth | member | Knights of the Black Sword | stated | no |  |
-| l137 | Huarwar Mulphoon | member | Knights of the Black Sword | stated | no |  |
+| l136 | Kadroth | member | Knights of the Black Sword | inferred | no | named as Black Sword cultists in the DM notes |
+| l137 | Huarwar Mulphoon | member | Knights of the Black Sword | inferred | no | named as Black Sword cultists in the DM notes |
 | l138 | Roark | works_at | The Uphill Climb | stated | yes |  |
+| l174 | Shafina Fa'ertenya | leads | Shafina's guild | stated | no | a guild leader |
+| l176 | Thorin | works_at | The Beautiful Mine | stated | no | one of the workers |
 
-### Feelings and opposition (21)
+### Feelings and opposition (30)
 
 | id | from | tie | to | tier | must find | note |
 |---|---|---|---|---|---|---|
@@ -96,7 +99,7 @@ What the graph should hold after the sample lore document is read. Every name he
 | l049 | Claude Ambere | held_captive_by | The circus | stated | no | before he escaped |
 | l062 | Belleros Stormgrace | knows (neutral) | Brewner | stated | no | an argument about smelting |
 | l063 | Belleros Stormgrace | knows | Garret Velryn | stated | no | knows his name from the League |
-| l067 | Hlin Trollbane | enemy_of | Sephek Kaltro | stated | yes | the one who hires is not the target's servant (#3256) |
+| l067 | Hlin Trollbane | enemy_of | Sephek Kaltro | stated | yes | she hires the party against him; she is not his servant (#3256) |
 | l088 | Cerric Vanya'elen | knows | Belleros Stormgrace | by_rule | yes | player characters who play together know each other (#3036) |
 | l089 | Cerric Vanya'elen | knows | Okthandom Korran | by_rule | yes | player characters who play together know each other (#3036) |
 | l090 | Cerric Vanya'elen | knows | Claude Ambere | by_rule | yes | player characters who play together know each other (#3036) |
@@ -104,19 +107,28 @@ What the graph should hold after the sample lore document is read. Every name he
 | l092 | Belleros Stormgrace | knows | Claude Ambere | by_rule | yes | player characters who play together know each other (#3036) |
 | l093 | Okthandom Korran | knows | Claude Ambere | by_rule | yes | player characters who play together know each other (#3036) |
 | l109 | Veron Braig | knows (wary) | Craig the Gnome | inferred | no | he wants good reviews |
-| l116 | Fizzlebomb | knows (hostile) | Cerric Vanya'elen | stated | no | thrown in the water; one-sided, optional |
+| l116 | Fizzlebomb | knows (hostile) | Cerric Vanya'elen | inferred | no | thrown in the water; he pleaded for a reason |
 | l118 | Duergar of Xardorok | enemy_of | The party | stated | yes | they hunt the party |
 | l119 | Duergar of Xardorok | knows (devoted) | Deep Duerra | stated | no | worship her |
+| l162 | The party | enemy_of | Sephek Kaltro | stated | yes | the quarry |
+| l163 | Sephek Kaltro | enemy_of | Claude Ambere | stated | no | stabbed him in the back |
+| l166 | Cerric Vanya'elen | knows (wary) | Belleros Stormgrace | stated | no | argue over attuning to the icy blade |
+| l167 | Oyami Nartok | knows (friendly) | Belleros Stormgrace | stated | no | respect and a promise of safe passage |
+| l168 | Oyami Nartok | knows | Mjenir | inferred | no | sends Okthandom to the seer |
+| l170 | Knights of the Black Sword | knows (devoted) | Levistus | stated | no | cultists of Levistus |
+| l173 | Ice Troll | enemy_of | The Minotaur captain | stated | no | killed him and wrecked his ship |
+| l177 | The ones who came for the tome | enemy_of | Cerric Vanya'elen | inferred | no | 'they are coming'; unknown |
+| l178 | The ones who came for the tome | enemy_of | Wit | inferred | no |  |
 
 ### Things (23)
 
 | id | from | tie | to | tier | must find | note |
 |---|---|---|---|---|---|---|
 | l030 | Cerric Vanya'elen | carries | Sparkwalker's tome | stated | yes | saved it from the lab |
-| l031 | Syllar Sparkwalker | owns | Sparkwalker's tome | inferred | no | 'the Master's tome' |
+| l031 | Syllar Sparkwalker | owns | Sparkwalker's tome | stated | no | 'the Master's tome' |
 | l034 | Cerric Vanya'elen | owns | Glyph | stated | yes | familiar |
 | l046 | Okthandom Korran | owns | Korran family journal | stated | no |  |
-| l055 | Belleros Stormgrace | owns | Boy | stated | yes | 'adopted' in the entity list; the owner flagged Boy-to-Garret as missing, see l064 |
+| l055 | Belleros Stormgrace | owns | Boy | inferred | no | befriended in the story, 'adopted' in the entity list; see the Garret tie below |
 | l056 | Belleros Stormgrace | owns | Wolf figurine | stated | yes | bought from Claude |
 | l057 | Belleros Stormgrace | owns | Kanberron | stated | yes | 'his Winter Wolf' |
 | l059 | Belleros Stormgrace | carries | Chardalyn spear | stated | yes |  |
@@ -136,18 +148,18 @@ What the graph should hold after the sample lore document is read. Every name he
 | l113 | The ghost | owns | Penolopi | stated | yes | its pet plant |
 | l120 | Xardorok Sunblight | owns | Chardalyn shipment | inferred | no | meant for him |
 
-### Places and other ties (60)
+### Places and other ties (67)
 
 | id | from | tie | to | tier | must find | note |
 |---|---|---|---|---|---|---|
 | l023 | Qinric | associate | Syllar Sparkwalker | stated | yes | 'one of Qinric's associates' |
-| l033 | Danneth | in | Easthaven | stated | yes | the note names Easthaven |
+| l033 | Danneth | in | Easthaven | inferred | no | the note is addressed to Danneth at East Haven |
 | l036 | Cerric Vanya'elen | in | Waterdeep | stated | no | born in the Temple of the Seldarine |
 | l037 | Temple of the Seldarine | in | Waterdeep | stated | yes |  |
-| l038 | Blackstaff Tower | in | Waterdeep | stated | yes |  |
+| l038 | Blackstaff Tower | in | Waterdeep | inferred | no | the story places it in the city |
 | l039 | Sparkwalker Spire | in | Waterdeep | inferred | no |  |
-| l040 | Castle Ward | in | Waterdeep | stated | yes |  |
-| l041 | Spires of the Morning | in | Waterdeep | stated | yes |  |
+| l040 | Castle Ward | in | Waterdeep | inferred | no | the story places it in the city |
+| l041 | Spires of the Morning | in | Waterdeep | inferred | no | the story places it in the city |
 | l042 | Sly | associate | Okthandom Korran | stated | yes | haunts and protects him |
 | l045 | Mjenir | in | Skytower Shelter | stated | yes |  |
 | l051 | Claude Ambere | in | Spine of the World | stated | yes | the clan's crags; he is from there |
@@ -185,21 +197,28 @@ What the graph should hold after the sample lore document is read. Every name he
 | l142 | Clan Battlehammer | in | Kelvin's Cairn | stated | no | near its foothills |
 | l143 | Kelvin's Cairn | in | Icewind Dale | stated | no |  |
 | l144 | Maer Dualdon | in | Icewind Dale | stated | no |  |
-| l145 | Eastway Road | in | Icewind Dale | stated | no | joins Bryn Shander and Easthaven |
-| l146 | Targos | in | Ten-Towns | stated | yes |  |
-| l147 | Bryn Shander | in | Ten-Towns | stated | yes |  |
-| l148 | Easthaven | in | Ten-Towns | stated | yes |  |
-| l149 | Termalaine | in | Ten-Towns | stated | yes |  |
-| l150 | Bremen | in | Ten-Towns | stated | yes |  |
-| l151 | Good Mead | in | Ten-Towns | stated | yes |  |
-| l152 | Caer-Dineval | in | Ten-Towns | stated | yes |  |
-| l153 | Caer-Konig | in | Ten-Towns | stated | yes |  |
-| l154 | Lonelywood | in | Ten-Towns | stated | yes |  |
-| l155 | Dougan's Hole | in | Ten-Towns | stated | yes |  |
-| l156 | Ten-Towns | in | Icewind Dale | stated | yes |  |
-| l157 | Auril the Frostmaiden | associate | Icewind Dale | stated | yes | casts the Everlasting Rime over it |
-| l158 | Ten-Towns | associate | Auril the Frostmaiden | stated | no | pay tribute to her |
-| l159 | Okthandom Korran | in | Icewind Dale | inferred | no |  |
+| l145 | Eastway Road | in | Icewind Dale | inferred | no |  |
+| l146 | Eastway Road | associate | Bryn Shander | stated | no | the road joins it to Easthaven |
+| l147 | Eastway Road | associate | Easthaven | stated | no | the road joins it to Bryn Shander |
+| l148 | Targos | in | Ten-Towns | stated | yes |  |
+| l149 | Bryn Shander | in | Ten-Towns | stated | yes |  |
+| l150 | Easthaven | in | Ten-Towns | stated | yes |  |
+| l151 | Termalaine | in | Ten-Towns | stated | yes |  |
+| l152 | Bremen | in | Ten-Towns | stated | yes |  |
+| l153 | Good Mead | in | Ten-Towns | stated | yes |  |
+| l154 | Caer-Dineval | in | Ten-Towns | stated | yes |  |
+| l155 | Caer-Konig | in | Ten-Towns | stated | yes |  |
+| l156 | Lonelywood | in | Ten-Towns | stated | yes |  |
+| l157 | Dougan's Hole | in | Ten-Towns | stated | yes |  |
+| l158 | Ten-Towns | in | Icewind Dale | stated | yes |  |
+| l159 | Auril the Frostmaiden | associate | Icewind Dale | stated | yes | casts the Everlasting Rime over it |
+| l160 | Ten-Towns | associate | Auril the Frostmaiden | stated | no | pay tribute to her |
+| l161 | Okthandom Korran | in | Icewind Dale | inferred | no |  |
+| l164 | Arcane Brotherhood | associate | Psi crystal | stated | no | they may want it |
+| l165 | Duergar of Xardorok | associate | Psi crystal | stated | no | they track the party through it |
+| l169 | Okthandom Korran | associate | Mjenir | stated | no | told to seek the seer |
+| l171 | Spires of the Morning | associate | Lathander | stated | no | a temple to him |
+| l172 | Ice Troll | in | Maer Dualdon | stated | no |  |
 
 ## Events
 
@@ -209,9 +228,9 @@ What the graph should hold after the sample lore document is read. Every name he
 | e02 | Vaelrith vanishes, leaving a bloodstained camp and a broken talisman | Okthandom, Vaelrith |
 | e03 | Claude erased his own memory and was held by a circus; the ringmaster died | Claude, the ringmaster |
 | e04 | The grell destroys Glyph, and the party kills it | Cerric, the party |
-| e05 | Trex, possessed by a ghost, is stopped when Penolopi is burned | Trex, Claude, Cerric |
+| e05 | Okthandom's arrow kills Trex, then the ghost is banished when Claude burns Penolopi | Trex, Okthandom, Claude, Cerric |
 | e06 | The party takes 250 gold from Speaker Masthew for clearing the mine | the party, Speaker Masthew |
-| e07 | The party shoves Fizzlebomb into Maer Dualdon and the Aurora's Wind is wrecked | Cerric, Okthandom, Fizzlebomb |
+| e07 | The party shoves Fizzlebomb into Maer Dualdon and the Aurora's Wind is wrecked | Cerric, Okthandom, Belleros, Fizzlebomb |
 | e08 | Dzaan is burned at the stake in Easthaven | Dzaan |
 | e09 | The party clears the duergar ferry and finds the chardalyn | the party, Xardorok's duergar |
 | e10 | Sephek Kaltro is killed at The Wet Trout and the party takes his head for Hlin | the party, Sephek Kaltro, Hlin Trollbane |
@@ -222,7 +241,7 @@ What the graph should hold after the sample lore document is read. Every name he
 
 ## Entries
 
-### People (49)
+### People (51)
 
 | name | also called | note |
 |---|---|---|
@@ -275,8 +294,10 @@ What the graph should hold after the sample lore document is read. Every name he
 | Huarwar Mulphoon |  | Black Sword cultist |
 | Vellynne Harpell |  | named in the proper-names list only |
 | Nass Lantomir |  | named in the proper-names list only |
+| The Minotaur captain |  | Unnamed. Captain of the first ship, killed by the Ice Troll. |
+| Brewner's daughter |  | Unnamed. A tall human redhead. |
 
-### Creatures (8)
+### Creatures (13)
 
 | name | also called | note |
 |---|---|---|
@@ -286,24 +307,33 @@ What the graph should hold after the sample lore document is read. Every name he
 | Kanberron | Kanberon | Winter wolf called through the wolf figurine. |
 | Arveiaturace | the White Death | Ancient white dragon. |
 | The ghost |  | Unnamed ghost that possessed Trex. |
+| Grell |  | monster in the mine |
+| Peryton |  | winged predator |
+| Mind flayer |  | petrified skull in the mine |
+| Yeti |  | tracked the party |
+| Owlbears |  | three fought near Targos |
 | Coldlight Walker |  | Undead fought on the road to Caer-Dineval. |
 | Ice Troll |  | Killed the first ship's captain on Maer Dualdon. |
 
-### Gods (3)
+### Gods (5)
 
 | name | also called | note |
 |---|---|---|
 | Auril the Frostmaiden | Auril | goddess of winter |
+| Levistus |  | god of the Black Sword cultists |
+| Azuth |  | named once in an exclamation |
 | Deep Duerra |  | duergar goddess |
 | Lathander |  | named once, a temple in Waterdeep |
 
-### Groups (18)
+### Groups (20)
 
 | name | also called | note |
 |---|---|---|
 | The party | the heroes, the company | The four player characters. |
 | The circus |  | Unnamed travelling circus that held Claude. |
 | Explorer's League | Explorer's League, the League | Guild of explorers. |
+| Shafina's guild |  | Unnamed merchant guild. |
+| The ones who came for the tome | they | Unnamed pursuers in Cerric's backstory. |
 | Torg's Caravan |  | Torrga's caravan |
 | Clan Battlehammer |  | dwarven stronghold |
 | Elk Tribe |  | tribe of Reghed nomads |

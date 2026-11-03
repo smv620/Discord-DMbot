@@ -1,7 +1,7 @@
 # Story graph answer keys (public sample data)
 
 These files say what DMbot's story graph **should** hold after it reads a sample lore document and a sample session.
-Every name is made up for testing, and the players agreed that their lines may be used for testing, development and public examples.
+The player characters and many other names are invented for testing; some towns, gods and non-player characters come from a published adventure (names only, none of its text). The players agreed that their lines may be used for testing, development and public examples.
 The documents themselves are linked, not copied.
 
 ## The sample documents

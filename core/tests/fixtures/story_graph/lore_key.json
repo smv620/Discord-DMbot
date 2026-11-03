@@ -439,6 +439,62 @@
    "note": "The ghost's pet plant."
   },
   {
+   "name": "The Minotaur captain",
+   "kind": "person",
+   "aliases": [],
+   "note": "Unnamed. Captain of the first ship, killed by the Ice Troll."
+  },
+  {
+   "name": "Brewner's daughter",
+   "kind": "person",
+   "aliases": [],
+   "note": "Unnamed. A tall human redhead."
+  },
+  {
+   "name": "Shafina's guild",
+   "kind": "group",
+   "aliases": [],
+   "note": "Unnamed merchant guild."
+  },
+  {
+   "name": "The ones who came for the tome",
+   "kind": "group",
+   "aliases": [
+    "they"
+   ],
+   "note": "Unnamed pursuers in Cerric's backstory."
+  },
+  {
+   "name": "Grell",
+   "kind": "creature",
+   "aliases": [],
+   "note": "monster in the mine"
+  },
+  {
+   "name": "Peryton",
+   "kind": "creature",
+   "aliases": [],
+   "note": "winged predator"
+  },
+  {
+   "name": "Mind flayer",
+   "kind": "creature",
+   "aliases": [],
+   "note": "petrified skull in the mine"
+  },
+  {
+   "name": "Yeti",
+   "kind": "creature",
+   "aliases": [],
+   "note": "tracked the party"
+  },
+  {
+   "name": "Owlbears",
+   "kind": "creature",
+   "aliases": [],
+   "note": "three fought near Targos"
+  },
+  {
    "name": "Coldlight Walker",
    "kind": "creature",
    "aliases": [],
@@ -457,6 +513,18 @@
     "Auril"
    ],
    "note": "goddess of winter"
+  },
+  {
+   "name": "Levistus",
+   "kind": "deity",
+   "aliases": [],
+   "note": "god of the Black Sword cultists"
+  },
+  {
+   "name": "Azuth",
+   "kind": "deity",
+   "aliases": [],
+   "note": "named once in an exclamation"
   },
   {
    "name": "Deep Duerra",
@@ -977,7 +1045,7 @@
    "a": "Okthandom Korran",
    "relation": "parent_of",
    "b": "Okthandom's child",
-   "tier": "inferred",
+   "tier": "stated",
    "must_find": false,
    "note": "'his child' is named once, in passing"
   },
@@ -1130,7 +1198,7 @@
    "a": "Syllar Sparkwalker",
    "relation": "owns",
    "b": "Sparkwalker's tome",
-   "tier": "inferred",
+   "tier": "stated",
    "must_find": false,
    "note": "'the Master's tome'"
   },
@@ -1148,9 +1216,9 @@
    "a": "Danneth",
    "relation": "in",
    "b": "Easthaven",
-   "tier": "stated",
-   "must_find": true,
-   "note": "the note names Easthaven"
+   "tier": "inferred",
+   "must_find": false,
+   "note": "the note is addressed to Danneth at East Haven"
   },
   {
    "id": "l034",
@@ -1192,8 +1260,9 @@
    "a": "Blackstaff Tower",
    "relation": "in",
    "b": "Waterdeep",
-   "tier": "stated",
-   "must_find": true
+   "tier": "inferred",
+   "must_find": false,
+   "note": "the story places it in the city"
   },
   {
    "id": "l039",
@@ -1208,16 +1277,18 @@
    "a": "Castle Ward",
    "relation": "in",
    "b": "Waterdeep",
-   "tier": "stated",
-   "must_find": true
+   "tier": "inferred",
+   "must_find": false,
+   "note": "the story places it in the city"
   },
   {
    "id": "l041",
    "a": "Spires of the Morning",
    "relation": "in",
    "b": "Waterdeep",
-   "tier": "stated",
-   "must_find": true
+   "tier": "inferred",
+   "must_find": false,
+   "note": "the story places it in the city"
   },
   {
    "id": "l042",
@@ -1336,9 +1407,9 @@
    "a": "Belleros Stormgrace",
    "relation": "owns",
    "b": "Boy",
-   "tier": "stated",
-   "must_find": true,
-   "note": "'adopted' in the entity list; the owner flagged Boy-to-Garret as missing, see l064"
+   "tier": "inferred",
+   "must_find": false,
+   "note": "befriended in the story, 'adopted' in the entity list; see the Garret tie below"
   },
   {
    "id": "l056",
@@ -1444,7 +1515,7 @@
    "b": "Sephek Kaltro",
    "tier": "stated",
    "must_find": true,
-   "note": "the one who hires is not the target's servant (#3256)"
+   "note": "she hires the party against him; she is not his servant (#3256)"
   },
   {
    "id": "l068",
@@ -1862,10 +1933,10 @@
    "a": "Fizzlebomb",
    "relation": "knows",
    "b": "Cerric Vanya'elen",
-   "tier": "stated",
+   "tier": "inferred",
    "must_find": false,
    "feeling": "hostile",
-   "note": "thrown in the water; one-sided, optional"
+   "note": "thrown in the water; he pleaded for a reason"
   },
   {
    "id": "l117",
@@ -2032,16 +2103,18 @@
    "a": "Kadroth",
    "relation": "member",
    "b": "Knights of the Black Sword",
-   "tier": "stated",
-   "must_find": false
+   "tier": "inferred",
+   "must_find": false,
+   "note": "named as Black Sword cultists in the DM notes"
   },
   {
    "id": "l137",
    "a": "Huarwar Mulphoon",
    "relation": "member",
    "b": "Knights of the Black Sword",
-   "tier": "stated",
-   "must_find": false
+   "tier": "inferred",
+   "must_find": false,
+   "note": "named as Black Sword cultists in the DM notes"
   },
   {
    "id": "l138",
@@ -2105,12 +2178,29 @@
    "a": "Eastway Road",
    "relation": "in",
    "b": "Icewind Dale",
-   "tier": "stated",
-   "must_find": false,
-   "note": "joins Bryn Shander and Easthaven"
+   "tier": "inferred",
+   "must_find": false
   },
   {
    "id": "l146",
+   "a": "Eastway Road",
+   "relation": "associate",
+   "b": "Bryn Shander",
+   "tier": "stated",
+   "must_find": false,
+   "note": "the road joins it to Easthaven"
+  },
+  {
+   "id": "l147",
+   "a": "Eastway Road",
+   "relation": "associate",
+   "b": "Easthaven",
+   "tier": "stated",
+   "must_find": false,
+   "note": "the road joins it to Bryn Shander"
+  },
+  {
+   "id": "l148",
    "a": "Targos",
    "relation": "in",
    "b": "Ten-Towns",
@@ -2118,7 +2208,7 @@
    "must_find": true
   },
   {
-   "id": "l147",
+   "id": "l149",
    "a": "Bryn Shander",
    "relation": "in",
    "b": "Ten-Towns",
@@ -2126,7 +2216,7 @@
    "must_find": true
   },
   {
-   "id": "l148",
+   "id": "l150",
    "a": "Easthaven",
    "relation": "in",
    "b": "Ten-Towns",
@@ -2134,7 +2224,7 @@
    "must_find": true
   },
   {
-   "id": "l149",
+   "id": "l151",
    "a": "Termalaine",
    "relation": "in",
    "b": "Ten-Towns",
@@ -2142,7 +2232,7 @@
    "must_find": true
   },
   {
-   "id": "l150",
+   "id": "l152",
    "a": "Bremen",
    "relation": "in",
    "b": "Ten-Towns",
@@ -2150,7 +2240,7 @@
    "must_find": true
   },
   {
-   "id": "l151",
+   "id": "l153",
    "a": "Good Mead",
    "relation": "in",
    "b": "Ten-Towns",
@@ -2158,7 +2248,7 @@
    "must_find": true
   },
   {
-   "id": "l152",
+   "id": "l154",
    "a": "Caer-Dineval",
    "relation": "in",
    "b": "Ten-Towns",
@@ -2166,7 +2256,7 @@
    "must_find": true
   },
   {
-   "id": "l153",
+   "id": "l155",
    "a": "Caer-Konig",
    "relation": "in",
    "b": "Ten-Towns",
@@ -2174,7 +2264,7 @@
    "must_find": true
   },
   {
-   "id": "l154",
+   "id": "l156",
    "a": "Lonelywood",
    "relation": "in",
    "b": "Ten-Towns",
@@ -2182,7 +2272,7 @@
    "must_find": true
   },
   {
-   "id": "l155",
+   "id": "l157",
    "a": "Dougan's Hole",
    "relation": "in",
    "b": "Ten-Towns",
@@ -2190,7 +2280,7 @@
    "must_find": true
   },
   {
-   "id": "l156",
+   "id": "l158",
    "a": "Ten-Towns",
    "relation": "in",
    "b": "Icewind Dale",
@@ -2198,7 +2288,7 @@
    "must_find": true
   },
   {
-   "id": "l157",
+   "id": "l159",
    "a": "Auril the Frostmaiden",
    "relation": "associate",
    "b": "Icewind Dale",
@@ -2207,7 +2297,7 @@
    "note": "casts the Everlasting Rime over it"
   },
   {
-   "id": "l158",
+   "id": "l160",
    "a": "Ten-Towns",
    "relation": "associate",
    "b": "Auril the Frostmaiden",
@@ -2216,10 +2306,163 @@
    "note": "pay tribute to her"
   },
   {
-   "id": "l159",
+   "id": "l161",
    "a": "Okthandom Korran",
    "relation": "in",
    "b": "Icewind Dale",
+   "tier": "inferred",
+   "must_find": false
+  },
+  {
+   "id": "l162",
+   "a": "The party",
+   "relation": "enemy_of",
+   "b": "Sephek Kaltro",
+   "tier": "stated",
+   "must_find": true,
+   "note": "the quarry"
+  },
+  {
+   "id": "l163",
+   "a": "Sephek Kaltro",
+   "relation": "enemy_of",
+   "b": "Claude Ambere",
+   "tier": "stated",
+   "must_find": false,
+   "note": "stabbed him in the back"
+  },
+  {
+   "id": "l164",
+   "a": "Arcane Brotherhood",
+   "relation": "associate",
+   "b": "Psi crystal",
+   "tier": "stated",
+   "must_find": false,
+   "note": "they may want it"
+  },
+  {
+   "id": "l165",
+   "a": "Duergar of Xardorok",
+   "relation": "associate",
+   "b": "Psi crystal",
+   "tier": "stated",
+   "must_find": false,
+   "note": "they track the party through it"
+  },
+  {
+   "id": "l166",
+   "a": "Cerric Vanya'elen",
+   "relation": "knows",
+   "b": "Belleros Stormgrace",
+   "tier": "stated",
+   "must_find": false,
+   "feeling": "wary",
+   "note": "argue over attuning to the icy blade"
+  },
+  {
+   "id": "l167",
+   "a": "Oyami Nartok",
+   "relation": "knows",
+   "b": "Belleros Stormgrace",
+   "tier": "stated",
+   "must_find": false,
+   "feeling": "friendly",
+   "note": "respect and a promise of safe passage"
+  },
+  {
+   "id": "l168",
+   "a": "Oyami Nartok",
+   "relation": "knows",
+   "b": "Mjenir",
+   "tier": "inferred",
+   "must_find": false,
+   "note": "sends Okthandom to the seer"
+  },
+  {
+   "id": "l169",
+   "a": "Okthandom Korran",
+   "relation": "associate",
+   "b": "Mjenir",
+   "tier": "stated",
+   "must_find": false,
+   "note": "told to seek the seer"
+  },
+  {
+   "id": "l170",
+   "a": "Knights of the Black Sword",
+   "relation": "knows",
+   "b": "Levistus",
+   "tier": "stated",
+   "must_find": false,
+   "feeling": "devoted",
+   "note": "cultists of Levistus"
+  },
+  {
+   "id": "l171",
+   "a": "Spires of the Morning",
+   "relation": "associate",
+   "b": "Lathander",
+   "tier": "stated",
+   "must_find": false,
+   "note": "a temple to him"
+  },
+  {
+   "id": "l172",
+   "a": "Ice Troll",
+   "relation": "in",
+   "b": "Maer Dualdon",
+   "tier": "stated",
+   "must_find": false
+  },
+  {
+   "id": "l173",
+   "a": "Ice Troll",
+   "relation": "enemy_of",
+   "b": "The Minotaur captain",
+   "tier": "stated",
+   "must_find": false,
+   "note": "killed him and wrecked his ship"
+  },
+  {
+   "id": "l174",
+   "a": "Shafina Fa'ertenya",
+   "relation": "leads",
+   "b": "Shafina's guild",
+   "tier": "stated",
+   "must_find": false,
+   "note": "a guild leader"
+  },
+  {
+   "id": "l175",
+   "a": "Brewner",
+   "relation": "parent_of",
+   "b": "Brewner's daughter",
+   "tier": "stated",
+   "must_find": false
+  },
+  {
+   "id": "l176",
+   "a": "Thorin",
+   "relation": "works_at",
+   "b": "The Beautiful Mine",
+   "tier": "stated",
+   "must_find": false,
+   "note": "one of the workers"
+  },
+  {
+   "id": "l177",
+   "a": "The ones who came for the tome",
+   "relation": "enemy_of",
+   "b": "Cerric Vanya'elen",
+   "tier": "inferred",
+   "must_find": false,
+   "note": "'they are coming'; unknown"
+  },
+  {
+   "id": "l178",
+   "a": "The ones who came for the tome",
+   "relation": "enemy_of",
+   "b": "Wit",
    "tier": "inferred",
    "must_find": false
   }
@@ -2247,8 +2490,8 @@
   },
   {
    "id": "e05",
-   "what": "Trex, possessed by a ghost, is stopped when Penolopi is burned",
-   "who": "Trex, Claude, Cerric"
+   "what": "Okthandom's arrow kills Trex, then the ghost is banished when Claude burns Penolopi",
+   "who": "Trex, Okthandom, Claude, Cerric"
   },
   {
    "id": "e06",
@@ -2258,7 +2501,7 @@
   {
    "id": "e07",
    "what": "The party shoves Fizzlebomb into Maer Dualdon and the Aurora's Wind is wrecked",
-   "who": "Cerric, Okthandom, Fizzlebomb"
+   "who": "Cerric, Okthandom, Belleros, Fizzlebomb"
   },
   {
    "id": "e08",
