@@ -27,8 +27,8 @@ NO_PLAN = "Scripts need the story memory that comes with a paid campaign."
 GONE = "That session is gone."
 ASK_TEXT = (
     '📜 **A script of this session** can be made: every "he", "it" and "that one" named in '
-    "brackets, for you alone.\nPress the button; it tells you what it will cost before it spends "
-    "anything, and nobody else can read it."
+    "brackets, for the DMs alone.\nPress the button; it tells you what it will cost before it "
+    "spends anything, and only the DMs can read it."
 )
 CONFIRM_YES = "Make the script"
 CONFIRM_NO = "Cancel"
@@ -125,18 +125,34 @@ class Confirm(discord.ui.View):
         await run(interaction, self.guild_id, self.session_id)
 
 
+def _plain_name(bot: Any, guild_id: int, user_id: int) -> str | None:
+    """The person's display name, or None when DMbot cannot see them (then the AI is given
+    "Speaker N" and never a Discord id)."""
+    name: str = bot.name_of(guild_id, user_id)
+    return None if name.startswith("<@") else name
+
+
 async def run(interaction: discord.Interaction, guild_id: int, session_id: str) -> job.Outcome:
     """Make the script and keep the DM's card current. The checks are made again here: a minute
-    passed since the press."""
+    passed since the press (the switch, the plan, who is asking, who still agrees)."""
     bot = _bot(interaction)
-    assert bot.transcripts is not None and bot.memory is not None and bot.theatre_ai is not None
+    assert bot.transcripts is not None
     session = await bot.transcripts.session(guild_id, session_id)
     campaign = await bot.campaigns.get(guild_id, session.campaign_id) if session else None
     user = interaction.user.id
-    if session is None or campaign is None or user not in campaign.dm_user_ids:
-        await interaction.edit_original_response(content=ONLY_DMS)
-        return job.Outcome(ONLY_DMS, started=False)
-    ai = bot.theatre_ai
+    problem = ONLY_DMS
+    if session is not None and campaign is not None and user in campaign.dm_user_ids:
+        if not bot.settings.theatre_on or bot.theatre_ai is None or bot.memory is None:
+            problem = OFF
+        elif not await bot.plan_allows("story", guild_id, campaign, fail_open=False):
+            problem = NO_PLAN
+        else:
+            problem = ""
+    if problem or session is None or campaign is None:
+        await interaction.edit_original_response(content=problem or GONE)
+        return job.Outcome(problem or GONE, started=False)
+    ai, memory = bot.theatre_ai, bot.memory
+    assert ai is not None and memory is not None  # (the switch check above)
 
     async def ask(instructions: str, scene: str) -> Any:
         return await ai.complete(instructions, scene)
@@ -144,29 +160,36 @@ async def run(interaction: discord.Interaction, guild_id: int, session_id: str) 
     async def agreed_now() -> Any:
         return await bot.consent.consenting(guild_id)
 
+    edit_failed = False
+
     async def edit(text: str) -> None:
+        nonlocal edit_failed
         try:
             await interaction.edit_original_response(content=text, allowed_mentions=NO_PINGS)
+            edit_failed = False
         except discord.HTTPException:
-            # The card's 15 minutes ran out (or it was dismissed): the last word still reaches
-            # the DM, privately. Intermediate edits are simply not made any more.
-            if text.startswith(("Script ready", "Stopped", "Nothing", "There was")):
-                await bot.sidebar_send_dm(user, text)
+            edit_failed = True  # (the card's 15 minutes ran out, or it was dismissed)
 
+    agreed = await agreed_now()
     lines = await bot.transcripts.lines(guild_id, session_id)
-    names = {
-        uid: bot.name_of(guild_id, uid)
-        for uid in {x.user_id for x in lines}
-        if not bot.name_of(guild_id, uid).startswith("<@")
-    }
-    return await job.make_script(
+    names = {}
+    for uid in {x.user_id for x in lines if x.user_id in agreed}:
+        name = _plain_name(bot, guild_id, uid)
+        if name is not None:
+            names[uid] = name
+    outcome = await job.make_script(
         bot.campaigns.db,
         ask,
         guild_id,
         session_id,
-        agreed=await agreed_now(),
+        agreed=agreed,
         names=names,
-        known=await bot.memory.table_names(guild_id, session.campaign_id),
+        known=await memory.table_names(guild_id, session.campaign_id),
         still_agreed=agreed_now,
         edit=edit,
     )
+    if not outcome.started and not outcome.taken_over:
+        await edit(outcome.text)  # a second card for a run already going: say so, never hang
+    elif outcome.started and not outcome.taken_over and edit_failed:
+        await bot.sidebar_send_dm(user, outcome.text)  # the last word still reaches the DM
+    return outcome

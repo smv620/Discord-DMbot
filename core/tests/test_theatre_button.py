@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock
 
 from dmbot.bot import DMBot
 from dmbot.dm_questions import SCRIPT
+from dmbot.transcript import theatre_job as job
 from dmbot.ui import theatre_button as tb
 
 BOT: Any = DMBot  # (its methods are called on a stand-in)
@@ -81,9 +82,9 @@ class TheOffer(unittest.IsolatedAsyncioTestCase):
         button = tb.ScriptButton(GUILD, SESSION)
         custom_id = button.item.custom_id
         assert custom_id is not None
-        match = re.fullmatch(tb.ScriptButton.__discord_ui_compiled_template__.pattern, custom_id)
+        match = re.fullmatch(r"dmbot:script:([0-9]{1,20}):([0-9a-f]{32})", custom_id)
         assert match is not None
-        self.assertEqual((int(match["guild"]), match["session"]), (GUILD, SESSION))
+        self.assertEqual((int(match[1]), match[2]), (GUILD, SESSION))
 
 
 class ThePress(unittest.IsolatedAsyncioTestCase):
@@ -120,3 +121,83 @@ class ThePress(unittest.IsolatedAsyncioTestCase):
         interaction = pressed(me, DM)
         await tb.press(interaction, GUILD, SESSION)
         self.assertEqual(self.said(interaction), tb.GONE)
+
+
+class TheRun(unittest.IsolatedAsyncioTestCase):
+    def bot(self, **kw: Any) -> Any:
+        me = bot(**kw)
+        me.transcripts.lines = AsyncMock(
+            return_value=[SimpleNamespace(user_id=PLAYER), SimpleNamespace(user_id=DM)]
+        )
+        me.consent = SimpleNamespace(consenting=AsyncMock(return_value={DM}))  # (PLAYER stopped)
+        me.memory = SimpleNamespace(table_names=AsyncMock(return_value=["Kell"]))
+        me.name_of = lambda gid, uid: {DM: "Dana", PLAYER: "Pat"}.get(uid, f"<@{uid}>")
+        me.theatre_ai = SimpleNamespace(complete=AsyncMock())
+        me.campaigns.db = object()
+        me.sidebar_send_dm = AsyncMock(return_value="sent")
+        return me
+
+    def card(self, me: Any, user: int = DM, *, expired: bool = False) -> Any:
+        import discord
+
+        gone = discord.HTTPException(SimpleNamespace(status=404, reason="x"), "gone")  # type: ignore[arg-type]
+        c = pressed(me, user)
+        c.edit_original_response = AsyncMock(side_effect=gone if expired else None)
+        return c
+
+    async def go(self, c: Any, outcome: job.Outcome) -> tuple[job.Outcome, Any]:
+        from unittest.mock import patch
+
+        async def fake(*a: Any, **kw: Any) -> job.Outcome:
+            if outcome.text and outcome.started:
+                await kw["edit"](outcome.text)  # (the job ends the card with the outcome)
+            return outcome
+
+        with patch.object(job, "make_script", AsyncMock(side_effect=fake)) as made:
+            got = await tb.run(c, GUILD, SESSION)
+        return got, made
+
+    async def test_the_ai_is_given_only_agreed_names_and_the_tables_list(self) -> None:
+        me = self.bot()
+        _, made = await self.go(self.card(me), job.Outcome("Script ready", started=True, ok=True))
+        kw = made.await_args.kwargs
+        self.assertEqual(kw["names"], {DM: "Dana"})  # (Pat stopped: no name goes)
+        self.assertEqual(kw["known"], ["Kell"])
+        self.assertEqual(kw["agreed"], {DM})
+
+    async def test_the_switch_and_the_plan_are_checked_again_when_it_is_confirmed(self) -> None:
+        for me, words in ((self.bot(on=False), tb.OFF), (self.bot(plan=False), tb.NO_PLAN)):
+            c = self.card(me)
+            got, made = await self.go(c, job.Outcome("x", started=True))
+            made.assert_not_awaited()
+            self.assertEqual(got.text, words)
+            self.assertEqual(c.edit_original_response.await_args.kwargs["content"], words)
+
+    async def test_a_non_dm_cannot_make_one_from_a_confirm_step(self) -> None:
+        me = self.bot()
+        got, made = await self.go(self.card(me, PLAYER), job.Outcome("x", started=True))
+        made.assert_not_awaited()
+        self.assertEqual(got.text, tb.ONLY_DMS)
+
+    async def test_a_second_card_for_a_run_already_going_is_told_so_and_not_left_hanging(
+        self,
+    ) -> None:
+        me = self.bot()
+        c = self.card(me)
+        await self.go(c, job.Outcome(job.ALREADY, started=False))
+        self.assertEqual(c.edit_original_response.await_args.kwargs["content"], job.ALREADY)
+
+    async def test_when_the_card_has_expired_the_last_word_reaches_the_dm_privately(self) -> None:
+        me = self.bot()
+        text = "No lines were kept. Nothing was changed."
+        await self.go(self.card(me, expired=True), job.Outcome(text, started=True))
+        me.sidebar_send_dm.assert_awaited_once_with(DM, text)
+
+    async def test_a_working_card_sends_no_extra_message_and_a_taken_over_run_says_nothing(
+        self,
+    ) -> None:
+        me = self.bot()
+        await self.go(self.card(me), job.Outcome("Script ready", started=True, ok=True))
+        me.sidebar_send_dm.assert_not_awaited()
+        await self.go(self.card(me, expired=True), job.Outcome("", started=True, taken_over=True))
+        me.sidebar_send_dm.assert_not_awaited()
