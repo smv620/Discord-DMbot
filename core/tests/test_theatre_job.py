@@ -57,7 +57,7 @@ class TheJob(NamesTest):
         out = await self.make(Replies(ok(self.answer())))
         self.assertTrue(out.ok)
         self.assertEqual(
-            self.shown[-1], "Script ready: 3 lines from 1 scene. Only you can read it."
+            self.shown[-1], "Script ready: 3 lines from 1 scene. Only the DMs can read it."
         )
         self.assertEqual(len(await TheatreStore(self.db).read(GUILD, self.session)), 3)
 

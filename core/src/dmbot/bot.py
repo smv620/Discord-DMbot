@@ -504,6 +504,7 @@ from dmbot.ui import (
     player_id,
     recap_audio,
     shared_rules_defs,
+    theatre_button,
 )
 from dmbot.ui import guide as guide_screen
 from dmbot.ui import logic as ui_logic
@@ -1353,6 +1354,11 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             if self.ai_client
             else None
         )
+        self.theatre_ai = (  # a session recast as a script (#3244), background, DM only
+            self.ai_client.tier(FEATURE_TIERS[Feature.THEATRE], Feature.THEATRE)
+            if self.ai_client
+            else None
+        )
         # Pictures posted in the table chat (#2450): off unless the backend switch is on.
         # Messages deleted lately, so a picture still being described when its poster deletes it
         # is not written down afterwards (#2450); id → when.
@@ -1629,6 +1635,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             BackstoryButton
         )  # 📜 Upload campaign lore, from the Main Menu (#2380)
         self.add_dynamic_items(links_ready.ReadyButton)  # connections became ready (#2650)
+        self.add_dynamic_items(theatre_button.ScriptButton)  # make a script of a session (#3244)
         # the Shared story switch (#1692), named one by one so the registration test sees them
         self.add_dynamic_items(StoryButton, StoryChoiceButton, StoryYesButton, StoryNoButton)
         # giving DMbot an adventure (#1698), named one by one so the registration test sees them
@@ -3033,6 +3040,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             ("new names", lambda: self.post_new_names(table)),
             ("new connections", lambda: self.post_claims(table)),
             ("family links", lambda: self.warn_about_family(table)),
+            # The script of the session, if the DM wants it (#3244): only a question here.
+            ("script offer", lambda: self.offer_script(table)),
             # The questions above go out as one private message (#3210).
             ("questions for the DM", lambda: self.send_collected_asks(table)),
             ("heads-ups", lambda: self.warn_about_continuity(table)),
@@ -9690,6 +9699,30 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                         links_ready.family_notice(waiting),
                     ),
                 )
+
+    async def offer_script(self, table: Table) -> None:
+        """After a session (#3244), only with DMBOT_THEATRE_ON: one more question for the DM,
+        "make a script of this session?", with a button. Nothing is spent until the DM confirms.
+        Not offered to a campaign whose plan has no story memory (checked closed), or for a
+        session with no lines. No AI call here."""
+        if (
+            not self.settings.theatre_on
+            or self.theatre_ai is None
+            or self.memory is None
+            or self.transcripts is None
+            or table.campaign_id is None
+            or table.transcript_session_id is None
+        ):
+            return
+        gid, cid, sid = table.guild_id, table.campaign_id, table.transcript_session_id
+        with log_context(guild_id=gid, campaign_id=cid):
+            session = await self.transcripts.session(gid, sid)
+            campaign = await self.campaigns.get(gid, cid)
+            if session is None or session.lines == 0 or campaign is None:
+                return
+            if not await self.plan_allows("story", gid, campaign, fail_open=False):
+                return
+            await self.ask_dm(table, theatre_button.ask_for(gid, sid))
 
     async def warn_about_continuity(self, table: Table) -> None:
         """After a session: if what was said clashes with the story the DM already confirmed
