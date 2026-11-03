@@ -14,6 +14,7 @@ def with_asking(fake: SimpleNamespace) -> SimpleNamespace:
     me: Any = fake  # (a stand-in for the bot: typed loosely on purpose)
     fake.ask_dm = partial(DMBot.ask_dm, me)
     fake.send_asks = partial(DMBot.send_asks, me)
+    fake._send_asks_for = partial(DMBot._send_asks_for, me)  # (what send_asks calls, #3314)
     return fake
 
 
