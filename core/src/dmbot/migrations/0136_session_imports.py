@@ -308,10 +308,7 @@ ISOLATED_TABLES: tuple[str, ...] = (
 WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     # Importing older sessions (#2105): each is held to a DM of the campaign.
     ("dmbot_import_agreed", "dmbot_import_agreed(BIGINT, TEXT, INT, TEXT)"),
-    (
-        "dmbot_import_store",
-        "dmbot_import_store(BIGINT, TEXT, TEXT, TEXT, BIGINT, JSONB, INT, TEXT)",
-    ),
+    # (dmbot_import_store is listed by 0327, which gave it the uploader's ticks)
     ("dmbot_import_members", "dmbot_import_members(BIGINT, TEXT, TEXT, INT, TEXT)"),
     ("dmbot_import_progress", "dmbot_import_progress(BIGINT, TEXT, TEXT)"),
     ("dmbot_import_mapping", "dmbot_import_mapping(BIGINT, TEXT, JSONB, INT, TEXT)"),

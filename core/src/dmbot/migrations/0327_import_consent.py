@@ -198,6 +198,22 @@ IMPORT_CONSENT = (
            OR 0 = ANY (ticked) THEN
             RETURN jsonb_build_object('error', 'unknown_speaker');
         END IF;
+        -- A ticked member must be someone the member search can offer: a person a character is
+        -- played by, or someone with a name on a website account. A bot is neither, so a bot cannot
+        -- be ticked in, whatever the page sent.
+        PERFORM set_config('dmbot.import_names', 'on', true);
+        IF EXISTS (SELECT 1 FROM unnest(ticked) u
+                   WHERE u > 0
+                     AND NOT EXISTS (SELECT 1 FROM memory_entities e
+                                     WHERE e.guild_id = g AND e.campaign_id = c
+                                       AND e.type = 'person' AND e.played_by = u)
+                     AND NOT EXISTS (SELECT 1 FROM web_users w WHERE w.user_id = u)
+                     AND NOT EXISTS (SELECT 1 FROM consent x
+                                     WHERE x.guild_id = g AND x.user_id = u)) THEN
+            PERFORM set_config('dmbot.import_names', '', true);
+            RETURN jsonb_build_object('error', 'unknown_member');
+        END IF;
+        PERFORM set_config('dmbot.import_names', '', true);
         PERFORM pg_advisory_xact_lock(hashtextextended('import:' || g::TEXT || c, 0));
         total := jsonb_array_length(lines);
         SELECT coalesce(jsonb_agg(jsonb_build_object(
@@ -254,6 +270,61 @@ IMPORT_CONSENT = (
     END
     $fn$;
 
+    -- dmbot_import_members, now also saying who refused (the page greys them out).
+    CREATE OR REPLACE FUNCTION dmbot_import_members(
+        g BIGINT, c TEXT, q TEXT, terms INT, outside TEXT
+    ) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        found JSONB;
+        before TEXT := COALESCE(current_setting('dmbot.import_names', true), '');
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
+           OR NOT EXISTS (SELECT 1 FROM campaign_dms d
+                          WHERE d.guild_id = g AND d.campaign_id = c
+                            AND d.user_id = dmbot_current_user()) THEN
+            RETURN NULL;
+        END IF;
+        -- web_users is closed to everyone; a policy TO the owner role opens it only while this
+        -- function has set its own setting, and only this query reads names from it.
+        PERFORM set_config('dmbot.import_names', 'on', true);
+        SELECT COALESCE((
+            SELECT jsonb_agg(jsonb_build_object(
+                       'userId', m.user_id::TEXT, 'name', m.name,
+                       'refused', (SELECT r.kind FROM consent_refusals r
+                                   WHERE r.guild_id = g AND r.user_id = m.user_id),
+                       'agreed', EXISTS (SELECT 1 FROM consent x
+                                         WHERE x.guild_id = g AND x.user_id = m.user_id
+                                           AND x.terms_version = terms
+                                           AND (outside IS NULL OR x.outside_to = outside)))
+                       ORDER BY lower(m.name))
+            FROM (SELECT n.name, n.user_id FROM (
+                      SELECT e.name, e.played_by AS user_id, 0 AS rank
+                      FROM memory_entities e
+                      WHERE e.guild_id = g AND e.campaign_id = c AND e.type = 'person'
+                        AND e.status = 'confirmed' AND e.played_by IS NOT NULL
+                      UNION ALL
+                      SELECT u.display_name, u.user_id, 1
+                      FROM web_users u
+                      WHERE coalesce(u.display_name, '') <> ''
+                        AND EXISTS (SELECT 1 FROM consent x
+                                    WHERE x.guild_id = g AND x.user_id = u.user_id
+                                      AND x.terms_version = terms
+                                      AND (outside IS NULL OR x.outside_to = outside))
+                        AND NOT EXISTS (SELECT 1 FROM memory_entities e2
+                                        WHERE e2.guild_id = g AND e2.campaign_id = c
+                                          AND e2.type = 'person' AND e2.status = 'confirmed'
+                                          AND e2.played_by = u.user_id)
+                  ) n
+                  WHERE (q = '' OR position(lower(q) IN lower(n.name)) > 0)
+                  ORDER BY (lower(n.name) = lower(q)) DESC, n.rank, lower(n.name)
+                  LIMIT 25) m), '[]'::jsonb) INTO found;
+        PERFORM set_config('dmbot.import_names', before, true);
+        RETURN found;
+    END
+    $fn$;
+
     DO $do$
     BEGIN
         EXECUTE format(
@@ -278,3 +349,13 @@ IMPORT_CONSENT = (
 SQL = IMPORT_CONSENT
 
 ISOLATED_TABLES: tuple[str, ...] = ("consent_refusals", "campaign_speakers", "import_consents")
+
+WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
+    # Importing with the uploader's consent per speaker (#3305): each is held to a DM of the
+    # campaign.
+    (
+        "dmbot_import_store",
+        "dmbot_import_store(BIGINT, TEXT, TEXT, TEXT, BIGINT, JSONB, INT, TEXT, JSONB)",
+    ),
+    ("dmbot_import_speaker", "dmbot_import_speaker(BIGINT, TEXT, TEXT)"),
+)

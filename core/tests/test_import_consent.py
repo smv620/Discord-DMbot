@@ -1,0 +1,196 @@
+"""Importing with the uploader's consent per speaker (#3305): a member who has not agreed can be
+ticked in, a member who said no never can (checked in the database too, whatever the page sent), a
+speaker without Discord is kept by name under a negative id, and every tick leaves its record.
+Invented fixtures only."""
+
+from __future__ import annotations
+
+from typing import Any
+
+from dmbot.consent import TERMS_VERSION, ConsentStore
+from dmbot.web import imports
+from dmbot.web.recaps import RecapError, _scoped
+from tests.test_recap_web import ALICE
+from tests.test_web_imports import (
+    CRAIG,
+    MAPPING,
+    MIRA,
+    THURSDAY,
+    TOMAS,
+    WithImports,
+)
+
+SESSION = [{"file": "a.txt", "date": "2026-09-14", "order": 1}]
+GHOST = "Old Greg (greg)"  # a speaker not on Discord
+WITH_GHOST = CRAIG + "Old Greg (greg): I hold the rope, said Greg.\n"
+
+
+def plan(mapping: dict[str, Any], **extra: Any) -> dict[str, Any]:
+    return {"mapping": mapping, "sessions": SESSION, **extra}
+
+
+class Confirming(WithImports):
+    async def lines(self) -> list[tuple[int, str]]:
+        async with self.db.guild(THURSDAY.id) as conn:
+            cur = await conn.execute(
+                "SELECT l.user_id, l.heard FROM transcript_lines l"
+                " JOIN transcript_sessions s ON s.id = l.session_id AND s.guild_id = l.guild_id"
+                " WHERE l.guild_id = %s AND s.campaign_id = %s ORDER BY l.started_ms, l.id",
+                (THURSDAY.id, self.one.id),
+            )
+            return [(int(r["user_id"]), str(r["heard"])) for r in await cur.fetchall()]
+
+    async def rows(self, table: str, campaign: str | None = None) -> list[dict[str, Any]]:
+        async with self.db.guild(THURSDAY.id) as conn:
+            cur = await conn.execute(
+                f"SELECT * FROM {table} WHERE guild_id = %s AND campaign_id = %s",
+                (THURSDAY.id, campaign or self.one.id),
+            )
+            return list(await cur.fetchall())
+
+    async def test_a_member_who_has_not_agreed_is_kept_when_the_uploader_ticks(self) -> None:
+        mapping: dict[str, Any] = {
+            "Mira (mira_v)": str(MIRA),
+            "Tomas (tomas#1)": {"confirmed": True, "member": str(TOMAS)},
+        }
+        await self.confirm(plan(mapping, consentVersion=TERMS_VERSION), ("a.txt", CRAIG))
+        who = {user for user, _ in await self.lines()}
+        self.assertEqual(who, {MIRA, TOMAS})
+        [record] = await self.rows("import_consents")
+        self.assertEqual(
+            (record["user_id"], record["basis"], record["confirmed_by"], record["terms_version"]),
+            (TOMAS, "uploader_confirmed", ALICE.id, TERMS_VERSION),
+        )
+        self.assertEqual(record["lines"], 1)
+        self.assertGreater(record["confirmed_at"], 0)
+
+    async def test_a_member_who_agreed_anyway_leaves_no_record(self) -> None:
+        mapping: dict[str, Any] = {"Mira (mira_v)": {"confirmed": True, "member": str(MIRA)}}
+        await self.confirm(plan(mapping, consentVersion=TERMS_VERSION), ("a.txt", CRAIG))
+        self.assertEqual(await self.rows("import_consents"), [])
+
+    async def test_an_unticked_member_who_has_not_agreed_still_stores_nothing(self) -> None:
+        # (as before: a plain mapping to someone who has not agreed keeps none of their lines)
+        await self.confirm(plan(MAPPING), ("a.txt", CRAIG))
+        self.assertEqual({user for user, _ in await self.lines()}, {MIRA})
+        self.assertEqual(await self.rows("import_consents"), [])
+
+    async def test_a_member_who_said_no_cannot_be_ticked_in(self) -> None:
+        consent = ConsentStore(self.db)
+        await consent.grant(THURSDAY.id, TOMAS)
+        await consent.revoke(THURSDAY.id, TOMAS)  # "Stop recording me"
+        mapping: dict[str, Any] = {"Tomas (tomas#1)": {"confirmed": True, "member": str(TOMAS)}}
+        with self.assertRaises(RecapError) as raised:
+            await self.confirm(plan(mapping, consentVersion=TERMS_VERSION), ("a.txt", CRAIG))
+        self.assertEqual(str(raised.exception), "blocked")
+        self.assertEqual(await self.lines(), [])
+        self.assertEqual(await self.rows("import_consents"), [])
+
+    async def test_the_database_refuses_even_when_the_page_is_bypassed(self) -> None:
+        consent = ConsentStore(self.db)
+        await consent.revoke(THURSDAY.id, TOMAS)  # turned DMbot down without ever agreeing
+        async with self.web.user(self.session.user_id, session=self.session.id_hash) as conn:
+            await _scoped(conn, THURSDAY.id)
+            cur = await conn.execute(
+                "SELECT dmbot_import_store(%s, %s, 'x', 'a.txt', 1000, %s::jsonb, %s, NULL,"
+                " %s::jsonb) AS r",
+                (
+                    THURSDAY.id,
+                    self.one.id,
+                    f'[{{"ms": 0, "user": {TOMAS}, "text": "hello", "dur": 10}}]',
+                    TERMS_VERSION,
+                    f'["{TOMAS}"]',
+                ),
+            )
+            self.assertEqual((await cur.fetchone() or {}).get("r"), {"error": "blocked"})
+        self.assertEqual(await self.lines(), [])
+
+    async def test_a_refusal_is_remembered_by_kind_and_cleared_by_a_yes(self) -> None:
+        consent = ConsentStore(self.db)
+        await consent.revoke(THURSDAY.id, NOBODY_ID)  # never agreed
+        await consent.grant(THURSDAY.id, TOMAS)
+        await consent.revoke(THURSDAY.id, TOMAS)  # had agreed
+        async with self.db.guild(THURSDAY.id) as conn:
+            cur = await conn.execute(
+                "SELECT user_id, kind FROM consent_refusals WHERE guild_id = %s",
+                (THURSDAY.id,),
+            )
+            got = {int(r["user_id"]): str(r["kind"]) for r in await cur.fetchall()}
+        self.assertEqual(got, {NOBODY_ID: "declined", TOMAS: "stopped"})
+        await consent.grant(THURSDAY.id, TOMAS)  # said yes again: the no no longer stands
+        async with self.db.guild(THURSDAY.id) as conn:
+            cur = await conn.execute(
+                "SELECT count(*) AS n FROM consent_refusals WHERE guild_id = %s AND user_id = %s",
+                (THURSDAY.id, TOMAS),
+            )
+            self.assertEqual((await cur.fetchone() or {})["n"], 0)
+
+    async def test_a_speaker_without_discord_is_kept_by_name_under_a_negative_id(self) -> None:
+        mapping: dict[str, Any] = {
+            "Mira (mira_v)": str(MIRA),
+            GHOST: {"confirmed": True},
+        }
+        await self.confirm(plan(mapping, consentVersion=TERMS_VERSION), ("a.txt", WITH_GHOST))
+        [speaker] = await self.rows("campaign_speakers")
+        self.assertLess(speaker["user_id"], 0)
+        self.assertEqual(speaker["name"], "Old Greg")
+        self.assertIn((speaker["user_id"], "I hold the rope, said Greg."), await self.lines())
+        [record] = await self.rows("import_consents")
+        self.assertEqual((record["user_id"], record["lines"]), (speaker["user_id"], 1))
+
+    async def test_the_same_name_in_the_next_file_is_the_same_speaker(self) -> None:
+        mapping: dict[str, Any] = {GHOST: {"confirmed": True}}
+        for _file in range(2):
+            await self.confirm(
+                plan(mapping, consentVersion=TERMS_VERSION),
+                ("a.txt", WITH_GHOST),
+            )
+        self.assertEqual(len(await self.rows("campaign_speakers")), 1)
+
+    async def test_another_campaign_sees_none_of_it(self) -> None:
+        mapping: dict[str, Any] = {GHOST: {"confirmed": True}}
+        await self.confirm(plan(mapping, consentVersion=TERMS_VERSION), ("a.txt", WITH_GHOST))
+        self.assertEqual(await self.rows("campaign_speakers", self.two.id), [])
+        self.assertEqual(await self.rows("import_consents", self.two.id), [])
+
+    async def test_a_speaker_with_no_tick_is_refused(self) -> None:
+        for bad in ({"confirmed": False}, {}, {"confirmed": "yes"}):
+            with self.assertRaises(RecapError) as raised:
+                await self.confirm(plan({GHOST: bad}), ("a.txt", WITH_GHOST))
+            self.assertEqual(str(raised.exception), "not_ticked")
+        self.assertEqual(await self.rows("campaign_speakers"), [])
+
+    async def test_a_stale_wording_is_refused_so_the_page_shows_the_new_one(self) -> None:
+        mapping: dict[str, Any] = {GHOST: {"confirmed": True}}
+        for version in (None, TERMS_VERSION - 1, str(TERMS_VERSION)):
+            with self.assertRaises(RecapError) as raised:
+                await self.confirm(plan(mapping, consentVersion=version), ("a.txt", WITH_GHOST))
+            self.assertEqual(str(raised.exception), "stale_consent")
+        self.assertEqual(await self.lines(), [])
+
+    async def test_an_id_that_is_no_member_of_the_campaign_cannot_be_ticked_in(self) -> None:
+        # (a bot, or anyone the member search could never have offered)
+        mapping: dict[str, Any] = {"Mira (mira_v)": {"confirmed": True, "member": "888888"}}
+        with self.assertRaises(RecapError):
+            await self.confirm(plan(mapping, consentVersion=TERMS_VERSION), ("a.txt", CRAIG))
+        self.assertEqual(await self.lines(), [])
+        self.assertEqual(await self.rows("import_consents"), [])
+
+    async def test_leaving_a_speaker_out_stores_nothing_for_them(self) -> None:
+        mapping: dict[str, Any] = {"Mira (mira_v)": str(MIRA), GHOST: {"leave_out": True}}
+        await self.confirm(plan(mapping), ("a.txt", WITH_GHOST))
+        self.assertEqual({user for user, _ in await self.lines()}, {MIRA})
+        self.assertEqual(await self.rows("campaign_speakers"), [])
+
+    async def test_the_member_search_greys_out_a_member_who_said_no(self) -> None:
+        consent = ConsentStore(self.db)
+        await consent.grant(THURSDAY.id, TOMAS)  # a person a character is played by...
+        await consent.revoke(THURSDAY.id, TOMAS)  # ...who agreed and then said Stop recording me
+        got = await imports.search_members(self.web, self.session, self.ref_c, "", **self.kw)
+        by = {m["userId"]: m for m in got["members"]}
+        self.assertEqual(by[str(TOMAS)]["blocked"], "opted-out")
+        self.assertIsNone(by[str(MIRA)]["blocked"])
+        self.assertNotIn("refused", by[str(TOMAS)])  # (the page gets the words, not the kind)
+
+
+NOBODY_ID = 7003

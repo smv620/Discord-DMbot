@@ -143,6 +143,11 @@ class ConsentStore:
                     " outside_to = EXCLUDED.outside_to",
                     (guild_id, user_id, int(time.time()), TERMS_VERSION, method, outside_to),
                 )
+                # They said yes now, so an earlier "no" no longer stands (#3305).
+                await conn.execute(
+                    "DELETE FROM consent_refusals WHERE guild_id = %s AND user_id = %s",
+                    (guild_id, user_id),
+                )
                 users = await _select(conn, guild_id, self._outside)
             if self._stops.get((guild_id, user_id), 0) == stops_before:
                 self._held_back.get(guild_id, set()).discard(user_id)
@@ -180,6 +185,15 @@ class ConsentStore:
                     (guild_id, user_id),
                 )
                 removed = await cur.fetchone() is not None
+                # Every "no" is remembered (#3305), so an import cannot tick in someone who
+                # refused: `stopped` had agreed, `declined` never did. Written with the delete, in
+                # the same transaction. (Nothing earlier than this was recorded.)
+                await conn.execute(
+                    "INSERT INTO consent_refusals (guild_id, user_id, kind, refused_at)"
+                    " VALUES (%s, %s, %s, %s) ON CONFLICT (guild_id, user_id)"
+                    " DO UPDATE SET kind = EXCLUDED.kind, refused_at = EXCLUDED.refused_at",
+                    (guild_id, user_id, "stopped" if removed else "declined", int(self._wall())),
+                )
                 if removed and in_transaction is not None:
                     await in_transaction(conn)
                 users = await _select(conn, guild_id, self._outside)
