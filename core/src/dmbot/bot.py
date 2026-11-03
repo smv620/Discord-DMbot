@@ -8694,8 +8694,15 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
 
     async def extract_claims(self, table: Table, ended_at: int) -> None:
         """After a live session: see `_extract_session`."""
-        if table.campaign_id is None or table.transcript_session_id is None:
-            return
+        if (
+            not self.settings.story_extractor_on
+            or self.extractor_ai is None
+            or self.memory is None
+            or self.transcripts is None
+            or table.campaign_id is None
+            or table.transcript_session_id is None
+        ):
+            return  # (off means off: nothing is read or built)
         await self._extract_session(
             table.guild_id,
             table.campaign_id,
