@@ -637,7 +637,10 @@ async def send_backup(interaction: discord.Interaction, campaign_id: str) -> Non
     try:
         data, parts = await bot.campaigns.export_set(guild.id, campaign.id)
         rows = data.get("sections", {}).get("pictures", [])
-        if bot.picture_store is not None and bot.picture_bucket is not None:
+        if (
+            getattr(bot, "picture_store", None) is not None
+            and getattr(bot, "picture_bucket", None) is not None
+        ):
             picture_count = len(picture_backup.plan(rows, part_bytes))
             if picture_count:
                 data["picture_parts"] = {"id": uuid.uuid4().hex, "count": picture_count}
@@ -917,7 +920,10 @@ class RestoreChoice(_Menu):
         """Put the picture files given back, then say in counts how it went (#3274). The rows are
         already in, waiting for their files; what is not given, or does not fit, stays waiting and
         its link says it is being restored. Never raises: the copy has landed."""
-        store, restorer = bot.picture_store, bot.picture_restorer
+        store, restorer = (
+            getattr(bot, "picture_store", None),
+            getattr(bot, "picture_restorer", None),
+        )
         if store is None:
             return ""
         try:
