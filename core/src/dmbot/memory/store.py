@@ -4421,6 +4421,20 @@ class MemoryStore:
         party's theories too. A connection with no party belief is not in it (a secret one)."""
         return await self._view(guild_id, campaign_id, "party", known_only)
 
+    async def table_names(self, guild_id: int, campaign_id: str) -> list[str]:
+        """The names and things the *table* knows (#3244): every entry the party (what every
+        player character knows) may see, each by the name the party is shown, never a secret one
+        and never an entry the party has no name for. This is the only list the theatrical
+        transcript's AI is given to resolve a "him" or an "it" with. Sorted, no repeats."""
+        async with self._read(guild_id, campaign_id, snapshot=True) as scope:
+            viewer = gate.Viewer.the_party()
+            seen = await gate.visible_to(scope, viewer)
+            ids = sorted(seen.entries)
+            if not ids:
+                return []
+            shown = await gate.names_for(scope, viewer, ids)
+            return sorted({name for name in shown.values() if name})
+
     async def truth_view(self, guild_id: int, campaign_id: str) -> list[Belief]:
         """What The truth holds of the confirmed connections, secret ones included: the current
         belief for each, the DM's view."""
