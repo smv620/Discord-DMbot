@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import unittest
 from collections.abc import Collection
+from functools import partial
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, patch
@@ -160,6 +161,9 @@ class Loading(ConfirmedMemoryTest):
         self.assertEqual(writes, 1)  # one hand-over, one read of the campaign's memory
 
 
+BOT: Any = DMBot  # (its methods are called on a stand-in)
+
+
 class Gates(unittest.IsolatedAsyncioTestCase):
     """`DMBot.extract_claims`, with the parts it asks canned."""
 
@@ -172,7 +176,7 @@ class Gates(unittest.IsolatedAsyncioTestCase):
             record_extraction=AsyncMock(),
             is_import=AsyncMock(return_value=False),
         )
-        return SimpleNamespace(
+        me = SimpleNamespace(
             settings=SimpleNamespace(
                 story_extractor_on=True, story_readings_on=False, story_family_only=False,
                 story_extractor_max_calls=480,
@@ -187,6 +191,8 @@ class Gates(unittest.IsolatedAsyncioTestCase):
             name_of=lambda gid, uid: f"<@{uid}>",
             post=AsyncMock(),
         )  # fmt: skip
+        me._extract_session = partial(BOT._extract_session, me)  # (extract_claims calls it)
+        return me
 
     def table(self) -> Any:
         return SimpleNamespace(

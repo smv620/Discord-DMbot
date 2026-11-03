@@ -218,6 +218,45 @@ class ImportStore:
             )
             return bool(cur.rowcount)
 
+    async def renew_scan(self, guild_id: int, session_id: str, now: int) -> bool:
+        """Keep a running scan's claim fresh while it does slow work (the story extractor's AI
+        calls), so no other round retakes it after `STALE_SCAN_S`. False when the claim is not
+        running (it finished, or was given up)."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "UPDATE session_imports SET scan_from = %s"
+                " WHERE session_id = %s AND scanned AND NOT scan_finished",
+                (now, session_id),
+            )
+            return bool(cur.rowcount)
+
+    async def unextracted(self, guild_id: int, limit: int = PER_ROUND) -> list[Ready]:
+        """Scanned imports whose lines the story extractor has not finished reading (a call limit
+        stopped it, or it was off), oldest first, a campaign's earlier sessions before its later
+        ones. A session whose last line is not read yet is listed; the caller checks which lines
+        are readable and marks the rest done."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT i.campaign_id, i.session_id, i.write_recap, t.started_at, i.import_id"
+                " FROM session_imports i JOIN transcript_sessions t"
+                " ON t.id = i.session_id AND t.guild_id = i.guild_id"
+                " WHERE i.scan_finished AND NOT i.scan_gave_up"
+                " AND t.extracted_through_ms < (SELECT coalesce(max(l.started_ms), 0)"
+                "   FROM transcript_lines l WHERE l.guild_id = t.guild_id AND l.session_id = t.id)"
+                " ORDER BY t.started_at, i.session_id LIMIT %s",
+                (limit,),
+            )
+            return [
+                Ready(
+                    r["campaign_id"],
+                    r["session_id"],
+                    int(r["started_at"]),
+                    bool(r["write_recap"]),
+                    r["import_id"],
+                )
+                for r in await cur.fetchall()
+            ]
+
     async def finish_scan(self, guild_id: int, session_id: str, ended: int) -> None:
         """The scan ran to `ended` (seconds): its window is closed."""
         async with self._db.guild(guild_id) as conn:
