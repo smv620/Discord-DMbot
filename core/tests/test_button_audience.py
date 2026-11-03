@@ -137,6 +137,7 @@ AUDIENCE: dict[str, str] = {
             "dm_screen.adventure_card.SeeButton",
             "dm_screen.backstory_button.BackstoryButton",
             "dm_screen.links_ready.ReadyButton",
+            "ui.theatre_button.ScriptButton",  # press() checks dm_user_ids (#3244)
             "dm_screen.buttons.StopListeningButton",
             "dm_screen.buttons.VisibilityButton",
             "dm_screen.clock.ClockButton",

@@ -4728,6 +4728,24 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
   - **A final careful-tier pass** edits the result for continuity, balance, context and clear scene
     changes, reading the draft, the story so far and the transcript; code holds it to the same checks
     and keeps the earlier draft if it fails one (#2952).
+  **The recap standard: the "must haves"** (owner, 2026-11-03; details in `docs/RECAP_STANDARD.md`). Every
+  recap is written to and judged by a list of must-haves, grouped as follows:
+  - **Framing:** where and how the session began, where it ended, and the cliffhanger.
+  - **Travel:** routes, directions and time as stated, with clean scene changes.
+  - **Action:** each combat and how hard it was, near-death moments, and loot gained or lost.
+  - **Plot:** twists, and the new clue or mystery step.
+  - **Character:** PC-to-PC development first, and NPCs weighted by how much they matter.
+
+  How the list works:
+  - **The DM's list.** It's the campaign's own: the DM views, edits, removes and adds lines on the Recap
+    style page beside the recap examples. Removing every line brings the defaults back.
+  - **Writing and checking.** The writer is given the list, and the coverage check confirms each
+    must-have the session gave. A miss goes to the one revision, never fails a recap for length, and
+    never outranks the fact check.
+  - **Never invented.** A must-have the session didn't give (a direction, a journey's time, a feeling)
+    is left out, not guessed.
+  - **Ownership.** CloudDev-lead owns the recap's narrative quality against this standard and scores
+    every writer change before and after on a fixed set of sessions.
   **Every claim is checked against the beats** (Supervisor, 2026-10-19, after the owner read recap
   test 10: it passed every check yet said the party travelled south (never said at the table) and
   had its weapons taken at the tavern, when that happened later at the keep's gate and one weapon
@@ -4976,6 +4994,26 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
     - **Taking it back:** a confirmed speaker's lines can be removed later by the campaign's DMs on the
       website ("Remove this speaker's lines"). A server member can also remove them, as with live lines.
       A speaker without Discord asks the DM, and the privacy page says so.
+      - **How a removal works** (Supervisor, 2026-11-03, #3305 part 2): it is for **one campaign**. It
+        takes every trace of that speaker's lines in that campaign (lines, script lines, fix
+        suggestions, story-memory mentions and unconfirmed claims that cite them) and none in another
+        campaign or server; a member's own "Delete my transcripts" stays server-wide. A speaker
+        without Discord loses their name too; their number (a negative one, per campaign) is never
+        given again. What the uploader confirmed stays as a record, marked removed, with no lines.
+        DMbot keeps a small marker (ids and a time, no words) in the campaign, **in its backup**, which
+        every restore reads: an older copy of the same campaign restored over it, in Discord or on
+        the website, leaves those lines out. A copy restored as a *new* campaign carries only the
+        markers it was made with, so it cannot know of a removal made after the copy was taken; the
+        privacy page says "Lines removed from a campaign stay removed in that campaign, including
+        after a restore." It is not held to a paid plan. The wait shows its stage, how long it has run,
+        when it last moved and how many lines and sessions it covers (counts only, noted before it
+        starts); a removal is one step, so there is no "n of N". The page never shows a raw code:
+        `not_a_dm` "Only this campaign's DM can remove lines.", `unknown_speaker` "DMbot can't find
+        that person in this campaign.", `nothing` "There are no lines from this person to remove."
+        (information, not an error), `too_soon` "Wait a few seconds and try again.", a failure
+        "Something went wrong. Nothing was removed. Try again." The privacy page adds: "A copy made
+        before the removal and restored as a new campaign can still hold those lines. Remove them
+        again there."
     - **Counts:** the page says how many lines each choice keeps or drops.
     - **Who can read them:** imported sessions are read by the whole server like any transcript, and the
       consent words on the page say so.

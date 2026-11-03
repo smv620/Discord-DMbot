@@ -232,7 +232,8 @@ class ConsentStore:
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "SELECT DISTINCT c.user_id FROM import_consents c WHERE c.guild_id = %s"
-                " AND c.campaign_id = %s AND NOT EXISTS (SELECT 1 FROM consent_refusals r"
+                " AND c.campaign_id = %s AND c.removed_at IS NULL"
+                " AND NOT EXISTS (SELECT 1 FROM consent_refusals r"
                 " WHERE r.guild_id = c.guild_id AND r.user_id = c.user_id)",
                 (guild_id, campaign_id),
             )

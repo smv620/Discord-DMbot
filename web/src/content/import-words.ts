@@ -14,7 +14,7 @@ export const IMPORT_LIVE = false;
 /** The uploader confirms consent for each speaker, including people who aren't in Discord (#3306; PLAN, "Import
  * sessions → Consent"). Off until the core half (#3305) is deployed: the routes it needs don't exist before that, so
  * the page keeps its old choices (a member or Leave out) while this is false. */
-export const IMPORT_CONFIRM_LIVE = false;
+export const IMPORT_CONFIRM_LIVE = true;
 
 /** How many files one import takes, and how big each may be (PLAN: "up to 20 files at once, each
  * up to 2 MB of text"). These MIRROR the importer's limits (#2105): change them together, or the
@@ -265,6 +265,8 @@ export const confirmWords = {
   notInDiscord: "Not in Discord",
   blockedOption: (name: string): string => `Said no: ${name}`,
   tick: (name: string): string => `I confirm ${name} agreed to this.`,
+  // The group's name for a screen reader (the box itself carries the words above).
+  tickLegend: (label: string): string => `Do they agree? ${label}`,
   saidNo: (name: string): string => `${name} said no to being recorded, so their lines can't be kept.`,
   sameAs: (name: string): string => `${name} is already kept in this campaign, so these lines join theirs.`,
   needsTick: "Tick the box to keep their lines, or choose Leave out.",

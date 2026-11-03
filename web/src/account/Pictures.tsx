@@ -31,6 +31,10 @@ export function refFromPath(path: string): string | null {
 
 type Load = "loading" | "ok" | "failed";
 
+/** After a "waiting" answer the list is read once more after this long: the bot usually answers within a minute, and
+ * the page should notice by itself rather than wait for a reload (#3322). */
+export const WAITING_RECHECK_MS = 10_000;
+
 /** Has the list now shown what an action asked for? (A deleted tile is gone; the others carry the new flag.) */
 function shows(tiles: PictureItem[], code: string, action: PictureAction): boolean {
   const tile = tiles.find((t) => t.code === code);
@@ -60,6 +64,15 @@ export default function Pictures({ api, path }: { api: AccountApi; path: string 
   const appliedRef = useRef<PictureFilter>({});
   // An action waiting for the bot: its picture's code and the action, until the list shows it.
   const [waiting, setWaiting] = useState<Record<string, PictureAction>>({});
+  // The same waiting actions, readable from a timer; and one recheck timer per waiting tile (#3322).
+  const waitingNow = useRef<Record<string, PictureAction>>({});
+  const rechecks = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  // False once the page is left: an action still in flight then must not schedule anything (#3322).
+  const mounted = useRef(true);
+  function setWaitingState(next: Record<string, PictureAction>): void {
+    waitingNow.current = next;
+    setWaiting(next);
+  }
   const [busy, setBusy] = useState<string | null>(null);
   const busyRef = useRef(false);
   const [confirming, setConfirming] = useState<string | null>(null);
@@ -92,11 +105,10 @@ export default function Pictures({ api, path }: { api: AccountApi; path: string 
       setSessions(got.sessions);
       setPosters(got.posters);
       // A waiting action is done once the list shows it (or its picture is gone); until then it stays on its tile.
-      setWaiting((old) => {
-        const next: Record<string, PictureAction> = {};
-        for (const [code, action] of Object.entries(old)) if (!shows(got.pictures, code, action)) next[code] = action;
-        return next;
-      });
+      const next: Record<string, PictureAction> = {};
+      for (const [code, action] of Object.entries(waitingNow.current))
+        if (!shows(got.pictures, code, action)) next[code] = action;
+      setWaitingState(next);
       setLoad("ok");
     } catch {
       if (mine !== reads.current) return;
@@ -119,6 +131,21 @@ export default function Pictures({ api, path }: { api: AccountApi; path: string 
     if (!PICTURES_LIVE) return;
     void readFirst({});
   }, [api, ref]);
+
+  // Leaving the page drops any pending recheck, so nothing reads after the page is gone.
+  const clearRechecks = (): void => {
+    for (const timer of Object.values(rechecks.current)) clearTimeout(timer);
+    rechecks.current = {};
+  };
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      clearRechecks();
+    };
+  }, []);
+  // A different campaign's list must not be read by a timer started for this one.
+  useEffect(() => clearRechecks, [api, ref]);
 
   if (!PICTURES_LIVE || !api.pictures) return <p class="muted">{words.notOpen}</p>;
 
@@ -165,9 +192,20 @@ export default function Pictures({ api, path }: { api: AccountApi; path: string 
     setConfirming(null);
     try {
       const result = await api.pictureAction(ref, tile.code, action);
+      if (!mounted.current) return; // the page was left while the action was on its way
       if (result.state === "waiting") {
-        setWaiting((old) => ({ ...old, [tile.code]: action }));
+        setWaitingState({ ...waitingNow.current, [tile.code]: action });
         void readFirst(appliedRef.current);
+        // One more read after a while, for this tile only; a hidden tab does not read, and a tile that has
+        // changed in the meantime is not waiting any more, so nothing is read for it.
+        const code = tile.code;
+        clearTimeout(rechecks.current[code]);
+        rechecks.current[code] = setTimeout(() => {
+          delete rechecks.current[code];
+          if (typeof document !== "undefined" && document.hidden) return;
+          if (!waitingNow.current[code]) return;
+          void readFirst(appliedRef.current);
+        }, WAITING_RECHECK_MS);
       } else if (action === "delete") {
         setTiles((old) => old.filter((t) => t.code !== tile.code));
         void refreshUsage();

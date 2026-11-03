@@ -291,6 +291,10 @@ export default function campaignArea({ call }: ApiHelpers): Partial<AccountApi> 
       (await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/speakers/${encodeURIComponent(speaker)}/remove`)) as { id: string },
     speakerRemoval: async (ref, id) =>
       (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/speakers/removals/${encodeURIComponent(id)}`)) as SpeakerRemoval,
+    saveRecapMusts: async (ref, lines) =>
+      (await call("PUT", `/me/campaigns/${encodeURIComponent(ref)}/recap-style/must-haves`, { lines })) as { id: string },
+    recapMustsDefaults: async (ref) =>
+      (await call("DELETE", `/me/campaigns/${encodeURIComponent(ref)}/recap-style/must-haves`)) as { id: string },
     recapStyleAction: async (ref, id) =>
       (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/recap-style/${encodeURIComponent(id)}`)) as RecapStyleAction,
     loreAdd: async (ref, input) =>

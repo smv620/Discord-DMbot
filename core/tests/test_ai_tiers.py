@@ -166,6 +166,7 @@ class Tiers(unittest.TestCase):
                 Feature.PLAN_READER: AIModelTier.CAREFUL,
                 Feature.TIME_SUGGEST: AIModelTier.FAST,  # a time jump suggested (#1758)
                 Feature.IMPORT_TIME: AIModelTier.FAST,  # where an imported session ended (#2979)
+                Feature.THEATRE: AIModelTier.FAST,  # a scene recast as a script (#3244)
                 Feature.SUPPORT: AIModelTier.DEEP,
                 Feature.RECAP_WRITE: AIModelTier.CREATIVE,  # the recap as plain text (#2074)
                 Feature.RECAP_FORMAT: AIModelTier.FORMATTING,  # its sections, no word changed

@@ -53,6 +53,17 @@ type View = "loading" | "ok" | "none" | "down" | "signed-out";
 const DEFAULT_HOPS = 2;
 const AUTO_MS = 5000; // how often the map reads itself again, plus up to a second more
 const AUTO_JITTER_MS = 1000;
+/** After this many reads in a row that found nothing new, the map waits longer between reads (an interim
+ * back-off for #3294, until the campaign has a graph version that makes a full read unnecessary). */
+const QUIET_LOOKS = 3;
+const BACKOFF_MS = [15000, 30000, 60000]; // the waits after the quiet looks; the last one holds
+
+/** How long to wait before the next read, not counting the jitter: 5 s while things are changing, then 15 s, 30 s
+ * and at most 60 s as reads keep finding the same graph. Any change, the tab coming back or the button resets it. */
+export function autoDelay(unchanged: number): number {
+  if (unchanged < QUIET_LOOKS) return AUTO_MS;
+  return BACKOFF_MS[Math.min(unchanged - QUIET_LOOKS, BACKOFF_MS.length - 1)] ?? AUTO_MS;
+}
 
 /** Two reads that are the same text draw the same map, so the second changes nothing on the page. The whole
  * read is the signature: a secret turned on, a know word, a pin or a belief all show without a reload. */
@@ -117,12 +128,18 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
   autoNow.current = auto;
   const alive = useRef(true);
   useEffect(() => () => void (alive.current = false), []);
-  const refreshNow = useRef<() => Promise<void>>(async () => {});
+  const refreshNow = useRef<() => Promise<"changed" | "same" | "skipped">>(async () => "skipped");
+  // Reads in a row that found the same graph; it sets the wait before the next read (autoDelay).
+  const unchanged = useRef(0);
+  // Bumped when the person reads a web themselves, so a long wait already running starts again at the quick pace.
+  const [pulse, setPulse] = useState(0);
 
   /** Reads the web around `at`. A big one waits for a yes unless `sure`. */
   async function load(at: string | null, steps: number, sure = false): Promise<void> {
     if (!ref || !api.webGraph) return;
     const mine = ++latest.current;
+    unchanged.current = 0;
+    setPulse((n) => n + 1);
     const view = askedNow.current;
     setBig(null);
     let readingSeeAs = false; // only a failed read of the character's web means the character is gone (#3161)
@@ -186,10 +203,10 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
    * the person started meanwhile, and drops its answer if they froze the graph or left. A person who is signed
    * out, or whose peeking was turned off, is told as a normal read would tell them; any other failure waits
    * for the next turn. */
-  async function refresh(): Promise<void> {
-    if (!ref || !api.webGraph || view !== "ok" || big !== null || revealing.size > 0) return;
+  async function refresh(): Promise<"changed" | "same" | "skipped"> {
+    if (!ref || !api.webGraph || view !== "ok" || big !== null || revealing.size > 0) return "skipped";
     const shown = graphNow.current;
-    if (!shown) return;
+    if (!shown) return "skipped";
     const stamp = latest.current;
     const [at, steps] = [center, hops];
     const query = {
@@ -203,21 +220,23 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
     try {
       if (api.webSize && seeAsNow.current === undefined) {
         const size = await withTimeout(api.webSize(ref, { center: at, hops: steps, ...(askedNow.current ? { view: askedNow.current } : {}) }));
-        if (stale() || size.names > BIG_WEB) return;
+        if (stale() || size.names > BIG_WEB) return "skipped";
       }
       const read = await withTimeout(api.webGraph(ref, query));
-      if (stale()) return;
+      if (stale()) return "skipped";
       const next = read.canEdit ? read : plainGraph(read);
-      if (graphSignature(next) === graphSignature(shown)) return;
+      if (graphSignature(next) === graphSignature(shown)) return "same";
       setGraph(next);
       setLine((now) => (now && next.edges.some((e) => (e.a === now.a && e.b === now.b) || (e.a === now.b && e.b === now.a)) ? now : null));
       void loadOverview();
+      return "changed";
     } catch (error) {
-      if (stale()) return;
+      if (stale()) return "skipped";
       const kind = error instanceof ApiError ? error.kind : "network";
       if (kind === "signed-out") setView("signed-out");
       else if (kind === "peek-off") void load(at, steps, true);
       /* anything else is simply tried again at the next turn */
+      return "skipped";
     }
   }
   refreshNow.current = refresh;
@@ -230,12 +249,20 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
     let stopped = false;
     const next = (): void => {
       timer = setTimeout(async () => {
-        if (!document.hidden) await refreshNow.current();
+        if (!document.hidden) {
+          const found = await refreshNow.current();
+          // Only a read that really compared two graphs counts: a skipped turn says nothing about the story.
+          if (found === "changed") unchanged.current = 0;
+          else if (found === "same") unchanged.current += 1;
+        }
         if (!stopped) next();
-      }, AUTO_MS + Math.random() * AUTO_JITTER_MS);
+      }, autoDelay(unchanged.current) + Math.random() * AUTO_JITTER_MS);
     };
     const back = (): void => {
-      if (!document.hidden) void refreshNow.current();
+      if (document.hidden) return;
+      unchanged.current = 0; // the tab is back: look at once, and keep to the quick pace again
+      setPulse((n) => n + 1); // (the timer that was waiting out a long delay starts again at the quick one)
+      void refreshNow.current();
     };
     document.addEventListener("visibilitychange", back);
     next();
@@ -244,12 +271,13 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
       if (timer !== undefined) clearTimeout(timer);
       document.removeEventListener("visibilitychange", back);
     };
-  }, [auto, view]);
+  }, [auto, view, pulse]);
 
   function toggleAuto(): void {
     const on = !auto;
     setAuto(on);
     saveAuto(on);
+    unchanged.current = 0;
     if (on) void refresh();
   }
 

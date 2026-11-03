@@ -245,6 +245,11 @@ class EveryClaimedTableComesBack(DatabaseTest):
                 " VALUES (%s, %s, repeat('c', 32), 'batch', -1, 'uploader_confirmed', %s, 1, 7, 3)",
                 (g, c, DM),
             ),
+            "speaker_erasures": (  # (-2: -1 is the speaker above, who stays)
+                "INSERT INTO speaker_erasures (guild_id, campaign_id, user_id, erased_at)"
+                " VALUES (%s, %s, -2, 5)",
+                (g, c),
+            ),
             "session_notes": (
                 "INSERT INTO session_notes (guild_id, campaign_id, session_at, beats, written_at,"
                 " job_created_at) VALUES (%s, %s, 1,"

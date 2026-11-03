@@ -122,6 +122,9 @@ class Feature(enum.StrEnum):
     # The game time an imported session ended at (#2979): a background call, so unlike the live
     # suggestion above it is not a live feature and gets the generous floor (#2596).
     IMPORT_TIME = "import_time"
+    # A session recast as a script with every reference resolved (#3244): a background call for the
+    # DM alone, scene by scene, so it gets the generous floor like the other background jobs.
+    THEATRE = "theatre"
     RECAP_WRITE = "recap_write"  # the recap written as plain text by the creative model (#2074)
     RECAP_FORMAT = "recap_format"  # that text shaped into sections by the small model (#2074)
     RULE_CONFLICTS = "rule_conflicts"  # a saved house rule that disagrees with another (#2284)
@@ -181,6 +184,7 @@ FEATURE_TIERS = {
     Feature.RECAP: AIModelTier.FAST,
     Feature.PLAN_READER: AIModelTier.CAREFUL,  # read once and kept; it must not make things up
     Feature.IMPORT_TIME: AIModelTier.FAST,  # one small answer over a session's cue lines
+    Feature.THEATRE: AIModelTier.FAST,  # a scene recast as a script; checked in code (#3244)
     Feature.TIME_SUGGEST: AIModelTier.FAST,  # one short line, one small answer, a DM presses
     Feature.SUPPORT: AIModelTier.DEEP,  # a person is reading the answer, and it must not mislead
     Feature.RECAP_RETRY: AIModelTier.CAREFUL,
