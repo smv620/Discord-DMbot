@@ -23,8 +23,8 @@ GROUP = "Not named yet"  # the heading on the name list (slice 4b)
 MAX_WHAT = 100
 MAX_ROLE = 40
 _ARTICLE = re.compile(r"^(?:a|an|the)\s+", re.IGNORECASE)
-# A description that already says whose it is ("his child", "Brewner's daughter") would be shown as
-# "Brewner's Brewner's daughter": the label supplies the owner, so a leading owner is dropped.
+# A description that already says whose it is ("his child", "Hobb's daughter") would be shown as
+# "Hobb's Hobb's daughter": the label supplies the owner, so a leading owner is dropped.
 _PRONOUN_OWNER = re.compile(r"^(?:his|her|their|its|my|our|your)\s+(?=\S)", re.IGNORECASE)
 _POSSESSIVE_ENDS = ("'s ", "’s ", "' ", "’ ")
 # A title is not the owner when it is only the first word of a longer name ("Lord's heir").
@@ -63,7 +63,7 @@ def possessive(name: str) -> str:
 
 def _without_owner(word: str, anchor_name: str) -> str:
     """`word` without a leading owner that is a possessive pronoun or the anchor's own name (or
-    its first word: "Okthandom's child" for "Okthandom Korran"), compared to the name as the label
+    its first word: "Ivo's child" for "Ivo Rand"), compared to the name as the label
     shows it. Another owner stays: "the king's guard" is not "the guard"."""
     pronoun = _PRONOUN_OWNER.match(word)
     if pronoun is not None:

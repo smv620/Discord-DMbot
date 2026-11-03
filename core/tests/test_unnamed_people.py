@@ -28,21 +28,15 @@ class TheLabel(unittest.TestCase):
         )
 
     def test_a_description_that_already_says_whose_is_not_owned_twice(self) -> None:
-        self.assertEqual(
-            unnamed.label("his child", "Okthandom"), "Okthandom's child (name unknown)"
-        )
+        self.assertEqual(unnamed.label("his child", "Ivo"), "Ivo's child (name unknown)")
         self.assertEqual(unnamed.label("her sister", "Ken"), "Ken's sister (name unknown)")
+        self.assertEqual(unnamed.label("Hobb's daughter", "Hobb"), "Hobb's daughter (name unknown)")
         self.assertEqual(
-            unnamed.label("Brewner's daughter", "Brewner"), "Brewner's daughter (name unknown)"
-        )
-        self.assertEqual(
-            unnamed.label("Okthandom's child", "Okthandom Korran"),
-            "Okthandom Korran's child (name unknown)",
+            unnamed.label("Ivo's child", "Ivo Rand"),
+            "Ivo Rand's child (name unknown)",
         )
         self.assertEqual(unnamed.label("Hollis' king", "Hollis"), "Hollis' king (name unknown)")
-        self.assertEqual(
-            unnamed.label("His child", "Okthandom"), "Okthandom's child (name unknown)"
-        )
+        self.assertEqual(unnamed.label("His child", "Ivo"), "Ivo's child (name unknown)")
         self.assertEqual(unnamed.label("Ken’s sister", "Ken"), "Ken's sister (name unknown)")
         self.assertEqual(
             unnamed.label("O'Brien's child", "O'Brien"), "O'Brien's child (name unknown)"
