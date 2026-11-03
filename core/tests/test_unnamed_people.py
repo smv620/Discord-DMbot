@@ -27,6 +27,25 @@ class TheLabel(unittest.TestCase):
             "elf archer with long blue hair (name unknown)",
         )
 
+    def test_a_description_that_already_says_whose_is_not_owned_twice(self) -> None:
+        self.assertEqual(
+            unnamed.label("his child", "Okthandom"), "Okthandom's child (name unknown)"
+        )
+        self.assertEqual(unnamed.label("her sister", "Ken"), "Ken's sister (name unknown)")
+        self.assertEqual(
+            unnamed.label("Brewner's daughter", "Brewner"), "Brewner's daughter (name unknown)"
+        )
+        self.assertEqual(
+            unnamed.label("Okthandom's child", "Okthandom Korran"),
+            "Okthandom Korran's child (name unknown)",
+        )
+        self.assertEqual(unnamed.label("Hollis' king", "Hollis"), "Hollis' king (name unknown)")
+        # another owner stays, and a lone word is never emptied
+        self.assertEqual(
+            unnamed.label("the king's guard", "Ken"), "Ken's king's guard (name unknown)"
+        )
+        self.assertEqual(unnamed.label("his", "Ken"), "Ken's his (name unknown)")
+
     def test_a_name_ending_in_s_takes_only_an_apostrophe_and_an_article_is_dropped(self) -> None:
         self.assertEqual(unnamed.label("the king", "Hollis"), "Hollis' king (name unknown)")
 

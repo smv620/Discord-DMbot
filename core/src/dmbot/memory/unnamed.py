@@ -23,6 +23,11 @@ GROUP = "Not named yet"  # the heading on the name list (slice 4b)
 MAX_WHAT = 100
 MAX_ROLE = 40
 _ARTICLE = re.compile(r"^(?:a|an|the)\s+", re.IGNORECASE)
+# A description that already says whose it is ("his child", "Brewner's daughter") would be shown as
+# "Brewner's Brewner's daughter": the label supplies the owner, so a leading owner is dropped.
+_OWNER = re.compile(
+    r"^(?:his|her|their|its|my|our|your|(?P<name>[^\s'’]+)['’]s?)\s+", re.IGNORECASE
+)
 
 
 def tidy(what: str) -> str:
@@ -34,13 +39,29 @@ def possessive(name: str) -> str:
     return f"{name}'" if name.endswith(("s", "S")) else f"{name}'s"
 
 
+def _without_owner(word: str, anchor_name: str) -> str:
+    """`word` without a leading owner that is a possessive pronoun or the anchor's own name (or
+    its first word: "Okthandom's child" for "Okthandom Korran"). Another owner stays: "the king's
+    guard" is not "the guard"."""
+    m = _OWNER.match(word)
+    if m is None:
+        return word
+    owner = m.group("name")
+    if owner is not None and owner.casefold() not in {
+        part.casefold() for part in (anchor_name, *anchor_name.split())
+    }:
+        return word
+    rest = word[m.end() :].strip()
+    return rest or word
+
+
 def label(what: str, anchor_name: str | None = None) -> str:
     """ "Ken's sister (name unknown)", or "a hooded figure (name unknown)" with nobody to hang
     them off."""
     word = tidy(what)
     if anchor_name:
         whose = possessive(anchor_name[:ANCHOR_MAX].rstrip())
-        return f"{whose} {_ARTICLE.sub('', word)} {SUFFIX}"
+        return f"{whose} {_ARTICLE.sub('', _without_owner(word, anchor_name))} {SUFFIX}"
     return f"{word} {SUFFIX}"
 
 
