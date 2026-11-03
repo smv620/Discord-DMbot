@@ -12,6 +12,8 @@ from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, PropertyMock, patch
 
+import discord
+
 from dmbot.memory import background as bg
 from dmbot.memory import lore_read
 from dmbot.memory.models import CONFIRMED, PROPOSED
@@ -319,7 +321,13 @@ class ThePath(NamesTest):
         self.assertIn("does not keep it, only a short line", text)
         self.assertEqual(
             [b.label for b in view.children],
-            ["🤖 Find names", ui_bg.TRUTH_OFF, "Cancel", ui_bg.KNOWS_LABELS["world"]],
+            [ui_bg.TRUTH_OFF, "Cancel", ui_bg.KNOWS_LABELS["world"], ui_bg.UPLOAD_LABEL],
+        )
+        # The button that does the work is last and green (owner, 2026-11-03).
+        last = view.children[-1]
+        assert isinstance(last, discord.ui.Button)
+        self.assertEqual(
+            (last.label, last.style), (ui_bg.UPLOAD_LABEL, discord.ButtonStyle.success)
         )
         # (#3098, owner 2026-10-31: the form starts on "Everyone knows it", marked Default)
         self.assertIn("Everyone knows it", text)

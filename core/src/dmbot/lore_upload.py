@@ -1,7 +1,7 @@
 """Reading a lore upload from the website (#3022): the bot's half of Add to the story > Upload lore.
 
 A DM's paste, file text or link was queued in `lore_uploads` (see `memory.lore_queue`). This reads
-it the way Discord's 🤖 Find names does, through the same `read_background`, with no Discord
+it the way Discord's Upload & process lore does, through the same `read_background`, with no Discord
 interaction: names go to Check new names as proposals, connections are queued for the DM's answers,
 and what the page shows is counts and stage words only. The text is the DM's own writing and is
 never kept or logged: the queue blanks it in the statement that ends the row, whichever way it

@@ -124,7 +124,7 @@ CONNECTIONS_NOTE = (
 def rights_text() -> str:
     return (
         f"Use this for {NOT_A_BOOK}. (For a book or adventure, use the **Shared story** "
-        "switch.)\n**Pressing 🤖 Find names says this is your own writing, and you may use "
+        "switch.)\n**Pressing Upload & process lore says this is your own writing, and you may use "
         "it.** The text is sent once to Anthropic (an AI company) to be read. DMbot does not "
         "keep it, only a short line beside each name until you answer it."
     )
@@ -339,6 +339,7 @@ NO_CHARACTERS = (
     '\n\nIt says "I" or "my", but no character is confirmed yet. Confirm the character first, '
     'or connections that say "I" are left out.'
 )
+UPLOAD_LABEL = "Upload & process lore"
 NOT_ONE = "Not one character's"
 NOT_ONE_VALUE = "-"
 
@@ -387,9 +388,6 @@ class BackgroundOffer(_Menu):
         if self.choices:
             self.add_item(self._select())
         self.truth = False  # asked once per upload (#2447): "may change in play" by default
-        self.add_item(
-            _Button(self._read, label="🤖 Find names", style=discord.ButtonStyle.primary, row=1)
-        )
         self.switch = _Button(
             self._flip, label=TRUTH_OFF, style=discord.ButtonStyle.secondary, row=1
         )
@@ -405,6 +403,11 @@ class BackgroundOffer(_Menu):
             row=2,
         )
         self.add_item(self.knows_button)
+        # The button that does the work comes last, after the choices it uses, and is green
+        # (it was "🤖 Find names", which said little about uploading and reading the lore).
+        self.add_item(
+            _Button(self._read, label=UPLOAD_LABEL, style=discord.ButtonStyle.success, row=2)
+        )
 
     def _select(self) -> discord.ui.Select[Any]:
         options = [discord.SelectOption(label=NOT_ONE, value=NOT_ONE_VALUE, default=True)] + [
@@ -507,7 +510,9 @@ class BackgroundOffer(_Menu):
         if interaction.user.id not in campaign.dm_user_ids:  # on every press
             await _tell(interaction, ONLY_DMS)
             return
-        truth = self.truth  # as it was when Find names was pressed, not when the AI is done
+        truth = (
+            self.truth
+        )  # as it was when Upload & process lore was pressed, not when the AI is done
         knows = self.knows  # likewise
         speaker = self.speaker
         known_by = self.known_by
@@ -671,10 +676,11 @@ async def read_background(
     choice: str = lore_knowledge.DEFAULT,
 ) -> BackgroundRead:
     """The read itself, with no Discord interaction: both passes over the text, the names stored
-    as proposals and the connections queued for the DM's answers. Discord's 🤖 Find names and the
-    website's Upload lore (#3022) both come through here, so they cannot drift apart. The caller
-    has checked who may ask, the plan and the allowance, and shows the result. `progress(stage,
-    done, total)` is told where it is with counts only: "reading", "looking", "shaping" and "who"
+    as proposals and the connections queued for the DM's answers. Discord's Upload & process lore
+    and the website's Upload lore (#3022) both come through here, so they cannot drift apart. The
+    caller has checked who may ask, the plan and the allowance, and shows the result.
+    `progress(stage, done, total)` is told where it is with counts only: "reading", "looking",
+    "shaping" and "who"
     (working out who a pronoun means). `started` is the monotonic time the wait began. `choice`
     (#2959) is what the upload says the player characters know: world general knowledge, spoilers
     (today's behaviour, the default) or the AI's call, statement by statement."""
