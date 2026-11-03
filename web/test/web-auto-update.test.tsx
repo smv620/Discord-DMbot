@@ -327,6 +327,20 @@ describe("backing off while nothing changes (#3294, until a graph version exists
     document.dispatchEvent(new Event("visibilitychange")); // a read at once, and the pace is quick again
     await tick(50);
     expect(reads()).toBe(before + 1);
+    await tick(5100); // and the next one is 5 s later, not after the long wait that was running
+    expect(reads()).toBe(before + 2);
+  });
+
+  it("does not count a hidden tab's turns as quiet", async () => {
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    const { api, reads } = counting(false);
+    await ready(api);
+    Object.defineProperty(document, "hidden", { value: true, configurable: true });
+    await tick(5100 * 6); // six turns pass with the tab hidden: no reads
+    const hiddenReads = reads();
+    Object.defineProperty(document, "hidden", { value: false, configurable: true });
+    await tick(5100);
+    expect(reads()).toBe(hiddenReads + 1); // still the quick pace once it is visible again
   });
 
   it("goes back to 5 s when the button is pressed", async () => {

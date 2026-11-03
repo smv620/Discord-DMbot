@@ -261,6 +261,7 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
     const back = (): void => {
       if (document.hidden) return;
       unchanged.current = 0; // the tab is back: look at once, and keep to the quick pace again
+      setPulse((n) => n + 1); // (the timer that was waiting out a long delay starts again at the quick one)
       void refreshNow.current();
     };
     document.addEventListener("visibilitychange", back);
