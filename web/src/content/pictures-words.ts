@@ -31,7 +31,8 @@ export const picturesPage = {
   makePublic: "Make public",
   remove: "Delete",
   confirmDelete: "Delete this picture for good?",
-  confirmRemove: "Delete",
+  confirmRemove: "Yes, delete it",
+  roomNote: "When space runs out, the oldest pictures that aren't permanent are removed to make room.",
   cancel: "Cancel",
   permanentFull: (limit: number | null): string =>
     limit === null

@@ -203,9 +203,12 @@ export default function Pictures({ api, path }: { api: AccountApi; path: string 
       {ref && <CampaignNav api={api} campaignRef={ref} page="pictures" name={null} />}
       <p class="small muted">{words.intro}</p>
       {usage && isDm && (
-        <p class="small" role="status">
-          {words.usage(usage.usedMb, usage.limitMb, usage.permanentMb, usage.permanentLimitMb)}
-        </p>
+        <>
+          <p class="small" role="status">
+            {words.usage(usage.usedMb, usage.limitMb, usage.permanentMb, usage.permanentLimitMb)}
+          </p>
+          <p class="small muted">{words.roomNote}</p>
+        </>
       )}
       <form
         class="row"

@@ -58,6 +58,7 @@ describe("the Pictures page", () => {
   it("the usage line reads like 312 MB of 500 MB used, for a game master only", async () => {
     render(<Pictures api={mockApi("table")} path={PATH} />);
     expect(await screen.findByText(w.usage(312, 500, 100, 400))).toBeTruthy();
+    expect(screen.getByText(w.roomNote)).toBeTruthy();
   });
 
   it("a player sees no Permanent button, and the poster sees Make private and Delete only on their own", async () => {
@@ -65,6 +66,7 @@ describe("the Pictures page", () => {
     await screen.findByAltText("A map of the Brass Ford");
     expect(screen.queryByRole("button", { name: w.permanent })).toBeNull();
     expect(screen.queryByText(w.usage(312, 500, 100, 400))).toBeNull();
+    expect(screen.queryByText(w.roomNote)).toBeNull();
     // Mira's own pictures have the two buttons; Cerric's have none.
     expect(within(tileFor("A map of the Brass Ford")).getByRole("button", { name: w.makePrivate })).toBeTruthy();
     expect(within(tileFor("Cerric's oath scroll")).queryByRole("button", { name: w.remove })).toBeNull();
