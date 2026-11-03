@@ -65,6 +65,7 @@ import type {
 import type { ImportClock } from "./api";
 import { ApiError, type HouseFileRequest, type HouseFileState, type LoreUpload, type RecapStyle, type RecapStyleAction, type WebLinkKind, type FixAnswer, type FixMode, type PlotIssue, type PlotMessage, type PlotProposal, type WaitingLook } from "./api";
 import { NAME_LIMIT } from "../content/names-words";
+import { MUSTS_LINE_CHARS, MUSTS_MAX_LINES } from "../content/recap-style-words";
 
 /** Found in the built files only if the pretend API was included; check-csp fails a real
  * build that contains it. */
@@ -2056,8 +2057,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       calls.push(`saveRecapMusts:${ref}:${lines.length}`);
       await reachable();
       signedIn();
-      if (lines.length > 40) throw new ApiError("bad-choice");
-      if (lines.some((l) => l.length > 300)) throw new ApiError("ticket-too-long");
+      if (lines.length > MUSTS_MAX_LINES || lines.some((l) => l.length > MUSTS_LINE_CHARS)) throw new ApiError("bad-choice");
       const id = String(styleChanges.size + 1).padStart(32, "0");
       styleChanges.set(id, { action: "save_musts", arg: JSON.stringify(lines), looks: 0, at: Math.floor(Date.now() / 1000) });
       return { id };
@@ -2082,7 +2082,10 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         if (c.action === "add_example") styleNow.examples.push({ id: String(100 + styleNow.examples.length), text: c.arg });
         else if (c.action === "remove_example") styleNow.examples = styleNow.examples.filter((e) => e.id !== c.arg);
         else if (c.action === "use_defaults") styleNow.examples = [];
-        else if (c.action === "save_musts") mustsNow.own = (JSON.parse(c.arg) as string[]).length === 0 ? null : (JSON.parse(c.arg) as string[]);
+        else if (c.action === "save_musts") {
+          const saved = JSON.parse(c.arg) as string[];
+          mustsNow.own = saved.length === 0 ? null : saved;
+        }
         else if (c.action === "musts_defaults") mustsNow.own = null;
         else if (c.action === "add_note") styleNow.notes.push({ id: String(200 + styleNow.notes.length), text: c.arg });
         else styleNow.notes = styleNow.notes.filter((n) => n.id !== c.arg);

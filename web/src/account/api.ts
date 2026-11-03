@@ -1210,7 +1210,6 @@ export interface HouseFileInput {
   link?: string;
   text?: string;
 }
-/** The campaign's recap style (#2985): ids are the stores' own, to remove by. */
 /** The recap must-haves (#3329; docs/RECAP_STANDARD.md): what every recap of the campaign covers when the session had it.
  * `group` is one of the five headings for DMbot's own lines and "" for a line the DM added; `defaults` is true while the
  * campaign has no list of its own. Game masters only (the API leaves it out for anyone else). */
@@ -1218,6 +1217,7 @@ export interface RecapMusts {
   lines: { id: string; text: string; group: string }[];
   defaults: boolean;
 }
+/** The campaign's recap style (#2985): ids are the stores' own, to remove by. */
 export interface RecapStyle {
   /** Missing from an API older than #3328. */
   musts?: RecapMusts;

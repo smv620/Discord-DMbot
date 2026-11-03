@@ -97,7 +97,7 @@ describe("the must-haves list", () => {
     expect(inputs()).toHaveLength(13);
   });
 
-  it("does not offer another line past the limit, and an empty edit is dropped on save", async () => {
+  it("drops an emptied line on save", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const api = mockApi("table");
     render(<RecapStyleView api={api} path={PATH} />);
@@ -105,6 +105,33 @@ describe("the must-haves list", () => {
     fireEvent.input(inputs()[0]!, { target: { value: "   " } }); // emptied: it is not a line any more
     fireEvent.click(screen.getByRole("button", { name: m.save }));
     await waitFor(() => expect(api.calls).toContain("saveRecapMusts:100.cmp1:12"));
+  });
+
+  it("keeps unsaved edits when something else on the page (a note) is saved and the style is read again", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    render(<RecapStyleView api={mockApi("table")} path={PATH} />);
+    await screen.findByText(m.heading);
+    fireEvent.input(inputs()[0]!, { target: { value: "Still mine." } });
+    fireEvent.input(screen.getByLabelText(words.noteLabel), { target: { value: "Keep it short." } });
+    fireEvent.click(screen.getByRole("button", { name: words.addNote }));
+    await settle();
+    await waitFor(() => expect(document.body.textContent).toContain("Keep it short."));
+    expect(inputs()[0]!.value).toBe("Still mine."); // the reload brought the same list, so the draft stayed
+  });
+
+  it("sends a line that was typed but not added, and will not save an empty list", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const api = mockApi("table");
+    render(<RecapStyleView api={api} path={PATH} />);
+    await screen.findByText(m.heading);
+    fireEvent.input(screen.getByLabelText(m.addLabel), { target: { value: "Typed, not added." } });
+    fireEvent.click(screen.getByRole("button", { name: m.save }));
+    await waitFor(() => expect(api.calls).toContain("saveRecapMusts:100.cmp1:14")); // 13 + the typed line
+    await settle();
+    // Remove every line: nothing to save, and the words say how to start over.
+    for (let i = 14; i >= 1; i--) fireEvent.click(screen.getByRole("button", { name: new RegExp(`^${m.remove(i)}`) }));
+    expect(screen.getByText(m.emptyList)).toBeTruthy();
+    expect((screen.getByRole("button", { name: m.save }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("rests the controls while a change is on its way", async () => {

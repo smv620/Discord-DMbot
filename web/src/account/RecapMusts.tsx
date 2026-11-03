@@ -36,15 +36,21 @@ export default function RecapMustsPanel({
   const [adding, setAdding] = useState("");
   const [asking, setAsking] = useState(false);
   // What the API shows is the truth: when it changes (a save finished, the defaults came back) the draft starts over from it.
-  const shown = useRef(musts);
+  // The draft starts over only when what the API shows really differs from what it showed: a reload that brings the
+  // same list (after an example or a note was added on this page) must not wipe edits that are not saved yet.
+  const signature = (list: RecapMusts): string => JSON.stringify([list.defaults, list.lines.map((l) => [l.id, l.text])]);
+  const shown = useRef(signature(musts));
   useEffect(() => {
-    if (shown.current === musts) return; // (not on the first look: the draft already starts from it, and a typed change must stay)
-    shown.current = musts;
+    const now = signature(musts);
+    if (shown.current === now) return; // (also the first look: the draft already starts from it)
+    shown.current = now;
     setDraft(fresh(musts));
+    setAdding("");
     setAsking(false);
   }, [musts]);
 
-  const texts = draft.map((d) => d.text.trim()).filter((t) => t !== "");
+  // A line typed in "Add a line" but not added yet goes with Save, so it is never lost.
+  const texts = [...draft.map((d) => d.text.trim()), adding.trim()].filter((t) => t !== "");
   const changed = !same(texts, musts.lines.map((l) => l.text));
   const full = draft.length >= MUSTS_MAX_LINES;
   const tooLong = draft.some((d) => d.text.length > MUSTS_LINE_CHARS);
@@ -68,7 +74,7 @@ export default function RecapMustsPanel({
       <ol class="stack">
         {rows.map(({ heading, d, n }) => (
           <li key={d.key} class="stack">
-            {grouped && heading && <strong class="small">{heading}</strong>}
+            {grouped && heading && <h3 class="small">{heading}</h3>}
             <p>
               <input
                 type="text"
@@ -86,7 +92,7 @@ export default function RecapMustsPanel({
                 type="button"
                 class="button secondary"
                 disabled={disabled}
-                aria-label={`${words.remove(n)}: ${d.text.slice(0, 30)}`}
+                aria-label={`${words.remove(n)}: ${d.text.trim().slice(0, 30) || words.emptyLine}`}
                 onClick={() => setDraft((now) => now.filter((x) => x.key !== d.key))}
               >
                 {words.remove(n)}
@@ -121,10 +127,18 @@ export default function RecapMustsPanel({
         </form>
       )}
       <p role="status" class="small">
-        {changed ? words.unsaved : ""}
+        {texts.length === 0 ? words.emptyList : changed ? words.unsaved : ""}
       </p>
       <p>
-        <button type="button" class="button" disabled={disabled || !changed || tooLong} onClick={() => onSave(texts)}>
+        <button
+          type="button"
+          class="button"
+          disabled={disabled || !changed || tooLong || texts.length === 0}
+          onClick={() => {
+            setAdding("");
+            onSave(texts);
+          }}
+        >
           {words.save}
         </button>{" "}
         {!musts.defaults && (
