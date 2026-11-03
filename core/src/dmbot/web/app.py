@@ -2688,7 +2688,8 @@ def create_app(
         except RecapError as err:
             raise import_refusal(err) from None
         return imports.consent_words(
-            cloud=settings.transcription.sends_audio_out, company=settings.transcription.company
+            cloud=settings.outside_engine is not None,
+            company="Deepgram" if settings.outside_engine == "deepgram" else None,
         )
 
     @app.get("/me/campaigns/{ref}/speakers", dependencies=[Depends(imports_enabled)])

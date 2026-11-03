@@ -10,12 +10,11 @@ from typing import Any
 from dmbot.consent import TERMS_VERSION, ConsentStore
 from dmbot.web import imports
 from dmbot.web.recaps import RecapError, _scoped
-from tests.test_recap_web import ALICE
+from tests.test_web_api import ALICE, THURSDAY
 from tests.test_web_imports import (
     CRAIG,
     MAPPING,
     MIRA,
-    THURSDAY,
     TOMAS,
     WithImports,
 )
