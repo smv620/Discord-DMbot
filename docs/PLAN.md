@@ -4993,14 +4993,15 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
       > - DMbot turns what they said, or wrote, in the file into text for this campaign.
       > - Anyone in this campaign's server can read and download that text.
       > - An AI company (Anthropic) reads the text, with who said it, to give the DM notes. It is not used to train their AI.
-      > - Only tick for someone who is 18 or older and said yes, or who is 13 to 17 and whose parent or guardian said yes after having the chance to see what they said. Never tick for anyone under 13.
+      > - Only tick for someone who is 16 or older and said yes, or who is 13 to 15 and whose parent or guardian said yes after having the chance to see what they said. Never tick for anyone under 13.
       > - If they change their mind, their lines stay until they ask for them to be removed. They can ask at any time: on Discord with Delete my transcripts, or, if they are not on Discord, through the DM.
 
-      **Age at upload** (owner, 2026-11-03): an uploaded speaker is 18 or older, or is 13 to 17 with the
-      expressed consent of their parent or guardian, given after the parent or guardian had the chance
-      to review the content. **Nobody under 13** (owner, 2026-11-03: Discord's own minimum, and US law
-      (COPPA) expects checkable parental consent below it, which a tick is not). This differs from live recording in Discord (16 or older, #1018). No age or birthdate
-      is stored. The record keeps who ticked, when and under which wording, as before.
+      **Age at upload** (owner, 2026-11-03): the same self-declared age as live recording in Discord
+      (16 or older, #1018): a speaker who is 16 or older agrees for themselves. A speaker who is 13 to 15
+      needs the expressed consent of their parent or guardian, given after the parent or guardian had the
+      chance to review the content. **Nobody under 13** (Discord's own minimum, and US law (COPPA) expects
+      checkable parental consent below it, which a tick is not). No age or birthdate is stored. The record
+      keeps who ticked, when and under which wording, as before.
     - **Limits:**
       - A server member who has said **Stop recording me**, or turned DMbot down, can't be ticked for
         them. Their own no always wins, and the page says why the box is greyed out.
