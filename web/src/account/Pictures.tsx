@@ -4,9 +4,9 @@
 // usage line; the poster gets Make private/public and Delete on their own. Held behind PICTURES_LIVE.
 import { useEffect, useRef, useState } from "preact/hooks";
 
-import { sessionDay } from "../content/recaps";
 import { picturesPage as words } from "../content/pictures-words";
 import { PICTURES_LIVE } from "../content/pictures-switch";
+import { sessionDay } from "../content/recaps";
 import {
   ApiError,
   type AccountApi,
@@ -29,25 +29,39 @@ export function refFromPath(path: string): string | null {
   }
 }
 
-type Tile = PictureItem & { working?: boolean; note?: string };
 type Load = "loading" | "ok" | "failed";
+
+/** Has the list now shown what an action asked for? (A deleted tile is gone; the others carry the new flag.) */
+function shows(tiles: PictureItem[], code: string, action: PictureAction): boolean {
+  const tile = tiles.find((t) => t.code === code);
+  if (action === "delete") return tile === undefined;
+  if (tile === undefined) return true;
+  if (action === "make-private") return !tile.isPublic;
+  if (action === "make-public") return tile.isPublic;
+  if (action === "permanent") return tile.permanent;
+  return !tile.permanent;
+}
 
 export default function Pictures({ api, path }: { api: AccountApi; path: string }) {
   const ref = refFromPath(path);
   const [load, setLoad] = useState<Load>("loading");
-  const [tiles, setTiles] = useState<Tile[]>([]);
+  const [tiles, setTiles] = useState<PictureItem[]>([]);
   const [more, setMore] = useState(false);
   const [moreBusy, setMoreBusy] = useState(false);
   const [isDm, setIsDm] = useState(false);
   const [usage, setUsage] = useState<PictureUsage | null>(null);
   const [sessions, setSessions] = useState<number[]>([]);
   const [posters, setPosters] = useState<string[]>([]);
-  // The filters on screen, and the ones the list was last read with.
+  // The filters on screen, and the ones the list was last read with (kept in a ref too, for a read that starts later).
   const [session, setSession] = useState("");
   const [poster, setPoster] = useState("");
   const [typed, setTyped] = useState("");
   const [applied, setApplied] = useState<PictureFilter>({});
+  const appliedRef = useRef<PictureFilter>({});
+  // An action waiting for the bot: its picture's code and the action, until the list shows it.
+  const [waiting, setWaiting] = useState<Record<string, PictureAction>>({});
   const [busy, setBusy] = useState<string | null>(null);
+  const busyRef = useRef(false);
   const [confirming, setConfirming] = useState<string | null>(null);
   const [problems, setProblems] = useState<Record<string, string>>({});
   const [listProblem, setListProblem] = useState(false);
@@ -67,6 +81,7 @@ export default function Pictures({ api, path }: { api: AccountApi; path: string 
     const mine = ++reads.current;
     setLoad("loading");
     setListProblem(false);
+    setProblems({});
     try {
       const got: PictureList = await api.pictures(ref, f);
       if (mine !== reads.current) return;
@@ -76,6 +91,12 @@ export default function Pictures({ api, path }: { api: AccountApi; path: string 
       setUsage(got.usage);
       setSessions(got.sessions);
       setPosters(got.posters);
+      // A waiting action is done once the list shows it (or its picture is gone); until then it stays on its tile.
+      setWaiting((old) => {
+        const next: Record<string, PictureAction> = {};
+        for (const [code, action] of Object.entries(old)) if (!shows(got.pictures, code, action)) next[code] = action;
+        return next;
+      });
       setLoad("ok");
     } catch {
       if (mine !== reads.current) return;
@@ -87,7 +108,7 @@ export default function Pictures({ api, path }: { api: AccountApi; path: string 
   async function refreshUsage(): Promise<void> {
     if (!ref || !api.pictures) return;
     try {
-      const got = await api.pictures(ref, applied);
+      const got = await api.pictures(ref, appliedRef.current);
       setUsage(got.usage);
     } catch {
       // The usage line keeps what it said; the next read corrects it.
@@ -97,13 +118,13 @@ export default function Pictures({ api, path }: { api: AccountApi; path: string 
   useEffect(() => {
     if (!PICTURES_LIVE) return;
     void readFirst({});
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api, ref]);
 
   if (!PICTURES_LIVE || !api.pictures) return <p class="muted">{words.notOpen}</p>;
 
   function applyFilters(s: string, p: string, q: string): void {
     const f = filterFrom(s, p, q);
+    appliedRef.current = f;
     setApplied(f);
     setConfirming(null);
     void readFirst(f);
@@ -112,13 +133,15 @@ export default function Pictures({ api, path }: { api: AccountApi; path: string 
   async function showMore(): Promise<void> {
     const last = tiles[tiles.length - 1];
     if (!ref || !api.pictures || !last || moreBusy) return;
+    const mine = reads.current;
     setMoreBusy(true);
     try {
-      const got = await api.pictures(ref, { ...applied, before: last.cursor });
+      const got = await api.pictures(ref, { ...appliedRef.current, before: last.cursor });
+      if (mine !== reads.current) return; // the filter changed while this page was on its way
       setTiles((old) => [...old, ...got.pictures]);
       setMore(got.more);
     } catch {
-      setListProblem(true);
+      if (mine === reads.current) setListProblem(true);
     } finally {
       setMoreBusy(false);
     }
@@ -133,19 +156,21 @@ export default function Pictures({ api, path }: { api: AccountApi; path: string 
     });
   }
 
-  async function act(tile: Tile, action: PictureAction): Promise<void> {
-    if (!ref || !api.pictureAction || busy !== null) return;
+  async function act(tile: PictureItem, action: PictureAction): Promise<void> {
+    // A ref, not the render's `busy`: two quick presses before the next render must not start two actions.
+    if (!ref || !api.pictureAction || busyRef.current) return;
+    busyRef.current = true;
     setBusy(tile.code);
     setProblem(tile.code, null);
     setConfirming(null);
     try {
       const result = await api.pictureAction(ref, tile.code, action);
-      if (action === "delete" && result.state === "done") {
+      if (result.state === "waiting") {
+        setWaiting((old) => ({ ...old, [tile.code]: action }));
+        void readFirst(appliedRef.current);
+      } else if (action === "delete") {
         setTiles((old) => old.filter((t) => t.code !== tile.code));
-      } else if (result.state === "waiting") {
-        // The bot still has it: the tile says so, and the list is asked again for what is really there.
-        setTiles((old) => old.map((t) => (t.code === tile.code ? { ...t, working: true } : t)));
-        void readFirst(applied);
+        void refreshUsage();
       } else {
         setTiles((old) =>
           old.map((t) =>
@@ -155,7 +180,6 @@ export default function Pictures({ api, path }: { api: AccountApi; path: string 
                   ...t,
                   isPublic: action === "make-public" ? true : action === "make-private" ? false : t.isPublic,
                   permanent: action === "permanent" ? true : action === "not-permanent" ? false : t.permanent,
-                  working: false,
                 },
           ),
         );
@@ -165,9 +189,9 @@ export default function Pictures({ api, path }: { api: AccountApi; path: string 
       if (error instanceof ApiError && error.note) setProblem(tile.code, error.note);
       else if (error instanceof ApiError && error.kind === "permanent-full")
         setProblem(tile.code, words.permanentFull(usage?.permanentLimitMb ?? null));
-      else if (error instanceof ApiError && error.kind === "not-allowed") setProblem(tile.code, words.notAllowed);
       else setProblem(tile.code, words.actionFailed);
     } finally {
+      busyRef.current = false;
       setBusy(null);
     }
   }
@@ -197,7 +221,8 @@ export default function Pictures({ api, path }: { api: AccountApi; path: string 
             onChange={(e) => {
               const v = (e.currentTarget as HTMLSelectElement).value;
               setSession(v);
-              applyFilters(v, poster, typed);
+              // A selection applies the filters already set; text typed in the search box waits for its button.
+              applyFilters(v, poster, applied.q ?? "");
             }}
           >
             <option value="">{words.allSessions}</option>
@@ -215,7 +240,7 @@ export default function Pictures({ api, path }: { api: AccountApi; path: string 
             onChange={(e) => {
               const v = (e.currentTarget as HTMLSelectElement).value;
               setPoster(v);
-              applyFilters(session, v, typed);
+              applyFilters(session, v, applied.q ?? "");
             }}
           >
             <option value="">{words.everyone}</option>
@@ -235,7 +260,7 @@ export default function Pictures({ api, path }: { api: AccountApi; path: string 
         </button>
       </form>
 
-      {load === "loading" && (
+      {load === "loading" && tiles.length === 0 && (
         <p class="muted" role="status">
           {words.loading}
         </p>
@@ -243,24 +268,21 @@ export default function Pictures({ api, path }: { api: AccountApi; path: string 
       {load === "failed" && (
         <div class="panel" role="alert">
           <p>{words.failed}</p>
-          <button type="button" class="button secondary" onClick={() => void readFirst(applied)}>
+          <button type="button" class="button secondary" onClick={() => void readFirst(appliedRef.current)}>
             {words.tryAgain}
           </button>
         </div>
       )}
       {load === "ok" && tiles.length === 0 && <p class="muted">{filtered ? words.noMatch : words.none}</p>}
 
-      {load === "ok" && tiles.length > 0 && (
-        <ul class="campaigns" style={{ display: "grid", gap: "1rem", gridTemplateColumns: "repeat(auto-fill, minmax(12rem, 1fr))", listStyle: "none", padding: 0 }}>
+      {tiles.length > 0 && (
+        <ul class="picture-grid">
           {tiles.map((tile) => {
-            const canDm = isDm;
-            const canPoster = tile.mine;
-            const can = canDm || canPoster;
-            const label = tile.description;
+            const can = isDm || tile.mine;
             return (
               <li key={tile.code} class="small">
                 <a href={`/pictures/${encodeURIComponent(tile.code)}`} target="_blank" rel="noopener">
-                  <img src={tile.previewUrl} alt={tile.description} style={{ width: "100%", height: "auto" }} />
+                  <img src={tile.previewUrl} alt={tile.description} />
                 </a>
                 <div>
                   <span class="muted">{sessionDay(tile.at)}</span>
@@ -268,7 +290,11 @@ export default function Pictures({ api, path }: { api: AccountApi; path: string 
                   <div>{tile.poster}</div>
                   {!tile.isPublic && <div class="tag">{words.privateTag}</div>}
                   {tile.permanent && <div class="tag">{words.permanentTag}</div>}
-                  {tile.working && <p class="small muted" role="status">{words.working}</p>}
+                  {waiting[tile.code] && (
+                    <p class="small muted" role="status">
+                      {words.working}
+                    </p>
+                  )}
                   {problems[tile.code] && (
                     <p class="note bad" role="alert">
                       {problems[tile.code]}
@@ -288,12 +314,11 @@ export default function Pictures({ api, path }: { api: AccountApi; path: string 
                 ) : (
                   can && (
                     <div class="row">
-                      {canDm && (
+                      {isDm && (
                         <button
                           type="button"
                           class="button secondary"
-                          aria-label={tile.permanent ? words.stopPermanent(label) : words.makePermanent(label)}
-                          aria-pressed={tile.permanent}
+                          aria-label={tile.permanent ? words.stopPermanent(tile.description) : words.makePermanent(tile.description)}
                           disabled={busy !== null}
                           onClick={() => void act(tile, tile.permanent ? "not-permanent" : "permanent")}
                         >

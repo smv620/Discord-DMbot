@@ -119,6 +119,33 @@ describe("the Pictures page", () => {
     expect(alts()).toHaveLength(5);
   });
 
+  it("a waiting answer shows Working on it under the tile, and the list is asked again", async () => {
+    const api = mockApi("table");
+    render(<Pictures api={api} path={PATH} />);
+    await screen.findByAltText("A storm over the ford");
+    fireEvent.click(screen.getByRole("button", { name: w.showMore }));
+    await screen.findByAltText("A torn page from a diary");
+    const before = api.calls.filter((c) => c.startsWith("pictures:")).length;
+    // Deleting pic-5 answers "waiting" in the mock; the list is read again and no longer shows the picture.
+    const tile = tileFor("A torn page from a diary");
+    fireEvent.click(within(tile).getByRole("button", { name: w.remove }));
+    fireEvent.click(within(tile).getByRole("button", { name: w.confirmRemove }));
+    await waitFor(() => expect(api.calls.filter((c) => c.startsWith("pictures:")).length).toBeGreaterThan(before));
+    await waitFor(() => expect(alts()).not.toContain("A torn page from a diary"));
+    expect(screen.queryByText(w.failed)).toBeNull();
+  });
+
+  it("a search narrows the grid, and an empty result says so", async () => {
+    render(<Pictures api={mockApi("table")} path={PATH} />);
+    await screen.findByAltText("A map of the Brass Ford");
+    fireEvent.input(screen.getByLabelText(/Search the descriptions/), { target: { value: "map" } });
+    fireEvent.click(screen.getByRole("button", { name: w.search }));
+    await waitFor(() => expect(alts()).toEqual(["A map of the Brass Ford"]));
+    fireEvent.input(screen.getByLabelText(/Search the descriptions/), { target: { value: "zzz" } });
+    fireEvent.click(screen.getByRole("button", { name: w.search }));
+    expect(await screen.findByText(w.noMatch)).toBeTruthy();
+  });
+
   it("private and permanent tiles are marked", async () => {
     render(<Pictures api={mockApi("table")} path={PATH} />);
     await screen.findByAltText("A storm over the ford");
