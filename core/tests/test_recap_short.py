@@ -90,7 +90,10 @@ def fake_bot(lines: list[Line], *, newer: int | None = None) -> Any:
             lines=AsyncMock(return_value=lines),
             sessions=AsyncMock(return_value=newest),
         ),
-        consent=SimpleNamespace(consenting=AsyncMock(return_value={ALICE})),
+        consent=SimpleNamespace(
+            consenting=AsyncMock(return_value={ALICE}),
+            recorded_in=AsyncMock(return_value={ALICE}),  # (the short-session check, #3305)
+        ),
         post=AsyncMock(),
         post_message=AsyncMock(return_value=SimpleNamespace(id=1, content="q")),
         decision_lines=MagicMock(

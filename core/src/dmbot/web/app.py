@@ -878,6 +878,12 @@ def create_app(
         "too_many_files": (413, "too_many_files"),
         "bad_files": (422, "bad_files"),
         "bad_mapping": (422, "bad_mapping"),
+        "blocked": (409, "blocked"),  # a member who said no cannot be ticked in (#3305)
+        "not_ticked": (409, "not_ticked"),
+        "stale_consent": (
+            409,
+            "stale_consent",
+        ),  # the consent words changed (not the recap's "stale")
         "bad_date": (422, "bad_date"),
         "no_lines_kept": (422, "no_lines_kept"),
         "too_many_lines": (413, "too_many_lines"),
@@ -2666,6 +2672,32 @@ def create_app(
         try:
             return await imports.search_members(
                 db, session, ref, q, outside=settings.outside_engine,
+                now=int(clock()), enforce_plans=settings.enforce_plans,
+            )  # fmt: skip
+        except RecapError as err:
+            raise import_refusal(err) from None
+
+    @app.get("/me/campaigns/{ref}/imports/consent", dependencies=[Depends(imports_enabled)])
+    async def me_import_consent(ref: str, signed: Signed) -> dict[str, Any]:
+        session, _token = signed
+        try:  # only a DM of the campaign (on a plan that imports) is shown the words
+            await imports.authorize(
+                db, session, ref, outside=settings.outside_engine,
+                now=int(clock()), enforce_plans=settings.enforce_plans,
+            )  # fmt: skip
+        except RecapError as err:
+            raise import_refusal(err) from None
+        return imports.consent_words(
+            cloud=settings.outside_engine is not None,
+            company="Deepgram" if settings.outside_engine == "deepgram" else None,
+        )
+
+    @app.get("/me/campaigns/{ref}/speakers", dependencies=[Depends(imports_enabled)])
+    async def me_speakers(ref: str, signed: Signed) -> dict[str, Any]:
+        session, _token = signed
+        try:
+            return await imports.speakers(
+                db, session, ref, outside=settings.outside_engine,
                 now=int(clock()), enforce_plans=settings.enforce_plans,
             )  # fmt: skip
         except RecapError as err:

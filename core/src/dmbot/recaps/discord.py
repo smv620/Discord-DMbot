@@ -521,7 +521,7 @@ class RecapFeatures:
             # A short session asks first (#2104): what the recap would read is not changed.
             lines = await self.transcripts.lines(gid, session.id)
             span = short.span_minutes(lines)
-            talk = short.talk_minutes(lines, await self.consent.consenting(gid))
+            talk = short.talk_minutes(lines, await self.consent.recorded_in(gid, cid))
             if short.is_short(span, talk):
                 if await self.recaps.get(gid, cid, session.started_at) is not None:
                     return  # a repeat of the end of session, or already decided: ask once only
@@ -1333,7 +1333,7 @@ class RecapFeatures:
                 "This recap names a secret of yours, so it wasn't shared. "
                 "Edit it on your recap page, then try again.",
             )
-        if not set(job.speakers) <= set(await self.consent.consenting(gid)):
+        if not set(job.speakers) <= set(await self.consent.recorded_in(gid, cid)):
             return (
                 None,
                 "A player has stopped being recorded, so this recap can't be shared as "
