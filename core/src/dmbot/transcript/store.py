@@ -1138,6 +1138,11 @@ class TranscriptStore:
                 " WHERE guild_id = %s AND campaign_id = %s AND speaker_names ? %s",
                 (str(speaker), *scope, str(speaker)),
             )
+            await conn.execute(  # the labels this campaign's imports mapped to them (member only)
+                "DELETE FROM import_speakers"
+                " WHERE guild_id = %s AND campaign_id = %s AND user_id = %s",
+                (*scope, speaker),
+            )
             if speaker < 0:  # (the name is the person's data too; the marker keeps the number)
                 await conn.execute(
                     "DELETE FROM campaign_speakers"

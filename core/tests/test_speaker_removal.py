@@ -78,10 +78,17 @@ class Removing(WithImports):
         await ConsentStore(self.db).grant(THURSDAY.id, MIRA)
         await self.give(self.one.id, MIRA, "in one")
         await self.give(self.two.id, MIRA, "in two")
+        async with self.db.guild(THURSDAY.id) as conn:  # a label an import mapped to her
+            await conn.execute(
+                "INSERT INTO import_speakers (guild_id, campaign_id, label, user_id, updated_at)"
+                " VALUES (%s, %s, 'Mira (mira_v)', %s, 1)",
+                (THURSDAY.id, self.one.id, MIRA),
+            )
         gone = await self.transcripts.remove_speaker(THURSDAY.id, self.one.id, MIRA)
         self.assertEqual(gone.lines, 1)
         self.assertEqual(await self.lines_of(self.one.id, MIRA), 0)
         self.assertEqual(await self.lines_of(self.two.id, MIRA), 1)
+        self.assertEqual(await self.rows("import_speakers"), [])
         self.assertEqual([r["user_id"] for r in await self.rows("speaker_erasures")], [MIRA])
         self.assertEqual(await self.rows("speaker_erasures", self.two.id), [])
 
