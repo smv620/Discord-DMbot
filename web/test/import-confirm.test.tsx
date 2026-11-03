@@ -1,3 +1,4 @@
+import "preact/debug"; // the duplicate-key warning lives in the debug build only (#3323)
 /** @jsxImportSource preact */
 // @vitest-environment happy-dom
 // Confirming consent per speaker on the Import page (#3306): the consent words come from the API, a speaker needs a
@@ -125,13 +126,16 @@ describe("confirming consent per speaker", () => {
 
   it("two identical consent lines both show, with no key warning", async () => {
     const errors = vi.spyOn(console, "error").mockImplementation(() => {});
-    const api = mockApi("table");
-    api.importConsent = async () => ({ version: 7, text: "Same.\nSame.\nOther." });
-    await previewed(api);
-    expect(screen.getAllByText("Same.")).toHaveLength(2);
-    expect(screen.getByText("Other.")).toBeTruthy();
-    expect(errors.mock.calls.some((args) => String(args[0]).includes("key"))).toBe(false);
-    errors.mockRestore();
+    try {
+      const api = mockApi("table");
+      api.importConsent = async () => ({ version: 7, text: "Same.\nSame.\nOther." });
+      await previewed(api);
+      expect(screen.getAllByText("Same.")).toHaveLength(2);
+      expect(screen.getByText("Other.")).toBeTruthy();
+      expect(errors.mock.calls.some((args) => /same key/i.test(String(args[0])))).toBe(false);
+    } finally {
+      errors.mockRestore();
+    }
   });
 
   it("keeps the old choices, with no consent words, while the switch is off", async () => {
