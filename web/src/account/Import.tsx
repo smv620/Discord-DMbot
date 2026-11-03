@@ -1097,17 +1097,20 @@ export default function Import({
                           </span>
                         )}
                         {needsTick(chosen) && (
-                          <label class="small">
-                            <input
-                              type="checkbox"
-                              checked={ticks[s.label] === true}
-                              onChange={(e) => {
-                                setCheck(null);
-                                setTicks((now) => ({ ...now, [s.label]: (e.target as HTMLInputElement).checked }));
-                              }}
-                            />{" "}
-                            {confirmWords.tick(chosen === NEW_SPEAKER ? s.label : (who?.name ?? s.label))}
-                          </label>
+                          <fieldset class="small">
+                            <legend class="visually-hidden">{confirmWords.tickLegend(s.label)}</legend>
+                            <label>
+                              <input
+                                type="checkbox"
+                                checked={ticks[s.label] === true}
+                                onChange={(e) => {
+                                  setCheck(null);
+                                  setTicks((now) => ({ ...now, [s.label]: (e.target as HTMLInputElement).checked }));
+                                }}
+                              />{" "}
+                              {confirmWords.tick(chosen === NEW_SPEAKER ? s.label : (who?.name ?? s.label))}
+                            </label>
+                          </fieldset>
                         )}
                         {who && who.agreed === false && !confirmOn && (
                           <span class="small" role="note">

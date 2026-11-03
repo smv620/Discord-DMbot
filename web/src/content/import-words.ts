@@ -265,6 +265,8 @@ export const confirmWords = {
   notInDiscord: "Not in Discord",
   blockedOption: (name: string): string => `Said no: ${name}`,
   tick: (name: string): string => `I confirm ${name} agreed to this.`,
+  // The group's name for a screen reader (the box itself carries the words above).
+  tickLegend: (label: string): string => `Do they agree? ${label}`,
   saidNo: (name: string): string => `${name} said no to being recorded, so their lines can't be kept.`,
   sameAs: (name: string): string => `${name} is already kept in this campaign, so these lines join theirs.`,
   needsTick: "Tick the box to keep their lines, or choose Leave out.",
