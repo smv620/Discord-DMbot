@@ -95,7 +95,7 @@ describe("only what is live is shown", () => {
 
   it("starts from the DM screen until the DMbot channel is live, and from the channel after", () => {
     const labels = discordTree().map((p) => p.label);
-    expect(labels.includes("The dmb-dm-bot channel")).toBe(DM_BOT_CHANNEL_LIVE);
+    expect(labels.includes("The DM Bot channel")).toBe(DM_BOT_CHANNEL_LIVE);
     expect(labels.includes("Your DM screen")).toBe(!DM_BOT_CHANNEL_LIVE);
   });
 });
@@ -109,13 +109,13 @@ describe("the page", () => {
 
   it("is a nested list, and says what DM only means", () => {
     expect(page.querySelectorAll("main ul ul").length).toBeGreaterThan(5);
-    expect(main).toContain("DM only means only a campaign's game masters can use it.");
+    expect(main).toContain("DM only means only a campaign's game masters can use it. Everything inside a DM only place is DM only too.");
   });
 
   it("links to Help, and shows a path with a placeholder as text, not a link", () => {
     const hrefs = [...page.querySelectorAll("main a")].map((a) => a.getAttribute("href"));
     expect(hrefs).toContain("/help");
-    expect(hrefs.some((h) => h?.includes("{"))).toBe(false);
+    expect(hrefs.some((h) => h?.includes("{") || h?.includes("%7B"))).toBe(false);
   });
 
   it("is in the footer", () => {

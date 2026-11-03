@@ -33,7 +33,7 @@ export interface Place {
 export const whereHeading = "Where to find everything";
 export const whereLead =
   "How to get to anything in DMbot, in Discord or on the website. Places marked DM only are for the game masters of a campaign; players don't see them.";
-export const whereLegend = "DM only means only a campaign's game masters can use it.";
+export const whereLegend = "DM only means only a campaign's game masters can use it. Everything inside a DM only place is DM only too.";
 export const discordHeading = "In Discord";
 export const websiteHeading = "On the website";
 export const dmOnlyBadge = "DM only";
@@ -54,16 +54,16 @@ export const commands: Place[] = [
   command("/consent revoke", "Stop DMbot recording your voice."),
   command("/dmbot migrate", "Move your plan to a new Discord account."),
   command("/dmbot houserules", "See the house rules. The DM adds, edits and removes them."),
-  command("/dmbot start", "Pick a campaign and voice channel, then start listening.", { dmOnly: true }),
-  command("/dmbot stop", "Stop listening.", { dmOnly: true }),
-  command("/dmbot settings", "Open ⚙️ Manage DMbot.", { dmOnly: true }),
-  command("/dmbot names", "The names DMbot listens for.", { dmOnly: true }),
-  command("/dmbot optionalrules", "Turn optional rules on or off.", { dmOnly: true }),
+  command("/dmbot restore", "Bring a campaign back from a copy. Replacing a campaign needs its DM."),
+  command("/dmbot start", "Pick a campaign and voice channel, then start listening.", { dmOnly: true, who: "server managers too" }),
+  command("/dmbot stop", "Stop listening.", { dmOnly: true, who: "server managers too" }),
+  command("/dmbot settings", "Open ⚙️ Manage DMbot.", { dmOnly: true, who: "server managers too" }),
+  command("/dmbot names", "The names DMbot listens for.", { dmOnly: true, who: "server managers too" }),
+  command("/dmbot optionalrules", "Turn optional rules on or off.", { dmOnly: true, who: "server managers too" }),
   command("/dmbot homebrew", "Your own spells, monsters and items.", { dmOnly: true }),
   command("/dmbot recap", "Make a session's recap, or make it again.", { dmOnly: true }),
   command("/dmbot recap-upload", "Add a recap someone at your table wrote.", { dmOnly: true }),
   command("/dmbot import", "Bring in older sessions, on the website.", { dmOnly: true }),
-  command("/dmbot restore", "Bring a campaign back from a copy.", { dmOnly: true }),
 ];
 
 const manageDmbot: Place[] = [
@@ -72,18 +72,18 @@ const manageDmbot: Place[] = [
   button("Turn rules cards on", "Show a rules card when a spell, condition or creature is named."),
   button("Game clock", "Start or show the game clock on the DM screen."),
   button("Table chat", "Turn table chat on or off, and pick its channel."),
-  button("Stop when quiet", "How long a silent table is listened to before DMbot stops."),
+  button("Stop when quiet", "How long DMbot waits at a silent table before it stops listening."),
   button("What's switched on", "The features this DMbot has turned on."),
   group("Campaign management", [
     button("Hand over", "Give the campaign to someone else.", { who: "the campaign's owner" }),
     button("Pause this campaign", "Pause or unpause.", { who: "the campaign's owner" }),
     button("Transcript retention", "How long transcripts are kept."),
     button("Game masters", "Add or remove a game master."),
-    button("Delete this campaign", "Delete it for good.", { who: "the plan holder" }),
+    button("Delete this campaign", "Delete it for good.", { who: "whoever pays for the plan" }),
   ]),
   button("Shared story", "Let DMbot follow your adventure."),
   button("House-rules file", "Connect a file of house rules."),
-  button("Campaign invite link", "A link players use to join your campaign's character tool."),
+  button("Campaign invite link", "A link for players to join your campaign on the website."),
   button("Recap style", "Show DMbot how your recaps should sound."),
   button("Shared rules", "Share your house rules, or follow another table's."),
   button("Homebrew", "Your campaign's own spells, monsters and items."),
@@ -104,7 +104,7 @@ export function discordTree(): Place[] {
   });
   const where: Place[] = DM_BOT_CHANNEL_LIVE
     ? [
-        group("The dmb-dm-bot channel", [
+        group("The DM Bot channel", [
           button("DMbot Main Menu", "Press it for the buttons for your part at the table. Only you see the answer.", {
             children: [
               button("My data", "Your recording, transcripts and character sheet.", { children: privateMenu }),
@@ -119,12 +119,12 @@ export function discordTree(): Place[] {
         group("Your DM screen", [button("Manage DMbot", "What DMbot does in this server. You can also type /dmbot settings.", { dmOnly: true, who: "server managers can open it too", children: manageDmbot })]),
       ];
   return [
-    group("Type a command", commands, { note: "In any channel of your server." }),
+    group("Type a command", commands, { note: "Type these in any channel of your server." }),
     ...where,
-    group("DMbot's private message to you", [button("Menu", "Your recording, transcripts and character sheet.", { children: privateMenu })], {
+    group("DMbot's private message", [button("Menu", "Your recording, transcripts and character sheet.", { children: privateMenu })], {
       note: "DMbot sends it when you join the voice channel.",
     }),
-    group("During a session", [
+    group("While you play", [
       button("Pause the table", "Pause for 5 minutes, 15 minutes or until you resume.", { dmOnly: true }),
       button("Stop listening", "Stop DMbot listening.", { dmOnly: true, who: "server managers too" }),
       button("Peek behind the DM screen", "See the DM screen, if your DM lets players peek. DMbot warns about spoilers first."),
@@ -172,7 +172,7 @@ export function websiteTree(): Place[] {
       { note: "Open to everyone." },
     ),
     group(
-      "My Account",
+      "My account",
       [
         { label: "My plan and billing", note: "Your plan, and how to change it." },
         {

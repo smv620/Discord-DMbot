@@ -260,34 +260,34 @@ WELCOME_TEXT = (
 # keeps this in step with the commands the bot registers, so Help can't miss one (or list one that
 # is gone). "DM only" means the campaign's DM (a few also let a server manager in).
 HELP_COMMANDS: tuple[tuple[str, str, bool], ...] = (
-    ("/dmbot help", "this help", False),
+    ("/dmbot help", "what DMbot does, and where to find things", False),
     (
         "/dmbot rule",
         "look up a spell, condition, creature or rule",
         False,
     ),
     ("/transcript", "download what was said in a session", False),
-    ("/dmbot fix", "fix a line DMbot heard wrong (a DM can fix any)", False),
+    ("/dmbot fix", "fix a line DMbot heard wrong (a DM can fix any line)", False),
     ("/dmbot backup", "download a copy of a campaign", False),
     ("/dmbot delete-my-lines", "delete the lines DMbot wrote down from you", False),
     ("/consent give", "let DMbot record your voice", False),
     ("/consent revoke", "stop DMbot recording your voice", False),
-    ("/dmbot migrate", "move your plan to a new Discord account", False),
+    ("/dmbot migrate", "if you pay for DMbot, move your plan to a new Discord account", False),
     (
         "/dmbot houserules",
-        "see the house rules (the DM edits them)",
+        "see the house rules (only the DM can change them)",
         False,
     ),
+    ("/dmbot restore", "bring a campaign back from a copy (replacing one needs its DM)", False),
     ("/dmbot start", "pick a campaign and voice channel, then start", True),
     ("/dmbot stop", "stop listening", True),
     ("/dmbot settings", "open ⚙️ Manage DMbot", True),
-    ("/dmbot names", "the names DMbot listens for", True),
-    ("/dmbot optionalrules", "optional rules on or off", True),
+    ("/dmbot names", "set the names DMbot listens for", True),
+    ("/dmbot optionalrules", "turn optional rules on or off", True),
     ("/dmbot homebrew", "your own spells, monsters and items", True),
-    ("/dmbot recap", "make a session's recap again", True),
+    ("/dmbot recap", "make a session's recap, or make it again", True),
     ("/dmbot recap-upload", "add a recap someone wrote", True),
-    ("/dmbot import", "bring in older sessions (website)", True),
-    ("/dmbot restore", "bring a campaign back from a copy", True),
+    ("/dmbot import", "bring in older sessions, on the website", True),
 )
 
 
@@ -297,19 +297,18 @@ HELP_COMMANDS_TEXT = (
     "in private. It remembers each campaign between sessions.\n"
     "**DMbot never makes up the story and never decides anything. The DM always does.**\n"
     "\n"
-    "**The menu:** press 👤 DMbot Main Menu in the DM Bot channel. 🙋 My data is about you: "
-    "your recording, your transcripts and your character sheet. DMs also get ⚙️ Manage DMbot "
-    "(what DMbot does in this server) and 🌐 Manage campaign (your campaign on the website).\n"
-    f"**{WHERE_LABEL}** (the button below) opens a page that shows how to get to anything, in "
-    "Discord or on the website, and marks what is for DMs only.\n"
+    "**The menu:** press 👤 DMbot Main Menu in the DM Bot channel. 🙋 My data is yours. DMs also "
+    "get ⚙️ Manage DMbot and 🌐 Manage campaign.\n"
+    f"**{WHERE_LABEL}** (the button below): how to get to anything, with the DM-only parts "
+    "marked.\n"
     "\n"
     "**Commands for everyone**\n"
-    + "\n".join(f"• `{c}`: {d}" for c, d, dm in HELP_COMMANDS if not dm)
+    + "\n".join(f"• `{c}` – {d}" for c, d, dm in HELP_COMMANDS if not dm)
     + "\n\n**Commands for DMs only**\n"
-    + "\n".join(f"• `{c}`: {d}" for c, d, dm in HELP_COMMANDS if dm)
-    + "\n"
-    "• 📜 Upload campaign lore (DMs, in ⚙️ Manage DMbot): DMbot finds names and connections in "
-    "your notes; you keep what's right\n"
+    + "\n".join(f"• `{c}` – {d}" for c, d, dm in HELP_COMMANDS if dm)
+    + "\n\n"
+    "**Button for DMs:** 📜 Upload campaign lore, in ⚙️ Manage DMbot. DMbot finds names and "
+    "connections in your notes; you keep what's right."
 )
 
 HELP_RECORDING_TEXT = (

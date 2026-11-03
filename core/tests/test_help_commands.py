@@ -19,7 +19,7 @@ from dmbot.ui.dmbot_commands import HelpButtons
 
 DM_ONLY = {
     "/dmbot start", "/dmbot stop", "/dmbot settings", "/dmbot names", "/dmbot optionalrules",
-    "/dmbot homebrew", "/dmbot recap", "/dmbot recap-upload", "/dmbot import", "/dmbot restore",
+    "/dmbot homebrew", "/dmbot recap", "/dmbot recap-upload", "/dmbot import",
 }  # fmt: skip
 
 
@@ -100,3 +100,29 @@ class TheLink(unittest.TestCase):
         urls = asyncio.run(build())
         self.assertIn("https://test.example.org/where", urls)
         self.assertIn("https://test.example.org/account/transcripts", urls)
+
+
+class TheSends(unittest.IsolatedAsyncioTestCase):
+    """Both messages go out, the first with the buttons, every one private and without pings."""
+
+    async def test_the_help_command_sends_the_commands_with_buttons_then_the_rest(self) -> None:
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock, MagicMock
+
+        from dmbot.ui import dmbot_commands
+
+        interaction = MagicMock()
+        interaction.client = SimpleNamespace(settings=SimpleNamespace(site_url=""))
+        interaction.response.is_done.return_value = False
+        interaction.response.send_message = AsyncMock()
+        interaction.followup.send = AsyncMock()
+        await dmbot_commands.dmbot_help.callback(interaction)
+        first = interaction.response.send_message
+        first.assert_awaited_once()
+        self.assertEqual(first.await_args.args[0], logic.HELP_PARTS[0])
+        self.assertTrue(first.await_args.kwargs["ephemeral"])
+        self.assertIsNotNone(first.await_args.kwargs["view"])
+        interaction.followup.send.assert_awaited_once()
+        self.assertEqual(interaction.followup.send.await_args.args[0], logic.HELP_PARTS[1])
+        self.assertTrue(interaction.followup.send.await_args.kwargs["ephemeral"])
+        self.assertIn("allowed_mentions", interaction.followup.send.await_args.kwargs)
