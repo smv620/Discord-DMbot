@@ -34,8 +34,8 @@ INT64_MAX = 2**63 - 1
 GROUPS = ("framing", "travel", "action", "plot", "character")
 
 DAMAGED = "This backup file is damaged (bad recap must-haves)."
-EMPTY = "That line is empty."
-TOO_LONG = f"That line is too long. Keep it to {LINE_CHARS} characters or fewer."
+EMPTY = "That line is empty. Type something in it, or remove it."
+TOO_LONG = f"That line is too long. Keep it to {LINE_CHARS} letters or fewer."
 TOO_MANY = f"You can keep {MAX_LINES} lines. Remove one to add another."
 
 
