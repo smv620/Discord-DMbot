@@ -5,6 +5,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { httpApi } from "../src/account/api";
 import { mockApi } from "../src/account/mock";
 import RecapStyleView from "../src/account/RecapStyle";
 import { mustsPage as m, recapStylePage as words } from "../src/content/recap-style-words";
@@ -150,5 +151,32 @@ describe("the words", () => {
   it("hold the What's new entry back exactly while the switch is off", () => {
     expect(held.some((h) => h.title === "See and change what every recap covers")).toBe(true);
     expect(entries.some((e) => e.title === "See and change what every recap covers")).toBe(false);
+  });
+});
+
+describe("the routes as CloudDev-lead built them (#3340)", () => {
+  const over = (status: number, body: unknown, seen: { method: string; url: string; body: string }[] = []) =>
+    httpApi("https://api.example.test", (async (url: string, init: RequestInit) => {
+      seen.push({ method: String(init.method), url: String(url), body: String(init.body ?? "") });
+      return new Response(JSON.stringify(body), { status });
+    }) as unknown as typeof fetch);
+
+  it("saves with PUT and the lines, and goes back to the defaults with DELETE", async () => {
+    const seen: { method: string; url: string; body: string }[] = [];
+    const api = over(200, { id: "a".repeat(32) }, seen);
+    await api.saveRecapMusts!("100.cmp1", ["One.", "Two."]);
+    await api.recapMustsDefaults!("100.cmp1");
+    expect(seen[0]).toMatchObject({ method: "PUT", body: JSON.stringify({ lines: ["One.", "Two."] }) });
+    expect(seen[0]!.url).toContain("/me/campaigns/100.cmp1/recap-style/must-haves");
+    expect(seen[1]).toMatchObject({ method: "DELETE" });
+  });
+
+  it("reads its refusals: too many, empty, too long and not allowed", async () => {
+    const ask = (detail: string, status = 409) => over(status, { detail }).saveRecapMusts!("100.cmp1", ["x"]);
+    await expect(ask("too_many")).rejects.toMatchObject({ kind: "musts-full" });
+    await expect(ask("empty")).rejects.toMatchObject({ kind: "musts-empty" });
+    await expect(ask("too_long")).rejects.toMatchObject({ kind: "ticket-too-long" });
+    await expect(ask("not_allowed", 403)).rejects.toMatchObject({ kind: "not-allowed" });
+    expect(words.problems["musts-full"]).toContain("40 lines");
   });
 });
