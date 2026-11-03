@@ -57,6 +57,26 @@ class Kept(DatabaseTest):
         self.assertTrue(added.picture.public)
         self.assertFalse(added.picture.permanent)
 
+    async def test_a_picture_waiting_for_its_file_uses_no_room_and_is_never_removed(self) -> None:
+        # (restored from a backup, its file not back yet, #3274)
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "INSERT INTO campaign_pictures (guild_id, campaign_id, poster_id, code,"
+                " consent_version, right_granted_at, sha256, object_key, size_bytes, made_at,"
+                " restore_state) VALUES (%s, %s, %s, %s, 7, 900, %s, '', %s, 1, 'waiting')",
+                (GUILD_A, self.one.id, ME, "w" * 43, sha(99), 4 * MB),
+            )
+        usage = await self.store.usage(GUILD_A, self.one.id, 5)
+        self.assertEqual(usage.used_bytes, 0)
+        # Five 1 MB pictures fill 5 MB: the waiting 4 MB row is not what makes room.
+        for n in range(1, 6):
+            added = await self.keep(self.one.id, n)
+            self.assertIsNotNone(added.picture)
+            self.assertEqual(added.removed, ())
+        waiting = [p for p in await self.store.list(GUILD_A, self.one.id) if p.waiting]
+        self.assertEqual(len(waiting), 1)
+        self.assertIsNone(waiting[0].deleted_at)
+
     async def test_the_same_file_in_one_campaign_is_one_picture(self) -> None:
         first = await self.keep(self.one.id, 1)
         again = await self.keep(self.one.id, 1)

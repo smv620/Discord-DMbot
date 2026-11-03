@@ -35,7 +35,7 @@ CODE_BYTES = 32  # 256 bits in the link code
 COLUMNS = (
     "id, campaign_id, poster_id, session_id, line_id, message_id, description, code, public,"
     " permanent, sha256, object_key, preview_key, size_bytes, preview_bytes, made_at, deleted_at,"
-    " removed_for_room"
+    " removed_for_room, restore_state"
 )
 
 
@@ -59,6 +59,11 @@ class Picture:
     made_at: int
     deleted_at: int | None
     removed_for_room: bool
+    restore_state: str = "ready"  # 'waiting': restored from a backup, its file not back yet
+
+    @property
+    def waiting(self) -> bool:
+        return self.restore_state == "waiting"
 
     @property
     def gone(self) -> bool:
@@ -116,6 +121,7 @@ def _picture(row: Any) -> Picture:
         made_at=int(row["made_at"]),
         deleted_at=None if row["deleted_at"] is None else int(row["deleted_at"]),
         removed_for_room=bool(row["removed_for_room"]),
+        restore_state=str(row["restore_state"]),
     )
 
 
@@ -131,7 +137,8 @@ async def _usage(conn: Conn, guild_id: int, campaign_id: str, storage_mb: int) -
     cur = await conn.execute(
         "SELECT COALESCE(SUM(size_bytes + preview_bytes), 0) AS used,"
         " COALESCE(SUM(size_bytes + preview_bytes) FILTER (WHERE permanent), 0) AS perm"
-        " FROM campaign_pictures WHERE guild_id = %s AND campaign_id = %s AND deleted_at IS NULL",
+        " FROM campaign_pictures WHERE guild_id = %s AND campaign_id = %s AND deleted_at IS NULL"
+        " AND restore_state = 'ready'",  # (a picture still waiting for its file uses none)
         (guild_id, campaign_id),
     )
     row = await cur.fetchone()
@@ -195,7 +202,7 @@ class PictureStore:
                 cur = await conn.execute(
                     f"SELECT {COLUMNS} FROM campaign_pictures"
                     " WHERE guild_id = %s AND campaign_id = %s AND deleted_at IS NULL"
-                    " AND NOT permanent ORDER BY id",
+                    " AND NOT permanent AND restore_state = 'ready' ORDER BY id",
                     (guild_id, campaign_id),
                 )
                 for row in await cur.fetchall():
