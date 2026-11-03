@@ -728,7 +728,7 @@ class TheStore(WithImports):
             cur = await conn.execute(
                 (
                     "SELECT dmbot_import_store(%s, %s, %s, %s, %s, %s::jsonb, %s, NULL,"
-                    " '[]'::jsonb) AS r"
+                    " '[]'::jsonb, 6) AS r"
                 ),
                 (
                     THURSDAY.id,
@@ -753,7 +753,7 @@ class TheStore(WithImports):
             cur = await conn.execute(
                 (
                     "SELECT dmbot_import_store(%s, %s, %s, %s, %s, %s::jsonb, 1, NULL,"
-                    " '[]'::jsonb) AS r"
+                    " '[]'::jsonb, 6) AS r"
                 ),
                 (THURSDAY.id, self.one.id, "a" * 32, "x.txt", 1_700_000_000,
                  json.dumps([{"ms": 0, "user": MIRA, "text": "hi", "dur": 1}])),

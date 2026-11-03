@@ -465,7 +465,7 @@ class TheDmsPage(Base):
             await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(THURSDAY.id),))
             cur = await conn.execute(
                 "SELECT dmbot_import_store(%s, %s, %s, %s, %s, %s::jsonb, %s, NULL,"
-                " '[]'::jsonb) AS r",
+                " '[]'::jsonb, 6) AS r",
                 (
                     THURSDAY.id,
                     self.one.id,
