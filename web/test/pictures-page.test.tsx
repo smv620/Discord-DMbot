@@ -2,11 +2,12 @@
 // @vitest-environment happy-dom
 // The Pictures page (#3276): the switch, the tiles and their link, the game master's and the poster's buttons, delete
 // with a confirm, the permanent limit, the filters and "Show more". The switch is mocked so each test can turn it on.
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { type AccountApi, type PictureItem } from "../src/account/api";
 import { mockApi } from "../src/account/mock";
-import Pictures from "../src/account/Pictures";
+import Pictures, { WAITING_RECHECK_MS } from "../src/account/Pictures";
 import { picturesPage as w } from "../src/content/pictures-words";
 
 const live = vi.hoisted(() => ({ on: true }));
@@ -154,5 +155,122 @@ describe("the Pictures page", () => {
     await screen.findByAltText("A storm over the ford");
     expect(tileFor("A storm over the ford").textContent).toContain(w.privateTag);
     expect(tileFor("Cerric's oath scroll").textContent).toContain(w.permanentTag);
+  });
+});
+
+describe("the recheck after a waiting answer (#3322)", () => {
+  // A stub whose one tile flips to private on the read number `changeAfterReads` (later reads see the change).
+  function waitingApi(changeAfterReads: number) {
+    let reads = 0;
+    const tile = (isPublic: boolean): PictureItem => ({
+      code: "pic-1",
+      cursor: "1791004000:1",
+      at: 1791004000,
+      sessionNumber: 2,
+      poster: "Mira",
+      description: "A map of the Brass Ford",
+      previewUrl: "/pictures/preview-1.webp",
+      permanent: false,
+      isPublic,
+      mine: true,
+    });
+    const pictures = vi.fn(async () => {
+      reads += 1;
+      return {
+        pictures: [tile(reads <= changeAfterReads)],
+        more: false,
+        isDm: true,
+        usage: null,
+        sessions: [2],
+        posters: ["Mira"],
+      };
+    });
+    const pictureAction = vi.fn(async () => ({ state: "waiting" as const, note: "" }));
+    return { pictures, pictureAction } as unknown as AccountApi & {
+      pictures: ReturnType<typeof vi.fn>;
+      pictureAction: ReturnType<typeof vi.fn>;
+    };
+  }
+  async function passTime(ms: number): Promise<void> {
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(ms);
+    });
+  }
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("asks the list once more after 10 seconds and clears Working on it when the change shows", async () => {
+    const api = waitingApi(2);
+    render(<Pictures api={api} path={PATH} />);
+    await screen.findByAltText("A map of the Brass Ford");
+    vi.useFakeTimers();
+    fireEvent.click(within(tileFor("A map of the Brass Ford")).getByRole("button", { name: w.makePrivate }));
+    await passTime(0);
+    expect(within(tileFor("A map of the Brass Ford")).getByText(w.working)).toBeTruthy();
+    expect(api.pictures).toHaveBeenCalledTimes(2);
+    await passTime(WAITING_RECHECK_MS);
+    expect(api.pictures).toHaveBeenCalledTimes(3);
+    expect(within(tileFor("A map of the Brass Ford")).queryByText(w.working)).toBeNull();
+    expect(within(tileFor("A map of the Brass Ford")).getByText(w.privateTag)).toBeTruthy();
+  });
+
+  it("no extra read is made when the tile is no longer waiting", async () => {
+    const api = waitingApi(1);
+    render(<Pictures api={api} path={PATH} />);
+    await screen.findByAltText("A map of the Brass Ford");
+    vi.useFakeTimers();
+    fireEvent.click(within(tileFor("A map of the Brass Ford")).getByRole("button", { name: w.makePrivate }));
+    await passTime(0);
+    const atAction = api.pictures.mock.calls.length;
+    await passTime(WAITING_RECHECK_MS);
+    expect(api.pictures.mock.calls.length).toBe(atAction);
+  });
+
+  it("an action that answers after the page is left schedules no read", async () => {
+    const api = waitingApi(2);
+    let answer!: (value: { state: "waiting"; note: string }) => void;
+    api.pictureAction.mockImplementationOnce(() => new Promise((resolve) => (answer = resolve)));
+    const { unmount } = render(<Pictures api={api} path={PATH} />);
+    await screen.findByAltText("A map of the Brass Ford");
+    vi.useFakeTimers();
+    fireEvent.click(within(tileFor("A map of the Brass Ford")).getByRole("button", { name: w.makePrivate }));
+    unmount();
+    await act(async () => {
+      answer({ state: "waiting", note: "" });
+    });
+    const atLeaving = api.pictures.mock.calls.length;
+    await passTime(WAITING_RECHECK_MS);
+    expect(api.pictures.mock.calls.length).toBe(atLeaving);
+  });
+
+  it("no extra read is made while the tab is hidden", async () => {
+    const api = waitingApi(2);
+    render(<Pictures api={api} path={PATH} />);
+    await screen.findByAltText("A map of the Brass Ford");
+    vi.useFakeTimers();
+    fireEvent.click(within(tileFor("A map of the Brass Ford")).getByRole("button", { name: w.makePrivate }));
+    await passTime(0);
+    const atAction = api.pictures.mock.calls.length;
+    Object.defineProperty(document, "hidden", { configurable: true, value: true });
+    try {
+      await passTime(WAITING_RECHECK_MS);
+      expect(api.pictures.mock.calls.length).toBe(atAction);
+    } finally {
+      Object.defineProperty(document, "hidden", { configurable: true, value: false });
+    }
+  });
+
+  it("no extra read is made after the page is left", async () => {
+    const api = waitingApi(2);
+    const { unmount } = render(<Pictures api={api} path={PATH} />);
+    await screen.findByAltText("A map of the Brass Ford");
+    vi.useFakeTimers();
+    fireEvent.click(within(tileFor("A map of the Brass Ford")).getByRole("button", { name: w.makePrivate }));
+    await passTime(0);
+    unmount();
+    const atLeaving = api.pictures.mock.calls.length;
+    await passTime(WAITING_RECHECK_MS);
+    expect(api.pictures.mock.calls.length).toBe(atLeaving);
   });
 });

@@ -32,6 +32,7 @@ from dmbot.waiting import WaitingMessage, message_is_gone
 log = logging.getLogger(__name__)
 
 TITLE = "📜 Making a script of this session…"
+PRIVATE_NOTE = "It makes a private copy only the DMs can read."
 ALREADY = "A script is already being made for this session."
 FAILED = "Nothing was changed; press the button to try again."
 STILL_WORKING = "Still working."
@@ -65,7 +66,7 @@ def done_text(report: tr.Report) -> str:
     """What the card ends on after a run that reached the end. Counts only."""
     if report.saved:
         scenes = f"{report.parts} scene{'' if report.parts == 1 else 's'}"
-        return f"Script ready: {report.kept} lines from {scenes}. Only you can read it."
+        return f"Script ready: {report.kept} lines from {scenes}. Only the DMs can read it."
     if report.parts == 0 or report.lines == 0:
         return "There was nothing to put in a script. Nothing was changed."
     return "No lines were kept. Nothing was changed."

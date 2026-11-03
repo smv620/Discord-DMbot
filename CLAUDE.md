@@ -545,6 +545,11 @@ terminal output or Discord screenshots copied to it.
   #2475's last comment, post `NNNN_name, #<issue>, <session>` with the next number, then push. If two
   comments claim the same number, the earlier keeps it and the later renumbers. Names order the
   list, so a gap is fine.
+- **A recap-writer change is scored before and after** (owner, 2026-11-03; `docs/RECAP_STANDARD.md`):
+  a PR that changes the recap writer, its instructions or its checks pastes the `recap_run --score`
+  counts (must-haves covered, missed and not given, plus the fact check) from before and after, on
+  the fixed set of sessions dev1 runs. A PR with fewer must-haves covered, or more unsupported
+  sentences, needs a stated reason. RepoManager checks that the table is there.
 - **AI output limits are generous** (owner, 2026-10-24, #2596, after #2086, #2341, #2345, #2365,
   #2454, #2563 and #2594 were all answers cut off at a hand-sized `max_tokens`): background calls
   never send less than the tier's floor in `ai.py` (about 16,000 tokens); the service charges for
