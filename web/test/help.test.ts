@@ -63,7 +63,7 @@ describe("Help", () => {
       for (const { name, file } of step.names ?? []) {
         expect(step.text, `${name} is in its step`).toContain(name);
         // A word the site names before core has it: tracked in pendingBotLabels until the bot's label ships (#3344).
-        if (pendingBotLabels.some((p) => name.includes(p.label))) continue;
+        if (pendingBotLabels.some((p) => p.label === name)) continue;
         const source = readFileSync(join(botDir, file), "utf8");
         expect(source, `${name} in ${file}`).toContain(name);
       }
