@@ -393,6 +393,72 @@ async def speakers(
     return {"speakers": list(found)}
 
 
+SPEAKER_ID = re.compile(r"^-?[1-9][0-9]{0,18}$")
+REMOVAL_ID = re.compile(r"^[0-9a-f]{32}$")
+# What a failed removal says, as the code the page turns into words.
+REMOVAL_REASONS = {"failed"}
+
+
+async def remove_speaker(
+    db: Database, session: Session, ref: str, speaker: str, *, outside: str | None,
+    now: int, enforce_plans: bool,
+) -> dict[str, Any]:  # fmt: skip
+    """Ask the bot to remove one speaker's lines from this campaign (#3305): `{status, id}`.
+    DMs only, a speaker of this campaign only. Not held to a paid plan, on purpose: taking
+    someone's words out is never something to put behind a payment. The same id again while one is
+    open for the speaker. `nothing` when a member has no lines here, `unknown_speaker` for a number
+    that is nobody's here, `too_soon` past twenty requests an hour."""
+    if not SPEAKER_ID.match(speaker) or abs(int(speaker)) > 2**63 - 1:
+        raise RecapError("unknown_speaker")
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        c = await _open(conn, session, ref, outside=outside)
+        cur = await conn.execute(
+            "SELECT dmbot_speaker_remove(%s, %s, %s) AS r",
+            (c.guild_id, c.campaign_id, int(speaker)),
+        )
+        got = (await cur.fetchone() or {}).get("r")
+    if got is None:
+        raise RecapError("not_a_dm")
+    if got["status"] != "ok":
+        raise RecapError(str(got["status"]))
+    return {"status": "queued", "id": str(got["id"])}
+
+
+async def speaker_removal(
+    db: Database, session: Session, ref: str, removal_id: str, *, outside: str | None,
+    now: int | None = None,
+) -> dict[str, Any]:  # fmt: skip
+    """Where a removal stands, in the shared progress shape, with the counts once it is done.
+    A single transaction in the bot, so no "n of N": the stage, how long it has run and when it
+    last moved. Counts only, never a word of a transcript. DMs only."""
+    if not REMOVAL_ID.match(removal_id):
+        raise RecapError("not_found")
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        c = await _open(conn, session, ref, outside=outside)
+        cur = await conn.execute(
+            "SELECT dmbot_speaker_removal_read(%s, %s, %s) AS r",
+            (c.guild_id, c.campaign_id, removal_id),
+        )
+        got = (await cur.fetchone() or {}).get("r")
+    if got is None:
+        raise RecapError("not_found")
+    reason = got["error"] or None
+    shape = progress_shape.shape(
+        got["stage"],
+        started_at=int(got["createdAt"]),
+        updated_at=int(got["updatedAt"]),
+        now=int(time.time()) if now is None else now,
+        reason=reason if reason in REMOVAL_REASONS else ("failed" if reason else None),
+    )
+    done = got["state"] == "done"
+    return {
+        **shape,
+        "speaker": got["speaker"],
+        "lines": int(got["lines"]) if done else None,
+        "sessions": int(got["sessions"]) if done else None,
+    }
+
+
 async def authorize(
     db: Database, session: Session, ref: str, *, outside: str | None, now: int, enforce_plans: bool
 ) -> None:

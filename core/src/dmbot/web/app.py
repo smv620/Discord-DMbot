@@ -879,6 +879,8 @@ def create_app(
         "bad_files": (422, "bad_files"),
         "bad_mapping": (422, "bad_mapping"),
         "blocked": (409, "blocked"),  # a member who said no cannot be ticked in (#3305)
+        "nothing": (409, "nothing"),  # a speaker with no lines left to remove (#3305)
+        "unknown_speaker": (404, "not_found"),  # a number that is nobody's in this campaign
         "not_ticked": (409, "not_ticked"),
         "stale_consent": (
             409,
@@ -2700,6 +2702,39 @@ def create_app(
                 db, session, ref, outside=settings.outside_engine,
                 now=int(clock()), enforce_plans=settings.enforce_plans,
             )  # fmt: skip
+        except RecapError as err:
+            raise import_refusal(err) from None
+
+    @app.post(
+        "/me/campaigns/{ref}/speakers/{speaker}/remove",
+        status_code=202,
+        dependencies=[Depends(imports_enabled)],
+    )
+    async def me_speaker_remove(ref: str, speaker: str, signed: Signed) -> dict[str, Any]:
+        """Ask the bot to remove one speaker's lines from this campaign (#3305): `{status, id}`,
+        the same id again while one is open. 403 not a DM, 409 `nothing` when they have no lines
+        here, 429 `too_soon`. This campaign only; another campaign's lines of the same person are
+        not touched."""
+        session, _token = signed
+        try:
+            return await imports.remove_speaker(
+                db, session, ref, speaker, outside=settings.outside_engine,
+                now=int(clock()), enforce_plans=settings.enforce_plans,
+            )  # fmt: skip
+        except RecapError as err:
+            raise import_refusal(err) from None
+
+    @app.get(
+        "/me/campaigns/{ref}/speakers/removals/{removal_id}",
+        dependencies=[Depends(imports_enabled)],
+    )
+    async def me_speaker_removal(ref: str, removal_id: str, signed: Signed) -> dict[str, Any]:
+        """Where a removal stands, in the shared progress shape, with counts once done (#3305)."""
+        session, _token = signed
+        try:
+            return await imports.speaker_removal(
+                db, session, ref, removal_id, outside=settings.outside_engine, now=int(clock())
+            )
         except RecapError as err:
             raise import_refusal(err) from None
 
