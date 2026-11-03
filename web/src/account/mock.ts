@@ -1635,7 +1635,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       if (confirm && confirm.consentVersion !== 7) throw new ApiError("stale");
       if (Object.entries(mapping).some(([, to]) => to === "4")) throw new ApiError("said-no");
       for (const [label, to] of Object.entries(mapping))
-        if ((to === "new" || to === "2") && !(confirm?.confirmed ?? []).includes(label)) throw new ApiError("not-ticked");
+        if (to === "new" && !(confirm?.confirmed ?? []).includes(label)) throw new ApiError("not-ticked");
       files = [
         ...files,
         ...links.map((_, i) => ({ name: `Google Doc ${i + 1}.txt`, text: "Cerric: Hello from the doc\nMira: And hello" })),

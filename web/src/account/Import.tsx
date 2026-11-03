@@ -191,6 +191,7 @@ export default function Import({
   const [consentFailed, setConsentFailed] = useState(false);
   const [ticks, setTicks] = useState<Record<string, boolean>>({});
   const confirmOn = IMPORT_CONFIRM_LIVE && !!api.importConsent;
+  const consentSeq = useRef(0);
   const [check, setCheck] = useState<ImportCheck | null>(null);
   const [dates, setDates] = useState<Record<string, string>>({});
   const [guessed, setGuessed] = useState<Record<string, boolean>>({});
@@ -222,6 +223,7 @@ export default function Import({
   const fail = (error: unknown): void => {
     const kind = error instanceof ApiError ? error.kind : "server";
     if (kind === "signed-out") setSignedOut(true);
+    void wordingChanged(error); // (the consent words changed since they were read: read them again and ask for the ticks again)
     // The message is announced by its role="alert"; moving focus too would read it twice.
     // A doc can stop opening after Preview (sharing turned off), so "the files" is the wrong advice.
     const key = kind === "bad-files" && sentLinks.length > 0 ? "bad-files-docs" : kind;
@@ -376,6 +378,7 @@ export default function Import({
     setCheck(null);
     setOrder([]);
     setMapping({});
+    consentSeq.current++;
     setConsent(null);
     setConsentFailed(false);
     setTicks({});
@@ -587,12 +590,24 @@ export default function Import({
 
   // The words people agree to are read fresh each time: a stale answer from the API means they changed (#3306).
   const loadConsent = async (): Promise<void> => {
+    const mine = ++consentSeq.current; // a late answer after the files changed is ignored
     try {
-      setConsent(await api.importConsent!(ref));
+      const got = await api.importConsent!(ref);
+      if (mine !== consentSeq.current) return;
+      setConsent(got);
       setConsentFailed(false);
     } catch {
+      if (mine !== consentSeq.current) return;
       setConsent(null);
       setConsentFailed(true);
+    }
+  };
+  /** The wording changed since it was read (`stale`): show the new words, ask for the ticks again, and make Check run again. */
+  const wordingChanged = async (error: unknown): Promise<void> => {
+    if (confirmOn && error instanceof ApiError && error.kind === "stale") {
+      setTicks({});
+      setCheck(null);
+      await loadConsent();
     }
   };
 
@@ -600,8 +615,10 @@ export default function Import({
   const needsTick = (to: string): boolean => {
     if (!confirmOn) return false;
     if (to === NEW_SPEAKER) return true;
+    if (to === "" || to === DROP) return false;
+    // A member whose state isn't known yet needs the tick too (it goes away if they turn out to have agreed).
     const m = known[to];
-    return m !== undefined && m.agreed === false && !m.blocked;
+    return m?.agreed !== true && !m?.blocked;
   };
   const blockedChoice = (to: string): boolean => confirmOn && !!known[to]?.blocked;
   /** Everything the plan sends about confirming: the ticked labels that need one, with the wording's version. */
@@ -622,16 +639,7 @@ export default function Import({
   const doCheck = (): Promise<void> =>
     run(async () => {
       if (!api.importCheck) return;
-      try {
-        setCheck(await api.importCheck(ref, sentFiles(), mapping, sentLinks, confirmation()));
-      } catch (error) {
-        // The wording changed since it was read: show the new words and ask for the ticks again.
-        if (confirmOn && error instanceof ApiError && error.kind === "stale") {
-          setTicks({});
-          await loadConsent();
-        }
-        throw error;
-      }
+      setCheck(await api.importCheck(ref, sentFiles(), mapping, sentLinks, confirmation()));
     });
 
   const move = (name: string, by: -1 | 1): void =>
@@ -1021,9 +1029,14 @@ export default function Import({
                       </ul>
                     ) : (
                       consentFailed && (
-                        <p class="note bad" role="alert">
-                          {confirmWords.loadFailed}
-                        </p>
+                        <>
+                          <p class="note bad" role="alert">
+                            {confirmWords.loadFailed}
+                          </p>
+                          <button type="button" class="button secondary" onClick={() => void loadConsent()}>
+                            {confirmWords.retry}
+                          </button>
+                        </>
                       )
                     )}
                   </div>
@@ -1044,6 +1057,7 @@ export default function Import({
                         </span>
                         <select
                           aria-label={`${s.label}: ${words.matchHeading}`}
+                          aria-invalid={confirmOn && blockedChoice(chosen) ? true : undefined}
                           value={chosen}
                           onChange={(e) => {
                             const value = (e.target as HTMLSelectElement).value;
@@ -1102,11 +1116,16 @@ export default function Import({
                   type="button"
                   class="button secondary"
                   disabled={busy || !ready}
+                  aria-describedby={!ready ? "import-choose-all" : undefined}
                   onClick={() => void doCheck()}
                 >
                   {words.checkButton}
                 </button>
-                {!ready && <p class="small">{confirmWords.chooseAll}</p>}
+                {!ready && (
+                  <p class="small" id="import-choose-all">
+                    {confirmWords.chooseAll}
+                  </p>
+                )}
                 {/* A live region that is always there, so the result is announced when it fills in. */}
                 <div role="status" aria-live="polite">
                   {check && (

@@ -131,4 +131,48 @@ describe("confirming consent per speaker", () => {
     expect(pickFor("Ash").value).toBe("drop");
     expect(within(pickFor("Ash")).queryByText(c.notInDiscord)).toBeNull();
   });
+
+  it("sends the wording's version and only the ticks that are still needed when the import starts", async () => {
+    const api = await previewed();
+    for (const label of ["Ash", "Mira", "Dax"]) choose(label, "drop");
+    choose("Old Pip", "new");
+    fireEvent.click(screen.getByLabelText(c.tick("Old Pip")));
+    // Cerric is matched to a member who agreed: no tick is sent for them.
+    const sent: { confirmed: string[] | undefined; consentVersion: number | undefined }[] = [];
+    const start = api.importStart!;
+    api.importStart = async (ref, files, plan, links) => {
+      sent.push({ confirmed: plan.confirmed, consentVersion: plan.consentVersion });
+      return start(ref, files, plan, links);
+    };
+    fireEvent.click(screen.getByRole("button", { name: w.checkButton }));
+    await screen.findByText(new RegExp(c.keptConfirmed));
+    fireEvent.click(screen.getByRole("button", { name: w.importButton }));
+    await waitFor(() => expect(sent).toHaveLength(1));
+    expect(sent[0]).toEqual({ confirmed: ["Old Pip"], consentVersion: 7 });
+  });
+
+  it("drops a tick when the choice becomes a member who agreed", async () => {
+    const api = await previewed();
+    for (const label of ["Ash", "Dax"]) choose(label, "drop");
+    choose("Old Pip", "new");
+    fireEvent.click(screen.getByLabelText(c.tick("Old Pip")));
+    choose("Old Pip", "3"); // Mira agreed in Discord
+    choose("Mira", "drop");
+    fireEvent.click(screen.getByRole("button", { name: w.checkButton }));
+    await screen.findByText(/Checked:/);
+    expect(api.calls.some((x) => x.includes("|confirmed:"))).toBe(false);
+  });
+
+  it("offers a way to try again when the consent words can't be loaded", async () => {
+    const api = mockApi("table");
+    let tries = 0;
+    api.importConsent = async () => {
+      if (tries++ === 0) throw new ApiError("network");
+      return { version: 7, lines: ["Words."] };
+    };
+    await previewed(api);
+    expect(await screen.findByText(c.loadFailed)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: c.retry }));
+    expect(await screen.findByText("Words.")).toBeTruthy();
+  });
 });
