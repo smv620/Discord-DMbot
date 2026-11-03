@@ -192,5 +192,61 @@ class Confirming(WithImports):
         self.assertIsNone(by[str(MIRA)]["blocked"])
         self.assertNotIn("refused", by[str(TOMAS)])  # (the page gets the words, not the kind)
 
+    async def test_a_confirmed_speaker_counts_as_recorded_in_that_campaign_only(self) -> None:
+        consent = ConsentStore(self.db)
+        mapping: dict[str, Any] = {
+            "Tomas (tomas#1)": {"confirmed": True, "member": str(TOMAS)},
+            GHOST: {"confirmed": True},
+        }
+        await self.confirm(plan(mapping, consentVersion=TERMS_VERSION), ("a.txt", WITH_GHOST))
+        [speaker] = await self.rows("campaign_speakers")
+        ghost = speaker["user_id"]
+        here = await consent.recorded_in(THURSDAY.id, self.one.id)
+        self.assertIn(TOMAS, here)
+        self.assertIn(ghost, here)
+        self.assertIn(MIRA, here)  # (and whoever agreed, as before)
+        # Another campaign of the same server, and the live allowlist, are untouched.
+        elsewhere = await consent.recorded_in(THURSDAY.id, self.two.id)
+        self.assertNotIn(TOMAS, elsewhere)
+        self.assertNotIn(ghost, elsewhere)
+        live = await consent.consenting(THURSDAY.id)
+        self.assertEqual(live, frozenset({MIRA}))  # a tick never lets a voice be recorded
+        self.assertFalse(consent.has_consent(THURSDAY.id, TOMAS))
+
+    async def test_a_confirmed_member_who_later_says_no_stops_counting(self) -> None:
+        consent = ConsentStore(self.db)
+        mapping: dict[str, Any] = {"Tomas (tomas#1)": {"confirmed": True, "member": str(TOMAS)}}
+        await self.confirm(plan(mapping, consentVersion=TERMS_VERSION), ("a.txt", CRAIG))
+        self.assertIn(TOMAS, await consent.recorded_in(THURSDAY.id, self.one.id))
+        async with self.db.guild(THURSDAY.id) as conn:  # their later no, newer than the tick
+            await conn.execute(
+                "INSERT INTO consent_refusals (guild_id, user_id, kind, refused_at)"
+                " VALUES (%s, %s, 'stopped', 4000000000)",
+                (THURSDAY.id, TOMAS),
+            )
+        self.assertNotIn(TOMAS, await consent.recorded_in(THURSDAY.id, self.one.id))
+        self.assertEqual(len(await self.lines()), 1)  # (their stored line stays; readers stop)
+
+    async def test_the_import_cleaner_uses_the_campaign_rule(self) -> None:
+        from dmbot.transcript.import_job import ImportJob, ImportStore
+
+        calls: list[tuple[int, str]] = []
+
+        async def recorded(guild: int, campaign: str) -> frozenset[int]:
+            calls.append((guild, campaign))
+            return frozenset({TOMAS})
+
+        async def consenting(guild: int) -> frozenset[int]:
+            return frozenset()
+
+        async def lookup(guild: int, campaign: str) -> Any:
+            return None
+
+        job = ImportJob(ImportStore(self.db), lookup, None, consenting, recorded)
+        self.assertEqual(await job._agreed(THURSDAY.id, self.one.id), frozenset({TOMAS}))
+        self.assertEqual(calls, [(THURSDAY.id, self.one.id)])
+        plain = ImportJob(ImportStore(self.db), lookup, None, consenting)
+        self.assertEqual(await plain._agreed(THURSDAY.id, self.one.id), frozenset())
+
 
 NOBODY_ID = 7003

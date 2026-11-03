@@ -1402,7 +1402,11 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         # Cleaning the sessions a DM imported from a file (#2105), in the background.
         self.import_job: ImportJob | None = (
             ImportJob(
-                ImportStore(transcripts.db), self.lookup.get, self.topic_ai, consent.consenting
+                ImportStore(transcripts.db),
+                self.lookup.get,
+                self.topic_ai,
+                consent.consenting,
+                consent.recorded_in,
             )
             if transcripts is not None and self.lookup is not None
             else None

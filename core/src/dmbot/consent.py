@@ -220,6 +220,24 @@ class ConsentStore:
         """Who may be recorded now: those who agreed, minus anyone off the record."""
         return self._recordable(guild_id, await self._agreed(guild_id))
 
+    async def recorded_in(self, guild_id: int, campaign_id: str) -> frozenset[int]:
+        """Who counts as recorded in ONE campaign's imported sessions (#3305): everyone
+        `consenting` returns, plus the people the uploader confirmed for an import into this
+        campaign (a member who had not agreed, or a speaker without Discord, whose number is
+        negative), except anyone who has said no since the tick. It is for readers of a campaign's
+        stored sessions only. The live allowlist and `consenting` are unchanged: a confirmation
+        never lets a voice be recorded, and never counts in another campaign or server."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT DISTINCT c.user_id FROM import_consents c WHERE c.guild_id = %s"
+                " AND c.campaign_id = %s AND NOT EXISTS (SELECT 1 FROM consent_refusals r"
+                " WHERE r.guild_id = c.guild_id AND r.user_id = c.user_id"
+                " AND r.refused_at >= c.confirmed_at)",
+                (guild_id, campaign_id),
+            )
+            confirmed = frozenset(int(r["user_id"]) for r in await cur.fetchall())
+        return await self.consenting(guild_id) | confirmed
+
     async def _agreed(self, guild_id: int) -> frozenset[int]:
         if guild_id not in self._cache:
             async with self._lock(guild_id):
