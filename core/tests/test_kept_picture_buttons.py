@@ -5,7 +5,7 @@ restart. The real store and actions on a test database; Discord is a stand-in. I
 from __future__ import annotations
 
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock
 
 from dmbot.campaigns import CampaignStore
@@ -193,6 +193,6 @@ class Pressing(DatabaseTest):
 
 def test_ids_fit_discord_and_the_view_has_both_buttons() -> None:
     view = kept_pictures.link_view(10**17)
-    ids = [i.item.custom_id for i in view.children]
+    ids = [cast(Any, i).item.custom_id for i in view.children]  # (a DynamicItem wraps a button)
     assert ids == ["dmbot:picpriv:100000000000000000", "dmbot:picdel:100000000000000000"]
     assert all(len(i) <= 100 for i in ids)
