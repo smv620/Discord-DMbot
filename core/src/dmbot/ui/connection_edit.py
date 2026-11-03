@@ -276,7 +276,9 @@ class OneConnection(_Menu):
             first, second = second, first
         subject = found.names.entities.get(first)
         other = found.names.entities.get(second)
-        words = link_words(stored.predicate, stored.detail, directional=stored.directional)
+        words = link_words(
+            stored.predicate, stored.detail, stored.directional, subject.type if subject else ""
+        )
         return f"{subject.name if subject else '?'} {words} {other.name if other else '?'}"
 
     async def _other_words(self, interaction: discord.Interaction) -> None:

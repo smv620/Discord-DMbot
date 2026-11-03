@@ -4,7 +4,7 @@ Pure: no Discord, no database."""
 
 from __future__ import annotations
 
-from dmbot.memory import kin, reputation_words
+from dmbot.memory import kin, place_words, reputation_words
 from dmbot.memory.ontology import DISGUISED_AS, FALLBACK_PREDICATE, SYNONYMS
 
 CONNECTION_WORDS = {
@@ -91,10 +91,16 @@ def predicate_for_either(words: str) -> tuple[str, str, bool]:
     return predicate, detail, False
 
 
-def link_words(predicate: str, detail: str, directional: bool = False) -> str:
+def link_words(
+    predicate: str, detail: str, directional: bool = False, subject_kind: str = ""
+) -> str:
     """How one connection reads from its first name to its second. On the catch-all, the words it
     was said in ("sworn on the ashes of") are the connection's own label (#1303); on family, the
-    role ("is the niece of")."""
+    role ("is the niece of"). A place tie reads by its word ("lives in"), and for something that
+    moves with no word, "was last seen in", never "is in" (#3363); `subject_kind` is the first
+    name's kind ("" when the caller does not know it, which keeps the old "is in")."""
+    if predicate == "located_in":
+        return place_words.forward(detail, subject_kind)
     if predicate == FALLBACK_PREDICATE and detail:
         return detail
     # "knows" with the feeling a reader gave it (#3175): "knows (hostile)", the old friend and enemy
@@ -107,9 +113,13 @@ def link_words(predicate: str, detail: str, directional: bool = False) -> str:
     return connection_words(predicate)
 
 
-def back_words(predicate: str, detail: str, directional: bool = False) -> str | None:
+def back_words(
+    predicate: str, detail: str, directional: bool = False, subject_kind: str = ""
+) -> str | None:
     """How a connection reads from its second name, when that differs from `link_words`: "has a
     niece". None for one that reads the same either way, or has no fixed reading back."""
+    if predicate == "located_in":
+        return place_words.backward(detail, subject_kind)
     if predicate == KIN and directional and kin.directional(detail):
         return kin.backward(kin.role_of(detail) or "")
     return CONNECTION_BACK.get(predicate)
