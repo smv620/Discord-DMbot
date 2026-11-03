@@ -233,7 +233,7 @@ class Confirming(WithImports):
         await consent.revoke(THURSDAY.id, TOMAS)  # ...who agreed and then said Stop recording me
         got = await imports.search_members(self.web, self.session, self.ref_c, "", **self.kw)
         by = {m["userId"]: m for m in got["members"]}
-        self.assertEqual(by[str(TOMAS)]["blocked"], "opted-out")
+        self.assertEqual(by[str(TOMAS)]["blocked"], "said_no")
         self.assertIsNone(by[str(MIRA)]["blocked"])
         self.assertNotIn("refused", by[str(TOMAS)])  # (the page gets the words, not the kind)
 

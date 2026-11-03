@@ -582,7 +582,9 @@ async def _suggest(
     }
 
 
-BLOCKED_WORDS = {"stopped": "opted-out", "declined": "declined"}  # what the page is told
+# One code for both kinds of no: the page may say only that this person said no. "stopped" would
+# tell the uploader they once agreed, "declined" that they were asked (#3305, ux-critic).
+BLOCKED_WORDS = {"stopped": "said_no", "declined": "said_no"}
 NEW_SPEAKER_BASE = -(10**12)  # placeholder ids for speakers not made yet; real ones are small
 
 
