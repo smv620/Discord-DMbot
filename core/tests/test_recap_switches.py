@@ -124,7 +124,10 @@ def fake_bot(camp: Any, *, plan: dict[str, bool] | None = None, audio_on: bool =
             session=AsyncMock(return_value=SimpleNamespace(id="s", started_at=100, lines=5)),
             lines=AsyncMock(return_value=long_session()),
         ),
-        consent=SimpleNamespace(consenting=AsyncMock(return_value={ALICE_ID})),
+        consent=SimpleNamespace(
+            consenting=AsyncMock(return_value={ALICE_ID}),
+            recorded_in=AsyncMock(return_value={ALICE_ID}),  # (#3305)
+        ),
         post=AsyncMock(),
         post_message=AsyncMock(),
         _short_asks={},

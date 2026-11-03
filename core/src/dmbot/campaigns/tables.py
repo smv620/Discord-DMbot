@@ -46,8 +46,12 @@ SECTION_TABLES: dict[str, tuple[str, ...]] = {
     "site_approvals": ("site_approvals",),
     "map_notes": ("map_notes",),
     "recap_style_notes": ("recap_style_notes",),
+    "recap_must_haves": ("recap_must_haves",),  # the list every recap is written to (#3328)
     "recap_style_examples": ("recap_style_examples",),
     "import_speakers": ("import_speakers",),
+    "campaign_speakers": ("campaign_speakers",),  # speakers without Discord, negative ids (#3305)
+    "import_consents": ("import_consents",),  # what the uploader confirmed, per speaker (#3305)
+    "speaker_erasures": ("speaker_erasures",),  # whose lines a DM removed here (#3305)
     "rule_set_follows": ("rule_set_follows",),
     "rule_sets": ("rule_sets", "rule_set_versions", "rule_set_editors"),
     "game_clock": ("game_clocks", "game_clock_groups", "game_clock_log"),
@@ -136,6 +140,7 @@ NOT_IN_BACKUP: dict[str, str] = {
     "name_actions": _WAIT,
     "setting_actions": _WAIT,
     "picture_actions": _WAIT,
+    "speaker_removals": _QUEUE,
     "web_rule_actions": _WAIT,
     "web_recap_style_actions": _WAIT,
     "web_report_requests": _WAIT,

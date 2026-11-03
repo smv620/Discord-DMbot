@@ -114,7 +114,7 @@ if TYPE_CHECKING:  # (only for annotations: `bot.py` imports this module)
     from dmbot import plan_rules
     from dmbot.ai import TierClient
     from dmbot.bot import DMBot
-    from dmbot.campaigns import web_backup, web_line_delete, web_restore
+    from dmbot.campaigns import speaker_removal, web_backup, web_line_delete, web_restore
     from dmbot.campaigns.store import CampaignStore
     from dmbot.campaigns.web_delete import WebDeleteNotices
     from dmbot.config import Settings
@@ -130,6 +130,7 @@ if TYPE_CHECKING:  # (only for annotations: `bot.py` imports this module)
     from dmbot.memory.web_actions import ActionStore
     from dmbot.memory.web_sheets import ActionStore as SheetActionStore
     from dmbot.recaps.audio.worker import AudioWorker
+    from dmbot.recaps.must_haves import MustStore
     from dmbot.recaps.pipeline import RecapWorker
     from dmbot.recaps.plot import PlotRunner
     from dmbot.recaps.plot_talk_run import TalkRunner
@@ -250,6 +251,7 @@ class RecapFeatures:
         recap_feedback_limit: recap_feedback.FeedbackLimit
         recap_holds: recap_hold.HoldStore | None
         recap_notes: NoteStore | None
+        recap_musts: MustStore | None
         recap_requests: recap_requests.RequestStore | None
         recap_styles: StyleStore | None
         recap_worker: RecapWorker | None
@@ -259,6 +261,7 @@ class RecapFeatures:
         transcripts: TranscriptStore | None
         web_backups: web_backup.WebBackups | None
         web_line_deletions: web_line_delete.WebLineDeletions | None
+        speaker_removals: speaker_removal.SpeakerRemovals | None
         web_restores: web_restore.WebRestores | None
         web_delete_notices: WebDeleteNotices | None
         web_settings: SettingStore | None
@@ -285,6 +288,8 @@ class RecapFeatures:
         async def run_picture_actions(self) -> None: ...
         async def run_picture_sweep(self) -> None: ...
         async def run_web_line_deletions(self) -> None: ...
+
+        async def run_speaker_removals(self) -> None: ...
         async def run_web_delete_notices(self) -> None: ...
         @staticmethod
         def _watched(work: Coroutine[Any, Any, None], name: str) -> asyncio.Task[None]: ...
@@ -521,7 +526,7 @@ class RecapFeatures:
             # A short session asks first (#2104): what the recap would read is not changed.
             lines = await self.transcripts.lines(gid, session.id)
             span = short.span_minutes(lines)
-            talk = short.talk_minutes(lines, await self.consent.consenting(gid))
+            talk = short.talk_minutes(lines, await self.consent.recorded_in(gid, cid))
             if short.is_short(span, talk):
                 if await self.recaps.get(gid, cid, session.started_at) is not None:
                     return  # a repeat of the end of session, or already decided: ask once only
@@ -1187,6 +1192,7 @@ class RecapFeatures:
             session_at=job.session_at,
             styles=self.recap_styles,
             notes=self.recap_notes,
+            musts=self.recap_musts,
             importance=self.importance,
             recanted=await self._recanted(gid, cid, job.session_at),
             relation_ties=await self._relation_ties(gid, cid),
@@ -1333,7 +1339,7 @@ class RecapFeatures:
                 "This recap names a secret of yours, so it wasn't shared. "
                 "Edit it on your recap page, then try again.",
             )
-        if not set(job.speakers) <= set(await self.consent.consenting(gid)):
+        if not set(job.speakers) <= set(await self.consent.recorded_in(gid, cid)):
             return (
                 None,
                 "A player has stopped being recorded, so this recap can't be shared as "
@@ -2006,6 +2012,10 @@ class RecapFeatures:
                 await self.run_web_line_deletions()
             except Exception as exc:
                 log.warning("The website line deletions failed: %s", type(exc).__name__)
+            try:
+                await self.run_speaker_removals()
+            except Exception as exc:
+                log.warning("The speaker removals failed: %s", type(exc).__name__)
             sweeps += 1  # counted whatever happened, so the sweep below can't be starved
             if sweeps % 300 == 0 and self.recap_requests is not None:  # about every 10 minutes
                 for guild in list(self.guilds):
@@ -2026,6 +2036,8 @@ class RecapFeatures:
                             await self.web_rule_actions.sweep(guild.id)
                         if self.web_line_deletions is not None:
                             await self.web_line_deletions.sweep(guild.id)
+                        if self.speaker_removals is not None:
+                            await self.speaker_removals.sweep(guild.id)
                         if self.web_sheets is not None:
                             await self.web_sheets.sweep(guild.id)
                         # Lines a DM put back after their session (#2587): read once.

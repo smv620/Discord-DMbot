@@ -1,3 +1,4 @@
+import "preact/debug"; // the duplicate-key warning lives in the debug build only (#3323)
 /** @jsxImportSource preact */
 // @vitest-environment happy-dom
 // Confirming consent per speaker on the Import page (#3306): the consent words come from the API, a speaker needs a
@@ -123,6 +124,20 @@ describe("confirming consent per speaker", () => {
     expect((screen.getByLabelText(c.tick("Old Pip")) as HTMLInputElement).checked).toBe(false);
   });
 
+  it("two identical consent lines both show, with no key warning", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const api = mockApi("table");
+      api.importConsent = async () => ({ version: 7, text: "Same.\nSame.\nOther." });
+      await previewed(api);
+      expect(screen.getAllByText("Same.")).toHaveLength(2);
+      expect(screen.getByText("Other.")).toBeTruthy();
+      expect(errors.mock.calls.some((args) => /same key/i.test(String(args[0])))).toBe(false);
+    } finally {
+      errors.mockRestore();
+    }
+  });
+
   it("keeps the old choices, with no consent words, while the switch is off", async () => {
     live.confirm = false;
     const api = await previewed();
@@ -196,5 +211,27 @@ describe("the consent routes over the wire (#3305 PR 1)", () => {
     await expect(ask("stale_consent")).rejects.toMatchObject({ kind: "stale" });
     await expect(ask("blocked")).rejects.toMatchObject({ kind: "said-no" });
     await expect(ask("not_ticked")).rejects.toMatchObject({ kind: "not-ticked" });
+  });
+
+  it("sends a choice the way PR 1 reads it: objects for ticks, a bare id or drop otherwise", async () => {
+    const bodies: Record<string, unknown>[] = [];
+    const api = httpApi("https://api.example.test", (async (_u: string, init: RequestInit) => {
+      bodies.push(JSON.parse(String(init.body)));
+      return new Response(JSON.stringify({ files: [], estimate: { sessions: 0, fastCalls: 0 } }), { status: 200 });
+    }) as unknown as typeof fetch);
+    const mapping = { Cerric: "1", Ash: "2", "Old Pip": "new", Mira: "drop", Late: "new" };
+    await api.importCheck!("100.cmp1", [], mapping, [], { confirmed: ["Ash", "Old Pip"], consentVersion: 7 });
+    expect(bodies[0]?.mapping).toEqual({
+      Cerric: "1",
+      Ash: { confirmed: true, member: "2" },
+      "Old Pip": { confirmed: true },
+      Mira: "drop",
+      Late: { confirmed: false }, // never ticked: the API refuses it as not_ticked
+    });
+    await api.importStart!("100.cmp1", [], { mapping, confirmed: ["Ash", "Old Pip"], consentVersion: 7, sessions: [] });
+    const plan = bodies[1]?.plan as Record<string, unknown>;
+    expect(plan.consentVersion).toBe(7);
+    expect(plan.confirmed).toBeUndefined();
+    expect((plan.mapping as Record<string, unknown>)["Old Pip"]).toEqual({ confirmed: true });
   });
 });

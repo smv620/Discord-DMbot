@@ -234,6 +234,22 @@ class EveryClaimedTableComesBack(DatabaseTest):
                 " %s, 1)",
                 (g, c, text_hash("T", "S"), DM),
             ),
+            "campaign_speakers": (
+                "INSERT INTO campaign_speakers (guild_id, campaign_id, user_id, name, created_by,"
+                " created_at) VALUES (%s, %s, -1, 'Old Greg', %s, 1)",
+                (g, c, DM),
+            ),
+            "import_consents": (
+                "INSERT INTO import_consents (guild_id, campaign_id, id, import_id, user_id, basis,"
+                " confirmed_by, confirmed_at, terms_version, lines)"
+                " VALUES (%s, %s, repeat('c', 32), 'batch', -1, 'uploader_confirmed', %s, 1, 7, 3)",
+                (g, c, DM),
+            ),
+            "speaker_erasures": (  # (-2: -1 is the speaker above, who stays)
+                "INSERT INTO speaker_erasures (guild_id, campaign_id, user_id, erased_at)"
+                " VALUES (%s, %s, -2, 5)",
+                (g, c),
+            ),
             "session_notes": (
                 "INSERT INTO session_notes (guild_id, campaign_id, session_at, beats, written_at,"
                 " job_created_at) VALUES (%s, %s, 1,"
@@ -262,6 +278,11 @@ class EveryClaimedTableComesBack(DatabaseTest):
             "recap_style_notes": (
                 "INSERT INTO recap_style_notes (guild_id, campaign_id, position, text, created_by,"
                 " created_at) VALUES (%s, %s, 1, 'Short', %s, 1)",
+                (g, c, DM),
+            ),
+            "recap_must_haves": (
+                "INSERT INTO recap_must_haves (guild_id, campaign_id, position, text, created_by,"
+                " created_at) VALUES (%s, %s, 1, 'Name the tavern.', %s, 1)",
                 (g, c, DM),
             ),
             "recap_style_examples": (

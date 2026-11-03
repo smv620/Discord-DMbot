@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError, type AccountApi, type WebGraph } from "../src/account/api";
 import { mockApi } from "../src/account/mock";
-import Web from "../src/account/Web";
+import Web, { autoDelay } from "../src/account/Web";
 import { webPage as w, webPage as words } from "../src/content/web-words";
 
 const PATH = "/account/web/100.cmp1";
@@ -268,5 +268,91 @@ describe("what a read may and may not do", () => {
       await vi.advanceTimersByTimeAsync(50);
     });
     expect(screen.queryByText("Late Arrival")).toBeNull();
+  });
+});
+
+describe("backing off while nothing changes (#3294, until a graph version exists)", () => {
+  it("waits 5 s for three quiet reads, then 15 s, 30 s and at most 60 s", () => {
+    expect([0, 1, 2].map(autoDelay)).toEqual([5000, 5000, 5000]);
+    expect([3, 4, 5, 6, 20].map(autoDelay)).toEqual([15000, 30000, 60000, 60000, 60000]);
+  });
+
+  it("slows down after three reads that found the same graph", async () => {
+    vi.spyOn(Math, "random").mockReturnValue(0); // no jitter: the waits are exact
+    const { api, reads } = counting(false);
+    await ready(api);
+    const first = reads();
+    await tick(5100 * 3); // three quiet reads, 5 s apart
+    expect(reads()).toBe(first + 3);
+    await tick(14000); // the next wait is 15 s: nothing yet
+    expect(reads()).toBe(first + 3);
+    await tick(1500);
+    expect(reads()).toBe(first + 4);
+    await tick(29000); // and then 30 s
+    expect(reads()).toBe(first + 4);
+    await tick(1500);
+    expect(reads()).toBe(first + 5);
+  });
+
+  it("goes back to 5 s when the graph changes", async () => {
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    const base = mockApi("table");
+    let reads = 0;
+    let grown = false;
+    const api: AccountApi = {
+      ...base,
+      async webGraph(ref, query): Promise<WebGraph> {
+        reads += 1;
+        const got = await base.webGraph!(ref, query);
+        return grown ? { ...got, nodes: [...got.nodes, { id: "late", name: "Late Arrival", kind: "npc" }] } : got;
+      },
+    };
+    await ready(api);
+    await tick(5100 * 3 + 15500); // three quiet reads and the 15 s one: now waiting 30 s
+    const before = reads;
+    grown = true;
+    await tick(30500); // the read after the 30 s wait sees the change
+    expect(reads).toBe(before + 1);
+    await tick(5100); // changed, so the next wait is 5 s again
+    expect(reads).toBe(before + 2);
+  });
+
+  it("goes back to 5 s when the tab comes back", async () => {
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    const { api, reads } = counting(false);
+    await ready(api);
+    await tick(5100 * 3 + 15500);
+    const before = reads();
+    Object.defineProperty(document, "hidden", { value: false, configurable: true });
+    document.dispatchEvent(new Event("visibilitychange")); // a read at once, and the pace is quick again
+    await tick(50);
+    expect(reads()).toBe(before + 1);
+    await tick(5100); // and the next one is 5 s later, not after the long wait that was running
+    expect(reads()).toBe(before + 2);
+  });
+
+  it("does not count a hidden tab's turns as quiet", async () => {
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    const { api, reads } = counting(false);
+    await ready(api);
+    Object.defineProperty(document, "hidden", { value: true, configurable: true });
+    await tick(5100 * 6); // six turns pass with the tab hidden: no reads
+    const hiddenReads = reads();
+    Object.defineProperty(document, "hidden", { value: false, configurable: true });
+    await tick(5100);
+    expect(reads()).toBe(hiddenReads + 1); // still the quick pace once it is visible again
+  });
+
+  it("goes back to 5 s when the button is pressed", async () => {
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    const { api, reads } = counting(false);
+    await ready(api);
+    await tick(5100 * 3 + 15500);
+    fireEvent.click(screen.getByRole("button", { name: w.freezeGraph }));
+    fireEvent.click(screen.getByRole("button", { name: w.autoUpdateGraph })); // frozen, then back on: reads at once
+    await tick(50);
+    const after = reads();
+    await tick(5100);
+    expect(reads()).toBe(after + 1); // the quick pace again, not 30 s
   });
 });

@@ -878,6 +878,14 @@ def create_app(
         "too_many_files": (413, "too_many_files"),
         "bad_files": (422, "bad_files"),
         "bad_mapping": (422, "bad_mapping"),
+        "blocked": (409, "blocked"),  # a member who said no cannot be ticked in (#3305)
+        "nothing": (409, "nothing"),  # a speaker with no lines left to remove (#3305)
+        "unknown_speaker": (404, "not_found"),  # a number that is nobody's in this campaign
+        "not_ticked": (409, "not_ticked"),
+        "stale_consent": (
+            409,
+            "stale_consent",
+        ),  # the consent words changed (not the recap's "stale")
         "bad_date": (422, "bad_date"),
         "no_lines_kept": (422, "no_lines_kept"),
         "too_many_lines": (413, "too_many_lines"),
@@ -1371,6 +1379,8 @@ def create_app(
         "too_long": (422, "too_long"),
         "too_soon": (429, "too_soon"),
         "full": (409, "full"),
+        "empty": (422, "empty"),  # a blank must-have line (#3328)
+        "too_many": (422, "too_many"),  # more than 40 must-have lines
     }
 
     @app.get("/me/campaigns/{ref}/recap-style")
@@ -1400,6 +1410,33 @@ def create_app(
                 request, 128 * 1024
             )  # 8,000 characters, all escaped, with room
             return await recap_style.add(db, session, ref, body)
+        except RecapError as err:
+            status, detail = style_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.put("/me/campaigns/{ref}/recap-style/must-haves", status_code=202)
+    async def me_recap_musts_save(ref: str, signed: Signed, request: Request) -> dict[str, Any]:
+        """Save the campaign's whole must-have list (#3328): `{"lines": [text, ...]}`. Answers
+        `{"id": ...}`; poll `GET …/recap-style/{id}`. An empty list or the defaults word for word
+        brings the defaults back. 422 `empty`, `too_long`, `too_many`, `bad_arg`. DM only."""
+        session, _token = signed
+        if not settings.recap_style_on:
+            raise HTTPException(status_code=404, detail="not_found")
+        try:
+            body = await bounded_json(request, 256 * 1024)  # 40 lines of 300, all escaped
+            return await recap_style.save_musts(db, session, ref, body)
+        except RecapError as err:
+            status, detail = style_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.delete("/me/campaigns/{ref}/recap-style/must-haves", status_code=202)
+    async def me_recap_musts_defaults(ref: str, signed: Signed) -> dict[str, Any]:
+        """Back to DMbot's own must-haves (#3328); answers `{"id": ...}` like a save. DM only."""
+        session, _token = signed
+        if not settings.recap_style_on:
+            raise HTTPException(status_code=404, detail="not_found")
+        try:
+            return await recap_style.use_musts_defaults(db, session, ref)
         except RecapError as err:
             status, detail = style_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
@@ -2668,6 +2705,65 @@ def create_app(
                 db, session, ref, q, outside=settings.outside_engine,
                 now=int(clock()), enforce_plans=settings.enforce_plans,
             )  # fmt: skip
+        except RecapError as err:
+            raise import_refusal(err) from None
+
+    @app.get("/me/campaigns/{ref}/imports/consent", dependencies=[Depends(imports_enabled)])
+    async def me_import_consent(ref: str, signed: Signed) -> dict[str, Any]:
+        session, _token = signed
+        try:  # only a DM of the campaign (on a plan that imports) is shown the words
+            await imports.authorize(
+                db, session, ref, outside=settings.outside_engine,
+                now=int(clock()), enforce_plans=settings.enforce_plans,
+            )  # fmt: skip
+        except RecapError as err:
+            raise import_refusal(err) from None
+        return imports.consent_words(
+            cloud=settings.outside_engine is not None,
+            company="Deepgram" if settings.outside_engine == "deepgram" else None,
+        )
+
+    @app.get("/me/campaigns/{ref}/speakers", dependencies=[Depends(imports_enabled)])
+    async def me_speakers(ref: str, signed: Signed) -> dict[str, Any]:
+        session, _token = signed
+        try:
+            return await imports.speakers(
+                db, session, ref, outside=settings.outside_engine,
+                now=int(clock()), enforce_plans=settings.enforce_plans,
+            )  # fmt: skip
+        except RecapError as err:
+            raise import_refusal(err) from None
+
+    @app.post(
+        "/me/campaigns/{ref}/speakers/{speaker}/remove",
+        status_code=202,
+        dependencies=[Depends(imports_enabled)],
+    )
+    async def me_speaker_remove(ref: str, speaker: str, signed: Signed) -> dict[str, Any]:
+        """Ask the bot to remove one speaker's lines from this campaign (#3305): `{status, id}`,
+        the same id again while one is open. 403 not a DM, 409 `nothing` when they have no lines
+        here, 429 `too_soon`. This campaign only; another campaign's lines of the same person are
+        not touched."""
+        session, _token = signed
+        try:
+            return await imports.remove_speaker(
+                db, session, ref, speaker, outside=settings.outside_engine,
+                now=int(clock()), enforce_plans=settings.enforce_plans,
+            )  # fmt: skip
+        except RecapError as err:
+            raise import_refusal(err) from None
+
+    @app.get(
+        "/me/campaigns/{ref}/speakers/removals/{removal_id}",
+        dependencies=[Depends(imports_enabled)],
+    )
+    async def me_speaker_removal(ref: str, removal_id: str, signed: Signed) -> dict[str, Any]:
+        """Where a removal stands, in the shared progress shape, with counts once done (#3305)."""
+        session, _token = signed
+        try:
+            return await imports.speaker_removal(
+                db, session, ref, removal_id, outside=settings.outside_engine, now=int(clock())
+            )
         except RecapError as err:
             raise import_refusal(err) from None
 

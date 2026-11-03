@@ -147,13 +147,18 @@ class TheatreStore:
             ]  # fmt: skip
 
 
-async def forget_person(conn: Any, guild_id: int, user_id: int) -> int:
+async def forget_person(
+    conn: Any, guild_id: int, user_id: int, campaign_id: str | None = None
+) -> int:
     """Every script line made from this person's words, in the caller's transaction (called by
     `TranscriptStore.delete_person`). A row that lists them goes whole, even when others spoke in
-    it too: a script line is one thought, and keeping half of it would keep their words."""
+    it too: a script line is one thought, and keeping half of it would keep their words.
+    `campaign_id`: only that campaign's sessions (a DM's removal of one speaker, #3305)."""
     cur = await conn.execute(
-        "DELETE FROM theatre_lines WHERE guild_id = %s AND user_ids @> ARRAY[%s]::bigint[]",
-        (guild_id, user_id),
+        "DELETE FROM theatre_lines WHERE guild_id = %s AND user_ids @> ARRAY[%s]::bigint[]"
+        " AND (%s::text IS NULL OR session_id IN (SELECT t.id FROM transcript_sessions t"
+        "   WHERE t.guild_id = %s AND t.campaign_id = %s))",
+        (guild_id, user_id, campaign_id, guild_id, campaign_id),
     )
     return int(cur.rowcount)
 

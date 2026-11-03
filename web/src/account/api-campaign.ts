@@ -9,6 +9,8 @@ import type {
   SessionNotesList,
   RecapStyle,
   RecapStyleAction,
+  CampaignSpeaker,
+  SpeakerRemoval,
   HouseFileState,
   LoreUpload,
   CampaignPage,
@@ -286,6 +288,12 @@ export default function campaignArea({ call }: ApiHelpers): Partial<AccountApi> 
     recapStyle: async (ref) => (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/recap-style`)) as RecapStyle,
     changeRecapStyle: async (ref, action, arg = "") =>
       (await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/recap-style`, { action, arg })) as { id: string },
+    campaignSpeakers: async (ref) =>
+      ((await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/speakers`)) as { speakers: CampaignSpeaker[] }).speakers,
+    removeSpeaker: async (ref, speaker) =>
+      (await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/speakers/${encodeURIComponent(speaker)}/remove`)) as { id: string },
+    speakerRemoval: async (ref, id) =>
+      (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/speakers/removals/${encodeURIComponent(id)}`)) as SpeakerRemoval,
     saveRecapMusts: async (ref, lines) =>
       (await call("PUT", `/me/campaigns/${encodeURIComponent(ref)}/recap-style/must-haves`, { lines }, false, undefined, false, MUSTS_REFUSALS)) as { id: string },
     recapMustsDefaults: async (ref) =>

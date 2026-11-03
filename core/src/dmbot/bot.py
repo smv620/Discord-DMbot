@@ -69,7 +69,14 @@ from dmbot.ai import (
 from dmbot.ai_watch import AIWatch
 from dmbot.audio.segmenter import Segmenter, Utterance
 from dmbot.audio_check import Verdict
-from dmbot.campaigns import Campaign, CampaignStore, web_backup, web_line_delete, web_restore
+from dmbot.campaigns import (
+    Campaign,
+    CampaignStore,
+    speaker_removal,
+    web_backup,
+    web_line_delete,
+    web_restore,
+)
 from dmbot.campaigns.models import (
     SHARED_STORY,
     STORY_GUIDE,
@@ -362,6 +369,7 @@ from dmbot.recaps.discord import (
     WEB_STYLE_PER_ROUND,
     RecapFeatures,
 )
+from dmbot.recaps.must_haves import MustSection, MustStore
 from dmbot.recaps.notes import SessionNotesSection
 from dmbot.recaps.pipeline import RecapWorker
 from dmbot.recaps.plot import PlotRunner, PlotStore
@@ -442,6 +450,11 @@ from dmbot.transcript.cleaner import (
 )
 from dmbot.transcript.close_calls import CloseCalls
 from dmbot.transcript.export import clock
+from dmbot.transcript.import_consent import (
+    ImportConsentsSection,
+    SpeakerErasuresSection,
+    SpeakersSection,
+)
 from dmbot.transcript.import_job import STALE_SCAN_S, ImportJob, ImportStore, Ready
 from dmbot.transcript.import_map import ImportSpeakersSection
 from dmbot.transcript.improvement import OptOutStore
@@ -491,6 +504,7 @@ from dmbot.ui import (
     player_id,
     recap_audio,
     shared_rules_defs,
+    theatre_button,
 )
 from dmbot.ui import guide as guide_screen
 from dmbot.ui import logic as ui_logic
@@ -850,6 +864,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         npcs_roster: NpcRosterStore | None = None,
         recap_styles: StyleStore | None = None,
         recap_notes: NoteStore | None = None,
+        recap_musts: MustStore | None = None,
         installs: InstallStore | None = None,
         recap_holds: recap_hold.HoldStore | None = None,
         backstory_links: BackstoryLinks | None = None,
@@ -956,6 +971,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self.web_line_deletions = (
             web_line_delete.WebLineDeletions(recaps.db) if recaps is not None else None
         )
+        # A DM's "Remove this speaker's lines" from the website (#3305).
+        self.speaker_removals = (
+            speaker_removal.SpeakerRemovals(recaps.db) if recaps is not None else None
+        )
         # Copies restored from the website, waiting for the bot to apply them (#2746).
         self.web_restores = web_restore.WebRestores(recaps.db) if recaps is not None else None
         self._clip_sweep_rounds = 0
@@ -971,6 +990,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self.recap_holds = recap_holds  # recaps waiting for the DM's name answers (#2169)
         self.recap_feedback_limit = recap_feedback.FeedbackLimit()
         self.recap_notes = recap_notes  # the DM's standing style notes (#2076)
+        self.recap_musts = recap_musts  # the list every recap is written to (#3328)
         # How connected each name is in The truth, to rank the recap's beats (#2411); refreshed
         # after each session.
         self.importance = ImportanceCache(memory) if memory is not None else None
@@ -1334,6 +1354,11 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             if self.ai_client
             else None
         )
+        self.theatre_ai = (  # a session recast as a script (#3244), background, DM only
+            self.ai_client.tier(FEATURE_TIERS[Feature.THEATRE], Feature.THEATRE)
+            if self.ai_client
+            else None
+        )
         # Pictures posted in the table chat (#2450): off unless the backend switch is on.
         # Messages deleted lately, so a picture still being described when its poster deletes it
         # is not written down afterwards (#2450); id → when.
@@ -1403,7 +1428,11 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         # Cleaning the sessions a DM imported from a file (#2105), in the background.
         self.import_job: ImportJob | None = (
             ImportJob(
-                ImportStore(transcripts.db), self.lookup.get, self.topic_ai, consent.consenting
+                ImportStore(transcripts.db),
+                self.lookup.get,
+                self.topic_ai,
+                consent.consenting,
+                consent.recorded_in,
             )
             if transcripts is not None and self.lookup is not None
             else None
@@ -1606,6 +1635,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             BackstoryButton
         )  # 📜 Upload campaign lore, from the Main Menu (#2380)
         self.add_dynamic_items(links_ready.ReadyButton)  # connections became ready (#2650)
+        self.add_dynamic_items(theatre_button.ScriptButton)  # make a script of a session (#3244)
         # the Shared story switch (#1692), named one by one so the registration test sees them
         self.add_dynamic_items(StoryButton, StoryChoiceButton, StoryYesButton, StoryNoButton)
         # giving DMbot an adventure (#1698), named one by one so the registration test sees them
@@ -2312,6 +2342,35 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 log.exception("Couldn't take a deleted person out of an alias's user field")
         return gone.lines, gone.sessions
 
+    async def remove_speaker(
+        self, guild_id: int, campaign_id: str, speaker: int
+    ) -> tuple[int, int]:
+        """A DM's removal of one speaker's lines from ONE campaign (#3305; see
+        `TranscriptStore.remove_speaker`): one transaction, raises if it failed and then nothing is
+        removed. Returns (lines, sessions) removed. A running session of THIS campaign holds its
+        save lock meanwhile and drops what the speaker said and has not yet been saved; a running
+        session of another campaign is not touched."""
+        if self.transcripts is None:
+            return 0, 0
+        tables = [
+            t
+            for t in (self.tables.get(guild_id), *self._ending.get(guild_id, []))
+            if t and t.campaign_id == campaign_id
+        ]
+        async with contextlib.AsyncExitStack() as stack:
+            for table in tables:
+                await stack.enter_async_context(table.save_lock)
+                table.unsaved.drop_speaker(speaker)
+            gone = await self.transcripts.remove_speaker(guild_id, campaign_id, speaker)
+        log.info("Removed a speaker: %s lines in %s sessions", gone.lines, gone.sessions)
+        return gone.lines, gone.sessions
+
+    async def count_speaker(self, guild_id: int, campaign_id: str, speaker: int) -> tuple[int, int]:
+        if self.transcripts is None:
+            return 0, 0
+        counted = await self.transcripts.count_speaker(guild_id, campaign_id, speaker)
+        return counted.lines, counted.sessions
+
     @staticmethod
     def _watched(work: Coroutine[Any, Any, None], name: str) -> asyncio.Task[None]:
         """A background task that must run as long as DMbot does: if it ever ends
@@ -2981,6 +3040,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             ("new names", lambda: self.post_new_names(table)),
             ("new connections", lambda: self.post_claims(table)),
             ("family links", lambda: self.warn_about_family(table)),
+            # The script of the session, if the DM wants it (#3244): only a question here.
+            ("script offer", lambda: self.offer_script(table)),
             # The questions above go out as one private message (#3210).
             ("questions for the DM", lambda: self.send_collected_asks(table)),
             ("heads-ups", lambda: self.warn_about_continuity(table)),
@@ -9639,6 +9700,30 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     ),
                 )
 
+    async def offer_script(self, table: Table) -> None:
+        """After a session (#3244), only with DMBOT_THEATRE_ON: one more question for the DM,
+        "make a script of this session?", with a button. Nothing is spent until the DM confirms.
+        Not offered to a campaign whose plan has no story memory (checked closed), or for a
+        session with no lines. No AI call here."""
+        if (
+            not self.settings.theatre_on
+            or self.theatre_ai is None
+            or self.memory is None
+            or self.transcripts is None
+            or table.campaign_id is None
+            or table.transcript_session_id is None
+        ):
+            return
+        gid, cid, sid = table.guild_id, table.campaign_id, table.transcript_session_id
+        with log_context(guild_id=gid, campaign_id=cid):
+            session = await self.transcripts.session(gid, sid)
+            campaign = await self.campaigns.get(gid, cid)
+            if session is None or session.lines == 0 or campaign is None:
+                return
+            if not await self.plan_allows("story", gid, campaign, fail_open=False):
+                return
+            await self.ask_dm(table, theatre_button.ask_for(gid, sid))
+
     async def warn_about_continuity(self, table: Table) -> None:
         """After a session: if what was said clashes with the story the DM already confirmed
         (#1320), the DM screen says how many, never what, with a button only the DM can use.
@@ -11285,6 +11370,25 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                         log.info("Website line deletion: %s", why or "done")  # the word only
             except Exception as exc:
                 log.warning("The website line deletions of a server failed: %s", type(exc).__name__)
+
+    async def run_speaker_removals(self) -> None:
+        """Carry out the removals a DM asked for on the website (#3305): one speaker's lines from
+        one campaign, nobody else's and no other campaign's. Only servers the bot is in now.
+        Counts only are logged."""
+        store = self.speaker_removals
+        if store is None or self.transcripts is None:
+            return
+        for guild in list(self.guilds):
+            try:  # one server's trouble must not starve the others
+                for _ in range(speaker_removal.PER_ROUND):
+                    item = await store.claim_next(guild.id)
+                    if item is None:
+                        break
+                    with log_context(guild_id=guild.id, campaign_id=item.campaign_id):
+                        why = await speaker_removal.carry_out(self, guild.id, item, store)
+                        log.info("Speaker removal: %s", why or "done")  # the word only
+            except Exception as exc:
+                log.warning("The speaker removals of a server failed: %s", type(exc).__name__)
 
     async def run_web_restores(self) -> None:
         """Apply the copies DMs uploaded on the website (#2746), one at a time per server, with
@@ -13381,7 +13485,11 @@ def register_backup_sections(
     campaigns.register_section(MapNotesSection())  # and the maps posted at its table (#2450)
     campaigns.register_section(StyleSection())  # and how it likes its recaps to sound (#2075)
     campaigns.register_section(NotesSection())  # and its standing notes on that (#2076)
+    campaigns.register_section(MustSection())  # and the must-haves its recaps are written to
     campaigns.register_section(ImportSpeakersSection())  # and who its import labels were (#2105)
+    campaigns.register_section(SpeakersSection())  # speakers without Discord (#3305)
+    campaigns.register_section(ImportConsentsSection())  # and what the uploader confirmed
+    campaigns.register_section(SpeakerErasuresSection())  # and whose lines a DM removed (#3305)
     campaigns.register_section(FollowedSetsSection())  # and the sets it follows (#1260)
     campaigns.register_section(RuleSetsSection())  # and the sets it publishes (#2552)
     campaigns.register_section(ClockSection())  # and the game clock (#965)
@@ -13458,6 +13566,7 @@ async def run(settings: Settings) -> None:
             npcs_roster=NpcRosterStore(db),
             recap_styles=StyleStore(db),
             recap_notes=NoteStore(db),
+            recap_musts=MustStore(db),
             installs=InstallStore(db),
             recap_holds=recap_hold.HoldStore(db),
             backstory_links=BackstoryLinks(db),

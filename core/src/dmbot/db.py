@@ -36,6 +36,7 @@ from dmbot.schema import (
     WEB_ROLE_OFFER_POLICY,
     WEB_ROLE_POLICIES,
     WEB_ROLE_RECAP_POLICY,
+    WEB_ROLE_REFUSALS_POLICY,
     WEB_ROLE_SHEET_POLICY,
     Migration,
 )
@@ -433,18 +434,19 @@ async def _grant_web_role(conn: AsyncConnection[Any]) -> None:
     # cross: the owner's campaign count (0034), account deletion making campaigns ownerless
     # (0047) and the hours used in a month (0048). REVOKE first, so a run on every start leaves
     # exactly these; each only once it exists.
-    for name, signature in WEB_ROLE_FUNCTIONS:
-        cur = await conn.execute(
-            "SELECT 1 FROM pg_proc WHERE proname = %s"
-            " AND pronamespace = current_schema()::regnamespace",
-            (name,),
-        )
-        if await cur.fetchone() is not None:
+    for _name, signature in WEB_ROLE_FUNCTIONS:
+        # By its whole signature, not its name: a function that was given another set of
+        # arguments by a later migration (#3305) is not there yet in a database migrated only part
+        # of the way.
+        cur = await conn.execute("SELECT to_regprocedure(%s) IS NOT NULL AS found", (signature,))
+        if (await cur.fetchone() or {}).get("found"):
             door = sql.SQL(signature)  # constants from schema.py, never input
             await conn.execute(sql.SQL("REVOKE ALL ON FUNCTION {} FROM {}").format(door, role))
             await conn.execute(sql.SQL("GRANT EXECUTE ON FUNCTION {} TO {}").format(door, role))
     if "recap_jobs" in existing:
         await conn.execute(WEB_ROLE_RECAP_POLICY)  # #1382
+    if "consent_refusals" in existing:
+        await conn.execute(WEB_ROLE_REFUSALS_POLICY)  # #3305
     for privileges, tables in WEB_ROLE_GRANTS:
         present = [t for t in tables if t in existing]
         if privileges.startswith("INSERT (") and not offers_ready:

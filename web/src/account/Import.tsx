@@ -560,6 +560,8 @@ export default function Import({
                 {
                   userId: s.suggested.userId,
                   name: s.suggested.name.trim() || s.label,
+                  // The API says when the suggested member said no (#3305 PR 1).
+                  ...(s.blocked ? { blocked: s.blocked } : {}),
                 },
               ]
             : [],
@@ -1027,8 +1029,9 @@ export default function Import({
                           .split("\n")
                           .map((line) => line.trim())
                           .filter((line) => line !== "")
-                          .map((line) => (
-                            <li key={line}>{line}</li>
+                          // The position is part of the key, so two identical lines both show (#3323).
+                          .map((line, i) => (
+                            <li key={`${i}-${line}`}>{line}</li>
                           ))}
                       </ul>
                     ) : (
@@ -1049,7 +1052,7 @@ export default function Import({
                   {folded.map((s) => {
                     const chosen = mapping[s.label] ?? (confirmOn ? "" : DROP);
                     const who = known[chosen];
-                    const existing = preview?.files.flatMap((f) => f.speakers).find((x) => x.label === s.label)?.existing;
+                    const existing = preview?.files.flatMap((f) => f.speakers).find((x) => x.label === s.label)?.speaker;
                     return (
                       <li key={s.label}>
                         <span class="campaign-name">{s.label}</span>
@@ -1095,17 +1098,20 @@ export default function Import({
                           </span>
                         )}
                         {needsTick(chosen) && (
-                          <label class="small">
-                            <input
-                              type="checkbox"
-                              checked={ticks[s.label] === true}
-                              onChange={(e) => {
-                                setCheck(null);
-                                setTicks((now) => ({ ...now, [s.label]: (e.target as HTMLInputElement).checked }));
-                              }}
-                            />{" "}
-                            {confirmWords.tick(chosen === NEW_SPEAKER ? s.label : (who?.name ?? s.label))}
-                          </label>
+                          <fieldset class="small">
+                            <legend class="visually-hidden">{confirmWords.tickLegend(s.label)}</legend>
+                            <label class="choice">
+                              <input
+                                type="checkbox"
+                                checked={ticks[s.label] === true}
+                                onChange={(e) => {
+                                  setCheck(null);
+                                  setTicks((now) => ({ ...now, [s.label]: (e.target as HTMLInputElement).checked }));
+                                }}
+                              />
+                              <span>{confirmWords.tick(chosen === NEW_SPEAKER ? s.label : (who?.name ?? s.label))}</span>
+                            </label>
+                          </fieldset>
                         )}
                         {who && who.agreed === false && !confirmOn && (
                           <span class="small" role="note">

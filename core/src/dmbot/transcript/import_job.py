@@ -53,6 +53,7 @@ TOPIC_FAILURES_BEFORE_REST = 3  # windows failing one after another before the A
 
 Lookup = Callable[[int, str], Awaitable[CampaignLookup]]
 Consenting = Callable[[int], Awaitable[frozenset[int]]]  # who is recorded now, in a server
+Recorded = Callable[[int, str], Awaitable[frozenset[int]]]  # ...and in one campaign (#3305)
 
 
 @dataclass(frozen=True, slots=True)
@@ -464,12 +465,21 @@ class ImportJob:
         lookup: Lookup,
         topic_ai: Completes | None,
         consenting: Consenting,
+        recorded: Recorded | None = None,
     ) -> None:
         """`consenting`: who is recorded now in a server (`ConsentStore.consenting`: the current
         terms, the outside engine and the stops held back). Asked before every chunk and every AI
-        call, because a person can stop at any moment during a long job."""
+        call, because a person can stop at any moment during a long job. `recorded`: the same for
+        one campaign's stored sessions, which also counts the people the uploader confirmed
+        (`ConsentStore.recorded_in`, #3305); without it, `consenting` alone counts."""
         self.store, self.lookup, self.topic_ai = store, lookup, topic_ai
         self.consenting = consenting
+        self.recorded = recorded
+
+    async def _agreed(self, guild_id: int, campaign_id: str) -> frozenset[int]:
+        if self.recorded is not None:
+            return await self.recorded(guild_id, campaign_id)
+        return await self.consenting(guild_id)
 
     async def run_round(self, guild_id: int) -> int:
         """Clean the waiting imports of one server (first taking back any a stopped bot left
@@ -508,7 +518,7 @@ class ImportJob:
         partly = False
         for start in range(0, len(rows), CHUNK_LINES):
             chunk = rows[start : start + CHUNK_LINES]
-            agreed = await self.consenting(guild_id)  # asked again for every chunk
+            agreed = await self._agreed(guild_id, campaign_id)  # asked again for every chunk
             texts: list[str | None] = []
             for row in chunk:
                 fixed = row.heard
@@ -522,6 +532,7 @@ class ImportJob:
             if self.topic_ai is not None:
                 topics, windows_left, failures, skipped = await self._topics(
                     guild_id,
+                    campaign_id,
                     [(r.user_id, t or r.heard) for t, r in zip(texts, chunk, strict=True)],
                     windows_left,
                     failures,
@@ -549,6 +560,7 @@ class ImportJob:
     async def _topics(
         self,
         guild_id: int,
+        campaign_id: str,
         lines: Sequence[tuple[int, str]],
         windows_left: int,
         failures: int,
@@ -567,7 +579,7 @@ class ImportJob:
             if windows_left <= 0 or failures >= TOPIC_FAILURES_BEFORE_REST:
                 skipped = True
                 break
-            agreed = await self.consenting(guild_id)
+            agreed = await self._agreed(guild_id, campaign_id)
             window = lines[start : start + WINDOW_LINES]
             sent = [(i, text) for i, (user, text) in enumerate(window) if user in agreed]
             if not sent:

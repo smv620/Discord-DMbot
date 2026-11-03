@@ -18,6 +18,7 @@ from dmbot.memory.secret_aloud import MIN_KEY as MIN_SECRET_LETTERS
 from dmbot.recaps import familiar as fam
 from dmbot.recaps import fixed_lines
 from dmbot.recaps import split as sp
+from dmbot.recaps.must_haves import MustStore
 from dmbot.recaps.pipeline import Inputs
 from dmbot.recaps.style import NoteStore, StyleStore
 from dmbot.recaps.text import NOTES_HEAD, strip_cues
@@ -235,6 +236,7 @@ async def load_inputs(
     session_at: int,
     styles: StyleStore | None = None,
     notes: NoteStore | None = None,
+    musts: MustStore | None = None,
     with_earlier: bool = True,
     importance: Any | None = None,
     recanted: Collection[str] = (),
@@ -246,7 +248,8 @@ async def load_inputs(
         return await load_inputs_or_why(
             campaigns=campaigns, lookup=lookup, transcripts=transcripts, recaps=recaps,
             clocks=clocks, guild_id=guild_id, campaign_id=campaign_id, session_at=session_at,
-            styles=styles, notes=notes, with_earlier=with_earlier, importance=importance,
+            styles=styles, notes=notes, musts=musts, with_earlier=with_earlier,
+            importance=importance,
             recanted=recanted, relation_ties=relation_ties,
         )  # fmt: skip
     except NotLoaded:
@@ -324,6 +327,7 @@ async def load_inputs_or_why(
     session_at: int,
     styles: StyleStore | None = None,
     notes: NoteStore | None = None,
+    musts: MustStore | None = None,
     with_earlier: bool = True,
     importance: Any | None = None,
     recanted: Collection[str] = (),
@@ -385,6 +389,8 @@ async def load_inputs_or_why(
         notes=[n.text for n in await notes.notes(guild_id, campaign_id)]
         if notes is not None
         else (),
+        # The campaign's must-haves, or the defaults (#3328): for the writer's call only.
+        musts=await musts.lines_for(guild_id, campaign_id) if musts is not None else (),
     )
 
 
