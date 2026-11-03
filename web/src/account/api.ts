@@ -1232,15 +1232,24 @@ export interface HouseFileInput {
   link?: string;
   text?: string;
 }
+/** The recap must-haves (#3329; docs/RECAP_STANDARD.md): what every recap of the campaign covers when the session had it.
+ * `group` is one of the five headings for DMbot's own lines and "" for a line the DM added; `defaults` is true while the
+ * campaign has no list of its own. Game masters only (the API leaves it out for anyone else). */
+export interface RecapMusts {
+  lines: { id: string; text: string; group: string }[];
+  defaults: boolean;
+}
 /** The campaign's recap style (#2985): ids are the stores' own, to remove by. */
 export interface RecapStyle {
+  /** Missing from an API older than #3328. */
+  musts?: RecapMusts;
   examples: { id: string; text: string }[];
   notes: { id: string; text: string }[];
   /** True when the campaign has no examples of its own, so DMbot's own are used. */
   defaults: boolean;
 }
 export interface RecapStyleChange {
-  action: "add_example" | "remove_example" | "use_defaults" | "add_note" | "remove_note";
+  action: "add_example" | "remove_example" | "use_defaults" | "add_note" | "remove_note" | "save_musts" | "musts_defaults";
 }
 export interface RecapStyleAction {
   state: "waiting" | "working" | "done" | "failed";
@@ -2431,6 +2440,10 @@ export interface AccountApi {
   changeRecapStyle?(campaignRef: string, action: RecapStyleChange["action"], arg?: string): Promise<{ id: string }>;
   /** Where a queued change stands: state, error word, times; never its words. */
   recapStyleAction?(campaignRef: string, id: string): Promise<RecapStyleAction>;
+  /** Save the whole must-haves list, in the order shown (#3329); an empty list is the same as the defaults. Followed with `recapStyleAction`. */
+  saveRecapMusts?(campaignRef: string, lines: string[]): Promise<{ id: string }>;
+  /** Back to DMbot's own list of must-haves (#3329). Followed with `recapStyleAction`. */
+  recapMustsDefaults?(campaignRef: string): Promise<{ id: string }>;
   /** One upload's progress, or with no id the newest of the last day; null when there is none. */
   loreRead?(campaignRef: string, id?: string): Promise<LoreUpload | null>;
   /** One NPC's page. `campaignRef` is `<server>.<campaign>`, `entry` the NPC's id (#2266). */
@@ -2892,7 +2905,7 @@ export interface ApiHelpers {
 export const ACCOUNT_METHODS = ["emailSignInRequest", "emailSignInUse", "offerHandover", "deleteCampaign", "restoreStage", "restorePart", "restoreGo", "restoreStatus", "restoreCancel", "campaignBackup", "takeBackHandover", "handoverLook", "handoverAccept", "handoverDecline", "removeDiscordAccount", "getMoveCode", "myEmail", "changeEmail", "confirmEmail", "cancelEmailChange", "sendSupport", "mySupport", "supportThread", "signOutEverywhere", "startTryIt", "checkoutUrl", "billingPortalUrl", "renewPlan", "extraHoursUrl", "downloadExport", "characters", "linkServer", "acceptOffer", "declineOffer", "withdrawOffer", "stopRecording", "myLines", "deleteMyLines", "myLinesStatus", "requestDelete", "confirmDelete"] as const satisfies readonly (keyof AccountApi)[];
 export const RECAPS_METHODS = ["recapAudioUrl", "recaps", "pastSessions", "sessionReport", "makeSessionReport", "answerReport", "setBeatPresent", "makeRecap", "addRecap", "recapList", "recap", "saveRecap", "approveRecap", "approveUnchecked", "recapAudioLinks", "recapChoices", "setRecapChoice", "askRecapAudioAgain", "plotCheck", "answerPlotIssue", "plotChatSend", "plotChat", "decidePlotProposal", "recapAudioRemake", "sendFix", "fixResult", "sendVoice", "voiceResult", "rewriteWith", "importPreview", "importMembers", "importConsent", "importCheck", "importStart", "importProgress", "importClock", "shareRecap", "publicRecap", "decideRecap"] as const satisfies readonly (keyof AccountApi)[];
 export const NAMES_METHODS = ["namesFixed", "undoNameFix", "campaignNames", "suggestSaidAs", "respellFromVoice", "saveSaidAs", "nameChecks", "answerNameCheck", "npcPage", "saveNpcNote", "myNpcNotes", "deleteMyNpcNotes", "allNames", "smartNames", "changeName", "nameThem", "webGraph", "webSize", "webOverview", "webFind", "webNodeSummary", "webViewers", "confirmKinds", "confirmUndo", "confirmAnswer", "webWaiting", "answerWaiting", "webReadings", "answerReading", "webPeek", "webReveal", "changeWebLink"] as const satisfies readonly (keyof AccountApi)[];
-export const CAMPAIGN_METHODS = ["transcriptCampaigns", "transcriptSessions", "transcript", "transcriptFile", "transcriptScript", "transcriptStretch", "transcriptPutBack", "transcriptLeaveOut", "sessionNotesList", "sessionNotes", "pictures", "pictureAction", "setCampaignSetting", "campaignOptionalRules", "campaignGameMasters", "campaignSheets", "chooseSheet", "sheetAnswer", "fixTranscriptLine", "fixAnswer", "campaignGameMasterCandidates", "campaignSettingAnswer", "timeline", "sharedRules", "houseRuleCampaigns", "houseRules", "ruleSharing", "chooseRuleSharing", "ruleSharingAnswer", "houseRulesFile", "improvement", "setImprovement", "homebrewCampaigns", "homebrew", "homebrewFile", "campaignPage", "loreAdd", "loreRead", "recapStyle", "changeRecapStyle", "recapStyleAction", "houseFile", "houseFileAdd"] as const satisfies readonly (keyof AccountApi)[];
+export const CAMPAIGN_METHODS = ["transcriptCampaigns", "transcriptSessions", "transcript", "transcriptFile", "transcriptScript", "transcriptStretch", "transcriptPutBack", "transcriptLeaveOut", "sessionNotesList", "sessionNotes", "pictures", "pictureAction", "setCampaignSetting", "campaignOptionalRules", "campaignGameMasters", "campaignSheets", "chooseSheet", "sheetAnswer", "fixTranscriptLine", "fixAnswer", "campaignGameMasterCandidates", "campaignSettingAnswer", "timeline", "sharedRules", "houseRuleCampaigns", "houseRules", "ruleSharing", "chooseRuleSharing", "ruleSharingAnswer", "houseRulesFile", "improvement", "setImprovement", "homebrewCampaigns", "homebrew", "homebrewFile", "campaignPage", "loreAdd", "loreRead", "recapStyle", "changeRecapStyle", "recapStyleAction", "saveRecapMusts", "recapMustsDefaults", "houseFile", "houseFileAdd"] as const satisfies readonly (keyof AccountApi)[];
 
 /** A stand-in for each call of an area: the first use loads the area's file (once), and every call goes to it. */
 function lazyArea<K extends keyof AccountApi>(names: readonly K[], load: () => Promise<{ default: (h: ApiHelpers) => Record<string, unknown> }>, h: ApiHelpers): Pick<AccountApi, K> {
