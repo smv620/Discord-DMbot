@@ -15,7 +15,7 @@ export const speakerRemovalWords = {
   done: (lines: number, sessions: number): string =>
     `${lines.toLocaleString("en-US")} ${lines === 1 ? "line" : "lines"} removed from ${sessions.toLocaleString("en-US")} ${sessions === 1 ? "session" : "sessions"}. This campaign only.`,
   nothing: "There are no lines left to remove.",
-  failedDo: "Something went wrong. Nothing was removed. Try again.",
+  failedDo: "Something went wrong with the removal. Check the list, then try again.",
   problems: {
     "too-soon": "A removal is already going. Wait a minute, then try again.",
     "not-allowed": "Only a game master of this campaign can remove lines.",

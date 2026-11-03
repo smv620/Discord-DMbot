@@ -10,6 +10,7 @@ import { ApiError } from "../src/account/api";
 import { mockApi } from "../src/account/mock";
 import SpeakerRemovalPanel from "../src/account/SpeakerRemoval";
 import { speakerRemovalWords as w } from "../src/content/speaker-removal-words";
+import { importConsentLine } from "../src/content/privacy-channels";
 import { entries, held } from "../src/content/whats-new";
 
 const live = vi.hoisted(() => ({ on: true }));
@@ -100,6 +101,35 @@ describe("the speakers without Discord", () => {
     expect(api.calls.filter((c) => c.startsWith("campaignSpeakers")).length).toBe(2);
   });
 
+  it("keeps the result when the list cannot be read again after a removal", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const api = mockApi("table");
+    const real = api.campaignSpeakers!;
+    let reads = 0;
+    api.campaignSpeakers = async (ref) => {
+      if (++reads > 1) throw new ApiError("network"); // the first read works, the one after the removal does not
+      return real(ref);
+    };
+    render(<SpeakerRemovalPanel api={api} campaignRef={REF} />);
+    await screen.findByText(w.heading);
+    fireEvent.click(screen.getByRole("button", { name: w.buttonFor("Old Pip") }));
+    fireEvent.click(screen.getByRole("button", { name: w.confirmYes }));
+    await settle();
+    expect(await screen.findByText(w.done(12, 2))).toBeTruthy(); // still there: the panel did not vanish
+    expect(screen.getByText(w.heading)).toBeTruthy();
+  });
+
+  it("sends one removal when the confirm button is pressed twice at once", async () => {
+    const api = mockApi("table");
+    render(<SpeakerRemovalPanel api={api} campaignRef={REF} />);
+    await screen.findByText(w.heading);
+    fireEvent.click(screen.getByRole("button", { name: w.buttonFor("Old Pip") }));
+    const yes = screen.getByRole("button", { name: w.confirmYes });
+    fireEvent.click(yes);
+    fireEvent.click(yes);
+    await waitFor(() => expect(api.calls.filter((c) => c.startsWith("removeSpeaker")).length).toBe(1));
+  });
+
   it("says a failed removal removed nothing", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const api = mockApi("table");
@@ -129,5 +159,13 @@ describe("the words", () => {
   it("hold the What's new entry back while the switch is off", () => {
     expect(held.some((h) => h.title === "Remove a person's lines from a campaign")).toBe(true);
     expect(entries.some((e) => e.title === "Remove a person's lines from a campaign")).toBe(false);
+  });
+});
+
+describe("the privacy line", () => {
+  it("says a member deletes their own lines from Discord and that removed lines stay removed in that campaign", () => {
+    expect(importConsentLine.text).toContain("A server member can delete their own lines from Discord");
+    expect(importConsentLine.text).toContain("stay removed from that campaign");
+    expect(importConsentLine.text).not.toContain("on the website");
   });
 });

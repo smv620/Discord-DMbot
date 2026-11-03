@@ -1305,8 +1305,6 @@ export interface ImportProgress {
   }[];
 }
 
-/** One saved session of a campaign (#1501); times are Unix seconds, `endedAt` null when it was
- * still running or stopped early. */
 /** A speaker without Discord that a campaign kept when older sessions were imported (#3305): `id` is a negative number as
  * text and means nothing to the page; `lines` is how many lines they have in this campaign. Game masters only. */
 export interface CampaignSpeaker {
@@ -1317,6 +1315,8 @@ export interface CampaignSpeaker {
 /** Where the removal of one speaker's lines stands (#3305 PR 2): the shared progress shape (stage `removing`), and once it is
  * done how many lines and sessions it touched. Counts only. */
 export type SpeakerRemoval = JobProgress & { speaker?: string; lines?: number | null; sessions?: number | null };
+/** One saved session of a campaign (#1501); times are Unix seconds, `endedAt` null when it was
+ * still running or stopped early. */
 export interface TranscriptSessionItem {
   number: number;
   startedAt: number;

@@ -22,12 +22,15 @@ export default function SpeakerRemovalPanel({ api, campaignRef }: { api: Account
   const [open, setOpen] = useState<{ speaker: CampaignSpeaker; id: string; at: SpeakerRemoval | null } | null>(null);
   const [stopped, setStopped] = useState(false);
   const errors = useRef(0);
+  const sending = useRef(false); // (a ref, so two quick presses before the next render cannot both send)
 
-  const load = async (): Promise<void> => {
+  /** Reads the list. Only the first read can hide the panel (a player, an older API or a failed list: nothing to show);
+   * a later one that fails keeps what is shown, so a removal's result and a "nothing left" note never vanish with it. */
+  const load = async (first = false): Promise<void> => {
     try {
       setList(await api.campaignSpeakers!(campaignRef));
     } catch {
-      setList("hidden"); // a player, an older API or a failed list: nothing to show
+      if (first) setList("hidden");
     }
   };
   useEffect(() => {
@@ -38,7 +41,7 @@ export default function SpeakerRemovalPanel({ api, campaignRef }: { api: Account
       setList("hidden");
       return;
     }
-    void load();
+    void load(true);
   }, [api, campaignRef]);
 
   // Follow the open removal until it is done or failed, asking less often while nothing moves.
@@ -82,6 +85,8 @@ export default function SpeakerRemovalPanel({ api, campaignRef }: { api: Account
   const pending = open !== null && !failed && !done && !stopped;
 
   const remove = async (speaker: CampaignSpeaker): Promise<void> => {
+    if (sending.current) return;
+    sending.current = true;
     setAsking(null);
     setProblem("");
     setBusy(true);
@@ -95,8 +100,12 @@ export default function SpeakerRemovalPanel({ api, campaignRef }: { api: Account
       if (err instanceof ApiError && err.kind === "nothing") {
         setProblem(words.nothing);
         void load();
-      } else setProblem(words.problems[err instanceof ApiError ? err.kind : ""] ?? words.genericProblem);
+      } else {
+        setProblem(words.problems[err instanceof ApiError ? err.kind : ""] ?? words.genericProblem);
+        if (err instanceof ApiError && err.kind === "not-found") void load(); // (they are not in this campaign any more: the list says so)
+      }
     } finally {
+      sending.current = false;
       setBusy(false);
     }
   };
@@ -130,7 +139,7 @@ export default function SpeakerRemovalPanel({ api, campaignRef }: { api: Account
             <span class="small">{words.linesLabel(s.lines)}</span>
             {asking === s.id ? (
               <div class="stack" role="group" aria-label={words.confirm(s.name)}>
-                <p role="alert">{words.confirm(s.name)}</p>
+                <p>{words.confirm(s.name)}</p>
                 <p>
                   <button type="button" class="button" disabled={busy || pending} onClick={() => void remove(s)}>
                     {words.confirmYes}
