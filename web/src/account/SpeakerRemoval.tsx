@@ -110,10 +110,46 @@ export default function SpeakerRemovalPanel({ api, campaignRef }: { api: Account
     }
   };
 
+  const outside = list.filter((s) => s.member !== true);
+  const ticked = list.filter((s) => s.member === true);
+
+  /** One group of people with their buttons, under its own heading. */
+  const group = (id: string, heading: string, intro: string, people: CampaignSpeaker[]) =>
+    people.length === 0 ? null : (
+      <div class="stack" role="group" aria-labelledby={id}>
+        <h3 id={id}>{heading}</h3>
+        <p class="small">{intro}</p>
+        <ul class="campaigns">
+          {people.map((s) => (
+            <li key={s.id}>
+              <span class="campaign-name">{s.name}</span>
+              <span class="small">{words.linesLabel(s.lines)}</span>
+              {asking === s.id ? (
+                <div class="stack" role="group" aria-label={words.confirm(s.name, s.member === true)}>
+                  <p>{words.confirm(s.name, s.member === true)}</p>
+                  <p>
+                    <button type="button" class="button" disabled={busy || pending} onClick={() => void remove(s)}>
+                      {words.confirmYes}
+                    </button>{" "}
+                    <button type="button" class="button secondary" onClick={() => setAsking(null)}>
+                      {words.keep}
+                    </button>
+                  </p>
+                </div>
+              ) : (
+                <button type="button" class="button secondary" disabled={busy || pending} aria-label={words.buttonFor(s.name)} onClick={() => setAsking(s.id)}>
+                  {words.button}
+                </button>
+              )}
+            </li>
+          ))}
+        </ul>
+      </div>
+    );
+
   return (
     <section class="stack" aria-labelledby="sr-heading">
       <h2 id="sr-heading">{words.heading}</h2>
-      <p class="small">{words.intro}</p>
       {problem && <p role="alert">{problem}</p>}
       {open && (
         <div class="stack">
@@ -132,31 +168,8 @@ export default function SpeakerRemovalPanel({ api, campaignRef }: { api: Account
           )}
         </div>
       )}
-      <ul class="campaigns">
-        {list.map((s) => (
-          <li key={s.id}>
-            <span class="campaign-name">{s.name}</span>
-            <span class="small">{words.linesLabel(s.lines)}</span>
-            {asking === s.id ? (
-              <div class="stack" role="group" aria-label={words.confirm(s.name)}>
-                <p>{words.confirm(s.name)}</p>
-                <p>
-                  <button type="button" class="button" disabled={busy || pending} onClick={() => void remove(s)}>
-                    {words.confirmYes}
-                  </button>{" "}
-                  <button type="button" class="button secondary" onClick={() => setAsking(null)}>
-                    {words.keep}
-                  </button>
-                </p>
-              </div>
-            ) : (
-              <button type="button" class="button secondary" disabled={busy || pending} aria-label={words.buttonFor(s.name)} onClick={() => setAsking(s.id)}>
-                {words.button}
-              </button>
-            )}
-          </li>
-        ))}
-      </ul>
+      {group("sr-outside", words.outsideHeading, words.intro, outside)}
+      {group("sr-ticked", words.memberHeading, words.memberIntro, ticked)}
     </section>
   );
 }

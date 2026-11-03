@@ -785,7 +785,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   // The must-haves (#3329): DMbot's own thirteen until the DM saves a list of their own (`own` set).
   const mustsNow: { own: string[] | null } = { own: null };
   const styleNow = { examples: [{ id: "11", text: "The silver lock clicked and Mira let out her breath." }] as { id: string; text: string }[], notes: [] as { id: string; text: string }[] };
-  let speakersNow = [{ id: "-1", name: "Old Pip", lines: 12 }, { id: "-2", name: "The Ferryman", lines: 3 }];
+  let speakersNow: { id: string; name: string; lines: number; member?: boolean }[] = [{ id: "-1", name: "Old Pip", lines: 12 }, { id: "-2", name: "The Ferryman", lines: 3 }, { id: "9001", name: "Ash", lines: 5, member: true }];
   const removals = new Map<string, { speaker: string; looks: number; at: number; lines: number }>();
   const styleChanges = new Map<string, { action: RecapStyleAction["action"]; arg: string; looks: number; at: number }>();
   let putBackNow = false; // session 2's left-out stretch has been put back by a DM (#2568)
