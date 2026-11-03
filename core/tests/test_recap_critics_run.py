@@ -35,6 +35,12 @@ MOTIVE_AT = rd.sentences_of(WITH_MOTIVE).index(MOTIVE) + 1
 MEMORY = sg.Memory("f1" * 16, "The silver lock belongs to the Order of the Lantern.", True)
 NO_NOTES = json.dumps({"notes": [], "details": []})
 AGREE = json.dumps({"changes": []})
+MUSTS_LIST = ["Say where the party ended.", "Say how long the journey took.", "Name the loot."]
+
+
+def coverage_answer(*states: str) -> str:
+    items = [{"n": n, "state": s} for n, s in enumerate(states, start=1)]
+    return json.dumps({"items": items})
 
 
 def change(sentence: int, kind: str, text: str = "x", *ties: str) -> str:
@@ -1155,3 +1161,86 @@ class Criticising(WorkerHarness):
 
     def test_the_job_type_carries_the_loop(self) -> None:
         self.assertIn("critics", Job.__dataclass_fields__)
+
+    # --- the must-haves' coverage check (#3328) ---
+    async def test_a_missed_must_have_goes_to_the_one_revision(self) -> None:
+        fast = self.fast_for(CLEAN, grades=2)
+        careful = fx.Canned(
+            coverage_answer("covered", "not_given", "missed"),
+            fx.prose_answer(CLEAN),
+            coverage_answer("covered", "not_given", "covered"),  # the revision is read too
+        )
+        await self.setUpWorker(fast, careful, critics=True, musts=MUSTS_LIST)
+        job = await self.go()
+        self.assertEqual(job.state, "ready")
+        revision = careful.sent[1]
+        self.assertIn("<previous_draft>", revision)
+        self.assertIn("include this must-have", revision)
+        self.assertIn("Name the loot.", revision)
+        self.assertNotIn("how long the journey", revision)  # not given: never asked for
+        loop = cr.loop_from_json(job.critics)
+        self.assertTrue(loop.done)
+
+    async def test_a_failed_coverage_call_is_retried_alone_plotbot_is_not_asked_again(self) -> None:
+        fast = self.fast_for(CLEAN)
+        careful = fx.Canned(
+            NO_NOTES,  # the notes before the writing
+            AGREE,  # PlotBot: nothing to change
+            AIError("down"),  # the coverage check fails once
+            coverage_answer("covered", "covered", "covered"),
+        )
+        await self.setUpWorker(
+            fast, careful, critics=True, story=self.story_of(MEMORY), musts=MUSTS_LIST
+        )
+        job = await self.settle(await self.go())
+        self.assertEqual(job.state, "ready")
+        asked_plotbot = [t for t in careful.sent if "<memory>" in t and "<sentences>" in t]
+        self.assertEqual(len(asked_plotbot), 1)  # PlotBot paid for once
+        self.assertEqual(len([t for t in careful.sent if "<must_haves>" in t]), 2)
+
+    async def _no_flag_from(self, reply: Reply) -> None:
+        fast = self.fast_for(CLEAN)
+        careful = fx.Canned(reply)
+        await self.setUpWorker(fast, careful, critics=True, musts=MUSTS_LIST)
+        job = await self.go()
+        self.assertEqual(job.state, "ready")
+        self.assertEqual(len(careful.sent), 1)  # no revision was asked for
+
+    async def test_an_answer_cut_off_raises_no_flag_and_fails_nothing(self) -> None:
+        await self._no_flag_from(Reply(coverage_answer("missed", "missed")[:20], True, 10, 10, "m"))
+
+    async def test_an_answer_declined_raises_no_flag_and_fails_nothing(self) -> None:
+        await self._no_flag_from(Reply("no", False, 10, 10, "m", refused=True))
+
+    async def test_a_must_have_the_session_did_not_give_asks_for_nothing(self) -> None:
+        fast = self.fast_for(CLEAN)
+        careful = fx.Canned(coverage_answer("covered", "not_given", "not_given"))
+        await self.setUpWorker(fast, careful, critics=True, musts=MUSTS_LIST)
+        job = await self.go()
+        self.assertEqual(job.state, "ready")
+        self.assertEqual(len(careful.sent), 1)  # only the coverage check: no revision
+        self.assertEqual(cr.loop_from_json(job.critics).notes, ())
+
+    async def test_an_answer_that_cannot_be_read_raises_no_flag_and_fails_nothing(self) -> None:
+        fast = self.fast_for(CLEAN)
+        careful = fx.Canned("not json at all")
+        await self.setUpWorker(fast, careful, critics=True, musts=MUSTS_LIST)
+        job = await self.go()
+        self.assertEqual(job.state, "ready")
+        self.assertEqual(len(careful.sent), 1)
+
+    async def test_the_list_reaches_the_coverage_check_and_the_writer_not_the_beats(self) -> None:
+        fast = self.fast_for(CLEAN)
+        careful = fx.Canned(coverage_answer("covered", "covered", "covered"))
+        await self.setUpWorker(fast, careful, critics=True, musts=MUSTS_LIST)
+        await self.go()
+        self.assertIn("<must_haves>", careful.sent[0])
+        self.assertTrue(any("<must_haves>" in system for system in fast.systems))  # the writer
+        self.assertNotIn("Name the loot.", fast.systems[0] + fast.sent[0])  # the beats never see it
+
+    async def test_a_recap_with_no_list_makes_no_extra_call(self) -> None:
+        fast = self.fast_for(CLEAN)
+        careful = fx.Canned()
+        await self.setUpWorker(fast, careful, critics=True)
+        job = await self.go()
+        self.assertEqual((job.state, len(careful.sent), job.calls), ("ready", 0, 6))

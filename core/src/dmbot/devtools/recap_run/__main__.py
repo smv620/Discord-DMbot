@@ -66,7 +66,7 @@ from dmbot.memory.extractor import readable
 from dmbot.recaps import beats as bt
 from dmbot.recaps import calls as cl
 from dmbot.recaps import draft as rd
-from dmbot.recaps import fixed_lines
+from dmbot.recaps import fixed_lines, must_haves
 from dmbot.recaps import pipeline as pl
 from dmbot.recaps import split as sp
 from dmbot.recaps.audio.eleven import ProviderError, check_line
@@ -645,6 +645,13 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         "form, #2714); the report adds the counts. To compare, run the session once without it "
         "and once with it",
     )  # fmt: skip
+    parser.add_argument(
+        "--score", action="store_true",
+        help="with --session or --transcript: after the run, score the recap per must-have "
+        "(covered, missed, or not given by the session) and by the fact check, with one more AI "
+        "call that the estimate does not include. Counts only, so it can be posted; run on the "
+        "fixed set before and after a writer change (#3328)",
+    )  # fmt: skip
     parser.add_argument("--audio", action="store_true", help="also make the narration and music")
     parser.add_argument("--keep", action="store_true", help="keep the result as a draft recap row")
     parser.add_argument("--yes", action="store_true", help="spend the money")
@@ -688,6 +695,10 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         parser.error(
             "--structured goes with --session or --transcript, not --golden, --compare or --review"
         )
+    if (args.score and not (args.session or args.transcript)) or (
+        args.score and (args.compare or args.review or args.golden)
+    ):
+        parser.error("--score goes with --session or --transcript only")
     if args.out and not (args.transcript or args.compare or args.session):
         parser.error("--out goes with --session, --transcript or --compare")
     if args.hours is not None and not 0.25 <= args.hours <= 24:
@@ -903,6 +914,7 @@ async def inputs_for(db: Any, gid: int, cid: str, at: int) -> pl.Inputs:
     from dmbot.memory.lookup import LookupCache
     from dmbot.memory.store import MemoryStore
     from dmbot.recaps.inputs import load_inputs_or_why
+    from dmbot.recaps.must_haves import MustStore
     from dmbot.recaps.store import RecapStore
     from dmbot.timebot.store import ClockStore
     from dmbot.transcript.store import TranscriptStore
@@ -917,6 +929,7 @@ async def inputs_for(db: Any, gid: int, cid: str, at: int) -> pl.Inputs:
         campaign_id=cid,
         session_at=at,
         styles=StyleStore(db),
+        musts=MustStore(db),
     )
 
 
@@ -1013,6 +1026,8 @@ async def _session(
             print(REFUSED)
             return 3
         print("\n".join(lines))  # the paid text report first: nothing below can lose it
+        if args.score:
+            print("\n".join(await _score(out, careful)))
         folder = Path(args.out) if args.out else None
         if folder is not None:  # the text is saved before the audio can fail
             save_text(folder, out, lines, names_given=False)
@@ -1127,6 +1142,7 @@ def read_transcript_inputs(
         previous="",
         day=None,
         hours=hours,
+        musts=must_haves.default_texts(),  # a file has no campaign list: DMbot's defaults (#3328)
     )
     return inputs, transcript, names
 
@@ -1182,6 +1198,8 @@ async def _transcript(
         print(REFUSED)
         return 3
     print("\n".join(lines))  # the paid text report first: nothing below can lose it
+    if args.score:
+        print("\n".join(await _score(out, careful)))
     printed = list(lines)
     if out.job.state == "ready":
         cues = _cue_lines(out)
@@ -1236,6 +1254,18 @@ def _tolerated(transcript: tf.Transcript) -> str:
 def voice_tags_on() -> bool:
     """DMBOT_RECAP_VOICE_TAGS as the bot reads it (on unless 0/false/off)."""
     return os.environ.get("DMBOT_RECAP_VOICE_TAGS", "1").lower() in ("1", "true", "on")
+
+
+async def _score(out: Outcome, careful: Client) -> list[str]:
+    """`--score`: the must-have counts of a recap that is ready (#3328)."""
+    from dmbot.devtools.recap_run import score as sc
+
+    if out.job.state != "ready" or not out.job.summary:
+        return ["", "Must-haves: nothing to score, the run did not finish."]
+    sheet = out.job.beats if isinstance(out.job.beats, list) else None  # what it was written from
+    return await sc.score(
+        out.job.summary, sheet, out.inputs.musts, final_checks(out.job, out.inputs), careful
+    )
 
 
 def _cue_lines(out: Outcome) -> list[str]:
