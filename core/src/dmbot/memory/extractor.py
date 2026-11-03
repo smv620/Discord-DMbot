@@ -271,6 +271,7 @@ async def run(
     readings: bool = False,
     family_only: bool = False,
     imported: bool = False,
+    progress: Callable[[int, int], Awaitable[None]] | None = None,
 ) -> Report:
     """Read the session's lines and store what the AI found as proposals, all at once at the end
     (the linker picks the most-said new names across the whole session). `consenting` is asked
@@ -293,6 +294,9 @@ async def run(
 
     `imported`: the session was loaded from a file, so its readings carry no moment for the game
     clock's log to be read at (#3091).
+
+    `progress`: awaited with (batch n, of m) before each batch is sent (an import's progress card,
+    #3307); a failing one is logged by type and never stops the read.
 
     `family_only` (#2960; owner, 2026-10-29: families first, allies and enemies not yet): only a
     claim that says a family role ("is the niece of") is kept, whatever else the AI returned; the
@@ -328,6 +332,11 @@ async def run(
         rows = [(str(s.number), "DM" if s.user_id in dm_ids else "Player", s.text) for s in batch]
         speakers: dict[str, int | None] = {str(s.number): s.user_id for s in batch}
         report.calls += 1
+        if progress is not None:
+            try:
+                await progress(index + 1, len(work))
+            except Exception as exc:
+                log.warning("Story extractor: the progress note failed (%s)", type(exc).__name__)
         if count_call is not None:
             # Counted before the call, so a crash or restart mid-run cannot hide it from the
             # ceilings (the lines read are only noted when the claims are stored, at the end).

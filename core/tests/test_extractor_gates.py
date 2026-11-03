@@ -160,6 +160,27 @@ class Loading(ConfirmedMemoryTest):
         self.assertEqual((report.calls, len(ai.sent)), (15, 15))  # fifteen batches
         self.assertEqual(writes, 1)  # one hand-over, one read of the campaign's memory
 
+    async def test_the_progress_note_is_told_each_batch_and_a_failing_one_stops_nothing(
+        self,
+    ) -> None:
+        told: list[tuple[int, int]] = []
+
+        async def note(part: int, parts: int) -> None:
+            told.append((part, parts))
+            raise RuntimeError("secret words")
+
+        async def everyone() -> Collection[int]:
+            return {DM, 7}
+
+        ai = Canned()
+        report = await extractor.run(
+            ai, ClaimStore(self.memory), session(30, 7), guild_id=GUILD_A, campaign_id=self.c,
+            dm_ids={DM}, consenting=everyone, model=lambda: "m", session_started_at=1,
+            progress=note,
+        )  # fmt: skip
+        self.assertEqual(told, [(n, 3) for n in (1, 2, 3)])
+        self.assertEqual(report.calls, 3)  # (every batch was still sent)
+
 
 BOT: Any = DMBot  # (its methods are called on a stand-in)
 

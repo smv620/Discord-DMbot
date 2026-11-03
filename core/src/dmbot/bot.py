@@ -8722,6 +8722,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         tally: Tally | None,
         notice_channel: int | None,
         renew: Callable[[], Awaitable[Any]] | None = None,
+        progress: Callable[[int, int], Awaitable[None]] | None = None,
     ) -> str:
         """Read one stored session with the story extractor: "done", "limit" (its call limit is
         used, or it stopped early: the rest waits for a later round) or "skipped" (off, no plan,
@@ -8803,6 +8804,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 family_only=self.settings.story_family_only,
                 imported=await transcripts.is_import(gid, sid),
                 count_call=count_call,
+                progress=progress,
             )
             log.info(report.line())
             try:  # what a restart resumes from, and what the day's limit counts
@@ -10729,6 +10731,12 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         if campaign is None:
             return "skipped"
         try:
+
+            async def batch(part: int, parts: int) -> None:  # (the import's progress card)
+                await store.set_story(
+                    gid, ready.session_id, "reading", int(time.time()), part=part, parts=parts
+                )
+
             outcome = await self._extract_session(
                 gid,
                 ready.campaign_id,
@@ -10737,9 +10745,13 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 tally=None,
                 notice_channel=campaign.dm_screen_channel_id,
                 renew=lambda: store.renew_scan(gid, ready.session_id, int(time.time())),
+                progress=batch,
             )
             if outcome == "done":
                 await self._mark_import_read(gid, ready.session_id)
+                await store.set_story(gid, ready.session_id, "read", int(time.time()))
+            elif outcome == "limit":
+                await store.set_story(gid, ready.session_id, "waiting", int(time.time()))
             return outcome
         except Exception as exc:  # the type only: a database error can quote a row
             log.warning("Import: the story read failed (%s)", type(exc).__name__)

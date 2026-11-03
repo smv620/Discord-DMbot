@@ -74,6 +74,32 @@ class TheStore(WithImports):
 
         self.assertLess(CALL_TIMEOUT_S * 2, STALE_SCAN_S)  # (the claim is renewed before each call)
 
+    async def story(self, sid: str) -> tuple[str, int, int, int, int]:
+        async with self.db.guild(GUILD) as conn:
+            cur = await conn.execute(
+                "SELECT story_state, story_part, story_parts, story_started_at, story_moved_at"
+                " FROM session_imports WHERE session_id = %s",
+                (sid,),
+            )
+            r: Any = await cur.fetchone()
+        return (
+            r["story_state"], r["story_part"], r["story_parts"],
+            r["story_started_at"], r["story_moved_at"],
+        )  # fmt: skip
+
+    async def test_the_story_read_notes_its_state_and_keeps_when_it_started(self) -> None:
+        sid = await self.imported(1)
+        self.assertEqual((await self.story(sid))[0], "")
+        await self.store.set_story(GUILD, sid, "reading", 100, part=1, parts=4)
+        await self.store.set_story(GUILD, sid, "reading", 160, part=2, parts=4)
+        self.assertEqual(await self.story(sid), ("reading", 2, 4, 100, 160))  # (started once)
+        await self.store.set_story(GUILD, sid, "waiting", 200)
+        self.assertEqual(await self.story(sid), ("waiting", 2, 4, 100, 200))
+        await self.store.set_story(GUILD, sid, "reading", 900, part=3, parts=4)
+        self.assertEqual((await self.story(sid))[3], 900)  # (a new try starts afresh)
+        await self.store.set_story(GUILD, sid, "read", 950)
+        self.assertEqual((await self.story(sid))[0], "read")
+
     async def test_a_session_whose_scan_was_given_up_is_not_read(self) -> None:
         sid = await self.imported(1)
         await self.store.give_up_scan(GUILD, sid)
@@ -184,6 +210,35 @@ class TheImportRead(WithImports):
         self.assertTrue(await kwargs["renew"]())  # (the claim is still ours and now fresh)
         through, _ = await self.transcripts.extraction(GUILD, sid)
         self.assertEqual(through, START * 1000 + DAY * 1000)  # marked read to its last line
+
+    async def test_the_import_card_is_told_each_batch_then_read_or_waiting(self) -> None:
+        for outcome, final in (("done", "read"), ("limit", "waiting")):
+            sid = await self.imported(1 if outcome == "done" else 2)
+            ready: Any = SimpleNamespace(campaign_id=self.campaign.id, session_id=sid)
+            me = self.fake(outcome)
+
+            async def run(*a: Any, _me: Any = me, _o: str = outcome, **kw: Any) -> str:
+                await kw["progress"](1, 3)
+                await kw["progress"](2, 3)
+                return _o
+
+            me._extract_session = AsyncMock(side_effect=run)
+            await BOT._extract_import(me, GUILD, ready)
+            state, part, parts, _, _ = await self.story(sid)
+            self.assertEqual((state, part, parts), (final, 2, 3))
+
+    async def story(self, sid: str) -> tuple[str, int, int, int, int]:
+        async with self.db.guild(GUILD) as conn:
+            cur = await conn.execute(
+                "SELECT story_state, story_part, story_parts, story_started_at, story_moved_at"
+                " FROM session_imports WHERE session_id = %s",
+                (sid,),
+            )
+            r: Any = await cur.fetchone()
+        return (
+            r["story_state"], r["story_part"], r["story_parts"],
+            r["story_started_at"], r["story_moved_at"],
+        )  # fmt: skip
 
     async def test_a_session_stopped_by_the_limit_is_not_marked_read(self) -> None:
         sid = await self.imported(1)
