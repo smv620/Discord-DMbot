@@ -248,7 +248,8 @@ class OnTheWebsite(Reading):
         self.assertEqual(await refused({"lines": ["ok", " "]}), "empty")
         self.assertEqual(await refused({"lines": ["x" * 301]}), "too_long")
         self.assertEqual(await refused({"lines": ["a"] * 41}), "too_many")
-        for bad in (None, [], {"lines": "x"}, {"lines": [1]}, {"lines": ["a\x00"]}):
+        wrong: list[object] = [None, [], {"lines": "x"}, {"lines": [1]}, {"lines": ["a\x00"]}]
+        for bad in wrong:
             self.assertEqual(await refused(bad), "bad_arg", msg=str(bad))
 
     async def test_forty_lines_of_emoji_are_queued_not_a_server_error(self) -> None:
