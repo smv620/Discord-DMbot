@@ -175,8 +175,10 @@ describe("the routes as CloudDev-lead built them (#3340)", () => {
     const ask = (detail: string, status = 409) => over(status, { detail }).saveRecapMusts!("100.cmp1", ["x"]);
     await expect(ask("too_many")).rejects.toMatchObject({ kind: "musts-full" });
     await expect(ask("empty")).rejects.toMatchObject({ kind: "musts-empty" });
-    await expect(ask("too_long")).rejects.toMatchObject({ kind: "ticket-too-long" });
+    await expect(ask("too_long")).rejects.toMatchObject({ kind: "musts-too-long" });
     await expect(ask("not_allowed", 403)).rejects.toMatchObject({ kind: "not-allowed" });
     expect(words.problems["musts-full"]).toContain("40 lines");
+    expect(words.problems["musts-too-long"]).toBe("Nothing was changed. A line can be up to 300 characters. Shorten it and try again.");
+    expect(words.examplesIntro).toBe("These examples shape how your recaps sound. The list above decides what goes in them.");
   });
 });

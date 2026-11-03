@@ -61,7 +61,7 @@ export const recapStylePage = {
   notFound: "We can't find that campaign. Go back to your campaigns and choose it.",
   lead: "Show DMbot how your recaps should sound. Paste a recap you like. DMbot copies the style, not the story: nothing from your example goes into your recaps. Your campaign's game masters can see these examples, and they are kept in the campaign's backup, so leave out anything that must stay secret.",
   examplesHeading: "How your recaps should sound",
-  examplesIntro: "These examples shape how your recaps sound. The list above decides what goes in them. Recaps you like: DMbot copies how they sound.",
+  examplesIntro: "These examples shape how your recaps sound. The list above decides what goes in them.",
   usingOwn: (n: number): string => `${n} of ${STYLE_MAX_EXAMPLES} examples.`,
   usingDefaults: "No examples of your own yet, so DMbot is using its own.",
   useDefaults: "Delete mine, use DMbot's",
@@ -125,6 +125,7 @@ export const recapStylePage = {
     "not-found": "We can't find that campaign. Go back to your campaigns and choose it.",
     "musts-full": `Nothing was changed. You already have ${MUSTS_MAX_LINES} lines. Remove one first.`,
     "musts-empty": "Nothing was changed. A line can't be empty.",
+    "musts-too-long": `Nothing was changed. A line can be up to ${MUSTS_LINE_CHARS} characters. Shorten it and try again.`,
   } as Record<string, string>,
   failedReasons: {
     not_taken: "DMbot didn't get to it. Nothing was changed. Try again, or ask your server owner if it keeps happening.",

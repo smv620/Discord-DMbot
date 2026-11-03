@@ -2167,6 +2167,7 @@ export type ApiErrorKind =
   | "too-many-lines" // a file has more lines than one import takes (#2107)
   | "musts-full" // the recap must-haves list already has 40 lines (#3329)
   | "musts-empty" // a must-haves line that is empty (#3329)
+  | "musts-too-long" // a must-haves line is over 300 characters (#3346)
   | "too-many-speakers" // a file has more different names than one import takes (#2107)
   | "try-it-campaign" // importing is not part of Try It (#2107)
   | "too-many-files" // more than 20 files in one import (#2107)

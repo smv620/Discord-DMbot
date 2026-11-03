@@ -62,7 +62,7 @@ const PICTURE_WIRE_ACTION: Record<PictureAction, string> = {
 };
 
 /** What the must-haves routes refuse with (#3329, CloudDev-lead's #3340): `too_many` would otherwise read as the game masters' limit. */
-const MUSTS_REFUSALS: Record<string, ApiErrorKind> = { too_many: "musts-full", empty: "musts-empty", too_long: "ticket-too-long", bad_arg: "bad-choice" };
+const MUSTS_REFUSALS: Record<string, ApiErrorKind> = { too_many: "musts-full", empty: "musts-empty", too_long: "musts-too-long", bad_arg: "bad-choice" };
 
 export default function campaignArea({ call }: ApiHelpers): Partial<AccountApi> {
   return {
