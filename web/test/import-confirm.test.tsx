@@ -6,7 +6,7 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ApiError } from "../src/account/api";
+import { ApiError, httpApi } from "../src/account/api";
 import { mockApi } from "../src/account/mock";
 import Import from "../src/account/Import";
 import { confirmWords as c, importPage as w } from "../src/content/import-words";
@@ -111,7 +111,7 @@ describe("confirming consent per speaker", () => {
     for (const label of ["Ash", "Mira", "Dax"]) choose(label, "drop");
     choose("Old Pip", "new");
     fireEvent.click(screen.getByLabelText(c.tick("Old Pip")));
-    api.importConsent = async () => ({ version: 8, lines: ["New words."] });
+    api.importConsent = async () => ({ version: 8, text: "New words." });
     const real = api.importCheck!;
     api.importCheck = async (...args) => {
       if (args[4]) throw new ApiError("stale");
@@ -168,11 +168,33 @@ describe("confirming consent per speaker", () => {
     let tries = 0;
     api.importConsent = async () => {
       if (tries++ === 0) throw new ApiError("network");
-      return { version: 7, lines: ["Words."] };
+      return { version: 7, text: "Words." };
     };
     await previewed(api);
     expect(await screen.findByText(c.loadFailed)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: c.retry }));
     expect(await screen.findByText("Words.")).toBeTruthy();
+  });
+});
+
+describe("the consent routes over the wire (#3305 PR 1)", () => {
+  const over = (status: number, body: unknown, seen: string[] = []) =>
+    httpApi("https://api.example.test", (async (url: string) => {
+      seen.push(String(url));
+      return new Response(JSON.stringify(body), { status });
+    }) as unknown as typeof fetch);
+
+  it("reads the consent words from /imports/consent", async () => {
+    const seen: string[] = [];
+    const got = await over(200, { version: 7, text: "A\nB" }, seen).importConsent!("100.cmp1");
+    expect(got).toEqual({ version: 7, text: "A\nB" });
+    expect(seen[0]).toContain("/me/campaigns/100.cmp1/imports/consent");
+  });
+
+  it("reads the API's refusals: stale_consent, blocked and not_ticked", async () => {
+    const ask = (detail: string) => over(409, { detail }).importCheck!("100.cmp1", [], {});
+    await expect(ask("stale_consent")).rejects.toMatchObject({ kind: "stale" });
+    await expect(ask("blocked")).rejects.toMatchObject({ kind: "said-no" });
+    await expect(ask("not_ticked")).rejects.toMatchObject({ kind: "not-ticked" });
   });
 });

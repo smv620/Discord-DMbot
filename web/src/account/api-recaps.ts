@@ -186,7 +186,7 @@ export default function recapsArea({ call, url }: ApiHelpers): Partial<AccountAp
         withLinks({ files, mapping, ...(confirm ?? {}) }, links),
       )) as ImportCheck,
     importConsent: async (ref) =>
-      (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/import/consent`)) as ImportConsent,
+      (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/imports/consent`)) as ImportConsent,
     importStart: async (ref, files, plan, links) =>
       (await call(
         "POST",

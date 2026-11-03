@@ -1023,9 +1023,13 @@ export default function Import({
                     <p class="small">{confirmWords.lead}</p>
                     {consent ? (
                       <ul class="small">
-                        {consent.lines.map((line) => (
-                          <li key={line}>{line}</li>
-                        ))}
+                        {consent.text
+                          .split("\n")
+                          .map((line) => line.trim())
+                          .filter((line) => line !== "")
+                          .map((line) => (
+                            <li key={line}>{line}</li>
+                          ))}
                       </ul>
                     ) : (
                       consentFailed && (
