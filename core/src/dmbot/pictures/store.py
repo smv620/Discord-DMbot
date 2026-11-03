@@ -267,6 +267,17 @@ class PictureStore:
             )
             return [_picture(r) for r in await cur.fetchall()]
 
+    async def by_id(self, guild_id: int, picture_id: int) -> Picture | None:
+        """One picture of this server by its id (a button carries the id, not the campaign). The
+        row-level security of the server still applies, so another server's id finds nothing."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                f"SELECT {COLUMNS} FROM campaign_pictures WHERE guild_id = %s AND id = %s",
+                (guild_id, picture_id),
+            )
+            row = await cur.fetchone()
+        return None if row is None else _picture(row)
+
     async def get(self, guild_id: int, campaign_id: str, picture_id: int) -> Picture | None:
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(

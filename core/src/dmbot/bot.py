@@ -483,6 +483,7 @@ from dmbot.transcription.pipeline import TranscriptionPipeline, clip_budget_s, s
 from dmbot.ui import (
     contradiction_notes,
     image_fix,
+    kept_pictures,
     looked_at,
     name_pass_undo,
     player_id,
@@ -1343,6 +1344,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         # the bucket fully set up. Without them nothing is stored anywhere.
         self.picture_keeper: PictureKeeper | None = None
         self.picture_actions: PictureActions | None = None
+        self.picture_store: PictureStore | None = None
         self.picture_bucket: Bucket | None = None
         self._picture_db: Database | None = None
         self._pictures_told: set[str] = set()  # campaigns told this run that old pictures went
@@ -1560,6 +1562,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self.add_dynamic_items(GuideButton)  # Guide me (#1731)
         self.add_dynamic_items(LineFixButton, FixLineButton)  # a player's line fix (#1491)
         self.add_dynamic_items(image_fix.FixTextButton)  # the words in a picture (#2450)
+        self.add_dynamic_items(  # Make private / Delete under a kept picture's link (#3274)
+            kept_pictures.PrivateButton, kept_pictures.DeleteButton, kept_pictures.DeleteYesButton
+        )
         self.add_dynamic_items(  # #965, #1117
             clock_screen.ClockButton, clock_screen.ClockUndoButton, clock_screen.SuggestionButton
         )
@@ -11487,7 +11492,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 channel_id,
                 message_id,
                 f"🖼️ {self.settings.site_url}/pictures/{got.picture.code}",
-                discord.ui.View(),
+                kept_pictures.link_view(got.picture.id),
             )
             if reply is not None and message_id:
                 if message_id in self._deleted_messages:  # deleted while the line was sent
@@ -13159,6 +13164,7 @@ async def run(settings: Settings) -> None:
             bot.picture_keeper = PictureKeeper(
                 pictures, bot.picture_bucket, settings.picture_storage_mb
             )
+            bot.picture_store = pictures
             bot.picture_actions = PictureActions(
                 db, pictures, bot.picture_bucket, settings.picture_storage_mb
             )
