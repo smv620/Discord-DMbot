@@ -10,8 +10,8 @@ and nobody's Discord consent is asked again. (Version 101 is the first wording; 
 
 They are held back by a switch so that the last promise (a person can ask for their lines to be
 removed) is true from the first day: `UPLOADER_WORDS_LIVE` is turned on in the same change as the
-website's `SPEAKER_REMOVAL_LIVE` (web/src/content/speaker-removal-switch.ts; docs/GO_LIVE.md has
-the row for both).
+website's `SPEAKER_REMOVAL_LIVE` (web/src/content/speaker-removal-switch.ts; docs/GO_LIVE.md
+notes it in the website switch's row: the web map lists website switches only).
 Until then the page shows the Discord words as before, under the Discord terms version.
 
 No age or birthdate is ever stored: the age rule is a fact the uploader affirms with the tick.
