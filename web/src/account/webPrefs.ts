@@ -6,6 +6,7 @@ import type { LayoutMode } from "./webForce";
 import type { SavedPlaces } from "./webForce";
 
 const MODE_KEY = "dmbot:web-layout";
+const AUTO_KEY = "dmbot:web-auto-update";
 const placesKey = (campaign: string): string => `dmbot:web-places:${campaign}`;
 
 export function readMode(): LayoutMode {
@@ -48,5 +49,23 @@ export function savePlaces(campaign: string, places: SavedPlaces): void {
     else window.localStorage.setItem(placesKey(campaign), JSON.stringify(places));
   } catch {
     /* storage is blocked: the names stay where they are until the page is closed */
+  }
+}
+
+/** Whether the map reads itself again every few seconds. On unless the person froze it. */
+export function readAuto(): boolean {
+  try {
+    return window.localStorage.getItem(AUTO_KEY) !== "off";
+  } catch {
+    return true;
+  }
+}
+
+export function saveAuto(on: boolean): void {
+  try {
+    if (on) window.localStorage.removeItem(AUTO_KEY);
+    else window.localStorage.setItem(AUTO_KEY, "off");
+  } catch {
+    /* storage is blocked: the choice lasts until the page is closed */
   }
 }

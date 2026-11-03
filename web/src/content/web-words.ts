@@ -31,6 +31,12 @@ export const webPage = {
   seeAsListLabel: "Characters to see the story as",
   centreNone: "No name matches.",
   centreNow: (name: string): string => `In the middle: ${name}`,
+  // The button that stops and starts the map reading itself again every few seconds. It names what
+  // pressing it does, so while the map updates it says "Freeze the graph".
+  freezeGraph: "Freeze the graph",
+  autoUpdateGraph: "Auto update graph",
+  updatingNote: "The graph updates by itself every few seconds.",
+  frozenNote: "The graph is frozen. Press Auto update graph to see new names.",
   hopsLabel: "Steps out from the middle",
   hopsLess: "One step fewer",
   hopsMore: "One step more",
