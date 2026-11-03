@@ -2,6 +2,9 @@
 // pages that do not use them do not carry them. Each is the same call it was inside `httpApi`; the names are listed
 // in `CAMPAIGN_METHODS` there, and a test keeps the two in step.
 import type {
+  PictureAction,
+  PictureActionResult,
+  PictureList,
   SessionNotes,
   SessionNotesList,
   RecapStyle,
@@ -32,9 +35,26 @@ import type {
 } from "./api";
 import {
   ApiError,
+  errorKinds,
   fixErrorKinds,
 } from "./api";
-import type { AccountApi, ApiHelpers } from "./api";
+import type { AccountApi, ApiErrorKind, ApiHelpers } from "./api";
+
+/** The picture action's own 409 details (#3275). Only that action reads them, so they stay out of the shared table. */
+const pictureErrorKinds: Record<string, ApiErrorKind> = {
+  ...errorKinds,
+  "permanent-full": "permanent-full",
+  refused: "refused",
+};
+
+/** The route's own action names; the page's names for the same things are mapped here only (#3275). */
+const PICTURE_WIRE_ACTION: Record<PictureAction, string> = {
+  "make-private": "private",
+  "make-public": "public",
+  permanent: "permanent",
+  "not-permanent": "unpermanent",
+  delete: "delete",
+};
 
 export default function campaignArea({ call }: ApiHelpers): Partial<AccountApi> {
   return {
@@ -55,6 +75,28 @@ export default function campaignArea({ call }: ApiHelpers): Partial<AccountApi> 
       },
     sessionNotesList: async (campaignRef) =>
       (await call("GET", `/me/campaigns/${encodeURIComponent(campaignRef)}/session-notes`)) as SessionNotesList,
+    pictures: async (campaignRef, filter) => {
+      const params = new URLSearchParams();
+      if (filter.session !== undefined) params.set("session", String(filter.session));
+      if (filter.poster) params.set("poster", filter.poster);
+      if (filter.q) params.set("q", filter.q);
+      if (filter.before) params.set("before", filter.before);
+      const query = params.toString();
+      return (await call(
+        "GET",
+        `/me/campaigns/${encodeURIComponent(campaignRef)}/pictures${query ? `?${query}` : ""}`,
+      )) as PictureList;
+    },
+    pictureAction: async (campaignRef, code, action) =>
+      (await call(
+        "POST",
+        `/me/campaigns/${encodeURIComponent(campaignRef)}/pictures/${encodeURIComponent(code)}`,
+        { action: PICTURE_WIRE_ACTION[action] },
+        false,
+        undefined,
+        false,
+        pictureErrorKinds,
+      )) as PictureActionResult,
     sessionNotes: async (campaignRef, at) =>
       (await call("GET", `/me/campaigns/${encodeURIComponent(campaignRef)}/session-notes/${at}`)) as SessionNotes,
     transcript: async (campaignRef, number, version, offset = 0) =>
