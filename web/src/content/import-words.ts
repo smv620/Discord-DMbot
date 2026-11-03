@@ -11,6 +11,11 @@ import type { RecapsWhy } from "../account/api";
 
 export const IMPORT_LIVE = false;
 
+/** The uploader confirms consent for each speaker, including people who aren't in Discord (#3306; PLAN, "Import
+ * sessions → Consent"). Off until the core half (#3305) is deployed: the routes it needs don't exist before that, so
+ * the page keeps its old choices (a member or Leave out) while this is false. */
+export const IMPORT_CONFIRM_LIVE = false;
+
 /** How many files one import takes, and how big each may be (PLAN: "up to 20 files at once, each
  * up to 2 MB of text"). These MIRROR the importer's limits (#2105): change them together, or the
  * page promises a number DMbot does not keep. */
@@ -234,6 +239,10 @@ export const importPage = {
     "bad-files-docs":
       "One of your Google Docs couldn't be opened just now. Check it's still shared as Anyone with the link, then press Preview again.",
     "bad-mapping": "One of the choices of who is who doesn't fit. Check them and try again.",
+    "said-no": "Someone you chose said no to being recorded, so their lines can't be kept. Choose Leave out for them.",
+    "not-ticked": "Tick the box for each person you keep who hasn't agreed in Discord, then try again.",
+    stale: "The words people agree to have changed. Read them again, tick the boxes again, then try again.",
+    "bot-picked": "A bot's lines can't be kept. Choose Leave out for it.",
     "bad-date": "One of the dates isn't a date. Check them and try again.",
     "no-lines-kept":
       "Every line in one of the files would be dropped, so nothing was imported. Match more people, or ask players to agree to be recorded in Discord, then try again.",
@@ -242,6 +251,23 @@ export const importPage = {
     "not-found": "We can't find that campaign. Go back and open it again.",
     server: "Something went wrong on our side. Try again in a minute.",
   } as Record<string, string>,
+} as const;
+
+// Confirming consent for each speaker (#3306). The consent words themselves come from the API (the same lines a player
+// reads in Discord) and are never copied here.
+export const confirmWords = {
+  heading: "What they are agreeing to",
+  lead: "Anyone you keep here must have agreed to this. These are the same words a player is shown in Discord.",
+  loadFailed: "Couldn't load the words people agree to. Reload the page to try again.",
+  choose: "Choose…",
+  notInDiscord: "Not in Discord (keep by name)",
+  blockedOption: (name: string): string => `${name} (said no)`,
+  tick: (name: string): string => `I confirm ${name} agreed to this.`,
+  saidNo: (name: string): string => `${name} said no to being recorded, so their lines can't be kept.`,
+  sameAs: (name: string): string => `Same as the speaker already called ${name}.`,
+  needsTick: "Tick the box to keep their lines, or choose Leave out.",
+  chooseAll: "Choose what to do with every name before you check.",
+  keptConfirmed: "you confirmed",
 } as const;
 
 // The clock offer on an imported session (#3199, #3259): once a session is in, DMbot offers to set the game clock to

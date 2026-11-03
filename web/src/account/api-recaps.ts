@@ -4,6 +4,7 @@
 import type {
   FixResult,
   ImportCheck,
+  ImportConsent,
   ImportMember,
   ImportPreview,
   ImportProgress,
@@ -178,12 +179,14 @@ export default function recapsArea({ call, url }: ApiHelpers): Partial<AccountAp
           `/me/campaigns/${encodeURIComponent(ref)}/imports/members?q=${encodeURIComponent(q)}`,
         )) as { members: ImportMember[] }
       ).members,
-    importCheck: async (ref, files, mapping, links) =>
+    importCheck: async (ref, files, mapping, links, confirm) =>
       (await call(
         "POST",
         `/me/campaigns/${encodeURIComponent(ref)}/imports/check`,
-        withLinks({ files, mapping }, links),
+        withLinks({ files, mapping, ...(confirm ?? {}) }, links),
       )) as ImportCheck,
+    importConsent: async (ref) =>
+      (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/import/consent`)) as ImportConsent,
     importStart: async (ref, files, plan, links) =>
       (await call(
         "POST",

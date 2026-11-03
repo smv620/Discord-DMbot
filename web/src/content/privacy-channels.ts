@@ -3,7 +3,16 @@
 // never states something that isn't true yet. Session notes (#3027) have no Help step yet: their line
 // follows SESSION_NOTES_LIVE, the switch of its What's new entry. Plain words: a few lines each, no technical terms.
 import { INITIATIVE_STYLE_LIVE, STORY_STATES_LIVE } from "./help";
+import { IMPORT_CONFIRM_LIVE } from "./import-words";
 import { SESSION_NOTES_LIVE } from "./session-notes-switch";
+
+/** In "What we keep": the lines of older sessions a game master imports (#3306). It follows the switch of the page that
+ * lets the uploader confirm each speaker, so the page never says what DMbot does not do yet. */
+export const importConsentLine = {
+  live: IMPORT_CONFIRM_LIVE,
+  lead: "Older sessions a game master imports.",
+  text: "If you say no to being recorded, DMbot remembers it, so nobody can add your lines from an uploaded file. A game master can keep the lines of a person who is not in Discord only by ticking that the person agreed to it, and the lines are kept under that name in that campaign alone.",
+};
 
 /** In "What we keep": the initiative style FightBot hears (#1783) and keeps per campaign (#1790). */
 export const initiativeLine = {
