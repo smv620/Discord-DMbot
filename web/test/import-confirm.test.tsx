@@ -83,6 +83,15 @@ describe("confirming consent per speaker", () => {
     expect(api.calls.some((x) => x.includes("|confirmed:Old Pip@7"))).toBe(true);
   });
 
+  it("shows the server's own tick words with the name filled in, once it sends them (#3305)", async () => {
+    const api = mockApi("table");
+    api.importConsent = async () => ({ version: 7, text: "Their words.", tick: "{name} agreed to the uploader's words." });
+    await previewed(api);
+    choose("Ash", "2");
+    expect(screen.getByLabelText("Ash agreed to the uploader's words.")).toBeTruthy();
+    expect(screen.queryByLabelText(c.tick("Ash"))).toBeNull();
+  });
+
   it("asks for a tick for a member who has not agreed in Discord, naming the member", async () => {
     await previewed();
     choose("Ash", "2");
