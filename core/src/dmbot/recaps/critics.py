@@ -79,14 +79,15 @@ APPROVED_UNCHECKED = (
 WAIT_REVISE_CALLS = 6
 
 
-def wait_budget(batches: int) -> int:
+def wait_budget(batches: int, musts: bool = False) -> int:
     """Calls a waiting try may make. A try that reads the draft: one for each batch of sentences
     and two for PlotBot (its second call, with more room when its answer was cut off, #2365, is
     counted). A try that revises it: `WAIT_REVISE_CALLS`. A try is one or the other, so this is
     the larger of the two, and never fewer than `WAIT_CALLS`, so a long recap is checked as surely
     as a short one. A documented bound, not a gate: the loop is written to stay inside it, and a
     test (the outage one) fails if a try ever spends more (#2308)."""
-    return max(WAIT_CALLS, batches + 2, WAIT_REVISE_CALLS)
+    # (a campaign with must-haves has a third call in a reading: the coverage check, #3328)
+    return max(WAIT_CALLS, batches + 2 + (1 if musts else 0), WAIT_REVISE_CALLS)
 
 
 def wait_for(waits: int, *, soon: bool = False) -> int:
