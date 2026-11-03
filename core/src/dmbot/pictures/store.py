@@ -354,6 +354,56 @@ class PictureStore:
             )
             return None
 
+    async def waiting(self, guild_id: int, campaign_id: str) -> list[Picture]:
+        """The pictures restored from a backup whose file has not come back yet, oldest first."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                f"SELECT {COLUMNS} FROM campaign_pictures WHERE guild_id = %s AND campaign_id = %s"
+                " AND restore_state = 'waiting' AND deleted_at IS NULL ORDER BY id",
+                (guild_id, campaign_id),
+            )
+            return [_picture(r) for r in await cur.fetchall()]
+
+    async def fill(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        picture_id: int,
+        *,
+        object_key: str,
+        preview_key: str,
+        size_bytes: int,
+        preview_bytes: int,
+        storage_mb: int,
+    ) -> str:
+        """Give a waiting picture its file. 'filled', 'full' (it would pass the storage; nothing
+        is removed to make room for a restore, the picture keeps waiting) or 'gone' (it was
+        deleted or filled meanwhile). The permanent mark is kept only while it stays within 80%
+        of the storage: the setting may be smaller here than where the backup was made."""
+        async with self._db.guild(guild_id) as conn:
+            await _lock(conn, guild_id, campaign_id)
+            cur = await conn.execute(
+                "SELECT permanent FROM campaign_pictures WHERE guild_id = %s AND campaign_id = %s"
+                " AND id = %s AND restore_state = 'waiting' AND deleted_at IS NULL",
+                (guild_id, campaign_id, picture_id),
+            )
+            row = await cur.fetchone()
+            if row is None:
+                return "gone"
+            need = size_bytes + preview_bytes
+            usage = await _usage(conn, guild_id, campaign_id, storage_mb)
+            if usage.used_bytes + need > usage.limit_bytes:
+                return "full"
+            permanent = bool(row["permanent"]) and (
+                usage.permanent_bytes + need <= usage.permanent_limit_bytes
+            )
+            await conn.execute(
+                "UPDATE campaign_pictures SET object_key = %s, preview_key = %s, size_bytes = %s,"
+                " preview_bytes = %s, permanent = %s, restore_state = 'ready' WHERE id = %s",
+                (object_key, preview_key, size_bytes, preview_bytes, permanent, picture_id),
+            )
+            return "filled"
+
     async def delete(self, guild_id: int, campaign_id: str, picture_id: int) -> Picture | None:
         """Delete a picture: the row keeps its link (so it can say it was removed), the
         description goes. Returns what was kept so the caller deletes the files; None when it was

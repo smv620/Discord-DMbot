@@ -10,6 +10,7 @@ from dmbot.pictures import parts
 from dmbot.pictures.parts import PartItem
 
 ID = "a" * 32
+R1, R2 = "1" * 64, "2" * 64
 
 
 class Grouping(unittest.TestCase):
@@ -26,7 +27,7 @@ class Grouping(unittest.TestCase):
 
 class RoundTrip(unittest.TestCase):
     def test_a_part_reads_back_exactly(self) -> None:
-        items = [PartItem(0, b"first"), PartItem(7, b"\x00\x01second\xff")]
+        items = [PartItem(R1, b"first"), PartItem(R2, b"\x00\x01second\xff")]
         got = parts.decode_part(parts.encode_part(ID, 3, items))
         self.assertEqual((got.backup, got.number), (ID, 3))
         self.assertEqual(got.items, items)
@@ -41,7 +42,7 @@ class Refusing(unittest.TestCase):
             parts.decode_part(raw)
 
     def good(self) -> bytes:
-        return parts.encode_part(ID, 1, [PartItem(0, b"abc"), PartItem(1, b"defg")])
+        return parts.encode_part(ID, 1, [PartItem(R1, b"abc"), PartItem(R2, b"defg")])
 
     def test_not_a_part(self) -> None:
         self.refused(b"")
@@ -57,7 +58,11 @@ class Refusing(unittest.TestCase):
         self.refused(self.good() + b"x")
 
     def test_a_repeated_place_is_refused(self) -> None:
-        self.refused(parts.encode_part(ID, 1, [PartItem(2, b"a"), PartItem(2, b"b")]))
+        self.refused(parts.encode_part(ID, 1, [PartItem(R1, b"a"), PartItem(R1, b"b")]))
+
+    def test_a_reference_that_is_not_a_hash_is_refused(self) -> None:
+        for ref in ("0", "g" * 64, "1" * 63, "A" * 64):
+            self.refused(parts.encode_part(ID, 1, [PartItem(ref, b"a")]))
 
     def test_a_bad_header_is_refused(self) -> None:
         raw = self.good()

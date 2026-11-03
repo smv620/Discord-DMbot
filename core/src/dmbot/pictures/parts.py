@@ -6,8 +6,9 @@ file holds whole pictures and is read on its own, so a restore's memory stays bo
 
 Pictures are already compressed, so a part is not gzipped. Layout: the magic line, one JSON header
 line (`format`, `version`, `backup`, `part`, `count`), then for each picture a 4-byte length, its
-JSON header (`ref`, `size`) and its bytes. `ref` is the picture's place in the main file's list of
-pictures, so a file never names a database id.
+JSON header (`ref`, `size`) and its bytes. `ref` is the picture's `sha256` as the main file lists
+it (the hash of the bytes first posted, unique within a campaign), so a file never names a
+database id and a part can be matched to its picture whenever it arrives.
 
 A part carries only the picture file. The preview, the metadata stripping and every size check are
 done again by `prepare` on restore, so a forged part can write nothing the bot would not accept from
@@ -19,6 +20,7 @@ Pure: no database and no bucket here.
 from __future__ import annotations
 
 import json
+import re
 import struct
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -36,13 +38,14 @@ PICTURE_READ_BYTES = 26 * 1024 * 1024  # the most one picture may be (prepare al
 PICTURES_MAX = 5000  # pictures in one part
 HEADER_MAX = 1024  # bytes of one picture's header
 
+_REF = re.compile(r"[0-9a-f]{64}")
 DAMAGED = "This pictures file is damaged. Use the files DMbot made, all of them."
 TOO_BIG = "This pictures file is too big for DMbot to read."
 
 
 @dataclass(frozen=True, slots=True)
 class PartItem:
-    ref: int  # the picture's place in the main file's list
+    ref: str  # the picture's `sha256` in the main file's list
     data: bytes
 
 
@@ -119,7 +122,7 @@ def decode_part(raw: bytes) -> Part:
         raise CampaignError(DAMAGED)
     at = end + 1
     items: list[PartItem] = []
-    seen: set[int] = set()
+    seen: set[str] = set()
     for _ in range(count):
         if at + 4 > len(raw):
             raise CampaignError(DAMAGED)
@@ -136,8 +139,8 @@ def decode_part(raw: bytes) -> Part:
             (header.get(k) for k in ("ref", "size")) if isinstance(header, dict) else (None, None)
         )
         if (
-            type(ref) is not int
-            or ref < 0
+            not isinstance(ref, str)
+            or not _REF.fullmatch(ref)
             or ref in seen
             or type(length) is not int
             or not 0 < length <= PICTURE_READ_BYTES
