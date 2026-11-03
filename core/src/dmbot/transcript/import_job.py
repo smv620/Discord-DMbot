@@ -268,6 +268,27 @@ class ImportStore:
             ]
         return sorted(first, key=lambda r: (r.started_at, r.session_id))[:limit]
 
+    async def finished_imports(self, guild_id: int) -> list[tuple[str, str, int]]:
+        """(campaign, import id, sessions the story read has not finished) for each import whose
+        every session has finished its name scan (or failed to clean), scanned on or after
+        `READ_IMPORTS_FROM` (#3314). The caller tells the DM once for each."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT i.campaign_id, i.import_id,"
+                f" count(*) FILTER (WHERE {_UNREAD}) AS unread"
+                " FROM session_imports i JOIN transcript_sessions t"
+                " ON t.id = i.session_id AND t.guild_id = i.guild_id"
+                " WHERE i.guild_id = %s GROUP BY i.campaign_id, i.import_id"
+                " HAVING bool_and(i.state = 'failed' OR (i.state = 'done' AND i.scan_finished))"
+                f" AND max(i.scan_to) >= {READ_IMPORTS_FROM}"
+                " ORDER BY min(t.started_at), i.import_id",
+                (guild_id,),
+            )
+            return [
+                (str(r["campaign_id"]), str(r["import_id"]), int(r["unread"]))
+                for r in await cur.fetchall()
+            ]
+
     async def count_unextracted(self, guild_id: int) -> dict[str, int]:
         """How many scanned imports of each campaign the story extractor has not finished."""
         async with self._db.guild(guild_id) as conn:
