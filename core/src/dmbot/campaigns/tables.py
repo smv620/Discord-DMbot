@@ -91,6 +91,8 @@ _VOICE_CO = (
     "(Supervisor, #2604). A restored campaign makes its own when it makes audio"
 )
 NOT_IN_BACKUP: dict[str, str] = {
+    "dm_waiting_sent": "which 'things wait for you' private message was already sent after a "
+    "lore upload or an import: keys and times only, so a restart does not send it twice (#3314)",
     "theatre_runs": "whether a script of a session is being made, with counts and times only: "
     "pressing the button again makes it (#3244)",
     "theatre_lines": "the theatrical transcript of a session (DM-only): made from the cleaned "

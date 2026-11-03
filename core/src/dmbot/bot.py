@@ -109,6 +109,7 @@ from dmbot.db import Database, DatabaseError
 from dmbot.discord_limits import tree_problems
 from dmbot.dm_questions import (
     CLAIMS,
+    CONNECTIONS,
     FAMILY,
     NAMES,
     NO_PRIVATE_MESSAGE,
@@ -246,6 +247,7 @@ from dmbot.dm_screen.transcript_keep import (
     KeepYesButton,
     TranscriptsButton,
 )
+from dmbot.dm_waiting import WaitingChecks, WaitingSent, asks_for
 from dmbot.ears.protocol import (
     AudioFrame,
     EarsMessage,
@@ -10411,20 +10413,131 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         """Send the collected questions as one private message with a button for each. If no DM
         can be reached they stay where they were: each on the DM screen with its own words and
         a line saying why. Nothing is lost."""
+        if table.campaign_id is None:
+            return
+        await self._send_asks_for(table.guild_id, table.campaign_id, table.screen_channel_id, asks)
+
+    async def _send_asks_for(
+        self, guild_id: int, campaign_id: str, screen_channel_id: int | None, asks: list[Ask]
+    ) -> bool:
+        """`send_asks` for a campaign with no table at a session (a lore upload, an import,
+        #3314). True when the message reached a DM privately or was posted on the DM screen."""
         combined = combine(asks)
-        if combined is None or table.campaign_id is None:
-            return
+        if combined is None:
+            return False
         text, view = combined
-        if await self.ask_privately(table.guild_id, table.campaign_id, text, view):
-            return
+        if await self.ask_privately(guild_id, campaign_id, text, view):
+            return True
+        posted = False
         for ask in ordered(asks):
+            if screen_channel_id is None:
+                break  # (no DM screen to fall back on)
             # Each in its own try: one failed post must not skip the questions after it.
             try:
                 await self.post(
-                    table.screen_channel_id, ask.screen + NO_PRIVATE_MESSAGE, view=view_of(ask)
+                    screen_channel_id, ask.screen + NO_PRIVATE_MESSAGE, view=view_of(ask)
                 )
+                posted = True
             except Exception:
                 log.exception("Couldn't post a question for the DM on the DM screen")
+        return posted
+
+    async def count_waiting(self, gid: int, cid: str) -> WaitingChecks:
+        """What waits for the DM now, by kind, counted the way the names panel counts it (#3314).
+        A count that can't be read is left out (zero); the log gets the error type only."""
+        names = people = claims = connections = 0
+        memory = self.memory
+        if memory is None:
+            return WaitingChecks()
+
+        async def safe(what: str, count: Callable[[], Awaitable[int]]) -> int:
+            try:
+                return await count()
+            except Exception as exc:
+                log.warning("Waiting checks: couldn't count %s (%s)", what, type(exc).__name__)
+                return 0
+
+        async def proposed() -> int:
+            return len(await memory.entities(gid, cid, statuses=[PROPOSED]))
+
+        async def heard() -> int:
+            return await self.heard_questions.count(gid, cid) if self.heard_questions else 0
+
+        async def who() -> int:
+            return len(await memory.people_suggestions(gid, cid))
+
+        async def said() -> int:
+            if self.extractor_ai is None:
+                return 0
+            agreed = await self.consent.consenting(gid)
+            return int(await ClaimStore(memory).waiting_for_check(gid, cid, opted_in=agreed))
+
+        async def backstory() -> int:
+            return int(await self.backstory_links.count(gid, cid)) if self.backstory_links else 0
+
+        async def suggested() -> int:
+            return len(await memory.suggested_names(gid, cid))
+
+        async def matches() -> int:
+            return len(await memory.same_person_offers(gid, cid))
+
+        async def family() -> int:
+            await memory.rework_family(gid, cid)
+            return len(await memory.worked_out_waiting(gid, cid))
+
+        names = await safe("names", proposed) + await safe("heard names", heard)
+        people = await safe("who is who", who)
+        claims = await safe("things said", said)
+        for what, count in (
+            ("backstory connections", backstory),
+            ("suggested names", suggested),
+            ("matches", matches),
+            ("family links", family),
+        ):
+            connections += await safe(what, count)
+        return WaitingChecks(names=names, people=people, claims=claims, connections=connections)
+
+    async def tell_dm_waiting(
+        self, gid: int, cid: str, key: str, *, where: str, note: str = ""
+    ) -> bool:
+        """After a lore upload or an import finished (#3314): one private message to the
+        campaign's DMs saying how many checks of each kind wait, a button for each, the DM screen
+        as the fallback. Sent once for each `key` (claimed in the database first, so a restart or
+        a second round does not send it again) and never when nothing waits. `note` is kept with
+        the key (an import's unread count). Counts only. True when a message went out. Never
+        raises."""
+        try:
+            if self.memory is None or self.campaigns is None:
+                return False
+            campaign = await self.campaigns.get(gid, cid)
+            if campaign is None:
+                return False
+            sent = WaitingSent(self.campaigns.db)
+            if await sent.sent(gid, cid, key):
+                return False
+            waiting = await self.count_waiting(gid, cid)
+            asks = asks_for(
+                waiting,
+                {
+                    NAMES: partial(RecapNamesButton, gid, cid),
+                    PEOPLE: partial(PeopleReviewButton, cid),
+                    CLAIMS: partial(ClaimsReviewButton, cid),
+                    CONNECTIONS: partial(links_ready.ReadyButton, cid),
+                },
+                where=where,
+            )
+            if not await sent.claim(gid, cid, key, f"{waiting.offered()} {note}".strip()):
+                return False  # (another round took it between the look and now)
+            if not asks:
+                return False  # nothing waits: the key is spent, nothing is sent
+            if await self._send_asks_for(gid, cid, campaign.dm_screen_channel_id, asks):
+                log.info("Waiting checks told (%s)", waiting.offered())
+                return True
+            await sent.release(gid, cid, key)  # (no DM and no screen: try again at the next round)
+            return False
+        except Exception as exc:
+            log.warning("Waiting checks: the message failed (%s)", type(exc).__name__)
+            return False
 
     async def ask_live(
         self,
@@ -10692,7 +10805,33 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         await self._apply_import_plays(gid, store)
         await self._tell_import_news(gid, store)
         await self._tell_imports_left(gid, store, await self._extract_imports_left(gid))
+        await self._tell_finished_imports(gid, store)
         return done
+
+    async def _tell_finished_imports(self, gid: int, store: ImportStore) -> None:
+        """Once for each import whose sessions have all finished their name scan and story read
+        (or the read stopped for a limit), one private message saying what waits (#3314). If the
+        limit stopped part of the read, what waits now is sent and the rest follows in a second
+        message when the leftover read finishes. Never raises: it must not stop the round."""
+        try:
+            sent = WaitingSent(self.campaigns.db)
+            for cid, imp, unread in await store.finished_imports(gid):
+                with log_context(guild_id=gid, campaign_id=cid):
+                    first = f"import:{imp}"
+                    if not await sent.sent(gid, cid, first):
+                        await self.tell_dm_waiting(
+                            gid, cid, first, where="your import", note=f"unread={unread}"
+                        )
+                    elif unread == 0:
+                        before = await sent.offered_of(gid, cid, first) or ""
+                        if not before.endswith(
+                            "unread=0"
+                        ):  # the first message went out with some unread
+                            await self.tell_dm_waiting(
+                                gid, cid, f"{first}:rest", where="your import", note="unread=0"
+                            )
+        except Exception as exc:
+            log.warning("Waiting checks after an import failed (%s)", type(exc).__name__)
 
     async def _tell_imports_left(self, gid: int, store: ImportStore, left: dict[str, int]) -> None:
         """Say, once for each change, how many imported sessions the story read has not reached
