@@ -182,6 +182,33 @@ class Confirming(WithImports):
         with self.assertRaises(RecapError):
             await imports.speakers(self.web, bob, self.ref_c, **self.kw)
 
+    async def test_the_website_may_write_only_the_signed_in_persons_own_refusal(self) -> None:
+        import psycopg
+
+        consent = ConsentStore(self.db)
+        await consent.revoke(THURSDAY.id, TOMAS)  # someone else's no, made by the bot
+        async with self.web.user(self.session.user_id, session=self.session.id_hash) as conn:
+            await _scoped(conn, THURSDAY.id)
+            cur = await conn.execute("SELECT user_id FROM consent_refusals")
+            self.assertEqual([r["user_id"] for r in await cur.fetchall()], [])  # (not theirs)
+            with self.assertRaises(psycopg.errors.InsufficientPrivilege):
+                async with conn.transaction():  # (a no written for another person)
+                    await conn.execute(
+                        "INSERT INTO consent_refusals (guild_id, user_id, kind, refused_at)"
+                        " VALUES (%s, %s, 'stopped', 1)",
+                        (THURSDAY.id, MIRA),
+                    )
+        # Their own, the way the website's Stop route does it (as the signed-in person).
+        scoped = self.web.as_person(self.session.user_id, self.session.id_hash)
+        await ConsentStore(scoped).revoke(THURSDAY.id, self.session.user_id)
+        async with self.db.guild(THURSDAY.id) as conn:
+            cur = await conn.execute(
+                "SELECT user_id FROM consent_refusals WHERE guild_id = %s ORDER BY user_id",
+                (THURSDAY.id,),
+            )
+            got = [int(r["user_id"]) for r in await cur.fetchall()]
+        self.assertEqual(got, sorted([TOMAS, self.session.user_id]))
+
     async def test_the_same_name_in_the_next_file_is_the_same_speaker(self) -> None:
         mapping: dict[str, Any] = {GHOST: {"confirmed": True}}
         for _file in range(2):

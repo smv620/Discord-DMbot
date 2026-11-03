@@ -36,6 +36,7 @@ from dmbot.schema import (
     WEB_ROLE_OFFER_POLICY,
     WEB_ROLE_POLICIES,
     WEB_ROLE_RECAP_POLICY,
+    WEB_ROLE_REFUSALS_POLICY,
     WEB_ROLE_SHEET_POLICY,
     Migration,
 )
@@ -444,6 +445,8 @@ async def _grant_web_role(conn: AsyncConnection[Any]) -> None:
             await conn.execute(sql.SQL("GRANT EXECUTE ON FUNCTION {} TO {}").format(door, role))
     if "recap_jobs" in existing:
         await conn.execute(WEB_ROLE_RECAP_POLICY)  # #1382
+    if "consent_refusals" in existing:
+        await conn.execute(WEB_ROLE_REFUSALS_POLICY)  # #3305
     for privileges, tables in WEB_ROLE_GRANTS:
         present = [t for t in tables if t in existing]
         if privileges.startswith("INSERT (") and not offers_ready:
