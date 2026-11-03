@@ -4986,6 +4986,20 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
       who hasn't agreed in Discord yet, or someone with no Discord account (kept as a speaker of this
       campaign by name only). DMbot records who confirmed, when, and under which consent wording.
     - **Leave out:** the speaker's lines are dropped before saving and never stored.
+    - **The uploader's own words** (owner, 2026-11-03, #3305; they replace the Discord words on the
+      Import sessions page and go live together with "Remove this speaker's lines", so the last promise
+      is true from the first day). Addressed to the uploader, versioned with the terms, with these facts:
+      > **Before you save these sessions:** for each person you tick, you are confirming that they agreed to this.
+      > - DMbot turns what they said, or wrote, in the file into text for this campaign.
+      > - Anyone in this campaign's server can read and download that text.
+      > - An AI company (Anthropic) reads the text, with who said it, to give the DM notes. It is not used to train their AI.
+      > - Only tick for someone who is 18 or older and said yes, or, if they are younger, whose parent or guardian said yes after having the chance to see what they said.
+      > - If they change their mind, their lines stay until they ask for them to be removed. They can ask at any time: on Discord with Delete my transcripts, or, if they are not on Discord, through the DM.
+
+      **Age at upload** (owner, 2026-11-03): an uploaded speaker is 18 or older, or has the expressed
+      consent of their parent or guardian, given after the parent or guardian had the chance to review
+      the content. This differs from live recording in Discord (16 or older, #1018). No age or birthdate
+      is stored. The record keeps who ticked, when and under which wording, as before.
     - **Limits:**
       - A server member who has said **Stop recording me**, or turned DMbot down, can't be ticked for
         them. Their own no always wins, and the page says why the box is greyed out.
