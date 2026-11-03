@@ -4728,6 +4728,24 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
   - **A final careful-tier pass** edits the result for continuity, balance, context and clear scene
     changes, reading the draft, the story so far and the transcript; code holds it to the same checks
     and keeps the earlier draft if it fails one (#2952).
+  **The recap standard: the "must haves"** (owner, 2026-11-03; details in `docs/RECAP_STANDARD.md`). Every
+  recap is written to and judged by a list of must-haves, grouped as follows:
+  - **Framing:** where and how the session began, where it ended, and the cliffhanger.
+  - **Travel:** routes, directions and time as stated, with clean scene changes.
+  - **Action:** each combat and how hard it was, near-death moments, and loot gained or lost.
+  - **Plot:** twists, and the new clue or mystery step.
+  - **Character:** PC-to-PC development first, and NPCs weighted by how much they matter.
+
+  How the list works:
+  - **The DM's list.** It's the campaign's own: the DM views, edits, removes and adds lines on the Recap
+    style page beside the recap examples. Removing every line brings the defaults back.
+  - **Writing and checking.** The writer is given the list, and the coverage check confirms each
+    must-have the session gave. A miss goes to the one revision, never fails a recap for length, and
+    never outranks the fact check.
+  - **Never invented.** A must-have the session didn't give (a direction, a journey's time, a feeling)
+    is left out, not guessed.
+  - **Ownership.** CloudDev-lead owns the recap's narrative quality against this standard and scores
+    every writer change before and after on a fixed set of sessions.
   **Every claim is checked against the beats** (Supervisor, 2026-10-19, after the owner read recap
   test 10: it passed every check yet said the party travelled south (never said at the table) and
   had its weapons taken at the tavern, when that happened later at the keep's gate and one weapon
