@@ -63,6 +63,14 @@ function isFinal(s: Session): boolean {
   );
 }
 
+/** The connections read of a session that is still going or waiting for the daily limit (#3307). */
+function storyOpen(s: Session): boolean {
+  return s.story != null && (s.story.stage === "reading_connections" || s.story.stage === "waiting_for_limit");
+}
+function storyWaiting(s: Session): boolean {
+  return s.story?.stage === "waiting_for_limit";
+}
+
 /** The whole import's progress as the shared wait shows it. The server says `failed` as soon as one session
  * has, but the others go on: while any can still move it is shown as running (or stalled, when the server
  * says so); once none can, as failed only if every session failed, else done. */
@@ -283,13 +291,14 @@ export default function Import({
         if (typeof stamp === "number" && !older) lastUpdated.current = stamp;
         if (!older) setProgress(next); // (an older answer: keep what is shown, ask again)
         idleLooks.current = moved && !older ? 0 : idleLooks.current + 1;
-        const open = next.sessions.filter((s) => !isFinal(s));
+        // A session's connections are read after it is imported, so the page keeps looking until that is done or waiting.
+        const open = next.sessions.filter((s) => !isFinal(s) || storyOpen(s));
         if (open.length > 0) {
           if (Date.now() - watchStart.current > WATCH_LIMIT_MS) {
             setProblem(words.stoppedWatching); // the page stops here; "Check again" starts it afresh
             return;
           }
-          const onlyNames = open.every((s) => s.stage === "waiting_for_names");
+          const onlyNames = open.every((s) => s.stage === "waiting_for_names" || storyWaiting(s));
           const wait = onlyNames ? SLOW_POLL_MS : Math.min(POLL_MS * 2 ** idleLooks.current, IDLE_POLL_MAX_MS);
           timer = setTimeout(() => void tick(), wait);
         }
@@ -701,6 +710,22 @@ export default function Import({
                   {words.namesLink}
                 </a>
               )}
+              {s.story && storyOpen(s) && (
+                <WorkProgress
+                  stage={words.story[s.story.stage] ?? ""}
+                  done={s.story.done}
+                  total={s.story.total}
+                  unit={s.story.unit ? words.unit[s.story.unit] : undefined}
+                  startedAt={s.story.startedAt}
+                  updatedAt={s.story.updatedAt}
+                  serverNow={s.story.serverNow}
+                  state={s.story.state}
+                  waiting={storyWaiting(s)}
+                  frozen={problem !== null}
+                  whatToDo={words.stalledDo}
+                />
+              )}
+              {s.story?.stage === "connections_read" && <span class="small">{words.story.connections_read}</span>}
               {importId && isFinal(s) && s.clock && (
                 <ClockOffer api={api} campaignRef={ref} importId={importId} file={s.file} clock={s.clock} />
               )}

@@ -186,6 +186,13 @@ export const importPage = {
     done: "Imported",
     failed: "Couldn't import this one",
   } as Record<string, string>,
+  // The read of each session's connections, after the import itself (#3307). Its stages come from the API in the same
+  // shared shape; the waiting one is not a failure, so it says it carries on by itself.
+  story: {
+    reading_connections: "Reading connections",
+    waiting_for_limit: "Waiting for DMbot's daily limit, will carry on by itself",
+    connections_read: "Connections read",
+  } as Record<string, string>,
   // What the counts of the whole import's progress count (the API's `unit` code) (#2565).
   unit: { sessions: "sessions", parts: "pieces", lines: "lines" } as Record<string, string>,
   // Said when the server calls the import stalled: it can still move, and the files are safe.
