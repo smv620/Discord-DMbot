@@ -12,6 +12,7 @@ import contextlib
 import io
 import logging
 import time
+import uuid
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, cast
 
@@ -41,6 +42,8 @@ from dmbot.dm_screen import handover
 from dmbot.dm_screen.settings import SettingsButton
 from dmbot.logs import set_log_context
 from dmbot.mentions import NO_PINGS
+from dmbot.pictures import backup as picture_backup
+from dmbot.pictures import parts as picture_parts
 from dmbot.ui import logic
 from dmbot.waiting import WaitingMessage, message_is_gone
 
@@ -598,6 +601,8 @@ async def show_voice_step(
 
 # ---- /dmbot backup and restore ------------------------------------------------------
 
+PICTURE_PART_MARGIN = 256 * 1024  # room under the server's upload limit for the message itself
+
 
 async def send_backup(interaction: discord.Interaction, campaign_id: str) -> None:
     guild = interaction.guild
@@ -625,11 +630,24 @@ async def send_backup(interaction: discord.Interaction, campaign_id: str) -> Non
     name = discord.utils.escape_markdown(campaign.name)
     limit = logic.upload_limit(guild.filesize_limit)
     why = ""
+    # The pictures' files come in more files, built and sent one at a time below (#3274); how many
+    # there will be is worked out from the list of pictures, so the main file can name the set.
+    part_bytes = max(1, min(picture_parts.PART_TARGET_BYTES, limit - PICTURE_PART_MARGIN))
+    picture_count = 0
     try:
         data, parts = await bot.campaigns.export_set(guild.id, campaign.id)
+        rows = data.get("sections", {}).get("pictures", [])
+        if bot.picture_store is not None and bot.picture_bucket is not None:
+            picture_count = len(picture_backup.plan(rows, part_bytes))
+            if picture_count:
+                data["picture_parts"] = {"id": uuid.uuid4().hex, "count": picture_count}
         raw: bytes | None = await asyncio.to_thread(encode_backup, data)
     except BackupTooBig as exc:
-        raw, parts = None, []  # bigger than a restore takes: no copy that can't come back
+        raw, parts, picture_count = (
+            None,
+            [],
+            0,
+        )  # bigger than a restore takes: no copy that can't come back
         why = TOO_MANY_PARTS if str(exc) == TOO_MANY_PARTS else ""  # (the one reason said plainly)
     # The transcripts come in extra files (#2552); a copy none of the files of which this server
     # takes is not made.
@@ -696,6 +714,53 @@ async def send_backup(interaction: discord.Interaction, campaign_id: str) -> Non
             ephemeral=True,
             allowed_mentions=NO_PINGS,
         )
+    if picture_count:
+        await _send_picture_parts(interaction, bot, campaign, data, guild.id, part_bytes, name)
+
+
+async def _send_picture_parts(
+    interaction: discord.Interaction,
+    bot: Any,
+    campaign: Campaign,
+    data: dict[str, Any],
+    guild_id: int,
+    part_bytes: int,
+    name: str,
+) -> None:
+    """The pictures' files, one message each as they are read from storage, so only one is in
+    memory at a time and each message is the progress (#2564): "file 3 of 12". Counts only."""
+    total = data["picture_parts"]["count"]
+    rows = data["sections"]["pictures"]
+    number = 0
+    try:
+        async for raw in picture_backup.make_parts(
+            bot.picture_store,
+            bot.picture_bucket,
+            guild_id,
+            campaign.id,
+            rows,
+            data["picture_parts"]["id"],
+            part_bytes,
+        ):
+            number += 1
+            await interaction.followup.send(
+                f"🖼️ Pictures of **{name}**, file {number} of {total}.",
+                file=discord.File(
+                    io.BytesIO(raw),
+                    filename=logic.picture_part_filename(campaign.name, _now(), number, total),
+                ),
+                ephemeral=True,
+                allowed_mentions=NO_PINGS,
+            )
+    except Exception:
+        log.exception("Sending a copy's picture files failed")
+        await interaction.followup.send(
+            f"⚠️ I could only send {number} of the {total} picture files of **{name}**. "
+            "The copy still restores; the other pictures come back waiting for their files. "
+            "Download it again for the rest.",
+            ephemeral=True,
+            allowed_mentions=NO_PINGS,
+        )
 
 
 class BackupPicker(_Menu):
@@ -730,10 +795,15 @@ class RestoreChoice(_Menu):
         replaceable: list[Campaign],
         parts: list[bytes] | None = None,
         wanted: int = 0,
+        *,
+        pictures: list[bytes] | None = None,
+        picture_wanted: int = 0,
     ) -> None:
         super().__init__()
         self.data = data
         self.parts = parts or []
+        self.pictures = pictures or []  # the picture files given (any of the copy's)
+        self.picture_wanted = picture_wanted  # how many the copy came with
         self.wanted = wanted  # the transcripts files the copy came with
         self.name = name
         self.replaceable_ids = [c.id for c in replaceable]
@@ -841,6 +911,50 @@ class RestoreChoice(_Menu):
         with contextlib.suppress(discord.HTTPException):
             await interaction.user.send(done, allowed_mentions=NO_PINGS)
 
+    async def _put_pictures_back(
+        self, bot: Any, guild_id: int, campaign_id: str, waiting: WaitingMessage
+    ) -> str:
+        """Put the picture files given back, then say in counts how it went (#3274). The rows are
+        already in, waiting for their files; what is not given, or does not fit, stays waiting and
+        its link says it is being restored. Never raises: the copy has landed."""
+        store, restorer = bot.picture_store, bot.picture_restorer
+        if store is None:
+            return ""
+        try:
+            wait_rows = await store.waiting(guild_id, campaign_id)
+            if self.pictures and restorer is not None:
+                manifest = self.data.get("picture_parts") if isinstance(self.data, dict) else None
+                backup_id = manifest.get("id") if isinstance(manifest, dict) else None
+                total = len(self.pictures)
+                waiting.step("Step 2 of 3: restoring the copy, pictures files", 0, total)
+                for number, raw in enumerate(self.pictures, 1):
+                    try:
+                        part = await asyncio.to_thread(picture_parts.decode_part, raw)
+                    except CampaignError:
+                        part = None  # damaged: its pictures stay waiting
+                    if part is not None and part.backup == backup_id:
+                        await restorer.apply(guild_id, campaign_id, part)
+                    waiting.step("Step 2 of 3: restoring the copy, pictures files", number, total)
+            left = await store.waiting(guild_id, campaign_id)
+        except Exception:
+            log.exception("Putting a copy's pictures back failed")
+            return (
+                "\n⚠️ Some pictures could not be put back. Their links say they are being restored."
+            )
+        if not wait_rows:  # the copy had no pictures
+            return ""
+        if not left:
+            return f"\n🖼️ All {len(wait_rows)} pictures are back."
+        site = bot.settings.site_url
+        where = f" Add the rest on the website: {site}/account/restore" if site else ""
+        one = len(left) == 1
+        return (
+            f"\n🖼️ {len(wait_rows) - len(left)} of {len(wait_rows)} pictures are back. "
+            f"{len(left)} {'picture is' if one else 'pictures are'} still waiting for "
+            f"{'its file' if one else 'their files'}; the link says "
+            f'"This picture is being restored." until then.{where}'
+        )
+
     async def _restore_steps(
         self,
         interaction: discord.Interaction,
@@ -894,6 +1008,7 @@ class RestoreChoice(_Menu):
             except Exception:
                 log.exception("Restoring a backup failed")
                 return RESTORE_FAILED
+        picture_note = await self._put_pictures_back(bot, guild.id, campaign.id, waiting)
         if replace_id is None:
             done = f"✅ Restored **{campaign.name}**."
         else:
@@ -912,7 +1027,7 @@ class RestoreChoice(_Menu):
             if erased_lines.lines
             else ""
         )
-        result = f"{done}{erased} Use `/dmbot start` to play it.{left_out}"
+        result = f"{done}{erased} Use `/dmbot start` to play it.{left_out}{picture_note}"
         self._landed = result  # from here the person is always told it landed, even on a cancel
         waiting.step("Step 3 of 3: tidying up")
         # The restore has landed; from here a problem must never be told as "nothing was
@@ -1155,6 +1270,10 @@ async def dmbot_restore(
     if name is None:
         await _tell(interaction, NOT_A_BACKUP)
         return
+    # Extra files are the transcripts files and the pictures' files, told apart by their first
+    # bytes (the boxes are the same): the transcripts all or none, the pictures any of them.
+    pictures = [p for p in parts if p.startswith(picture_parts.MAGIC)]
+    parts = [p for p in parts if not p.startswith(picture_parts.MAGIC)]
     # The copy says how many transcripts files it came with (#2552): all of them, or none.
     wanted = logic.backup_parts(data)
     if parts and len(parts) != wanted:
@@ -1192,5 +1311,13 @@ async def dmbot_restore(
             if replaceable
             else ""
         ),
-        RestoreChoice(data, name, replaceable, parts, wanted),
+        RestoreChoice(
+            data,
+            name,
+            replaceable,
+            parts,
+            wanted,
+            pictures=pictures,
+            picture_wanted=logic.backup_picture_parts(data),
+        ),
     )

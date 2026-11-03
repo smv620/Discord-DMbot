@@ -234,6 +234,13 @@ class EveryClaimedTableComesBack(DatabaseTest):
                 " %s, 1)",
                 (g, c, text_hash("T", "S"), DM),
             ),
+            "campaign_pictures": (
+                "INSERT INTO campaign_pictures (guild_id, campaign_id, poster_id, code,"
+                " consent_version, right_granted_at, sha256, object_key, size_bytes, made_at)"
+                " VALUES (%s, %s, %s, repeat('p', 43), 7, 900, repeat('a', 64), 'p/one.png',"
+                " 1000, 1)",
+                (g, c, DM),
+            ),
             "session_notes": (
                 "INSERT INTO session_notes (guild_id, campaign_id, session_at, beats, written_at,"
                 " job_created_at) VALUES (%s, %s, 1,"

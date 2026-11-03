@@ -21,6 +21,14 @@ def backup_parts(data: object) -> int:
     return count if type(count) is int and 0 < count <= 1000 else 0
 
 
+def backup_picture_parts(data: object) -> int:
+    """How many picture files a copy came with (#3274); 0 when it came with none. Unlike the
+    transcripts files, any of them may be given: the rest are restored later on the website."""
+    manifest = data.get("picture_parts") if isinstance(data, dict) else None
+    count = manifest.get("count") if isinstance(manifest, dict) else None
+    return count if type(count) is int and 0 < count <= 100000 else 0
+
+
 def backup_campaign_name(data: object) -> str | None:
     """The campaign name inside a parsed backup, for messages; None if it's not there."""
     if isinstance(data, dict):

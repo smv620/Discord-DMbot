@@ -56,6 +56,7 @@ SECTION_TABLES: dict[str, tuple[str, ...]] = {
     "recaps": ("recap_jobs",),
     "recap_rights": ("recap_upload_rights",),
     "recap_accepted": ("recap_accepted",),  # each approved version of a recap (#2122)
+    "pictures": ("campaign_pictures",),  # kept pictures: the rows here, the files in parts (#3274)
     "session_notes": ("session_notes",),  # each session's beat sheet, kept for good (#3026)
     "plot_issues": ("plot_issues",),  # PlotBot's issues and the DM's answers (#2122)
     "plot_fine": ("plot_fine",),  # what the DM said was not a problem (#2122)
@@ -177,10 +178,7 @@ NOT_IN_BACKUP: dict[str, str] = {
 # table can be parked here again while its section is built). `transcript_lines` has no
 # `campaign_id`; it hangs off `transcript_sessions` (the test follows foreign keys to find such
 # tables).
-OWED_TO_BACKUP: tuple[str, ...] = (
-    # kept pictures: the rows and the files go into a backup in the bot step of #3274
-    "campaign_pictures",
-)
+OWED_TO_BACKUP: tuple[str, ...] = ()
 
 
 def backed_up() -> frozenset[str]:

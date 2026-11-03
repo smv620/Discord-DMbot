@@ -341,6 +341,7 @@ from dmbot.mentions import NO_PINGS
 from dmbot.off_the_record import NOT_TOLD, WAKE_MINUTES, OffTheRecord, Paused, paused_text
 from dmbot.pictures import sweep as picture_sweep
 from dmbot.pictures.actions import PictureActions
+from dmbot.pictures.backup import PictureRestorer, PicturesSection
 from dmbot.pictures.bucket import Bucket
 from dmbot.pictures.keeper import Context as PictureContext
 from dmbot.pictures.keeper import PictureKeeper
@@ -1345,6 +1346,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self.picture_keeper: PictureKeeper | None = None
         self.picture_actions: PictureActions | None = None
         self.picture_store: PictureStore | None = None
+        self.picture_restorer: PictureRestorer | None = None
         self.picture_bucket: Bucket | None = None
         self._picture_db: Database | None = None
         self._pictures_told: set[str] = set()  # campaigns told this run that old pictures went
@@ -13080,6 +13082,7 @@ def register_backup_sections(
     campaigns.register_section(RecapRightsSection())  # who may use recaps written by the table
     campaigns.register_section(AcceptedSection())  # the recaps the DM approved (#2122)
     campaigns.register_section(SessionNotesSection())  # each session's notes, kept for good (#3026)
+    campaigns.register_section(PicturesSection())  # and its kept pictures' rows (#3274)
     campaigns.register_section(PlotIssuesSection())  # PlotBot's issues and the DM's answers
     campaigns.register_section(PlotFineSection())  # ... and what the DM said was not a problem
     campaigns.register_section(ReportAnswersSection())  # the DM's report answers (#2661)
@@ -13165,6 +13168,9 @@ async def run(settings: Settings) -> None:
                 pictures, bot.picture_bucket, settings.picture_storage_mb
             )
             bot.picture_store = pictures
+            bot.picture_restorer = PictureRestorer(
+                pictures, bot.picture_bucket, settings.picture_storage_mb
+            )
             bot.picture_actions = PictureActions(
                 db, pictures, bot.picture_bucket, settings.picture_storage_mb
             )
