@@ -4987,8 +4987,15 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
         the website, leaves those lines out. A copy restored as a *new* campaign carries only the
         markers it was made with, so it cannot know of a removal made after the copy was taken; the
         privacy page says "Lines removed from a campaign stay removed in that campaign, including
-        after a restore." It is not held to a paid plan. The wait shows its stage, how long it has run
-        and when it last moved, with counts only.
+        after a restore." It is not held to a paid plan. The wait shows its stage, how long it has run,
+        when it last moved and how many lines and sessions it covers (counts only, noted before it
+        starts); a removal is one step, so there is no "n of N". The page never shows a raw code:
+        `not_a_dm` "Only this campaign's DM can remove lines.", `unknown_speaker` "DMbot can't find
+        that person in this campaign.", `nothing` "There are no lines from this person to remove."
+        (information, not an error), `too_soon` "Wait a few seconds and try again.", a failure
+        "Something went wrong. Nothing was removed. Try again." The privacy page adds: "A copy made
+        before the removal and restored as a new campaign can still hold those lines. Remove them
+        again there."
     - **Counts:** the page says how many lines each choice keeps or drops.
     - **Who can read them:** imported sessions are read by the whole server like any transcript, and the
       consent words on the page say so.
