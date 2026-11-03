@@ -8816,7 +8816,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 await self.post(
                     notice_channel, held_back_text(report.new_names), view=review_view(cid)
                 )
-            return "limit" if report.stopped else "done"
+            return "limit" if report.stopped or report.failed else "done"
 
     async def read_put_back_lines(self, guild_id: int) -> None:
         """Start the read of the lines DMs put back (#2587) as a tracked background task, at most
@@ -10708,9 +10708,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 one = now == 1
                 what = "1 imported session" if one else f"{now} imported sessions"
                 text = (
-                    f"📖 The story read has not reached {what} yet: its AI limit for now is "
-                    f"used. {'It is' if one else 'They are'} read later on their own; nothing is "
-                    "lost."
+                    f"📖 The story read has not finished {what} yet. It tries again later on its "
+                    "own; nothing is lost."
                 )
                 await self.post(campaign.dm_screen_channel_id, text)
             self._import_left_told[cid] = now
@@ -10747,9 +10746,11 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             return "skipped"
 
     async def _extract_imports_left(self, gid: int) -> dict[str, int]:
-        """Imported sessions the story extractor stopped part way (its call limit) are read on a
-        later round, oldest first and a campaign's earlier ones first, until the limits say stop.
-        Returns, for each campaign, how many are still waiting. One sweep a server at a time."""
+        """Imported sessions the story extractor did not finish (a call limit stopped it, or a
+        batch failed) are read on a later round: each round the earliest unread session of each
+        campaign, oldest first, so a campaign's later sessions wait for its earlier ones and a
+        campaign that cannot be read never crowds out another. Returns, for each campaign, how
+        many are still waiting. One sweep a server at a time."""
         assert self.import_job is not None and self.transcripts is not None
         if self.extractor_ai is None or not self.settings.story_extractor_on:
             return {}
@@ -10757,20 +10758,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             return {}
         self._import_reading.add(gid)
         try:
-            left: dict[str, int] = {}
-            stopped: set[str] = set()
             for ready in await self.import_job.store.unextracted(gid):
-                cid = ready.campaign_id
-                if cid in stopped:
-                    left[cid] = left.get(cid, 0) + 1  # (its limit is used: this one waits too)
-                    continue
-                with log_context(guild_id=gid, campaign_id=cid):
-                    outcome = await self._extract_import(gid, ready)
-                if outcome != "done":
-                    stopped.add(cid)  # (the later sessions of the campaign come after this one)
-                if outcome == "limit":
-                    left[cid] = left.get(cid, 0) + 1
-            return left
+                with log_context(guild_id=gid, campaign_id=ready.campaign_id):
+                    await self._extract_import(gid, ready)
+            return await self.import_job.store.count_unextracted(gid)
         finally:
             self._import_reading.discard(gid)
 

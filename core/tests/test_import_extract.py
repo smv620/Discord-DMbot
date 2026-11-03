@@ -11,6 +11,7 @@ from typing import Any
 from unittest.mock import AsyncMock, patch
 
 from dmbot.bot import DMBot
+from dmbot.transcript.import_job import STALE_SCAN_S
 from tests.test_import_recaps import DAY, GUILD, START, WithImports
 
 BOT: Any = DMBot  # (the methods are called on stand-ins)
@@ -34,11 +35,44 @@ class TheStore(WithImports):
         for sid in (early, late):
             await self.store.claim_scan(GUILD, sid, int(time.time()))
             await self.store.finish_scan(GUILD, sid, int(time.time()))
-        self.assertEqual([r.session_id for r in await self.store.unextracted(GUILD)], [early, late])
+        self.assertEqual([r.session_id for r in await self.store.unextracted(GUILD)], [early])
         await self.transcripts.record_extraction(
             GUILD, early, through_ms=(START + DAY) * 1000, calls=1, now=1
         )
         self.assertEqual([r.session_id for r in await self.store.unextracted(GUILD)], [late])
+
+    async def test_renewing_keeps_the_window_start_where_the_scan_began(self) -> None:
+        sid = await self.imported(1)
+        began = int(time.time()) - 600
+        await self.store.claim_scan(GUILD, sid, began)
+        await self.store.renew_scan(GUILD, sid, began + 400)
+        self.assertEqual(await self.store.window(GUILD, sid), (began, began + 400))
+        # a renewed claim is not stale; one nobody renewed is
+        self.assertFalse(await self.store.claim_scan(GUILD, sid, began + 400 + STALE_SCAN_S - 1))
+        self.assertTrue(await self.store.claim_scan(GUILD, sid, began + 400 + STALE_SCAN_S + 1))
+
+    async def test_each_campaign_lists_only_its_earliest_unread_session_and_all_are_counted(
+        self,
+    ) -> None:
+        early, mid, late = [await self.imported(d) for d in (1, 2, 3)]
+        for sid in (early, mid, late):
+            await self.store.claim_scan(GUILD, sid, int(time.time()))
+            await self.store.finish_scan(GUILD, sid, int(time.time()))
+        self.assertEqual([r.session_id for r in await self.store.unextracted(GUILD)], [early])
+        self.assertEqual(
+            await self.store.count_unextracted(GUILD), {self.campaign.id: 3}
+        )  # (the count is not capped)
+
+    async def test_an_import_scanned_before_the_story_read_existed_is_left_alone(self) -> None:
+        sid = await self.imported(1)
+        await self.store.claim_scan(GUILD, sid, 1_700_000_000)
+        await self.store.finish_scan(GUILD, sid, 1_700_000_100)
+        self.assertEqual(await self.store.unextracted(GUILD), [])
+
+    def test_one_extractor_call_always_fits_inside_the_scans_stale_window(self) -> None:
+        from dmbot.memory.extractor import CALL_TIMEOUT_S
+
+        self.assertLess(CALL_TIMEOUT_S * 2, STALE_SCAN_S)  # (the claim is renewed before each call)
 
     async def test_a_session_whose_scan_was_given_up_is_not_read(self) -> None:
         sid = await self.imported(1)
@@ -81,21 +115,15 @@ class TheSweep(WithImports):
             await self.store.finish_scan(GUILD, sid, int(time.time()))
         return ids
 
-    async def test_a_session_that_hits_the_limit_holds_back_the_later_ones_and_is_counted(
+    async def test_each_round_reads_the_earliest_unread_session_of_a_campaign_and_counts_the_rest(
         self,
     ) -> None:
         one, two, three = await self.scanned(1, 2, 3)
         me = bot_for(self.store, ["limit"])
         left = await me._extract_imports_left(GUILD)
         self.assertEqual(me.sent, [one])  # (the later sessions are not read before the earlier)
-        self.assertEqual(left, {self.campaign.id: 3})
+        self.assertEqual(left, {self.campaign.id: 3})  # (all three still wait: the count is real)
         del two, three
-
-    async def test_sessions_that_finish_are_not_left_and_the_sweep_goes_on(self) -> None:
-        one, two = await self.scanned(1, 2)
-        me = bot_for(self.store, ["done", "done"])
-        self.assertEqual(await me._extract_imports_left(GUILD), {})
-        self.assertEqual(me.sent, [one, two])
 
     async def test_nothing_is_read_while_the_story_read_is_off_or_a_sweep_is_running(self) -> None:
         await self.scanned(1)

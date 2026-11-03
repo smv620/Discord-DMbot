@@ -209,6 +209,19 @@ class Gates(unittest.IsolatedAsyncioTestCase):
         assert call is not None
         self.assertIs(call.kwargs["family_only"], True)
 
+    async def test_a_batch_that_failed_means_not_done_so_it_is_read_again_later(self) -> None:
+        me = self.fake()
+        for report, outcome in (
+            (extractor.Report(failed=1), "limit"),
+            (extractor.Report(stopped="call limit"), "limit"),
+            (extractor.Report(), "done"),
+        ):
+            with patch.object(extractor, "run", AsyncMock(return_value=report)):
+                got = await BOT._extract_session(
+                    me, 1, "c", "s", dm_ids={DM}, tally=None, notice_channel=None
+                )
+            self.assertEqual(got, outcome)
+
     async def test_a_campaign_whose_plan_has_no_story_memory_runs_nothing(self) -> None:
         me = self.fake(allowed=False)
         with patch.object(extractor, "run", AsyncMock()) as run:
