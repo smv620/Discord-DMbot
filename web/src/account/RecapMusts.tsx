@@ -38,7 +38,8 @@ export default function RecapMustsPanel({
   // What the API shows is the truth: when it changes (a save finished, the defaults came back) the draft starts over from it.
   // The draft starts over only when what the API shows really differs from what it showed: a reload that brings the
   // same list (after an example or a note was added on this page) must not wipe edits that are not saved yet.
-  const signature = (list: RecapMusts): string => JSON.stringify([list.defaults, list.lines.map((l) => [l.id, l.text])]);
+  // (Ids are positions, not stable across saves, so only the words and whether it is DMbot's own list are compared.)
+  const signature = (list: RecapMusts): string => JSON.stringify([list.defaults, list.lines.map((l) => l.text)]);
   const shown = useRef(signature(musts));
   useEffect(() => {
     const now = signature(musts);

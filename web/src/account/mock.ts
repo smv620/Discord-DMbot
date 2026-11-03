@@ -2099,7 +2099,8 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       calls.push(`saveRecapMusts:${ref}:${lines.length}`);
       await reachable();
       signedIn();
-      if (lines.length > MUSTS_MAX_LINES || lines.some((l) => l.length > MUSTS_LINE_CHARS)) throw new ApiError("bad-choice");
+      if (lines.length > MUSTS_MAX_LINES) throw new ApiError("musts-full");
+      if (lines.some((l) => l.length > MUSTS_LINE_CHARS)) throw new ApiError("ticket-too-long");
       const id = String(styleChanges.size + 1).padStart(32, "0");
       styleChanges.set(id, { action: "save_musts", arg: JSON.stringify(lines), looks: 0, at: Math.floor(Date.now() / 1000) });
       return { id };

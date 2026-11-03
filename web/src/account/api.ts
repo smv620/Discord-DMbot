@@ -2165,6 +2165,8 @@ export type ApiErrorKind =
   | "bad-choice" // not one of the three recap choices (#1468)
   | "too-big" // a transcript too long to show or save as one file (#1512)
   | "too-many-lines" // a file has more lines than one import takes (#2107)
+  | "musts-full" // the recap must-haves list already has 40 lines (#3329)
+  | "musts-empty" // a must-haves line that is empty (#3329)
   | "too-many-speakers" // a file has more different names than one import takes (#2107)
   | "try-it-campaign" // importing is not part of Try It (#2107)
   | "too-many-files" // more than 20 files in one import (#2107)

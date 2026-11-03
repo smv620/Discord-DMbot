@@ -61,6 +61,9 @@ const PICTURE_WIRE_ACTION: Record<PictureAction, string> = {
   delete: "delete",
 };
 
+/** What the must-haves routes refuse with (#3329, CloudDev-lead's #3340): `too_many` would otherwise read as the game masters' limit. */
+const MUSTS_REFUSALS: Record<string, ApiErrorKind> = { too_many: "musts-full", empty: "musts-empty", too_long: "ticket-too-long", bad_arg: "bad-choice" };
+
 export default function campaignArea({ call }: ApiHelpers): Partial<AccountApi> {
   return {
     transcriptCampaigns: async () =>
@@ -292,9 +295,9 @@ export default function campaignArea({ call }: ApiHelpers): Partial<AccountApi> 
     speakerRemoval: async (ref, id) =>
       (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/speakers/removals/${encodeURIComponent(id)}`)) as SpeakerRemoval,
     saveRecapMusts: async (ref, lines) =>
-      (await call("PUT", `/me/campaigns/${encodeURIComponent(ref)}/recap-style/must-haves`, { lines })) as { id: string },
+      (await call("PUT", `/me/campaigns/${encodeURIComponent(ref)}/recap-style/must-haves`, { lines }, false, undefined, false, MUSTS_REFUSALS)) as { id: string },
     recapMustsDefaults: async (ref) =>
-      (await call("DELETE", `/me/campaigns/${encodeURIComponent(ref)}/recap-style/must-haves`)) as { id: string },
+      (await call("DELETE", `/me/campaigns/${encodeURIComponent(ref)}/recap-style/must-haves`, undefined, false, undefined, false, MUSTS_REFUSALS)) as { id: string },
     recapStyleAction: async (ref, id) =>
       (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/recap-style/${encodeURIComponent(id)}`)) as RecapStyleAction,
     loreAdd: async (ref, input) =>
