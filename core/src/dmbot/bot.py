@@ -69,7 +69,14 @@ from dmbot.ai import (
 from dmbot.ai_watch import AIWatch
 from dmbot.audio.segmenter import Segmenter, Utterance
 from dmbot.audio_check import Verdict
-from dmbot.campaigns import Campaign, CampaignStore, web_backup, web_line_delete, web_restore
+from dmbot.campaigns import (
+    Campaign,
+    CampaignStore,
+    speaker_removal,
+    web_backup,
+    web_line_delete,
+    web_restore,
+)
 from dmbot.campaigns.models import (
     SHARED_STORY,
     STORY_GUIDE,
@@ -960,6 +967,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self.web_backups = web_backup.WebBackups(recaps.db) if recaps is not None else None
         self.web_line_deletions = (
             web_line_delete.WebLineDeletions(recaps.db) if recaps is not None else None
+        )
+        # A DM's "Remove this speaker's lines" from the website (#3305).
+        self.speaker_removals = (
+            speaker_removal.SpeakerRemovals(recaps.db) if recaps is not None else None
         )
         # Copies restored from the website, waiting for the bot to apply them (#2746).
         self.web_restores = web_restore.WebRestores(recaps.db) if recaps is not None else None
@@ -2320,6 +2331,35 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             except Exception:
                 log.exception("Couldn't take a deleted person out of an alias's user field")
         return gone.lines, gone.sessions
+
+    async def remove_speaker(
+        self, guild_id: int, campaign_id: str, speaker: int
+    ) -> tuple[int, int]:
+        """A DM's removal of one speaker's lines from ONE campaign (#3305; see
+        `TranscriptStore.remove_speaker`): one transaction, raises if it failed and then nothing is
+        removed. Returns (lines, sessions) removed. A running session of THIS campaign holds its
+        save lock meanwhile and drops what the speaker said and has not yet been saved; a running
+        session of another campaign is not touched."""
+        if self.transcripts is None:
+            return 0, 0
+        tables = [
+            t
+            for t in (self.tables.get(guild_id), *self._ending.get(guild_id, []))
+            if t and t.campaign_id == campaign_id
+        ]
+        async with contextlib.AsyncExitStack() as stack:
+            for table in tables:
+                await stack.enter_async_context(table.save_lock)
+                table.unsaved.drop_speaker(speaker)
+            gone = await self.transcripts.remove_speaker(guild_id, campaign_id, speaker)
+        log.info("Removed a speaker: %s lines in %s sessions", gone.lines, gone.sessions)
+        return gone.lines, gone.sessions
+
+    async def count_speaker(self, guild_id: int, campaign_id: str, speaker: int) -> tuple[int, int]:
+        if self.transcripts is None:
+            return 0, 0
+        counted = await self.transcripts.count_speaker(guild_id, campaign_id, speaker)
+        return counted.lines, counted.sessions
 
     @staticmethod
     def _watched(work: Coroutine[Any, Any, None], name: str) -> asyncio.Task[None]:
@@ -11294,6 +11334,25 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                         log.info("Website line deletion: %s", why or "done")  # the word only
             except Exception as exc:
                 log.warning("The website line deletions of a server failed: %s", type(exc).__name__)
+
+    async def run_speaker_removals(self) -> None:
+        """Carry out the removals a DM asked for on the website (#3305): one speaker's lines from
+        one campaign, nobody else's and no other campaign's. Only servers the bot is in now.
+        Counts only are logged."""
+        store = self.speaker_removals
+        if store is None or self.transcripts is None:
+            return
+        for guild in list(self.guilds):
+            try:  # one server's trouble must not starve the others
+                for _ in range(speaker_removal.PER_ROUND):
+                    item = await store.claim_next(guild.id)
+                    if item is None:
+                        break
+                    with log_context(guild_id=guild.id, campaign_id=item.campaign_id):
+                        why = await speaker_removal.carry_out(self, guild.id, item, store)
+                        log.info("Speaker removal: %s", why or "done")  # the word only
+            except Exception as exc:
+                log.warning("The speaker removals of a server failed: %s", type(exc).__name__)
 
     async def run_web_restores(self) -> None:
         """Apply the copies DMs uploaded on the website (#2746), one at a time per server, with
