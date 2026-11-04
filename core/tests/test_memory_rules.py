@@ -319,9 +319,18 @@ class Checks(unittest.TestCase):
         lived = self.place(B, "lived in", rid="1" * 32)
         now = self.place(C, "lives in")
         self.assertEqual(check_relation(self.onto, now, "character", "place", [lived]), [])
+
+    def test_past_words_are_never_limited_so_two_past_homes_both_stay(self) -> None:
+        lived = self.place(B, "lived in", rid="1" * 32)
         again = self.place(C, "lived in", rid="8" * 32)
-        problems = check_relation(self.onto, again, "character", "place", [lived])
-        self.assertEqual([(p.kind, p.other_id) for p in problems], [(TOO_MANY, lived.id)])
+        self.assertEqual(check_relation(self.onto, again, "character", "place", [lived]), [])
+        worked = self.place(B, "worked in", rid="9" * 32)
+        also = self.place(C, "worked in", rid="a" * 32)
+        self.assertEqual(check_relation(self.onto, also, "character", "place", [worked]), [])
+        kept = self.place(B, "was kept in", rid="b" * 32)
+        self.assertEqual(
+            check_relation(self.onto, self.place(C, "was kept in"), "item", "place", [kept]), []
+        )
 
     def test_rejected_facts_dont_count(self) -> None:
         old = rel(A, "born_in", B, rid="1" * 32, status=REJECTED)

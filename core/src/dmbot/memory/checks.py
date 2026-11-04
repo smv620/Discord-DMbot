@@ -248,10 +248,12 @@ def check_relation(
             if p.key == NESTS:
                 # Each word of a place tie is its own: living in one town, working in another and
                 # having been seen in a third are three facts, and a past word never ends a
-                # present one (#3363).
-                others = [
-                    r for r in others if place_words.slot(r.detail) == place_words.slot(new.detail)
-                ]
+                # present one. A past word ("lived in", "worked in") is history and is never
+                # limited at all: two past homes both stay (#3363).
+                mine = place_words.slot(new.detail)
+                others = (
+                    [] if mine[1] else [r for r in others if place_words.slot(r.detail) == mine]
+                )
             if p.key == NESTS and nesting is not None:
                 # Being in the inn and in the town it is in is one place, not two.
                 others = [r for r in others if not nesting.related(r.object_id, new.object_id)]
