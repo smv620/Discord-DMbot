@@ -56,7 +56,6 @@ export const waitingWords = {
   tiesPickHelp: "Pressing a name only records your choice. Nothing is added to your story until you press Keep.",
   tiesUndo: "Undo my pick",
   tiesUndone: "Your pick is taken back. The fact is under Which one? again.",
-  tiesCannotUndo: "You can't undo this any more, because the fact was already kept or dropped.",
   pronounHeading: "Who is this?",
   pronounNote: "DMbot isn't sure who a word like \"she\" means.",
   pronounQuestion: (word: string): string => `Who is ${word}?`,

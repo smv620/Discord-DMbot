@@ -104,3 +104,19 @@ def test_the_door_migration_copies_the_stores_reason_word_for_word() -> None:
     for name in ("0342_which_info", "0343_claim_pick_actions"):
         module = importlib.import_module(f"dmbot.migrations.{name}")
         assert module.UNPLACED_REASON == UNPLACED_REASON
+
+
+def test_the_widened_action_list_keeps_every_action_the_last_one_allowed() -> None:
+    """0343 rewrites the whole CHECK list; dropping an action (0315's confirm-kinds and
+    confirm-undo, in the first draft) would break its queue rows."""
+    import importlib
+    import re
+
+    def actions(sql: str) -> set[str]:
+        block = sql.split("name_actions_action_check CHECK", 1)[1].split("));", 1)[0]
+        return set(re.findall(r"'([a-z-]+)'", block))
+
+    old = importlib.import_module("dmbot.migrations.0315_confirm_kinds_actions")
+    new = importlib.import_module("dmbot.migrations.0343_claim_pick_actions")
+    assert actions(old.SQL) <= actions(new.SQL)
+    assert {"claim-pick", "claim-unpick"} <= actions(new.SQL)

@@ -82,10 +82,11 @@ SQL = (
     ALTER TABLE name_actions ADD CONSTRAINT name_actions_action_check CHECK (action IN
         ('spell', 'name', 'name-join', 'name-undo', 'kind', 'add-other', 'remove-other', 'secret',
          'hide', 'merge', 'merge-many', 'remove', 'link-add', 'link-words', 'link-secret',
-         'link-remove', 'link-pin', 'link-who', 'alias-who', 'claim-confirm', 'claim-reject',
-         'claim-pick', 'claim-unpick', 'backstory-keep', 'backstory-skip', 'backstory-keep-all',
-         'backstory-which-pick', 'backstory-which-neither', 'reading-place', 'reading-no',
-         'reading-undo', 'names-fixed-undo'));
+         'link-remove', 'link-pin', 'link-who', 'alias-who', 'confirm-kinds', 'confirm-undo',
+         'claim-confirm', 'claim-reject', 'claim-pick', 'claim-unpick', 'backstory-keep',
+         'backstory-skip', 'backstory-keep-all', 'backstory-which-pick',
+         'backstory-which-neither', 'reading-place', 'reading-no', 'reading-undo',
+         'names-fixed-undo'));
 
     CREATE OR REPLACE FUNCTION pg_temp.swap_n(def text, old text, new text, n integer) RETURNS text
     LANGUAGE plpgsql AS $f$
