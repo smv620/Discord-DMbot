@@ -1,12 +1,14 @@
 {
  "campaign": "test of the frostmaiden (sample)",
- "source": "the public sample lore document (link in README.md)",
- "version": 1,
+ "source": "the public sample lore, https://docs.google.com/document/d/1zbt7g3r6uFfiSYr3fl_gyaxARhwJPizauI0jmiEa2aw/edit?usp=sharing (the plain-text export; each connection names its line)",
+ "version": 2,
  "how_to_read": {
-  "tier": "stated = the words are in the text; inferred = only implied (offered as a suggestion, never extracted); by_rule = made by a rule, not read; known_gap = expected but waits for a slice not yet built",
-  "relation": "parent_of, sibling, spouse, uncle_of, apprentice_of, mentor_of, owns, carries, knows (+ one of nine feeling words), member, leads, works_for, enemy_of, rival_of, held_captive_by, associate; place ties by word: lives_in, works_in, comes_from, last_seen_in (a character, creature or group), kept_in (an item: only ever kept in a place); in (only a place or an event inside a place)",
-  "direction": "a to b: parent_of (a is the parent), owns (a owns b), leads (a leads group b), member (a belongs to b), in (a place or event is inside place b); sibling, spouse and rival_of read the same both ways",
-  "must_find": "false = a good find if present, not a miss if absent; an inferred tie that must be found is scored as an offered suggestion"
+  "tier": "stated = the words are in the text; inferred = only implied (offered to the DM as a suggestion, never extracted as a fact); by_rule = made by a rule, not read",
+  "relation": "parent_of, grandparent_of, sibling, spouse, uncle_of, apprentice_of, mentor_of, owns, carries, knows (+ one of nine feeling words), member, leads, works_for, enemy_of, rival_of, held_captive_by, found, associate; place ties by word: lives_in, lived_in, works_in, comes_from, last_seen_in (a character, creature or group), kept_in, was_kept_in (an item); in (only a place inside a place)",
+  "direction": "a to b: parent_of (a is the parent), owns (a owns b), leads (a leads b), member (a belongs to b), in (a place is inside place b); sibling, spouse and rival_of read the same both ways",
+  "must_find": "false = a good find if present, not a miss if absent; an inferred tie that must be found is scored as an offered suggestion",
+  "current": "false = history: it was true and is not now (the graph shows the most recent relationship, #3363)",
+  "line": "the line of the document's plain-text export that supports it (blank lines count)"
  },
  "players": {
   "Cerric Vanya'elen": "user_ist",
@@ -22,10 +24,9 @@
     "Cerric",
     "Norro Fa'ertenya",
     "Norro",
-    "Spellweave",
-    "Anton Swift-Thistle"
+    "Spellweave"
    ],
-   "note": "Player character. Norro is his old name; Anton Swift-Thistle is a cover story told at the Caer."
+   "note": "Player character. Norro is his old name."
   },
   {
    "name": "Belleros Stormgrace",
@@ -33,15 +34,13 @@
    "aliases": [
     "Belleros"
    ],
-   "note": "Player character. The lore calls him both a ranger and a paladin/cleric."
+   "note": "Player character."
   },
   {
    "name": "Okthandom Korran",
    "kind": "person",
    "aliases": [
-    "Okthandom",
-    "Oktandom",
-    "Okk"
+    "Okthandom"
    ],
    "note": "Player character."
   },
@@ -51,49 +50,49 @@
    "aliases": [
     "Claude",
     "Griz",
-    "Grizz",
     "Major Ursa"
    ],
-   "note": "Player character. His true name is Griz, son of Lee."
+   "note": "Player character. His first name was Griz, son of Lee."
   },
   {
    "name": "The party",
    "kind": "group",
    "aliases": [
     "the heroes",
+    "our four adventurers",
     "the company"
    ],
    "note": "The four player characters."
   },
   {
-   "name": "Roceran Fa'ertenya",
+   "name": "Roceran",
    "kind": "person",
    "aliases": [],
-   "note": "Cerric's father"
+   "note": "Cerric's father, an explorer and wanderer"
   },
   {
-   "name": "Shafina Fa'ertenya",
+   "name": "Shafina",
    "kind": "person",
    "aliases": [],
-   "note": "Cerric's mother, a weaver"
+   "note": "Cerric's mother, a magical weaver"
   },
   {
    "name": "Valyra",
    "kind": "person",
    "aliases": [],
-   "note": "Cerric's younger sister"
+   "note": "Cerric's younger sister, a sorcerer"
   },
   {
    "name": "Kelfir Ama'Kiir",
    "kind": "person",
    "aliases": [],
-   "note": "elven mage who took Valyra as an apprentice"
+   "note": "elven mage Valyra serves"
   },
   {
    "name": "Qinric",
    "kind": "person",
    "aliases": [],
-   "note": "Cerric's uncle, a war mage"
+   "note": "Roceran's brother, a war mage"
   },
   {
    "name": "Syllar Sparkwalker",
@@ -101,184 +100,67 @@
    "aliases": [
     "Master Sparkwalker"
    ],
-   "note": "Council mage Cerric served"
+   "note": "Cerric's master"
   },
   {
-   "name": "Emmerich Ravenstride",
+   "name": "Emmerich",
    "kind": "person",
    "aliases": [],
-   "note": "Sparkwalker's apprentice, Cerric's rival"
+   "note": "a rival apprentice"
   },
   {
    "name": "Wit",
    "kind": "person",
    "aliases": [],
-   "note": "Sparkwalker's apprentice, died warning Cerric"
+   "note": "a rival apprentice, returns fatally wounded"
   },
   {
    "name": "Danneth",
    "kind": "person",
    "aliases": [],
-   "note": "named in a note to Easthaven"
+   "note": "named in the note in the tome"
   },
   {
-   "name": "Khelben Aruynsen",
+   "name": "Vaelrith",
    "kind": "person",
    "aliases": [],
-   "note": "the previous Blackstaff, a marble bust in the lore"
+   "note": "Okthandom's elder brother, vanished"
   },
   {
-   "name": "Cerric's grandfather",
+   "name": "Nyssara",
    "kind": "person",
    "aliases": [],
-   "note": "Unnamed. Roceran's father; died in a storm."
-  },
-  {
-   "name": "Glyph",
-   "kind": "creature",
-   "aliases": [],
-   "note": "Cerric's snowy owl familiar. Destroyed by the grell, to be brought back later."
-  },
-  {
-   "name": "Vaelrith Korran",
-   "kind": "person",
-   "aliases": [
-    "Vaelrith"
-   ],
-   "note": "elder brother, vanished"
-  },
-  {
-   "name": "Nyssara Korran",
-   "kind": "person",
-   "aliases": [
-    "Nyssara"
-   ],
-   "note": "younger sister"
-  },
-  {
-   "name": "Mjenir",
-   "kind": "person",
-   "aliases": [],
-   "note": "seer of the Elk Tribe"
-  },
-  {
-   "name": "Okthandom's child",
-   "kind": "person",
-   "aliases": [],
-   "note": "Unnamed. Mentioned once as someone the haunting could claim."
-  },
-  {
-   "name": "Sly",
-   "kind": "creature",
-   "aliases": [
-    "the wind spirit",
-    "wind spren",
-    "Daughter of the Air"
-   ],
-   "note": "Wind spirit that haunts and protects Okthandom."
-  },
-  {
-   "name": "Korran family journal",
-   "kind": "item",
-   "aliases": [
-    "family journal"
-   ],
-   "note": "Okthandom's family history."
+   "note": "Okthandom's younger sister"
   },
   {
    "name": "Lee",
    "kind": "person",
    "aliases": [],
-   "note": "Claude's late father, killed by the white dragon"
-  },
-  {
-   "name": "Oyami Nartok",
-   "kind": "person",
-   "aliases": [
-    "Oyami"
-   ],
-   "note": "goliath werebear, a brother of Claude's clan"
-  },
-  {
-   "name": "The ringmaster",
-   "kind": "person",
-   "aliases": [],
-   "note": "Unnamed. Ran the circus that held Claude; killed by him."
-  },
-  {
-   "name": "The circus",
-   "kind": "group",
-   "aliases": [],
-   "note": "Unnamed travelling circus that held Claude."
-  },
-  {
-   "name": "Explorer's League",
-   "kind": "group",
-   "aliases": [
-    "Explorer's League",
-    "the League"
-   ],
-   "note": "Guild of explorers."
-  },
-  {
-   "name": "Boy",
-   "kind": "creature",
-   "aliases": [],
-   "note": "Sled dog Belleros befriended in Targos."
-  },
-  {
-   "name": "Kanberron",
-   "kind": "creature",
-   "aliases": [
-    "Kanberon"
-   ],
-   "note": "Winter wolf called through the wolf figurine."
-  },
-  {
-   "name": "Wolf figurine",
-   "kind": "item",
-   "aliases": [
-    "fey figurine"
-   ],
-   "note": "Claude sold it to Belleros for 75 gold."
-  },
-  {
-   "name": "Chardalyn spear",
-   "kind": "item",
-   "aliases": [],
-   "note": "Corrupts its wielder."
-  },
-  {
-   "name": "Icy Rapier of Life Stealing",
-   "kind": "item",
-   "aliases": [
-    "the icy blade"
-   ],
-   "note": "Sephek Kaltro's blade, later with the party."
+   "note": "Claude's father"
   },
   {
    "name": "Hlin Trollbane",
    "kind": "person",
    "aliases": [],
-   "note": "retired bounty hunter, hires the party"
+   "note": "retired bounty hunter in Lonelywood"
   },
   {
    "name": "Sephek Kaltro",
    "kind": "person",
    "aliases": [],
-   "note": "killer the party hunts; bodyguard of Torrga"
+   "note": "bodyguard the party is hired to catch"
   },
   {
    "name": "Torrga Icevein",
    "kind": "person",
    "aliases": [],
-   "note": "merchant leading Torg's Caravan"
+   "note": "dwarf merchant leading Torg's Caravan"
   },
   {
-   "name": "Brewner",
+   "name": "Speaker Masthew",
    "kind": "person",
    "aliases": [],
-   "note": "dwarf who argued smelting with Belleros"
+   "note": "Town Speaker of Termalaine"
   },
   {
    "name": "Veron Braig",
@@ -287,16 +169,16 @@
    "note": "half-orc owner of The Blue Clam"
   },
   {
-   "name": "Craig the Gnome",
+   "name": "Brewner",
    "kind": "person",
    "aliases": [],
-   "note": "reviewer Veron courts"
+   "note": "dwarf who argued mithril smelting with Belleros"
   },
   {
-   "name": "Speaker Masthew",
+   "name": "Thorin",
    "kind": "person",
    "aliases": [],
-   "note": "town Speaker of Termalaine"
+   "note": "worker at the gemstone mine, Bruni's brother"
   },
   {
    "name": "Bruni Stonewake",
@@ -305,34 +187,28 @@
    "note": "miner"
   },
   {
-   "name": "Thorin",
-   "kind": "person",
-   "aliases": [],
-   "note": "Bruni's brother"
-  },
-  {
    "name": "Grek",
    "kind": "person",
    "aliases": [],
-   "note": "kobold prisoner"
+   "note": "surrendered kobold, then killed"
   },
   {
    "name": "Trex",
    "kind": "person",
    "aliases": [],
-   "note": "kobold leader possessed by a ghost"
+   "note": "kobold leader, killed by Okthandom"
   },
   {
    "name": "Fizzlebomb",
    "kind": "person",
    "aliases": [],
-   "note": "captain of the Aurora's Wind"
+   "note": "owner of the ship Aurora's Wind"
   },
   {
    "name": "Keegan Velryn",
    "kind": "person",
    "aliases": [],
-   "note": "wife of the missing explorer"
+   "note": "Garret's wife, hires the party"
   },
   {
    "name": "Garret Velryn",
@@ -344,137 +220,118 @@
    "name": "Jebidiah",
    "kind": "person",
    "aliases": [],
-   "note": "kennel master in Targos"
+   "note": "kennel master"
   },
   {
-   "name": "Dzaan",
+   "name": "Cerric's paternal grandfather",
    "kind": "person",
    "aliases": [],
-   "note": "Red Wizard burned at the stake"
+   "note": "Unnamed. Died in a storm."
   },
   {
-   "name": "Imdra Arlaggath",
+   "name": "Okthandom's child",
    "kind": "person",
    "aliases": [],
-   "note": "captain of the Easthaven militia"
-  },
-  {
-   "name": "Rinaldo",
-   "kind": "person",
-   "aliases": [],
-   "note": "bard who holds seances"
-  },
-  {
-   "name": "Xardorok Sunblight",
-   "kind": "person",
-   "aliases": [],
-   "note": "duergar tyrant"
-  },
-  {
-   "name": "Roark",
-   "kind": "person",
-   "aliases": [],
-   "note": "barkeep at The Uphill Climb"
-  },
-  {
-   "name": "Meltharond",
-   "kind": "person",
-   "aliases": [],
-   "note": "dead wizard rider of the white dragon"
-  },
-  {
-   "name": "Naerth Maxildanarr",
-   "kind": "person",
-   "aliases": [],
-   "note": "leader of the Zhentarim in Targos"
-  },
-  {
-   "name": "Markham Southwell",
-   "kind": "person",
-   "aliases": [],
-   "note": "sheriff of Bryn Shander"
-  },
-  {
-   "name": "Kadroth",
-   "kind": "person",
-   "aliases": [],
-   "note": "Black Sword cultist"
-  },
-  {
-   "name": "Huarwar Mulphoon",
-   "kind": "person",
-   "aliases": [],
-   "note": "Black Sword cultist"
-  },
-  {
-   "name": "Vellynne Harpell",
-   "kind": "person",
-   "aliases": [],
-   "note": "named in the proper-names list only"
-  },
-  {
-   "name": "Nass Lantomir",
-   "kind": "person",
-   "aliases": [],
-   "note": "named in the proper-names list only"
-  },
-  {
-   "name": "Arveiaturace",
-   "kind": "creature",
-   "aliases": [
-    "the White Death"
-   ],
-   "note": "Ancient white dragon."
-  },
-  {
-   "name": "The ghost",
-   "kind": "creature",
-   "aliases": [],
-   "note": "Unnamed ghost that possessed Trex."
-  },
-  {
-   "name": "Penolopi",
-   "kind": "item",
-   "aliases": [],
-   "note": "The ghost's pet plant."
-  },
-  {
-   "name": "The Minotaur captain",
-   "kind": "person",
-   "aliases": [],
-   "note": "Unnamed. Captain of the first ship, killed by the Ice Troll."
+   "note": "Unnamed. Mentioned once."
   },
   {
    "name": "Brewner's daughter",
    "kind": "person",
    "aliases": [],
-   "note": "Unnamed. A tall human redhead."
+   "note": "Unnamed. Leads Brewner home."
   },
   {
-   "name": "Shafina's guild",
-   "kind": "group",
+   "name": "The minotaur captain",
+   "kind": "person",
    "aliases": [],
-   "note": "Unnamed merchant guild."
+   "note": "Unnamed. Captain of the first ship."
   },
   {
-   "name": "The ones who came for the tome",
-   "kind": "group",
+   "name": "The beggar woman",
+   "kind": "person",
+   "aliases": [],
+   "note": "Unnamed. Gives a prophecy."
+  },
+  {
+   "name": "Auril the Frostmaiden",
+   "kind": "deity",
    "aliases": [
-    "they"
+    "Auril",
+    "the Frostmaiden"
    ],
-   "note": "Unnamed pursuers in Cerric's backstory."
+   "note": "Minor deity of winter's wrath."
+  },
+  {
+   "name": "Glyph",
+   "kind": "creature",
+   "aliases": [],
+   "note": "Cerric's snowy owl familiar, destroyed by the grell"
+  },
+  {
+   "name": "Boy",
+   "kind": "creature",
+   "aliases": [],
+   "note": "sled dog Belleros befriended"
+  },
+  {
+   "name": "The ghost",
+   "kind": "creature",
+   "aliases": [],
+   "note": "Unnamed possessed ghost that emerged when Trex fell"
+  },
+  {
+   "name": "Penolopi",
+   "kind": "creature",
+   "aliases": [],
+   "note": "pet plant the party burned"
+  },
+  {
+   "name": "The wind spirit",
+   "kind": "creature",
+   "aliases": [],
+   "note": "Unnamed ancient spirit that guides and guards Okthandom"
+  },
+  {
+   "name": "White roc",
+   "kind": "creature",
+   "aliases": [],
+   "note": "Auril's mount"
+  },
+  {
+   "name": "Ice kobolds",
+   "kind": "creature",
+   "aliases": [],
+   "note": "six fought on the road"
+  },
+  {
+   "name": "Yeti",
+   "kind": "creature",
+   "aliases": [],
+   "note": "evaded on the road"
   },
   {
    "name": "Grell",
    "kind": "creature",
    "aliases": [],
-   "note": "monster in the mine"
+   "note": "killed the familiar"
   },
   {
-   "name": "Peryton",
+   "name": "Ice troll",
    "kind": "creature",
    "aliases": [],
-   "note": "winged predator"
+   "note": "ate the first ship's captain"
+  },
+  {
+   "name": "Electric eel",
+   "kind": "creature",
+   "aliases": [],
+   "note": "pulled Fizzlebomb under"
+  },
+  {
+   "name": "Owlbears",
+   "kind": "creature",
+   "aliases": [],
+   "note": "three ambushed the party near Targos"
   },
   {
    "name": "Mind flayer",
@@ -483,144 +340,34 @@
    "note": "petrified skull in the mine"
   },
   {
-   "name": "Yeti",
-   "kind": "creature",
+   "name": "Lord's Alliance",
+   "kind": "group",
    "aliases": [],
-   "note": "tracked the party"
+   "note": "alliance Qinric serves"
   },
   {
-   "name": "Owlbears",
-   "kind": "creature",
+   "name": "Explorer's League",
+   "kind": "group",
    "aliases": [],
-   "note": "three fought near Targos"
-  },
-  {
-   "name": "Coldlight Walker",
-   "kind": "creature",
-   "aliases": [],
-   "note": "Undead fought on the road to Caer-Dineval."
-  },
-  {
-   "name": "Ice Troll",
-   "kind": "creature",
-   "aliases": [],
-   "note": "Killed the first ship's captain on Maer Dualdon."
-  },
-  {
-   "name": "Auril the Frostmaiden",
-   "kind": "deity",
-   "aliases": [
-    "Auril"
-   ],
-   "note": "goddess of winter"
-  },
-  {
-   "name": "Levistus",
-   "kind": "deity",
-   "aliases": [],
-   "note": "god of the Black Sword cultists"
-  },
-  {
-   "name": "Azuth",
-   "kind": "deity",
-   "aliases": [],
-   "note": "named once in an exclamation"
-  },
-  {
-   "name": "Deep Duerra",
-   "kind": "deity",
-   "aliases": [],
-   "note": "duergar goddess"
-  },
-  {
-   "name": "Lathander",
-   "kind": "deity",
-   "aliases": [],
-   "note": "named once, a temple in Waterdeep"
+   "note": "guild of explorers"
   },
   {
    "name": "Torg's Caravan",
    "kind": "group",
    "aliases": [],
-   "note": "Torrga's caravan"
+   "note": "Torrga's merchant caravan"
   },
   {
-   "name": "Clan Battlehammer",
+   "name": "The circus",
    "kind": "group",
    "aliases": [],
-   "note": "dwarven stronghold"
+   "note": "Unnamed travelling circus that held Claude"
   },
   {
-   "name": "Elk Tribe",
+   "name": "The Brotherhood",
    "kind": "group",
    "aliases": [],
-   "note": "tribe of Reghed nomads"
-  },
-  {
-   "name": "Knights of the Black Sword",
-   "kind": "group",
-   "aliases": [],
-   "note": "cult that holds the Caer, also called the Black Swords"
-  },
-  {
-   "name": "Arcane Brotherhood",
-   "kind": "group",
-   "aliases": [],
-   "note": "wizard order"
-  },
-  {
-   "name": "Zhentarim",
-   "kind": "group",
-   "aliases": [],
-   "note": "criminal network"
-  },
-  {
-   "name": "Council of the Blackstaff Tower",
-   "kind": "group",
-   "aliases": [],
-   "note": "council of mages"
-  },
-  {
-   "name": "Lord's Alliance",
-   "kind": "group",
-   "aliases": [],
-   "note": "alliance Qinric served"
-  },
-  {
-   "name": "Harpers",
-   "kind": "group",
-   "aliases": [],
-   "note": "founded by Khelben"
-  },
-  {
-   "name": "Red Wizards of Thay",
-   "kind": "group",
-   "aliases": [],
-   "note": "wizards of Thay"
-  },
-  {
-   "name": "Easthaven militia",
-   "kind": "group",
-   "aliases": [],
-   "note": "town guard"
-  },
-  {
-   "name": "Duergar of Xardorok",
-   "kind": "group",
-   "aliases": [],
-   "note": "duergar who hunt the party"
-  },
-  {
-   "name": "Tundra barbarians",
-   "kind": "group",
-   "aliases": [],
-   "note": "raiders with chardalyn weapons"
-  },
-  {
-   "name": "Bryn Shander guards",
-   "kind": "group",
-   "aliases": [],
-   "note": "town guard"
+   "note": "Unnamed. Named in the note in the tome"
   },
   {
    "name": "Icewind Dale",
@@ -630,18 +377,6 @@
   },
   {
    "name": "Ten-Towns",
-   "kind": "place",
-   "aliases": [],
-   "note": ""
-  },
-  {
-   "name": "Lonelywood",
-   "kind": "place",
-   "aliases": [],
-   "note": ""
-  },
-  {
-   "name": "Termalaine",
    "kind": "place",
    "aliases": [],
    "note": ""
@@ -662,8 +397,26 @@
    "name": "Easthaven",
    "kind": "place",
    "aliases": [
-    "East Haven"
+    "Eashaven"
    ],
+   "note": ""
+  },
+  {
+   "name": "Termalaine",
+   "kind": "place",
+   "aliases": [],
+   "note": ""
+  },
+  {
+   "name": "Bremen",
+   "kind": "place",
+   "aliases": [],
+   "note": ""
+  },
+  {
+   "name": "Good Mead",
+   "kind": "place",
+   "aliases": [],
    "note": ""
   },
   {
@@ -679,73 +432,7 @@
    "note": ""
   },
   {
-   "name": "Good Mead",
-   "kind": "place",
-   "aliases": [],
-   "note": ""
-  },
-  {
-   "name": "Bremen",
-   "kind": "place",
-   "aliases": [],
-   "note": ""
-  },
-  {
-   "name": "Dougan's Hole",
-   "kind": "place",
-   "aliases": [],
-   "note": ""
-  },
-  {
-   "name": "Maer Dualdon",
-   "kind": "place",
-   "aliases": [],
-   "note": ""
-  },
-  {
-   "name": "Kelvin's Cairn",
-   "kind": "place",
-   "aliases": [],
-   "note": ""
-  },
-  {
-   "name": "Lac Dinneshere",
-   "kind": "place",
-   "aliases": [],
-   "note": ""
-  },
-  {
-   "name": "Eastway Road",
-   "kind": "place",
-   "aliases": [],
-   "note": ""
-  },
-  {
-   "name": "Reghed Glacier",
-   "kind": "place",
-   "aliases": [],
-   "note": ""
-  },
-  {
-   "name": "Ythryn",
-   "kind": "place",
-   "aliases": [],
-   "note": ""
-  },
-  {
-   "name": "Caves of Hunger",
-   "kind": "place",
-   "aliases": [],
-   "note": ""
-  },
-  {
-   "name": "Sea of Moving Ice",
-   "kind": "place",
-   "aliases": [],
-   "note": ""
-  },
-  {
-   "name": "Skytower Shelter",
+   "name": "Lonelywood",
    "kind": "place",
    "aliases": [],
    "note": ""
@@ -763,13 +450,19 @@
    "note": ""
   },
   {
-   "name": "Blackstaff Tower",
+   "name": "Castle Ward",
    "kind": "place",
    "aliases": [],
    "note": ""
   },
   {
    "name": "Sparkwalker Spire",
+   "kind": "place",
+   "aliases": [],
+   "note": ""
+  },
+  {
+   "name": "Blackstaff Tower",
    "kind": "place",
    "aliases": [],
    "note": ""
@@ -787,26 +480,6 @@
    "note": ""
   },
   {
-   "name": "Castle Ward",
-   "kind": "place",
-   "aliases": [],
-   "note": ""
-  },
-  {
-   "name": "Spires of the Morning",
-   "kind": "place",
-   "aliases": [],
-   "note": ""
-  },
-  {
-   "name": "The Beautiful Mine",
-   "kind": "place",
-   "aliases": [
-    "gemstone mine"
-   ],
-   "note": ""
-  },
-  {
    "name": "The Lucky Liar",
    "kind": "place",
    "aliases": [],
@@ -819,764 +492,853 @@
    "note": ""
   },
   {
+   "name": "The gemstone mine",
+   "kind": "place",
+   "aliases": [
+    "the mine"
+   ],
+   "note": ""
+  },
+  {
+   "name": "Maer Dualdon",
+   "kind": "place",
+   "aliases": [],
+   "note": ""
+  },
+  {
    "name": "Three Flags Sailing",
    "kind": "place",
    "aliases": [],
    "note": ""
   },
   {
-   "name": "White Lady Inn",
-   "kind": "place",
-   "aliases": [
-    "The White Lady Inn"
-   ],
-   "note": ""
-  },
-  {
-   "name": "The Wet Trout",
-   "kind": "place",
-   "aliases": [
-    "The Wet Trout Inn"
-   ],
-   "note": ""
-  },
-  {
-   "name": "The Uphill Climb",
+   "name": "Kelvin's Cairn",
    "kind": "place",
    "aliases": [],
    "note": ""
   },
   {
-   "name": "The Caer",
+   "name": "Eastway Road",
    "kind": "place",
    "aliases": [],
    "note": ""
   },
   {
-   "name": "Blackiron Blades",
+   "name": "The Underdark",
    "kind": "place",
    "aliases": [],
    "note": ""
+  },
+  {
+   "name": "Sacrifice of souls",
+   "kind": "event",
+   "aliases": [],
+   "note": "every ten-day humanoid souls are sacrificed, spellcasters first, to appease Auril"
+  },
+  {
+   "name": "Sacrifice of warmth",
+   "kind": "event",
+   "aliases": [],
+   "note": "recurring Sacrifices of Warmth: all warmth is forsaken, to appease Auril"
+  },
+  {
+   "name": "Sacrifice of food",
+   "kind": "event",
+   "aliases": [],
+   "note": "the residents fast and surrender their daily food to the beasts of the tundra, to appease Auril"
+  },
+  {
+   "name": "The Everlasting Rime",
+   "kind": "event",
+   "aliases": [],
+   "note": "the magical winter Auril casts each night so the sun cannot rise"
+  },
+  {
+   "name": "Azure tome",
+   "kind": "item",
+   "aliases": [],
+   "note": "Syllar's locked tome"
+  },
+  {
+   "name": "Ancestral journal",
+   "kind": "item",
+   "aliases": [],
+   "note": "Okthandom's family journal"
+  },
+  {
+   "name": "Wolf figurine",
+   "kind": "item",
+   "aliases": [],
+   "note": "inlaid with black gems, etched with Sylvan runes"
   },
   {
    "name": "Aurora's Wind",
    "kind": "item",
    "aliases": [],
-   "note": "ship"
-  },
-  {
-   "name": "Lantern of Greater Tracking",
-   "kind": "item",
-   "aliases": [],
-   "note": ""
-  },
-  {
-   "name": "Psi crystal",
-   "kind": "item",
-   "aliases": [],
-   "note": "gives telepathy to its attuned owner"
+   "note": "Fizzlebomb's ship"
   },
   {
    "name": "Wand of Conducting",
    "kind": "item",
    "aliases": [],
-   "note": ""
+   "note": "found in the mine"
   },
   {
-   "name": "Wyvern poison",
+   "name": "Lantern of Greater Tracking",
    "kind": "item",
    "aliases": [],
-   "note": ""
+   "note": "found in the mine"
+  },
+  {
+   "name": "Chardalyn spear",
+   "kind": "item",
+   "aliases": [],
+   "note": "found in the mine"
+  },
+  {
+   "name": "Psi crystal",
+   "kind": "item",
+   "aliases": [],
+   "note": "from a petrified mind flayer skull; gives telepathy"
   },
   {
    "name": "Heart of chardalyn",
    "kind": "item",
    "aliases": [],
-   "note": ""
-  },
-  {
-   "name": "Sparkwalker's tome",
-   "kind": "item",
-   "aliases": [],
-   "note": "locked tome Cerric saved"
-  },
-  {
-   "name": "Explorer's League journal",
-   "kind": "item",
-   "aliases": [],
-   "note": "found on the ferry"
-  },
-  {
-   "name": "Oyami's pipe",
-   "kind": "item",
-   "aliases": [],
-   "note": "calming magical pipe"
-  },
-  {
-   "name": "Chardalyn shipment",
-   "kind": "item",
-   "aliases": [],
-   "note": "1,500 pounds on the ferry"
-  },
-  {
-   "name": "Dog sleds",
-   "kind": "item",
-   "aliases": [],
-   "note": "two sleds and eight dogs"
+   "note": "hidden under the bucket lift"
   }
  ],
  "pairs": [
   {
    "id": "l001",
-   "a": "Roceran Fa'ertenya",
+   "a": "Roceran",
    "relation": "parent_of",
    "b": "Cerric Vanya'elen",
    "tier": "stated",
    "must_find": true,
-   "note": "father; also Valyra's"
+   "line": 18
   },
   {
    "id": "l002",
-   "a": "Shafina Fa'ertenya",
+   "a": "Shafina",
    "relation": "parent_of",
    "b": "Cerric Vanya'elen",
    "tier": "stated",
    "must_find": true,
-   "note": "mother"
+   "line": 18
   },
   {
    "id": "l003",
-   "a": "Roceran Fa'ertenya",
+   "a": "Roceran",
    "relation": "parent_of",
    "b": "Valyra",
-   "tier": "stated",
-   "must_find": true
+   "tier": "inferred",
+   "must_find": false,
+   "line": 18,
+   "note": "'his younger sister, Valyra': the same parents"
   },
   {
    "id": "l004",
-   "a": "Shafina Fa'ertenya",
+   "a": "Shafina",
    "relation": "parent_of",
    "b": "Valyra",
-   "tier": "stated",
-   "must_find": true
+   "tier": "inferred",
+   "must_find": false,
+   "line": 18
   },
   {
    "id": "l005",
-   "a": "Roceran Fa'ertenya",
-   "relation": "spouse",
-   "b": "Shafina Fa'ertenya",
-   "tier": "inferred",
-   "must_find": false,
-   "note": "they are his parents together"
-  },
-  {
-   "id": "l006",
    "a": "Cerric Vanya'elen",
    "relation": "sibling",
    "b": "Valyra",
    "tier": "stated",
    "must_find": true,
+   "line": 18,
    "note": "younger sister"
+  },
+  {
+   "id": "l006",
+   "a": "Cerric's paternal grandfather",
+   "relation": "grandparent_of",
+   "b": "Cerric Vanya'elen",
+   "tier": "stated",
+   "must_find": true,
+   "line": 18,
+   "note": "died in a severe storm"
   },
   {
    "id": "l007",
    "a": "Qinric",
-   "relation": "uncle_of",
-   "b": "Cerric Vanya'elen",
+   "relation": "sibling",
+   "b": "Roceran",
    "tier": "stated",
    "must_find": true,
-   "note": "his father's brother"
+   "line": 18,
+   "note": "'Roceran's brother Qinric'; the owner asked for this tie directly"
   },
   {
    "id": "l008",
    "a": "Qinric",
-   "relation": "sibling",
-   "b": "Roceran Fa'ertenya",
-   "tier": "stated",
+   "relation": "uncle_of",
+   "b": "Cerric Vanya'elen",
+   "tier": "inferred",
    "must_find": true,
-   "note": "brothers; the owner's list wants this direct"
+   "line": 18,
+   "note": "never said as 'uncle': Roceran's brother"
   },
   {
    "id": "l009",
-   "a": "Cerric's grandfather",
-   "relation": "parent_of",
-   "b": "Roceran Fa'ertenya",
-   "tier": "stated",
-   "must_find": true,
-   "note": "his father's father"
-  },
-  {
-   "id": "l010",
-   "a": "Cerric's grandfather",
-   "relation": "parent_of",
-   "b": "Qinric",
-   "tier": "inferred",
-   "must_find": false
-  },
-  {
-   "id": "l011",
-   "a": "Okthandom Korran",
-   "relation": "sibling",
-   "b": "Vaelrith Korran",
-   "tier": "stated",
-   "must_find": true,
-   "note": "elder brother"
-  },
-  {
-   "id": "l012",
-   "a": "Okthandom Korran",
-   "relation": "sibling",
-   "b": "Nyssara Korran",
-   "tier": "stated",
-   "must_find": true,
-   "note": "younger sister; a player character's family must be kept"
-  },
-  {
-   "id": "l013",
-   "a": "Vaelrith Korran",
-   "relation": "sibling",
-   "b": "Nyssara Korran",
-   "tier": "stated",
-   "must_find": true,
-   "note": "'their younger sister'"
-  },
-  {
-   "id": "l014",
-   "a": "Okthandom Korran",
-   "relation": "parent_of",
-   "b": "Okthandom's child",
-   "tier": "stated",
-   "must_find": false,
-   "note": "'his child' is named once, in passing"
-  },
-  {
-   "id": "l015",
-   "a": "Lee",
-   "relation": "parent_of",
-   "b": "Claude Ambere",
-   "tier": "stated",
-   "must_find": true,
-   "note": "Griz, son of Lee; the owner flagged this as missing"
-  },
-  {
-   "id": "l016",
-   "a": "Oyami Nartok",
-   "relation": "sibling",
-   "b": "Claude Ambere",
-   "tier": "stated",
-   "must_find": true,
-   "note": "an adoptive brother of the clan"
-  },
-  {
-   "id": "l017",
-   "a": "Garret Velryn",
-   "relation": "spouse",
-   "b": "Keegan Velryn",
-   "tier": "stated",
-   "must_find": true,
-   "note": "her husband"
-  },
-  {
-   "id": "l018",
-   "a": "Bruni Stonewake",
-   "relation": "sibling",
-   "b": "Thorin",
-   "tier": "stated",
-   "must_find": true,
-   "note": "brothers"
-  },
-  {
-   "id": "l019",
-   "a": "Valyra",
-   "relation": "apprentice_of",
-   "b": "Kelfir Ama'Kiir",
-   "tier": "stated",
-   "must_find": true
-  },
-  {
-   "id": "l020",
-   "a": "Cerric Vanya'elen",
-   "relation": "works_for",
-   "b": "Syllar Sparkwalker",
-   "tier": "stated",
-   "must_find": true,
-   "note": "steward and keeper of the Spire"
-  },
-  {
-   "id": "l021",
-   "a": "Cerric Vanya'elen",
-   "relation": "works_in",
-   "b": "Sparkwalker Spire",
-   "tier": "stated",
-   "must_find": true,
-   "note": "'Keeper of the Sparkwalker Spire'"
-  },
-  {
-   "id": "l022",
-   "a": "Syllar Sparkwalker",
-   "relation": "member",
-   "b": "Council of the Blackstaff Tower",
-   "tier": "stated",
-   "must_find": true
-  },
-  {
-   "id": "l023",
-   "a": "Qinric",
-   "relation": "associate",
-   "b": "Syllar Sparkwalker",
-   "tier": "stated",
-   "must_find": true,
-   "note": "'one of Qinric's associates'"
-  },
-  {
-   "id": "l024",
    "a": "Qinric",
    "relation": "member",
    "b": "Lord's Alliance",
    "tier": "stated",
    "must_find": true,
-   "note": "served as a war mage"
+   "line": 18,
+   "note": "a war mage evoker in it"
   },
   {
-   "id": "l025",
-   "a": "Syllar Sparkwalker",
-   "relation": "mentor_of",
-   "b": "Emmerich Ravenstride",
+   "id": "l010",
+   "a": "Valyra",
+   "relation": "apprentice_of",
+   "b": "Kelfir Ama'Kiir",
    "tier": "stated",
    "must_find": true,
-   "note": "an apprentice"
+   "line": 18
   },
   {
-   "id": "l026",
+   "id": "l011",
+   "a": "Cerric Vanya'elen",
+   "relation": "works_for",
+   "b": "Syllar Sparkwalker",
+   "tier": "stated",
+   "must_find": true,
+   "line": 18,
+   "note": "Keeper of the Sparkwalker Spire under him"
+  },
+  {
+   "id": "l012",
+   "a": "Cerric Vanya'elen",
+   "relation": "works_in",
+   "b": "Sparkwalker Spire",
+   "tier": "stated",
+   "must_find": true,
+   "line": 18,
+   "note": "Keeper of it"
+  },
+  {
+   "id": "l013",
+   "a": "Syllar Sparkwalker",
+   "relation": "works_in",
+   "b": "Blackstaff Tower",
+   "tier": "inferred",
+   "must_find": false,
+   "line": 18,
+   "note": "'Syllar Sparkwalker of Blackstaff Tower'"
+  },
+  {
+   "id": "l014",
+   "a": "Syllar Sparkwalker",
+   "relation": "mentor_of",
+   "b": "Emmerich",
+   "tier": "inferred",
+   "must_find": false,
+   "line": 18,
+   "note": "Cerric's fellow apprentices"
+  },
+  {
+   "id": "l015",
    "a": "Syllar Sparkwalker",
    "relation": "mentor_of",
    "b": "Wit",
-   "tier": "stated",
-   "must_find": true,
-   "note": "an apprentice"
+   "tier": "inferred",
+   "must_find": false,
+   "line": 18
   },
   {
-   "id": "l027",
-   "a": "Emmerich Ravenstride",
+   "id": "l016",
+   "a": "Emmerich",
    "relation": "rival_of",
    "b": "Cerric Vanya'elen",
    "tier": "stated",
    "must_find": true,
-   "note": "the owner flagged backstory rivals as missing"
+   "line": 18,
+   "note": "'rival apprentices Emmerich and Wit'; the owner flagged backstory rivals as missing"
   },
   {
-   "id": "l028",
-   "a": "Cerric Vanya'elen",
-   "relation": "knows",
-   "b": "Wit",
-   "tier": "stated",
-   "must_find": true,
-   "feeling": "friendly",
-   "note": "mutual respect; the owner flagged this as missing"
-  },
-  {
-   "id": "l029",
+   "id": "l017",
    "a": "Wit",
-   "relation": "knows",
+   "relation": "rival_of",
    "b": "Cerric Vanya'elen",
    "tier": "stated",
-   "must_find": true,
-   "feeling": "trusts",
-   "note": "gives him the last order"
-  },
-  {
-   "id": "l030",
-   "a": "Cerric Vanya'elen",
-   "relation": "carries",
-   "b": "Sparkwalker's tome",
-   "tier": "stated",
-   "must_find": true,
-   "note": "saved it from the lab"
-  },
-  {
-   "id": "l031",
-   "a": "Syllar Sparkwalker",
-   "relation": "owns",
-   "b": "Sparkwalker's tome",
-   "tier": "stated",
    "must_find": false,
-   "note": "'the Master's tome'"
+   "line": 18
   },
   {
-   "id": "l032",
-   "a": "Syllar Sparkwalker",
-   "relation": "knows",
-   "b": "Danneth",
-   "tier": "inferred",
-   "must_find": false,
-   "note": "the note is signed 'S' and sent to Danneth"
-  },
-  {
-   "id": "l033",
-   "a": "Danneth",
-   "relation": "last_seen_in",
-   "b": "Easthaven",
-   "tier": "inferred",
-   "must_find": false,
-   "note": "the note is addressed to Danneth at East Haven"
-  },
-  {
-   "id": "l034",
-   "a": "Cerric Vanya'elen",
-   "relation": "owns",
-   "b": "Glyph",
-   "tier": "stated",
-   "must_find": true,
-   "note": "familiar"
-  },
-  {
-   "id": "l035",
-   "a": "Khelben Aruynsen",
-   "relation": "member",
-   "b": "Harpers",
-   "tier": "stated",
-   "must_find": false,
-   "note": "founder; a bust only"
-  },
-  {
-   "id": "l036",
+   "id": "l018",
    "a": "Cerric Vanya'elen",
    "relation": "comes_from",
    "b": "Waterdeep",
    "tier": "stated",
-   "must_find": false,
+   "must_find": true,
+   "line": 18,
    "note": "born in the Temple of the Seldarine"
   },
   {
-   "id": "l037",
+   "id": "l019",
    "a": "Temple of the Seldarine",
    "relation": "in",
    "b": "Waterdeep",
    "tier": "stated",
-   "must_find": true
+   "must_find": true,
+   "line": 18
   },
   {
-   "id": "l038",
-   "a": "Blackstaff Tower",
-   "relation": "in",
-   "b": "Waterdeep",
-   "tier": "inferred",
+   "id": "l020",
+   "a": "Cerric Vanya'elen",
+   "relation": "lived_in",
+   "b": "Castle Ward",
+   "tier": "stated",
    "must_find": false,
-   "note": "the story places it in the city"
+   "line": 18,
+   "current": false,
+   "note": "raised in a mansion there"
   },
   {
-   "id": "l039",
-   "a": "Sparkwalker Spire",
-   "relation": "in",
-   "b": "Waterdeep",
-   "tier": "inferred",
-   "must_find": false
-  },
-  {
-   "id": "l040",
+   "id": "l021",
    "a": "Castle Ward",
    "relation": "in",
    "b": "Waterdeep",
    "tier": "inferred",
    "must_find": false,
-   "note": "the story places it in the city"
+   "line": 18
   },
   {
-   "id": "l041",
-   "a": "Spires of the Morning",
-   "relation": "in",
-   "b": "Waterdeep",
+   "id": "l022",
+   "a": "Cerric Vanya'elen",
+   "relation": "carries",
+   "b": "Azure tome",
+   "tier": "stated",
+   "must_find": true,
+   "line": 21,
+   "note": "grabbed his master's locked tome"
+  },
+  {
+   "id": "l023",
+   "a": "Syllar Sparkwalker",
+   "relation": "owns",
+   "b": "Azure tome",
+   "tier": "stated",
+   "must_find": true,
+   "line": 21,
+   "note": "'his master's'"
+  },
+  {
+   "id": "l024",
+   "a": "Cerric Vanya'elen",
+   "relation": "last_seen_in",
+   "b": "Neverwinter",
+   "tier": "stated",
+   "must_find": false,
+   "line": 21,
+   "note": "fled there by teleportation rune"
+  },
+  {
+   "id": "l025",
+   "a": "Cerric Vanya'elen",
+   "relation": "last_seen_in",
+   "b": "Icewind Dale",
+   "tier": "stated",
+   "must_find": false,
+   "line": 21,
+   "note": "journeyed north into it"
+  },
+  {
+   "id": "l026",
+   "a": "Danneth",
+   "relation": "last_seen_in",
+   "b": "Easthaven",
    "tier": "inferred",
    "must_find": false,
-   "note": "the story places it in the city"
+   "line": 21,
+   "note": "the note is addressed 'Danneth, Easthaven'"
   },
   {
-   "id": "l042",
-   "a": "Sly",
+   "id": "l027",
+   "a": "Syllar Sparkwalker",
+   "relation": "knows",
+   "b": "Danneth",
+   "tier": "inferred",
+   "must_find": false,
+   "line": 21,
+   "note": "the note is signed S"
+  },
+  {
+   "id": "l028",
+   "a": "Cerric Vanya'elen",
+   "relation": "owns",
+   "b": "Glyph",
+   "tier": "stated",
+   "must_find": true,
+   "line": 21,
+   "note": "snowy owl familiar"
+  },
+  {
+   "id": "l029",
+   "a": "Easthaven",
+   "relation": "in",
+   "b": "Icewind Dale",
+   "tier": "stated",
+   "must_find": true,
+   "line": 21
+  },
+  {
+   "id": "l030",
+   "a": "Okthandom Korran",
+   "relation": "sibling",
+   "b": "Vaelrith",
+   "tier": "stated",
+   "must_find": true,
+   "line": 27,
+   "note": "elder brother, vanished at 105"
+  },
+  {
+   "id": "l031",
+   "a": "Okthandom Korran",
+   "relation": "sibling",
+   "b": "Nyssara",
+   "tier": "stated",
+   "must_find": true,
+   "line": 27,
+   "note": "younger sister; a player character's family must be kept"
+  },
+  {
+   "id": "l032",
+   "a": "Vaelrith",
+   "relation": "sibling",
+   "b": "Nyssara",
+   "tier": "inferred",
+   "must_find": false,
+   "line": 27
+  },
+  {
+   "id": "l033",
+   "a": "Okthandom Korran",
+   "relation": "parent_of",
+   "b": "Okthandom's child",
+   "tier": "stated",
+   "must_find": false,
+   "line": 30,
+   "note": "'his child', named once in passing"
+  },
+  {
+   "id": "l034",
+   "a": "The wind spirit",
    "relation": "associate",
    "b": "Okthandom Korran",
    "tier": "stated",
    "must_find": true,
-   "note": "haunts and protects him"
+   "line": 30,
+   "note": "guides and guards him"
   },
   {
-   "id": "l043",
-   "a": "Oyami Nartok",
-   "relation": "knows",
-   "b": "Sly",
-   "tier": "stated",
-   "must_find": true,
-   "feeling": "devoted",
-   "note": "reveres it"
-  },
-  {
-   "id": "l044",
-   "a": "Mjenir",
-   "relation": "member",
-   "b": "Elk Tribe",
-   "tier": "stated",
-   "must_find": true
-  },
-  {
-   "id": "l045",
-   "a": "Mjenir",
-   "relation": "lives_in",
-   "b": "Skytower Shelter",
-   "tier": "stated",
-   "must_find": true
-  },
-  {
-   "id": "l046",
+   "id": "l035",
    "a": "Okthandom Korran",
    "relation": "owns",
-   "b": "Korran family journal",
-   "tier": "stated",
-   "must_find": false
-  },
-  {
-   "id": "l047",
-   "a": "Lee",
-   "relation": "knows",
-   "b": "Oyami Nartok",
-   "tier": "stated",
-   "must_find": true,
-   "feeling": "friendly",
-   "note": "'friend to Lee'"
-  },
-  {
-   "id": "l048",
-   "a": "Arveiaturace",
-   "relation": "enemy_of",
-   "b": "Lee",
-   "tier": "stated",
-   "must_find": true,
-   "note": "killed him"
-  },
-  {
-   "id": "l049",
-   "a": "Claude Ambere",
-   "relation": "held_captive_by",
-   "b": "The circus",
-   "tier": "stated",
+   "b": "Ancestral journal",
+   "tier": "inferred",
    "must_find": false,
-   "note": "before he escaped"
+   "line": 27,
+   "note": "found the curse in it"
   },
   {
-   "id": "l050",
-   "a": "The ringmaster",
-   "relation": "leads",
-   "b": "The circus",
+   "id": "l036",
+   "a": "Belleros Stormgrace",
+   "relation": "member",
+   "b": "Explorer's League",
    "tier": "stated",
-   "must_find": false
+   "must_find": true,
+   "line": 36,
+   "note": "'a scout associated with the Explorer's League'"
   },
   {
-   "id": "l051",
+   "id": "l037",
    "a": "Claude Ambere",
    "relation": "comes_from",
    "b": "Spine of the World",
    "tier": "stated",
    "must_find": true,
-   "note": "the clan's crags; he is from there"
+   "line": 42
+  },
+  {
+   "id": "l038",
+   "a": "Lee",
+   "relation": "parent_of",
+   "b": "Claude Ambere",
+   "tier": "stated",
+   "must_find": true,
+   "line": 42,
+   "note": "'Griz, son of Lee'; the owner flagged this as missing"
+  },
+  {
+   "id": "l039",
+   "a": "Claude Ambere",
+   "relation": "held_captive_by",
+   "b": "The circus",
+   "tier": "stated",
+   "must_find": true,
+   "line": 42,
+   "current": false,
+   "note": "before he escaped"
+  },
+  {
+   "id": "l040",
+   "a": "Claude Ambere",
+   "relation": "found",
+   "b": "Wolf figurine",
+   "tier": "inferred",
+   "must_find": true,
+   "line": 42,
+   "current": false,
+   "note": "the owner: Claude found it first (line 42: he carries a unique wolf figurine; line 90: he sells it). Offered to the DM, never extracted"
+  },
+  {
+   "id": "l041",
+   "a": "Auril the Frostmaiden",
+   "relation": "lives_in",
+   "b": "Icewind Dale",
+   "tier": "stated",
+   "must_find": true,
+   "line": 51,
+   "note": "withdrawn there to live among mortals"
+  },
+  {
+   "id": "l042",
+   "a": "Auril the Frostmaiden",
+   "relation": "associate",
+   "b": "White roc",
+   "tier": "stated",
+   "must_find": false,
+   "line": 51,
+   "note": "rides it"
+  },
+  {
+   "id": "l043",
+   "a": "Ten-Towns",
+   "relation": "associate",
+   "b": "Auril the Frostmaiden",
+   "tier": "stated",
+   "must_find": false,
+   "line": 90,
+   "note": "its towns sacrifice every ten-day to appease her"
+  },
+  {
+   "id": "l044",
+   "a": "Targos",
+   "relation": "in",
+   "b": "Ten-Towns",
+   "tier": "stated",
+   "must_find": true,
+   "line": 90,
+   "note": "listed with its sacrifice (also line 7)"
+  },
+  {
+   "id": "l045",
+   "a": "Bryn Shander",
+   "relation": "in",
+   "b": "Ten-Towns",
+   "tier": "stated",
+   "must_find": true,
+   "line": 90,
+   "note": "listed with its sacrifice (also line 7)"
+  },
+  {
+   "id": "l046",
+   "a": "Easthaven",
+   "relation": "in",
+   "b": "Ten-Towns",
+   "tier": "stated",
+   "must_find": true,
+   "line": 90,
+   "note": "listed with its sacrifice (also line 7)"
+  },
+  {
+   "id": "l047",
+   "a": "Termalaine",
+   "relation": "in",
+   "b": "Ten-Towns",
+   "tier": "stated",
+   "must_find": true,
+   "line": 90,
+   "note": "listed with its sacrifice (also line 7)"
+  },
+  {
+   "id": "l048",
+   "a": "Bremen",
+   "relation": "in",
+   "b": "Ten-Towns",
+   "tier": "stated",
+   "must_find": true,
+   "line": 90,
+   "note": "listed with its sacrifice (also line 7)"
+  },
+  {
+   "id": "l049",
+   "a": "Good Mead",
+   "relation": "in",
+   "b": "Ten-Towns",
+   "tier": "stated",
+   "must_find": true,
+   "line": 90,
+   "note": "listed with its sacrifice (also line 7)"
+  },
+  {
+   "id": "l050",
+   "a": "Caer-Dineval",
+   "relation": "in",
+   "b": "Ten-Towns",
+   "tier": "stated",
+   "must_find": true,
+   "line": 90,
+   "note": "listed with its sacrifice (also line 7)"
+  },
+  {
+   "id": "l051",
+   "a": "Caer-Konig",
+   "relation": "in",
+   "b": "Ten-Towns",
+   "tier": "stated",
+   "must_find": true,
+   "line": 90,
+   "note": "listed with its sacrifice (also line 7)"
   },
   {
    "id": "l052",
-   "a": "Oyami Nartok",
-   "relation": "lives_in",
-   "b": "Spine of the World",
-   "tier": "inferred",
-   "must_find": false
+   "a": "Lonelywood",
+   "relation": "in",
+   "b": "Ten-Towns",
+   "tier": "stated",
+   "must_find": true,
+   "line": 90,
+   "note": "listed with its sacrifice (also line 7)"
   },
   {
    "id": "l053",
-   "a": "Belleros Stormgrace",
-   "relation": "member",
-   "b": "Explorer's League",
+   "a": "Ten-Towns",
+   "relation": "in",
+   "b": "Icewind Dale",
    "tier": "stated",
-   "must_find": true
+   "must_find": true,
+   "line": 57
   },
   {
    "id": "l054",
-   "a": "Garret Velryn",
-   "relation": "member",
-   "b": "Explorer's League",
+   "a": "Sacrifice of souls",
+   "relation": "in",
+   "b": "Targos",
    "tier": "stated",
-   "must_find": true
+   "must_find": true,
+   "line": 7,
+   "note": "held there every ten-day (line 90)"
   },
   {
    "id": "l055",
-   "a": "Belleros Stormgrace",
-   "relation": "owns",
-   "b": "Boy",
-   "tier": "inferred",
-   "must_find": false,
-   "note": "befriended in the story, 'adopted' in the entity list; see the Garret tie below"
+   "a": "Sacrifice of souls",
+   "relation": "in",
+   "b": "Bryn Shander",
+   "tier": "stated",
+   "must_find": true,
+   "line": 7,
+   "note": "held there every ten-day (line 90)"
   },
   {
    "id": "l056",
-   "a": "Belleros Stormgrace",
-   "relation": "owns",
-   "b": "Wolf figurine",
+   "a": "Sacrifice of souls",
+   "relation": "in",
+   "b": "Easthaven",
    "tier": "stated",
    "must_find": true,
-   "note": "bought from Claude"
+   "line": 7,
+   "note": "held there every ten-day (line 90)"
   },
   {
    "id": "l057",
-   "a": "Belleros Stormgrace",
-   "relation": "owns",
-   "b": "Kanberron",
+   "a": "Sacrifice of souls",
+   "relation": "associate",
+   "b": "Auril the Frostmaiden",
    "tier": "stated",
    "must_find": true,
-   "note": "'his Winter Wolf'"
+   "line": 90,
+   "note": "to appease her"
   },
   {
    "id": "l058",
-   "a": "Wolf figurine",
-   "relation": "associate",
-   "b": "Kanberron",
+   "a": "Sacrifice of warmth",
+   "relation": "in",
+   "b": "Termalaine",
    "tier": "stated",
    "must_find": true,
-   "note": "a gateway for the winter wolf"
+   "line": 7,
+   "note": "held there every ten-day (line 90)"
   },
   {
    "id": "l059",
-   "a": "Belleros Stormgrace",
-   "relation": "carries",
-   "b": "Chardalyn spear",
+   "a": "Sacrifice of warmth",
+   "relation": "in",
+   "b": "Bremen",
    "tier": "stated",
-   "must_find": true
+   "must_find": true,
+   "line": 7,
+   "note": "held there every ten-day (line 90)"
   },
   {
    "id": "l060",
-   "a": "Belleros Stormgrace",
-   "relation": "carries",
-   "b": "Icy Rapier of Life Stealing",
+   "a": "Sacrifice of warmth",
+   "relation": "in",
+   "b": "Good Mead",
    "tier": "stated",
-   "must_find": false,
-   "note": "looted from Kaltro"
+   "must_find": true,
+   "line": 7,
+   "note": "held there every ten-day (line 90)"
   },
   {
    "id": "l061",
-   "a": "Sephek Kaltro",
-   "relation": "carries",
-   "b": "Icy Rapier of Life Stealing",
+   "a": "Sacrifice of warmth",
+   "relation": "associate",
+   "b": "Auril the Frostmaiden",
    "tier": "stated",
-   "must_find": true
+   "must_find": true,
+   "line": 90,
+   "note": "to appease her"
   },
   {
    "id": "l062",
-   "a": "Belleros Stormgrace",
-   "relation": "knows",
-   "b": "Brewner",
+   "a": "Sacrifice of food",
+   "relation": "in",
+   "b": "Caer-Dineval",
    "tier": "stated",
-   "must_find": false,
-   "feeling": "neutral",
-   "note": "an argument about smelting"
+   "must_find": true,
+   "line": 7,
+   "note": "held there every ten-day (line 90)"
   },
   {
    "id": "l063",
-   "a": "Belleros Stormgrace",
-   "relation": "knows",
-   "b": "Garret Velryn",
+   "a": "Sacrifice of food",
+   "relation": "in",
+   "b": "Caer-Konig",
    "tier": "stated",
-   "must_find": false,
-   "note": "knows his name from the League"
+   "must_find": true,
+   "line": 7,
+   "note": "held there every ten-day (line 90)"
   },
   {
    "id": "l064",
-   "a": "Garret Velryn",
-   "relation": "owns",
-   "b": "Boy",
-   "tier": "inferred",
+   "a": "Sacrifice of food",
+   "relation": "in",
+   "b": "Lonelywood",
+   "tier": "stated",
    "must_find": true,
-   "note": "the owner says Boy is Garret's dog; the lore does not say it. Offer as a suggestion for the DM, never extract."
+   "line": 7,
+   "note": "held there every ten-day (line 90)"
   },
   {
    "id": "l065",
-   "a": "Boy",
-   "relation": "last_seen_in",
-   "b": "Three Flags Sailing",
+   "a": "Sacrifice of food",
+   "relation": "associate",
+   "b": "Auril the Frostmaiden",
    "tier": "stated",
-   "must_find": false
+   "must_find": true,
+   "line": 90,
+   "note": "to appease her"
   },
   {
    "id": "l066",
+   "a": "Auril the Frostmaiden",
+   "relation": "associate",
+   "b": "The Everlasting Rime",
+   "tier": "stated",
+   "must_find": true,
+   "line": 51,
+   "note": "casts it each night before midnight (line 4)"
+  },
+  {
+   "id": "l067",
+   "a": "The Everlasting Rime",
+   "relation": "in",
+   "b": "Icewind Dale",
+   "tier": "stated",
+   "must_find": true,
+   "line": 4,
+   "note": "holds the Ten-Towns in a frozen vice"
+  },
+  {
+   "id": "l068",
+   "a": "Hlin Trollbane",
+   "relation": "works_in",
+   "b": "Lonelywood",
+   "tier": "stated",
+   "must_find": true,
+   "line": 53,
+   "note": "operates out of it"
+  },
+  {
+   "id": "l069",
    "a": "The party",
    "relation": "works_for",
    "b": "Hlin Trollbane",
    "tier": "stated",
    "must_find": true,
-   "note": "100 gold to bring back Kaltro"
+   "line": 53,
+   "note": "100 gold to capture or eliminate Kaltro (line 67)"
   },
   {
-   "id": "l067",
+   "id": "l070",
    "a": "Hlin Trollbane",
    "relation": "enemy_of",
    "b": "Sephek Kaltro",
-   "tier": "stated",
-   "must_find": true,
-   "note": "she hires the party against him; she is not his servant (#3256)"
+   "tier": "inferred",
+   "must_find": false,
+   "line": 53,
+   "note": "she hires against him; she is not his servant (#3256)"
   },
   {
-   "id": "l068",
+   "id": "l071",
    "a": "Sephek Kaltro",
    "relation": "works_for",
    "b": "Torrga Icevein",
    "tier": "stated",
    "must_find": true,
-   "note": "bodyguard; not the caravan itself"
+   "line": 57,
+   "note": "her bodyguard (also line 55)"
   },
   {
-   "id": "l069",
+   "id": "l072",
    "a": "Torrga Icevein",
    "relation": "leads",
    "b": "Torg's Caravan",
    "tier": "stated",
-   "must_find": true
-  },
-  {
-   "id": "l070",
-   "a": "Sephek Kaltro",
-   "relation": "member",
-   "b": "Torg's Caravan",
-   "tier": "inferred",
-   "must_find": false
-  },
-  {
-   "id": "l071",
-   "a": "Torg's Caravan",
-   "relation": "last_seen_in",
-   "b": "The Wet Trout",
-   "tier": "stated",
-   "must_find": false,
-   "note": "rumoured stay"
-  },
-  {
-   "id": "l072",
-   "a": "Torg's Caravan",
-   "relation": "last_seen_in",
-   "b": "Easthaven",
-   "tier": "stated",
-   "must_find": false,
-   "note": "headed to Easthaven"
+   "must_find": true,
+   "line": 57,
+   "note": "under her own heading on line 56"
   },
   {
    "id": "l073",
    "a": "Sephek Kaltro",
+   "relation": "member",
+   "b": "Torg's Caravan",
+   "tier": "inferred",
+   "must_find": false,
+   "line": 55,
+   "note": "accompanies it"
+  },
+  {
+   "id": "l074",
+   "a": "Sephek Kaltro",
    "relation": "last_seen_in",
    "b": "Easthaven",
    "tier": "stated",
    "must_find": false,
-   "note": "last known place"
-  },
-  {
-   "id": "l074",
-   "a": "The party",
-   "relation": "works_for",
-   "b": "Speaker Masthew",
-   "tier": "stated",
-   "must_find": true,
-   "note": "250 gold for the mine"
+   "line": 96,
+   "note": "his last known location"
   },
   {
    "id": "l075",
@@ -1584,974 +1346,582 @@
    "relation": "leads",
    "b": "Termalaine",
    "tier": "stated",
-   "must_find": true
+   "must_find": true,
+   "line": 59
   },
   {
    "id": "l076",
    "a": "The party",
    "relation": "works_for",
-   "b": "Keegan Velryn",
+   "b": "Speaker Masthew",
    "tier": "stated",
    "must_find": true,
-   "note": "50 gold to find Garret"
+   "line": 78,
+   "note": "50 gold, then 250 for the mine (line 87)"
   },
   {
    "id": "l077",
-   "a": "Garret Velryn",
-   "relation": "last_seen_in",
-   "b": "Kelvin's Cairn",
+   "a": "Veron Braig",
+   "relation": "owns",
+   "b": "The Blue Clam",
    "tier": "stated",
-   "must_find": false,
-   "note": "last seen near it"
+   "must_find": true,
+   "line": 61
   },
   {
    "id": "l078",
-   "a": "The party",
-   "relation": "works_for",
-   "b": "Imdra Arlaggath",
+   "a": "Veron Braig",
+   "relation": "works_in",
+   "b": "The Blue Clam",
    "tier": "stated",
    "must_find": true,
-   "note": "missing fishers"
+   "line": 61,
+   "note": "owner and proprietor"
   },
   {
    "id": "l079",
-   "a": "Imdra Arlaggath",
-   "relation": "leads",
-   "b": "Easthaven militia",
+   "a": "The Blue Clam",
+   "relation": "in",
+   "b": "Termalaine",
    "tier": "stated",
-   "must_find": true
+   "must_find": true,
+   "line": 61
   },
   {
    "id": "l080",
-   "a": "Imdra Arlaggath",
-   "relation": "works_in",
-   "b": "Easthaven",
+   "a": "The Lucky Liar",
+   "relation": "in",
+   "b": "Lonelywood",
    "tier": "stated",
-   "must_find": false
+   "must_find": true,
+   "line": 67
   },
   {
    "id": "l081",
-   "a": "Rinaldo",
-   "relation": "works_in",
-   "b": "White Lady Inn",
+   "a": "Belleros Stormgrace",
+   "relation": "knows",
+   "b": "Brewner",
    "tier": "stated",
    "must_find": false,
-   "note": "hosts seances"
+   "line": 67,
+   "feeling": "wary",
+   "note": "a heated debate"
   },
   {
    "id": "l082",
-   "a": "White Lady Inn",
-   "relation": "in",
-   "b": "Easthaven",
+   "a": "Brewner",
+   "relation": "parent_of",
+   "b": "Brewner's daughter",
    "tier": "stated",
-   "must_find": true
+   "must_find": false,
+   "line": 67
   },
   {
    "id": "l083",
-   "a": "The Wet Trout",
-   "relation": "in",
-   "b": "Easthaven",
-   "tier": "stated",
-   "must_find": true
-  },
-  {
-   "id": "l084",
    "a": "Cerric Vanya'elen",
    "relation": "member",
    "b": "The party",
    "tier": "stated",
-   "must_find": true
+   "must_find": true,
+   "line": 67,
+   "note": "'our four adventurers'"
   },
   {
-   "id": "l085",
+   "id": "l084",
    "a": "Belleros Stormgrace",
    "relation": "member",
    "b": "The party",
    "tier": "stated",
-   "must_find": true
+   "must_find": true,
+   "line": 67,
+   "note": "'our four adventurers'"
   },
   {
-   "id": "l086",
+   "id": "l085",
    "a": "Okthandom Korran",
    "relation": "member",
    "b": "The party",
    "tier": "stated",
-   "must_find": true
+   "must_find": true,
+   "line": 67,
+   "note": "'our four adventurers'"
   },
   {
-   "id": "l087",
+   "id": "l086",
    "a": "Claude Ambere",
    "relation": "member",
    "b": "The party",
    "tier": "stated",
-   "must_find": true
+   "must_find": true,
+   "line": 67,
+   "note": "'our four adventurers'"
   },
   {
-   "id": "l088",
+   "id": "l087",
    "a": "Cerric Vanya'elen",
    "relation": "knows",
    "b": "Belleros Stormgrace",
    "tier": "by_rule",
    "must_find": true,
+   "line": 67,
+   "note": "player characters who play together know each other (#3036)"
+  },
+  {
+   "id": "l088",
+   "a": "Cerric Vanya'elen",
+   "relation": "knows",
+   "b": "Okthandom Korran",
+   "tier": "by_rule",
+   "must_find": true,
+   "line": 67,
    "note": "player characters who play together know each other (#3036)"
   },
   {
    "id": "l089",
    "a": "Cerric Vanya'elen",
    "relation": "knows",
-   "b": "Okthandom Korran",
+   "b": "Claude Ambere",
    "tier": "by_rule",
    "must_find": true,
+   "line": 67,
    "note": "player characters who play together know each other (#3036)"
   },
   {
    "id": "l090",
-   "a": "Cerric Vanya'elen",
+   "a": "Belleros Stormgrace",
    "relation": "knows",
-   "b": "Claude Ambere",
+   "b": "Okthandom Korran",
    "tier": "by_rule",
    "must_find": true,
+   "line": 67,
    "note": "player characters who play together know each other (#3036)"
   },
   {
    "id": "l091",
    "a": "Belleros Stormgrace",
    "relation": "knows",
-   "b": "Okthandom Korran",
+   "b": "Claude Ambere",
    "tier": "by_rule",
    "must_find": true,
+   "line": 67,
    "note": "player characters who play together know each other (#3036)"
   },
   {
    "id": "l092",
-   "a": "Belleros Stormgrace",
-   "relation": "knows",
-   "b": "Claude Ambere",
-   "tier": "by_rule",
-   "must_find": true,
-   "note": "player characters who play together know each other (#3036)"
-  },
-  {
-   "id": "l093",
    "a": "Okthandom Korran",
    "relation": "knows",
    "b": "Claude Ambere",
    "tier": "by_rule",
    "must_find": true,
+   "line": 67,
    "note": "player characters who play together know each other (#3036)"
   },
   {
-   "id": "l094",
-   "a": "The party",
-   "relation": "owns",
-   "b": "Lantern of Greater Tracking",
+   "id": "l093",
+   "a": "Bruni Stonewake",
+   "relation": "sibling",
+   "b": "Thorin",
    "tier": "stated",
    "must_find": true,
-   "note": "found in the mine"
+   "line": 78,
+   "note": "'Thorin, his miner brother Bruni'"
+  },
+  {
+   "id": "l094",
+   "a": "Bruni Stonewake",
+   "relation": "works_in",
+   "b": "The gemstone mine",
+   "tier": "stated",
+   "must_find": false,
+   "line": 78,
+   "note": "a miner"
   },
   {
    "id": "l095",
-   "a": "Cerric Vanya'elen",
-   "relation": "carries",
-   "b": "Psi crystal",
-   "tier": "stated",
-   "must_find": true,
-   "note": "attuned; gives telepathy"
+   "a": "The gemstone mine",
+   "relation": "in",
+   "b": "Termalaine",
+   "tier": "inferred",
+   "must_find": false,
+   "line": 78
   },
   {
    "id": "l096",
-   "a": "Psi crystal",
-   "relation": "kept_in",
-   "b": "The Beautiful Mine",
+   "a": "Trex",
+   "relation": "associate",
+   "b": "The ghost",
    "tier": "stated",
    "must_find": false,
-   "note": "found in the mind flayer's skull"
+   "line": 84,
+   "note": "a possessed ghost emerged when he fell"
   },
   {
    "id": "l097",
+   "a": "Trex",
+   "relation": "carries",
+   "b": "Penolopi",
+   "tier": "stated",
+   "must_find": false,
+   "line": 84,
+   "note": "the plant was in his backpack"
+  },
+  {
+   "id": "l098",
+   "a": "Okthandom Korran",
+   "relation": "enemy_of",
+   "b": "Trex",
+   "tier": "stated",
+   "must_find": false,
+   "line": 84,
+   "note": "killed him with an arrow"
+  },
+  {
+   "id": "l099",
    "a": "Cerric Vanya'elen",
    "relation": "carries",
    "b": "Wand of Conducting",
    "tier": "stated",
    "must_find": false,
-   "note": "given by Okthandom"
-  },
-  {
-   "id": "l098",
-   "a": "Cerric Vanya'elen",
-   "relation": "carries",
-   "b": "Wyvern poison",
-   "tier": "stated",
-   "must_find": false
-  },
-  {
-   "id": "l099",
-   "a": "The party",
-   "relation": "owns",
-   "b": "Heart of chardalyn",
-   "tier": "stated",
-   "must_find": false,
-   "note": "found by Claude"
+   "line": 84,
+   "note": "Okthandom found it and gave it to him"
   },
   {
    "id": "l100",
    "a": "The party",
    "relation": "owns",
-   "b": "Dog sleds",
+   "b": "Lantern of Greater Tracking",
    "tier": "stated",
-   "must_find": false
+   "must_find": false,
+   "line": 84,
+   "note": "found in the mine"
   },
   {
    "id": "l101",
-   "a": "Jebidiah",
+   "a": "The party",
    "relation": "owns",
-   "b": "Dog sleds",
+   "b": "Chardalyn spear",
    "tier": "stated",
    "must_find": false,
-   "note": "provided them"
+   "line": 84,
+   "note": "spoils of the mine"
   },
   {
    "id": "l102",
-   "a": "Jebidiah",
-   "relation": "works_in",
-   "b": "Targos",
+   "a": "The party",
+   "relation": "owns",
+   "b": "Heart of chardalyn",
    "tier": "stated",
-   "must_find": false
+   "must_find": false,
+   "line": 84,
+   "note": "hidden under the bucket lift"
   },
   {
    "id": "l103",
-   "a": "The party",
-   "relation": "owns",
-   "b": "Explorer's League journal",
-   "tier": "stated",
-   "must_find": false
+   "a": "Cerric Vanya'elen",
+   "relation": "carries",
+   "b": "Psi crystal",
+   "tier": "inferred",
+   "must_find": true,
+   "line": 87,
+   "note": "studied it; the party took it from the skull"
   },
   {
    "id": "l104",
+   "a": "Psi crystal",
+   "relation": "was_kept_in",
+   "b": "The gemstone mine",
+   "tier": "inferred",
+   "must_find": true,
+   "line": 84,
+   "current": false,
+   "note": "found there in the mind flayer's skull, then taken: the place is history"
+  },
+  {
+   "id": "l105",
+   "a": "Psi crystal",
+   "relation": "associate",
+   "b": "Mind flayer",
+   "tier": "stated",
+   "must_find": false,
+   "line": 84,
+   "note": "from its petrified skull"
+  },
+  {
+   "id": "l106",
+   "a": "Belleros Stormgrace",
+   "relation": "owns",
+   "b": "Wolf figurine",
+   "tier": "stated",
+   "must_find": true,
+   "line": 90,
+   "note": "bought it from Claude for 75 gold"
+  },
+  {
+   "id": "l107",
+   "a": "Belleros Stormgrace",
+   "relation": "carries",
+   "b": "Wolf figurine",
+   "tier": "inferred",
+   "must_find": true,
+   "line": 90,
+   "note": "the owner: he owns it and carries it now; the text says only that he bought it"
+  },
+  {
+   "id": "l108",
    "a": "Fizzlebomb",
    "relation": "owns",
    "b": "Aurora's Wind",
    "tier": "stated",
    "must_find": true,
-   "note": "'Fizzlebomb's ship'; the owner flagged this as missing"
-  },
-  {
-   "id": "l105",
-   "a": "Fizzlebomb",
-   "relation": "last_seen_in",
-   "b": "Maer Dualdon",
-   "tier": "stated",
-   "must_find": false
-  },
-  {
-   "id": "l106",
-   "a": "Veron Braig",
-   "relation": "owns",
-   "b": "The Blue Clam",
-   "tier": "stated",
-   "must_find": true
-  },
-  {
-   "id": "l107",
-   "a": "Veron Braig",
-   "relation": "works_in",
-   "b": "The Blue Clam",
-   "tier": "stated",
-   "must_find": true
-  },
-  {
-   "id": "l108",
-   "a": "The Blue Clam",
-   "relation": "in",
-   "b": "Termalaine",
-   "tier": "stated",
-   "must_find": true
+   "line": 90,
+   "note": "'Fizzlebomb's vessel'; the owner flagged this as missing"
   },
   {
    "id": "l109",
-   "a": "Veron Braig",
-   "relation": "knows",
-   "b": "Craig the Gnome",
-   "tier": "inferred",
+   "a": "Ice troll",
+   "relation": "enemy_of",
+   "b": "The minotaur captain",
+   "tier": "stated",
    "must_find": false,
-   "feeling": "wary",
-   "note": "he wants good reviews"
+   "line": 90,
+   "note": "devoured him and shattered his ship"
   },
   {
    "id": "l110",
-   "a": "The Beautiful Mine",
-   "relation": "in",
-   "b": "Termalaine",
-   "tier": "stated",
-   "must_find": true
-  },
-  {
-   "id": "l111",
-   "a": "Bruni Stonewake",
-   "relation": "works_in",
-   "b": "The Beautiful Mine",
-   "tier": "stated",
-   "must_find": false,
-   "note": "a miner"
-  },
-  {
-   "id": "l112",
-   "a": "Trex",
-   "relation": "associate",
-   "b": "The ghost",
-   "tier": "stated",
-   "must_find": true,
-   "note": "possessed by it"
-  },
-  {
-   "id": "l113",
-   "a": "The ghost",
-   "relation": "owns",
-   "b": "Penolopi",
-   "tier": "stated",
-   "must_find": true,
-   "note": "its pet plant"
-  },
-  {
-   "id": "l114",
-   "a": "Trex",
-   "relation": "last_seen_in",
-   "b": "The Beautiful Mine",
-   "tier": "stated",
-   "must_find": false
-  },
-  {
-   "id": "l115",
-   "a": "Grek",
-   "relation": "last_seen_in",
-   "b": "The Beautiful Mine",
-   "tier": "stated",
-   "must_find": false
-  },
-  {
-   "id": "l116",
-   "a": "Fizzlebomb",
-   "relation": "knows",
-   "b": "Cerric Vanya'elen",
-   "tier": "inferred",
-   "must_find": false,
-   "feeling": "hostile",
-   "note": "thrown in the water; he pleaded for a reason"
-  },
-  {
-   "id": "l117",
-   "a": "Xardorok Sunblight",
-   "relation": "leads",
-   "b": "Duergar of Xardorok",
-   "tier": "stated",
-   "must_find": true
-  },
-  {
-   "id": "l118",
-   "a": "Duergar of Xardorok",
-   "relation": "enemy_of",
-   "b": "The party",
-   "tier": "stated",
-   "must_find": true,
-   "note": "they hunt the party"
-  },
-  {
-   "id": "l119",
-   "a": "Duergar of Xardorok",
-   "relation": "knows",
-   "b": "Deep Duerra",
-   "tier": "stated",
-   "must_find": false,
-   "feeling": "devoted",
-   "note": "worship her"
-  },
-  {
-   "id": "l120",
-   "a": "Xardorok Sunblight",
-   "relation": "owns",
-   "b": "Chardalyn shipment",
-   "tier": "inferred",
-   "must_find": false,
-   "note": "meant for him"
-  },
-  {
-   "id": "l121",
-   "a": "Dzaan",
-   "relation": "member",
-   "b": "Red Wizards of Thay",
-   "tier": "stated",
-   "must_find": true
-  },
-  {
-   "id": "l122",
-   "a": "Dzaan",
-   "relation": "member",
-   "b": "Arcane Brotherhood",
-   "tier": "stated",
-   "must_find": true
-  },
-  {
-   "id": "l123",
-   "a": "Dzaan",
-   "relation": "last_seen_in",
-   "b": "Easthaven",
-   "tier": "stated",
-   "must_find": false
-  },
-  {
-   "id": "l124",
-   "a": "Arveiaturace",
-   "relation": "associate",
-   "b": "Meltharond",
-   "tier": "stated",
-   "must_find": true,
-   "note": "his corpse rides on her saddle"
-  },
-  {
-   "id": "l125",
-   "a": "Arveiaturace",
-   "relation": "lives_in",
-   "b": "Reghed Glacier",
-   "tier": "stated",
-   "must_find": false,
-   "note": "lair"
-  },
-  {
-   "id": "l126",
-   "a": "Arveiaturace",
-   "relation": "last_seen_in",
-   "b": "Sea of Moving Ice",
-   "tier": "stated",
-   "must_find": false,
-   "note": "hunts there"
-  },
-  {
-   "id": "l127",
-   "a": "Ythryn",
-   "relation": "in",
-   "b": "Reghed Glacier",
-   "tier": "stated",
-   "must_find": true
-  },
-  {
-   "id": "l128",
-   "a": "Caves of Hunger",
-   "relation": "in",
-   "b": "Reghed Glacier",
-   "tier": "stated",
-   "must_find": true
-  },
-  {
-   "id": "l129",
-   "a": "Skytower Shelter",
-   "relation": "in",
-   "b": "Spine of the World",
-   "tier": "inferred",
-   "must_find": false
-  },
-  {
-   "id": "l130",
-   "a": "Naerth Maxildanarr",
-   "relation": "leads",
-   "b": "Zhentarim",
-   "tier": "stated",
-   "must_find": true
-  },
-  {
-   "id": "l131",
-   "a": "Zhentarim",
-   "relation": "works_in",
-   "b": "Targos",
-   "tier": "stated",
-   "must_find": false
-  },
-  {
-   "id": "l132",
-   "a": "Markham Southwell",
-   "relation": "leads",
-   "b": "Bryn Shander guards",
-   "tier": "stated",
-   "must_find": true
-  },
-  {
-   "id": "l133",
-   "a": "Blackiron Blades",
-   "relation": "in",
-   "b": "Bryn Shander",
-   "tier": "stated",
-   "must_find": false
-  },
-  {
-   "id": "l134",
-   "a": "Knights of the Black Sword",
-   "relation": "leads",
-   "b": "The Caer",
-   "tier": "stated",
-   "must_find": true,
-   "note": "they control the keep"
-  },
-  {
-   "id": "l135",
-   "a": "The Caer",
-   "relation": "in",
-   "b": "Caer-Dineval",
-   "tier": "stated",
-   "must_find": true
-  },
-  {
-   "id": "l136",
-   "a": "Kadroth",
-   "relation": "member",
-   "b": "Knights of the Black Sword",
-   "tier": "inferred",
-   "must_find": false,
-   "note": "named as Black Sword cultists in the DM notes"
-  },
-  {
-   "id": "l137",
-   "a": "Huarwar Mulphoon",
-   "relation": "member",
-   "b": "Knights of the Black Sword",
-   "tier": "inferred",
-   "must_find": false,
-   "note": "named as Black Sword cultists in the DM notes"
-  },
-  {
-   "id": "l138",
-   "a": "Roark",
-   "relation": "works_in",
-   "b": "The Uphill Climb",
-   "tier": "stated",
-   "must_find": true
-  },
-  {
-   "id": "l139",
-   "a": "The Uphill Climb",
-   "relation": "in",
-   "b": "Caer-Dineval",
-   "tier": "stated",
-   "must_find": true
-  },
-  {
-   "id": "l140",
-   "a": "The Lucky Liar",
-   "relation": "in",
-   "b": "Lonelywood",
-   "tier": "stated",
-   "must_find": true
-  },
-  {
-   "id": "l141",
-   "a": "Three Flags Sailing",
-   "relation": "in",
-   "b": "Targos",
-   "tier": "stated",
-   "must_find": true
-  },
-  {
-   "id": "l142",
-   "a": "Clan Battlehammer",
-   "relation": "works_in",
-   "b": "Kelvin's Cairn",
-   "tier": "stated",
-   "must_find": false,
-   "note": "near its foothills"
-  },
-  {
-   "id": "l143",
-   "a": "Kelvin's Cairn",
-   "relation": "in",
-   "b": "Icewind Dale",
-   "tier": "stated",
-   "must_find": false
-  },
-  {
-   "id": "l144",
-   "a": "Maer Dualdon",
-   "relation": "in",
-   "b": "Icewind Dale",
-   "tier": "stated",
-   "must_find": false
-  },
-  {
-   "id": "l145",
-   "a": "Eastway Road",
-   "relation": "in",
-   "b": "Icewind Dale",
-   "tier": "inferred",
-   "must_find": false
-  },
-  {
-   "id": "l146",
-   "a": "Eastway Road",
-   "relation": "associate",
-   "b": "Bryn Shander",
-   "tier": "stated",
-   "must_find": false,
-   "note": "the road joins it to Easthaven"
-  },
-  {
-   "id": "l147",
-   "a": "Eastway Road",
-   "relation": "associate",
-   "b": "Easthaven",
-   "tier": "stated",
-   "must_find": false,
-   "note": "the road joins it to Bryn Shander"
-  },
-  {
-   "id": "l148",
-   "a": "Targos",
-   "relation": "in",
-   "b": "Ten-Towns",
-   "tier": "stated",
-   "must_find": true
-  },
-  {
-   "id": "l149",
-   "a": "Bryn Shander",
-   "relation": "in",
-   "b": "Ten-Towns",
-   "tier": "stated",
-   "must_find": true
-  },
-  {
-   "id": "l150",
-   "a": "Easthaven",
-   "relation": "in",
-   "b": "Ten-Towns",
-   "tier": "stated",
-   "must_find": true
-  },
-  {
-   "id": "l151",
-   "a": "Termalaine",
-   "relation": "in",
-   "b": "Ten-Towns",
-   "tier": "stated",
-   "must_find": true
-  },
-  {
-   "id": "l152",
-   "a": "Bremen",
-   "relation": "in",
-   "b": "Ten-Towns",
-   "tier": "stated",
-   "must_find": true
-  },
-  {
-   "id": "l153",
-   "a": "Good Mead",
-   "relation": "in",
-   "b": "Ten-Towns",
-   "tier": "stated",
-   "must_find": true
-  },
-  {
-   "id": "l154",
-   "a": "Caer-Dineval",
-   "relation": "in",
-   "b": "Ten-Towns",
-   "tier": "stated",
-   "must_find": true
-  },
-  {
-   "id": "l155",
-   "a": "Caer-Konig",
-   "relation": "in",
-   "b": "Ten-Towns",
-   "tier": "stated",
-   "must_find": true
-  },
-  {
-   "id": "l156",
-   "a": "Lonelywood",
-   "relation": "in",
-   "b": "Ten-Towns",
-   "tier": "stated",
-   "must_find": true
-  },
-  {
-   "id": "l157",
-   "a": "Dougan's Hole",
-   "relation": "in",
-   "b": "Ten-Towns",
-   "tier": "stated",
-   "must_find": true
-  },
-  {
-   "id": "l158",
-   "a": "Ten-Towns",
-   "relation": "in",
-   "b": "Icewind Dale",
-   "tier": "stated",
-   "must_find": true
-  },
-  {
-   "id": "l159",
-   "a": "Auril the Frostmaiden",
-   "relation": "associate",
-   "b": "Icewind Dale",
-   "tier": "stated",
-   "must_find": true,
-   "note": "casts the Everlasting Rime over it"
-  },
-  {
-   "id": "l160",
-   "a": "Ten-Towns",
-   "relation": "associate",
-   "b": "Auril the Frostmaiden",
-   "tier": "stated",
-   "must_find": false,
-   "note": "pay tribute to her"
-  },
-  {
-   "id": "l161",
-   "a": "Okthandom Korran",
-   "relation": "last_seen_in",
-   "b": "Icewind Dale",
-   "tier": "inferred",
-   "must_find": false
-  },
-  {
-   "id": "l162",
-   "a": "The party",
-   "relation": "enemy_of",
-   "b": "Sephek Kaltro",
-   "tier": "stated",
-   "must_find": true,
-   "note": "the quarry"
-  },
-  {
-   "id": "l163",
-   "a": "Sephek Kaltro",
-   "relation": "enemy_of",
-   "b": "Claude Ambere",
-   "tier": "stated",
-   "must_find": false,
-   "note": "stabbed him in the back"
-  },
-  {
-   "id": "l164",
-   "a": "Arcane Brotherhood",
-   "relation": "associate",
-   "b": "Psi crystal",
-   "tier": "stated",
-   "must_find": false,
-   "note": "they may want it"
-  },
-  {
-   "id": "l165",
-   "a": "Duergar of Xardorok",
-   "relation": "associate",
-   "b": "Psi crystal",
-   "tier": "stated",
-   "must_find": false,
-   "note": "they track the party through it"
-  },
-  {
-   "id": "l166",
-   "a": "Cerric Vanya'elen",
-   "relation": "knows",
-   "b": "Belleros Stormgrace",
-   "tier": "stated",
-   "must_find": false,
-   "feeling": "wary",
-   "note": "argue over attuning to the icy blade"
-  },
-  {
-   "id": "l167",
-   "a": "Oyami Nartok",
-   "relation": "knows",
-   "b": "Belleros Stormgrace",
-   "tier": "stated",
-   "must_find": false,
-   "feeling": "friendly",
-   "note": "respect and a promise of safe passage"
-  },
-  {
-   "id": "l168",
-   "a": "Oyami Nartok",
-   "relation": "knows",
-   "b": "Mjenir",
-   "tier": "inferred",
-   "must_find": false,
-   "note": "sends Okthandom to the seer"
-  },
-  {
-   "id": "l169",
-   "a": "Okthandom Korran",
-   "relation": "associate",
-   "b": "Mjenir",
-   "tier": "stated",
-   "must_find": false,
-   "note": "told to seek the seer"
-  },
-  {
-   "id": "l170",
-   "a": "Knights of the Black Sword",
-   "relation": "knows",
-   "b": "Levistus",
-   "tier": "stated",
-   "must_find": false,
-   "feeling": "devoted",
-   "note": "cultists of Levistus"
-  },
-  {
-   "id": "l171",
-   "a": "Spires of the Morning",
-   "relation": "associate",
-   "b": "Lathander",
-   "tier": "stated",
-   "must_find": false,
-   "note": "a temple to him"
-  },
-  {
-   "id": "l172",
-   "a": "Ice Troll",
+   "a": "Ice troll",
    "relation": "last_seen_in",
    "b": "Maer Dualdon",
    "tier": "stated",
-   "must_find": false
+   "must_find": false,
+   "line": 90
   },
   {
-   "id": "l173",
-   "a": "Ice Troll",
+   "id": "l111",
+   "a": "Electric eel",
    "relation": "enemy_of",
-   "b": "The Minotaur captain",
+   "b": "Fizzlebomb",
    "tier": "stated",
    "must_find": false,
-   "note": "killed him and wrecked his ship"
+   "line": 93,
+   "note": "pulled him under"
   },
   {
-   "id": "l174",
-   "a": "Shafina Fa'ertenya",
-   "relation": "leads",
-   "b": "Shafina's guild",
+   "id": "l112",
+   "a": "Belleros Stormgrace",
+   "relation": "knows",
+   "b": "Boy",
    "tier": "stated",
    "must_find": false,
-   "note": "a guild leader"
+   "line": 96,
+   "feeling": "friendly",
+   "note": "befriended him"
   },
   {
-   "id": "l175",
-   "a": "Brewner",
-   "relation": "parent_of",
-   "b": "Brewner's daughter",
+   "id": "l113",
+   "a": "Boy",
+   "relation": "last_seen_in",
+   "b": "Three Flags Sailing",
    "tier": "stated",
-   "must_find": false
+   "must_find": false,
+   "line": 96
   },
   {
-   "id": "l176",
-   "a": "Thorin",
+   "id": "l114",
+   "a": "Three Flags Sailing",
+   "relation": "in",
+   "b": "Targos",
+   "tier": "inferred",
+   "must_find": false,
+   "line": 96
+  },
+  {
+   "id": "l115",
+   "a": "Garret Velryn",
+   "relation": "owns",
+   "b": "Boy",
+   "tier": "inferred",
+   "must_find": true,
+   "line": 96,
+   "note": "Boy led the party to Keegan's home: the owner says he is Garret's dog. The text never says it; offer it to the DM, never extract it"
+  },
+  {
+   "id": "l116",
+   "a": "Garret Velryn",
+   "relation": "spouse",
+   "b": "Keegan Velryn",
+   "tier": "stated",
+   "must_find": true,
+   "line": 96,
+   "note": "'whose husband'"
+  },
+  {
+   "id": "l117",
+   "a": "Garret Velryn",
+   "relation": "member",
+   "b": "Explorer's League",
+   "tier": "stated",
+   "must_find": true,
+   "line": 96,
+   "note": "'a noted member'"
+  },
+  {
+   "id": "l118",
+   "a": "Garret Velryn",
+   "relation": "last_seen_in",
+   "b": "Kelvin's Cairn",
+   "tier": "stated",
+   "must_find": false,
+   "line": 96,
+   "note": "vanished five days ago leading an expedition up it"
+  },
+  {
+   "id": "l119",
+   "a": "The party",
+   "relation": "works_for",
+   "b": "Keegan Velryn",
+   "tier": "stated",
+   "must_find": true,
+   "line": 96,
+   "note": "50 gold and a route map to find Garret"
+  },
+  {
+   "id": "l120",
+   "a": "Jebidiah",
    "relation": "works_in",
-   "b": "The Beautiful Mine",
-   "tier": "stated",
-   "must_find": false,
-   "note": "one of the workers"
-  },
-  {
-   "id": "l177",
-   "a": "The ones who came for the tome",
-   "relation": "enemy_of",
-   "b": "Cerric Vanya'elen",
+   "b": "Targos",
    "tier": "inferred",
    "must_find": false,
-   "note": "'they are coming'; unknown"
-  },
-  {
-   "id": "l178",
-   "a": "The ones who came for the tome",
-   "relation": "enemy_of",
-   "b": "Wit",
-   "tier": "inferred",
-   "must_find": false
+   "line": 96,
+   "note": "a kennel master the party met there"
   }
  ],
  "events": [
   {
    "id": "e01",
-   "what": "Cerric flees Waterdeep with the tome after Wit dies",
-   "who": "Cerric, Wit, Syllar Sparkwalker"
+   "what": "Master Sparkwalker disappears, Wit comes back fatally wounded, and Cerric flees to Neverwinter with the tome",
+   "who": "Cerric, Syllar Sparkwalker, Wit",
+   "line": 21
   },
   {
    "id": "e02",
-   "what": "Vaelrith vanishes, leaving a bloodstained camp and a broken talisman",
-   "who": "Okthandom, Vaelrith"
+   "what": "Vaelrith vanishes at 105, leaving a bloodstained campsite",
+   "who": "Okthandom, Vaelrith",
+   "line": 27
   },
   {
    "id": "e03",
-   "what": "Claude erased his own memory and was held by a circus; the ringmaster died",
-   "who": "Claude, the ringmaster"
+   "what": "Claude erases his own memory, is held by a circus and escapes",
+   "who": "Claude",
+   "line": 42
   },
   {
    "id": "e04",
-   "what": "The grell destroys Glyph, and the party kills it",
-   "who": "Cerric, the party"
+   "what": "Hlin Trollbane offers the party a contract on Sephek Kaltro in The Lucky Liar",
+   "who": "the party, Hlin Trollbane, Sephek Kaltro",
+   "line": 67
   },
   {
    "id": "e05",
-   "what": "Okthandom's arrow kills Trex, then the ghost is banished when Claude burns Penolopi",
-   "who": "Trex, Okthandom, Claude, Cerric"
+   "what": "The party fights six ice kobolds and evades a yeti on the road to Termalaine",
+   "who": "the party",
+   "line": 75
   },
   {
    "id": "e06",
-   "what": "The party takes 250 gold from Speaker Masthew for clearing the mine",
-   "who": "the party, Speaker Masthew"
+   "what": "Rumours reach the party that an evil wizard captured in Easthaven will be burned at the stake",
+   "who": "the party",
+   "line": 78
   },
   {
    "id": "e07",
-   "what": "The party shoves Fizzlebomb into Maer Dualdon and the Aurora's Wind is wrecked",
-   "who": "Cerric, Okthandom, Belleros, Fizzlebomb"
+   "what": "The grell paralyzes Claude and destroys Glyph, then the party kills it",
+   "who": "Claude, Cerric, the party",
+   "line": 84
   },
   {
    "id": "e08",
-   "what": "Dzaan is burned at the stake in Easthaven",
-   "who": "Dzaan"
+   "what": "Okthandom kills Trex with an arrow, and Claude burns Penolopi to banish the ghost",
+   "who": "Okthandom, Trex, Claude, Cerric",
+   "line": 84
   },
   {
    "id": "e09",
-   "what": "The party clears the duergar ferry and finds the chardalyn",
-   "who": "the party, Xardorok's duergar"
+   "what": "The party secures the spoils of the mine, including a psi crystal and a heart of chardalyn",
+   "who": "the party",
+   "line": 84
   },
   {
    "id": "e10",
-   "what": "Sephek Kaltro is killed at The Wet Trout and the party takes his head for Hlin",
-   "who": "the party, Sephek Kaltro, Hlin Trollbane"
+   "what": "Speaker Masthew pays a bounty of 250 gold for clearing the mine",
+   "who": "the party, Speaker Masthew",
+   "line": 87
   },
   {
    "id": "e11",
-   "what": "A peryton nearly kills Okthandom at the camp",
-   "who": "Okthandom"
+   "what": "Claude sells the wolf figurine to Belleros for 75 gold",
+   "who": "Claude, Belleros",
+   "line": 90
   },
   {
    "id": "e12",
-   "what": "Belleros, charmed by chardalyn, orders Kanberron to attack Cerric",
-   "who": "Belleros, Kanberron, Cerric"
+   "what": "An ice troll devours the first ship's captain and shatters his ship",
+   "who": "ice troll, the minotaur captain",
+   "line": 90
   },
   {
    "id": "e13",
-   "what": "Oyami Nartok finds Claude in the whiteout and tells him he is Griz, son of Lee",
-   "who": "Oyami, Claude, Lee"
+   "what": "Cerric talks Okthandom into pushing Fizzlebomb overboard; Belleros runs the Aurora's Wind ashore",
+   "who": "Cerric, Okthandom, Belleros, Fizzlebomb",
+   "line": 93
   },
   {
    "id": "e14",
-   "what": "The party kills a Coldlight Walker on the road to Caer-Dineval",
-   "who": "the party"
+   "what": "Three owlbears ambush the party near Targos",
+   "who": "the party",
+   "line": 93
+  },
+  {
+   "id": "e15",
+   "what": "Belleros befriends Boy, who leads the party to Keegan Velryn; she asks them to find Garret",
+   "who": "Belleros, Boy, Keegan Velryn, Garret Velryn",
+   "line": 96
+  },
+  {
+   "id": "e16",
+   "what": "Every ten-day Targos, Bryn Shander and Easthaven sacrifice humanoid souls, spellcasters first, to appease Auril",
+   "who": "Targos, Bryn Shander, Easthaven, Auril",
+   "line": 7
+  },
+  {
+   "id": "e17",
+   "what": "Every ten-day Termalaine, Bremen and Good Mead forsake all warmth in a Sacrifice of Warmth",
+   "who": "Termalaine, Bremen, Good Mead, Auril",
+   "line": 7
+  },
+  {
+   "id": "e18",
+   "what": "Every ten-day Caer-Dineval, Caer-Konig and Lonelywood fast and surrender their food to the beasts of the tundra",
+   "who": "Caer-Dineval, Caer-Konig, Lonelywood, Auril",
+   "line": 7
+  },
+  {
+   "id": "e19",
+   "what": "Each night before midnight Auril casts the spell that keeps the sun from rising: the Everlasting Rime",
+   "who": "Auril",
+   "line": 51
   }
  ],
  "deferred": [
   "Glyph travels with the party (travels_with, #3176)",
-  "the party was ambushed by barbarians on the road (a fight, #3244 note on single actions)",
-  "map facts: twenty miles from Targos to Kelvin's Cairn; Bryn Shander is a few hours' dogsled from Easthaven"
+  "who a marching order puts ahead of whom is not a tie"
  ],
  "must_not_find": [
-  "any link made from dice rolls, hit points, temporary hit points, exhaustion, conditions or spells",
-  "the 'Xanathar's origin rolls' table: the letters TN and NE are alignments, not people or places",
-  "'Claude yells to Claude' is a typing slip in the lore, so no link from Claude to himself",
-  "'my child', 'brother' and 'Father' used as forms of address are not family ties",
-  "the instructions block (purpose, response style, transcript corrections) is about how to write a summary, not about the story",
-  "the book-cover blurb at the top is not the campaign's own story",
-  "Vellynne Harpell and Nass Lantomir appear only in a proper-names list: names, but no invented ties",
-  "the Dzaan Red Wizard 'Arcane Brotherhood' tie is stated; do not widen it to the whole party"
+  "any link made from dice rolls, hit points, wasp stings or spear wounds, spells (Moment to Think, Detect Magic) or marching order",
+  "only unique items are tracked (#3373): no entry or tie for Wyvern poison, the two dog sleds and eight dogs, the scroll of Detect Magic, the scroll of Identify, the Potion of Healing or the waterproof backpacks (ordinary gear)",
+  "the warning sign 'Kobolds only!' is a sign, not a person or a group",
+  "'The Brotherhood' in the note is named once and nothing is said about it: no members, no leader, and it is not the Explorer's League",
+  "the unnamed boy who shouts the news, the unnamed beggar woman's prophecy and the unnamed ghost's own name: do not invent names for them",
+  "'Eashaven' is Easthaven spelled wrongly (one place, not two)",
+  "the Ten-Towns settlement 'Dougan's Hole' is not in this document, so it must not appear"
  ]
 }

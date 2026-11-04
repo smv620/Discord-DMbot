@@ -6,7 +6,8 @@ The documents themselves are linked, not copied.
 
 ## The sample documents
 
-- Sample lore: <https://docs.google.com/document/d/1lHeFJAheOyz-suXZS644R86dLMt_d5VX7ib6Ig4Ox6Y/edit?usp=sharing>
+- Sample lore (**the one the lore key follows**, the small test bed, about 2,200 words): <https://docs.google.com/document/d/1zbt7g3r6uFfiSYr3fl_gyaxARhwJPizauI0jmiEa2aw/edit?usp=sharing>
+- A longer lore document, also public (about 13,500 words, with session recaps, DM prep notes and an entities tab). **No key follows it yet**: <https://docs.google.com/document/d/1lHeFJAheOyz-suXZS644R86dLMt_d5VX7ib6Ig4Ox6Y/edit?usp=sharing>
 - Sample session: <https://docs.google.com/document/d/1BtHZ4O75886WHOoTq0FCPst2hdg7YLnsaCiI-kNsv-E/edit?usp=sharing>
 
 ## The test players
@@ -24,7 +25,7 @@ These usernames are made up. Use them when loading the sample session, so no rea
 
 | File | What it is | Status |
 |---|---|---|
-| [lore_key.md](lore_key.md) | Everything the lore should produce, as tables to read | built |
+| [lore_key.md](lore_key.md) | Everything the small sample lore should produce, as tables to read, with the document line for each tie | built |
 | [lore_key.json](lore_key.json) | The same key, for the check script | built |
 | session_key.md / .json | What the sample session should produce | next |
 | master_key.md / .json | Lore and session together, plus the ties that cross them | after the session key |

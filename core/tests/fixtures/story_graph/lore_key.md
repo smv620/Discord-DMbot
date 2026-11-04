@@ -1,6 +1,6 @@
 # Lore answer key (sample campaign)
 
-What the graph should hold after the sample lore document is read. Names come from the owner's sample campaign: the player characters and many local characters are invented, and other names (towns, gods, a few non-player characters) are from a published adventure. Only names and short paraphrases are used here, never its text. The players agreed to its use as a public example. The lore itself is linked in the [README](README.md), not copied here.
+What the graph should hold after the sample lore document is read: [Icewind Dale Background & Premise](https://docs.google.com/document/d/1zbt7g3r6uFfiSYr3fl_gyaxARhwJPizauI0jmiEa2aw/edit?usp=sharing) (about 2,200 words). The player characters and many other names are invented for testing; some towns, gods and non-player characters come from a published adventure (names only, never its text). The players agreed to its use as a public example. The document is linked in the [README](README.md), not copied here. **The line numbers** are lines of the document's plain-text export (blank lines count), so you can find each source.
 
 **Test players** (made-up usernames):
 
@@ -11,421 +11,323 @@ What the graph should hold after the sample lore document is read. Names come fr
 | Okthandom Korran | `user_eri` |
 | Claude Ambere | `user_owe` |
 
-**Tiers:** `stated` the words are in the text · `inferred` only implied, offered as a suggestion and never extracted · `by_rule` made by a rule, not read · **must find: no** means a good find if present, not a miss if absent. An `inferred` tie marked must-find is scored on whether DMbot *offers* it to the DM as a suggestion.
+**Tiers:** `stated` the words are in the text · `inferred` only implied, offered as a suggestion and never extracted · `by_rule` made by a rule, not read. **Must find: no** means a good find if present, not a miss if absent. An `inferred` tie marked must-find is scored on whether DMbot *offers* it to the DM. **Current: no** is history: it was true and is not now.
 
-**Totals:** 142 entries, 178 connections (102 must-find), 14 events.
+**Totals:** 94 entries, 120 connections (80 must-find), 19 events.
 
 ## Connections
 
-### Family (19)
+### Family (16)
 
-| id | from | tie | to | tier | must find | note |
-|---|---|---|---|---|---|---|
-| l001 | Roceran Fa'ertenya | parent_of | Cerric Vanya'elen | stated | yes | father; also Valyra's |
-| l002 | Shafina Fa'ertenya | parent_of | Cerric Vanya'elen | stated | yes | mother |
-| l003 | Roceran Fa'ertenya | parent_of | Valyra | stated | yes |  |
-| l004 | Shafina Fa'ertenya | parent_of | Valyra | stated | yes |  |
-| l005 | Roceran Fa'ertenya | spouse | Shafina Fa'ertenya | inferred | no | they are his parents together |
-| l006 | Cerric Vanya'elen | sibling | Valyra | stated | yes | younger sister |
-| l007 | Qinric | uncle_of | Cerric Vanya'elen | stated | yes | his father's brother |
-| l008 | Qinric | sibling | Roceran Fa'ertenya | stated | yes | brothers; the owner's list wants this direct |
-| l009 | Cerric's grandfather | parent_of | Roceran Fa'ertenya | stated | yes | his father's father |
-| l010 | Cerric's grandfather | parent_of | Qinric | inferred | no |  |
-| l011 | Okthandom Korran | sibling | Vaelrith Korran | stated | yes | elder brother |
-| l012 | Okthandom Korran | sibling | Nyssara Korran | stated | yes | younger sister; a player character's family must be kept |
-| l013 | Vaelrith Korran | sibling | Nyssara Korran | stated | yes | 'their younger sister' |
-| l014 | Okthandom Korran | parent_of | Okthandom's child | stated | no | 'his child' is named once, in passing |
-| l015 | Lee | parent_of | Claude Ambere | stated | yes | Griz, son of Lee; the owner flagged this as missing |
-| l016 | Oyami Nartok | sibling | Claude Ambere | stated | yes | an adoptive brother of the clan |
-| l017 | Garret Velryn | spouse | Keegan Velryn | stated | yes | her husband |
-| l018 | Bruni Stonewake | sibling | Thorin | stated | yes | brothers |
-| l175 | Brewner | parent_of | Brewner's daughter | stated | no |  |
+| id | from | tie | to | tier | must find | current | line | note |
+|---|---|---|---|---|---|---|---|---|
+| l001 | Roceran | parent_of | Cerric Vanya'elen | stated | yes | yes | 18 |  |
+| l002 | Shafina | parent_of | Cerric Vanya'elen | stated | yes | yes | 18 |  |
+| l003 | Roceran | parent_of | Valyra | inferred | no | yes | 18 | 'his younger sister, Valyra': the same parents |
+| l004 | Shafina | parent_of | Valyra | inferred | no | yes | 18 |  |
+| l005 | Cerric Vanya'elen | sibling | Valyra | stated | yes | yes | 18 | younger sister |
+| l006 | Cerric's paternal grandfather | grandparent_of | Cerric Vanya'elen | stated | yes | yes | 18 | died in a severe storm |
+| l007 | Qinric | sibling | Roceran | stated | yes | yes | 18 | 'Roceran's brother Qinric'; the owner asked for this tie directly |
+| l008 | Qinric | uncle_of | Cerric Vanya'elen | inferred | yes | yes | 18 | never said as 'uncle': Roceran's brother |
+| l030 | Okthandom Korran | sibling | Vaelrith | stated | yes | yes | 27 | elder brother, vanished at 105 |
+| l031 | Okthandom Korran | sibling | Nyssara | stated | yes | yes | 27 | younger sister; a player character's family must be kept |
+| l032 | Vaelrith | sibling | Nyssara | inferred | no | yes | 27 |  |
+| l033 | Okthandom Korran | parent_of | Okthandom's child | stated | no | yes | 30 | 'his child', named once in passing |
+| l038 | Lee | parent_of | Claude Ambere | stated | yes | yes | 42 | 'Griz, son of Lee'; the owner flagged this as missing |
+| l082 | Brewner | parent_of | Brewner's daughter | stated | no | yes | 67 |  |
+| l093 | Bruni Stonewake | sibling | Thorin | stated | yes | yes | 78 | 'Thorin, his miner brother Bruni' |
+| l116 | Garret Velryn | spouse | Keegan Velryn | stated | yes | yes | 96 | 'whose husband' |
 
-### Teaching and work (33)
+### Teaching and work (18)
 
-| id | from | tie | to | tier | must find | note |
-|---|---|---|---|---|---|---|
-| l019 | Valyra | apprentice_of | Kelfir Ama'Kiir | stated | yes |  |
-| l020 | Cerric Vanya'elen | works_for | Syllar Sparkwalker | stated | yes | steward and keeper of the Spire |
-| l022 | Syllar Sparkwalker | member | Council of the Blackstaff Tower | stated | yes |  |
-| l024 | Qinric | member | Lord's Alliance | stated | yes | served as a war mage |
-| l025 | Syllar Sparkwalker | mentor_of | Emmerich Ravenstride | stated | yes | an apprentice |
-| l026 | Syllar Sparkwalker | mentor_of | Wit | stated | yes | an apprentice |
-| l035 | Khelben Aruynsen | member | Harpers | stated | no | founder; a bust only |
-| l044 | Mjenir | member | Elk Tribe | stated | yes |  |
-| l050 | The ringmaster | leads | The circus | stated | no |  |
-| l053 | Belleros Stormgrace | member | Explorer's League | stated | yes |  |
-| l054 | Garret Velryn | member | Explorer's League | stated | yes |  |
-| l066 | The party | works_for | Hlin Trollbane | stated | yes | 100 gold to bring back Kaltro |
-| l068 | Sephek Kaltro | works_for | Torrga Icevein | stated | yes | bodyguard; not the caravan itself |
-| l069 | Torrga Icevein | leads | Torg's Caravan | stated | yes |  |
-| l070 | Sephek Kaltro | member | Torg's Caravan | inferred | no |  |
-| l074 | The party | works_for | Speaker Masthew | stated | yes | 250 gold for the mine |
-| l075 | Speaker Masthew | leads | Termalaine | stated | yes |  |
-| l076 | The party | works_for | Keegan Velryn | stated | yes | 50 gold to find Garret |
-| l078 | The party | works_for | Imdra Arlaggath | stated | yes | missing fishers |
-| l079 | Imdra Arlaggath | leads | Easthaven militia | stated | yes |  |
-| l084 | Cerric Vanya'elen | member | The party | stated | yes |  |
-| l085 | Belleros Stormgrace | member | The party | stated | yes |  |
-| l086 | Okthandom Korran | member | The party | stated | yes |  |
-| l087 | Claude Ambere | member | The party | stated | yes |  |
-| l117 | Xardorok Sunblight | leads | Duergar of Xardorok | stated | yes |  |
-| l121 | Dzaan | member | Red Wizards of Thay | stated | yes |  |
-| l122 | Dzaan | member | Arcane Brotherhood | stated | yes |  |
-| l130 | Naerth Maxildanarr | leads | Zhentarim | stated | yes |  |
-| l132 | Markham Southwell | leads | Bryn Shander guards | stated | yes |  |
-| l134 | Knights of the Black Sword | leads | The Caer | stated | yes | they control the keep |
-| l136 | Kadroth | member | Knights of the Black Sword | inferred | no | named as Black Sword cultists in the DM notes |
-| l137 | Huarwar Mulphoon | member | Knights of the Black Sword | inferred | no | named as Black Sword cultists in the DM notes |
-| l174 | Shafina Fa'ertenya | leads | Shafina's guild | stated | no | a guild leader |
+| id | from | tie | to | tier | must find | current | line | note |
+|---|---|---|---|---|---|---|---|---|
+| l009 | Qinric | member | Lord's Alliance | stated | yes | yes | 18 | a war mage evoker in it |
+| l010 | Valyra | apprentice_of | Kelfir Ama'Kiir | stated | yes | yes | 18 |  |
+| l011 | Cerric Vanya'elen | works_for | Syllar Sparkwalker | stated | yes | yes | 18 | Keeper of the Sparkwalker Spire under him |
+| l014 | Syllar Sparkwalker | mentor_of | Emmerich | inferred | no | yes | 18 | Cerric's fellow apprentices |
+| l015 | Syllar Sparkwalker | mentor_of | Wit | inferred | no | yes | 18 |  |
+| l036 | Belleros Stormgrace | member | Explorer's League | stated | yes | yes | 36 | 'a scout associated with the Explorer's League' |
+| l069 | The party | works_for | Hlin Trollbane | stated | yes | yes | 53 | 100 gold to capture or eliminate Kaltro (line 67) |
+| l071 | Sephek Kaltro | works_for | Torrga Icevein | stated | yes | yes | 57 | her bodyguard (also line 55) |
+| l072 | Torrga Icevein | leads | Torg's Caravan | stated | yes | yes | 57 | under her own heading on line 56 |
+| l073 | Sephek Kaltro | member | Torg's Caravan | inferred | no | yes | 55 | accompanies it |
+| l075 | Speaker Masthew | leads | Termalaine | stated | yes | yes | 59 |  |
+| l076 | The party | works_for | Speaker Masthew | stated | yes | yes | 78 | 50 gold, then 250 for the mine (line 87) |
+| l083 | Cerric Vanya'elen | member | The party | stated | yes | yes | 67 | 'our four adventurers' |
+| l084 | Belleros Stormgrace | member | The party | stated | yes | yes | 67 | 'our four adventurers' |
+| l085 | Okthandom Korran | member | The party | stated | yes | yes | 67 | 'our four adventurers' |
+| l086 | Claude Ambere | member | The party | stated | yes | yes | 67 | 'our four adventurers' |
+| l117 | Garret Velryn | member | Explorer's League | stated | yes | yes | 96 | 'a noted member' |
+| l119 | The party | works_for | Keegan Velryn | stated | yes | yes | 96 | 50 gold and a route map to find Garret |
 
-### Feelings and opposition (30)
+### Feelings and opposition (16)
 
-| id | from | tie | to | tier | must find | note |
-|---|---|---|---|---|---|---|
-| l027 | Emmerich Ravenstride | rival_of | Cerric Vanya'elen | stated | yes | the owner flagged backstory rivals as missing |
-| l028 | Cerric Vanya'elen | knows (friendly) | Wit | stated | yes | mutual respect; the owner flagged this as missing |
-| l029 | Wit | knows (trusts) | Cerric Vanya'elen | stated | yes | gives him the last order |
-| l032 | Syllar Sparkwalker | knows | Danneth | inferred | no | the note is signed 'S' and sent to Danneth |
-| l043 | Oyami Nartok | knows (devoted) | Sly | stated | yes | reveres it |
-| l047 | Lee | knows (friendly) | Oyami Nartok | stated | yes | 'friend to Lee' |
-| l048 | Arveiaturace | enemy_of | Lee | stated | yes | killed him |
-| l049 | Claude Ambere | held_captive_by | The circus | stated | no | before he escaped |
-| l062 | Belleros Stormgrace | knows (neutral) | Brewner | stated | no | an argument about smelting |
-| l063 | Belleros Stormgrace | knows | Garret Velryn | stated | no | knows his name from the League |
-| l067 | Hlin Trollbane | enemy_of | Sephek Kaltro | stated | yes | she hires the party against him; she is not his servant (#3256) |
-| l088 | Cerric Vanya'elen | knows | Belleros Stormgrace | by_rule | yes | player characters who play together know each other (#3036) |
-| l089 | Cerric Vanya'elen | knows | Okthandom Korran | by_rule | yes | player characters who play together know each other (#3036) |
-| l090 | Cerric Vanya'elen | knows | Claude Ambere | by_rule | yes | player characters who play together know each other (#3036) |
-| l091 | Belleros Stormgrace | knows | Okthandom Korran | by_rule | yes | player characters who play together know each other (#3036) |
-| l092 | Belleros Stormgrace | knows | Claude Ambere | by_rule | yes | player characters who play together know each other (#3036) |
-| l093 | Okthandom Korran | knows | Claude Ambere | by_rule | yes | player characters who play together know each other (#3036) |
-| l109 | Veron Braig | knows (wary) | Craig the Gnome | inferred | no | he wants good reviews |
-| l116 | Fizzlebomb | knows (hostile) | Cerric Vanya'elen | inferred | no | thrown in the water; he pleaded for a reason |
-| l118 | Duergar of Xardorok | enemy_of | The party | stated | yes | they hunt the party |
-| l119 | Duergar of Xardorok | knows (devoted) | Deep Duerra | stated | no | worship her |
-| l162 | The party | enemy_of | Sephek Kaltro | stated | yes | the quarry |
-| l163 | Sephek Kaltro | enemy_of | Claude Ambere | stated | no | stabbed him in the back |
-| l166 | Cerric Vanya'elen | knows (wary) | Belleros Stormgrace | stated | no | argue over attuning to the icy blade |
-| l167 | Oyami Nartok | knows (friendly) | Belleros Stormgrace | stated | no | respect and a promise of safe passage |
-| l168 | Oyami Nartok | knows | Mjenir | inferred | no | sends Okthandom to the seer |
-| l170 | Knights of the Black Sword | knows (devoted) | Levistus | stated | no | cultists of Levistus |
-| l173 | Ice Troll | enemy_of | The Minotaur captain | stated | no | killed him and wrecked his ship |
-| l177 | The ones who came for the tome | enemy_of | Cerric Vanya'elen | inferred | no | 'they are coming'; unknown |
-| l178 | The ones who came for the tome | enemy_of | Wit | inferred | no |  |
+| id | from | tie | to | tier | must find | current | line | note |
+|---|---|---|---|---|---|---|---|---|
+| l016 | Emmerich | rival_of | Cerric Vanya'elen | stated | yes | yes | 18 | 'rival apprentices Emmerich and Wit'; the owner flagged backstory rivals as missing |
+| l017 | Wit | rival_of | Cerric Vanya'elen | stated | no | yes | 18 |  |
+| l027 | Syllar Sparkwalker | knows | Danneth | inferred | no | yes | 21 | the note is signed S |
+| l039 | Claude Ambere | held_captive_by | The circus | stated | yes | no | 42 | before he escaped |
+| l070 | Hlin Trollbane | enemy_of | Sephek Kaltro | inferred | no | yes | 53 | she hires against him; she is not his servant (#3256) |
+| l081 | Belleros Stormgrace | knows (wary) | Brewner | stated | no | yes | 67 | a heated debate |
+| l087 | Cerric Vanya'elen | knows | Belleros Stormgrace | by_rule | yes | yes | 67 | player characters who play together know each other (#3036) |
+| l088 | Cerric Vanya'elen | knows | Okthandom Korran | by_rule | yes | yes | 67 | player characters who play together know each other (#3036) |
+| l089 | Cerric Vanya'elen | knows | Claude Ambere | by_rule | yes | yes | 67 | player characters who play together know each other (#3036) |
+| l090 | Belleros Stormgrace | knows | Okthandom Korran | by_rule | yes | yes | 67 | player characters who play together know each other (#3036) |
+| l091 | Belleros Stormgrace | knows | Claude Ambere | by_rule | yes | yes | 67 | player characters who play together know each other (#3036) |
+| l092 | Okthandom Korran | knows | Claude Ambere | by_rule | yes | yes | 67 | player characters who play together know each other (#3036) |
+| l098 | Okthandom Korran | enemy_of | Trex | stated | no | yes | 84 | killed him with an arrow |
+| l109 | Ice troll | enemy_of | The minotaur captain | stated | no | yes | 90 | devoured him and shattered his ship |
+| l111 | Electric eel | enemy_of | Fizzlebomb | stated | no | yes | 93 | pulled him under |
+| l112 | Belleros Stormgrace | knows (friendly) | Boy | stated | no | yes | 96 | befriended him |
 
-### Things (23)
+### Things (16)
 
-| id | from | tie | to | tier | must find | note |
-|---|---|---|---|---|---|---|
-| l030 | Cerric Vanya'elen | carries | Sparkwalker's tome | stated | yes | saved it from the lab |
-| l031 | Syllar Sparkwalker | owns | Sparkwalker's tome | stated | no | 'the Master's tome' |
-| l034 | Cerric Vanya'elen | owns | Glyph | stated | yes | familiar |
-| l046 | Okthandom Korran | owns | Korran family journal | stated | no |  |
-| l055 | Belleros Stormgrace | owns | Boy | inferred | no | befriended in the story, 'adopted' in the entity list; see the Garret tie below |
-| l056 | Belleros Stormgrace | owns | Wolf figurine | stated | yes | bought from Claude |
-| l057 | Belleros Stormgrace | owns | Kanberron | stated | yes | 'his Winter Wolf' |
-| l059 | Belleros Stormgrace | carries | Chardalyn spear | stated | yes |  |
-| l060 | Belleros Stormgrace | carries | Icy Rapier of Life Stealing | stated | no | looted from Kaltro |
-| l061 | Sephek Kaltro | carries | Icy Rapier of Life Stealing | stated | yes |  |
-| l064 | Garret Velryn | owns | Boy | inferred | yes | the owner says Boy is Garret's dog; the lore does not say it. Offer as a suggestion for the DM, never extract. |
-| l094 | The party | owns | Lantern of Greater Tracking | stated | yes | found in the mine |
-| l095 | Cerric Vanya'elen | carries | Psi crystal | stated | yes | attuned; gives telepathy |
-| l097 | Cerric Vanya'elen | carries | Wand of Conducting | stated | no | given by Okthandom |
-| l098 | Cerric Vanya'elen | carries | Wyvern poison | stated | no |  |
-| l099 | The party | owns | Heart of chardalyn | stated | no | found by Claude |
-| l100 | The party | owns | Dog sleds | stated | no |  |
-| l101 | Jebidiah | owns | Dog sleds | stated | no | provided them |
-| l103 | The party | owns | Explorer's League journal | stated | no |  |
-| l104 | Fizzlebomb | owns | Aurora's Wind | stated | yes | 'Fizzlebomb's ship'; the owner flagged this as missing |
-| l106 | Veron Braig | owns | The Blue Clam | stated | yes |  |
-| l113 | The ghost | owns | Penolopi | stated | yes | its pet plant |
-| l120 | Xardorok Sunblight | owns | Chardalyn shipment | inferred | no | meant for him |
+| id | from | tie | to | tier | must find | current | line | note |
+|---|---|---|---|---|---|---|---|---|
+| l022 | Cerric Vanya'elen | carries | Azure tome | stated | yes | yes | 21 | grabbed his master's locked tome |
+| l023 | Syllar Sparkwalker | owns | Azure tome | stated | yes | yes | 21 | 'his master's' |
+| l028 | Cerric Vanya'elen | owns | Glyph | stated | yes | yes | 21 | snowy owl familiar |
+| l035 | Okthandom Korran | owns | Ancestral journal | inferred | no | yes | 27 | found the curse in it |
+| l040 | Claude Ambere | found | Wolf figurine | inferred | yes | no | 42 | the owner: Claude found it first (line 42: he carries a unique wolf figurine; line 90: he sells it). Offered to the DM, never extracted |
+| l077 | Veron Braig | owns | The Blue Clam | stated | yes | yes | 61 |  |
+| l097 | Trex | carries | Penolopi | stated | no | yes | 84 | the plant was in his backpack |
+| l099 | Cerric Vanya'elen | carries | Wand of Conducting | stated | no | yes | 84 | Okthandom found it and gave it to him |
+| l100 | The party | owns | Lantern of Greater Tracking | stated | no | yes | 84 | found in the mine |
+| l101 | The party | owns | Chardalyn spear | stated | no | yes | 84 | spoils of the mine |
+| l102 | The party | owns | Heart of chardalyn | stated | no | yes | 84 | hidden under the bucket lift |
+| l103 | Cerric Vanya'elen | carries | Psi crystal | inferred | yes | yes | 87 | studied it; the party took it from the skull |
+| l106 | Belleros Stormgrace | owns | Wolf figurine | stated | yes | yes | 90 | bought it from Claude for 75 gold |
+| l107 | Belleros Stormgrace | carries | Wolf figurine | inferred | yes | yes | 90 | the owner: he owns it and carries it now; the text says only that he bought it |
+| l108 | Fizzlebomb | owns | Aurora's Wind | stated | yes | yes | 90 | 'Fizzlebomb's vessel'; the owner flagged this as missing |
+| l115 | Garret Velryn | owns | Boy | inferred | yes | yes | 96 | Boy led the party to Keegan's home: the owner says he is Garret's dog. The text never says it; offer it to the DM, never extract it |
 
-### Places and other ties (73)
+### Places and other ties (54)
 
-| id | from | tie | to | tier | must find | note |
-|---|---|---|---|---|---|---|
-| l021 | Cerric Vanya'elen | works_in | Sparkwalker Spire | stated | yes | 'Keeper of the Sparkwalker Spire' |
-| l023 | Qinric | associate | Syllar Sparkwalker | stated | yes | 'one of Qinric's associates' |
-| l033 | Danneth | last_seen_in | Easthaven | inferred | no | the note is addressed to Danneth at East Haven |
-| l036 | Cerric Vanya'elen | comes_from | Waterdeep | stated | no | born in the Temple of the Seldarine |
-| l037 | Temple of the Seldarine | in | Waterdeep | stated | yes |  |
-| l038 | Blackstaff Tower | in | Waterdeep | inferred | no | the story places it in the city |
-| l039 | Sparkwalker Spire | in | Waterdeep | inferred | no |  |
-| l040 | Castle Ward | in | Waterdeep | inferred | no | the story places it in the city |
-| l041 | Spires of the Morning | in | Waterdeep | inferred | no | the story places it in the city |
-| l042 | Sly | associate | Okthandom Korran | stated | yes | haunts and protects him |
-| l045 | Mjenir | lives_in | Skytower Shelter | stated | yes |  |
-| l051 | Claude Ambere | comes_from | Spine of the World | stated | yes | the clan's crags; he is from there |
-| l052 | Oyami Nartok | lives_in | Spine of the World | inferred | no |  |
-| l058 | Wolf figurine | associate | Kanberron | stated | yes | a gateway for the winter wolf |
-| l065 | Boy | last_seen_in | Three Flags Sailing | stated | no |  |
-| l071 | Torg's Caravan | last_seen_in | The Wet Trout | stated | no | rumoured stay |
-| l072 | Torg's Caravan | last_seen_in | Easthaven | stated | no | headed to Easthaven |
-| l073 | Sephek Kaltro | last_seen_in | Easthaven | stated | no | last known place |
-| l077 | Garret Velryn | last_seen_in | Kelvin's Cairn | stated | no | last seen near it |
-| l080 | Imdra Arlaggath | works_in | Easthaven | stated | no |  |
-| l081 | Rinaldo | works_in | White Lady Inn | stated | no | hosts seances |
-| l082 | White Lady Inn | in | Easthaven | stated | yes |  |
-| l083 | The Wet Trout | in | Easthaven | stated | yes |  |
-| l096 | Psi crystal | kept_in | The Beautiful Mine | stated | no | found in the mind flayer's skull |
-| l102 | Jebidiah | works_in | Targos | stated | no |  |
-| l105 | Fizzlebomb | last_seen_in | Maer Dualdon | stated | no |  |
-| l107 | Veron Braig | works_in | The Blue Clam | stated | yes |  |
-| l108 | The Blue Clam | in | Termalaine | stated | yes |  |
-| l110 | The Beautiful Mine | in | Termalaine | stated | yes |  |
-| l111 | Bruni Stonewake | works_in | The Beautiful Mine | stated | no | a miner |
-| l112 | Trex | associate | The ghost | stated | yes | possessed by it |
-| l114 | Trex | last_seen_in | The Beautiful Mine | stated | no |  |
-| l115 | Grek | last_seen_in | The Beautiful Mine | stated | no |  |
-| l123 | Dzaan | last_seen_in | Easthaven | stated | no |  |
-| l124 | Arveiaturace | associate | Meltharond | stated | yes | his corpse rides on her saddle |
-| l125 | Arveiaturace | lives_in | Reghed Glacier | stated | no | lair |
-| l126 | Arveiaturace | last_seen_in | Sea of Moving Ice | stated | no | hunts there |
-| l127 | Ythryn | in | Reghed Glacier | stated | yes |  |
-| l128 | Caves of Hunger | in | Reghed Glacier | stated | yes |  |
-| l129 | Skytower Shelter | in | Spine of the World | inferred | no |  |
-| l131 | Zhentarim | works_in | Targos | stated | no |  |
-| l133 | Blackiron Blades | in | Bryn Shander | stated | no |  |
-| l135 | The Caer | in | Caer-Dineval | stated | yes |  |
-| l138 | Roark | works_in | The Uphill Climb | stated | yes |  |
-| l139 | The Uphill Climb | in | Caer-Dineval | stated | yes |  |
-| l140 | The Lucky Liar | in | Lonelywood | stated | yes |  |
-| l141 | Three Flags Sailing | in | Targos | stated | yes |  |
-| l142 | Clan Battlehammer | works_in | Kelvin's Cairn | stated | no | near its foothills |
-| l143 | Kelvin's Cairn | in | Icewind Dale | stated | no |  |
-| l144 | Maer Dualdon | in | Icewind Dale | stated | no |  |
-| l145 | Eastway Road | in | Icewind Dale | inferred | no |  |
-| l146 | Eastway Road | associate | Bryn Shander | stated | no | the road joins it to Easthaven |
-| l147 | Eastway Road | associate | Easthaven | stated | no | the road joins it to Bryn Shander |
-| l148 | Targos | in | Ten-Towns | stated | yes |  |
-| l149 | Bryn Shander | in | Ten-Towns | stated | yes |  |
-| l150 | Easthaven | in | Ten-Towns | stated | yes |  |
-| l151 | Termalaine | in | Ten-Towns | stated | yes |  |
-| l152 | Bremen | in | Ten-Towns | stated | yes |  |
-| l153 | Good Mead | in | Ten-Towns | stated | yes |  |
-| l154 | Caer-Dineval | in | Ten-Towns | stated | yes |  |
-| l155 | Caer-Konig | in | Ten-Towns | stated | yes |  |
-| l156 | Lonelywood | in | Ten-Towns | stated | yes |  |
-| l157 | Dougan's Hole | in | Ten-Towns | stated | yes |  |
-| l158 | Ten-Towns | in | Icewind Dale | stated | yes |  |
-| l159 | Auril the Frostmaiden | associate | Icewind Dale | stated | yes | casts the Everlasting Rime over it |
-| l160 | Ten-Towns | associate | Auril the Frostmaiden | stated | no | pay tribute to her |
-| l161 | Okthandom Korran | last_seen_in | Icewind Dale | inferred | no |  |
-| l164 | Arcane Brotherhood | associate | Psi crystal | stated | no | they may want it |
-| l165 | Duergar of Xardorok | associate | Psi crystal | stated | no | they track the party through it |
-| l169 | Okthandom Korran | associate | Mjenir | stated | no | told to seek the seer |
-| l171 | Spires of the Morning | associate | Lathander | stated | no | a temple to him |
-| l172 | Ice Troll | last_seen_in | Maer Dualdon | stated | no |  |
-| l176 | Thorin | works_in | The Beautiful Mine | stated | no | one of the workers |
+| id | from | tie | to | tier | must find | current | line | note |
+|---|---|---|---|---|---|---|---|---|
+| l012 | Cerric Vanya'elen | works_in | Sparkwalker Spire | stated | yes | yes | 18 | Keeper of it |
+| l013 | Syllar Sparkwalker | works_in | Blackstaff Tower | inferred | no | yes | 18 | 'Syllar Sparkwalker of Blackstaff Tower' |
+| l018 | Cerric Vanya'elen | comes_from | Waterdeep | stated | yes | yes | 18 | born in the Temple of the Seldarine |
+| l019 | Temple of the Seldarine | in | Waterdeep | stated | yes | yes | 18 |  |
+| l020 | Cerric Vanya'elen | lived_in | Castle Ward | stated | no | no | 18 | raised in a mansion there |
+| l021 | Castle Ward | in | Waterdeep | inferred | no | yes | 18 |  |
+| l024 | Cerric Vanya'elen | last_seen_in | Neverwinter | stated | no | yes | 21 | fled there by teleportation rune |
+| l025 | Cerric Vanya'elen | last_seen_in | Icewind Dale | stated | no | yes | 21 | journeyed north into it |
+| l026 | Danneth | last_seen_in | Easthaven | inferred | no | yes | 21 | the note is addressed 'Danneth, Easthaven' |
+| l029 | Easthaven | in | Icewind Dale | stated | yes | yes | 21 |  |
+| l034 | The wind spirit | associate | Okthandom Korran | stated | yes | yes | 30 | guides and guards him |
+| l037 | Claude Ambere | comes_from | Spine of the World | stated | yes | yes | 42 |  |
+| l041 | Auril the Frostmaiden | lives_in | Icewind Dale | stated | yes | yes | 51 | withdrawn there to live among mortals |
+| l042 | Auril the Frostmaiden | associate | White roc | stated | no | yes | 51 | rides it |
+| l043 | Ten-Towns | associate | Auril the Frostmaiden | stated | no | yes | 90 | its towns sacrifice every ten-day to appease her |
+| l044 | Targos | in | Ten-Towns | stated | yes | yes | 90 | listed with its sacrifice (also line 7) |
+| l045 | Bryn Shander | in | Ten-Towns | stated | yes | yes | 90 | listed with its sacrifice (also line 7) |
+| l046 | Easthaven | in | Ten-Towns | stated | yes | yes | 90 | listed with its sacrifice (also line 7) |
+| l047 | Termalaine | in | Ten-Towns | stated | yes | yes | 90 | listed with its sacrifice (also line 7) |
+| l048 | Bremen | in | Ten-Towns | stated | yes | yes | 90 | listed with its sacrifice (also line 7) |
+| l049 | Good Mead | in | Ten-Towns | stated | yes | yes | 90 | listed with its sacrifice (also line 7) |
+| l050 | Caer-Dineval | in | Ten-Towns | stated | yes | yes | 90 | listed with its sacrifice (also line 7) |
+| l051 | Caer-Konig | in | Ten-Towns | stated | yes | yes | 90 | listed with its sacrifice (also line 7) |
+| l052 | Lonelywood | in | Ten-Towns | stated | yes | yes | 90 | listed with its sacrifice (also line 7) |
+| l053 | Ten-Towns | in | Icewind Dale | stated | yes | yes | 57 |  |
+| l054 | Sacrifice of souls | in | Targos | stated | yes | yes | 7 | held there every ten-day (line 90) |
+| l055 | Sacrifice of souls | in | Bryn Shander | stated | yes | yes | 7 | held there every ten-day (line 90) |
+| l056 | Sacrifice of souls | in | Easthaven | stated | yes | yes | 7 | held there every ten-day (line 90) |
+| l057 | Sacrifice of souls | associate | Auril the Frostmaiden | stated | yes | yes | 90 | to appease her |
+| l058 | Sacrifice of warmth | in | Termalaine | stated | yes | yes | 7 | held there every ten-day (line 90) |
+| l059 | Sacrifice of warmth | in | Bremen | stated | yes | yes | 7 | held there every ten-day (line 90) |
+| l060 | Sacrifice of warmth | in | Good Mead | stated | yes | yes | 7 | held there every ten-day (line 90) |
+| l061 | Sacrifice of warmth | associate | Auril the Frostmaiden | stated | yes | yes | 90 | to appease her |
+| l062 | Sacrifice of food | in | Caer-Dineval | stated | yes | yes | 7 | held there every ten-day (line 90) |
+| l063 | Sacrifice of food | in | Caer-Konig | stated | yes | yes | 7 | held there every ten-day (line 90) |
+| l064 | Sacrifice of food | in | Lonelywood | stated | yes | yes | 7 | held there every ten-day (line 90) |
+| l065 | Sacrifice of food | associate | Auril the Frostmaiden | stated | yes | yes | 90 | to appease her |
+| l066 | Auril the Frostmaiden | associate | The Everlasting Rime | stated | yes | yes | 51 | casts it each night before midnight (line 4) |
+| l067 | The Everlasting Rime | in | Icewind Dale | stated | yes | yes | 4 | holds the Ten-Towns in a frozen vice |
+| l068 | Hlin Trollbane | works_in | Lonelywood | stated | yes | yes | 53 | operates out of it |
+| l074 | Sephek Kaltro | last_seen_in | Easthaven | stated | no | yes | 96 | his last known location |
+| l078 | Veron Braig | works_in | The Blue Clam | stated | yes | yes | 61 | owner and proprietor |
+| l079 | The Blue Clam | in | Termalaine | stated | yes | yes | 61 |  |
+| l080 | The Lucky Liar | in | Lonelywood | stated | yes | yes | 67 |  |
+| l094 | Bruni Stonewake | works_in | The gemstone mine | stated | no | yes | 78 | a miner |
+| l095 | The gemstone mine | in | Termalaine | inferred | no | yes | 78 |  |
+| l096 | Trex | associate | The ghost | stated | no | yes | 84 | a possessed ghost emerged when he fell |
+| l104 | Psi crystal | was_kept_in | The gemstone mine | inferred | yes | no | 84 | found there in the mind flayer's skull, then taken: the place is history |
+| l105 | Psi crystal | associate | Mind flayer | stated | no | yes | 84 | from its petrified skull |
+| l110 | Ice troll | last_seen_in | Maer Dualdon | stated | no | yes | 90 |  |
+| l113 | Boy | last_seen_in | Three Flags Sailing | stated | no | yes | 96 |  |
+| l114 | Three Flags Sailing | in | Targos | inferred | no | yes | 96 |  |
+| l118 | Garret Velryn | last_seen_in | Kelvin's Cairn | stated | no | yes | 96 | vanished five days ago leading an expedition up it |
+| l120 | Jebidiah | works_in | Targos | inferred | no | yes | 96 | a kennel master the party met there |
 
 ## Events
 
-| id | what happened | who |
-|---|---|---|
-| e01 | Cerric flees Waterdeep with the tome after Wit dies | Cerric, Wit, Syllar Sparkwalker |
-| e02 | Vaelrith vanishes, leaving a bloodstained camp and a broken talisman | Okthandom, Vaelrith |
-| e03 | Claude erased his own memory and was held by a circus; the ringmaster died | Claude, the ringmaster |
-| e04 | The grell destroys Glyph, and the party kills it | Cerric, the party |
-| e05 | Okthandom's arrow kills Trex, then the ghost is banished when Claude burns Penolopi | Trex, Okthandom, Claude, Cerric |
-| e06 | The party takes 250 gold from Speaker Masthew for clearing the mine | the party, Speaker Masthew |
-| e07 | The party shoves Fizzlebomb into Maer Dualdon and the Aurora's Wind is wrecked | Cerric, Okthandom, Belleros, Fizzlebomb |
-| e08 | Dzaan is burned at the stake in Easthaven | Dzaan |
-| e09 | The party clears the duergar ferry and finds the chardalyn | the party, Xardorok's duergar |
-| e10 | Sephek Kaltro is killed at The Wet Trout and the party takes his head for Hlin | the party, Sephek Kaltro, Hlin Trollbane |
-| e11 | A peryton nearly kills Okthandom at the camp | Okthandom |
-| e12 | Belleros, charmed by chardalyn, orders Kanberron to attack Cerric | Belleros, Kanberron, Cerric |
-| e13 | Oyami Nartok finds Claude in the whiteout and tells him he is Griz, son of Lee | Oyami, Claude, Lee |
-| e14 | The party kills a Coldlight Walker on the road to Caer-Dineval | the party |
+| id | what happened | who | line |
+|---|---|---|---|
+| e01 | Master Sparkwalker disappears, Wit comes back fatally wounded, and Cerric flees to Neverwinter with the tome | Cerric, Syllar Sparkwalker, Wit | 21 |
+| e02 | Vaelrith vanishes at 105, leaving a bloodstained campsite | Okthandom, Vaelrith | 27 |
+| e03 | Claude erases his own memory, is held by a circus and escapes | Claude | 42 |
+| e04 | Hlin Trollbane offers the party a contract on Sephek Kaltro in The Lucky Liar | the party, Hlin Trollbane, Sephek Kaltro | 67 |
+| e05 | The party fights six ice kobolds and evades a yeti on the road to Termalaine | the party | 75 |
+| e06 | Rumours reach the party that an evil wizard captured in Easthaven will be burned at the stake | the party | 78 |
+| e07 | The grell paralyzes Claude and destroys Glyph, then the party kills it | Claude, Cerric, the party | 84 |
+| e08 | Okthandom kills Trex with an arrow, and Claude burns Penolopi to banish the ghost | Okthandom, Trex, Claude, Cerric | 84 |
+| e09 | The party secures the spoils of the mine, including a psi crystal and a heart of chardalyn | the party | 84 |
+| e10 | Speaker Masthew pays a bounty of 250 gold for clearing the mine | the party, Speaker Masthew | 87 |
+| e11 | Claude sells the wolf figurine to Belleros for 75 gold | Claude, Belleros | 90 |
+| e12 | An ice troll devours the first ship's captain and shatters his ship | ice troll, the minotaur captain | 90 |
+| e13 | Cerric talks Okthandom into pushing Fizzlebomb overboard; Belleros runs the Aurora's Wind ashore | Cerric, Okthandom, Belleros, Fizzlebomb | 93 |
+| e14 | Three owlbears ambush the party near Targos | the party | 93 |
+| e15 | Belleros befriends Boy, who leads the party to Keegan Velryn; she asks them to find Garret | Belleros, Boy, Keegan Velryn, Garret Velryn | 96 |
+| e16 | Every ten-day Targos, Bryn Shander and Easthaven sacrifice humanoid souls, spellcasters first, to appease Auril | Targos, Bryn Shander, Easthaven, Auril | 7 |
+| e17 | Every ten-day Termalaine, Bremen and Good Mead forsake all warmth in a Sacrifice of Warmth | Termalaine, Bremen, Good Mead, Auril | 7 |
+| e18 | Every ten-day Caer-Dineval, Caer-Konig and Lonelywood fast and surrender their food to the beasts of the tundra | Caer-Dineval, Caer-Konig, Lonelywood, Auril | 7 |
+| e19 | Each night before midnight Auril casts the spell that keeps the sun from rising: the Everlasting Rime | Auril | 51 |
 
 ## Entries
 
-### People (51)
+### People (35)
 
 | name | also called | note |
 |---|---|---|
-| Cerric Vanya'elen | Cerric, Norro Fa'ertenya, Norro, Spellweave, Anton Swift-Thistle | Player character. Norro is his old name; Anton Swift-Thistle is a cover story told at the Caer. |
-| Belleros Stormgrace | Belleros | Player character. The lore calls him both a ranger and a paladin/cleric. |
-| Okthandom Korran | Okthandom, Oktandom, Okk | Player character. |
-| Claude Ambere | Claude, Griz, Grizz, Major Ursa | Player character. His true name is Griz, son of Lee. |
-| Roceran Fa'ertenya |  | Cerric's father |
-| Shafina Fa'ertenya |  | Cerric's mother, a weaver |
-| Valyra |  | Cerric's younger sister |
-| Kelfir Ama'Kiir |  | elven mage who took Valyra as an apprentice |
-| Qinric |  | Cerric's uncle, a war mage |
-| Syllar Sparkwalker | Master Sparkwalker | Council mage Cerric served |
-| Emmerich Ravenstride |  | Sparkwalker's apprentice, Cerric's rival |
-| Wit |  | Sparkwalker's apprentice, died warning Cerric |
-| Danneth |  | named in a note to Easthaven |
-| Khelben Aruynsen |  | the previous Blackstaff, a marble bust in the lore |
-| Cerric's grandfather |  | Unnamed. Roceran's father; died in a storm. |
-| Vaelrith Korran | Vaelrith | elder brother, vanished |
-| Nyssara Korran | Nyssara | younger sister |
-| Mjenir |  | seer of the Elk Tribe |
-| Okthandom's child |  | Unnamed. Mentioned once as someone the haunting could claim. |
-| Lee |  | Claude's late father, killed by the white dragon |
-| Oyami Nartok | Oyami | goliath werebear, a brother of Claude's clan |
-| The ringmaster |  | Unnamed. Ran the circus that held Claude; killed by him. |
-| Hlin Trollbane |  | retired bounty hunter, hires the party |
-| Sephek Kaltro |  | killer the party hunts; bodyguard of Torrga |
-| Torrga Icevein |  | merchant leading Torg's Caravan |
-| Brewner |  | dwarf who argued smelting with Belleros |
+| Cerric Vanya'elen | Cerric, Norro Fa'ertenya, Norro, Spellweave | Player character. Norro is his old name. |
+| Belleros Stormgrace | Belleros | Player character. |
+| Okthandom Korran | Okthandom | Player character. |
+| Claude Ambere | Claude, Griz, Major Ursa | Player character. His first name was Griz, son of Lee. |
+| Roceran |  | Cerric's father, an explorer and wanderer |
+| Shafina |  | Cerric's mother, a magical weaver |
+| Valyra |  | Cerric's younger sister, a sorcerer |
+| Kelfir Ama'Kiir |  | elven mage Valyra serves |
+| Qinric |  | Roceran's brother, a war mage |
+| Syllar Sparkwalker | Master Sparkwalker | Cerric's master |
+| Emmerich |  | a rival apprentice |
+| Wit |  | a rival apprentice, returns fatally wounded |
+| Danneth |  | named in the note in the tome |
+| Vaelrith |  | Okthandom's elder brother, vanished |
+| Nyssara |  | Okthandom's younger sister |
+| Lee |  | Claude's father |
+| Hlin Trollbane |  | retired bounty hunter in Lonelywood |
+| Sephek Kaltro |  | bodyguard the party is hired to catch |
+| Torrga Icevein |  | dwarf merchant leading Torg's Caravan |
+| Speaker Masthew |  | Town Speaker of Termalaine |
 | Veron Braig |  | half-orc owner of The Blue Clam |
-| Craig the Gnome |  | reviewer Veron courts |
-| Speaker Masthew |  | town Speaker of Termalaine |
+| Brewner |  | dwarf who argued mithril smelting with Belleros |
+| Thorin |  | worker at the gemstone mine, Bruni's brother |
 | Bruni Stonewake |  | miner |
-| Thorin |  | Bruni's brother |
-| Grek |  | kobold prisoner |
-| Trex |  | kobold leader possessed by a ghost |
-| Fizzlebomb |  | captain of the Aurora's Wind |
-| Keegan Velryn |  | wife of the missing explorer |
+| Grek |  | surrendered kobold, then killed |
+| Trex |  | kobold leader, killed by Okthandom |
+| Fizzlebomb |  | owner of the ship Aurora's Wind |
+| Keegan Velryn |  | Garret's wife, hires the party |
 | Garret Velryn |  | missing explorer |
-| Jebidiah |  | kennel master in Targos |
-| Dzaan |  | Red Wizard burned at the stake |
-| Imdra Arlaggath |  | captain of the Easthaven militia |
-| Rinaldo |  | bard who holds seances |
-| Xardorok Sunblight |  | duergar tyrant |
-| Roark |  | barkeep at The Uphill Climb |
-| Meltharond |  | dead wizard rider of the white dragon |
-| Naerth Maxildanarr |  | leader of the Zhentarim in Targos |
-| Markham Southwell |  | sheriff of Bryn Shander |
-| Kadroth |  | Black Sword cultist |
-| Huarwar Mulphoon |  | Black Sword cultist |
-| Vellynne Harpell |  | named in the proper-names list only |
-| Nass Lantomir |  | named in the proper-names list only |
-| The Minotaur captain |  | Unnamed. Captain of the first ship, killed by the Ice Troll. |
-| Brewner's daughter |  | Unnamed. A tall human redhead. |
+| Jebidiah |  | kennel master |
+| Cerric's paternal grandfather |  | Unnamed. Died in a storm. |
+| Okthandom's child |  | Unnamed. Mentioned once. |
+| Brewner's daughter |  | Unnamed. Leads Brewner home. |
+| The minotaur captain |  | Unnamed. Captain of the first ship. |
+| The beggar woman |  | Unnamed. Gives a prophecy. |
 
 ### Creatures (13)
 
 | name | also called | note |
 |---|---|---|
-| Glyph |  | Cerric's snowy owl familiar. Destroyed by the grell, to be brought back later. |
-| Sly | the wind spirit, wind spren, Daughter of the Air | Wind spirit that haunts and protects Okthandom. |
-| Boy |  | Sled dog Belleros befriended in Targos. |
-| Kanberron | Kanberon | Winter wolf called through the wolf figurine. |
-| Arveiaturace | the White Death | Ancient white dragon. |
-| The ghost |  | Unnamed ghost that possessed Trex. |
-| Grell |  | monster in the mine |
-| Peryton |  | winged predator |
+| Glyph |  | Cerric's snowy owl familiar, destroyed by the grell |
+| Boy |  | sled dog Belleros befriended |
+| The ghost |  | Unnamed possessed ghost that emerged when Trex fell |
+| Penolopi |  | pet plant the party burned |
+| The wind spirit |  | Unnamed ancient spirit that guides and guards Okthandom |
+| White roc |  | Auril's mount |
+| Ice kobolds |  | six fought on the road |
+| Yeti |  | evaded on the road |
+| Grell |  | killed the familiar |
+| Ice troll |  | ate the first ship's captain |
+| Electric eel |  | pulled Fizzlebomb under |
+| Owlbears |  | three ambushed the party near Targos |
 | Mind flayer |  | petrified skull in the mine |
-| Yeti |  | tracked the party |
-| Owlbears |  | three fought near Targos |
-| Coldlight Walker |  | Undead fought on the road to Caer-Dineval. |
-| Ice Troll |  | Killed the first ship's captain on Maer Dualdon. |
 
-### Gods (5)
+### Gods (1)
 
 | name | also called | note |
 |---|---|---|
-| Auril the Frostmaiden | Auril | goddess of winter |
-| Levistus |  | god of the Black Sword cultists |
-| Azuth |  | named once in an exclamation |
-| Deep Duerra |  | duergar goddess |
-| Lathander |  | named once, a temple in Waterdeep |
+| Auril the Frostmaiden | Auril, the Frostmaiden | Minor deity of winter's wrath. |
 
-### Groups (19)
+### Groups (6)
 
 | name | also called | note |
 |---|---|---|
-| The party | the heroes, the company | The four player characters. |
-| The circus |  | Unnamed travelling circus that held Claude. |
-| Explorer's League | Explorer's League, the League | Guild of explorers. |
-| Shafina's guild |  | Unnamed merchant guild. |
-| The ones who came for the tome | they | Unnamed pursuers in Cerric's backstory. |
-| Torg's Caravan |  | Torrga's caravan |
-| Clan Battlehammer |  | dwarven stronghold |
-| Elk Tribe |  | tribe of Reghed nomads |
-| Knights of the Black Sword |  | cult that holds the Caer, also called the Black Swords |
-| Arcane Brotherhood |  | wizard order |
-| Zhentarim |  | criminal network |
-| Council of the Blackstaff Tower |  | council of mages |
-| Lord's Alliance |  | alliance Qinric served |
-| Harpers |  | founded by Khelben |
-| Red Wizards of Thay |  | wizards of Thay |
-| Easthaven militia |  | town guard |
-| Duergar of Xardorok |  | duergar who hunt the party |
-| Tundra barbarians |  | raiders with chardalyn weapons |
-| Bryn Shander guards |  | town guard |
+| The party | the heroes, our four adventurers, the company | The four player characters. |
+| Lord's Alliance |  | alliance Qinric serves |
+| Explorer's League |  | guild of explorers |
+| Torg's Caravan |  | Torrga's merchant caravan |
+| The circus |  | Unnamed travelling circus that held Claude |
+| The Brotherhood |  | Unnamed. Named in the note in the tome |
 
-### Places (38)
+### Events and rituals (4)
+
+| name | also called | note |
+|---|---|---|
+| Sacrifice of souls |  | every ten-day humanoid souls are sacrificed, spellcasters first, to appease Auril |
+| Sacrifice of warmth |  | recurring Sacrifices of Warmth: all warmth is forsaken, to appease Auril |
+| Sacrifice of food |  | the residents fast and surrender their daily food to the beasts of the tundra, to appease Auril |
+| The Everlasting Rime |  | the magical winter Auril casts each night so the sun cannot rise |
+
+### Places (26)
 
 | name | also called | note |
 |---|---|---|
 | Icewind Dale |  |  |
 | Ten-Towns |  |  |
-| Lonelywood |  |  |
-| Termalaine |  |  |
 | Targos |  |  |
 | Bryn Shander |  |  |
-| Easthaven | East Haven |  |
+| Easthaven | Eashaven |  |
+| Termalaine |  |  |
+| Bremen |  |  |
+| Good Mead |  |  |
 | Caer-Dineval |  |  |
 | Caer-Konig |  |  |
-| Good Mead |  |  |
-| Bremen |  |  |
-| Dougan's Hole |  |  |
-| Maer Dualdon |  |  |
-| Kelvin's Cairn |  |  |
-| Lac Dinneshere |  |  |
-| Eastway Road |  |  |
-| Reghed Glacier |  |  |
-| Ythryn |  |  |
-| Caves of Hunger |  |  |
-| Sea of Moving Ice |  |  |
-| Skytower Shelter |  |  |
+| Lonelywood |  |  |
 | Waterdeep |  |  |
 | Temple of the Seldarine |  |  |
-| Blackstaff Tower |  |  |
+| Castle Ward |  |  |
 | Sparkwalker Spire |  |  |
+| Blackstaff Tower |  |  |
 | Neverwinter |  |  |
 | Spine of the World |  |  |
-| Castle Ward |  |  |
-| Spires of the Morning |  |  |
-| The Beautiful Mine | gemstone mine |  |
 | The Lucky Liar |  |  |
 | The Blue Clam |  |  |
+| The gemstone mine | the mine |  |
+| Maer Dualdon |  |  |
 | Three Flags Sailing |  |  |
-| White Lady Inn | The White Lady Inn |  |
-| The Wet Trout | The Wet Trout Inn |  |
-| The Uphill Climb |  |  |
-| The Caer |  |  |
-| Blackiron Blades |  |  |
+| Kelvin's Cairn |  |  |
+| Eastway Road |  |  |
+| The Underdark |  |  |
 
-### Items (16)
+### Items (9)
 
 | name | also called | note |
 |---|---|---|
-| Korran family journal | family journal | Okthandom's family history. |
-| Wolf figurine | fey figurine | Claude sold it to Belleros for 75 gold. |
-| Chardalyn spear |  | Corrupts its wielder. |
-| Icy Rapier of Life Stealing | the icy blade | Sephek Kaltro's blade, later with the party. |
-| Penolopi |  | The ghost's pet plant. |
-| Aurora's Wind |  | ship |
-| Lantern of Greater Tracking |  |  |
-| Psi crystal |  | gives telepathy to its attuned owner |
-| Wand of Conducting |  |  |
-| Wyvern poison |  |  |
-| Heart of chardalyn |  |  |
-| Sparkwalker's tome |  | locked tome Cerric saved |
-| Explorer's League journal |  | found on the ferry |
-| Oyami's pipe |  | calming magical pipe |
-| Chardalyn shipment |  | 1,500 pounds on the ferry |
-| Dog sleds |  | two sleds and eight dogs |
+| Azure tome |  | Syllar's locked tome |
+| Ancestral journal |  | Okthandom's family journal |
+| Wolf figurine |  | inlaid with black gems, etched with Sylvan runes |
+| Aurora's Wind |  | Fizzlebomb's ship |
+| Wand of Conducting |  | found in the mine |
+| Lantern of Greater Tracking |  | found in the mine |
+| Chardalyn spear |  | found in the mine |
+| Psi crystal |  | from a petrified mind flayer skull; gives telepathy |
+| Heart of chardalyn |  | hidden under the bucket lift |
 
 ## Must not find
 
-- any link made from dice rolls, hit points, temporary hit points, exhaustion, conditions or spells
-- the 'Xanathar's origin rolls' table: the letters TN and NE are alignments, not people or places
-- 'Claude yells to Claude' is a typing slip in the lore, so no link from Claude to himself
-- 'my child', 'brother' and 'Father' used as forms of address are not family ties
-- the instructions block (purpose, response style, transcript corrections) is about how to write a summary, not about the story
-- the book-cover blurb at the top is not the campaign's own story
-- Vellynne Harpell and Nass Lantomir appear only in a proper-names list: names, but no invented ties
-- the Dzaan Red Wizard 'Arcane Brotherhood' tie is stated; do not widen it to the whole party
+- any link made from dice rolls, hit points, wasp stings or spear wounds, spells (Moment to Think, Detect Magic) or marching order
+- only unique items are tracked (#3373): no entry or tie for Wyvern poison, the two dog sleds and eight dogs, the scroll of Detect Magic, the scroll of Identify, the Potion of Healing or the waterproof backpacks (ordinary gear)
+- the warning sign 'Kobolds only!' is a sign, not a person or a group
+- 'The Brotherhood' in the note is named once and nothing is said about it: no members, no leader, and it is not the Explorer's League
+- the unnamed boy who shouts the news, the unnamed beggar woman's prophecy and the unnamed ghost's own name: do not invent names for them
+- 'Eashaven' is Easthaven spelled wrongly (one place, not two)
+- the Ten-Towns settlement 'Dougan's Hole' is not in this document, so it must not appear
 
 ## Waits for a later slice
 
 - Glyph travels with the party (travels_with, #3176)
-- the party was ambushed by barbarians on the road (a fight, #3244 note on single actions)
-- map facts: twenty miles from Targos to Kelvin's Cairn; Bryn Shander is a few hours' dogsled from Easthaven
+- who a marching order puts ahead of whom is not a tie
