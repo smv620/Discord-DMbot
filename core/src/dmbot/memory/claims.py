@@ -20,7 +20,7 @@ from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 
-from dmbot.memory import evidence, forget_readings, kin, link, reputation_words
+from dmbot.memory import evidence, forget_readings, kin, link, one_off, reputation_words
 from dmbot.memory._changes import ALIASES, CLAIMS, ENTITIES, Changes
 from dmbot.memory.models import (
     CLAIM_CONFIRMED,
@@ -80,6 +80,9 @@ A_READING = "That is a belief to place, not a fact to keep."
 
 # Why a claim was dropped, in words the numbers (and a curious DM) can read.
 PLAN_REASON = "a plan, not something that happened"
+# (#3244) A blow, a sighting or a chase lasts one moment; it is not a tie between two characters.
+ONE_OFF_REASON = "a single action, not a lasting tie"
+PREDICTION_REASON = "what is expected, not something that is so"
 INJECTION_REASON = "it reads like an instruction, not a story"
 NO_SPEAKER_REASON = "a line it cites has no known speaker"
 STOPPED_REASON = "a speaker it cites is not being recorded now"
@@ -471,6 +474,21 @@ def judge(
         return PLAN_REASON  # a plan is never turned into a fact
     if injection_like(claim):
         return INJECTION_REASON
+    # A prediction is never a fact, even from the DM; a single action is not a tie. Both are
+    # decided before the names, so a group that only ever "swings at" someone is never made into
+    # an entry (#3244). A phrase DMbot already has a relationship for (held, serves, carries) is
+    # a lasting state and goes on as it did: only a phrase it cannot place is dropped.
+    # A belief or a reading (`claim.reading`) is what someone thinks happened or expects: "Tor
+    # believes Vex shot the duke" is a clue, not a tie, so these checks are for claims only.
+    if claim.reading is None:
+        if one_off.is_prediction(claim.relationship):
+            return PREDICTION_REASON
+        if (
+            one_off.is_one_off(claim.relationship)
+            and resolve_relationship(onto, claim.relationship) is None
+            and feeling_of(onto, claim.relationship, claim.details or "") is None
+        ):
+            return ONE_OFF_REASON
     # A secret name is the DM's: a claim a player said with one in it is not matched (the
     # transcript is open to the server, and a proposal could give the name away).
     if names.secret and any(s not in dms for s in speakers):
