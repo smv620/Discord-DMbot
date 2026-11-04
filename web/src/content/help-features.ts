@@ -155,6 +155,16 @@ export const featureSteps: FeatureStep[] = [
       { name: "Make a script", file: "ui/theatre_button.py" },
     ],
   },
+  {
+    audience: "gameMaster",
+    whatsNew: "Split a list of names, or say it is a group",
+    text: "When a recap's Names to check list a name that is really a list, like \"Mira and Cerric\", press ✂️ These are separate names and DMbot splits it into one name for each part. If DMbot knows a group the list may be, press 👥 Yes, that group; if not, press 👥 They're a group and type what the group is called. Undo stays until one of the names is answered.",
+    names: [
+      { name: "✂️ These are separate names", file: "ui/names.py" },
+      { name: "👥 Yes, that group", file: "ui/names.py" },
+      { name: "👥 They're a group", file: "ui/names.py" },
+    ],
+  },
 ];
 
 /** The steps for one audience that are live now, in order. */
