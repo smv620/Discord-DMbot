@@ -144,3 +144,31 @@ class Applied(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MarkedByTheText(unittest.TestCase):
+    """The text says it is one of a kind (found on the sample lore: the wolf figurine)."""
+
+    def test_a_unique_or_inlaid_or_runed_thing_is_one_particular_thing(self) -> None:
+        said = (
+            "He carries a unique wolf figurine inlaid with black gemstones, etched with Sylvan "
+            "runes of conjuration."
+        )
+        verdict = unique_item.judge("wolf figurine", said)
+        self.assertEqual((verdict.keep, verdict.why), (True, "marked"))
+        self.assertFalse(unique_item.judge("wolf figurine").keep)  # said alone it is ordinary
+
+    def test_a_mark_in_another_sentence_or_for_gear_that_is_plainly_ordinary_is_not_enough(
+        self,
+    ) -> None:
+        elsewhere = "The runes on the door glowed. " + "The party carried rations for a week. " * 8
+        self.assertFalse(unique_item.judge("rations", elsewhere).keep)
+        self.assertFalse(unique_item.judge("a sled", "The two sleds were fast.").keep)
+
+    def test_a_mark_on_the_neighbouring_item_does_not_make_the_plain_one_unique(self) -> None:
+        said = (
+            "The company bolstered their provisions with waterproof backpacks and a Potion of "
+            "Healing, while Claude sold a wolf figurine etched with conjuration runes to Belleros."
+        )
+        self.assertFalse(unique_item.judge("waterproof backpacks", said).keep)
+        self.assertTrue(unique_item.judge("wolf figurine", said).keep)
