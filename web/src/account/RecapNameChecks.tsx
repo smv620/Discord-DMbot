@@ -61,7 +61,7 @@ export default function RecapNameChecks({ api, refId }: { api: AccountApi; refId
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api, refId]);
 
-  const waiting = (list?.names ?? []).some((n) => n.answering) || busy.size > 0;
+  const waiting = (list?.names ?? []).some((n) => n.answering) || busy.size > 0 || follow !== null;
   // The wait shows how long it has run and when the list last changed (the page sees no stage from the bot).
   const seen = useObservedWait(waiting, (list?.names ?? []).map((n) => `${n.id}:${n.answering ? 1 : 0}:${n.name}`).join(","));
   useEffect(() => {
@@ -112,6 +112,7 @@ export default function RecapNameChecks({ api, refId }: { api: AccountApi; refId
       stopped = true;
       setFollow(null);
       after();
+      void read(); // the list changed under us (parts added, or taken away again): show it as it is now
     };
     const timer = setInterval(async () => {
       looks += 1;
@@ -264,11 +265,11 @@ export default function RecapNameChecks({ api, refId }: { api: AccountApi; refId
       {undoLine}
       {/* Always mounted, so a screen reader hears the stage and then the result. */}
       <p class="sr-only" role="status">
-        {waiting ? (slow || seen.quiet ? "" : words.waiting) : said}
+        {waiting ? (slow || seen.quiet ? "" : follow ? gw.working : words.waiting) : said}
       </p>
       {waiting && seen.startedAt !== null ? (
         <WorkProgress
-          stage={words.waiting}
+          stage={follow ? gw.working : words.waiting}
           startedAt={seen.startedAt}
           updatedAt={seen.movedAt}
           state={slow || seen.quiet ? "stalled" : "running"}
