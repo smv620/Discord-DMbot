@@ -30,6 +30,7 @@ from dmbot.memory import (
     kin,
     lore_context,
     lore_knowledge,
+    lore_pc_names,
     lore_read,
     pronouns,
     who_ask,
@@ -726,6 +727,12 @@ async def read_background(
         rules=(campaign.target_ruleset, campaign.fallback_ruleset),
         dropped=read.stats.dropped,
     )
+    # A name tied to a player character that pass 1 never listed becomes a name to check, ahead of
+    # the read's own limit (#3238): the family of the table's characters is kept, not dropped.
+    found = [
+        *found,
+        *lore_pc_names.pc_new_names(read.links, found, known, player_keys, read.stats.dropped),
+    ]
     choice = lore_knowledge.normalize(choice)
     if speaker:  # a character's backstory stays as it was: the choices are for campaign lore
         choice = lore_knowledge.SPOILERS
