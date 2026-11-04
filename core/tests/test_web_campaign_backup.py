@@ -195,7 +195,7 @@ class Backing(Base):
         self.assertEqual(await self.build_next(THURSDAY.id), "")
         ready = await campaign_backup.status(self.web, self.session, ref, made)
         self.assertEqual((ready["stage"], ready["state"], ready["ready"]), ("done", "done", True))
-        self.assertTrue(ready["fileName"].endswith(".json.gz"))
+        self.assertRegex(ready["fileName"], r"\.dmbot#[0-9a-z]+\.json\.gz$")
         raw, name = await campaign_backup.fetch(self.web, self.session, ref, made)
         self.assertEqual(name, ready["fileName"])
         self.assertEqual(ready["size"], len(raw))

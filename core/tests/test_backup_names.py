@@ -61,10 +61,6 @@ class TheBackupNames(unittest.TestCase):
             self.assertIsNone(backup_names.backup_campaign_name(odd), odd)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class TheBuildsCommit(unittest.TestCase):
     """Which build made a backup is in the file and in its name (#3391)."""
 
@@ -92,3 +88,7 @@ class TheBuildsCommit(unittest.TestCase):
             self.assertEqual(
                 backup_names.backup_filename("Tales", 0), "tales-1970-01-01.dmbot#unknown.json.gz"
             )
+
+
+if __name__ == "__main__":
+    unittest.main()

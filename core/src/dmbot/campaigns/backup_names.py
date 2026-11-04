@@ -27,7 +27,8 @@ def backup_filename(campaign_name: str, now: int, commit: str | None = None) -> 
     slug = re.sub(r"[^a-z0-9]+", "-", campaign_name.casefold()).strip("-")[:40] or "campaign"
     day = datetime.fromtimestamp(now, UTC).strftime("%Y-%m-%d")
     tag = (commit if commit is not None else build_commit())[:8] or UNKNOWN_COMMIT
-    return f"{slug}-{day}.dmbot#{tag}.json.gz"  # compressed since #164; .dmbot.json still restores
+    # (compressed since #164; a restore goes by the file's content, not by its name)
+    return f"{slug}-{day}.dmbot#{tag}.json.gz"
 
 
 def backup_stem(file_name: str) -> str:
