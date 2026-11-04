@@ -48,7 +48,7 @@ _BACK = {
     LIVES: ("is home to", "was home to"),
     WORKS: ("is the workplace of", "was the workplace of"),
     KEPT: ("is where you keep", "was where you kept"),
-    FROM: ("is the origin of", "is the origin of"),
+    FROM: ("is the home town of", "is the home town of"),
     LAST_SEEN: ("is where you last saw", "is where you last saw"),
 }
 # How a place tie reads in a node's summary: (when the node is the subject, when it is the object),
@@ -68,6 +68,10 @@ _MOBILE = frozenset({
 })  # fmt: skip
 
 
+# The wordings a reader is told to use (the keys of `_FORWARD`, present and past, no repeats).
+WORDS_OFFERED = tuple(dict.fromkeys(w for pair in _FORWARD.values() for w in pair))
+
+
 def is_mobile(kind: str) -> bool:
     """Does this kind of entry move, so that its place needs a word and never "is in"?"""
     return kind in _MOBILE
@@ -75,7 +79,7 @@ def is_mobile(kind: str) -> bool:
 
 def way_of(detail: str) -> Way | None:
     """The way a connection's detail says, or None when it says none."""
-    return _WAYS.get(" ".join(detail.split()).casefold())
+    return _WAYS.get(" ".join(detail.replace("_", " ").split()).casefold())
 
 
 def slot(detail: str) -> tuple[str, bool]:
@@ -88,12 +92,22 @@ def slot(detail: str) -> tuple[str, bool]:
     return (way.key, way.past) if way is not None else (LAST_SEEN, False)
 
 
+def canonical(text: str) -> str | None:
+    """The one wording a way is kept in on a connection's detail ("lives in", "lived in",
+    "works in", "is kept in", "comes from", "was last seen in"), or None when the words say none.
+    The readers keep this, so two ways of saying it are one word in the data."""
+    way = way_of(text)
+    return None if way is None else _FORWARD[way.key][1 if way.past else 0]
+
+
 def forward(detail: str, subject_kind: str) -> str:
     """How the connection reads from the subject: "lives in" for a way, "was last seen in" for
     something that moves with no way said, and "is in" for what does not move."""
     way = way_of(detail)
     if way is not None:
         return _FORWARD[way.key][1 if way.past else 0]
+    if subject_kind == "event":
+        return "took place in"  # an event does not move, and "is in" would hide that it is over
     return _FORWARD[LAST_SEEN][0] if is_mobile(subject_kind) else "is in"
 
 
@@ -105,7 +119,13 @@ def backward(detail: str, subject_kind: str) -> str:
     return _BACK[LAST_SEEN][0] if is_mobile(subject_kind) else "is where you find"
 
 
-def summary_phrases(detail: str) -> tuple[str, str]:
-    """How a place tie reads in a node's summary, by the word its detail says (#3363)."""
+def summary_phrases(detail: str, subject_kind: str = "") -> tuple[str, str]:
+    """How a place tie reads in a node's summary (#3363): by the word its detail says, else by
+    what kind of entry the subject is (something that moves was last seen there; an event took
+    place there), else plainly, claiming nothing about when or how."""
     way = way_of(detail)
-    return _SUMMARY[way.key][1 if way.past else 0] if way is not None else _SUMMARY_PLAIN
+    if way is not None:
+        return _SUMMARY[way.key][1 if way.past else 0]
+    if subject_kind == "event":
+        return ("took place there", "where it took place")
+    return _SUMMARY[LAST_SEEN][0] if is_mobile(subject_kind) else _SUMMARY_PLAIN

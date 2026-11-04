@@ -22,7 +22,7 @@ from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Any
 
-from dmbot.memory import kin
+from dmbot.memory import kin, place_words
 from dmbot.memory import reputation_words as feeling_words
 from dmbot.memory.backstory_links import QUOTE_MAX
 from dmbot.memory.end_match import FILLER, SHORTEST, Ends
@@ -858,6 +858,13 @@ def read_connections(
             or next((k for k in own if k.lower() == word), None)
         )
         label = ""
+        if how == "located_in":
+            # The place tie keeps the word the text used, as one wording ("lives in"), or none for
+            # a place inside a place (#3363); anything else the AI wrote there is dropped.
+            raw_place = str(item.get("words") or "").strip()
+            label = place_words.canonical(raw_place) or ""
+            if raw_place and not label:
+                lost["place_word_off_list"] += 1  # (kept without it, as an off-list feeling is)
         if how == "knows":
             # How the one feels about the other: one of nine words (a reputation, #3175), in the
             # line's "words". One off the list is dropped and counted; the connection is kept
@@ -1079,7 +1086,7 @@ def keep_connections(
         sp: f.name for f in names for sp in f.also if len(claimed.get(name_key(sp), ())) == 1
     }
     reader = Ends(ends, {*ends.values()}, spellings)
-    seen: set[tuple[str, str, str]] = set()
+    seen: set[tuple[str, str, str, tuple[str, bool] | None]] = set()
     # kin_of, by unordered pair: (its place in `out` or None, its role or "", the order it was said)
     kin_held: dict[tuple[str, str], tuple[int | None, str, tuple[str, str]]] = {}
     contradicted: set[tuple[str, str]] = set()
@@ -1257,10 +1264,13 @@ def keep_connections(
                     ka, kb = kb, ka
                 # One fact per pair and kind: the queue's key has no words, so a second
                 # catch-all line for the pair (a mentor who is also a rival) is not offered.
-                if (ka, c.how, kb) in seen:
+                # (the place tie is one fact for each of its words: lives in and worked in the
+                # same town are both kept, #3363)
+                once = (ka, c.how, kb, place_words.slot(c.words) if c.how == "located_in" else None)
+                if once in seen:
                     lost["same_pair"] += 1
                     continue
-                seen.add((ka, c.how, kb))
+                seen.add(once)
             if role:
                 # A "Which X?" question asked earlier with the opposite role for one of this
                 # line's two names contradicts it the same way: both end as plain family.

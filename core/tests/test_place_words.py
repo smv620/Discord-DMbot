@@ -7,7 +7,7 @@ import unittest
 from types import SimpleNamespace
 from typing import Any
 
-from dmbot.memory import place_words
+from dmbot.memory import lore_read, place_words
 from dmbot.memory.link_words import back_words, link_words, reads_both_ways
 from dmbot.memory.models import CONFIRMED, Relation
 from dmbot.ui.name_card import _rows, sentence
@@ -16,7 +16,6 @@ from dmbot.ui.name_card import _rows, sentence
 class PlaceWords(unittest.TestCase):
     def test_a_place_inside_a_place_stays_is_in(self) -> None:
         self.assertEqual(link_words("located_in", "", False, "place"), "is in")
-        self.assertEqual(link_words("located_in", "", False, "event"), "is in")
         self.assertEqual(back_words("located_in", "", False, "place"), "is where you find")
 
     def test_something_that_moves_with_no_word_was_last_seen(self) -> None:
@@ -33,7 +32,7 @@ class PlaceWords(unittest.TestCase):
             "works at": ("works in", "is the workplace of"),
             "based in": ("works in", "is the workplace of"),  # a group works in a town too
             "is kept in": ("is kept in", "is where you keep"),
-            "grew up in": ("comes from", "is the origin of"),
+            "grew up in": ("comes from", "is the home town of"),
             "visited": ("was last seen in", "is where you last saw"),
         }
         for detail, (forward, back) in cases.items():
@@ -72,6 +71,52 @@ class PlaceWords(unittest.TestCase):
             self.assertEqual(link_words("located_in", "", False, kind), "was last seen in", kind)
         for kind in ("concept", "quest", ""):  # these do not, or are not known
             self.assertEqual(link_words("located_in", "", False, kind), "is in", kind)
+
+    def test_one_wording_for_each_word(self) -> None:
+        self.assertEqual(place_words.canonical("works at"), "works in")
+        self.assertEqual(place_words.canonical("Grew up in"), "comes from")
+        self.assertEqual(place_words.canonical("lived"), "lived in")
+        self.assertEqual(place_words.canonical("visited"), "was last seen in")
+        self.assertIsNone(place_words.canonical("is in"))
+        self.assertIsNone(place_words.canonical("knows"))
+
+    def test_the_readers_wording_is_what_the_reader_is_told_to_say(self) -> None:
+        # the six words of the instruction are the ones the code keeps (no drift between them)
+        from dmbot.memory.extractor import SYSTEM
+
+        for word in ("lives in", "lived in", "works in", "worked in", "is kept in", "was kept in",
+                     "comes from", "was last seen in"):  # fmt: skip
+            self.assertIn(f'"{word}"', SYSTEM)
+            self.assertEqual(place_words.canonical(word), word)
+        self.assertEqual(place_words.canonical("lives_in"), "lives in")  # (an ontology spelling)
+
+    def test_the_lore_reader_is_told_the_same_words(self) -> None:
+        for word in place_words.WORDS_OFFERED:
+            self.assertIn(word, lore_read.shape_instructions(), word)
+            self.assertIsNotNone(place_words.canonical(word), word)
+        self.assertIn("worked in", lore_read.read_instructions())
+        self.assertIn("was last seen in", lore_read.read_instructions())
+
+    def test_the_sayings_a_text_uses_are_each_one_word(self) -> None:
+        for said, kept in {
+            "was born in": "comes from", "Born in": "comes from", "visited": "was last seen in",
+            "  Worked   IN ": "worked in", "lived_in": "lived in", "is from": "comes from",
+        }.items():  # fmt: skip
+            self.assertEqual(place_words.canonical(said), kept, said)
+
+    def test_a_place_word_on_a_place_still_reads_by_its_word(self) -> None:
+        # a town that "lives in" another is odd, but it is shown as it was said, not "is in"
+        self.assertEqual(link_words("located_in", "lives in", False, "place"), "lives in")
+
+    def test_an_event_took_place_in_a_town(self) -> None:
+        self.assertEqual(link_words("located_in", "", False, "event"), "took place in")
+        self.assertEqual(
+            place_words.summary_phrases("", "event"), ("took place there", "where it took place")
+        )
+        self.assertEqual(
+            place_words.summary_phrases("", "character"),
+            ("was last seen there", "where they were last seen"),
+        )
 
     def test_a_node_summary_reads_by_the_word(self) -> None:
         self.assertEqual(
