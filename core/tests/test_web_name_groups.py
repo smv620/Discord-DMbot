@@ -97,14 +97,16 @@ class TheDatabaseHalf(WithChecks):
         async with self.db.guild(GUILD) as conn:
             await conn.execute(text, args)
 
-    async def group(self, name: str, *members: str, secret: bool = False) -> str:
+    async def group(
+        self, name: str, *members: str, secret: bool = False, status: str = CONFIRMED
+    ) -> str:
         made = await self.memory.add_entity(
             GUILD, self.one.id, type="faction", name=name, source=DM, status=CONFIRMED
         )
         for member in members:
             await self.memory.add_relation(
                 GUILD, self.one.id, member, "member_of", made.value.id,
-                source=DM, confidence=1.0, status=CONFIRMED, secret=secret,
+                source=DM, confidence=1.0, status=status, secret=secret,
             )  # fmt: skip
         return made.value.id
 
@@ -141,6 +143,13 @@ class TheDatabaseHalf(WithChecks):
         )
         await self.group("The Ashen Circle", brannoch, veshla)
         await self.group("A Secret Club", brannoch, secret=True)  # a secret membership: no hint
+        await self.group("A Guessed Club", brannoch, veshla, status="proposed")  # a guess: no hint
+        unnamed = await self.group("Garret's clients", brannoch, veshla)  # an unnamed group
+        await self.sql(
+            "UPDATE memory_entities SET unnamed = true, unnamed_what = 'a group of clients'"
+            " WHERE id = %s",
+            unnamed,
+        )
         listed = await self.suggest("Brannoch and Veshla")
         store = await self.memory.group_hints(GUILD, self.one.id, listed)
         page = next(c for c in (await self.listed())["names"] if c["id"] == listed)["groups"]
