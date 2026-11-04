@@ -26,6 +26,7 @@ from dmbot.memory import kin, place_words
 from dmbot.memory import reputation_words as feeling_words
 from dmbot.memory.backstory_links import QUOTE_MAX
 from dmbot.memory.end_match import FILLER, SHORTEST, Ends
+from dmbot.memory.list_names import split_list
 from dmbot.memory.models import name_key
 from dmbot.memory.ontology import DISGUISED_AS, FALLBACK_PREDICATE, SYNONYMS
 from dmbot.memory.pronouns import PRONOUNS, speaker_end
@@ -615,6 +616,25 @@ def in_the_rules(name: str, kind: str, target: str, fallback: str) -> bool:
     return False
 
 
+def _split_lists(answers: Iterable[list[Found]], held: Collection[str]) -> list[list[Found]]:
+    """A name that is a list ("Aldmoor, Quillgate, Fenwick") as one name for each part (#3383),
+    each with the list's kind and quote, so a list is never offered as one name. A bare "and"
+    splits only when each part is held or another entry of the same read names it alone."""
+    pieces = [list(a) for a in answers]
+    alone = {name_key(i.name) for found in pieces for i in found}
+    out: list[list[Found]] = []
+    for found in pieces:
+        kept: list[Found] = []
+        for item in found:
+            parts = split_list(item.name, known=held, offered=alone - {name_key(item.name)})
+            if len(parts) == 1:
+                kept.append(item)
+            else:
+                kept.extend(Found(p, item.kind, (), (), item.quote) for p in parts)
+        out.append(kept)
+    return out
+
+
 def merge(
     answers: Iterable[list[Found]],
     skip_keys: Collection[str] = (),
@@ -628,6 +648,7 @@ def merge(
     entry's secret spellings. `rules`
     (target, fallback ruleset): names the rules hold as a monster or spell are left out too."""
     skip = {name_key(k) for k in skip_keys} | COMMON | GAME_TERMS
+    answers = _split_lists(answers, skip_keys)
     order: list[str] = []
     merged: dict[str, Found] = {}
     for found in answers:

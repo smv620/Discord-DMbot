@@ -14,6 +14,7 @@ the numbers show how often, but it is never asked about and never a fact.
 from __future__ import annotations
 
 import json
+import logging
 import re
 from collections import Counter
 from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
@@ -30,6 +31,7 @@ from dmbot.memory import (
     reputation_words,
 )
 from dmbot.memory._changes import ALIASES, CLAIMS, ENTITIES, Changes
+from dmbot.memory.list_names import split_list
 from dmbot.memory.models import (
     CLAIM_CONFIRMED,
     CLAIM_DROPPED,
@@ -70,6 +72,8 @@ from dmbot.memory.store import MemoryStore, _load_ontology, _new_alias
 from dmbot.memory.voice import EFFECT, EFFECT_NOTE, OWN, PARTY, PARTY_REASON, voice
 from dmbot.names import not_names
 from dmbot.word_end import at_word_end
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:  # (placing builds on this module, so it is only named for the checker)
     from dmbot.memory.placing import Recorded
@@ -475,6 +479,26 @@ def names_of(entities: Sequence[Mapping[str, Any]], aliases: Sequence[Mapping[st
     return Names({k: tuple(v.items()) for k, v in seen.items()}, hidden, roles)
 
 
+def expand_lists(claims: Sequence[Extracted], names: Names) -> tuple[list[Extracted], int]:
+    """Claims whose subject or object is a list of names ("Aldmoor, Quillgate, Fenwick") as one
+    claim for each part (#3383), so a list is never offered to the DM as one name. A part that is
+    already known joins its entry as usual. Returns (the claims, how many lists were split): a
+    count, never a name. A bare "and" splits only when every part is known or this same read
+    named each part alone (`list_names.split_list`)."""
+    alone = {name_key(n) for c in claims for n in (c.subject, c.object)}
+    out: list[Extracted] = []
+    split = 0
+    for c in claims:
+        subjects = split_list(c.subject, known=names.by_key, offered=alone - {name_key(c.subject)})
+        objects = split_list(c.object, known=names.by_key, offered=alone - {name_key(c.object)})
+        if len(subjects) == 1 and len(objects) == 1:
+            out.append(c)
+            continue
+        split += 1
+        out.extend(replace(c, subject=s, object=o) for s in subjects for o in objects)
+    return out, split
+
+
 def judge(
     claim: Extracted, onto: Ontology, names: Names, speakers: Sequence[int | None],
     opted_in: Collection[int], tally: Tally | None = None, dms: Collection[int] = (),
@@ -724,6 +748,9 @@ class ClaimStore:
             # First pass: the rules, with the names as they are. A claim that fails only for a
             # name DMbot does not know is a candidate for the linker.
             work: list[tuple[Extracted, str, list[str]]] = []  # claim, reason, unknown names
+            claims, lists = expand_lists(claims, names)
+            if lists:
+                logger.info("name lists split: %d", lists)  # a count, never a name
             for claim in claims[:limit]:
                 reason = judged(claim)
                 unknown: list[str] = []

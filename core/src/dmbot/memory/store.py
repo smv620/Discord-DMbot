@@ -59,6 +59,7 @@ from dmbot.memory._changes import (
     ATTITUDES,
     BELIEFS,
     CHANGED_SINCE,
+    CLAIMS,
     CORRECTIONS,
     DEPENDENTS,
     ENTITIES,
@@ -87,6 +88,7 @@ from dmbot.memory.checks import (
     waiting_guess,
 )
 from dmbot.memory.clues import CLUE, KNOWS, NEEDS_SOMEONE, ONLY_CHARACTERS, ONLY_CLUES
+from dmbot.memory.list_names import split_list
 from dmbot.memory.lookalikes import Name as LookAlikeName
 from dmbot.memory.lookalikes import find as find_look_alikes
 from dmbot.memory.lookalikes import pair as not_same_pair
@@ -143,6 +145,7 @@ from dmbot.memory.models import (
     Relation,
     RuleLink,
     SaidAsSuggestion,
+    SplitName,
     State,
     TooLateToUndo,
     Written,
@@ -394,6 +397,7 @@ def hidden_old_pronoun(entity: Entity) -> bool:
     )
 
 
+NOT_A_LIST = "That name is not a list of names."
 SPELLING_TAKEN = "Pick another spelling."  # a new name that is another entry's secret name
 
 
@@ -2523,6 +2527,84 @@ class MemoryStore:
             if status == REJECTED:
                 await _let_go_of_anchored(w, entity_id)
             return Written(_entity(row), w.batch)
+
+    async def split_waiting_name(
+        self, guild_id: int, campaign_id: str, entity_id: str, *, source: str
+    ) -> Written[SplitName]:
+        """The DM's "These are separate names" (#3383): a name still waiting for an answer that is
+        really a list ("Aldmoor, Quillgate, Fenwick") becomes one waiting name for each part, in
+        one change (one Undo). A part the campaign already holds is joined to its entry quietly.
+        The waiting claims that name the list are made again for each part, and the list itself
+        is turned down so no reader offers it again. Refused when the name is not a waiting list
+        (nothing is changed). Undo (`undo`) works until any part is answered, as for any batch."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can split a name.")
+        async with self._write(guild_id, campaign_id, source) as w:
+            current = await _entity_row(w, entity_id)
+            if current["status"] != PROPOSED:
+                raise MemoryRuleError(NOT_FOUND)
+            others = await w.select(ENTITIES, " AND status IN ('proposed', 'confirmed')")
+            held = {
+                lookup_key(str(a["text"]))
+                for a in await w.select(ALIASES, " AND status <> 'rejected'")
+            }
+            parts = split_list(
+                str(current["name"]), known=held - {lookup_key(str(current["name"]))}
+            )
+            if len(parts) < 2:
+                raise MemoryRuleError(NOT_A_LIST)
+            by_key: dict[str, str] = {}
+            for a in await w.select(ALIASES, " AND status <> 'rejected'"):
+                by_key.setdefault(str(a["key"]), str(a["entity_id"]))
+            live = {str(e["id"]) for e in others}
+            made: list[str] = []
+            joined: list[str] = []
+            for part in parts:
+                key = lookup_key(part)
+                if by_key.get(key) in live:
+                    joined.append(part)
+                    continue
+                kind = str(current["type"])
+                try:
+                    check_named(kind, part)
+                except MemoryRuleError:
+                    continue  # not a name DMbot can keep: that part is left out
+                row = await w.insert(
+                    ENTITIES,
+                    {
+                        "id": new_id(), "type": kind, "name": part, "role": current["role"],
+                        "description": current["description"], "status": PROPOSED,
+                        "merged_into": None, "source": current["source"],
+                        "created_at": w.now, "played_by": None,
+                        "needs_look": False, "unique_item": None,
+                    },
+                )  # fmt: skip
+                await w.insert(
+                    ALIASES, _new_alias(w, str(row["id"]), part, "full", PROPOSED, False, None)
+                )
+                by_key[key] = str(row["id"])
+                made.append(part)
+            old_key = lookup_key(str(current["name"]))
+            for claim in await w.select(CLAIMS, " AND status = 'proposed'"):
+                if (
+                    lookup_key(str(claim["subject"])) != old_key
+                    and lookup_key(str(claim["object"])) != old_key
+                ):
+                    continue
+                subjects = (
+                    parts if lookup_key(str(claim["subject"])) == old_key else [claim["subject"]]
+                )
+                objects = (
+                    parts if lookup_key(str(claim["object"])) == old_key else [claim["object"]]
+                )
+                for subject in subjects:
+                    for obj in objects:
+                        await w.insert(
+                            CLAIMS, {**claim, "id": new_id(), "subject": subject, "object": obj}
+                        )
+                await w.delete(CLAIMS, claim["id"])
+            await w.update(ENTITIES, entity_id, {"status": REJECTED})
+            return Written(SplitName(tuple(parts), tuple(made), tuple(joined)), w.batch)
 
     async def add_alias(
         self,
