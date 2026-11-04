@@ -33,3 +33,54 @@ def matches_alone(text: str, kind: str, source: str) -> bool:
     if not is_description(text):
         return True
     return source == "dm"
+
+
+# The last word of a description that names a person ("the woman", "a hooded figure"). Short and
+# plain on purpose: no race, class or job ("a dwarf", "a wizard", "a guard" say what someone is, and
+# "Bob is a dwarf" is not a tie to a person), and no thing or place ("the cave").
+PERSON_WORDS = frozenset(
+    [
+        "man",
+        "woman",
+        "girl",
+        "boy",
+        "lady",
+        "gentleman",
+        "stranger",
+        "figure",
+        "child",
+        "baby",
+        "infant",
+        "beggar",
+        "traveler",
+        "traveller",
+        "wanderer",
+        "hermit",
+        "villager",
+        "peasant",
+        "maid",
+        "servant",
+        "crone",
+        "hag",
+        "widow",
+        "orphan",
+        "prisoner",
+        "captive",
+        "messenger",
+        "courier",
+        "mother",
+        "father",
+        "sister",
+        "brother",
+        "son",
+        "daughter",
+    ]
+)
+
+
+def is_described_person(text: str) -> bool:
+    """A description whose last word is a person word: someone the story never names (#3431)."""
+    if not is_description(text):
+        return False
+    words = [w for w in text.replace("'s", " ").split() if w[:1].isalpha()]
+    return bool(words) and words[-1].casefold() in PERSON_WORDS

@@ -37,6 +37,7 @@ from dmbot.db import Database, row_int
 from dmbot.memory import (
     as_of,
     beliefs,
+    descriptions,
     evidence,
     gate,
     kin,
@@ -1580,55 +1581,67 @@ class MemoryStore:
             raise MemoryRuleError("That relationship word is too long.")
         if len(details) > DESCRIPTION_MAX:
             raise MemoryRuleError(f"That's too long (at most {DESCRIPTION_MAX} characters).")
-        same = unnamed_mod.same_person_key(word, role)
         async with self._write(guild_id, campaign_id, "extractor") as w:
-            anchor_name: str | None = None
-            if anchor_id is not None:
-                anchor = await _entity_row(w, anchor_id)
-                if anchor["status"] not in (PROPOSED, CONFIRMED):
-                    raise MemoryRuleError("That entry is not in the story any more.")
-                anchor_name = anchor["name"]
-            live = await w.select(
-                ENTITIES, " AND unnamed AND status IN ('proposed', 'confirmed') ORDER BY id"
-            )
-            found = [
-                r
-                for r in live
-                if r["unnamed_anchor"] == anchor_id
-                and unnamed_mod.same_person_key(r["unnamed_what"], r["unnamed_role"]) == same
-            ]
-            key = f"{anchor_id or ''}|{same}"
-            if anchor_id is not None and found:
-                return UnnamedAdded(_entity(found[0]), False)
-            if anchor_id is None and read is not None and key in read:
-                for r in found:
-                    if r["id"] == read[key]:
-                        return UnnamedAdded(_entity(r), False)
-            row = await w.insert(
-                ENTITIES,
-                {
-                    "id": new_id(),
-                    "type": "character",
-                    "name": unnamed_mod.stored(word, anchor_name),
-                    "description": details.strip(),
-                    "status": PROPOSED,
-                    "merged_into": None,
-                    "source": "extractor",
-                    "created_at": w.now,
-                    "played_by": None,
-                    "role": NPC,
-                    "needs_look": False,
-                    "unique_item": None,
-                    "unnamed": True,
-                    "unnamed_anchor": anchor_id,
-                    "unnamed_role": role,
-                    "unnamed_what": word,
-                },
-            )
-            if read is not None and anchor_id is None:
-                read[key] = row["id"]
-            similar = tuple(str(r["id"]) for r in found) if anchor_id is None else ()
-            return UnnamedAdded(_entity(row), True, similar, w.batch)
+            return await self._add_unnamed_in(w, word, role, details, anchor_id, read)
+
+    async def _add_unnamed_in(
+        self,
+        w: Changes,
+        word: str,
+        role: str | None,
+        details: str,
+        anchor_id: str | None,
+        read: dict[str, str] | None = None,
+    ) -> UnnamedAdded:
+        """`add_unnamed` inside an open write."""
+        same = unnamed_mod.same_person_key(word, role)
+        anchor_name: str | None = None
+        if anchor_id is not None:
+            anchor = await _entity_row(w, anchor_id)
+            if anchor["status"] not in (PROPOSED, CONFIRMED):
+                raise MemoryRuleError("That entry is not in the story any more.")
+            anchor_name = anchor["name"]
+        live = await w.select(
+            ENTITIES, " AND unnamed AND status IN ('proposed', 'confirmed') ORDER BY id"
+        )
+        found = [
+            r
+            for r in live
+            if r["unnamed_anchor"] == anchor_id
+            and unnamed_mod.same_person_key(r["unnamed_what"], r["unnamed_role"]) == same
+        ]
+        key = f"{anchor_id or ''}|{same}"
+        if anchor_id is not None and found:
+            return UnnamedAdded(_entity(found[0]), False)
+        if anchor_id is None and read is not None and key in read:
+            for r in found:
+                if r["id"] == read[key]:
+                    return UnnamedAdded(_entity(r), False)
+        row = await w.insert(
+            ENTITIES,
+            {
+                "id": new_id(),
+                "type": "character",
+                "name": unnamed_mod.stored(word, anchor_name),
+                "description": details.strip(),
+                "status": PROPOSED,
+                "merged_into": None,
+                "source": "extractor",
+                "created_at": w.now,
+                "played_by": None,
+                "role": NPC,
+                "needs_look": False,
+                "unique_item": None,
+                "unnamed": True,
+                "unnamed_anchor": anchor_id,
+                "unnamed_role": role,
+                "unnamed_what": word,
+            },
+        )
+        if read is not None and anchor_id is None:
+            read[key] = row["id"]
+        similar = tuple(str(r["id"]) for r in found) if anchor_id is None else ()
+        return UnnamedAdded(_entity(row), True, similar, w.batch)
 
     async def unnamed(self, guild_id: int, campaign_id: str) -> list[tuple[Entity, str]]:
         """The campaign's unnamed people, each with the label to show now: built from the anchor's
@@ -1649,6 +1662,61 @@ class MemoryStore:
                     r["unnamed_what"], r["unnamed_anchor"], names
                 )
         return [(_entity(r), names[str(r["id"])]) for r in rows]
+
+    async def described_entries(self, guild_id: int, campaign_id: str) -> list[Entity]:
+        """Entries whose main name is only a description ("the woman"), made by DMbot rather than
+        typed by the DM, with no other name that is a name (#3431). These no longer place lines by
+        that name; the DM is asked whether to make each an unnamed person (`make_unnamed`)."""
+        async with self._read(guild_id, campaign_id) as scope:
+            rows = await scope.select(
+                ENTITIES,
+                " AND status IN ('proposed', 'confirmed') AND NOT unnamed AND type = 'character'"
+                " AND source <> 'dm' ORDER BY created_at, id",
+            )
+            rows = [r for r in rows if descriptions.is_description(str(r["name"]))]
+            if not rows:
+                return []
+            aliases = await scope.select(
+                ALIASES, " AND entity_id = ANY(%s)", [[r["id"] for r in rows]]
+            )
+        named = {
+            str(a["entity_id"]) for a in aliases if not descriptions.is_description(str(a["text"]))
+        }
+        return [_entity(r) for r in rows if str(r["id"]) not in named]
+
+    async def make_unnamed(
+        self, guild_id: int, campaign_id: str, entity_id: str, *, source: str
+    ) -> Written[Entity]:
+        """The DM says this entry named by a description ("the woman") is a person the story never
+        named (#3431): it becomes an unnamed person, shown as "the woman (name unknown)", and the
+        DM can give them a name later. Only for an entry `described_entries` offers; one undo."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can say that.")
+        async with self._write(guild_id, campaign_id, source) as w:
+            row = await _entity_row(w, entity_id)
+            aliases = await w.select(ALIASES, " AND entity_id = %s", [entity_id])
+            if (
+                row["unnamed"]
+                or row["type"] != "character"
+                or row["source"] == DM
+                or row["played_by"] is not None
+                or not descriptions.is_description(str(row["name"]))
+                or any(not descriptions.is_description(str(a["text"])) for a in aliases)
+            ):
+                raise MemoryRuleError("That one has a name, so it can't be made unnamed.")
+            word = unnamed_mod.tidy(str(row["name"]))
+            updated = await w.update(
+                ENTITIES,
+                entity_id,
+                {
+                    "name": unnamed_mod.stored(word, None),
+                    "unnamed": True,
+                    "unnamed_anchor": None,
+                    "unnamed_role": None,
+                    "unnamed_what": word,
+                },
+            )
+            return Written(_entity(updated), w.batch)
 
     # ---- a clue only some people know (#1649) ----
 
