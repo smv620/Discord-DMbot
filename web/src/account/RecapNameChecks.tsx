@@ -229,7 +229,7 @@ export default function RecapNameChecks({ api, refId }: { api: AccountApi; refId
     looks.current = 0;
     try {
       await api.answerNameCheck!(refId, name.id, answer);
-      if (SPLIT_ACTIONS.has(answer.action)) setFollow({ id: name.id, undo: false });
+      if (SPLIT_ACTIONS.has(answer.action)) setFollow({ id: name.id, undo: false, batch: 0 });
     } catch (error) {
       const kind = error instanceof ApiError ? error.kind : "server";
       setProblems((was) => ({ ...was, [name.id]: words.problem[kind] ?? words.problem.server ?? "" }));
