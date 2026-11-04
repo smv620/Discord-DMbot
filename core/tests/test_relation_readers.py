@@ -102,6 +102,7 @@ STORE = {
     "recheck_definitions": CONFIRMED_ONLY,
     "add_relation_in": "writes: `placing` makes a guess connection here (fresh, leave, made_by)",
     "update_relation": "writes: the DM's Keep or No",
+    "_settle_whereabouts": "writes: ends an item's other whereabouts; shows players nothing",
     "pinned_connections": CONFIRMED_ONLY,
     "_view": CONFIRMED_ONLY + ": the party's and the DM's views",
     "relation": DM_ONLY + ": one connection by id",
