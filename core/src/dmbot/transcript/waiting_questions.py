@@ -163,6 +163,19 @@ class WaitingQuestionStore:
     async def count(self, guild_id: int, campaign_id: str) -> int:
         return len(await self.waiting(guild_id, campaign_id))
 
+    async def settled_count(self, guild_id: int, campaign_id: str) -> int:
+        """How many of the campaign's questions the DM has answered so far (#3435). Only an answer
+        raises it (an expiry or a removed speaker does not), so it tells an answer from a
+        question that went away by itself."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT count(*) AS n FROM waiting_name_questions"
+                " WHERE campaign_id = %s AND state IN (%s, %s)",
+                (campaign_id, ANSWERED, KEPT),
+            )
+            row = await cur.fetchone()
+        return int(row["n"]) if row else 0
+
     async def count_for_session(self, guild_id: int, session_id: str) -> int:
         """How many of this session's questions are still open (the recap waits for them, #2169).
         Counted in the database, not read line by line: a count is all that is asked. A question
