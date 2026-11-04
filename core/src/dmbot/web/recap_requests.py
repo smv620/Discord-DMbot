@@ -74,11 +74,12 @@ async def send_instructions(
 
 def _progress(got: dict[str, Any], failed_reason: str) -> dict[str, Any]:
     """How long a typed or spoken note has waited, in the shared progress shape (#3355). Times
-    only: `created_at` is when the page queued it, `claimed_at` when the bot took it (0 before).
-    A waiting note's last movement is its start; a taken one's is the moment it was taken."""
+    only: `created_at` is when the page queued it (seconds), `claimed_at` when the bot took it (0
+    before; milliseconds, see `recaps.requests.claim_next`). A waiting note's last movement is its
+    start; a taken one's is the moment it was taken."""
     state = str(got["state"])
     created = int(got.get("created_at") or 0)
-    taken = int(got.get("claimed_at") or 0)
+    taken = int(got.get("claimed_at") or 0) // 1000
     stage = {"waiting": "waiting", "working": "working", "done": "done"}.get(state, "failed")
     return progress.shape(
         stage,

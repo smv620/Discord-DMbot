@@ -270,9 +270,10 @@ class TheBot(WithClips):
         self.assertEqual(outcome, "done")  # (what this worker saw)
         meter.assert_not_awaited()  # the row was not its to finish, so no minutes either
         self.assertEqual(await self.clip_in_row(rid), CLIP)
+        got = await web.read_voice(self.web, self.session, self.ref, rid)
+        self.assertEqual(plain(got), {"state": "working"})
         self.assertEqual(
-            plain(await web.read_voice(self.web, self.session, self.ref, rid)),
-            {"state": "working"},
+            (got["progress"]["stage"], got["progress"]["state"]), ("working", "running")
         )
 
     async def test_a_gate_that_says_no_transcribes_nothing_and_deletes_the_clip(self) -> None:

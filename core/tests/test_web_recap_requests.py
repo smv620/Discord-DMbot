@@ -127,7 +127,7 @@ class TheProgress(WithRequests):
         assert request is not None
         shown = (await web.read_instructions(self.web, self.session, self.ref, rid))["progress"]
         self.assertEqual((shown["stage"], shown["state"]), ("working", "running"))
-        self.assertEqual(shown["updatedAt"], min(request.claimed_at, shown["serverNow"]))
+        self.assertEqual(shown["updatedAt"], request.claimed_at // 1000)
         self.assertGreaterEqual(shown["updatedAt"], shown["startedAt"])
 
     async def test_a_note_nobody_took_for_minutes_reads_stalled(self) -> None:
@@ -139,12 +139,23 @@ class TheProgress(WithRequests):
             (got["progress"]["state"], got["progress"]["reason"]), ("stalled", "stalled")
         )
 
+    async def test_a_taken_note_that_stops_moving_reads_stalled_after_ten_minutes(self) -> None:
+        rid = await self.send()
+        await self.requests.claim_next(THURSDAY.id)
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "UPDATE recap_requests SET created_at = created_at - 900,"
+                " claimed_at = claimed_at - 601000"
+            )
+        shown = (await web.read_instructions(self.web, self.session, self.ref, rid))["progress"]
+        self.assertEqual((shown["stage"], shown["state"]), ("working", "stalled"))
+
     async def test_a_failed_note_says_why_in_a_code(self) -> None:
         got = web._progress(
-            {"state": "failed", "error": "", "created_at": 100, "claimed_at": 130}, "sort_failed"
+            {"state": "failed", "error": "", "created_at": 100, "claimed_at": 130000}, "sort_failed"
         )
         self.assertEqual((got["state"], got["reason"]), ("failed", "sort_failed"))
-        done = web._progress({"state": "done", "created_at": 100, "claimed_at": 130}, "x")
+        done = web._progress({"state": "done", "created_at": 100, "claimed_at": 130000}, "x")
         self.assertEqual((done["stage"], done["state"], done["reason"]), ("done", "done", None))
 
 
