@@ -585,14 +585,14 @@ def parse_time(day: str, hour: str) -> int | None:
 
 
 # The day box (#3443): "4", or a change: a sign, a whole number, an optional "d", "day" or "days".
-_DAY_CHANGE = re.compile(r"([+-])\s*(\d{1,6})\s*(?:days?|d)?\.?", re.IGNORECASE)
+_DAY_CHANGE = re.compile(r"([+-])\s*(\d{1,6})\s*(?:days?|d)?\.?", re.IGNORECASE | re.ASCII)
 # The time box: "14" or "14:30", or a change: a sign, an amount ("2", "1.5", "2:30", ":30") and an
 # optional unit. A bare number is hours; a minute unit makes it minutes.
-_TIME_AT = re.compile(r"(\d{1,2})(?::(\d{2}))?")
+_TIME_AT = re.compile(r"(\d{1,2})(?::(\d{2}))?", re.ASCII)
 _TIME_CHANGE = re.compile(
     r"([+-])\s*(?:(\d{1,4}):(\d{1,2})|:(\d{1,2})|(\d{1,5}(?:\.\d{1,4})?))"
     r"\s*(hours?|hrs?|h|minutes?|mins?|m)?\.?",
-    re.IGNORECASE,
+    re.IGNORECASE | re.ASCII,
 )
 
 
@@ -723,7 +723,7 @@ async def run_press(
     *,
     set_to: int | None = None,
     minutes: int | None = None,
-    typed: bool = False,
+    typed: bool = False,  # the "Game time" form saved: say "Clock set to…" whatever the action
 ) -> bool:
     """A press after the interaction was answered: change the clock, show it, say the lines.
     True if the clock was changed; a failure is told to the presser and returns False, so a
