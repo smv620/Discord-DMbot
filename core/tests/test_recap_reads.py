@@ -423,3 +423,102 @@ class TheStoryAsTold(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheReviseMessage(unittest.TestCase):
+    """The revision is written from the same context as the first draft (#2965 item 7): the
+    transcript, the sheet, the open threads and the earlier recaps all reach the message."""
+
+    def test_the_message_carries_the_transcript_the_sheet_the_threads_and_the_story(self) -> None:
+        message = rd.prose_message(
+            [TheMessage.BEAT],
+            "",
+            [],
+            4,
+            transcript="Mira: I draw.",
+            who_and_what=("Mira: player character",),
+            threads=("the bridge toll",),
+            story=("The old tale.",),
+        )
+        for tag in ("<transcript>", "<who_and_what>", "<threads>", "<story_so_far>"):
+            self.assertIn(tag, message)
+        for text in ("Mira: I draw.", "Mira: player character", "the bridge toll", "The old tale."):
+            self.assertIn(text, message)
+
+
+class ThePlotBoundary(unittest.TestCase):
+    """PlotBot's review reads the newest earlier recaps that fit whole, and no story block when
+    none fit (#2954)."""
+
+    def test_the_newest_recap_that_fits_is_kept_and_the_older_one_is_not(self) -> None:
+        old, new = "A" * 40, "B" * 40
+        with patch.object(cr, "STORY_CHARS", 50):
+            message = cr.plot_message([TheMessage.BEAT], [], "", ["A sentence."], [old, new])
+        self.assertIn(new, message)
+        self.assertNotIn(old, message)
+
+    def test_a_recap_too_long_for_the_limit_gives_no_story_block(self) -> None:
+        with patch.object(cr, "STORY_CHARS", 10):
+            message = cr.plot_message([TheMessage.BEAT], [], "", ["A sentence."], ["B" * 40])
+        self.assertNotIn("<story_so_far>", message)
+
+    def test_no_earlier_recap_gives_no_story_block(self) -> None:
+        message = cr.plot_message([TheMessage.BEAT], [], "", ["A sentence."], [])
+        self.assertNotIn("<story_so_far>", message)
+
+
+class TheContextBudget(unittest.IsolatedAsyncioTestCase):
+    """The writer's context is cut to the model's room (#2954): an over-long transcript is left
+    out once for the job, and the earlier recaps are kept whole, newest first, within what is
+    left (#2965 item 7)."""
+
+    def worker(self, notes: list[str], limit_tokens: int) -> Any:
+        w: Any = pl.RecapWorker.__new__(pl.RecapWorker)
+        w._beats_instead = set()
+        w._sheets = {}
+        w._on_note = notes.append
+        w._transcript_limit = lambda: limit_tokens
+
+        async def sheet(*_: object) -> tuple[str, ...]:
+            return ("Mira: player character",)  # 21 characters
+
+        w._who_and_what = sheet
+        return w
+
+    def inputs(self, story: tuple[str, ...] = ()) -> pl.Inputs:
+        return pl.Inputs(
+            lines=[],
+            dm_ids={1},
+            allowed_names=[],
+            secret_names=[],
+            previous="",
+            day=4,
+            story=story,
+        )
+
+    async def test_an_over_long_transcript_is_left_out_once_and_retries_do_not_repeat_it(
+        self,
+    ) -> None:
+        notes: list[str] = []
+        w = self.worker(notes, limit_tokens=10)  # 30 characters of room
+        job = SimpleNamespace(session_at=100)
+        play = [SimpleNamespace(user_id=2, text="x" * 100)]
+        block, _ = await w._context_for(1, "c", job, self.inputs(), play, ())
+        self.assertEqual(block, "")
+        self.assertIn((1, "c", 100), w._beats_instead)
+        self.assertEqual(len(notes), 1)
+        again, _ = await w._context_for(1, "c", job, self.inputs(), play, ())
+        self.assertEqual(again, "")
+        self.assertEqual(len(notes), 1)  # the retry says nothing new to the DM
+
+    async def test_earlier_recaps_that_do_not_fit_the_room_left_are_dropped_whole(self) -> None:
+        w = self.worker([], limit_tokens=10)  # 30 characters, 21 used by the sheet: 9 left
+        job = SimpleNamespace(session_at=100)
+        _, given = await w._context_for(1, "c", job, self.inputs(("A" * 50, "B" * 50)), [], ())
+        self.assertEqual(given.story, ())
+
+    async def test_only_the_newest_earlier_recap_that_fits_is_kept(self) -> None:
+        w = self.worker([], limit_tokens=20)  # 60 characters, 21 used by the sheet: 39 left
+        job = SimpleNamespace(session_at=100)
+        _, given = await w._context_for(1, "c", job, self.inputs(("A" * 30, "B" * 30)), [], ())
+        self.assertEqual(given.story, ("B" * 30,))
