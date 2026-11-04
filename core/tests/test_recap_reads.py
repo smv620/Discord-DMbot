@@ -82,8 +82,12 @@ class TheMessage(unittest.TestCase):
         worker._heard = {key: "lines"}
         worker._given = {key: rd.Given()}
         worker._beats_instead = {key}
+        worker._sheets = {key: ("a beat",)}
         worker._forget_reads(key)
-        self.assertEqual((worker._heard, worker._given, worker._beats_instead), ({}, {}, set()))
+        self.assertEqual(
+            (worker._heard, worker._given, worker._beats_instead, worker._sheets),
+            ({}, {}, set(), {}),
+        )
 
     def test_the_fact_check_message_carries_the_transcript(self) -> None:
         plain = rd.facts_message([self.BEAT], "Mira drew her blade.")
@@ -116,6 +120,7 @@ class TheMaterialAfterAWait(unittest.IsolatedAsyncioTestCase):
     def worker(self) -> pl.RecapWorker:
         w = pl.RecapWorker.__new__(pl.RecapWorker)
         w._given, w._heard, w._beats_instead = {}, {}, {self.KEY}
+        w._sheets = {}
         return w
 
     async def test_the_material_is_read_once_and_again_only_after_a_wait(self) -> None:
@@ -158,9 +163,54 @@ class TheMaterialAfterAWait(unittest.IsolatedAsyncioTestCase):
         w._context_for = context
         w._parts = lambda job, said: ([], [], None)
         w._said = lambda inputs, speakers: []
+        w._heard[self.KEY] = "heard before the wait"  # so the pop below has something to remove
         with patch.object(rd, "session_hours", return_value=1.0):
             await w._given_for(1, "c", job, inputs)
         self.assertNotIn(self.KEY, w._heard)
+
+    async def test_forgetting_the_reads_drops_the_sheet_too(self) -> None:
+        w: Any = self.worker()
+        w._sheets[self.KEY] = ("a beat",)
+        w._forget_reads(self.KEY)
+        self.assertNotIn(self.KEY, w._sheets)
+
+
+class TheEarlierCopy(unittest.TestCase):
+    """A copy of an earlier recap is counted as advisory and never fails a draft; a copy of the
+    table's own words still does (#2965 item 2)."""
+
+    EARLIER = "The dark forest lay silent under a pale and endless moon."
+    TRANSCRIPT = "We talked about the weather and the bridge repairs at the mill."
+
+    def test_a_copy_of_an_earlier_recap_is_advisory_only(self) -> None:
+        advisory: list[str] = []
+        prose = rd.Prose("They walked where the dark forest lay silent under the rain.", ())
+        problems = rd.check_prose(
+            prose,
+            beats=(),
+            transcript=self.TRANSCRIPT,
+            allowed_names=[],
+            secret_names=[],
+            story=[self.EARLIER],
+            advisory=advisory,
+        )
+        self.assertFalse(any("word for word" in p for p in problems), problems)
+        self.assertEqual(advisory, ["earlier"])
+
+    def test_a_copy_of_the_table_still_fails_the_draft(self) -> None:
+        advisory: list[str] = []
+        said = "the bridge repairs at the mill were slow"
+        prose = rd.Prose(f"They talked about {said} that week.", ())
+        problems = rd.check_prose(
+            prose,
+            beats=(),
+            transcript=f"We talked about {said}.",
+            allowed_names=[],
+            secret_names=[],
+            advisory=advisory,
+        )
+        self.assertTrue(any("word for word" in p for p in problems), problems)
+        self.assertEqual(advisory, [])
 
 
 class TheContext(unittest.TestCase):

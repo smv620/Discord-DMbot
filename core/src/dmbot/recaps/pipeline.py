@@ -2910,6 +2910,7 @@ class RecapWorker:
         and the fall-back to the beats. Dropped when the job ends, so nothing outlives it."""
         self._heard.pop(key, None)
         self._given.pop(key, None)
+        self._sheets.pop(key, None)
         self._beats_instead.discard(key)
 
     def _forget(self, gid: int, cid: str, job: Job) -> None:
