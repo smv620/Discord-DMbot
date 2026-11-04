@@ -226,3 +226,19 @@ class SplitAndGroup(WithChecks):
         self.assertEqual(await self.apply_one(), "")
         names = (await self.listed())["names"]
         self.assertEqual(sorted(n["name"] for n in names), ["Aldmoor", "Fenwick", "Quillgate"])
+
+    async def test_a_failed_link_does_not_lose_the_answer_or_its_undo(self) -> None:
+        from unittest import mock
+
+        listed = await self.suggest("Aldmoor, Quillgate, Fenwick")
+        await self.ask(listed, action="split")
+        with mock.patch.object(
+            na.AnswerStore, "link_like", side_effect=RuntimeError("the database blinked")
+        ):
+            self.assertEqual(await self.apply_one(), "")
+        [row] = await self.rows()
+        self.assertEqual((row["state"], row["note"]), ("done", "Split into 3 names."))
+        self.assertIsNotNone(row["batch"])
+        await self.ask(listed, action="undo", batch=int(row["batch"]))
+        self.assertEqual(await self.apply_one(), "")
+        self.assertEqual(await self.waiting_names(), ["Aldmoor, Quillgate, Fenwick"])

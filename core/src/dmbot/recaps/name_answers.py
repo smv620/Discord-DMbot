@@ -368,14 +368,17 @@ async def _split_or_group(
     if answers is not None and made_names:
         # The new waiting names belong to this recap too, or its page would not list them. Not
         # finding them is not a failure: the change is made and Discord's list has them.
-        wanted = {lookup_key(n) for n in made_names}
-        waiting = await memory.entities(guild_id, campaign_id, statuses=[PROPOSED])
-        await answers.link_like(
-            guild_id,
-            campaign_id,
-            entity.id,
-            [e.id for e in waiting if lookup_key(e.name) in wanted],
-        )
+        try:
+            wanted = {lookup_key(n) for n in made_names}
+            waiting = await memory.entities(guild_id, campaign_id, statuses=[PROPOSED])
+            await answers.link_like(
+                guild_id,
+                campaign_id,
+                entity.id,
+                [e.id for e in waiting if lookup_key(e.name) in wanted],
+            )
+        except Exception as exc:  # the change is made and can be undone: never lose that
+            log.warning("The new names could not be linked to the recap: %s", type(exc).__name__)
     return ""
 
 
