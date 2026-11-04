@@ -16,6 +16,8 @@ export const fixWords = {
   pickUp: "Waiting for DMbot to pick up your note…",
   slow: "This is taking longer than usual. Your note is still being sorted. Press Check again.",
   checkAgain: "Check again",
+  // The stalled wait panel's line (#3442): it does not name the Check again button, which shows only once the page gives up.
+  stalled: "This is taking longer than usual. DMbot may still finish it. Wait a little longer, or reload the page to check.",
   sorted: (n: number): string => `Done. ${n} ${n === 1 ? "point" : "points"} to look at.`,
   nothing: "DMbot found nothing to change. Say it another way and press Send.",
   correctionsHeading: "Changes to make",

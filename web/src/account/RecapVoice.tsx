@@ -312,7 +312,7 @@ export default function RecapVoice({
           updatedAt={progress.updatedAt}
           serverNow={progress.serverNow}
           state={progress.state === "stalled" ? "stalled" : "running"}
-          whatToDo={progress.state === "stalled" ? words.slow : undefined}
+          whatToDo={progress.state === "stalled" ? words.stalled : undefined}
         />
       )}
       <div class="with-info">

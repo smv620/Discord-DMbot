@@ -270,7 +270,7 @@ export default function RecapFix({
           updatedAt={progress.updatedAt}
           serverNow={progress.serverNow}
           state={progress.state === "stalled" ? "stalled" : "running"}
-          whatToDo={progress.state === "stalled" ? words.slow : undefined}
+          whatToDo={progress.state === "stalled" ? words.stalled : undefined}
         />
       )}
       {cutOff && (

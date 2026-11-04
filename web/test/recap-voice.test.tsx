@@ -420,7 +420,8 @@ describe("the wait panel for a spoken note (#3355)", () => {
     speak();
     await screen.findByRole("button", { name: w.stopLabel });
     stop();
-    expect(await screen.findByText(w.slow, {}, { timeout: 5000 })).toBeTruthy();
+    expect(await screen.findByText(w.stalled, {}, { timeout: 5000 })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: w.checkAgain })).toBeNull();
   }, 30_000);
 
   it("without progress from an older API, keeps today's one-line status", async () => {

@@ -598,7 +598,8 @@ describe("the wait panel for a typed note (#3355)", () => {
     await open(api);
     type("Fix the name");
     fireEvent.click(screen.getByRole("button", { name: w.send }));
-    expect(await screen.findByText(w.slow, {}, { timeout: 5000 })).toBeTruthy();
+    expect(await screen.findByText(w.stalled, {}, { timeout: 5000 })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: w.checkAgain })).toBeNull(); // the button is for a page that gave up
     await screen.findByText("Fix the innkeeper's name", {}, { timeout: 8000 });
   }, 30_000);
 
