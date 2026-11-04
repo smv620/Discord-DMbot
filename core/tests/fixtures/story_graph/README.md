@@ -23,18 +23,34 @@ These usernames are made up. Use them when loading the sample session, so no rea
 
 ## The keys
 
-| File | What it is | Status |
-|---|---|---|
-| [lore_key.md](lore_key.md) | Everything the small sample lore should produce, as tables to read, with the document line for each tie | built |
-| [lore_key.json](lore_key.json) | The same key, for the check script | built |
-| [session_key.md](session_key.md) | What the sample session should produce, as tables to read, with the transcript line for each tie | built |
-| [session_key.json](session_key.json) | The same key, for the check script | built |
-| master_key.md / .json | Lore and session together, plus the ties that cross them | after the session key |
+| File | What it is |
+|---|---|
+| [lore_key.md](lore_key.md) / [.json](lore_key.json) | What the small sample lore should produce, with the document line for each tie |
+| [session_key.md](session_key.md) / [.json](session_key.json) | What the sample session should produce, with the transcript line for each tie |
+| [master_key.md](master_key.md) / [.json](master_key.json) | The two together, each tie once: lore first, then session (where they disagree about what is current, the session wins). **This is the one the check scores.** |
 
-## How the keys are used
+The `.md` files are for reading, the `.json` files for the check; each pair comes from one list, so they cannot disagree.
 
-Each time the story reader changes, dev1 loads the sample lore and session into a test campaign, takes a backup and compares it to the master key.
-The comparison prints counts only: found, missing, extra and wrongly typed ties, split by people, groups, places, items, family and events.
-When a test finds something real that the key missed, the key is updated in a small pull request, with the reason.
+## The check script
 
-The comparison script and dev1's run instructions are added with the master key.
+`core/src/dmbot/devtools/graph_key_check.py` scores a campaign **backup** against a key and prints counts and ids: for the entries and for each group of ties (family, work, feelings, things, places, associations) how many were **found**, **missing**, of the **wrong type** (for example family without its role, or "in" where a word was expected), found **only as a waiting suggestion**, plus the **extra** entries and ties the key does not name, the **must-not-find** names that appeared, and the inferred ties that were stored as facts. It reads the backup file only: no database, no Discord, no AI.
+
+```bash
+cd core
+python -m dmbot.devtools.graph_key_check BACKUP.dmbot.json.gz --docs lore      # after the lore is read
+python -m dmbot.devtools.graph_key_check BACKUP.dmbot.json.gz --docs both      # after the session is read
+# options: --counts-only (ids and counts, no names)  --json OUT.json  --key OTHER_KEY.json
+```
+
+### How dev1 runs it each time (a test campaign, never a real one)
+
+Run it after any deploy that changes what the story reader or the story graph does, on a **throw-away test campaign** made only for this. The documents are public, and the report prints their names, so never run it on any other campaign.
+
+1. In a test server, make a campaign named **test of the frostmaiden (sample)**. Switch story reading on as the current test plan says (`DMBOT_STORY_EXTRACTOR`, and readings if that is part of the run). Say in the log which switches were on.
+2. Load the **small sample lore** (link above) as the campaign's lore (the "your notes" upload of the names panel, or the website's lore page). Wait for the read to finish and answer nothing: leave the waiting suggestions as they are.
+3. Make a backup (the backup button) and run the check with `--docs lore`. Keep the report.
+4. Import the **sample session** (link above) as a past session. Map the transcript's speakers to four test accounts: Cerric to `user_ist`, Belleros to `user_jac`, Okthandom to `user_eri`, Claude to `user_owe` (the made-up names stand for whichever four test accounts are used; say which). The **DM** is a fifth account. Wait for the import to finish, make a backup, and run the check with `--docs both`.
+5. Put the **totals and the lists of missing ids** in `docs/testing-history.log` (counts and ids only: the sample's names are public, but the habit is the same), and the latest in `docs/testing-status.log`. Compare with the previous run: **a lower "found" count, a new must-not-find name or a new wrong-type tie is a regression**; say so on #3244.
+6. If a run shows a real entry or tie the key missed, or a key row that is wrong, comment on #3244: GraphEngineer updates the keys in a small PR with the reason.
+
+A tie found only as a **waiting suggestion** counts as found-waiting: the reader proposed it and the DM has not said yes. A tie marked **inferred** in the key should only ever be offered; one that is already confirmed is counted so a person can look.
