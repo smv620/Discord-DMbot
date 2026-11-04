@@ -2,7 +2,9 @@
 2026-11-04: the graph shows the most recent relationship). A new "carries" ends the present
 "is kept in" (it becomes "was kept in", history); a new present "is kept in" ends the present
 "carries"; and when there is no order between them (one read that gives both, or an undated fact),
-carrying wins, since the item was taken from where it was found. An older fact read late never
+carrying wins, since the item was taken from where it was found. That is for a reader's facts
+only: a fact the DM adds by hand is the newest thing the table knows, so it ends the other and
+is never made history itself (the DM decides). An older fact read late never
 ends a newer one: it becomes history itself. Ownership is a different tie and is never ended.
 A hidden fact (secret, or not yet shown) never ends or rewrites a fact the players can see, so
 the history cannot give it away. Pure: no database, so the rules are tested alone."""
@@ -67,10 +69,23 @@ def _span_end(old: Relation, new: Relation) -> int | None:
     return new.from_session_at
 
 
+def _ends_at(old: Relation, new: Relation, now: int) -> int:
+    """When a carrying the DM ended by hand stops: the new fact's session, else now, and never
+    before the carrying began (a span must not run backwards)."""
+    return max(new.from_session_at or now, old.from_session_at or 0)
+
+
 def settle(
-    new: Relation, subject_kind: str, object_kind: str, others: Sequence[Relation]
+    new: Relation,
+    subject_kind: str,
+    object_kind: str,
+    others: Sequence[Relation],
+    *,
+    by_hand: bool = False,
+    now: int = 0,
 ) -> Settled:
-    """What a new, confirmed fact does to the live facts already known about its item."""
+    """What a new, confirmed fact does to the live facts already known about its item.
+    `by_hand`: the DM added it themselves, so it counts as the newest of all (`now` dates it)."""
     if new.status != CONFIRMED or new.to_session_at is not None:
         return Settled()
     if new.predicate == CARRIES and object_kind == "item":
@@ -78,7 +93,7 @@ def settle(
         for r in others:
             if r.id == new.id or not _live(r) or not _present_keeping(r, new.object_id):
                 continue
-            if _newer(r, new):
+            if not by_hand and _newer(r, new):
                 # The keeping is later than this carrying (a carrying read late): the carrying
                 # is history, and the keeping stands.
                 return Settled(new_changes={"to_session_at": r.from_session_at})
@@ -96,9 +111,9 @@ def settle(
                 continue
             if r.predicate != CARRIES or r.object_id != new.subject_id:
                 continue
-            if _newer(new, r):
+            if by_hand or _newer(new, r):
                 if _can_touch(new, r):
-                    ends[r.id] = {"to_session_at": new.from_session_at}
+                    ends[r.id] = {"to_session_at": _ends_at(r, new, now)}
             elif not _hidden(r) or _hidden(new):
                 # No order, or the carrying is later: carrying wins and the place is history.
                 # (A hidden carrying never turns a visible keeping into history: that would say
