@@ -1665,7 +1665,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         await recaps_discord.setup(self)  # the recap buttons (#2129)
         self.add_dynamic_items(name_pass_undo.UndoNamePassButton)  # Undo of the name pass (#2628)
         self.add_dynamic_items(questions_discord.NotNowButton)  # 🔕 under a reminder (#3435)
-        self.add_dynamic_items(questions_board.LookAlikesButton)  # the Questions message (#3435)
+        self.add_dynamic_items(
+            questions_board.LookAlikesButton, questions_board.QuestionsButton
+        )  # the Questions message and the card's button (#3435)
         self.question_round = questions_discord.build_round(self)
         self.question_notices = (
             self.question_round.notices if self.question_round is not None else None

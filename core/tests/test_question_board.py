@@ -229,3 +229,51 @@ class TheSender(unittest.IsolatedAsyncioTestCase):
         channel.send = AsyncMock(side_effect=discord.HTTPException(MagicMock(status=403), "no"))
         got = await sender.board(7, self.campaign(), found(names=1), None, create=True)
         self.assertEqual(got, (None, ""))
+
+
+class TheCardButtonsPress(unittest.IsolatedAsyncioTestCase):
+    """📬 Questions for you on the settings card: a DM makes the list; anyone else is told no."""
+
+    def interaction(self, user: int, round_: object):  # type: ignore[no-untyped-def]
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock, MagicMock
+
+        campaign = SimpleNamespace(
+            guild_id=GUILD, id=CAMPAIGN, name="Frostmaiden", dm_user_ids=frozenset({7})
+        )
+        bot = MagicMock()
+        bot.question_round = round_
+        bot.campaigns.get = AsyncMock(return_value=campaign)
+        it = MagicMock(client=bot, guild=MagicMock(id=GUILD), user=MagicMock(id=user))
+        return it
+
+    async def test_a_player_is_told_it_is_not_theirs(self) -> None:
+        from unittest.mock import AsyncMock, patch
+
+        from dmbot.questions.discord import NOT_A_DM
+
+        tell = AsyncMock()
+        with patch("dmbot.ui.dmbot_commands._tell", tell):
+            await board.QuestionsButton(CAMPAIGN).callback(self.interaction(8, object()))
+        self.assertEqual(tell.await_args.args[1], NOT_A_DM)
+
+    async def test_a_dm_gets_the_list_made(self) -> None:
+        from unittest.mock import AsyncMock, patch
+
+        sent = AsyncMock()
+        round_ = object()
+        with patch("dmbot.questions.discord.send_lists", sent):
+            await board.QuestionsButton(CAMPAIGN).callback(self.interaction(7, round_))
+        self.assertEqual(sent.await_args.args[1], round_)
+        self.assertEqual([c.id for c in sent.await_args.args[2]], [CAMPAIGN])
+
+    async def test_the_label_total_comes_from_the_stored_counts(self) -> None:
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+
+        counts = SimpleNamespace(read=AsyncMock(return_value=found(names=2, heard=3)))
+        it = self.interaction(7, SimpleNamespace(counts=counts))
+        self.assertEqual(await board.total_for(it, CAMPAIGN), 5)
+        broken = SimpleNamespace(counts=SimpleNamespace(read=AsyncMock(side_effect=RuntimeError)))
+        self.assertIsNone(await board.total_for(self.interaction(7, broken), CAMPAIGN))
+        self.assertIsNone(await board.total_for(self.interaction(7, None), CAMPAIGN))

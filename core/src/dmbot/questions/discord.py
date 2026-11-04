@@ -198,9 +198,17 @@ async def dmbot_questions(interaction: discord.Interaction) -> None:
     if round_ is None:
         await _tell(interaction, NOT_AVAILABLE)
         return
+    await send_lists(interaction, round_, mine)
+
+
+async def send_lists(
+    interaction: discord.Interaction, round_: Round, campaigns: list[Campaign]
+) -> None:
+    """Make or refresh the Questions message for each of these campaigns in the person's private
+    chat and say where it is. The caller has checked the person is a DM of every one."""
     await interaction.response.defer(ephemeral=True)
     links: list[str] = []
-    for campaign in mine:
+    for campaign in campaigns:
         try:
             found = await counting.count_kinds(round_.sources, campaign.guild_id, campaign.id)
             round_.latest[(campaign.guild_id, campaign.id)] = found

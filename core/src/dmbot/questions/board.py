@@ -102,3 +102,60 @@ def view(guild_id: int, campaign_id: str, found: Mapping[str, Counted]) -> disco
     if kinds.CLAIMS in waiting:
         out.add_item(ClaimsReviewButton(campaign_id))
     return out
+
+
+class QuestionsButton(
+    discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
+    template=r"dmbot:questions:open:(?P<campaign>[0-9a-f]{32})",
+):
+    """📬 Questions for you (n), first on the ⚙️ Manage DMbot card (#3435): makes or refreshes the
+    Questions message in the DM's private chat and links to it. It opens even at zero. Only a
+    campaign's DM may press it (checked on every press); the count is only the label."""
+
+    def __init__(self, campaign_id: str, total: int | None = None) -> None:
+        label = "📬 Questions for you" + (f" ({total if total < 100 else '99+'})" if total else "")
+        super().__init__(
+            discord.ui.Button(
+                label=label,
+                style=discord.ButtonStyle.primary,
+                custom_id=f"dmbot:questions:open:{campaign_id}",
+            )
+        )
+        self.campaign_id = campaign_id
+
+    @classmethod
+    async def from_custom_id(
+        cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
+    ) -> QuestionsButton:
+        return cls(match["campaign"])
+
+    async def callback(self, interaction: discord.Interaction) -> Any:
+        from dmbot.questions.discord import NOT_A_DM, NOT_AVAILABLE, send_lists
+        from dmbot.ui.dmbot_commands import _tell
+
+        bot: Any = interaction.client
+        guild = interaction.guild
+        campaign = await bot.campaigns.get(guild.id, self.campaign_id) if guild else None
+        round_ = getattr(bot, "question_round", None)
+        if campaign is None or interaction.user.id not in campaign.dm_user_ids:
+            await _tell(interaction, NOT_A_DM)
+            return
+        if round_ is None:
+            await _tell(interaction, NOT_AVAILABLE)
+            return
+        await send_lists(interaction, round_, [campaign])
+
+
+async def total_for(interaction: discord.Interaction, campaign_id: str) -> int | None:
+    """How many questions wait for this campaign, from the stored counts, for the button's label;
+    None when they can't be read (the button then shows without a number)."""
+    bot: Any = interaction.client
+    round_ = getattr(bot, "question_round", None)
+    guild = interaction.guild
+    if round_ is None or guild is None:
+        return None
+    try:
+        stored = await round_.counts.read(guild.id, campaign_id)
+    except Exception:
+        return None
+    return sum(c.n for c in stored.values()) if stored else None
