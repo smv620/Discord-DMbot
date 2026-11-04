@@ -108,3 +108,40 @@ class TheSilences(unittest.TestCase):
         stays, action = run(muted, T0 + 10, total=2, answered=True)
         self.assertTrue(stays.muted)
         self.assertEqual(action, "none")
+
+
+class TheWords(unittest.TestCase):
+    def test_one_campaign_first_notice_and_reminder(self) -> None:
+        from dmbot.questions.messages import Line, notice
+
+        self.assertEqual(
+            notice([Line("Frostmaiden", 1, True)]),
+            "❓ DMbot has a question for you about **Frostmaiden**.",
+        )
+        self.assertEqual(
+            notice([Line("Frostmaiden", 3, True)]),
+            "❓ DMbot has 3 questions for you about **Frostmaiden**.",
+        )
+        self.assertEqual(
+            notice([Line("Frostmaiden", 1, False)]),
+            "❓ Still waiting: 1 question about **Frostmaiden**.",
+        )
+        self.assertEqual(
+            notice([Line("Frostmaiden", 12, False)]),
+            "❓ Still waiting: 12 questions about **Frostmaiden**.",
+        )
+
+    def test_several_campaigns_share_one_message_and_a_name_cannot_change_it(self) -> None:
+        from dmbot.questions.messages import Line, notice
+
+        text = notice([Line("One", 2, False), Line("**@everyone** _x_", 1, False)])
+        self.assertEqual(text.splitlines()[0], "❓ Still waiting:")
+        self.assertIn("• **One**: 2 questions", text)
+        self.assertIn("\\*\\*@​everyone\\*\\* \\_x\\_", text)
+        self.assertEqual(notice([]), "")
+
+    def test_a_long_campaign_name_is_cut(self) -> None:
+        from dmbot.questions.messages import NAME_MAX, Line, notice
+
+        text = notice([Line("W" * 200, 1, True)])
+        self.assertLessEqual(text.count("W"), NAME_MAX)
