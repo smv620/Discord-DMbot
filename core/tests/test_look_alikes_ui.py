@@ -14,6 +14,7 @@ from dmbot.memory.lookalikes import Name
 from dmbot.memory.models import DM, MemoryRuleError
 from dmbot.ui import look_alikes as la
 from dmbot.ui import name_dropdown as dd
+from dmbot.ui import name_places
 from dmbot.ui.name_card import SAME
 from dmbot.ui.names import NamesHome, Reviews
 
@@ -138,7 +139,7 @@ class TheWhereButton(unittest.IsolatedAsyncioTestCase):
             patch.object(la, "sees_secrets", MagicMock(return_value=dm)),
             patch.object(la, "_tell", tell),
             patch.object(la, "_answer_first", AsyncMock()),
-            patch.object(la.name_places, "where_said", said),
+            patch.object(name_places, "where_said", said),
             patch.object(discord.ui.Select, "values", [which], create=True),
         ):
             await view._chosen(asked)
@@ -157,6 +158,7 @@ class TheWhereButton(unittest.IsolatedAsyncioTestCase):
     async def test_the_reply_is_the_names_to_check_reply_for_that_name(self) -> None:
         asked, said, _ = await self.press(B)
         args = said.await_args
+        assert args is not None
         self.assertEqual(args.args[2:], (1, [("s:1:2", 5)], ["Beleros"], {7}))
         sent = asked.followup.send.await_args
         self.assertEqual(sent.args[0], "THE PLACES")
@@ -185,14 +187,15 @@ class TheWhereButton(unittest.IsolatedAsyncioTestCase):
 
     async def test_a_failed_read_says_try_again_and_a_missing_name_says_nothing_kept(self) -> None:
         asked, said, _ = await self.press(B, fail=True)
-        self.assertEqual(asked.followup.send.await_args.args[0], la.name_places.TRY_AGAIN)
+        self.assertEqual(asked.followup.send.await_args.args[0], name_places.TRY_AGAIN)
         asked, said, _ = await self.press("x" * 32)
-        self.assertEqual(asked.followup.send.await_args.args[0], la.name_places.NOTHING_KEPT)
+        self.assertEqual(asked.followup.send.await_args.args[0], name_places.NOTHING_KEPT)
         said.assert_not_awaited()
 
     async def test_a_player_is_refused_and_nothing_is_quoted(self) -> None:
         asked, said, tell = await self.press(B, dm=False)
         tell.assert_awaited_once()
+        assert tell.await_args is not None
         self.assertEqual(tell.await_args.args[1], la.NOT_THE_DM)
         said.assert_not_awaited()
         asked.followup.send.assert_not_awaited()
