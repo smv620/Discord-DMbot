@@ -1325,23 +1325,15 @@ class ClaimStore:
         found.sort(key=lambda c: name_key(c.subject))  # stable: oldest first within a name
         return found
 
-    async def _sorted(self, guild_id: int, campaign_id: str) -> tuple[list[Claim], list[Claim]]:
-        """The proposed claims split by their names (#1364): (ready, waiting on a new name).
-        A claim is ready when each name in it is a confirmed entry. One naming an entry the DM
-        has not said yet what it is waits. One whose name is no longer anyone's (the DM said it
-        isn't a name, or it was taken away) is dropped here for good, so it is never asked."""
-        async with self._store._read(guild_id, campaign_id) as scope:
-            # (A reading is a belief to place, not a fact to say yes to: it is not asked here until
-            # the DM can place it, #2412.)
-            sql = " AND status = 'proposed' AND reading IS NULL ORDER BY created_at, id"
-            rows = await scope.select(CLAIMS, sql)
-            if not rows:
-                return [], []
-            entities = await scope.select(
-                ENTITIES, " AND status IN ('proposed', 'confirmed') AND type <> 'person'"
-            )
-            aliases = await scope.select(ALIASES, " AND status <> 'rejected'")
-            rejected = await _turned_down(scope)
+    @staticmethod
+    def _split(
+        rows: Sequence[Mapping[str, Any]],
+        entities: Sequence[Mapping[str, Any]],
+        aliases: Sequence[Mapping[str, Any]],
+        rejected: Collection[str],
+    ) -> tuple[list[Claim], list[Claim], list[tuple[Claim, str]]]:
+        """(ready, waiting on a new name, gone): the proposed claims split by their names (#1364),
+        pure, so the list and its count cannot differ."""
         live = names_of(entities, aliases)
         sure = {str(e["id"]) for e in entities if e["status"] == CONFIRMED}
         ready: list[Claim] = []
@@ -1374,6 +1366,26 @@ class ClaimStore:
                 ready.append(claim)
             else:
                 pending.append(claim)
+        return ready, pending, gone
+
+    async def _sorted(self, guild_id: int, campaign_id: str) -> tuple[list[Claim], list[Claim]]:
+        """The proposed claims split by their names (#1364): (ready, waiting on a new name).
+        A claim is ready when each name in it is a confirmed entry. One naming an entry the DM
+        has not said yet what it is waits. One whose name is no longer anyone's (the DM said it
+        isn't a name, or it was taken away) is dropped here for good, so it is never asked."""
+        async with self._store._read(guild_id, campaign_id) as scope:
+            # (A reading is a belief to place, not a fact to say yes to: it is not asked here until
+            # the DM can place it, #2412.)
+            sql = " AND status = 'proposed' AND reading IS NULL ORDER BY created_at, id"
+            rows = await scope.select(CLAIMS, sql)
+            if not rows:
+                return [], []
+            entities = await scope.select(
+                ENTITIES, " AND status IN ('proposed', 'confirmed') AND type <> 'person'"
+            )
+            aliases = await scope.select(ALIASES, " AND status <> 'rejected'")
+            rejected = await _turned_down(scope)
+        ready, pending, gone = self._split(rows, entities, aliases, rejected)
         if gone:
             async with self._store._write(guild_id, campaign_id, EXTRACTOR) as w:
                 for claim, reason in gone:
@@ -1485,6 +1497,33 @@ class ClaimStore:
             )
             row = await cur.fetchone()
         return int(row["n"]) if row else 0
+
+    async def listed_count(
+        self, guild_id: int, campaign_id: str, *, opted_in: Collection[int]
+    ) -> int:
+        """How many claims the DM's list shows now (#3435): `waiting` without its limit, counted
+        WITHOUT changing anything. The same split as the list (`_split`): a claim is listed when
+        every name in it is a confirmed entry; one naming a still-proposed entry, or waiting for
+        its name, is not. Claims citing someone not recorded now are left out, as the list wipes
+        them first. `waiting_for_check` is higher by the claims that are not listed yet."""
+        async with self._store._read(guild_id, campaign_id) as scope:
+            rows = await scope.select(
+                CLAIMS, " AND status = 'proposed' AND reading IS NULL ORDER BY created_at, id"
+            )
+            rows = [
+                r
+                for r in rows
+                if r["speaker_ids"] and all(int(x) in set(opted_in) for x in r["speaker_ids"])
+            ]
+            if not rows:
+                return 0
+            entities = await scope.select(
+                ENTITIES, " AND status IN ('proposed', 'confirmed') AND type <> 'person'"
+            )
+            aliases = await scope.select(ALIASES, " AND status <> 'rejected'")
+            rejected = await _turned_down(scope)
+        ready, _pending, _gone = self._split(rows, entities, aliases, rejected)
+        return len(ready)
 
     async def forget_speaker(self, guild_id: int, user_id: int) -> int:
         """Stop recording me: in every campaign of the server, delete the claims that cite
