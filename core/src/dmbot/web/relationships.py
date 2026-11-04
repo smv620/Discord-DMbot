@@ -1108,7 +1108,10 @@ async def read_waiting(db: Database, session: Session, ref: str) -> dict[str, An
         {
             **{k: v for k, v in b.items() if k != "decided"},
             "how": link_words(
-                str(b["predicate"]), str(b["detail"]), kin.directional(str(b["detail"]))
+                str(b["predicate"]),
+                str(b["detail"]),
+                kin.directional(str(b["detail"])),
+                str(b.get("subjectKind") or ""),
             ),
             "check": check_words(b.get("decided")),
         }
@@ -1118,7 +1121,12 @@ async def read_waiting(db: Database, session: Session, ref: str) -> dict[str, An
         {
             **{k: v for k, v in w.items() if k != "decided"},
             "how": link_words(
-                str(w["predicate"]), str(w["detail"]), kin.directional(str(w["detail"]))
+                str(w["predicate"]),
+                str(w["detail"]),
+                kin.directional(str(w["detail"])),
+                # the named name is the subject only when the door says so; otherwise the subject
+                # is a list the DM has yet to choose from, and its kind is not known (old words)
+                str(w.get("otherKind") or "") if w.get("otherIsSubject") else "",
             ),
             "check": check_words(w.get("decided")),
         }
