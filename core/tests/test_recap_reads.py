@@ -354,10 +354,6 @@ class TheSetting(unittest.TestCase):
         self.assertIn("RECAP_WRITER_READS", str(caught.exception))
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class FakeAccepted:
     """The accepted recaps of a campaign, as `newest` gives them (any session, the caller
     filters by `before`), or an error when the store is down."""
@@ -423,3 +419,7 @@ class TheStoryAsTold(unittest.IsolatedAsyncioTestCase):
         told = await story_so_far(FakeAccepted([]), 1, "c", self.NOW, notes)
         self.assertEqual(len(told), 1)
         self.assertIn("Mira found the bridge.", told[0])
+
+
+if __name__ == "__main__":
+    unittest.main()
