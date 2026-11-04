@@ -15,8 +15,8 @@ class Judging(unittest.TestCase):
             ("Icy Rapier of Life Stealing", "name"), ("the Widowmaker", "name"),
             ("Garret's sled", "owner"), ("Sparkwalker's tome", "owner"), ("Oyami's pipe", "owner"),
             ("the crystal from the mind flayer's skull", "description"),
-            ("the Sunbrand sword", "name"), ("Vorpal sword", "name"), ("Moonblade", "name"),
-            ("Orb of Dragonkind", "name"), ("Staff of Power", "name"), ("Cerra's ring", "owner"),
+            ("the Sunbrand sword", "name"), ("Moonblade", "name"),
+            ("Orb of Dragonkind", "name"), ("Cerra's ring", "owner"),
             ("Cerra\u2019s ring", "owner"), ("Garret's boots", "owner"),
             ("Mira's longbow", "owner"),
         ]:  # fmt: skip
@@ -172,3 +172,24 @@ class MarkedByTheText(unittest.TestCase):
         )
         self.assertFalse(unique_item.judge("waterproof backpacks", said).keep)
         self.assertTrue(unique_item.judge("wolf figurine", said).keep)
+
+
+class StandardRulebookItems(unittest.TestCase):
+    """An item the rulebook holds is one of many in the world, like any gear (#3379)."""
+
+    def test_a_standard_item_is_not_tracked_by_its_name_alone(self) -> None:
+        for name in ("Potion of Healing", "Scroll of Identify", "scroll of Detect Magic",
+                     "Bag of Holding", "Rope of Climbing", "Cloak of Protection",
+                     "Staff of Power", "Vorpal Sword"):  # fmt: skip
+            verdict = unique_item.judge(name)
+            self.assertEqual((verdict.keep, verdict.why), (False, "standard"), name)
+
+    def test_an_owner_a_story_or_a_name_the_rules_do_not_hold_keeps_it(self) -> None:
+        self.assertTrue(unique_item.judge("Mira's Bag of Holding").keep)
+        self.assertTrue(unique_item.judge("the potion of healing the cult poisoned").keep)
+        self.assertTrue(
+            unique_item.judge("Potion of Healing", "The cult poisoned it before the heist.").keep
+        )
+        for name in ("Heartseeker", "Wand of Conducting", "Icy Rapier of Life Stealing",
+                     "Lantern of Greater Tracking"):  # fmt: skip
+            self.assertTrue(unique_item.judge(name).keep, name)
