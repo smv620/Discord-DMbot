@@ -19,7 +19,9 @@ from dmbot.memory.name_longer import MAX_OFFERED, longer_names
 from dmbot.memory.places import LINE_CHARS, cut, find_in, trimmed
 from dmbot.names import not_names
 from dmbot.recaps import name_answers
+from dmbot.recaps.notify import job_ref
 from dmbot.web import name_groups, recaps
+from dmbot.web.names import _parse
 from dmbot.web.recaps import RecapError
 from dmbot.web.sessions import Session
 
@@ -41,6 +43,33 @@ def _entity_id(value: object) -> str:
     ):
         raise RecapError("not_found")
     return value
+
+
+async def read_campaign_checks(db: Database, session: Session, ref: str) -> dict[str, Any]:
+    """The recaps of one campaign with names waiting to be checked (#3438), oldest session first:
+    `{recaps: [{ref, at, count}]}`, ids, session times and counts only. The Questions page opens
+    each recap's own list (`read_checks`), so the card and its answers are the recap page's. Only a
+    DM of the campaign; anyone else gets "not found"."""
+    guild_id, campaign_id = _parse(ref)
+    recaps._guild_of(session, guild_id)
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await recaps._scoped(conn, guild_id)
+        cur = await conn.execute(
+            "SELECT dmbot_campaign_name_checks(%s, %s) AS r", (guild_id, campaign_id)
+        )
+        found = (await cur.fetchone() or {}).get("r")
+    if found is None:
+        raise RecapError("not_found")
+    return {
+        "recaps": [
+            {
+                "ref": job_ref(guild_id, campaign_id, int(r["at"])),
+                "at": int(r["at"]),
+                "count": int(r["count"]),
+            }
+            for r in found
+        ]
+    }
 
 
 async def read_checks(db: Database, session: Session, ref: str) -> dict[str, Any]:

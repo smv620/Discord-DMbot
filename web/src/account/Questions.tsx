@@ -6,10 +6,12 @@
 // (`question_counts`); older than five minutes, the page says it is catching up.
 import { useEffect, useState } from "preact/hooks";
 
+import { RECAP_NAME_CHECKS_LIVE } from "../content/recap-words";
 import { QUESTIONS_LIVE } from "../content/questions-switch";
-import { kindWords, questionsPage as words } from "../content/questions-words";
+import { kindWords, type QuestionHow, questionsPage as words } from "../content/questions-words";
 import { type AccountApi, ApiError, type QuestionCampaign, type QuestionCounts, type QuestionKind } from "./api";
 import { campaignHref } from "./campaignLinks";
+import QuestionsNames from "./QuestionsNames";
 
 /** The bot counts every minute or so: five minutes without a count and the numbers are said to be old. */
 export const CATCHING_UP_SECONDS = 300;
@@ -35,7 +37,15 @@ export function mergeUnknown(kinds: QuestionKind[]): QuestionKind[] {
   return [...known, { kind: "other", count: unknown.reduce((n, k) => n + k.count, 0), oldest: oldest.length ? Math.min(...oldest) : null }];
 }
 
-function Campaign({ campaign, serverNow }: { campaign: QuestionCampaign; serverNow: number }) {
+/** Where a kind is answered today: a kind that opens its cards here falls back to its link while the page can't read them. */
+function howFor(kind: string, api: AccountApi): QuestionHow {
+  const how = kindWords(kind).how;
+  if (how === "here" && !(kind === "names" && RECAP_NAME_CHECKS_LIVE && api.campaignNameChecks !== undefined)) return "link";
+  return how;
+}
+
+function Campaign({ campaign, serverNow, api }: { campaign: QuestionCampaign; serverNow: number; api: AccountApi }) {
+  const [open, setOpen] = useState<Set<string>>(new Set());
   const kinds = oldestFirst(mergeUnknown(campaign.kinds));
   // The bot has never counted this campaign (null) or not lately: the numbers can't be vouched for, so there is no all-clear.
   const old = campaign.countedAt === null || serverNow - campaign.countedAt > CATCHING_UP_SECONDS;
@@ -56,7 +66,25 @@ function Campaign({ campaign, serverNow }: { campaign: QuestionCampaign; serverN
               return (
                 <li key={k.kind} class="stack">
                   <strong>{words.kindLine(w.label, k.count)}</strong>
-                  {w.how === "link" && w.to ? (
+                  {howFor(k.kind, api) === "here" ? (
+                    <>
+                      <button
+                        type="button"
+                        class="button secondary"
+                        aria-expanded={open.has(k.kind)}
+                        onClick={() =>
+                          setOpen((was) => {
+                            const next = new Set(was);
+                            if (!next.delete(k.kind)) next.add(k.kind);
+                            return next;
+                          })
+                        }
+                      >
+                        {open.has(k.kind) ? words.hideHere : words.showHere}
+                      </button>
+                      {open.has(k.kind) && <QuestionsNames api={api} campaignRef={campaign.ref} />}
+                    </>
+                  ) : w.how !== "discord" && w.to ? (
                     <a class="button secondary" href={href(campaign.ref, w.to)}>
                       {w.link}
                     </a>
@@ -109,7 +137,7 @@ export default function Questions({ api }: { api: AccountApi }) {
     <div class="stack">
       <p class="muted">{words.intro}</p>
       {data.campaigns.map((c) => (
-        <Campaign key={c.ref} campaign={c} serverNow={data.serverNow} />
+        <Campaign key={c.ref} campaign={c} serverNow={data.serverNow} api={api} />
       ))}
       {data.campaigns.some((c) => oldestFirst(c.kinds).some((k) => kindWords(k.kind).how === "discord")) && <p class="small muted">{words.discordWhere}</p>}
     </div>

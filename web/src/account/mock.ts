@@ -1912,6 +1912,10 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         ],
       };
     },
+    async campaignNameChecks(campaignRef) {
+      calls.push(`campaignNameChecks:${campaignRef}`);
+      return { recaps: [{ ref: `${campaignRef}.100`, at: 1_799_000_000, count: 3 }] };
+    },
     async questionsTotal() {
       calls.push("questionsTotal");
       return { total: 17 };

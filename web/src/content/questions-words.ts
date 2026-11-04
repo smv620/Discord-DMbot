@@ -4,7 +4,7 @@
 // "link" (the page that answers it), or "discord" (not on the website yet: its count and how to answer it there).
 // A kind the page does not know yet is shown by its key's count with the Discord line, never dropped.
 
-export type QuestionHow = "link" | "discord";
+export type QuestionHow = "here" | "link" | "discord";
 
 export interface QuestionKindWords {
   /** What the DM calls it, as a plain heading. */
@@ -22,6 +22,10 @@ export const questionsPage = {
   // Said once, under the list; each Discord-only kind then needs only the short line.
   discordWhere: "Some questions are answered in Discord, in your private chat with DMbot: open ❓ Questions for you.",
   nothing: "Nothing waiting for you. 🎉",
+  showHere: "Answer them here",
+  hideHere: "Hide them",
+  sessionOf: (date: string): string => `Session of ${date}`,
+  noneHere: "Nothing is waiting here now.",
   // The counts are written by the bot every minute or so: older than five minutes, the page says it is catching up.
   catchingUp: "DMbot is catching up. These numbers may be a little old.",
   notYet: "This page isn't available yet.",
@@ -33,7 +37,8 @@ export const questionsPage = {
   badge: (total: number): string => `${total} ${total === 1 ? "question" : "questions"} waiting`,
   linkLabel: "Questions for you",
   kinds: {
-    names: { label: "New names to check", how: "link", to: "recaps", link: "Open the recaps" },
+    // (answered on this page when it can read them, else the link to the recaps: see `howFor` in Questions.tsx)
+    names: { label: "New names to check", how: "here", to: "recaps", link: "Open the recaps" },
     heard: { label: "Did they mean…?", how: "discord" },
     lookalikes: { label: "Names that look alike", how: "link", to: "names", link: "Open the Names page" },
     connections: { label: "Connections waiting", how: "link", to: "graph", link: "Open the Story Graph" },
