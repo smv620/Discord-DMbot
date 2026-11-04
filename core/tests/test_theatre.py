@@ -85,6 +85,73 @@ class TheInstructions(unittest.TestCase):
         self.assertIn("nothing is known", th.instructions([]))
 
 
+class FormsOfAddress(unittest.TestCase):
+    """A form of address, a title said alone or a role word is resolved for its own line, in a
+    bracket, and never becomes a name (#3385). Invented names."""
+
+    def check(self, text: str, known: list[str]) -> tuple[str, int]:
+        # (the lines of the scene are where every word outside a bracket comes from)
+        said_lines = [
+            "Hello, Friend.",
+            "Thank you, Father.",
+            "The innkeeper nods.",
+            "my sister",
+            "Captain Vel",
+        ]
+        return th.check_brackets(text, {name_key(k) for k in known}, said_lines)
+
+    def test_the_instructions_ask_for_it_and_say_it_is_for_one_line(self) -> None:
+        prompt = th.instructions(["Tavin"])
+        self.assertIn("form of address", prompt)
+        self.assertIn("Hello, Friend [Tavin]", prompt)
+        self.assertIn("for this one line only", prompt)
+
+    def test_a_form_of_address_keeps_its_bracket_when_the_name_is_on_the_list(self) -> None:
+        for text in (
+            "Hello, Friend [Tavin]",
+            "Thank you, Father [Tavin]",
+            "The innkeeper [Tavin] nods",
+        ):
+            self.assertEqual(self.check(text, ["Tavin"]), (text, 0), text)
+
+    def test_the_same_bracket_for_someone_not_on_the_list_is_unknown(self) -> None:
+        self.assertEqual(
+            self.check("Hello, Friend [Brin]", ["Tavin"]), ("Hello, Friend [unknown]", 1)
+        )
+
+    def test_an_address_in_the_bracket_means_nothing_and_is_unknown(self) -> None:
+        # (the words were said in the scene, which would keep any other said phrase)
+        self.assertEqual(
+            self.check("Hello, Friend [friend]", ["Tavin"]), ("Hello, Friend [unknown]", 1)
+        )
+
+    def test_a_relative_resolves_to_the_name_or_is_unknown_if_she_is_not_known_yet(self) -> None:
+        self.assertEqual(self.check("my sister [Nyssara]", ["Nyssara"]), ("my sister [Nyssara]", 0))
+        self.assertEqual(self.check("my sister [Nyssara]", ["Tavin"]), ("my sister [unknown]", 1))
+
+    def test_address_words_are_everyday_words_even_when_the_scene_lacks_them(self) -> None:
+        got = th.check_brackets("Friend [Tavin], wait", {name_key("Tavin")}, [])
+        self.assertEqual(got, ("Friend [Tavin], wait", 0))
+
+    def test_a_real_name_from_an_address_phrase_is_still_rewritten_outside_a_bracket(self) -> None:
+        # "Grace" is a name even though "Your Grace" is a form of address
+        got = th.check_brackets("Grace nods", {name_key("Tavin")}, [])
+        self.assertEqual(got, ("[unknown] nods", 1))
+
+    def test_a_bare_title_in_a_bracket_is_unknown_unless_the_table_lists_it(self) -> None:
+        for bare in ("Captain", "my lord"):
+            self.assertEqual(
+                self.check(f"Hello, Friend [{bare}]", ["Tavin"]), ("Hello, Friend [unknown]", 1)
+            )
+        # a table that really lists "Captain" as someone's name keeps its own word
+        self.assertEqual(
+            self.check("Hello, Friend [Captain]", ["Captain"]), ("Hello, Friend [Captain]", 0)
+        )
+
+    def test_a_title_with_a_name_is_a_name_and_needs_no_bracket(self) -> None:
+        self.assertEqual(self.check("Captain Vel [Vel]", ["Vel"]), ("Captain Vel [Vel]", 0))
+
+
 class TheBracketCheck(unittest.TestCase):
     def check(self, text: str) -> tuple[str, int]:
         return th.check_brackets(text, {name_key(k) for k in KNOWN}, [x.text for x in LINES])
