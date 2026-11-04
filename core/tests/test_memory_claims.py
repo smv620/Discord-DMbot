@@ -27,6 +27,7 @@ from dmbot.memory.ontology import (
     REASON_BETWEEN,
     REASON_RULES_WORD,
     Ontology,
+    PredicateTerm,
     Tally,
 )
 from dmbot.schema import MIGRATIONS
@@ -152,6 +153,67 @@ class Judging(unittest.TestCase):
             self.judge(said("Bram", "carries", "Heartseeker", "plan")), claims.PLAN_REASON
         )
         self.assertEqual(self.judge(said("Bram", "is", "dead", "plan")), claims.PLAN_REASON)
+
+    def test_a_single_action_is_not_a_tie(self) -> None:
+        # (#3244) a blow, a swing, a sighting or a feeding lasts one moment
+        for words in ("hits", "swings at", "can see", "cannot catch", "feeds and waters", "shot"):
+            self.assertEqual(
+                self.judge(said("Bram", words, "Hesper")), claims.ONE_OFF_REASON, words
+            )
+
+    def test_a_group_that_only_swings_at_someone_is_never_made_into_a_name(self) -> None:
+        # the check runs before the names, so "the attackers" cannot become an unknown name
+        self.assertEqual(
+            self.judge(said("The attackers", "swings at", "Hesper")), claims.ONE_OFF_REASON
+        )
+
+    def test_a_lasting_state_is_still_kept(self) -> None:
+        # held, carried, owned and served keep their own kinds, and an unknown verb that is
+        # not on the closed list goes on to the DM as before
+        self.assertEqual(self.judge(said("Heartseeker", "is held by", "Bram")), "")
+        self.assertEqual(self.judge(said("Bram", "carries", "Heartseeker")), "")
+        self.assertEqual(self.judge(said("Bram", "hold", "Hesper")), "")  # "the bandits hold her"
+        self.assertEqual(self.judge(said("Bram", "can survive", "Veldmoor")), "")
+
+    def test_a_prediction_is_never_a_fact_even_from_the_dm(self) -> None:
+        for words in ("will likely go to", "is going to reach", "shall return to"):
+            self.assertEqual(
+                self.judge(said("Bram", words, "Veldmoor")), claims.PREDICTION_REASON, words
+            )
+
+    def test_a_belief_or_a_reading_is_a_clue_not_a_one_off(self) -> None:
+        # "Hesper believes Bram shot the duke" and "Hesper expects Bram will strike at midnight"
+        # are what someone thinks, which a mystery runs on: only claims are filtered (#3364)
+        belief = {"view": "Hesper", "status": "believed"}
+        self.assertEqual(
+            self.judge(Extracted("Bram", "shot", "Hesper", "", ("1",), "player_said", belief)), ""
+        )
+        self.assertEqual(
+            self.judge(
+                Extracted("Bram", "will strike at", "Veldmoor", "", ("1",), "player_said", belief)
+            ),
+            "",
+        )
+        # the same words as a claim are still dropped
+        self.assertEqual(self.judge(said("Bram", "shot", "Hesper")), claims.ONE_OFF_REASON)
+
+    def test_a_hedge_or_a_promise_is_not_a_prediction(self) -> None:
+        for words in ("might be the brother of", "may know", "would die for"):
+            self.assertNotEqual(
+                self.judge(said("Bram", words, "Hesper")), claims.PREDICTION_REASON, words
+            )
+
+    def test_a_term_a_campaign_made_for_a_moment_word_is_kept(self) -> None:
+        # the guard: a relationship DMbot does place is never dropped, whatever its first word
+        mine = PredicateTerm(
+            key="watched_by", label="watches", description="a standing watch",
+            subject_types=("character",), object_types=("character",), core=False,
+        )  # fmt: skip
+        onto = Ontology.build(extra_predicates=[mine])
+        kept = judge(said("Bram", "watches", "Hesper"), onto, NAMES, [7], {7})
+        self.assertEqual(kept, "")
+        # and without that term, the same words are one moment
+        self.assertEqual(self.judge(said("Bram", "watches", "Hesper")), claims.ONE_OFF_REASON)
 
     def test_an_unknown_name_or_the_wrong_kind_is_dropped(self) -> None:
         self.assertEqual(self.judge(said("Nobody", "knows", "Hesper")), claims.UNKNOWN_NAME_REASON)
@@ -291,6 +353,26 @@ class Stored(ConfirmedMemoryTest):
             opted_in={7} if opted_in is None else opted_in, prompt_version="p1", model="m1",
             session_started_at=500,
         )  # fmt: skip
+
+    async def test_a_single_action_is_dropped_and_never_makes_a_name_or_a_tie(self) -> None:
+        got = await self.propose(
+            said("The attackers", "swings at", "Bram"),
+            said("Bram", "will likely go to", "Veldmoor"),
+        )
+        self.assertEqual((got.waiting, got.dropped, got.new), (0, 2, ()))
+        self.assertEqual(got.reasons, {claims.ONE_OFF_REASON: 1, claims.PREDICTION_REASON: 1})
+        self.assertEqual(await self.memory.relations(GUILD_A, self.c), [])
+        # the same words in a later session are counted as repeated, not asked again
+        again = await self.propose(said("The attackers", "swings at", "Bram"))
+        self.assertEqual((again.waiting, again.dropped, again.repeated), (0, 0, 1))
+
+    async def test_a_belief_about_a_shot_is_kept_and_placed_as_before(self) -> None:
+        belief = Extracted(
+            "Bram", "shot", "Veldmoor", "", ("1",), "player_said",
+            {"view": "Bram", "status": "believed"},
+        )  # fmt: skip
+        got = await self.propose(belief)
+        self.assertEqual((got.waiting, got.dropped), (1, 0))
 
     async def test_what_passes_waits_as_a_proposal_and_nothing_is_a_fact_yet(self) -> None:
         got = await self.propose(
