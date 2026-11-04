@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import unittest
 
+from dmbot.memory.background import Found
 from dmbot.memory.list_names import split_list
 
 
@@ -160,3 +161,40 @@ class DmDecides(unittest.TestCase):
             split_list("Aldmoor and the old road", dm=True), ["Aldmoor and the old road"]
         )
         self.assertEqual(split_list("Aldmoor", dm=True), ["Aldmoor"])
+
+
+class LoreGroups(unittest.TestCase):
+    """A list a group of the same lore read leads is that group's members (#3383, part 2)."""
+
+    def found(self) -> list[Found]:
+        return [
+            Found("The Ash Wolves", "faction", (), (), "the Ash Wolves ride"),
+            Found(
+                "The Ash Wolves, Tavin and Mira",
+                "faction",
+                (),
+                (),
+                "the Ash Wolves, Tavin and Mira",
+            ),
+        ]
+
+    def test_the_members_become_people_and_get_ties_to_the_group(self) -> None:
+        from dmbot.memory.background import group_connections, merge
+
+        names = merge([self.found()])
+        self.assertEqual(
+            sorted((f.name, f.kind) for f in names),
+            [("Mira", "npc"), ("Tavin", "npc"), ("The Ash Wolves", "faction")],
+        )
+        ties = group_connections([self.found()])
+        self.assertEqual(
+            [(c.a, c.how, c.b) for c in ties],
+            [("Tavin", "member_of", "The Ash Wolves"), ("Mira", "member_of", "The Ash Wolves")],
+        )
+
+    def test_a_list_no_group_leads_gives_no_ties_and_keeps_the_lists_kind(self) -> None:
+        from dmbot.memory.background import Found, group_connections, merge
+
+        listed = [Found("Aldmoor, Quillgate", "place", (), (), "")]
+        self.assertEqual(group_connections([listed]), [])
+        self.assertEqual(sorted(f.kind for f in merge([listed])), ["place", "place"])

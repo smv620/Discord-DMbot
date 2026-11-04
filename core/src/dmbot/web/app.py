@@ -104,6 +104,7 @@ from dmbot.web.limits import LIMITS, RateLimit, free_ticket_refusal
 from dmbot.web.me import build_me
 from dmbot.web.moving import MoveCodes, can_move
 from dmbot.web.name_checks import answer as answer_name_check
+from dmbot.web.name_checks import read_answer as read_name_answer
 from dmbot.web.name_checks import read_checks
 from dmbot.web.names import list_names, set_said_as
 from dmbot.web.names_fixed import queue_undo_polled as queue_names_fixed_undo_polled
@@ -1104,6 +1105,17 @@ def create_app(
         body = await bounded_json(request)
         try:
             return await answer_name_check(db, session, ref, entity_id, body)
+        except RecapError as err:
+            status, detail = request_status.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    # The bot's word on the last answer to one name (#3406): the page follows a split or a group
+    # with it, and reads "not found" as done. The DM's alone, like the list.
+    @app.get("/me/recaps/{ref}/names-to-check/{entity_id}/answer")
+    async def me_recap_name_answer_read(ref: str, entity_id: str, signed: Signed) -> dict[str, Any]:
+        session, _token = signed
+        try:
+            return await read_name_answer(db, session, ref, entity_id)
         except RecapError as err:
             status, detail = request_status.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
