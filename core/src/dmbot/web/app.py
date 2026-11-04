@@ -105,7 +105,7 @@ from dmbot.web.me import build_me
 from dmbot.web.moving import MoveCodes, can_move
 from dmbot.web.name_checks import answer as answer_name_check
 from dmbot.web.name_checks import read_answer as read_name_answer
-from dmbot.web.name_checks import read_checks
+from dmbot.web.name_checks import read_campaign_checks, read_checks
 from dmbot.web.names import list_names, set_said_as
 from dmbot.web.names_fixed import queue_undo_polled as queue_names_fixed_undo_polled
 from dmbot.web.names_fixed import read_names_fixed
@@ -1080,6 +1080,16 @@ def create_app(
         body = await bounded_json(request)
         try:
             return await rewrite(db, session, ref, body)
+        except RecapError as err:
+            status, detail = request_status.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    # The campaign's recaps with names waiting, for the Questions page (#3438): ids and counts only.
+    @app.get("/me/campaigns/{ref}/names-to-check")
+    async def me_campaign_name_checks(ref: str, signed: Signed) -> dict[str, Any]:
+        session, _token = signed
+        try:
+            return await read_campaign_checks(db, session, ref)
         except RecapError as err:
             status, detail = request_status.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
