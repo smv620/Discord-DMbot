@@ -404,6 +404,15 @@ class TheCounts(Base):
             opted_in={SAID_BY}, dms={SAID_BY}, prompt_version="r1", model="m1",
             session_started_at=1_000,
         )  # fmt: skip
+        from dmbot.consent import TERMS_VERSION
+
+        async with self.db.guild(self.g) as conn:  # the door reads who is recorded now (#3462)
+            await conn.execute(
+                "INSERT INTO consent (guild_id, user_id, granted_at, terms_version)"
+                " VALUES (%s, %s, 0, %s) ON CONFLICT (guild_id, user_id)"
+                " DO UPDATE SET terms_version = EXCLUDED.terms_version",
+                (self.g, SAID_BY, TERMS_VERSION),
+            )
         ref = f"{self.g}.{self.c}"
         shown = await relationships.read_readings(self.web, self.session, ref)
         self.assertEqual((await self.count(kinds.READINGS)).n, shown["counts"]["readings"])
