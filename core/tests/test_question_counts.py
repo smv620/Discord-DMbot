@@ -7,6 +7,7 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
+from dmbot.campaigns import CampaignStore
 from dmbot.memory.models import DM, PROPOSED
 from dmbot.memory.store import MemoryStore
 from dmbot.questions import counts, kinds
@@ -95,18 +96,47 @@ class TheCounts(Base):
         found = await counts.count_kinds(self.src, self.g, self.c, only={kind})
         return found[kind]
 
-    async def test_new_names_equal_the_proposed_names_list(self) -> None:
+    async def test_new_names_equal_the_names_the_review_opens_with(self) -> None:
+        """The count equals the queue of the real 📝 Check new names review, and an old pronoun
+        suggestion (hidden from every list) is in neither."""
+        from unittest.mock import AsyncMock, patch
+
+        from dmbot.ui import names as ui
+
         self.assertEqual((await self.count(kinds.NAMES)).n, 0)
         for name in ("Hrothgar", "Maren"):
             await self.memory.add_entity(
                 self.g, self.c, type="character", name=name, source=DM, status=PROPOSED
             )
+        old = await self.memory.add_entity(  # from before the pronoun gate: never offered
+            self.g, self.c, type="character", name="We", source="background", status=PROPOSED
+        )
+        async with self.db.guild(self.g) as conn:
+            await conn.execute(
+                "UPDATE memory_entities SET made_before_name_gate = true WHERE id = %s",
+                (old.value.id,),
+            )
         await self.memory.add_entity(  # another campaign's name is not ours
             self.g, self.two.id, type="character", name="Elsewhere", source=DM, status=PROPOSED
         )
-        listed = await self.memory.entities(self.g, self.c, statuses=[PROPOSED])
-        self.assertEqual((await self.count(kinds.NAMES)).n, len(listed))
-        self.assertEqual(len(listed), 2)
+        seen: list[ui.SuggestionReview] = []
+
+        async def capture(_it: object, _text: str, view: ui.SuggestionReview) -> None:
+            seen.append(view)
+
+        campaign = await CampaignStore(self.db).get(self.g, self.c)
+        with (
+            patch.object(ui, "_memory", lambda _it: self.memory),
+            patch.object(ui, "_campaign_for", AsyncMock(return_value=campaign)),
+            patch.object(ui, "_send", capture),
+            patch.object(ui, "_offer_add_all", AsyncMock(return_value=False)),
+            patch.object(ui.SuggestionReview, "prepare", AsyncMock(return_value="card")),
+        ):
+            await ui._review(AsyncMock(), self.memory, campaign, bulk=False)  # type: ignore[arg-type]
+        (review,) = seen
+        self.assertEqual((await self.count(kinds.NAMES)).n, len(review.queue))
+        self.assertEqual(len(review.queue), 2)
+        self.assertNotIn(old.value.id, review.queue)
 
     async def test_did_they_mean_equals_the_open_list_and_counts_answers_not_expiry(self) -> None:
         transcripts = TranscriptStore(self.db)

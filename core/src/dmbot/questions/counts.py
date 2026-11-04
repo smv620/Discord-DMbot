@@ -110,17 +110,13 @@ async def _family(src: Sources, g: int, c: str) -> Counted:
 
 
 async def _claims(src: Sources, g: int, c: str) -> Counted:
-    """Facts to check, without the ones kept for a "Which one?" answer (`family`): the claim
-    reader counts those too, and the page would show them twice."""
+    """Facts to check: the number the claims list shows (`listed_count`, the list's own split),
+    without the claims kept for a "Which one?" answer, which are their own kind (`family`) and
+    which that list also shows."""
     if src.claims is None or src.agreed is None:
         return Counted(0)
-    return Counted(
-        int(
-            await src.claims.waiting_for_check(
-                g, c, opted_in=await src.agreed(g), without_unplaced=True
-            )
-        )
-    )
+    listed = int(await src.claims.listed_count(g, c, opted_in=await src.agreed(g)))
+    return Counted(max(0, listed - int(await src.claims.unplaced_count(g, c))))
 
 
 async def _readings(src: Sources, g: int, c: str) -> Counted:

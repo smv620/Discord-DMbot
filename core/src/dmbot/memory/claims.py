@@ -1471,29 +1471,19 @@ class ClaimStore:
         campaign_id: str,
         *,
         opted_in: Collection[int],
-        without_unplaced: bool = False,
     ) -> int:
         """How many proposed claims the DM could answer now, counted WITHOUT changing anything:
         `counts` first wipes the claims that cite someone not recorded now, which is right after
         a session but not at its start, when a player may be about to agree again (#1403). Only
         claims whose every speaker is recorded now are counted, and those waiting on a new name
         are left out, as `counts` leaves them out of "proposed". A claim `counts` would drop
-        for a name turned down may still be counted here; the review drops it when it opens.
-        `without_unplaced`: leave out the claims kept for a "Which one?" answer (#3238), which
-        "Questions for you" counts as their own kind (#3435), under the same rule as the rest."""
+        for a name turned down may still be counted here; the review drops it when it opens."""
         async with self._store._read(guild_id, campaign_id) as scope:
             cur = await scope.conn.execute(
                 "SELECT count(*) AS n FROM memory_claims WHERE guild_id = %s AND campaign_id = %s"
                 " AND status = 'proposed' AND reason <> %s AND cardinality(speaker_ids) > 0"
-                " AND speaker_ids <@ %s::bigint[] AND reading IS NULL"
-                " AND (NOT %s OR reason <> %s)",
-                (
-                    *scope.ids,
-                    WAITING_NAME_REASON,
-                    list(opted_in),
-                    without_unplaced,
-                    UNPLACED_REASON,
-                ),
+                " AND speaker_ids <@ %s::bigint[] AND reading IS NULL",
+                (*scope.ids, WAITING_NAME_REASON, list(opted_in)),
             )
             row = await cur.fetchone()
         return int(row["n"]) if row else 0
