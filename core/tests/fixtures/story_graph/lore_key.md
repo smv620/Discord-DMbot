@@ -169,7 +169,7 @@ What the graph should hold after the sample lore document is read. Names come fr
 | l081 | Rinaldo | works_in | White Lady Inn | stated | no | hosts seances |
 | l082 | White Lady Inn | in | Easthaven | stated | yes |  |
 | l083 | The Wet Trout | in | Easthaven | stated | yes |  |
-| l096 | Psi crystal | kept_in | The Beautiful Mine | stated | no | found in the mind flayer's skull |
+| l096 | Psi crystal | was_kept_in | The Beautiful Mine | stated | no | found there, then taken by Cerric: the place is history, Cerric carries it now |
 | l102 | Jebidiah | works_in | Targos | stated | no |  |
 | l105 | Fizzlebomb | last_seen_in | Maer Dualdon | stated | no |  |
 | l107 | Veron Braig | works_in | The Blue Clam | stated | yes |  |
