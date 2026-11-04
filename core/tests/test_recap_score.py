@@ -70,3 +70,66 @@ class TheOption(unittest.TestCase):
         for argv in (["--golden", "--score"], ["--score"], ["--review", "x", "--score"]):
             with self.assertRaises(SystemExit, msg=str(argv)):
                 rr.parse_args(argv)
+
+
+class FromAFile(unittest.TestCase):
+    """`--score-recap FILE --beats FILE` (#3328): an earlier recap scored against the same
+    session's saved beat sheet; no fact check; nothing of the recap printed."""
+
+    BEATS = json.dumps(
+        [
+            {
+                "text": "Mira opened the silver lock.",
+                "who": ["Mira"],
+                "where": "the keep",
+                "line": 1,
+                "kind": "event",
+            }
+        ]
+    )
+
+    def test_the_cue_free_section_of_a_saved_recap_is_the_recap(self) -> None:
+        from dmbot.devtools.recap_run import review as rv
+
+        text = rv.recap_text("T", "《Tense》 Mira opened the lock.", ["h"], ["m"], voice_tags=False)
+        self.assertEqual(sc.recap_from_file(text), "Mira opened the lock.")
+
+    def test_a_plain_file_is_the_recap_as_it_is(self) -> None:
+        self.assertEqual(sc.recap_from_file("  Mira wept.\n"), "Mira wept.")
+
+    def test_a_beats_file_must_be_a_list_of_objects(self) -> None:
+        self.assertIsNotNone(sc.beats_from_file(self.BEATS))
+        for bad in ("not json", "{}", "[1]", ""):
+            self.assertIsNone(sc.beats_from_file(bad), msg=bad)
+
+    def test_it_scores_without_a_fact_check_and_prints_no_word_of_the_recap(self) -> None:
+        client = Client(says("covered", "missed", "not_given"))
+        lines = asyncio.run(
+            sc.score_recap_file(
+                "Mira opened the silver lock.", self.BEATS, ["A.", "B.", "C."], client
+            )
+        )
+        text = "\n".join(lines)
+        self.assertIn("covered 1, missed 1, not given 1", text)
+        self.assertNotIn("Fact check", text)
+        self.assertNotIn("silver lock", text)
+        self.assertEqual(len(client.sent), 1)
+
+    def test_a_file_that_is_not_a_beat_sheet_makes_no_call(self) -> None:
+        client = Client(says("covered"))
+        lines = asyncio.run(sc.score_recap_file("Mira wept.", "not json", ["A."], client))
+        self.assertIn("not a saved beat sheet", "\n".join(lines))
+        self.assertEqual(client.sent, [])
+
+    def test_an_empty_recap_makes_no_call(self) -> None:
+        client = Client(says("covered"))
+        lines = asyncio.run(sc.score_recap_file("   ", self.BEATS, ["A."], client))
+        self.assertIn("no recap", "\n".join(lines))
+        self.assertEqual(client.sent, [])
+
+    def test_the_options_go_together(self) -> None:
+        for argv in (["--score-recap", "a.txt"], ["--session", "1", "c", "2", "--beats", "b.json"]):
+            with self.assertRaises(SystemExit, msg=str(argv)):
+                rr.parse_args(argv)
+        got = rr.parse_args(["--score-recap", "a.txt", "--beats", "b.json"])
+        self.assertEqual((got.score_recap, got.beats), ("a.txt", "b.json"))
