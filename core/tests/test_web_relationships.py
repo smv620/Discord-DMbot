@@ -235,8 +235,9 @@ class TheShape(Web):
         got = await self.graph(center=self.keep, hops=1)
         edge = next(e for e in got["edges"] if {e["a"], e["b"]} == {self.rook, self.keep})
         link = edge["links"][0]
-        self.assertEqual(link["words"], "is in")
-        # Rook is in the Keep: the words read from the subject (Rook) to the object (Keep)
+        # Rook is an NPC: something that moves is no longer "in" a place (#3363)
+        self.assertEqual(link["words"], "was last seen in")
+        # the words read from the subject (Rook) to the object (Keep)
         expected = "a-b" if edge["a"] == self.rook else "b-a"
         self.assertEqual(link["direction"], expected)
 
@@ -319,6 +320,34 @@ class Shaping(unittest.TestCase):
         self.assertEqual(links["2"]["back"], "is the boss of")
         self.assertIsNone(links["3"]["back"])
         self.assertEqual(links["1"]["words"], "is a member of")
+
+    def test_a_place_tie_reads_by_the_subjects_kind(self) -> None:
+        """#3363: a character is never "in" a place; a place or event still is. The kind comes
+        from the answer's own nodes, and a subject missing from them keeps the old words."""
+        rows = [
+            self.row("1", "a", "b", "located_in", 1),
+            self.row("2", "c", "d", "located_in", 2),
+            self.row("3", "e", "f", "located_in", 3, detail="lives in"),
+            self.row("4", "g", "h", "located_in", 4),
+        ]
+        kinds = {"a": "npc", "c": "place", "e": "player_character"}  # (g is not in the nodes)
+        by_id = {
+            x["id"]: x
+            for e in relationships.edges_from(rows, can_edit=True, kinds=kinds)
+            for x in e["links"]
+        }
+        self.assertEqual(by_id["1"]["words"], "was last seen in")
+        self.assertEqual(by_id["1"]["back"], "is where you last saw")
+        self.assertEqual(by_id["2"]["words"], "is in")  # a town in a region
+        self.assertEqual(by_id["2"]["back"], "is where you find")
+        self.assertEqual(by_id["3"]["words"], "lives in")
+        self.assertEqual(by_id["3"]["back"], "is home to")
+        self.assertEqual(by_id["4"]["words"], "is in")  # no kind known: the safe old words
+
+    def test_the_old_words_stay_when_no_kinds_are_given(self) -> None:
+        rows = [self.row("1", "a", "b", "located_in", 1)]
+        (edge,) = relationships.edges_from(rows, can_edit=True)
+        self.assertEqual(edge["links"][0]["words"], "is in")
 
     def test_the_secret_flag_is_a_dms_only_and_never_picks_the_label(self) -> None:
         rows = [
