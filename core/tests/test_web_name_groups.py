@@ -127,7 +127,7 @@ class TheDatabaseHalf(WithChecks):
         self.assertTrue(robin)
 
     async def test_the_page_offers_what_the_store_offers_with_a_secret_spelling(self) -> None:
-        """The parity test Supervisor asked for (#3406): the store and the page give the same hints."""
+        """Parity (Supervisor, #3406): the store and the page give the same hints."""
         batman, robin = await self.person("Batman"), await self.person("Robin")
         await self.memory.add_alias(
             GUILD, self.one.id, robin, "The Boy Wonder", kind="nickname", source=DM, secret=True
