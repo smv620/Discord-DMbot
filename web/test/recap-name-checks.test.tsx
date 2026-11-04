@@ -13,6 +13,7 @@ import { ApiError, httpApi } from "../src/account/api";
 import { mockApi, mockRecaps } from "../src/account/mock";
 import RecapNameChecks from "../src/account/RecapNameChecks";
 import { workWords as workMovedWords } from "../src/content/work-progress";
+import { nameGroupWords as gw } from "../src/content/name-group-words";
 import { nameCheckWords as w } from "../src/content/recap-name-checks";
 
 const live = vi.hoisted(() => ({ on: false }));
@@ -193,9 +194,11 @@ describe("the codes the bot writes", () => {
   });
 
   it.each([...new Set([...codes, "busy"])])("has plain words for %s", (code) => {
-    const said = w.problem[code.replaceAll("_", "-")];
+    // The split, group and Undo refusals (#3406) are shown through `nameGroupWords.errors` (splitReason), not `problem`.
+    const said = w.problem[code.replaceAll("_", "-")] ?? (Object.hasOwn(gw.errors, code) ? gw.reason(code) : undefined);
     expect(said, code).toBeTruthy();
     expect(said).not.toBe(w.problem.server);
+    expect(said).not.toBe(gw.other);
   });
 });
 
