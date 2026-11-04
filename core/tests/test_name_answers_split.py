@@ -151,21 +151,34 @@ class SplitAndGroup(WithChecks):
         self.assertEqual(await self.apply_one(dms=set()), na.NOT_DM)
         self.assertEqual(await self.waiting_names(), ["Aldmoor, Quillgate, Fenwick"])
 
-    async def test_a_group_with_a_secret_name_or_hidden_from_players_is_not_joined(self) -> None:
+    async def test_a_group_hidden_from_the_players_is_not_joined(self) -> None:
         listed = await self.waiting("Tavin and Mira", "character")
-        secret = (
+        hidden = (
+            await self.memory.add_entity(
+                GUILD, self.one.id, type="faction", name="The Ash Wolves", source="dm",
+                status=CONFIRMED, hidden_from_players=True,
+            )
+        ).value.id  # fmt: skip
+        await self.queue(listed, "join_group", target=hidden)
+        self.assertEqual(await self.apply_one(), na.NOT_FOUND_WORD)
+        self.assertEqual([r["state"] for r in await self.rows()], ["failed"])  # nothing was kept
+        self.assertIn("Tavin and Mira", await self.waiting_names())
+
+    async def test_a_group_with_a_secret_spelling_is_joined_as_in_discord(self) -> None:
+        listed = await self.waiting("Tavin and Mira", "character")
+        group = (
             await self.memory.add_entity(
                 GUILD, self.one.id, type="faction", name="The Ash Wolves", source="dm",
                 status=CONFIRMED,
             )
         ).value.id  # fmt: skip
         await self.memory.add_alias(
-            GUILD, self.one.id, secret, "The Grey Hand", kind="full", source="dm", secret=True
+            GUILD, self.one.id, group, "The Grey Hand", kind="full", source="dm", secret=True
         )
-        await self.queue(listed, "join_group", target=secret)
-        self.assertEqual(await self.apply_one(), na.NOT_FOUND_WORD)
-        self.assertEqual([r["state"] for r in await self.rows()], ["failed"])  # nothing was kept
-        self.assertIn("Tavin and Mira", await self.waiting_names())
+        await self.queue(listed, "join_group", target=group)
+        self.assertEqual(await self.apply_one(), "")
+        [row] = await self.rows()
+        self.assertEqual(row["state"], "done")
 
     async def test_a_waiting_name_with_a_secret_spelling_is_not_split(self) -> None:
         listed = await self.waiting("Aldmoor, Quillgate, Fenwick")
