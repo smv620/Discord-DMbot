@@ -117,3 +117,31 @@ class SplitButton(NamesTest):
         it = self.it(MANAGER)
         await self.button(view, GROUP).callback(it)
         self.assertEqual(it.response.sent[-1][0], logic.NO_CAMPAIGN_ACCESS)
+
+    async def test_yes_that_group_joins_the_known_group_end_to_end(self) -> None:
+        cid = self.campaign.id
+
+        async def entity(name: str, kind: str, status: str) -> str:
+            written = await self.memory.add_entity(
+                GUILD, cid, type=kind, name=name, source="dm", status=status
+            )
+            return written.value.id
+
+        group = await entity("The Ash Wolves", "faction", "confirmed")
+        for member in ("Tavin", "Mira"):
+            mid = await entity(member, "character", "confirmed")
+            await self.memory.add_relation(
+                GUILD, cid, mid, "member_of", group, source="dm", confidence=1.0,
+                status="confirmed",
+            )  # fmt: skip
+        await entity("Tavin and Mira", "character", PROPOSED)
+        view, _it = await self.card()
+        self.assertIn(YES_GROUP, self.labels(view))  # the hint is shown
+        self.assertEqual(view.group.group_name if view.group else "", "The Ash Wolves")
+        await self.button(view, YES_GROUP).callback(self.it())
+        self.assertEqual(await self.waiting_names(), [])  # the list is answered, no new names
+        data = await self.memory.lookup_data(GUILD, cid)
+        self.assertTrue(
+            any(a.text == "Tavin and Mira" and a.entity_id == group for a in data.aliases)
+        )  # it is another name of the group now
+        self.assertEqual(view.queue, [])  # nothing left to ask: the review is over
