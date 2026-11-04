@@ -2259,7 +2259,7 @@ export interface BackupSet {
   files: BackupFile[];
 }
 /** A name safe to save under: letters, digits, dots, dashes and underscores. */
-export const safeBackupName = (name: string, fallback: string): string => name.replace(/[^A-Za-z0-9._-]+/g, "-").slice(0, 160) || fallback;
+export const safeBackupName = (name: string, fallback: string): string => name.replace(/[^A-Za-z0-9._#-]+/g, "-").slice(0, 160) || fallback;
 
 export class ApiError extends Error {
   /** The words the server gave with a refusal, when it gave some (#3275): shown as they are. */
