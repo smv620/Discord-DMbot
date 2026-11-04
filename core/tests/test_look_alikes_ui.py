@@ -41,13 +41,19 @@ class TheGroupMessage(unittest.TestCase):
             "(they still find it).",
             text,
         )
-        self.assertIn("**First box:** the names that are the same. Untick any that aren't.", text)
+        self.assertIn("**Top box:** the names that are the same. Untick any that aren't.", text)
         self.assertIn(
-            "**Second box:** the name to keep. I picked **Belleros**, the one heard most. "
+            "**Bottom box:** the name to keep, now **Belleros**, the one heard most. "
             "Pick another if you like, then press 🔗 Merge.",
             text,
         )
         self.assertIn("If none of them are the same, press **None are the same**.", text)
+
+    def test_nobody_is_said_to_be_heard_most_when_no_name_was_heard_more(self) -> None:
+        same = [Name(A, "Belleros", 1), Name(B, "Beleros", 1)]
+        text = la.group_text(same, KINDS, number=1, of=1)
+        self.assertIn("**Bottom box:** the name to keep, now **Belleros**. Pick another", text)
+        self.assertNotIn("heard most", text)
 
     def test_a_group_of_a_kind_of_one_needs_no_number(self) -> None:
         self.assertNotIn(" of ", la.group_text(NAMES, KINDS, number=1, of=1).splitlines()[0])
@@ -91,8 +97,8 @@ class TheGroupView(unittest.TestCase):
         self.assertTrue(all(o.default for o in ticked.options))
         self.assertEqual([o.default for o in keep.options], [True, False, False])  # most heard
         self.assertEqual([o.label for o in keep.options], ["Name 000", "Name 001", "Name 002"])
-        self.assertEqual(keep.placeholder, "Second box: the name to keep ▾")
-        self.assertEqual(ticked.placeholder, "First box: the names that are the same…")
+        self.assertEqual(keep.placeholder, "Name to keep")
+        self.assertEqual(ticked.placeholder, "Names that are the same")
 
     def test_a_menu_holds_25_so_a_big_group_shows_the_first_25(self) -> None:
         view = self.view(40)

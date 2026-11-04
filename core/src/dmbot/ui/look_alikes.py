@@ -85,12 +85,16 @@ def group_text(
         + ")"
         for n in names
     ]
+    # "the one heard most" is said only when one name was heard more than the rest.
+    most = (
+        ", the one heard most" if len(names) > 1 and names[0].mentions > names[1].mentions else ""
+    )
     advice = (
         "If they are, DMbot keeps one name and the others become its other names (they still "
         "find it).\n"
-        "**First box:** the names that are the same. Untick any that aren't.\n"
-        f"**Second box:** the name to keep. I picked **{_md(logic.shorten(names[0].name, 80))}**, "
-        "the one heard most. Pick another if you like, then press 🔗 Merge.\n"
+        "**Top box:** the names that are the same. Untick any that aren't.\n"
+        f"**Bottom box:** the name to keep, now **{_md(logic.shorten(names[0].name, 80))}**{most}. "
+        "Pick another if you like, then press 🔗 Merge.\n"
         "If none of them are the same, press **None are the same**."
     )
     shown = _fit(lines, MESSAGE_BUDGET - len(advice) - len(head))
@@ -229,7 +233,7 @@ class LookAlikeGroup(_Menu):
         self.keep: str | None = self.names[0].id  # the most heard, unless the DM picks another
         self.members = _Select(
             self._ticked,
-            placeholder="First box: the names that are the same…",
+            placeholder="Names that are the same",
             options=_options(self.names, kinds, ticked=True),
             min_values=1,
             max_values=len(self.names),
@@ -238,7 +242,7 @@ class LookAlikeGroup(_Menu):
         self.add_item(self.members)
         self.chooser = _Select(
             self._kept,
-            placeholder="Second box: the name to keep ▾",
+            placeholder="Name to keep",
             options=_options(self.names, kinds, ticked=False, only=self.names[0].id),
             row=1,
         )
