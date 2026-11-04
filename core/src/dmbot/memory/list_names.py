@@ -40,11 +40,16 @@ def _name_like(part: str) -> bool:
     return True
 
 
-def split_list(text: str, known: Collection[str] = (), offered: Collection[str] = ()) -> list[str]:
+def split_list(
+    text: str, known: Collection[str] = (), offered: Collection[str] = (), *, dm: bool = False
+) -> list[str]:
     """The parts of `text` when it is a list of names, or `[text]` when it is one name.
 
     `known` and `offered` are name keys: names the campaign already holds, and names the same
-    read offered on their own. A name held whole (`text` itself is in `known`) is never split."""
+    read offered on their own. `dm`: the DM pressed "These are separate names", so the DM has
+    decided: "and", "or" and "&" split like a comma, and a part with a joining word needs no
+    proof; every part must still be name-like. A name held whole (`text` itself is in `known`)
+    is never split."""
     whole = " ".join(text.split())
     if not whole or name_key(whole) in {name_key(k) for k in known}:
         return [whole] if whole else []
@@ -63,12 +68,14 @@ def split_list(text: str, known: Collection[str] = (), offered: Collection[str] 
         return [whole]
     if not all(_name_like(p) for p in parts):
         return [whole]
-    if not hard and not all(name_key(p) in keys for p in parts):
+    if dm:
+        pass
+    elif not hard and not all(name_key(p) in keys for p in parts):
         return [whole]
     # A part with a small joining word in it ("City of Splendors" in "Waterdeep, City of
     # Splendors") is more likely a title or a description than a name of its own: it splits only
     # when the campaign or the same read holds that part on its own.
-    for p in parts:
+    for p in [] if dm else parts:
         if any(w in _JOINERS for w in p.split()) and name_key(p) not in keys:
             return [whole]
     unique: dict[str, str] = {}

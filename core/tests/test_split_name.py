@@ -47,7 +47,7 @@ class SplitWaitingName(MemoryTest):
             await self.memory.undo(GUILD_A, self.c, written.batch)
 
     async def test_one_name_is_not_split_and_only_the_dm_can(self) -> None:
-        single = await self.waiting("Salt and Iron Company")
+        single = await self.waiting("Ironhold")
         with self.assertRaises(MemoryRuleError):
             await self.memory.split_waiting_name(GUILD_A, self.c, single, source="dm")
         listed = await self.waiting("Aldmoor, Quillgate")
@@ -91,3 +91,9 @@ class SplitWaitingName(MemoryTest):
         written = await self.memory.split_waiting_name(GUILD_A, self.c, listed, source="dm")
         self.assertEqual(written.value.made, ("Aldmoor",))
         self.assertEqual(await self.names(PROPOSED), ["Aldmoor"])
+
+    async def test_the_dms_split_takes_and_with_neither_part_known(self) -> None:
+        listed = await self.waiting("Lords' Alliance and Harpers")
+        written = await self.memory.split_waiting_name(GUILD_A, self.c, listed, source="dm")
+        self.assertEqual(written.value.parts, ("Lords' Alliance", "Harpers"))
+        self.assertEqual(await self.names(PROPOSED), ["Harpers", "Lords' Alliance"])

@@ -766,7 +766,7 @@ class ClaimStore:
             claims, lists = expand_lists(claims[:limit], names)
             if lists:
                 logger.info("name lists split: %d", lists)  # a count, never a name
-            for claim in claims[:limit]:
+            for claim in claims:  # (the limit was applied once, before the lists were split)
                 reason = judged(claim)
                 unknown: list[str] = []
                 # A pronoun is a name only where a cited line plainly says so ("My name is We").

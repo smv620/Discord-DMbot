@@ -2550,7 +2550,7 @@ class MemoryStore:
             all_aliases = await w.select(ALIASES, " AND status <> 'rejected'")
             held = {lookup_key(str(a["text"])) for a in all_aliases}
             parts = split_list(
-                str(current["name"]), known=held - {lookup_key(str(current["name"]))}
+                str(current["name"]), known=held - {lookup_key(str(current["name"]))}, dm=True
             )
             if len(parts) < 2:
                 raise MemoryRuleError(NOT_A_LIST)
@@ -2637,7 +2637,7 @@ class MemoryStore:
 
         async def put_back(w: Changes) -> None:
             key = lookup_key(name)
-            parts = set(split_list(name))
+            parts = set(split_list(name, dm=True))
             for claim in await w.select(
                 CLAIMS, " AND status = %s AND reason = %s", [CLAIM_DROPPED, SPLIT_REASON]
             ):

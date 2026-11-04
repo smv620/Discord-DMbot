@@ -137,3 +137,22 @@ class ExpandClaims(unittest.TestCase):
             [(c.subject, c.object) for c in out],
             [("Aldmoor", "Fenwick"), ("Quillgate", "Fenwick")],
         )
+
+
+class DmDecides(unittest.TestCase):
+    def test_the_dms_split_takes_and_or_and_ampersand_like_a_comma(self) -> None:
+        self.assertEqual(
+            split_list("Lords' Alliance and Harpers", dm=True), ["Lords' Alliance", "Harpers"]
+        )
+        self.assertEqual(split_list("Aldmoor or Quillgate & Fenwick", dm=True),
+                         ["Aldmoor", "Quillgate", "Fenwick"])  # fmt: skip
+        self.assertEqual(
+            split_list("Aldmoor, City of Splendors", dm=True), ["Aldmoor", "City of Splendors"]
+        )
+
+    def test_the_reader_still_keeps_a_company_whole_and_the_dm_still_needs_names(self) -> None:
+        self.assertEqual(split_list("Salt and Iron Company"), ["Salt and Iron Company"])
+        self.assertEqual(
+            split_list("Aldmoor and the old road", dm=True), ["Aldmoor and the old road"]
+        )
+        self.assertEqual(split_list("Aldmoor", dm=True), ["Aldmoor"])
