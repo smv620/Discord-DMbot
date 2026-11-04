@@ -27,13 +27,24 @@ class TheDescriptionRule(unittest.TestCase):
     def test_what_is_a_description(self) -> None:
         for text in ("the woman", "beggar woman", "a hooded figure", "his old sister"):
             self.assertTrue(descriptions.is_description(text), text)
-        for text in ("Mira", "the Ashen King", "Beggar Mira", "Old Brannoc", "Ulric's Fall"):
+        for text in (
+            "Mira",
+            "the Ashen King",
+            "Beggar Mira",
+            "Old Brannoc",
+            "Ulric's Fall",
+            "d'Artagnan",
+            "al-Rashid",
+            "Ulric’s Fall",
+            "王",
+        ):
             self.assertFalse(descriptions.is_description(text), text)
 
     def test_only_a_hand_typed_short_name_may_still_match(self) -> None:
         self.assertFalse(descriptions.matches_alone("the woman", "full", "background"))
-        self.assertFalse(descriptions.matches_alone("the woman", "old", "dm"))
         self.assertTrue(descriptions.matches_alone("the woman", "nickname", "dm"))
+        self.assertTrue(descriptions.matches_alone("mira", "full", "dm"))
+        self.assertFalse(descriptions.matches_alone("mira", "full", ""))
         self.assertTrue(descriptions.matches_alone("Mira", "full", "background"))
 
 
@@ -69,6 +80,11 @@ class TheMergedDescriptionNeverPlacesALine(unittest.TestCase):
             claims.names_of(entities, aliases).one("the ferrywoman"), ("a" * 32, "character")
         )
 
+    def test_an_alias_without_text_is_not_taken_for_a_description(self) -> None:
+        entities = [{"id": "a" * 32, "name": "Mira Vane", "type": "character"}]
+        aliases = [{"entity_id": "a" * 32, "key": "mira"}]
+        self.assertEqual(claims.names_of(entities, aliases).one("mira"), ("a" * 32, "character"))
+
 
 class TheTag(unittest.TestCase):
     place = tags.TagTie("located_in", "Termalaine", confirmed=True)
@@ -93,6 +109,22 @@ class TheTag(unittest.TestCase):
         e = _entity("beggar woman")
         self.assertEqual(tags.tag_for(e, [secret]), "beggar woman")
         self.assertEqual(tags.tag_for(e, [secret], dm=True), "beggar woman (in the Hidden Vault)")
+
+    def test_a_tie_to_an_entry_the_viewer_may_not_see_is_never_used(self) -> None:
+        hidden = tags.TagTie("located_in", "the Hidden Vault", confirmed=True, visible=False)
+        self.assertEqual(tags.tag_for(_entity("beggar woman"), [hidden], dm=True), "beggar woman")
+
+    def test_a_long_place_is_cut_with_its_words_kept(self) -> None:
+        far = tags.TagTie("located_in", "Z" * 70, confirmed=True)
+        tag = tags.tag_for(_entity("beggar woman"), [far])
+        self.assertTrue(tag.startswith("beggar woman (in Z"))
+        self.assertLessEqual(len(tag), len("beggar woman ()") + tags.TAG_MAX)
+
+    def test_family_ties_are_named_without_guessing_the_direction(self) -> None:
+        kin_tie = tags.TagTie("related_to", "Mira Vane", confirmed=True, detail="sister")
+        self.assertEqual(
+            tags.tag_for(_entity("the woman"), [kin_tie]), "the woman (family of Mira Vane)"
+        )
 
     def test_a_tie_not_confirmed_is_not_used(self) -> None:
         loose = tags.TagTie("located_in", "Termalaine", confirmed=False)

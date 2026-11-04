@@ -6,8 +6,8 @@ where it was seen or how it ties to someone named: `beggar woman (in Termalaine)
 `the woman (member of the Ash Wolves)`. The tag is built every time from what the DM has confirmed,
 never stored and never invented, and it holds no words of a transcript.
 
-The caller passes only the ties the viewer may see (a player gets no secret ones, and no tie to an
-entry that is hidden from them); `dm` is the DM's view, which may use secret confirmed ties."""
+A tie to an entry the viewer may not see is marked `visible=False` and never used; `dm` is the DM's
+view, which may use secret confirmed ties."""
 
 from __future__ import annotations
 
@@ -38,6 +38,7 @@ class TagTie:
     confirmed: bool = False
     secret: bool = False
     detail: str = ""
+    visible: bool = True  # the viewer may see the other end (not hidden from players, not a clue)
 
 
 def needs_tag(entity: Entity) -> bool:
@@ -50,7 +51,7 @@ def _cut(text: str, limit: int = TAG_MAX) -> str:
     text = " ".join(text.split())
     if len(text) <= limit:
         return text
-    return text[:limit].rsplit(" ", 1)[0].rstrip(",;: ") or text[:limit]
+    return text[: limit - 1].rstrip(",;: ") + "…"
 
 
 def _first_clause(note: str) -> str:
@@ -60,7 +61,9 @@ def _first_clause(note: str) -> str:
 def _context(ties: Sequence[TagTie], note: str, dm: bool) -> str | None:
     """Strongest confirmed tie first: where it is, then its group, then family; else the
     first clause of the entry's own note."""
-    usable = [t for t in ties if t.confirmed and t.other_name and (dm or not t.secret)]
+    usable = [
+        t for t in ties if t.confirmed and t.visible and t.other_name and (dm or not t.secret)
+    ]
     for tie in usable:
         if tie.predicate == _PLACE and tie.outgoing:
             return f"in {tie.other_name}"
