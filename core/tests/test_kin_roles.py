@@ -179,7 +179,9 @@ def relation(subject: str, object_: str, detail: str, directional: bool = True) 
 
 
 def entity(entity_id: str, name: str) -> Any:
-    return SimpleNamespace(id=entity_id, name=name, status="confirmed", kind_key="npc")
+    return SimpleNamespace(
+        id=entity_id, name=name, status="confirmed", kind_key="npc", type="character"
+    )
 
 
 class TheCard(unittest.TestCase):
