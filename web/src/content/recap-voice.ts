@@ -30,8 +30,13 @@ export const voiceWords = {
   atLimit: "That is the longest a note can be (1 minute), so recording stopped.",
   empty: "Nothing was recorded. Try again, or type your note instead.",
   sending: "Turning your note into words… this takes a few seconds. Stay on this page.",
+  // The stages the wait panel shows while the bot works on the words (#3355).
+  pickUp: "Waiting for DMbot to pick up your note…",
+  turning: "Turning your note into words…",
   slow: "This is taking longer than usual. Press Check again, or type your note instead.",
   checkAgain: "Check again",
+  // The stalled wait panel's line (#3442): it does not name the Check again button, which shows only once the page gives up.
+  stalled: "This is taking longer than usual. DMbot may still finish it. Wait a little longer, or reload the page to check.",
   heard: "Here is what DMbot heard. Check it, change it if you like, then press Send.",
   privacy:
     "Your recording goes to our speech service, is turned into words, and is deleted as soon as the words are ready. We keep only the words.",

@@ -368,6 +368,17 @@ class Stored(ConfirmedMemoryTest):
         self.assertNotIn("Zed", got.new)  # the limit still holds for everyone else
         self.assertEqual(got.pc_named, 1)
 
+    async def test_the_count_of_the_list_is_what_the_list_shows(self) -> None:
+        # (#3435) a claim naming a still-proposed entry is waiting for that name, not listed
+        await self.add("Zed", type="character", status="proposed")
+        await self.propose(said("Bram", "knows", "Zed"), said("Bram", "is in", "Veldmoor"))
+        listed = await self.claims.waiting(GUILD_A, self.c, opted_in={7})
+        self.assertEqual(len(listed), 1)
+        self.assertEqual(await self.claims.listed_count(GUILD_A, self.c, opted_in={7}), 1)
+        self.assertEqual(await self.claims.waiting_for_check(GUILD_A, self.c, opted_in={7}), 2)
+        # someone not recorded now: left out of both
+        self.assertEqual(await self.claims.listed_count(GUILD_A, self.c, opted_in=set()), 0)
+
     async def _two_maras(self) -> None:
         for name in ("Mara Ashgrove", "Mara Vell"):
             made = await self.add(name, type="character")

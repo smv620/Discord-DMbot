@@ -3287,7 +3287,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       calls.push(`fixResult:${ref}:${requestId}`);
       const looks = (fixLooks.get(requestId) ?? 0) + 1;
       fixLooks.set(requestId, looks);
-      if (looks < 2) return { state: "working" as const };
+      if (looks < 2) return { state: "working" as const, progress: { stage: "working", state: "running" as const, startedAt: Math.floor(Date.now() / 1000) - 3, updatedAt: Math.floor(Date.now() / 1000) - 1, serverNow: Math.floor(Date.now() / 1000) } };
       return {
         state: "done" as const,
         points: {
@@ -3316,7 +3316,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       const seen = voiceLooks.get(requestId) ?? { looks: 0, size: 0 };
       seen.looks += 1;
       voiceLooks.set(requestId, seen);
-      if (seen.looks < 2) return { state: "working" as const };
+      if (seen.looks < 2) return { state: "working" as const, progress: { stage: "working", state: "running" as const, startedAt: Math.floor(Date.now() / 1000) - 3, updatedAt: Math.floor(Date.now() / 1000) - 1, serverNow: Math.floor(Date.now() / 1000) } };
       if (seen.size === 7) return { state: "failed" as const, error: "no_consent" };
       if (seen.size === 13) return { state: "failed" as const, error: "no_words" };
       return { state: "done" as const, text: "Change the innkeeper's name to Brannoch." };
