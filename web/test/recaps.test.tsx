@@ -245,14 +245,21 @@ describe("the page keeps up with the bot", () => {
     expect(again.disabled).toBe(true);
   });
 
-  it("an unknown Try again failure still says the generic words", async () => {
+  it("a failure that is not a refusal (ApiError(\"server\")) leaves the read count alone", async () => {
     const api = mockApi("table");
+    const read = api.recap!;
+    let reads = 0;
+    api.recap = async (ref) => {
+      reads++;
+      return read(ref);
+    };
     api.decideRecap = async () => {
       throw new ApiError("server");
     };
     renderPage(reviewPath, api);
     fireEvent.click(await screen.findByRole("button", { name: "Try again (2 left)" }));
     expect(await screen.findByText(errors.other)).toBeTruthy();
+    expect(reads).toBe(1);
   });
 
   it("looks again while the recap is being posted, until it is posted", async () => {

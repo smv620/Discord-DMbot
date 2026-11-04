@@ -251,9 +251,8 @@ export const errors: Partial<Record<ApiErrorKind, string>> & { other: string } =
     "not-editable":
       "This recap can't be changed any more. Reload the page to see where it is now.",
     "no-lines":
-      "That session's transcript isn't kept any more, so DMbot has nothing to write this recap from. Reload the page to see where it stands.",
-    "no-tries":
-      "This recap has no Try again left, so it can't be written again. Reload the page to see where it stands.",
+      "That session's transcript isn't kept any more, so DMbot has nothing to write this recap from. You can leave it unposted.",
+    "no-tries": "This recap has no Try again left. You can leave it unposted.",
     "bad-text": "The recap is empty or too long. Shorten it and save again.",
     "fixed-lines":
       "Nothing was saved. The first and last lines of a recap are DMbot's and can't be changed. Put them back as they were.",
