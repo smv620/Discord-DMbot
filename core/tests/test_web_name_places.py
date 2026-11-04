@@ -162,7 +162,8 @@ class Places(WithChecks):
         (place,) = (await self.card())["places"]
         self.assertEqual((place["session"], place["available"], place["lines"]), (1, False, []))
 
-    async def test_two_windows_at_first_and_the_rest_counted(self) -> None:
+    async def test_three_windows_newest_first_and_the_rest_counted(self) -> None:
+        """#3384: the newest three places, the newest first (as Discord's button shows them)."""
         harrow = await self.suggest("Harrow")
         await self.agree(ALICE.id)
         sids = []
@@ -173,13 +174,24 @@ class Places(WithChecks):
             await self.point(harrow, sid, line, at=AT + n * 1000)
             sids.append(sid)
         card = await self.card()
-        # the earliest, and the middle one of five (as Discord's card picks them)
         self.assertEqual(
             [p["lines"][0]["text"] for p in card["places"]],
-            ["Harrow, number 0.", "Harrow, number 2."],
+            ["Harrow, number 4.", "Harrow, number 3.", "Harrow, number 2."],
         )
-        self.assertEqual([p["session"] for p in card["places"]], [1, 3])
-        self.assertEqual(card["morePlaces"], 3)
+        self.assertEqual([p["session"] for p in card["places"]], [5, 4, 3])
+        self.assertEqual(card["morePlaces"], 2)
+
+    async def test_two_places_are_both_shown_newest_first(self) -> None:
+        harrow = await self.suggest("Harrow")
+        await self.agree(ALICE.id)
+        for n in range(2):
+            sid = await self.open(at=AT + n * 1000)
+            line = Line(10_000 + n, ALICE.id, f"Harrow, number {n}.", f"Harrow, number {n}.")
+            await self.say(sid, [line])
+            await self.point(harrow, sid, line, at=AT + n * 1000)
+        card = await self.card()
+        self.assertEqual([p["session"] for p in card["places"]], [2, 1])
+        self.assertEqual(card["morePlaces"], 0)
 
     async def test_a_pointer_to_a_vanished_session_does_not_hide_the_earliest_place(self) -> None:
         harrow = await self.suggest("Harrow")
