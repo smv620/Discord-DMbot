@@ -16,7 +16,7 @@ import time
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 
-from dmbot.memory import background, kin, lore_knowledge
+from dmbot.memory import kin, lore_knowledge
 from dmbot.memory import reputation_words as feeling_words
 from dmbot.memory.backstory_links import BackstoryLinks, NewLink, Waiting
 from dmbot.memory.checks import conflicts
@@ -114,8 +114,8 @@ async def player_character_keys(
     memory: MemoryStore, guild_id: int, campaign_id: str
 ) -> frozenset[str]:
     """The name keys a player character is written by in a text (#3238): its main name and every
-    confirmed public spelling, with the first word of a longer one ("Cerric" for "Cerric Vale"), as
-    a lore read looks for a third name. Names only; nothing about who plays them."""
+    confirmed public spelling, whole (never a first word alone: an NPC called "Hunter" is not the
+    player character "Hunter Black"). Names only; nothing about who plays them."""
     lookup = CampaignLookup.build(await memory.lookup_data(guild_id, campaign_id))
     mine = {
         e.id
@@ -124,7 +124,7 @@ async def player_character_keys(
     }
     keys = {n.key for n in lookup.names if n.entity_id in mine and not n.secret and not n.person}
     keys |= {name_key(lookup.entities[i].name) for i in mine}
-    return frozenset(background.reach_names(keys))
+    return frozenset(keys)
 
 
 async def shown_entry_ids(memory: MemoryStore, guild_id: int, campaign_id: str) -> set[str]:

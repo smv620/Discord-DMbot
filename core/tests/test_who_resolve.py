@@ -181,6 +181,30 @@ class TheAnswers(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((out.unresolved, out.counts["asked"]), (0, 1))
         self.assertEqual(pick.decided, "who-is-it: not checked")
 
+    def test_a_player_character_that_is_only_the_named_end_is_no_reason_to_wait(self) -> None:
+        out = who_resolve.pc_picks([unsettled_of()], ["Mara", "Ken"], {"ken"})  # (Ken is named)
+        self.assertEqual((out.picks, out.unresolved), ([], 1))
+
+    def test_a_player_character_the_passage_does_not_name_does_not_reorder_the_check(self) -> None:
+        out = who_resolve.Settled()
+        who_resolve._use(
+            unsettled_of(), asked(("Bram", 55), ("Mara", 45), ("Ken", 30)), out, players={"zed"}
+        )
+        (pick,) = out.picks
+        self.assertEqual(pick.candidates, ("Bram", "Mara"))  # (the check's own order)
+
+    def test_the_check_off_holds_an_open_pronoun_only_when_there_are_player_characters(
+        self,
+    ) -> None:
+        from dmbot.memory import lore_read
+
+        for players, held in ((frozenset({"mara"}), 1), (frozenset(), 0)):
+            stats = lore_read.Stats(unsettled=[] if players else None)
+            lines = reply(sister())
+            bg.read_connections(lines, TEXT, set(), stats.dropped, None, stats.unsettled)
+            self.assertEqual(len(stats.unsettled or []), held)
+            self.assertEqual(stats.dropped["not_in_text"], 1 - held)
+
     def test_with_the_check_off_any_other_open_pronoun_is_left_out_and_counted(self) -> None:
         out = who_resolve.pc_picks([unsettled_of()], ["Mara", "Ken"], {"bram"})
         self.assertEqual((out.picks, out.unresolved), ([], 1))

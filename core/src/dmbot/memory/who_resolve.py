@@ -130,7 +130,10 @@ def _pick(
     characters is what a DM is most likely to be asked about, and the choice is cut at three."""
     fixed = name_key(_fixed(u))
     chosen: list[str] = []
-    mine = {name_key(p) for p in players}
+    # only a player character the passage itself names goes first, so a character that is merely
+    # a low-ranked guess never pushes out the check's own best answer
+    named = {name_key(n) for n in bg.names_in(u.passage, names)}
+    mine = {name_key(p) for p in players} & named
     names = sorted(names, key=lambda x: name_key(x) not in mine)
     for n in names:
         if n == NOT_LISTED or name_key(n) == fixed or name_key(n) in map(name_key, chosen):
@@ -276,7 +279,10 @@ def pc_picks(
     mine = {name_key(p) for p in players}
     for u in sorted(unsettled, key=lambda x: len(x.passage)):
         offered = bg.names_in(u.passage[-who_ask.MAX_PASSAGE_CHARS :], names)
-        if not any(name_key(n) in mine for n in offered):
+        fixed = name_key(_fixed(u))
+        # (a player character that is only the end the sentence already names is no reason: the
+        # pronoun is about someone else)
+        if not any(name_key(n) in mine and name_key(n) != fixed for n in offered):
             out.unresolved += 1  # (as with the check off before: left out and counted)
             continue
         if out.counts["asked"] >= PC_PICKS_PER_READ:
