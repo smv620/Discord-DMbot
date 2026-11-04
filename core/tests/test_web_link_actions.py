@@ -895,6 +895,42 @@ class TheEdits(Editing):
     async def waiting_now(self, who: Any = None) -> dict[str, Any]:
         return await relationships.read_waiting(self.web, who or self.session, self.cref)
 
+    async def test_a_membership_the_group_button_held_is_not_asked_about_again(self) -> None:
+        """#3383 part 2: "Yes, that group" decided it; the waiting door lists no row for it, and the
+        claims queue holds none either. It becomes a fact when the DM confirms the new name."""
+        wolves = await self.memory.add_entity(
+            self.g, self.one.id, type="faction", name="The Ash Wolves", source=DM_SOURCE,
+            status="confirmed",
+        )  # fmt: skip
+        await self.memory.add_relation(
+            self.g, self.one.id, self.mira, "member_of", wolves.value.id, source=DM_SOURCE,
+            confidence=1.0, status="confirmed",
+        )  # fmt: skip
+        listed = await self.memory.add_entity(
+            self.g, self.one.id, type="concept", name="Mira Voss and Bram", source="extractor",
+            status="proposed",
+        )  # fmt: skip
+        before = await self.waiting_now()
+        counts_before = await self.claims.counts(self.g, self.one.id, opted_in={7})
+        done = await self.memory.join_group(
+            self.g, self.one.id, listed.value.id, wolves.value.id, source=DM_SOURCE
+        )
+        self.assertEqual(done.value.made, ("Bram",))
+        held = [
+            r for r in await self.memory.relations(self.g, self.one.id) if r.status == "proposed"
+        ]
+        self.assertEqual([r.predicate for r in held], ["member_of"])  # it is there, held
+        after = await self.waiting_now()
+        self.assertEqual(after, before)  # no row and no count for it
+        self.assertEqual(await self.claims.counts(self.g, self.one.id, opted_in={7}), counts_before)
+        # and the card shows nothing for it before the name is confirmed
+        card = [
+            r
+            for r in await self.memory.relations(self.g, self.one.id, confirmed_only=True)
+            if r.object_id == wolves.value.id and r.subject_id != self.mira
+        ]
+        self.assertEqual(card, [])
+
     async def test_a_reading_is_not_listed_or_counted_as_a_claim_waiting_for_a_yes(self) -> None:
         """#2412: a theory is a belief to place, not something said to keep; the page lists the
         plain claim and not the reading, and the count agrees."""
