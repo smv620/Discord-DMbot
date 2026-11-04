@@ -14,6 +14,9 @@ export const nameGroupWords = {
   hint: (group: string, members: readonly string[]): string =>
     `It looks like the group ${group}. ${members.join(", ")} ${members.length === 1 ? "is" : "are"} already in that group.`,
   undo: "Undo",
+  // Said after an Undo works (the bot's answer is gone then, so the page says it in its own words).
+  undone: "Taken back.",
+  groupNameMax: 120, // as the database's door: the same limits as any name
   working: "Working on it…",
   // Keyed by the bot's refusal word. A word not in this list gets `other`.
   errors: {

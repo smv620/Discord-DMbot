@@ -9,15 +9,20 @@ import NamePlaces from "./NamePlaces";
 import { campaignRefOf } from "./RecapNames";
 import { useEffect, useRef, useState } from "preact/hooks";
 
+import { nameGroupWords as gw } from "../content/name-group-words";
+import { NAME_SPLIT_LIVE } from "../content/name-split-switch";
 import { NAME_MAX_LETTERS, NOTE_MAX_LETTERS, SPELLING_MAX_LETTERS, nameCheckWords as words } from "../content/recap-name-checks";
 import { NAME_CHANGE_WORDS_LIVE, NAME_PLACES_LIVE, RECAP_NAME_CHECKS_LIVE, RECAPS_LIVE } from "../content/recap-words";
-import { ApiError, type AccountApi, type NameCheck, type NameCheckAnswer, type NameCheckList } from "./api";
+import { ApiError, type AccountApi, type NameAnswerResult, type NameCheck, type NameCheckAnswer, type NameCheckList } from "./api";
 import { keepFocus } from "./focus";
 import { useObservedWait } from "./useObservedWait";
 import WorkProgress from "./WorkProgress";
 
 const POLL_MS = 2000;
 const POLL_LIMIT = 30; // about a minute: the bot normally answers within seconds
+const SPLIT_ACTIONS = new Set(["split", "join_group", "make_group"]);
+/** The sentence for a refusal word the bot gave for a split, a group or an Undo; "" for any other word. */
+const splitReason = (code: string): string => (Object.hasOwn(gw.errors, code) ? gw.reason(code) : "");
 
 export default function RecapNameChecks({ api, refId }: { api: AccountApi; refId: string }) {
   const [list, setList] = useState<NameCheckList | null>(null);
@@ -29,6 +34,12 @@ export default function RecapNameChecks({ api, refId }: { api: AccountApi; refId
   const looks = useRef(0);
   const changing = useRef(new Set<string>()); // cards whose last answer was Change the words, for an unknown refusal
   const heading = useRef<HTMLHeadingElement>(null);
+  // Split, group and Undo (#3406): the bot's word on the last such answer, followed until it is done. The name
+  // leaves the list once it is applied, so the line with Undo sits under the list, not on the card.
+  const splitOn = NAME_SPLIT_LIVE && api.nameAnswerResult !== undefined;
+  const [follow, setFollow] = useState<{ id: string; undo: boolean } | null>(null);
+  const [last, setLast] = useState<{ id: string; note: string; batch: number } | null>(null);
+  const [lastProblem, setLastProblem] = useState("");
 
   const read = async (): Promise<NameCheckList | null> => {
     if (!api.nameChecks) return null;
@@ -91,6 +102,83 @@ export default function RecapNameChecks({ api, refId }: { api: AccountApi; refId
     return () => clearTimeout(timer);
   });
 
+  useEffect(() => {
+    if (!follow || !api.nameAnswerResult) return;
+    const { id, undo } = follow;
+    let stopped = false;
+    let looks = 0;
+    const end = (after: () => void) => {
+      stopped = true;
+      setFollow(null);
+      after();
+    };
+    const timer = setInterval(async () => {
+      looks += 1;
+      try {
+        const got: NameAnswerResult = await api.nameAnswerResult!(refId, id);
+        if (stopped) return;
+        if (got.state === "done") {
+          end(() => {
+            if (undo) {
+              setLast(null);
+              setSaid(gw.undone);
+            } else if (got.batch !== null) setLast({ id, note: got.note, batch: got.batch });
+          });
+        } else if (got.state === "failed") {
+          // A refused Undo is said here; a refused split or group shows on the card, from the list.
+          end(() => setLastProblem(undo ? gw.reason(got.error) : ""));
+        }
+      } catch (error) {
+        if (stopped) return;
+        // No answer on record: an Undo that worked took it with it; any other answer was applied and cleared.
+        if (error instanceof ApiError && error.kind === "not-found") {
+          end(() => {
+            if (undo) {
+              setLast(null);
+              setSaid(gw.undone);
+            }
+          });
+        }
+      }
+      if (!stopped && looks >= POLL_LIMIT) end(() => setLastProblem(undo ? gw.other : ""));
+    }, POLL_MS);
+    return () => {
+      stopped = true;
+      clearInterval(timer);
+    };
+  }, [follow, api, refId]);
+
+  async function undo() {
+    if (!last || !api.answerNameCheck) return;
+    setLastProblem("");
+    try {
+      await api.answerNameCheck(refId, last.id, { action: "undo", batch: last.batch });
+      setFollow({ id: last.id, undo: true });
+    } catch (error) {
+      const kind = error instanceof ApiError ? error.kind : "server";
+      setLastProblem(words.problem[kind] ?? words.problem.server ?? "");
+    }
+  }
+
+  // The line with Undo for the last split or group, and the word on an Undo that was refused.
+  const undoLine = (
+    <>
+      {splitOn && last && (
+        <p class="small" role="status">
+          {last.note}{" "}
+          <button type="button" class="button secondary" disabled={follow !== null} onClick={() => void undo()}>
+            {gw.undo}
+          </button>
+        </p>
+      )}
+      {lastProblem && (
+        <p class="warn small" role="alert">
+          {lastProblem}
+        </p>
+      )}
+    </>
+  );
+
   if (!RECAPS_LIVE || !RECAP_NAME_CHECKS_LIVE || !api.nameChecks || !api.answerNameCheck) return null;
   if (failed) {
     return (
@@ -103,11 +191,18 @@ export default function RecapNameChecks({ api, refId }: { api: AccountApi; refId
     );
   }
   if (list === null || list.names.length === 0) {
-    // Nothing to check; once the last one is answered, the page says so for a moment, then is quiet.
-    return said === "" ? null : (
-      <p class="small muted" role="status">
-        {words.allDone}
-      </p>
+    // Nothing to check; once the last one is answered, the page says so for a moment, then is quiet. A split or
+    // group just made can still be taken back, so its line stays.
+    if (said === "" && !last) return null;
+    return (
+      <>
+        {said !== "" && (
+          <p class="small muted" role="status">
+            {said === gw.undone ? said : words.allDone}
+          </p>
+        )}
+        {undoLine}
+      </>
     );
   }
 
@@ -115,11 +210,14 @@ export default function RecapNameChecks({ api, refId }: { api: AccountApi; refId
     if (answer.action === "change_words") changing.current.add(name.id);
     else changing.current.delete(name.id);
     setProblems((was) => ({ ...was, [name.id]: "" }));
+    setLast(null); // (Undo is offered until the next answer)
+    setLastProblem("");
     setBusy((was) => new Set(was).add(name.id));
     setSlow(false);
     looks.current = 0;
     try {
       await api.answerNameCheck!(refId, name.id, answer);
+      if (SPLIT_ACTIONS.has(answer.action)) setFollow({ id: name.id, undo: false });
     } catch (error) {
       const kind = error instanceof ApiError ? error.kind : "server";
       setProblems((was) => ({ ...was, [name.id]: words.problem[kind] ?? words.problem.server ?? "" }));
@@ -145,11 +243,13 @@ export default function RecapNameChecks({ api, refId }: { api: AccountApi; refId
             list={list}
             campaignRef={campaignRefOf(refId)}
             busy={busy.has(n.id) || n.answering}
-            problem={problems[n.id] || (n.error ? words.problem[n.error.replaceAll("_", "-")] ?? (changing.current.has(n.id) ? words.changeFailed : words.failedHint) : "")}
+            splitOn={splitOn}
+            problem={problems[n.id] || (n.error ? words.problem[n.error.replaceAll("_", "-")] ?? ((splitOn ? splitReason(n.error) : "") || (changing.current.has(n.id) ? words.changeFailed : words.failedHint)) : "")}
             onSend={(answer) => void send(n, answer)}
           />
         ))}
       </ul>
+      {undoLine}
       {/* Always mounted, so a screen reader hears the stage and then the result. */}
       <p class="sr-only" role="status">
         {waiting ? (slow || seen.quiet ? "" : words.waiting) : said}
@@ -178,6 +278,7 @@ function NameRow({
   campaignRef,
   busy,
   problem,
+  splitOn,
   onSend,
 }: {
   name: NameCheck;
@@ -185,6 +286,7 @@ function NameRow({
   campaignRef: string;
   busy: boolean;
   problem: string;
+  splitOn: boolean;
   onSend: (answer: NameCheckAnswer) => void;
 }) {
   const id = `name-check-${name.id}`;
@@ -198,6 +300,9 @@ function NameRow({
   const [wholeName, setWholeName] = useState(name.name);
   const [heard, setHeard] = useState(""); // how it was written, when the DM picked a longer name (kept if they then fix it)
   const [changing, setChanging] = useState(false);
+  // Split and group (#3406): "They're a group" asks what the group is called.
+  const [asking, setAsking] = useState(false);
+  const [groupName, setGroupName] = useState("");
   const longer = (name.longerNames ?? []).slice(0, 3);
   // The card keeps its id when its words change (here or in Discord), so the box follows the stored name.
   const shownName = useRef(name.name);
@@ -269,6 +374,38 @@ function NameRow({
               </fieldset>
             </details>
           </>
+        )}
+        {splitOn && name.isList && (
+          <div class="stack">
+            <div class="row">
+              <button type="button" class="button secondary" disabled={busy} aria-label={`${gw.split}: ${name.name}`} onClick={() => onSend({ action: "split" })}>
+                <span aria-hidden="true">{gw.splitIcon}</span> {gw.split}
+              </button>
+              <button type="button" class="button secondary" disabled={busy} aria-expanded={asking} aria-label={`${gw.isGroup}: ${name.name}`} onClick={() => setAsking(!asking)}>
+                <span aria-hidden="true">{gw.groupIcon}</span> {gw.isGroup}
+              </button>
+            </div>
+            {(name.groups ?? []).slice(0, 3).map((g) => (
+              <div class="row" key={g.id}>
+                <span class="small muted">{gw.hint(g.name, g.members)}</span>
+                <button type="button" class="button secondary" disabled={busy} aria-label={`${gw.yesGroup}: ${g.name}`} onClick={() => onSend({ action: "join_group", group: g.id })}>
+                  <span aria-hidden="true">{gw.groupIcon}</span> {gw.yesGroup}
+                </button>
+              </div>
+            ))}
+            {asking && (
+              <div class="row">
+                <label for={`${id}-group`}>{gw.groupAsk}</label>
+                <input id={`${id}-group`} type="text" maxLength={gw.groupNameMax} autocomplete="off" autocapitalize="words" spellcheck={false} value={groupName} disabled={busy} onInput={(e) => setGroupName((e.target as HTMLInputElement).value)} />
+                <button type="button" class="button" disabled={busy || groupName.trim() === ""} aria-label={`${gw.groupMake}: ${name.name}`} onClick={() => onSend({ action: "make_group", name: groupName.trim() })}>
+                  {gw.groupMake}
+                </button>
+                <button type="button" class="button secondary" disabled={busy} onClick={() => { setAsking(false); setGroupName(""); }}>
+                  {gw.groupCancel}
+                </button>
+              </div>
+            )}
+          </div>
         )}
         <details>
           <summary>{words.more}</summary>
