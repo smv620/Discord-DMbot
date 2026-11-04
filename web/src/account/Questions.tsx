@@ -57,7 +57,7 @@ function howFor(kind: string, api: AccountApi): QuestionHow {
 
 function Campaign({ campaign, serverNow, api }: { campaign: QuestionCampaign; serverNow: number; api: AccountApi }) {
   const [open, setOpen] = useState<Set<string>>(new Set());
-  const kinds = oldestFirst(mergeUnknown(campaign.kinds));
+  const kinds = oldestFirst(mergeUnknown(campaign.kinds)).filter((k) => kindWords(k.kind).how !== "hidden");
   // The first line of each group carries its toggle and panel; the others say they are answered with it.
   const lead = new Map<string, string>();
   for (const k of kinds) {

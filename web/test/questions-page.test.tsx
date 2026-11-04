@@ -86,7 +86,7 @@ describe("the Questions page", () => {
     expect(lines.map((l) => l.querySelector("strong")?.textContent)).toEqual([
       `${kindWords("names").label} · 3`,
       `${kindWords("connections").label} · 12`,
-      `${kindWords("family").label} · 2`,
+      `${kindWords("heard").label} · 2`,
     ]); // (oldest first, by when each kind's oldest question began)
   });
 
@@ -95,10 +95,20 @@ describe("the Questions page", () => {
     await screen.findByRole("heading", { name: "The Ashen Road" });
     const names = screen.getByText(`${kindWords("names").label} · 3`).closest("li") as HTMLElement;
     expect(within(names).getByRole("link").getAttribute("href")).toBe("/account/recaps?campaign=100.cmp1");
-    const family = screen.getByText(`${kindWords("family").label} · 2`).closest("li") as HTMLElement;
-    expect(within(family).queryByRole("link")).toBeNull();
-    expect(within(family).getByText(w.discord)).toBeTruthy();
+    const heard = screen.getByText(`${kindWords("heard").label} · 2`).closest("li") as HTMLElement;
+    expect(within(heard).queryByRole("link")).toBeNull();
+    expect(within(heard).getByText(w.discord)).toBeTruthy();
     expect(screen.getByText(w.discordWhere)).toBeTruthy(); // (said once, under the list)
+  });
+
+  it("never shows Family ties until a screen can answer them (#3463), in the lines or the count", async () => {
+    const api = mockApi("table");
+    api.myQuestions = async () =>
+      counts({ total: 7, kinds: [{ kind: "names", count: 5, oldest: now - 100 }, { kind: "family", count: 2, oldest: now - 50 }] });
+    render(<Questions api={api} />);
+    await screen.findByText(`${kindWords("names").label} · 5`);
+    expect(screen.queryByText(new RegExp(kindWords("family").label))).toBeNull();
+    expect(screen.getByText(w.campaignLine(5))).toBeTruthy();
   });
 
   it("a campaign with nothing waiting says so", async () => {
