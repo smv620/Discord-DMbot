@@ -4,7 +4,7 @@
  "version": 2,
  "how_to_read": {
   "tier": "stated = the words are in the text; inferred = only implied (offered to the DM as a suggestion, never extracted as a fact); by_rule = made by a rule, not read",
-  "relation": "parent_of, grandparent_of, sibling, spouse, uncle_of, apprentice_of, mentor_of, owns, carries, knows (+ one of nine feeling words), member, leads, works_for, enemy_of, rival_of, held_captive_by, associate; place ties by word: lives_in, lived_in, works_in, comes_from, last_seen_in (a character, creature or group), kept_in, was_kept_in (an item); in (only a place inside a place)",
+  "relation": "parent_of, grandparent_of, sibling, spouse, uncle_of, apprentice_of, mentor_of, owns, carries, knows (+ one of nine feeling words), member, leads, works_for, enemy_of, rival_of, held_captive_by, found, associate; place ties by word: lives_in, lived_in, works_in, comes_from, last_seen_in (a character, creature or group), kept_in, was_kept_in (an item); in (only a place inside a place)",
   "direction": "a to b: parent_of (a is the parent), owns (a owns b), leads (a leads b), member (a belongs to b), in (a place is inside place b); sibling, spouse and rival_of read the same both ways",
   "must_find": "false = a good find if present, not a miss if absent; an inferred tie that must be found is scored as an offered suggestion",
   "current": "false = history: it was true and is not now (the graph shows the most recent relationship, #3363)",
@@ -530,6 +530,30 @@
    "note": ""
   },
   {
+   "name": "Sacrifice of souls",
+   "kind": "event",
+   "aliases": [],
+   "note": "every ten-day humanoid souls are sacrificed, spellcasters first, to appease Auril"
+  },
+  {
+   "name": "Sacrifice of warmth",
+   "kind": "event",
+   "aliases": [],
+   "note": "recurring Sacrifices of Warmth: all warmth is forsaken, to appease Auril"
+  },
+  {
+   "name": "Sacrifice of food",
+   "kind": "event",
+   "aliases": [],
+   "note": "the residents fast and surrender their daily food to the beasts of the tundra, to appease Auril"
+  },
+  {
+   "name": "The Everlasting Rime",
+   "kind": "event",
+   "aliases": [],
+   "note": "the magical winter Auril casts each night so the sun cannot rise"
+  },
+  {
    "name": "Azure tome",
    "kind": "item",
    "aliases": [],
@@ -969,13 +993,13 @@
   {
    "id": "l040",
    "a": "Claude Ambere",
-   "relation": "carries",
+   "relation": "found",
    "b": "Wolf figurine",
-   "tier": "stated",
+   "tier": "inferred",
    "must_find": true,
    "line": 42,
    "current": false,
-   "note": "carried it until he sold it to Belleros (line 90): history"
+   "note": "the owner: Claude found it first (line 42: he carries a unique wolf figurine; line 90: he sells it). Offered to the DM, never extracted"
   },
   {
    "id": "l041",
@@ -1108,6 +1132,146 @@
   },
   {
    "id": "l054",
+   "a": "Sacrifice of souls",
+   "relation": "in",
+   "b": "Targos",
+   "tier": "stated",
+   "must_find": true,
+   "line": 7,
+   "note": "held there every ten-day (line 90)"
+  },
+  {
+   "id": "l055",
+   "a": "Sacrifice of souls",
+   "relation": "in",
+   "b": "Bryn Shander",
+   "tier": "stated",
+   "must_find": true,
+   "line": 7,
+   "note": "held there every ten-day (line 90)"
+  },
+  {
+   "id": "l056",
+   "a": "Sacrifice of souls",
+   "relation": "in",
+   "b": "Easthaven",
+   "tier": "stated",
+   "must_find": true,
+   "line": 7,
+   "note": "held there every ten-day (line 90)"
+  },
+  {
+   "id": "l057",
+   "a": "Sacrifice of souls",
+   "relation": "associate",
+   "b": "Auril the Frostmaiden",
+   "tier": "stated",
+   "must_find": true,
+   "line": 90,
+   "note": "to appease her"
+  },
+  {
+   "id": "l058",
+   "a": "Sacrifice of warmth",
+   "relation": "in",
+   "b": "Termalaine",
+   "tier": "stated",
+   "must_find": true,
+   "line": 7,
+   "note": "held there every ten-day (line 90)"
+  },
+  {
+   "id": "l059",
+   "a": "Sacrifice of warmth",
+   "relation": "in",
+   "b": "Bremen",
+   "tier": "stated",
+   "must_find": true,
+   "line": 7,
+   "note": "held there every ten-day (line 90)"
+  },
+  {
+   "id": "l060",
+   "a": "Sacrifice of warmth",
+   "relation": "in",
+   "b": "Good Mead",
+   "tier": "stated",
+   "must_find": true,
+   "line": 7,
+   "note": "held there every ten-day (line 90)"
+  },
+  {
+   "id": "l061",
+   "a": "Sacrifice of warmth",
+   "relation": "associate",
+   "b": "Auril the Frostmaiden",
+   "tier": "stated",
+   "must_find": true,
+   "line": 90,
+   "note": "to appease her"
+  },
+  {
+   "id": "l062",
+   "a": "Sacrifice of food",
+   "relation": "in",
+   "b": "Caer-Dineval",
+   "tier": "stated",
+   "must_find": true,
+   "line": 7,
+   "note": "held there every ten-day (line 90)"
+  },
+  {
+   "id": "l063",
+   "a": "Sacrifice of food",
+   "relation": "in",
+   "b": "Caer-Konig",
+   "tier": "stated",
+   "must_find": true,
+   "line": 7,
+   "note": "held there every ten-day (line 90)"
+  },
+  {
+   "id": "l064",
+   "a": "Sacrifice of food",
+   "relation": "in",
+   "b": "Lonelywood",
+   "tier": "stated",
+   "must_find": true,
+   "line": 7,
+   "note": "held there every ten-day (line 90)"
+  },
+  {
+   "id": "l065",
+   "a": "Sacrifice of food",
+   "relation": "associate",
+   "b": "Auril the Frostmaiden",
+   "tier": "stated",
+   "must_find": true,
+   "line": 90,
+   "note": "to appease her"
+  },
+  {
+   "id": "l066",
+   "a": "Auril the Frostmaiden",
+   "relation": "associate",
+   "b": "The Everlasting Rime",
+   "tier": "stated",
+   "must_find": true,
+   "line": 51,
+   "note": "casts it each night before midnight (line 4)"
+  },
+  {
+   "id": "l067",
+   "a": "The Everlasting Rime",
+   "relation": "in",
+   "b": "Icewind Dale",
+   "tier": "stated",
+   "must_find": true,
+   "line": 4,
+   "note": "holds the Ten-Towns in a frozen vice"
+  },
+  {
+   "id": "l068",
    "a": "Hlin Trollbane",
    "relation": "works_in",
    "b": "Lonelywood",
@@ -1117,7 +1281,7 @@
    "note": "operates out of it"
   },
   {
-   "id": "l055",
+   "id": "l069",
    "a": "The party",
    "relation": "works_for",
    "b": "Hlin Trollbane",
@@ -1127,7 +1291,7 @@
    "note": "100 gold to capture or eliminate Kaltro (line 67)"
   },
   {
-   "id": "l056",
+   "id": "l070",
    "a": "Hlin Trollbane",
    "relation": "enemy_of",
    "b": "Sephek Kaltro",
@@ -1137,7 +1301,7 @@
    "note": "she hires against him; she is not his servant (#3256)"
   },
   {
-   "id": "l057",
+   "id": "l071",
    "a": "Sephek Kaltro",
    "relation": "works_for",
    "b": "Torrga Icevein",
@@ -1147,7 +1311,7 @@
    "note": "her bodyguard (also line 55)"
   },
   {
-   "id": "l058",
+   "id": "l072",
    "a": "Torrga Icevein",
    "relation": "leads",
    "b": "Torg's Caravan",
@@ -1157,7 +1321,7 @@
    "note": "under her own heading on line 56"
   },
   {
-   "id": "l059",
+   "id": "l073",
    "a": "Sephek Kaltro",
    "relation": "member",
    "b": "Torg's Caravan",
@@ -1167,7 +1331,7 @@
    "note": "accompanies it"
   },
   {
-   "id": "l060",
+   "id": "l074",
    "a": "Sephek Kaltro",
    "relation": "last_seen_in",
    "b": "Easthaven",
@@ -1177,7 +1341,7 @@
    "note": "his last known location"
   },
   {
-   "id": "l061",
+   "id": "l075",
    "a": "Speaker Masthew",
    "relation": "leads",
    "b": "Termalaine",
@@ -1186,7 +1350,7 @@
    "line": 59
   },
   {
-   "id": "l062",
+   "id": "l076",
    "a": "The party",
    "relation": "works_for",
    "b": "Speaker Masthew",
@@ -1196,7 +1360,7 @@
    "note": "50 gold, then 250 for the mine (line 87)"
   },
   {
-   "id": "l063",
+   "id": "l077",
    "a": "Veron Braig",
    "relation": "owns",
    "b": "The Blue Clam",
@@ -1205,7 +1369,7 @@
    "line": 61
   },
   {
-   "id": "l064",
+   "id": "l078",
    "a": "Veron Braig",
    "relation": "works_in",
    "b": "The Blue Clam",
@@ -1215,7 +1379,7 @@
    "note": "owner and proprietor"
   },
   {
-   "id": "l065",
+   "id": "l079",
    "a": "The Blue Clam",
    "relation": "in",
    "b": "Termalaine",
@@ -1224,7 +1388,7 @@
    "line": 61
   },
   {
-   "id": "l066",
+   "id": "l080",
    "a": "The Lucky Liar",
    "relation": "in",
    "b": "Lonelywood",
@@ -1233,7 +1397,7 @@
    "line": 67
   },
   {
-   "id": "l067",
+   "id": "l081",
    "a": "Belleros Stormgrace",
    "relation": "knows",
    "b": "Brewner",
@@ -1244,7 +1408,7 @@
    "note": "a heated debate"
   },
   {
-   "id": "l068",
+   "id": "l082",
    "a": "Brewner",
    "relation": "parent_of",
    "b": "Brewner's daughter",
@@ -1253,7 +1417,7 @@
    "line": 67
   },
   {
-   "id": "l069",
+   "id": "l083",
    "a": "Cerric Vanya'elen",
    "relation": "member",
    "b": "The party",
@@ -1263,7 +1427,7 @@
    "note": "'our four adventurers'"
   },
   {
-   "id": "l070",
+   "id": "l084",
    "a": "Belleros Stormgrace",
    "relation": "member",
    "b": "The party",
@@ -1273,7 +1437,7 @@
    "note": "'our four adventurers'"
   },
   {
-   "id": "l071",
+   "id": "l085",
    "a": "Okthandom Korran",
    "relation": "member",
    "b": "The party",
@@ -1283,7 +1447,7 @@
    "note": "'our four adventurers'"
   },
   {
-   "id": "l072",
+   "id": "l086",
    "a": "Claude Ambere",
    "relation": "member",
    "b": "The party",
@@ -1293,7 +1457,7 @@
    "note": "'our four adventurers'"
   },
   {
-   "id": "l073",
+   "id": "l087",
    "a": "Cerric Vanya'elen",
    "relation": "knows",
    "b": "Belleros Stormgrace",
@@ -1303,7 +1467,7 @@
    "note": "player characters who play together know each other (#3036)"
   },
   {
-   "id": "l074",
+   "id": "l088",
    "a": "Cerric Vanya'elen",
    "relation": "knows",
    "b": "Okthandom Korran",
@@ -1313,7 +1477,7 @@
    "note": "player characters who play together know each other (#3036)"
   },
   {
-   "id": "l075",
+   "id": "l089",
    "a": "Cerric Vanya'elen",
    "relation": "knows",
    "b": "Claude Ambere",
@@ -1323,7 +1487,7 @@
    "note": "player characters who play together know each other (#3036)"
   },
   {
-   "id": "l076",
+   "id": "l090",
    "a": "Belleros Stormgrace",
    "relation": "knows",
    "b": "Okthandom Korran",
@@ -1333,7 +1497,7 @@
    "note": "player characters who play together know each other (#3036)"
   },
   {
-   "id": "l077",
+   "id": "l091",
    "a": "Belleros Stormgrace",
    "relation": "knows",
    "b": "Claude Ambere",
@@ -1343,7 +1507,7 @@
    "note": "player characters who play together know each other (#3036)"
   },
   {
-   "id": "l078",
+   "id": "l092",
    "a": "Okthandom Korran",
    "relation": "knows",
    "b": "Claude Ambere",
@@ -1353,7 +1517,7 @@
    "note": "player characters who play together know each other (#3036)"
   },
   {
-   "id": "l079",
+   "id": "l093",
    "a": "Bruni Stonewake",
    "relation": "sibling",
    "b": "Thorin",
@@ -1363,7 +1527,7 @@
    "note": "'Thorin, his miner brother Bruni'"
   },
   {
-   "id": "l080",
+   "id": "l094",
    "a": "Bruni Stonewake",
    "relation": "works_in",
    "b": "The gemstone mine",
@@ -1373,7 +1537,7 @@
    "note": "a miner"
   },
   {
-   "id": "l081",
+   "id": "l095",
    "a": "The gemstone mine",
    "relation": "in",
    "b": "Termalaine",
@@ -1382,7 +1546,7 @@
    "line": 78
   },
   {
-   "id": "l082",
+   "id": "l096",
    "a": "Trex",
    "relation": "associate",
    "b": "The ghost",
@@ -1392,7 +1556,7 @@
    "note": "a possessed ghost emerged when he fell"
   },
   {
-   "id": "l083",
+   "id": "l097",
    "a": "Trex",
    "relation": "carries",
    "b": "Penolopi",
@@ -1402,7 +1566,7 @@
    "note": "the plant was in his backpack"
   },
   {
-   "id": "l084",
+   "id": "l098",
    "a": "Okthandom Korran",
    "relation": "enemy_of",
    "b": "Trex",
@@ -1412,7 +1576,7 @@
    "note": "killed him with an arrow"
   },
   {
-   "id": "l085",
+   "id": "l099",
    "a": "Cerric Vanya'elen",
    "relation": "carries",
    "b": "Wand of Conducting",
@@ -1422,7 +1586,7 @@
    "note": "Okthandom found it and gave it to him"
   },
   {
-   "id": "l086",
+   "id": "l100",
    "a": "The party",
    "relation": "owns",
    "b": "Lantern of Greater Tracking",
@@ -1432,7 +1596,7 @@
    "note": "found in the mine"
   },
   {
-   "id": "l087",
+   "id": "l101",
    "a": "The party",
    "relation": "owns",
    "b": "Chardalyn spear",
@@ -1442,7 +1606,7 @@
    "note": "spoils of the mine"
   },
   {
-   "id": "l088",
+   "id": "l102",
    "a": "The party",
    "relation": "owns",
    "b": "Heart of chardalyn",
@@ -1452,7 +1616,7 @@
    "note": "hidden under the bucket lift"
   },
   {
-   "id": "l089",
+   "id": "l103",
    "a": "Cerric Vanya'elen",
    "relation": "carries",
    "b": "Psi crystal",
@@ -1462,7 +1626,7 @@
    "note": "studied it; the party took it from the skull"
   },
   {
-   "id": "l090",
+   "id": "l104",
    "a": "Psi crystal",
    "relation": "was_kept_in",
    "b": "The gemstone mine",
@@ -1473,7 +1637,7 @@
    "note": "found there in the mind flayer's skull, then taken: the place is history"
   },
   {
-   "id": "l091",
+   "id": "l105",
    "a": "Psi crystal",
    "relation": "associate",
    "b": "Mind flayer",
@@ -1483,7 +1647,7 @@
    "note": "from its petrified skull"
   },
   {
-   "id": "l092",
+   "id": "l106",
    "a": "Belleros Stormgrace",
    "relation": "owns",
    "b": "Wolf figurine",
@@ -1493,7 +1657,17 @@
    "note": "bought it from Claude for 75 gold"
   },
   {
-   "id": "l093",
+   "id": "l107",
+   "a": "Belleros Stormgrace",
+   "relation": "carries",
+   "b": "Wolf figurine",
+   "tier": "inferred",
+   "must_find": true,
+   "line": 90,
+   "note": "the owner: he owns it and carries it now; the text says only that he bought it"
+  },
+  {
+   "id": "l108",
    "a": "Fizzlebomb",
    "relation": "owns",
    "b": "Aurora's Wind",
@@ -1503,7 +1677,7 @@
    "note": "'Fizzlebomb's vessel'; the owner flagged this as missing"
   },
   {
-   "id": "l094",
+   "id": "l109",
    "a": "Ice troll",
    "relation": "enemy_of",
    "b": "The minotaur captain",
@@ -1513,7 +1687,7 @@
    "note": "devoured him and shattered his ship"
   },
   {
-   "id": "l095",
+   "id": "l110",
    "a": "Ice troll",
    "relation": "last_seen_in",
    "b": "Maer Dualdon",
@@ -1522,7 +1696,7 @@
    "line": 90
   },
   {
-   "id": "l096",
+   "id": "l111",
    "a": "Electric eel",
    "relation": "enemy_of",
    "b": "Fizzlebomb",
@@ -1532,7 +1706,7 @@
    "note": "pulled him under"
   },
   {
-   "id": "l097",
+   "id": "l112",
    "a": "Belleros Stormgrace",
    "relation": "knows",
    "b": "Boy",
@@ -1543,7 +1717,7 @@
    "note": "befriended him"
   },
   {
-   "id": "l098",
+   "id": "l113",
    "a": "Boy",
    "relation": "last_seen_in",
    "b": "Three Flags Sailing",
@@ -1552,7 +1726,7 @@
    "line": 96
   },
   {
-   "id": "l099",
+   "id": "l114",
    "a": "Three Flags Sailing",
    "relation": "in",
    "b": "Targos",
@@ -1561,7 +1735,7 @@
    "line": 96
   },
   {
-   "id": "l100",
+   "id": "l115",
    "a": "Garret Velryn",
    "relation": "owns",
    "b": "Boy",
@@ -1571,7 +1745,7 @@
    "note": "Boy led the party to Keegan's home: the owner says he is Garret's dog. The text never says it; offer it to the DM, never extract it"
   },
   {
-   "id": "l101",
+   "id": "l116",
    "a": "Garret Velryn",
    "relation": "spouse",
    "b": "Keegan Velryn",
@@ -1581,7 +1755,7 @@
    "note": "'whose husband'"
   },
   {
-   "id": "l102",
+   "id": "l117",
    "a": "Garret Velryn",
    "relation": "member",
    "b": "Explorer's League",
@@ -1591,7 +1765,7 @@
    "note": "'a noted member'"
   },
   {
-   "id": "l103",
+   "id": "l118",
    "a": "Garret Velryn",
    "relation": "last_seen_in",
    "b": "Kelvin's Cairn",
@@ -1601,7 +1775,7 @@
    "note": "vanished five days ago leading an expedition up it"
   },
   {
-   "id": "l104",
+   "id": "l119",
    "a": "The party",
    "relation": "works_for",
    "b": "Keegan Velryn",
@@ -1611,7 +1785,7 @@
    "note": "50 gold and a route map to find Garret"
   },
   {
-   "id": "l105",
+   "id": "l120",
    "a": "Jebidiah",
    "relation": "works_in",
    "b": "Targos",
@@ -1711,6 +1885,30 @@
    "what": "Belleros befriends Boy, who leads the party to Keegan Velryn; she asks them to find Garret",
    "who": "Belleros, Boy, Keegan Velryn, Garret Velryn",
    "line": 96
+  },
+  {
+   "id": "e16",
+   "what": "Every ten-day Targos, Bryn Shander and Easthaven sacrifice humanoid souls, spellcasters first, to appease Auril",
+   "who": "Targos, Bryn Shander, Easthaven, Auril",
+   "line": 7
+  },
+  {
+   "id": "e17",
+   "what": "Every ten-day Termalaine, Bremen and Good Mead forsake all warmth in a Sacrifice of Warmth",
+   "who": "Termalaine, Bremen, Good Mead, Auril",
+   "line": 7
+  },
+  {
+   "id": "e18",
+   "what": "Every ten-day Caer-Dineval, Caer-Konig and Lonelywood fast and surrender their food to the beasts of the tundra",
+   "who": "Caer-Dineval, Caer-Konig, Lonelywood, Auril",
+   "line": 7
+  },
+  {
+   "id": "e19",
+   "what": "Each night before midnight Auril casts the spell that keeps the sun from rising: the Everlasting Rime",
+   "who": "Auril",
+   "line": 51
   }
  ],
  "deferred": [
