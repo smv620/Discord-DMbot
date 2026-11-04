@@ -58,7 +58,7 @@ _POSSESSIVE = re.compile(r"^(?:the\s+)?([A-Z][\w'-]*(?:\s+[A-Z][\w'-]*)*)'s\s+(.
 _SIGNIFICANT = re.compile(
     r"\b(stole|stolen|steal|steals|theft|delivered|delivery|deliver|consignment|shipment|tribute|"
     r"smuggl\w*|sought|seeking|ransom|bounty|meant for|intended for|fought over|fight over|"
-    r"villain's plan|the plan|plot thread|the ritual|cursed|corrupt\w*|madness)\b",
+    r"villain's plan|the plan|plot thread|the ritual|cursed|corrupt\w*|madness|poisoned|tainted)\b",
     re.IGNORECASE,
 )
 # Words the text itself uses to say one particular thing is one of a kind: "a unique wolf figurine
@@ -151,6 +151,33 @@ def _near(name: str, context: str) -> str:
     return " ".join(p for p in parts if head and re.search(rf"\b{head}", p.casefold()))
 
 
+_STANDARD_KINDS = ("item", "gear", "weapon", "armor", "tool")
+_THE_FORM = re.compile(r"^(?:the|a|an|some|\d+|two|three|four|five|six)\s+", re.IGNORECASE)
+_SCROLL = re.compile(r"^scrolls?\s+of\s+(.+)$", re.IGNORECASE)
+
+
+def standard_item(name: str) -> bool:
+    """Is this an item of the rulebook, one of many in the world ("Potion of Healing", "Bag of
+    Holding", "Scroll of Identify")? The rules data DMbot already holds is asked, in both its
+    editions: a magic item, potion or gear entry, or a scroll of any spell. A named artifact the
+    rules do not hold ("Heartseeker") is not standard. Such an item is common like any other
+    gear: tracked only when another test makes it one particular thing."""
+    from dmbot.rules import index  # late: the rules data loads on first use
+
+    text = _THE_FORM.sub("", " ".join(name.split()))
+    if not text:
+        return False
+    rules = index.srd()
+    scroll = _SCROLL.match(text)
+    if scroll is not None and rules.lookup(scroll.group(1), "2024", "2014", kind="spell"):
+        return True
+    return any(
+        rules.lookup(candidate, "2024", "2014", kind=kind) is not None
+        for candidate in {text, re.sub(r"(?i)^(\w+)s\b", r"\1", text, count=1)}
+        for kind in _STANDARD_KINDS
+    )
+
+
 def judge(name: str, context: str = "") -> Verdict:
     """Is this item one particular thing? `context` is the words the item was said in (a quote, the
     cited lines): it only ever adds a reason to keep, through the story-significance test."""
@@ -158,20 +185,23 @@ def judge(name: str, context: str = "") -> Verdict:
     words = _core(text)
     if not words:
         return Verdict(False, "empty")
-    if _proper(words):
+    standard = standard_item(text)
+    if _proper(words) and not standard:
         return Verdict(True, "name")
     owner_thing = _POSSESSIVE.match(text.replace("’", "'"))
     if owner_thing is not None:
         thing = owner_thing.group(2).split()
         if thing and not _plural_head(thing) and not _QUANTITY.search(owner_thing.group(2)):
             return Verdict(True, "owner")
-    if _CLAUSE.search(text.replace("’", "'")) and not _QUANTITY.search(text):
+    if not standard and _CLAUSE.search(text.replace("’", "'")) and not _QUANTITY.search(text):
         return Verdict(True, "description")
     context = _near(text, context)
     if _SIGNIFICANT.search(f"{text} {context}"):
         return Verdict(True, "story")
     if _marked_near(words, f"{text} {context}"):
         return Verdict(True, "marked")
+    if standard:
+        return Verdict(False, "standard")  # a rulebook item is ordinary unless a test above held it
     # A judgement of the signs left: keep when more likely than not one particular thing.
     plain = [w.casefold() for w in words]
     score = 0
