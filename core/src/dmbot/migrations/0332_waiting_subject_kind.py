@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from dmbot.migrations._shared import _swaps
 
+
 # A place tie reads by what its subject is: a character "lives in" or "was last seen in" a town,
 # a town "is in" a region (#3363). The relationship door sends each name's kind; the waiting list
 # did not, so a character's waiting backstory still said "is in". Each backstory row now carries
@@ -17,12 +18,18 @@ from dmbot.migrations._shared import _swaps
 # any text, and the door is the DM's alone, as before. The door is read back from the database as
 # it is and widened, each anchor found exactly once (a drift stops the migration), as 0275 does.
 # No table changes, no rows change.
-_KIND_OF_S = (
-    "CASE WHEN s.type = 'character' THEN CASE s.role WHEN 'player_character' THEN "
-    "'player_character' WHEN 'npc' THEN 'npc' WHEN 'god' THEN 'deity' ELSE 'character' END "
-    "ELSE s.type END"
-)
-_KIND_OF_O = _KIND_OF_S.replace("s.", "o.")
+def _kind_of(alias: str) -> str:
+    """The kind word for an entry (the graph door's, in `_shared.py`): a character's role, else
+    its own type. Built for the alias it is read through, so nothing is rewritten by accident."""
+    return (
+        f"CASE WHEN {alias}.type = 'character' THEN CASE {alias}.role "
+        "WHEN 'player_character' THEN 'player_character' WHEN 'npc' THEN 'npc' "
+        f"WHEN 'god' THEN 'deity' ELSE 'character' END ELSE {alias}.type END"
+    )
+
+
+_KIND_OF_S = _kind_of("s")
+_KIND_OF_O = _kind_of("o")
 
 _WAITING_KIND_SWAPS = (
     (

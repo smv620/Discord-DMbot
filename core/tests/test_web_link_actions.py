@@ -928,6 +928,15 @@ class TheEdits(Editing):
         self.assertEqual(row["subjectKind"], "npc")
         self.assertEqual(row["how"], "was last seen in")
 
+    async def test_a_which_question_sends_the_named_names_kind(self) -> None:
+        """#3368: `otherKind` is the kind of the name the question already shows; the page uses
+        it as the subject's kind only when `otherIsSubject` says it is the subject."""
+        await self.which_question()
+        got = await self.waiting_now()
+        (question,) = got["which"]
+        self.assertTrue(question["otherIsSubject"])
+        self.assertEqual(question["otherKind"], "npc")  # Rook
+
     async def test_the_door_lists_what_waits_with_the_upload_and_the_counts(self) -> None:
         claim = await self.claim()
         link = await self.waiting_link(self.mira, self.hall)
