@@ -5340,7 +5340,12 @@ class MemoryStore:
             back = await w.get(RELATIONS, ended[0]["row_id"])
             if back is None:
                 raise MemoryRuleError(NOT_FOUND)
-            return Written(_relation(back), w.batch)
+            restored = _relation(back)
+            if restored.status == CONFIRMED and restored.to_session_at is None:
+                # The DM took a removal back: an item has one current whereabouts (#3375), and
+                # what the DM brings back counts as the newest word.
+                restored, _ = await _settle_whereabouts(w, restored, by_hand=True)
+            return Written(restored, w.batch)
 
     def _too_late(self) -> str:
         # Also true after a backup replaced the campaign: that starts a fresh log.
