@@ -675,7 +675,10 @@ class TypedChanges(unittest.TestCase):
         early = game.from_day_and_time(1, 1)
         self.assertEqual(self.change("", "-2", early), ui.BEFORE_DAY_ONE)
         self.assertEqual(self.change("-1", "", game.from_day_and_time(1, 9)), ui.BEFORE_DAY_ONE)
-        self.assertEqual(ui.BEFORE_DAY_ONE, "That would be before day 1. Nothing was changed.")
+        self.assertEqual(
+            ui.BEFORE_DAY_ONE,
+            "That would be before day 1, so nothing was changed. Try a later day or time.",
+        )
 
     def test_junk_and_empty_boxes_are_not_a_time(self) -> None:
         junk = [
@@ -702,7 +705,7 @@ class TypedChanges(unittest.TestCase):
         self.assertEqual(form.hour.default, None)
         self.assertFalse(form.day.required or form.hour.required)
         self.assertEqual(form.day.placeholder, "Now 4. Type a day, or +1 / -1")
-        self.assertEqual(form.hour.placeholder, "Now 14:30. Type 15:00, or +2, +:30, -1 hr")
+        self.assertEqual(form.hour.placeholder, "Now 14:30. Type 15:00, or +2 hr, +30 min, -1 hr")
         for box in (form.day, form.hour):
             self.assertEqual(box.max_length, 20)
             self.assertLessEqual(len(str(box.label)), 45)

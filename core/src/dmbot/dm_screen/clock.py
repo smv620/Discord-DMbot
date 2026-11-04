@@ -54,8 +54,11 @@ SET_FIRST = (
 )
 GONE = "That campaign isn't here any more."
 FAILED = "That didn't save. Try again in a moment."
-BAD_TIME = "Type a day like 4 or +1, and a time like 14:30, +2 or +:30."
-BEFORE_DAY_ONE = "That would be before day 1. Nothing was changed."
+BAD_TIME = (
+    "Couldn't read that, so nothing was changed. "
+    "Try a day like 4 or +1, and a time like 14:30, +2 hr or +30 min."
+)
+BEFORE_DAY_ONE = "That would be before day 1, so nothing was changed. Try a later day or time."
 ALREADY_SHOWN = "The clock is already pinned on the DM screen: {where}"
 PANEL_TEXT = "Take a rest, skip to dawn, or type the time. Only you see this."
 PLAYERS_SEE = "\nPlayers see {what}a rough time in <#{channel}>."
@@ -665,7 +668,7 @@ class SetTimeForm(discord.ui.Modal):
         label="Day: a number, or +1 / -1", placeholder="4", max_length=20, required=False
     )
     hour: discord.ui.TextInput[SetTimeForm] = discord.ui.TextInput(
-        label="Time: 14:30, or +2 / +:30 / -1 hr",
+        label="Time: 14:30, or +2 hr / +30 min",
         placeholder="14:30",
         max_length=20,
         required=False,
@@ -680,7 +683,7 @@ class SetTimeForm(discord.ui.Modal):
             # would have to be deleted before typing "+1".
             self.day.placeholder = f"Now {game.day_of(clock.minute)}. Type a day, or +1 / -1"
             self.hour.placeholder = (
-                f"Now {game.clock_time(clock.minute)}. Type 15:00, or +2, +:30, -1 hr"
+                f"Now {game.clock_time(clock.minute)}. Type 15:00, or +2 hr, +30 min, -1 hr"
             )
         else:
             self.day.required = self.hour.required = True
