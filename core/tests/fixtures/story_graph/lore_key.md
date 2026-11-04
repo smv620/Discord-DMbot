@@ -41,13 +41,12 @@ What the graph should hold after the sample lore document is read. Names come fr
 | l018 | Bruni Stonewake | sibling | Thorin | stated | yes | brothers |
 | l175 | Brewner | parent_of | Brewner's daughter | stated | no |  |
 
-### Teaching and work (39)
+### Teaching and work (33)
 
 | id | from | tie | to | tier | must find | note |
 |---|---|---|---|---|---|---|
 | l019 | Valyra | apprentice_of | Kelfir Ama'Kiir | stated | yes |  |
 | l020 | Cerric Vanya'elen | works_for | Syllar Sparkwalker | stated | yes | steward and keeper of the Spire |
-| l021 | Cerric Vanya'elen | works_at | Sparkwalker Spire | stated | yes | 'Keeper of the Sparkwalker Spire' |
 | l022 | Syllar Sparkwalker | member | Council of the Blackstaff Tower | stated | yes |  |
 | l024 | Qinric | member | Lord's Alliance | stated | yes | served as a war mage |
 | l025 | Syllar Sparkwalker | mentor_of | Emmerich Ravenstride | stated | yes | an apprentice |
@@ -66,13 +65,10 @@ What the graph should hold after the sample lore document is read. Names come fr
 | l076 | The party | works_for | Keegan Velryn | stated | yes | 50 gold to find Garret |
 | l078 | The party | works_for | Imdra Arlaggath | stated | yes | missing fishers |
 | l079 | Imdra Arlaggath | leads | Easthaven militia | stated | yes |  |
-| l081 | Rinaldo | works_at | White Lady Inn | stated | no | hosts seances |
 | l084 | Cerric Vanya'elen | member | The party | stated | yes |  |
 | l085 | Belleros Stormgrace | member | The party | stated | yes |  |
 | l086 | Okthandom Korran | member | The party | stated | yes |  |
 | l087 | Claude Ambere | member | The party | stated | yes |  |
-| l107 | Veron Braig | works_at | The Blue Clam | stated | yes |  |
-| l111 | Bruni Stonewake | works_at | The Beautiful Mine | stated | no | a miner |
 | l117 | Xardorok Sunblight | leads | Duergar of Xardorok | stated | yes |  |
 | l121 | Dzaan | member | Red Wizards of Thay | stated | yes |  |
 | l122 | Dzaan | member | Arcane Brotherhood | stated | yes |  |
@@ -81,9 +77,7 @@ What the graph should hold after the sample lore document is read. Names come fr
 | l134 | Knights of the Black Sword | leads | The Caer | stated | yes | they control the keep |
 | l136 | Kadroth | member | Knights of the Black Sword | inferred | no | named as Black Sword cultists in the DM notes |
 | l137 | Huarwar Mulphoon | member | Knights of the Black Sword | inferred | no | named as Black Sword cultists in the DM notes |
-| l138 | Roark | works_at | The Uphill Climb | stated | yes |  |
 | l174 | Shafina Fa'ertenya | leads | Shafina's guild | stated | no | a guild leader |
-| l176 | Thorin | works_at | The Beautiful Mine | stated | no | one of the workers |
 
 ### Feelings and opposition (30)
 
@@ -148,53 +142,58 @@ What the graph should hold after the sample lore document is read. Names come fr
 | l113 | The ghost | owns | Penolopi | stated | yes | its pet plant |
 | l120 | Xardorok Sunblight | owns | Chardalyn shipment | inferred | no | meant for him |
 
-### Places and other ties (67)
+### Places and other ties (73)
 
 | id | from | tie | to | tier | must find | note |
 |---|---|---|---|---|---|---|
+| l021 | Cerric Vanya'elen | works_in | Sparkwalker Spire | stated | yes | 'Keeper of the Sparkwalker Spire' |
 | l023 | Qinric | associate | Syllar Sparkwalker | stated | yes | 'one of Qinric's associates' |
-| l033 | Danneth | in | Easthaven | inferred | no | the note is addressed to Danneth at East Haven |
-| l036 | Cerric Vanya'elen | in | Waterdeep | stated | no | born in the Temple of the Seldarine |
+| l033 | Danneth | last_seen_in | Easthaven | inferred | no | the note is addressed to Danneth at East Haven |
+| l036 | Cerric Vanya'elen | comes_from | Waterdeep | stated | no | born in the Temple of the Seldarine |
 | l037 | Temple of the Seldarine | in | Waterdeep | stated | yes |  |
 | l038 | Blackstaff Tower | in | Waterdeep | inferred | no | the story places it in the city |
 | l039 | Sparkwalker Spire | in | Waterdeep | inferred | no |  |
 | l040 | Castle Ward | in | Waterdeep | inferred | no | the story places it in the city |
 | l041 | Spires of the Morning | in | Waterdeep | inferred | no | the story places it in the city |
 | l042 | Sly | associate | Okthandom Korran | stated | yes | haunts and protects him |
-| l045 | Mjenir | in | Skytower Shelter | stated | yes |  |
-| l051 | Claude Ambere | in | Spine of the World | stated | yes | the clan's crags; he is from there |
-| l052 | Oyami Nartok | in | Spine of the World | inferred | no |  |
+| l045 | Mjenir | lives_in | Skytower Shelter | stated | yes |  |
+| l051 | Claude Ambere | comes_from | Spine of the World | stated | yes | the clan's crags; he is from there |
+| l052 | Oyami Nartok | lives_in | Spine of the World | inferred | no |  |
 | l058 | Wolf figurine | associate | Kanberron | stated | yes | a gateway for the winter wolf |
-| l065 | Boy | in | Three Flags Sailing | stated | no |  |
-| l071 | Torg's Caravan | in | The Wet Trout | stated | no | rumoured stay |
-| l072 | Torg's Caravan | in | Easthaven | stated | no | headed to Easthaven |
-| l073 | Sephek Kaltro | in | Easthaven | stated | no | last known place |
-| l077 | Garret Velryn | in | Kelvin's Cairn | stated | no | last seen near it |
-| l080 | Imdra Arlaggath | in | Easthaven | stated | no |  |
+| l065 | Boy | last_seen_in | Three Flags Sailing | stated | no |  |
+| l071 | Torg's Caravan | last_seen_in | The Wet Trout | stated | no | rumoured stay |
+| l072 | Torg's Caravan | last_seen_in | Easthaven | stated | no | headed to Easthaven |
+| l073 | Sephek Kaltro | last_seen_in | Easthaven | stated | no | last known place |
+| l077 | Garret Velryn | last_seen_in | Kelvin's Cairn | stated | no | last seen near it |
+| l080 | Imdra Arlaggath | works_in | Easthaven | stated | no |  |
+| l081 | Rinaldo | works_in | White Lady Inn | stated | no | hosts seances |
 | l082 | White Lady Inn | in | Easthaven | stated | yes |  |
 | l083 | The Wet Trout | in | Easthaven | stated | yes |  |
-| l096 | Psi crystal | in | The Beautiful Mine | stated | no | found in the mind flayer's skull |
-| l102 | Jebidiah | in | Targos | stated | no |  |
-| l105 | Fizzlebomb | in | Maer Dualdon | stated | no |  |
+| l096 | Psi crystal | last_seen_in | The Beautiful Mine | stated | no | found in the mind flayer's skull |
+| l102 | Jebidiah | works_in | Targos | stated | no |  |
+| l105 | Fizzlebomb | last_seen_in | Maer Dualdon | stated | no |  |
+| l107 | Veron Braig | works_in | The Blue Clam | stated | yes |  |
 | l108 | The Blue Clam | in | Termalaine | stated | yes |  |
 | l110 | The Beautiful Mine | in | Termalaine | stated | yes |  |
+| l111 | Bruni Stonewake | works_in | The Beautiful Mine | stated | no | a miner |
 | l112 | Trex | associate | The ghost | stated | yes | possessed by it |
-| l114 | Trex | in | The Beautiful Mine | stated | no |  |
-| l115 | Grek | in | The Beautiful Mine | stated | no |  |
-| l123 | Dzaan | in | Easthaven | stated | no |  |
+| l114 | Trex | last_seen_in | The Beautiful Mine | stated | no |  |
+| l115 | Grek | last_seen_in | The Beautiful Mine | stated | no |  |
+| l123 | Dzaan | last_seen_in | Easthaven | stated | no |  |
 | l124 | Arveiaturace | associate | Meltharond | stated | yes | his corpse rides on her saddle |
-| l125 | Arveiaturace | in | Reghed Glacier | stated | no | lair |
-| l126 | Arveiaturace | in | Sea of Moving Ice | stated | no | hunts there |
+| l125 | Arveiaturace | lives_in | Reghed Glacier | stated | no | lair |
+| l126 | Arveiaturace | last_seen_in | Sea of Moving Ice | stated | no | hunts there |
 | l127 | Ythryn | in | Reghed Glacier | stated | yes |  |
 | l128 | Caves of Hunger | in | Reghed Glacier | stated | yes |  |
 | l129 | Skytower Shelter | in | Spine of the World | inferred | no |  |
-| l131 | Zhentarim | in | Targos | stated | no |  |
+| l131 | Zhentarim | works_in | Targos | stated | no |  |
 | l133 | Blackiron Blades | in | Bryn Shander | stated | no |  |
 | l135 | The Caer | in | Caer-Dineval | stated | yes |  |
+| l138 | Roark | works_in | The Uphill Climb | stated | yes |  |
 | l139 | The Uphill Climb | in | Caer-Dineval | stated | yes |  |
 | l140 | The Lucky Liar | in | Lonelywood | stated | yes |  |
 | l141 | Three Flags Sailing | in | Targos | stated | yes |  |
-| l142 | Clan Battlehammer | in | Kelvin's Cairn | stated | no | near its foothills |
+| l142 | Clan Battlehammer | works_in | Kelvin's Cairn | stated | no | near its foothills |
 | l143 | Kelvin's Cairn | in | Icewind Dale | stated | no |  |
 | l144 | Maer Dualdon | in | Icewind Dale | stated | no |  |
 | l145 | Eastway Road | in | Icewind Dale | inferred | no |  |
@@ -210,15 +209,16 @@ What the graph should hold after the sample lore document is read. Names come fr
 | l155 | Caer-Konig | in | Ten-Towns | stated | yes |  |
 | l156 | Lonelywood | in | Ten-Towns | stated | yes |  |
 | l157 | Dougan's Hole | in | Ten-Towns | stated | yes |  |
-| l158 | Ten-Towns | in | Icewind Dale | stated | yes |  |
+| l158 | Ten-Towns | last_seen_in | Icewind Dale | stated | yes |  |
 | l159 | Auril the Frostmaiden | associate | Icewind Dale | stated | yes | casts the Everlasting Rime over it |
 | l160 | Ten-Towns | associate | Auril the Frostmaiden | stated | no | pay tribute to her |
-| l161 | Okthandom Korran | in | Icewind Dale | inferred | no |  |
+| l161 | Okthandom Korran | last_seen_in | Icewind Dale | inferred | no |  |
 | l164 | Arcane Brotherhood | associate | Psi crystal | stated | no | they may want it |
 | l165 | Duergar of Xardorok | associate | Psi crystal | stated | no | they track the party through it |
 | l169 | Okthandom Korran | associate | Mjenir | stated | no | told to seek the seer |
 | l171 | Spires of the Morning | associate | Lathander | stated | no | a temple to him |
-| l172 | Ice Troll | in | Maer Dualdon | stated | no |  |
+| l172 | Ice Troll | last_seen_in | Maer Dualdon | stated | no |  |
+| l176 | Thorin | works_in | The Beautiful Mine | stated | no | one of the workers |
 
 ## Events
 

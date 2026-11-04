@@ -4,8 +4,8 @@
  "version": 1,
  "how_to_read": {
   "tier": "stated = the words are in the text; inferred = only implied (offered as a suggestion, never extracted); by_rule = made by a rule, not read; known_gap = expected but waits for a slice not yet built",
-  "relation": "parent_of, sibling, spouse, uncle_of, apprentice_of, mentor_of, owns, carries, knows (+ one of nine feeling words), member, leads, works_for, works_at, enemy_of, rival_of, held_captive_by, associate, in",
-  "direction": "a to b: parent_of (a is the parent), owns (a owns b), leads (a leads group b), member (a belongs to b), in (a is inside b); sibling, spouse and rival_of read the same both ways",
+  "relation": "parent_of, sibling, spouse, uncle_of, apprentice_of, mentor_of, owns, carries, knows (+ one of nine feeling words), member, leads, works_for, enemy_of, rival_of, held_captive_by, associate; place ties by word: lives_in, works_in, comes_from, last_seen_in, kept_in (anything that moves); in (only a place or an event inside a place)",
+  "direction": "a to b: parent_of (a is the parent), owns (a owns b), leads (a leads group b), member (a belongs to b), in (a place or event is inside place b); sibling, spouse and rival_of read the same both ways",
   "must_find": "false = a good find if present, not a miss if absent; an inferred tie that must be found is scored as an offered suggestion"
  },
  "players": {
@@ -1105,7 +1105,7 @@
   {
    "id": "l021",
    "a": "Cerric Vanya'elen",
-   "relation": "works_at",
+   "relation": "works_in",
    "b": "Sparkwalker Spire",
    "tier": "stated",
    "must_find": true,
@@ -1214,7 +1214,7 @@
   {
    "id": "l033",
    "a": "Danneth",
-   "relation": "in",
+   "relation": "last_seen_in",
    "b": "Easthaven",
    "tier": "inferred",
    "must_find": false,
@@ -1241,7 +1241,7 @@
   {
    "id": "l036",
    "a": "Cerric Vanya'elen",
-   "relation": "in",
+   "relation": "comes_from",
    "b": "Waterdeep",
    "tier": "stated",
    "must_find": false,
@@ -1320,7 +1320,7 @@
   {
    "id": "l045",
    "a": "Mjenir",
-   "relation": "in",
+   "relation": "lives_in",
    "b": "Skytower Shelter",
    "tier": "stated",
    "must_find": true
@@ -1372,7 +1372,7 @@
   {
    "id": "l051",
    "a": "Claude Ambere",
-   "relation": "in",
+   "relation": "comes_from",
    "b": "Spine of the World",
    "tier": "stated",
    "must_find": true,
@@ -1381,7 +1381,7 @@
   {
    "id": "l052",
    "a": "Oyami Nartok",
-   "relation": "in",
+   "relation": "lives_in",
    "b": "Spine of the World",
    "tier": "inferred",
    "must_find": false
@@ -1494,7 +1494,7 @@
   {
    "id": "l065",
    "a": "Boy",
-   "relation": "in",
+   "relation": "last_seen_in",
    "b": "Three Flags Sailing",
    "tier": "stated",
    "must_find": false
@@ -1545,7 +1545,7 @@
   {
    "id": "l071",
    "a": "Torg's Caravan",
-   "relation": "in",
+   "relation": "last_seen_in",
    "b": "The Wet Trout",
    "tier": "stated",
    "must_find": false,
@@ -1554,7 +1554,7 @@
   {
    "id": "l072",
    "a": "Torg's Caravan",
-   "relation": "in",
+   "relation": "last_seen_in",
    "b": "Easthaven",
    "tier": "stated",
    "must_find": false,
@@ -1563,7 +1563,7 @@
   {
    "id": "l073",
    "a": "Sephek Kaltro",
-   "relation": "in",
+   "relation": "last_seen_in",
    "b": "Easthaven",
    "tier": "stated",
    "must_find": false,
@@ -1598,7 +1598,7 @@
   {
    "id": "l077",
    "a": "Garret Velryn",
-   "relation": "in",
+   "relation": "last_seen_in",
    "b": "Kelvin's Cairn",
    "tier": "stated",
    "must_find": false,
@@ -1624,7 +1624,7 @@
   {
    "id": "l080",
    "a": "Imdra Arlaggath",
-   "relation": "in",
+   "relation": "works_in",
    "b": "Easthaven",
    "tier": "stated",
    "must_find": false
@@ -1632,7 +1632,7 @@
   {
    "id": "l081",
    "a": "Rinaldo",
-   "relation": "works_at",
+   "relation": "works_in",
    "b": "White Lady Inn",
    "tier": "stated",
    "must_find": false,
@@ -1761,7 +1761,7 @@
   {
    "id": "l096",
    "a": "Psi crystal",
-   "relation": "in",
+   "relation": "last_seen_in",
    "b": "The Beautiful Mine",
    "tier": "stated",
    "must_find": false,
@@ -1813,7 +1813,7 @@
   {
    "id": "l102",
    "a": "Jebidiah",
-   "relation": "in",
+   "relation": "works_in",
    "b": "Targos",
    "tier": "stated",
    "must_find": false
@@ -1838,7 +1838,7 @@
   {
    "id": "l105",
    "a": "Fizzlebomb",
-   "relation": "in",
+   "relation": "last_seen_in",
    "b": "Maer Dualdon",
    "tier": "stated",
    "must_find": false
@@ -1854,7 +1854,7 @@
   {
    "id": "l107",
    "a": "Veron Braig",
-   "relation": "works_at",
+   "relation": "works_in",
    "b": "The Blue Clam",
    "tier": "stated",
    "must_find": true
@@ -1888,7 +1888,7 @@
   {
    "id": "l111",
    "a": "Bruni Stonewake",
-   "relation": "works_at",
+   "relation": "works_in",
    "b": "The Beautiful Mine",
    "tier": "stated",
    "must_find": false,
@@ -1915,7 +1915,7 @@
   {
    "id": "l114",
    "a": "Trex",
-   "relation": "in",
+   "relation": "last_seen_in",
    "b": "The Beautiful Mine",
    "tier": "stated",
    "must_find": false
@@ -1923,7 +1923,7 @@
   {
    "id": "l115",
    "a": "Grek",
-   "relation": "in",
+   "relation": "last_seen_in",
    "b": "The Beautiful Mine",
    "tier": "stated",
    "must_find": false
@@ -1993,7 +1993,7 @@
   {
    "id": "l123",
    "a": "Dzaan",
-   "relation": "in",
+   "relation": "last_seen_in",
    "b": "Easthaven",
    "tier": "stated",
    "must_find": false
@@ -2010,7 +2010,7 @@
   {
    "id": "l125",
    "a": "Arveiaturace",
-   "relation": "in",
+   "relation": "lives_in",
    "b": "Reghed Glacier",
    "tier": "stated",
    "must_find": false,
@@ -2019,7 +2019,7 @@
   {
    "id": "l126",
    "a": "Arveiaturace",
-   "relation": "in",
+   "relation": "last_seen_in",
    "b": "Sea of Moving Ice",
    "tier": "stated",
    "must_find": false,
@@ -2060,7 +2060,7 @@
   {
    "id": "l131",
    "a": "Zhentarim",
-   "relation": "in",
+   "relation": "works_in",
    "b": "Targos",
    "tier": "stated",
    "must_find": false
@@ -2119,7 +2119,7 @@
   {
    "id": "l138",
    "a": "Roark",
-   "relation": "works_at",
+   "relation": "works_in",
    "b": "The Uphill Climb",
    "tier": "stated",
    "must_find": true
@@ -2151,7 +2151,7 @@
   {
    "id": "l142",
    "a": "Clan Battlehammer",
-   "relation": "in",
+   "relation": "works_in",
    "b": "Kelvin's Cairn",
    "tier": "stated",
    "must_find": false,
@@ -2282,7 +2282,7 @@
   {
    "id": "l158",
    "a": "Ten-Towns",
-   "relation": "in",
+   "relation": "last_seen_in",
    "b": "Icewind Dale",
    "tier": "stated",
    "must_find": true
@@ -2308,7 +2308,7 @@
   {
    "id": "l161",
    "a": "Okthandom Korran",
-   "relation": "in",
+   "relation": "last_seen_in",
    "b": "Icewind Dale",
    "tier": "inferred",
    "must_find": false
@@ -2409,7 +2409,7 @@
   {
    "id": "l172",
    "a": "Ice Troll",
-   "relation": "in",
+   "relation": "last_seen_in",
    "b": "Maer Dualdon",
    "tier": "stated",
    "must_find": false
@@ -2443,7 +2443,7 @@
   {
    "id": "l176",
    "a": "Thorin",
-   "relation": "works_at",
+   "relation": "works_in",
    "b": "The Beautiful Mine",
    "tier": "stated",
    "must_find": false,
