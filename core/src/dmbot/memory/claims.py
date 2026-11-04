@@ -479,23 +479,38 @@ def names_of(entities: Sequence[Mapping[str, Any]], aliases: Sequence[Mapping[st
     return Names({k: tuple(v.items()) for k, v in seen.items()}, hidden, roles)
 
 
+MAX_EXPANDED = 12  # claims one list claim may become: more is a sentence, not a list of names
+
+
 def expand_lists(claims: Sequence[Extracted], names: Names) -> tuple[list[Extracted], int]:
     """Claims whose subject or object is a list of names ("Aldmoor, Quillgate, Fenwick") as one
     claim for each part (#3383), so a list is never offered to the DM as one name. A part that is
     already known joins its entry as usual. Returns (the claims, how many lists were split): a
     count, never a name. A bare "and" splits only when every part is known or this same read
-    named each part alone (`list_names.split_list`)."""
+    named each part alone (`list_names.split_list`). A claim that would become more than
+    MAX_EXPANDED, or pair a name with itself, is kept as it was said or left out of the pairs;
+    the same claim twice (a part also said alone) is kept once."""
     alone = {name_key(n) for c in claims for n in (c.subject, c.object)}
     out: list[Extracted] = []
+    seen: set[tuple[str, str, str, tuple[str, ...]]] = set()
     split = 0
     for c in claims:
         subjects = split_list(c.subject, known=names.by_key, offered=alone - {name_key(c.subject)})
         objects = split_list(c.object, known=names.by_key, offered=alone - {name_key(c.object)})
-        if len(subjects) == 1 and len(objects) == 1:
+        if (len(subjects) == 1 and len(objects) == 1) or len(subjects) * len(
+            objects
+        ) > MAX_EXPANDED:
+            seen.add((name_key(c.subject), c.relationship, name_key(c.object), c.lines))
             out.append(c)
             continue
         split += 1
-        out.extend(replace(c, subject=s, object=o) for s in subjects for o in objects)
+        for s in subjects:
+            for o in objects:
+                key = (name_key(s), c.relationship, name_key(o), c.lines)
+                if name_key(s) == name_key(o) or key in seen:
+                    continue
+                seen.add(key)
+                out.append(replace(c, subject=s, object=o))
     return out, split
 
 
@@ -748,7 +763,7 @@ class ClaimStore:
             # First pass: the rules, with the names as they are. A claim that fails only for a
             # name DMbot does not know is a candidate for the linker.
             work: list[tuple[Extracted, str, list[str]]] = []  # claim, reason, unknown names
-            claims, lists = expand_lists(claims, names)
+            claims, lists = expand_lists(claims[:limit], names)
             if lists:
                 logger.info("name lists split: %d", lists)  # a count, never a name
             for claim in claims[:limit]:

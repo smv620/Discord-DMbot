@@ -97,6 +97,8 @@ from dmbot.memory.models import (
     AFFECTED,
     ALIAS_KINDS,
     BACKGROUND_SOURCE,
+    CLAIM_DROPPED,
+    CLAIM_PROPOSED,
     CONFIRMED,
     CREATURE_TYPE,
     DEED,
@@ -398,6 +400,7 @@ def hidden_old_pronoun(entity: Entity) -> bool:
 
 
 NOT_A_LIST = "That name is not a list of names."
+SPLIT_REASON = "split into separate names"  # a claim set aside by "These are separate names"
 SPELLING_TAKEN = "Pick another spelling."  # a new name that is another entry's secret name
 
 
@@ -2544,21 +2547,26 @@ class MemoryStore:
             if current["status"] != PROPOSED:
                 raise MemoryRuleError(NOT_FOUND)
             others = await w.select(ENTITIES, " AND status IN ('proposed', 'confirmed')")
-            held = {
-                lookup_key(str(a["text"]))
-                for a in await w.select(ALIASES, " AND status <> 'rejected'")
-            }
+            all_aliases = await w.select(ALIASES, " AND status <> 'rejected'")
+            held = {lookup_key(str(a["text"])) for a in all_aliases}
             parts = split_list(
                 str(current["name"]), known=held - {lookup_key(str(current["name"]))}
             )
             if len(parts) < 2:
                 raise MemoryRuleError(NOT_A_LIST)
             by_key: dict[str, str] = {}
-            for a in await w.select(ALIASES, " AND status <> 'rejected'"):
+            for a in all_aliases:
                 by_key.setdefault(str(a["key"]), str(a["entity_id"]))
             live = {str(e["id"]) for e in others}
             made: list[str] = []
             joined: list[str] = []
+            keep = set(parts)  # the parts that are entries now (claims are made only for those)
+            turned_down = {
+                str(a["key"]) for a in await w.select(ALIASES, " AND status = 'rejected'")
+            } | {
+                lookup_key(str(e["name"]))
+                for e in await w.select(ENTITIES, " AND status = 'rejected'")
+            }
             for part in parts:
                 key = lookup_key(part)
                 if by_key.get(key) in live:
@@ -2568,7 +2576,11 @@ class MemoryStore:
                 try:
                     check_named(kind, part)
                 except MemoryRuleError:
+                    keep.discard(part)
                     continue  # not a name DMbot can keep: that part is left out
+                if key in turned_down:
+                    keep.discard(part)
+                    continue  # the DM already said this is not a name: not asked again
                 row = await w.insert(
                     ENTITIES,
                     {
@@ -2602,9 +2614,49 @@ class MemoryStore:
                         await w.insert(
                             CLAIMS, {**claim, "id": new_id(), "subject": subject, "object": obj}
                         )
-                await w.delete(CLAIMS, claim["id"])
-            await w.update(ENTITIES, entity_id, {"status": REJECTED})
+                # (claims are not in the change log, so the original is kept, set aside, for Undo)
+                await w.update(
+                    CLAIMS, claim["id"], {"status": CLAIM_DROPPED, "reason": SPLIT_REASON}
+                )
+            # The list is turned down like any "Not a name" (its own cleanup, its other name too).
+            await w.update(ENTITIES, entity_id, {"status": REJECTED, **_note_cleared(current)})
+            for link in await w.select(PLAN_SAME_AS, " AND entity_id = %s", [entity_id]):
+                await w.delete(PLAN_SAME_AS, link["id"])
+            await _let_go_of_anchored(w, entity_id)
+            for alias in await w.select(ALIASES, " AND entity_id = %s", [entity_id]):
+                await w.update(ALIASES, alias["id"], {"status": REJECTED})
             return Written(SplitName(tuple(parts), tuple(made), tuple(joined)), w.batch)
+
+    async def undo_split(
+        self, guild_id: int, campaign_id: str, batch: int, name: str
+    ) -> Written[None]:
+        """Take back "These are separate names" (#3383): `undo` for the batch, and the waiting
+        claims it set aside (claims are not in the change log) come back as they were, with the
+        copies made for the parts removed. Refused, like any undo, once any part was answered.
+        `name` is the list as it was before the split."""
+
+        async def put_back(w: Changes) -> None:
+            key = lookup_key(name)
+            parts = set(split_list(name))
+            for claim in await w.select(
+                CLAIMS, " AND status = %s AND reason = %s", [CLAIM_DROPPED, SPLIT_REASON]
+            ):
+                subject, obj = lookup_key(str(claim["subject"])), lookup_key(str(claim["object"]))
+                if key not in (subject, obj):
+                    continue
+                subjects = parts if subject == key else {str(claim["subject"])}
+                objects = parts if obj == key else {str(claim["object"])}
+                for copy in await w.select(CLAIMS, " AND status = %s", [CLAIM_PROPOSED]):
+                    if (
+                        copy["relationship"] == claim["relationship"]
+                        and list(copy["lines"]) == list(claim["lines"])
+                        and str(copy["subject"]) in subjects
+                        and str(copy["object"]) in objects
+                    ):
+                        await w.delete(CLAIMS, copy["id"])
+                await w.update(CLAIMS, claim["id"], {"status": CLAIM_PROPOSED, "reason": ""})
+
+        return await self.undo(guild_id, campaign_id, batch, after=put_back)
 
     async def add_alias(
         self,

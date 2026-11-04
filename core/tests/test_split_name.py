@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dmbot.memory.models import PROPOSED, REJECTED, MemoryRuleError, TooLateToUndo
+from dmbot.memory.models import PROPOSED, REJECTED, MemoryRuleError, TooLateToUndo, new_id
 from tests.test_memory_store import GUILD_A, MemoryTest
 
 
@@ -53,3 +53,41 @@ class SplitWaitingName(MemoryTest):
         listed = await self.waiting("Aldmoor, Quillgate")
         with self.assertRaises(MemoryRuleError):
             await self.memory.split_waiting_name(GUILD_A, self.c, listed, source="extractor")
+
+    async def claim(self, subject: str, obj: str, status: str = "proposed") -> None:
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "INSERT INTO memory_claims (guild_id, campaign_id, id, subject, relationship,"
+                " object, details, how, lines, speaker_ids, source, prompt_version, model, status,"
+                " reason, session_started_at, created_at) VALUES (%s, %s, %s, %s, 'is in', %s,"
+                " '', 'player_said', ARRAY['1'], ARRAY[5]::bigint[],"
+                " 'extractor', 'v', 'm', %s, '', 1, 1)",
+                (GUILD_A, self.c, new_id(), subject, obj, status),
+            )
+
+    async def claims(self) -> list[tuple[str, str]]:
+        async with self.db.guild(GUILD_A) as conn:
+            cur = await conn.execute(
+                "SELECT subject, object FROM memory_claims WHERE campaign_id = %s"
+                " AND status = 'proposed'"
+                " ORDER BY subject, object",
+                (self.c,),
+            )
+            return [(r["subject"], r["object"]) for r in await cur.fetchall()]
+
+    async def test_waiting_claims_are_made_again_for_each_part_and_come_back_on_undo(self) -> None:
+        listed = await self.waiting("Aldmoor, Quillgate")
+        await self.claim("Aldmoor, Quillgate", "Fenwick")
+        written = await self.memory.split_waiting_name(GUILD_A, self.c, listed, source="dm")
+        self.assertEqual(await self.claims(), [("Aldmoor", "Fenwick"), ("Quillgate", "Fenwick")])
+        assert written.batch is not None
+        await self.memory.undo_split(GUILD_A, self.c, written.batch, "Aldmoor, Quillgate")
+        self.assertEqual(await self.claims(), [("Aldmoor, Quillgate", "Fenwick")])
+
+    async def test_a_part_the_dm_turned_down_is_not_asked_again(self) -> None:
+        refused = await self.waiting("Quillgate")
+        await self.memory.set_entity_status(GUILD_A, self.c, refused, REJECTED, source="dm")
+        listed = await self.waiting("Aldmoor, Quillgate")
+        written = await self.memory.split_waiting_name(GUILD_A, self.c, listed, source="dm")
+        self.assertEqual(written.value.made, ("Aldmoor",))
+        self.assertEqual(await self.names(PROPOSED), ["Aldmoor"])

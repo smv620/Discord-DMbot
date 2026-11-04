@@ -48,30 +48,30 @@ def split_list(text: str, known: Collection[str] = (), offered: Collection[str] 
     whole = " ".join(text.split())
     if not whole or name_key(whole) in {name_key(k) for k in known}:
         return [whole] if whole else []
-    parts = [p for p in _HARD.split(whole) if p]
-    hard = len(parts) > 1
-    if not hard:
+    keys = {name_key(k) for k in (*known, *offered)}
+    hard_parts = [p for p in _HARD.split(whole) if p]
+    hard = len(hard_parts) > 1
+    if hard:  # "A, B, and C" and "A, B and C" are three: the last pair is one list too
+        parts: list[str] = []
+        for p in hard_parts:
+            p = _LEADING_JOIN.sub("", p)
+            sub = [q for q in _SOFT.split(p) if q]
+            parts.extend(sub if len(sub) > 1 and all(_name_like(q) for q in sub) else [p])
+    else:
         parts = [p for p in _SOFT.split(whole) if p]
-    else:  # "A, B, and C" is three: drop the joiner in front of the last part
-        parts = [_LEADING_JOIN.sub("", p) for p in parts]
     if len(parts) < 2 or len(parts) > MAX_PARTS:
         return [whole]
     if not all(_name_like(p) for p in parts):
         return [whole]
-    if not hard:
-        keys = {name_key(k) for k in (*known, *offered)}
-        if not all(name_key(p) in keys for p in parts):
-            return [whole]
-    # an "and" list that has a comma too ("A, B and C"): split the last pair as well
-    out: list[str] = []
+    if not hard and not all(name_key(p) in keys for p in parts):
+        return [whole]
+    # A part with a small joining word in it ("City of Splendors" in "Waterdeep, City of
+    # Splendors") is more likely a title or a description than a name of its own: it splits only
+    # when the campaign or the same read holds that part on its own.
     for p in parts:
-        sub = [q for q in _SOFT.split(p) if q]
-        if hard and len(sub) > 1 and all(_name_like(q) for q in sub):
-            keys = {name_key(k) for k in (*known, *offered)}
-            out.extend(sub if all(name_key(q) in keys for q in sub) else [p])
-        else:
-            out.append(p)
+        if any(w in _JOINERS for w in p.split()) and name_key(p) not in keys:
+            return [whole]
     unique: dict[str, str] = {}
-    for p in out:
+    for p in parts:
         unique.setdefault(name_key(p), p)
     return list(unique.values())
