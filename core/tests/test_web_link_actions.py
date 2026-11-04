@@ -1537,7 +1537,10 @@ class TheReveal(Editing):
         sister = await self.memory.add_unnamed(
             self.g, self.one.id, what="sister", role="sibling", anchor_id=self.rook
         )
-        async with self.db.guild(self.g) as conn:  # (as the owner's campaign had them: confirmed, still unnamed)
+        # (as the owner's campaign had them: confirmed, still unnamed)
+        async with self.db.guild(
+            self.g
+        ) as conn:  # (as the owner's campaign had them: confirmed, still unnamed)
             await conn.execute(
                 "UPDATE memory_entities SET status = 'confirmed' WHERE id = %s", (sister.entity.id,)
             )
