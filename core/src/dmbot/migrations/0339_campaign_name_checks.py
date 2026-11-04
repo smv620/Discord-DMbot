@@ -9,10 +9,10 @@ from __future__ import annotations
 # each recap: one names-to-check list for each recap that has names waiting, the same list and card
 # as on the recap's own page. This door is the campaign-wide part: the recaps (by session time) that
 # have at least one proposed name waiting, with how many, for a DM of the campaign only (anyone else
-# gets NULL). It filters as `dmbot_recap_names_read` does (a proposed name, none with a secret
-# spelling) and only for recaps that exist, so a link made from it always opens. The count is a hint
-# for ordering; each recap's own list decides what the card shows. No names, lines or any text come
-# back, and nothing is written.
+# gets NULL). It filters as `dmbot_recap_names_read` does in SQL (a proposed name, none with a secret
+# spelling) and only for recaps that exist, so a link made from it always opens. The page's own read
+# also hides old pronouns in Python, which SQL cannot, so the count is an upper bound: each recap's
+# own list decides what the card shows. No names, lines or any text come back, nothing is written.
 CAMPAIGN_NAME_CHECKS = r"""
     CREATE FUNCTION dmbot_campaign_name_checks(g BIGINT, c TEXT) RETURNS JSONB
     LANGUAGE plpgsql SECURITY DEFINER AS $fn$

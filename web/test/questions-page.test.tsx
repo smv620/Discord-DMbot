@@ -185,13 +185,13 @@ describe("new names to check, answered on the page (#3438)", () => {
 
   it("offers to answer them here, not a link away", async () => {
     const { line } = await openNames();
-    expect(within(line).getByRole("button", { name: w.showHere })).toBeTruthy();
+    expect(within(line).getByRole("button", { name: `${w.showHere}: ${kindWords("names").label}` })).toBeTruthy();
     expect(within(line).queryByRole("link")).toBeNull();
   });
 
   it("shows each recap with names waiting as a session heading with its own list", async () => {
     const { api, line } = await openNames();
-    fireEvent.click(within(line).getByRole("button", { name: w.showHere }));
+    fireEvent.click(within(line).getByRole("button", { name: `${w.showHere}: ${kindWords("names").label}` }));
     expect(await within(line).findByRole("heading", { name: w.sessionOf("3 January 2027") })).toBeTruthy();
     expect(api.calls).toContain("campaignNameChecks:100.cmp1");
     await waitFor(() => expect(api.calls.some((c) => c.startsWith("nameChecks:100.cmp1.100"))).toBe(true));
@@ -199,11 +199,11 @@ describe("new names to check, answered on the page (#3438)", () => {
 
   it("hides them again, and says what it is doing while the read is made", async () => {
     const { line } = await openNames();
-    const button = within(line).getByRole("button", { name: w.showHere });
+    const button = within(line).getByRole("button", { name: `${w.showHere}: ${kindWords("names").label}` });
     fireEvent.click(button);
     expect(button.getAttribute("aria-expanded")).toBe("true");
     expect(within(line).getByText(w.loading)).toBeTruthy();
-    fireEvent.click(within(line).getByRole("button", { name: w.hideHere }));
+    fireEvent.click(within(line).getByRole("button", { name: `${w.hideHere}: ${kindWords("names").label}` }));
     expect(within(line).queryByRole("heading")).toBeNull();
   });
 
@@ -211,7 +211,7 @@ describe("new names to check, answered on the page (#3438)", () => {
     const api = mockApi("table");
     api.campaignNameChecks = async () => ({ recaps: [] });
     const { line } = await openNames(api);
-    fireEvent.click(within(line).getByRole("button", { name: w.showHere }));
+    fireEvent.click(within(line).getByRole("button", { name: `${w.showHere}: ${kindWords("names").label}` }));
     expect(await within(line).findByText(w.noneHere)).toBeTruthy();
   });
 
@@ -221,7 +221,7 @@ describe("new names to check, answered on the page (#3438)", () => {
       throw new Error("down");
     };
     const { line } = await openNames(api);
-    fireEvent.click(within(line).getByRole("button", { name: w.showHere }));
+    fireEvent.click(within(line).getByRole("button", { name: `${w.showHere}: ${kindWords("names").label}` }));
     expect(await within(line).findByText(w.failed)).toBeTruthy();
   });
 
@@ -233,8 +233,7 @@ describe("new names to check, answered on the page (#3438)", () => {
     expect(within(line).queryByRole("button")).toBeNull();
     cleanup();
     names.on = true;
-    const old = mockApi("table");
-    old.campaignNameChecks = undefined;
+    const { campaignNameChecks: _gone, ...old } = mockApi("table");
     render(<Questions api={old} />);
     const again = (await screen.findByText(`${kindWords("names").label} · 3`)).closest("li") as HTMLElement;
     expect(within(again).getByRole("link")).toBeTruthy();

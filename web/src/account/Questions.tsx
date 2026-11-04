@@ -72,6 +72,8 @@ function Campaign({ campaign, serverNow, api }: { campaign: QuestionCampaign; se
                         type="button"
                         class="button secondary"
                         aria-expanded={open.has(k.kind)}
+                        aria-controls={`q-${campaign.ref}-${k.kind}`}
+                        aria-label={`${open.has(k.kind) ? words.hideHere : words.showHere}: ${w.label}`}
                         onClick={() =>
                           setOpen((was) => {
                             const next = new Set(was);
@@ -82,7 +84,7 @@ function Campaign({ campaign, serverNow, api }: { campaign: QuestionCampaign; se
                       >
                         {open.has(k.kind) ? words.hideHere : words.showHere}
                       </button>
-                      {open.has(k.kind) && <QuestionsNames api={api} campaignRef={campaign.ref} />}
+                      {open.has(k.kind) && <QuestionsNames api={api} campaignRef={campaign.ref} id={`q-${campaign.ref}-${k.kind}`} />}
                     </>
                   ) : w.how !== "discord" && w.to ? (
                     <a class="button secondary" href={href(campaign.ref, w.to)}>

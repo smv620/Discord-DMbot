@@ -47,7 +47,8 @@ def _entity_id(value: object) -> str:
 
 async def read_campaign_checks(db: Database, session: Session, ref: str) -> dict[str, Any]:
     """The recaps of one campaign with names waiting to be checked (#3438), oldest session first:
-    `{recaps: [{ref, at, count}]}`, ids, session times and counts only. The Questions page opens
+    `{recaps: [{ref, at, count}]}`, ids, session times and counts only (the count is an upper bound:
+    `read_checks` also hides old pronouns, which the database cannot). The Questions page opens
     each recap's own list (`read_checks`), so the card and its answers are the recap page's. Only a
     DM of the campaign; anyone else gets "not found"."""
     guild_id, campaign_id = _parse(ref)

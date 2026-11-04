@@ -13,7 +13,7 @@ import LazyPanel from "./LazyPanel";
 
 const day = (at: number): string => formatDate(new Date(at * 1000).toISOString().slice(0, 10));
 
-export default function QuestionsNames({ api, campaignRef }: { api: AccountApi; campaignRef: string }) {
+export default function QuestionsNames({ api, campaignRef, id }: { api: AccountApi; campaignRef: string; id?: string }) {
   const [list, setList] = useState<CampaignNameChecks | null>(null);
   const [failed, setFailed] = useState(false);
   useEffect(() => {
@@ -28,27 +28,27 @@ export default function QuestionsNames({ api, campaignRef }: { api: AccountApi; 
     };
   }, [api, campaignRef]);
 
-  if (failed)
-    return (
-      <p class="warn" role="alert">
-        {words.failed}
-      </p>
-    );
-  if (list === null)
-    return (
-      <p class="muted" role="status">
-        {words.loading}
-      </p>
-    );
-  if (list.recaps.length === 0) return <p class="small muted">{words.noneHere}</p>;
+  // One wrapper with the id the toggle points at (aria-controls), whatever the list is saying.
   return (
-    <div class="stack">
-      {list.recaps.map((r) => (
-        <section class="stack" key={r.ref} aria-label={words.sessionOf(day(r.at))}>
-          <h3>{words.sessionOf(day(r.at))}</h3>
-          <LazyPanel load={() => import("./RecapNameChecks")} what="the names to check" props={{ api, refId: r.ref }} />
-        </section>
-      ))}
+    <div id={id} class="stack">
+      {failed ? (
+        <p class="warn" role="alert">
+          {words.failed}
+        </p>
+      ) : list === null ? (
+        <p class="muted" role="status">
+          {words.loading}
+        </p>
+      ) : list.recaps.length === 0 ? (
+        <p class="small muted">{words.noneHere}</p>
+      ) : (
+        list.recaps.map((r) => (
+          <section class="stack" key={r.ref} aria-labelledby={`qn-${r.ref}`}>
+            <h3 id={`qn-${r.ref}`}>{words.sessionOf(day(r.at))}</h3>
+            <LazyPanel load={() => import("./RecapNameChecks")} what="the names to check" props={{ api, refId: r.ref }} />
+          </section>
+        ))
+      )}
     </div>
   );
 }
