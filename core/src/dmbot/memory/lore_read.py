@@ -1112,4 +1112,6 @@ async def read_lore(
         stats.unnamed_listed, len(unnamed),
         ", still cut off" if cut else "",
     )  # fmt: skip
+    # "the Ash Wolves, Tavin and Mira": a list a group of this read leads is its members (#3383)
+    links = [*links, *bg.group_connections([names], known_keys)]
     return LoreRead(names, links, cut, stats, known, secrets, unnamed)

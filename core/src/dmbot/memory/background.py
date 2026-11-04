@@ -617,12 +617,24 @@ def in_the_rules(name: str, kind: str, target: str, fallback: str) -> bool:
     return False
 
 
+def _led_by_a_group(item: Found, parts: list[str], others: dict[str, Found]) -> Found | None:
+    """The group this list is led by (#3383, part 2): its first part is another name of the same
+    read, of the kind faction ("the Ash Wolves, Tavin and Mira": the group, then its members)."""
+    if len(parts) < 2:
+        return None
+    group = others.get(name_key(parts[0]))
+    return group if group is not None and group.kind == "faction" and group is not item else None
+
+
 def _split_lists(answers: Iterable[list[Found]], held: Collection[str]) -> list[list[Found]]:
     """A name that is a list ("Aldmoor, Quillgate, Fenwick") as one name for each part (#3383),
     each with the list's kind and quote, so a list is never offered as one name. A bare "and"
-    splits only when each part is held or another entry of the same read names it alone."""
+    splits only when each part is held or another entry of the same read names it alone. A list
+    led by a group of the same read ("the Ash Wolves, Tavin and Mira") gives its members as
+    people (`group_connections` makes their ties)."""
     pieces = [list(a) for a in answers]
     alone = {name_key(i.name) for found in pieces for i in found}
+    named = {name_key(i.name): i for found in pieces for i in found}
     out: list[list[Found]] = []
     for found in pieces:
         kept: list[Found] = []
@@ -630,9 +642,30 @@ def _split_lists(answers: Iterable[list[Found]], held: Collection[str]) -> list[
             parts = split_list(item.name, known=held, offered=alone - {name_key(item.name)})
             if len(parts) == 1:
                 kept.append(item)
+            elif _led_by_a_group(item, parts, named) is not None:
+                kept.extend(Found(p, "npc", (), (), item.quote) for p in parts[1:])
             else:
                 kept.extend(Found(p, item.kind, (), (), item.quote) for p in parts)
         out.append(kept)
+    return out
+
+
+def group_connections(
+    answers: Iterable[list[Found]], held: Collection[str] = ()
+) -> list[Connection]:
+    """The `member_of` ties of every list a group of the same read leads (#3383, part 2): "the Ash
+    Wolves, Tavin and Mira" gives Tavin and Mira each a tie to the Ash Wolves, in the words of the
+    list's own quote. Nothing else is guessed: a list no group of this read leads gives none."""
+    pieces = [list(a) for a in answers]
+    alone = {name_key(i.name) for found in pieces for i in found}
+    named = {name_key(i.name): i for found in pieces for i in found}
+    out: list[Connection] = []
+    for found in pieces:
+        for item in found:
+            parts = split_list(item.name, known=held, offered=alone - {name_key(item.name)})
+            group = _led_by_a_group(item, parts, named) if len(parts) > 1 else None
+            if group is not None:
+                out.extend(Connection(p, "member_of", group.name, item.quote) for p in parts[1:])
     return out
 
 

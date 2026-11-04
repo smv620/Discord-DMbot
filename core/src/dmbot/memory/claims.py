@@ -45,6 +45,7 @@ from dmbot.memory.models import (
     HOW_PLAN,
     HOWS,
     NAME_MAX,
+    PLAYER_CHARACTER,
     PROPOSED,
     Flag,
     MemoryRuleError,
@@ -117,6 +118,10 @@ NAME_FIRST = "Say what the new name is first (in Check new names)."
 WAITING_NAME_REASON = "waiting for its name to be proposed"
 WAITING_NAME_CLAIMS = 500  # how many such claims one campaign keeps; past that they are let go
 NEW_NAME_LIMIT = 20  # new names one session sends to the DM; the rest wait for next time
+# A claim with a player character at one end is never dropped unseen (#3238): when a name in it
+# could mean two entries, it is kept for the DM's answer, with its lines, instead of being dropped.
+UNPLACED_REASON = "kept for your answer: a name in it could be two different entries"
+UNPLACED_LIMIT = 20  # such claims one session keeps; the rest are counted and not stored
 SESSION_CLAIMS = 3000  # claims one session may hand to `propose` at once
 CONCEPT = "concept"  # a proposed entry whose kind is not known yet: the DM says what it is
 
@@ -204,6 +209,10 @@ class Proposed:
     new: tuple[str, ...] = ()  # those names as said (for the DM screen; never for the log)
     joined: int = 0  # spellings added to a name already waiting for the DM
     deferred: int = 0  # claims left for next time: their name is past the session's limit
+    # About the player characters (#3238), counts only:
+    pc_named: int = 0  # new names made for a claim about a player character, past the limit
+    kept_unplaced: int = 0  # claims about a player character kept for the DM's answer
+    unplaced_over_cap: int = 0  # ... and those past the session's cap, counted and not stored
 
 
 @dataclass(frozen=True, slots=True)
@@ -771,6 +780,7 @@ class ClaimStore:
         with a name DMbot does not know is dropped (nothing waits for the name), so it can never
         become a new name later (a reading never makes one, #2412)."""
         waiting = dropped = repeated = 0
+        kept_unplaced = unplaced_over_cap = 0
         why: Counter[str] = Counter()
         async with self._store._write(guild_id, campaign_id, EXTRACTOR) as w:
             onto = await _load_ontology(w)
@@ -797,9 +807,26 @@ class ClaimStore:
                 if r["reason"] == WAITING_NAME_REASON and make_names
             ]  # fmt: skip  (a pass that makes no names leaves earlier waiting claims alone)
 
+            players = {
+                str(e["id"])
+                for e in entities
+                if e.get("role") == PLAYER_CHARACTER and e["status"] in (PROPOSED, CONFIRMED)
+            }
+
+            def about_a_player(claim: Extracted) -> bool:
+                """Does a player character stand at one end of the claim (#3238)?"""
+                for n in (claim.subject, claim.object):
+                    found = names.by_key.get(name_key(n), ())
+                    if len(found) == 1 and found[0][0] in players:
+                        return True
+                return False
+
             def judged(claim: Extracted) -> str:
                 cited = [speakers.get(ref) for ref in claim.lines]
-                return judge(claim, onto, names, cited, opted_in, tally, dms)
+                reason = judge(claim, onto, names, cited, opted_in, tally, dms)
+                if reason == TWO_ENTRIES_REASON and about_a_player(claim):
+                    return UNPLACED_REASON  # never dropped unseen: kept for the DM's answer
+                return reason
 
             # First pass: the rules, with the names as they are. A claim that fails only for a
             # name DMbot does not know is a candidate for the linker.
@@ -892,7 +919,18 @@ class ClaimStore:
             chosen_old, left_old = link.most_mentioned(old_mentions, new_names)
             fresh = [name_key(n) for _, _, unknown in work for n in unknown]
             fresh = [m for m in fresh if m not in chosen_old]
-            chosen_new, left_new = link.most_mentioned(fresh, max(0, new_names - len(chosen_old)))
+            # A new name in a claim about a player character is always made, ahead of the limit
+            # (#3238): a family member narrated about one of the table's characters is likely to
+            # matter later. The rest share what is left of the limit.
+            about_players = {
+                name_key(n) for claim, _, unknown in work if about_a_player(claim) for n in unknown
+            }
+            for_players = list(dict.fromkeys(m for m in fresh if m in about_players))
+            others = [m for m in fresh if m not in about_players]
+            chosen_new, left_new = link.most_mentioned(
+                others, max(0, new_names - len(chosen_old) - len(for_players))
+            )
+            chosen_new = [*for_players, *chosen_new]
             chosen = [*chosen_old, *chosen_new]
             left = bool(left_old or left_new)
             deferred = 0
@@ -955,6 +993,22 @@ class ClaimStore:
                 if key in asked or (*key, reason) in refused:
                     repeated += 1
                     continue
+                if reason == UNPLACED_REASON:
+                    # kept for the DM's answer (#3238), up to the session's cap; past it the claim
+                    # is counted and not stored, so a runaway read cannot fill the DM's list
+                    if kept_unplaced >= UNPLACED_LIMIT:
+                        unplaced_over_cap += 1
+                        continue
+                    kept_unplaced += 1
+                    waiting += 1
+                    asked.add(key)
+                    rows.append(
+                        self._row(
+                            claim, cited, prompt_version, model, session_started_at, w.now,
+                            status=CLAIM_PROPOSED, reason=reason,
+                        )
+                    )  # fmt: skip
+                    continue
                 if reason:
                     dropped += 1
                     why[reason] += 1
@@ -972,7 +1026,18 @@ class ClaimStore:
                 )  # fmt: skip
             await w.insert_many(CLAIMS, rows)
         return Proposed(
-            waiting, dropped, repeated, malformed, dict(why), len(new), tuple(new), joined, deferred
+            waiting,
+            dropped,
+            repeated,
+            malformed,
+            dict(why),
+            len(new),
+            tuple(new),
+            joined,
+            deferred,
+            len(for_players),
+            kept_unplaced,
+            unplaced_over_cap,
         )
 
     @staticmethod
@@ -1126,6 +1191,18 @@ class ClaimStore:
                     },
                 )
             return len(stale)
+
+    async def unplaced_count(self, guild_id: int, campaign_id: str) -> int:
+        """How many claims about the player characters are kept for the DM's answer (#3238), for the
+        count the import or recap result and the names-to-check list show. A count only."""
+        async with self._store._read(guild_id, campaign_id) as scope:
+            cur = await scope.conn.execute(
+                "SELECT count(*) AS n FROM memory_claims WHERE guild_id = %s AND campaign_id = %s"
+                " AND status = 'proposed' AND reason = %s",
+                (*scope.ids, UNPLACED_REASON),
+            )
+            row = await cur.fetchone()
+        return int(row["n"]) if row else 0
 
     async def waiting(
         self, guild_id: int, campaign_id: str, *, opted_in: Collection[int], limit: int = 200

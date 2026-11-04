@@ -102,7 +102,7 @@ STORE = {
     "recheck_definitions": CONFIRMED_ONLY,
     "add_relation_in": "writes: `placing` makes a guess connection here (fresh, leave, made_by)",
     "update_relation": "writes: the DM's Keep or No",
-    "group_hints": "member_of ties for the DM's own name question; names only, not for players",
+    "group_hints": "confirmed member_of ties for the DM's name question; names only",
     "_confirm_group_memberships": "writes: confirms the DM's own proposed member_of; no reading",
     "_settle_whereabouts": "writes: ends an item's other whereabouts; shows players nothing",
     "pinned_connections": CONFIRMED_ONLY,
