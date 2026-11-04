@@ -493,7 +493,7 @@ class GroupHint:
     group_id: str
     group_name: str
     members: tuple[str, ...]
-    new: tuple[str, ...]
+    others: tuple[str, ...]  # listed names that are not (yet) members of it
 
 
 @dataclass(frozen=True, slots=True)
@@ -506,6 +506,8 @@ class GroupJoined:
     parts: tuple[str, ...]
     joined: tuple[str, ...]
     made: tuple[str, ...]
+    # Listed names left out: a known entry that is not a character, or a name DMbot can't keep.
+    skipped: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

@@ -38,7 +38,7 @@ class GroupOfNames(_Base):
         group = await self.wolves("Tavin", "Mira")
         listed = await self.waiting("Tavin and Mira")
         hints = await self.memory.group_hints(GUILD_A, self.c, listed)
-        self.assertEqual([(h.group_id, h.members, h.new) for h in hints],
+        self.assertEqual([(h.group_id, h.members, h.others) for h in hints],
                          [(group, ("Tavin", "Mira"), ())])  # fmt: skip
 
     async def test_no_hint_when_no_group_fits_or_it_is_one_name(self) -> None:
@@ -82,7 +82,7 @@ class GroupOfNames(_Base):
         out, lists = claims.expand_lists([claim], names)
         self.assertEqual((out, lists), ([claim], 0))
 
-    async def test_a_new_part_is_a_waiting_name_with_the_membership_decided(self) -> None:
+    async def test_a_new_part_takes_its_membership_when_its_name_is_confirmed(self) -> None:
         group = await self.wolves("Tavin")
         listed = await self.waiting("Tavin and Bram")
         done = await self.memory.join_group(GUILD_A, self.c, listed, group, source="dm")
@@ -90,12 +90,37 @@ class GroupOfNames(_Base):
         self.assertEqual(await self.names(PROPOSED), ["Bram"])
         data = await self.memory.lookup_data(GUILD_A, self.c)
         bram = next(e for e in data.entities if e.name == "Bram")
-        ties = [r for r in await self.memory.relations(GUILD_A, self.c, entity_id=bram.id)]
+        waiting = await self.memory.relations(GUILD_A, self.c, entity_id=bram.id)
+        # held as a proposal while the name waits: never a fact for a name the DM may refuse
+        self.assertEqual([(r.predicate, r.status) for r in waiting], [("member_of", PROPOSED)])
+        await self.memory.set_entity_status(GUILD_A, self.c, bram.id, CONFIRMED, source="dm")
+        ties = await self.memory.relations(GUILD_A, self.c, entity_id=bram.id)
         self.assertEqual([(r.predicate, r.object_id, r.status) for r in ties],
                          [("member_of", group, CONFIRMED)])  # fmt: skip
-        # turned down, the membership goes with the name
+
+    async def test_a_turned_down_part_takes_its_membership_with_it(self) -> None:
+        group = await self.wolves("Tavin")
+        await self.memory.join_group(
+            GUILD_A, self.c, await self.waiting("Tavin and Bram"), group, source="dm"
+        )
+        data = await self.memory.lookup_data(GUILD_A, self.c)
+        bram = next(e for e in data.entities if e.name == "Bram")
         await self.memory.set_entity_status(GUILD_A, self.c, bram.id, REJECTED, source="dm")
         self.assertEqual(await self.memory.relations(GUILD_A, self.c, entity_id=bram.id), [])
+
+    async def test_a_waiting_claim_about_the_list_now_means_the_group(self) -> None:
+        group = await self.wolves("Tavin", "Mira")
+        listed = await self.waiting("Tavin and Mira")
+        await self.memory.join_group(GUILD_A, self.c, listed, group, source="dm")
+        data = await self.memory.lookup_data(GUILD_A, self.c)
+        names = claims.names_of(
+            [{"id": e.id, "name": e.name, "type": e.type} for e in data.entities],
+            [
+                {"entity_id": a.entity_id, "key": lookup_key(a.text), "secret": a.secret}
+                for a in data.aliases
+            ],
+        )
+        self.assertEqual(names.one("Tavin and Mira"), (group, "faction"))
 
     async def test_they_are_a_group_makes_the_group_the_members_and_the_alias(self) -> None:
         listed = await self.waiting("Tavin and Mira")
@@ -118,6 +143,36 @@ class GroupOfNames(_Base):
         assert done.batch is not None
         await self.memory.undo(GUILD_A, self.c, done.batch)
         self.assertEqual(await self.snapshot(), before)
+
+    async def test_the_best_fit_comes_first_and_secret_or_hidden_groups_give_no_hint(self) -> None:
+        wolves = await self.wolves("Tavin", "Mira")
+        pack = await self.add("The Pack", type="faction", status=CONFIRMED)
+        data = await self.memory.lookup_data(GUILD_A, self.c)
+        tavin = next(e.id for e in data.entities if e.name == "Tavin")
+        await self.relate(tavin, "member_of", pack, status=CONFIRMED)
+        hints = await self.memory.group_hints(GUILD_A, self.c, await self.waiting("Tavin and Mira"))
+        self.assertEqual([h.group_id for h in hints], [wolves, pack])  # all of them, then one
+        await self.memory.set_hidden_from_players(GUILD_A, self.c, wolves, True, source="dm")
+        hints = await self.memory.group_hints(GUILD_A, self.c, await self.waiting("Mira and Tavin"))
+        self.assertEqual([h.group_id for h in hints], [pack])
+
+    async def test_a_known_entry_that_is_not_a_character_is_skipped_and_said_so(self) -> None:
+        group = await self.wolves("Tavin")
+        await self.add("Aldmoor", type="place", status=CONFIRMED)
+        done = await self.memory.join_group(
+            GUILD_A, self.c, await self.waiting("Tavin and Aldmoor"), group, source="dm"
+        )
+        self.assertEqual((done.value.joined, done.value.skipped), (("Tavin",), ("Aldmoor",)))
+
+    async def test_only_a_group_of_people_is_a_group_and_a_list_of_places_is_not(self) -> None:
+        group = await self.wolves("Tavin")
+        not_a_group = await self.add("Aldmoor", type="place", status=CONFIRMED)
+        listed = await self.waiting("Tavin and Bram")
+        with self.assertRaises(MemoryRuleError):
+            await self.memory.join_group(GUILD_A, self.c, listed, not_a_group, source="dm")
+        places = await self.add("Aldmoor, Quillgate", type="place", status=PROPOSED)
+        with self.assertRaises(MemoryRuleError):
+            await self.memory.join_group(GUILD_A, self.c, places, group, source="dm")
 
     async def test_refusals_change_nothing(self) -> None:
         group = await self.wolves("Tavin")

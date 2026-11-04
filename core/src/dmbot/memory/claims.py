@@ -486,17 +486,15 @@ def names_of(entities: Sequence[Mapping[str, Any]], aliases: Sequence[Mapping[st
 MAX_EXPANDED = 12  # claims one list claim may become: more is a sentence, not a list of names
 
 
-def _group_led(
-    subjects: list[str], objects: list[str], names: Names
-) -> tuple[str, list[str]] | None:
-    """(group, members) when the claim's subject or object is a list whose first part is a known
-    group and whose other parts are names; None otherwise."""
-    for parts in (subjects, objects):
-        if len(parts) < 2:
-            continue
-        found = names.by_key.get(name_key(parts[0]), ())
-        if len(found) == 1 and found[0][1] == "faction":
-            return parts[0], parts[1:]
+def _group_led(subjects: list[str], names: Names) -> tuple[str, list[str]] | None:
+    """(group, members) when the claim's subject is a list whose first part is a known group and
+    whose other parts are names; None otherwise. Only the subject side reads as membership:
+    "A met the Ash Wolves, Tavin" says nothing about who belongs."""
+    if len(subjects) < 2 or len(subjects) - 1 > MAX_EXPANDED:
+        return None
+    found = names.by_key.get(name_key(subjects[0]), ())
+    if len(found) == 1 and found[0][1] == "faction":
+        return subjects[0], subjects[1:]
     return None
 
 
@@ -515,7 +513,7 @@ def expand_lists(claims: Sequence[Extracted], names: Names) -> tuple[list[Extrac
     for c in claims:
         subjects = split_list(c.subject, known=names.by_key, offered=alone - {name_key(c.subject)})
         objects = split_list(c.object, known=names.by_key, offered=alone - {name_key(c.object)})
-        led = _group_led(subjects, objects, names)
+        led = _group_led(subjects, names)
         if led is not None:
             # "the Ash Wolves, Tavin and Mira": a known group followed by its members. The members
             # are proposed as members of it (#3383, part 2); the list is not a name.

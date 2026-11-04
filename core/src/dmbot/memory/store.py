@@ -2507,6 +2507,19 @@ class MemoryStore:
             )
             return {str(r["key"]) for r in await cur.fetchall()}
 
+    async def _confirm_group_memberships(self, w: Changes, entity_id: str) -> None:
+        """A name the DM just confirmed takes the memberships the group button decided for it
+        (#3383, part 2): a `member_of` the DM proposed for it while it waited becomes a fact."""
+        for r in await w.select(
+            RELATIONS,
+            " AND subject_id = %s AND predicate = 'member_of' AND status = 'proposed'"
+            " AND source = %s",
+            [entity_id, DM],
+        ):
+            await self.add_relation_in(
+                w, entity_id, "member_of", str(r["object_id"]), confidence=1.0, status=CONFIRMED
+            )
+
     async def set_entity_status(
         self, guild_id: int, campaign_id: str, entity_id: str, status: str, *, source: str
     ) -> Written[Entity]:
@@ -2519,6 +2532,8 @@ class MemoryStore:
                 entity_id,
                 {"status": status, **(_note_cleared(current) if status != PROPOSED else {})},
             )
+            if status == CONFIRMED and source == DM:
+                await self._confirm_group_memberships(w, entity_id)
             await _forget_quotes(
                 w, [entity_id] if status != PROPOSED and _note_cleared(current) else []
             )
@@ -2681,13 +2696,23 @@ class MemoryStore:
                 str(e["id"]): e
                 for e in await scope.select(ENTITIES, " AND status IN ('proposed', 'confirmed')")
             }
-            by_key = {str(a["key"]): str(a["entity_id"]) for a in aliases}
+            by_key: dict[str, str] = {}
+            for a in aliases:
+                by_key.setdefault(str(a["key"]), str(a["entity_id"]))  # (as `_join_group_in`)
             ids = {p: by_key.get(lookup_key(p)) for p in parts}
+            # Only what is plain to everyone: a secret membership or a group hidden from the
+            # players never gives a hint, so the hint can't spoil what the question would show.
             member_rows = await scope.select(
-                RELATIONS, " AND predicate = 'member_of' AND status IN ('proposed', 'confirmed')"
+                RELATIONS,
+                " AND predicate = 'member_of' AND status IN ('proposed', 'confirmed')"
+                " AND NOT secret AND NOT unrevealed",
             )
             groups = [
-                e for e in entities.values() if e["type"] == "faction" and e["status"] == CONFIRMED
+                e
+                for e in entities.values()
+                if e["type"] == "faction"
+                and e["status"] == CONFIRMED
+                and not e.get("hidden_from_players")
             ]
             hints: list[GroupHint] = []
             for g in groups:
@@ -2755,6 +2780,8 @@ class MemoryStore:
     ) -> GroupJoined:
         """The shared body of `join_group` and `make_group` inside an open write."""
         listed = str(current["name"])
+        if current["type"] in ("place", "item", "event"):
+            raise MemoryRuleError(NOT_A_LIST)  # a list of places or things is no group of people
         aliases = await w.select(ALIASES, " AND status <> 'rejected'")
         held = {lookup_key(str(a["text"])) for a in aliases}
         parts = split_list(listed, known=held - {lookup_key(listed)}, dm=True)
@@ -2789,20 +2816,26 @@ class MemoryStore:
         turned_down = {str(a["key"]) for a in await w.select(ALIASES, " AND status = 'rejected'")}
         joined: list[str] = []
         made: list[str] = []
+        skipped: list[str] = []
+        own_keys = {str(a["key"]) for a in aliases if str(a["entity_id"]) == str(current["id"])}
         for part in parts:
             pkey = lookup_key(part)
             member_id = by_key.get(pkey)
             if member_id in live and member_id != str(current["id"]):
                 if live[member_id]["type"] != "character":
-                    continue  # a place or a thing is not a member
+                    skipped.append(part)  # a place or a thing is not a member
+                    continue
                 joined.append(part)
+                waiting = False
             else:
                 try:
                     check_named("character", part)
                 except MemoryRuleError:
+                    skipped.append(part)
                     continue
-                if pkey in turned_down and pkey != key:
-                    continue  # the DM already said this is not a name
+                if pkey in turned_down and pkey not in own_keys:
+                    skipped.append(part)  # the DM already said this is not a name
+                    continue
                 row = await w.insert(
                     ENTITIES,
                     {
@@ -2818,11 +2851,26 @@ class MemoryStore:
                 )
                 member_id = str(row["id"])
                 made.append(part)
+                waiting = True
+            # The DM decided this by pressing the button. For a name still waiting it is held as a
+            # proposal the DM is not asked about: `set_entity_status` confirms it when the name is
+            # confirmed (and it simply stays hidden if the name is turned down), so it is never
+            # shown for a name the DM may yet refuse.
             await self.add_relation_in(
-                w, member_id, "member_of", str(group["id"]), confidence=1.0, status=CONFIRMED
+                w,
+                member_id,
+                "member_of",
+                str(group["id"]),
+                confidence=1.0,
+                status=PROPOSED if waiting else CONFIRMED,
             )
         return GroupJoined(
-            str(group["id"]), str(group["name"]), tuple(parts), tuple(joined), tuple(made)
+            str(group["id"]),
+            str(group["name"]),
+            tuple(parts),
+            tuple(joined),
+            tuple(made),
+            tuple(skipped),
         )
 
     async def add_alias(
