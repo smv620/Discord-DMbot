@@ -158,7 +158,7 @@ export const featureSteps: FeatureStep[] = [
   {
     audience: "gameMaster",
     whatsNew: "Split a list of names, or say it is a group",
-    text: "When a recap's Names to check list a name that is really a list, like \"Mira and Cerric\", press ✂️ These are separate names and DMbot splits it into one name for each part. If DMbot knows a group the list may be, press 👥 Yes, that group; if not, press 👥 They're a group and type what the group is called. Undo stays until one of the names is answered.",
+    text: "When a name in Names to check is really several names, like \"Mira and Cerric\", press ✂️ These are separate names and DMbot splits it into one name for each part; the new names wait in the list for your answer. If DMbot suggests a group the name may belong to, press 👥 Yes, that group; if not, press 👥 They're a group and type what the group is called. Undo takes it back until you answer one of the new names.",
     names: [
       { name: "✂️ These are separate names", file: "ui/names.py" },
       { name: "👥 Yes, that group", file: "ui/names.py" },
