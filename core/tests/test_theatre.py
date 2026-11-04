@@ -130,8 +130,8 @@ class FormsOfAddress(unittest.TestCase):
         self.assertEqual(self.check("my sister [Nyssara]", ["Tavin"]), ("my sister [unknown]", 1))
 
     def test_address_words_are_everyday_words_even_when_the_scene_lacks_them(self) -> None:
-        got = th.check_brackets("Hello, Friend [Tavin]", {name_key("Tavin")}, [])
-        self.assertEqual(got, ("Hello, Friend [Tavin]", 0))
+        got = th.check_brackets("Friend [Tavin], wait", {name_key("Tavin")}, [])
+        self.assertEqual(got, ("Friend [Tavin], wait", 0))
 
     def test_a_real_name_from_an_address_phrase_is_still_rewritten_outside_a_bracket(self) -> None:
         # "Grace" is a name even though "Your Grace" is a form of address
