@@ -1677,6 +1677,25 @@ class WhatPeopleBelieve(Editing):
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
         self.recorded = {7}
+        await self.agree(7)  # (the door reads who is recorded now from the consent table, #3462)
+
+    async def agree(self, user: int, terms: int | None = None) -> None:
+        """A consent row for the person, under the current wording unless told otherwise."""
+        from dmbot.consent import TERMS_VERSION
+
+        async with self.db.guild(self.g) as conn:
+            await conn.execute(
+                "INSERT INTO consent (guild_id, user_id, granted_at, terms_version)"
+                " VALUES (%s, %s, 0, %s) ON CONFLICT (guild_id, user_id)"
+                " DO UPDATE SET terms_version = EXCLUDED.terms_version",
+                (self.g, user, TERMS_VERSION if terms is None else terms),
+            )
+
+    async def stop(self, user: int) -> None:
+        async with self.db.guild(self.g) as conn:
+            await conn.execute(
+                "DELETE FROM consent WHERE guild_id = %s AND user_id = %s", (self.g, user)
+            )
 
     async def reading(
         self,
@@ -1743,6 +1762,58 @@ class WhatPeopleBelieve(Editing):
             ("accusation", "Rook", "Mira Voss knows Far Hall", "fairly sure", True),
         )
         self.assertEqual((got["counts"], got["capped"]), ({"readings": 1}, False))
+
+    async def test_a_reading_from_someone_who_stopped_being_recorded_is_left_out(self) -> None:
+        """#3462: the list and its count keep only readings whose every speaker is recorded now, as
+        Discord's list does, and the reading comes back if they agree again."""
+        await self.reading()
+        self.assertEqual((await self.listed())["counts"], {"readings": 1})
+        await self.stop(7)
+        gone = await self.listed()
+        self.assertEqual((gone["readings"], gone["counts"]), ([], {"readings": 0}))
+        await self.agree(7)
+        back = await self.listed()
+        self.assertEqual((len(back["readings"]), back["counts"]), (1, {"readings": 1}))
+
+    async def test_a_reading_from_someone_under_older_wording_is_left_out(self) -> None:
+        """The bot counts a person as recorded only under the current wording (`consent._select`),
+        so the door is asked the same and agrees with it."""
+        from dmbot.consent import TERMS_VERSION
+
+        await self.reading()
+        await self.agree(7, TERMS_VERSION - 1)
+        self.assertEqual((await self.listed())["readings"], [])
+        await self.agree(7)
+        self.assertEqual(len((await self.listed())["readings"]), 1)
+
+    async def test_the_website_counts_what_the_bot_counts_for_who_is_recorded_now(self) -> None:
+        """The bot's own count (`readings_waiting`, with who the consent source says is recorded)
+        equals the website's: with a recorded speaker, one who stopped, one on older wording."""
+        from dmbot import consent
+
+        await self.reading()
+
+        async def both() -> tuple[int, int]:
+            async with self.db.guild(self.g) as conn:
+                recorded = await consent._select(conn, self.g, None)
+            site = (await self.listed())["counts"]["readings"]
+            bot = await self.claims.readings_waiting(self.g, self.one.id, opted_in=recorded)
+            return site, bot
+
+        self.assertEqual(await both(), (1, 1))
+        await self.stop(7)
+        self.assertEqual(await both(), (0, 0))
+        await self.agree(7, consent.TERMS_VERSION - 1)
+        self.assertEqual(await both(), (0, 0))
+        await self.agree(7)
+        self.assertEqual(await both(), (1, 1))
+
+    async def test_a_reading_is_still_listed_while_its_speaker_is_only_paused(self) -> None:
+        """The one gap, said in the migration: a pause is in the bot's memory, so the door still
+        lists the reading (Discord already leaves it out)."""
+        await self.reading()
+        self.recorded = set()  # (the bot's view: paused)
+        self.assertEqual(len((await self.listed())["readings"]), 1)
 
     async def test_only_a_dm_reads_them_or_answers(self) -> None:
         ident = await self.reading()

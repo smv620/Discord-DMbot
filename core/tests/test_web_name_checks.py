@@ -72,6 +72,60 @@ class WithChecks(Base):
         return why
 
 
+class TheCampaignList(WithChecks):
+    """Which of a campaign's recaps have names waiting (#3438): ids and counts, for a DM only, so
+    the Questions page can open each recap's own list. Invented names throughout."""
+
+    def cref(self, campaign: str | None = None) -> str:
+        return f"{GUILD}.{campaign or self.one.id}"
+
+    async def test_a_recap_with_names_waiting_is_listed_with_its_count(self) -> None:
+        await self.suggest("Brannoch")
+        await self.suggest("Veshla")
+        got = await web.read_campaign_checks(self.web, self.session, self.cref())
+        self.assertEqual(got, {"recaps": [{"ref": self.ref, "at": AT, "count": 2}]})
+
+    async def test_nothing_waiting_is_an_empty_list(self) -> None:
+        got = await web.read_campaign_checks(self.web, self.session, self.cref())
+        self.assertEqual(got, {"recaps": []})
+
+    async def test_an_answered_name_is_no_longer_counted(self) -> None:
+        keep = await self.suggest("Brannoch")
+        await self.suggest("Veshla")
+        await self.memory.confirm_entity(GUILD, self.one.id, keep, "place", source="dm")
+        got = await web.read_campaign_checks(self.web, self.session, self.cref())
+        self.assertEqual(got["recaps"][0]["count"], 1)
+
+    async def test_a_name_with_a_secret_spelling_is_not_counted(self) -> None:
+        hidden = await self.suggest("Brannoch")
+        await self.memory.add_alias(
+            GUILD, self.one.id, hidden, "Brannoch", kind="full", source="dm", secret=True
+        )
+        got = await web.read_campaign_checks(self.web, self.session, self.cref())
+        self.assertEqual(got, {"recaps": []})
+
+    async def test_a_name_linked_to_a_recap_that_does_not_exist_is_not_listed(self) -> None:
+        written = await self.memory.add_entity(
+            GUILD, self.one.id, type="concept", name="Brannoch", source="scan"
+        )
+        await self.answers.link(GUILD, self.one.id, 999, [written.value.id])
+        got = await web.read_campaign_checks(self.web, self.session, self.cref())
+        self.assertEqual(got, {"recaps": []})
+
+    async def test_another_campaigns_names_are_never_listed_and_its_list_is_refused(self) -> None:
+        await self.suggest("Brannoch", campaign=self.two.id)
+        mine = await web.read_campaign_checks(self.web, self.session, self.cref())
+        self.assertEqual(mine, {"recaps": []})  # (Alice is not Two's DM)
+        code = await self.code(
+            web.read_campaign_checks(self.web, self.session, self.cref(self.two.id))
+        )
+        self.assertEqual(code, "not_found")
+
+    async def test_a_bad_address_is_not_found(self) -> None:
+        code = await self.code(web.read_campaign_checks(self.web, self.session, "nope"))
+        self.assertEqual(code, "not_found")
+
+
 class TheOldPronounRule(WithChecks):
     """The recap page and Discord's lists agree on the same stored rows (#2358): a pronoun the
     database marks as made before the gate is hidden in both, unless the DM wrote it."""
