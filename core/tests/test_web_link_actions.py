@@ -913,7 +913,9 @@ class TheEdits(Editing):
         return found.id
 
     async def waiting_now(self, who: Any = None) -> dict[str, Any]:
-        return await relationships.read_waiting(self.web, who or self.session, self.cref)
+        return await relationships.read_waiting(
+            self.web, who or self.session, self.cref, outside_engine=None
+        )
 
     async def test_a_claim_from_someone_who_stopped_being_recorded_is_left_out(self) -> None:
         """#3466: the claims list and its count keep only claims whose every speaker is recorded
@@ -936,9 +938,9 @@ class TheEdits(Editing):
         self.assertEqual(len((await self.waiting_now())["claims"]), 1)
 
     async def test_the_website_counts_what_the_bot_lists_for_who_is_recorded_now(self) -> None:
-        """The bot's own list (`ClaimStore.waiting`, with who the consent source says is recorded)
-        has as many claims as the website's, as the speaker stops, is on older wording, and
-        agrees again."""
+        """The bot's own count (`ClaimStore.waiting_for_check`, read-only, with who the consent
+        source says is recorded) equals the website's, as the speaker stops, is on older
+        wording, and agrees again. (`ClaimStore.waiting` would wipe the claim when they stop.)"""
         from dmbot import consent
 
         await self.claim()
@@ -947,7 +949,7 @@ class TheEdits(Editing):
             async with self.db.guild(self.g) as conn:
                 recorded = await consent._select(conn, self.g, None)
             site = (await self.waiting_now())["counts"]["claims"]
-            bot = len(await self.claims.waiting(self.g, self.one.id, opted_in=recorded))
+            bot = await self.claims.waiting_for_check(self.g, self.one.id, opted_in=recorded)
             return site, bot
 
         self.assertEqual(await both(), (1, 1))
@@ -1423,7 +1425,9 @@ class TheEdits(Editing):
         self.assertEqual([w["id"] for w in got["which"]], [mine])  # and hers holds only hers
         self.assertEqual(got["claims"], [])  # not the other campaign's claim
         with self.assertRaises(RecapError) as caught:
-            await relationships.read_waiting(self.web, self.session, f"{self.g}.{two.id}")
+            await relationships.read_waiting(
+                self.web, self.session, f"{self.g}.{two.id}", outside_engine=None
+            )
         self.assertEqual(caught.exception.code, "not_found")
 
     async def test_a_flag_on_a_which_answer_is_refused_by_the_door(self) -> None:

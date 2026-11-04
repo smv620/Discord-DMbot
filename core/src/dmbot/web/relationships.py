@@ -1087,7 +1087,7 @@ def _claim_statement(row: dict[str, Any]) -> str:
 
 
 async def read_waiting(
-    db: Database, session: Session, ref: str, *, outside_engine: str | None = None
+    db: Database, session: Session, ref: str, *, outside_engine: str | None
 ) -> dict[str, Any]:
     """What waits for the signed-in DM of this campaign (#2652): the claims PlotBot found at the
     table, the connections a backstory found (ready, or waiting on a name, with the upload each came
