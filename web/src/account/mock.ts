@@ -1905,12 +1905,16 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
             kinds: [
               { kind: "names", count: 3, oldest: now - 86_400 },
               { kind: "connections", count: 12, oldest: now - 7_200 },
-              { kind: "family", count: 2, oldest: now - 3_600 },
+              { kind: "heard", count: 2, oldest: now - 3_600 },
             ],
           },
           { ref: "100.cmp2", name: "Salt and Smoke", total: 0, countedAt: now - 60, kinds: [] },
         ],
       };
+    },
+    async campaignNameChecks(campaignRef) {
+      calls.push(`campaignNameChecks:${campaignRef}`);
+      return { recaps: [{ ref: `${campaignRef}.100`, at: 1_799_000_000, count: 3 }] };
     },
     async questionsTotal() {
       calls.push("questionsTotal");
