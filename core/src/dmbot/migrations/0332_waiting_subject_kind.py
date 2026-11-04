@@ -31,14 +31,16 @@ def _kind_of(alias: str) -> str:
 _KIND_OF_S = _kind_of("s")
 _KIND_OF_O = _kind_of("o")
 
+# (The anchors stop before `decided`: the door's note read is 0275's alone, and a guard test keeps
+# every other migration from selecting it.)
 _WAITING_KIND_SWAPS = (
     (
-        "'subjectId', l.subject_id, 'decided', l.decided,",
-        f"'subjectId', l.subject_id, 'subjectKind', {_KIND_OF_S}, 'decided', l.decided,",
+        "'subjectId', l.subject_id,",
+        f"'subjectId', l.subject_id, 'subjectKind', {_KIND_OF_S},",
     ),
     (
-        "'otherIsSubject', w.other_is_subject, 'decided', w.decided,",
-        f"'otherIsSubject', w.other_is_subject, 'otherKind', {_KIND_OF_O}, 'decided', w.decided,",
+        "'otherIsSubject', w.other_is_subject,",
+        f"'otherIsSubject', w.other_is_subject, 'otherKind', {_KIND_OF_O},",
     ),
 )
 
