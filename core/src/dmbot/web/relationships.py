@@ -1106,11 +1106,26 @@ async def read_waiting(
             (guild_id, campaign_id, TERMS_VERSION, outside_engine),
         )
         found = await cur.fetchone()
-    got = found["r"] if found else None
+        got = found["r"] if found else None
+        info = None
+        if got is not None and got.get("status") == "ok" and got["claims"]:
+            # The claims kept for a "Which one?" answer (#3463): the choices come from the
+            # store's own function, run on the facts this door sends for the ids the list showed.
+            ids = [str(c["id"]) for c in got["claims"]][:200]
+            cur = await conn.execute(
+                "SELECT dmbot_web_which_info(%s, %s, %s) AS r", (guild_id, campaign_id, ids)
+            )
+            info = (await cur.fetchone() or {}).get("r")
     if got is None or got.get("status") != "ok":
         raise RecapError("not_found")
+    choices = which_choices.choices_by_claim(info) if info else {}
     claims = [
-        {**c, "statement": _claim_statement(c), "canSecret": _can_be_secret(c)}
+        {
+            **c,
+            "statement": _claim_statement(c),
+            "canSecret": _can_be_secret(c),
+            **({"choices": choices[str(c["id"])]} if str(c["id"]) in choices else {}),
+        }
         for c in got["claims"]
     ]
     backstory = [
