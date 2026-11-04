@@ -54,7 +54,10 @@ def _who(who: dict[str, Any] | None) -> str:
 def _words(rel: dict[str, Any]) -> str:
     """A connection as one plain line, "Aldric serves the Ashen Crown"."""
     said = link_words(
-        str(rel["predicate"]), str(rel.get("detail") or ""), bool(rel.get("directional"))
+        str(rel["predicate"]),
+        str(rel.get("detail") or ""),
+        bool(rel.get("directional")),
+        str(rel.get("subjectKind") or ""),
     )
     return f"{rel['subject']} {said} {rel['object']}"
 
