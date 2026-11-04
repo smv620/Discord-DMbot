@@ -28,7 +28,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-from dmbot.campaigns.store import CampaignError, decode_backup
+from dmbot.campaigns.store import decode_backup
 from dmbot.memory import kin, place_words, reputation_words
 from dmbot.memory.models import name_key
 
@@ -286,8 +286,8 @@ def _row_ok(
             want_past = past or not current
             # one subject at a time: a name that resolves to several entries is right if any is
             ok = any(
-                (got := _slot(detail, kinds.get(sid, "")))[0] == word
-                and (got[1] or ended) == want_past
+                (slot := _slot(detail, kinds.get(sid, "")))[0] == word
+                and (slot[1] or ended) == want_past
                 for sid in subjects
             )
             why = "wrong place word"
@@ -475,7 +475,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 f'This campaign is not "{SAMPLE_CAMPAIGN}"; the check is only for the sample.'
             )
         report = check(backup, key, args.docs)
-    except (ValueError, OSError, CampaignError) as exc:
+    except (ValueError, OSError) as exc:
         sys.stderr.write(f"{exc}\n")
         return 2
     sys.stdout.write(f"Documents scored: {args.docs}\n" + render(report, args.counts_only))
