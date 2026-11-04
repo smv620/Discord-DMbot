@@ -44,6 +44,19 @@ export const waitingWords = {
   whichLine: (other: string, how: string, word: string, otherIsSubject: boolean): string =>
     otherIsSubject ? `${other} ${how} ${word}` : `${word} ${how} ${other}`,
   neither: "Neither",
+  // A fact kept because a name in it could be two different entries (Family ties, #3463).
+  tiesHeading: "Which one?",
+  tiesNote: "DMbot kept these facts because a name in them could be two different entries. Pick the right one, and DMbot never guesses.",
+  tiesQuestion: (word: string): string => `Which ${word} does this mean?`,
+  tiesWhy: "DMbot kept this because the name could be two different entries.",
+  tiesNoNote: "No note",
+  tiesPick: (name: string, tag: string): string => (tag ? `${name} (${tag})` : name),
+  tiesNeither: "None of these",
+  tiesNeitherHelp: "None of these. DMbot drops this fact.",
+  tiesPickHelp: "Picking one saves your choice. The fact then waits for your Keep.",
+  tiesUndo: "Undo",
+  tiesUndone: "Your pick was taken back. The question is back in the list.",
+  tiesCannotUndo: "This can't be undone now.",
   pronounHeading: "Who is this?",
   pronounNote: "DMbot isn't sure who a word like \"she\" means.",
   pronounQuestion: (word: string): string => `Who is ${word}?`,
@@ -68,6 +81,8 @@ export const waitingWords = {
     skip: "Skipped.",
     pick: "Picked. It now shows under From your backstory.",
     neither: "Neither. No connection was made.",
+    tiesPick: "Picked. Keep or drop the fact when it shows in the list.",
+    tiesNeither: "Dropped. DMbot won't ask about it again.",
     someoneElse: "Someone else. DMbot kept the connection with a person who isn't named yet.",
   },
   kept: (n?: number): string =>
