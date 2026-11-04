@@ -26,6 +26,7 @@ from dmbot.campaigns.models import OWN_WRITING, CampaignError, fingerprint
 from dmbot.memory import background as bg
 from dmbot.memory import backstory_keep as keep
 from dmbot.memory import (
+    descriptions,
     kin,
     lore_context,
     lore_knowledge,
@@ -1062,6 +1063,8 @@ async def confirmed_aliases(memory: MemoryStore, campaign: Campaign) -> dict[str
             continue
         if not all(e.confirmed and not e.secret and not e.person for e in entries):
             continue
+        if not all(descriptions.matches_alone(e.text, e.kind, "") for e in entries):
+            continue  # (a description is not a name: #3431)
         (entity,) = owners[key]
         canonical = name_key(lookup.entities[entity].name)
         if key != canonical:
@@ -1303,7 +1306,15 @@ async def queue_links(
     ends: dict[str, str] = {}
     for key, entries in lookup.by_key.items():
         for e in entries:
-            if e.confirmed and not e.secret and not e.person:
+            # (a description such as "the woman" is no end of a connection: #3431; the lookup does
+            # not carry who typed a name, so only a name with a capital counts here, and the
+            # Cleaner, which only fixes spelling, still reads every spelling)
+            if (
+                e.confirmed
+                and not e.secret
+                and not e.person
+                and descriptions.matches_alone(e.text, e.kind, "")
+            ):
                 ends.setdefault(key, lookup.entities[e.entity_id].name)
     owners: dict[str, set[str]] = {}
     for main, spellings in (known_spellings or {}).items():
@@ -1316,6 +1327,7 @@ async def queue_links(
                 have_name is not None
                 and len(owners[name_key(sp)]) == 1
                 and usable_alias(name_key(sp))
+                and not descriptions.is_description(sp)
             ):
                 ends.setdefault(name_key(sp), have_name)
 
