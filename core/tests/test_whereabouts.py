@@ -104,6 +104,31 @@ class Deciding(unittest.TestCase):
         self.assertEqual(set(got.ends), {"1" * 32})
 
 
+class ByHand(unittest.TestCase):
+    def test_a_fact_the_dm_types_is_the_newest_and_never_history(self) -> None:
+        # Tavin carries it, then the DM types "kept in the chest": the carrying ends
+        carried = carrying(start=100)
+        got = whereabouts.settle(keeping(), "item", "place", [carried], by_hand=True, now=900)
+        self.assertEqual(dict(got.ends), {carried.id: {"to_session_at": 900}})
+        self.assertEqual(dict(got.new_changes), {})
+        # the chest keeps it, then the DM types "Tavin carries it": the keeping becomes history
+        kept = keeping(start=700)
+        got = whereabouts.settle(carrying(start=300), "character", "item", [kept], by_hand=True)
+        self.assertEqual(set(got.ends), {kept.id})
+        self.assertEqual(dict(got.new_changes), {})  # (not made history, though it is older)
+        # the same facts from a reader keep the old order
+        self.assertEqual(
+            dict(whereabouts.settle(keeping(), "item", "place", [carried]).new_changes),
+            {"detail": "was kept in"},
+        )
+
+    def test_a_hidden_fact_the_dm_types_still_never_changes_what_players_see(self) -> None:
+        got = whereabouts.settle(
+            keeping(secret=True), "item", "place", [carrying()], by_hand=True, now=900
+        )
+        self.assertEqual((dict(got.ends), dict(got.new_changes)), ({}, {}))
+
+
 class InTheStore(ConfirmedMemoryTest):
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
@@ -114,11 +139,11 @@ class InTheStore(ConfirmedMemoryTest):
 
     async def put(
         self, a: str, pred: str, b: str, detail: str = "", at: int | None = None,
-        status: str = CONFIRMED,
+        status: str = CONFIRMED, by_hand: bool = False,
     ) -> Relation:  # fmt: skip
         got = await self.memory.add_relation(
             GUILD_A, self.c, a, pred, b, source="dm", confidence=1.0, status=status,
-            detail=detail, from_session_at=at,
+            detail=detail, from_session_at=at, by_hand=by_hand,
         )  # fmt: skip
         return got.value[0]
 
@@ -167,6 +192,20 @@ class InTheStore(ConfirmedMemoryTest):
             self.assertEqual(
                 rels, {"carries": ("", None), "located_in": ("was kept in", None)}, first
             )
+
+    async def test_the_dm_typing_a_keeping_over_a_carrying_ends_the_carrying(self) -> None:
+        await self.put(self.tavin, "carries", self.sword, "", 100)
+        await self.put(self.sword, "located_in", self.chest, "is kept in", by_hand=True)
+        held = await self.held()
+        self.assertEqual(held[("located_in", self.chest)], ("is kept in", None))  # not history
+        self.assertIsNotNone(held[("carries", self.sword)][1])  # Tavin's carrying has ended
+
+    async def test_the_dm_typing_a_carrying_over_a_keeping_makes_the_keeping_history(self) -> None:
+        await self.put(self.sword, "located_in", self.chest, "is kept in", 700)
+        await self.put(self.tavin, "carries", self.sword, "", 300, by_hand=True)
+        held = await self.held()
+        self.assertEqual(held[("carries", self.sword)], ("", None))  # live, though dated earlier
+        self.assertEqual(held[("located_in", self.chest)][0], "was kept in")
 
     async def test_owning_it_is_not_ended_by_either(self) -> None:
         await self.put(self.tavin, "owns", self.sword)
