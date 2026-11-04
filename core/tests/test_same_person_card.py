@@ -203,7 +203,7 @@ class TheTwoWomenCard(NamesTest):
         self.assertIn("Is the woman", text)
         self.assertIn("(in Termalaine)", text)  # the tag tells the two apart
         self.assertIn("(name unknown)", text)  # the other has nothing to tell it apart yet
-        self.assertIn("they are described the same way, in different sessions", text)
+        self.assertIn("they are described the same way", text)
         self.assertIn(KEEPS, text)
 
     async def test_yes_leaves_one_woman(self) -> None:
@@ -211,4 +211,6 @@ class TheTwoWomenCard(NamesTest):
         await view.load(self.it(DM))
         yes = next(b for b in view.children if b.label.startswith("✅"))
         await yes.callback(self.it(DM))
-        self.assertEqual(len(await self.memory.unnamed(GUILD, self.campaign.id)), 1)
+        left = await self.memory.unnamed(GUILD, self.campaign.id)
+        self.assertEqual([e.id for e, _ in left], [self.first])  # (the older is kept)
+        self.assertEqual(await self.memory.same_person_offers(GUILD, self.campaign.id), [])

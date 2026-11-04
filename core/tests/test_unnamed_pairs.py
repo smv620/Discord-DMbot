@@ -77,7 +77,55 @@ class TheOffers(MemoryTest):
         )
 
 
+class TheJoinRules(MemoryTest):
+    async def two_women(self) -> tuple[str, str]:
+        first = (await self.memory.add_unnamed(GUILD_A, self.c, what="the woman")).entity.id
+        second = (await self.memory.add_unnamed(GUILD_A, self.c, what="the woman")).entity.id
+        return first, second
+
+    async def test_something_described_through_either_is_refused(self) -> None:
+        first, second = await self.two_women()
+        await self.memory.add_unnamed(GUILD_A, self.c, what="dog", anchor_id=second)
+        with self.assertRaises(MemoryRuleError):
+            await self.memory.join_same_person(GUILD_A, self.c, first, second)
+
+    async def test_what_the_newer_had_moves_onto_the_older_and_undo_puts_it_back(self) -> None:
+        first, second = await self.two_women()
+        port = await self.add("Termalaine", type="place", status="confirmed")
+        tie = await self.relate(second, "located_in", port, status="confirmed")
+        done = await self.memory.join_same_person(GUILD_A, self.c, first, second)
+        ties = await self.memory.relations(GUILD_A, self.c, entity_id=first)
+        self.assertEqual([r.object_id for r in ties], [port])
+        assert done.batch is not None
+        await self.memory.undo(GUILD_A, self.c, done.batch, source="dm")
+        back = await self.memory.relations(GUILD_A, self.c, entity_id=second)
+        self.assertEqual([r.id for r in back], [tie.value[0].id])
+
+    async def test_a_joined_away_person_cannot_be_joined_again(self) -> None:
+        first, second = await self.two_women()
+        await self.memory.join_same_person(GUILD_A, self.c, first, second)
+        with self.assertRaises(MemoryRuleError):
+            await self.memory.join_same_person(GUILD_A, self.c, first, second)
+
+    async def test_two_campaigns_each_with_a_woman_offer_nothing(self) -> None:
+        await self.memory.add_unnamed(GUILD_A, self.c, what="the woman")
+        other = await self.campaigns.create(GUILD_A, "Sunken City", 7)
+        await self.memory.add_unnamed(GUILD_A, other.id, what="the woman")
+        self.assertEqual(await self.memory.same_person_offers(GUILD_A, self.c), [])
+        self.assertEqual(await self.memory.same_person_offers(GUILD_A, other.id), [])
+
+
 class ThePairRule(unittest.TestCase):
+    def test_a_no_to_one_pair_does_not_hide_the_others(self) -> None:
+        rows = [_row("a", "the woman", 1), _row("b", "the woman", 2), _row("c", "the woman", 3)]
+        found = same_person.unnamed_pairs(rows, {("a", "b"), ("a", "c")})
+        self.assertEqual([(o.unnamed_id, o.named_id) for o in found], [("b", "c")])
+
+    def test_only_a_character_is_paired(self) -> None:
+        rows = [{**_row("a", "the lantern", 1), "type": "item"},
+                {**_row("b", "the lantern", 2), "type": "item"}]  # fmt: skip
+        self.assertEqual(same_person.unnamed_pairs(rows), [])
+
     """Pure: the finder, with rows."""
 
     def test_only_unanchored_people_with_the_same_words_pair_with_the_oldest(self) -> None:

@@ -28,7 +28,7 @@ from dmbot.memory.ontology import DISGUISED_AS
 STATED = "the text says so"
 CONNECTIONS = "they share connections"
 WORDS = "their descriptions share words"
-SAME_WORDS = "they are described the same way, in different sessions"  # two unnamed people (#3447)
+SAME_WORDS = "they are described the same way"  # two unnamed people (#3447)
 
 MAX_OFFERS_PER_ENTRY = 3  # the best few for one unnamed entry: a long list is a guess
 MIN_EVIDENCE = 2  # shared words plus shared connections, unless the text said so outright
@@ -159,6 +159,7 @@ def unnamed_pairs(
     for e in entries:
         if (
             e["unnamed"]
+            and e["type"] == "character"  # (the only kind a join accepts)
             and e.get("unnamed_anchor") is None
             and e["status"] in ("proposed", "confirmed")
         ):
@@ -170,12 +171,14 @@ def unnamed_pairs(
     found: list[Offer] = []
     for group in groups.values():
         group.sort(key=lambda e: (e.get("created_at") or 0, str(e["id"])))
-        oldest = str(group[0]["id"])
-        for later in group[1:]:
-            pair = (oldest, str(later["id"]))
-            if pair in declined or pair[::-1] in declined:
-                continue
-            found.append(Offer(pair[0], pair[1], 0, (SAME_WORDS,), both_unnamed=True))
+        for i, later in enumerate(group[1:], start=1):
+            # paired with the oldest one it has not been ruled apart from, so a "not the same" to
+            # one pair never hides the others
+            for earlier in group[:i]:
+                pair = (str(earlier["id"]), str(later["id"]))
+                if pair not in declined and pair[::-1] not in declined:
+                    found.append(Offer(pair[0], pair[1], 0, (SAME_WORDS,), both_unnamed=True))
+                    break
     found.sort(key=lambda o: (o.unnamed_id, o.named_id))
     return found
 
