@@ -286,7 +286,7 @@ describe("connections, Which one? and readings, answered on the page (#3438)", (
           { kind: "connections", count: 4, oldest: now - 400 },
           { kind: "which", count: 2, oldest: now - 300 },
           { kind: "readings", count: 3, oldest: now - 200 },
-          { kind: "family", count: 1, oldest: now - 100 },
+          { kind: "heard", count: 1, oldest: now - 100 },
         ],
       },
     ],
@@ -319,7 +319,7 @@ describe("connections, Which one? and readings, answered on the page (#3438)", (
 
   it("a kind the page cannot answer still says how to answer it in Discord", async () => {
     await show();
-    expect(within(line("family", 1)).getByText(w.discord)).toBeTruthy();
+    expect(within(line("heard", 1)).getByText(w.discord)).toBeTruthy();
   });
 
   it("falls back to the link while the lists are switched off", async () => {
