@@ -26,6 +26,7 @@ from dmbot.campaigns.models import OWN_WRITING, CampaignError, fingerprint
 from dmbot.memory import background as bg
 from dmbot.memory import backstory_keep as keep
 from dmbot.memory import (
+    descriptions,
     kin,
     lore_context,
     lore_knowledge,
@@ -1062,6 +1063,8 @@ async def confirmed_aliases(memory: MemoryStore, campaign: Campaign) -> dict[str
             continue
         if not all(e.confirmed and not e.secret and not e.person for e in entries):
             continue
+        if not all(descriptions.matches_alone(e.text, e.kind, "") for e in entries):
+            continue  # (a description is not a name: #3431)
         (entity,) = owners[key]
         canonical = name_key(lookup.entities[entity].name)
         if key != canonical:
@@ -1316,6 +1319,7 @@ async def queue_links(
                 have_name is not None
                 and len(owners[name_key(sp)]) == 1
                 and usable_alias(name_key(sp))
+                and not descriptions.is_description(sp)
             ):
                 ends.setdefault(name_key(sp), have_name)
 

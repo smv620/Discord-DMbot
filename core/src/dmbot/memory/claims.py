@@ -22,6 +22,7 @@ from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 
 from dmbot.memory import (
+    descriptions,
     evidence,
     forget_readings,
     kin,
@@ -500,7 +501,10 @@ def names_of(entities: Sequence[Mapping[str, Any]], aliases: Sequence[Mapping[st
     for e in entities:
         seen.setdefault(name_key(str(e["name"])), {})[str(e["id"])] = str(e["type"])
     for a in aliases:
-        if str(a["entity_id"]) in kinds:
+        # (a description such as "the woman" never places a line by itself: #3431)
+        if str(a["entity_id"]) in kinds and descriptions.matches_alone(
+            str(a.get("text") or a["key"]), str(a.get("kind") or "full"), str(a.get("source") or "")
+        ):
             seen.setdefault(str(a["key"]), {})[str(a["entity_id"])] = kinds[str(a["entity_id"])]
     open_keys = {name_key(str(e["name"])) for e in entities}
     open_keys |= {str(a["key"]) for a in aliases if not a.get("secret")}
