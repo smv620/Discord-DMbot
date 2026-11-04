@@ -6,7 +6,7 @@ import { useEffect, useState } from "preact/hooks";
 
 import { QUESTIONS_LIVE } from "../content/questions-switch";
 import { questionsPage as words } from "../content/questions-words";
-import { type AccountApi } from "./api";
+import type { AccountApi } from "./api";
 
 export default function QuestionsLink({ api, show = true }: { api: AccountApi; show?: boolean }) {
   const [total, setTotal] = useState(0);
