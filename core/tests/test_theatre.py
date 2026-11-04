@@ -129,6 +129,25 @@ class FormsOfAddress(unittest.TestCase):
         self.assertEqual(self.check("my sister [Nyssara]", ["Nyssara"]), ("my sister [Nyssara]", 0))
         self.assertEqual(self.check("my sister [Nyssara]", ["Tavin"]), ("my sister [unknown]", 1))
 
+    def test_address_words_are_everyday_words_even_when_the_scene_lacks_them(self) -> None:
+        got = th.check_brackets("Hello, Friend [Tavin]", {name_key("Tavin")}, [])
+        self.assertEqual(got, ("Hello, Friend [Tavin]", 0))
+
+    def test_a_real_name_from_an_address_phrase_is_still_rewritten_outside_a_bracket(self) -> None:
+        # "Grace" is a name even though "Your Grace" is a form of address
+        got = th.check_brackets("Grace nods", {name_key("Tavin")}, [])
+        self.assertEqual(got, ("[unknown] nods", 1))
+
+    def test_a_bare_title_in_a_bracket_is_unknown_unless_the_table_lists_it(self) -> None:
+        for bare in ("Captain", "my lord"):
+            self.assertEqual(
+                self.check(f"Hello, Friend [{bare}]", ["Tavin"]), ("Hello, Friend [unknown]", 1)
+            )
+        # a table that really lists "Captain" as someone's name keeps its own word
+        self.assertEqual(
+            self.check("Hello, Friend [Captain]", ["Captain"]), ("Hello, Friend [Captain]", 0)
+        )
+
     def test_a_title_with_a_name_is_a_name_and_needs_no_bracket(self) -> None:
         self.assertEqual(self.check("Captain Vel [Vel]", ["Vel"]), ("Captain Vel [Vel]", 0))
 

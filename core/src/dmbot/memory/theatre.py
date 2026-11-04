@@ -64,11 +64,8 @@ _EVERYDAY = frozenset(
 # A form of address or title is said with a capital ("Hello, Friend", "Thank you, Father"): it is an
 # everyday word here, so it is not rewritten before its bracket (#3385).
 _EVERYDAY = frozenset(
-    (
-        *_EVERYDAY,
-        *(w for phrase in not_names.ADDRESS_ALONE for w in phrase.replace("'", "").split()),
-    )
-)
+    (*_EVERYDAY, *(w for w in not_names.ADDRESS_ALONE if " " not in w and "'" not in w))
+)  # (single words only: "good", "young" or "grace" from a phrase would hide a real name)
 
 
 @dataclass(frozen=True, slots=True)
@@ -293,11 +290,11 @@ def check_brackets(text: str, allowed: Collection[str], said: Sequence[str]) -> 
     spoken = {w for line in said for w in _words(line)}
 
     def keep(inside: str) -> bool:
+        if _plain(inside) in keys or name_key(inside) in keys:
+            return True  # the table's own list wins, even for a name that is also a title
         if not_names.shape_of(inside) == "address":
-            return (
-                False  # "Friend [friend]" explains nothing: a form of address is no meaning (#3385)
-            )
-        return _plain(inside) in keys or name_key(inside) in keys or _said_as_phrase(inside, said)
+            return False  # "Friend [friend]" explains nothing: a form of address is no meaning
+        return _said_as_phrase(inside, said)
 
     checked, in_brackets = _brackets(text, keep)
     cleaned, stray = _stray_names(checked, lambda w: name_key(w) in listed_words or w in spoken)
