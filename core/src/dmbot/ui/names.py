@@ -1385,9 +1385,9 @@ class SuggestionReview(_Menu):
             context=self._context(interaction, campaign, entity),
         )
         if self.group is not None:  # say which group, so "Yes, that group" has a "that"
-            inside = _and([f"**{_md(m)}**" for m in self.group.members])
+            inside = _and([f"**{_md(logic.shorten(m, 40))}**" for m in self.group.members[:5]])
             text += (
-                f"\n👥 Is this your group **{_md(self.group.group_name)}**? "
+                f"\n👥 Is this your group **{_md(logic.shorten(self.group.group_name, 60))}**? "
                 f"Already in it: {inside}. Yes adds this to it."
             )
         return text
@@ -2032,8 +2032,8 @@ class SuggestionReview(_Menu):
             written = await memory.join_group(
                 campaign.guild_id, campaign.id, entity.id, self.group.group_id, source=DM
             )
-        except MemoryRuleError:
-            await _tell(interaction, GONE)
+        except MemoryRuleError as exc:
+            await _tell(interaction, f"Couldn't add it to the group. {exc} Nothing was changed.")
             return
         await self._grouped(interaction, campaign, memory, entity, written)
 
@@ -2042,7 +2042,7 @@ class SuggestionReview(_Menu):
         current = await self._current(interaction)
         if current is None:
             return
-        campaign, _memory_unused, entity = current
+        campaign, _, entity = current
         if not sees_secrets(campaign, interaction.user.id):
             await _tell(interaction, logic.NO_CAMPAIGN_ACCESS)
             return
@@ -2092,10 +2092,14 @@ class SuggestionReview(_Menu):
         made = [by_key[k] for p in done.made if (k := lookup_key(p)) in by_key]
         self.queue.pop(0)
         self.queue[:0] = made
+        self.split_undo = None
         if written.batch is not None:
             self.split_undo = (written.batch, entity.name, entity.id, made)
             self.undo_kind = "group"
-        names = _and([f"**{_md(p)}**" for p in done.parts]) if done.parts else ""
+        shown = [logic.shorten(p, 40) for p in done.parts[:8]]
+        more = f" and {len(done.parts) - 8} more" if len(done.parts) > 8 else ""
+        names = (_and([f"**{_md(p)}**" for p in shown]) + more) if shown else ""
+        group = logic.shorten(done.group_name, 60)
         extra = (
             f" Not added: {_and([f'**{_md(p)}**' for p in done.skipped])}." if done.skipped else ""
         )
@@ -2103,7 +2107,7 @@ class SuggestionReview(_Menu):
             interaction,
             campaign,
             memory,
-            note=f"👥 Saved: **{_md(done.group_name)}** is a group of {names}.{extra}",
+            note=f"👥 Saved: **{_md(group)}** is a group of {names}.{extra}",
         )
 
     async def _undo_split(self, interaction: discord.Interaction) -> None:
