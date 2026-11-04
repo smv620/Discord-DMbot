@@ -212,5 +212,7 @@ class TheTwoWomenCard(NamesTest):
         yes = next(b for b in view.children if b.label.startswith("✅"))
         await yes.callback(self.it(DM))
         left = await self.memory.unnamed(GUILD, self.campaign.id)
-        self.assertEqual([e.id for e, _ in left], [self.first])  # (the older is kept)
+        # (the keeper is the older, then the one with more ties, then the smaller id: the first
+        # woman has the place tie, so she is kept even when both were made in the same second)
+        self.assertEqual([e.id for e, _ in left], [self.first])
         self.assertEqual(await self.memory.same_person_offers(GUILD, self.campaign.id), [])
