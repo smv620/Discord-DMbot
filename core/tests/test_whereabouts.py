@@ -1,5 +1,5 @@
 """An item has one current whereabouts (#3363): carrying and being kept in a place end each
-other, and with no order between them carrying wins. Names are invented."""
+other, the newest wins, and with no order carrying wins. Names are invented."""
 
 from __future__ import annotations
 
@@ -10,81 +10,98 @@ from dmbot.memory import whereabouts
 from dmbot.memory.models import CONFIRMED, PROPOSED, Relation
 from tests.test_memory_store import GUILD_A, ConfirmedMemoryTest
 
-TAVIN, SWORD, VAULT, CHEST = "t" * 32, "s" * 32, "v" * 32, "c" * 32
+TAVIN, MIRA, SWORD, VAULT, CHEST = "t" * 32, "m" * 32, "s" * 32, "v" * 32, "c" * 32
 
 
 def rel(
     subject: str, predicate: str, obj: str, detail: str = "", rid: str = "f" * 32,
     start: int | None = None, end: int | None = None, status: str = CONFIRMED,
+    secret: bool = False,
 ) -> Relation:  # fmt: skip
     return Relation(
-        rid,
-        subject,
-        predicate,
-        obj,
-        detail,
-        1.0,
-        status,
-        "dm",
-        (),
-        start,
-        end,
-        None,
-        None,
-        False,
-        0,
-    )
+        rid, subject, predicate, obj, detail, 1.0, status, "dm", (), start, end, None, None,
+        secret, 0,
+    )  # fmt: skip
+
+
+def keeping(rid: str = "1" * 32, detail: str = "is kept in", **kw: object) -> Relation:
+    return rel(SWORD, "located_in", VAULT, detail, rid=rid, **kw)  # type: ignore[arg-type]
+
+
+def carrying(rid: str = "2" * 32, who: str = TAVIN, **kw: object) -> Relation:
+    return rel(who, "carries", SWORD, rid=rid, **kw)  # type: ignore[arg-type]
 
 
 class Deciding(unittest.TestCase):
     def test_a_new_carrying_ends_the_present_keeping_and_it_becomes_history(self) -> None:
-        kept = rel(SWORD, "located_in", VAULT, "is kept in", rid="1" * 32, start=100)
-        carried = rel(TAVIN, "carries", SWORD, rid="2" * 32, start=200)
-        got = whereabouts.settle(carried, "character", "item", [kept])
+        kept = keeping(start=100)
+        got = whereabouts.settle(carrying(start=200), "character", "item", [kept])
         self.assertEqual(dict(got.ends), {kept.id: {"detail": "was kept in", "to_session_at": 200}})
-        self.assertIsNone(got.new_detail)
+        self.assertEqual(dict(got.new_changes), {})
 
     def test_an_undated_carrying_still_makes_the_keeping_history(self) -> None:
-        kept = rel(SWORD, "located_in", VAULT, "", rid="1" * 32)  # no word: kept, for an item
-        got = whereabouts.settle(rel(TAVIN, "carries", SWORD), "character", "item", [kept])
+        kept = keeping(detail="")  # no word: kept, for an item
+        got = whereabouts.settle(carrying(), "character", "item", [kept])
         self.assertEqual(dict(got.ends), {kept.id: {"detail": "was kept in"}})
 
     def test_a_later_keeping_ends_the_carrying(self) -> None:
-        carried = rel(TAVIN, "carries", SWORD, rid="2" * 32, start=100)
-        chest = rel(SWORD, "located_in", CHEST, "is kept in", rid="3" * 32, start=200)
-        got = whereabouts.settle(chest, "item", "place", [carried])
+        carried = carrying(start=100)
+        got = whereabouts.settle(keeping(start=200), "item", "place", [carried])
         self.assertEqual(dict(got.ends), {carried.id: {"to_session_at": 200}})
-        self.assertIsNone(got.new_detail)
+        self.assertEqual(dict(got.new_changes), {})
 
     def test_with_no_order_between_them_carrying_wins_and_the_place_is_history(self) -> None:
-        carried = rel(TAVIN, "carries", SWORD, rid="2" * 32)
-        found = rel(SWORD, "located_in", VAULT, "is kept in", rid="3" * 32)
-        got = whereabouts.settle(found, "item", "place", [carried])
-        self.assertEqual((dict(got.ends), got.new_detail), ({}, "was kept in"))
+        got = whereabouts.settle(keeping(), "item", "place", [carrying()])
+        self.assertEqual((dict(got.ends), dict(got.new_changes)), ({}, {"detail": "was kept in"}))
         # an older sighting than the carrying is no order either
-        older = replace(found, from_session_at=50)
-        newer_carry = replace(carried, from_session_at=100)
-        self.assertEqual(
-            whereabouts.settle(older, "item", "place", [newer_carry]).new_detail, "was kept in"
+        older = whereabouts.settle(keeping(start=50), "item", "place", [carrying(start=100)])
+        self.assertEqual(dict(older.new_changes), {"detail": "was kept in"})
+
+    def test_an_older_carrying_read_late_never_ends_a_newer_keeping(self) -> None:
+        kept = keeping(start=700)
+        got = whereabouts.settle(carrying(start=300), "character", "item", [kept])
+        self.assertEqual(dict(got.ends), {})
+        self.assertEqual(dict(got.new_changes), {"to_session_at": 700})  # the carrying is history
+
+    def test_another_carrier_is_left_alone_on_purpose(self) -> None:
+        # the ruling is about keeping; two carriers are for the DM to sort out
+        got = whereabouts.settle(
+            carrying(who=MIRA, rid="4" * 32), "character", "item", [carrying()]
         )
+        self.assertEqual((dict(got.ends), dict(got.new_changes)), ({}, {}))
 
     def test_other_ties_are_left_alone(self) -> None:
-        kept = rel(SWORD, "located_in", VAULT, "is kept in", rid="1" * 32)
         owns = rel(TAVIN, "owns", SWORD, rid="4" * 32)
-        past = rel(SWORD, "located_in", VAULT, "was kept in", rid="5" * 32)
-        ended = rel(SWORD, "located_in", VAULT, "is kept in", rid="6" * 32, end=10)
-        carried = rel(TAVIN, "carries", SWORD, rid="2" * 32)
+        past = keeping(rid="5" * 32, detail="was kept in")
+        ended = keeping(rid="6" * 32, end=10)
         # ownership is never ended; a past keeping or an ended fact is history already
-        self.assertEqual(
-            whereabouts.settle(carried, "character", "item", [owns, past, ended]).ends, {}
-        )
-        self.assertEqual(whereabouts.settle(owns, "character", "item", [kept]).ends, {})
+        got = whereabouts.settle(carrying(), "character", "item", [owns, past, ended])
+        self.assertEqual(dict(got.ends), {})
+        self.assertEqual(whereabouts.settle(owns, "character", "item", [keeping()]).ends, {})
+        # a past keeping read now ends nothing
+        got = whereabouts.settle(past, "item", "place", [carrying()])
+        self.assertEqual((dict(got.ends), dict(got.new_changes)), ({}, {}))
         # a character's place is not an item's: a sighting does not touch what Tavin carries
         seen = rel(TAVIN, "located_in", VAULT, "was last seen in", rid="7" * 32)
-        self.assertEqual(whereabouts.settle(seen, "character", "place", [carried]).ends, {})
+        self.assertEqual(whereabouts.settle(seen, "character", "place", [carrying()]).ends, {})
         # a proposal ends nothing until it is confirmed
-        waiting = replace(carried, status=PROPOSED)
-        self.assertEqual(whereabouts.settle(waiting, "character", "item", [kept]).ends, {})
+        waiting = replace(carrying(), status=PROPOSED)
+        self.assertEqual(whereabouts.settle(waiting, "character", "item", [keeping()]).ends, {})
+
+    def test_a_hidden_fact_never_changes_what_the_players_can_see(self) -> None:
+        kept = keeping()
+        secret_carry = carrying(secret=True)
+        got = whereabouts.settle(secret_carry, "character", "item", [kept])
+        self.assertEqual(dict(got.ends), {})  # a secret carrying leaves the visible keeping
+        hidden_kept = keeping(secret=True)
+        got = whereabouts.settle(hidden_kept, "item", "place", [carrying(start=1)])
+        self.assertEqual(dict(got.new_changes), {"detail": "was kept in"})  # its own, hidden
+        # a hidden carrying does not turn a visible keeping into history
+        got = whereabouts.settle(keeping(), "item", "place", [secret_carry])
+        self.assertEqual((dict(got.ends), dict(got.new_changes)), ({}, {}))
+        # a visible fact may end a hidden one
+        got = whereabouts.settle(carrying(), "character", "item", [keeping(secret=True)])
+        self.assertEqual(set(got.ends), {"1" * 32})
 
 
 class InTheStore(ConfirmedMemoryTest):
@@ -95,11 +112,15 @@ class InTheStore(ConfirmedMemoryTest):
         self.vault = await self.add("Greyvault", type="place")
         self.chest = await self.add("Old Chest", type="place")
 
-    async def put(self, a: str, pred: str, b: str, detail: str = "", at: int | None = None) -> None:
-        await self.memory.add_relation(
-            GUILD_A, self.c, a, pred, b, source="dm", confidence=1.0, status=CONFIRMED,
+    async def put(
+        self, a: str, pred: str, b: str, detail: str = "", at: int | None = None,
+        status: str = CONFIRMED,
+    ) -> Relation:  # fmt: skip
+        got = await self.memory.add_relation(
+            GUILD_A, self.c, a, pred, b, source="dm", confidence=1.0, status=status,
             detail=detail, from_session_at=at,
         )  # fmt: skip
+        return got.value[0]
 
     async def held(self) -> dict[tuple[str, str], tuple[str, int | None]]:
         rels = await self.memory.relations(GUILD_A, self.c)
@@ -152,6 +173,31 @@ class InTheStore(ConfirmedMemoryTest):
         await self.put(self.sword, "located_in", self.vault, "is kept in", 100)
         await self.put(self.tavin, "carries", self.sword, "", 200)
         self.assertEqual((await self.held())[("owns", self.sword)], ("", None))
+
+    async def test_confirming_a_waiting_fact_settles_the_item_too(self) -> None:
+        # a reader's facts wait for the DM's yes: it is the yes that makes them live
+        await self.put(self.sword, "located_in", self.vault, "is kept in", 100)
+        waiting = await self.put(self.tavin, "carries", self.sword, "", 200, status=PROPOSED)
+        self.assertEqual((await self.held())[("located_in", self.vault)], ("is kept in", None))
+        await self.memory.update_relation(
+            GUILD_A, self.c, waiting.id, source="dm", status=CONFIRMED
+        )
+        self.assertEqual((await self.held())[("located_in", self.vault)], ("was kept in", 200))
+
+    async def test_an_older_carrying_read_late_is_history_and_the_keeping_stands(self) -> None:
+        await self.put(self.sword, "located_in", self.vault, "is kept in", 700)
+        await self.put(self.tavin, "carries", self.sword, "", 300)
+        self.assertEqual(
+            await self.held(),
+            {("located_in", self.vault): ("is kept in", None), ("carries", self.sword): ("", 700)},
+        )
+
+    async def test_a_repeated_carrying_leaves_the_keeping_alone(self) -> None:
+        await self.put(self.tavin, "carries", self.sword, "", 100)
+        await self.put(self.sword, "located_in", self.vault, "is kept in", 50)  # older: history
+        before = await self.held()
+        await self.put(self.tavin, "carries", self.sword, "", 100)  # the same fact again
+        self.assertEqual(await self.held(), before)
 
 
 if __name__ == "__main__":

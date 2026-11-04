@@ -4094,15 +4094,12 @@ class MemoryStore:
             if not upgrade:
                 return same, []
             row = await w.update(RELATIONS, same.id, upgrade)
-            return _relation(row), []
-        # An item has one current whereabouts (#3363): a new carrying ends the present keeping, a
-        # new present keeping ends the carrying, and with no order between them carrying wins.
-        settled = whereabouts.settle(new, types[s], types[o], existing)
-        if settled.new_detail is not None:
-            new = dataclasses.replace(new, detail=settled.new_detail)
+            revived, _ = await _settle_whereabouts(w, _relation(row), types)
+            return revived, []
         await w.insert(RELATIONS, _relation_row(new))
-        for ended_id, changes in settled.ends.items():
-            await w.update(RELATIONS, ended_id, dict(changes))
+        # An item has one current whereabouts (#3363): see `whereabouts`
+        new, ended = await _settle_whereabouts(w, new, types)
+        existing = [r for r in existing if r.id not in ended]
         if pred.key == DISGUISED_AS:  # the one in disguise knows it, on every path (#3091)
             await knowers.know_own_disguise(w, new.id, s)
         for mention in found:  # what it was said in: typed links (#2662), beside the old list
@@ -4175,7 +4172,14 @@ class MemoryStore:
             row = await w.update(RELATIONS, relation_id, changes)
             if waiting_guess(_relation(current)) and row["status"] == CONFIRMED:
                 await flag_kept(w, relation_id)  # (only a guess host was never judged as a fact)
-            return Written(_relation(row), w.batch)
+            made = _relation(row)
+            if (
+                made.status == CONFIRMED
+                and made.to_session_at is None
+                and (changes.keys() & {"status", "to_session_at"})
+            ):  # (it just became live: an item's other whereabouts settle, #3363)
+                made, _ = await _settle_whereabouts(w, made)
+            return Written(made, w.batch)
 
     # ---- beliefs: who believes a connection (#2409; docs/STORY_MEMORY.md, section 9) -----------
 
@@ -5714,6 +5718,27 @@ async def _relations_touching(w: Scope, *entity_ids: str) -> list[Relation]:
         [list(entity_ids), list(entity_ids)],
     )
     return [_relation(r) for r in rows]
+
+
+async def _settle_whereabouts(
+    w: Changes, rel: Relation, types: Mapping[str, str] | None = None
+) -> tuple[Relation, set[str]]:
+    """An item has one current whereabouts (#3363, owner 2026-11-04): a fact that has just become
+    live ends or yields to the item's other live whereabouts by `whereabouts.settle`. Returns the
+    fact as it now stands and the ids of the facts it ended."""
+    if rel.predicate not in (whereabouts.CARRIES, whereabouts.LOCATED):
+        return rel, set()
+    kinds = dict(types or {})
+    for end in (rel.subject_id, rel.object_id):
+        if end not in kinds:
+            kinds[end] = (await _entity_row(w, end))["type"]
+    others = await _relations_touching(w, rel.subject_id, rel.object_id)
+    settled = whereabouts.settle(rel, kinds[rel.subject_id], kinds[rel.object_id], others)
+    if settled.new_changes:
+        rel = _relation(await w.update(RELATIONS, rel.id, dict(settled.new_changes)))
+    for ended_id, changes in settled.ends.items():
+        await w.update(RELATIONS, ended_id, dict(changes))
+    return rel, set(settled.ends)
 
 
 async def _flag_problems(
