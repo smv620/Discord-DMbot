@@ -486,6 +486,31 @@ class SplitName:
 
 
 @dataclass(frozen=True, slots=True)
+class GroupHint:
+    """A known group a waiting list of names may be ("Batman and Robin" = the Dynamic Duo, #3383):
+    which of the listed names already belong to it and which do not. Names only."""
+
+    group_id: str
+    group_name: str
+    members: tuple[str, ...]
+    others: tuple[str, ...]  # listed names that are not (yet) members of it
+
+
+@dataclass(frozen=True, slots=True)
+class GroupJoined:
+    """What "Yes, that group" or "They're a group" did: the group, the listed names, those that
+    were already entries (joined as members) and those made as waiting names."""
+
+    group_id: str
+    group_name: str
+    parts: tuple[str, ...]
+    joined: tuple[str, ...]
+    made: tuple[str, ...]
+    # Listed names left out: a known entry that is not a character, or a name DMbot can't keep.
+    skipped: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class Written[T]:
     """A write's result, with the change-log batch to pass to `undo` (None: nothing
     changed, for example the fact was already known)."""

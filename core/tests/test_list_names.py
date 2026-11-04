@@ -60,8 +60,10 @@ class SplitList(unittest.TestCase):
 
     def test_one_name_and_an_overlong_list_stay_whole(self) -> None:
         self.assertEqual(split_list("Aldmoor"), ["Aldmoor"])
-        nine = ", ".join(f"Town{c}" for c in "ABCDEFGHI")
-        self.assertEqual(split_list(nine), [nine])
+        many = ", ".join(f"Town{c}" for c in "ABCDEFGHIJKLM")
+        self.assertEqual(split_list(many), [many])  # thirteen: more likely a sentence
+        ten = ", ".join(f"Town{c}" for c in "ABCDEFGHIJ")
+        self.assertEqual(len(split_list(ten)), 10)  # a region's ten towns in a row
 
     def test_repeats_are_joined(self) -> None:
         self.assertEqual(split_list("Aldmoor, Aldmoor, Quillgate"), ["Aldmoor", "Quillgate"])
@@ -115,9 +117,11 @@ class RealNames(unittest.TestCase):
             split_list("Aldmoor, Quillgate and Fenwick"), ["Aldmoor", "Quillgate", "Fenwick"]
         )
 
-    def test_more_than_eight_parts_is_kept_whole(self) -> None:
-        nine = ", ".join(f"Town{c}" for c in "ABCDEFGHI")
-        self.assertEqual(split_list(nine), [nine])
+    def test_more_than_twelve_parts_is_kept_whole(self) -> None:
+        many = ", ".join(f"Town{c}" for c in "ABCDEFGHIJKLM")
+        self.assertEqual(split_list(many), [many])  # thirteen: more likely a sentence
+        ten = ", ".join(f"Town{c}" for c in "ABCDEFGHIJ")
+        self.assertEqual(len(split_list(ten)), 10)  # a region's ten towns in a row
 
 
 class ExpandClaims(unittest.TestCase):

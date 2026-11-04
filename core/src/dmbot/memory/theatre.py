@@ -37,6 +37,7 @@ from collections.abc import Callable, Collection, Sequence
 from dataclasses import dataclass
 
 from dmbot.memory.models import name_key
+from dmbot.names import not_names
 
 UNKNOWN = "[unknown]"
 TYPED_MARK = " (typed)"  # after a speaker in the input; the stored line starts with it
@@ -60,6 +61,11 @@ _EVERYDAY = frozenset(
     .replace("'", "")
     .split()
 )
+# A form of address or title is said with a capital ("Hello, Friend", "Thank you, Father"): it is an
+# everyday word here, so it is not rewritten before its bracket (#3385).
+_EVERYDAY = frozenset(
+    (*_EVERYDAY, *(w for w in not_names.ADDRESS_ALONE if " " not in w and "'" not in w))
+)  # (single words only: "good", "young" or "grace" from a phrase would hide a real name)
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,8 +139,12 @@ def instructions(known: Sequence[str]) -> str:
         "of one thought, fix the punctuation, drop fillers and false starts, and put a line that "
         "crossed between speakers back with its speaker. Never add anything that was not said.\n\n"
         "After every reference that is not already a name (he, him, it, that one, my cloak, the "
-        "king), write its meaning in square brackets, like `I will cast it on him [Kell]` or `It "
-        "[the cloak] uses 2 [charges]`. Use only the names and things below, or words said in "
+        "king), and after every form of address, title said alone or role word (Friend, stranger, "
+        "lad, Captain, Father, my lord, the innkeeper, the guard), write who or what it means in "
+        "square brackets, like `I will cast it on him [Kell]`, `Hello, Friend [Tavin]`, `The "
+        "innkeeper [Brin] nods` or `It [the cloak] uses 2 [charges]`. A bracket after a form of "
+        "address is for this one line only: it is not a name for that person. Use only the names "
+        "and things below, or words said in "
         "these lines. If you cannot tell, write `[unknown]`. Never guess and never reveal a name "
         "that is not on the list.\n\n"
         "The table knows these names and things:\n"
@@ -280,7 +290,11 @@ def check_brackets(text: str, allowed: Collection[str], said: Sequence[str]) -> 
     spoken = {w for line in said for w in _words(line)}
 
     def keep(inside: str) -> bool:
-        return _plain(inside) in keys or name_key(inside) in keys or _said_as_phrase(inside, said)
+        if _plain(inside) in keys or name_key(inside) in keys:
+            return True  # the table's own list wins, even for a name that is also a title
+        if not_names.shape_of(inside) == "address":
+            return False  # "Friend [friend]" explains nothing: a form of address is no meaning
+        return _said_as_phrase(inside, said)
 
     checked, in_brackets = _brackets(text, keep)
     cleaned, stray = _stray_names(checked, lambda w: name_key(w) in listed_words or w in spoken)

@@ -61,6 +61,15 @@ _SIGNIFICANT = re.compile(
     r"villain's plan|the plan|plot thread|the ritual|cursed|corrupt\w*|madness)\b",
     re.IGNORECASE,
 )
+# Words the text itself uses to say one particular thing is one of a kind: "a unique wolf figurine
+# inlaid with black gemstones, etched with runes". Read only in the sentences that speak of the
+# item (`_near`), so a rune in another sentence says nothing about it.
+_MARK_WORDS = 5  # how close a word must be to the item's own last word
+_MARKED = re.compile(
+    r"\b(unique|one of a kind|one-of-a-kind|heirloom|relic|legendary|"
+    r"(?:inlaid|etched|engraved|carved|set|studded) (?:with|in)|runes?)\b",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -116,6 +125,22 @@ def _proper(words: list[str]) -> bool:
     )
 
 
+def _marked_near(words: list[str], text: str) -> bool:
+    """Is a one-of-a-kind word within a few words of the item's own last word? A sentence that
+    lists two things ("waterproof backpacks ... a wolf figurine etched with runes") must not make
+    the plain one unique."""
+    if not words:
+        return False
+    head = words[-1].casefold().rstrip("s")
+    tokens = re.findall(r"[\w'-]+", text)
+    for i, token in enumerate(tokens):
+        if token.casefold().rstrip("s") == head:
+            window = " ".join(tokens[max(0, i - _MARK_WORDS) : i + _MARK_WORDS + 1])
+            if _MARKED.search(window):
+                return True
+    return False
+
+
 def _near(name: str, context: str) -> str:
     """The sentences of `context` that speak of this item (its last word): a word like "plan" in
     another sentence says nothing about it. A short context (one quote) is taken whole."""
@@ -145,6 +170,8 @@ def judge(name: str, context: str = "") -> Verdict:
     context = _near(text, context)
     if _SIGNIFICANT.search(f"{text} {context}"):
         return Verdict(True, "story")
+    if _marked_near(words, f"{text} {context}"):
+        return Verdict(True, "marked")
     # A judgement of the signs left: keep when more likely than not one particular thing.
     plain = [w.casefold() for w in words]
     score = 0

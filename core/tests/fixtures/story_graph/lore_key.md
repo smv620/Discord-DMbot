@@ -13,7 +13,7 @@ What the graph should hold after the sample lore document is read: [Icewind Dale
 
 **Tiers:** `stated` the words are in the text · `inferred` only implied, offered as a suggestion and never extracted · `by_rule` made by a rule, not read. **Must find: no** means a good find if present, not a miss if absent. An `inferred` tie marked must-find is scored on whether DMbot *offers* it to the DM. **Current: no** is history: it was true and is not now.
 
-**Totals:** 94 entries, 120 connections (80 must-find), 19 events.
+**Totals:** 89 entries, 119 connections (80 must-find), 19 events.
 
 ## Connections
 
@@ -29,25 +29,26 @@ What the graph should hold after the sample lore document is read: [Icewind Dale
 | l006 | Cerric's paternal grandfather | grandparent_of | Cerric Vanya'elen | stated | yes | yes | 18 | died in a severe storm |
 | l007 | Qinric | sibling | Roceran | stated | yes | yes | 18 | 'Roceran's brother Qinric'; the owner asked for this tie directly |
 | l008 | Qinric | uncle_of | Cerric Vanya'elen | inferred | yes | yes | 18 | never said as 'uncle': Roceran's brother |
-| l030 | Okthandom Korran | sibling | Vaelrith | stated | yes | yes | 27 | elder brother, vanished at 105 |
-| l031 | Okthandom Korran | sibling | Nyssara | stated | yes | yes | 27 | younger sister; a player character's family must be kept |
-| l032 | Vaelrith | sibling | Nyssara | inferred | no | yes | 27 |  |
-| l033 | Okthandom Korran | parent_of | Okthandom's child | stated | no | yes | 30 | 'his child', named once in passing |
-| l038 | Lee | parent_of | Claude Ambere | stated | yes | yes | 42 | 'Griz, son of Lee'; the owner flagged this as missing |
+| l031 | Okthandom Korran | sibling | Vaelrith | stated | yes | yes | 27 | elder brother, vanished at 105 |
+| l032 | Okthandom Korran | sibling | Nyssara | stated | yes | yes | 27 | younger sister; a player character's family must be kept |
+| l033 | Vaelrith | sibling | Nyssara | inferred | no | yes | 27 |  |
+| l034 | Okthandom Korran | parent_of | Okthandom's child | stated | no | yes | 30 | 'his child', named once in passing |
+| l039 | Lee | parent_of | Claude Ambere | stated | yes | yes | 42 | 'Griz, son of Lee'; the owner flagged this as missing |
 | l082 | Brewner | parent_of | Brewner's daughter | stated | no | yes | 67 |  |
 | l093 | Bruni Stonewake | sibling | Thorin | stated | yes | yes | 78 | 'Thorin, his miner brother Bruni' |
-| l116 | Garret Velryn | spouse | Keegan Velryn | stated | yes | yes | 96 | 'whose husband' |
+| l115 | Garret Velryn | spouse | Keegan Velryn | stated | yes | yes | 96 | 'whose husband' |
 
-### Teaching and work (18)
+### Teaching and work (19)
 
 | id | from | tie | to | tier | must find | current | line | note |
 |---|---|---|---|---|---|---|---|---|
 | l009 | Qinric | member | Lord's Alliance | stated | yes | yes | 18 | a war mage evoker in it |
 | l010 | Valyra | apprentice_of | Kelfir Ama'Kiir | stated | yes | yes | 18 |  |
 | l011 | Cerric Vanya'elen | works_for | Syllar Sparkwalker | stated | yes | yes | 18 | Keeper of the Sparkwalker Spire under him |
-| l014 | Syllar Sparkwalker | mentor_of | Emmerich | inferred | no | yes | 18 | Cerric's fellow apprentices |
-| l015 | Syllar Sparkwalker | mentor_of | Wit | inferred | no | yes | 18 |  |
-| l036 | Belleros Stormgrace | member | Explorer's League | stated | yes | yes | 36 | 'a scout associated with the Explorer's League' |
+| l012 | Cerric Vanya'elen | leads | Sparkwalker Spire | stated | yes | yes | 18 | Keeper of it (leads; works_in is also true and kept as optional, Supervisor 2026-11-04) |
+| l015 | Syllar Sparkwalker | mentor_of | Emmerich | inferred | no | yes | 18 | Cerric's fellow apprentices |
+| l016 | Syllar Sparkwalker | mentor_of | Wit | inferred | no | yes | 18 |  |
+| l037 | Belleros Stormgrace | member | Explorer's League | stated | yes | yes | 36 | 'a scout associated with the Explorer's League' |
 | l069 | The party | works_for | Hlin Trollbane | stated | yes | yes | 53 | 100 gold to capture or eliminate Kaltro (line 67) |
 | l071 | Sephek Kaltro | works_for | Torrga Icevein | stated | yes | yes | 57 | her bodyguard (also line 55) |
 | l072 | Torrga Icevein | leads | Torg's Caravan | stated | yes | yes | 57 | under her own heading on line 56 |
@@ -58,17 +59,17 @@ What the graph should hold after the sample lore document is read: [Icewind Dale
 | l084 | Belleros Stormgrace | member | The party | stated | yes | yes | 67 | 'our four adventurers' |
 | l085 | Okthandom Korran | member | The party | stated | yes | yes | 67 | 'our four adventurers' |
 | l086 | Claude Ambere | member | The party | stated | yes | yes | 67 | 'our four adventurers' |
-| l117 | Garret Velryn | member | Explorer's League | stated | yes | yes | 96 | 'a noted member' |
-| l119 | The party | works_for | Keegan Velryn | stated | yes | yes | 96 | 50 gold and a route map to find Garret |
+| l116 | Garret Velryn | member | Explorer's League | stated | yes | yes | 96 | 'a noted member' |
+| l118 | The party | works_for | Keegan Velryn | stated | yes | yes | 96 | 50 gold and a route map to find Garret |
 
-### Feelings and opposition (16)
+### Feelings and opposition (15)
 
 | id | from | tie | to | tier | must find | current | line | note |
 |---|---|---|---|---|---|---|---|---|
-| l016 | Emmerich | rival_of | Cerric Vanya'elen | stated | yes | yes | 18 | 'rival apprentices Emmerich and Wit'; the owner flagged backstory rivals as missing |
-| l017 | Wit | rival_of | Cerric Vanya'elen | stated | no | yes | 18 |  |
-| l027 | Syllar Sparkwalker | knows | Danneth | inferred | no | yes | 21 | the note is signed S |
-| l039 | Claude Ambere | held_captive_by | The circus | stated | yes | no | 42 | before he escaped |
+| l017 | Emmerich | rival_of | Cerric Vanya'elen | stated | yes | yes | 18 | 'rival apprentices Emmerich and Wit'; the owner flagged backstory rivals as missing |
+| l018 | Wit | rival_of | Cerric Vanya'elen | stated | no | yes | 18 |  |
+| l028 | Syllar Sparkwalker | knows | Danneth | inferred | no | yes | 21 | the note is signed S |
+| l040 | Claude Ambere | held_captive_by | The circus | stated | yes | no | 42 | before he escaped |
 | l070 | Hlin Trollbane | enemy_of | Sephek Kaltro | inferred | no | yes | 53 | she hires against him; she is not his servant (#3256) |
 | l081 | Belleros Stormgrace | knows (wary) | Brewner | stated | no | yes | 67 | a heated debate |
 | l087 | Cerric Vanya'elen | knows | Belleros Stormgrace | by_rule | yes | yes | 67 | player characters who play together know each other (#3036) |
@@ -79,18 +80,17 @@ What the graph should hold after the sample lore document is read: [Icewind Dale
 | l092 | Okthandom Korran | knows | Claude Ambere | by_rule | yes | yes | 67 | player characters who play together know each other (#3036) |
 | l098 | Okthandom Korran | enemy_of | Trex | stated | no | yes | 84 | killed him with an arrow |
 | l109 | Ice troll | enemy_of | The minotaur captain | stated | no | yes | 90 | devoured him and shattered his ship |
-| l111 | Electric eel | enemy_of | Fizzlebomb | stated | no | yes | 93 | pulled him under |
-| l112 | Belleros Stormgrace | knows (friendly) | Boy | stated | no | yes | 96 | befriended him |
+| l111 | Belleros Stormgrace | knows (friendly) | Boy | stated | no | yes | 96 | befriended him |
 
 ### Things (16)
 
 | id | from | tie | to | tier | must find | current | line | note |
 |---|---|---|---|---|---|---|---|---|
-| l022 | Cerric Vanya'elen | carries | Azure tome | stated | yes | yes | 21 | grabbed his master's locked tome |
-| l023 | Syllar Sparkwalker | owns | Azure tome | stated | yes | yes | 21 | 'his master's' |
-| l028 | Cerric Vanya'elen | owns | Glyph | stated | yes | yes | 21 | snowy owl familiar |
-| l035 | Okthandom Korran | owns | Ancestral journal | inferred | no | yes | 27 | found the curse in it |
-| l040 | Claude Ambere | found | Wolf figurine | inferred | yes | no | 42 | the owner: Claude found it first (line 42: he carries a unique wolf figurine; line 90: he sells it). Offered to the DM, never extracted |
+| l023 | Cerric Vanya'elen | carries | Azure tome | stated | yes | yes | 21 | grabbed his master's locked tome |
+| l024 | Syllar Sparkwalker | owns | Azure tome | stated | yes | yes | 21 | 'his master's' |
+| l029 | Cerric Vanya'elen | owns | Glyph | stated | yes | yes | 21 | snowy owl familiar |
+| l036 | Okthandom Korran | owns | Ancestral journal | inferred | no | yes | 27 | found the curse in it |
+| l041 | Claude Ambere | found | Wolf figurine | inferred | yes | no | 42 | the owner: Claude found it first (line 42: he carries a unique wolf figurine; line 90: he sells it). Offered to the DM, never extracted |
 | l077 | Veron Braig | owns | The Blue Clam | stated | yes | yes | 61 |  |
 | l097 | Trex | carries | Penolopi | stated | no | yes | 84 | the plant was in his backpack |
 | l099 | Cerric Vanya'elen | carries | Wand of Conducting | stated | no | yes | 84 | Okthandom found it and gave it to him |
@@ -101,26 +101,25 @@ What the graph should hold after the sample lore document is read: [Icewind Dale
 | l106 | Belleros Stormgrace | owns | Wolf figurine | stated | yes | yes | 90 | bought it from Claude for 75 gold |
 | l107 | Belleros Stormgrace | carries | Wolf figurine | inferred | yes | yes | 90 | the owner: he owns it and carries it now; the text says only that he bought it |
 | l108 | Fizzlebomb | owns | Aurora's Wind | stated | yes | yes | 90 | 'Fizzlebomb's vessel'; the owner flagged this as missing |
-| l115 | Garret Velryn | owns | Boy | inferred | yes | yes | 96 | Boy led the party to Keegan's home: the owner says he is Garret's dog. The text never says it; offer it to the DM, never extract it |
+| l114 | Garret Velryn | owns | Boy | inferred | yes | yes | 96 | Boy led the party to Keegan's home: the owner says he is Garret's dog. The text never says it; offer it to the DM, never extract it |
 
-### Places and other ties (54)
+### Places and other ties (53)
 
 | id | from | tie | to | tier | must find | current | line | note |
 |---|---|---|---|---|---|---|---|---|
-| l012 | Cerric Vanya'elen | works_in | Sparkwalker Spire | stated | yes | yes | 18 | Keeper of it |
-| l013 | Syllar Sparkwalker | works_in | Blackstaff Tower | inferred | no | yes | 18 | 'Syllar Sparkwalker of Blackstaff Tower' |
-| l018 | Cerric Vanya'elen | comes_from | Waterdeep | stated | yes | yes | 18 | born in the Temple of the Seldarine |
-| l019 | Temple of the Seldarine | in | Waterdeep | stated | yes | yes | 18 |  |
-| l020 | Cerric Vanya'elen | lived_in | Castle Ward | stated | no | no | 18 | raised in a mansion there |
-| l021 | Castle Ward | in | Waterdeep | inferred | no | yes | 18 |  |
-| l024 | Cerric Vanya'elen | last_seen_in | Neverwinter | stated | no | yes | 21 | fled there by teleportation rune |
-| l025 | Cerric Vanya'elen | last_seen_in | Icewind Dale | stated | no | yes | 21 | journeyed north into it |
-| l026 | Danneth | last_seen_in | Easthaven | inferred | no | yes | 21 | the note is addressed 'Danneth, Easthaven' |
-| l029 | Easthaven | in | Icewind Dale | stated | yes | yes | 21 |  |
-| l034 | The wind spirit | associate | Okthandom Korran | stated | yes | yes | 30 | guides and guards him |
-| l037 | Claude Ambere | comes_from | Spine of the World | stated | yes | yes | 42 |  |
-| l041 | Auril the Frostmaiden | lives_in | Icewind Dale | stated | yes | yes | 51 | withdrawn there to live among mortals |
-| l042 | Auril the Frostmaiden | associate | White roc | stated | no | yes | 51 | rides it |
+| l013 | Cerric Vanya'elen | works_in | Sparkwalker Spire | stated | no | yes | 18 | Keeper of it |
+| l014 | Syllar Sparkwalker | works_in | Blackstaff Tower | inferred | no | yes | 18 | 'Syllar Sparkwalker of Blackstaff Tower' |
+| l019 | Cerric Vanya'elen | comes_from | Waterdeep | stated | yes | yes | 18 | born in the Temple of the Seldarine |
+| l020 | Temple of the Seldarine | in | Waterdeep | stated | yes | yes | 18 |  |
+| l021 | Cerric Vanya'elen | lived_in | Castle Ward | stated | no | no | 18 | raised in a mansion there |
+| l022 | Castle Ward | in | Waterdeep | inferred | no | yes | 18 |  |
+| l025 | Cerric Vanya'elen | last_seen_in | Neverwinter | stated | no | yes | 21 | fled there by teleportation rune |
+| l026 | Cerric Vanya'elen | last_seen_in | Icewind Dale | stated | no | yes | 21 | journeyed north into it |
+| l027 | Danneth | last_seen_in | Easthaven | inferred | no | yes | 21 | the note is addressed 'Danneth, Easthaven' |
+| l030 | Easthaven | in | Icewind Dale | stated | yes | yes | 21 |  |
+| l035 | The wind spirit | associate | Okthandom Korran | stated | yes | yes | 30 | guides and guards him |
+| l038 | Claude Ambere | comes_from | Spine of the World | stated | yes | yes | 42 |  |
+| l042 | Auril the Frostmaiden | lives_in | Icewind Dale | stated | yes | yes | 51 | withdrawn there to live among mortals |
 | l043 | Ten-Towns | associate | Auril the Frostmaiden | stated | no | yes | 90 | its towns sacrifice every ten-day to appease her |
 | l044 | Targos | in | Ten-Towns | stated | yes | yes | 90 | listed with its sacrifice (also line 7) |
 | l045 | Bryn Shander | in | Ten-Towns | stated | yes | yes | 90 | listed with its sacrifice (also line 7) |
@@ -157,10 +156,10 @@ What the graph should hold after the sample lore document is read: [Icewind Dale
 | l104 | Psi crystal | was_kept_in | The gemstone mine | inferred | yes | no | 84 | found there in the mind flayer's skull, then taken: the place is history |
 | l105 | Psi crystal | associate | Mind flayer | stated | no | yes | 84 | from its petrified skull |
 | l110 | Ice troll | last_seen_in | Maer Dualdon | stated | no | yes | 90 |  |
-| l113 | Boy | last_seen_in | Three Flags Sailing | stated | no | yes | 96 |  |
-| l114 | Three Flags Sailing | in | Targos | inferred | no | yes | 96 |  |
-| l118 | Garret Velryn | last_seen_in | Kelvin's Cairn | stated | no | yes | 96 | vanished five days ago leading an expedition up it |
-| l120 | Jebidiah | works_in | Targos | inferred | no | yes | 96 | a kennel master the party met there |
+| l112 | Boy | last_seen_in | Three Flags Sailing | stated | no | yes | 96 |  |
+| l113 | Three Flags Sailing | in | Targos | inferred | no | yes | 96 |  |
+| l117 | Garret Velryn | last_seen_in | Kelvin's Cairn | stated | no | yes | 96 | vanished five days ago leading an expedition up it |
+| l119 | Jebidiah | works_in | Targos | inferred | no | yes | 96 | a kennel master the party met there |
 
 ## Events
 
@@ -228,7 +227,7 @@ What the graph should hold after the sample lore document is read: [Icewind Dale
 | The minotaur captain | Minotaur captain of the first ship | Unnamed. Captain of the first ship. |
 | The beggar woman | beggar woman | Unnamed. Gives a prophecy. |
 
-### Creatures (13)
+### Creatures (8)
 
 | name | also called | note |
 |---|---|---|
@@ -237,13 +236,8 @@ What the graph should hold after the sample lore document is read: [Icewind Dale
 | The ghost |  | Unnamed possessed ghost that emerged when Trex fell |
 | Penolopi |  | pet plant the party burned |
 | The wind spirit |  | Unnamed ancient spirit that guides and guards Okthandom |
-| White roc |  | Auril's mount |
-| Ice kobolds |  | six fought on the road |
 | Yeti |  | evaded on the road |
-| Grell |  | killed the familiar |
 | Ice troll |  | ate the first ship's captain |
-| Electric eel |  | pulled Fizzlebomb under |
-| Owlbears |  | three ambushed the party near Targos |
 | Mind flayer |  | petrified skull in the mine |
 
 ### Gods (1)
@@ -319,6 +313,7 @@ What the graph should hold after the sample lore document is read: [Icewind Dale
 
 ## Must not find
 
+- a kind of creature is not an entry (#3373 rule, Supervisor 2026-11-04): no entry or tie for the white roc, ice kobolds, grell, electric eel or owlbears; one particular creature is (the mind flayer whose skull held the Psi crystal)
 - any link made from dice rolls, hit points, wasp stings or spear wounds, spells (Moment to Think, Detect Magic) or marching order
 - only unique items are tracked (#3373): no entry or tie for Wyvern poison, the two dog sleds and eight dogs, the scroll of Detect Magic, the scroll of Identify, the Potion of Healing or the waterproof backpacks (ordinary gear)
 - the warning sign 'Kobolds only!' is a sign, not a person or a group

@@ -315,11 +315,7 @@
   {
    "name": "Keegan Velryn",
    "kind": "person",
-   "aliases": [
-    "she",
-    "the lady",
-    "ma'am"
-   ],
+   "aliases": [],
    "note": "Garret's wife, hires the party Garret's wife. Never named in play, only 'she' and 'the lady': the name needs the recap or the lore.",
    "docs": [
     "lore",
@@ -463,24 +459,6 @@
    ]
   },
   {
-   "name": "White roc",
-   "kind": "creature",
-   "aliases": [],
-   "note": "Auril's mount",
-   "docs": [
-    "lore"
-   ]
-  },
-  {
-   "name": "Ice kobolds",
-   "kind": "creature",
-   "aliases": [],
-   "note": "six fought on the road",
-   "docs": [
-    "lore"
-   ]
-  },
-  {
    "name": "Yeti",
    "kind": "creature",
    "aliases": [],
@@ -491,37 +469,10 @@
    ]
   },
   {
-   "name": "Grell",
-   "kind": "creature",
-   "aliases": [],
-   "note": "killed the familiar",
-   "docs": [
-    "lore"
-   ]
-  },
-  {
    "name": "Ice troll",
    "kind": "creature",
    "aliases": [],
    "note": "ate the first ship's captain",
-   "docs": [
-    "lore"
-   ]
-  },
-  {
-   "name": "Electric eel",
-   "kind": "creature",
-   "aliases": [],
-   "note": "pulled Fizzlebomb under",
-   "docs": [
-    "lore"
-   ]
-  },
-  {
-   "name": "Owlbears",
-   "kind": "creature",
-   "aliases": [],
-   "note": "three ambushed the party near Targos",
    "docs": [
     "lore"
    ]
@@ -1220,7 +1171,7 @@
   {
    "id": "m012",
    "a": "Cerric Vanya'elen",
-   "relation": "works_in",
+   "relation": "leads",
    "b": "Sparkwalker Spire",
    "tier": "stated",
    "must_find": true,
@@ -1234,14 +1185,14 @@
      "line": 18
     }
    ],
-   "note": "Keeper of it"
+   "note": "Keeper of it (leads; works_in is also true and kept as optional, Supervisor 2026-11-04)"
   },
   {
    "id": "m013",
-   "a": "Syllar Sparkwalker",
+   "a": "Cerric Vanya'elen",
    "relation": "works_in",
-   "b": "Blackstaff Tower",
-   "tier": "inferred",
+   "b": "Sparkwalker Spire",
+   "tier": "stated",
    "must_find": false,
    "in": [
     "lore"
@@ -1253,13 +1204,13 @@
      "line": 18
     }
    ],
-   "note": "'Syllar Sparkwalker of Blackstaff Tower'"
+   "note": "Keeper of it"
   },
   {
    "id": "m014",
    "a": "Syllar Sparkwalker",
-   "relation": "mentor_of",
-   "b": "Emmerich",
+   "relation": "works_in",
+   "b": "Blackstaff Tower",
    "tier": "inferred",
    "must_find": false,
    "in": [
@@ -1272,13 +1223,13 @@
      "line": 18
     }
    ],
-   "note": "Cerric's fellow apprentices"
+   "note": "'Syllar Sparkwalker of Blackstaff Tower'"
   },
   {
    "id": "m015",
    "a": "Syllar Sparkwalker",
    "relation": "mentor_of",
-   "b": "Wit",
+   "b": "Emmerich",
    "tier": "inferred",
    "must_find": false,
    "in": [
@@ -1290,10 +1241,29 @@
      "id": "l015",
      "line": 18
     }
-   ]
+   ],
+   "note": "Cerric's fellow apprentices"
   },
   {
    "id": "m016",
+   "a": "Syllar Sparkwalker",
+   "relation": "mentor_of",
+   "b": "Wit",
+   "tier": "inferred",
+   "must_find": false,
+   "in": [
+    "lore"
+   ],
+   "sources": [
+    {
+     "doc": "lore",
+     "id": "l016",
+     "line": 18
+    }
+   ]
+  },
+  {
+   "id": "m017",
    "a": "Cerric Vanya'elen",
    "relation": "rival_of",
    "b": "Emmerich",
@@ -1305,14 +1275,14 @@
    "sources": [
     {
      "doc": "lore",
-     "id": "l016",
+     "id": "l017",
      "line": 18
     }
    ],
    "note": "'rival apprentices Emmerich and Wit'; the owner flagged backstory rivals as missing"
   },
   {
-   "id": "m017",
+   "id": "m018",
    "a": "Cerric Vanya'elen",
    "relation": "rival_of",
    "b": "Wit",
@@ -1324,34 +1294,15 @@
    "sources": [
     {
      "doc": "lore",
-     "id": "l017",
+     "id": "l018",
      "line": 18
     }
    ]
   },
   {
-   "id": "m018",
+   "id": "m019",
    "a": "Cerric Vanya'elen",
    "relation": "comes_from",
-   "b": "Waterdeep",
-   "tier": "stated",
-   "must_find": true,
-   "in": [
-    "lore"
-   ],
-   "sources": [
-    {
-     "doc": "lore",
-     "id": "l018",
-     "line": 18
-    }
-   ],
-   "note": "born in the Temple of the Seldarine"
-  },
-  {
-   "id": "m019",
-   "a": "Temple of the Seldarine",
-   "relation": "in",
    "b": "Waterdeep",
    "tier": "stated",
    "must_find": true,
@@ -1364,10 +1315,29 @@
      "id": "l019",
      "line": 18
     }
-   ]
+   ],
+   "note": "born in the Temple of the Seldarine"
   },
   {
    "id": "m020",
+   "a": "Temple of the Seldarine",
+   "relation": "in",
+   "b": "Waterdeep",
+   "tier": "stated",
+   "must_find": true,
+   "in": [
+    "lore"
+   ],
+   "sources": [
+    {
+     "doc": "lore",
+     "id": "l020",
+     "line": 18
+    }
+   ]
+  },
+  {
+   "id": "m021",
    "a": "Cerric Vanya'elen",
    "relation": "lived_in",
    "b": "Castle Ward",
@@ -1380,14 +1350,14 @@
    "sources": [
     {
      "doc": "lore",
-     "id": "l020",
+     "id": "l021",
      "line": 18
     }
    ],
    "note": "raised in a mansion there"
   },
   {
-   "id": "m021",
+   "id": "m022",
    "a": "Castle Ward",
    "relation": "in",
    "b": "Waterdeep",
@@ -1399,34 +1369,15 @@
    "sources": [
     {
      "doc": "lore",
-     "id": "l021",
+     "id": "l022",
      "line": 18
     }
    ]
   },
   {
-   "id": "m022",
+   "id": "m023",
    "a": "Cerric Vanya'elen",
    "relation": "carries",
-   "b": "Azure tome",
-   "tier": "stated",
-   "must_find": true,
-   "in": [
-    "lore"
-   ],
-   "sources": [
-    {
-     "doc": "lore",
-     "id": "l022",
-     "line": 21
-    }
-   ],
-   "note": "grabbed his master's locked tome"
-  },
-  {
-   "id": "m023",
-   "a": "Syllar Sparkwalker",
-   "relation": "owns",
    "b": "Azure tome",
    "tier": "stated",
    "must_find": true,
@@ -1440,15 +1391,15 @@
      "line": 21
     }
    ],
-   "note": "'his master's'"
+   "note": "grabbed his master's locked tome"
   },
   {
    "id": "m024",
-   "a": "Cerric Vanya'elen",
-   "relation": "last_seen_in",
-   "b": "Neverwinter",
+   "a": "Syllar Sparkwalker",
+   "relation": "owns",
+   "b": "Azure tome",
    "tier": "stated",
-   "must_find": false,
+   "must_find": true,
    "in": [
     "lore"
    ],
@@ -1459,13 +1410,13 @@
      "line": 21
     }
    ],
-   "note": "fled there by teleportation rune"
+   "note": "'his master's'"
   },
   {
    "id": "m025",
    "a": "Cerric Vanya'elen",
    "relation": "last_seen_in",
-   "b": "Icewind Dale",
+   "b": "Neverwinter",
    "tier": "stated",
    "must_find": false,
    "in": [
@@ -1478,14 +1429,14 @@
      "line": 21
     }
    ],
-   "note": "journeyed north into it"
+   "note": "fled there by teleportation rune"
   },
   {
    "id": "m026",
-   "a": "Danneth",
+   "a": "Cerric Vanya'elen",
    "relation": "last_seen_in",
-   "b": "Easthaven",
-   "tier": "inferred",
+   "b": "Icewind Dale",
+   "tier": "stated",
    "must_find": false,
    "in": [
     "lore"
@@ -1497,13 +1448,13 @@
      "line": 21
     }
    ],
-   "note": "the note is addressed 'Danneth, Easthaven'"
+   "note": "journeyed north into it"
   },
   {
    "id": "m027",
-   "a": "Syllar Sparkwalker",
-   "relation": "knows",
-   "b": "Danneth",
+   "a": "Danneth",
+   "relation": "last_seen_in",
+   "b": "Easthaven",
    "tier": "inferred",
    "must_find": false,
    "in": [
@@ -1516,10 +1467,29 @@
      "line": 21
     }
    ],
-   "note": "the note is signed S"
+   "note": "the note is addressed 'Danneth, Easthaven'"
   },
   {
    "id": "m028",
+   "a": "Syllar Sparkwalker",
+   "relation": "knows",
+   "b": "Danneth",
+   "tier": "inferred",
+   "must_find": false,
+   "in": [
+    "lore"
+   ],
+   "sources": [
+    {
+     "doc": "lore",
+     "id": "l028",
+     "line": 21
+    }
+   ],
+   "note": "the note is signed S"
+  },
+  {
+   "id": "m029",
    "a": "Cerric Vanya'elen",
    "relation": "owns",
    "b": "Glyph",
@@ -1532,7 +1502,7 @@
    "sources": [
     {
      "doc": "lore",
-     "id": "l028",
+     "id": "l029",
      "line": 21
     },
     {
@@ -1544,7 +1514,7 @@
    "note": "snowy owl familiar / 'Glyph, my owl familiar'"
   },
   {
-   "id": "m029",
+   "id": "m030",
    "a": "Easthaven",
    "relation": "in",
    "b": "Icewind Dale",
@@ -1556,41 +1526,16 @@
    "sources": [
     {
      "doc": "lore",
-     "id": "l029",
+     "id": "l030",
      "line": 21
     }
    ]
   },
   {
-   "id": "m030",
+   "id": "m031",
    "a": "Okthandom Korran",
    "relation": "sibling",
    "b": "Vaelrith",
-   "tier": "stated",
-   "must_find": true,
-   "in": [
-    "lore",
-    "session"
-   ],
-   "sources": [
-    {
-     "doc": "lore",
-     "id": "l030",
-     "line": 27
-    },
-    {
-     "doc": "session",
-     "id": "s004",
-     "line": 481
-    }
-   ],
-   "note": "elder brother, vanished at 105 / another player says the name (478); Okthandom: 'no that's my brother'"
-  },
-  {
-   "id": "m031",
-   "a": "Nyssara",
-   "relation": "sibling",
-   "b": "Okthandom Korran",
    "tier": "stated",
    "must_find": true,
    "in": [
@@ -1605,6 +1550,31 @@
     },
     {
      "doc": "session",
+     "id": "s004",
+     "line": 481
+    }
+   ],
+   "note": "elder brother, vanished at 105 / another player says the name (478); Okthandom: 'no that's my brother'"
+  },
+  {
+   "id": "m032",
+   "a": "Nyssara",
+   "relation": "sibling",
+   "b": "Okthandom Korran",
+   "tier": "stated",
+   "must_find": true,
+   "in": [
+    "lore",
+    "session"
+   ],
+   "sources": [
+    {
+     "doc": "lore",
+     "id": "l032",
+     "line": 27
+    },
+    {
+     "doc": "session",
      "id": "s003",
      "line": 487
     }
@@ -1612,7 +1582,7 @@
    "note": "younger sister; a player character's family must be kept / 'my sister' on line 439 and 454; the name only on line 487 ('her name is Nyssara'): the first mention needs the later name"
   },
   {
-   "id": "m032",
+   "id": "m033",
    "a": "Nyssara",
    "relation": "sibling",
    "b": "Vaelrith",
@@ -1624,13 +1594,13 @@
    "sources": [
     {
      "doc": "lore",
-     "id": "l032",
+     "id": "l033",
      "line": 27
     }
    ]
   },
   {
-   "id": "m033",
+   "id": "m034",
    "a": "Okthandom Korran",
    "relation": "parent_of",
    "b": "Okthandom's child",
@@ -1642,14 +1612,14 @@
    "sources": [
     {
      "doc": "lore",
-     "id": "l033",
+     "id": "l034",
      "line": 30
     }
    ],
    "note": "'his child', named once in passing"
   },
   {
-   "id": "m034",
+   "id": "m035",
    "a": "The wind spirit",
    "relation": "associate",
    "b": "Okthandom Korran",
@@ -1661,14 +1631,14 @@
    "sources": [
     {
      "doc": "lore",
-     "id": "l034",
+     "id": "l035",
      "line": 30
     }
    ],
    "note": "guides and guards him"
   },
   {
-   "id": "m035",
+   "id": "m036",
    "a": "Okthandom Korran",
    "relation": "owns",
    "b": "Ancestral journal",
@@ -1680,14 +1650,14 @@
    "sources": [
     {
      "doc": "lore",
-     "id": "l035",
+     "id": "l036",
      "line": 27
     }
    ],
    "note": "found the curse in it"
   },
   {
-   "id": "m036",
+   "id": "m037",
    "a": "Belleros Stormgrace",
    "relation": "member",
    "b": "Explorer's League",
@@ -1699,14 +1669,14 @@
    "sources": [
     {
      "doc": "lore",
-     "id": "l036",
+     "id": "l037",
      "line": 36
     }
    ],
    "note": "'a scout associated with the Explorer's League'"
   },
   {
-   "id": "m037",
+   "id": "m038",
    "a": "Claude Ambere",
    "relation": "comes_from",
    "b": "Spine of the World",
@@ -1718,13 +1688,13 @@
    "sources": [
     {
      "doc": "lore",
-     "id": "l037",
+     "id": "l038",
      "line": 42
     }
    ]
   },
   {
-   "id": "m038",
+   "id": "m039",
    "a": "Lee",
    "relation": "parent_of",
    "b": "Claude Ambere",
@@ -1736,14 +1706,14 @@
    "sources": [
     {
      "doc": "lore",
-     "id": "l038",
+     "id": "l039",
      "line": 42
     }
    ],
    "note": "'Griz, son of Lee'; the owner flagged this as missing"
   },
   {
-   "id": "m039",
+   "id": "m040",
    "a": "Claude Ambere",
    "relation": "held_captive_by",
    "b": "The circus",
@@ -1756,14 +1726,14 @@
    "sources": [
     {
      "doc": "lore",
-     "id": "l039",
+     "id": "l040",
      "line": 42
     }
    ],
    "note": "before he escaped"
   },
   {
-   "id": "m040",
+   "id": "m041",
    "a": "Claude Ambere",
    "relation": "found",
    "b": "Wolf figurine",
@@ -1776,14 +1746,14 @@
    "sources": [
     {
      "doc": "lore",
-     "id": "l040",
+     "id": "l041",
      "line": 42
     }
    ],
    "note": "the owner: Claude found it first (line 42: he carries a unique wolf figurine; line 90: he sells it). Offered to the DM, never extracted"
   },
   {
-   "id": "m041",
+   "id": "m042",
    "a": "Auril the Frostmaiden",
    "relation": "lives_in",
    "b": "Icewind Dale",
@@ -1795,30 +1765,11 @@
    "sources": [
     {
      "doc": "lore",
-     "id": "l041",
-     "line": 51
-    }
-   ],
-   "note": "withdrawn there to live among mortals"
-  },
-  {
-   "id": "m042",
-   "a": "Auril the Frostmaiden",
-   "relation": "associate",
-   "b": "White roc",
-   "tier": "stated",
-   "must_find": false,
-   "in": [
-    "lore"
-   ],
-   "sources": [
-    {
-     "doc": "lore",
      "id": "l042",
      "line": 51
     }
    ],
-   "note": "rides it"
+   "note": "withdrawn there to live among mortals"
   },
   {
    "id": "m043",
@@ -3168,25 +3119,6 @@
   },
   {
    "id": "m111",
-   "a": "Electric eel",
-   "relation": "enemy_of",
-   "b": "Fizzlebomb",
-   "tier": "stated",
-   "must_find": false,
-   "in": [
-    "lore"
-   ],
-   "sources": [
-    {
-     "doc": "lore",
-     "id": "l111",
-     "line": 93
-    }
-   ],
-   "note": "pulled him under"
-  },
-  {
-   "id": "m112",
    "a": "Belleros Stormgrace",
    "relation": "knows",
    "b": "Boy",
@@ -3200,7 +3132,7 @@
    "sources": [
     {
      "doc": "lore",
-     "id": "l112",
+     "id": "l111",
      "line": 96
     },
     {
@@ -3212,11 +3144,29 @@
    "note": "befriended him / 'I would like Boy to be my lead sled dog'; 'Come on, Boy!'"
   },
   {
-   "id": "m113",
+   "id": "m112",
    "a": "Boy",
    "relation": "last_seen_in",
    "b": "Three Flags Sailing",
    "tier": "stated",
+   "must_find": false,
+   "in": [
+    "lore"
+   ],
+   "sources": [
+    {
+     "doc": "lore",
+     "id": "l112",
+     "line": 96
+    }
+   ]
+  },
+  {
+   "id": "m113",
+   "a": "Three Flags Sailing",
+   "relation": "in",
+   "b": "Targos",
+   "tier": "inferred",
    "must_find": false,
    "in": [
     "lore"
@@ -3231,28 +3181,35 @@
   },
   {
    "id": "m114",
-   "a": "Three Flags Sailing",
-   "relation": "in",
-   "b": "Targos",
+   "a": "Garret Velryn",
+   "relation": "owns",
+   "b": "Boy",
    "tier": "inferred",
-   "must_find": false,
+   "must_find": true,
    "in": [
-    "lore"
+    "lore",
+    "session"
    ],
    "sources": [
     {
      "doc": "lore",
      "id": "l114",
      "line": 96
+    },
+    {
+     "doc": "session",
+     "id": "s009",
+     "line": 15
     }
-   ]
+   ],
+   "note": "Boy led the party to Keegan's home: the owner says he is Garret's dog. The text never says it; offer it to the DM, never extract it / 'if Boy made it back and they didn't - Boy wouldn't leave him'; the DM (204): 'Boy came back missing his dog and missing his dogsled'. The owner says Boy is Garret's dog; offer it to the DM, never extract it"
   },
   {
    "id": "m115",
    "a": "Garret Velryn",
-   "relation": "owns",
-   "b": "Boy",
-   "tier": "inferred",
+   "relation": "spouse",
+   "b": "Keegan Velryn",
+   "tier": "stated",
    "must_find": true,
    "in": [
     "lore",
@@ -3266,17 +3223,17 @@
     },
     {
      "doc": "session",
-     "id": "s009",
-     "line": 15
+     "id": "s023",
+     "line": 1
     }
    ],
-   "note": "Boy led the party to Keegan's home: the owner says he is Garret's dog. The text never says it; offer it to the DM, never extract it / 'if Boy made it back and they didn't - Boy wouldn't leave him'; the DM (204): 'Boy came back missing his dog and missing his dogsled'. The owner says Boy is Garret's dog; offer it to the DM, never extract it"
+   "note": "'whose husband' / only in the 'Previously' recap ('whose husband, Garret'): background, no session date"
   },
   {
    "id": "m116",
    "a": "Garret Velryn",
-   "relation": "spouse",
-   "b": "Keegan Velryn",
+   "relation": "member",
+   "b": "Explorer's League",
    "tier": "stated",
    "must_find": true,
    "in": [
@@ -3291,17 +3248,17 @@
     },
     {
      "doc": "session",
-     "id": "s023",
-     "line": 1
+     "id": "s006",
+     "line": 168
     }
    ],
-   "note": "'whose husband' / only in the 'Previously' recap ('whose husband, Garret'): background, no session date"
+   "note": "'a noted member' / 'a member of the Explorers' League' (also 201: 'his stature in the Explorers' League')"
   },
   {
    "id": "m117",
    "a": "Garret Velryn",
-   "relation": "member",
-   "b": "Explorer's League",
+   "relation": "last_seen_in",
+   "b": "Kelvin's Cairn",
    "tier": "stated",
    "must_find": true,
    "in": [
@@ -3316,17 +3273,17 @@
     },
     {
      "doc": "session",
-     "id": "s006",
-     "line": 168
+     "id": "s008",
+     "line": 192
     }
    ],
-   "note": "'a noted member' / 'a member of the Explorers' League' (also 201: 'his stature in the Explorers' League')"
+   "note": "vanished five days ago leading an expedition up it / 'Kelvin's Cairn to find Garret': the lore and the recap say he vanished leading an expedition up it"
   },
   {
    "id": "m118",
-   "a": "Garret Velryn",
-   "relation": "last_seen_in",
-   "b": "Kelvin's Cairn",
+   "a": "The party",
+   "relation": "works_for",
+   "b": "Keegan Velryn",
    "tier": "stated",
    "must_find": true,
    "in": [
@@ -3341,31 +3298,6 @@
     },
     {
      "doc": "session",
-     "id": "s008",
-     "line": 192
-    }
-   ],
-   "note": "vanished five days ago leading an expedition up it / 'Kelvin's Cairn to find Garret': the lore and the recap say he vanished leading an expedition up it"
-  },
-  {
-   "id": "m119",
-   "a": "The party",
-   "relation": "works_for",
-   "b": "Keegan Velryn",
-   "tier": "stated",
-   "must_find": true,
-   "in": [
-    "lore",
-    "session"
-   ],
-   "sources": [
-    {
-     "doc": "lore",
-     "id": "l119",
-     "line": 96
-    },
-    {
-     "doc": "session",
      "id": "s015",
      "line": 135
     }
@@ -3373,7 +3305,7 @@
    "note": "50 gold and a route map to find Garret / 'she gave you the 50 gold when Belleros said he would go find him'"
   },
   {
-   "id": "m120",
+   "id": "m119",
    "a": "Jebidiah",
    "relation": "works_in",
    "b": "Targos",
@@ -3385,14 +3317,14 @@
    "sources": [
     {
      "doc": "lore",
-     "id": "l120",
+     "id": "l119",
      "line": 96
     }
    ],
    "note": "a kennel master the party met there"
   },
   {
-   "id": "m121",
+   "id": "m120",
    "a": "Okthandom Korran",
    "relation": "carries",
    "b": "Lantern of Greater Tracking",
@@ -3411,7 +3343,7 @@
    "note": "'my Lantern of Tracking' (also line 292); the lore calls it the Lantern of Greater Tracking"
   },
   {
-   "id": "m122",
+   "id": "m121",
    "a": "Garret Velryn",
    "relation": "owns",
    "b": "Garret's old sled",
@@ -3430,7 +3362,7 @@
    "note": "'you can take Garret's old sled'"
   },
   {
-   "id": "m123",
+   "id": "m122",
    "a": "Garret Velryn",
    "relation": "works_for",
    "b": "Garret's clients",
@@ -3449,7 +3381,7 @@
    "note": "'He was hired as a guide' by people Keegan never met"
   },
   {
-   "id": "m124",
+   "id": "m123",
    "a": "Jebidiah",
    "relation": "works_in",
    "b": "The kennel",
@@ -3468,7 +3400,7 @@
    "note": "'Jebidiah down at the kennel'"
   },
   {
-   "id": "m125",
+   "id": "m124",
    "a": "The kennel",
    "relation": "in",
    "b": "Targos",
@@ -3487,7 +3419,7 @@
    "note": "the party is in Targos (171) and walks down the road to it"
   },
   {
-   "id": "m126",
+   "id": "m125",
    "a": "Jebidiah",
    "relation": "knows",
    "b": "Garret Velryn",
@@ -3507,7 +3439,7 @@
    "note": "'Garret's done a lot for me'"
   },
   {
-   "id": "m127",
+   "id": "m126",
    "a": "Jebidiah",
    "relation": "associate",
    "b": "Keegan Velryn",
@@ -3526,7 +3458,7 @@
    "note": "'he does owe me a favor': Jebidiah owes her a favor (she is 'she', named only in the recap)"
   },
   {
-   "id": "m128",
+   "id": "m127",
    "a": "Claude Ambere",
    "relation": "knows",
    "b": "Okthandom Korran",
@@ -3546,7 +3478,7 @@
    "note": "offers his wineskin: 'ok we friend'"
   },
   {
-   "id": "m129",
+   "id": "m128",
    "a": "Cerric Vanya'elen",
    "relation": "knows",
    "b": "Okthandom Korran",
@@ -3566,7 +3498,7 @@
    "note": "'What's wrong Oak'"
   },
   {
-   "id": "m130",
+   "id": "m129",
    "a": "Belleros Stormgrace",
    "relation": "knows",
    "b": "Cerric Vanya'elen",
@@ -3586,7 +3518,7 @@
    "note": "'that's very self-serving'"
   },
   {
-   "id": "m131",
+   "id": "m130",
    "a": "Clan Battlehammer",
    "relation": "works_in",
    "b": "Dwarven Valley",
@@ -3605,7 +3537,7 @@
    "note": "'the dwarven city'; 'the dwarves of Clan Battlehammer'"
   },
   {
-   "id": "m132",
+   "id": "m131",
    "a": "The party",
    "relation": "last_seen_in",
    "b": "Targos",
@@ -3625,7 +3557,7 @@
    "note": "'you're in Targos, right?' (about 2 PM): history by the end of the session"
   },
   {
-   "id": "m133",
+   "id": "m132",
    "a": "The party",
    "relation": "last_seen_in",
    "b": "Bryn Shander",
@@ -3645,7 +3577,7 @@
    "note": "they pass it around 3 PM: history by the end"
   },
   {
-   "id": "m134",
+   "id": "m133",
    "a": "The party",
    "relation": "last_seen_in",
    "b": "The windbreak shelter",
@@ -3879,6 +3811,7 @@
   "the road ambush as a deed ('attacked'), until session events have their own design note"
  ],
  "must_not_find": [
+  "a kind of creature is not an entry (#3373 rule, Supervisor 2026-11-04): no entry or tie for the white roc, ice kobolds, grell, electric eel or owlbears; one particular creature is (the mind flayer whose skull held the Psi crystal)",
   "any link made from dice rolls, hit points, wasp stings or spear wounds, spells (Moment to Think, Detect Magic) or marching order",
   "only unique items are tracked (#3373): no entry or tie for Wyvern poison, the two dog sleds and eight dogs, the scroll of Detect Magic, the scroll of Identify, the Potion of Healing or the waterproof backpacks (ordinary gear)",
   "the warning sign 'Kobolds only!' is a sign, not a person or a group",
@@ -3911,6 +3844,11 @@
   "Eashaven",
   "chardalyn maul",
   "chardalyn morningstar",
-  "The Brotherhood members"
+  "The Brotherhood members",
+  "White roc",
+  "Ice kobolds",
+  "Grell",
+  "Electric eel",
+  "Owlbears"
  ]
 }

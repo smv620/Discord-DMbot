@@ -108,6 +108,7 @@ TWO_ENTRIES_REASON = "a name in it could be two different entries"
 SAME_ENTRY_REASON = "it connects an entry to itself"
 STATE_REASON = "that entry can't be in that condition"
 NAME_REJECTED_REASON = "the DM said a name in it isn't a name"
+NOT_A_NAME_REASON = "a number, time, address or plain word in it is no name"  # #3394
 SECRET_NAME_REASON = "a name in it is one only the DM may use"
 NAME_FIRST = "Say what the new name is first (in Check new names)."
 # A claim whose name was past the session's limit is kept, waiting for its name to be proposed in
@@ -485,6 +486,18 @@ def names_of(entities: Sequence[Mapping[str, Any]], aliases: Sequence[Mapping[st
 MAX_EXPANDED = 12  # claims one list claim may become: more is a sentence, not a list of names
 
 
+def _group_led(subjects: list[str], names: Names) -> tuple[str, list[str]] | None:
+    """(group, members) when the claim's subject is a list whose first part is a known group and
+    whose other parts are names; None otherwise. Only the subject side reads as membership:
+    "A met the Ash Wolves, Tavin" says nothing about who belongs."""
+    if len(subjects) < 2 or len(subjects) - 1 > MAX_EXPANDED:
+        return None
+    found = names.by_key.get(name_key(subjects[0]), ())
+    if len(found) == 1 and found[0][1] == "faction":
+        return subjects[0], subjects[1:]
+    return None
+
+
 def expand_lists(claims: Sequence[Extracted], names: Names) -> tuple[list[Extracted], int]:
     """Claims whose subject or object is a list of names ("Aldmoor, Quillgate, Fenwick") as one
     claim for each part (#3383), so a list is never offered to the DM as one name. A part that is
@@ -500,6 +513,17 @@ def expand_lists(claims: Sequence[Extracted], names: Names) -> tuple[list[Extrac
     for c in claims:
         subjects = split_list(c.subject, known=names.by_key, offered=alone - {name_key(c.subject)})
         objects = split_list(c.object, known=names.by_key, offered=alone - {name_key(c.object)})
+        led = _group_led(subjects, names)
+        if led is not None:
+            # "the Ash Wolves, Tavin and Mira": a known group followed by its members. The members
+            # are proposed as members of it (#3383, part 2); the list is not a name.
+            split += 1
+            group, members = led
+            out.extend(
+                replace(c, subject=m, relationship="member of", object=group, details="")
+                for m in members
+            )
+            continue
         if (len(subjects) == 1 and len(objects) == 1) or len(subjects) * len(
             objects
         ) > MAX_EXPANDED:
@@ -781,6 +805,15 @@ class ClaimStore:
             # name DMbot does not know is a candidate for the linker.
             work: list[tuple[Extracted, str, list[str]]] = []  # claim, reason, unknown names
             claims, lists = expand_lists(claims[:limit], names)
+            # How many lines offer each name (a name two lines offer is more likely a real one)
+            lines_by_name: dict[str, set[str]] = {}
+            not_a_name: Counter[str] = Counter()
+            for c in claims:
+                for n in (c.subject, c.object):
+                    lines_by_name.setdefault(name_key(n), set()).update(c.lines)
+            for r in leftovers:
+                for n in (r["subject"], r["object"]):
+                    lines_by_name.setdefault(name_key(n), set()).update(r["lines"])
             if lists:
                 logger.info("name lists split: %d", lists)  # a count, never a name
             for claim in claims:  # (the limit was applied once, before the lists were split)
@@ -799,6 +832,22 @@ class ClaimStore:
                         unknown = []  # a person at the table: not a story name
                     elif not all(not_names.allowed(n, cued) for n in unknown):
                         unknown = []  # a pronoun ("he", "we"): never made into a name (#2358)
+                    elif any(
+                        kinds := [
+                            not_names.why_not(
+                                n,
+                                text="\n".join((said or {}).get(r, "") for r in claim.lines),
+                                offered=len(lines_by_name.get(name_key(n), ())),
+                                cued=cued,
+                            )
+                            for n in unknown
+                        ]
+                    ):  # a number, measure, time, address or plain word (#3394)
+                        for k in kinds:
+                            if k:
+                                not_a_name[k] += 1
+                        reason = NOT_A_NAME_REASON
+                        unknown = []
                     elif _generic_items(onto, claim, unknown, said or {}):
                         # A new item that is clearly everyday gear is not made into an entry, so
                         # its claim goes with it (#3373): no owns, carries or kept-in is stored.
@@ -824,7 +873,21 @@ class ClaimStore:
                         CLAIMS, r["id"], {"status": CLAIM_DROPPED, "reason": UNKNOWN_NAME_REASON}
                     )
                 elif unknown:
-                    old.append((r, kept, unknown))
+                    # (#3394) this claim's own lines are not part of this read, so only a shape
+                    # (a number, measure, time or lone address) drops it; a plain word is judged
+                    # on the lines of a read that has them
+                    kinds_old = [not_names.shape_of(n) for n in unknown]
+                    if any(kinds_old):
+                        for k in kinds_old:
+                            if k:
+                                not_a_name[k] += 1
+                        await w.update(
+                            CLAIMS,
+                            r["id"],
+                            {"status": CLAIM_DROPPED, "reason": NOT_A_NAME_REASON},
+                        )
+                    else:
+                        old.append((r, kept, unknown))
             old_mentions = [name_key(n) for _, _, unknown in old for n in unknown]
             chosen_old, left_old = link.most_mentioned(old_mentions, new_names)
             fresh = [name_key(n) for _, _, unknown in work for n in unknown]
@@ -850,6 +913,8 @@ class ClaimStore:
                     await w.update(CLAIMS, r["id"], {"reason": ""})
                     waiting += 1
             kept_waiting = len(leftovers)
+            if not_a_name:
+                logger.info("not a name, by reason: %s", dict(not_a_name))  # counts only
             rows: list[dict[str, Any]] = []
             for claim, reason, unknown in work:
                 if unknown:

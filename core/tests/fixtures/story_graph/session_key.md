@@ -85,7 +85,7 @@ What the graph should hold after the sample session is read: [the session transc
 | Belleros Stormgrace | Belleros | Player character (speaker 'Belleros'). |
 | Okthandom Korran | Okthandom, Oak | Player character (speaker 'Okthandom'); 'Oak' is a nickname. |
 | Claude Ambere | Claude | Player character (speaker 'Claude'). |
-| Keegan Velryn | she, the lady, ma'am | Garret's wife. Never named in play, only 'she' and 'the lady': the name needs the recap or the lore. |
+| Keegan Velryn |  | Garret's wife. Never named in play, only 'she' and 'the lady': the name needs the recap or the lore. |
 | Garret Velryn | Garret | Missing guide and explorer. |
 | Jebidiah | Jebediah | Kennel master the DM voices. |
 | Vaelrith |  | Okthandom's brother, named by Belleros and confirmed by Okthandom. |
