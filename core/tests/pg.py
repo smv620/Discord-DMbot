@@ -314,7 +314,21 @@ def _forget(schema: str) -> None:
     _BUILT.pop(schema, None)
     with psycopg.connect(TEST_URL, autocommit=True) as conn:
         conn.execute("SET lock_timeout = '10s'")
-        conn.execute(sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(sql.Identifier(schema)))
+        drop = sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(sql.Identifier(schema))
+        try:
+            conn.execute(drop)
+        except psycopg.errors.OutOfMemory:  # out of lock slots (#3030): the tables, one at a time
+            rows = conn.execute(
+                "SELECT tablename FROM pg_tables WHERE schemaname = %s ORDER BY tablename",
+                (schema,),
+            ).fetchall()
+            for (name,) in rows:
+                conn.execute(
+                    sql.SQL("DROP TABLE IF EXISTS {}.{} CASCADE").format(
+                        sql.Identifier(schema), sql.Identifier(name)
+                    )
+                )
+            conn.execute(drop)
 
 
 WHY = ""  # why the last schema was not reused (a test failure message needs to say)

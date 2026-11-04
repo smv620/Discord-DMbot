@@ -895,6 +895,42 @@ class TheEdits(Editing):
     async def waiting_now(self, who: Any = None) -> dict[str, Any]:
         return await relationships.read_waiting(self.web, who or self.session, self.cref)
 
+    async def test_a_membership_the_group_button_held_is_not_asked_about_again(self) -> None:
+        """#3383 part 2: "Yes, that group" decided it; the waiting door lists no row for it, and the
+        claims queue holds none either. It becomes a fact when the DM confirms the new name."""
+        wolves = await self.memory.add_entity(
+            self.g, self.one.id, type="faction", name="The Ash Wolves", source=DM_SOURCE,
+            status="confirmed",
+        )  # fmt: skip
+        await self.memory.add_relation(
+            self.g, self.one.id, self.mira, "member_of", wolves.value.id, source=DM_SOURCE,
+            confidence=1.0, status="confirmed",
+        )  # fmt: skip
+        listed = await self.memory.add_entity(
+            self.g, self.one.id, type="concept", name="Mira Voss and Bram", source="extractor",
+            status="proposed",
+        )  # fmt: skip
+        before = await self.waiting_now()
+        counts_before = await self.claims.counts(self.g, self.one.id, opted_in={7})
+        done = await self.memory.join_group(
+            self.g, self.one.id, listed.value.id, wolves.value.id, source=DM_SOURCE
+        )
+        self.assertEqual(done.value.made, ("Bram",))
+        held = [
+            r for r in await self.memory.relations(self.g, self.one.id) if r.status == "proposed"
+        ]
+        self.assertEqual([r.predicate for r in held], ["member_of"])  # it is there, held
+        after = await self.waiting_now()
+        self.assertEqual(after, before)  # no row and no count for it
+        self.assertEqual(await self.claims.counts(self.g, self.one.id, opted_in={7}), counts_before)
+        # and the card shows nothing for it before the name is confirmed
+        card = [
+            r
+            for r in await self.memory.relations(self.g, self.one.id, confirmed_only=True)
+            if r.object_id == wolves.value.id and r.subject_id != self.mira
+        ]
+        self.assertEqual(card, [])
+
     async def test_a_reading_is_not_listed_or_counted_as_a_claim_waiting_for_a_yes(self) -> None:
         """#2412: a theory is a belief to place, not something said to keep; the page lists the
         plain claim and not the reading, and the count agrees."""
@@ -916,6 +952,26 @@ class TheEdits(Editing):
         got = await self.waiting_now()
         self.assertEqual([c["id"] for c in got["claims"]], [plain])
         self.assertEqual(got["counts"]["claims"], 1)
+
+    async def test_a_waiting_place_tie_reads_by_what_its_subject_is(self) -> None:
+        """#3368: the door sends the subject's kind, so Rook (a character) "was last seen in" the
+        hall and not "is in" it, as on the relationship web (#3363)."""
+        await self.backstory.add(
+            self.g, self.one.id, [NewLink(self.rook, "located_in", self.hall, "q")]
+        )
+        got = await self.waiting_now()
+        (row,) = [b for b in got["backstory"] if b["predicate"] == "located_in"]
+        self.assertEqual(row["subjectKind"], "player_character")  # (the fixture's Rook)
+        self.assertEqual(row["how"], "was last seen in")
+
+    async def test_a_which_question_sends_the_named_names_kind(self) -> None:
+        """#3368: `otherKind` is the kind of the name the question already shows; the page uses
+        it as the subject's kind only when `otherIsSubject` says it is the subject."""
+        await self.which_question()
+        got = await self.waiting_now()
+        (question,) = got["which"]
+        self.assertTrue(question["otherIsSubject"])
+        self.assertEqual(question["otherKind"], "player_character")  # Rook
 
     async def test_the_door_lists_what_waits_with_the_upload_and_the_counts(self) -> None:
         claim = await self.claim()
@@ -1455,6 +1511,49 @@ class TheReveal(Editing):
         hidden = await self.memory.relation(self.g, self.one.id, link)
         assert hidden is not None
         self.assertTrue(hidden.unrevealed)  # ONE Undo, as on the Discord card
+
+    async def answer_error(self, answer: str) -> str:
+        done = await self.poll(answer)
+        self.assertEqual(done["state"], "failed")
+        return str(done["error"])
+
+    async def test_a_connection_to_a_name_still_held_back_stays_held_back_and_says_why(
+        self,
+    ) -> None:
+        """#3426: the rule is unchanged, but the refusal has its own word instead of bad_target."""
+        link = await self.hidden_link()
+        await self.memory.set_hidden_from_players(
+            self.g, self.one.id, self.hall, True, source=DM_SOURCE
+        )
+        answer = await self.reveal("link", link)
+        self.assertEqual([o.error for o in await self.apply_all()], ["names_not_shown"])
+        self.assertEqual(await self.answer_error(answer), "names_not_shown")
+        held = await self.memory.relation(self.g, self.one.id, link)
+        assert held is not None
+        self.assertTrue(held.unrevealed)
+
+    async def test_a_connection_to_a_person_the_story_never_named_says_to_name_them(self) -> None:
+        """#3426: an unnamed end is told apart from a hidden one (the page points to naming)."""
+        sister = await self.memory.add_unnamed(
+            self.g, self.one.id, what="sister", role="sibling", anchor_id=self.rook
+        )
+        # (as the owner's campaign had them: confirmed, still unnamed)
+        async with self.db.guild(
+            self.g
+        ) as conn:  # (as the owner's campaign had them: confirmed, still unnamed)
+            await conn.execute(
+                "UPDATE memory_entities SET status = 'confirmed' WHERE id = %s", (sister.entity.id,)
+            )
+        made = await self.memory.add_relation(
+            self.g, self.one.id, self.rook, "ally_of", sister.entity.id, source=DM_SOURCE,
+            confidence=1.0, status="confirmed", unrevealed=True,
+        )  # fmt: skip
+        answer = await self.reveal("link", made.value[0].id)
+        self.assertEqual([o.error for o in await self.apply_all()], ["name_unnamed"])
+        self.assertEqual(await self.answer_error(answer), "name_unnamed")
+        held = await self.memory.relation(self.g, self.one.id, made.value[0].id)
+        assert held is not None
+        self.assertTrue(held.unrevealed)
 
     async def test_a_dm_reveals_a_name_and_undo_hides_it_again(self) -> None:
         name = await self.add("Hidden Tower", "place")

@@ -5,7 +5,7 @@ copy through one database door (`dmbot_web_backup_add`), the bot builds it with 
 and packing as Discord's Download (`campaigns/web_backup.py`), `status` reports where it stands in
 the shared progress shape (`dmbot.progress`, #2564), and `fetch` hands over the file once and
 removes it (it is kept 15 minutes at most). The owner may ask for a copy in any server, even one
-DMbot cannot reach; a game master may in a server on the session's list. Copies are for a paid
+DMbot cannot reach; anyone else may in a server on the session's list. Copies are for a paid
 plan (none for Try It): the bot judges that when it builds the copy and the status says so. Only
 the person who asked can read or fetch it. A copy is a set, as Discord's is (#2772): the main file
 and its transcripts files, each fetched once (`fetch`, `fetch_part`). A copy holds the campaign's
@@ -21,6 +21,7 @@ import time
 from typing import Any
 
 from dmbot import progress
+from dmbot.campaigns.backup_names import backup_stem
 from dmbot.campaigns.parts import RESTORE_BOXES
 from dmbot.db import Database
 from dmbot.web.names import _parse
@@ -145,5 +146,5 @@ async def fetch_part(
 def part_filename(main: str, n: int, total: int) -> str:
     """The name Discord's transcripts file has (`logic.part_filename`), made from the main file's
     own name and date."""
-    base = main.removesuffix(".dmbot.json.gz") or "campaign"
+    base = backup_stem(main) or "campaign"
     return f"{base}.transcripts-{n}-of-{total}.dmbot.json.gz"

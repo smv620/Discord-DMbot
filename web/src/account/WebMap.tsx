@@ -13,7 +13,8 @@ import { mapReadLine } from "./webReading";
 
 import { kindWords, webPage as words } from "../content/web-words";
 import { kindStyle } from "./webKinds";
-import type { WebEdge, WebNode } from "./api";
+import NodeSummary from "./NodeSummary";
+import type { AccountApi, WebEdge, WebNode } from "./api";
 import {
   MAX_SIM_NAMES,
   MAX_SIM_STEPS,
@@ -55,6 +56,9 @@ function arrowhead(from: { x: number; y: number }, to: { x: number; y: number })
   return `M${tx.toFixed(1)} ${ty.toFixed(1)}L${(bx - uy * 5).toFixed(1)} ${(by + ux * 5).toFixed(1)}L${(bx + uy * 5).toFixed(1)} ${(by - ux * 5).toFixed(1)}Z`;
 }
 const NUDGE = 24; // how far an arrow key moves the name it is on
+
+/** How many of a line's connections its tooltip lists before "plus n more…" (#3279). */
+const TIP_LINKS = 4;
 
 /** Each style has its own shape (and the plain ones a dashed edge), so a name is known by shape and word as
  * well as by its colour. */
@@ -122,7 +126,13 @@ export default function WebMap({
   onCenter,
   onLine,
   children,
+  api,
+  onDragging,
 }: {
+  /** The summary of a picked name (#3243); missing from an older page, so the panel shows none. */
+  api?: AccountApi;
+  /** Told when a drag of a name really starts (it has moved) and when it ends (#3324). */
+  onDragging?: (on: boolean) => void;
   nodes: WebNode[];
   edges: WebEdge[];
   center: string;
@@ -169,6 +179,16 @@ export default function WebMap({
   const pointers = useRef(new Map<number, { x: number; y: number }>());
   const pinch = useRef<number | null>(null);
   const dragName = useRef<{ id: string; x: number; y: number; moved: boolean } | null>(null);
+  // Whether a name is being dragged now, reported to the page once per drag (so its auto update does not redraw
+  // under a hand, #3324). The callback is read from a ref, because the window listeners are added once.
+  const draggingOn = useRef(false);
+  const onDraggingRef = useRef(onDragging);
+  onDraggingRef.current = onDragging;
+  const setDraggingOn = (on: boolean): void => {
+    if (draggingOn.current === on) return;
+    draggingOn.current = on;
+    onDraggingRef.current?.(on);
+  };
   const viewRef = useRef(view);
   viewRef.current = view;
 
@@ -294,6 +314,23 @@ export default function WebMap({
   reheatRef.current = reheat;
   const rememberRef = useRef(remember);
   rememberRef.current = remember;
+  // A tap on a name: one picks it (the panel under the map follows), a second on the same name within DOUBLE_MS puts it
+  // in the middle. Counted here, not with `dblclick`, which a phone does not send reliably. Worked out when the pointer
+  // is let go (below), not from the browser's `click`: the names keep drifting while the layout settles, and a
+  // `click` is only sent to a name when the pointer is let go over the same element it went down on, so a name that
+  // moved a little under the pointer got no click, and so no panel and no double click.
+  const tap = (id: string): void => {
+    // A finger leaves no hover behind: the panel follows the pick, not the last name touched.
+    if (touched.current) setFocus(null);
+    const now = Date.now();
+    const again = lastTap.current?.id === id && now - lastTap.current.at < DOUBLE_MS;
+    lastTap.current = again ? null : { id, at: now };
+    if (again) onCenter(id);
+    else setPicked(id);
+  };
+  const tapRef = useRef(tap);
+  tapRef.current = tap;
+  const tapped = useRef(false); // set while the `click` that follows a tap handled on pointer up is still to come
   const start = useRef(new Map<number, { x: number; y: number }>());
   useEffect(() => {
     const pair = (): [{ x: number; y: number }, { x: number; y: number }] =>
@@ -317,6 +354,7 @@ export default function WebMap({
       if (grab) {
         if (!grab.moved && Math.hypot(m.clientX - grab.x, m.clientY - grab.y) <= 5) return;
         grab.moved = true;
+        setDraggingOn(true);
         dragged.current = true;
         const n = sim.current.find((q) => q.id === grab.id);
         if (!n) return;
@@ -346,9 +384,16 @@ export default function WebMap({
       if (dragName.current) {
         const grab = dragName.current;
         dragName.current = null;
+        setDraggingOn(false);
         if (grab.moved) {
           rememberRef.current();
           setExtent(extentOf(sim.current));
+        } else if (u.type === "pointerup") {
+          // Let go without having dragged: a tap on that name, wherever the pointer is now (not for a cancel, which
+          // is the browser taking the touch over to scroll).
+          tapRef.current(grab.id);
+          tapped.current = true;
+          setTimeout(() => (tapped.current = false), 0);
         }
         setTimeout(() => (dragged.current = false), 0);
         return;
@@ -364,6 +409,8 @@ export default function WebMap({
       window.removeEventListener("pointerup", up);
       window.removeEventListener("pointercancel", up);
       pointers.current.clear();
+      // Going away mid-drag ends it, so the page is not left waiting for a drag that will never end.
+      setDraggingOn(false);
     };
   }, []);
 
@@ -376,6 +423,7 @@ export default function WebMap({
       pinch.current = Math.hypot(p.x - q.x, p.y - q.y);
       // A second finger turns a name's drag into a pinch: the name stays where it was.
       dragName.current = null;
+      setDraggingOn(false);
     }
   };
 
@@ -559,6 +607,21 @@ export default function WebMap({
             const dim = edge.links.length > 0 && edge.links.every((l) => l.revealed === false);
             const touches = focus !== null && (edge.a === focus || edge.b === focus);
             const text = `${theory ? `${words.theoryMark} ` : ""}${edge.label}${edge.more > 0 ? ` (+${edge.more})` : ""}`;
+            // Hovering a line that holds several connections lists four of them, then "plus n more…", so "(+6)" on the
+            // line is never a mystery (#3279). The API sends the links oldest first and words the line with the latest
+            // one, so the line's own connection comes first and the others follow newest first. Each reads in full, from
+            // the right end ("Mira serves Gorn"), as the side panel reads it. One connection keeps its words.
+            const aName = byId.get(edge.a)?.name ?? "";
+            const bName = byId.get(edge.b)?.name ?? "";
+            const lead = edge.links.findLastIndex((l) => l.words === edge.label);
+            const ordered = [...(lead >= 0 ? [edge.links[lead]!] : []), ...edge.links.filter((_, i) => i !== lead).reverse()];
+            const tip =
+              edge.links.length > 1
+                ? [
+                    ...ordered.slice(0, TIP_LINKS).map((l, i) => `${theory && i === 0 ? `${words.theoryMark} ` : ""}${words.linkText(aName, bName, l.words, l.direction)}`),
+                    ...(ordered.length > TIP_LINKS ? [words.plusMore(ordered.length - TIP_LINKS)] : []),
+                  ].join("\n")
+                : text;
             // The line of the name in focus (hovered, else picked) says just the verb as that name would say it, with an
             // arrow toward the other name; with no wording from that end it says nothing and has no arrowhead. The
             // chosen line keeps its full words. A line that holds several connections says how many when it has no
@@ -598,7 +661,7 @@ export default function WebMap({
                   class="web-hit"
                   tabIndex={touches ? 0 : -1}
                   role="button"
-                  aria-label={words.lineBetween(byId.get(edge.a)?.name ?? "", byId.get(edge.b)?.name ?? "")}
+                  aria-label={`${words.lineBetween(byId.get(edge.a)?.name ?? "", byId.get(edge.b)?.name ?? "")}${edge.links.length > 1 ? `. ${tip.replace(/\n/g, ". ")}` : ""}`}
                   onClick={open}
                   onKeyDown={(ev) => {
                     if (ev.key === "Enter" || ev.key === " ") {
@@ -606,11 +669,13 @@ export default function WebMap({
                       onLine(edge.a, edge.b);
                     }
                   }}
-                />
+                >
+                  <title>{tip}</title>
+                </line>
                 {arrowFrom && arrowTo && <path d={arrowhead(arrowFrom, arrowTo)} class="web-arrow" aria-hidden="true" />}
                 {shown && (
                   <text x={mx} y={my - 5} transform={`rotate(${upright.toFixed(1)} ${mx} ${my})`} class="web-edge-text" text-anchor="middle" onClick={open}>
-                    <title>{text}</title>
+                    <title>{tip}</title>
                     {short(shown, 26)}
                   </text>
                 )}
@@ -633,6 +698,7 @@ export default function WebMap({
                   ev.stopPropagation();
                   touched.current = ev.pointerType === "touch";
                   if (pointers.current.size > 1) return; // a second finger: a pinch, not a drag of this name
+                  if (ev.button !== 0) return; // a right or middle press opens a menu or scrolls: not a tap or a drag
                   dragName.current = { id: n.id, x: ev.clientX, y: ev.clientY, moved: false };
                   dragged.current = false;
                 }}
@@ -641,19 +707,12 @@ export default function WebMap({
                 onFocus={() => setFocus(n.id)}
                 onBlur={() => setFocus((f) => (f === n.id ? null : f))}
                 onClick={() => {
+                  if (tapped.current) return; // (this click was already counted when the pointer was let go)
                   if (dragged.current) {
                     lastTap.current = null; // (the end of a drag is neither a click nor half of a double click)
                     return;
                   }
-                  // A finger leaves no hover behind: the panel follows the pick, not the last name touched.
-                  if (touched.current) setFocus(null);
-                  // One click picks the name; a second on the same name within DOUBLE_MS puts it in the middle.
-                  // Counted here, not with `dblclick`, which a phone does not send reliably.
-                  const now = Date.now();
-                  const again = lastTap.current?.id === n.id && now - lastTap.current.at < DOUBLE_MS;
-                  lastTap.current = again ? null : { id: n.id, at: now };
-                  if (again) onCenter(n.id);
-                  else setPicked(n.id);
+                  tap(n.id);
                 }}
                 onKeyDown={(ev) => {
                   const step: Record<string, [number, number]> = {
@@ -688,6 +747,7 @@ export default function WebMap({
         <aside class="web-side panel stack" aria-labelledby="web-side-h" aria-live="polite">
           <h3 id="web-side-h">{detail.name}</h3>
           <p class="small muted">{kindWords(detail.kind)}</p>
+          {api && <NodeSummary key={detail.id} api={api} refId={refId} id={detail.id} />}
           {(detail.quests?.length ?? 0) > 1 && <p class="small">{words.alsoIn(detail.quests!.slice(1).map((q) => q.name).join(", "))}</p>}
           {sideLines.length === 0 ? (
             <p class="small">{words.sideNone}</p>

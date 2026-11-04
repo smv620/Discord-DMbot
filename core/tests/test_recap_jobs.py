@@ -5,7 +5,7 @@ campaign, in backups, and gone with the campaign."""
 from __future__ import annotations
 
 import json
-from collections.abc import Awaitable, Callable, Collection
+from collections.abc import Awaitable, Callable, Collection, Sequence
 from itertools import pairwise
 from typing import Any
 from unittest.mock import patch
@@ -294,6 +294,7 @@ class WorkerHarness(Base):
         story: Any = None,
         critics: bool = False,
         final_read: bool = False,
+        musts: Sequence[str] = (),
     ) -> None:
         self.fast = fast
         self.careful = careful or fx.Canned()
@@ -317,6 +318,7 @@ class WorkerHarness(Base):
                 window_chars=window_chars,
                 hours=hours,  # the canned recap is 353 words: a 3.5-hour session's (#2013, #2368)
                 campaign_name=campaign_name,
+                musts=musts,
             )
 
         async def ok(gid: int, cid: str, job: Job) -> bool:
@@ -415,9 +417,7 @@ class Working(WorkerHarness):
         self.assertEqual(job.state, "ready")
         paragraphs = job.summary.split("\n\n")
         self.assertEqual(paragraphs[0], "Previously, on The Ember Road…")
-        self.assertEqual(
-            paragraphs[-1], "And so we continue, the epic adventure of The Ember Road."
-        )
+        self.assertEqual(paragraphs[-1], "And so continues the epic adventure of The Ember Road.")
         self.assertEqual(fixed_lines.without(job.summary), fx.SUMMARY)  # the story is untouched
         self.assertEqual(job.original, job.summary)  # the DM's edit is compared with what they saw
         self.assertEqual(job.grade["tension"], 4)  # graded as the writer wrote it, before the lines

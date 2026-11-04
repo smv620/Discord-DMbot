@@ -47,8 +47,16 @@ def _is_condition(claim: Claim) -> bool:
     )  # fmt: skip
 
 
-def waiting_text(count: int) -> str:
-    """For the DM screen after a session: how many, never what."""
+def waiting_text(count: int, *, private: bool = False) -> str:
+    """For the DM after a session: how many, never what. `private` is the DM's own chat (#3210),
+    where nobody else reads it, so it says what to do next and drops the line about who will see
+    the button."""
+    if private:
+        what = "thing said at the table needs" if count == 1 else "things said at the table need"
+        return (
+            f"🗣️ **{count} {what} your yes or no.** Nothing is remembered until you say so. "
+            "Press the button."
+        )
     what = "thing" if count == 1 else "things"
     return (
         f"🗣️ **{count} {what} said at the table to check.** Nothing is remembered until you "
@@ -160,7 +168,7 @@ async def start_claims_review(interaction: discord.Interaction, campaign_id: str
     campaign = await _campaign_for(interaction, campaign_id)  # only whoever runs the campaign
     if campaign is None:
         return
-    view = ClaimsReview(campaign.id)
+    view = ClaimsReview(campaign.id, campaign.guild_id)
     text = await view.current_text(interaction)
     if text is None:
         await _tell(interaction, NOTHING_WAITING)
@@ -172,9 +180,12 @@ class ClaimsReview(_Menu):
     """A page of questions, each with ✅ and ❌ under its number. Answering one leaves the rest
     where they are; the next page comes when the whole page is answered."""
 
-    def __init__(self, campaign_id: str) -> None:
+    def __init__(self, campaign_id: str, guild_id: int) -> None:
         super().__init__()
         self.campaign_id = campaign_id
+        # From the campaign, not the press: a question in the DM's private chat has no server
+        # around it (#3210).
+        self.guild_id = guild_id
         self.page: list[Claim] = []
         self.total = 0
         self.answered: dict[str, str] = {}
@@ -183,11 +194,10 @@ class ClaimsReview(_Menu):
     async def current_text(self, interaction: discord.Interaction) -> str | None:
         """A fresh page (the oldest waiting questions), or None when none are left."""
         memory = _memory(interaction)
-        guild = interaction.guild
-        if memory is None or guild is None:
+        if memory is None:
             return None
-        agreed = await _bot(interaction).consent.consenting(guild.id)
-        waiting = await ClaimStore(memory).waiting(guild.id, self.campaign_id, opted_in=agreed)
+        agreed = await _bot(interaction).consent.consenting(self.guild_id)
+        waiting = await ClaimStore(memory).waiting(self.guild_id, self.campaign_id, opted_in=agreed)
         self.page, self.total, self.answered = waiting[:PAGE], len(waiting), {}
         self.undoable = {}
         if not self.page:
@@ -283,9 +293,8 @@ class ClaimsReview(_Menu):
     ) -> None:
         campaign = await _campaign_for(interaction, self.campaign_id)  # asked again each press
         memory = _memory(interaction)
-        guild = interaction.guild
         claim = next((c for c in self.page if c.id == claim_id), None)
-        if campaign is None or memory is None or guild is None or claim is None:
+        if campaign is None or memory is None or claim is None:
             return
         claims = ClaimStore(memory)
         saying = statement(claim)
@@ -293,9 +302,9 @@ class ClaimsReview(_Menu):
         try:
             if yes:
                 # Who may be recorded is asked again now: someone may have stopped meanwhile.
-                agreed = await _bot(interaction).consent.consenting(guild.id)
+                agreed = await _bot(interaction).consent.consenting(self.guild_id)
                 result = await claims.confirm(
-                    guild.id, self.campaign_id, claim_id, opted_in=agreed, secret=secret
+                    self.guild_id, self.campaign_id, claim_id, opted_in=agreed, secret=secret
                 )
                 if result.batch is not None:
                     self.undoable[claim_id] = result.batch
@@ -309,7 +318,7 @@ class ClaimsReview(_Menu):
                     why = FLAG_WHY.get(result.flags[0].kind) or ODD_PAIR
                     note = f"\n⚠️ {why}. It's saved, and DMbot will ask you about it."
             else:
-                await claims.reject(guild.id, self.campaign_id, claim_id)
+                await claims.reject(self.guild_id, self.campaign_id, claim_id)
                 done = f"{NO} Not remembered: {saying}. DMbot won't ask again."
         except MemoryRuleError as exc:
             message = str(exc) or GONE

@@ -224,7 +224,7 @@ class PlayersClock(DatabaseTest):
         self.clocks = ClockStore(self.db)
         self.a = await self.campaigns.create(GUILD, "Alpha", DM)
         await self.campaigns.set_dm_screen(GUILD, self.a.id, SCREEN)
-        await self.campaigns.set_dmbchat_channel(GUILD, self.a.id, CHAT)
+        await self.campaigns.set_table_chat(GUILD, self.a.id, on=True, channel_id=CHAT)
         self.discord = FakeDiscord(self.clocks, self.campaigns)
         self.discord.channel(SCREEN)
         self.discord.channel(CHAT)
@@ -300,19 +300,19 @@ class PlayersClock(DatabaseTest):
         self.discord.messages.clear()  # someone deleted it
         await self.show()
         self.assertEqual(len(await self.players_posts()), 2)
-        await self.campaigns.set_dmbchat_channel(GUILD, self.a.id, 701)
+        await self.campaigns.set_table_chat(GUILD, self.a.id, on=True, channel_id=701)
         self.discord.channel(701)
         await self.show()
         self.assertEqual(self.discord.posts[-1][0], 701)
 
     async def test_without_a_chat_channel_nothing_happens_and_nothing_breaks(self) -> None:
-        await self.campaigns.set_dmbchat_channel(GUILD, self.a.id, None)
+        await self.campaigns.set_table_chat(GUILD, self.a.id, on=True, channel_id=None)
         await self.press("set", set_to=NOON4)
         await self.show()
         self.assertEqual(self.discord.posts, [])
         # A channel DMbot cannot read, or Discord refusing, is skipped too: the DM's clock is the
         # one that matters at the table.
-        await self.campaigns.set_dmbchat_channel(GUILD, self.a.id, CHAT)
+        await self.campaigns.set_table_chat(GUILD, self.a.id, on=True, channel_id=CHAT)
         self.discord.history_error = discord.HTTPException(MagicMock(status=403), "no")
         await self.show()
         self.assertEqual(self.discord.posts, [])
@@ -518,7 +518,7 @@ class SayingWhereAndTakingBack(SetTimePanel):
     async def test_the_players_sentence_is_only_said_when_the_chat_channel_exists(self) -> None:
         campaign = await self.campaign()
         self.assertIn(f"<#{CHAT}>", ui.players_see(campaign))
-        await self.campaigns.set_dmbchat_channel(GUILD, self.a.id, None)
+        await self.campaigns.set_table_chat(GUILD, self.a.id, on=True, channel_id=None)
         self.assertEqual(ui.players_see(await self.campaign()), "")
 
     async def test_an_undone_rest_is_corrected_for_the_players(self) -> None:

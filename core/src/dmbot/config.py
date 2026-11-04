@@ -101,6 +101,10 @@ class Settings:
     # Mine family connections only (#2960; owner, 2026-10-29): a claim that is not a family role
     # is dropped in code, and no readings are asked. Off: every kind of claim, as before.
     story_family_only: bool = False
+    # The theatrical transcript (#3244, stage 1 of #3242): a DM-only working copy of a session with
+    # every "him" and "it" resolved in brackets. Off until dev1's measured run; with it off nothing
+    # is asked of the AI and the session is exactly as it was.
+    theatre_on: bool = False
     # After a session, PlotBot grades the contradictions one point of view holds (#2660), major or
     # minor, and the grades are kept for the DM. Off until the extractor is; it runs inside the
     # extractor's plan check and call limits (at most a few calls a session).
@@ -114,6 +118,17 @@ class Settings:
     # image is noted as not described.
     table_images_on: bool = False
     table_images_per_day: int = 40
+    # Kept pictures (#3274): a picture posted by someone who agreed under consent version 7 is kept
+    # with the campaign in a private Cloudflare R2 bucket and gets a link. Off until the consent
+    # wording is live; with it off nothing is stored. `picture_storage_mb` is what one campaign may
+    # keep (a setting so it can change later; the oldest non-permanent pictures go first, and
+    # permanent ones may total 80% of it). The R2 keys come from `.env` and are never logged.
+    pictures_kept: bool = False
+    picture_storage_mb: int = 500
+    r2_account_id: str = ""
+    r2_access_key: str = field(default="", repr=False)
+    r2_secret_key: str = field(default="", repr=False)
+    r2_bucket: str = ""
     # Hand-over by email (#2532): off until slices B to D and the accept page are live. While it is
     # off, 🤝 Hand over keeps its member picker and the email route answers 404.
     handover_email_on: bool = False
@@ -146,6 +161,13 @@ class Settings:
     # The most recaps, and narrated recaps, one campaign may make in a calendar month (#1428).
     recaps_per_month: int = 10
     recap_audio_per_month: int = 8
+
+    @property
+    def pictures_ready(self) -> bool:
+        """Kept pictures are on and the bucket is fully set up (#3274)."""
+        return self.pictures_kept and all(
+            (self.r2_account_id, self.r2_access_key, self.r2_secret_key, self.r2_bucket)
+        )
 
     def imports_enabled_for(self, guild_id: int) -> bool:
         return imports_switch.enabled(self.imports_on, self.imports_servers, guild_id)
@@ -329,6 +351,9 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         raise ConfigError(
             'DMBOT_STORY_FAMILY_ONLY must be 1 (on) or 0 (off), got "' + family_raw + '".'
         )
+    theatre_raw = (get("DMBOT_THEATRE_ON") or "0").lower()
+    if theatre_raw not in ("0", "1", "true", "on", "false", "off"):
+        raise ConfigError('DMBOT_THEATRE_ON must be 1 (on) or 0 (off), got "' + theatre_raw + '".')
     readings_raw = (get("DMBOT_STORY_READINGS") or "0").lower()
     if readings_raw not in ("0", "1", "true", "on", "false", "off"):
         raise ConfigError(
@@ -442,6 +467,18 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
             + images_day_raw
             + '".'
         )
+    kept_raw = (get("DMBOT_PICTURES_KEPT") or "0").lower()
+    if kept_raw not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError('DMBOT_PICTURES_KEPT must be 1 (on) or 0 (off), got "' + kept_raw + '".')
+    storage_raw = get("DMBOT_PICTURE_STORAGE_MB") or "500"
+    if not (storage_raw.isascii() and storage_raw.isdigit()) or not (
+        1 <= int(storage_raw) <= 1_000_000
+    ):
+        raise ConfigError(
+            'DMBOT_PICTURE_STORAGE_MB must be a whole number of megabytes from 1 to 1000000, got "'
+            + storage_raw
+            + '".'
+        )
     sidebar_raw = (get("DMBOT_SIDEBAR") or "0").lower()
     if sidebar_raw not in ("0", "1", "true", "false", "on", "off"):
         raise ConfigError('DMBOT_SIDEBAR must be 1 (on) or 0 (off), got "' + sidebar_raw + '".')
@@ -499,10 +536,17 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         story_extractor_on=extractor_raw in ("1", "true", "on"),
         story_readings_on=readings_raw in ("1", "true", "on"),
         story_family_only=family_raw in ("1", "true", "on"),
+        theatre_on=theatre_raw in ("1", "true", "on"),
         story_contradictions_on=contradictions_raw in ("1", "true", "on"),
         story_report_on=report_raw in ("1", "true", "on"),
         table_images_on=images_raw in ("1", "true", "on"),
         table_images_per_day=int(images_day_raw),
+        pictures_kept=kept_raw in ("1", "true", "on"),
+        picture_storage_mb=int(storage_raw),
+        r2_account_id=get("R2_ACCOUNT_ID"),
+        r2_access_key=get("R2_ACCESS_KEY_ID"),
+        r2_secret_key=get("R2_SECRET_ACCESS_KEY"),
+        r2_bucket=get("R2_BUCKET"),
         recaps_on=recaps_raw in ("1", "true", "on"),
         handover_email_on=handover_email_raw in ("1", "true", "on"),
         plot_check_on=recaps_raw in ("1", "true", "on")

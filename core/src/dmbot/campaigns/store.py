@@ -31,6 +31,7 @@ from psycopg import sql
 
 from dmbot import entitlements, fight_style
 from dmbot.campaigns import offer_notify
+from dmbot.campaigns.backup_names import build_commit
 from dmbot.campaigns.invite import parse_invite
 from dmbot.campaigns.models import (
     CONFIRMATION_PURPOSES,
@@ -527,6 +528,16 @@ class CampaignStore:
             if await self.has_campaign(guild_id, campaign_id):
                 return True
         return False
+
+    async def guild_of(self, campaign_id: str) -> int | None:
+        """The server a campaign is in now, read fresh from the database (#3210). A question sent
+        to a DM's private chat has no server around it, and a lookup kept in memory would be
+        lost on every restart, leaving old buttons dead. A moved campaign keeps its ID, so this
+        finds it in its new server."""
+        for guild_id in await self.guilds_with_campaigns():
+            if await self.has_campaign(guild_id, campaign_id):
+                return guild_id
+        return None
 
     async def forget_guild_if_empty(self, guild_id: int) -> bool:
         """Drop a server from the list once it holds no campaigns and no website-delete note
@@ -1062,6 +1073,10 @@ class CampaignStore:
         )
         await conn.execute(
             "UPDATE map_notes SET message_id = 0 WHERE guild_id = %s AND campaign_id = %s",
+            (guild_id, campaign_id),
+        )
+        await conn.execute(
+            "UPDATE campaign_pictures SET message_id = 0 WHERE guild_id = %s AND campaign_id = %s",
             (guild_id, campaign_id),
         )
         await conn.execute("SELECT set_config('dmbot.moving_campaign', %s, true)", (campaign_id,))
@@ -1611,6 +1626,9 @@ class CampaignStore:
             "format": EXPORT_FORMAT,
             "version": EXPORT_VERSION,
             "exported_at": int(self._clock()),
+            # Which build made this file (#3391), so its lineage survives a renamed file. A restore
+            # never reads it.
+            "dmbot_commit": build_commit(),
             "campaign": {
                 "name": campaign.name,
                 "created_at": campaign.created_at,

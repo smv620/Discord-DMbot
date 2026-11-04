@@ -41,6 +41,7 @@ class KeptAll:
     # the batches that ended an old connection for each kept change (same order as `kept`)
     ended: list[list[int | None]] = field(default_factory=list)
     refused: int = 0  # the rules refused it: it stays waiting, to be answered by hand
+    worked_out: int = 0  # every worked-out family link waiting for the DM's yes after this keep
 
 
 def replaced_by(onto: Ontology, link: Waiting, existing: Sequence[Relation]) -> list[Relation]:
@@ -243,6 +244,23 @@ async def keep_all(
                 await progress(tried, total)
             continue
         made = written.value[0]
+        # A feeling kept with a "knows" (#3175) is how the first name feels about the second: the
+        # DM's press stores it as a reputation from the story (a standing the DM set still wins).
+        # Its batch joins the ones Undo takes back, so one press and one Undo cover both.
+        word = feeling_words.word_of(c.detail) if c.predicate == "knows" else None
+        score = feeling_words.score_of(word) if word is not None else None
+        if score is not None:
+            try:
+                batch = await memory.add_feeling(
+                    guild_id, campaign_id, c.subject_id, c.object_id, score
+                )
+            except Exception as exc:  # the connection is kept whatever happens to the feeling
+                log.warning(
+                    "A kept connection's feeling could not be stored (%s)", type(exc).__name__
+                )
+                batch = None
+            if batch is not None:
+                ended.append(batch)
         # (only a connection made just now: an older twin's rows are the DM's, not this guess's)
         if c.world == lore_knowledge.GUESS and not made.unrevealed and made.created_at >= now:
             await mark_guess(memory, guild_id, campaign_id, "connection", [made.id])
@@ -256,7 +274,26 @@ async def keep_all(
         done.ended.append(ended)
         if progress is not None:
             await progress(tried, total)
+    done.worked_out = await rework_family(memory, guild_id, campaign_id, [c for c, _ in done.kept])
     return done
+
+
+async def rework_family(
+    memory: MemoryStore, guild_id: int, campaign_id: str, kept: Sequence[Waiting]
+) -> int:
+    """Work out the family links that follow from what was just kept (#3238): without this they
+    appeared only when the DM next opened the connections screen or a session ended, so a DM who
+    kept a backstory's family links and looked for the suggestions found none. Only when a family
+    link was kept. Returns how many wait for the DM's yes (counts only); a failure is logged and
+    leaves the kept links as they are, since the suggestions are recomputed on the next look."""
+    if not any(c.predicate == "kin_of" for c in kept):
+        return 0
+    try:
+        await memory.rework_family(guild_id, campaign_id)
+        return len(await memory.worked_out_waiting(guild_id, campaign_id))
+    except Exception as exc:
+        log.warning("Worked-out family links could not be refreshed (%s)", type(exc).__name__)
+        return 0
 
 
 async def undo_all(
@@ -264,6 +301,16 @@ async def undo_all(
 ) -> int:
     """Take back what `keep_all` kept: each is reversed and waits again. Returns how many went
     back; one that cannot be reversed (changed since) is left as it is."""
+    try:
+        return await _undo_all(memory, store, guild_id, campaign_id, done)
+    finally:
+        # a suggestion that followed from a link now taken back goes with it
+        await rework_family(memory, guild_id, campaign_id, [c for c, _ in done.kept])
+
+
+async def _undo_all(
+    memory: MemoryStore, store: BackstoryLinks, guild_id: int, campaign_id: str, done: KeptAll
+) -> int:
     back = 0
     for (c, batch), ended in reversed(list(zip(done.kept, done.ended, strict=True))):
         if batch is None and not ended:

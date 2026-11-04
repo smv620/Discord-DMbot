@@ -60,8 +60,9 @@ def set_log_context(*, guild_id: int | None = None, campaign_id: str | None = No
 
 
 # A shared recap's address holds its secret token (#2118); a log line with one is a working link.
-# Any segment after /recaps/ or /r/ that looks like a token is hidden, whichever logger wrote it.
-_TOKEN_IN_PATH = re.compile(r"(/(?:recaps|r)/)[A-Za-z0-9_-]{16,}")
+# Any segment after /recaps/, /r/ or /pictures/ (#3274) that looks like a token is hidden,
+# whichever logger wrote it.
+_TOKEN_IN_PATH = re.compile(r"(/(?:recaps|r|pictures)/)[A-Za-z0-9_-]{16,}")
 
 
 def mask_tokens(text: str) -> str:

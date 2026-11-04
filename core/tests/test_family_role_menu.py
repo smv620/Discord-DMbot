@@ -34,7 +34,8 @@ class TheRoleMenu(unittest.IsolatedAsyncioTestCase):
     def test_every_family_role_is_one_of_the_stored_roles(self) -> None:
         from dmbot.memory import kin
 
-        self.assertEqual(set(nc.FAMILY_ROLES), set(kin.ROLES))
+        # (the neutral words are for worked-out links only; the menu is at Discord's 25)
+        self.assertEqual(set(nc.FAMILY_ROLES), set(kin.ROLES) - kin.NEUTRAL_ONLY)
 
     def test_the_menu_holds_the_roles_and_just_family_and_says_how_each_reads(self) -> None:
         menu = nc.FamilyRole(CAMPAIGN.id, MIRA, ALDRIC, "kin_of", ("Mira", "Aldric"),

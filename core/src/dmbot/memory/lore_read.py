@@ -29,17 +29,20 @@ import logging
 import re
 import time
 from collections import Counter
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
 from typing import Any
 
 from dmbot.ai import OUTPUT_FLOOR, AIError, AIOutOfFunds, Reply, max_output
 from dmbot.memory import background as bg
+from dmbot.memory import descriptions, place_words
 from dmbot.memory import reputation_words as feeling_words
 from dmbot.memory.end_match import usable_alias
 from dmbot.memory.models import name_key
 from dmbot.memory.name_documents import request_text
+from dmbot.memory.unnamed_read import read_unnamed
+from dmbot.memory.who_resolve import UnnamedLink
 
 log = logging.getLogger(__name__)
 
@@ -62,7 +65,8 @@ SHAPE_ROOM = 8000  # tokens for one pass-2 call: a slice of the list as JSON
 SPLIT_DEPTH = 3  # a slice whose answer is cut off is halved this many times
 
 NAMES, RELATIONSHIPS, NOT_INCLUDED = "NAMES", "RELATIONSHIPS", "NOT INCLUDED"
-SECTIONS = (NAMES, RELATIONSHIPS, NOT_INCLUDED)
+UNNAMED = "UNNAMED"  # people the text describes but never names (#2959)
+SECTIONS = (NAMES, RELATIONSHIPS, NOT_INCLUDED, UNNAMED)
 
 # The worked examples pass 1 is shown (made-up text only: no published setting, no owner material).
 # A constant with a test that pins its format, because the reader below depends on that format.
@@ -141,7 +145,7 @@ RELATIONSHIPS
 - Captain Ryl — mentors — Vessa | quote: "Vessa, Orin and Pell rode north, and Captain Ryl mentored them"
 - Captain Ryl — mentors — Orin | quote: "Orin and Pell rode north, and Captain Ryl mentored them"
 - Captain Ryl — mentors — Pell | quote: "Pell rode north, and Captain Ryl mentored them"
-- Danrel — is in — Eastvale | quote: "Danrel, Eastvale"
+- Danrel — was last seen in — Eastvale | quote: "Danrel, Eastvale"
 - Order — knows — Danrel | quote: "Danrel, Eastvale. The Order knows who you are"
 
 Example 5. Input (a list of names, no relationships):
@@ -153,6 +157,22 @@ Output:
 NAMES
 - Tavin | person | other names: the rogue | quote: "Tavin (the rogue)"
 - Ka'zeth | person | said: kah-ZETH | quote: "Ka'zeth (kah-ZETH)"
+
+Example 7. Input (family the text describes but never names):
+<document>
+Garrick Pell was born in Ashmere, the son of a stern ropemaker mother and an absent father.
+</document>
+Output:
+NAMES
+- Garrick Pell | person | quote: "Garrick Pell was born in"
+- Ashmere | place | quote: "born in Ashmere"
+
+RELATIONSHIPS
+- Garrick Pell — comes from (born in) — Ashmere | quote: "Garrick Pell was born in Ashmere"
+
+UNNAMED
+- Garrick Pell | mother | stern ropemaker mother | quote: "Garrick Pell was born in Ashmere, the son of a stern ropemaker mother and an absent father"
+- Garrick Pell | father | absent father | quote: "Garrick Pell was born in Ashmere, the son of a stern ropemaker mother and an absent father"
 """  # noqa: E501 (the examples are the prompt's own lines)
 
 
@@ -206,6 +226,10 @@ def read_instructions(own: Mapping[str, str] | None = None) -> str:
         "still the document's own words: list the names and relationships they state.\n"
         "- Leave out descriptions, ordinary words, spells, rules terms and kinds of creature in "
         "general (elves, goblins).\n"
+        "- List an item only when it is one particular thing: it has its own name (Heartseeker), "
+        "belongs to one named owner or story (Garret's sled, the crystal from the skull), or the "
+        "story turns on it (a shipment the villain is waiting for). Leave out ordinary gear and "
+        "quantities of common things (a dagger, arrows, rations, a sled, a vial of poison).\n"
         "- RELATIONSHIPS: go through the text sentence by sentence, and for every sentence that "
         "says plainly how two of those names are connected, write a line. One sentence may give "
         "several (a mentor with two named apprentices is two lines; a person who is a member of "
@@ -214,8 +238,10 @@ def read_instructions(own: Mapping[str, str] | None = None) -> str:
         "a long document has many. The kinds, in plain words: is family of (say the role, such as "
         "father, sister or cousin, in brackets), is a member of (also: belongs to, is associated "
         "with, served in), works for (also: is employed by, is a bodyguard for), serves, "
-        "mentors, is an apprentice of, is a rival of, owns, is in (also: lives in, resides in, "
-        "is from), leads (also: rules, is the speaker, mayor or captain of), founded, worships, "
+        "mentors, is an apprentice of, is a rival of, owns, is in (a place inside a place; for a "
+        "character or group say whether it lives in, lived in, works in, worked in, comes from "
+        "or was last seen in; an item is only ever kept in a place), leads (also: rules, is the "
+        "speaker, mayor or captain of), founded, worships, "
         "is a parent of, is a child of, is a sibling of (a brother or sister), is a spouse of "
         "(a husband or wife), is held captive by "
         "(captured, imprisoned), contains (has inside it), knows (a group can know a person; also "
@@ -233,7 +259,18 @@ def read_instructions(own: Mapping[str, str] | None = None) -> str:
         "both names or a word of each (one that does not is dropped).\n"
         "- A rumour, a guess or something nobody knows is never a relationship: put it under "
         "NOT INCLUDED with the reason.\n"
-        "- Keep the three headings, and write nothing else.\n\n" + EXAMPLES
+        "- UNNAMED PEOPLE: a person the text describes by what they are to a NAMED person, and "
+        "never names anywhere (a mother, a sister, an uncle), goes under a fourth heading, "
+        "UNNAMED, one line each: the named person | what the described person is to them "
+        "(mother, father, sister, brother, son, daughter, aunt, uncle, niece, nephew, cousin, "
+        "husband, wife, grandmother, grandfather; or the neutral parent, child, sibling, spouse, "
+        "grandparent, grandchild: use the neutral word when the text does not say which, as for "
+        "'his child') | the text's words for them | quote. Family "
+        "only. If the text names the person anywhere, write them under NAMES and RELATIONSHIPS "
+        "instead and not here. Never a crowd, 'the party', a kind of creature or anyone already "
+        "listed. Leave the heading out when there is no such person.\n"
+        "- Keep the headings (UNNAMED only when it has lines), and write nothing else.\n\n"
+        + EXAMPLES
     )
 
 
@@ -295,7 +332,10 @@ def shape_instructions(own: Mapping[str, str] | None = None) -> str:
         "For each RELATIONSHIPS line give a and b (the two names as in the line), quote (its "
         f"'quote:') and how, which reads 'a <how> b': exactly one of {words}{theirs}. They mean: "
         "family = a is family of b; member = a is a member of b (or belongs to a group); "
-        "in = a is in b (a place or thing located in a place); owns = a owns b; "
+        'in = a is in the place b (a place or event inside a place: leave "words" empty); for '
+        'a character, creature or group it is tied to the place b: put in "words" '
+        f"exactly one of {', '.join(place_words.WORDS_OFFERED)}; an item is only ever kept in a "
+        'place: say "is kept in" or "was kept in"; owns = a owns b; '
         "works for = a works for b; serves = a serves b; knows = a knows b (also friends, "
         'allies and enemies: in "words" give how a feels about b, one of '
         f"{', '.join(feeling_words.WORDS)}, else empty); "
@@ -304,7 +344,8 @@ def shape_instructions(own: Mapping[str, str] | None = None) -> str:
         "(competes with, does not want b harmed); founded = a founded b; parent = a is a parent "
         "of b (a mother or father); child = a is a child of b (a son or daughter); sibling = a "
         "is a brother or sister of b; spouse = a is a husband or wife of b; grandparent = a is a "
-        "grandparent of b; aunt, uncle, niece, nephew and cousin = a is that to b; "
+        "grandparent of b; guardian = a is the guardian of b, a ward under age (never a parent); "
+        "aunt, uncle, niece, nephew and cousin = a is that to b; "
         "leads = a leads b (a group or a place: its leader, ruler, speaker, mayor or captain); "
         "captive = a is held captive by b; contains = a contains b (a note in a book, a gem in "
         "a chest); disguised as = a is disguised as b (a second character posing as b, never the "
@@ -328,7 +369,9 @@ def shape_request(names: list[str], links: list[str]) -> str:
     return f"<list>\n{body}\n</list>"
 
 
-_HEADING = re.compile(r"^[#*\s]*(NAMES|RELATIONSHIPS|NOT INCLUDED)[*:\s]*$", re.I)
+_HEADING = re.compile(
+    r"^[#*\s]*(NAMES|RELATIONSHIPS|NOT INCLUDED|UNNAMED(?:\s+PEOPLE)?)[*:\s]*$", re.I
+)
 
 
 @dataclass(slots=True)
@@ -338,12 +381,16 @@ class PlainList:
     names: list[str] = field(default_factory=list)
     links: list[str] = field(default_factory=list)
     left_out: list[str] = field(default_factory=list)
+    unnamed: list[str] = field(default_factory=list)  # people described but never named (#2959)
     last: str | None = None  # the section the last line went into (a continuation starts there)
 
     def add(self, section: str, line: str) -> None:
-        {NAMES: self.names, RELATIONSHIPS: self.links, NOT_INCLUDED: self.left_out}[section].append(
-            line
-        )
+        {
+            NAMES: self.names,
+            RELATIONSHIPS: self.links,
+            NOT_INCLUDED: self.left_out,
+            UNNAMED: self.unnamed,
+        }[section].append(line)
 
 
 def parse_plain(reply: str, *, complete: bool = True, into: PlainList | None = None) -> PlainList:
@@ -361,7 +408,11 @@ def parse_plain(reply: str, *, complete: bool = True, into: PlainList | None = N
         line = raw.strip()
         heading = _HEADING.match(line)
         if heading:
-            section = heading.group(1).upper()
+            section = (
+                heading.group(1).upper().split()[0]
+                if heading.group(1).upper().startswith("UNNAMED")
+                else heading.group(1).upper()
+            )
             continue
         if section is not None and line.startswith("-"):
             out.add(section, line)
@@ -373,6 +424,19 @@ def _entry_key(line: str) -> str:
     """What makes a list line the same entry as another: a name, or the two ends and the words."""
     head = line.lstrip("- ").split("|")[0]
     return name_key(re.sub(r"\s+", " ", head))
+
+
+def dedupe_unnamed(items: list[str]) -> list[str]:
+    """One line for each person: the named end, the role and the text's words together (a mother
+    and a father of one character are two lines under one named end, #2959)."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for line in items:
+        key = "|".join(name_key(part) for part in line.lstrip("- ").split("|")[:3])
+        if key not in seen:
+            seen.add(key)
+            out.append(line)
+    return out
 
 
 def dedupe(items: list[str]) -> list[str]:
@@ -388,7 +452,11 @@ def dedupe(items: list[str]) -> list[str]:
 
 def plain_text(found: PlainList) -> str:
     return (
-        f"{NAMES}\n" + "\n".join(found.names) + f"\n\n{RELATIONSHIPS}\n" + "\n".join(found.links)
+        f"{NAMES}\n"
+        + "\n".join(found.names)
+        + f"\n\n{RELATIONSHIPS}\n"
+        + "\n".join(found.links)
+        + (f"\n\n{UNNAMED}\n" + "\n".join(found.unnamed) if found.unnamed else "")
     ).strip()
 
 
@@ -409,6 +477,7 @@ class Stats:
     continued: int = 0
     names_listed: int = 0
     links_listed: int = 0
+    unnamed_listed: int = 0  # UNNAMED lines pass 1 gave (#2959)
     left_out: int = 0
     lonely: int = 0  # names pass 1 gave no relationship line (#2757)
     paragraphs_asked: int = 0  # paragraphs the second look asked about (#2854)
@@ -441,6 +510,8 @@ class LoreRead:
     known_spellings: dict[str, tuple[str, ...]] = field(default_factory=dict)
     # Every disguise ("secret:") this read listed, as name keys: a link found through one is secret.
     secret_spellings: frozenset[str] = frozenset()
+    # People the text describes but never names (#2959), checked and ready for the store.
+    unnamed: list[UnnamedLink] = field(default_factory=list)
 
 
 async def _call(
@@ -508,6 +579,7 @@ async def read_list(
         stats.read_cut += 1
     # One line for each name (a name has one kind here) and for each pair and words.
     found.names, found.links = dedupe(found.names), dedupe(found.links)
+    found.unnamed = dedupe_unnamed(found.unnamed)
     stats.names_listed, stats.links_listed = len(found.names), len(found.links)
     stats.pass1_links = len(found.links)
     stats.left_out = len(found.left_out)
@@ -896,6 +968,7 @@ async def read_lore(
     progress: Callable[[str, int, int], None] | None = None,
     aliases: Mapping[str, Sequence[str]] | None = None,
     hold_open: bool = False,
+    known_keys: Collection[str] = (),
 ) -> LoreRead:
     """Both passes over the whole text. Nothing here stores anything: the caller merges the
     names, keeps what the campaign can hold and shows the DM every suggestion.
@@ -986,14 +1059,21 @@ async def read_lore(
     spelled: dict[str, list[str]] = {}
     for f in names:  # (a spelling too plain to name anyone, "the King", is not one: #2762)
         spelled.setdefault(f.name, []).extend(
-            sp for sp in (*f.also, *f.secret) if usable_alias(name_key(sp))
+            sp
+            for sp in (*f.also, *f.secret)
+            if usable_alias(name_key(sp)) and not descriptions.is_description(sp)
         )
     here = {**{k: list(v) for k, v in (aliases or {}).items()}}
     for main, others in spelled.items():
         here.setdefault(main, []).extend(others)
+    # Every name a pronoun might mean: the campaign's own, this read's, and all their spellings
+    # (a quote that reaches back through its paragraph stops at any of them, #2757).
+    third = bg.reach_names(
+        {name_key(k) for k in (*known_keys, *here, *(sp for sps in here.values() for sp in sps))}
+    )
     for reply_text in replies:
         links += bg.read_connections(
-            reply_text, text, set(own), stats.dropped, here, stats.unsettled
+            reply_text, text, set(own), stats.dropped, here, stats.unsettled, third
         )
     secrets = frozenset(name_key(sp) for f in names for sp in f.secret)
     # A name the list also gives as another line's other or secret name is that person, not a
@@ -1010,16 +1090,30 @@ async def read_lore(
         }
         names = [f for f in names if not skip_name(f.name)]
     stats.names_kept, stats.links_kept = len(names), len(links)
+    stats.unnamed_listed = len(listed.unnamed)
+    # The described-but-unnamed people (#2959): checked against the text here, stored by the caller
+    # through the same path the who-is-it check uses. Counts go with the connections' own.
+    # (the persons of this read, to tell a second person in a quote from a place in it)
+    people = bg.reach_names(
+        {name_key(x) for f in names if f.kind == "npc" for x in (f.name, *f.also)}
+    )
+    unnamed = read_unnamed(
+        listed.unnamed, text, here, links, [*known_keys, *here], third, stats.dropped, people
+    )
     log.info(
         "Lore read: pass 1 %d call(s), %d cut, %d continued, %d name line(s), %d relationship "
         "line(s) (%d from pass 1 alone), %d left out; %d name(s) with no line; second look at %d "
         "paragraph(s) in %d call(s) added %d line(s); paragraphs with 0/1/2/3+ lines %s before, "
-        "%s after; pass 2 %d call(s), %d cut; kept %d name(s), %d connection(s)%s",
+        "%s after; pass 2 %d call(s), %d cut; kept %d name(s), %d connection(s); %d unnamed "
+        "line(s) listed, %d kept%s",
         stats.read_calls, stats.read_cut, stats.continued, stats.names_listed,
         stats.links_listed, stats.pass1_links, stats.left_out, stats.lonely,
         stats.paragraphs_asked, stats.second_calls, stats.extra_links,
         stats.paragraph_lines_before or "-", stats.paragraph_lines_after or "-",
         stats.shape_calls, stats.shape_cut, stats.names_kept, stats.links_kept,
+        stats.unnamed_listed, len(unnamed),
         ", still cut off" if cut else "",
     )  # fmt: skip
-    return LoreRead(names, links, cut, stats, known, secrets)
+    # "the Ash Wolves, Tavin and Mira": a list a group of this read leads is its members (#3383)
+    links = [*links, *bg.group_connections([names], known_keys)]
+    return LoreRead(names, links, cut, stats, known, secrets, unnamed)

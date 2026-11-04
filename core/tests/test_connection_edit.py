@@ -423,9 +423,9 @@ class Cards(base.NamesTest):
 
     async def test_a_bad_pick_changes_nothing_not_even_the_hiding(self) -> None:
         await self.know("Kesh")  # (public)
-        npc = await ui.save_name(self.memory, self.campaign, "Old Smith", "npc", [], [])
+        npc = await ui.save_name(self.memory, self.campaign, "Old Mill", "place", [], [])
         _, view = await self.who_page()
-        view.picked = [npc.id]  # forged: not a player character
+        view.picked = [npc.id]  # forged: not a character at all (an NPC may be picked since #3197)
         it = self.it()
         await view._some(it)
         self.assertIn("Couldn't change that", str(it.response.sent or it.followup.send.await_args))

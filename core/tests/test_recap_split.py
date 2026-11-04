@@ -296,6 +296,18 @@ class TheSplit(unittest.TestCase):
         )
         self.assertEqual(sp.without_ai(one, EARLIER).label_of(3), sp.RECAP)
 
+    def test_both_wordings_of_the_closing_line_are_heard(self) -> None:
+        # (#2951: recaps written before the change end "And so we continue, the …")
+        new = "And so continues the epic adventure of The Ember Road."
+        for closing in (CLOSING, new, "and so the party continues the tale"):
+            with self.subTest(closing=closing):
+                self.assertEqual(
+                    sp.heard_fixed_lines(["Previously, on The Ember Road…", closing]), (True, True)
+                )
+        self.assertEqual(sp.heard_fixed_lines(["Nothing like it here."]), (False, False))
+        late = said(TALK, READ_ALOUD, [new], PLAY * 3)
+        self.assertEqual(sp.without_ai(late, EARLIER).label_of(len(TALK) + 1), sp.RECAP)
+
     def test_the_answer_is_read_strictly(self) -> None:
         self.assertEqual(sp.parse('{"parts":[{"label":"talk","last":2}]}'), [("talk", 2)])
         self.assertEqual(sp.parse('```json\n{"parts":[]}\n```'), [])

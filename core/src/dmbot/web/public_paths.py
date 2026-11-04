@@ -46,6 +46,12 @@ PUBLIC: tuple[PublicPath, ...] = (
         "the payment company's events, checked by their signature",
         "/webhooks/stripe",
     ),
+    _public(
+        r"/pictures/",
+        "a kept picture opened by its link: the code is the key (#3274)",
+        "/pictures/code",
+        "/pictures/code/preview",
+    ),
     _public(r"/auth/", "sign-in with Discord or an emailed link, and sign-out", "/auth/logout"),
     _public(r"/me(/|$)", "the signed-in website's own calls", "/me", "/me/recaps"),
     _public(

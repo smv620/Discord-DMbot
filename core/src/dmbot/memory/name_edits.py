@@ -32,6 +32,8 @@ async def set_who_knows(
     alias: Alias,
     who: str,
     characters: Sequence[str] = (),
+    *,
+    players_only: bool = False,
 ) -> Written[object]:
     """Set who knows this other name. Nothing is written when the pick is refused; showing the
     name lets the characters who knew it go first and puts them back if it is refused."""
@@ -44,17 +46,23 @@ async def set_who_knows(
             return Written(None, None)  # already everyone's
         before = (await memory.alias_knowers(guild_id, campaign_id, [alias.id])).get(alias.id, [])
         if before:
-            await memory.set_alias_knowers(guild_id, campaign_id, alias.id, [], source=DM)
+            await memory.set_alias_knowers(
+                guild_id, campaign_id, alias.id, [], source=DM, players_only=players_only
+            )
         try:
             return await memory.update_alias(
                 guild_id, campaign_id, alias.id, secret=False, source=DM
             )
         except MemoryRuleError:
             if before:
-                await memory.set_alias_knowers(guild_id, campaign_id, alias.id, before, source=DM)
+                await memory.set_alias_knowers(
+                    guild_id, campaign_id, alias.id, before, source=DM, players_only=players_only
+                )
             raise
     chosen = list(characters) if who == SOME_CHARACTERS else []
     await memory.check_knowers(guild_id, campaign_id, chosen)
     if not alias.secret:
         await memory.update_alias(guild_id, campaign_id, alias.id, secret=True, source=DM)
-    return await memory.set_alias_knowers(guild_id, campaign_id, alias.id, chosen, source=DM)
+    return await memory.set_alias_knowers(
+        guild_id, campaign_id, alias.id, chosen, source=DM, players_only=players_only
+    )

@@ -224,7 +224,36 @@ describe("the map", () => {
     render(<WebMap nodes={nodes} edges={edges} center="m" refId="1.a" selected={{ a: "m", b: "g" }} onCenter={() => {}} onLine={() => {}} />);
     fireEvent.pointerEnter(nodeOf("Mira"));
     expect(texts()).toContain("serves (+1)"); // (the chosen line: its full words, as the server worded them)
-    expect([...document.querySelectorAll(".web-edge-text title")].map((t) => t.textContent)).toContain("serves (+1)");
+    // (the tooltip now lists the connections, see "lists the first four connections" below, #3279)
+    const tipText = [...document.querySelectorAll(".web-edge-text title")].map((t) => t.textContent ?? "").find((t) => t.includes("\n")) ?? "";
+    expect(tipText.split("\n")[0]).toContain("serves");
+    expect(tipText.split("\n")[1]).toContain("owes");
+  });
+
+  it("lists four connections in a line's tooltip, the one on the line first, then plus n more…, read in full (#3279)", () => {
+    const words7 = ["serves", "owes", "fears", "trusts", "hunts", "hides", "sells"];
+    const many: WebEdge[] = [
+      // the API words the line with the latest link (the last), and sends the links oldest first
+      { a: "m", b: "g", label: "sells", more: 6, links: words7.map((w, i) => link(`x${i}`, w)) },
+      { a: "m", b: "h", label: "lives at", more: 0, links: [link("y1", "lives at")] },
+      { a: "g", b: "o", label: "helps", more: 3, links: ["knows", "pays", "fights", "helps"].map((w, i) => link(`z${i}`, w)) },
+    ];
+    render(<WebMap nodes={nodes} edges={many} center="m" refId="1.a" selected={null} onCenter={() => {}} onLine={() => {}} />);
+    const groups = [...document.querySelectorAll(".web-edge")];
+    const tips = groups.map((g) => [...g.querySelectorAll("title")].map((t) => t.textContent));
+    const [mira, gorn] = [nodes.find((n) => n.id === "m")!.name, nodes.find((n) => n.id === "g")!.name];
+    // seven connections: the line's own ("sells") first, then the newest others, four in all, then the rest counted
+    expect(tips[0]).toHaveLength(2);
+    expect(tips[0]![0]).toBe([`${mira} sells ${gorn}`, `${mira} hides ${gorn}`, `${mira} hunts ${gorn}`, `${mira} trusts ${gorn}`, "plus 3 more…"].join("\n"));
+    expect(tips[0]![1]).toBe(tips[0]![0]);
+    // one connection keeps its words
+    expect(tips[1]![0]).toBe("lives at");
+    // exactly four: all listed, no "plus"
+    expect(tips[2]![0]).not.toContain("plus");
+    expect(tips[2]![0]!.split("\n")).toHaveLength(4);
+    expect(tips[2]![0]!.split("\n")[0]).toContain("helps");
+    // the line's hit area also carries it for screen readers
+    expect(groups[0]!.querySelector(".web-hit")!.getAttribute("aria-label")).toContain("plus 3 more…");
   });
 
   it("says how many when a bundle has no wording from the focused end, and a hover wins over the pick", () => {
@@ -263,7 +292,7 @@ describe("the map", () => {
     const onLine = vi.fn();
     draw({ onLine });
     const hit = document.querySelector(".web-hit") as SVGLineElement;
-    expect(hit.getAttribute("aria-label")).toBe(words.lineBetween("Mira Voss", "Garrick"));
+    expect(hit.getAttribute("aria-label")).toContain(words.lineBetween("Mira Voss", "Garrick"));
     fireEvent.keyDown(hit, { key: "Enter" });
     expect(onLine).toHaveBeenCalledWith("m", "g");
   });
@@ -313,6 +342,66 @@ describe("the map", () => {
     fireEvent.click(nodeOf("Garrick"));
     expect(onCenter).not.toHaveBeenCalled();
     now.mockRestore();
+  });
+
+  it("a press and release on a name is a tap even when no click follows (the name drifted from under the pointer)", () => {
+    const onCenter = vi.fn();
+    draw({ onCenter });
+    const now = vi.spyOn(Date, "now").mockReturnValue(3000);
+    // pointer down on the name, pointer up elsewhere (window): the browser sends no click to the name
+    fireEvent.pointerDown(nodeOf("Garrick"), { clientX: 300, clientY: 300, pointerId: 1 });
+    fireEvent.pointerUp(window, { clientX: 303, clientY: 300, pointerId: 1 });
+    expect(document.querySelector("#web-side-h")!.textContent).toBe("Garrick"); // the panel is on it
+    now.mockReturnValue(3000 + 150);
+    fireEvent.pointerDown(nodeOf("Garrick"), { clientX: 300, clientY: 300, pointerId: 1 });
+    fireEvent.pointerUp(window, { clientX: 303, clientY: 300, pointerId: 1 });
+    expect(onCenter).toHaveBeenCalledTimes(1);
+    expect(onCenter).toHaveBeenCalledWith("g");
+    now.mockRestore();
+  });
+
+  it("the click that follows a tap is not counted a second time", () => {
+    const onCenter = vi.fn();
+    draw({ onCenter });
+    vi.useFakeTimers();
+    fireEvent.pointerDown(nodeOf("Garrick"), { clientX: 300, clientY: 300, pointerId: 1 });
+    fireEvent.pointerUp(window, { pointerId: 1 });
+    fireEvent.click(nodeOf("Garrick")); // (the browser's own click, right after the pointer up)
+    expect(onCenter).not.toHaveBeenCalled(); // one tap is a pick, not half of a double tap counted twice
+    expect(document.querySelector("#web-side-h")!.textContent).toBe("Garrick"); // (and the tap did pick it)
+    vi.runAllTimers();
+    vi.useRealTimers();
+    // later, a click on its own counts again (the flag was cleared): a second one soon after is a double click
+    const now = vi.spyOn(Date, "now").mockReturnValue(9000);
+    fireEvent.click(nodeOf("Mira Voss"));
+    now.mockReturnValue(9100);
+    fireEvent.click(nodeOf("Mira Voss"));
+    expect(onCenter).toHaveBeenCalledWith("m");
+    now.mockRestore();
+  });
+
+  it("a right or middle press on a name is not a tap", () => {
+    const onCenter = vi.fn();
+    draw({ onCenter });
+    for (const button of [1, 2]) {
+      fireEvent.pointerDown(nodeOf("Garrick"), { clientX: 300, clientY: 300, pointerId: 1, button });
+      fireEvent.pointerUp(window, { pointerId: 1, button });
+    }
+    expect(document.querySelector("#web-side-h")!.textContent).toBe("Mira Voss"); // nothing was picked
+    expect(onCenter).not.toHaveBeenCalled();
+  });
+
+  it("a pointer the browser cancelled (it took the touch over) is not a tap", () => {
+    const onCenter = vi.fn();
+    draw({ onCenter });
+    fireEvent.pointerDown(nodeOf("Garrick"), { clientX: 300, clientY: 300, pointerId: 1 });
+    fireEvent.pointerCancel(window, { pointerId: 1 });
+    expect(document.querySelector("#web-side-h")!.textContent).toBe("Mira Voss"); // nothing was picked
+  });
+
+  it("a name's label cannot be selected, which cancelled the second press of a double click", () => {
+    const css = readFileSync(resolve(__dirname, "../src/styles/web-map.css"), "utf8");
+    expect(css).toMatch(/\.account \.web-node \{[^}]*user-select: none/);
   });
 
   it("falls back to the middle name when the picked name is no longer drawn", () => {
@@ -848,5 +937,57 @@ describe("Cluster by quest (#2992)", () => {
     saveMode("quests");
     render(<WebMap nodes={list} edges={lines} center="g" refId="1.a" selected={null} onCenter={() => {}} onLine={() => {}} />);
     expect(labels().filter((l) => l === "Find the Lost Bell")).toHaveLength(1); // the drawn quest and its names share one area
+  });
+});
+
+describe("telling the page about a drag (#3324)", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("onDragging is true while a name is dragged and false when it is let go", () => {
+    withBox();
+    const onDragging = vi.fn();
+    draw({ onDragging });
+    drag(nodeOf("Garrick"), [150, 90]);
+    expect(onDragging.mock.calls).toEqual([[true], [false]]);
+  });
+
+  it("a tap does not call onDragging", () => {
+    withBox();
+    const onDragging = vi.fn();
+    draw({ onDragging });
+    fireEvent.pointerDown(nodeOf("Garrick"), { clientX: 300, clientY: 300, pointerId: 1 });
+    fireEvent.pointerUp(window, { clientX: 300, clientY: 300, pointerId: 1 });
+    expect(onDragging).not.toHaveBeenCalled();
+  });
+
+  it("a pointer the browser cancels ends the drag too", () => {
+    withBox();
+    const onDragging = vi.fn();
+    draw({ onDragging });
+    fireEvent.pointerDown(nodeOf("Garrick"), { clientX: 300, clientY: 300, pointerId: 1 });
+    fireEvent.pointerMove(window, { clientX: 330, clientY: 330, pointerId: 1 });
+    fireEvent.pointerCancel(window, { clientX: 330, clientY: 330, pointerId: 1 });
+    expect(onDragging.mock.calls).toEqual([[true], [false]]);
+  });
+
+  it("a second finger turns the drag into a pinch, which ends it", () => {
+    withBox();
+    const onDragging = vi.fn();
+    draw({ onDragging });
+    fireEvent.pointerDown(nodeOf("Garrick"), { clientX: 300, clientY: 300, pointerId: 1 });
+    fireEvent.pointerMove(window, { clientX: 330, clientY: 330, pointerId: 1 });
+    fireEvent.pointerDown(nodeOf("Mira"), { clientX: 200, clientY: 200, pointerId: 2 });
+    expect(onDragging.mock.calls).toEqual([[true], [false]]);
+  });
+
+  it("onDragging(false) is called if the map goes away mid-drag", () => {
+    withBox();
+    const onDragging = vi.fn();
+    const { unmount } = draw({ onDragging });
+    fireEvent.pointerDown(nodeOf("Garrick"), { clientX: 300, clientY: 300, pointerId: 1 });
+    fireEvent.pointerMove(window, { clientX: 330, clientY: 330, pointerId: 1 });
+    expect(onDragging.mock.calls).toEqual([[true]]);
+    unmount();
+    expect(onDragging.mock.calls.at(-1)).toEqual([false]);
   });
 });

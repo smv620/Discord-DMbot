@@ -184,6 +184,11 @@ const pages = [
       { name: "second-session.txt", mimeType: "text/plain", buffer: Buffer.from("Cerric: again") },
     ]);
     await page.getByRole("button", { name: "Preview" }).click();
+    // The consent step is on: every name needs a choice. Ash is left out; Mira is kept as someone not in Discord, with the
+    // tick, so the tick's layout is measured at phone width too.
+    await page.getByLabel("Ash: Who is who?").selectOption("drop");
+    await page.getByLabel("Mira: Who is who?").selectOption("new");
+    await page.getByLabel(/I confirm Mira agreed to this/).check();
     await page.getByRole("button", { name: /Check what will be kept/ }).click();
     await page.getByText(/^Checked:/).first().waitFor();
   }],

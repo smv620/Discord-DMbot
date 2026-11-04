@@ -15,7 +15,7 @@ export const campaignBackupWords = {
   bigFile: "A file in your backup is large. If Discord says it is too big when you load the backup, ask on the Help page.",
   fileSlow: "A file is taking a long time. You can wait, or press Download a backup again later.",
   problem: {
-    "not-allowed": "Only the campaign's game masters can download a backup here for now. In Discord, type /dmbot backup.",
+    "not-allowed": "You can't download a backup of this campaign here. In Discord, type /dmbot backup.",
     "not-found": "That campaign isn't here any more. Go back to My Account to see your campaigns.",
     "no-backup": "This campaign's plan can't make a backup.",
     "too-big": "This campaign is too big to back up here. Use /dmbot backup in Discord instead.",

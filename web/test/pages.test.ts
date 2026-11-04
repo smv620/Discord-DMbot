@@ -46,6 +46,7 @@ const pages: [path: string, file: string, title: string, noindex: boolean][] = [
   ["/account/web", "account/web.astro", "Story Graph · DMbot", true],
   ["/account/campaigns", "account/campaigns.astro", "Campaign · DMbot", true],
   ["/account/npc", "account/npc.astro", "NPC · DMbot", true],
+  ["/account/pictures", "account/pictures.astro", "Pictures · DMbot", true],
   ["/r", "r.astro", "A shared recap · DMbot", true],
   ["/legal/terms", "legal/terms.astro", "Terms of use · DMbot", false],
   ["/legal/privacy", "legal/privacy.astro", "Privacy · DMbot", false],

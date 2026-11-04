@@ -41,6 +41,7 @@ from dmbot.campaigns import Campaign
 from dmbot.dm_screen.recap_panel import PlanFacts, audio_how
 from dmbot.entitlements import RECAP_AUDIO_PLANS
 from dmbot.logs import log_context
+from dmbot.memory import gate
 from dmbot.memory.exposures import secret_connections
 from dmbot.memory.lookup import CampaignLookup
 from dmbot.memory.models import (
@@ -105,7 +106,7 @@ from dmbot.ui.recap_again import (
 from dmbot.ui.recap_dm import AUDIO_WHY, RecapButton, ready_text, ready_view
 from dmbot.ui.recap_hold import WriteNowButton, hold_line_key, hold_view
 from dmbot.ui.recap_share import ShareButton
-from dmbot.ui.recap_short import EXPIRED, ShortRecapButton, ask_key, ask_view
+from dmbot.ui.recap_short import EXPIRED, WRITING, ShortRecapButton, ask_key, ask_view
 
 if TYPE_CHECKING:  # (only for annotations: `bot.py` imports this module)
     from collections.abc import Coroutine, Hashable, Sequence
@@ -113,7 +114,7 @@ if TYPE_CHECKING:  # (only for annotations: `bot.py` imports this module)
     from dmbot import plan_rules
     from dmbot.ai import TierClient
     from dmbot.bot import DMBot
-    from dmbot.campaigns import web_backup, web_line_delete, web_restore
+    from dmbot.campaigns import speaker_removal, web_backup, web_line_delete, web_restore
     from dmbot.campaigns.store import CampaignStore
     from dmbot.campaigns.web_delete import WebDeleteNotices
     from dmbot.config import Settings
@@ -129,6 +130,7 @@ if TYPE_CHECKING:  # (only for annotations: `bot.py` imports this module)
     from dmbot.memory.web_actions import ActionStore
     from dmbot.memory.web_sheets import ActionStore as SheetActionStore
     from dmbot.recaps.audio.worker import AudioWorker
+    from dmbot.recaps.must_haves import MustStore
     from dmbot.recaps.pipeline import RecapWorker
     from dmbot.recaps.plot import PlotRunner
     from dmbot.recaps.plot_talk_run import TalkRunner
@@ -156,6 +158,7 @@ WEB_RESTORE_TIDY_EVERY = 30  # rounds (about a minute) between the restore rows'
 RECAP_REQUEST_ROUND_S = 2  # how often the bot looks for what a DM typed on the recap page
 RECAP_REQUESTS_PER_ROUND = 3  # for one server, so one busy server can't hold the others
 RECAP_VOICE_AT_ONCE = 3  # spoken notes written down at the same time, in all servers (#2161)
+WEB_STYLE_PER_ROUND = 5  # recap style choices applied for one server in one round (#3060)
 LORE_SWEEP_EVERY_S = 30.0  # how often a server's lore upload queue is swept for stale rows (#3022)
 NAME_ANSWERS_PER_ROUND = 10  # a page of names answered at once, for one server
 CLIP_SWEEP_EVERY = (
@@ -248,6 +251,7 @@ class RecapFeatures:
         recap_feedback_limit: recap_feedback.FeedbackLimit
         recap_holds: recap_hold.HoldStore | None
         recap_notes: NoteStore | None
+        recap_musts: MustStore | None
         recap_requests: recap_requests.RequestStore | None
         recap_styles: StyleStore | None
         recap_worker: RecapWorker | None
@@ -257,6 +261,7 @@ class RecapFeatures:
         transcripts: TranscriptStore | None
         web_backups: web_backup.WebBackups | None
         web_line_deletions: web_line_delete.WebLineDeletions | None
+        speaker_removals: speaker_removal.SpeakerRemovals | None
         web_restores: web_restore.WebRestores | None
         web_delete_notices: WebDeleteNotices | None
         web_settings: SettingStore | None
@@ -280,7 +285,11 @@ class RecapFeatures:
         ): ...
         async def fetch_user(self, user_id: int, /) -> discord.User: ...
         async def run_web_backups(self) -> None: ...
+        async def run_picture_actions(self) -> None: ...
+        async def run_picture_sweep(self) -> None: ...
         async def run_web_line_deletions(self) -> None: ...
+
+        async def run_speaker_removals(self) -> None: ...
         async def run_web_delete_notices(self) -> None: ...
         @staticmethod
         def _watched(work: Coroutine[Any, Any, None], name: str) -> asyncio.Task[None]: ...
@@ -305,6 +314,13 @@ class RecapFeatures:
             remember: Hashable | None = None,
             secret_of: tuple[int, str] | None = None,
         ) -> bool: ...
+        async def ask_live(
+            self,
+            table: Table,
+            text: str,
+            make_view: Callable[[], discord.ui.View],
+            on_sent: Callable[[discord.Message], None] | None = None,
+        ) -> list[discord.Message]: ...
         async def post_message(
             self,
             channel_id: int,
@@ -323,6 +339,7 @@ class RecapFeatures:
         async def run_web_report_requests(self) -> None: ...
         async def run_web_sheets(self) -> None: ...
         async def run_web_line_fixes(self) -> None: ...
+        async def run_web_recap_style(self) -> None: ...
         async def run_web_restores(self) -> None: ...
         async def tidy_web_restores(self) -> None: ...
         async def keep_web_restores_alive(self) -> None: ...
@@ -509,18 +526,25 @@ class RecapFeatures:
             # A short session asks first (#2104): what the recap would read is not changed.
             lines = await self.transcripts.lines(gid, session.id)
             span = short.span_minutes(lines)
-            talk = short.talk_minutes(lines, await self.consent.consenting(gid))
+            talk = short.talk_minutes(lines, await self.consent.recorded_in(gid, cid))
             if short.is_short(span, talk):
                 if await self.recaps.get(gid, cid, session.started_at) is not None:
                     return  # a repeat of the end of session, or already decided: ask once only
-                sent = await self.post_message(
-                    table.screen_channel_id,
+                # In every DM's private chat (#3210); each copy is remembered, so an answer in
+                # one loses the others their buttons and the next session expires them all.
+                sent = await self.ask_live(
+                    table,
                     short.question(span, talk),
-                    ask_view(cid, session.started_at),
-                    remember=ask_key(cid, session.started_at),
+                    lambda: ask_view(cid, session.started_at),
+                    partial(self.decision_lines.remember, ask_key(cid, session.started_at)),
                 )
-                if sent is None:
+                if not sent:
                     log.warning("Recap: couldn't ask about a short session")
+                    return
+                if await self.recaps.get(gid, cid, session.started_at) is not None:
+                    # A DM answered "Write a recap" while the other copies were still going out:
+                    # the copies sent after it were remembered only now, so close them too.
+                    await self.decision_lines.close(ask_key(cid, session.started_at), WRITING)
                     return
                 self._short_asks[cid] = session.started_at
                 log.info("Recap: asked first (a short session)")  # no numbers of the table's
@@ -1168,6 +1192,7 @@ class RecapFeatures:
             session_at=job.session_at,
             styles=self.recap_styles,
             notes=self.recap_notes,
+            musts=self.recap_musts,
             importance=self.importance,
             recanted=await self._recanted(gid, cid, job.session_at),
             relation_ties=await self._relation_ties(gid, cid),
@@ -1314,7 +1339,7 @@ class RecapFeatures:
                 "This recap names a secret of yours, so it wasn't shared. "
                 "Edit it on your recap page, then try again.",
             )
-        if not set(job.speakers) <= set(await self.consent.consenting(gid)):
+        if not set(job.speakers) <= set(await self.consent.recorded_in(gid, cid)):
             return (
                 None,
                 "A player has stopped being recorded, so this recap can't be shared as "
@@ -1714,17 +1739,15 @@ class RecapFeatures:
                 "Your plan doesn't include recaps right now, so nothing was posted. "
                 "Your draft is saved."
             )
-        channel = (
-            self.get_channel(campaign.dmbchat_channel_id) if campaign.dmbchat_channel_id else None
-        )
+        channel = self.get_channel(campaign.table_chat_id) if campaign.table_chat_id else None
         if (
             channel is None
             or not hasattr(channel, "send")
             or (getattr(getattr(channel, "guild", None), "id", gid) != gid)
         ):
             return await back(
-                "There's no chat channel for this campaign yet. It's made when a session starts. "
-                "Start one, then press Post."
+                "DMbot has no table chat to post in yet: start a session in a voice channel, or "
+                "pick a chat channel in ⚙️ Manage DMbot. Then press Post."
             )
         secrets = await self.recap_secret_names(campaign, job.session_at)
         if secrets is None:
@@ -1764,7 +1787,7 @@ class RecapFeatures:
                 f.close()
             log.warning("Recap: the send failed")
             return await back(
-                "DMbot couldn't write in the chat channel. Check it can post there, "
+                "DMbot couldn't write in the table's chat. Check it can post there, "
                 "then press Post again."
             )
         await self.recaps.posted(gid, cid, at, url=link)
@@ -1942,6 +1965,14 @@ class RecapFeatures:
             except Exception as exc:
                 log.warning("The house-rules file requests failed: %s", type(exc).__name__)
             try:
+                await self.run_picture_actions()
+            except Exception as exc:
+                log.warning("The website picture choices failed: %s", type(exc).__name__)
+            try:
+                await self.run_picture_sweep()
+            except Exception as exc:
+                log.warning("The picture sweep failed: %s", type(exc).__name__)
+            try:
                 await self.run_web_settings()
             except Exception as exc:
                 log.warning("The website settings failed: %s", type(exc).__name__)
@@ -1957,6 +1988,10 @@ class RecapFeatures:
                 await self.run_web_line_fixes()
             except Exception as exc:
                 log.warning("The website line fixes failed: %s", type(exc).__name__)
+            try:
+                await self.run_web_recap_style()
+            except Exception as exc:
+                log.warning("The website recap style choices failed: %s", type(exc).__name__)
             try:
                 await self.run_peek_notices()
             except Exception as exc:
@@ -1977,6 +2012,10 @@ class RecapFeatures:
                 await self.run_web_line_deletions()
             except Exception as exc:
                 log.warning("The website line deletions failed: %s", type(exc).__name__)
+            try:
+                await self.run_speaker_removals()
+            except Exception as exc:
+                log.warning("The speaker removals failed: %s", type(exc).__name__)
             sweeps += 1  # counted whatever happened, so the sweep below can't be starved
             if sweeps % 300 == 0 and self.recap_requests is not None:  # about every 10 minutes
                 for guild in list(self.guilds):
@@ -1997,6 +2036,8 @@ class RecapFeatures:
                             await self.web_rule_actions.sweep(guild.id)
                         if self.web_line_deletions is not None:
                             await self.web_line_deletions.sweep(guild.id)
+                        if self.speaker_removals is not None:
+                            await self.speaker_removals.sweep(guild.id)
                         if self.web_sheets is not None:
                             await self.web_sheets.sweep(guild.id)
                         # Lines a DM put back after their session (#2587): read once.
@@ -2030,19 +2071,24 @@ class RecapFeatures:
                 if answer is None:
                     break
                 with log_context(guild_id=guild.id, campaign_id=answer.campaign_id):
+                    kept = name_answers.Kept()
                     try:
                         campaign = await self.campaigns.get(guild.id, answer.campaign_id)
                         why = (
                             name_answers.NOT_ALLOWED
                             if campaign is None
                             else await name_answers.apply(
-                                self.memory, guild.id, campaign.dm_user_ids, answer
+                                self.memory, guild.id, campaign.dm_user_ids, answer, kept, store
                             )
                         )
                     except Exception as exc:  # the row must never stay "working" for a bug
                         log.warning("A name answer failed: %s", type(exc).__name__)
                         why = name_answers.FAILED
-                    await store.finish(guild.id, answer, error=why)
+                    stays = answer.action in name_answers.KEPT_ACTIONS and kept.batch is not None
+                    if not await store.finish(
+                        guild.id, answer, error=why, kept=kept if stays else None
+                    ):
+                        log.warning("A name answer lost its claim before it finished")
                     log.info("Name answer: %s", why or "done")  # the word only
                     if not why and self.lookup is not None:
                         self.lookup.mark_stale(guild.id, answer.campaign_id)  # lists read it fresh
@@ -2410,15 +2456,23 @@ class RecapFeatures:
             log.exception("Recap: couldn't read the open story threads")
             return ()
         live = (OPEN, GOING, HINTED)
-        # Only threads the players may know: one hidden from them or limited to some of them is the
-        # DM's own plot and never goes to the writer (a recap is read aloud to the table).
+        # Only threads the party knows: one that only the DM, an NPC or some of the player
+        # characters know is the DM's own plot and never goes to the writer (a recap is read aloud
+        # to the table). Asked of the one gate, never of the old flags (#2995): the viewer is "what
+        # every player character knows", so a limited or hidden thread is not among them.
+        try:
+            seen = await self.memory.visible_to(gid, cid, gate.Viewer.the_party())
+        except Exception:
+            log.exception("Recap: couldn't ask what the party knows of the story threads")
+            return ()
         return tuple(
             t.thread.name
             for t in found
             if t.state is not None
             and t.state.condition in live
-            and not t.thread.hidden_from_players
-            and not t.thread.audience_limited
+            # (the thread's own entry row, not `knows`: that also counts an entry a known
+            # property of it implies, and a thread's state is its own statement)
+            and seen.how_sure(gate.ENTRY, t.thread.id) is not None
         )
 
     async def run_audio_notices(self) -> None:

@@ -26,6 +26,7 @@ from dmbot.sessions import SessionStore
 from dmbot.transcript import questions as name_questions
 from dmbot.transcript import speaker_question as speaker_q
 from dmbot.ui.logic import NO_CAMPAIGN_ACCESS
+from tests.asking import live_on_screen
 from tests.pg import DatabaseTest
 
 GUILD, VOICE, SCREEN, OTHER_TEXT, TRANSCRIPT = 1, 2, 3, 4, 5
@@ -80,6 +81,7 @@ class SessionTests(DatabaseTest):
             self.campaigns,
             self.sessions,
         )
+        live_on_screen(self.bot)  # live questions are asked on the screen here (#3210)
         self.ears = FakeEarsConnection()
         self.bot.ears._active = self.ears  # type: ignore[assignment]
 
@@ -370,7 +372,7 @@ class SaveAndResume(SessionTests):
         await self.consent.grant(GUILD, PLAYER)
         await self.consent.grant(GUILD, DM)
         await self.start()
-        self.bot.tables[GUILD].dmbchat_channel_id = 555
+        self.bot.tables[GUILD].chat_channel_id = 555
         done = await self.bot.pause_recording(GUILD, PLAYER, 15)
         assert done.ok
         saved = await self.sessions.get(GUILD)
@@ -3483,7 +3485,7 @@ class SaveAndResume(SessionTests):
         with self.assertRaises(RuntimeError):
             await first
         self.assertTrue(table.questions.is_open(asked.id))  # open again, buttons still work
-        self.assertIsNotNone(table.question_message)
+        self.assertTrue(table.question_messages)
 
     async def test_someone_who_stops_while_the_answer_saves_stays_hidden(self) -> None:
         table, message, _, memory = await self.asked_about_marin()

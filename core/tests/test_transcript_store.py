@@ -14,6 +14,7 @@ from dmbot.bot import DMBot
 from dmbot.campaigns import CampaignStore
 from dmbot.config import Settings
 from dmbot.consent import ConsentStore
+from dmbot.dm_questions import NO_PRIVATE_MESSAGE
 from dmbot.dm_screen import messages as screen_messages
 from dmbot.sessions import SessionStore
 from dmbot.table import Table
@@ -1307,9 +1308,38 @@ class BotTests(DatabaseTest):
         self.assertIn("I saw Belleros 0", text)
         self.assertEqual(
             [c.item.custom_id for c in view.children],
-            [f"dmbot:linefix:yes:{sid}", f"dmbot:linefix:no:{sid}"],
+            [f"dmbot:linefix:yes:{GUILD}:{sid}", f"dmbot:linefix:no:{GUILD}:{sid}"],  # (#3210)
         )
         self.assertEqual(cast(Any, self.bot.post_message).await_args_list[0].args[0], SCREEN)
+
+    async def test_with_a_dm_who_can_be_reached_the_fixes_go_to_their_private_chat(self) -> None:
+        # #3210: not on the screen; the server is in the buttons' ids; each copy is remembered.
+        table, ids = await self.waiting_setup(5)
+        copies: list[Any] = []
+
+        async def dm_message(user_id: int, text: str, view: Any) -> Any:
+            message = MagicMock(id=900 + len(copies), content=text, edit=AsyncMock())
+            message.view = view
+            copies.append(message)
+            return message
+
+        self.bot._dm_message = dm_message  # type: ignore[method-assign]
+        self.bot.sidebar_send_dm = AsyncMock(return_value="sent")  # type: ignore[method-assign]
+        await self.bot._waiting_suggestions(table)
+        cast(Any, self.bot.post_message).assert_not_awaited()  # nothing on the DM screen
+        self.assertEqual(len(copies), 3)  # the three shown, one DM
+        for i, message in enumerate(copies):
+            self.assertTrue(message.content.startswith("❓ **DMbot has a question** · "))
+            self.assertEqual(
+                message.view.children[0].item.custom_id, f"dmbot:linefix:yes:{GUILD}:{ids[i]}"
+            )
+        # the count of the rest goes privately too, with the campaign's name
+        sent = cast(Any, self.bot.sidebar_send_dm).await_args
+        self.assertIn("…and 2 more", sent.args[1])
+        self.assertIn("DMbot has a question", sent.args[1])
+        # each copy was remembered, so a decision takes the buttons off the others
+        await self.bot.decision_lines.close(("fix", ids[0]), "Accepted.", pressed_id=None)
+        copies[0].edit.assert_awaited_once()
 
     async def test_nothing_for_an_answered_or_dropped_suggestion(self) -> None:
         table, (first, second) = await self.waiting_setup(2)
@@ -1327,8 +1357,12 @@ class BotTests(DatabaseTest):
         self.assertEqual(len(shown), 4)
         for i, (text, view) in enumerate(shown[:3]):
             self.assertIn(f"I saw Belleros {i}", text)
-            self.assertEqual(view.children[0].item.custom_id, f"dmbot:linefix:yes:{ids[i]}")
-        self.assertEqual(shown[3], ("…and 2 more that go when this session ends.", None))
+            self.assertEqual(view.children[0].item.custom_id, f"dmbot:linefix:yes:{GUILD}:{ids[i]}")
+        # (no DM can be reached here, so the count is on the screen with the reason, #3210)
+        self.assertEqual(
+            shown[3],
+            ("…and 2 more that go when this session ends." + NO_PRIVATE_MESSAGE, None),
+        )
 
     async def test_nothing_after_a_restart_in_the_middle_of_a_session(self) -> None:
         table, _ = await self.waiting_setup(1)

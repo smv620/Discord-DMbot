@@ -17,7 +17,7 @@ import discord
 
 from dmbot.campaigns import Campaign
 from dmbot.memory import link_edits
-from dmbot.memory.link_words import CONNECTION_WORDS, link_words, predicate_for
+from dmbot.memory.link_words import CONNECTION_WORDS, link_words, predicate_for, reads_both_ways
 from dmbot.memory.lookup import CampaignLookup
 from dmbot.memory.models import CONFIRMED, DM, MemoryRuleError, Relation
 from dmbot.memory.store import MemoryStore
@@ -272,11 +272,15 @@ class OneConnection(_Menu):
         # connection with no direction ("is an enemy of") is said from the card the DM is on,
         # whichever way round the row happens to be stored, as the card itself reads it.
         first, second = stored.subject_id, stored.object_id
-        if not stored.directional and second == card_id:
+        if second == card_id and reads_both_ways(
+            stored.predicate, stored.detail, stored.directional
+        ):
             first, second = second, first
         subject = found.names.entities.get(first)
         other = found.names.entities.get(second)
-        words = link_words(stored.predicate, stored.detail, directional=stored.directional)
+        words = link_words(
+            stored.predicate, stored.detail, stored.directional, subject.type if subject else ""
+        )
         return f"{subject.name if subject else '?'} {words} {other.name if other else '?'}"
 
     async def _other_words(self, interaction: discord.Interaction) -> None:
@@ -472,7 +476,13 @@ class WhoKnows(WhoKnowsMenu):
             return
         try:
             written = await link_edits.set_who_knows(
-                found.memory, c.guild_id, c.id, found.relation, who, self.picked
+                found.memory,
+                c.guild_id,
+                c.id,
+                found.relation,
+                who,
+                self.picked,
+                players_only=True,  # (this menu lists player characters only: NPC knowers stay)
             )
         except MemoryRuleError as exc:
             if str(exc) == link_edits.PICK_ONE:

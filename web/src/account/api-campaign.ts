@@ -2,10 +2,15 @@
 // pages that do not use them do not carry them. Each is the same call it was inside `httpApi`; the names are listed
 // in `CAMPAIGN_METHODS` there, and a test keeps the two in step.
 import type {
+  PictureAction,
+  PictureActionResult,
+  PictureList,
   SessionNotes,
   SessionNotesList,
   RecapStyle,
   RecapStyleAction,
+  CampaignSpeaker,
+  SpeakerRemoval,
   HouseFileState,
   LoreUpload,
   CampaignPage,
@@ -32,9 +37,32 @@ import type {
 } from "./api";
 import {
   ApiError,
+  errorKinds,
   fixErrorKinds,
 } from "./api";
-import type { AccountApi, ApiHelpers } from "./api";
+import type { AccountApi, ApiErrorKind, ApiHelpers } from "./api";
+
+/** The picture action's own 409 details (#3275). Only that action reads them, so they stay out of the shared table. */
+const pictureErrorKinds: Record<string, ApiErrorKind> = {
+  ...errorKinds,
+  "permanent-full": "permanent-full",
+  refused: "refused",
+};
+
+/** The script download's own refusal (#3244): a session with no script. Only that call reads it. */
+const scriptErrorKinds: Record<string, ApiErrorKind> = { ...errorKinds, no_script: "no-script" };
+
+/** The route's own action names; the page's names for the same things are mapped here only (#3275). */
+const PICTURE_WIRE_ACTION: Record<PictureAction, string> = {
+  "make-private": "private",
+  "make-public": "public",
+  permanent: "permanent",
+  "not-permanent": "unpermanent",
+  delete: "delete",
+};
+
+/** What the must-haves routes refuse with (#3329, CloudDev-lead's #3340): `too_many` would otherwise read as the game masters' limit. */
+const MUSTS_REFUSALS: Record<string, ApiErrorKind> = { too_many: "musts-full", empty: "musts-empty", too_long: "musts-too-long", bad_arg: "bad-choice" };
 
 export default function campaignArea({ call }: ApiHelpers): Partial<AccountApi> {
   return {
@@ -55,6 +83,28 @@ export default function campaignArea({ call }: ApiHelpers): Partial<AccountApi> 
       },
     sessionNotesList: async (campaignRef) =>
       (await call("GET", `/me/campaigns/${encodeURIComponent(campaignRef)}/session-notes`)) as SessionNotesList,
+    pictures: async (campaignRef, filter) => {
+      const params = new URLSearchParams();
+      if (filter.session !== undefined) params.set("session", String(filter.session));
+      if (filter.poster) params.set("poster", filter.poster);
+      if (filter.q) params.set("q", filter.q);
+      if (filter.before) params.set("before", filter.before);
+      const query = params.toString();
+      return (await call(
+        "GET",
+        `/me/campaigns/${encodeURIComponent(campaignRef)}/pictures${query ? `?${query}` : ""}`,
+      )) as PictureList;
+    },
+    pictureAction: async (campaignRef, code, action) =>
+      (await call(
+        "POST",
+        `/me/campaigns/${encodeURIComponent(campaignRef)}/pictures/${encodeURIComponent(code)}`,
+        { action: PICTURE_WIRE_ACTION[action] },
+        false,
+        undefined,
+        false,
+        pictureErrorKinds,
+      )) as PictureActionResult,
     sessionNotes: async (campaignRef, at) =>
       (await call("GET", `/me/campaigns/${encodeURIComponent(campaignRef)}/session-notes/${at}`)) as SessionNotes,
     transcript: async (campaignRef, number, version, offset = 0) =>
@@ -68,6 +118,16 @@ export default function campaignArea({ call }: ApiHelpers): Partial<AccountApi> 
         `/me/campaigns/${encodeURIComponent(campaignRef)}/transcripts/${number}/download?version=${version}`,
         undefined,
         true,
+      )) as Blob,
+    transcriptScript: async (campaignRef, number) =>
+      (await call(
+        "GET",
+        `/me/campaigns/${encodeURIComponent(campaignRef)}/transcripts/${number}/script`,
+        undefined,
+        true,
+        undefined,
+        false,
+        scriptErrorKinds,
       )) as Blob,
     transcriptStretch: async (campaignRef, number, skip) =>
       (
@@ -228,6 +288,16 @@ export default function campaignArea({ call }: ApiHelpers): Partial<AccountApi> 
     recapStyle: async (ref) => (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/recap-style`)) as RecapStyle,
     changeRecapStyle: async (ref, action, arg = "") =>
       (await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/recap-style`, { action, arg })) as { id: string },
+    campaignSpeakers: async (ref) =>
+      ((await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/speakers`)) as { speakers: CampaignSpeaker[] }).speakers,
+    removeSpeaker: async (ref, speaker) =>
+      (await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/speakers/${encodeURIComponent(speaker)}/remove`)) as { id: string },
+    speakerRemoval: async (ref, id) =>
+      (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/speakers/removals/${encodeURIComponent(id)}`)) as SpeakerRemoval,
+    saveRecapMusts: async (ref, lines) =>
+      (await call("PUT", `/me/campaigns/${encodeURIComponent(ref)}/recap-style/must-haves`, { lines }, false, undefined, false, MUSTS_REFUSALS)) as { id: string },
+    recapMustsDefaults: async (ref) =>
+      (await call("DELETE", `/me/campaigns/${encodeURIComponent(ref)}/recap-style/must-haves`, undefined, false, undefined, false, MUSTS_REFUSALS)) as { id: string },
     recapStyleAction: async (ref, id) =>
       (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/recap-style/${encodeURIComponent(id)}`)) as RecapStyleAction,
     loreAdd: async (ref, input) =>

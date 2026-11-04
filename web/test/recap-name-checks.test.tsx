@@ -9,10 +9,11 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ApiError, httpApi } from "../src/account/api";
+import { ApiError, httpApi, type NameAnswerResult } from "../src/account/api";
 import { mockApi, mockRecaps } from "../src/account/mock";
 import RecapNameChecks from "../src/account/RecapNameChecks";
 import { workWords as workMovedWords } from "../src/content/work-progress";
+import { nameGroupWords as gw } from "../src/content/name-group-words";
 import { nameCheckWords as w } from "../src/content/recap-name-checks";
 
 const live = vi.hoisted(() => ({ on: false }));
@@ -29,10 +30,19 @@ vi.mock("../src/content/recap-words", async (original) => {
   };
 });
 
+// The split, group and Undo buttons (#3406): on only in the split describe below.
+const split = vi.hoisted(() => ({ on: false }));
+vi.mock("../src/content/name-split-switch", () => ({
+  get NAME_SPLIT_LIVE() {
+    return split.on;
+  },
+}));
+
 afterEach(() => {
   cleanup();
   vi.useRealTimers();
   live.on = false;
+  split.on = false;
 });
 
 const draft = mockRecaps()[0]!;
@@ -193,9 +203,11 @@ describe("the codes the bot writes", () => {
   });
 
   it.each([...new Set([...codes, "busy"])])("has plain words for %s", (code) => {
-    const said = w.problem[code.replaceAll("_", "-")];
+    // The split, group and Undo refusals (#3406) are shown through `nameGroupWords.errors` (splitReason), not `problem`.
+    const said = w.problem[code.replaceAll("_", "-")] ?? (Object.hasOwn(gw.errors, code) ? gw.reason(code) : undefined);
     expect(said, code).toBeTruthy();
     expect(said).not.toBe(w.problem.server);
+    expect(said).not.toBe(gw.other);
   });
 });
 
@@ -227,4 +239,140 @@ describe("a name the bot never finishes", () => {
     expect(screen.getByText(workMovedWords.stoppedLooking)).toBeTruthy();
     expect(screen.queryByText(/Running for/)).toBeNull();
   });
+});
+
+// Split, group and Undo on a list of names (#3406). The bot's word on each answer comes from a stub that
+// answers in order: each poll takes the next step, and the last step repeats.
+describe("names to check: split, group and Undo (#3406)", () => {
+  const LIST = "Aldmoor, Quillgate and Fenwick";
+  const PAIR = "Brannoch and Veshla";
+  const done7: NameAnswerResult = { state: "done", note: "Split into 3 names.", error: null, batch: 7 };
+  const working: NameAnswerResult = { state: "working", note: "", error: null, batch: null };
+  const failed = (error: string): NameAnswerResult => ({ state: "failed", note: "", error, batch: null });
+  const notFound = new ApiError("not-found");
+  // Each poll of the bot's word takes the next step; the last one repeats.
+  function script(api: ReturnType<typeof mockApi>, steps: (NameAnswerResult | ApiError)[]) {
+    let at = 0;
+    api.nameAnswerResult = async () => {
+      const step = steps[Math.min(at, steps.length - 1)]!;
+      at += 1;
+      if (step instanceof ApiError) throw step;
+      return step;
+    };
+  }
+  async function openSplit() {
+    split.on = true;
+    const api = await open();
+    return api;
+  }
+
+  it("no split buttons when the switch is off", async () => {
+    split.on = false;
+    await open();
+    expect(row(LIST)).toBeTruthy(); // the card is there, so the absence below means something
+    expect(screen.queryByRole("button", { name: `${gw.split}: ${LIST}` })).toBeNull();
+    expect(screen.queryByRole("button", { name: `${gw.isGroup}: ${LIST}` })).toBeNull();
+  });
+
+  it("list card shows both buttons, a one-name card shows neither", async () => {
+    await openSplit();
+    const list = row(LIST);
+    expect(within(list).getByRole("button", { name: `${gw.split}: ${LIST}` })).toBeTruthy();
+    expect(within(list).getByRole("button", { name: `${gw.isGroup}: ${LIST}` })).toBeTruthy();
+    const one = row("Brannoch");
+    expect(within(one).queryByRole("button", { name: `${gw.split}: Brannoch` })).toBeNull();
+    expect(within(one).queryByRole("button", { name: `${gw.isGroup}: Brannoch` })).toBeNull();
+  });
+
+  it("hint card shows the hint and \"Yes, that group\"", async () => {
+    await openSplit();
+    const pair = row(PAIR);
+    expect(within(pair).getByText(gw.hint("The Ashen Circle", ["Brannoch"]))).toBeTruthy();
+    expect(within(pair).getByRole("button", { name: `${gw.yesGroup}: The Ashen Circle` })).toBeTruthy();
+  });
+
+  it("split sends the split answer and then offers Undo", async () => {
+    const api = await openSplit();
+    script(api, [working, done7]);
+    fireEvent.click(within(row(LIST)).getByRole("button", { name: `${gw.split}: ${LIST}` }));
+    await waitFor(() => expect(calls(api, "answerNameCheck").some((c) => c.includes('"action":"split"'))).toBe(true));
+    expect(await screen.findByText("Split into 3 names.", undefined, slow)).toBeTruthy();
+    expect(screen.getByRole("button", { name: gw.undo })).toBeTruthy();
+  }, 30_000);
+
+  it("They're a group asks for the name, sends it trimmed, and Cancel hides the box", async () => {
+    const api = await openSplit();
+    const list = row(LIST);
+    fireEvent.click(within(list).getByRole("button", { name: `${gw.isGroup}: ${LIST}` }));
+    const box = within(list).getByLabelText(gw.groupAsk) as HTMLInputElement;
+    // Cancel closes the box, with nothing sent.
+    await act(async () => {
+      fireEvent.input(box, { target: { value: "The Ashen Circle" } });
+    });
+    fireEvent.click(within(list).getByRole("button", { name: gw.groupCancel }));
+    expect(within(list).queryByLabelText(gw.groupAsk)).toBeNull();
+    expect(calls(api, "answerNameCheck").some((c) => c.includes('"action":"make_group"'))).toBe(false);
+    // Open again: the name is trimmed before it is sent.
+    fireEvent.click(within(list).getByRole("button", { name: `${gw.isGroup}: ${LIST}` }));
+    const again = within(list).getByLabelText(gw.groupAsk) as HTMLInputElement;
+    const make = within(list).getByRole("button", { name: `${gw.groupMake}: ${LIST}` }) as HTMLButtonElement;
+    expect(make.disabled).toBe(true);
+    await act(async () => {
+      fireEvent.input(again, { target: { value: "  The Ashen Circle " } });
+    });
+    expect(make.disabled).toBe(false);
+    fireEvent.click(make);
+    await waitFor(() => expect(calls(api, "answerNameCheck").some((c) => c.includes('"action":"make_group"'))).toBe(true));
+    expect(calls(api, "answerNameCheck").find((c) => c.includes('"action":"make_group"'))).toContain('"name":"The Ashen Circle"');
+  }, 30_000);
+
+  it("Undo waits for the bot, then says Taken back.", async () => {
+    const api = await openSplit();
+    script(api, [working, done7, done7, notFound]);
+    fireEvent.click(within(row(LIST)).getByRole("button", { name: `${gw.split}: ${LIST}` }));
+    await screen.findByText("Split into 3 names.", undefined, slow);
+    fireEvent.click(screen.getByRole("button", { name: gw.undo }));
+    await waitFor(() => expect(calls(api, "answerNameCheck").some((c) => c.includes('"action":"undo","batch":7'))).toBe(true));
+    // The bot still has the split, so Undo stays off while it waits.
+    await waitFor(() => expect((screen.getByRole("button", { name: gw.undo }) as HTMLButtonElement).disabled).toBe(true), slow);
+    expect(await screen.findByText(gw.undone, undefined, slow)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: gw.undo })).toBeNull();
+  }, 40_000);
+
+  it("a plain answer clears Undo", async () => {
+    const api = await openSplit();
+    script(api, [working, done7]);
+    fireEvent.click(within(row(LIST)).getByRole("button", { name: `${gw.split}: ${LIST}` }));
+    await screen.findByText("Split into 3 names.", undefined, slow);
+    expect(screen.getByRole("button", { name: gw.undo })).toBeTruthy();
+    fireEvent.click(within(row("Garrick")).getByRole("button", { name: w.notANameFor("Garrick") }));
+    expect(screen.queryByRole("button", { name: gw.undo })).toBeNull();
+  }, 30_000);
+
+  it("a refused Undo shows the reason", async () => {
+    const api = await openSplit();
+    script(api, [working, done7, failed("answered")]);
+    fireEvent.click(within(row(LIST)).getByRole("button", { name: `${gw.split}: ${LIST}` }));
+    await screen.findByText("Split into 3 names.", undefined, slow);
+    fireEvent.click(screen.getByRole("button", { name: gw.undo }));
+    expect(await screen.findByText(gw.reason("answered"), undefined, slow)).toBeTruthy();
+  }, 40_000);
+
+  it("the list is read again when a follow ends", async () => {
+    const api = await openSplit();
+    script(api, [working, done7]);
+    const before = calls(api, "nameChecks").length;
+    fireEvent.click(within(row(LIST)).getByRole("button", { name: `${gw.split}: ${LIST}` }));
+    await screen.findByText("Split into 3 names.", undefined, slow);
+    await waitFor(() => expect(calls(api, "nameChecks").length).toBeGreaterThan(before), slow);
+  }, 30_000);
+
+  it("the wait shows Working on it… while a split is followed", async () => {
+    const api = await openSplit();
+    script(api, [working, done7]);
+    fireEvent.click(within(row(LIST)).getByRole("button", { name: `${gw.split}: ${LIST}` }));
+    expect(await screen.findAllByText(gw.working, undefined, slow)).not.toHaveLength(0);
+    await screen.findByText("Split into 3 names.", undefined, slow);
+    expect(screen.queryAllByText(gw.working)).toHaveLength(0);
+  }, 30_000);
 });

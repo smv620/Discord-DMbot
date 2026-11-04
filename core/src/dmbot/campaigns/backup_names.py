@@ -2,16 +2,38 @@
 
 from __future__ import annotations
 
+import os
 import re
 from datetime import UTC, datetime
 
 from dmbot.discord_limits import OPTION_LABEL_MAX, shorten
 
+UNKNOWN_COMMIT = "unknown"
+# The ending of a backup's file name, with or without the build's commit after "#" (#3391).
+_ENDING = re.compile(r"\.dmbot(?:#[0-9a-z]+)?\.json\.gz$")
 
-def backup_filename(campaign_name: str, now: int) -> str:
+
+def build_commit() -> str:
+    """The commit the running build was made from (the image gets it as GIT_COMMIT): the full
+    40 characters, or "unknown" when the build has none. A backup says which build made it, so the
+    data's lineage survives a renamed file (#3391)."""
+    value = (os.environ.get("GIT_COMMIT") or "").strip().casefold()
+    return value if re.fullmatch(r"[0-9a-f]{40}", value) else UNKNOWN_COMMIT
+
+
+def backup_filename(campaign_name: str, now: int, commit: str | None = None) -> str:
+    """`slug-2026-11-04.dmbot#bd8ae13a.json.gz`: the first 8 characters of the commit after "#",
+    `unknown` when the build has none. `commit` is for tests; the default is the running build's."""
     slug = re.sub(r"[^a-z0-9]+", "-", campaign_name.casefold()).strip("-")[:40] or "campaign"
     day = datetime.fromtimestamp(now, UTC).strftime("%Y-%m-%d")
-    return f"{slug}-{day}.dmbot.json.gz"  # compressed since #164; .dmbot.json still restores
+    tag = (commit if commit is not None else build_commit())[:8] or UNKNOWN_COMMIT
+    # (compressed since #164; a restore goes by the file's content, not by its name)
+    return f"{slug}-{day}.dmbot#{tag}.json.gz"
+
+
+def backup_stem(file_name: str) -> str:
+    """A backup's file name without its ending, for naming the transcripts files beside it."""
+    return _ENDING.sub("", file_name)
 
 
 def backup_parts(data: object) -> int:

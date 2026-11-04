@@ -137,6 +137,7 @@ AUDIENCE: dict[str, str] = {
             "dm_screen.adventure_card.SeeButton",
             "dm_screen.backstory_button.BackstoryButton",
             "dm_screen.links_ready.ReadyButton",
+            "ui.theatre_button.ScriptButton",  # press() checks dm_user_ids (#3244)
             "dm_screen.buttons.StopListeningButton",
             "dm_screen.buttons.VisibilityButton",
             "dm_screen.clock.ClockButton",
@@ -151,11 +152,13 @@ AUDIENCE: dict[str, str] = {
             "dm_screen.house_sync.HouseSyncButton",
             "dm_screen.house_voice.HouseVoiceButton",
             "dm_screen.import_button.ImportButton",
+            "dm_screen.import_time.ImportTimeButton",  # the game time an import ended at (#2979)
             "dm_screen.left_out.PutBackButton",
             "dm_screen.name_questions.FixUndoButton",
             "dm_screen.name_questions.NameAnswerUndoButton",
             "dm_screen.name_questions.NameQuestionButton",
             "dm_screen.pack_suggestion.PackSuggestionButton",
+            "dm_screen.old_chat.OldChatButton",
             "dm_screen.pack_update.PackUpdateButton",
             "dm_screen.quiet_stop.KeepListeningButton",
             "dm_screen.names_button.NamesButton",
@@ -197,6 +200,11 @@ AUDIENCE: dict[str, str] = {
             "ui.heard_review.HeardReviewButton",
             # The person who posted the picture, or a DM (`_is_dm`); a stranger is refused (#2450).
             "ui.image_fix.FixTextButton",
+            # The poster or a DM, checked in `PictureActions.apply` and again before the question
+            # (`DeleteButton`); a stranger is refused (#3274).
+            "ui.kept_pictures.DeleteButton",
+            "ui.kept_pictures.DeleteYesButton",
+            "ui.kept_pictures.PrivateButton",
             "ui.line_fix.FixLineButton",
             "ui.line_fix.LineFixButton",
             "ui.name_card.UndoButton",

@@ -31,6 +31,7 @@ from dmbot.memory.extractor import Said, readable
 from dmbot.recaps import away, fixed_lines
 from dmbot.recaps import beats as bt
 from dmbot.recaps import calls as cl
+from dmbot.recaps import coverage as covg
 from dmbot.recaps import critics as cr
 from dmbot.recaps import draft as rd
 from dmbot.recaps import final_read as fr
@@ -108,6 +109,9 @@ class Inputs:
     # copy check read them; the beats and the fact check never do.
     style: Sequence[str] = ()
     notes: Sequence[str] = ()  # the DM's standing style notes, oldest first (#2076)
+    # The campaign's must-have list (#3328): for the writer's call (and the coverage check), never
+    # the beats or the fact check.
+    musts: Sequence[str] = ()
     # What the DM corrected in this one recap (#2076): confirmed facts for it alone, never style.
     corrections: Sequence[str] = ()
     # The campaign's display name, for the recap's fixed opening and closing lines (#2253).
@@ -1264,6 +1268,7 @@ class RecapWorker:
                     style=inputs.style,
                     notes=inputs.notes,
                     corrections=inputs.corrections,
+                    musts=inputs.musts,
                 ),
                 message,
                 more_room(rd.write_room(length) if self._two else length.max_tokens, job.attempt),
@@ -2034,13 +2039,17 @@ class RecapWorker:
             job = await self._store.get(gid, cid, job.session_at) or job
         plot: list[cr.Change] = []
         memory: list[sg.Memory] = []
-        if self._story is not None:
+        # (a try that finds PlotBot's answer already saved goes straight to the coverage check)
+        asked_plot = loop.plot is None
+        if loop.plot is not None:
+            plot = list(loop.plot)
+        if asked_plot and self._story is not None:
             seeds = sorted({n for b in sheet for n in (*b.who, b.where) if n})[:40]
             try:
                 memory = list(await self._story(gid, cid, job, seeds))
             except Exception as exc:  # optional context: the type, never the text
                 log.warning("Recap: couldn't read the story memory (%s)", type(exc).__name__)
-        if sg.worth_asking(memory, inputs.previous):
+        if asked_plot and sg.worth_asking(memory, inputs.previous):
             room = plot_room(len(sentences))
             message = cr.plot_message(
                 sheet,
@@ -2092,6 +2101,36 @@ class RecapWorker:
                     secret_names=inputs.secret_names,
                 )
                 self._annotate(gid, cid, job, "plotbot", checks=lambda: cl.kinds(cut))
+        # The must-haves the session gave and the draft leaves out (#3328): a third reading of the
+        # same draft, soft like PlotBot's missed beats, one revision. A call that cannot be made
+        # waits like PlotBot's; an answer that cannot be read is no flag (never a gate).
+        if inputs.musts and sentences and sheet:
+            if (
+                asked_plot
+            ):  # PlotBot's answer is kept, so a coverage call that fails is retried alone
+                loop = replace(loop, plot=tuple(plot))
+                await self._save_loop(gid, cid, job, loop)
+                job = await self._store.get(gid, cid, job.session_at) or job
+            cover_message = covg.message(inputs.musts, sheet, sentences)
+            raw = await self._call(
+                gid, cid, job, self._careful, covg.SYSTEM, cover_message,
+                covg.room(len(inputs.musts)), schema=covg.SCHEMA, stage="musts", soft=True,
+                free=waiting,
+            )  # fmt: skip
+            if raw is None:
+                return await self._store.get(gid, cid, job.session_at)
+            if not set(job.speakers) <= set(await consenting()):
+                return await self._restart(gid, cid, job)
+            states = None if unusable(raw) else covg.parse(raw.text, len(inputs.musts))
+            if states is None:
+                self._annotate(gid, cid, job, "musts", checks=["shape"])
+            else:
+                plot = [*plot, *covg.changes(states, inputs.musts)]
+                tally = covg.counts(states, len(inputs.musts))
+                log.info("Recap: must-haves %s", tally)  # counts only
+                self._annotate(
+                    gid, cid, job, "musts", checks=lambda: [f"{k}:{v}" for k, v in tally.items()]
+                )
         style = cr.style_changes(rd.weak(job.grade)) if job.grade else []
         # A reader who was away (#2680): the writer is asked once, on the first reading; whatever
         # is left after its fix is a note for the DM (`_away` again at the end), not another round.
@@ -2122,6 +2161,7 @@ class RecapWorker:
                 round=loop.round + 1,
                 pending=tuple(changes),
                 motives=None,
+                plot=None,
                 best=best if same or best.better_than(loop.best) else loop.best,
             ),
         )
@@ -2175,7 +2215,7 @@ class RecapWorker:
             self._creative if self._creative is not None and self._two else self._careful,
             rd.prose_system(
                 inputs.setting, length, plain=self._two, style=inputs.style,
-                notes=inputs.notes, corrections=inputs.corrections,
+                notes=inputs.notes, corrections=inputs.corrections, musts=inputs.musts,
             ),
             message,
             more_room(rd.write_room(length) if self._two else length.max_tokens, attempt),

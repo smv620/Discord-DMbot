@@ -16,9 +16,18 @@ if TYPE_CHECKING:  # keeps this module (and the lookup) free of the database dri
 
 CHANNEL = "dmbot_memory"
 # Tables the in-memory lookup copies. Other changes (mentions, flags, rule terms) bump
-# the version without making copies reload.
+# the version without making copies reload. The lists of who knows what and the points of view
+# are here since the lookup asks the gate which entries the players are shown (#2995): a "Who
+# knows this?" edit writes nothing else, and a stale copy would keep showing a hidden entry.
 LOOKUP_TABLES = frozenset(
-    {"memory_entities", "memory_aliases", "memory_relations", "memory_corrections"}
+    {
+        "memory_entities",
+        "memory_aliases",
+        "memory_relations",
+        "memory_corrections",
+        "memory_knowers",
+        "memory_perspectives",
+    }
 )
 
 

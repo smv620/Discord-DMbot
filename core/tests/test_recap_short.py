@@ -11,6 +11,7 @@ from dmbot.bot import DMBot
 from dmbot.recaps import short
 from dmbot.transcript.models import Line
 from dmbot.ui import recap_short as screen
+from tests.asking import live_on_screen
 
 GUILD = 11
 CID = "c" * 32
@@ -65,7 +66,7 @@ class TheNumbers(unittest.TestCase):
 def campaign() -> Any:
     return SimpleNamespace(
         guild_id=GUILD, id=CID, recaps_text=True, recaps_email=True, owner_user_id=DM,
-        dm_user_ids=frozenset({DM}),
+        dm_user_ids=frozenset({DM}), dm_screen_channel_id=66,
     )  # fmt: skip
 
 
@@ -89,10 +90,15 @@ def fake_bot(lines: list[Line], *, newer: int | None = None) -> Any:
             lines=AsyncMock(return_value=lines),
             sessions=AsyncMock(return_value=newest),
         ),
-        consent=SimpleNamespace(consenting=AsyncMock(return_value={ALICE})),
+        consent=SimpleNamespace(
+            consenting=AsyncMock(return_value={ALICE}),
+            recorded_in=AsyncMock(return_value={ALICE}),  # (the short-session check, #3305)
+        ),
         post=AsyncMock(),
         post_message=AsyncMock(return_value=SimpleNamespace(id=1, content="q")),
-        decision_lines=MagicMock(close=AsyncMock(), remember_pressed=MagicMock()),
+        decision_lines=MagicMock(
+            close=AsyncMock(), remember_pressed=MagicMock(), remember=MagicMock()
+        ),
         _short_asks={},
         recap_holds=None,
     )
@@ -101,6 +107,7 @@ def fake_bot(lines: list[Line], *, newer: int | None = None) -> Any:
         "recap_write_anyway", "_expire_short_asks", "_hold_or_queue", "_say_writing",
     ):  # fmt: skip
         setattr(bot, name, getattr(DMBot, name).__get__(bot))
+    live_on_screen(bot)  # (where the question goes is tested in test_dm_questions)
     return bot
 
 
@@ -115,17 +122,25 @@ class WhenTheSessionEnds(unittest.IsolatedAsyncioTestCase):
         bot = fake_bot([said(0, 10), said(10, 10)])
         await bot.recap_session(table())
         bot.recaps.enqueue.assert_not_awaited()
-        ((channel, text, view), kwargs) = (
-            bot.post_message.await_args.args,
-            bot.post_message.await_args.kwargs,
-        )
+        (channel, text, view) = bot.post_message.await_args.args
         self.assertEqual((channel, text), (66, short.question(20, 20)))
         self.assertEqual(
             [cast(Any, c).custom_id for c in view.children],
             [f"dmbot:recapask:go:{CID}:{AT}", f"dmbot:recapask:skip:{CID}:{AT}"],
         )
-        self.assertEqual(kwargs["remember"], screen.ask_key(CID, AT))
+        key, kept = bot.decision_lines.remember.call_args.args  # the copy is kept for the others
+        self.assertEqual(key, screen.ask_key(CID, AT))
+        self.assertEqual(kept.id, 1)
         self.assertEqual(bot._short_asks, {CID: AT})
+
+    async def test_copies_sent_after_an_answer_are_closed_too(self) -> None:
+        bot = fake_bot([said(0, 10), said(10, 10)])
+        # A job exists by the time the last copy has been sent: a DM already said "Write a recap".
+        gets = AsyncMock(side_effect=[None, SimpleNamespace()])
+        bot.recaps.get = gets
+        await bot.recap_session(table())
+        bot.decision_lines.close.assert_awaited_once_with(screen.ask_key(CID, AT), screen.WRITING)
+        self.assertEqual(bot._short_asks, {})  # nothing left open to expire
 
     async def test_a_session_of_two_hours_with_an_hour_of_talk_is_queued_as_usual(self) -> None:
         bot = fake_bot([said(i * 2, 1) for i in range(60)] + [said(119, 1)])
@@ -190,6 +205,48 @@ class TheButtons(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(bot.post.await_args.args[0], 66)
         self.assertIsNone(i.edit_original_response.await_args.kwargs["view"])
         self.assertIn("Writing the recap.", i.edit_original_response.await_args.kwargs["content"])
+
+    async def test_a_press_in_a_private_chat_finds_the_server_and_posts_to_the_screen(self) -> None:
+        bot = fake_bot([said(0, 10)])
+        bot.campaigns.guild_of = AsyncMock(return_value=GUILD)
+        button, i = press_on(bot, "go")
+        i.guild, i.channel_id = None, 777  # a private chat: no server, and the chat's own channel
+        await button.callback(i)
+        bot.campaigns.guild_of.assert_awaited_once_with(CID)
+        bot.recaps.enqueue.assert_awaited_once_with(GUILD, CID, AT, dm_user_id=DM)
+        self.assertEqual(bot.post.await_args.args[0], 66)  # the DM screen, never the chat
+        bot.decision_lines.close.assert_awaited_once()  # the other DMs' copies lose their buttons
+
+    async def test_a_private_press_for_an_unknown_campaign_is_refused(self) -> None:
+        bot = fake_bot([said(0, 10)])
+        bot.campaigns.guild_of = AsyncMock(return_value=None)
+        bot.campaigns.get = AsyncMock(return_value=None)
+        button, i = press_on(bot, "go")
+        i.guild = None
+        await button.callback(i)
+        bot.recaps.enqueue.assert_not_awaited()
+        self.assertEqual(i.response.send_message.await_args.args[0], screen.GONE)
+
+    async def test_a_private_press_with_no_dm_screen_says_so_not_that_recaps_are_off(self) -> None:
+        bot = fake_bot([said(0, 10)])
+        bot.campaigns.guild_of = AsyncMock(return_value=GUILD)
+        bot.campaigns.get = AsyncMock(
+            return_value=SimpleNamespace(**{**vars(campaign()), "dm_screen_channel_id": None})
+        )
+        button, i = press_on(bot, "go")
+        i.guild = None
+        await button.callback(i)
+        bot.recaps.enqueue.assert_not_awaited()
+        self.assertEqual(i.followup.send.await_args.args[0], screen.NO_SCREEN)  # (answered first)
+
+    async def test_a_private_press_by_a_non_dm_is_refused(self) -> None:
+        bot = fake_bot([said(0, 10)])
+        bot.campaigns.guild_of = AsyncMock(return_value=GUILD)
+        button, i = press_on(bot, "go", user=BOB)
+        i.guild = None
+        await button.callback(i)
+        bot.recaps.enqueue.assert_not_awaited()
+        self.assertEqual(i.response.send_message.await_args.args[0], screen.NOT_YOURS)
 
     async def test_no_recap_writes_nothing(self) -> None:
         bot = fake_bot([said(0, 10)])

@@ -115,6 +115,19 @@ WEB_ROLE_SHEET_POLICY = """
 # The DM's recaps on the website (#1382): the signed-in person's own campaigns' recaps only, in
 # their session's servers. The campaign's DM list is read under the same rule, so being a DM is
 # what opens a row. Applied once the recap table exists.
+# The website's Stop recording me (#1151) goes through `ConsentStore.revoke`, which also records the
+# "no" (`consent_refusals`, #3305). So the website may write that one table, but only the signed-in
+# person's own row in a server of the session, like `consent`. It can never read another person's
+# or delete one (a yes clears it, and only the bot runs a yes). Applied once the table exists.
+WEB_ROLE_REFUSALS_POLICY = """
+    DROP POLICY IF EXISTS web_own_rows ON consent_refusals;
+    CREATE POLICY web_own_rows ON consent_refusals AS RESTRICTIVE TO dmbot_web
+        USING (user_id = dmbot_current_user()
+               AND guild_id = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
+        WITH CHECK (user_id = dmbot_current_user()
+                    AND guild_id = ANY ((SELECT dmbot_web_guilds())::BIGINT[]));
+"""
+
 WEB_ROLE_RECAP_POLICY = """
     DROP POLICY IF EXISTS web_dm_recaps ON recap_jobs;
     CREATE POLICY web_dm_recaps ON recap_jobs AS RESTRICTIVE TO dmbot_web
@@ -178,6 +191,7 @@ WEB_ROLE_GRANTS: tuple[tuple[str, tuple[str, ...]], ...] = (
         ("recap_jobs",),
     ),
     ("SELECT, DELETE", ("consent",)),
+    ("SELECT, INSERT, UPDATE", ("consent_refusals",)),  # the "no" a website stop records (#3305)
     # Accepting a hand-over (#614) makes the person the owner and one of the DMs; the
     # store locks the campaign row first (FOR UPDATE needs an UPDATE right), and answering
     # changes only an offer's status.

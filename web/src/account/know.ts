@@ -26,3 +26,8 @@ export function withoutKnow<T extends { knowWord?: KnowWord }>(x: T): T {
 export function plainGraph<G extends { nodes: { knowWord?: KnowWord }[]; edges: { links: { knowWord?: KnowWord }[] }[] }>(g: G): G {
   return { ...g, nodes: g.nodes.map(withoutKnow), edges: g.edges.map((e) => ({ ...e, links: e.links.map(withoutKnow) })) };
 }
+
+/** The overview as a read that is not the DM's own full view sees it: no state on any tray name (#3192). */
+export function plainOverview<O extends { tray: { knowWord?: KnowWord }[] }>(o: O): O {
+  return { ...o, tray: o.tray.map(withoutKnow) };
+}

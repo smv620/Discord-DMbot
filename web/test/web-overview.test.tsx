@@ -34,13 +34,13 @@ describe("the Not connected yet tray", () => {
     await open();
     const tray = await screen.findByRole("region", { name: new RegExp(w.trayHeading) });
     expect(within(tray).getByText(w.trayLead)).toBeTruthy();
-    expect(within(tray).getByRole("button", { name: "Old Mill" })).toBeTruthy();
-    expect(within(tray).getByRole("button", { name: "Brother Venn" })).toBeTruthy();
+    expect(within(tray).getByRole("button", { name: /^Old Mill/ })).toBeTruthy();
+    expect(within(tray).getByRole("button", { name: /^Brother Venn/ })).toBeTruthy();
     expect(within(tray).getByText(w.trayKind(w.kinds["place"]!, 2))).toBeTruthy();
-    fireEvent.click(within(tray).getByRole("button", { name: "Old Mill" }));
+    fireEvent.click(within(tray).getByRole("button", { name: /^Old Mill/ }));
     expect(await screen.findByText(w.noConnectionsYet("Old Mill"))).toBeTruthy();
-    expect(within(tray).getByRole("button", { name: "Old Mill" }).getAttribute("aria-pressed")).toBe("true");
-    fireEvent.click(within(tray).getByRole("button", { name: "Old Mill" })); // again: put it away
+    expect(within(tray).getByRole("button", { name: /^Old Mill/ }).getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(within(tray).getByRole("button", { name: /^Old Mill/ })); // again: put it away
     await waitFor(() => expect(screen.queryByText(w.noConnectionsYet("Old Mill"))).toBeNull());
   });
 

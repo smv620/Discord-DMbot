@@ -464,7 +464,8 @@ class TheDmsPage(Base):
         async with self.web.user(self.session.user_id, session=self.session.id_hash) as conn:
             await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(THURSDAY.id),))
             cur = await conn.execute(
-                "SELECT dmbot_import_store(%s, %s, %s, %s, %s, %s::jsonb, %s, NULL) AS r",
+                "SELECT dmbot_import_store(%s, %s, %s, %s, %s, %s::jsonb, %s, NULL,"
+                " '[]'::jsonb, 6) AS r",
                 (
                     THURSDAY.id,
                     self.one.id,
@@ -742,6 +743,28 @@ class TheRoutes(Base):
         self.assertEqual(got.status_code, 200, got.text)
         self.assertNotIn(BOB.email, got.text)  # never another DM's address (#2334)
         return dict(got.json()["recapEmail"])
+
+    async def test_try_again_with_no_body_retries_the_draft_it_does_not_start_over(self) -> None:
+        """#3387: the page's "Try again (2 left)" posts to `/again` with no body. That path was
+        taken by "make a new one" (#2608), which answered 409 `needs_confirm`, and the page said
+        "Something went wrong on our side". No body is the retry of a failed or finished draft."""
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute("UPDATE recap_jobs SET state = 'failed'")
+        got = await self.client.post(f"/me/recaps/{self.ref}/again")
+        self.assertEqual(got.status_code, 200, got.text)
+        self.assertEqual((got.json()["state"], got.json()["triesLeft"]), ("queued", 1))
+        job = await self.state(self.one.id)
+        self.assertEqual((job.tries, job.state), (1, "queued"))
+        # "Make a new one" still sends its body and still asks first.
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute("UPDATE recap_jobs SET state = 'ready'")
+        asked = await self.client.post(f"/me/recaps/{self.ref}/again", json={"replace": False})
+        self.assertEqual(asked.status_code, 409)  # (this fixture has no lines: `no_lines`)
+        self.assertIn(asked.json()["error"], ("needs_confirm", "no_lines"))
+        junk = await self.client.post(f"/me/recaps/{self.ref}/again", json=[1])
+        self.assertEqual((junk.status_code, junk.json()["error"]), (422, "bad_action"))
+        job = await self.state(self.one.id)
+        self.assertEqual(job.tries, 1)  # neither of those spent a try
 
     async def test_approve_unchecked_answers_in_the_pages_words(self) -> None:
         from dmbot.recaps import critics as cr
@@ -2073,7 +2096,7 @@ def fake_bot(job: Job | None, *, allowed: bool = True, secrets: list[str] | None
         to_post=AsyncMock(return_value=[("c" * 32, 100)]),
     )
     campaign = SimpleNamespace(
-        id="c" * 32, dmbchat_channel_id=55, dm_screen_channel_id=66,
+        id="c" * 32, table_chat_id=55, dm_screen_channel_id=66,
         recaps_text=True, recaps_audio=True, recaps_email=True,
     )  # fmt: skip
     bot = SimpleNamespace(

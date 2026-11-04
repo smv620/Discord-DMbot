@@ -170,8 +170,8 @@ class TheLinksNeverWorkedOut(unittest.TestCase):
 
 
 class TheWordsThatAreNotSources(unittest.TestCase):
-    def test_spouse_aunt_uncle_niece_nephew_and_cousin_are_ignored(self) -> None:
-        for word in ("spouse", "aunt", "uncle", "niece", "nephew", "cousin"):
+    def test_spouse_and_cousin_are_ignored(self) -> None:
+        for word in ("spouse", "cousin"):
             with self.subTest(word):
                 links = [
                     stated("1", "mira", word, "aldric"),
@@ -231,7 +231,7 @@ class TheDerivedOrder(unittest.TestCase):
         ]
 
         self.assertEqual(
-            derive(links),
+            [d for d in derive(links) if d.role == "parent"],
             [Derived("mira", "parent", "bryn", ("1", "2"))],
         )
 
@@ -308,6 +308,109 @@ class TheEdgeCases(unittest.TestCase):
         ]
 
         self.assertEqual(
-            derive(links),
+            [d for d in derive(links) if d.role == "parent"],
             [Derived("mira", "parent", "bryn", ("10", "2"))],
         )
+
+
+class TheRulesOfNovember(unittest.TestCase):
+    """The rules the owner approved on 2026-11-01 (#3238). Invented names."""
+
+    def test_a_sibling_of_a_sibling_is_a_sibling(self) -> None:
+        links = [stated("1", "bran", "brother", "ivo"), stated("2", "bran", "sister", "sela")]
+
+        self.assertEqual(derive(links), [Derived("ivo", "sibling", "sela", ("1", "2"))])
+
+    def test_the_derived_sibling_is_stored_smaller_id_first(self) -> None:
+        links = [stated("1", "bran", "sibling", "zed"), stated("2", "bran", "sibling", "ann")]
+
+        (got,) = derive(links)
+
+        self.assertEqual((got.a_id, got.role, got.b_id), ("ann", "sibling", "zed"))
+
+    def test_a_sibling_already_stated_is_not_worked_out_again(self) -> None:
+        links = [
+            stated("1", "bran", "sibling", "ivo"),
+            stated("2", "bran", "sibling", "sela"),
+            stated("3", "sela", "sibling", "ivo"),
+        ]
+
+        self.assertEqual(derive(links), [])
+
+    def test_a_parents_sibling_is_an_aunt_or_uncle_of_the_child(self) -> None:
+        links = [stated("1", "bran", "parent", "kit"), stated("2", "bran", "sibling", "ivo")]
+
+        self.assertEqual(derive(links), [Derived("ivo", "aunt or uncle", "kit", ("1", "2"))])
+
+    def test_the_owners_first_text_gives_three(self) -> None:
+        # Bran has a brother Ivo, a sister Sela and an unnamed child.
+        links = [
+            stated("1", "bran", "brother", "ivo"),
+            stated("2", "bran", "sister", "sela"),
+            stated("3", "bran", "parent", "kid"),
+        ]
+
+        got = {(d.a_id, d.role, d.b_id) for d in derive(links)}
+
+        self.assertEqual(
+            got,
+            {
+                ("ivo", "sibling", "sela"),
+                ("ivo", "aunt or uncle", "kid"),
+                ("sela", "aunt or uncle", "kid"),
+            },
+        )
+
+    def test_siblings_share_a_stated_aunt_uncle_and_grandparent(self) -> None:
+        # Tavin has parents Rolo and Shen, a sister Vela, an uncle Quill and a grandparent.
+        links = [
+            stated("1", "rolo", "father", "tavin"),
+            stated("2", "shen", "mother", "tavin"),
+            stated("3", "tavin", "sister", "vela"),
+            stated("4", "quill", "uncle", "tavin"),
+            stated("5", "gran", "grandfather", "tavin"),
+        ]
+
+        got = {(d.a_id, d.role, d.b_id) for d in derive(links)}
+
+        self.assertEqual(
+            got,
+            {
+                ("rolo", "parent", "vela"),
+                ("shen", "parent", "vela"),
+                ("quill", "aunt or uncle", "vela"),
+                ("gran", "grandparent", "vela"),
+            },
+        )
+
+    def test_a_niece_is_the_same_link_read_from_the_other_side(self) -> None:
+        links = [stated("1", "tavin", "niece", "quill"), stated("2", "tavin", "sibling", "vela")]
+
+        self.assertEqual(derive(links), [Derived("quill", "aunt or uncle", "vela", ("1", "2"))])
+
+    def test_nothing_is_guessed_about_whose_sibling_the_uncle_is(self) -> None:
+        links = [
+            stated("1", "rolo", "parent", "tavin"),
+            stated("2", "shen", "parent", "tavin"),
+            stated("3", "quill", "uncle", "tavin"),
+        ]
+
+        self.assertEqual(derive(links), [])
+
+    def test_a_contradictory_parent_and_uncle_is_not_offered_as_an_uncle(self) -> None:
+        links = [
+            stated("1", "bran", "parent", "kit"),
+            stated("2", "bran", "sibling", "ivo"),
+            stated("3", "ivo", "parent", "kit"),
+        ]
+
+        got = {(d.a_id, d.role, d.b_id) for d in derive(links)}
+
+        self.assertNotIn(("ivo", "aunt or uncle", "kit"), got)
+
+    def test_the_same_aunt_in_other_words_is_one_fact(self) -> None:
+        from dmbot.memory import kin
+
+        for a, role, b in (("u", "uncle", "a"), ("a", "niece", "u"), ("u", "aunt or uncle", "a")):
+            self.assertEqual(kin.same_fact(a, role, b), ("u", "aunt or uncle", "a"))
+        self.assertEqual(kin.same_fact("x", "mother", "y"), ("x", "mother", "y"))

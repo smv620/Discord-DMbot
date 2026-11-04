@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import math
 import os
 import shutil
@@ -66,7 +67,7 @@ from dmbot.memory.extractor import readable
 from dmbot.recaps import beats as bt
 from dmbot.recaps import calls as cl
 from dmbot.recaps import draft as rd
-from dmbot.recaps import fixed_lines
+from dmbot.recaps import fixed_lines, must_haves
 from dmbot.recaps import pipeline as pl
 from dmbot.recaps import split as sp
 from dmbot.recaps.audio.eleven import ProviderError, check_line
@@ -584,6 +585,17 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     )  # fmt: skip
     what.add_argument("--golden", action="store_true", help="the invented golden set")
     what.add_argument(
+        "--score-recap", metavar="FILE",
+        help="score a recap written earlier (a recap.txt from --out, or the recap as plain text) "
+        "per must-have, against the beat sheet in --beats; one AI call, needs --yes. For the "
+        "'before' of a writer change, written by a build with no --score (#3328)",
+    )  # fmt: skip
+    parser.add_argument(
+        "--beats", metavar="FILE",
+        help="with --score-recap: the beats.json an --out run of the SAME session saved, so the "
+        "before and the after are held to the same facts",
+    )  # fmt: skip
+    what.add_argument(
         "--transcript", metavar="FILE",
         help="a transcript file (DMbot's download, 'Name: words' lines, WebVTT or SRT)",
     )  # fmt: skip
@@ -645,6 +657,13 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         "form, #2714); the report adds the counts. To compare, run the session once without it "
         "and once with it",
     )  # fmt: skip
+    parser.add_argument(
+        "--score", action="store_true",
+        help="with --session or --transcript: after the run, score the recap per must-have "
+        "(covered, missed, or not given by the session) and by the fact check, with one more AI "
+        "call that the estimate does not include. Counts only, so it can be posted; run on the "
+        "fixed set before and after a writer change (#3328)",
+    )  # fmt: skip
     parser.add_argument("--audio", action="store_true", help="also make the narration and music")
     parser.add_argument("--keep", action="store_true", help="keep the result as a draft recap row")
     parser.add_argument("--yes", action="store_true", help="spend the money")
@@ -688,6 +707,14 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         parser.error(
             "--structured goes with --session or --transcript, not --golden, --compare or --review"
         )
+    if args.score_recap and not args.beats:
+        parser.error("--score-recap needs --beats (the beats.json of a run of the same session)")
+    if args.beats and not args.score_recap:
+        parser.error("--beats goes with --score-recap")
+    if (args.score and not (args.session or args.transcript)) or (
+        args.score and (args.compare or args.review or args.golden)
+    ):
+        parser.error("--score goes with --session or --transcript only")
     if args.out and not (args.transcript or args.compare or args.session):
         parser.error("--out goes with --session, --transcript or --compare")
     if args.hours is not None and not 0.25 <= args.hours <= 24:
@@ -814,6 +841,8 @@ async def main_async(args: argparse.Namespace) -> int:
 async def _main_async(args: argparse.Namespace) -> int:
     if args.review:
         return review_folder(Path(args.review))
+    if args.score_recap:
+        return await _score_recap(args)
     got = clients_from_env()
     if got is None:
         return 2
@@ -837,6 +866,33 @@ async def _main_async(args: argparse.Namespace) -> int:
     if args.transcript:
         return await _transcript(args, fast, careful, models, prices)
     return await _session(args, fast, careful, models, prices)
+
+
+async def _score_recap(args: argparse.Namespace) -> int:
+    """`--score-recap FILE --beats FILE`: score a recap written earlier (#3328). Counts only; the
+    recap is sent to the AI as in any run, and nothing of it is printed."""
+    from dmbot.devtools.recap_run import score as sc
+
+    recap, beats = Path(args.score_recap), Path(args.beats)
+    for path in (recap, beats):
+        if not path.is_file():
+            print(f"recap_run: {path} is not a file", file=sys.stderr)
+            return 2
+    if not args.yes:
+        print("One AI call to score the recap. Nothing was run. Add --yes to spend the money.")
+        return 0
+    got = clients_from_env()
+    if got is None:
+        return 2
+    _, careful, _ = got
+    try:
+        recap_text, beats_text = await asyncio.to_thread(sc.read_texts, recap, beats)
+        lines = await sc.score_recap_file(recap_text, beats_text, [], careful)
+    except OSError as exc:  # the kind only: never the path's contents
+        print(f"recap_run: could not read a file ({type(exc).__name__})", file=sys.stderr)
+        return 2
+    print("\n".join(lines))
+    return 0
 
 
 def review_folder(folder: Path) -> int:
@@ -868,6 +924,12 @@ def save_text(folder: Path, out: Outcome, printed: Sequence[str], *, names_given
             ),
         )
     rv.write_private(folder / rv.REPORT_FILE, "\n".join(printed) + "\n")
+    if out.job.state == "ready" and isinstance(job.beats, list) and job.beats:
+        # the beat sheet the recap was written from, so `--score-recap` can hold an earlier recap
+        # of the same session to the same facts (#3328)
+        from dmbot.devtools.recap_run import score as sc
+
+        rv.write_private(folder / sc.BEATS_FILE, json.dumps(job.beats))
 
 
 def audio_failure(exc: Exception) -> list[str]:
@@ -903,6 +965,7 @@ async def inputs_for(db: Any, gid: int, cid: str, at: int) -> pl.Inputs:
     from dmbot.memory.lookup import LookupCache
     from dmbot.memory.store import MemoryStore
     from dmbot.recaps.inputs import load_inputs_or_why
+    from dmbot.recaps.must_haves import MustStore
     from dmbot.recaps.store import RecapStore
     from dmbot.timebot.store import ClockStore
     from dmbot.transcript.store import TranscriptStore
@@ -917,6 +980,7 @@ async def inputs_for(db: Any, gid: int, cid: str, at: int) -> pl.Inputs:
         campaign_id=cid,
         session_at=at,
         styles=StyleStore(db),
+        musts=MustStore(db),
     )
 
 
@@ -1013,6 +1077,8 @@ async def _session(
             print(REFUSED)
             return 3
         print("\n".join(lines))  # the paid text report first: nothing below can lose it
+        if args.score:
+            print("\n".join(await _score(out, careful)))
         folder = Path(args.out) if args.out else None
         if folder is not None:  # the text is saved before the audio can fail
             save_text(folder, out, lines, names_given=False)
@@ -1127,6 +1193,7 @@ def read_transcript_inputs(
         previous="",
         day=None,
         hours=hours,
+        musts=must_haves.default_texts(),  # a file has no campaign list: DMbot's defaults (#3328)
     )
     return inputs, transcript, names
 
@@ -1182,6 +1249,8 @@ async def _transcript(
         print(REFUSED)
         return 3
     print("\n".join(lines))  # the paid text report first: nothing below can lose it
+    if args.score:
+        print("\n".join(await _score(out, careful)))
     printed = list(lines)
     if out.job.state == "ready":
         cues = _cue_lines(out)
@@ -1236,6 +1305,18 @@ def _tolerated(transcript: tf.Transcript) -> str:
 def voice_tags_on() -> bool:
     """DMBOT_RECAP_VOICE_TAGS as the bot reads it (on unless 0/false/off)."""
     return os.environ.get("DMBOT_RECAP_VOICE_TAGS", "1").lower() in ("1", "true", "on")
+
+
+async def _score(out: Outcome, careful: Client) -> list[str]:
+    """`--score`: the must-have counts of a recap that is ready (#3328)."""
+    from dmbot.devtools.recap_run import score as sc
+
+    if out.job.state != "ready" or not out.job.summary:
+        return ["", "Must-haves: nothing to score, the run did not finish."]
+    sheet = out.job.beats if isinstance(out.job.beats, list) else None  # what it was written from
+    return await sc.score(
+        out.job.summary, sheet, out.inputs.musts, final_checks(out.job, out.inputs), careful
+    )
 
 
 def _cue_lines(out: Outcome) -> list[str]:

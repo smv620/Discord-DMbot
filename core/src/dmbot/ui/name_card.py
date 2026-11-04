@@ -150,13 +150,15 @@ NAME_LIMIT = 100  # what a form field may hold
 BACK = ":back"  # a "how" picked from the other name's side ("has as members…")
 
 
-def fact_words(r: Relation) -> str:
+def fact_words(r: Relation, subject_kind: str = "") -> str:
     """How one fact reads between its two names. On the catch-all, the words it was said in
-    ("sworn on the ashes of") are the fact's own label (#1303); otherwise the relationship's."""
+    ("sworn on the ashes of") are the fact's own label (#1303); otherwise the relationship's.
+    `subject_kind` is the first name's kind, so a character's place reads "was last seen in",
+    never "is in" (#3363)."""
     if r.predicate == FALLBACK_PREDICATE and r.detail:
         return _md(r.detail)  # transcript words: never let them format or ping
     return link_words(
-        r.predicate, r.detail, r.directional
+        r.predicate, r.detail, r.directional, subject_kind
     )  # (family reads with its role: "is the niece of")
 
 
@@ -165,7 +167,7 @@ def sentence(lookup: CampaignLookup, r: Relation) -> str | None:
     subject, obj = lookup.entities.get(r.subject_id), lookup.entities.get(r.object_id)
     if subject is None or obj is None:
         return None
-    return f"{subject.name} {fact_words(r)} {obj.name}"
+    return f"{subject.name} {fact_words(r, subject.type)} {obj.name}"
 
 
 # Kinds whose "other way round" reading is not offered in the menu: Discord allows 25 options, and
@@ -237,15 +239,20 @@ def _rows(
         other = lookup.entities.get(r.object_id if r.subject_id == entity_id else r.subject_id)
         if other is None or other.status != CONFIRMED or other.id == entity_id:
             continue
+        first = lookup.entities.get(r.subject_id)  # the connection's own first name
+        subject_kind = first.type if first is not None else ""
         words = (
-            fact_words(r)
+            fact_words(r, subject_kind)
             if ahead
             else (
                 f"is linked (“{_md(r.detail)}”) to"
                 if r.predicate == FALLBACK_PREDICATE and r.detail
                 else (
-                    (back_words(r.predicate, r.detail, r.directional) or "is connected to")
-                    if r.predicate == "kin_of"
+                    (
+                        back_words(r.predicate, r.detail, r.directional, subject_kind)
+                        or "is connected to"
+                    )
+                    if r.predicate in ("kin_of", "located_in")
                     else CARD_BACK.get(r.predicate, "is connected to")
                 )
             )
@@ -1575,6 +1582,7 @@ class KindChange(_Menu):
         except MemoryRuleError:
             await _tell(interaction, GONE)
             return
+        await memory.party_on_assignment(campaign.guild_id, campaign.id)  # (a lore-only start)
         changed(interaction, campaign)
         self.stop()
         await show_card(interaction, self.campaign_id, self.entity_id, replace=True)
@@ -2237,7 +2245,13 @@ class WhoKnowsName(WhoKnowsMenu):
             return
         try:
             await name_edits.set_who_knows(
-                memory, campaign.guild_id, campaign.id, alias, who, self.picked
+                memory,
+                campaign.guild_id,
+                campaign.id,
+                alias,
+                who,
+                self.picked,
+                players_only=True,  # (this menu lists player characters only: NPC knowers stay)
             )
         except MemoryRuleError as exc:
             if str(exc) == name_edits.PICK_ONE:
@@ -2739,6 +2753,7 @@ async def connect(
             secret=secret,
             detail=detail,
             directional=kin.directional(detail),
+            by_hand=True,  # the DM's own, so the newest thing the table knows (#3363)
         )
     except MemoryRuleError as exc:
         await _tell(interaction, f"Couldn't connect them. {exc}")

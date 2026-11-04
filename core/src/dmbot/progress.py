@@ -27,13 +27,22 @@ STALL_AFTER_S: Final[Mapping[str, int | None]] = {
     "cleaning": 10 * 60,  # a chunk of lines, then the next (waiting to be taken counts too)
     "checking_names": 15 * 60,  # the name scan's own retake window
     "finding_names": 15 * 60,
+    # The story read of an imported session (#3307): a batch is one AI call (up to 5 minutes);
+    # waiting for the daily limit never stalls, it carries on by itself.
+    "reading_connections": 15 * 60,
+    "waiting_for_limit": None,
+    "connections_read": None,
     "waiting_for_names": None,  # waiting for the DM's answers
     "starting_recap": 10 * 60,
     "writing_recap": 30 * 60,
     "recap_not_written": None,  # the recap was held, declined or removed: a resting end
     "waiting": 2 * 60,  # a copy asked for on the website: the bot takes it within seconds
+    # A note typed or spoken on the recap page (#3355): the bot takes it within seconds, then one
+    # AI call sorts it (or one transcription writes it down).
+    "working": 10 * 60,
     "fixing": 5 * 60,  # a line fixed at a person's asking (#2858)
     "deleting": 10 * 60,  # a person's lines being deleted at their asking (#2769)
+    "removing": 10 * 60,  # a speaker's lines being removed from a campaign by its DM (#3305)
     "reading": 5 * 60,  # ... then reads the campaign
     "packing": 5 * 60,  # ... and packs it
     # A backup loaded on the website (#2745): the person's own files arriving (waits for them),
@@ -68,6 +77,7 @@ ENDS: Final[Mapping[str, str]] = {
     "done": DONE,
     "recap_not_written": DONE,
     "recap_ready": DONE,
+    "connections_read": DONE,
     "failed": FAILED,
     "recap_failed": FAILED,
 }
@@ -80,6 +90,7 @@ UNITS: Final[Mapping[str, str]] = {
     "audio_voice": "parts",
     "recap_reading": "parts",
     "restore_writing": "parts",
+    "reading_connections": "parts",
 }
 
 

@@ -16,7 +16,7 @@ from psycopg import errors as pg_errors
 
 from dmbot.campaigns import CampaignError, CampaignStore
 from dmbot.campaigns.store import decode_backup, encode_backup
-from dmbot.memory import evidence, knowers
+from dmbot.memory import evidence, importance_rank, knowers
 from dmbot.memory._changes import ALIASES, ALL, Changes, scoped_select
 from dmbot.memory._changes import ENTITIES as ENTITIES_TABLE
 from dmbot.memory._changes import FLAGS as FLAGS_TABLE
@@ -144,6 +144,10 @@ class Isolation(MemoryTest):
         )
         async with self.memory._write(GUILD_A, self.c, "dm") as w:
             await knowers.set_alias_knowers(w, shade.value.id, [view])
+        # and an internal importance assessment of a character (#3172)
+        await importance_rank.ImportanceStore(self.db).add(
+            GUILD_A, self.c, [importance_rank.Assessment(a, 2, "recurring")]
+        )
         # and a character who knows an entry exists (#2995)
         await self.memory.set_statement_knowers(GUILD_A, self.c, "entry", b, [view], source="dm")
         await self.relate(a, "located_in", b)  # flagged: Cerric isn't a place

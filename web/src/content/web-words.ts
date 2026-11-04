@@ -31,6 +31,12 @@ export const webPage = {
   seeAsListLabel: "Characters to see the story as",
   centreNone: "No name matches.",
   centreNow: (name: string): string => `In the middle: ${name}`,
+  // The button that stops and starts the map reading itself again every few seconds. It names what
+  // pressing it does, so while the map updates it says "Freeze the graph".
+  freezeGraph: "Freeze the graph",
+  autoUpdateGraph: "Auto update graph",
+  updatingNote: "The graph updates by itself every few seconds.",
+  frozenNote: "The graph is frozen. Press Auto update graph to see new names.",
   hopsLabel: "Steps out from the middle",
   hopsLess: "One step fewer",
   hopsMore: "One step more",
@@ -84,6 +90,8 @@ export const webPage = {
   linkKind: { family: "Family", ally: "Friends and allies", group: "Clubs and groups", work: "Work", other: "Something else" } as Record<string, string>,
   letGo: "Let everything move again",
   nConnections: (n: number): string => `${n} connections`,
+  // The last line of a line's tooltip when it holds more connections than the four it lists (#3279).
+  plusMore: (n: number): string => `plus ${n} more…`,
   lineBetween: (a: string, b: string): string => `Open the connections between ${a} and ${b}`,
   nameButton: (name: string): string => `${name}. Press Enter to pick it.`,
   legendHeading: "What the shapes and lines mean",
@@ -109,6 +117,28 @@ export const webPage = {
     clue: "Clues",
     people: "Folk and peoples",
     thread: "Story threads",
+  } as Record<string, string>,
+  // The singular of each kind, for a kind with one name waiting: "Add 1 place" (#3224). Same keys as `kinds`.
+  kindOne: {
+    npc: "NPC",
+    player_character: "PC",
+    place: "place",
+    group: "group",
+    item: "item",
+    event: "event",
+    faction: "group",
+    creature: "creature",
+    deity: "god",
+    character: "character",
+    concept: "idea",
+    quest: "quest",
+    mystery: "mystery",
+    hook: "hook",
+    goal: "goal",
+    promise: "promise",
+    clue: "clue",
+    people: "people group",
+    thread: "story thread",
   } as Record<string, string>,
   secretMark: "🤫",
   secretWords: "Secret: only the DM sees this",
@@ -204,6 +234,30 @@ export const webPage = {
   pinnedDone: "Pinned. Only you see it. Unpin any time.",
   unpinnedDone: "Unpinned.",
   pinHint: "Only you see pins. Players never do.",
+  // "Who knows this?" on a held connection (#2935 D4, #3214). Plain words; the bot applies the answer.
+  whoKnowsHeading: "Who knows this?",
+  whoOnlyDm: "🤫 Only the DM",
+  whoSome: "👥 Only some characters",
+  whoEveryone: "👁️ Everyone at the table",
+  whoStateDm: "Hidden from the party. Only you know it.",
+  whoStateSome: (names: string): string => `Hidden from the party. Only ${names} know it.`,
+  whoStateAll: "Everyone at the table can see it.",
+  whoSearch: "Search a character",
+  whoSomeLabel: "Characters who know it",
+  whoPickOne: "Pick at least one character.",
+  whoSave: "Save",
+  whoDoneDm: "Now only you know this.",
+  whoDoneSome: (names: string): string => `Now only ${names} know this.`,
+  whoDoneAll: "Now everyone at the table can see this.",
+  whoAlready: "It was already like that.",
+  // Names in a list: "Mara, Tavin and Brann"; past five, the first four and how many more.
+  whoNames: (names: string[]): string => {
+    if (names.length <= 5) {
+      if (names.length <= 1) return names[0] ?? "";
+      return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+    }
+    return `${names.slice(0, 4).join(", ")} and ${names.length - 4} more`;
+  },
   legendPinned: "📌: pinned as 100% truth (only you see this)",
   believesFalse: "⚠️ The party believes this; it's false",
   reveal: "👁️ Reveal to players",
@@ -222,9 +276,32 @@ export const webPage = {
     network: "We couldn't reach DMbot, so nothing was changed. Check your connection and try again.",
   } as Record<string, string>,
   errorFallback: "That didn't work. Try again in a minute.",
+  // Showing a connection is refused until its names are shown to the players (#3426). The ending is what the
+  // connection's row looks for to offer the link to the Names page.
+  namesPageEnding: "on the Names page.",
+  showNamesFirst: (held: string[]): string =>
+    held.length === 0
+      ? "Show both names to the players first. You can do that on the Names page."
+      : held.length === 1
+        ? `${held[0]} isn't shown to the players yet. Show that name first, on the Names page.`
+        : `${held.join(" and ")} aren't shown to the players yet. Show those names first, on the Names page.`,
+  // `who` is how the page calls the person ("someone's sister"), without the "(name unknown)" label.
+  nameThemFirst: (who: string | null, onWeb: boolean): string =>
+    onWeb
+      ? who === null
+        ? "One end of this connection has no name yet. Add one on the Names page."
+        : `This connection needs a name first: ${who} has none yet. Add one on the Names page.`
+      : // While the Names page can't name anyone (NOT_NAMED_LIVE), the way is Discord's, and there is no link.
+        `${who === null ? "One end of this connection has" : `${who} has`} no name yet. In Discord, press 📚 Browse and choose Give them a name, then show this connection.`,
+  openNames: "Open Names page",
 } as const;
 
 /** The words for a kind: the API's key if no words are known. */
 export function kindWords(key: string): string {
   return webPage.kinds[key] ?? key;
+}
+
+/** A kind's singular word; a key with no entry shows the key with `_` as a space (#3224). */
+export function kindWord(key: string): string {
+  return webPage.kindOne[key] ?? key.replace(/_/g, " ");
 }

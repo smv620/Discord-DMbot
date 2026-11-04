@@ -100,7 +100,7 @@ export default function accountArea({ call, restoreCall, url }: ApiHelpers): Par
       // sends it). The names are Discord's own, made from the main file's name. One that fails fails the set:
       // a backup with a file missing would restore without part of the story.
       const main = safeBackupName(got.fileName ?? "", "campaign.dmbot.json.gz");
-      const stem = main.replace(/\.dmbot\.json\.gz$/, "") || "campaign";
+      const stem = main.replace(/\.dmbot(#[0-9a-z]+)?\.json\.gz$/, "") || "campaign";
       // An API without the transcripts files says nothing of them (no `fileWaiting`, no `partsTotal`): a main file
       // alone would look complete, so it is refused.
       if (typeof got.partsTotal !== "number" || typeof got.fileWaiting !== "boolean") throw new ApiError("backup-failed");

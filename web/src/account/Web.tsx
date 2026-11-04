@@ -9,6 +9,7 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import { NAME_LIMIT } from "../content/names-words";
+import { NOT_NAMED_LIVE } from "../content/not-named-switch";
 import { BIG_WEB, kindWords, webPage as words } from "../content/web-words";
 import {
   type AccountApi,
@@ -25,12 +26,14 @@ import {
 } from "./api";
 import WebMap from "./WebMap";
 import WebOverviewPanel from "./WebOverview";
-import { dimmedName, markSecret, plainGraph } from "./know";
+import { dimmedName, markSecret, plainGraph, plainOverview } from "./know";
+import { WHO_KNOWS_LIVE } from "../content/who-knows-switch";
 import WebReadings from "./WebReadings";
 import WebWaiting from "./WebWaiting";
 import { WEB_READINGS_LIVE } from "../content/web-readings";
 import { WEB_WAITING_LIVE } from "../content/web-waiting";
 import { clampHops } from "./webLayout";
+import { readAuto, saveAuto } from "./webPrefs";
 import { listLines, type WebLine } from "./webLines";
 import CampaignNav from "./CampaignNav";
 import { npcPageHref } from "./webNodes";
@@ -49,6 +52,35 @@ export function webRefFromPath(path: string): string | null {
 type View = "loading" | "ok" | "none" | "down" | "signed-out";
 
 const DEFAULT_HOPS = 2;
+const AUTO_MS = 5000; // how often the map reads itself again, plus up to a second more
+const AUTO_JITTER_MS = 1000;
+/** After this many reads in a row that found nothing new, the map waits longer between reads (an interim
+ * back-off for #3294, until the campaign has a graph version that makes a full read unnecessary). */
+const QUIET_LOOKS = 3;
+const BACKOFF_MS = [15000, 30000, 60000]; // the waits after the quiet looks; the last one holds
+
+/** How long to wait before the next read, not counting the jitter: 5 s while things are changing, then 15 s, 30 s
+ * and at most 60 s as reads keep finding the same graph. Any change, the tab coming back or the button resets it. */
+export function autoDelay(unchanged: number): number {
+  if (unchanged < QUIET_LOOKS) return AUTO_MS;
+  return BACKOFF_MS[Math.min(unchanged - QUIET_LOOKS, BACKOFF_MS.length - 1)] ?? AUTO_MS;
+}
+
+/** Two reads that are the same text draw the same map, so the second changes nothing on the page. The whole
+ * read is the signature: a secret turned on, a know word, a pin or a belief all show without a reload. */
+const graphSignature = (g: WebGraph): string => JSON.stringify(g);
+
+/** A quiet read that hangs is dropped after this long, so one stuck request cannot stop the next turns. */
+const QUIET_READ_MS = 20000;
+
+function withTimeout<T>(work: Promise<T>): Promise<T> {
+  return Promise.race([
+    work,
+    new Promise<never>((_, reject) => setTimeout(() => reject(new Error("timeout")), QUIET_READ_MS)),
+  ]);
+}
+
+const UNNAMED_SUFFIX = "(name unknown)"; // core/memory/unnamed.py: how a person the story never named is labelled
 
 function refusal(error: unknown): string | null {
   const kind = error instanceof ApiError ? error.kind : "network";
@@ -91,11 +123,28 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
   const [alone, setAlone] = useState<string | null>(null);
   const overviewLatest = useRef(0);
   const peekSwitch = useRef<HTMLInputElement>(null);
+  // The map reads itself again every few seconds unless the person froze it; kept in this browser.
+  const [auto, setAuto] = useState(readAuto);
+  const graphNow = useRef<WebGraph | null>(null);
+  graphNow.current = graph;
+  const autoNow = useRef(auto);
+  autoNow.current = auto;
+  const alive = useRef(true);
+  useEffect(() => () => void (alive.current = false), []);
+  const refreshNow = useRef<() => Promise<"changed" | "same" | "skipped">>(async () => "skipped");
+  // True while a name is being dragged: a read then would redraw the map under the person's hand (#3324).
+  const dragging = useRef(false);
+  // Reads in a row that found the same graph; it sets the wait before the next read (autoDelay).
+  const unchanged = useRef(0);
+  // Bumped when the person reads a web themselves, so a long wait already running starts again at the quick pace.
+  const [pulse, setPulse] = useState(0);
 
   /** Reads the web around `at`. A big one waits for a yes unless `sure`. */
   async function load(at: string | null, steps: number, sure = false): Promise<void> {
     if (!ref || !api.webGraph) return;
     const mine = ++latest.current;
+    unchanged.current = 0;
+    setPulse((n) => n + 1);
     const view = askedNow.current;
     setBig(null);
     let readingSeeAs = false; // only a failed read of the character's web means the character is gone (#3161)
@@ -154,6 +203,91 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
     }
   }
 
+  /** One quiet read of the web as it is shown now: nothing moves unless the story changed. It never draws a
+   * web that needs the big-web yes (it skips those, and asks only the cheap size first), gives way to any read
+   * the person started meanwhile, and drops its answer if they froze the graph or left. A person who is signed
+   * out, or whose peeking was turned off, is told as a normal read would tell them; any other failure waits
+   * for the next turn. */
+  async function refresh(): Promise<"changed" | "same" | "skipped"> {
+    if (dragging.current) return "skipped";
+    if (!ref || !api.webGraph || view !== "ok" || big !== null || revealing.size > 0) return "skipped";
+    const shown = graphNow.current;
+    if (!shown) return "skipped";
+    const stamp = latest.current;
+    const [at, steps] = [center, hops];
+    const query = {
+      center: at,
+      hops: steps,
+      ...(askedNow.current ? { view: askedNow.current } : {}),
+      ...(seeAsNow.current !== undefined ? { seeAs: seeAsNow.current } : {}),
+    };
+    // A read that was on its way when a drag began is dropped too, so the map is not redrawn under the hand (#3324).
+    const stale = (): boolean =>
+      !alive.current || !autoNow.current || stamp !== latest.current || graphNow.current !== shown || dragging.current;
+    try {
+      if (api.webSize && seeAsNow.current === undefined) {
+        const size = await withTimeout(api.webSize(ref, { center: at, hops: steps, ...(askedNow.current ? { view: askedNow.current } : {}) }));
+        if (stale() || size.names > BIG_WEB) return "skipped";
+      }
+      const read = await withTimeout(api.webGraph(ref, query));
+      if (stale()) return "skipped";
+      const next = read.canEdit ? read : plainGraph(read);
+      if (graphSignature(next) === graphSignature(shown)) return "same";
+      setGraph(next);
+      setLine((now) => (now && next.edges.some((e) => (e.a === now.a && e.b === now.b) || (e.a === now.b && e.b === now.a)) ? now : null));
+      void loadOverview();
+      return "changed";
+    } catch (error) {
+      if (stale()) return "skipped";
+      const kind = error instanceof ApiError ? error.kind : "network";
+      if (kind === "signed-out") setView("signed-out");
+      else if (kind === "peek-off") void load(at, steps, true);
+      /* anything else is simply tried again at the next turn */
+      return "skipped";
+    }
+  }
+  refreshNow.current = refresh;
+
+  // Every 5 seconds, give or take up to a second so open tabs drift apart; only while the tab is on screen, and
+  // at once when it comes back.
+  useEffect(() => {
+    if (!auto || view !== "ok") return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let stopped = false;
+    const next = (): void => {
+      timer = setTimeout(async () => {
+        if (!document.hidden) {
+          const found = await refreshNow.current();
+          // Only a read that really compared two graphs counts: a skipped turn says nothing about the story.
+          if (found === "changed") unchanged.current = 0;
+          else if (found === "same") unchanged.current += 1;
+        }
+        if (!stopped) next();
+      }, autoDelay(unchanged.current) + Math.random() * AUTO_JITTER_MS);
+    };
+    const back = (): void => {
+      if (document.hidden) return;
+      unchanged.current = 0; // the tab is back: look at once, and keep to the quick pace again
+      setPulse((n) => n + 1); // (the timer that was waiting out a long delay starts again at the quick one)
+      void refreshNow.current();
+    };
+    document.addEventListener("visibilitychange", back);
+    next();
+    return () => {
+      stopped = true;
+      if (timer !== undefined) clearTimeout(timer);
+      document.removeEventListener("visibilitychange", back);
+    };
+  }, [auto, view, pulse]);
+
+  function toggleAuto(): void {
+    const on = !auto;
+    setAuto(on);
+    saveAuto(on);
+    unchanged.current = 0;
+    if (on) void refresh();
+  }
+
   /** Changes which web is asked for, and reads it (#2405). */
   function switchTo(next: WebView | undefined): void {
     askedNow.current = next;
@@ -210,6 +344,13 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
     try {
       await api.webReveal(ref, target);
     } catch (error) {
+      if (target.kind === "link" && error instanceof ApiError && (error.kind === "names-not-shown" || error.kind === "name-unnamed")) {
+        // Which end needs what: the page already holds the two names, so it can say them (#3426).
+        const ends = graph?.edges.find((e) => e.links.some((l) => l.id === target.id));
+        const ones = ends ? graph!.nodes.filter((n) => n.id === ends.a || n.id === ends.b) : [];
+        if (error.kind === "name-unnamed") return words.nameThemFirst(ones.find((n) => n.name.endsWith(UNNAMED_SUFFIX))?.name.slice(0, -UNNAMED_SUFFIX.length).trim() ?? null, NOT_NAMED_LIVE && api.nameThem !== undefined);
+        return words.showNamesFirst(ones.filter((n) => n.revealed === false).map((n) => n.name));
+      }
       const said = refusal(error);
       if (said === null) {
         setView("signed-out");
@@ -236,7 +377,7 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
     const view = askedNow.current;
     try {
       const got = await api.webOverview(ref, view ? { view } : {});
-      if (mine === overviewLatest.current) setOverview(got);
+      if (mine === overviewLatest.current) setOverview(got.canEdit ? got : plainOverview(got));
     } catch {
       if (mine === overviewLatest.current) setOverview(null);
     }
@@ -475,6 +616,14 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
         <p id="web-hops-hint" class="small muted">
           {words.hopsHint(maxHops)}
         </p>
+        <div class="field">
+          <button type="button" class="button secondary" onClick={toggleAuto}>
+            {auto ? words.freezeGraph : words.autoUpdateGraph}
+          </button>
+          <p class="small muted" role="status" aria-live="polite">
+            {auto ? words.updatingNote : words.frozenNote}
+          </p>
+        </div>
       </div>
 
       <p class="small" role="status" aria-live="polite">
@@ -498,6 +647,10 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
             </a>
             <WebMap
               key={ref}
+              api={api}
+              onDragging={(on) => {
+                dragging.current = on;
+              }}
               nodes={nodes}
               edges={edges}
               center={center}
@@ -514,6 +667,8 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
                   canEdit={canEdit}
                   act={act}
                   reveal={reveal} revealing={revealing}
+                  api={api}
+                  refId={ref}
                   onClose={() => setLine(null)}
                 />
               )}
@@ -902,6 +1057,8 @@ function LinePanel({
   act,
   reveal,
   revealing,
+  api,
+  refId,
   onClose,
 }: {
   edge: WebEdge;
@@ -910,6 +1067,8 @@ function LinePanel({
   act: (change: WebLinkChange, ok: string) => Promise<string | null>;
   reveal: (target: WebRevealTarget) => Promise<string | null>;
   revealing: Set<string>;
+  api: AccountApi;
+  refId: string;
   onClose: () => void;
 }) {
   const a = nameOf(edge.a);
@@ -928,7 +1087,7 @@ function LinePanel({
             <ol class="stack">
               {edge.links.map((l, i) =>
                 l.direction === "both" ? (
-                  <LinkRow key={l.id} n={i + 1} link={l} a={a} b={b} canEdit={canEdit} act={act} reveal={reveal} revealing={revealing} />
+                  <LinkRow key={l.id} n={i + 1} link={l} a={a} b={b} canEdit={canEdit} act={act} reveal={reveal} revealing={revealing} api={api} refId={refId} />
                 ) : null,
               )}
             </ol>
@@ -942,7 +1101,7 @@ function LinePanel({
                 <ol class="stack">
                   {edge.links.map((l, i) =>
                     l.direction === way ? (
-                      <LinkRow key={l.id} n={i + 1} link={l} a={a} b={b} canEdit={canEdit} act={act} reveal={reveal} revealing={revealing} />
+                      <LinkRow key={l.id} n={i + 1} link={l} a={a} b={b} canEdit={canEdit} act={act} reveal={reveal} revealing={revealing} api={api} refId={refId} />
                     ) : null,
                   )}
                 </ol>
@@ -959,6 +1118,179 @@ function LinePanel({
   );
 }
 
+/** "Who knows this?" on a held connection (#2935 D4, #3214): the DM says only the DM, some characters, or everyone at
+ * the table, and the bot applies it. Shown to the DM's full view only, behind WHO_KNOWS_LIVE. */
+function WhoKnows({
+  api,
+  refId,
+  link,
+  act,
+}: {
+  api: AccountApi;
+  refId: string;
+  link: WebEdge["links"][number];
+  act: (change: WebLinkChange, ok: string) => Promise<string | null>;
+}) {
+  const [picking, setPicking] = useState(false);
+  const [chosen, setChosen] = useState<Set<string>>(new Set());
+  const [names, setNames] = useState<Map<string, string>>(new Map()); // the names of the characters, by id
+  const [q, setQ] = useState("");
+  const [list, setList] = useState<{ id: string; name: string }[]>([]);
+  const [total, setTotal] = useState(0);
+  const [failed, setFailed] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+  const [already, setAlready] = useState("");
+  const [busy, setBusy] = useState(false); // a change is with the bot: no second press until it is answered
+  const latest = useRef(0);
+  // Undefined from an older API: no answer is pressed, and nothing is said about one (#3214).
+  const current = link.who;
+  const holders = link.knownBy ?? [];
+
+  // The character search: the same wait and list as the See as… picker.
+  useEffect(() => {
+    if (!picking || !api.webViewers) return;
+    const mine = ++latest.current;
+    const timer = setTimeout(
+      () => {
+        api
+          .webViewers!(refId, q.trim())
+          .then((got) => {
+            if (mine !== latest.current) return;
+            setList(got.viewers);
+            setTotal(got.total);
+            setFailed(false);
+          })
+          .catch(() => {
+            if (mine !== latest.current) return;
+            setList([]);
+            setTotal(0);
+            setFailed(true);
+          });
+      },
+      q === "" ? 0 : 300,
+    );
+    return () => clearTimeout(timer);
+  }, [api, refId, q, picking]);
+
+  const stateLine =
+    current === undefined
+      ? null
+      : current === "dm"
+        ? words.whoStateDm
+        : current === "some" && holders.length > 0
+          ? words.whoStateSome(words.whoNames(holders.map((h) => h.name)))
+          : current === "all"
+            ? words.whoStateAll
+            : words.whoStateDm;
+
+  /** Only the DM, or everyone at the table: sent at once. Pressing the answer already set says so, and sends nothing. */
+  async function choose(who: "dm" | "everyone"): Promise<void> {
+    if (busy) return;
+    const now = current === "dm" ? "dm" : current === "all" ? "everyone" : null;
+    setAlready("");
+    if (now === who) return setAlready(words.whoAlready);
+    setBusy(true);
+    try {
+      setProblem(await act({ action: "who", id: link.id, who }, who === "dm" ? words.whoDoneDm : words.whoDoneAll));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function toggle(v: { id: string; name: string }): void {
+    setChosen((was) => {
+      const next = new Set(was);
+      if (next.has(v.id)) next.delete(v.id);
+      else next.add(v.id);
+      return next;
+    });
+    setNames((was) => new Map(was).set(v.id, v.name));
+  }
+
+  async function save(): Promise<void> {
+    if (busy) return;
+    const ids = [...chosen];
+    // The same set as already holds it: nothing is sent, and the page says so.
+    const same = current === "some" && ids.length === holders.length && holders.every((h) => chosen.has(h.id));
+    setAlready("");
+    if (same) return setAlready(words.whoAlready);
+    const named = ids.map((id) => names.get(id) ?? holders.find((h) => h.id === id)?.name ?? "");
+    setBusy(true);
+    try {
+      const problemNow = await act({ action: "who", id: link.id, who: "some", characters: ids }, words.whoDoneSome(words.whoNames(named)));
+      setProblem(problemNow);
+      if (problemNow === null) setPicking(false); // a failure keeps the picker and the ticks
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div class="stack">
+      <p>
+        <strong>{words.whoKnowsHeading}</strong>
+      </p>
+      {stateLine && <p class="small">{stateLine}</p>}
+      <div class="row" role="group" aria-label={words.whoKnowsHeading}>
+        <button type="button" class="button secondary" aria-pressed={current === "dm"} disabled={busy} onClick={() => void choose("dm")}>
+          {words.whoOnlyDm}
+        </button>
+        <button
+          type="button"
+          class="button secondary"
+          aria-pressed={current === "some"}
+          disabled={busy}
+          onClick={() => {
+            setChosen(new Set(holders.map((h) => h.id)));
+            setNames(new Map(holders.map((h) => [h.id, h.name])));
+            setPicking(true);
+          }}
+        >
+          {words.whoSome}
+        </button>
+        <button type="button" class="button secondary" aria-pressed={current === "all"} disabled={busy} onClick={() => void choose("everyone")}>
+          {words.whoEveryone}
+        </button>
+      </div>
+      {already && <p role="status">{already}</p>}
+      {problem && <p role="status">{problem}</p>}
+      {picking && (
+        <div class="stack">
+          <label>
+            {words.whoSearch}
+            <input
+              type="search"
+              value={q}
+              placeholder={words.whoSearch}
+              autoComplete="off"
+              spellcheck={false}
+              onInput={(e) => setQ((e.target as HTMLInputElement).value)}
+            />
+          </label>
+          {failed && <p role="status">{words.seeAsLoadFailed}</p>}
+          <ul class="web-found" aria-label={words.whoSomeLabel}>
+            {list.map((v) => (
+              <li key={v.id}>
+                <label class="choice">
+                  <input type="checkbox" checked={chosen.has(v.id)} onChange={() => toggle(v)} />
+                  <span>{v.name}</span>
+                </label>
+              </li>
+            ))}
+          </ul>
+          {total > list.length && <p class="small muted">{words.seeAsMore(list.length, total)}</p>}
+          <div class="row">
+            <button type="button" class="button" disabled={chosen.size === 0 || busy} onClick={() => void save()}>
+              {words.whoSave}
+            </button>
+            {chosen.size === 0 && <span class="small muted">{words.whoPickOne}</span>}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function LinkRow({
   n,
   link,
@@ -968,6 +1300,8 @@ function LinkRow({
   act,
   reveal,
   revealing,
+  api,
+  refId,
 }: {
   n: number;
   link: WebEdge["links"][number];
@@ -977,6 +1311,8 @@ function LinkRow({
   act: (change: WebLinkChange, ok: string) => Promise<string | null>;
   reveal: (target: WebRevealTarget) => Promise<string | null>;
   revealing: Set<string>;
+  api: AccountApi;
+  refId: string;
 }) {
   const [text, setText] = useState(link.words);
   const [problem, setProblem] = useState<string | null>(null);
@@ -1016,6 +1352,11 @@ function LinkRow({
           >
             {words.reveal}
           </button>
+          {problem?.endsWith(words.namesPageEnding) && (
+            <a class="small" href={`/account/names/${encodeURIComponent(refId)}`}>
+              {words.openNames}
+            </a>
+          )}
         </div>
       )}
       {canEdit && (
@@ -1061,6 +1402,9 @@ function LinkRow({
             )}
           </div>
           <p class="small muted">{words.pinHint}</p>
+          {canEdit && WHO_KNOWS_LIVE && (link.secret || link.revealed === false) && (
+            <WhoKnows api={api} refId={refId} link={link} act={act} />
+          )}
           {asking && (
             <div class="row" role="group" aria-label={words.removeShort}>
               <span>{words.removeAsk(a, b)}</span>

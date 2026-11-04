@@ -145,7 +145,9 @@ class TheDoors(Reading):
         self,
     ) -> None:
         empty = await recap_style.read(self.web, self.session, self.cref)
+        musts = empty.pop("musts")  # the must-have list is read beside them (#3328)
         self.assertEqual(empty, {"examples": [], "notes": [], "defaults": True})
+        self.assertTrue(musts["defaults"])
         await self.sql(
             "INSERT INTO recap_style_examples (guild_id, campaign_id, position, text, created_by,"
             " created_at) VALUES (%s, %s, 1, %s, %s, 1)",

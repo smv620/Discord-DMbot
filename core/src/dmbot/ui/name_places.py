@@ -218,3 +218,71 @@ async def more_places(
         return GONE
     parts = [*texts, *([GONE] if gone else [])]
     return fit_message("\n".join(parts)) or GONE
+
+
+REMOVED = "That line was removed."
+NOTHING_KEPT = "No place is kept for this name."
+TRY_AGAIN = "Couldn't read the transcript just now. Try again in a moment."
+SHOWN_BEHIND_BUTTON = 3  # "📜 Where was it said?" shows this many, newest first (#3384)
+
+
+async def where_said(
+    guild: discord.Guild | None,
+    transcripts: TranscriptStore,
+    guild_id: int,
+    refs: Collection[tuple[str, int | None]],
+    spellings: Sequence[str],
+    agreed: Collection[int],
+    *,
+    lore: str = "",
+    lore_source: str = "",
+) -> str:
+    """The answer to "Where was it said?": up to three places, newest first, each with a line
+    either side; a line that is gone says so. A sentence from the DM's lore comes with the
+    upload's name. Words are read now from the transcript, never copied; the caller has checked
+    that the person asking is the DM."""
+    parsed = [(at or 0, parse_ref(ref)) for ref, at in refs]
+    pointers = [p for _at, p in sorted(
+        ((at, p) for at, p in parsed if p is not None),
+        key=lambda x: (x[0], x[1].started_ms),
+        reverse=True,
+    )]  # fmt: skip
+    parts: list[str] = []
+    try:
+        sessions = _Sessions(transcripts, guild_id)
+        arounds: list[tuple[Pointer, Around | None, int, int]] = []
+        for pointer in pointers[:SHOWN_BEHIND_BUTTON]:
+            session = await sessions.get(pointer.session_id)
+            around = (
+                None
+                if session is None or session[2] is not None
+                else await transcripts.around(
+                    guild_id, pointer.session_id, pointer.started_ms, pointer.user_id, agreed
+                )
+            )
+            arounds.append(
+                (pointer, around, session[0] if session else 0, session[1] if session else 0)
+            )
+        ids: set[int] = set()
+        for _p, around, _n, _s in arounds:
+            if around:
+                ids.update(x[0] for x in (around.before, around.line, around.after) if x)
+        names = await display_names(guild, tuple(sorted(ids))) if ids else {}
+        for pointer, around, number, started_at in arounds:
+            if around is None:
+                parts.append(REMOVED)
+                continue
+            header = f"Session {number}, {clock((pointer.started_ms - started_at * 1000) / 1000)}"
+            parts.append(window_text(header, around, names, spellings))
+    except Exception:
+        log.exception("Couldn't read where a name was said")
+        return TRY_AGAIN
+    if lore:
+        source = f" ({_plain(lore_source)})" if lore_source else ""
+        shown = discord.utils.escape_markdown(lore, ignore_links=False)
+        parts.append(f"_From your lore{source}_\n> “{shown}”")
+    if not parts:
+        return NOTHING_KEPT
+    if len(pointers) > SHOWN_BEHIND_BUTTON:  # first, so a long message never cuts it off
+        parts.insert(0, f"Heard {len(pointers)} times. Showing {SHOWN_BEHIND_BUTTON}.")
+    return fit_message("\n".join(parts))

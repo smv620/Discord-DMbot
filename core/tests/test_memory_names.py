@@ -2582,6 +2582,15 @@ class Adding(NamesTest):
         self.assertIn("Kept secret: **the hooded stranger** is really **Belleros**", text)
         self.assertIn("never puts it in the transcript", text)
 
+    async def test_the_saved_text_says_hidden_only_when_the_dm_asked_for_it(self) -> None:
+        entity = await ui.save_name(
+            self.memory, self.campaign, "Belleros", "npc", [], [], hidden=True
+        )
+        # (the line is the choice just made; it is not read back from the entry's flag)
+        self.assertIn("Hidden from players", ui.saved_text(entity, [], [], hidden=True))
+        self.assertNotIn("Hidden from players", ui.saved_text(entity, [], []))
+        self.assertTrue(entity.hidden_from_players)  # and the flag alone does not say it
+
     async def test_the_kind_picker_saves(self) -> None:
         view = ui.KindPicker(self.campaign.id, "Thornewick", ["Thorn Wick"], [])
         view.pick = SimpleNamespace(values=["place"])  # type: ignore[assignment]
@@ -3001,6 +3010,7 @@ class Review(NamesTest):
                 "🚫 Not a name",
                 "⏳ Later",
                 "✏️ Change the words",
+                "📜 Where was it said?",
             ],
         )
         self.assertTrue(all(len(label) <= ui.REVIEW_LABEL_MAX for label in labels))
@@ -3391,6 +3401,32 @@ class AfterSession(NamesTest):
         self.assertIn("1 new name to check** from this session: **Bryn Shander**", text)
         self.assertIsInstance(posted.await_args.kwargs["view"], discord.ui.View)  # type: ignore[union-attr]
 
+    async def test_new_names_question_goes_to_the_dms_private_chat(self) -> None:
+        # #3210: the question is asked in the DM's private chat, not on the DM screen.
+        table = self.table()
+        table.new_names = ["Belleros"]
+        posted = AsyncMock(return_value=True)
+        sent = AsyncMock(return_value="sent")
+        self.bot.post = posted  # type: ignore[method-assign]
+        self.bot.sidebar_send_dm = sent  # type: ignore[method-assign]
+        await self.bot.post_new_names(table)
+        posted.assert_not_awaited()  # nothing about it on the DM screen
+        self.assertEqual(sent.await_count, len(self.campaign.dm_user_ids))
+        self.assertIn("Belleros", sent.await_args.args[1])  # type: ignore[union-attr]
+        # marked as from DMbot, with the campaign's name
+        self.assertTrue(sent.await_args.args[1].startswith("❓ **DMbot has a question** · "))  # type: ignore[union-attr]
+        self.assertIsInstance(sent.await_args.args[2], discord.ui.View)  # type: ignore[union-attr]
+
+    async def test_new_names_question_stays_on_the_screen_when_dms_are_closed(self) -> None:
+        # #3210: private messages closed for every DM: the question is not lost.
+        table = self.table()
+        table.new_names = ["Belleros"]
+        posted = AsyncMock(return_value=True)
+        self.bot.post = posted  # type: ignore[method-assign]
+        self.bot.sidebar_send_dm = AsyncMock(return_value="forbidden")  # type: ignore[method-assign]
+        await self.bot.post_new_names(table)
+        posted.assert_awaited_once()
+
     async def test_a_name_fixed_live_is_not_suggested_again(self) -> None:
         # #394: the scan reads the cleaned line, where "Rothgar" was already fixed
         from dmbot.audio.segmenter import Utterance
@@ -3658,5 +3694,8 @@ class Store(NamesTest):
         restored = await self.campaigns.import_backup(2, backup, DM)
         copy = await self.memory.entities(2, restored.id, statuses=[CONFIRMED])
         self.assertEqual(
-            [(e.name, e.played_by) for e in copy if e.type != "person"], [("Cerric", PLAYER)]
+            [(e.name, e.played_by) for e in copy if e.type != "person" and e.name != "The party"],
+            [
+                ("Cerric", PLAYER)
+            ],  # (The party, made when the player was given the character, aside)
         )

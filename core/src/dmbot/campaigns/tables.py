@@ -37,6 +37,7 @@ SECTION_TABLES: dict[str, tuple[str, ...]] = {
         "memory_flags",
         "character_sheets",
     ),
+    "memory_importance": ("memory_importance",),  # PlotBot's importance ranks (#3172)
     "house_rules": ("house_rules",),
     "house_rule_wins": ("house_rule_wins",),
     "homebrew": ("homebrew_entries",),
@@ -45,8 +46,12 @@ SECTION_TABLES: dict[str, tuple[str, ...]] = {
     "site_approvals": ("site_approvals",),
     "map_notes": ("map_notes",),
     "recap_style_notes": ("recap_style_notes",),
+    "recap_must_haves": ("recap_must_haves",),  # the list every recap is written to (#3328)
     "recap_style_examples": ("recap_style_examples",),
     "import_speakers": ("import_speakers",),
+    "campaign_speakers": ("campaign_speakers",),  # speakers without Discord, negative ids (#3305)
+    "import_consents": ("import_consents",),  # what the uploader confirmed, per speaker (#3305)
+    "speaker_erasures": ("speaker_erasures",),  # whose lines a DM removed here (#3305)
     "rule_set_follows": ("rule_set_follows",),
     "rule_sets": ("rule_sets", "rule_set_versions", "rule_set_editors"),
     "game_clock": ("game_clocks", "game_clock_groups", "game_clock_log"),
@@ -90,6 +95,16 @@ _VOICE_CO = (
     "(Supervisor, #2604). A restored campaign makes its own when it makes audio"
 )
 NOT_IN_BACKUP: dict[str, str] = {
+    "question_counts": "the count of each kind of question waiting for the DM, made again every "
+    "minute by the bot: counts and times only (#3435)",
+    "question_notices": "the timer of the 'Questions for you' reminders for each DM: step, next "
+    "time and message ids only, made again by the next round (#3435)",
+    "dm_waiting_sent": "which 'things wait for you' private message was already sent after a "
+    "lore upload or an import: keys and times only, so a restart does not send it twice (#3314)",
+    "theatre_runs": "whether a script of a session is being made, with counts and times only: "
+    "pressing the button again makes it (#3244)",
+    "theatre_lines": "the theatrical transcript of a session (DM-only): made from the cleaned "
+    "lines by an AI and made again on request, never carries content of its own (#3244)",
     "web_backups": "a request for a copy for the website and the copy made for it, kept 15 "
     "minutes: a copy of a copy, never content (#2554)",
     "web_backup_parts": "the transcripts files of a website copy, kept with it for 15 minutes: a "
@@ -128,6 +143,8 @@ NOT_IN_BACKUP: dict[str, str] = {
     "secret_exposures": _WAIT,
     "name_actions": _WAIT,
     "setting_actions": _WAIT,
+    "picture_actions": _WAIT,
+    "speaker_removals": _QUEUE,
     "web_rule_actions": _WAIT,
     "web_recap_style_actions": _WAIT,
     "web_report_requests": _WAIT,
@@ -170,7 +187,10 @@ NOT_IN_BACKUP: dict[str, str] = {
 # table can be parked here again while its section is built). `transcript_lines` has no
 # `campaign_id`; it hangs off `transcript_sessions` (the test follows foreign keys to find such
 # tables).
-OWED_TO_BACKUP: tuple[str, ...] = ()
+OWED_TO_BACKUP: tuple[str, ...] = (
+    # kept pictures: the rows and the files go into a backup in the bot step of #3274
+    "campaign_pictures",
+)
 
 
 def backed_up() -> frozenset[str]:
@@ -186,6 +206,7 @@ def backed_up() -> frozenset[str]:
 # are cleared so nothing tries to edit a message that is not there.
 SERVER_BOUND_COLUMNS: dict[str, str] = {
     "campaigns.*_channel_id": "cleared by the move (and the pinned message id with them)",
+    "campaign_pictures.message_id": "set to 0 by the move, which is what a restored picture has",
     "game_clocks.channel_id": "cleared by the move",
     "game_clocks.message_id": "cleared by the move",
     "game_clocks.players_channel_id": "cleared by the move",
@@ -195,5 +216,7 @@ SERVER_BOUND_COLUMNS: dict[str, str] = {
     "recap_holds.channel_id": "left: the new server finds no such channel until /dmbot start",
     "active_sessions.screen_channel_id": "none: a campaign with a running session does not move",
     "active_sessions.voice_channel_id": "none: a campaign with a running session does not move",
+    "question_notices.message_id": "a message in the DM's private chat, which belongs to no "
+    "server, so it stays valid after a move (#3435)",
     "campaign_handover_offers.message_id": "none: the offer is removed by the move",
 }

@@ -5,7 +5,7 @@ import QabotPrivacy from "../../components/QabotPrivacy.astro";
 import RecapsPrivacy from "../../components/RecapsPrivacy.astro";
 import { RECAP_AUDIO_LIVE, RECAP_SHARE_LIVE, RECAPS_LIVE } from "../../content/recap-words";
 import { QABOT_LIVE } from "../../content/qabot";
-import { initiativeLine, sessionNotesPrivacy, storyStatesLine } from "../../content/privacy-channels";
+import { importConsentLine, initiativeLine, sessionNotesPrivacy, storyStatesLine } from "../../content/privacy-channels";
 import {
   deletionWarnings,
   geminiPrivacy,
@@ -108,8 +108,8 @@ import {
     <li>
       <strong>What was typed.</strong> While DMbot is listening, it also reads what people who
       said yes type in the table's chat: the voice channel's chat, one more channel the game
-      master picks, and the dmb-chat channel where anyone can ask a quick rules question. Typed
-      lines go in the written record, marked as typed. Questions put to DMbot, and its answers
+      master picks. Anyone who said yes can call DMbot there by starting with "Hey DMbot" or
+      "DMbot". Typed lines go in the written record, marked as typed. Questions put to DMbot, and its answers
       about the game, go in the written record too, marked as such.
     </li>
     <li>
@@ -122,6 +122,13 @@ import {
       initiativeLine.live && (
         <li>
           <strong>{initiativeLine.lead}</strong> {initiativeLine.text}
+        </li>
+      )
+    }
+    {
+      importConsentLine.live && (
+        <li>
+          <strong>{importConsentLine.lead}</strong> {importConsentLine.text}
         </li>
       )
     }

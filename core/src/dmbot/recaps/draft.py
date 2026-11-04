@@ -34,6 +34,7 @@ from dmbot.memory.extractor import Said, quoted
 from dmbot.memory.importance import beat_score
 from dmbot.memory.models import spelling_key
 from dmbot.names import not_names
+from dmbot.recaps import must_haves
 from dmbot.recaps.beats import Beat, sheet
 from dmbot.recaps.fixed_lines import ROOM as FIXED_LINES_ROOM
 from dmbot.recaps.fixed_lines import STORY_COLUMN_MAX
@@ -465,12 +466,15 @@ def prose_system(
     notes: Sequence[str] = (),
     corrections: Sequence[str] = (),
     reads: str = BEATS,
+    musts: Sequence[str] = (),
 ) -> str:
     """The instructions, with the campaign's own setting filled in from data; none when it has
     none. Never a setting written into this text. `plain`: the writer of a two-model recap
     (#2074) answers in plain text with MOOD and MUSIC lines, not the schema's JSON. `style`: the
     campaign's example recaps (#2075), after the rules in a block of their own; only the writer's
-    instructions take it, never the formatter's, the fact check's or the grader's."""
+    instructions take it, never the formatter's, the fact check's or the grader's. `musts`: the
+    campaign's must-have list (#3328), also only here (and later the coverage check): never the beat
+    sheet or the fact check."""
     length = length or length_for(2.0)
     line = f"The campaign is set in {setting}." if setting else ""
     form = ANSWER_AS_TEXT.replace("{moods}", ", ".join(_moods())) if plain else ANSWER_AS_JSON
@@ -484,7 +488,11 @@ def prose_system(
         .strip()
     ) + "".join(
         f"\n\n{block}"
-        for block in (corrections_block(corrections), style_block(style, notes))
+        for block in (
+            corrections_block(corrections),
+            must_haves.block(list(musts)),
+            style_block(style, notes),
+        )
         if block
     )
 

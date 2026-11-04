@@ -451,12 +451,15 @@ terminal output or Discord screenshots copied to it.
 - **DM authority:** the bot never posts rulings to players or public channels. Advice
   goes only to `#dm-screen` / the DM. PlotBot and NPCBot record only DM-confirmed facts.
   **Table questions** (owner, 2026-10-14): anyone at the table may ask DMbot ("Hey DMbot…" or
-  typed in the campaign's `dmb-chat` channel), and the answer is posted in `dmb-chat` as
+  typed in the table's chat), and the answer is posted in the table's chat as
   `Q (who asked): <the question, shortened>` / `Answer: <as short as possible>`, with its source and
   at most one link (dndbeyond.com, or a public link shared with the campaign, such as its house
   rules). That is rules information, not a ruling, and it never holds DM-screen content: a
   player's question that needs it, or asks DMbot to decide, gets "That's one for your DM."; a
-  DM's goes to the DM privately. See docs/PLAN.md, "Table questions".
+  DM's goes to the DM privately. See docs/PLAN.md, "Table questions". **The table's chat**
+  (owner, 2026-11-01, #3212): the table's voice channel's own text chat, or the one text channel
+  the DM picked; DMbot makes no `dmb-chat` channel. **Every question DMbot asks** someone goes to
+  that person's private chat with DMbot, marked as from DMbot (owner, 2026-11-01, #3210).
 - **Transcripts are shared; the DM screen is not pushed to players.** Anyone in the
   Discord server may view and download a campaign's session transcripts (decided
   2026-10-05). Only people who agreed are ever recorded, and the consent request tells
@@ -542,6 +545,11 @@ terminal output or Discord screenshots copied to it.
   #2475's last comment, post `NNNN_name, #<issue>, <session>` with the next number, then push. If two
   comments claim the same number, the earlier keeps it and the later renumbers. Names order the
   list, so a gap is fine.
+- **A recap-writer change is scored before and after** (owner, 2026-11-03; `docs/RECAP_STANDARD.md`):
+  a PR that changes the recap writer, its instructions or its checks pastes the `recap_run --score`
+  counts (must-haves covered, missed and not given, plus the fact check) from before and after, on
+  the fixed set of sessions dev1 runs. A PR with fewer must-haves covered, or more unsupported
+  sentences, needs a stated reason. RepoManager checks that the table is there.
 - **AI output limits are generous** (owner, 2026-10-24, #2596, after #2086, #2341, #2345, #2365,
   #2454, #2563 and #2594 were all answers cut off at a hand-sized `max_tokens`): background calls
   never send less than the tier's floor in `ai.py` (about 16,000 tokens); the service charges for

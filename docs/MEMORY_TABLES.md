@@ -26,6 +26,7 @@ Count: 24 tables. The migrations create 24 distinct `memory_*` tables (`grep -ho
 - `memory_flags`
 - `memory_heard`
 - `memory_impressions`
+- `memory_importance`
 - `memory_knowers`
 - `memory_mentions`
 - `memory_perspectives`
@@ -495,6 +496,30 @@ These are for the lead to decide. The page does not pick a side.
 - `campaign_id, guild_id` references `campaigns`; ON DELETE CASCADE: yes; ON UPDATE CASCADE: yes.
 - `guild_id, campaign_id, subject_id` references `memory_entities`; ON DELETE CASCADE: yes; ON UPDATE CASCADE: yes.
 - `guild_id, campaign_id, viewer_id` references `memory_entities`; ON DELETE CASCADE: yes; ON UPDATE CASCADE: yes.
+
+## `memory_importance`
+
+**Key** (after `guild_id`, `campaign_id`): `seq` (a generated, ever-rising number).
+
+**Logged for Undo:** no (append-only; the newest row is current). Carried in its own backup section (`memory/importance_backup.py`), oldest first, without line numbers.
+
+| column | type | null? | default | meaning |
+|---|---|---|---|---|
+| `seq` | bigint | no | generated | Order of the assessments; the highest for an entry is current. |
+| `entity_id` | text | no |  | The character assessed (a live, non-merged character; a merged name counts for the one that stayed). |
+| `rank` | smallint | no |  | 0 background, 1 minor, 2 recurring, 3 significant, 4 major, 5 player character (importance_rank.py). Never read below the floor. |
+| `basis` | text | no |  | A reason code from a fixed list (importance_rank.py `BASES`); never a word of the story. |
+| `source` | text | no |  | `plotbot` (its reading of a session) or `rule`. |
+| `session_started_at` | bigint | yes |  | The session the assessment came from. |
+| `lines` | integer[] | no | `{}` | At most 20 line numbers of that session. Numbers only, no words. |
+| `recorded_at` | bigint | no |  | When it was written. |
+
+Internal: never shown to a player, a card or a recap (#3172).
+
+**Foreign keys:**
+
+- `campaign_id, guild_id` references `campaigns`; ON DELETE CASCADE: yes; ON UPDATE CASCADE: yes.
+- `guild_id, campaign_id, entity_id` references `memory_entities`; ON DELETE CASCADE: yes; ON UPDATE CASCADE: yes.
 
 ## `memory_knowers`
 

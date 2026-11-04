@@ -226,6 +226,9 @@ def _apply(
     return None
 
 
+apply_action = _apply  # the press's own rule, for a caller that walks a whole session (#2979)
+
+
 def _speaks(action: str) -> bool:
     """Dawn, noon and dusk are said when time passes by a button or a rest; not when the
     DM says what time it is (the DM already knows)."""
@@ -377,9 +380,9 @@ async def show(client: Any, campaign: Campaign, stored: Stored) -> discord.Messa
 def players_see(campaign: Campaign, what: str = "the day and ") -> str:
     """Where the players see the clock: said only when the chat channel exists. While splitting,
     `what` also tells the DM the players read the group names."""
-    if campaign.dmbchat_channel_id is None:
+    if campaign.table_chat_id is None:
         return ""
-    return PLAYERS_SEE.format(channel=campaign.dmbchat_channel_id, what=what)
+    return PLAYERS_SEE.format(channel=campaign.table_chat_id, what=what)
 
 
 # ---- the players' clock: a small line in the DMbot chat channel (#2877) -------------------------
@@ -438,9 +441,9 @@ async def put_line(
     message in the channel and a plain one, it is edited, so quick changes stay one line;
     otherwise a new line is posted. No chat channel, or DMbot cannot read or post there: nothing
     is said (a counts-only note) and nothing is held up."""
-    channel_id = campaign.dmbchat_channel_id
+    channel_id = campaign.table_chat_id
     if channel_id is None:
-        log.info("A clock line was not posted: the campaign has no chat channel")
+        log.info("A clock line was not posted: the campaign has no table chat")
         return
     channel = client.get_channel(channel_id)
     me = getattr(client.user, "id", None)
@@ -622,8 +625,12 @@ async def _run_press(
     interaction: discord.Interaction, campaign_id: str, action: str, set_to: int | None
 ) -> bool:
     client: Any = interaction.client
-    guild = interaction.guild
-    campaign = await client.campaigns.get(guild.id, campaign_id) if guild else None
+    # In a DM's private chat there is no server on the press (#3210): the database says which
+    # one the campaign is in. `press` itself still checks the presser is one of its DMs.
+    guild_id = (
+        interaction.guild.id if interaction.guild else await client.campaigns.guild_of(campaign_id)
+    )
+    campaign = await client.campaigns.get(guild_id, campaign_id) if guild_id else None
     if campaign is None:
         await _reply(interaction, GONE)
         return False
@@ -791,6 +798,10 @@ class ClockButton(
         client: Any = interaction.client
         guild = interaction.guild
         if guild is None:
+            # Only "End combat", on the question about a fight left over from last time, is
+            # pressed in a DM's private chat (#3210); every other button needs a server.
+            if self.action == "cend":
+                await self._end_left_over_fight(interaction)
             return
         try:
             if self.action == "timer":
@@ -818,6 +829,38 @@ class ClockButton(
         except Exception:
             log.exception("The game clock button failed")
             await _reply(interaction, FAILED)
+
+    async def _end_left_over_fight(self, interaction: discord.Interaction) -> None:
+        """End combat, pressed on the private question about a fight left over from last time.
+        The clock itself is shown on the DM screen as usual (`_show_here` falls back to it); this
+        message says it is over, and the same question in the other DMs' chats loses its button.
+        Also when the fight was already ended some other way: then nothing is changed, but the
+        question is stale, so its buttons come down everywhere."""
+        client: Any = interaction.client
+        try:
+            await interaction.response.defer()
+            ended = await run_press(interaction, self.campaign_id, "cend")
+            if not ended and not await self._fight_is_over(client):
+                return  # refused (not a DM) or failed: the question stays for a DM to answer
+            done = "⚔️ The fight is over." if ended else "⚔️ That fight is already over."
+            if interaction.message is not None:
+                with contextlib.suppress(discord.HTTPException):
+                    await interaction.message.edit(content=done, view=None)
+            lines = getattr(client, "decision_lines", None)
+            if lines is not None:
+                pressed = interaction.message.id if interaction.message is not None else None
+                await lines.close(("fight", self.campaign_id), "Combat ended.", pressed_id=pressed)
+        except Exception:
+            log.exception("End combat from a private question failed")
+            await _reply(interaction, FAILED)
+
+    async def _fight_is_over(self, client: Any) -> bool:
+        """No fight is running in this campaign's clock (and the campaign exists)."""
+        guild_id = await client.campaigns.guild_of(self.campaign_id)
+        if guild_id is None:
+            return False
+        stored = await client.clocks.get(guild_id, self.campaign_id)
+        return stored is not None and stored.clock.combat_round is None
 
     async def _split_or_rejoin(
         self, interaction: discord.Interaction, client: Any, guild_id: int

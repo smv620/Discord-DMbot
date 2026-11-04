@@ -26,6 +26,7 @@ from dmbot.campaigns.models import OWN_WRITING, CampaignError, fingerprint
 from dmbot.memory import background as bg
 from dmbot.memory import backstory_keep as keep
 from dmbot.memory import (
+    descriptions,
     kin,
     lore_context,
     lore_knowledge,
@@ -91,6 +92,7 @@ from dmbot.ui.names import (
 )
 from dmbot.ui.who_knows import player_characters
 from dmbot.waiting import WaitingMessage, message_is_gone
+from dmbot.word_end import in_the_middle
 
 log = logging.getLogger(__name__)
 
@@ -618,6 +620,11 @@ class BackgroundOffer(_Menu):
                 suggested=done.suggested,
                 knowledge_note=done.knowledge_note,
             )
+            # The card above is the DM's own, and goes when they close it: what waits for them
+            # also comes once to their private chat, like a live session's (#3314).
+            await bot.tell_dm_waiting(
+                guild, campaign.id, f"lore:{time.time_ns()}", where="your upload"
+            )
         except (AIError, CampaignError) as exc:  # CampaignError: the campaign is gone
             with contextlib.suppress(discord.HTTPException):
                 await interaction.edit_original_response(content=str(exc))
@@ -709,11 +716,13 @@ async def read_background(
         progress=progress,
         aliases=aliases,
         hold_open=who_ai is not None,
+        known_keys=known,
     )
     found = bg.merge(
         [read.names],
         known,
         rules=(campaign.target_ruleset, campaign.fallback_ruleset),
+        dropped=read.stats.dropped,
     )
     choice = lore_knowledge.normalize(choice)
     if speaker:  # a character's backstory stays as it was: the choices are for campaign lore
@@ -747,6 +756,7 @@ async def read_background(
         # a disguise becomes a plain other name only when the DM said everything is known;
         # under the smart guess it stays secret whatever the AI says (DM authority)
         fold_secret=choice == lore_knowledge.WORLD,
+        source=upload.label,
     )
     await save_earlier_names(
         memory,
@@ -756,6 +766,7 @@ async def read_background(
         getattr(bot, "lore_context", None),
         upload.text,
         known_by,
+        upload.label,
     )
     questions: list[str] = []
     keys: set[tuple[str, str, str]] = set()
@@ -774,6 +785,7 @@ async def read_background(
         speaker=speaker,
         known_by=known_by,
         unsettled=read.stats.unsettled or (),
+        unnamed=read.unnamed,
         who_ai=who_ai,
         on_who=on_who,
         until=started + lore_read.LORE_TIME_LIMIT_S - WHO_SUMMARY_MARGIN_S,
@@ -795,7 +807,7 @@ async def read_background(
         ", ".join(
             f"{k}={n}"
             for k, n in sorted(read.stats.dropped.items())
-            if k != "quote_widened"  # (a line kept, not dropped: counted for the log only)
+            if k not in ("quote_widened", "quote_reach")  # (lines kept, not dropped: log only)
         )
         or "nothing",
     )  # (counts only: the questions are the DM's own words, shown only to them)
@@ -871,6 +883,7 @@ async def save_earlier_names(
     held: lore_context.Held | None = None,
     text: str = "",
     known_by: str = "",
+    source: str = "",
 ) -> None:
     """The other names a lore text gives a name the campaign already has (#3034): a pseudonym, an
     earlier or birth name, a nickname. They are saved as suggestions on that entry (never a new
@@ -922,7 +935,7 @@ async def save_earlier_names(
     if held is None or not text:
         return
     for alias in added:  # the sentence around each, for its question (memory only)
-        held.put(campaign.guild_id, alias.id, lore_context.around(text, "", alias.text))
+        held.put(campaign.guild_id, alias.id, lore_context.around(text, "", alias.text), source)
 
 
 async def store(
@@ -934,6 +947,7 @@ async def store(
     known_by: str = "",
     world: Collection[str] = (),
     fold_secret: bool = False,
+    source: str = "",
 ) -> dict[str, list[str]]:
     """Each name as a suggestion with its quote (never confirmed), its other spellings with it and
     a disguise kept as a secret name. One change for the whole list: one reload of the live names,
@@ -996,6 +1010,7 @@ async def store(
                     campaign.guild_id,
                     entity_id,
                     lore_context.around(text, item.quote, item.name),
+                    source,
                 )
             if known_by and item.secret:
                 await _secret_names_known_by(memory, campaign, entity_id, item.secret, known_by)
@@ -1048,6 +1063,8 @@ async def confirmed_aliases(memory: MemoryStore, campaign: Campaign) -> dict[str
             continue
         if not all(e.confirmed and not e.secret and not e.person for e in entries):
             continue
+        if not all(descriptions.matches_alone(e.text, e.kind, "") for e in entries):
+            continue  # (a description is not a name: #3431)
         (entity,) = owners[key]
         canonical = name_key(lookup.entities[entity].name)
         if key != canonical:
@@ -1252,6 +1269,7 @@ async def queue_links(
     speaker: str | None = None,
     known_by: str = "",
     unsettled: Sequence[bg.Unsettled] = (),
+    unnamed: Sequence[who_resolve.UnnamedLink] = (),
     who_ai: who_ask.Client | None = None,
     on_who: Callable[[int, int], None] | None = None,
     until: float | None = None,
@@ -1282,13 +1300,21 @@ async def queue_links(
     which also covers the ones made from a settled pronoun, a "Which one?" question and an unnamed
     person. `world_level`: how they are known (`lore_knowledge.SURE`, or `GUESS` for the AI's)."""
     store = getattr(bot, "backstory_links", None)
-    if store is None or not (any(answers) or unsettled):
+    if store is None or not (any(answers) or unsettled or unnamed):
         return 0
     lookup = CampaignLookup.build(await memory.lookup_data(campaign.guild_id, campaign.id))
     ends: dict[str, str] = {}
     for key, entries in lookup.by_key.items():
         for e in entries:
-            if e.confirmed and not e.secret and not e.person:
+            # (a description such as "the woman" is no end of a connection: #3431; the lookup does
+            # not carry who typed a name, so only a name with a capital counts here, and the
+            # Cleaner, which only fixes spelling, still reads every spelling)
+            if (
+                e.confirmed
+                and not e.secret
+                and not e.person
+                and descriptions.matches_alone(e.text, e.kind, "")
+            ):
                 ends.setdefault(key, lookup.entities[e.entity_id].name)
     owners: dict[str, set[str]] = {}
     for main, spellings in (known_spellings or {}).items():
@@ -1301,6 +1327,7 @@ async def queue_links(
                 have_name is not None
                 and len(owners[name_key(sp)]) == 1
                 and usable_alias(name_key(sp))
+                and not descriptions.is_description(sp)
             ):
                 ends.setdefault(name_key(sp), have_name)
 
@@ -1349,6 +1376,9 @@ async def queue_links(
         if dropped is not None:
             dropped["not_in_text"] += settled.unresolved
         answers = [*answers, settled.connections]
+    # People the text describes but never names (#2959) go the way the who-is-it check's do: the
+    # same store call, the same secrecy (below) and the same cap.
+    settled.unnamed = [*settled.unnamed, *unnamed]
     picks: list[bg.Pick] = []
     # (the campaign's own secret names stay secret whatever the upload's choice: the choice only
     # frees the earlier names this read found)
@@ -1747,7 +1777,7 @@ class WhichOffer(_Menu):
         return (
             f"🔎 **Which {asked} is this?**{place}\n"
             f"{pair}\n"
-            f"From your text: \u201c{_md(logic.shorten(c.quote, QUOTE_SHOWN))}\u201d\n"
+            f"From your text: \u201c{_md(in_the_middle(c.quote, QUOTE_SHOWN))}\u201d\n"
             + who_resolve.checked_line(c.decided)
             + (
                 f"It could be {names}. Tap the right one. "
@@ -1993,7 +2023,7 @@ class ConnectionOffer(_Menu):
                 f"📜 **Connection {self.kept + self.left_out + 1} of {self.total}.** "
                 "Change this?\n"
                 + self._change_line(c, how)
-                + f"From your text: \u201c{_md(logic.shorten(c.quote, QUOTE_SHOWN))}\u201d\n"
+                + f"From your text: \u201c{_md(in_the_middle(c.quote, QUOTE_SHOWN))}\u201d\n"
                 + who_resolve.checked_line(c.decided)
                 + f"{note}"
                 + self._scope(c)
@@ -2001,7 +2031,7 @@ class ConnectionOffer(_Menu):
         return (
             f"📜 **Connection {self.kept + self.left_out + 1} of {self.total}.** Keep this?\n"
             f"**{_md(c.subject)}** {how} **{_md(c.object)}**\n"
-            f"From your text: \u201c{_md(logic.shorten(c.quote, QUOTE_SHOWN))}\u201d\n"
+            f"From your text: \u201c{_md(in_the_middle(c.quote, QUOTE_SHOWN))}\u201d\n"
             + who_resolve.checked_line(c.decided)
             + f"{note}"
             + self._scope(c)
@@ -2164,11 +2194,19 @@ class ConnectionOffer(_Menu):
                 if self.all_done.refused
                 else ""
             )
+            waiting = self.all_done.worked_out  # (every one waiting now, not only the new ones)
+            worked_out = (
+                f" {waiting} worked-out family link{'' if waiting == 1 else 's'} now "
+                f"{'waits' if waiting == 1 else 'wait'} for your yes: "
+                "press 📜 Check the connections."
+                if waiting
+                else ""
+            )
             with contextlib.suppress(discord.HTTPException):
                 await interaction.edit_original_response(
                     content=(
                         f"📜 Kept {len(self.all_done.kept)} connection"
-                        f"{'' if len(self.all_done.kept) == 1 else 's'}.{refused} "
+                        f"{'' if len(self.all_done.kept) == 1 else 's'}.{refused}{worked_out} "
                         "Press ↩️ Undo to take them all back."
                     ),
                     view=self,
@@ -2224,12 +2262,27 @@ class BulkConfirm(_Menu):
         self.campaign_id = campaign_id
         self.queued = queued  # connections waiting for these names to be answered
         self.ids = {k: list(v) for k, v in stored.items()}
-        self.last: tuple[str, int, list[str]] | None = None  # (kind, batch, ids) to undo
+        # What the last press added, to undo: (kind, batch, ids) for each kind it covered (one for
+        # a kind's own button, one per kind for the overall Add all).
+        self.last: list[tuple[str, int, list[str]]] = []
         self._build()
 
     def _build(self) -> None:
         self.clear_items()
         by_size = sorted(self.ids.items(), key=lambda x: -len(x[1]))
+        addable = self._addable()
+        if len(addable) > 1:
+            # One press for everything below, first: with several kinds the per-kind buttons
+            # alone mean pressing each one. A single kind needs no second button for the same
+            # names. Ideas (concepts) are left out, as in their own case below.
+            total = sum(len(v) for v in addable.values())
+            self.add_item(
+                _Button(
+                    self._all_kinds,
+                    label=logic.shorten(f"✅ Add all {total}", REVIEW_LABEL_MAX),
+                    style=discord.ButtonStyle.success,
+                )
+            )
         for kind, ids in by_size[:MAX_BULK_BUTTONS]:
             if kind == "concept":
                 continue  # an idea needs a look: no yes-to-all
@@ -2258,15 +2311,24 @@ class BulkConfirm(_Menu):
                     row=1,
                 )
             )
-        if self.last is not None:
+        if self.last:
+            names = (
+                _plural(self.last[0][0], len(self.last[0][2]))
+                if len(self.last) == 1
+                else f"all {sum(len(ids) for _, _, ids in self.last)}"
+            )
             self.add_item(
                 _Button(
                     self._undo,
-                    label=logic.shorten(f"↩️ Undo {_plural(self.last[0], len(self.last[2]))}", 25),
+                    label=logic.shorten(f"↩️ Undo {names}", 25),
                     style=discord.ButtonStyle.secondary,
                     row=1,
                 )
             )
+
+    def _addable(self) -> dict[str, list[str]]:
+        """The names a yes-to-all may cover: every kind but ideas, which need a look."""
+        return {k: v for k, v in self.ids.items() if k != "concept" and v}
 
     async def _open(self, interaction: discord.Interaction) -> None:
         self.stop()
@@ -2277,6 +2339,14 @@ class BulkConfirm(_Menu):
         await ask_connections(interaction, self.campaign_id)
 
     async def _all(self, kind: str, interaction: discord.Interaction) -> None:
+        await self._add(interaction, [kind])
+
+    async def _all_kinds(self, interaction: discord.Interaction) -> None:
+        await self._add(interaction, list(self._addable()))
+
+    async def _add(self, interaction: discord.Interaction, kinds: list[str]) -> None:
+        """Say yes to every name of these kinds from this reading: one change (one Undo batch) for
+        each kind, so Undo takes back exactly what this press added."""
         await interaction.response.defer()  # many writes follow (#351)
         campaign = await _campaign_for(interaction, self.campaign_id)
         memory = _memory(interaction)
@@ -2285,59 +2355,78 @@ class BulkConfirm(_Menu):
         if interaction.user.id not in campaign.dm_user_ids:  # on every press
             await _tell(interaction, ONLY_DMS)
             return
-        ids = self.ids.get(kind, [])
+        done: list[tuple[str, int, list[str]]] = []
+        added: dict[str, int] = {}
         try:
-            written = await memory.confirm_kinds(
-                campaign.guild_id, campaign.id, ids, kind, source=DM
-            )  # this reading's names only; one already answered is left alone
+            for kind in kinds:
+                ids = self.ids.get(kind, [])
+                written = await memory.confirm_kinds(
+                    campaign.guild_id, campaign.id, ids, kind, source=DM
+                )  # this reading's names only; one already answered is left alone
+                self.ids.pop(kind, None)  # (answered, or already answered: not offered again)
+                added[kind] = written.value
+                if written.value and written.batch is not None:
+                    done.append((kind, written.batch, ids))
         except MemoryRuleError:
+            self.last = done  # (what was added before the refusal can still be taken back)
+            self._build()
+            with contextlib.suppress(discord.HTTPException):
+                await interaction.edit_original_response(view=self, allowed_mentions=NO_PINGS)
             await _tell(interaction, "DMbot couldn't add those. Open 📝 Check new names instead.")
             return
         changed(interaction, campaign)
-        self.ids.pop(kind, None)
-        if written.value and written.batch is not None:
-            self.last = (kind, written.batch, ids)
+        self.last = done
         self._build()
         with contextlib.suppress(discord.HTTPException):
             await interaction.edit_original_response(view=self, allowed_mentions=NO_PINGS)
-        done = (
-            f"✅ Added {_plural(kind, written.value)}."
-            if written.value
-            else "Nothing was added: those names were already answered."
-        )
+        total = sum(added.values())
+        if not total:
+            text = "Nothing was added: those names were already answered."
+        elif len(kinds) == 1:
+            text = f"✅ Added {_plural(kinds[0], total)}."
+        else:
+            parts = ", ".join(_plural(k, n) for k, n in added.items() if n)
+            text = f"✅ Added {total} names: {parts}."
         with contextlib.suppress(discord.HTTPException):
-            await interaction.followup.send(
-                done,
-                ephemeral=True,
-                allowed_mentions=NO_PINGS,
-            )
-        if written.value and self.queued:  # their names may be answered now
+            await interaction.followup.send(text, ephemeral=True, allowed_mentions=NO_PINGS)
+        if total and self.queued:  # their names may be answered now
             await offer_ready(interaction, self.campaign_id)
 
     async def _undo(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer()
         campaign = await _campaign_for(interaction, self.campaign_id)
         memory = _memory(interaction)
-        if campaign is None or memory is None or self.last is None:
+        if campaign is None or memory is None or not self.last:
             return
         if interaction.user.id not in campaign.dm_user_ids:
             await _tell(interaction, ONLY_DMS)
             return
-        kind, batch, ids = self.last
+        undone: list[tuple[str, int, list[str]]] = []
         try:
-            await memory.undo(campaign.guild_id, campaign.id, batch)
+            for item in self.last:
+                await memory.undo(campaign.guild_id, campaign.id, item[1])
+                undone.append(item)
         except MemoryRuleError:
+            for kind, _, ids in undone:  # what was taken back is offered again
+                self.ids[kind] = ids
+            self.last = [x for x in self.last if x not in undone]
+            self._build()
+            with contextlib.suppress(discord.HTTPException):
+                await interaction.edit_original_response(view=self, allowed_mentions=NO_PINGS)
             await _tell(interaction, "That can't be undone now: something changed since.")
             return
         changed(interaction, campaign)
-        self.ids[kind] = ids
-        self.last = None
+        for kind, _, ids in undone:
+            self.ids[kind] = ids
+        count = sum(len(ids) for _, _, ids in undone)
+        what = _plural(undone[0][0], count) if len(undone) == 1 else f"{count} names"
+        self.last = []
         self._build()
         with contextlib.suppress(discord.HTTPException):
             await interaction.edit_original_response(view=self, allowed_mentions=NO_PINGS)
         with contextlib.suppress(discord.HTTPException):
             await interaction.followup.send(
-                f"↩️ Took back {_plural(kind, len(ids))}. They're back in 📝 Check new names.",
+                f"↩️ Took back {what}. They're back in 📝 Check new names.",
                 ephemeral=True,
                 allowed_mentions=NO_PINGS,
             )

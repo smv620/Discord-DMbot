@@ -8,6 +8,7 @@ import { lorePage as words, LORE_TEXT_MAX } from "../content/lore-words";
 import { stageWords } from "../content/work-progress";
 import { type AccountApi, ApiError, type LoreInput, type LoreUpload, type NameRow } from "./api";
 import WorkProgress from "./WorkProgress";
+import AddAll from "./AddAll";
 
 /** The campaign's address, read from `/account/lore/<server>.<campaign>`. */
 export function campaignFromPath(path: string): string | null {
@@ -210,6 +211,17 @@ export default function Lore({ api, path }: { api: AccountApi; path: string }) {
               </>
             )}
           </div>
+        )}
+        {done && (
+          <AddAll
+            api={api}
+            campaign={ref}
+            upload={upload}
+            onChanged={() => {
+              // The waiting counts changed: read the upload again, so the buttons show what is left.
+              void api.loreRead?.(ref, upload.id).then((got) => got && setUpload(got)).catch(() => undefined);
+            }}
+          />
         )}
         {(done || failed) && (
           <button

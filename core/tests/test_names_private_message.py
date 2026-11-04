@@ -40,9 +40,18 @@ class FromAPrivateMessage(NamesTest):
         self.assertFalse(any("Use this in a server" in t for t in sent), sent)
         self.assertFalse(await self.names((PROPOSED,)))  # (it was answered)
 
-    async def test_with_no_server_known_it_still_says_so(self) -> None:
+    async def test_with_no_server_known_the_database_finds_the_campaign(self) -> None:
+        # #3210: after a restart nothing is remembered, but the campaign is still in the database.
+        ui._PRIVATE_SERVERS.pop(self.campaign.id, None)
         it = self.private()
-        self.assertIsNone(await ui._campaign_for(it, self.campaign.id))
+        found = await ui._campaign_for(it, self.campaign.id)
+        assert found is not None
+        self.assertEqual(found.id, self.campaign.id)
+
+    async def test_with_no_such_campaign_anywhere_it_still_says_so(self) -> None:
+        # (a campaign that is really gone: no server remembered and none in the database)
+        it = self.private()
+        self.assertIsNone(await ui._campaign_for(it, "f" * 32))
         self.assertIn("Use this in a server", it.response.sent[0][0])
 
     async def test_a_person_who_may_not_run_the_campaign_gets_nothing(self) -> None:

@@ -127,6 +127,7 @@ FEATURES: tuple[Feature, ...] = (
             "story_extractor_on",
             "story_readings_on",
             "story_family_only",
+            "theatre_on",
             "story_contradictions_on",
             "story_report_on",
             "story_extractor_tier",
@@ -197,6 +198,14 @@ FEATURES: tuple[Feature, ...] = (
         for_dms=False,  # not live yet: it is listed for whoever runs DMbot, not on the card
     ),
     Feature(
+        "kept pictures",
+        "Pictures kept with the campaign",
+        "A picture posted in the table's chat is kept with the campaign and gets a link.",
+        lambda s: s.pictures_ready,
+        ("pictures_kept",),
+        for_dms=False,  # not live until the consent wording is: for whoever runs DMbot
+    ),
+    Feature(
         "who is he",
         'Who "he" and "she" are in a document',
         "",
@@ -245,6 +254,11 @@ NOT_A_SWITCH: dict[str, str] = {
     "continuity": "tuning numbers",
     "thread_stalled_sessions": "a number",
     "table_images_per_day": "a limit",
+    "picture_storage_mb": "a limit",
+    "r2_account_id": "which storage account, a setting; never listed",
+    "r2_access_key": "a key; never listed",
+    "r2_secret_key": "a key; never listed",
+    "r2_bucket": "which storage bucket, a setting; never listed",
     "admin_primary_id": "who is told of problems; never listed",
     "admin_secondary_id": "who is told of problems; never listed",
 }

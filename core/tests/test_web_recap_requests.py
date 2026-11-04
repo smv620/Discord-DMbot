@@ -22,6 +22,12 @@ from tests import recap_fixtures as fx
 from tests.test_recap_web import BOB, HEADERS, NOW, Base
 from tests.test_web_api import SITE, THURSDAY, FakeDiscord, settings
 
+
+def plain(got: dict[str, Any]) -> dict[str, Any]:
+    """A poll's answer without its `progress` (tested on its own, below)."""
+    return {k: v for k, v in got.items() if k != "progress"}
+
+
 POINTS = Sorted(
     style=("Shorter, please.",),
     corrections=("Mira did not draw her blade.",),
@@ -57,7 +63,8 @@ class TheQueue(WithRequests):
         rid = await self.send()
         self.assertRegex(rid, r"^[0-9a-f]{32}$")
         self.assertEqual(
-            await web.read_instructions(self.web, self.session, self.ref, rid), {"state": "waiting"}
+            plain(await web.read_instructions(self.web, self.session, self.ref, rid)),
+            {"state": "waiting"},
         )
         after = await self.state(self.one.id)
         self.assertEqual((after.tries, after.corrections), (before.tries, before.corrections))
@@ -98,6 +105,58 @@ class TheQueue(WithRequests):
                 await self.code(web.read_instructions(self.web, self.session, self.ref, odd)),
                 "not_found",
             )
+
+
+class TheProgress(WithRequests):
+    """Every wait shows its stage, its start and its last movement (#3355): times and codes only."""
+
+    async def test_a_waiting_note_shows_when_it_was_queued_and_has_not_moved(self) -> None:
+        rid = await self.send()
+        got = await web.read_instructions(self.web, self.session, self.ref, rid)
+        shown = got["progress"]
+        self.assertEqual((shown["stage"], shown["state"]), ("waiting", "running"))
+        self.assertEqual(shown["startedAt"], shown["updatedAt"])
+        self.assertLessEqual(abs(shown["serverNow"] - shown["startedAt"]), 60)
+        self.assertEqual(
+            set(shown), {"stage", "startedAt", "updatedAt", "serverNow", "state", "reason"}
+        )
+
+    async def test_a_note_the_bot_took_is_working_and_moved_when_it_was_taken(self) -> None:
+        rid = await self.send()
+        request = await self.requests.claim_next(THURSDAY.id)
+        assert request is not None
+        shown = (await web.read_instructions(self.web, self.session, self.ref, rid))["progress"]
+        self.assertEqual((shown["stage"], shown["state"]), ("working", "running"))
+        self.assertEqual(shown["updatedAt"], request.claimed_at // 1000)
+        self.assertGreaterEqual(shown["updatedAt"], shown["startedAt"])
+
+    async def test_a_note_nobody_took_for_minutes_reads_stalled(self) -> None:
+        rid = await self.send()
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute("UPDATE recap_requests SET created_at = created_at - 600")
+        got = await web.read_instructions(self.web, self.session, self.ref, rid)
+        self.assertEqual(
+            (got["progress"]["state"], got["progress"]["reason"]), ("stalled", "stalled")
+        )
+
+    async def test_a_taken_note_that_stops_moving_reads_stalled_after_ten_minutes(self) -> None:
+        rid = await self.send()
+        await self.requests.claim_next(THURSDAY.id)
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "UPDATE recap_requests SET created_at = created_at - 900,"
+                " claimed_at = claimed_at - 601000"
+            )
+        shown = (await web.read_instructions(self.web, self.session, self.ref, rid))["progress"]
+        self.assertEqual((shown["stage"], shown["state"]), ("working", "stalled"))
+
+    async def test_a_failed_note_says_why_in_a_code(self) -> None:
+        got = web._progress(
+            {"state": "failed", "error": "", "created_at": 100, "claimed_at": 130000}, "sort_failed"
+        )
+        self.assertEqual((got["state"], got["reason"]), ("failed", "sort_failed"))
+        done = web._progress({"state": "done", "created_at": 100, "claimed_at": 130000}, "x")
+        self.assertEqual((done["stage"], done["state"], done["reason"]), ("done", "done", None))
 
 
 class TheBot(WithRequests):
@@ -141,7 +200,7 @@ class TheBot(WithRequests):
         )
         sort.assert_not_awaited()
         got = await web.read_instructions(self.web, self.session, self.ref, await self.latest())
-        self.assertEqual(got, {"state": "failed", "error": "too_soon"})
+        self.assertEqual(plain(got), {"state": "failed", "error": "too_soon"})
 
     async def test_a_sort_that_fails_or_raises_is_failed_not_stuck(self) -> None:
         self.assertEqual(await self.work(sort=AsyncMock(return_value=None)), "sort_failed")
@@ -436,7 +495,7 @@ class TheRoutes(WithRequests):
         self.assertEqual(got.status_code, 202, got.text)
         rid = got.json()["requestId"]
         poll = await self.client.get(f"/me/recaps/{self.ref}/instructions/{rid}")
-        self.assertEqual((poll.status_code, poll.json()), (200, {"state": "waiting"}))
+        self.assertEqual((poll.status_code, plain(poll.json())), (200, {"state": "waiting"}))
 
     async def test_a_big_body_is_refused_by_its_declared_length_and_when_streamed(self) -> None:
         url = f"/me/recaps/{self.ref}/instructions"

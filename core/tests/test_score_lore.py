@@ -37,8 +37,9 @@ class TheScorer(unittest.TestCase):
         self.assertEqual(got["p05"], "kept kind=ok")  # a husband is a spouse
         self.assertEqual(got["p06"], "dropped:word_not_allowed")  # a free label the quote lacks
         self.assertEqual(got["p07"], "no_entry")  # an end that is no name of the read
-        # A pronoun whose name is two sentences back is held for the who-is-it check, not kept.
-        self.assertEqual(got["p08"], "held_for_who_is_it")
+        # A pronoun whose name is two sentences back is read by reaching back (#2757), not held
+        # for the who-is-it check (it was `held_for_who_is_it` before the reach).
+        self.assertEqual(got["p08"], "kept kind=ok")
         # A mutual feeling is two lines (one in the old word "enemy", one in the new): friend and
         # enemy are read as knows with a feeling (#3175), and the key scores its sign.
         self.assertEqual(got["p09"], "kept kind=ok feeling=ok")

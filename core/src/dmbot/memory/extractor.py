@@ -26,10 +26,13 @@ from typing import Protocol
 from dmbot.ai import AIOutOfFunds, Reply
 from dmbot.memory.claims import (
     INJECTION_REASON,
+    ITEM_REASON,
     NAME_REJECTED_REASON,
     NEW_NAME_LIMIT,
     NO_SPEAKER_REASON,
+    ONE_OFF_REASON,
     PLAN_REASON,
+    PREDICTION_REASON,
     SAME_ENTRY_REASON,
     SECRET_NAME_REASON,
     SESSION_CLAIMS,
@@ -100,6 +103,33 @@ Rules for what counts as a claim:
    own claim with the relationship "is" and the one word as the object. Example: subject
    "the old bridge", relationship "is", object "destroyed". If only a cause is told and
    no result is stated, give the cause as a claim and no state change.
+
+6. How two characters feel about each other is the relationship "knows" with the feeling as
+   the claim's "details", one of these words and no other: sworn enemy, hostile, distrusts,
+   wary, neutral, trusts, friendly, close, devoted. "Cerric and Belleros are friends" is two
+   claims, each way, with "friendly" (or "close" when it says so). "Strahd is Cerric's sworn
+   enemy" is one claim with "sworn enemy". Use the word only when a line says or plainly shows
+   the feeling; a plain meeting is "knows" with no details. Never use "ally", "friend" or
+   "enemy" as a relationship between two characters; two groups allied or at war stay "ally of"
+   and "enemy of".
+
+7. Where a character, creature or group is tied to a place, the relationship is one of these
+   words: "lives in" (or "lived in"), "works in" (or "worked in"), "comes from" (born or raised
+   there), or "was last seen in" (the line says they were seen, are, or went there). Use only
+   what the line says: a place they merely pass is no claim. An item is only ever "is kept in" a
+   place (or "was kept in"). A place inside a place, or an event held at a place, is "is in".
+
+8. Leave out ordinary gear with no identity of its own (a dagger, rations, a vial of poison) and
+   quantities of common things, even with an owner ("Mira's arrows"). An item is a claim only
+   when it is one particular thing: its own name (Heartseeker), one named owner's single thing
+   (Garret's sled), a description tying it to one story, or something the story turns on (a
+   shipment the villain is waiting for).
+
+9. A subject or object is a particular someone or something: a name, or a clear description of
+   one particular thing. Never a number or amount ("two", "a few copper"), a measure or a time
+   ("four miles per hour", "five days ago"), weather or scenery ("snow", "a blizzard"), a form of
+   address or a title said alone ("Friend", "Captain"), or a plain word for a crowd or a kind
+   ("the dogs", "people"). If a line only says one of those, it is no claim.
 
 For each claim say how it was said:
 - "dm_said": the DM narrating, or the DM speaking as a character.
@@ -175,6 +205,8 @@ def batches(said: Sequence[Said]) -> list[list[Said]]:
 # label), so they are counted as "other": the log gets counts, never words.
 _LOGGED_REASONS = {
     PLAN_REASON: "plan",
+    ONE_OFF_REASON: "one-off action",
+    PREDICTION_REASON: "prediction",
     INJECTION_REASON: "instruction",
     NO_SPEAKER_REASON: "no speaker",
     STOPPED_REASON: "stopped",
@@ -183,6 +215,7 @@ _LOGGED_REASONS = {
     SAME_ENTRY_REASON: "same entry",
     STATE_REASON: "bad condition",
     NAME_REJECTED_REASON: "not a name",
+    ITEM_REASON: "generic item",
     SECRET_NAME_REASON: "secret name",
 }
 
@@ -262,6 +295,7 @@ async def run(
     readings: bool = False,
     family_only: bool = False,
     imported: bool = False,
+    progress: Callable[[int, int], Awaitable[None]] | None = None,
 ) -> Report:
     """Read the session's lines and store what the AI found as proposals, all at once at the end
     (the linker picks the most-said new names across the whole session). `consenting` is asked
@@ -284,6 +318,9 @@ async def run(
 
     `imported`: the session was loaded from a file, so its readings carry no moment for the game
     clock's log to be read at (#3091).
+
+    `progress`: awaited with (batch n, of m) before each batch is sent (an import's progress card,
+    #3307); a failing one is logged by type and never stops the read.
 
     `family_only` (#2960; owner, 2026-10-29: families first, allies and enemies not yet): only a
     claim that says a family role ("is the niece of") is kept, whatever else the AI returned; the
@@ -319,6 +356,11 @@ async def run(
         rows = [(str(s.number), "DM" if s.user_id in dm_ids else "Player", s.text) for s in batch]
         speakers: dict[str, int | None] = {str(s.number): s.user_id for s in batch}
         report.calls += 1
+        if progress is not None:
+            try:
+                await progress(index + 1, len(work))
+            except Exception as exc:
+                log.warning("Story extractor: the progress note failed (%s)", type(exc).__name__)
         if count_call is not None:
             # Counted before the call, so a crash or restart mid-run cannot hide it from the
             # ceilings (the lines read are only noted when the claims are stored, at the end).

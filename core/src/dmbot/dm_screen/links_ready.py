@@ -58,6 +58,21 @@ def notice(counts: Mapping[str, int]) -> str:
     return head + "\nPress the button to keep or skip each one. Nothing goes to players."
 
 
+def family_notice(count: int) -> str:
+    """After a session (#3066): how many family links DMbot guessed from the DM's own are waiting
+    for a yes or no. A number only, never a name or which links. "Guessed" keeps it plain that
+    DMbot advises and the DM decides."""
+    if count <= 0:
+        return ""
+    noun = "family link" if count == 1 else "family links"
+    verb = "needs" if count == 1 else "need"
+    return (
+        f"👪 **{count} {noun}** DMbot guessed from your links {verb} your yes or no.\n"
+        "Press the button to keep or skip each one. Nothing is added until you say yes, and "
+        "players are not told."
+    )
+
+
 class ReadyButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
     template=rf"dmbot:linksready:{_ID}",

@@ -1075,6 +1075,8 @@ all NPCs:
 - "Bruno → desires → Shela": Bruno 1.0, Shela 0.95. Tran has no row.
 - "Shela → desires → Bruno": Bruno 0.3 (he hopes so), Shela 0.0 (she doesn't), Tran no row.
 
+"Only some characters" (the DM's pick on a connection or another name) may include NPCs, up to 60 of this campaign's confirmed characters (factions and other groups included), never a merged or rejected entry, a place, or another campaign's (#3197).
+
 A viewer is shown a statement when one of its characters has a row, with that character's confidence, so a guess
 is drawn as uncertain.
 
@@ -1158,6 +1160,16 @@ A test fails if a reader skips it, as `test_relation_readers.py` does for connec
 **9. Moving to it.** What is revealed today becomes known to every player character. What is secret today becomes
 known to nobody. Today's "Who knows this?" knowers carry over as they are. "The party" point of view is worked out
 from the player characters from then on, never written by itself.
+
+**A player character who joins later** (Supervisor, 2026-11-01, #2995) is given, in the same change, what the
+whole table was shown: every statement all the OTHER player characters know, at the least sure of theirs. Never a
+"some characters" list, a DM-only or NPC-only statement, or one put to sleep by a hide. With no other player
+character, what the flags show the players is given instead. A demoted player character keeps its rows. A
+character knows its own entry, in the party's view too. Migration 0316 adds the rows older campaigns lack (a
+statement every other player character holds, or the flags' answer for a campaign with one), and only adds. The
+lookup then asks the party's view which entries the players are shown (`Entity.unseen_by_players`); an entry still
+only suggested, or a campaign with no player character yet, stays on the flags. One test compares the flags with the
+party's view for every kind of entry as player characters join in turn.
 ## Build order (proposed)
 
 Each step is useful on its own and ships behind the existing phases.
@@ -1511,6 +1523,42 @@ Each step is useful on its own and ships behind the existing phases.
 TimeBot (Phase 4) makes game-time checks exact; until then facts are ordered by session,
 as today.
 
+### 9c. Importance: an internal rank for characters (owner, 2026-11-01; #3172)
+
+Every character has a rank from 0 to 5 that only decides which details a recap or PlotBot picks. It
+states no story fact, nobody sets it (no DM control), and it is never shown to a player, a card or a
+recap: "Major" beside a hidden villain would be a spoiler. The levels are the owner's: 0 background
+(anyone or anything met; kept so it can be raised later), 1 minor (a one-time encounter that interacts
+with a PC), 2 recurring (shown to the PCs more than once), 3 significant (mentors, rivals, mini-bosses,
+henchmen, recurring quest givers), 4 major (named companions, the main protagonists and antagonists,
+gods and royalty, even while their name is hidden), 5 player character.
+
+- **The floor is counted by code and never stored:** a player character is 5; a character heard in two
+  or more separate sessions (`memory_heard`) is at least 2. A god cannot be counted (it is an NPC "in its
+  words"), so it comes from PlotBot's reading.
+- **PlotBot's reading sets the rest:** one assessment at a time in `memory_importance` (append-only; the
+  newest is current; never below the floor). The importance call reads the DM's notes and DM-only facts
+  as well (a small recurring character may secretly be a god or a spy, and that is where it is written),
+  because the rank is never shown to a player, a card or a recap. Collecting ranks is live with no switch;
+  the one switch is for USING a rank to choose what goes in a recap (slice 4, off until the owner says
+  go; its default is that the recap writer sees only the party's view).
+  Connections set a floor from a lookup table (`importance_rank.CONNECTION_FLOORS`): 4 connected entries
+  give at least Minor, 8 Recurring, 12 Significant, never a count of Major or higher and never added to
+  another floor (the highest floor wins). A pair of live entries counts once however many connections
+  join it, a joined entry counts for the one it became (the union), and a lore, secret or not yet
+  revealed connection counts in full (the rank is never shown). An ended connection, a `plays` link and
+  a link The party makes count for nothing; a worked-out family link counts once the DM has confirmed it.
+  Every kind of entry has a rank, not only characters (places, items, events, groups), and a player
+  character's companion (`travels_with`) has a floor of Significant.
+- **Stored with codes, not words:** a fixed list of reasons (`importance_rank.BASES`), session and line
+  numbers. A person's erased words leave the rank alone. A backup carries the table in its own section
+  (`memory/importance_backup.py`): PlotBot's reading cannot be made again from a backup (the lines are not
+  in it), so a restore would otherwise drop an off-stage villain to the floor. Line numbers stay out.
+- **Built in slices (#3172):** 1 the table, the floor and the reader (`memory/importance_rank.py`, this
+  section); 2 the connection nudge; 3 PlotBot's call, behind a switch; 4 recaps pick by rank. Slice 5,
+  unnamed creatures as quiet rank-0 entries (the mouse in the dark), changes the rule in section 3 that
+  unnamed monsters are not entries; it is for play only and waits until slices 1 to 3 have merged.
+
 ### 9d. Knows and a reputation word instead of friend and enemy (owner, 2026-11-01; #3175)
 
 Two characters just **know** each other, and how well and how kindly is a **reputation**: the scale the
@@ -1531,9 +1579,9 @@ shows it); a word off the list is dropped and counted and the connection is kept
 - **Who sees the word.** The feeling word is the connection's own detail, so it follows that connection's
   knowers exactly as "enemy of" did (section 9b): a character who does not know the connection does not
   see the word, and a secret connection is secret with it. The reputation impression (Standing) is a
-  different thing and stays DM-only; nothing here makes one: the word is a proposal that waits with the
-  connection, and storing an impression on the DM's Keep press is a later slice, with the DM's word
-  always winning.
+  different thing and stays DM-only. The word is a proposal that waits with the connection; when the DM
+  presses Keep, the feeling is also stored as a story-sourced impression (weight 30, one Undo for both,
+  #3196), a later opposite feeling closes the earlier one, and a Standing the DM set is never overwritten.
 - **Not changed yet.** The session extractor and the ontology's "not this" lines for `knows`, `ally_of`
   and `enemy_of` still describe the old split; that is the next slice (#3181). The
   website shows a feeling-carrying `knows` as plain "knows" until its own reading learns the word.

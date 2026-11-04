@@ -21,6 +21,8 @@ DM_ONLY = "DM-side by design"
 READERS = {
     "memory/recall.py": CONFIRMED_ONLY + ": the walk behind NPC pages, table answers and recaps",
     "memory/importance.py": CONFIRMED_ONLY,
+    "memory/importance_rank.py": CONFIRMED_ONLY
+    + ": counts current, confirmed connections for a rank floor; never shown to a player",
     "memory/continuity.py": CONFIRMED_ONLY + ": the counts and the story's world",
     "memory/backstory_links.py": CONFIRMED_ONLY + ": pairs already known",
     "memory/worked_out.py": "proposes links; players see only confirmed ones, and a link from a "
@@ -39,6 +41,8 @@ READERS = {
     + ": reads kept and guess connections to put a difference "
     "into the campaign's words for PlotBot; ids and names, no transcript",
     "memory/report_store.py": "only checks that the connections of a difference still exist",
+    "memory/claims.py": "DM-side: reads only the facts made by kept described-person claims of "
+    "one session, to find the person they made; shows players nothing (#3431)",
     "memory/placing.py": "writes the proposed connections and their beliefs for the DM",
     "memory/gate.py": "the gate (#2995): reads each connection's ends to say which entries a "
     "viewer learns, and only for connections its list says that viewer knows",
@@ -100,6 +104,11 @@ STORE = {
     "recheck_definitions": CONFIRMED_ONLY,
     "add_relation_in": "writes: `placing` makes a guess connection here (fresh, leave, made_by)",
     "update_relation": "writes: the DM's Keep or No",
+    "tag_ties": "confirmed ties for the DM's private same-person question, secret ones marked; "
+    "the tag never shows a secret tie to a player",
+    "group_hints": "confirmed member_of ties for the DM's name question; names only",
+    "_confirm_group_memberships": "writes: confirms the DM's own proposed member_of; no reading",
+    "_settle_whereabouts": "writes: ends an item's other whereabouts; shows players nothing",
     "pinned_connections": CONFIRMED_ONLY,
     "_view": CONFIRMED_ONLY + ": the party's and the DM's views",
     "relation": DM_ONLY + ": one connection by id",
