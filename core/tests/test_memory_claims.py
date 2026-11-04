@@ -392,6 +392,69 @@ class Stored(ConfirmedMemoryTest):
         self.assertEqual((row["subject"], row["status"]), ("Mira", "proposed"))
         self.assertTrue(row["lines"])  # its quote is kept
 
+    async def _two_miras(self) -> tuple[str, str]:
+        """Two entries with the very same main name (#3238): no wording tells them apart."""
+        one = await self.add("Mira", type="character", description="the ferrywoman")
+        two = await self.add("Mira", type="character", description="a smuggler's daughter")
+        return one, two
+
+    async def _kept(self) -> str:
+        await self.add("Tavin", type="player_character")
+        await self._two_miras()
+        await self.propose(said("Tavin", "is the sister of", "Mira"))
+        async with self.db.guild(GUILD_A) as conn:
+            cur = await conn.execute(
+                "SELECT id FROM memory_claims WHERE reason = %s", (claims.UNPLACED_REASON,)
+            )
+            (row,) = await cur.fetchall()
+        return str(row["id"])
+
+    async def test_which_one_tells_two_entries_with_the_same_name_apart(self) -> None:
+        claim_id = await self._kept()
+        (choice,) = await self.claims.which_one(GUILD_A, self.c, claim_id)
+        self.assertEqual((choice.words, choice.side), ("Mira", "object"))
+        self.assertEqual(
+            sorted((o.name, o.kind, o.note) for o in choice.entries),
+            [
+                ("Mira", "character", "a smuggler's daughter"),
+                ("Mira", "character", "the ferrywoman"),
+            ],
+        )
+
+    async def test_picking_records_the_id_and_the_ordinary_keep_uses_it(self) -> None:
+        claim_id = await self._kept()
+        (choice,) = await self.claims.which_one(GUILD_A, self.c, claim_id)
+        smuggler = next(o.id for o in choice.entries if o.note.startswith("a smuggler"))
+        picked = await self.claims.pick_one(GUILD_A, self.c, claim_id, "object", smuggler)
+        self.assertEqual(
+            (picked.object_picked, picked.reason, picked.object), (smuggler, "", "Mira")
+        )
+        self.assertEqual(await self.claims.which_one(GUILD_A, self.c, claim_id), [])
+        self.assertEqual(await self.claims.unplaced_count(GUILD_A, self.c), 0)
+        done = await self.claims.confirm(GUILD_A, self.c, claim_id, opted_in={7})
+        self.assertEqual(done.claim.status, "confirmed")
+        facts = await self.memory.relations(GUILD_A, self.c, entity_id=smuggler)
+        self.assertEqual(len(facts), 1)  # the fact is about the one picked, not the other Mira
+
+    async def test_a_choice_that_is_not_one_of_the_entries_is_refused_and_changes_nothing(
+        self,
+    ) -> None:
+        claim_id = await self._kept()
+        with self.assertRaises(MemoryRuleError):
+            await self.claims.pick_one(GUILD_A, self.c, claim_id, "object", self.bram)
+        with self.assertRaises(MemoryRuleError):
+            await self.claims.pick_one(GUILD_A, self.c, claim_id, "nonsense", self.bram)
+        (choice,) = await self.claims.which_one(GUILD_A, self.c, claim_id)
+        self.assertEqual(len(choice.entries), 2)
+
+    async def test_a_picked_id_in_a_backup_survives_and_an_older_file_has_none(self) -> None:
+        claim_id = await self._kept()
+        (choice,) = await self.claims.which_one(GUILD_A, self.c, claim_id)
+        await self.claims.pick_one(GUILD_A, self.c, claim_id, "object", choice.entries[0].id)
+        rows = await self.claims.get(GUILD_A, self.c, claim_id)
+        assert rows is not None
+        self.assertEqual(rows.object_picked, choice.entries[0].id)
+
     async def test_the_claims_kept_for_an_answer_are_capped_for_a_session(self) -> None:
         await self.add("Mira", type="player_character")
         await self._two_maras()
