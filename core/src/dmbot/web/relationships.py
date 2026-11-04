@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import re
-from collections.abc import Callable, Collection
+from collections.abc import Callable, Collection, Mapping
 from typing import Any
 
 from dmbot.db import Database
@@ -74,17 +74,26 @@ def who_knows(link: dict[str, Any]) -> dict[str, Any]:
 
 
 def edges_from(
-    rows: list[dict[str, Any]], *, can_edit: bool, is_dm: bool = False
+    rows: list[dict[str, Any]],
+    *,
+    can_edit: bool,
+    is_dm: bool = False,
+    kinds: Mapping[str, str] | None = None,
 ) -> list[dict[str, Any]]:
     """The door's connections grouped one edge for each pair of names (`a` the smaller ID), each
     with its `label` (the words of the label connection), `more` (how many others there are) and
     every connection as `links`: {id, words, secret, revealed, direction, kind}. `direction` says
     which way the words read between the pair: "a-b", "b-a", or "both" for the ones that read
     the same either way. A connection's `secret` (and whether it is `revealed` yet) is only sent
-    to a DM (the door sends none to anyone else). `kind` is for the map's colours (#2942)."""
+    to a DM (the door sends none to anyone else). `kind` is for the map's colours (#2942).
+    `kinds` maps a name's id to its kind (from the same answer's `nodes`), so a place tie reads
+    "lives in" or "was last seen in" for a character and keeps "is in" for a place (#3363). A
+    subject missing from it (a kind the gate left out) reads the old, safe "is in"."""
+    kinds = kinds or {}
     pairs: dict[tuple[str, str], list[dict[str, Any]]] = {}
     for row in rows:
         a, b = sorted((str(row["a"]), str(row["b"])))
+        subject_kind = kinds.get(str(row["a"]), "")  # (the words read from row["a"])
         directional = bool(row.get("directional", False))
         if reads_both_ways(str(row["predicate"]), str(row["detail"] or ""), directional):
             direction = "both"
@@ -93,11 +102,21 @@ def edges_from(
         pairs.setdefault((a, b), []).append(
             {
                 "id": row["id"],
-                "words": link_words(str(row["predicate"]), str(row["detail"] or ""), directional),
+                "words": link_words(
+                    str(row["predicate"]),
+                    str(row["detail"] or ""),
+                    directional,
+                    subject_kind,
+                ),
                 # how it reads from the second name when that differs ("has a niece", "has as a
                 # member"), else None; every connection that has a reading back sends it (#2666),
                 # so the page can write each line from the name in the middle
-                "back": back_words(str(row["predicate"]), str(row["detail"] or ""), directional),
+                "back": back_words(
+                    str(row["predicate"]),
+                    str(row["detail"] or ""),
+                    directional,
+                    subject_kind,
+                ),
                 "secret": bool(row["secret"]),  # (the real flag; masked on the way out)
                 "revealed": bool(row.get("revealed", True)),  # (the party believes it; masked too)
                 "pinned": bool(row.get("pinned", False)),  # (the DM's 📌; only a DM ever sees it)
@@ -417,6 +436,7 @@ def page_of(got: dict[str, Any]) -> dict[str, Any]:
             # "Who knows this?" is the DM's alone, in the full view: a player who peeks sees
             # everything the DM screen shows, but not which characters know what (#2935)
             is_dm=bool(got["canEdit"]) and bool(got["seesAll"]),
+            kinds={str(n["id"]): str(n.get("kind") or "") for n in got["nodes"]},
         ),
         "truncated": bool(got["truncated"]),
         "maxHops": MAX_HOPS,

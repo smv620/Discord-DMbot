@@ -30,7 +30,9 @@ from dmbot.memory.claims import (
     NAME_REJECTED_REASON,
     NEW_NAME_LIMIT,
     NO_SPEAKER_REASON,
+    ONE_OFF_REASON,
     PLAN_REASON,
+    PREDICTION_REASON,
     SAME_ENTRY_REASON,
     SECRET_NAME_REASON,
     SESSION_CLAIMS,
@@ -197,6 +199,8 @@ def batches(said: Sequence[Said]) -> list[list[Said]]:
 # label), so they are counted as "other": the log gets counts, never words.
 _LOGGED_REASONS = {
     PLAN_REASON: "plan",
+    ONE_OFF_REASON: "one-off action",
+    PREDICTION_REASON: "prediction",
     INJECTION_REASON: "instruction",
     NO_SPEAKER_REASON: "no speaker",
     STOPPED_REASON: "stopped",
