@@ -1397,6 +1397,9 @@ class SuggestionReview(_Menu):
         campaign = await _campaign_for(interaction, self.campaign_id)
         if campaign is None:
             return
+        if not sees_secrets(campaign, interaction.user.id):  # DM only, not a server manager
+            await _tell(interaction, logic.NO_CAMPAIGN_ACCESS)
+            return
         transcripts = getattr(interaction.client, "transcripts", None)
         await _answer_first(interaction)
         held = getattr(interaction.client, "lore_context", None)
@@ -1404,19 +1407,23 @@ class SuggestionReview(_Menu):
         if held is not None and sees_secrets(campaign, interaction.user.id):
             lore = str(held.get(campaign.guild_id, self.entity_id))
             source = str(held.source(campaign.guild_id, self.entity_id))
-        if transcripts is None:
-            text = name_places.NOTHING_KEPT
-        else:
-            text = await name_places.where_said(
-                interaction.guild,
-                transcripts,
-                campaign.guild_id,
-                self.refs,
-                self.spellings,
-                await cast(Any, interaction.client).consent.consenting(campaign.guild_id),
-                lore=lore,
-                lore_source=source,
-            )
+        try:
+            if transcripts is None:
+                text = name_places.NOTHING_KEPT
+            else:
+                text = await name_places.where_said(
+                    interaction.guild,
+                    transcripts,
+                    campaign.guild_id,
+                    self.refs,
+                    self.spellings,
+                    await cast(Any, interaction.client).consent.consenting(campaign.guild_id),
+                    lore=lore,
+                    lore_source=source,
+                )
+        except Exception:
+            log.exception("Couldn't show where a name was said")
+            text = name_places.TRY_AGAIN
         log.info("Showed where a name was said: %d places kept", len(self.refs))
         await interaction.followup.send(text, ephemeral=True)
 

@@ -19,7 +19,7 @@ from dmbot.transcript.models import Line
 from dmbot.transcript.store import Around, TranscriptStore
 from dmbot.ui import logic, name_places
 from dmbot.ui import names as ui
-from tests.test_memory_names import DM, GUILD, PLAYER, NamesTest
+from tests.test_memory_names import DM, GUILD, MANAGER, PLAYER, NamesTest
 
 START = 1_700_000_000
 SAID = "we ride to meet Hrothgar at the old gate before dawn"
@@ -220,6 +220,21 @@ class Cards(NamesTest):
         self.assertEqual(it.response.sent[-1][0], logic.NO_CAMPAIGN_ACCESS)  # (nothing quoted)
         self.assertNotIn("Session", it.response.sent[-1][0])
 
+    async def test_a_server_manager_who_is_not_a_dm_is_refused(self) -> None:
+        await self.said(4)
+        view, _text = await self.card()
+        it = self.it(MANAGER)
+        await self.where(view).callback(it)
+        self.assertEqual(it.response.sent[-1][0], logic.NO_CAMPAIGN_ACCESS)
+
+    async def test_the_count_and_lore_survive_long_lines(self) -> None:
+        wall = "word " * 200
+        await self.said(10, f"{wall}Hrothgar{wall}")
+        view, _text = await self.card()
+        it = self.it()
+        await self.where(view).callback(it)
+        self.assertTrue(it.response.sent[-1][0].startswith("Heard"))
+
     async def test_a_removed_line_says_so(self) -> None:
         await self.said(2)
         view, _text = await self.card()
@@ -350,8 +365,7 @@ class Cards(NamesTest):
         view, text = await self.card()
         self.assertLessEqual(len(text), MESSAGE_MAX)
         it = self.it()
-        button = next(b for b in view.children if getattr(b, "label", "") == "🔎 More places")
-        await button.callback(it)
+        await self.where(view).callback(it)
         self.assertLessEqual(len(it.response.sent[-1][0]), MESSAGE_MAX)
 
     async def test_a_suggestion_with_no_pointers_is_the_card_it_was(self) -> None:
