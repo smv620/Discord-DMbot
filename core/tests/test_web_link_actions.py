@@ -1606,6 +1606,21 @@ class WhatPeopleBelieve(Editing):
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
         self.recorded = {7}
+        await self.agree(7)  # (the door reads who is recorded now from the consent table, #3462)
+
+    async def agree(self, user: int) -> None:
+        async with self.db.guild(self.g) as conn:
+            await conn.execute(
+                "INSERT INTO consent (guild_id, user_id, granted_at) VALUES (%s, %s, 0)"
+                " ON CONFLICT DO NOTHING",
+                (self.g, user),
+            )
+
+    async def stop(self, user: int) -> None:
+        async with self.db.guild(self.g) as conn:
+            await conn.execute(
+                "DELETE FROM consent WHERE guild_id = %s AND user_id = %s", (self.g, user)
+            )
 
     async def reading(
         self,
@@ -1672,6 +1687,32 @@ class WhatPeopleBelieve(Editing):
             ("accusation", "Rook", "Mira Voss knows Far Hall", "fairly sure", True),
         )
         self.assertEqual((got["counts"], got["capped"]), ({"readings": 1}, False))
+
+    async def test_a_reading_from_someone_who_stopped_being_recorded_is_left_out(self) -> None:
+        """#3462: the list and its count keep only readings whose every speaker is recorded now, as
+        Discord's list does, and the reading comes back if they agree again."""
+        await self.reading()
+        self.assertEqual((await self.listed())["counts"], {"readings": 1})
+        await self.stop(7)
+        gone = await self.listed()
+        self.assertEqual((gone["readings"], gone["counts"]), ([], {"readings": 0}))
+        await self.agree(7)
+        back = await self.listed()
+        self.assertEqual((len(back["readings"]), back["counts"]), (1, {"readings": 1}))
+
+    async def test_the_website_and_discord_count_the_same_readings_with_a_speaker_gone(
+        self,
+    ) -> None:
+        """The bot's own count (`readings_waiting`, opted_in = who is recorded now) equals the
+        website's, with a recorded speaker and with one who stopped."""
+        await self.reading()
+        for recorded in ({7}, set()):
+            self.recorded = recorded
+            if not recorded:
+                await self.stop(7)
+            site = (await self.listed())["counts"]["readings"]
+            bot = await self.claims.readings_waiting(self.g, self.one.id, opted_in=recorded)
+            self.assertEqual((site, bot), (len(recorded), len(recorded)))
 
     async def test_only_a_dm_reads_them_or_answers(self) -> None:
         ident = await self.reading()
