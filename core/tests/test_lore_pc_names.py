@@ -20,10 +20,16 @@ def named(*names: str) -> list[Found]:
 
 class ThePlayerCharactersFamily(unittest.TestCase):
     def run_it(
-        self, links: list[Connection], names: list[Found] | None = None, known: tuple[str, ...] = ()
+        self,
+        links: list[Connection],
+        names: list[Found] | None = None,
+        known: tuple[str, ...] = (),
+        spellings: tuple[str, ...] = (),
     ) -> tuple[list[str], Counter[str]]:
         lost: Counter[str] = Counter()
-        made = pc_new_names(links, names or named("Cerric Vale"), known, {"cerric vale"}, lost)
+        made = pc_new_names(
+            links, names or named("Cerric Vale"), known, {"cerric vale"}, lost, spellings=spellings
+        )
         return [m.name for m in made], lost
 
     def test_a_name_unlisted_next_to_a_player_character_is_added(self) -> None:
@@ -47,6 +53,27 @@ class ThePlayerCharactersFamily(unittest.TestCase):
     def test_a_description_or_a_plain_word_is_not_a_name(self) -> None:
         links = [link("Cerric Vale", x) for x in ("the sister", "a hooded figure", "five days ago")]
         self.assertEqual(self.run_it(links)[0], [])
+
+    def test_a_secret_or_new_spelling_of_a_known_name_is_not_a_new_name(self) -> None:
+        links = [link("Cerric Vale", "The Raven", "knows")]
+        self.assertEqual(self.run_it(links, spellings=("the raven",))[0], [])
+
+    def test_a_first_name_of_a_listed_name_is_that_name_not_a_second_one(self) -> None:
+        both = named("Cerric Vale", "Ulric Vale")
+        self.assertEqual(self.run_it([link("Cerric Vale", "Ulric")], both)[0], [])
+
+    def test_only_a_tie_between_two_people_can_add_a_name(self) -> None:
+        for how in ("owns", "located_in", "member_of", "contains", "leads", "founded"):
+            self.assertEqual(self.run_it([link("Cerric Vale", "Dawnbreaker", how)])[0], [], how)
+        serves = self.run_it([link("Cerric Vale", "Dawnbreaker", "serves")])[0]
+        self.assertEqual(serves, ["Dawnbreaker"])
+
+    def test_a_phrase_is_not_a_name(self) -> None:
+        for end in (
+            "Cerric's brother", "Cerric's", "Ulric, the smith", "Ulric (his twin)",
+            "Her mother Mara", "Route 66",
+        ):  # fmt: skip
+            self.assertEqual(self.run_it([link("Cerric Vale", end)])[0], [], end)
 
     def test_the_same_name_in_two_ties_is_added_once(self) -> None:
         made, _ = self.run_it([link("Cerric Vale", "Ulric"), link("Ulric", "Cerric Vale", "knows")])
