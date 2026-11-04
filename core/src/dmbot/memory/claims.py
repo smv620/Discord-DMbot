@@ -1505,8 +1505,29 @@ class ClaimStore:
             found["names"] = len(pending)
         return found
 
-    async def waiting_for_check(
+    async def readings_waiting(
         self, guild_id: int, campaign_id: str, *, opted_in: Collection[int]
+    ) -> int:
+        """How many readings (what people believe, or a suspected lie) wait for the DM, counted
+        without changing anything (#3435). The same rows the website's readings list counts
+        (`dmbot_web_readings`), and only those whose every speaker is recorded now."""
+        async with self._store._read(guild_id, campaign_id) as scope:
+            cur = await scope.conn.execute(
+                "SELECT count(*) AS n FROM memory_claims WHERE guild_id = %s AND campaign_id = %s"
+                " AND status = 'proposed' AND reading IS NOT NULL AND how <> 'plan'"
+                " AND cardinality(speaker_ids) > 0 AND speaker_ids <@ %s::bigint[]"
+                " AND reason <> %s",
+                (*scope.ids, list(opted_in), WAITING_NAME_REASON),
+            )
+            row = await cur.fetchone()
+        return int(row["n"]) if row else 0
+
+    async def waiting_for_check(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        *,
+        opted_in: Collection[int],
     ) -> int:
         """How many proposed claims the DM could answer now, counted WITHOUT changing anything:
         `counts` first wipes the claims that cite someone not recorded now, which is right after

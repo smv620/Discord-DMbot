@@ -5,11 +5,13 @@
 // that part, so a DM always sees where they are and what else is next to it (#2985). It replaces the old
 // "← <campaign>" back links, so nobody is lost. The Settings tab is only for the campaign's game
 // masters, as the API names them (a missing or new role shows no Settings: it fails closed).
+import type { ComponentType } from "preact";
 import { useEffect, useState } from "preact/hooks";
 
 import { campaignPage as words } from "../content/campaign-page";
 import { type AccountApi, type CampaignPage } from "./api";
 import { campaignHref } from "./campaignLinks";
+import { QUESTIONS_LIVE } from "../content/questions-switch";
 import { type CampaignGroup, type CampaignPageKey, GROUP_OF, sectionPages } from "./campaignSections";
 
 export type { CampaignGroup, CampaignPageKey };
@@ -58,6 +60,15 @@ export default function CampaignNav({
       live = false;
     };
   }, [api, campaignRef]);
+
+  // The link to the Questions page is fetched only while its switch is on and only for a game master, so the page
+  // does not carry it (the weight budget): the switch is tested here so the build drops the import while it is off.
+  const [Questions, setQuestions] = useState<ComponentType<{ api: AccountApi; show: boolean }> | null>(null);
+  const isDmNow = found?.role === "owner" || found?.role === "co-dm";
+  useEffect(() => {
+    if (!QUESTIONS_LIVE || !isDmNow) return;
+    void import("./QuestionsLink").then((m) => setQuestions(() => m.default));
+  }, [isDmNow]);
 
   const campaign = name || found?.name || words.thisCampaign;
   // Settings is a part of the campaign's own page: its tab is the marked one once the person has gone there (#settings).
@@ -118,6 +129,8 @@ export default function CampaignNav({
           ))}
         </ul>
       </nav>
+      {/* (the switch is tested here so the build drops the link and its words while it is off: the page stays within its weight budget) */}
+      {Questions && <Questions api={api} show={isDm} />}
       {inPart.length > 1 && (
         <nav aria-label={words.pagesLabel}>
           <ul class="tabs subtabs">
