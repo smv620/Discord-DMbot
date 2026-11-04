@@ -32,6 +32,7 @@ import {
   type RecordingEntry,
 } from "./api";
 import CampaignDelete from "./CampaignDelete";
+import { QUESTIONS_LIVE } from "../content/questions-switch";
 import QuestionsLink from "./QuestionsLink";
 import { takeDeleted } from "./deleted-notice";
 import { campaignHref } from "./campaignLinks";
@@ -962,7 +963,7 @@ function CampaignsSection({ me, api }: { me: Me; api: AccountApi }) {
       )}
       {RECAPS_LIVE && me.campaigns.some((c) => c.role !== "player") && <a href="/account/recaps">{recapCard.linkToList}</a>}
       {WEB_RESTORE_LIVE && <a href="/account/restore">{restoreLink}</a>}
-      <QuestionsLink api={api} show={me.campaigns.some((c) => c.role !== "player")} />
+      {QUESTIONS_LIVE && <QuestionsLink api={api} show={me.campaigns.some((c) => c.role !== "player")} />}
     </section>
   );
 }
