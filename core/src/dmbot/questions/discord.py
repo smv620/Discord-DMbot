@@ -206,7 +206,8 @@ async def send_lists(
 ) -> None:
     """Make or refresh the Questions message for each of these campaigns in the person's private
     chat and say where it is. The caller has checked the person is a DM of every one."""
-    await interaction.response.defer(ephemeral=True)
+    if not interaction.response.is_done():  # the 📬 button has already answered
+        await interaction.response.defer(ephemeral=True)
     links: list[str] = []
     for campaign in campaigns:
         try:

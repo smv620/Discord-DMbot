@@ -48,6 +48,11 @@ LABELS: Final[dict[str, str]] = {
     RULES: "House rule updates",
 }
 
+# The kinds the DM is told about and counted in the total. "Family ties" is still counted and stored
+# (the website reads it) but is left out here until there is a screen that answers it (#3463): a
+# question nobody can answer must not keep a reminder going.
+SHOWN: Final[tuple[str, ...]] = tuple(k for k in ORDER if k != FAMILY)
+
 # Kinds whose questions also leave by themselves (they expire), so an answer is counted from the
 # answers given (`settled`) and never from the open count going down.
 EXPIRING: Final[frozenset[str]] = frozenset({HEARD})

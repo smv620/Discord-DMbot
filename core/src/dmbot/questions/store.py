@@ -51,7 +51,9 @@ class QuestionCounts:
 
 
 def total(counts: Mapping[str, Counted]) -> int:
-    return sum(c.n for c in counts.values())
+    from dmbot.questions import kinds
+
+    return sum(c.n for k, c in counts.items() if k in kinds.SHOWN)
 
 
 def answered(before: Mapping[str, Counted], after: Mapping[str, Counted]) -> bool:
@@ -63,6 +65,8 @@ def answered(before: Mapping[str, Counted], after: Mapping[str, Counted]) -> boo
     from dmbot.questions import kinds
 
     for kind, now in after.items():
+        if kind not in kinds.SHOWN:
+            continue
         was = before.get(kind)
         if was is None:
             continue
@@ -76,4 +80,8 @@ def answered(before: Mapping[str, Counted], after: Mapping[str, Counted]) -> boo
 
 def grew(before: Mapping[str, Counted], after: Mapping[str, Counted]) -> bool:
     """Whether a new question arrived: some kind waits more than before."""
-    return any(now.n > (before[k].n if k in before else 0) for k, now in after.items())
+    from dmbot.questions import kinds
+
+    return any(
+        now.n > (before[k].n if k in before else 0) for k, now in after.items() if k in kinds.SHOWN
+    )

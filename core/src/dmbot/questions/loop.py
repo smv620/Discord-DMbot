@@ -19,7 +19,7 @@ from typing import Protocol
 
 from dmbot.campaigns.models import Campaign
 from dmbot.questions import counts as counting
-from dmbot.questions import messages
+from dmbot.questions import kinds, messages
 from dmbot.questions.counts import Counted, Sources
 from dmbot.questions.notices import NoticeStore
 from dmbot.questions.store import QuestionCounts, answered, grew, total
@@ -121,7 +121,9 @@ class Round:
         now_counts = await counting.count_kinds(self.sources, g, c, only=only)
         merged: Mapping[str, Counted] = {**before, **now_counts}  # a kind that failed keeps its old
         self.latest[(g, c)] = merged
-        changed = {k: v.n for k, v in merged.items()} != {k: v.n for k, v in before.items()}
+        changed = {k: v.n for k, v in merged.items() if k in kinds.SHOWN} != {
+            k: v.n for k, v in before.items() if k in kinds.SHOWN
+        }
         n = total(merged)
         was_answered, new_question = answered(before, merged), grew(before, merged)
         recording = await self.sender.recording(g, c) if self.notify else False

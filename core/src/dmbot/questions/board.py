@@ -13,13 +13,13 @@ import discord
 
 from dmbot.questions import kinds
 from dmbot.questions.counts import Counted
+from dmbot.questions.store import total
 
 EMPTY = "Nothing waiting for you. 🎉"
 SITE_WORD = "answer on the website"
 SCREEN_WORD = "answer on the DM screen"
 # Where a kind is answered when there is no button for it here.
 ELSEWHERE: dict[str, str] = {
-    kinds.FAMILY: SITE_WORD,
     kinds.READINGS: SITE_WORD,
     kinds.PLOT: SITE_WORD,
     kinds.RECAP_APPROVE: SCREEN_WORD,
@@ -39,7 +39,7 @@ def text(campaign: str, found: Mapping[str, Counted]) -> str:
     """The message: a heading with the campaign, then a line for each kind that waits."""
     head = f"❓ **Questions for you** about {text_name(campaign)}"
     lines = []
-    for kind in kinds.ORDER:
+    for kind in kinds.SHOWN:
         count = found.get(kind)
         if count is None or count.n <= 0:
             continue
@@ -133,6 +133,8 @@ class QuestionsButton(
         from dmbot.questions.discord import NOT_A_DM, NOT_AVAILABLE, send_lists
         from dmbot.ui.dmbot_commands import _tell
 
+        # Answer Discord first: the campaign is read from the database next (3 seconds to answer).
+        await interaction.response.defer(ephemeral=True)
         bot: Any = interaction.client
         guild = interaction.guild
         campaign = await bot.campaigns.get(guild.id, self.campaign_id) if guild else None
@@ -158,4 +160,4 @@ async def total_for(interaction: discord.Interaction, campaign_id: str) -> int |
         stored = await round_.counts.read(guild.id, campaign_id)
     except Exception:
         return None
-    return sum(c.n for c in stored.values()) if stored else None
+    return total(stored) if stored else None

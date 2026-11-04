@@ -45,7 +45,7 @@ class TheText(unittest.TestCase):
         self.assertIn("• Plot check: **2** (answer on the website)", text)
         self.assertIn("• Recaps to approve: **1** (answer on the DM screen)", text)
         self.assertIn("• House rule updates: **1** (answer on the DM screen)", text)
-        self.assertIn("• Family ties: **1** (answer on the website)", text)
+        self.assertNotIn("Family ties", text)  # nothing answers it yet (#3463)
         self.assertIn("• What people believe: **4** (answer on the website)", text)
 
     def test_a_campaign_name_cannot_change_the_message(self) -> None:
@@ -245,7 +245,25 @@ class TheCardButtonsPress(unittest.IsolatedAsyncioTestCase):
         bot.question_round = round_
         bot.campaigns.get = AsyncMock(return_value=campaign)
         it = MagicMock(client=bot, guild=MagicMock(id=GUILD), user=MagicMock(id=user))
+        it.response.defer = AsyncMock()
         return it
+
+    async def test_the_button_answers_discord_before_it_reads_the_campaign(self) -> None:
+        from unittest.mock import AsyncMock, patch
+
+        it = self.interaction(7, object())
+        order: list[str] = []
+        it.response.defer = AsyncMock(side_effect=lambda **_: order.append("defer"))
+        real = it.client.campaigns.get
+
+        async def read(*args: object) -> object:
+            order.append("read")
+            return await real(*args)
+
+        it.client.campaigns.get = read
+        with patch("dmbot.questions.discord.send_lists", AsyncMock()):
+            await board.QuestionsButton(CAMPAIGN).callback(it)
+        self.assertEqual(order[:2], ["defer", "read"])
 
     async def test_a_player_is_told_it_is_not_theirs(self) -> None:
         from unittest.mock import AsyncMock, patch
@@ -277,3 +295,11 @@ class TheCardButtonsPress(unittest.IsolatedAsyncioTestCase):
         broken = SimpleNamespace(counts=SimpleNamespace(read=AsyncMock(side_effect=RuntimeError)))
         self.assertIsNone(await board.total_for(self.interaction(7, broken), CAMPAIGN))
         self.assertIsNone(await board.total_for(self.interaction(7, None), CAMPAIGN))
+
+    async def test_family_ties_are_left_out_of_the_total(self) -> None:
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+
+        counts = SimpleNamespace(read=AsyncMock(return_value=found(names=2, family=3)))
+        it = self.interaction(7, SimpleNamespace(counts=counts))
+        self.assertEqual(await board.total_for(it, CAMPAIGN), 2)
