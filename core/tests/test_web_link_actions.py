@@ -1544,6 +1544,9 @@ class TheReveal(Editing):
         answer = await self.reveal("link", made.value[0].id)
         self.assertEqual([o.error for o in await self.apply_all()], ["name_unnamed"])
         self.assertEqual(await self.answer_error(answer), "name_unnamed")
+        held = await self.memory.relation(self.g, self.one.id, made.value[0].id)
+        assert held is not None
+        self.assertTrue(held.unrevealed)
 
     async def test_a_dm_reveals_a_name_and_undo_hides_it_again(self) -> None:
         name = await self.add("Hidden Tower", "place")

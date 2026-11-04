@@ -221,6 +221,7 @@ async def _live_ids(scope: Scope, among: Collection[str] | None = None) -> set[s
 
 
 PARTY_NAME = "The party"
+# (`web_actions` matches this text to give the website its own refusal word: reword both together.)
 NAMES_NOT_SHOWN = "Show both names to the players first, then this connection."
 LED_TO_KINDS = "A clue, an event or a thread can lead to a thread or an event."
 LED_TO_CONFIRM = "One of them isn't confirmed yet. Confirm it, then try again."
