@@ -10,6 +10,7 @@ import { useEffect, useState } from "preact/hooks";
 import { campaignPage as words } from "../content/campaign-page";
 import { type AccountApi, type CampaignPage } from "./api";
 import { campaignHref } from "./campaignLinks";
+import QuestionsLink from "./QuestionsLink";
 import { type CampaignGroup, type CampaignPageKey, GROUP_OF, sectionPages } from "./campaignSections";
 
 export type { CampaignGroup, CampaignPageKey };
@@ -118,6 +119,7 @@ export default function CampaignNav({
           ))}
         </ul>
       </nav>
+      <QuestionsLink api={api} show={isDm} />
       {inPart.length > 1 && (
         <nav aria-label={words.pagesLabel}>
           <ul class="tabs subtabs">
