@@ -24,7 +24,7 @@ from dmbot.web import sessions
 from tests.test_recap_web import BOB, NOW
 from tests.test_transcript_cleaner import alias, entity, lookup
 from tests.test_web_api import ALICE, THURSDAY
-from tests.test_web_recap_requests import WithRequests
+from tests.test_web_recap_requests import WithRequests, plain
 
 CLIP = b"\x1a\x45\xdf\xa3 not really audio, the doors do not decode it"
 
@@ -85,7 +85,8 @@ class TheDoors(WithClips):
         rid = await self.send_clip()
         self.assertRegex(rid, r"^[0-9a-f]{32}$")
         self.assertEqual(
-            await web.read_voice(self.web, self.session, self.ref, rid), {"state": "waiting"}
+            plain(await web.read_voice(self.web, self.session, self.ref, rid)),
+            {"state": "waiting"},
         )
         self.assertEqual(await self.clip_in_row(rid), CLIP)
 
@@ -229,7 +230,7 @@ class TheBot(WithClips):
         self.assertEqual(outcome, "done")
         self.assertIsNone(await self.clip_in_row(rid))
         self.assertEqual(
-            await web.read_voice(self.web, self.session, self.ref, rid),
+            plain(await web.read_voice(self.web, self.session, self.ref, rid)),
             {"state": "done", "text": "Mira did not draw her blade."},
         )
 
@@ -248,7 +249,7 @@ class TheBot(WithClips):
             self.assertEqual(outcome, expected)
             self.assertIsNone(await self.clip_in_row(rid), expected)
             got = await web.read_voice(self.web, self.session, self.ref, rid)
-            self.assertEqual(got, {"state": "failed", "error": expected})
+            self.assertEqual(plain(got), {"state": "failed", "error": expected})
 
     async def test_a_retaken_claim_is_not_billed_and_changes_nothing(self) -> None:
         import dataclasses
@@ -270,7 +271,8 @@ class TheBot(WithClips):
         meter.assert_not_awaited()  # the row was not its to finish, so no minutes either
         self.assertEqual(await self.clip_in_row(rid), CLIP)
         self.assertEqual(
-            await web.read_voice(self.web, self.session, self.ref, rid), {"state": "working"}
+            plain(await web.read_voice(self.web, self.session, self.ref, rid)),
+            {"state": "working"},
         )
 
     async def test_a_gate_that_says_no_transcribes_nothing_and_deletes_the_clip(self) -> None:
@@ -817,7 +819,7 @@ class TheRoutes(WithClips):
         )
         self.assertEqual(got.status_code, 202, got.text)
         poll = await self.client.get(f"{self.url}/{got.json()['requestId']}")
-        self.assertEqual((poll.status_code, poll.json()), (200, {"state": "waiting"}))
+        self.assertEqual((poll.status_code, plain(poll.json())), (200, {"state": "waiting"}))
 
     async def test_the_content_type_decides(self) -> None:
         for kind in ("audio/mpeg", "application/json", ""):

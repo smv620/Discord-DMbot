@@ -6,8 +6,10 @@ at most an hour, never logged, never returned to anyone but the DM who sent them
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
+from dmbot import progress
 from dmbot.consent import TERMS_VERSION
 from dmbot.db import Database
 from dmbot.web import recaps
@@ -70,6 +72,23 @@ async def send_instructions(
     return {"requestId": got["id"]}
 
 
+def _progress(got: dict[str, Any], failed_reason: str) -> dict[str, Any]:
+    """How long a typed or spoken note has waited, in the shared progress shape (#3355). Times
+    only: `created_at` is when the page queued it, `claimed_at` when the bot took it (0 before).
+    A waiting note's last movement is its start; a taken one's is the moment it was taken."""
+    state = str(got["state"])
+    created = int(got.get("created_at") or 0)
+    taken = int(got.get("claimed_at") or 0)
+    stage = {"waiting": "waiting", "working": "working", "done": "done"}.get(state, "failed")
+    return progress.shape(
+        stage,
+        started_at=created,
+        updated_at=taken if state != "waiting" and taken else created,
+        now=int(time.time()),
+        reason=(got.get("error") or failed_reason) if stage == "failed" else None,
+    )
+
+
 async def read_instructions(
     db: Database, session: Session, ref: str, request_id: object
 ) -> dict[str, Any]:
@@ -83,7 +102,7 @@ async def read_instructions(
         got = (await cur.fetchone() or {}).get("r")
     if got is None:
         raise RecapError("not_found")
-    out: dict[str, Any] = {"state": got["state"]}
+    out: dict[str, Any] = {"state": got["state"], "progress": _progress(got, "sort_failed")}
     if got["state"] == "done":
         out["points"] = got["answer"]
     if got["state"] == "failed":
@@ -131,7 +150,7 @@ async def read_voice(
         got = (await cur.fetchone() or {}).get("r")
     if got is None:
         raise RecapError("not_found")
-    out: dict[str, Any] = {"state": got["state"]}
+    out: dict[str, Any] = {"state": got["state"], "progress": _progress(got, "transcribe_failed")}
     if got["state"] == "done":
         out["text"] = (got["answer"] or {}).get("text", "")
     if got["state"] == "failed":
