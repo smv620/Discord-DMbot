@@ -886,6 +886,19 @@ class ThePath(NamesTest):
              ("Rusty Anchor", "located_in", "Aldmoor"): ""},
         )  # fmt: skip
 
+    def test_two_place_words_for_one_pair_are_both_kept_by_the_reader(self) -> None:
+        # (#3363) lived in and lives in the same town are two readings; the same word twice is
+        # one. (The DM's waiting queue still keeps one fact for a pair and kind.)
+        found = [bg.Found("Tavin", "npc", (), (), ""), bg.Found("Aldmoor", "place", (), (), "")]
+        lines = [
+            bg.Connection("Tavin", "located_in", "Aldmoor", "q", words=w)
+            for w in ("lived in", "lives in", "lives in")
+        ]
+        lost: bg.Dropped = Counter()
+        kept = bg.keep_connections([lines], found, {}, dropped=lost)
+        self.assertEqual(sorted(c.words for c in kept), ["lived in", "lives in"])
+        self.assertEqual(lost["same_pair"], 1)
+
     async def test_a_second_character_posing_as_another_is_a_secret_connection_under_world(
         self,
     ) -> None:
