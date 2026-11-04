@@ -476,6 +476,16 @@ class PeopleSuggestion:
 
 
 @dataclass(frozen=True, slots=True)
+class SplitName:
+    """What "These are separate names" did (#3383): the parts of the list, which of them are new
+    waiting names and which were already held and joined quietly."""
+
+    parts: tuple[str, ...]
+    made: tuple[str, ...]
+    joined: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class Written[T]:
     """A write's result, with the change-log batch to pass to `undo` (None: nothing
     changed, for example the fact was already known)."""
