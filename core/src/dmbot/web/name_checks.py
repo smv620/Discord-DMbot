@@ -14,7 +14,7 @@ from __future__ import annotations
 from typing import Any
 
 from dmbot.db import Database
-from dmbot.memory.models import NAME_MAX, lookup_key
+from dmbot.memory.models import NAME_MAX, MemoryRuleError, lookup_key
 from dmbot.memory.name_longer import MAX_OFFERED, longer_names
 from dmbot.memory.places import LINE_CHARS, cut, find_in, trimmed
 from dmbot.names import not_names
@@ -55,20 +55,20 @@ async def read_checks(db: Database, session: Session, ref: str) -> dict[str, Any
                 "SELECT dmbot_recap_name_places(%s, %s, %s) AS r", (gid, cid, at)
             )
             found = (await cur.fetchone() or {}).get("r") or {}
-    if got is None:
-        raise RecapError("not_found")
-    # Suggestions made before pronouns were kept out ("We", "I'll") are still stored: they are
-    # not shown (#2358), by the same rule as Discord's lists (`hidden_old_pronoun`): only a
-    # pronoun the database marks as made before the gate. The marker is not passed on.
-    waiting = [
-        _with_places(
-            _with_longer_names({k: v for k, v in n.items() if k != "old"}), found.get(n["id"])
-        )
-        for n in got["names"]
-        if not (n.get("old") and not_names.is_not_name(str(n.get("name", ""))))
-    ]
-    async with db.user(session.user_id, session=session.id_hash) as conn:
-        for card in waiting:
+        if got is None:
+            raise RecapError("not_found")
+        # Suggestions made before pronouns were kept out ("We", "I'll") are still stored: they are
+        # not shown (#2358), by the same rule as Discord's lists (`hidden_old_pronoun`): only a
+        # pronoun the database marks as made before the gate. The marker is not passed on.
+        waiting = [
+            _with_places(
+                _with_longer_names({k: v for k, v in n.items() if k != "old"}),
+                found.get(n["id"]),
+            )
+            for n in got["names"]
+            if not (n.get("old") and not_names.is_not_name(str(n.get("name", ""))))
+        ]
+        for card in waiting:  # (in this same read, so every door answers from one moment)
             await _with_groups(conn, gid, cid, card)
     return {"names": waiting, "known": got["known"], "kinds": name_answers.kinds()}
 
@@ -82,10 +82,11 @@ async def _with_groups(conn: Any, gid: int, cid: str, card: dict[str, Any]) -> N
     parts = name_groups.parts_of(str(card.get("name", "")))
     if not parts:
         return
-    cur = await conn.execute(
-        "SELECT dmbot_name_group_info(%s, %s, %s) AS r",
-        (gid, cid, [lookup_key(p) for p in parts]),
-    )
+    try:
+        keys = [lookup_key(p) for p in parts]
+    except MemoryRuleError:
+        return  # a part too long to be a name: the card is shown as it was
+    cur = await conn.execute("SELECT dmbot_name_group_info(%s, %s, %s) AS r", (gid, cid, keys))
     info = (await cur.fetchone() or {}).get("r") or {}
     card["isList"] = True
     card["groups"] = [

@@ -173,6 +173,12 @@ class TheDatabaseHalf(WithChecks):
             row = await cur.fetchone()
         return str(row["state"]) if row else ""
 
+    async def test_a_second_answer_for_a_name_is_busy_through_the_rebuilt_door(self) -> None:
+        listed = await self.suggest("Aldmoor, Quillgate and Fenwick")
+        await self.ask(listed, action="split")
+        self.assertEqual(await self.code(self.ask(listed, action="make_group", name="X")), "busy")
+        self.assertEqual(await self.code(self.ask(listed, action="not_a_name")), "busy")
+
     async def test_undo_needs_a_finished_answer_with_that_batch(self) -> None:
         listed = await self.suggest("Aldmoor, Quillgate and Fenwick")
         self.assertEqual(await self.code(self.ask(listed, action="undo", batch=7)), "not_found")

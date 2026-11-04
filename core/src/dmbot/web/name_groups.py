@@ -19,7 +19,10 @@ MAX_HINTS = 3  # as the store: up to three, the best fit first
 
 def parts_of(name: str) -> list[str]:
     """The parts of a waiting name when it is a list the DM could split (two or more), else [].
-    The DM has decided on pressing the button, so "and", "or" and "&" split like a comma."""
+    The DM has decided on pressing the button, so "and", "or" and "&" split like a comma. (The
+    store also passes the campaign's held spellings, but only to keep a name that is held whole
+    from splitting, and it removes the name's own key from them first, so with the DM's decision
+    they change nothing here.)"""
     parts = split_list(name, dm=True)
     return parts if len(parts) >= 2 else []
 
