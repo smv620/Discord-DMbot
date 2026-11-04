@@ -68,6 +68,10 @@ _MOBILE = frozenset({
 })  # fmt: skip
 
 
+# The wordings a reader is told to use (the keys of `_FORWARD`, present and past, no repeats).
+WORDS_OFFERED = tuple(dict.fromkeys(w for pair in _FORWARD.values() for w in pair))
+
+
 def is_mobile(kind: str) -> bool:
     """Does this kind of entry move, so that its place needs a word and never "is in"?"""
     return kind in _MOBILE

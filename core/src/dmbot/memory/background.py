@@ -22,7 +22,7 @@ from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Any
 
-from dmbot.memory import kin
+from dmbot.memory import kin, place_words
 from dmbot.memory import reputation_words as feeling_words
 from dmbot.memory.backstory_links import QUOTE_MAX
 from dmbot.memory.end_match import FILLER, SHORTEST, Ends
@@ -858,6 +858,10 @@ def read_connections(
             or next((k for k in own if k.lower() == word), None)
         )
         label = ""
+        if how == "located_in":
+            # The place tie keeps the word the text used, as one wording ("lives in"), or none for
+            # a place inside a place (#3363); anything else the AI wrote there is dropped.
+            label = place_words.canonical(str(item.get("words") or "")) or ""
         if how == "knows":
             # How the one feels about the other: one of nine words (a reputation, #3175), in the
             # line's "words". One off the list is dropped and counted; the connection is kept

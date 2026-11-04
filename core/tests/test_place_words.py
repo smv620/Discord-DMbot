@@ -90,6 +90,15 @@ class PlaceWords(unittest.TestCase):
             self.assertEqual(place_words.canonical(word), word)
         self.assertEqual(place_words.canonical("lives_in"), "lives in")  # (an ontology spelling)
 
+    def test_the_lore_reader_is_told_the_same_words(self) -> None:
+        from dmbot.memory import lore_read
+
+        for word in place_words.WORDS_OFFERED:
+            self.assertIn(word, lore_read.shape_instructions(), word)
+            self.assertIsNotNone(place_words.canonical(word), word)
+        self.assertIn("worked in", lore_read.read_instructions())
+        self.assertIn("was last seen in", lore_read.read_instructions())
+
     def test_an_event_took_place_in_a_town(self) -> None:
         self.assertEqual(link_words("located_in", "", False, "event"), "took place in")
         self.assertEqual(

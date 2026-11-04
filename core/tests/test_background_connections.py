@@ -858,6 +858,34 @@ class ThePath(NamesTest):
             },
         )
 
+    async def test_a_place_word_is_kept_for_a_character_and_a_town_in_a_town_has_none(
+        self,
+    ) -> None:
+        # (#3363) "works at" is kept as "works in"; a place inside a place keeps no word, and
+        # a word the AI made up on a place tie is dropped
+        text = "Tavin works at the Rusty Anchor in Aldmoor. The Rusty Anchor sits in Aldmoor."
+        names = [
+            name("Tavin", "person", "Tavin works at"),
+            name("Aldmoor", "place", "in Aldmoor"),
+            name("Rusty Anchor", "place", "the Rusty Anchor"),
+        ]
+        links = [
+            {**link("Tavin", "in", "Aldmoor", "Tavin works at the Rusty Anchor in Aldmoor"),
+             "words": "works at"},
+            {**link("Rusty Anchor", "in", "Aldmoor", "The Rusty Anchor sits in Aldmoor"),
+             "words": "sits boldly"},
+        ]  # fmt: skip
+        lore_fake.set_answer(self.ai, {"names": names, "connections": links})
+        it = self.it()
+        await ui_bg.offer(it, self.campaign.id, Upload(text, "your notes"))
+        await it.response.sent[0][1]["view"]._read(self.it())
+        got = {(w.subject, w.predicate, w.object): w.detail for w in await self.waiting()}
+        self.assertEqual(
+            {k: v for k, v in got.items() if k[1] == "located_in"},
+            {("Tavin", "located_in", "Aldmoor"): "works in",
+             ("Rusty Anchor", "located_in", "Aldmoor"): ""},
+        )  # fmt: skip
+
     async def test_a_second_character_posing_as_another_is_a_secret_connection_under_world(
         self,
     ) -> None:
