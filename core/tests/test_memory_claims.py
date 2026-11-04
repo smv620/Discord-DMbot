@@ -367,8 +367,8 @@ class Stored(ConfirmedMemoryTest):
         self.assertEqual(got.new, ("Aldmoor",))
 
     async def test_an_old_waiting_claim_with_a_shape_for_a_name_is_dropped(self) -> None:
-        # (#3394) the waiting queue clears of a time or a number; a plain word is still asked about (its
-        # lines are not part of this read, so it cannot be judged)
+        # (#3394) the waiting queue clears of a time or a number; a plain word is still asked
+        # about (its lines are not part of this read, so it cannot be judged)
         from dmbot.memory.models import new_id
 
         async with self.db.guild(GUILD_A) as conn:
