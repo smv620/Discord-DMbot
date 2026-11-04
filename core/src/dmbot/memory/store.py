@@ -52,6 +52,7 @@ from dmbot.memory import (
 from dmbot.memory import lies as lies_mod
 from dmbot.memory import party as party_mod
 from dmbot.memory import same_person as same_person_mod
+from dmbot.memory import tags as tags_mod
 from dmbot.memory import threads as threads_mod
 from dmbot.memory import unnamed as unnamed_mod
 from dmbot.memory import worked_out as worked_out_mod
@@ -3331,6 +3332,47 @@ class MemoryStore:
             same_person_mod.from_rows, entries, aliases, links, apart, disguises
         )
 
+    async def tag_ties(
+        self, guild_id: int, campaign_id: str, entity_ids: Sequence[str]
+    ) -> dict[str, list[tags_mod.TagTie]]:
+        """Each entry's confirmed ties as `tags.tag_for` reads them, for the DM's private questions
+        (#3431, #3447): the other end's shown name, whether the entry is the subject, whether the
+        tie is secret. DM-only by its caller; a tie to an entry that is not live is left out."""
+        wanted = sorted(set(entity_ids))
+        if not wanted:
+            return {}
+        async with self._read(guild_id, campaign_id, snapshot=True) as scope:
+            rows = await scope.select(
+                RELATIONS,
+                " AND status = 'confirmed' AND (subject_id = ANY(%s) OR object_id = ANY(%s))",
+                [wanted, wanted],
+            )
+            ends = sorted({str(r[k]) for r in rows for k in ("subject_id", "object_id")})
+            names = {
+                str(e["id"]): str(e["name"])
+                for e in await scope.select(
+                    ENTITIES, " AND status IN ('proposed', 'confirmed') AND id = ANY(%s)", [ends]
+                )
+            }
+        found: dict[str, list[tags_mod.TagTie]] = {i: [] for i in wanted}
+        for r in rows:
+            for mine, other, outgoing in (
+                (str(r["subject_id"]), str(r["object_id"]), True),
+                (str(r["object_id"]), str(r["subject_id"]), False),
+            ):
+                if mine in found and other in names:
+                    found[mine].append(
+                        tags_mod.TagTie(
+                            str(r["predicate"]),
+                            names[other],
+                            outgoing,
+                            confirmed=True,
+                            secret=bool(r["secret"]),
+                            detail=str(r["detail"] or ""),
+                        )
+                    )
+        return found
+
     async def not_the_same_person(
         self, guild_id: int, campaign_id: str, unnamed_id: str, named_id: str, *, user_id: int
     ) -> None:
@@ -3344,13 +3386,23 @@ class MemoryStore:
             # named entry that is not a player, both in this campaign (a stray pair would also
             # hide a real look-alike offer, since the finder shares this table)
             cur = await conn.execute(
-                "SELECT count(*) AS n FROM memory_entities WHERE guild_id = %s AND campaign_id = %s"
-                " AND type <> %s AND ((id = %s AND unnamed AND status IN ('proposed', 'confirmed'))"
-                " OR (id = %s AND NOT unnamed AND status = 'confirmed'))",
-                (guild_id, campaign_id, PERSON, unnamed_id, named_id),
+                "SELECT id, unnamed, status FROM memory_entities WHERE guild_id = %s"
+                " AND campaign_id = %s AND type <> %s AND id = ANY(%s)",
+                (guild_id, campaign_id, PERSON, [unnamed_id, named_id]),
             )
-            row = await cur.fetchone()
-            if row is None or int(row["n"]) != 2:
+            rows = {str(r["id"]): r for r in await cur.fetchall()}
+            first, second = rows.get(unnamed_id), rows.get(named_id)
+            live = ("proposed", "confirmed")
+            # (the second may be another unnamed person, #3447: two people described the same way)
+            if (
+                first is None
+                or second is None
+                or not (first["unnamed"] and first["status"] in live)
+                or not (
+                    (second["unnamed"] and second["status"] in live)
+                    or (not second["unnamed"] and second["status"] == "confirmed")
+                )
+            ):
                 raise MemoryRuleError(NOT_FOUND)
             # (the look-alike finder only reads named entries, so its cache needs no clearing)
             await conn.execute(
@@ -3371,6 +3423,10 @@ class MemoryStore:
         async with self._write(guild_id, campaign_id, DM) as w:
             unnamed = await _entity_row(w, unnamed_id)
             named = await _entity_row(w, named_id)
+            if unnamed["unnamed"] and named["unnamed"]:
+                if unnamed_id == named_id:
+                    raise MemoryRuleError("That's the same entry.")
+                return await self._join_two_unnamed(w, unnamed, named)
             if not unnamed["unnamed"] or named["unnamed"] or named["status"] != CONFIRMED:
                 raise MemoryRuleError("That isn't an unnamed person and a named one.")
             if PERSON in (unnamed["type"], named["type"]):
@@ -3419,6 +3475,31 @@ class MemoryStore:
             final = await w.get(ENTITIES, kept)
             assert final is not None
             return Written(_entity(final), w.batch)
+
+    async def _join_two_unnamed(
+        self, w: Changes, older: dict[str, Any], newer: dict[str, Any]
+    ) -> Written[Entity]:
+        """The DM says two people the story never named are one (#3447): the older is kept and the
+        newer's connections and facts move onto it, as in any merge, in one change (one Undo).
+        Nothing else is guessed: each had no name, so there is no other name to carry, and nobody
+        learns anything they did not know."""
+        if older["type"] != "character" or newer["type"] != "character":
+            raise MemoryRuleError("Only a character can be joined to a character.")
+        for one in (older, newer):
+            hanging = await w.select(
+                ENTITIES,
+                " AND unnamed_anchor = %s AND status IN ('proposed', 'confirmed')",
+                [one["id"]],
+            )
+            if hanging:  # their wording is built on this person ("the guard's dog")
+                raise MemoryRuleError(
+                    "Something is described through this person "
+                    f"(the {hanging[0]['unnamed_what']}). Name it or remove it first."
+                )
+        kept = await self._merge_in(w, older["id"], newer["id"], source=DM, dm_said_same=True)
+        final = await w.get(ENTITIES, kept)
+        assert final is not None
+        return Written(_entity(final), w.batch)
 
     async def display_names(
         self,

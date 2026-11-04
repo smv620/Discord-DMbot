@@ -21,12 +21,14 @@ from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from dmbot.memory import unnamed as unnamed_mod
 from dmbot.memory.models import name_key
 from dmbot.memory.ontology import DISGUISED_AS
 
 STATED = "the text says so"
 CONNECTIONS = "they share connections"
 WORDS = "their descriptions share words"
+SAME_WORDS = "they are described the same way, in different sessions"  # two unnamed people (#3447)
 
 MAX_OFFERS_PER_ENTRY = 3  # the best few for one unnamed entry: a long list is a guess
 MIN_EVIDENCE = 2  # shared words plus shared connections, unless the text said so outright
@@ -74,6 +76,9 @@ class Offer:
     named_id: str
     score: int
     reasons: tuple[str, ...]  # fixed words, strongest first
+    # Two unnamed people (#3447): `unnamed_id` is the older and the one a yes keeps, `named_id` the
+    # newer. The question reads both as people the story never named.
+    both_unnamed: bool = False
 
 
 def _fold(word: str) -> str:
@@ -143,6 +148,38 @@ def offers(
     return found
 
 
+def unnamed_pairs(
+    entries: Sequence[dict[str, Any]], declined: Collection[tuple[str, str]] = ()
+) -> list[Offer]:
+    """Two unnamed people the story described the same way ("the woman", kept in two sessions),
+    each offered once with the older (#3447). Only people with no one they hang off ("Ken's
+    sister" is Ken's) and the same relationship word; the newer ones pair with the oldest, so a
+    yes shortens the list. A pair the DM said "not the same" to is never offered again."""
+    groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for e in entries:
+        if (
+            e["unnamed"]
+            and e.get("unnamed_anchor") is None
+            and e["status"] in ("proposed", "confirmed")
+        ):
+            key = (
+                str(e["type"]),
+                unnamed_mod.same_person_key(e["unnamed_what"], e["unnamed_role"]),
+            )
+            groups.setdefault(key, []).append(e)
+    found: list[Offer] = []
+    for group in groups.values():
+        group.sort(key=lambda e: (e.get("created_at") or 0, str(e["id"])))
+        oldest = str(group[0]["id"])
+        for later in group[1:]:
+            pair = (oldest, str(later["id"]))
+            if pair in declined or pair[::-1] in declined:
+                continue
+            found.append(Offer(pair[0], pair[1], 0, (SAME_WORDS,), both_unnamed=True))
+    found.sort(key=lambda o: (o.unnamed_id, o.named_id))
+    return found
+
+
 def from_rows(
     entries: Sequence[dict[str, Any]],
     aliases: Sequence[dict[str, Any]],
@@ -192,4 +229,8 @@ def from_rows(
         (b, a) for a, b in apart if b in left and a in right
     }
     declined |= {(a, b) for a, b in disguised if a in left and b in right}
-    return offers(unnamed, named, declined=declined)
+    made = offers(unnamed, named, declined=declined)
+    # two unnamed people described the same way (#3447); a disguise or a "not the same" keeps a pair
+    # apart, in either order
+    apart_both = set(apart) | disguised
+    return [*made, *unnamed_pairs(entries, apart_both)]
