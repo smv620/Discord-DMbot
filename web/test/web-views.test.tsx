@@ -136,7 +136,7 @@ describe("a connection that can't be shown until its names are (#3426)", () => {
 
   it("says to show the names first, and links to the Names page", async () => {
     const alert = await pressRevealOnAConnection("names-not-shown");
-    expect(alert.textContent).toMatch(/^Show (both names|the names?) (to the players )?first/);
+    expect(alert.textContent).toMatch(/Show (both names|that name|those names)/);
     expect(alert.textContent).toContain(w.namesPageEnding);
     const link = screen.getByRole("link", { name: w.openNames });
     expect(link.getAttribute("href")).toBe("/account/names/100.cmp1");
@@ -144,15 +144,15 @@ describe("a connection that can't be shown until its names are (#3426)", () => {
 
   it("says to give the unnamed person a name first, and links to the Names page", async () => {
     const alert = await pressRevealOnAConnection("name-unnamed");
-    expect(alert.textContent).toMatch(/^Give .* a name first, then show this connection\./);
+    expect(alert.textContent).toMatch(/(needs a name first|has no name yet)/);
     expect(alert.textContent).not.toBe(w.errorFallback);
     expect(screen.getByRole("link", { name: w.openNames })).toBeTruthy();
   });
 
   it("builds each sentence from the names that are held back", () => {
-    expect(w.showNamesFirst(["Brannoch"])).toBe("Show the name first: Brannoch isn't shown to the players yet. You can do that on the Names page.");
+    expect(w.showNamesFirst(["Brannoch"])).toBe("Brannoch isn't shown to the players yet. Show that name first, on the Names page.");
     expect(w.showNamesFirst(["Brannoch", "Veshla"])).toContain("Brannoch and Veshla aren't shown");
-    expect(w.nameThemFirst("someone's sister (name unknown)")).toContain("Give someone's sister (name unknown) a name first");
+    expect(w.nameThemFirst("someone's sister")).toBe("This connection needs a name first: someone's sister has none yet. Add one on the Names page.");
   });
 });
 

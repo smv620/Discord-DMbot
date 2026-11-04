@@ -278,18 +278,19 @@ export const webPage = {
   errorFallback: "That didn't work. Try again in a minute.",
   // Showing a connection is refused until its names are shown to the players (#3426). The ending is what the
   // connection's row looks for to offer the link to the Names page.
-  namesPageEnding: "You can do that on the Names page.",
+  namesPageEnding: "on the Names page.",
   showNamesFirst: (held: string[]): string =>
     held.length === 0
-      ? "Show both names to the players first, then this connection. You can do that on the Names page."
+      ? "Show both names to the players first. You can do that on the Names page."
       : held.length === 1
-        ? `Show the name first: ${held[0]} isn't shown to the players yet. You can do that on the Names page.`
-        : `Show the names first: ${held.join(" and ")} aren't shown to the players yet. You can do that on the Names page.`,
+        ? `${held[0]} isn't shown to the players yet. Show that name first, on the Names page.`
+        : `${held.join(" and ")} aren't shown to the players yet. Show those names first, on the Names page.`,
+  // `who` is how the page calls the person ("someone's sister"), without the "(name unknown)" label.
   nameThemFirst: (who: string | null): string =>
     who === null
-      ? "Give the unnamed person a name first, then show this connection. You can do that on the Names page."
-      : `Give ${who} a name first, then show this connection. You can do that on the Names page.`,
-  openNames: "Open the Names page",
+      ? "One end of this connection has no name yet. Add one on the Names page."
+      : `This connection needs a name first: ${who} has none yet. Add one on the Names page.`,
+  openNames: "Open Names page",
 } as const;
 
 /** The words for a kind: the API's key if no words are known. */
