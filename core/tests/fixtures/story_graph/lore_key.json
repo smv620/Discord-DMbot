@@ -231,25 +231,33 @@
   {
    "name": "Okthandom's child",
    "kind": "person",
-   "aliases": [],
+   "aliases": [
+    "Okthandom Korran's child (name unknown)"
+   ],
    "note": "Unnamed. Mentioned once."
   },
   {
    "name": "Brewner's daughter",
    "kind": "person",
-   "aliases": [],
+   "aliases": [
+    "Brewner's daughter (name unknown)"
+   ],
    "note": "Unnamed. Leads Brewner home."
   },
   {
    "name": "The minotaur captain",
    "kind": "person",
-   "aliases": [],
+   "aliases": [
+    "Minotaur captain of the first ship"
+   ],
    "note": "Unnamed. Captain of the first ship."
   },
   {
    "name": "The beggar woman",
    "kind": "person",
-   "aliases": [],
+   "aliases": [
+    "beggar woman"
+   ],
    "note": "Unnamed. Gives a prophecy."
   },
   {
@@ -538,7 +546,9 @@
   {
    "name": "Sacrifice of warmth",
    "kind": "event",
-   "aliases": [],
+   "aliases": [
+    "Sacrifices of Warmth"
+   ],
    "note": "recurring Sacrifices of Warmth: all warmth is forsaken, to appease Auril"
   },
   {
@@ -550,7 +560,9 @@
   {
    "name": "The Everlasting Rime",
    "kind": "event",
-   "aliases": [],
+   "aliases": [
+    "Everlasting Rime"
+   ],
    "note": "the magical winter Auril casts each night so the sun cannot rise"
   },
   {

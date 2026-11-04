@@ -223,10 +223,10 @@ What the graph should hold after the sample lore document is read: [Icewind Dale
 | Garret Velryn |  | missing explorer |
 | Jebidiah |  | kennel master |
 | Cerric's paternal grandfather |  | Unnamed. Died in a storm. |
-| Okthandom's child |  | Unnamed. Mentioned once. |
-| Brewner's daughter |  | Unnamed. Leads Brewner home. |
-| The minotaur captain |  | Unnamed. Captain of the first ship. |
-| The beggar woman |  | Unnamed. Gives a prophecy. |
+| Okthandom's child | Okthandom Korran's child (name unknown) | Unnamed. Mentioned once. |
+| Brewner's daughter | Brewner's daughter (name unknown) | Unnamed. Leads Brewner home. |
+| The minotaur captain | Minotaur captain of the first ship | Unnamed. Captain of the first ship. |
+| The beggar woman | beggar woman | Unnamed. Gives a prophecy. |
 
 ### Creatures (13)
 
@@ -268,9 +268,9 @@ What the graph should hold after the sample lore document is read: [Icewind Dale
 | name | also called | note |
 |---|---|---|
 | Sacrifice of souls |  | every ten-day humanoid souls are sacrificed, spellcasters first, to appease Auril |
-| Sacrifice of warmth |  | recurring Sacrifices of Warmth: all warmth is forsaken, to appease Auril |
+| Sacrifice of warmth | Sacrifices of Warmth | recurring Sacrifices of Warmth: all warmth is forsaken, to appease Auril |
 | Sacrifice of food |  | the residents fast and surrender their daily food to the beasts of the tundra, to appease Auril |
-| The Everlasting Rime |  | the magical winter Auril casts each night so the sun cannot rise |
+| The Everlasting Rime | Everlasting Rime | the magical winter Auril casts each night so the sun cannot rise |
 
 ### Places (26)
 
