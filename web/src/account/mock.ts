@@ -62,7 +62,7 @@ import type {
   RuleSharingAnswer,
   RuleSharingChoice,
 } from "./api";
-import type { ImportClock, NameGroupHint } from "./api";
+import type { ImportClock, NameNameAnswerResult, NameGroupHint } from "./api";
 import { ApiError, type HouseFileRequest, type HouseFileState, type LoreUpload, type RecapStyle, type RecapStyleAction, type WebLinkKind, type FixAnswer, type FixMode, type PlotIssue, type PlotMessage, type PlotProposal, type WaitingLook } from "./api";
 import { NAME_LIMIT } from "../content/names-words";
 import { MUSTS_LINE_CHARS, MUSTS_MAX_LINES } from "../content/recap-style-words";
@@ -1224,8 +1224,8 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
   const nameFailed = new Set<string>();
   // Split, group and Undo answers (#3406): the bot's result for each name, read on the second look. An Undo that
   // works takes the answer back, so the name has none left and the page reads it as done.
-  type AnswerResult = { state: "waiting" | "working" | "done" | "failed"; note: string; error: string | null; batch: number | null };
-  const nameAnswers = new Map<string, { looks: number; result: AnswerResult }>();
+
+  const nameAnswers = new Map<string, { looks: number; result: NameAnswerResult }>();
   // The Plot check (#2124): the recap text last checked, the questions, and how many "checking" looks are left.
   const plotText = new Map<string, string>();
   const plotLooks = new Map<string, number>();
@@ -3224,7 +3224,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
           return;
         }
         const list = id === "f".repeat(32) || id === "g".repeat(32);
-        const result: AnswerResult =
+        const result: NameAnswerResult =
           answer.action === "split"
             ? list
               ? { state: "done", note: "Split into 3 names.", error: null, batch: 7 }
@@ -3239,8 +3239,8 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         nameAnswers.set(key, { looks: 0, result });
       }
     },
-    async nameAnswerResult(ref, id) {
-      calls.push(`nameAnswerResult:${ref}:${id.slice(0, 1)}`);
+    async nameNameAnswerResult(ref, id) {
+      calls.push(`nameNameAnswerResult:${ref}:${id.slice(0, 1)}`);
       await reachable();
       signedIn();
       const entry = nameAnswers.get(`${ref}:${id}`);

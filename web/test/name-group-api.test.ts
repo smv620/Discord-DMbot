@@ -79,6 +79,14 @@ describe("the pretend API for split and group answers (#3406)", () => {
     expect((err as ApiError).kind).toBe("not-found");
   });
 
+  it("the pretend API: join_group to an unknown group fails with not_found", async () => {
+    const api = mockApi("table");
+    const id = "a".repeat(32);
+    await api.answerNameCheck!(ref, id, { action: "join_group", group: "e".repeat(32) });
+    await api.nameAnswerResult!(ref, id);
+    expect(await api.nameAnswerResult!(ref, id)).toMatchObject({ state: "failed", error: "not_found", batch: null });
+  });
+
   it("the pretend API: a name with no answer made to it is not found", async () => {
     const api = mockApi("table");
     const err = await api.nameAnswerResult!(ref, "h".repeat(32)).catch((e: unknown) => e);
