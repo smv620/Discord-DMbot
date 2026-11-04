@@ -47,6 +47,7 @@ from dmbot.memory import (
     report_fixed,
     standing,
     states,
+    whereabouts,
 )
 from dmbot.memory import lies as lies_mod
 from dmbot.memory import party as party_mod
@@ -3962,6 +3963,7 @@ class MemoryStore:
         decided: str | None = None,
         known_by: Sequence[str] = (),
         keep_flags: bool = False,
+        by_hand: bool = False,
     ) -> Written[tuple[Relation, list[Flag]]]:
         """Store a fact, checked against the rules. Problems become flags for the DM to
         review; the fact is stored as given either way. A fact already known is only
@@ -3979,6 +3981,7 @@ class MemoryStore:
                 detail=detail, from_session_at=from_session_at, to_session_at=to_session_at,
                 secret=secret, mention_ids=mention_ids, unrevealed=unrevealed,
                 directional=directional, decided=decided, keep_flags=keep_flags,
+                by_hand=by_hand,
             )  # fmt: skip
             if known_by and w.source == DM and (value[0].secret or value[0].unrevealed):
                 # The characters who know it from the start (#2935): the same change as the
@@ -4015,6 +4018,7 @@ class MemoryStore:
         leave: bool = False,
         made_by: str | None = None,
         keep_flags: bool = False,
+        by_hand: bool = False,
     ) -> tuple[Relation, list[Flag]]:
         """`add_relation` inside a write that is already open (#1301), with the same checks;
         the write's own source is the fact's source. The caller opened `w` for the right
@@ -4093,8 +4097,12 @@ class MemoryStore:
             if not upgrade:
                 return same, []
             row = await w.update(RELATIONS, same.id, upgrade)
-            return _relation(row), []
+            revived, _ = await _settle_whereabouts(w, _relation(row), types, by_hand=by_hand)
+            return revived, []
         await w.insert(RELATIONS, _relation_row(new))
+        # An item has one current whereabouts (#3363): see `whereabouts`
+        new, ended = await _settle_whereabouts(w, new, types, by_hand=by_hand)
+        existing = [r for r in existing if r.id not in ended]
         if pred.key == DISGUISED_AS:  # the one in disguise knows it, on every path (#3091)
             await knowers.know_own_disguise(w, new.id, s)
         for mention in found:  # what it was said in: typed links (#2662), beside the old list
@@ -4167,7 +4175,14 @@ class MemoryStore:
             row = await w.update(RELATIONS, relation_id, changes)
             if waiting_guess(_relation(current)) and row["status"] == CONFIRMED:
                 await flag_kept(w, relation_id)  # (only a guess host was never judged as a fact)
-            return Written(_relation(row), w.batch)
+            made = _relation(row)
+            if (
+                made.status == CONFIRMED
+                and made.to_session_at is None
+                and (changes.keys() & {"status", "to_session_at"})
+            ):  # (it just became live: an item's other whereabouts settle, #3363)
+                made, _ = await _settle_whereabouts(w, made)
+            return Written(made, w.batch)
 
     # ---- beliefs: who believes a connection (#2409; docs/STORY_MEMORY.md, section 9) -----------
 
@@ -5706,6 +5721,29 @@ async def _relations_touching(w: Scope, *entity_ids: str) -> list[Relation]:
         [list(entity_ids), list(entity_ids)],
     )
     return [_relation(r) for r in rows]
+
+
+async def _settle_whereabouts(
+    w: Changes, rel: Relation, types: Mapping[str, str] | None = None, *, by_hand: bool = False
+) -> tuple[Relation, set[str]]:
+    """An item has one current whereabouts (#3363, owner 2026-11-04): a fact that has just become
+    live ends or yields to the item's other live whereabouts by `whereabouts.settle`. Returns the
+    fact as it now stands and the ids of the facts it ended."""
+    if rel.predicate not in (whereabouts.CARRIES, whereabouts.LOCATED):
+        return rel, set()
+    kinds = dict(types or {})
+    for end in (rel.subject_id, rel.object_id):
+        if end not in kinds:
+            kinds[end] = (await _entity_row(w, end))["type"]
+    others = await _relations_touching(w, rel.subject_id, rel.object_id)
+    settled = whereabouts.settle(
+        rel, kinds[rel.subject_id], kinds[rel.object_id], others, by_hand=by_hand, now=w.now
+    )
+    if settled.new_changes:
+        rel = _relation(await w.update(RELATIONS, rel.id, dict(settled.new_changes)))
+    for ended_id, changes in settled.ends.items():
+        await w.update(RELATIONS, ended_id, dict(changes))
+    return rel, set(settled.ends)
 
 
 async def _flag_problems(

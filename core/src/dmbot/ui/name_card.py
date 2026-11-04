@@ -2753,6 +2753,7 @@ async def connect(
             secret=secret,
             detail=detail,
             directional=kin.directional(detail),
+            by_hand=True,  # the DM's own, so the newest thing the table knows (#3363)
         )
     except MemoryRuleError as exc:
         await _tell(interaction, f"Couldn't connect them. {exc}")
