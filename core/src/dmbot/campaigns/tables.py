@@ -95,6 +95,10 @@ _VOICE_CO = (
     "(Supervisor, #2604). A restored campaign makes its own when it makes audio"
 )
 NOT_IN_BACKUP: dict[str, str] = {
+    "question_counts": "the count of each kind of question waiting for the DM, made again every "
+    "minute by the bot: counts and times only (#3435)",
+    "question_notices": "the timer of the 'Questions for you' reminders for each DM: step, next "
+    "time and message ids only, made again by the next round (#3435)",
     "dm_waiting_sent": "which 'things wait for you' private message was already sent after a "
     "lore upload or an import: keys and times only, so a restart does not send it twice (#3314)",
     "theatre_runs": "whether a script of a session is being made, with counts and times only: "
@@ -212,5 +216,7 @@ SERVER_BOUND_COLUMNS: dict[str, str] = {
     "recap_holds.channel_id": "left: the new server finds no such channel until /dmbot start",
     "active_sessions.screen_channel_id": "none: a campaign with a running session does not move",
     "active_sessions.voice_channel_id": "none: a campaign with a running session does not move",
+    "question_notices.message_id": "a message in the DM's private chat, which belongs to no "
+    "server, so it stays valid after a move (#3435)",
     "campaign_handover_offers.message_id": "none: the offer is removed by the move",
 }
