@@ -1380,7 +1380,9 @@ class TheEdits(Editing):
         self.assertEqual(limited, {"Mara Ashgrove": True, "Mara Vell": False})
         other = await self.campaigns.create(self.g, "Elsewhere", ALICE.id)
         async with self.db.guild(self.g) as conn:
-            cur = await conn.execute("SELECT dmbot_web_waiting(%s, %s) AS r", (self.g, other.id))
+            cur = await conn.execute(
+                "SELECT dmbot_web_waiting(%s, %s, 1, NULL) AS r", (self.g, other.id)
+            )
             row = await cur.fetchone()
             assert row is not None
             self.assertIsNone(row["r"])  # not this person's campaign: nothing
@@ -1411,7 +1413,9 @@ class TheEdits(Editing):
             )
         async with self.web.user(ALICE.id, session=self.session.id_hash) as conn:
             await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(self.g),))
-            cur = await conn.execute("SELECT dmbot_web_waiting(%s, %s) AS r", (self.g, two.id))
+            cur = await conn.execute(
+                "SELECT dmbot_web_waiting(%s, %s, 1, NULL) AS r", (self.g, two.id)
+            )
             row = await cur.fetchone()
             assert row is not None
             self.assertIsNone(row["r"])  # Alice is not a DM of campaign two
