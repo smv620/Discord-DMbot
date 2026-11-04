@@ -13,7 +13,7 @@ from unittest import mock
 import httpx
 
 from dmbot.bot import DMBot
-from dmbot.campaigns import web_backup
+from dmbot.campaigns import backup_names, web_backup
 from dmbot.campaigns.store import BackupTooBig, decode_backup
 from dmbot.campaigns.web_backup import WebBackups
 from dmbot.web import campaign_backup, sessions
@@ -195,7 +195,7 @@ class Backing(Base):
         self.assertEqual(await self.build_next(THURSDAY.id), "")
         ready = await campaign_backup.status(self.web, self.session, ref, made)
         self.assertEqual((ready["stage"], ready["state"], ready["ready"]), ("done", "done", True))
-        self.assertTrue(ready["fileName"].endswith(".dmbot.json.gz"))
+        self.assertTrue(ready["fileName"].endswith(".json.gz"))
         raw, name = await campaign_backup.fetch(self.web, self.session, ref, made)
         self.assertEqual(name, ready["fileName"])
         self.assertEqual(ready["size"], len(raw))
@@ -241,7 +241,7 @@ class Backing(Base):
             )
             self.assertEqual(len(part), p["size"])
             self.assertEqual(
-                part_name, name.removesuffix(".dmbot.json.gz") + f".transcripts-{p['n']}-of-"
+                part_name, backup_names.backup_stem(name) + f".transcripts-{p['n']}-of-"
                 f"{got['partsTotal']}.dmbot.json.gz",
             )  # fmt: skip
             files.append(part)

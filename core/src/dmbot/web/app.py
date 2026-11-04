@@ -2294,7 +2294,7 @@ def create_app(
         except RecapError as err:
             status, detail = backup_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
-        safe = re.sub(r"[^A-Za-z0-9._-]", "-", name)[:120] or "campaign.dmbot.json.gz"
+        safe = re.sub(r"[^A-Za-z0-9._#-]", "-", name)[:120] or "campaign.dmbot.json.gz"
         return Response(
             raw,
             media_type="application/gzip",

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import unittest
 from typing import Any
+from unittest import mock
 
 from dmbot import discord_limits
 from dmbot.campaigns import backup_names
@@ -20,11 +21,14 @@ class TheBackupNames(unittest.TestCase):
 
     def test_the_file_name_is_a_slug_with_the_day(self) -> None:
         self.assertEqual(
-            backup_names.backup_filename("The Brynwater Crossing!", 1_792_000_000),
-            "the-brynwater-crossing-2026-10-14.dmbot.json.gz",
+            backup_names.backup_filename(
+                "The Brynwater Crossing!", 1_792_000_000, "bd8ae13a" + "0" * 32
+            ),
+            "the-brynwater-crossing-2026-10-14.dmbot#bd8ae13a.json.gz",
         )
         self.assertEqual(
-            backup_names.backup_filename("???", 0), "campaign-1970-01-01.dmbot.json.gz"
+            backup_names.backup_filename("???", 0, "unknown"),
+            "campaign-1970-01-01.dmbot#unknown.json.gz",
         )
 
     def test_the_parts_count_is_zero_unless_it_is_a_sensible_whole_number(self) -> None:
@@ -59,3 +63,32 @@ class TheBackupNames(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheBuildsCommit(unittest.TestCase):
+    """Which build made a backup is in the file and in its name (#3391)."""
+
+    FULL = "bd8ae13a" + "c0ffee00" * 4
+
+    def test_the_commit_is_the_running_builds_or_unknown(self) -> None:
+        with mock.patch.dict("os.environ", {"GIT_COMMIT": self.FULL.upper()}):
+            self.assertEqual(backup_names.build_commit(), self.FULL)
+        for bad in ("", "bd8ae13a", "not a commit", "z" * 40):
+            with mock.patch.dict("os.environ", {"GIT_COMMIT": bad}):
+                self.assertEqual(backup_names.build_commit(), "unknown")
+        with mock.patch.dict("os.environ", clear=True):
+            self.assertEqual(backup_names.build_commit(), "unknown")
+
+    def test_the_file_name_carries_eight_characters_after_a_hash(self) -> None:
+        with mock.patch.dict("os.environ", {"GIT_COMMIT": self.FULL}):
+            name = backup_names.backup_filename("Test of the Frostmaiden", 1_793_750_400)
+        self.assertEqual(name, "test-of-the-frostmaiden-2026-11-04.dmbot#bd8ae13a.json.gz")
+        self.assertEqual(backup_names.backup_stem(name), "test-of-the-frostmaiden-2026-11-04")
+        # the old ending still gives the same stem, for names made before this
+        self.assertEqual(backup_names.backup_stem("a-2026-11-04.dmbot.json.gz"), "a-2026-11-04")
+
+    def test_a_build_without_a_commit_says_unknown_in_the_name(self) -> None:
+        with mock.patch.dict("os.environ", clear=True):
+            self.assertEqual(
+                backup_names.backup_filename("Tales", 0), "tales-1970-01-01.dmbot#unknown.json.gz"
+            )

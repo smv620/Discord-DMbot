@@ -13,6 +13,7 @@ from dmbot.campaigns import DM_SCREEN_VISIBILITY, FALLBACK_NONE, RULESETS, Campa
 from dmbot.campaigns.backup_names import backup_campaign_name as backup_campaign_name
 from dmbot.campaigns.backup_names import backup_filename as backup_filename
 from dmbot.campaigns.backup_names import backup_parts as backup_parts
+from dmbot.campaigns.backup_names import backup_stem as backup_stem
 from dmbot.campaigns.models import (
     DEFAULT_DM_SCREEN_LEVEL,
     DM_SCREEN_LEVELS,
@@ -227,7 +228,7 @@ def writing_status(engine: Engine, backlog: int, last_latency_s: float | None) -
 
 def part_filename(campaign_name: str, now: int, number: int, total: int) -> str:
     """The name of one transcripts file of a copy (#2552): the copy's name, then which of them."""
-    base = backup_filename(campaign_name, now).removesuffix(".dmbot.json.gz")
+    base = backup_stem(backup_filename(campaign_name, now))
     return f"{base}.transcripts-{number}-of-{total}.dmbot.json.gz"
 
 

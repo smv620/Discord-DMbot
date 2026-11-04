@@ -136,7 +136,7 @@ class CommandTests(DatabaseTest):
         first, second = it.followup.send.call_args_list
         self.assertIn("more file", first.args[0])
         self.assertIn("transcripts_1", first.args[0])
-        self.assertTrue(first.kwargs["file"].filename.endswith(".dmbot.json.gz"))
+        self.assertTrue(first.kwargs["file"].filename.endswith(".json.gz"))
         (extra,) = second.kwargs["files"]
         self.assertIn(".transcripts-1-of-1.dmbot.json.gz", extra.filename)
 
@@ -176,7 +176,7 @@ class CommandTests(DatabaseTest):
         it = fake_interaction(self.bot)  # not this campaign's DM
         await cmds.dmbot_backup.callback(it)  # type: ignore[call-arg]
         sent = it.followup.send.call_args
-        self.assertTrue(sent.kwargs["file"].filename.endswith(".dmbot.json.gz"))
+        self.assertTrue(sent.kwargs["file"].filename.endswith(".json.gz"))
         self.assertIn("complete copy", sent.args[0])
         self.assertIn("don't open it", sent.args[0])
 
@@ -186,7 +186,7 @@ class CommandTests(DatabaseTest):
         it.user.guild_permissions = discord.Permissions(manage_guild=True)  # both: still fine
         await cmds.dmbot_backup.callback(it)  # type: ignore[call-arg]
         sent = it.followup.send.call_args.kwargs["file"]
-        self.assertTrue(sent.filename.endswith(".dmbot.json.gz"))
+        self.assertTrue(sent.filename.endswith(".json.gz"))
 
     async def test_an_older_plain_backup_still_restores(self) -> None:
         mine = await self.campaigns.create(GUILD, "Mine", DM)
