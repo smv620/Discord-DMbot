@@ -125,6 +125,12 @@ Rules for what counts as a claim:
    (Garret's sled), a description tying it to one story, or something the story turns on (a
    shipment the villain is waiting for).
 
+9. A subject or object is a particular someone or something: a name, or a clear description of
+   one particular thing. Never a number or amount ("two", "a few copper"), a measure or a time
+   ("four miles per hour", "five days ago"), weather or scenery ("snow", "a blizzard"), a form of
+   address or a title said alone ("Friend", "Captain"), or a plain word for a crowd or a kind
+   ("the dogs", "people"). If a line only says one of those, it is no claim.
+
 For each claim say how it was said:
 - "dm_said": the DM narrating, or the DM speaking as a character.
 - "player_said": a player's words or belief about the game world.

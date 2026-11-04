@@ -354,6 +354,18 @@ class Stored(ConfirmedMemoryTest):
             session_started_at=500,
         )  # fmt: skip
 
+    async def test_numbers_times_and_addresses_are_never_made_into_names(self) -> None:
+        # (#3394, #3385) none of these is asked about; a real new place still is
+        got = await self.propose(
+            said("Bram", "is in", "four miles per hour"),
+            said("Bram", "is in", "five days ago"),
+            said("Bram", "is in", "Friend"),
+            said("Bram", "is in", "two"),
+            said("Bram", "is in", "Aldmoor"),
+        )
+        self.assertEqual(got.reasons.get(claims.NOT_A_NAME_REASON), 4)
+        self.assertEqual(got.new, ("Aldmoor",))
+
     async def test_only_a_unique_item_is_made_an_entry_from_a_session_claim(self) -> None:
         # (#3373) "Bram carries a dagger" makes no entry and no tie; a named or owned item does
         got = await self.propose(

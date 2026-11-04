@@ -585,6 +585,7 @@ def read_answer(reply: str, piece: str) -> list[Found]:
             or "|" in name
             or not _in_text(haystack, name, piece)
             or not not_names.allowed(name, cued)
+            or not_names.shape_of(name) is not None  # a number, time or address: no name (#3394)
         ):
             continue
         # A disguise is read first, so the same spelling is never also a public one.
