@@ -17,7 +17,7 @@ never widens what anyone knew (#2995).
 from __future__ import annotations
 
 import re
-from collections.abc import Collection, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -148,8 +148,17 @@ def offers(
     return found
 
 
+def keeper_order(row: dict[str, Any], ties: Mapping[str, int]) -> tuple[int, int, str]:
+    """Which of two people described the same way a Yes keeps (#3457): the older first, then the
+    one with more confirmed connections, then the smaller id, so two made in the same second still
+    have one answer and the same pair is never offered the other way round."""
+    return (int(row.get("created_at") or 0), -ties.get(str(row["id"]), 0), str(row["id"]))
+
+
 def unnamed_pairs(
-    entries: Sequence[dict[str, Any]], declined: Collection[tuple[str, str]] = ()
+    entries: Sequence[dict[str, Any]],
+    declined: Collection[tuple[str, str]] = (),
+    ties: Mapping[str, int] | None = None,
 ) -> list[Offer]:
     """Two unnamed people the story described the same way ("the woman", kept in two sessions),
     each offered once with the older (#3447). Only people with no one they hang off ("Ken's
@@ -170,7 +179,7 @@ def unnamed_pairs(
             groups.setdefault(key, []).append(e)
     found: list[Offer] = []
     for group in groups.values():
-        group.sort(key=lambda e: (e.get("created_at") or 0, str(e["id"])))
+        group.sort(key=lambda e: keeper_order(e, ties or {}))
         for i, later in enumerate(group[1:], start=1):
             # paired with the oldest one it has not been ruled apart from, so a "not the same" to
             # one pair never hides the others
@@ -236,4 +245,5 @@ def from_rows(
     # two unnamed people described the same way (#3447); a disguise or a "not the same" keeps a pair
     # apart, in either order
     apart_both = set(apart) | disguised
-    return [*made, *unnamed_pairs(entries, apart_both)]
+    counts = {entry: len(found) for entry, found in links.items()}
+    return [*made, *unnamed_pairs(entries, apart_both, counts)]
