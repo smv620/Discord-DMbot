@@ -300,7 +300,8 @@ CORE_PREDICATES: tuple[PredicateTerm, ...] = (
         "located_in",
         "is in",
         "Where someone or something is, or sits: a character in a town, a shop in a city, an "
-        "item in a vault. One place at a time; a move ends the old fact.",
+        "item in a vault. One place at a time for each word of the tie (lives in, works in, "
+        "was last seen in...); a move ends only the old fact of the same word.",
         ("character", "place", "faction", "item", "event"),
         ("place",),
         max_per_subject=1,

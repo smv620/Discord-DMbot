@@ -39,7 +39,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import NamedTuple
 
-from dmbot.memory import kin
+from dmbot.memory import kin, place_words
 from dmbot.memory.models import PROPOSED, REJECTED, Relation
 from dmbot.memory.ontology import Ontology, PredicateTerm
 
@@ -245,6 +245,13 @@ def check_relation(
                 and not same_pair(r, new)
                 and (end in (r.subject_id, r.object_id) if p.symmetric else r.subject_id == end)
             ]
+            if p.key == NESTS:
+                # Each word of a place tie is its own: living in one town, working in another and
+                # having been seen in a third are three facts, and a past word never ends a
+                # present one (#3363).
+                others = [
+                    r for r in others if place_words.slot(r.detail) == place_words.slot(new.detail)
+                ]
             if p.key == NESTS and nesting is not None:
                 # Being in the inn and in the town it is in is one place, not two.
                 others = [r for r in others if not nesting.related(r.object_id, new.object_id)]
