@@ -27,8 +27,7 @@ import WebMap from "./WebMap";
 import WebOverviewPanel from "./WebOverview";
 import { dimmedName, markSecret, plainGraph, plainOverview } from "./know";
 import { WHO_KNOWS_LIVE } from "../content/who-knows-switch";
-import WebReadings from "./WebReadings";
-import WebWaiting from "./WebWaiting";
+import LazyPanel from "./LazyPanel";
 import { WEB_READINGS_LIVE } from "../content/web-readings";
 import { WEB_WAITING_LIVE } from "../content/web-waiting";
 import { clampHops } from "./webLayout";
@@ -689,10 +688,13 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
         />
       )}
 
-      {WEB_READINGS_LIVE && overview?.canEdit && asked !== "players" && <WebReadings key={`readings-${ref}`} api={api} campaignRef={ref} />}
+      {/* (both lists load on demand, and the switch is tested here so the build drops a list that is not live: the page stays within its weight budget) */}
+      {WEB_READINGS_LIVE && overview?.canEdit && asked !== "players" && (
+        <LazyPanel key={`readings-${ref}`} load={() => import("./WebReadings")} what="what people believe" props={{ api, campaignRef: ref }} />
+      )}
 
       {WEB_WAITING_LIVE && overview?.canEdit && asked !== "players" && (
-        <WebWaiting key={ref} api={api} campaignRef={ref} onChanged={() => void load(center, hops, true)} />
+        <LazyPanel key={ref} load={() => import("./WebWaiting")} what="the waiting connections" props={{ api, campaignRef: ref, onChanged: () => void load(center, hops, true) }} />
       )}
 
       <details
