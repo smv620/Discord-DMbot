@@ -28,7 +28,7 @@ export default function NamePlaces({
           aria-expanded={open}
           onClick={() => setOpen(!open)}
         >
-          {words.button}
+          <span aria-hidden="true">{words.buttonIcon}</span> {words.button}
         </button>
       </p>
       {open && (

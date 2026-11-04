@@ -144,6 +144,12 @@ describe("the page itself", () => {
     expect(text).toContain(w.gone(4));
   });
 
+  it("with no windows but more places, the button opens to the count alone", () => {
+    render(<NamePlaces places={[]} more={4} campaignRef="1.2" />);
+    fireEvent.click(screen.getByRole("button", { name: w.button }));
+    expect(screen.getByText(w.heard(4, 0))).toBeTruthy();
+  });
+
   it("shows at most three windows of three lines, only after the button is pressed", () => {
     const lines = [1, 2, 3, 4].map((n) => ({
       speaker: "Mira",

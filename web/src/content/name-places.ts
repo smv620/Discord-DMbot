@@ -6,7 +6,9 @@
 // or its speaker. Shown only while NAME_PLACES_LIVE is true (recap-words.ts).
 export const namePlaceWords = {
   // The button on every name question that has a place (the owner's words, #3384; the same label as Discord's).
-  button: "📜 Where was it said?",
+  button: "Where was it said?",
+  // Shown before the label and hidden from a screen reader, which would read it out as "scroll".
+  buttonIcon: "📜",
   session: (n: number): string => `Session ${n}`,
   // Seconds into the session, as the transcript pages show them.
   time: (seconds: number): string => {

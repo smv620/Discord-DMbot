@@ -21,9 +21,13 @@ _OLD = importlib.import_module("dmbot.migrations.0245_recap_name_places")
 _FROM = "CREATE FUNCTION dmbot_recap_name_places"
 _PICK = "WHERE r.cnt <= 2 OR r.rn = 1 OR r.rn = r.cnt / 2 + 1\n                ORDER BY r.rn"
 _NEWEST_THREE = "WHERE r.rn > r.cnt - 3\n                ORDER BY r.rn DESC"
+_ORDER = "ORDER BY q.at NULLS LAST, q.ms, q.sid, q.uid"
+# A place with no session date (the column may be empty) is the oldest, not the newest: the numbers
+# below run earliest first, so the undated ones now sit at the start, not the end.
+_ORDER_UNDATED_OLDEST = "ORDER BY q.at NULLS FIRST, q.ms, q.sid, q.uid"
 assert _OLD.SQL.count(_FROM) == 1
 _DOOR = _OLD.SQL[_OLD.SQL.index(_FROM) :]
-assert _DOOR.count(_PICK) == 1
+assert _DOOR.count(_PICK) == 1 and _DOOR.count(_ORDER) == 1
 
 RECAP_NAME_PLACES_NEWEST = r"""
     -- dmbot_recap_name_places: where each waiting name of a recap was said (#2403, #3384), for the
@@ -31,8 +35,10 @@ RECAP_NAME_PLACES_NEWEST = r"""
     -- table lines around the line the name was heard in, and how many places are left unshown.
     -- Nothing is copied: the words are read from transcript_lines now, and a line is kept only if
     -- its speaker has a consent row for this server at this moment (see 0245).
-    """ + _DOOR.replace(_FROM, "CREATE OR REPLACE FUNCTION dmbot_recap_name_places").replace(
-    _PICK, _NEWEST_THREE
+    """ + (
+    _DOOR.replace(_FROM, "CREATE OR REPLACE FUNCTION dmbot_recap_name_places")
+    .replace(_PICK, _NEWEST_THREE)
+    .replace(_ORDER, _ORDER_UNDATED_OLDEST)
 )
 
 SQL = RECAP_NAME_PLACES_NEWEST
