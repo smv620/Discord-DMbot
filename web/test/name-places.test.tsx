@@ -4,7 +4,13 @@
 // (false today), so these tests switch it on. The lines are transcript words: they are drawn, never logged.
 import { readFileSync } from "node:fs";
 
-import { cleanup, render, screen, within } from "@testing-library/preact";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from "@testing-library/preact";
 import axe from "axe-core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -41,6 +47,11 @@ const draft = mockRecaps()[0]!;
 const row = (name: string) =>
   screen.getByRole("group", { name }) as HTMLElement;
 
+/** Press a name's "📜 Where was it said?" button, which opens its places. */
+function show(name: string) {
+  fireEvent.click(within(row(name)).getByRole("button", { name: w.button }));
+}
+
 async function open(on = true) {
   live.places = on;
   render(<RecapNameChecks api={mockApi("table")} refId={draft.ref} />);
@@ -50,13 +61,13 @@ async function open(on = true) {
 describe("where it was said", () => {
   it("is not shown while it is switched off", async () => {
     await open(false);
-    expect(screen.queryByText(w.heading)).toBeNull();
+    expect(screen.queryByRole("button", { name: w.button })).toBeNull();
   });
 
   it("draws each window with its speaker, time and words, and a placeholder for a removed line", async () => {
     await open();
     const card = within(row("Brannoch"));
-    expect(card.getByText(w.heading)).toBeTruthy();
+    // the newest place is there with no click (#3384); the rest wait behind the button
     expect(card.getByText(w.session(12))).toBeTruthy();
     expect(card.getByText(/we rode to Brannoch's forge/)).toBeTruthy();
     expect(card.getByText(`Mira ${w.time(1840)}`)).toBeTruthy();
@@ -65,11 +76,14 @@ describe("where it was said", () => {
 
   it("says so when a whole window is no longer available", async () => {
     await open();
+    expect(within(row("Brannoch")).queryByText(w.gone(9))).toBeNull(); // the older place is behind the button
+    show("Brannoch");
     expect(within(row("Brannoch")).getByText(w.gone(9))).toBeTruthy();
   });
 
   it("links to the transcript at that session and counts the places left out", async () => {
     await open();
+    show("Brannoch");
     const card = within(row("Brannoch"));
     const link = card.getByRole("link", {
       name: w.openTranscriptFor(12),
@@ -78,19 +92,21 @@ describe("where it was said", () => {
     expect(link.getAttribute("href")).toBe(
       `/account/transcripts/${encodeURIComponent(campaign)}/12`,
     );
-    expect(card.getByText(w.more(3))).toBeTruthy();
+    expect(card.getByText(w.heard(5, 2))).toBeTruthy();
   });
 
   it("shows nothing for a name with no places", async () => {
     await open();
-    expect(within(row("Garrick")).queryByText(w.heading)).toBeNull();
+    expect(
+      within(row("Garrick")).queryByRole("button", { name: w.button }),
+    ).toBeNull();
   });
 
   it("formats times as m:ss and h:mm:ss", () => {
     expect(w.time(65)).toBe("at 1:05");
     expect(w.time(3725)).toBe("at 1:02:05");
     expect(w.time(-4)).toBe("at 0:00");
-    expect(w.more(1)).toBe("1 more place in the transcripts.");
+    expect(w.heard(5, 3)).toBe("Heard 5 times. Showing 3.");
   });
 
   it("never writes the transcript words to the console", async () => {
@@ -105,6 +121,7 @@ describe("where it was said", () => {
 
   it("has no accessibility violations", async () => {
     await open();
+    show("Brannoch");
     const result = await axe.run(document.body);
     expect(result.violations).toEqual([]);
   });
@@ -127,6 +144,8 @@ describe("the page itself", () => {
     const { container } = render(
       <NamePlaces places={places} more={0} campaignRef="1.2" />,
     );
+    const button = screen.queryByRole("button", { name: w.button });
+    if (button) fireEvent.click(button);
     const text = container.textContent ?? "";
     for (const bad of ["SECRET", "Mira", "HIDDEN", "Kes"])
       expect(text).not.toContain(bad);
@@ -134,13 +153,19 @@ describe("the page itself", () => {
     expect(text).toContain(w.gone(4));
   });
 
-  it("shows at most two windows of three lines", () => {
+  it("with no windows but more places, the button opens to the count alone", () => {
+    render(<NamePlaces places={[]} more={4} campaignRef="1.2" />);
+    fireEvent.click(screen.getByRole("button", { name: w.button }));
+    expect(screen.getByText(w.heard(4, 0))).toBeTruthy();
+  });
+
+  it("draws the newest place with no click, and the other two only after the button is pressed", () => {
     const lines = [1, 2, 3, 4].map((n) => ({
       speaker: "Mira",
       at: n,
       text: `line${n}`,
     }));
-    const places = [1, 2, 3].map((session) => ({
+    const places = [4, 3, 2, 1].map((session) => ({
       session,
       available: true,
       lines,
@@ -148,9 +173,32 @@ describe("the page itself", () => {
     const { container } = render(
       <NamePlaces places={places} more={0} campaignRef="1.2" />,
     );
-    expect(container.textContent).not.toContain("line4");
+    // closed: only the newest window (session 4, three of its lines)
+    expect(container.textContent).toContain(w.session(4));
     expect(container.textContent).not.toContain(w.session(3));
-    expect(container.querySelectorAll("li li")).toHaveLength(6);
+    expect(container.querySelectorAll("li li")).toHaveLength(3);
+    const button = screen.getByRole("button", { name: w.button });
+    expect(button.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(button);
+    expect(button.getAttribute("aria-expanded")).toBe("true");
+    expect(container.textContent).not.toContain("line4"); // three lines to a window
+    expect(container.textContent).toContain(w.session(3));
+    expect(container.textContent).toContain(w.session(2));
+    expect(container.textContent).not.toContain(w.session(1)); // three places at most
+    expect(container.querySelectorAll("li li")).toHaveLength(9);
+  });
+
+  it("has no button when the newest place is the only one", () => {
+    const lines = [{ speaker: "Mira", at: 5, text: "just once" }];
+    const { container } = render(
+      <NamePlaces
+        places={[{ session: 7, available: true, lines }]}
+        more={0}
+        campaignRef="1.2"
+      />,
+    );
+    expect(container.textContent).toContain("just once");
+    expect(screen.queryByRole("button", { name: w.button })).toBeNull();
   });
 
   it("is held with its What's new entry and one GO_LIVE row", async () => {
