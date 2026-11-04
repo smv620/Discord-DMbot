@@ -27,6 +27,7 @@ from dmbot.memory.models import (
     PROPOSED,
     REJECTED,
     MemoryRuleError,
+    lookup_key,
     name_key,
 )
 from dmbot.memory.name_longer import widens
@@ -109,6 +110,26 @@ class AnswerStore:
                 " WHERE e.guild_id = %s AND e.campaign_id = %s AND e.id = ANY(%s)"
                 " ON CONFLICT DO NOTHING",
                 (guild_id, campaign_id, session_at, guild_id, campaign_id, ids),
+            )
+            return int(cur.rowcount)
+
+    async def link_like(
+        self, guild_id: int, campaign_id: str, from_entity: str, entity_ids: Sequence[str]
+    ) -> int:
+        """The new names a split or group made belong to the same recaps as the list they came
+        from (#3406), so the page's list shows them. Ids only; repeats change nothing."""
+        ids = list(dict.fromkeys(entity_ids))
+        if not ids:
+            return 0
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "INSERT INTO recap_name_checks (guild_id, campaign_id, session_at, entity_id)"
+                " SELECT k.guild_id, k.campaign_id, k.session_at, e.id"
+                " FROM recap_name_checks k, memory_entities e"
+                " WHERE k.guild_id = %s AND k.campaign_id = %s AND k.entity_id = %s"
+                " AND e.guild_id = k.guild_id AND e.campaign_id = k.campaign_id"
+                " AND e.id = ANY(%s) ON CONFLICT DO NOTHING",
+                (guild_id, campaign_id, from_entity, ids),
             )
             return int(cur.rowcount)
 
@@ -268,7 +289,7 @@ async def apply(
         elif answer.action == "not_a_name":
             await memory.set_entity_status(guild_id, cid, entity.id, REJECTED, source="dm")
         elif answer.action in KEPT_ACTIONS:
-            return await _split_or_group(memory, guild_id, cid, entity, answer, kept)
+            return await _split_or_group(memory, guild_id, cid, entity, answer, kept, answers)
         elif answer.action == "explain":
             await memory.set_note(
                 guild_id, cid, entity.id, answer.text, source="dm", limit=NOTE_MAX
@@ -299,6 +320,7 @@ async def _split_or_group(
     entity: Any,
     answer: Answer,
     kept: Kept | None,
+    answers: AnswerStore | None = None,
 ) -> str:
     """ "These are separate names", "Yes, that group" and "They're a group" (#3406, #3383): the same
     store calls as Discord's buttons (#3403, #3404), one change each, so one Undo. What stays on
@@ -306,11 +328,13 @@ async def _split_or_group(
     name. A refusal changes nothing."""
     note = ""
     undo_name: str | None = None
+    made_names: Sequence[str] = ()
     try:
         if answer.action == SPLIT:
             undo_name = entity.name
             split = await memory.split_waiting_name(guild_id, campaign_id, entity.id, source="dm")
             batch = split.batch
+            made_names = split.value.made
             note = f"Split into {len(split.value.parts)} names."
         elif answer.action == JOIN_GROUP:
             # Refuse exactly what the hints never offer (and what the door's check lets through
@@ -328,17 +352,30 @@ async def _split_or_group(
                 guild_id, campaign_id, entity.id, answer.target_id, source="dm"
             )
             batch = joined.batch
+            made_names = joined.value.made
             note = f"Added to the group {joined.value.group_name[:150]}."
         else:
             made = await memory.make_group(
                 guild_id, campaign_id, entity.id, answer.text, source="dm"
             )
             batch = made.batch
+            made_names = made.value.made
             note = f"Made the group {made.value.group_name[:150]}."
     except MemoryRuleError as exc:
         return _store_reason(exc)
     if kept is not None:
         kept.batch, kept.undo_name, kept.note = batch, undo_name, note[:200]
+    if answers is not None and made_names:
+        # The new waiting names belong to this recap too, or its page would not list them. Not
+        # finding them is not a failure: the change is made and Discord's list has them.
+        wanted = {lookup_key(n) for n in made_names}
+        waiting = await memory.entities(guild_id, campaign_id, statuses=[PROPOSED])
+        await answers.link_like(
+            guild_id,
+            campaign_id,
+            entity.id,
+            [e.id for e in waiting if lookup_key(e.name) in wanted],
+        )
     return ""
 
 

@@ -218,3 +218,11 @@ class SplitAndGroup(WithChecks):
         self.assertEqual(
             await self.code(self.ask(listed, action="undo", batch=int(row["batch"]))), "not_found"
         )
+
+    async def test_the_new_names_belong_to_the_same_recap_as_the_list(self) -> None:
+        """Without a pointer to the recap's name checks the page's list would not show them."""
+        listed = await self.suggest("Aldmoor, Quillgate, Fenwick")
+        await self.ask(listed, action="split")
+        self.assertEqual(await self.apply_one(), "")
+        names = (await self.listed())["names"]
+        self.assertEqual(sorted(n["name"] for n in names), ["Aldmoor", "Fenwick", "Quillgate"])
