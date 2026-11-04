@@ -1466,7 +1466,19 @@ def create_app(
             body = await request.json()
         except ValueError:
             body = None
-        replace = body.get("replace", False) if isinstance(body, dict) else False
+        if not isinstance(body, dict):
+            # No body is the page's "Try again (N left)" (the generic decision route's `again`):
+            # retry the failed or finished draft in place. This path was shadowing it since #2608,
+            # so the retry came back 409 and the page said "Something went wrong" (#3387).
+            try:
+                return await decide(
+                    db, session, ref, "again",
+                    plot_gate=settings.plot_check_on, outside_engine=settings.outside_engine,
+                )  # fmt: skip
+            except RecapError as err:
+                status, detail = recap_refusals.get(err.code, (404, "not_found"))
+                raise HTTPException(status_code=status, detail=detail) from None
+        replace = body.get("replace", False)
         if not isinstance(replace, bool):
             raise HTTPException(status_code=422, detail="bad_action")
         try:
