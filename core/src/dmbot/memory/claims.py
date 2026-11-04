@@ -1354,6 +1354,42 @@ class ClaimStore:
             changes["reason"] = UNPLACED_REASON if left else ""
             return claim_of(await w.update(CLAIMS, claim_id, changes))
 
+    async def unpick(self, guild_id: int, campaign_id: str, claim_id: str) -> bool:
+        """The DM's Undo of "Which one?" (#3463): the pick (or picks) made on this kept claim are
+        taken back and it waits for its answer again, with the same choices. Claims are not in the
+        change log, so this is the claim's own undo, and it holds only while the claim is still
+        proposed (not kept, turned down or dropped since) and has a pick to take back; otherwise
+        nothing changes and it returns False. A claim of another campaign is never found. Both
+        sides' picks go together: the claim returns to the state it was kept in."""
+        async with self._store._write(guild_id, campaign_id, DM) as w:
+            row = await w.get(CLAIMS, claim_id)
+            if (
+                row is None
+                or row["status"] != CLAIM_PROPOSED
+                or row["reason"] not in (UNPLACED_REASON, "")
+                or (row["subject_picked"] is None and row["object_picked"] is None)
+            ):
+                return False
+            entities = await w.select(
+                ENTITIES, " AND status IN ('proposed', 'confirmed') AND type <> 'person'"
+            )
+            aliases = await w.select(ALIASES, " AND status <> 'rejected'")
+            names = names_of(entities, aliases)
+            ambiguous = any(
+                len(names.by_key.get(name_key(str(row[side])), ())) > 1
+                for side in ("subject", "object")
+            )
+            await w.update(
+                CLAIMS,
+                claim_id,
+                {
+                    "subject_picked": None,
+                    "object_picked": None,
+                    "reason": UNPLACED_REASON if ambiguous else "",
+                },
+            )
+            return True
+
     async def unplaced_count(self, guild_id: int, campaign_id: str) -> int:
         """How many claims about the player characters are kept for the DM's answer (#3238), for the
         count the import or recap result and the names-to-check list show. A count only."""
