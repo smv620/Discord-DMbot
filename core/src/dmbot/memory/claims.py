@@ -799,6 +799,42 @@ def implied_kind(onto: Ontology, claim: Extracted, side: str) -> str:
     return pick if pick != "person" else CONCEPT
 
 
+def which_choices(
+    row: Mapping[str, Any],
+    entities: Sequence[Mapping[str, Any]],
+    aliases: Sequence[Mapping[str, Any]],
+) -> list[WhichOne]:
+    """The "Which one?" choices of a kept claim's row, from the campaign's live entries and other
+    names (#3238): one `WhichOne` for each name in it that could mean two entries and has not been
+    picked for. Pure, so the website reads the same choices from the facts a database door sends it
+    (#3463). A secret name is never used, even to tell two entries apart."""
+    by_id = {str(e["id"]): e for e in entities}
+    others: dict[str, list[str]] = {}
+    for a in aliases:
+        if not a.get("secret"):  # never a secret name, even to tell two entries apart
+            others.setdefault(str(a["entity_id"]), []).append(str(a["text"]))
+    names = names_of(entities, aliases)
+    out: list[WhichOne] = []
+    for side in ("subject", "object"):
+        found = names.by_key.get(name_key(str(row[side])), ())
+        if len(found) < 2 or row[f"{side}_picked"] is not None:
+            continue
+        options = []
+        for entry_id, _kind in found:
+            e = by_id.get(entry_id)
+            if e is None:
+                continue
+            note = (
+                " ".join(str(e["description"]).split())[:80]
+                or ", ".join(
+                    t for t in others.get(entry_id, []) if name_key(t) != name_key(str(e["name"]))
+                )[:80]
+            )
+            options.append(EntryOption(entry_id, str(e["name"]), str(e["type"]), note))
+        out.append(WhichOne(str(row[side]), side, tuple(options)))
+    return out
+
+
 class ClaimStore:
     """Proposals from the extractor, and the DM's answers to them."""
 
@@ -1295,33 +1331,7 @@ class ClaimStore:
                 ENTITIES, " AND status IN ('proposed', 'confirmed') AND type <> 'person'"
             )
             aliases = await scope.select(ALIASES, " AND status <> 'rejected'")
-        by_id = {str(e["id"]): e for e in entities}
-        others: dict[str, list[str]] = {}
-        for a in aliases:
-            if not a.get("secret"):  # never a secret name, even to tell two entries apart
-                others.setdefault(str(a["entity_id"]), []).append(str(a["text"]))
-        names = names_of(entities, aliases)
-        out: list[WhichOne] = []
-        for side in ("subject", "object"):
-            found = names.by_key.get(name_key(str(row[side])), ())
-            if len(found) < 2 or row[f"{side}_picked"] is not None:
-                continue
-            options = []
-            for entry_id, _kind in found:
-                e = by_id.get(entry_id)
-                if e is None:
-                    continue
-                note = (
-                    " ".join(str(e["description"]).split())[:80]
-                    or ", ".join(
-                        t
-                        for t in others.get(entry_id, [])
-                        if name_key(t) != name_key(str(e["name"]))
-                    )[:80]
-                )
-                options.append(EntryOption(entry_id, str(e["name"]), str(e["type"]), note))
-            out.append(WhichOne(str(row[side]), side, tuple(options)))
-        return out
+        return which_choices(row, entities, aliases)
 
     async def pick_one(
         self, guild_id: int, campaign_id: str, claim_id: str, side: str, entry_id: str
