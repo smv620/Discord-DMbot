@@ -78,6 +78,16 @@ def way_of(detail: str) -> Way | None:
     return _WAYS.get(" ".join(detail.split()).casefold())
 
 
+def slot(detail: str) -> tuple[str, bool]:
+    """Which place tie this detail is, for the one-at-a-time limit (#3363): the word and whether
+    it is past. A new "lives in" ends only the old "lives in"; "lived in" is history and never
+    ends it, and a past word is never limited at all. A sighting ends only the old sighting. No
+    word is a sighting for something that moves and the plain place tie for a place, and a subject
+    has only one of those."""
+    way = way_of(detail)
+    return (way.key, way.past) if way is not None else (LAST_SEEN, False)
+
+
 def forward(detail: str, subject_kind: str) -> str:
     """How the connection reads from the subject: "lives in" for a way, "was last seen in" for
     something that moves with no way said, and "is in" for what does not move."""

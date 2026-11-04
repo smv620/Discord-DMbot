@@ -136,5 +136,15 @@ class OnTheCard(unittest.TestCase):
         self.assertFalse(reads_both_ways("located_in", "", False))
 
 
+class Slots(unittest.TestCase):
+    def test_a_word_and_its_tense_are_its_own_slot(self) -> None:
+        self.assertEqual(place_words.slot("lives in"), (place_words.LIVES, False))
+        self.assertEqual(place_words.slot("lived in"), (place_words.LIVES, True))
+        self.assertEqual(place_words.slot("works at"), (place_words.WORKS, False))
+        # no word, a visit and a sighting are one slot: the next one replaces the last
+        self.assertEqual(place_words.slot(""), place_words.slot("visited"))
+        self.assertEqual(place_words.slot("is revered in"), place_words.slot("was last seen in"))
+
+
 if __name__ == "__main__":
     unittest.main()
