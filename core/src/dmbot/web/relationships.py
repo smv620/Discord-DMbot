@@ -803,10 +803,14 @@ async def queue_edit(db: Database, session: Session, ref: str, link_id: str, bod
 # "backstory" (from the DM's own backstory; actions keep, skip; `secret` is "keep as secret";
 # `keep_all` keeps the ones named in `ids` (at most 50) that are ready now, and no others), or
 # "which" (a "Which Mara?" question, #2652; actions pick, with `entity` the candidate chosen, and
-# neither).
+# neither). A fact kept for "Which one?" (#3463, Family ties) is answered as `claim`: `pick` with
+# `side` ("subject" or "object") and `entity` (the entry chosen), `unpick` (Undo, while it waits),
+# and "None of these" is the ordinary `reject`.
 WAITING_QUEUE = {
     ("claim", "confirm"): "claim-confirm",
     ("claim", "reject"): "claim-reject",
+    ("claim", "pick"): "claim-pick",
+    ("claim", "unpick"): "claim-unpick",
     ("backstory", "keep"): "backstory-keep",
     ("backstory", "skip"): "backstory-skip",
     ("backstory", "keep_all"): "backstory-keep-all",
@@ -852,6 +856,11 @@ async def queue_waiting(db: Database, session: Session, ref: str, body: object) 
         if not ID_PATTERN.match(picked):
             raise RecapError("not_found")
         text = picked
+    if action == "claim-pick":
+        side, entry = body.get("side"), str(body.get("entity") or "")
+        if side not in ("subject", "object") or not ID_PATTERN.match(entry):
+            raise RecapError("not_found")
+        text = f"{side}:{entry}"  # the door checks the shape; the bot checks the choice
     return await _queue(
         db, session, ref, entity="", action=action, target=target, text=text,
         flag=secret and action in ("claim-confirm", "backstory-keep"),

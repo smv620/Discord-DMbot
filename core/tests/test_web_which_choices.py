@@ -93,3 +93,13 @@ class TheChoices(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_the_door_migration_copies_the_stores_reason_word_for_word() -> None:
+    import importlib
+
+    from dmbot.memory.claims import UNPLACED_REASON
+
+    for name in ("0342_which_info", "0343_claim_pick_actions"):
+        module = importlib.import_module(f"dmbot.migrations.{name}")
+        assert module.UNPLACED_REASON == UNPLACED_REASON

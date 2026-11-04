@@ -938,6 +938,48 @@ class TheEdits(Editing):
         self.assertEqual((choice["side"], choice["words"]), (direct.side, direct.words))
         self.assertTrue(all(e["tag"] for e in choice["entries"]))
 
+    async def _kept_claim(self) -> tuple[str, str]:
+        for note in ("the ferrywoman", "a smuggler's daughter"):
+            await self.memory.add_entity(
+                self.g, self.one.id, type="character", name="Mira", description=note,
+                source="dm", status="confirmed",
+            )  # fmt: skip
+        await self.claims.propose(
+            self.g, self.one.id, [said("Rook", "is the sister of", "Mira")], {"1": 7},
+            opted_in={7}, prompt_version="p1", model="m1", session_started_at=500,
+        )  # fmt: skip
+        kept = [c for c in (await self.waiting_now())["claims"] if "choices" in c]
+        return kept[0]["id"], kept[0]["choices"][0]["entries"][0]["id"]
+
+    async def test_a_pick_and_its_undo_are_queued_for_a_kept_claim_only(self) -> None:
+        """#3463: the door takes `claim-pick` for a claim still kept for its answer, with a
+        `side:entry` text, and `claim-unpick` for a waiting claim; nothing else gets through."""
+        claim, entry = await self._kept_claim()
+        self.assertTrue(
+            await self.queue(kind="claim", action="pick", id=claim, side="object", entity=entry)
+        )
+        self.assertTrue(await self.queue(kind="claim", action="unpick", id=claim))
+        self.assertEqual(
+            await self.refused_queue(kind="claim", action="pick", id=claim, side="x", entity=entry),
+            "not_found",
+        )
+        self.assertEqual(
+            await self.refused_queue(
+                kind="claim", action="pick", id="0" * 32, side="object", entity=entry
+            ),
+            "not_found",
+        )
+
+    async def test_a_pick_for_an_ordinary_waiting_claim_is_not_found(self) -> None:
+        await self.claim()
+        (plain,) = (await self.waiting_now())["claims"]
+        self.assertEqual(
+            await self.refused_queue(
+                kind="claim", action="pick", id=plain["id"], side="object", entity="a" * 32
+            ),
+            "not_found",
+        )
+
     async def test_a_claim_from_someone_who_stopped_being_recorded_is_left_out(self) -> None:
         """#3466: the claims list and its count keep only claims whose every speaker is recorded
         now, as Discord's list does, and the claim comes back if they agree again."""
