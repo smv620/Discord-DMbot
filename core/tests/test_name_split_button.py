@@ -25,7 +25,7 @@ class SplitButton(NamesTest):
 
     async def card(self, user: int = DM) -> tuple[ui.SuggestionReview, Any]:
         it = self.it(user)
-        await ui.start_review(it, self.campaign.id)
+        await ui.start_review(it, self.campaign.id, bulk=False)
         _text, kw = it.response.sent[0]
         return kw["view"], it
 
@@ -71,3 +71,20 @@ class SplitButton(NamesTest):
         await self.button(view, SPLIT).callback(it)
         self.assertEqual(it.response.sent[-1][0], logic.NO_CAMPAIGN_ACCESS)
         self.assertEqual(await self.waiting_names(), ["Aldmoor, Quillgate, Fenwick"])
+
+    async def test_a_server_manager_who_is_not_a_dm_cannot_undo_a_split(self) -> None:
+        await self.waiting("Aldmoor, Quillgate, Fenwick")
+        view, _it = await self.card()
+        await self.button(view, SPLIT).callback(self.it())
+        it = self.it(MANAGER)
+        await self.button(view, UNDO).callback(it)
+        self.assertEqual(it.response.sent[-1][0], logic.NO_CAMPAIGN_ACCESS)
+        self.assertEqual(await self.waiting_names(), ["Aldmoor", "Fenwick", "Quillgate"])
+
+    async def test_the_parts_are_asked_before_anything_else_and_the_list_is_gone(self) -> None:
+        await self.waiting("Aldmoor, Quillgate, Fenwick", "Zed")
+        view, _it = await self.card()
+        first = view.queue[0]
+        await self.button(view, SPLIT).callback(self.it())
+        self.assertNotIn(first, view.queue)
+        self.assertEqual(len(view.queue), 4)  # three parts and Zed

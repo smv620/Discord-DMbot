@@ -34,6 +34,7 @@ from dmbot.memory.models import (
     REJECTED,
     Entity,
     MemoryRuleError,
+    lookup_key,
     name_key,
 )
 from dmbot.memory.name_longer import longer_names, widens
@@ -1549,6 +1550,7 @@ class SuggestionReview(_Menu):
         entity = await memory.entity(campaign.guild_id, campaign.id, self.queue[0])
         if entity is None or entity.status != PROPOSED:
             self.queue.pop(0)
+            self.split_undo = None  # a part is gone: the split can't be taken back as it was
             await self._next(interaction, campaign, memory, note=None)
             return None
         return campaign, memory, entity
@@ -1934,10 +1936,10 @@ class SuggestionReview(_Menu):
             return
         changed(interaction, campaign)
         done = written.value
-        by_key = {name_key(e.name): e.id for e in await memory.entities(
+        by_key = {lookup_key(e.name): e.id for e in await memory.entities(
             campaign.guild_id, campaign.id, statuses=[PROPOSED]
         )}  # fmt: skip
-        made = [by_key[k] for p in done.made if (k := name_key(p)) in by_key]
+        made = [by_key[k] for p in done.made if (k := lookup_key(p)) in by_key]
         self.queue.pop(0)
         self.queue[:0] = made  # the new names are asked next
         if written.batch is not None:
@@ -1956,17 +1958,22 @@ class SuggestionReview(_Menu):
         pending = self.split_undo
         campaign = await _campaign_for(interaction, self.campaign_id)
         memory = _memory(interaction)
-        if pending is None or campaign is None or memory is None:
+        if campaign is None or memory is None:
             return
+        if not sees_secrets(campaign, interaction.user.id):  # the DM's change, the DM's undo
+            await _tell(interaction, logic.NO_CAMPAIGN_ACCESS)
+            return
+        if pending is None:  # a second press, or an old card
+            await _tell(interaction, GONE)
+            return
+        self.split_undo = None  # a second quick press finds nothing to undo
         batch, name, original, made = pending
         try:
             await memory.undo_split(campaign.guild_id, campaign.id, batch, name)
         except MemoryRuleError:
-            self.split_undo = None
             await _tell(interaction, "Can't undo: a part was answered, or it was changed since.")
             return
         changed(interaction, campaign)
-        self.split_undo = None
         self.queue = [original, *(q for q in self.queue if q not in made)]
         await self._next(interaction, campaign, memory, note=f"↩ Back to **{_md(name)}**.")
 
