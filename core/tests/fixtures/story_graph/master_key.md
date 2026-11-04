@@ -273,7 +273,7 @@ These are the ties the check should find most surely: the session repeats or sha
 | Torg's Caravan |  | lore | Torrga's merchant caravan |
 | The circus |  | lore | Unnamed travelling circus that held Claude |
 | The Brotherhood |  | lore | Unnamed. Named in the note in the tome |
-| Garret's clients | the people who hired Garret | session | Unnamed. Hired Garret as a guide; Keegan never met them. |
+| Garret's clients |  | session | Unnamed. Hired Garret as a guide; Keegan never met them. |
 | Clan Battlehammer |  | session | Dwarves Belleros wants to ask what happened. |
 
 ### Places (29)

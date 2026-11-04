@@ -238,6 +238,26 @@ class InTheStore(ConfirmedMemoryTest):
         await self.put(self.tavin, "carries", self.sword, "", 100)  # the same fact again
         self.assertEqual(await self.held(), before)
 
+    async def test_taking_back_a_removed_carrying_leaves_one_current_whereabouts(self) -> None:
+        # (#3375) the DM removed the carrying, a place then kept the item; Undo brings the carrying
+        # back, and the item still has one whereabouts: what the DM brought back is the newest
+        carrying_now = await self.put(self.tavin, "carries", self.sword, "", 100)
+        removed = await self.memory.update_relation(
+            GUILD_A, self.c, carrying_now.id, source="dm", status="rejected"
+        )
+        await self.put(self.sword, "located_in", self.chest, "is kept in", 200)
+        back = await self.memory.undo_connection(
+            GUILD_A, self.c, removed.batch or 0, within=3600, secrets=True
+        )
+        self.assertEqual(back.value.status, CONFIRMED)
+        self.assertEqual(
+            await self.held(),
+            {
+                ("carries", self.sword): ("", None),
+                ("located_in", self.chest): ("was kept in", None),
+            },
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

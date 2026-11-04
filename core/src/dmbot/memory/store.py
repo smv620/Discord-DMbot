@@ -2700,11 +2700,12 @@ class MemoryStore:
             for a in aliases:
                 by_key.setdefault(str(a["key"]), str(a["entity_id"]))  # (as `_join_group_in`)
             ids = {p: by_key.get(lookup_key(p)) for p in parts}
-            # Only what is plain to everyone: a secret membership or a group hidden from the
-            # players never gives a hint, so the hint can't spoil what the question would show.
+            # Only what is plain to everyone and a fact: a secret or guessed membership, or a group
+            # hidden from the players or unnamed, never gives a hint, so the hint can't spoil what
+            # the question would show or state a guess as true (the door rule, #3417).
             member_rows = await scope.select(
                 RELATIONS,
-                " AND predicate = 'member_of' AND status IN ('proposed', 'confirmed')"
+                " AND predicate = 'member_of' AND status = 'confirmed'"
                 " AND NOT secret AND NOT unrevealed",
             )
             groups = [
@@ -2713,6 +2714,7 @@ class MemoryStore:
                 if e["type"] == "faction"
                 and e["status"] == CONFIRMED
                 and not e.get("hidden_from_players")
+                and not e.get("unnamed")
             ]
             hints: list[GroupHint] = []
             for g in groups:
@@ -5340,7 +5342,12 @@ class MemoryStore:
             back = await w.get(RELATIONS, ended[0]["row_id"])
             if back is None:
                 raise MemoryRuleError(NOT_FOUND)
-            return Written(_relation(back), w.batch)
+            restored = _relation(back)
+            if restored.status == CONFIRMED and restored.to_session_at is None:
+                # The DM took a removal back: an item has one current whereabouts (#3375), and
+                # what the DM brings back counts as the newest word.
+                restored, _ = await _settle_whereabouts(w, restored, by_hand=True)
+            return Written(restored, w.batch)
 
     def _too_late(self) -> str:
         # Also true after a backup replaced the campaign: that starts a fresh log.

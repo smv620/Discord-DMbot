@@ -134,8 +134,10 @@ NAME_ANSWERS_SPLIT = (
     -- What the page needs to say whether a waiting list is a known group (Discord's "Yes, that
     -- group"): for the spellings of the listed parts (their lookup keys), the entry each belongs
     -- to, and the confirmed groups those entries are in. The same facts `MemoryStore.group_hints`
-    -- reads (every spelling not turned down, a membership that is neither secret nor unrevealed,
-    -- a confirmed group not hidden from the players), for a DM only; the web layer picks the
+    -- reads (every spelling not turned down, a confirmed membership that is neither secret nor
+    -- unrevealed, a confirmed group that is named and not hidden from the players), for a DM
+    -- only; a guess is not a fact the hint may state (the door rule: connections are read
+    -- confirmed only, #3417); the web layer picks the
     -- hints with the store's own rule, so the two cannot drift. At most 12 keys; ids, names and
     -- keys only.
     CREATE FUNCTION dmbot_name_group_info(g BIGINT, c TEXT, keys TEXT[]) RETURNS JSONB
@@ -163,7 +165,7 @@ NAME_ANSWERS_SPLIT = (
                 SELECT jsonb_agg(jsonb_build_object('subject', r.subject_id, 'group', r.object_id))
                 FROM memory_relations r
                 WHERE r.guild_id = g AND r.campaign_id = c AND r.predicate = 'member_of'
-                  AND r.status IN ('proposed', 'confirmed') AND NOT r.secret AND NOT r.unrevealed
+                  AND r.status = 'confirmed' AND NOT r.secret AND NOT r.unrevealed
                   AND r.subject_id IN (SELECT x.entity_id FROM memory_aliases x
                                        WHERE x.guild_id = g AND x.campaign_id = c
                                          AND x.status <> 'rejected' AND x.key = ANY (keys))),
@@ -173,11 +175,11 @@ NAME_ANSWERS_SPLIT = (
                                  ORDER BY lower(e.name), e.id)
                 FROM memory_entities e
                 WHERE e.guild_id = g AND e.campaign_id = c AND e.type = 'faction'
-                  AND e.status = 'confirmed' AND NOT e.hidden_from_players
+                  AND e.status = 'confirmed' AND NOT e.hidden_from_players AND NOT e.unnamed
                   AND e.id IN (SELECT r.object_id FROM memory_relations r
                                WHERE r.guild_id = g AND r.campaign_id = c
                                  AND r.predicate = 'member_of'
-                                 AND r.status IN ('proposed', 'confirmed')
+                                 AND r.status = 'confirmed'
                                  AND NOT r.secret AND NOT r.unrevealed
                                  AND r.subject_id IN (SELECT x.entity_id FROM memory_aliases x
                                                       WHERE x.guild_id = g AND x.campaign_id = c

@@ -116,9 +116,11 @@ CLAIMS = Table(
     "id",
     ("id", "subject", "relationship", "object", "details", "how", "lines", "speaker_ids",
      "source", "prompt_version", "model", "status", "reason", "session_started_at",
-     "created_at", "decided_at", "fact_id", "reading"),
+     "created_at", "decided_at", "fact_id", "reading", "subject_picked", "object_picked"),
     logged=False,
-    defaults={"reading": None},  # a claim that is a belief for the DM to place (#2412)
+    # a claim that is a belief for the DM to place (#2412); the entries the DM picked for a name
+    # that could mean two (#3238)
+    defaults={"reading": None, "subject_picked": None, "object_picked": None},
 )  # fmt: skip
 # A character's links to the rules (#1034): species, creature type, stat block, class,
 # background.

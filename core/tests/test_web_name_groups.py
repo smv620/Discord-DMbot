@@ -31,16 +31,16 @@ class TheHintsRule(unittest.TestCase):
     """`name_groups.hints_for`: the store's rule, over the facts the door gives."""
 
     def test_a_list_is_found_only_for_two_or_more_parts(self) -> None:
-        self.assertEqual(name_groups.parts_of("Batman and Robin"), ["Batman", "Robin"])
+        self.assertEqual(name_groups.parts_of("Brannoch and Veshla"), ["Brannoch", "Veshla"])
         self.assertEqual(name_groups.parts_of("Aldmoor, Quillgate and Fenwick")[0], "Aldmoor")
         self.assertEqual(name_groups.parts_of("Aldmoor"), [])
 
     def test_every_part_or_all_but_one_in_the_group_gives_a_hint(self) -> None:
-        facts = info({"batman": "e1", "robin": "e2"}, [("e1", "g1")], {"g1": "The Dynamic Duo"})
-        (hint,) = name_groups.hints_for(["Batman", "Robin"], facts)
+        facts = info({"brannoch": "e1", "veshla": "e2"}, [("e1", "g1")], {"g1": "The Ashen Circle"})
+        (hint,) = name_groups.hints_for(["Brannoch", "Veshla"], facts)
         self.assertEqual(
             (hint.group_id, hint.group_name, hint.members, hint.others),
-            ("g1", "The Dynamic Duo", ("Batman",), ("Robin",)),
+            ("g1", "The Ashen Circle", ("Brannoch",), ("Veshla",)),
         )
 
     def test_fewer_than_all_but_one_gives_none(self) -> None:
@@ -57,9 +57,9 @@ class TheHintsRule(unittest.TestCase):
         self.assertEqual([h.group_name for h in got], ["Zed", "alpha", "Beta"])
 
     def test_a_part_the_campaign_does_not_know_is_not_a_member(self) -> None:
-        facts = info({"batman": "e1"}, [("e1", "g1")], {"g1": "The Dynamic Duo"})
-        (hint,) = name_groups.hints_for(["Batman", "Robin"], facts)
-        self.assertEqual(hint.others, ("Robin",))
+        facts = info({"brannoch": "e1"}, [("e1", "g1")], {"g1": "The Ashen Circle"})
+        (hint,) = name_groups.hints_for(["Brannoch", "Veshla"], facts)
+        self.assertEqual(hint.others, ("Veshla",))
 
     def test_no_facts_no_hints(self) -> None:
         self.assertEqual(name_groups.hints_for(["A", "B"], {}), [])
@@ -97,14 +97,16 @@ class TheDatabaseHalf(WithChecks):
         async with self.db.guild(GUILD) as conn:
             await conn.execute(text, args)
 
-    async def group(self, name: str, *members: str, secret: bool = False) -> str:
+    async def group(
+        self, name: str, *members: str, secret: bool = False, status: str = CONFIRMED
+    ) -> str:
         made = await self.memory.add_entity(
             GUILD, self.one.id, type="faction", name=name, source=DM, status=CONFIRMED
         )
         for member in members:
             await self.memory.add_relation(
                 GUILD, self.one.id, member, "member_of", made.value.id,
-                source=DM, confidence=1.0, status=CONFIRMED, secret=secret,
+                source=DM, confidence=1.0, status=status, secret=secret,
             )  # fmt: skip
         return made.value.id
 
@@ -112,29 +114,43 @@ class TheDatabaseHalf(WithChecks):
         return await self.known(name, "character")
 
     async def test_a_list_name_carries_its_groups_and_other_names_carry_none(self) -> None:
-        batman, robin = await self.person("Batman"), await self.person("Robin")
-        duo = await self.group("The Dynamic Duo", batman)
-        listed = await self.suggest("Batman and Robin")
+        brannoch, veshla = await self.person("Brannoch"), await self.person("Veshla")
+        duo = await self.group("The Ashen Circle", brannoch)
+        listed = await self.suggest("Brannoch and Veshla")
         plain = await self.suggest("Gotham")
         cards = {c["id"]: c for c in (await self.listed())["names"]}
         self.assertTrue(cards[listed]["isList"])
         self.assertEqual(
             cards[listed]["groups"],
-            [{"id": duo, "name": "The Dynamic Duo", "members": ["Batman"], "others": ["Robin"]}],
+            [
+                {
+                    "id": duo,
+                    "name": "The Ashen Circle",
+                    "members": ["Brannoch"],
+                    "others": ["Veshla"],
+                }
+            ],
         )
         self.assertNotIn("isList", cards[plain])
         self.assertNotIn("groups", cards[plain])
-        self.assertTrue(robin)
+        self.assertTrue(veshla)
 
     async def test_the_page_offers_what_the_store_offers_with_a_secret_spelling(self) -> None:
         """Parity (Supervisor, #3406): the store and the page give the same hints."""
-        batman, robin = await self.person("Batman"), await self.person("Robin")
+        brannoch, veshla = await self.person("Brannoch"), await self.person("Veshla")
         await self.memory.add_alias(
-            GUILD, self.one.id, robin, "The Boy Wonder", kind="nickname", source=DM, secret=True
+            GUILD, self.one.id, veshla, "The Boy Wonder", kind="nickname", source=DM, secret=True
         )
-        await self.group("The Dynamic Duo", batman, robin)
-        await self.group("A Secret Club", batman, secret=True)  # a secret membership: no hint
-        listed = await self.suggest("Batman and Robin")
+        await self.group("The Ashen Circle", brannoch, veshla)
+        await self.group("A Secret Club", brannoch, secret=True)  # a secret membership: no hint
+        await self.group("A Guessed Club", brannoch, veshla, status="proposed")  # a guess: no hint
+        unnamed = await self.group("Garret's clients", brannoch, veshla)  # an unnamed group
+        await self.sql(
+            "UPDATE memory_entities SET unnamed = true, unnamed_what = 'a group of clients'"
+            " WHERE id = %s",
+            unnamed,
+        )
+        listed = await self.suggest("Brannoch and Veshla")
         store = await self.memory.group_hints(GUILD, self.one.id, listed)
         page = next(c for c in (await self.listed())["names"] if c["id"] == listed)["groups"]
         self.assertEqual(
@@ -145,13 +161,13 @@ class TheDatabaseHalf(WithChecks):
                 for h in store
             ],
         )  # fmt: skip
-        self.assertEqual([g["name"] for g in page], ["The Dynamic Duo"])
+        self.assertEqual([g["name"] for g in page], ["The Ashen Circle"])
 
     async def test_the_door_takes_the_new_answers_and_refuses_what_it_can_see_is_wrong(
         self,
     ) -> None:
         listed = await self.suggest("Aldmoor, Quillgate and Fenwick")
-        duo = await self.group("The Dynamic Duo")
+        duo = await self.group("The Ashen Circle")
         await self.ask(listed, action="split")
         self.assertEqual(await self.apply_state(listed), "waiting")
         await self.sql("DELETE FROM name_answers WHERE entity_id = %s", listed)

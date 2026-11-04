@@ -259,14 +259,36 @@ def _words_of(candidate: str) -> list[str]:
     return [w for w in (_plain(x) for x in _GAP.split(candidate.strip())) if w]
 
 
+# A clause the reader cut out of a sentence is no name (#3394): "twenty miles from Targos",
+# "prophecy to Tavin", "in Elvish". A lower-case linking word after the first word, or one that
+# starts it. "of" is left out on purpose ("Tower of Joy"), and "in", "at", "on", "by" and "for"
+# count only at the start, so "Fort at the Pass" is a name.
+CLAUSE_LINKS = frozenset(
+    {*("to", "from", "past", "into", "toward", "towards", "who", "which", "that", "with", "about")}
+)
+CLAUSE_STARTS = CLAUSE_LINKS | frozenset({"in", "at", "on", "by", "for"})
+
+
+def _clause(candidate: str) -> bool:
+    tokens = candidate.split()
+    if len(tokens) < 2:
+        return False
+    if tokens[0].islower() and _plain(tokens[0]) in CLAUSE_STARTS:
+        return True
+    return any(t.islower() and _plain(t) in CLAUSE_LINKS for t in tokens[1:])
+
+
 def shape_of(candidate: str) -> str | None:
-    """Why this candidate is no name by its shape alone: `number`, `measure`, `time` or `address`;
+    """Why this candidate is no name by its shape alone: `number`, `measure`, `time`, `address` or
+    `clause`;
     None when the shape says nothing. Capitals do not decide any of these."""
     words = _words_of(candidate)
     if not words:
         return None
     if " ".join(words) in ADDRESS_ALONE:
         return "address"
+    if _clause(candidate):
+        return "clause"
     # "Area 51", "Third Tower": a capitalised word that is not itself a number or unit word
     capitalised = any(
         w[:1].isupper() and _plain(w) not in NUMBER_WORDS | UNITS | TIME_WORDS
