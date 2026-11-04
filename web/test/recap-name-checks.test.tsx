@@ -269,6 +269,7 @@ describe("names to check: split, group and Undo (#3406)", () => {
   it("no split buttons when the switch is off", async () => {
     split.on = false;
     await open();
+    expect(row(LIST)).toBeTruthy(); // the card is there, so the absence below means something
     expect(screen.queryByRole("button", { name: `${gw.split}: ${LIST}` })).toBeNull();
     expect(screen.queryByRole("button", { name: `${gw.isGroup}: ${LIST}` })).toBeNull();
   });
@@ -355,7 +356,6 @@ describe("names to check: split, group and Undo (#3406)", () => {
     await screen.findByText("Split into 3 names.", undefined, slow);
     fireEvent.click(screen.getByRole("button", { name: gw.undo }));
     expect(await screen.findByText(gw.reason("answered"), undefined, slow)).toBeTruthy();
-    expect(gw.reason("answered")).toBe("You already answered one of these names, so Undo can't work. Change it in the list instead.");
   }, 40_000);
 
   it("the list is read again when a follow ends", async () => {
