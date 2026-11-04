@@ -4,14 +4,25 @@
 // connection, theories drawn dotted, and the player's "Peek behind the DM screen" switch with its
 // warning, its greyed-out state when the DM turned it off, and the fall-back when they do meanwhile.
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError } from "../src/account/api";
 import { mockApi } from "../src/account/mock";
 import Web from "../src/account/Web";
 import { webPage as w } from "../src/content/web-words";
 
-afterEach(cleanup);
+// NOT_NAMED_LIVE decides whether the Names page can name anyone (#3426): off in the first state, on in the second.
+const named = vi.hoisted(() => ({ on: false }));
+vi.mock("../src/content/not-named-switch", () => ({
+  get NOT_NAMED_LIVE() {
+    return named.on;
+  },
+}));
+
+afterEach(() => {
+  cleanup();
+  named.on = false;
+});
 
 const at = (suffix = ""): string => `/account/web/100.cmp1${suffix}`;
 const calls = (api: ReturnType<typeof mockApi>, prefix: string) => api.calls.filter((c) => c.startsWith(prefix));
@@ -131,7 +142,7 @@ describe("a connection that can't be shown until its names are (#3426)", () => {
     expect(button).toBeTruthy();
     fireEvent.click(button!);
     // (the page's own empty alert is always there, so the connection's line is found by its words)
-    return screen.findByText(new RegExp(w.namesPageEnding.replace(".", "\\.")));
+    return screen.findByText(/(on the Names page\.|In Discord, press)/);
   }
 
   it("says to show the names first, and links to the Names page", async () => {
@@ -142,17 +153,26 @@ describe("a connection that can't be shown until its names are (#3426)", () => {
     expect(link.getAttribute("href")).toBe("/account/names/100.cmp1");
   });
 
-  it("says to give the unnamed person a name first, and links to the Names page", async () => {
+  it("while the Names page can't name anyone, points to Discord and gives no link", async () => {
+    named.on = false;
+    const alert = await pressRevealOnAConnection("name-unnamed");
+    expect(alert.textContent).toMatch(/no name yet\. In Discord, press 📚 Browse and choose Give them a name/);
+    expect(screen.queryByRole("link", { name: w.openNames })).toBeNull();
+  });
+
+  it("once the Names page can name people, says to name them there and links to it", async () => {
+    named.on = true;
     const alert = await pressRevealOnAConnection("name-unnamed");
     expect(alert.textContent).toMatch(/(needs a name first|has no name yet)/);
-    expect(alert.textContent).not.toBe(w.errorFallback);
+    expect(alert.textContent).toContain("Add one on the Names page.");
     expect(screen.getByRole("link", { name: w.openNames })).toBeTruthy();
   });
 
   it("builds each sentence from the names that are held back", () => {
     expect(w.showNamesFirst(["Brannoch"])).toBe("Brannoch isn't shown to the players yet. Show that name first, on the Names page.");
     expect(w.showNamesFirst(["Brannoch", "Veshla"])).toContain("Brannoch and Veshla aren't shown");
-    expect(w.nameThemFirst("someone's sister")).toBe("This connection needs a name first: someone's sister has none yet. Add one on the Names page.");
+    expect(w.nameThemFirst("someone's sister", true)).toBe("This connection needs a name first: someone's sister has none yet. Add one on the Names page.");
+    expect(w.nameThemFirst("someone's sister", false)).toBe("someone's sister has no name yet. In Discord, press 📚 Browse and choose Give them a name, then show this connection.");
   });
 });
 
