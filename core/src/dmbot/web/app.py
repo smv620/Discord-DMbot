@@ -2104,7 +2104,9 @@ def create_app(
         came from) and "Which Mara?" questions, with the counts. DM only."""
         session, _token = signed
         try:
-            return await relationships.read_waiting(db, session, ref)
+            return await relationships.read_waiting(
+                db, session, ref, outside_engine=settings.outside_engine
+            )
         except RecapError as err:
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None

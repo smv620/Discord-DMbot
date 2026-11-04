@@ -61,6 +61,25 @@ class Editing(Web):
         self.actions = wa.ActionStore(self.db)
         self.claims = ClaimStore(self.memory)
         self.backstory = BackstoryLinks(self.db)
+        await self.agree(7)  # (the doors read who is recorded now from the consent table, #3466)
+
+    async def agree(self, user: int, terms: int | None = None) -> None:
+        """A consent row for the person, under the current wording unless told otherwise."""
+        from dmbot.consent import TERMS_VERSION
+
+        async with self.db.guild(self.g) as conn:
+            await conn.execute(
+                "INSERT INTO consent (guild_id, user_id, granted_at, terms_version)"
+                " VALUES (%s, %s, 0, %s) ON CONFLICT (guild_id, user_id)"
+                " DO UPDATE SET terms_version = EXCLUDED.terms_version",
+                (self.g, user, TERMS_VERSION if terms is None else terms),
+            )
+
+    async def stop(self, user: int) -> None:
+        async with self.db.guild(self.g) as conn:
+            await conn.execute(
+                "DELETE FROM consent WHERE guild_id = %s AND user_id = %s", (self.g, user)
+            )
 
     async def apply_all(
         self, dms: Any = None, waiting: wa.Waiting | None = None
@@ -329,6 +348,7 @@ class TheEdits(Editing):
         speaker: int = 7,
     ) -> str:
         """A claim PlotBot found at the table, waiting for the DM: not a relation."""
+        await self.agree(speaker)
         await self.claims.propose(
             self.g, self.one.id, [said(subject, "knows", obj)], {"1": speaker},
             opted_in={speaker}, prompt_version="p1", model="m1", session_started_at=500,
@@ -894,6 +914,49 @@ class TheEdits(Editing):
 
     async def waiting_now(self, who: Any = None) -> dict[str, Any]:
         return await relationships.read_waiting(self.web, who or self.session, self.cref)
+
+    async def test_a_claim_from_someone_who_stopped_being_recorded_is_left_out(self) -> None:
+        """#3466: the claims list and its count keep only claims whose every speaker is recorded
+        now, as Discord's list does, and the claim comes back if they agree again."""
+        await self.claim()
+        self.assertEqual((await self.waiting_now())["counts"]["claims"], 1)
+        await self.stop(7)
+        gone = await self.waiting_now()
+        self.assertEqual((gone["claims"], gone["counts"]["claims"]), ([], 0))
+        await self.agree(7)
+        self.assertEqual(len((await self.waiting_now())["claims"]), 1)
+
+    async def test_a_claim_from_someone_under_older_wording_is_left_out(self) -> None:
+        from dmbot.consent import TERMS_VERSION
+
+        await self.claim()
+        await self.agree(7, TERMS_VERSION - 1)
+        self.assertEqual((await self.waiting_now())["claims"], [])
+        await self.agree(7)
+        self.assertEqual(len((await self.waiting_now())["claims"]), 1)
+
+    async def test_the_website_counts_what_the_bot_lists_for_who_is_recorded_now(self) -> None:
+        """The bot's own list (`ClaimStore.waiting`, with who the consent source says is recorded)
+        has as many claims as the website's, as the speaker stops, is on older wording, and
+        agrees again."""
+        from dmbot import consent
+
+        await self.claim()
+
+        async def both() -> tuple[int, int]:
+            async with self.db.guild(self.g) as conn:
+                recorded = await consent._select(conn, self.g, None)
+            site = (await self.waiting_now())["counts"]["claims"]
+            bot = len(await self.claims.waiting(self.g, self.one.id, opted_in=recorded))
+            return site, bot
+
+        self.assertEqual(await both(), (1, 1))
+        await self.stop(7)
+        self.assertEqual(await both(), (0, 0))
+        await self.agree(7, consent.TERMS_VERSION - 1)
+        self.assertEqual(await both(), (0, 0))
+        await self.agree(7)
+        self.assertEqual(await both(), (1, 1))
 
     async def test_a_membership_the_group_button_held_is_not_asked_about_again(self) -> None:
         """#3383 part 2: "Yes, that group" decided it; the waiting door lists no row for it, and the
