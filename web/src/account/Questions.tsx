@@ -46,7 +46,7 @@ function howFor(kind: string, api: AccountApi): QuestionHow {
 
 function Campaign({ campaign, serverNow, api }: { campaign: QuestionCampaign; serverNow: number; api: AccountApi }) {
   const [open, setOpen] = useState<Set<string>>(new Set());
-  const kinds = oldestFirst(mergeUnknown(campaign.kinds));
+  const kinds = oldestFirst(mergeUnknown(campaign.kinds)).filter((k) => kindWords(k.kind).how !== "hidden");
   // The bot has never counted this campaign (null) or not lately: the numbers can't be vouched for, so there is no all-clear.
   const old = campaign.countedAt === null || serverNow - campaign.countedAt > CATCHING_UP_SECONDS;
   return (
