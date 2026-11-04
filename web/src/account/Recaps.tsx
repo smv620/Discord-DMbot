@@ -620,7 +620,7 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
   const refresh = async (error: unknown) => {
     if (
       !(error instanceof ApiError) ||
-      !["not-allowed", "not-editable"].includes(error.kind)
+      !["not-allowed", "not-editable", "no-tries", "no-lines"].includes(error.kind)
     )
       return;
     try {
