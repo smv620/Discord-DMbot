@@ -167,6 +167,9 @@ def _candidates(
         ):
             i = j
             continue
+        if not_names.shape_of(" ".join(words[i:j])) is not None:
+            i = j  # a form of address ("Friend"), a number, a measure or a time: no name (#3394)
+            continue
         if j - i <= MAX_WORDS:
             out.append((" ".join(words[i:j]), i > 0))
             if i == 0 and j - i > 1:
