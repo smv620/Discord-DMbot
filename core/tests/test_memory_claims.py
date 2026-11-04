@@ -366,6 +366,37 @@ class Stored(ConfirmedMemoryTest):
         self.assertEqual(got.reasons.get(claims.NOT_A_NAME_REASON), 4)
         self.assertEqual(got.new, ("Aldmoor",))
 
+    async def test_an_old_waiting_claim_with_a_shape_for_a_name_is_dropped(self) -> None:
+        # (#3394) the waiting queue clears of a time or a number; a plain word is still asked about (its
+        # lines are not part of this read, so it cannot be judged)
+        from dmbot.memory.models import new_id
+
+        async with self.db.guild(GUILD_A) as conn:
+            for obj in ("five days ago", "snow"):
+                await conn.execute(
+                    "INSERT INTO memory_claims (guild_id, campaign_id, id, subject, relationship,"
+                    " object, details, how, lines, speaker_ids, source, prompt_version, model,"
+                    " status, reason, session_started_at, created_at) VALUES (%s, %s, %s, 'Bram',"
+                    " 'is in', %s, '', 'dm_said', ARRAY['1'], ARRAY[7]::bigint[], 'extractor',"
+                    " 'v', 'm', 'proposed', %s, 1, 1)",
+                    (GUILD_A, self.c, new_id(), obj, claims.WAITING_NAME_REASON),
+                )
+        await self.propose()
+        async with self.db.guild(GUILD_A) as conn:
+            cur = await conn.execute(
+                "SELECT object, status, reason FROM memory_claims WHERE campaign_id = %s"
+                " ORDER BY object",
+                (self.c,),
+            )
+            rows = [(r["object"], r["status"], r["reason"]) for r in await cur.fetchall()]
+        self.assertEqual(
+            rows,
+            [
+                ("five days ago", "dropped", claims.NOT_A_NAME_REASON),
+                ("snow", "proposed", ""),  # still a name to ask about: it cannot be judged here
+            ],
+        )
+
     async def test_only_a_unique_item_is_made_an_entry_from_a_session_claim(self) -> None:
         # (#3373) "Bram carries a dagger" makes no entry and no tie; a named or owned item does
         got = await self.propose(

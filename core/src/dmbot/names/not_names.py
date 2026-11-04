@@ -274,12 +274,19 @@ def shape_of(candidate: str) -> str | None:
     )
     if any(c.isdigit() for c in candidate) and not capitalised:
         return "time" if _CLOCK.search(candidate) else "number"
-    if _CLOCK.search(candidate) or (set(words) & TIME_WORDS and not candidate[:1].isupper()):
+    raw = candidate.split()
+    if _CLOCK.search(candidate) or any(
+        _plain(w) in TIME_WORDS and w[:1].islower() for w in raw
+    ):  # "in the afternoon"; "the Dawn Court" and a person called Dawn are names
         return "time"
-    if words == ["current", "time"] or (words[-1] == "time" and len(words) <= 2):
+    if words == ["current", "time"]:
         return "time"
     if capitalised:
         return None
+    if len(words) == 1 and candidate[:1].isupper():
+        return None  # a lone capitalised "Seven" or "Third" may be someone's name: ask
+    if words[-1] == "time" and len(words) <= 2:
+        return "time"
     if set(words) & UNITS and (words[0] in NUMBER_WORDS or "per" in words or "ago" in words):
         return "measure"
     if words[0] in NUMBER_WORDS:

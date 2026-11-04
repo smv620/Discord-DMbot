@@ -849,23 +849,22 @@ class ClaimStore:
                     await w.update(
                         CLAIMS, r["id"], {"status": CLAIM_DROPPED, "reason": UNKNOWN_NAME_REASON}
                     )
-                elif kinds_old := [
-                    # (#3394) this claim's lines are not part of this read, so its own spelling is
-                    # the text it is judged on
-                    not_names.why_not(n, text=n, offered=len(lines_by_name.get(name_key(n), ())))
-                    for n in unknown
-                ]:
+                elif unknown:
+                    # (#3394) this claim's own lines are not part of this read, so only a shape
+                    # (a number, measure, time or lone address) drops it; a plain word is judged
+                    # on the lines of a read that has them
+                    kinds_old = [not_names.shape_of(n) for n in unknown]
                     if any(kinds_old):
                         for k in kinds_old:
                             if k:
                                 not_a_name[k] += 1
                         await w.update(
-                            CLAIMS, r["id"], {"status": CLAIM_DROPPED, "reason": NOT_A_NAME_REASON}
+                            CLAIMS,
+                            r["id"],
+                            {"status": CLAIM_DROPPED, "reason": NOT_A_NAME_REASON},
                         )
                     else:
                         old.append((r, kept, unknown))
-                elif unknown:
-                    old.append((r, kept, unknown))
             old_mentions = [name_key(n) for _, _, unknown in old for n in unknown]
             chosen_old, left_old = link.most_mentioned(old_mentions, new_names)
             fresh = [name_key(n) for _, _, unknown in work for n in unknown]

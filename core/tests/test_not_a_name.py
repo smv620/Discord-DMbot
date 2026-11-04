@@ -42,3 +42,14 @@ class CommonNouns(unittest.TestCase):
     def test_a_plain_phrase_with_a_small_word_inside_is_judged_whole(self) -> None:
         phrase = "heads of people poking up over a ridge"
         self.assertEqual(why_not(phrase, text=phrase), "common_noun")
+
+    def test_capitalised_real_names_that_contain_shape_words_are_kept(self) -> None:
+        for text in ["the Dawn Court", "the Midnight Market", "Old Time", "Dawn", "Midnight",
+                     "Seven", "Nine Hells", "First Light", "Last Hope", "One-Eyed Jack",
+                     "Day of Rest", "Father Tobias", "Night Watch"]:  # fmt: skip
+            self.assertIsNone(why_not(text, text=text), text)
+
+    def test_a_title_with_a_capital_behind_an_article_is_judged_by_the_lines(self) -> None:
+        self.assertIsNone(why_not("the Speaker", text="the Speaker rose"))
+        self.assertIsNone(why_not("the Lady", text="the Lady of Pain"))
+        self.assertEqual(why_not("Lady"), "address")  # said alone, a title is no name
