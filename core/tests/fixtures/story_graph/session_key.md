@@ -104,7 +104,7 @@ What the graph should hold after the sample session is read: [the session transc
 | name | also called | note |
 |---|---|---|
 | The party | the party, the four of you, my friends | The four player characters. |
-| Garret's clients | the people who hired Garret | Unnamed. Hired Garret as a guide; Keegan never met them. |
+| Garret's clients |  | Unnamed. Hired Garret as a guide; Keegan never met them. |
 | Explorer's League | the Explorers' League | Guild of explorers. |
 | Clan Battlehammer |  | Dwarves Belleros wants to ask what happened. |
 
