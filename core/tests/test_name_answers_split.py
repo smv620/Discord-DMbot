@@ -198,3 +198,23 @@ class SplitAndGroup(WithChecks):
         await self.queue(other, "undo", target=str(row["batch"]))
         self.assertEqual(await self.apply_one(), na.NOT_FOUND_WORD)
         self.assertIn("Aldmoor", await self.waiting_names())  # the split stands
+
+    async def test_a_real_split_and_its_undo_go_through_the_door_end_to_end(self) -> None:
+        """Nothing is put in by hand: the page's door queues the split, the bot applies it, the
+        door takes the Undo with the batch the split left, the bot applies that, and the list is
+        waiting again. Proves the recap's link to the list survives a real split, which the
+        door's Undo check joins on (#3406)."""
+        listed = await self.suggest("Aldmoor, Quillgate, Fenwick")
+        await self.ask(listed, action="split")
+        self.assertEqual(await self.apply_one(), "")
+        self.assertEqual(await self.waiting_names(), ["Aldmoor", "Fenwick", "Quillgate"])
+        [row] = await self.rows()
+        self.assertEqual(row["state"], "done")
+        await self.ask(listed, action="undo", batch=int(row["batch"]))
+        self.assertEqual(await self.apply_one(), "")
+        self.assertEqual(await self.waiting_names(), ["Aldmoor, Quillgate, Fenwick"])
+        self.assertEqual(await self.rows(), [])
+        # and the same Undo cannot be asked again
+        self.assertEqual(
+            await self.code(self.ask(listed, action="undo", batch=int(row["batch"]))), "not_found"
+        )
