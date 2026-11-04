@@ -486,6 +486,20 @@ def names_of(entities: Sequence[Mapping[str, Any]], aliases: Sequence[Mapping[st
 MAX_EXPANDED = 12  # claims one list claim may become: more is a sentence, not a list of names
 
 
+def _group_led(
+    subjects: list[str], objects: list[str], names: Names
+) -> tuple[str, list[str]] | None:
+    """(group, members) when the claim's subject or object is a list whose first part is a known
+    group and whose other parts are names; None otherwise."""
+    for parts in (subjects, objects):
+        if len(parts) < 2:
+            continue
+        found = names.by_key.get(name_key(parts[0]), ())
+        if len(found) == 1 and found[0][1] == "faction":
+            return parts[0], parts[1:]
+    return None
+
+
 def expand_lists(claims: Sequence[Extracted], names: Names) -> tuple[list[Extracted], int]:
     """Claims whose subject or object is a list of names ("Aldmoor, Quillgate, Fenwick") as one
     claim for each part (#3383), so a list is never offered to the DM as one name. A part that is
@@ -501,6 +515,17 @@ def expand_lists(claims: Sequence[Extracted], names: Names) -> tuple[list[Extrac
     for c in claims:
         subjects = split_list(c.subject, known=names.by_key, offered=alone - {name_key(c.subject)})
         objects = split_list(c.object, known=names.by_key, offered=alone - {name_key(c.object)})
+        led = _group_led(subjects, objects, names)
+        if led is not None:
+            # "the Ash Wolves, Tavin and Mira": a known group followed by its members. The members
+            # are proposed as members of it (#3383, part 2); the list is not a name.
+            split += 1
+            group, members = led
+            out.extend(
+                replace(c, subject=m, relationship="member of", object=group, details="")
+                for m in members
+            )
+            continue
         if (len(subjects) == 1 and len(objects) == 1) or len(subjects) * len(
             objects
         ) > MAX_EXPANDED:

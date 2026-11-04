@@ -137,6 +137,8 @@ from dmbot.memory.models import (
     Correction,
     Entity,
     Flag,
+    GroupHint,
+    GroupJoined,
     Heard,
     HeardCount,
     MemoryRuleError,
@@ -2658,6 +2660,170 @@ class MemoryStore:
                 await w.update(CLAIMS, claim["id"], {"status": CLAIM_PROPOSED, "reason": ""})
 
         return await self.undo(guild_id, campaign_id, batch, after=put_back)
+
+    async def group_hints(self, guild_id: int, campaign_id: str, entity_id: str) -> list[GroupHint]:
+        """The known groups a waiting list of names may be (#3383, part 2): every listed name, or
+        all but one, already belongs to the group (`member_of`). Up to three, the best fit first.
+        Read only. Version 1 reads membership only; the cited line naming the parts together is a
+        later signal that needs the transcript lines of the waiting name."""
+        async with self._read(guild_id, campaign_id, snapshot=True) as scope:
+            current = await scope.get(ENTITIES, entity_id)
+            if current is None or current["status"] != PROPOSED:
+                return []
+            aliases = await scope.select(ALIASES, " AND status <> 'rejected'")
+            held = {lookup_key(str(a["text"])) for a in aliases}
+            parts = split_list(
+                str(current["name"]), known=held - {lookup_key(str(current["name"]))}, dm=True
+            )
+            if len(parts) < 2:
+                return []
+            entities = {
+                str(e["id"]): e
+                for e in await scope.select(ENTITIES, " AND status IN ('proposed', 'confirmed')")
+            }
+            by_key = {str(a["key"]): str(a["entity_id"]) for a in aliases}
+            ids = {p: by_key.get(lookup_key(p)) for p in parts}
+            member_rows = await scope.select(
+                RELATIONS, " AND predicate = 'member_of' AND status IN ('proposed', 'confirmed')"
+            )
+            groups = [
+                e for e in entities.values() if e["type"] == "faction" and e["status"] == CONFIRMED
+            ]
+            hints: list[GroupHint] = []
+            for g in groups:
+                belongs = {str(r["subject_id"]) for r in member_rows if r["object_id"] == g["id"]}
+                inside = tuple(p for p in parts if ids[p] in belongs)
+                if inside and len(inside) >= len(parts) - 1:
+                    outside = tuple(p for p in parts if p not in inside)
+                    hints.append(GroupHint(str(g["id"]), str(g["name"]), inside, outside))
+            hints.sort(key=lambda h: (-len(h.members), h.group_name.casefold()))
+            return hints[:3]
+
+    async def join_group(
+        self, guild_id: int, campaign_id: str, entity_id: str, group_id: str, *, source: str
+    ) -> Written[GroupJoined]:
+        """The DM's "Yes, that group" (#3383, part 2): a waiting list of names is a group the
+        campaign knows. In one change (one Undo): the list's words become another name of the
+        group (a nickname, so it is never split again), each listed name that is a known entry
+        becomes a member, and each one that is not becomes a waiting name whose membership the
+        DM has already decided: it shows when its name is confirmed and goes with it if the name
+        is turned down."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can say that.")
+        async with self._write(guild_id, campaign_id, source) as w:
+            current = await _entity_row(w, entity_id)
+            if current["status"] != PROPOSED:
+                raise MemoryRuleError(NOT_FOUND)
+            group = await _entity_row(w, group_id)
+            if group["type"] != "faction" or group["status"] != CONFIRMED:
+                raise MemoryRuleError(NOT_FOUND)
+            return Written(await self._join_group_in(w, current, group), w.batch)
+
+    async def make_group(
+        self, guild_id: int, campaign_id: str, entity_id: str, name: str, *, source: str
+    ) -> Written[GroupJoined]:
+        """The DM's "They're a group" (#3383, part 2): no group is known, so the DM names it. The
+        group is made (confirmed, the DM's), then everything `join_group` does. One change."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can say that.")
+        name = clean_text(name)
+        async with self._write(guild_id, campaign_id, source) as w:
+            current = await _entity_row(w, entity_id)
+            if current["status"] != PROPOSED:
+                raise MemoryRuleError(NOT_FOUND)
+            check_named("faction", name)
+            key = lookup_key(name)
+            for a in await w.select(ALIASES, " AND key = %s AND status <> 'rejected'", [key]):
+                if str(a["entity_id"]) != entity_id:
+                    raise MemoryRuleError(SPELLING_TAKEN)
+            group = await w.insert(
+                ENTITIES,
+                {
+                    "id": new_id(), "type": "faction", "name": name, "role": None,
+                    "description": "", "status": CONFIRMED, "merged_into": None,
+                    "source": DM, "created_at": w.now, "played_by": None,
+                    "needs_look": False, "unique_item": None,
+                },
+            )  # fmt: skip
+            await w.insert(
+                ALIASES, _new_alias(w, str(group["id"]), name, "full", CONFIRMED, False, None)
+            )
+            return Written(await self._join_group_in(w, current, group), w.batch)
+
+    async def _join_group_in(
+        self, w: Changes, current: dict[str, Any], group: dict[str, Any]
+    ) -> GroupJoined:
+        """The shared body of `join_group` and `make_group` inside an open write."""
+        listed = str(current["name"])
+        aliases = await w.select(ALIASES, " AND status <> 'rejected'")
+        held = {lookup_key(str(a["text"])) for a in aliases}
+        parts = split_list(listed, known=held - {lookup_key(listed)}, dm=True)
+        if len(parts) < 2:
+            raise MemoryRuleError(NOT_A_LIST)
+        # The list is turned down like "Not a name" first, so its own words are free to become the
+        # group's other name.
+        await w.update(ENTITIES, str(current["id"]), {"status": REJECTED, **_note_cleared(current)})
+        for link in await w.select(PLAN_SAME_AS, " AND entity_id = %s", [current["id"]]):
+            await w.delete(PLAN_SAME_AS, link["id"])
+        await _let_go_of_anchored(w, str(current["id"]))
+        for alias in await w.select(ALIASES, " AND entity_id = %s", [current["id"]]):
+            await w.update(ALIASES, alias["id"], {"status": REJECTED})
+        key = lookup_key(listed)
+        for a in await w.select(ALIASES, " AND key = %s AND status <> 'rejected'", [key]):
+            if str(a["entity_id"]) != str(group["id"]):
+                raise MemoryRuleError(SPELLING_TAKEN)
+        if not any(
+            str(a["key"]) == key and str(a["entity_id"]) == str(group["id"]) for a in aliases
+        ):
+            await w.insert(
+                ALIASES,
+                _new_alias(w, str(group["id"]), listed, "nickname", CONFIRMED, False, None),
+            )
+        by_key: dict[str, str] = {}
+        for a in aliases:
+            by_key.setdefault(str(a["key"]), str(a["entity_id"]))
+        live = {
+            str(e["id"]): e
+            for e in await w.select(ENTITIES, " AND status IN ('proposed', 'confirmed')")
+        }
+        turned_down = {str(a["key"]) for a in await w.select(ALIASES, " AND status = 'rejected'")}
+        joined: list[str] = []
+        made: list[str] = []
+        for part in parts:
+            pkey = lookup_key(part)
+            member_id = by_key.get(pkey)
+            if member_id in live and member_id != str(current["id"]):
+                if live[member_id]["type"] != "character":
+                    continue  # a place or a thing is not a member
+                joined.append(part)
+            else:
+                try:
+                    check_named("character", part)
+                except MemoryRuleError:
+                    continue
+                if pkey in turned_down and pkey != key:
+                    continue  # the DM already said this is not a name
+                row = await w.insert(
+                    ENTITIES,
+                    {
+                        "id": new_id(), "type": "character", "name": part, "role": "npc",
+                        "description": current["description"], "status": PROPOSED,
+                        "merged_into": None, "source": current["source"],
+                        "created_at": w.now, "played_by": None,
+                        "needs_look": False, "unique_item": None,
+                    },
+                )  # fmt: skip
+                await w.insert(
+                    ALIASES, _new_alias(w, str(row["id"]), part, "full", PROPOSED, False, None)
+                )
+                member_id = str(row["id"])
+                made.append(part)
+            await self.add_relation_in(
+                w, member_id, "member_of", str(group["id"]), confidence=1.0, status=CONFIRMED
+            )
+        return GroupJoined(
+            str(group["id"]), str(group["name"]), tuple(parts), tuple(joined), tuple(made)
+        )
 
     async def add_alias(
         self,
