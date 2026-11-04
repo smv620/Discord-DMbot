@@ -2143,7 +2143,9 @@ def create_app(
         a spell showed, kept as beliefs and never as facts. DM only."""
         session, _token = signed
         try:
-            return await relationships.read_readings(db, session, ref)
+            return await relationships.read_readings(
+                db, session, ref, outside_engine=settings.outside_engine
+            )
         except RecapError as err:
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
