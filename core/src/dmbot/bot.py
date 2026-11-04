@@ -354,6 +354,7 @@ from dmbot.pictures.bucket import Bucket
 from dmbot.pictures.keeper import Context as PictureContext
 from dmbot.pictures.keeper import PictureKeeper
 from dmbot.pictures.store import PictureStore
+from dmbot.questions import board as questions_board
 from dmbot.questions import discord as questions_discord
 from dmbot.questions.loop import Round as QuestionRound
 from dmbot.questions.notices import NoticeStore as QuestionNotices
@@ -1664,6 +1665,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         await recaps_discord.setup(self)  # the recap buttons (#2129)
         self.add_dynamic_items(name_pass_undo.UndoNamePassButton)  # Undo of the name pass (#2628)
         self.add_dynamic_items(questions_discord.NotNowButton)  # 🔕 under a reminder (#3435)
+        self.add_dynamic_items(questions_board.LookAlikesButton)  # the Questions message (#3435)
         self.question_round = questions_discord.build_round(self)
         self.question_notices = (
             self.question_round.notices if self.question_round is not None else None

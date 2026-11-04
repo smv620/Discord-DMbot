@@ -104,3 +104,16 @@ class NoticeStore:
                 )
                 muted += cur.rowcount
         return muted
+
+    async def set_message(
+        self, guild_id: int, campaign_id: str, user_id: int, message_id: int | None
+    ) -> None:
+        """Remember the Questions message in this DM's private chat (or forget it)."""
+        async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "INSERT INTO question_notices (guild_id, campaign_id, user_id, message_id)"
+                " VALUES (%s, %s, %s, %s)"
+                " ON CONFLICT (guild_id, campaign_id, user_id) DO UPDATE SET"
+                " message_id = EXCLUDED.message_id",
+                (guild_id, campaign_id, user_id, message_id),
+            )

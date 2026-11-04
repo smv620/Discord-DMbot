@@ -8,15 +8,20 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 import discord
 
-from dmbot.questions import messages
-from dmbot.questions.counts import Sources
+from dmbot.campaigns.models import Campaign
+from dmbot.mentions import NO_PINGS
+from dmbot.questions import board, messages
+from dmbot.questions import counts as counting
+from dmbot.questions.counts import Counted, Sources
 from dmbot.questions.loop import ROUND_S, Round
 from dmbot.questions.notices import NoticeStore
 from dmbot.questions.store import QuestionCounts
+from dmbot.ui.dmbot_commands import _tell, dmbot_group
 
 if TYPE_CHECKING:
     from dmbot.bot import DMBot
@@ -77,6 +82,37 @@ class DiscordSender:
         sent = await self.bot._dm_message(user_id, text, view)
         return None if sent is None else sent.id
 
+    async def board(
+        self,
+        user_id: int,
+        campaign: Campaign,
+        found: Mapping[str, Counted],
+        message_id: int | None,
+        *,
+        create: bool,
+    ) -> tuple[int | None, str]:
+        """The Questions message (see `board`): edited in place, or made when there is none or it
+        was deleted. A DM whose private chat is closed gets nothing (None, no link)."""
+        content = board.text(campaign.name, found)
+        view = board.view(campaign.guild_id, campaign.id, found)
+        try:
+            user = self.bot.get_user(user_id) or await self.bot.fetch_user(user_id)
+            channel = user.dm_channel or await user.create_dm()
+            if message_id is not None:
+                try:
+                    kept = channel.get_partial_message(message_id)
+                    await kept.edit(content=content, view=view)
+                    return message_id, kept.jump_url
+                except discord.NotFound:
+                    message_id = None  # they deleted it
+            if not create:
+                return None, ""
+            sent = await channel.send(content, view=view, allowed_mentions=NO_PINGS)
+            return sent.id, sent.jump_url
+        except discord.HTTPException as exc:
+            log.info("Questions: couldn't show the list to a DM (%s)", type(exc).__name__)
+            return message_id, ""
+
     async def delete(self, user_id: int, message_id: int) -> None:
         try:
             user = self.bot.get_user(user_id) or await self.bot.fetch_user(user_id)
@@ -132,3 +168,60 @@ async def run_loop(bot: DMBot, round_: Round) -> None:
         except Exception as exc:
             log.warning("Questions: a round failed (%s)", type(exc).__name__)
         await asyncio.sleep(ROUND_S)
+
+
+NOT_A_DM = "Only a campaign's DM has questions to answer. Ask your DM."
+NOT_AVAILABLE = "Questions for you isn't available right now. Try again in a moment."
+SENT = "❓ The list is in your private messages:"
+
+
+@dmbot_group.command(
+    name="questions", description="See every question DMbot is waiting on you to answer"
+)
+async def dmbot_questions(interaction: discord.Interaction) -> None:
+    """Make (or refresh) the Questions message in the DM's private chat for each campaign they
+    run here, and say where it is. The DM's alone: a player has no questions."""
+    bot: Any = interaction.client
+    guild = interaction.guild
+    round_: Round | None = getattr(bot, "question_round", None)
+    if guild is None:
+        await _tell(interaction, NOT_AVAILABLE)
+        return
+    mine = [
+        c
+        for c in await bot.campaigns.list_campaigns(guild.id)
+        if interaction.user.id in c.dm_user_ids
+    ]
+    if not mine:
+        await _tell(interaction, NOT_A_DM)
+        return
+    if round_ is None:
+        await _tell(interaction, NOT_AVAILABLE)
+        return
+    await interaction.response.defer(ephemeral=True)
+    links: list[str] = []
+    for campaign in mine:
+        try:
+            found = await counting.count_kinds(round_.sources, campaign.guild_id, campaign.id)
+            round_.latest[(campaign.guild_id, campaign.id)] = found
+            await round_.counts.write(campaign.guild_id, campaign.id, found)
+            stored = await round_.notices.get(campaign.guild_id, campaign.id, interaction.user.id)
+            message_id, link = await round_.sender.board(
+                interaction.user.id, campaign, found, stored.message_id, create=True
+            )
+            if message_id != stored.message_id:
+                await round_.notices.set_message(
+                    campaign.guild_id, campaign.id, interaction.user.id, message_id
+                )
+            if link:
+                links.append(f"• {board.text_name(campaign.name)}: [Open the list]({link})")
+        except Exception as exc:
+            log.warning("Questions: the list could not be made (%s)", type(exc).__name__)
+    if not links:
+        await interaction.followup.send(
+            "I couldn't send you a private message. Turn on private messages from this server, "
+            "then try again.",
+            ephemeral=True,
+        )
+        return
+    await interaction.followup.send("\n".join([SENT, *links]), ephemeral=True)

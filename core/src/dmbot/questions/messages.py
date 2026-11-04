@@ -24,6 +24,7 @@ class Line:
     total: int
     first: bool  # the DM is hearing of these questions for the first time
     id: str = ""  # the campaign's id, for the caller (never shown)
+    link: str = ""  # the Questions message in their private chat, when there is one
 
 
 def _name(text: str) -> str:
@@ -35,18 +36,24 @@ def _questions(n: int) -> str:
     return f"{n} question" if n == 1 else f"{n} questions"
 
 
+def _open(link: str) -> str:
+    return f" [Open the list]({link})" if link else ""
+
+
 def notice(lines: Sequence[Line]) -> str:
     """One private message for a DM. One campaign: a first notice says DMbot has a question (or
-    how many) about it, a reminder says it is still waiting. Several campaigns share one message,
-    one line each, so a DM of many campaigns is never sent a stack of them."""
+    how many) about it, a reminder says it is still waiting; both link to the Questions message.
+    Several campaigns share one message, one line each, so a DM of many campaigns is never sent a
+    stack of them."""
     if not lines:
         return ""
     if len(lines) == 1:
         one = lines[0]
         if one.first:
             what = "a question" if one.total == 1 else _questions(one.total)
-            return f"❓ DMbot has {what} for you about {_name(one.campaign)}."
-        return f"❓ Still waiting: {_questions(one.total)} about {_name(one.campaign)}."
+            return f"❓ DMbot has {what} for you about {_name(one.campaign)}.{_open(one.link)}"
+        waiting = f"❓ Still waiting: {_questions(one.total)} about {_name(one.campaign)}."
+        return waiting + _open(one.link)
     head = "❓ DMbot has questions for you:" if any(x.first for x in lines) else "❓ Still waiting:"
-    body = "\n".join(f"• {_name(x.campaign)}: {_questions(x.total)}" for x in lines)
+    body = "\n".join(f"• {_name(x.campaign)}: {_questions(x.total)}{_open(x.link)}" for x in lines)
     return fit_message(f"{head}\n{body}")

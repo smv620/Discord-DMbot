@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Awaitable, Callable, Collection, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from typing import Protocol
 
 from dmbot.campaigns.models import Campaign
@@ -43,6 +43,19 @@ class Sender(Protocol):
 
     async def delete(self, user_id: int, message_id: int) -> None: ...
 
+    async def board(
+        self,
+        user_id: int,
+        campaign: Campaign,
+        found: Mapping[str, Counted],
+        message_id: int | None,
+        *,
+        create: bool,
+    ) -> tuple[int | None, str]:
+        """Show the Questions message: edit the one with `message_id`, or (`create`) send a new one
+        when there is none or it is gone. Returns its id and a link to it ("" if there is none)."""
+        ...
+
 
 @dataclass(slots=True)
 class Round:
@@ -54,6 +67,7 @@ class Round:
     clock: Callable[[], float] = time.time
     notify: bool = True  # False: count only (the notices are off, DMBOT_QUESTIONS=0)
     rounds: int = 0
+    latest: dict[tuple[int, str], Mapping[str, Counted]] = field(default_factory=dict)
 
     async def run(self, guild_ids: Collection[int]) -> int:
         """One round over these servers. Returns how many messages were sent."""
@@ -105,6 +119,8 @@ class Round:
         only = None if self.rounds % HEAVY_EVERY == 1 or not before else set(before) - HEAVY
         now_counts = await counting.count_kinds(self.sources, g, c, only=only)
         merged: Mapping[str, Counted] = {**before, **now_counts}  # a kind that failed keeps its old
+        self.latest[(g, c)] = merged
+        changed = {k: v.n for k, v in merged.items()} != {k: v.n for k, v in before.items()}
         n = total(merged)
         was_answered, new_question = answered(before, merged), grew(before, merged)
         recording = await self.sender.recording(g, c) if self.notify else False
@@ -121,6 +137,7 @@ class Round:
                     now,
                     per_user,
                     clears,
+                    changed,
                 )
             except Exception as exc:
                 log.warning("Questions: one DM's timer failed (%s)", type(exc).__name__)
@@ -140,9 +157,12 @@ class Round:
         now: int,
         per_user: dict[int, list[messages.Line]],
         clears: dict[int, list[str]],
+        changed: bool = False,
     ) -> None:
         g, c = campaign.guild_id, campaign.id
         stored = await self.notices.get(g, c, user_id)
+        if changed and stored.message_id is not None:  # keep the list they already have up to date
+            await self._show(user_id, campaign, stored.message_id, create=False)
         new, action = next_step(
             stored.notice,
             total=n,
@@ -161,6 +181,16 @@ class Round:
             per_user.setdefault(user_id, []).append(
                 messages.Line(campaign.name, n, first=action == "first", id=c)
             )
+
+    async def _show(
+        self, user_id: int, campaign: Campaign, message_id: int | None, *, create: bool
+    ) -> str:
+        """Edit (or make) their Questions message for this campaign; the link to it, or ""."""
+        found = self.latest.get((campaign.guild_id, campaign.id), {})
+        new_id, link = await self.sender.board(user_id, campaign, found, message_id, create=create)
+        if new_id != message_id:
+            await self.notices.set_message(campaign.guild_id, campaign.id, user_id, new_id)
+        return link
 
     async def _drop(self, guild_id: int, user_id: int, campaign_ids: list[str]) -> None:
         """Nothing waits any more in these campaigns: the notice still in their chat goes, unless
@@ -194,7 +224,18 @@ class Round:
                     gone.add(stored.reminder_id)
                     await self.sender.delete(user_id, stored.reminder_id)
                 await self.notices.set_reminder(guild_id, campaign.id, user_id, None)
-        sent_id = await self.sender.send(user_id, messages.notice(lines))
+        linked: list[messages.Line] = []
+        for line in lines:  # each campaign's list is made now if they have none, and linked to
+            campaign = next((c for c in mine if c.id == line.id), None)
+            stored = await self.notices.get(guild_id, line.id, user_id)
+            link = ""
+            if campaign is not None:
+                try:
+                    link = await self._show(user_id, campaign, stored.message_id, create=True)
+                except Exception as exc:
+                    log.warning("Questions: the list could not be shown (%s)", type(exc).__name__)
+            linked.append(replace(line, link=link))
+        sent_id = await self.sender.send(user_id, messages.notice(linked))
         if sent_id is None:
             return 0
         for line in lines:

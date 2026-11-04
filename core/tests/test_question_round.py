@@ -21,6 +21,8 @@ class FakeSender:
         self.sent: list[tuple[int, str, int]] = []
         self.deleted: list[tuple[int, int]] = []
         self.busy: set[str] = set()
+        self.edits: list[tuple[int, str, int, dict[str, int]]] = []
+        self.made: list[tuple[int, str, int]] = []
         self._next = 100
 
     async def recording(self, guild_id: int, campaign_id: str) -> bool:
@@ -33,6 +35,27 @@ class FakeSender:
 
     async def delete(self, user_id: int, message_id: int) -> None:
         self.deleted.append((user_id, message_id))
+
+    async def board(
+        self,
+        user_id: int,
+        campaign,
+        found,
+        message_id,
+        *,
+        create: bool,  # type: ignore[no-untyped-def]
+    ):  # type: ignore[no-untyped-def]
+        """The Questions message: edited when there is one, made when asked."""
+        if message_id is not None:
+            self.edits.append(
+                (user_id, campaign.id, message_id, {k: v.n for k, v in found.items()})
+            )
+            return message_id, f"https://discord.test/{message_id}"
+        if not create:
+            return None, ""
+        self._next += 1
+        self.made.append((user_id, campaign.id, self._next))
+        return self._next, f"https://discord.test/{self._next}"
 
 
 class TheRound(Base):
@@ -78,7 +101,9 @@ class TheRound(Base):
         self.assertEqual(await self.tick(), 1)
         ((user, text, _),) = self.sender.sent
         self.assertEqual(user, ALICE.id)
-        self.assertEqual(text, "❓ DMbot has a question for you about **One**.")
+        self.assertTrue(
+            text.startswith("❓ DMbot has a question for you about **One**. [Open the list](")
+        )
         self.assertEqual(await self.tick(10), 0)  # not again at once
         counts = await QuestionCounts(self.db).read(self.g, self.one.id)
         self.assertEqual(counts[kinds.NAMES].n, 1)
@@ -94,7 +119,9 @@ class TheRound(Base):
             await self.tick(1)
             times.append(self.now)
         self.assertEqual(len(self.sender.sent), 4)
-        self.assertEqual(self.sender.sent[1][1], "❓ Still waiting: 1 question about **One**.")
+        self.assertTrue(
+            self.sender.sent[1][1].startswith("❓ Still waiting: 1 question about **One**.")
+        )
         ids = [i for _u, _t, i in self.sender.sent]
         self.assertEqual([i for _u, i in self.sender.deleted], ids[:-1])  # one at a time
 
@@ -262,3 +289,22 @@ class TheRound(Base):
         await NotNowButton().callback(interaction)
         self.assertEqual(order, ["defer", "mute", "followup"])
         interaction.response.send_message.assert_not_called()
+
+    async def test_the_notice_links_to_a_list_that_is_made_with_it_and_kept_up_to_date(
+        self,
+    ) -> None:
+        first = await self.ask(self.one.id)
+        await self.ask(self.one.id, "Maren")
+        await self.tick()
+        ((_, text, _),) = self.sender.sent
+        ((_, campaign_id, made),) = self.sender.made
+        self.assertEqual(campaign_id, self.one.id)
+        self.assertIn(f"[Open the list](https://discord.test/{made})", text)
+        stored = await NoticeStore(self.db).get(self.g, self.one.id, ALICE.id)
+        self.assertEqual(stored.message_id, made)
+        self.assertEqual(self.sender.edits, [])  # nothing changed since it was made
+        await self.memory.confirm_entity(self.g, self.one.id, first, "character", source=DM)
+        await self.tick(5)
+        self.assertEqual(len(self.sender.edits), 1)  # the answer changed the counts: edited
+        self.assertEqual(self.sender.edits[0][3][kinds.NAMES], 1)
+        self.assertEqual(len(self.sender.made), 1)  # (not made again)

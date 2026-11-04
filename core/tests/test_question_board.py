@@ -1,0 +1,150 @@
+"""❓ Questions for you (#3435): the Questions message: its lines, its buttons (one for each kind
+that waits and has a flow in Discord), and the words for the rest. Pure; no database."""
+
+from __future__ import annotations
+
+import unittest
+
+import discord
+
+from dmbot.questions import board, kinds
+from dmbot.questions.counts import Counted
+
+GUILD, CAMPAIGN = 111, "c" * 32
+
+
+def found(**n: int) -> dict[str, Counted]:
+    return {k: Counted(v) for k, v in n.items()}
+
+
+def ids(view: discord.ui.View) -> list[str]:
+    return [str(getattr(i, "custom_id", None) or i.item.custom_id) for i in view.children]  # type: ignore[attr-defined]
+
+
+class TheText(unittest.TestCase):
+    def test_a_line_for_each_kind_that_waits_in_the_agreed_words_and_order(self) -> None:
+        text = board.text("Frostmaiden", found(heard=2, names=3, lookalikes=0, which=1))
+        self.assertEqual(
+            text.splitlines(),
+            [
+                "❓ **Questions for you** about **Frostmaiden**",
+                "• New names to check: **3**",
+                "• Did they mean…?: **2**",
+                "• Which one?: **1**",
+            ],
+        )
+
+    def test_nothing_waiting_says_so(self) -> None:
+        self.assertEqual(
+            board.text("Frostmaiden", found(names=0)).splitlines()[1], "Nothing waiting for you. 🎉"
+        )
+        self.assertIn("Nothing waiting", board.text("X", {}))
+
+    def test_a_kind_without_a_button_says_where_it_is_answered(self) -> None:
+        text = board.text("X", found(plot=2, recap_approve=1, rules=1, family=1, readings=4))
+        self.assertIn("• Plot check: **2** (answer on the website)", text)
+        self.assertIn("• Recaps to approve: **1** (answer on the DM screen)", text)
+        self.assertIn("• House rule updates: **1** (answer on the DM screen)", text)
+        self.assertIn("• Family ties: **1** (answer on the website)", text)
+        self.assertIn("• What people believe: **4** (answer on the website)", text)
+
+    def test_a_campaign_name_cannot_change_the_message(self) -> None:
+        text = board.text("**@everyone** " + "x" * 200, found(names=1))
+        self.assertNotIn("@everyone", text.replace("@​everyone", ""))
+        self.assertLessEqual(len(text), 400)
+
+
+class TheButtons(unittest.TestCase):
+    def test_one_button_for_each_waiting_kind_that_has_a_flow(self) -> None:
+        view = board.view(GUILD, CAMPAIGN, found(names=1, heard=1, lookalikes=2, claims=3))
+        self.assertEqual(
+            ids(view),
+            [
+                f"dmbot:names:recap:{GUILD}:{CAMPAIGN}",
+                f"dmbot:names:heard:{CAMPAIGN}",
+                f"dmbot:questions:look:{CAMPAIGN}",
+                f"dmbot:claims:review:{CAMPAIGN}",
+            ],
+        )
+
+    def test_connections_and_which_one_share_the_one_connections_button(self) -> None:
+        for waiting in (found(connections=2), found(which=1), found(connections=1, which=1)):
+            self.assertEqual(
+                ids(board.view(GUILD, CAMPAIGN, waiting)), [f"dmbot:linksready:{CAMPAIGN}"]
+            )
+
+    def test_nothing_waiting_or_only_website_kinds_means_no_buttons(self) -> None:
+        self.assertEqual(ids(board.view(GUILD, CAMPAIGN, found(names=0))), [])
+        self.assertEqual(ids(board.view(GUILD, CAMPAIGN, found(plot=3, rules=1))), [])
+
+    def test_the_most_buttons_fit_one_row(self) -> None:
+        everything = found(**{k: 1 for k in kinds.ORDER})
+        self.assertLessEqual(len(board.view(GUILD, CAMPAIGN, everything).children), 5)
+
+    def test_the_look_alikes_button_carries_the_campaign_for_a_restart(self) -> None:
+        item = board.LookAlikesButton(CAMPAIGN)
+        self.assertEqual(item.item.custom_id, f"dmbot:questions:look:{CAMPAIGN}")
+        self.assertLessEqual(len(item.item.custom_id or ""), 100)
+
+
+class TheCommand(unittest.IsolatedAsyncioTestCase):
+    """/dmbot questions: the list is made in the DM's private chat; a player is told it is not
+    theirs."""
+
+    def interaction(self, user: int, round_: object) -> object:
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock, MagicMock
+
+        campaign = SimpleNamespace(
+            guild_id=GUILD, id=CAMPAIGN, name="Frostmaiden", dm_user_ids=frozenset({7})
+        )
+        bot = MagicMock()
+        bot.question_round = round_
+        bot.campaigns.list_campaigns = AsyncMock(return_value=[campaign])
+        it = MagicMock(client=bot, guild=MagicMock(id=GUILD), user=MagicMock(id=user))
+        it.response.defer = AsyncMock()
+        it.followup.send = AsyncMock()
+        return it
+
+    async def test_a_player_is_told_it_is_not_theirs_and_nothing_is_made(self) -> None:
+        from unittest.mock import AsyncMock, patch
+
+        from dmbot.questions import discord as qd
+
+        tell = AsyncMock()
+        with patch.object(qd, "_tell", tell):
+            await qd.dmbot_questions.callback(self.interaction(8, object()))  # type: ignore[arg-type]
+        self.assertEqual(tell.await_args.args[1], qd.NOT_A_DM)
+
+    async def test_a_dm_gets_the_list_and_a_link_to_it(self) -> None:
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+
+        from dmbot.questions import discord as qd
+        from dmbot.questions.notices import Stored
+        from dmbot.questions.timer import Notice
+
+        made: list[object] = []
+
+        async def show(user, campaign, found, message_id, *, create):  # type: ignore[no-untyped-def]
+            made.append((user, campaign.id, message_id, create))
+            return 55, "https://discord.test/55"
+
+        round_ = SimpleNamespace(
+            sources=SimpleNamespace(),
+            counts=SimpleNamespace(write=AsyncMock()),
+            notices=SimpleNamespace(
+                get=AsyncMock(return_value=Stored(Notice())), set_message=AsyncMock()
+            ),
+            sender=SimpleNamespace(board=show),
+            latest={},
+        )
+        it = self.interaction(7, round_)
+        from unittest.mock import patch
+
+        with patch.object(qd.counting, "count_kinds", AsyncMock(return_value=found(names=2))):
+            await qd.dmbot_questions.callback(it)  # type: ignore[arg-type]
+        self.assertEqual(made, [(7, CAMPAIGN, None, True)])
+        text = it.followup.send.await_args.args[0]  # type: ignore[attr-defined]
+        self.assertIn("[Open the list](https://discord.test/55)", text)
+        round_.notices.set_message.assert_awaited_once_with(GUILD, CAMPAIGN, 7, 55)
