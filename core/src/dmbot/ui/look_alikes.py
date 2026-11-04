@@ -78,7 +78,7 @@ def _fit(lines: list[str], budget: int, noun: str = "more") -> list[str]:
 def group_text(
     names: list[Name], kinds: dict[str, str], *, number: int, of: int, extra: int = 0
 ) -> str:
-    head = "**DMbot thinks these may be one name:**" + (f" ({number} of {of})" if of > 1 else "")
+    head = "**Are these the same?**" + (f" ({number} of {of})" if of > 1 else "")
     lines = [
         f"• **{_md(logic.shorten(n.name, 80))}** ({_kind_of(kinds, n)}"
         + (f", heard {n.mentions} times" if n.mentions > 1 else "")
@@ -86,9 +86,12 @@ def group_text(
         for n in names
     ]
     advice = (
-        f"I'd keep **{_md(logic.shorten(names[0].name, 80))}**, the one heard most. Untick any "
-        "that are different, change the one to keep if you like, then press 🔗 Merge. "
-        "**None are the same** says that none of these are one name."
+        "If they are, DMbot keeps one name and the others become its other names (they still "
+        "find it).\n"
+        "**First box:** the names that are the same. Untick any that aren't.\n"
+        f"**Second box:** the name to keep. I picked **{_md(logic.shorten(names[0].name, 80))}**, "
+        "the one heard most. Pick another if you like, then press 🔗 Merge.\n"
+        "If none of them are the same, press **None are the same**."
     )
     shown = _fit(lines, MESSAGE_BUDGET - len(advice) - len(head))
     more = [f"…and {extra} more not shown."] if extra else []
@@ -226,7 +229,7 @@ class LookAlikeGroup(_Menu):
         self.keep: str | None = self.names[0].id  # the most heard, unless the DM picks another
         self.members = _Select(
             self._ticked,
-            placeholder="These are the same name…",
+            placeholder="First box: the names that are the same…",
             options=_options(self.names, kinds, ticked=True),
             min_values=1,
             max_values=len(self.names),
@@ -235,7 +238,7 @@ class LookAlikeGroup(_Menu):
         self.add_item(self.members)
         self.chooser = _Select(
             self._kept,
-            placeholder="Keep which name? ▾",
+            placeholder="Second box: the name to keep ▾",
             options=_options(self.names, kinds, ticked=False, only=self.names[0].id),
             row=1,
         )
