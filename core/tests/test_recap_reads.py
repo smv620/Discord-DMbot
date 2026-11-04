@@ -15,6 +15,7 @@ from dmbot.recaps import critics as cr
 from dmbot.recaps import draft as rd
 from dmbot.recaps import pipeline as pl
 from dmbot.recaps.beats import Beat
+from dmbot.recaps.inputs import story_so_far
 from dmbot.recaps.text import names_a_secret
 from dmbot.transcript.models import SIDEBAR_QUESTION, Line
 from tests import recap_fixtures as fx
@@ -355,3 +356,70 @@ class TheSetting(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FakeAccepted:
+    """The accepted recaps of a campaign, as `newest` gives them (any session, the caller
+    filters by `before`), or an error when the store is down."""
+
+    def __init__(self, rows: list[SimpleNamespace], error: bool = False) -> None:
+        self.rows, self.error = rows, error
+
+    async def newest(self, guild_id: int, campaign_id: str, *, before: int, last: int) -> list[Any]:
+        if self.error:
+            raise RuntimeError("the store is down")
+        return self.rows
+
+
+class FakeNotes:
+    """Session notes whose transcript is gone, as `all` gives them."""
+
+    def __init__(self, rows: list[SimpleNamespace]) -> None:
+        self.rows = rows
+
+    async def all(
+        self, guild_id: int, campaign_id: str, *, before: int, last: int, transcript_gone: bool
+    ) -> list[Any]:
+        return self.rows
+
+
+class TheStoryAsTold(unittest.IsolatedAsyncioTestCase):
+    """The earlier recaps the writer is given (#2965 item 7): only earlier sessions, with their
+    cues and fixed lines taken out, and nothing when the store cannot be read (#2954)."""
+
+    NOW = 5000
+    EARLIER = (
+        "Previously, on the road…\n\n《sad》Mira ((soft)) rode on through the rain. "
+        "The bridge held.\n\nAnd so we continue along the road of Mira."
+    )
+
+    async def test_only_earlier_sessions_are_told_oldest_first(self) -> None:
+        rows = [
+            SimpleNamespace(session_at=6000, summary="A later recap."),
+            SimpleNamespace(session_at=1000, summary="The first recap."),
+            SimpleNamespace(session_at=self.NOW, summary="This session."),
+            SimpleNamespace(session_at=3000, summary="The second recap."),
+        ]
+        told = await story_so_far(FakeAccepted(rows), 1, "c", self.NOW)
+        self.assertEqual(told, ("The first recap.", "The second recap."))
+
+    async def test_cues_and_fixed_lines_are_not_given_to_the_writer(self) -> None:
+        told = await story_so_far(
+            FakeAccepted([SimpleNamespace(session_at=1000, summary=self.EARLIER)]), 1, "c", self.NOW
+        )
+        self.assertEqual(len(told), 1)
+        text = told[0]
+        for taken in ("《", "((", "Previously", "And so we continue"):
+            self.assertNotIn(taken, text)
+        self.assertIn("Mira rode on through the rain. The bridge held.", text)
+
+    async def test_a_store_that_fails_gives_no_story_and_no_error(self) -> None:
+        told = await story_so_far(FakeAccepted([], error=True), 1, "c", self.NOW)
+        self.assertEqual(told, ())
+
+    async def test_notes_stand_in_for_a_session_with_no_accepted_recap(self) -> None:
+        beat = SimpleNamespace(what="Mira found the bridge.")
+        notes = FakeNotes([SimpleNamespace(session_at=1000, sheet=lambda: [beat])])
+        told = await story_so_far(FakeAccepted([]), 1, "c", self.NOW, notes)
+        self.assertEqual(len(told), 1)
+        self.assertIn("Mira found the bridge.", told[0])
