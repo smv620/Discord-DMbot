@@ -617,12 +617,6 @@
    "note": "raiders with chardalyn weapons"
   },
   {
-   "name": "Ten-Towns",
-   "kind": "group",
-   "aliases": [],
-   "note": "ten settlements"
-  },
-  {
    "name": "Bryn Shander guards",
    "kind": "group",
    "aliases": [],
@@ -630,6 +624,12 @@
   },
   {
    "name": "Icewind Dale",
+   "kind": "place",
+   "aliases": [],
+   "note": ""
+  },
+  {
+   "name": "Ten-Towns",
    "kind": "place",
    "aliases": [],
    "note": ""
@@ -2282,7 +2282,7 @@
   {
    "id": "l158",
    "a": "Ten-Towns",
-   "relation": "last_seen_in",
+   "relation": "in",
    "b": "Icewind Dale",
    "tier": "stated",
    "must_find": true

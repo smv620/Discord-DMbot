@@ -209,7 +209,7 @@ What the graph should hold after the sample lore document is read. Names come fr
 | l155 | Caer-Konig | in | Ten-Towns | stated | yes |  |
 | l156 | Lonelywood | in | Ten-Towns | stated | yes |  |
 | l157 | Dougan's Hole | in | Ten-Towns | stated | yes |  |
-| l158 | Ten-Towns | last_seen_in | Icewind Dale | stated | yes |  |
+| l158 | Ten-Towns | in | Icewind Dale | stated | yes |  |
 | l159 | Auril the Frostmaiden | associate | Icewind Dale | stated | yes | casts the Everlasting Rime over it |
 | l160 | Ten-Towns | associate | Auril the Frostmaiden | stated | no | pay tribute to her |
 | l161 | Okthandom Korran | last_seen_in | Icewind Dale | inferred | no |  |
@@ -325,7 +325,7 @@ What the graph should hold after the sample lore document is read. Names come fr
 | Deep Duerra |  | duergar goddess |
 | Lathander |  | named once, a temple in Waterdeep |
 
-### Groups (20)
+### Groups (19)
 
 | name | also called | note |
 |---|---|---|
@@ -347,14 +347,14 @@ What the graph should hold after the sample lore document is read. Names come fr
 | Easthaven militia |  | town guard |
 | Duergar of Xardorok |  | duergar who hunt the party |
 | Tundra barbarians |  | raiders with chardalyn weapons |
-| Ten-Towns |  | ten settlements |
 | Bryn Shander guards |  | town guard |
 
-### Places (37)
+### Places (38)
 
 | name | also called | note |
 |---|---|---|
 | Icewind Dale |  |  |
+| Ten-Towns |  |  |
 | Lonelywood |  |  |
 | Termalaine |  |  |
 | Targos |  |  |
