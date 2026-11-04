@@ -12,15 +12,15 @@ export const nameGroupWords = {
   groupCancel: "Cancel",
   // Says which group the name looks like, and who is already in it. "is" for one member, "are" for several.
   hint: (group: string, members: readonly string[]): string =>
-    `It looks like ${group}. ${members.join(", ")} ${members.length === 1 ? "is" : "are"} already in it.`,
+    `It looks like the group ${group}. ${members.join(", ")} ${members.length === 1 ? "is" : "are"} already in that group.`,
   undo: "Undo",
   working: "Working on it…",
   // Keyed by the bot's refusal word. A word not in this list gets `other`.
   errors: {
-    not_a_list: "That isn't a list of names, so it can't be split.",
+    not_a_list: "That isn't a list of names, so it can't be split. Keep it as one name.",
     not_found: "That name isn't waiting any more. Reload the page to see the list.",
-    spelling_taken: "A name with that spelling is already in your story. Pick another name for the group.",
-    answered: "One of those names was already answered, so this can't be undone.",
+    spelling_taken: "A name with that spelling is already in your campaign. Pick another name for the group.",
+    answered: "One of those names was already answered, so this can't be undone. Keep the names as they are.",
     not_dm: "Only a game master of this campaign can do that.",
   },
   other: "That didn't go through. Try again in a minute.",

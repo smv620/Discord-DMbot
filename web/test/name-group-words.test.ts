@@ -10,7 +10,7 @@ describe("name group words (#3406)", () => {
     for (const [code, sentence] of Object.entries(w.errors)) {
       expect(w.reason(code), code).toBe(sentence);
     }
-    expect(w.reason("not_a_list")).toBe("That isn't a list of names, so it can't be split.");
+    expect(w.reason("not_a_list")).toBe("That isn't a list of names, so it can't be split. Keep it as one name.");
   });
 
   it("reason falls back to other for an unknown word, null and undefined", () => {
@@ -21,9 +21,9 @@ describe("name group words (#3406)", () => {
   });
 
   it("hint says is for one member and are for several", () => {
-    expect(w.hint("the Bat Family", ["Robin"])).toBe("It looks like the Bat Family. Robin is already in it.");
+    expect(w.hint("the Bat Family", ["Robin"])).toBe("It looks like the group the Bat Family. Robin is already in that group.");
     expect(w.hint("the Bat Family", ["Robin", "Alfred"])).toBe(
-      "It looks like the Bat Family. Robin, Alfred are already in it.",
+      "It looks like the group the Bat Family. Robin, Alfred are already in that group.",
     );
   });
 
