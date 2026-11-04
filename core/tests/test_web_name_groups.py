@@ -120,7 +120,14 @@ class TheDatabaseHalf(WithChecks):
         self.assertTrue(cards[listed]["isList"])
         self.assertEqual(
             cards[listed]["groups"],
-            [{"id": duo, "name": "The Ashen Circle", "members": ["Brannoch"], "others": ["Veshla"]}],
+            [
+                {
+                    "id": duo,
+                    "name": "The Ashen Circle",
+                    "members": ["Brannoch"],
+                    "others": ["Veshla"],
+                }
+            ],
         )
         self.assertNotIn("isList", cards[plain])
         self.assertNotIn("groups", cards[plain])
