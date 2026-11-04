@@ -164,6 +164,7 @@ export default function RecapVoice({
       const { requestId: id } = await api.sendVoice!(recap.ref, clip);
       if (!mounted.current) return;
       setPhase("sending");
+      setProgress(null);
       setRequestId(id);
     } catch (error) {
       if (!mounted.current) return;
@@ -239,6 +240,7 @@ export default function RecapVoice({
         return;
       }
       setPhase("sending");
+      setProgress(null);
       void send(clip);
     };
     try {
@@ -373,6 +375,7 @@ export default function RecapVoice({
           onClick={() => {
             setSlow(false);
             setPhase("sending");
+            setProgress(null);
             setChecks((n) => n + 1);
           }}
         >

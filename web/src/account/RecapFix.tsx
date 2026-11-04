@@ -172,6 +172,7 @@ export default function RecapFix({
     try {
       const { requestId: id } = await api.sendFix(recap.ref, text.trim());
       setSorting(true);
+      setProgress(null);
       setRequestId(id);
     } catch (error) {
       fail(error);
@@ -326,6 +327,7 @@ export default function RecapFix({
             // Look again at the same request: the bot may still finish it, and a new Send counts toward the limit.
             setSlow(false);
             setSorting(true);
+            setProgress(null);
             setChecks((n) => n + 1);
           }}
         >

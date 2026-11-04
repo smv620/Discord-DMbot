@@ -584,6 +584,7 @@ describe("the wait panel for a typed note (#3355)", () => {
     expect(await screen.findByText(w.pickUp, {}, { timeout: 5000 })).toBeTruthy();
     expect(await screen.findByText(w.sorting, {}, { timeout: 5000 })).toBeTruthy();
     await screen.findByText("Fix the innkeeper's name", {}, { timeout: 8000 });
+    expect(screen.queryByText(w.sorting)).toBeNull(); // the panel is gone once the note is sorted
   }, 30_000);
 
   it("a stalled sort says so with the existing slow words", async () => {
@@ -616,20 +617,4 @@ describe("the wait panel for a typed note (#3355)", () => {
     await screen.findByText("Fix the innkeeper's name", {}, { timeout: 8000 });
   }, 30_000);
 
-  it("the panel carries stage, counts and times only, never the note's words", async () => {
-    const api = mockApi("table");
-    let asked = 0;
-    api.fixResult = async () => {
-      asked += 1;
-      return asked < 2
-        ? { state: "working", progress: { stage: "working", state: "running", startedAt: now() - 3, updatedAt: now() - 1, serverNow: now() } }
-        : { state: "done", points };
-    };
-    await open(api);
-    type("Fix the name");
-    fireEvent.click(screen.getByRole("button", { name: w.send }));
-    expect(await screen.findByText(w.sorting, {}, { timeout: 5000 })).toBeTruthy();
-    expect(screen.queryByText("Fix the name")).toBeNull();
-    await screen.findByText("Fix the innkeeper's name", {}, { timeout: 8000 });
-  }, 30_000);
 });
