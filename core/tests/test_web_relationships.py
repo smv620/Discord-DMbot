@@ -368,8 +368,10 @@ class Shaping(unittest.TestCase):
             e["links"][0]["id"]: e["links"][0]["words"]
             for e in relationships.page_of(got(nodes))["edges"]
         }
-        for who in ("n", "p", "c", "d", "x"):
+        for who in ("n", "p", "c", "d"):
             self.assertEqual(words[f"e-{who}"], "was last seen in", who)
+        # an item is only ever kept in a place (owner, 2026-11-04)
+        self.assertEqual(words["e-x"], "is kept in")
         self.assertEqual(words["e-ghost"], "is in")  # not among the nodes: the safe old words
 
     def test_the_old_words_stay_when_no_kinds_are_given(self) -> None:
