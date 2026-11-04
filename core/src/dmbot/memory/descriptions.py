@@ -33,3 +33,96 @@ def matches_alone(text: str, kind: str, source: str) -> bool:
     if not is_description(text):
         return True
     return source == "dm"
+
+
+# The last word of a description that names a person ("the woman", "a hooded figure"). Short and
+# plain on purpose: a description of a thing or a place ("the cave") is not made into a person.
+PERSON_WORDS = frozenset(
+    [
+        "man",
+        "woman",
+        "girl",
+        "boy",
+        "lady",
+        "gentleman",
+        "stranger",
+        "figure",
+        "child",
+        "baby",
+        "infant",
+        "beggar",
+        "guard",
+        "soldier",
+        "priest",
+        "priestess",
+        "monk",
+        "nun",
+        "merchant",
+        "trader",
+        "sailor",
+        "captain",
+        "thief",
+        "smuggler",
+        "farmer",
+        "farmhand",
+        "peasant",
+        "villager",
+        "traveler",
+        "traveller",
+        "wanderer",
+        "hermit",
+        "healer",
+        "midwife",
+        "innkeeper",
+        "barkeep",
+        "bartender",
+        "maid",
+        "servant",
+        "elder",
+        "crone",
+        "hag",
+        "giant",
+        "dwarf",
+        "elf",
+        "halfling",
+        "gnome",
+        "orc",
+        "goblin",
+        "cultist",
+        "mage",
+        "wizard",
+        "witch",
+        "sorcerer",
+        "knight",
+        "warrior",
+        "hunter",
+        "fisher",
+        "fisherman",
+        "ferryman",
+        "ferrywoman",
+        "shopkeeper",
+        "blacksmith",
+        "smith",
+        "cook",
+        "courier",
+        "messenger",
+        "prisoner",
+        "captive",
+        "widow",
+        "orphan",
+        "mother",
+        "father",
+        "sister",
+        "brother",
+        "son",
+        "daughter",
+    ]
+)
+
+
+def is_described_person(text: str) -> bool:
+    """A description whose last word is a person word: someone the story never names (#3431)."""
+    if not is_description(text):
+        return False
+    words = [w for w in text.replace("'s", " ").split() if w[:1].isalpha()]
+    return bool(words) and words[-1].casefold() in PERSON_WORDS
