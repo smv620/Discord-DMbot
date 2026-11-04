@@ -47,6 +47,7 @@ from dmbot.memory import (
     report_fixed,
     standing,
     states,
+    whereabouts,
 )
 from dmbot.memory import lies as lies_mod
 from dmbot.memory import party as party_mod
@@ -4094,7 +4095,14 @@ class MemoryStore:
                 return same, []
             row = await w.update(RELATIONS, same.id, upgrade)
             return _relation(row), []
+        # An item has one current whereabouts (#3363): a new carrying ends the present keeping, a
+        # new present keeping ends the carrying, and with no order between them carrying wins.
+        settled = whereabouts.settle(new, types[s], types[o], existing)
+        if settled.new_detail is not None:
+            new = dataclasses.replace(new, detail=settled.new_detail)
         await w.insert(RELATIONS, _relation_row(new))
+        for ended_id, changes in settled.ends.items():
+            await w.update(RELATIONS, ended_id, dict(changes))
         if pred.key == DISGUISED_AS:  # the one in disguise knows it, on every path (#3091)
             await knowers.know_own_disguise(w, new.id, s)
         for mention in found:  # what it was said in: typed links (#2662), beside the old list
