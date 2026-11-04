@@ -93,6 +93,7 @@ def edges_from(
     pairs: dict[tuple[str, str], list[dict[str, Any]]] = {}
     for row in rows:
         a, b = sorted((str(row["a"]), str(row["b"])))
+        subject_kind = kinds.get(str(row["a"]), "")  # (the words read from row["a"])
         directional = bool(row.get("directional", False))
         if reads_both_ways(str(row["predicate"]), str(row["detail"] or ""), directional):
             direction = "both"
@@ -105,7 +106,7 @@ def edges_from(
                     str(row["predicate"]),
                     str(row["detail"] or ""),
                     directional,
-                    kinds.get(str(row["a"]), ""),
+                    subject_kind,
                 ),
                 # how it reads from the second name when that differs ("has a niece", "has as a
                 # member"), else None; every connection that has a reading back sends it (#2666),
@@ -114,7 +115,7 @@ def edges_from(
                     str(row["predicate"]),
                     str(row["detail"] or ""),
                     directional,
-                    kinds.get(str(row["a"]), ""),
+                    subject_kind,
                 ),
                 "secret": bool(row["secret"]),  # (the real flag; masked on the way out)
                 "revealed": bool(row.get("revealed", True)),  # (the party believes it; masked too)

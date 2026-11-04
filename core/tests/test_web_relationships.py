@@ -344,6 +344,34 @@ class Shaping(unittest.TestCase):
         self.assertEqual(by_id["3"]["back"], "is home to")
         self.assertEqual(by_id["4"]["words"], "is in")  # no kind known: the safe old words
 
+    def test_the_page_reads_each_edge_by_its_subjects_kind_from_the_nodes(self) -> None:
+        """#3363: `page_of` builds the kinds from the answer's own nodes, so the door and the
+        player's gate both send them. A subject the gate left out keeps the old, safe "is in"."""
+
+        def node(i: str, kind: str) -> dict[str, Any]:
+            return {"id": i, "name": i, "kind": kind}
+
+        def got(nodes: list[dict[str, Any]]) -> dict[str, Any]:
+            return {
+                "pageIds": set(), "center": "t", "nodes": nodes, "seesAll": True, "canEdit": True,
+                "truncated": False, "view": "full", "visibility": "open", "canPeek": False,
+                "edges": [
+                    {"id": f"e-{who}", "a": who, "b": "t", "predicate": "located_in", "detail": "",
+                     "secret": False, "at": 1}
+                    for who in ("n", "p", "c", "d", "x", "ghost")
+                ],
+            }  # fmt: skip
+
+        nodes = [node("t", "place"), node("n", "npc"), node("p", "player_character"),
+                 node("c", "character"), node("d", "deity"), node("x", "item")]  # fmt: skip
+        words = {
+            e["links"][0]["id"]: e["links"][0]["words"]
+            for e in relationships.page_of(got(nodes))["edges"]
+        }
+        for who in ("n", "p", "c", "d", "x"):
+            self.assertEqual(words[f"e-{who}"], "was last seen in", who)
+        self.assertEqual(words["e-ghost"], "is in")  # not among the nodes: the safe old words
+
     def test_the_old_words_stay_when_no_kinds_are_given(self) -> None:
         rows = [self.row("1", "a", "b", "located_in", 1)]
         (edge,) = relationships.edges_from(rows, can_edit=True)
