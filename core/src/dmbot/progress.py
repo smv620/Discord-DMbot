@@ -37,6 +37,9 @@ STALL_AFTER_S: Final[Mapping[str, int | None]] = {
     "writing_recap": 30 * 60,
     "recap_not_written": None,  # the recap was held, declined or removed: a resting end
     "waiting": 2 * 60,  # a copy asked for on the website: the bot takes it within seconds
+    # A note typed or spoken on the recap page (#3355): the bot takes it within seconds, then one
+    # AI call sorts it (or one transcription writes it down).
+    "working": 10 * 60,
     "fixing": 5 * 60,  # a line fixed at a person's asking (#2858)
     "deleting": 10 * 60,  # a person's lines being deleted at their asking (#2769)
     "removing": 10 * 60,  # a speaker's lines being removed from a campaign by its DM (#3305)
