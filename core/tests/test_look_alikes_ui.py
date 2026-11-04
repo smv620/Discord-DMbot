@@ -103,12 +103,14 @@ class TheGroupView(unittest.TestCase):
 class TheWhereButton(unittest.IsolatedAsyncioTestCase):
     """📜 Where was it said? on the group screen (#3432): the names-to-check reply, per name."""
 
-    async def press(self, which: str, *, dm: bool = True) -> tuple[Any, Any, Any]:
+    async def press(
+        self, which: str, *, dm: bool = True, fail: bool = False
+    ) -> tuple[Any, Any, Any]:
         view = la.WhichName("c" * 32, NAMES, KINDS)
         memory = SimpleNamespace(mentions=AsyncMock(return_value=[("s:1:2", 5)]))
         campaign = SimpleNamespace(guild_id=1, id="c" * 32)
         tell = AsyncMock()
-        said = AsyncMock(return_value="THE PLACES")
+        said = AsyncMock(side_effect=RuntimeError) if fail else AsyncMock(return_value="THE PLACES")
         consent = SimpleNamespace(consenting=AsyncMock(return_value={7}))
         asked = interaction()
         asked.client = SimpleNamespace(transcripts=object(), consent=consent)
@@ -142,6 +144,34 @@ class TheWhereButton(unittest.IsolatedAsyncioTestCase):
         sent = asked.followup.send.await_args
         self.assertEqual(sent.args[0], "THE PLACES")
         self.assertTrue(sent.kwargs["ephemeral"])
+
+    async def test_the_button_asks_which_name_privately_and_only_for_a_dm(self) -> None:
+        for dm in (True, False):
+            view = la.LookAlikeGroup("c" * 32, [NAMES], 0, KINDS)
+            tell = AsyncMock()
+            asked = interaction()
+            with (
+                patch.object(la, "_campaign_for", AsyncMock(return_value=object())),
+                patch.object(la, "sees_secrets", MagicMock(return_value=dm)),
+                patch.object(la, "_tell", tell),
+                patch.object(la, "_answer_first", AsyncMock()),
+            ):
+                await view._where(asked)
+            if dm:
+                sent = asked.followup.send.await_args
+                self.assertEqual(sent.args[0], "Which name?")
+                self.assertTrue(sent.kwargs["ephemeral"])
+                self.assertIsInstance(sent.kwargs["view"], la.WhichName)
+            else:
+                tell.assert_awaited_once()
+                asked.followup.send.assert_not_awaited()
+
+    async def test_a_failed_read_says_try_again_and_a_missing_name_says_nothing_kept(self) -> None:
+        asked, said, _ = await self.press(B, fail=True)
+        self.assertEqual(asked.followup.send.await_args.args[0], la.name_places.TRY_AGAIN)
+        asked, said, _ = await self.press("x" * 32)
+        self.assertEqual(asked.followup.send.await_args.args[0], la.name_places.NOTHING_KEPT)
+        said.assert_not_awaited()
 
     async def test_a_player_is_refused_and_nothing_is_quoted(self) -> None:
         asked, said, tell = await self.press(B, dm=False)
