@@ -169,3 +169,58 @@ class TheRound(Base):
         self.sender.send = refuse  # type: ignore[method-assign]
         await self.ask(self.one.id)
         self.assertEqual(await self.tick(), 0)
+
+    async def test_a_failed_send_deletes_the_old_message_and_leaves_no_reminder_id(self) -> None:
+        await self.ask(self.one.id)
+        await self.tick()
+        first = self.sender.sent[0][2]
+
+        async def refuse(user_id: int, text: str) -> int | None:
+            return None
+
+        self.sender.send = refuse  # type: ignore[method-assign]
+        await self.tick(60)
+        self.assertEqual([i for _u, i in self.sender.deleted], [first])
+        stored = await NoticeStore(self.db).get(self.g, self.one.id, ALICE.id)
+        self.assertIsNone(stored.reminder_id)
+
+    async def test_not_now_touches_only_the_presser_and_never_another_dm(self) -> None:
+        await self.campaigns.add_dm(self.g, self.one.id, BOB.id)
+        await self.ask(self.one.id)
+        await self.tick()
+        notices = NoticeStore(self.db)
+        self.assertEqual(await notices.mute_all(ALICE.id, [self.g]), 1)
+        self.assertTrue((await notices.get(self.g, self.one.id, ALICE.id)).notice.muted)
+        self.assertFalse((await notices.get(self.g, self.one.id, BOB.id)).notice.muted)
+        self.assertEqual(await notices.mute_all(ALICE.id, [self.g]), 0)  # (already muted)
+
+    async def test_a_paused_campaign_is_left_alone(self) -> None:
+        await self.ask(self.one.id)
+        async with self.db.guild(self.g) as conn:
+            await conn.execute("UPDATE campaigns SET paused = TRUE WHERE id = %s", (self.one.id,))
+        self.assertEqual(await self.tick(), 0)
+
+    async def test_a_finished_campaign_keeps_a_message_that_another_still_waiting_one_shares(
+        self,
+    ) -> None:
+        await self.campaigns.add_dm(self.g, self.two.id, ALICE.id)
+        first = await self.ask(self.one.id)
+        await self.ask(self.two.id)
+        await self.tick()  # one message names both
+        await self.tick(10)
+        await self.memory.confirm_entity(self.g, self.one.id, first, "character", source=DM)
+        await self.tick(10)
+        self.assertEqual(self.sender.deleted, [])  # campaign Two still waits and is in it
+        stored = await NoticeStore(self.db).get(self.g, self.two.id, ALICE.id)
+        self.assertEqual(stored.reminder_id, self.sender.sent[0][2])
+
+    async def test_the_sent_view_holds_the_not_now_button_itself(self) -> None:
+        from unittest.mock import AsyncMock, MagicMock
+
+        from dmbot.questions.discord import DiscordSender, NotNowButton
+
+        bot = MagicMock()
+        bot._dm_message = AsyncMock(return_value=MagicMock(id=7))
+        await DiscordSender(bot).send(ALICE.id, "x")
+        view = bot._dm_message.await_args.args[2]
+        self.assertTrue(any(isinstance(item, NotNowButton) for item in view.children))

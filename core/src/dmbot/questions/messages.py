@@ -23,7 +23,6 @@ class Line:
     total: int
     first: bool  # the DM is hearing of these questions for the first time
     id: str = ""  # the campaign's id, for the caller (never shown)
-    id: str = ""  # the campaign's id, for the caller (never shown)
 
 
 def _name(text: str) -> str:

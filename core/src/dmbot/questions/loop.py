@@ -78,10 +78,17 @@ class Round:
                 log.warning("Questions: a campaign's round failed (%s)", type(exc).__name__)
         sent = 0
         for user_id, campaign_ids in clears.items():
-            if user_id not in per_user:  # nothing else to say: take the old notice away
+            if user_id in per_user:
+                continue  # they get a new message below, which replaces the old one
+            try:
                 await self._drop(guild_id, user_id, campaign_ids)
+            except Exception as exc:
+                log.warning("Questions: taking a notice away failed (%s)", type(exc).__name__)
         for user_id, lines in per_user.items():
-            sent += await self._tell(guild_id, user_id, lines)
+            try:
+                sent += await self._tell(guild_id, user_id, lines)
+            except Exception as exc:
+                log.warning("Questions: a notice failed (%s)", type(exc).__name__)
         return sent
 
     async def _campaign(
@@ -92,47 +99,91 @@ class Round:
     ) -> None:
         g, c = campaign.guild_id, campaign.id
         before = await self.counts.read(g, c)
+        # The heavy kinds are counted on the first round and every 5th; in between they keep their
+        # last number (a kind with no stored row yet waits for that round).
         only = None if self.rounds % HEAVY_EVERY == 1 or not before else set(before) - HEAVY
         now_counts = await counting.count_kinds(self.sources, g, c, only=only)
         merged: Mapping[str, Counted] = {**before, **now_counts}  # a kind that failed keeps its old
-        if now_counts:
-            await self.counts.write(g, c, now_counts)
         n = total(merged)
         was_answered, new_question = answered(before, merged), grew(before, merged)
         recording = await self.sender.recording(g, c)
         now = int(self.clock())
         for user_id in campaign.dm_user_ids:
-            stored = await self.notices.get(g, c, user_id)
-            new, action = next_step(
-                stored.notice,
-                total=n,
-                answered=was_answered,
-                grew=new_question,
-                recording=recording,
-                now=now,
-            )
-            if new != stored.notice and not await self.notices.change(
-                g, c, user_id, stored.notice, new
-            ):
-                continue  # another round got there first
-            if action == "clear" and stored.reminder_id is not None:
-                clears.setdefault(user_id, []).append(c)
-            elif action in ("first", "remind"):
-                per_user.setdefault(user_id, []).append(
-                    messages.Line(campaign.name, n, first=action == "first", id=c)
+            try:  # one DM's trouble never costs the others their notice
+                await self._user(
+                    campaign,
+                    user_id,
+                    n,
+                    was_answered,
+                    new_question,
+                    recording,
+                    now,
+                    per_user,
+                    clears,
                 )
+            except Exception as exc:
+                log.warning("Questions: one DM's timer failed (%s)", type(exc).__name__)
+        # Written last: a round that failed before here sees the same change again next time, so a
+        # muted DM still hears of the new question.
+        if now_counts:
+            await self.counts.write(g, c, now_counts)
+
+    async def _user(
+        self,
+        campaign: Campaign,
+        user_id: int,
+        n: int,
+        was_answered: bool,
+        new_question: bool,
+        recording: bool,
+        now: int,
+        per_user: dict[int, list[messages.Line]],
+        clears: dict[int, list[str]],
+    ) -> None:
+        g, c = campaign.guild_id, campaign.id
+        stored = await self.notices.get(g, c, user_id)
+        new, action = next_step(
+            stored.notice,
+            total=n,
+            answered=was_answered,
+            grew=new_question,
+            recording=recording,
+            now=now,
+        )
+        if new != stored.notice and not await self.notices.change(
+            g, c, user_id, stored.notice, new
+        ):
+            return  # another round got there first
+        if action == "clear" and stored.reminder_id is not None:
+            clears.setdefault(user_id, []).append(c)
+        elif action in ("first", "remind"):
+            per_user.setdefault(user_id, []).append(
+                messages.Line(campaign.name, n, first=action == "first", id=c)
+            )
 
     async def _drop(self, guild_id: int, user_id: int, campaign_ids: list[str]) -> None:
-        """Nothing waits any more: the notice or reminder still in their chat goes."""
+        """Nothing waits any more in these campaigns: the notice still in their chat goes, unless
+        another campaign of theirs that still waits is listed in that same message, which then
+        stays until its next reminder."""
+        mine = [c for c in await self.campaigns(guild_id) if user_id in c.dm_user_ids]
+        held: dict[str, int | None] = {}
+        for campaign in mine:
+            held[campaign.id] = (await self.notices.get(guild_id, campaign.id, user_id)).reminder_id
         for campaign_id in campaign_ids:
-            stored = await self.notices.get(guild_id, campaign_id, user_id)
-            if stored.reminder_id is not None:
-                await self.sender.delete(user_id, stored.reminder_id)
-                await self.notices.set_reminder(guild_id, campaign_id, user_id, None)
+            message_id = held.get(campaign_id)
+            if message_id is None:
+                continue
+            shared = any(m == message_id for other, m in held.items() if other not in campaign_ids)
+            if not shared:
+                await self.sender.delete(user_id, message_id)
+            await self.notices.set_reminder(guild_id, campaign_id, user_id, None)
 
     async def _tell(self, guild_id: int, user_id: int, lines: list[messages.Line]) -> int:
         """One message for this DM: the one before it is deleted first, so the chat never holds
-        more than one. A message that could not be sent is not retried this round."""
+        more than one. A message that could not be sent is not retried this round. A DM of
+        campaigns in two servers gets one message for each server: the servers' data never mix.
+        If a first notice could not be sent, the next one reads as a reminder; it still backs off,
+        so nothing is repeated in a loop."""
         mine = [c for c in await self.campaigns(guild_id) if user_id in c.dm_user_ids]
         gone: set[int] = set()
         for campaign in mine:  # every old notice of theirs here, whichever campaign it was about

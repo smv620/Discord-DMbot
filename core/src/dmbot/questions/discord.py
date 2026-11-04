@@ -67,7 +67,7 @@ class DiscordSender:
 
     async def send(self, user_id: int, text: str) -> int | None:
         view = discord.ui.View(timeout=None)
-        view.add_item(NotNowButton().item)
+        view.add_item(NotNowButton())
         sent = await self.bot._dm_message(user_id, text, view)
         return None if sent is None else sent.id
 
@@ -76,7 +76,7 @@ class DiscordSender:
             user = self.bot.get_user(user_id) or await self.bot.fetch_user(user_id)
             channel = user.dm_channel or await user.create_dm()
             await channel.get_partial_message(message_id).delete()
-        except discord.HTTPException:
+        except Exception:
             pass  # already gone (or the DM closed): nothing to take away
 
 
