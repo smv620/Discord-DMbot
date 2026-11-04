@@ -5,24 +5,38 @@ own list shows. Invented names and numbers throughout."""
 from __future__ import annotations
 
 import unittest
+from collections.abc import Collection
+from dataclasses import replace
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
 from dmbot.campaigns import CampaignStore
-from dmbot.memory.models import DM, PROPOSED
+from dmbot.memory import readings
+from dmbot.memory.backstory_links import BackstoryLinks, NewLink, NewWhich
+from dmbot.memory.claims import ClaimStore, Extracted
+from dmbot.memory.models import BACKGROUND_SOURCE, CONFIRMED, DM, PROPOSED
 from dmbot.memory.store import MemoryStore
 from dmbot.questions import counts, kinds
 from dmbot.questions.counts import Counted, Sources
 from dmbot.questions.store import QuestionCounts, answered, grew, total
 from dmbot.recaps.approval import text_hash
+from dmbot.rules.homebrew import HomebrewStore
+from dmbot.rules.house import HouseRuleStore
+from dmbot.rules.pack_updates import PackUpdateStore
+from dmbot.rules.rule_sets import RuleSetStore
 from dmbot.transcript.models import Line
 from dmbot.transcript.store import TranscriptStore
 from dmbot.transcript.waiting_questions import Unanswered, WaitingQuestionStore
 from dmbot.web import plot as web_plot
-from tests.test_recap_web import NOW, Base
-from tests.test_web_api import THURSDAY
+from dmbot.web import relationships
+from tests.test_memory_claims import said
+from tests.test_recap_web import BOB, NOW, Base
+from tests.test_web_api import ALICE, THURSDAY
 
 START = 1_700_000_000
 MS = START * 1000
+SAID_BY = 7  # a speaker who agreed to be recorded
+NOT_RECORDED = 8
 
 
 class TheKinds(unittest.TestCase):
@@ -214,6 +228,302 @@ class TheCounts(Base):
             {k: 0 for k in kinds.ORDER if k not in (kinds.PLOT, kinds.RECAP_APPROVE)}
             | {kinds.RECAP_APPROVE: 1},
         )
+
+    # --- the kinds whose list is read from several places (#3450): count == what the flow shows
+
+    async def entry(self, name: str, *, campaign: str | None = None, **kw: object) -> str:
+        kw.setdefault("type", "character")
+        made = await self.memory.add_entity(
+            self.g,
+            campaign or self.c,
+            name=name,
+            source=DM,
+            status=CONFIRMED,
+            **kw,  # type: ignore[arg-type]
+        )
+        return made.value.id
+
+    async def agreed(self, _guild: int) -> Collection[int]:
+        return {SAID_BY}
+
+    async def with_claims(self) -> ClaimStore:
+        """The claim reader switched on, as the bot has it: only SAID_BY agreed to be recorded."""
+        claims = ClaimStore(self.memory)
+        self.src = replace(self.src, claims=claims, agreed=self.agreed)
+        return claims
+
+    async def propose(
+        self, claims: ClaimStore, campaign: str, *found: Extracted, speakers: set[int] | None = None
+    ) -> None:
+        await claims.propose(
+            self.g, campaign, list(found), {"1": SAID_BY, "2": NOT_RECORDED},
+            opted_in=speakers or {SAID_BY}, dms={SAID_BY, NOT_RECORDED},
+            prompt_version="p1", model="m1", session_started_at=500,
+        )  # fmt: skip
+
+    async def test_lookalikes_equal_the_groups_the_list_offers(self) -> None:
+        pairs = (("Belleros", "Beleros"), ("Kellan", "Kelan"))
+        ids = {}
+        for one, two in pairs:
+            ids[one] = [await self.entry(one), await self.entry(two)]
+        await self.entry("Cerric")  # alone: in no group
+        for one, two in pairs:  # another campaign's look-alikes are not ours
+            await self.entry(one, campaign=self.two.id)
+            await self.entry(two, campaign=self.two.id)
+        groups = await self.memory.look_alikes(self.g, self.c)
+        self.assertEqual((await self.count(kinds.LOOKALIKES)).n, len(groups))
+        self.assertEqual(len(groups), 2)
+        # "Not the same", as the list's button does, takes that group off the list
+        await self.memory.not_the_same(self.g, self.c, ids["Belleros"], user_id=7)
+        self.assertEqual((await self.count(kinds.LOOKALIKES)).n, 1)
+        self.assertEqual(len(await self.memory.look_alikes(self.g, self.c)), 1)
+
+    async def test_which_equals_the_which_one_questions(self) -> None:
+        self.src = replace(self.src, backstory=(store := BackstoryLinks(self.db)))
+        voss = await self.entry("Voss", type="npc")
+        for campaign, who in ((self.c, "Mara"), (self.two.id, "Elsewhere")):
+            both = [
+                await self.entry(f"{who} Ash", campaign=campaign),
+                await self.entry(f"{who} Vell", campaign=campaign),
+            ]
+            if campaign != self.c:
+                voss_two = await self.entry("Voss", type="npc", campaign=campaign)
+                await store.add_which(
+                    self.g, campaign,
+                    [NewWhich(voss_two, True, "member_of", who, tuple(both), "q")],
+                )  # fmt: skip
+            else:
+                mara = both
+        await store.add_which(
+            self.g, self.c,
+            [
+                NewWhich(voss, True, "member_of", "Mara", tuple(mara), "q"),
+                NewWhich(voss, True, "enemy_of", "Mara", tuple(mara), "q"),
+            ],
+        )  # fmt: skip
+        asked = await store.which_waiting(self.g, self.c)
+        self.assertEqual((await self.count(kinds.WHICH)).n, len(asked))
+        self.assertEqual(len(asked), 2)
+        await store.pick_which(self.g, self.c, asked[0].id, mara[0])  # the DM picks one
+        self.assertEqual((await self.count(kinds.WHICH)).n, 1)
+        self.assertEqual(len(await store.which_waiting(self.g, self.c)), 1)
+
+    async def kept_for_an_answer(self, claims: ClaimStore, campaign: str, pc: str) -> None:
+        """Two entries answer to "Mara", so a player character's family claim is kept."""
+        await self.entry(pc, campaign=campaign, role="player_character", played_by=SAID_BY)
+        for name in ("Mara Ashgrove", "Mara Vell"):
+            made = await self.entry(name, campaign=campaign)
+            await self.memory.add_alias(
+                self.g, campaign, made, "Mara", kind="short", source=DM, status=CONFIRMED
+            )
+        await self.propose(
+            claims, campaign,
+            said(pc, "is the sister of", "Mara"), said(pc, "is the mother of", "Mara"),
+        )  # fmt: skip
+
+    async def test_family_ties_equal_the_claims_kept_for_an_answer(self) -> None:
+        claims = await self.with_claims()
+        await self.kept_for_an_answer(claims, self.c, "Mira")
+        await self.kept_for_an_answer(claims, self.two.id, "Tavin")
+        await self.entry("Bram")
+        await self.entry("Veldmoor", type="place")
+        await self.propose(claims, self.c, said("Bram", "is in", "Veldmoor"))
+        family, facts = await self.count(kinds.FAMILY), await self.count(kinds.CLAIMS)
+        self.assertEqual(family.n, await claims.unplaced_count(self.g, self.c))
+        self.assertEqual(family.n, 2)
+        # the claims list shows the kept ones too: the two kinds together are that list
+        listed = await claims.listed_count(self.g, self.c, opted_in={SAID_BY})
+        self.assertEqual((family.n + facts.n, facts.n), (listed, 1))
+        (first, _second) = [
+            c for c in await claims.waiting(self.g, self.c, opted_in={SAID_BY}) if c.reason
+        ]
+        (choice,) = await claims.which_one(self.g, self.c, first.id)
+        await claims.pick_one(self.g, self.c, first.id, choice.side, choice.entries[0].id)
+        self.assertEqual((await self.count(kinds.FAMILY)).n, 1)
+        # (the answered claim is an ordinary fact to check now, so the two still add up)
+        after = (await self.count(kinds.FAMILY)).n + (await self.count(kinds.CLAIMS)).n
+        self.assertEqual(after, await claims.listed_count(self.g, self.c, opted_in={SAID_BY}))
+
+    async def test_facts_to_check_equal_the_claims_waiting_and_skip_a_speaker_not_recorded(
+        self,
+    ) -> None:
+        claims = await self.with_claims()
+        for name in ("Bram", "Hesper"):
+            await self.entry(name)
+        await self.entry("Veldmoor", type="place")
+        await self.memory.add_entity(
+            self.g, self.c, name="Zed", type="character", source=DM, status=PROPOSED
+        )
+        await self.kept_for_an_answer(claims, self.c, "Mira")  # listed, but its own kind
+        await self.propose(
+            claims, self.c,
+            said("Bram", "is in", "Veldmoor"),
+            said("Hesper", "is in", "Veldmoor"),
+            said("Bram", "knows", "Zed"),  # a still-proposed name: in neither the list nor count
+            Extracted("Bram", "is the enemy of", "Hesper", "", ("2",), "dm_said"),  # not recorded
+            speakers={SAID_BY, NOT_RECORDED},
+        )  # fmt: skip
+        async with self.db.guild(self.g) as conn:
+            cur = await conn.execute(
+                "SELECT count(*) AS n FROM memory_claims WHERE campaign_id = %s"
+                " AND status = 'proposed' AND %s = ANY(speaker_ids)",
+                (self.c, NOT_RECORDED),
+            )
+            row = await cur.fetchone()
+        assert row is not None
+        self.assertEqual(row["n"], 1)  # it was stored: only `agreed` (read now) leaves it out
+        found = await self.count(kinds.CLAIMS)  # counted first: the list wipes the stopped ones
+        listed = await claims.waiting(self.g, self.c, opted_in=await self.agreed(self.g))
+        unplaced = await claims.unplaced_count(self.g, self.c)
+        self.assertEqual(found.n, len(listed) - unplaced)
+        self.assertEqual((found.n, unplaced), (2, 2))
+        await claims.confirm(self.g, self.c, listed[0].id, opted_in={SAID_BY})
+        self.assertEqual((await self.count(kinds.CLAIMS)).n, 1)
+
+    async def test_readings_equal_the_websites_readings_list(self) -> None:
+        claims = await self.with_claims()
+        await self.entry("Bram")
+        await self.entry("Heartseeker", type="item")
+        await self.entry("Crown", type="item")
+        theory = readings.BeliefProposal(
+            "pc:Mira", "Bram", "carries", "Heartseeker", 0.75, "accusation", ("1",)
+        )
+        for campaign, proposal in (
+            (self.c, theory),
+            (self.c, replace(theory, object="Crown")),
+        ):
+            await claims.propose(
+                self.g, campaign, [readings.as_claim(proposal, "player_said")], {"1": SAID_BY},
+                opted_in={SAID_BY}, dms={SAID_BY}, prompt_version="r1", model="m1",
+                session_started_at=1_000,
+            )  # fmt: skip
+        await self.entry("Bram", campaign=self.two.id)  # a reading in another campaign: not ours
+        await self.entry("Heartseeker", type="item", campaign=self.two.id)
+        await claims.propose(
+            self.g, self.two.id, [readings.as_claim(theory, "player_said")], {"1": SAID_BY},
+            opted_in={SAID_BY}, dms={SAID_BY}, prompt_version="r1", model="m1",
+            session_started_at=1_000,
+        )  # fmt: skip
+        from dmbot.consent import TERMS_VERSION
+
+        async with self.db.guild(self.g) as conn:  # the door reads who is recorded now (#3462)
+            await conn.execute(
+                "INSERT INTO consent (guild_id, user_id, granted_at, terms_version)"
+                " VALUES (%s, %s, 0, %s) ON CONFLICT (guild_id, user_id)"
+                " DO UPDATE SET terms_version = EXCLUDED.terms_version",
+                (self.g, SAID_BY, TERMS_VERSION),
+            )
+        ref = f"{self.g}.{self.c}"
+        shown = await relationships.read_readings(self.web, self.session, ref)
+        self.assertEqual((await self.count(kinds.READINGS)).n, shown["counts"]["readings"])
+        self.assertEqual(shown["counts"]["readings"], len(shown["readings"]))
+        self.assertEqual(len(shown["readings"]), 2)
+        await claims.reject(self.g, self.c, shown["readings"][0]["id"])  # "no", as the page does
+        again = await relationships.read_readings(self.web, self.session, ref)
+        self.assertEqual((await self.count(kinds.READINGS)).n, again["counts"]["readings"])
+        self.assertEqual(again["counts"]["readings"], 1)
+
+    async def test_connections_add_up_their_four_parts_and_leave_out_which_one(self) -> None:
+        links = BackstoryLinks(self.db)
+        self.src = replace(self.src, backstory=links)
+        voss = await self.entry("Voss", type="npc")
+        council = await self.entry("Lantern Council", type="faction")
+        await links.add(self.g, self.c, [NewLink(voss, "member_of", council, "q")])  # (1) backstory
+        asha, ashb = await self.entry("Asha"), await self.entry("Ashe")
+        await links.add_which(
+            self.g, self.c, [NewWhich(voss, True, "enemy_of", "Ash", (asha, ashb), "q")]
+        )  # "Which one?": its own kind
+        tavin = await self.entry("Tavin")  # (2) a name an AI read suggested for a confirmed entry
+        await self.memory.add_alias(
+            self.g, self.c, tavin, "Tav", kind="short", source=BACKGROUND_SOURCE, status=PROPOSED
+        )
+        await self.memory.add_unnamed(  # (3) an unnamed person who may be a named one
+            self.g, self.c, what="guard at the north gate", role="guard"
+        )
+        await self.entry("Ken", description="A guard who keeps the north gate")
+        aldric, bryn, mira = [await self.entry(n) for n in ("Aldric", "Bryn", "Mira")]
+        for one, role, two in ((aldric, "mother", bryn), (bryn, "sister", mira)):  # (4)
+            await self.memory.add_relation(
+                self.g, self.c, one, "kin_of", two, source=DM, confidence=1.0,
+                detail=role, directional=True, status=CONFIRMED,
+            )  # fmt: skip
+        await self.memory.rework_family(self.g, self.c)
+        parts = (
+            await links.count(self.g, self.c) - await links.count_which(self.g, self.c),
+            len(await self.memory.suggested_names(self.g, self.c)),
+            len(offers := await self.memory.same_person_offers(self.g, self.c)),
+            len(await self.memory.worked_out_waiting(self.g, self.c)),
+        )
+        self.assertEqual(parts, (1, 1, 1, 1))
+        self.assertEqual((await self.count(kinds.CONNECTIONS)).n, sum(parts))
+        self.assertEqual((await self.count(kinds.WHICH)).n, 1)  # counted there, not here
+        await self.memory.not_the_same_person(
+            self.g, self.c, offers[0].unnamed_id, offers[0].named_id, user_id=7
+        )
+        self.assertEqual((await self.count(kinds.CONNECTIONS)).n, sum(parts) - 1)
+
+    async def test_house_rule_updates_count_a_set_and_each_pack(self) -> None:
+        sets, packs = RuleSetStore(self.db), PackUpdateStore(self.db)
+        houses, brew = HouseRuleStore(self.db), HomebrewStore(self.db)
+        self.src = replace(self.src, rule_sets=sets, packs=packs)
+        publisher_dm = 5001
+        pub = (await self.campaigns.create(self.g, "Publisher", publisher_dm)).id
+        await houses.add(self.g, pub, publisher_dm, "No flanking")
+        await sets.publish(
+            self.g, pub, publisher_dm, "Frost rules", await houses.list(self.g, pub), None
+        )
+        await brew.add(self.g, pub, publisher_dm, kind="item", name="Lamp", text="Glows.")
+        await packs.publish_pack(
+            self.g, pub, publisher_dm, "Frost pack", await brew.list(self.g, pub)
+        )
+        followers = ((self.c, ALICE.id), (self.two.id, BOB.id))
+        for campaign, dm in followers:
+            (offer,) = await sets.shared_here(self.g, campaign)
+            await sets.follow(self.g, campaign, dm, offer)
+            (pack_offer,) = await packs.packs_here(self.g, campaign)
+            await packs.follow_pack(self.g, campaign, dm, pack_offer)
+        self.assertEqual((await self.count(kinds.RULES)).n, 0)  # nothing new yet
+        await houses.add(self.g, pub, publisher_dm, "Crits double the dice")
+        await sets.publish_changes(
+            self.g, pub, publisher_dm, await houses.list(self.g, pub), None, plan_ok=True
+        )
+        await brew.add(self.g, pub, publisher_dm, kind="item", name="Torch", text="Burns.")
+        await packs.publish_pack_changes(self.g, pub, publisher_dm, await brew.list(self.g, pub))
+        mine, dm = self.c, ALICE.id
+        shown = len(await packs.pending_pack_updates(self.g, mine, for_dmbot=True)) + bool(
+            await sets.pending_update(self.g, mine, for_dmbot=True)
+        )
+        self.assertEqual((await self.count(kinds.RULES)).n, shown)
+        self.assertEqual(shown, 2)  # the set, and the one pack
+        await sets.take_update(self.g, mine, dm)  # the DM takes the set's new version
+        self.assertEqual((await self.count(kinds.RULES)).n, 1)
+        (follow,) = await packs.followed_packs(self.g, mine)
+        await packs.take_pack_update(self.g, mine, dm, follow.set_id, expected_version=2)
+        await packs.undo_last_pack_take(self.g, mine, dm, follow.set_id, 2)  # ... and sends it back
+        self.assertEqual((await self.count(kinds.RULES)).n, 0)  # DMbot does not ask for it again
+        self.assertEqual(len(await packs.pending_pack_updates(self.g, mine)), 1)  # DM still sees
+        other = await counts.count_kinds(self.src, self.g, self.two.id, only={kinds.RULES})
+        self.assertEqual(other[kinds.RULES].n, 2)  # the other campaign's own
+
+    async def test_a_kind_that_cannot_be_counted_is_left_out_not_zero(self) -> None:
+        await self.entry("Belleros")
+        await self.entry("Beleros")
+        await self.memory.add_entity(
+            self.g, self.c, type="character", name="Hrothgar", source=DM, status=PROPOSED
+        )
+        with (
+            patch.object(MemoryStore, "look_alikes", AsyncMock(side_effect=RuntimeError("down"))),
+            self.assertLogs("dmbot.questions.counts", level="WARNING") as logged,
+        ):
+            found = await counts.count_kinds(self.src, self.g, self.c)
+        self.assertNotIn(kinds.LOOKALIKES, found)  # not Counted(0): its old number stays
+        self.assertEqual(found[kinds.NAMES].n, 1)
+        self.assertEqual(set(found), set(kinds.ORDER) - {kinds.LOOKALIKES})
+        (line,) = logged.output
+        self.assertIn("RuntimeError", line)
+        self.assertNotIn("down", line)  # the error type only
+        # ... and counted again once it works
+        self.assertEqual((await self.count(kinds.LOOKALIKES)).n, 1)
 
 
 class TheStoredCounts(Base):
