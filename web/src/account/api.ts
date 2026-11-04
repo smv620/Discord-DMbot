@@ -2115,6 +2115,8 @@ export type ApiErrorKind =
   | "network" // couldn't reach the API
   | "peek-off" // the DM turned peeking off, so the full view is closed (#2405)
   | "bad-target" // a merge, secret or remove the rules refuse for this name (#2379)
+  | "names-not-shown" // showing a connection whose name is still held back from the players (#3426)
+  | "name-unnamed" // ... or whose end is a person the story never named (#3426)
   | "still-waiting" // a queued name change the bot hasn't answered yet (#2294)
   | "gone" // a waiting connection that is not waiting any more (#2635)
   | "name-first" // a new name in it has to be answered first, in Check new names (#2635)
@@ -2902,6 +2904,8 @@ export const errorKinds: Record<string, ApiErrorKind> = {
   bad_email: "bad-email",
   in_use: "in-use",
   bad_target: "bad-target",
+  names_not_shown: "names-not-shown",
+  name_unnamed: "name-unnamed",
   // The web's views: a visit the API doesn't know is no more than a failed try, so the page says
   // its generic line rather than a reason (#2405).
   bad_visit: "server",

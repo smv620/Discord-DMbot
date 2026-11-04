@@ -23,6 +23,7 @@ from dmbot.db import Database
 from dmbot.memory import backstory_keep as keep
 from dmbot.memory import beliefs, evidence, link_edits, placing
 from dmbot.memory import claims as claims_mod
+from dmbot.memory import unnamed as unnamed_mod
 from dmbot.memory._changes import ALREADY_UNDONE, CLAIMS, Changes
 from dmbot.memory.backstory_links import DONE, FULL, BackstoryLinks
 from dmbot.memory.claims import ClaimStore
@@ -46,6 +47,7 @@ from dmbot.memory.models import (
     name_key,
 )
 from dmbot.memory.store import INT64_MAX, PERSON, MemoryStore
+from dmbot.memory.store import NAMES_NOT_SHOWN as NAMES_NOT_SHOWN_WORDS
 from dmbot.memory.which_else import COULD_NOT_KEEP, none_of_these
 
 log = logging.getLogger(__name__)
@@ -64,6 +66,8 @@ BAD_PLAYER = "bad_player"  # not an ID the rules take
 BOT_PLAYER = "bot_player"  # the ID is a bot's: a bot cannot play a character
 EXISTS = "exists"  # the spelling is already another name's
 BAD_TARGET = "bad_target"  # a merge, a secret or a removal the rules refuse
+NAMES_NOT_SHOWN = "names_not_shown"  # a connection to a name still held back (#3426)
+NAME_UNNAMED = "name_unnamed"  # ... or to a person the story never named (#3426)
 FAILED = "failed"  # anything unexpected; the action can be sent again
 GONE = "gone"  # a waiting question that is not waiting any more
 NAME_FIRST = "name_first"  # a new name in it has to be answered first (in Check new names)
@@ -680,7 +684,14 @@ async def _link(memory: MemoryStore, guild_id: int, cid: str, entity_id: str, a:
             )  # (a family role is said from the name it belongs to, #2457)
         else:
             return _failed(FAILED)
-    except MemoryRuleError:
+    except MemoryRuleError as exc:
+        # Showing a connection is refused until its names are shown: say which case it is, so the
+        # page can tell the DM what to do first (#3426). The rule itself is unchanged.
+        reason = str(exc)
+        if reason == NAMES_NOT_SHOWN_WORDS:
+            return _failed(NAMES_NOT_SHOWN)
+        if reason == unnamed_mod.NAME_BEFORE_SHOWING:
+            return _failed(NAME_UNNAMED)
         return _failed(BAD_TARGET)
     return Outcome(**pair)
 
