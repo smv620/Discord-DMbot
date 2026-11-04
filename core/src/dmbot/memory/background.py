@@ -22,7 +22,7 @@ from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Any
 
-from dmbot.memory import kin, place_words
+from dmbot.memory import kin, place_words, unique_item
 from dmbot.memory import reputation_words as feeling_words
 from dmbot.memory.backstory_links import QUOTE_MAX
 from dmbot.memory.end_match import FILLER, SHORTEST, Ends
@@ -621,12 +621,15 @@ def merge(
     *,
     cap: int = MAX_NAMES,
     rules: tuple[str, str] | None = None,
+    dropped: Counter[str] | None = None,
 ) -> list[Found]:
     """The pieces' names as one list, each once (other spellings joined, the first quote kept),
     leaving out names DMbot already has, ordinary words and game terms, at most `cap`. A name
     that is a disguise of another entry folds into it, and its other spellings become that
     entry's secret spellings. `rules`
-    (target, fallback ruleset): names the rules hold as a monster or spell are left out too."""
+    (target, fallback ruleset): names the rules hold as a monster or spell are left out too. An
+    item that is not one particular thing (a dagger, arrows) is left out and counted in `dropped`
+    as `item_not_unique` (#3373)."""
     skip = {name_key(k) for k in skip_keys} | COMMON | GAME_TERMS
     order: list[str] = []
     merged: dict[str, Found] = {}
@@ -636,6 +639,10 @@ def merge(
             if not key or key in skip:
                 continue
             if rules is not None and in_the_rules(item.name, item.kind, *rules):
+                continue
+            if item.kind == "item" and not unique_item.keeps(item.name, item.quote):
+                if dropped is not None:
+                    dropped["item_not_unique"] += 1  # (a count, never the name)
                 continue
             item = Found(  # a spelling DMbot already holds (a secret one too) is not offered again
                 item.name,

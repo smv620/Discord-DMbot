@@ -292,6 +292,20 @@ class Stored(ConfirmedMemoryTest):
             session_started_at=500,
         )  # fmt: skip
 
+    async def test_only_a_unique_item_is_made_an_entry_from_a_session_claim(self) -> None:
+        # (#3373) "Bram carries a dagger" makes no entry and no tie; a named or owned item does
+        got = await self.propose(
+            said("Bram", "carries", "a dagger"),
+            said("Bram", "carries", "Mira's arrows"),
+            said("Bram", "carries", "Moonblade"),
+            said("Bram", "carries", "Garret's sled"),
+        )
+        self.assertEqual(got.reasons, {claims.ITEM_REASON: 2})
+        self.assertEqual(sorted(got.new), ["Garret's sled", "Moonblade"])
+        # one that is later named is tracked from then on
+        later = await self.propose(said("Bram", "carries", "the Widowmaker"))
+        self.assertEqual(later.new, ("the Widowmaker",))
+
     async def test_what_passes_waits_as_a_proposal_and_nothing_is_a_fact_yet(self) -> None:
         got = await self.propose(
             said("Bram", "carries", "Heartseeker"),

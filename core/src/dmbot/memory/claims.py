@@ -20,7 +20,15 @@ from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 
-from dmbot.memory import evidence, forget_readings, kin, link, place_words, reputation_words
+from dmbot.memory import (
+    evidence,
+    forget_readings,
+    kin,
+    link,
+    place_words,
+    reputation_words,
+    unique_item,
+)
 from dmbot.memory._changes import ALIASES, CLAIMS, ENTITIES, Changes
 from dmbot.memory.models import (
     CLAIM_CONFIRMED,
@@ -86,6 +94,8 @@ STOPPED_REASON = "a speaker it cites is not being recorded now"
 STOPPED_NOW = "Someone who said that has stopped being recorded, so it can't be kept."
 ODD_NOW = "That doesn't look like something said in the game any more."
 UNKNOWN_NAME_REASON = "a name in it is not one DMbot knows yet"
+# (#3373) Only one particular thing is tracked: "Garret's sled", not "a sled".
+ITEM_REASON = "an item that is not one particular thing"
 TWO_ENTRIES_REASON = "a name in it could be two different entries"
 SAME_ENTRY_REASON = "it connects an entry to itself"
 STATE_REASON = "that entry can't be in that condition"
@@ -592,6 +602,20 @@ def _unknown_names(claim: Extracted, names: Names) -> list[str]:
     return [n for n in said if n.strip() and not names.by_key.get(name_key(n))]
 
 
+def _generic_items(
+    onto: Ontology, claim: Extracted, unknown: Sequence[str], said: Mapping[str, str]
+) -> bool:
+    """Is a new name in this claim an item that is not one particular thing? Only a name the
+    relationship fixes as an item is judged (`implied_kind`); the words it was said in help
+    (`unique_item`): the judgement is "more likely than not", and nobody is asked."""
+    context = " ".join(said.get(r, "") for r in claim.lines)
+    for name in unknown:
+        side = "subject" if name_key(name) == name_key(claim.subject) else "object"
+        if implied_kind(onto, claim, side) == "item" and not unique_item.keeps(name, context):
+            return True
+    return False
+
+
 def implied_kind(onto: Ontology, claim: Extracted, side: str) -> str:
     """The kind of entry a relationship fixes for a name on this side of a claim, or `CONCEPT`
     ("unsure") when it fixes none: "is in" puts a place on its object side, say. The DM can
@@ -705,6 +729,11 @@ class ClaimStore:
                 cued = not_names.cued_in("\n".join((said or {}).get(r, "") for r in claim.lines))
                 if reason == UNKNOWN_NAME_REASON:
                     unknown = _unknown_names(claim, names)
+                    if _generic_items(onto, claim, unknown, (said or {})):
+                        # A new item that is clearly everyday gear is not made into an entry, so
+                        # its claim goes with it (#3373): no owns, carries or kept-in is stored.
+                        work.append((claim, ITEM_REASON, []))
+                        continue
                     if not make_names:
                         unknown = []  # dropped below with its reason, not kept waiting
                     elif any(name_key(n) in refused_names for n in unknown):

@@ -721,6 +721,7 @@ async def read_background(
         [read.names],
         known,
         rules=(campaign.target_ruleset, campaign.fallback_ruleset),
+        dropped=read.stats.dropped,
     )
     choice = lore_knowledge.normalize(choice)
     if speaker:  # a character's backstory stays as it was: the choices are for campaign lore
