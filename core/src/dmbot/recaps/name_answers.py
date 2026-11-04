@@ -27,7 +27,6 @@ from dmbot.memory.models import (
     PROPOSED,
     REJECTED,
     MemoryRuleError,
-    TooLateToUndo,
     name_key,
 )
 from dmbot.memory.name_longer import widens
@@ -62,6 +61,7 @@ ANSWERED = "answered"  # undo, after a part was answered or the names changed
 NOT_DM = "not_dm"  # the sender is not a DM of the campaign any more
 SPLIT, JOIN_GROUP, MAKE_GROUP, UNDO = "split", "join_group", "make_group", "undo"
 KEPT_ACTIONS = (SPLIT, JOIN_GROUP, MAKE_GROUP)  # a finished one stays as a `done` row for its Undo
+NEW_ACTIONS = (*KEPT_ACTIONS, UNDO)
 
 PLAYER_CHARACTER = "player_character"  # who plays them is asked in Discord, not on the page
 
@@ -214,7 +214,7 @@ async def apply(
     reason word. Nothing here logs the DM's words. The sender is checked at the moment of use
     (they may have stopped being a DM since); the name must still be a waiting suggestion."""
     if answer.user_id not in dm_user_ids:
-        return NOT_DM if answer.action in (SPLIT, JOIN_GROUP, MAKE_GROUP, UNDO) else NOT_ALLOWED
+        return NOT_DM if answer.action in NEW_ACTIONS else NOT_ALLOWED
     cid = answer.campaign_id
     if answer.action == UNDO:
         return await _undo(memory, answers, guild_id, answer)
@@ -289,7 +289,7 @@ def _store_reason(exc: MemoryRuleError) -> str:
         return SPELLING_TAKEN_WORD
     if text == NOT_FOUND:
         return NOT_FOUND_WORD
-    return NOT_FOUND_WORD
+    return BAD_SPELLING  # anything else the store refuses is about the group's name (or the DM)
 
 
 async def _split_or_group(
@@ -313,17 +313,29 @@ async def _split_or_group(
             batch = split.batch
             note = f"Split into {len(split.value.parts)} names."
         elif answer.action == JOIN_GROUP:
+            # The page offers only a confirmed group the players know, with no secret name; a
+            # hand-made request for any other is refused as the old `same` action refuses one, so
+            # the list's words can never become a public name of a secret or hidden group.
+            group = await memory.entity(guild_id, campaign_id, answer.target_id)
+            if (
+                group is None
+                or group.status != CONFIRMED
+                or group.type != "faction"
+                or group.hidden_from_players
+                or await _has_secret(memory, guild_id, campaign_id, group.id)
+            ):
+                return NOT_FOUND_WORD
             joined = await memory.join_group(
                 guild_id, campaign_id, entity.id, answer.target_id, source="dm"
             )
             batch = joined.batch
-            note = f"Added to the group {joined.value.group_name}."
+            note = f"Added to the group {joined.value.group_name[:150]}."
         else:
             made = await memory.make_group(
                 guild_id, campaign_id, entity.id, answer.text, source="dm"
             )
             batch = made.batch
-            note = f"Made the group {made.value.group_name}."
+            note = f"Made the group {made.value.group_name[:150]}."
     except MemoryRuleError as exc:
         return _store_reason(exc)
     if kept is not None:
@@ -350,10 +362,9 @@ async def _undo(
             await memory.undo_split(guild_id, answer.campaign_id, batch, undo_name or "")
         else:
             await memory.undo(guild_id, answer.campaign_id, batch)
-    except TooLateToUndo:
+    except MemoryRuleError:  # (TooLateToUndo too: a part was answered, or the names changed)
         return ANSWERED
-    except MemoryRuleError:
-        return ANSWERED
+    # (the batch number is unique in a campaign, so deleting by it takes only this answer's row)
     await answers.drop_done(guild_id, answer.campaign_id, answer.entity_id, batch)
     return ""
 

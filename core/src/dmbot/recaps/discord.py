@@ -2085,7 +2085,10 @@ class RecapFeatures:
                         log.warning("A name answer failed: %s", type(exc).__name__)
                         why = name_answers.FAILED
                     stays = answer.action in name_answers.KEPT_ACTIONS and kept.batch is not None
-                    await store.finish(guild.id, answer, error=why, kept=kept if stays else None)
+                    if not await store.finish(
+                        guild.id, answer, error=why, kept=kept if stays else None
+                    ):
+                        log.warning("A name answer lost its claim before it finished")
                     log.info("Name answer: %s", why or "done")  # the word only
                     if not why and self.lookup is not None:
                         self.lookup.mark_stale(guild.id, answer.campaign_id)  # lists read it fresh
