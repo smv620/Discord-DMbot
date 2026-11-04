@@ -36,7 +36,7 @@ from typing import Any
 
 from dmbot.ai import OUTPUT_FLOOR, AIError, AIOutOfFunds, Reply, max_output
 from dmbot.memory import background as bg
-from dmbot.memory import place_words
+from dmbot.memory import descriptions, place_words
 from dmbot.memory import reputation_words as feeling_words
 from dmbot.memory.end_match import usable_alias
 from dmbot.memory.models import name_key
@@ -1059,7 +1059,9 @@ async def read_lore(
     spelled: dict[str, list[str]] = {}
     for f in names:  # (a spelling too plain to name anyone, "the King", is not one: #2762)
         spelled.setdefault(f.name, []).extend(
-            sp for sp in (*f.also, *f.secret) if usable_alias(name_key(sp))
+            sp
+            for sp in (*f.also, *f.secret)
+            if usable_alias(name_key(sp)) and not descriptions.is_description(sp)
         )
     here = {**{k: list(v) for k, v in (aliases or {}).items()}}
     for main, others in spelled.items():

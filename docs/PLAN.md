@@ -5922,6 +5922,58 @@ experience points and the trial extension (owner, 2026-10-14; Supervisor's detai
   message, extension), #1230 (moves), all CloudDev; #1231 (website sign-in by email, My Account,
   personal pages, WebDev); #1232 (owner: postal address, Gmail app password).
 
+**❓ Questions for you: every question DMbot waits on, in one place, in Discord and on the website** (owner,
+2026-11-04, #3435; website #3438). The DM answers DMbot's questions from one list, not from a button on each of a
+dozen screens, and gets the same list, words and context in both places.
+- **One list, two places.** In Discord, a single message in the DM's private chat with DMbot, kept up to date by
+  editing it (#3210). It is also reachable from `/dmbot` and the DM-screen menu. On the website, a **Questions** page
+  in the signed-in area, linked from My Account and from each campaign's page. Both show, per campaign the person
+  is a DM of, one line per kind that has anything waiting (its count, oldest first), then the cards. Nothing waiting
+  reads `Nothing waiting for you. 🎉`.
+- **One count.** A single core function gives each campaign's waiting counts by kind. The bot calls it, and the website
+  reads the same numbers through one DM-only door, so the two never disagree. A kind is added to it, or it doesn't
+  count.
+- **Every card has the same parts, in this order, in both places:**
+  1. **The question**, in one plain line ("Is **the woman** the same as **beggar woman**?").
+  2. **Who or what it is about**, each with its **tag**: a proper name stands alone. An entry with none gets a built
+     tag from its strongest confirmed tie the DM can see, else its description: `beggar woman (on the dock in
+     Termalaine)` (#3431). The tag is never stored, never invented, and never shows a secret to anyone else.
+  3. **Why DMbot asks**, in one line (`Heard twice in session 4; a name can mean two people.`).
+  4. **Where it was said:** up to three places, newest first, each with a line either side, the session and its
+     date. Only lines from people who agreed. In Discord behind `📜 Where was it said?`; on the website the newest
+     shows inline and the others open (#3384).
+  5. **What each answer does**, said before it's pressed where it isn't obvious ("**the woman** is kept as how she
+     was described, not as a name").
+  6. **The answers**, the same buttons in the same order with the same words, then **Undo** until the next answer.
+- **What context each kind needs** (the card's parts 2 to 5):
+
+  | Kind | About (with tags) | Why | Evidence | Consequence |
+  |---|---|---|---|---|
+  | New name to check | the name, DMbot's guess at its kind, likely longer names, and if it's a list its parts and any known group | heard N times, first in session S | where said | Same as… merges; a description is never kept as a name |
+  | Look-alikes | every name in the group, kind, times heard | spelled alike / said alike | where said, per name | the kept name and what the others become |
+  | Connection waiting | both ends, the connection in words, who said it | a reader found it | the lines it came from | a fact it would end (an item's last place) is named |
+  | Which one? (#3423) | the connection, and each entry the name could be, with kind and tag | a name fits two entries | the lines | the fact goes on the one picked |
+  | Family tie kept (#3238) | as a connection, the player character first | about a player character, kept, not dropped | the lines | as a connection |
+  | Reading to place | who believes it, the belief in words, the fact it touches | a reading of what a character knows | the lines | where it goes on the graph |
+  | Recap questions | the recap's sentence and the question | the plot check asked | the session's lines it cites | what changes in the recap |
+  | Names fixed | heard and fixed spelling | a misheard name | the line | the transcript spelling |
+  | House-rule clash | both rules and their sources | they disagree | each rule's own text | which one wins |
+- **Notices, the same rules for both.** When a campaign's count goes from 0 to 1 or more, each DM gets one private
+  message in Discord. It links to the Discord list and gives an "Open on the website" link. Reminders follow at
+  1, 2, 4, 8 … minutes (the gap capped at 24 hours) while nothing is answered, each replacing the last. Answering
+  anything, in either place, resets the gap. There are no reminders while the campaign is recording, and
+  `🔕 Not now` stops them until a new question. Notices carry only counts and campaign names, and players get none
+  of it (#3435).
+- **Who builds it:** CloudDev-lead (#3435: the count function, the Discord list and cards, the notices and their
+  timer; design note first). WebDev-lead (#3438: the door and the Questions page, built on the same count and
+  card parts). GraphEngineer (#3431: the tags and descriptions; the counts of the memory queues). The words are one
+  set, checked by the ux-critic once and copied to both places. A test on each side pins the card's button words
+  to the other's.
+- **A description is not a name** (owner, 2026-11-04, #3431): a spelling with no proper-noun word ("the woman",
+  "beggar woman", "a hooded figure") never becomes an other name that matches on its own. A merge or reader that
+  would add one keeps it as a description of that entry, shown on the entry and in its evidence, never used to place
+  a new line. Readers file such people as unnamed (#2790) when the text gives no proper name.
+
 **License (decided 2026-10-03).** Public repository under PolyForm Strict 1.0.0.
 
 ## Open decisions

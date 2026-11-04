@@ -33,11 +33,27 @@ def selects(view: discord.ui.View) -> list[discord.ui.Select[Any]]:
 class TheGroupMessage(unittest.TestCase):
     def test_every_name_is_listed_with_its_kind_and_how_often_it_was_heard(self) -> None:
         text = la.group_text(NAMES, KINDS, number=2, of=5)
-        self.assertIn("DMbot thinks these may be one name", text)
-        self.assertIn("(2 of 5)", text)
+        self.assertEqual(text.splitlines()[0], "**Are these the same?** (2 of 5)")
         self.assertIn("**Belleros** (NPC, heard 9 times)", text)
         self.assertIn("**the Belleros** (place)", text)
-        self.assertIn("I'd keep **Belleros**, the one heard most", text)
+        self.assertIn(
+            "If they are, DMbot keeps one name and the others become its other names "
+            "(they still find it).",
+            text,
+        )
+        self.assertIn("**Top box:** the names that are the same. Untick any that aren't.", text)
+        self.assertIn(
+            "**Bottom box:** the name to keep, now **Belleros**, the one heard most. "
+            "Pick another if you like, then press 🔗 Merge.",
+            text,
+        )
+        self.assertIn("If none of them are the same, press **None are the same**.", text)
+
+    def test_nobody_is_said_to_be_heard_most_when_no_name_was_heard_more(self) -> None:
+        same = [Name(A, "Belleros", 1), Name(B, "Beleros", 1)]
+        text = la.group_text(same, KINDS, number=1, of=1)
+        self.assertIn("**Bottom box:** the name to keep, now **Belleros**. Pick another", text)
+        self.assertNotIn("heard most", text)
 
     def test_a_group_of_a_kind_of_one_needs_no_number(self) -> None:
         self.assertNotIn(" of ", la.group_text(NAMES, KINDS, number=1, of=1).splitlines()[0])
@@ -81,7 +97,8 @@ class TheGroupView(unittest.TestCase):
         self.assertTrue(all(o.default for o in ticked.options))
         self.assertEqual([o.default for o in keep.options], [True, False, False])  # most heard
         self.assertEqual([o.label for o in keep.options], ["Name 000", "Name 001", "Name 002"])
-        self.assertEqual(keep.placeholder, "Keep which name? ▾")
+        self.assertEqual(keep.placeholder, "Name to keep")
+        self.assertEqual(ticked.placeholder, "Names that are the same")
 
     def test_a_menu_holds_25_so_a_big_group_shows_the_first_25(self) -> None:
         view = self.view(40)
