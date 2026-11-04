@@ -54,7 +54,8 @@ SET_FIRST = (
 )
 GONE = "That campaign isn't here any more."
 FAILED = "That didn't save. Try again in a moment."
-BAD_TIME = "Couldn't read that time. Try day 4 and time 14 (or 14:30)."
+BAD_TIME = "Type a day like 4 or +1, and a time like 14:30, +2 or +:30."
+BEFORE_DAY_ONE = "That would be before day 1. Nothing was changed."
 ALREADY_SHOWN = "The clock is already pinned on the DM screen: {where}"
 PANEL_TEXT = "Take a rest, skip to dawn, or type the time. Only you see this."
 PLAYERS_SEE = "\nPlayers see {what}a rough time in <#{channel}>."
@@ -569,7 +570,7 @@ async def say(
 
 
 def parse_time(day: str, hour: str) -> int | None:
-    """Game minutes for the form's two boxes, or None if they aren't a day and an hour.
+    """Game minutes for two absolute boxes, or None if they aren't a day and an hour.
     The hour is 14 or 14:30."""
     day, hour = day.strip(), hour.strip()
     if not (day.isascii() and day.isdigit()):
@@ -583,28 +584,132 @@ def parse_time(day: str, hour: str) -> int | None:
         return None
 
 
+# The day box (#3443): "4", or a change: a sign, a whole number, an optional "d", "day" or "days".
+_DAY_CHANGE = re.compile(r"([+-])\s*(\d{1,6})\s*(?:days?|d)?\.?", re.IGNORECASE)
+# The time box: "14" or "14:30", or a change: a sign, an amount ("2", "1.5", "2:30", ":30") and an
+# optional unit. A bare number is hours; a minute unit makes it minutes.
+_TIME_AT = re.compile(r"(\d{1,2})(?::(\d{2}))?")
+_TIME_CHANGE = re.compile(
+    r"([+-])\s*(?:(\d{1,4}):(\d{1,2})|:(\d{1,2})|(\d{1,5}(?:\.\d{1,4})?))"
+    r"\s*(hours?|hrs?|h|minutes?|mins?|m)?\.?",
+    re.IGNORECASE,
+)
+
+
+def _day_change(text: str) -> tuple[bool, int] | None:
+    """(is a change, the day or the days to move) from the day box, or None if unreadable."""
+    if text.isascii() and text.isdigit():
+        return False, int(text)
+    match = _DAY_CHANGE.fullmatch(text)
+    if match is None:
+        return None
+    return True, int(match[2]) * (-1 if match[1] == "-" else 1)
+
+
+def _time_change(text: str) -> tuple[bool, int] | None:
+    """(is a change, the minute of the day or the minutes to move) from the time box."""
+    at = _TIME_AT.fullmatch(text)
+    if at is not None:
+        hour, minute = int(at[1]), int(at[2] or 0)
+        return (False, hour * 60 + minute) if hour <= 23 and minute <= 59 else None
+    match = _TIME_CHANGE.fullmatch(text)
+    if match is None:
+        return None
+    in_minutes = (match[6] or "").lower().startswith("m")
+    if match[2] is not None or match[4] is not None:  # 2:30 or :30
+        minutes_part = int(match[3] if match[2] is not None else match[4])
+        if in_minutes or minutes_part > 59:
+            return None
+        total = int(match[2] or 0) * 60 + minutes_part
+    else:
+        amount = float(match[5])
+        total = round(amount if in_minutes else amount * 60)
+    return True, total * (-1 if match[1] == "-" else 1)
+
+
+def parse_change(day: str, hour: str, now: int | None) -> int | str | None:
+    """The new game minute for the form's two boxes (#3443), or BEFORE_DAY_ONE, or None if a box
+    can't be read. A box left empty leaves that part as it is (needs the clock, `now`). A day or
+    time with a sign moves from now: the day first, then the time, and the time rolls over days.
+    Without a clock both boxes must be an absolute day and time, as before."""
+    day, hour = day.strip(), hour.strip()
+    if now is None:
+        return parse_time(day, hour) if day and hour else None
+    if not day and not hour:
+        return None
+    by_day = _day_change(day) if day else (True, 0)
+    by_time = _time_change(hour) if hour else (True, 0)
+    if by_day is None or by_time is None:
+        return None
+    day_moves, day_n = by_day
+    time_moves, time_n = by_time
+    if not day_moves and not 1 <= day_n <= game.MAX_DAY:
+        return None
+    day_index = (game.day_of(now) - 1 + day_n) if day_moves else day_n - 1
+    minute_of_day = game.time_of_day(now) + time_n if time_moves else time_n
+    result = day_index * game.MINUTES_PER_DAY + minute_of_day
+    if result < 0:
+        return BEFORE_DAY_ONE
+    return min(result, game.MAX_MINUTE)
+
+
+def form_title(clock: Clock | None) -> str:
+    """ "Game time: now Day 4, 14:30" (a title is at most 45 characters)."""
+    if clock is None:
+        return "Set the game time"
+    return f"Game time: now Day {game.day_of(clock.minute)}, {game.clock_time(clock.minute)}"[:45]
+
+
 class SetTimeForm(discord.ui.Modal):
     day: discord.ui.TextInput[SetTimeForm] = discord.ui.TextInput(
-        label="Day (1 or higher)", placeholder="4", max_length=5
+        label="Day: a number, or +1 / -1", placeholder="4", max_length=20, required=False
     )
     hour: discord.ui.TextInput[SetTimeForm] = discord.ui.TextInput(
-        label="Time (14 or 14:30)", placeholder="14:30", max_length=5
+        label="Time: 14:30, or +2 / +:30 / -1 hr",
+        placeholder="14:30",
+        max_length=20,
+        required=False,
     )
 
     def __init__(self, campaign_id: str, clock: Clock | None = None) -> None:
-        super().__init__(title="Set the game time")
+        super().__init__(title=form_title(clock))
         self.campaign_id = campaign_id
+        self.clock = clock
         if clock is not None:
-            self.day.default = str(game.day_of(clock.minute))
-            self.hour.default = game.clock_time(clock.minute)
+            # Empty boxes, with the clock in the title and the placeholders: a prefilled value
+            # would have to be deleted before typing "+1".
+            self.day.placeholder = f"Now {game.day_of(clock.minute)}. Type a day, or +1 / -1"
+            self.hour.placeholder = (
+                f"Now {game.clock_time(clock.minute)}. Type 15:00, or +2, +:30, -1 hr"
+            )
+        else:
+            self.day.required = self.hour.required = True
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
-        minute = parse_time(self.day.value, self.hour.value)
+        client: Any = interaction.client
+        guild_id = (
+            interaction.guild.id
+            if interaction.guild
+            else await client.campaigns.guild_of(self.campaign_id)
+        )
+        stored = await client.clocks.get(guild_id, self.campaign_id) if guild_id else None
+        now = None if stored is None else stored.clock.minute  # (read again: it may have moved)
+        minute = parse_change(self.day.value, self.hour.value, now)
+        if isinstance(minute, str):
+            await interaction.response.send_message(minute, ephemeral=True)
+            return
         if minute is None:
             await interaction.response.send_message(BAD_TIME, ephemeral=True)
             return
         await interaction.response.defer(ephemeral=True)
-        await run_press(interaction, self.campaign_id, "set", set_to=minute)
+        if now is not None and minute > now:
+            # Later than now passes time like the buttons do: dawn, noon, dusk and the 24-hour
+            # line are said. Earlier (or the same) is the DM saying what time it is.
+            await run_press(
+                interaction, self.campaign_id, "advance", minutes=minute - now, typed=True
+            )
+        else:
+            await run_press(interaction, self.campaign_id, "set", set_to=minute)
 
 
 _locks: dict[str, asyncio.Lock] = {}  # one press at a time per campaign, so the pinned
@@ -612,17 +717,28 @@ _locks: dict[str, asyncio.Lock] = {}  # one press at a time per campaign, so the
 
 
 async def run_press(
-    interaction: discord.Interaction, campaign_id: str, action: str, *, set_to: int | None = None
+    interaction: discord.Interaction,
+    campaign_id: str,
+    action: str,
+    *,
+    set_to: int | None = None,
+    minutes: int | None = None,
+    typed: bool = False,
 ) -> bool:
     """A press after the interaction was answered: change the clock, show it, say the lines.
     True if the clock was changed; a failure is told to the presser and returns False, so a
     caller that says "done" can tell."""
     async with _locks.setdefault(campaign_id, asyncio.Lock()):
-        return await _run_press(interaction, campaign_id, action, set_to)
+        return await _run_press(interaction, campaign_id, action, set_to, minutes, typed)
 
 
 async def _run_press(
-    interaction: discord.Interaction, campaign_id: str, action: str, set_to: int | None
+    interaction: discord.Interaction,
+    campaign_id: str,
+    action: str,
+    set_to: int | None,
+    minutes: int | None = None,
+    typed: bool = False,
 ) -> bool:
     client: Any = interaction.client
     # In a DM's private chat there is no server on the press (#3210): the database says which
@@ -636,7 +752,13 @@ async def _run_press(
         return False
     try:
         result = await press(
-            client, campaign.guild_id, campaign.id, interaction.user.id, action, set_to=set_to
+            client,
+            campaign.guild_id,
+            campaign.id,
+            interaction.user.id,
+            action,
+            set_to=set_to,
+            minutes=minutes,
         )
     except CampaignError as exc:
         await _reply(interaction, str(exc))
@@ -658,7 +780,7 @@ async def _run_press(
     message = await _show_here(interaction, client, campaign, stored)
     if message is None:
         await _reply(interaction, OFF_SCREEN)
-    elif action == "set":
+    elif action == "set" or typed:
         # The form saved: the DM's own screen shows nothing else, so say where the clock is.
         await _reply(
             interaction,

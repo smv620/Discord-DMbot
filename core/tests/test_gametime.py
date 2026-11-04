@@ -562,6 +562,42 @@ class NoSecondClock(PlayersClock):
         )  # a caller holding old state
         self.assertEqual(self.chat_lines(), ["-# 🕰️ Day 4, afternoon"])
 
+    async def test_a_typed_later_time_passes_time_and_an_earlier_one_only_sets_it(self) -> None:
+        from unittest.mock import patch
+
+        await self.press("set", set_to=NOON4)  # Day 4, 12:00
+        panel = Msg(1, SCREEN, ui.PANEL_TEXT)
+        it = SimpleNamespace(
+            client=self.discord,
+            guild=SimpleNamespace(id=GUILD),
+            user=SimpleNamespace(id=DM),
+            message=panel,
+            response=SimpleNamespace(defer=AsyncMock(), is_done=lambda: True),
+            followup=SimpleNamespace(send=AsyncMock()),
+            edit_original_response=AsyncMock(),
+        )
+        said = AsyncMock()
+        form = ui.SetTimeForm(self.a.id, Clock(NOON4, NOON4))
+        form.day._value = ""  # (the boxes are filled as the person typed them)
+        form.hour._value = "+7"
+        with patch.object(ui, "say", said):
+            await form.on_submit(cast(Any, it))
+        stored = await self.clocks.get(GUILD, self.a.id)
+        assert stored is not None
+        self.assertEqual(stored.clock.minute, NOON4 + 7 * 60)
+        lines = said.await_args.args[2]
+        self.assertTrue(any("dusk" in line.lower() for line in lines), lines)  # time passed
+        self.assertIn("Clock set to", it.followup.send.await_args.args[0])
+        # Earlier: only a set, nothing is said about time passing.
+        said = AsyncMock()
+        form.hour._value = "-3"
+        with patch.object(ui, "say", said):
+            await form.on_submit(cast(Any, it))
+        stored = await self.clocks.get(GUILD, self.a.id)
+        assert stored is not None
+        self.assertEqual(stored.clock.minute, NOON4 + 4 * 60)
+        self.assertEqual(said.await_args.args[2], [])
+
     async def test_a_typed_time_from_the_panel_gets_its_reply(self) -> None:
         panel = Msg(1, SCREEN, ui.PANEL_TEXT)
         it = SimpleNamespace(
@@ -586,7 +622,7 @@ class Wording(unittest.TestCase):
         from dmbot.dm_screen import clock
 
         self.assertNotIn("**", clock.BAD_TIME)  # no button name to press again
-        self.assertIn("day 4", clock.BAD_TIME)
+        self.assertIn("day like 4", clock.BAD_TIME)
 
     def test_the_combat_lines_use_the_buttons_word(self) -> None:
         from dmbot.dm_screen import clock
@@ -595,3 +631,86 @@ class Wording(unittest.TestCase):
             self.assertIn("combat", line.lower())
             self.assertNotIn("fight", line.lower())
         self.assertIn("round 99", clock.NO_COMBAT_CHANGE["cnext"])
+
+
+NOW = game.from_day_and_time(4, 14, 30)
+
+
+class TypedChanges(unittest.TestCase):
+    """The form's two boxes take a day, a time, or a change from now (#3443). Pure."""
+
+    def change(self, day: str, hour: str, now: int | None = NOW) -> Any:
+        return ui.parse_change(day, hour, now)
+
+    def test_every_time_the_owner_listed_moves_by_the_right_minutes(self) -> None:
+        cases = {
+            "+1 hr": 60, "+ 1 hour": 60, "+ 1 hr. ": 60, "+ 1 hr.": 60, "+1.5 hrs": 90,
+            "-8": -480, "-8 hrs": -480, "+ 2 hrs": 120, "+2hrs": 120, "+2:30": 150,
+            "+:30": 30, "+30 min": 30, "+ 30 minutes": 30, "+30m": 30, "+2 h ": 120,
+            "-1 hour": -60, "-:10": -10, "+1": 60, "+2 HRS": 120, "+0.5": 30,
+        }  # fmt: skip
+        for text, minutes in cases.items():
+            with self.subTest(text):
+                self.assertEqual(self.change("", text), NOW + minutes)
+
+    def test_the_day_box_moves_by_days(self) -> None:
+        day = game.MINUTES_PER_DAY
+        for text, days in {"+1": 1, "+ 1 day": 1, "+ 1d": 1, "+2 Days.": 2, "-1": -1}.items():
+            with self.subTest(text):
+                self.assertEqual(self.change(text, ""), NOW + days * day)
+
+    def test_a_plain_day_and_time_are_absolute_as_before(self) -> None:
+        self.assertEqual(self.change("7", "9"), game.from_day_and_time(7, 9))
+        self.assertEqual(self.change("7", "09:05"), game.from_day_and_time(7, 9, 5))
+        self.assertEqual(self.change("", "16:00"), game.from_day_and_time(4, 16))
+        self.assertEqual(self.change("5", ""), game.from_day_and_time(5, 14, 30))
+
+    def test_the_day_applies_first_and_the_time_rolls_over_midnight(self) -> None:
+        late = game.from_day_and_time(4, 23)
+        self.assertEqual(self.change("", "+2", late), game.from_day_and_time(5, 1))
+        self.assertEqual(self.change("+1", "+2", late), game.from_day_and_time(6, 1))
+        self.assertEqual(self.change("7", "+:30", NOW), game.from_day_and_time(7, 14, 30) + 30)
+
+    def test_before_day_one_is_refused_in_words(self) -> None:
+        early = game.from_day_and_time(1, 1)
+        self.assertEqual(self.change("", "-2", early), ui.BEFORE_DAY_ONE)
+        self.assertEqual(self.change("-1", "", game.from_day_and_time(1, 9)), ui.BEFORE_DAY_ONE)
+        self.assertEqual(ui.BEFORE_DAY_ONE, "That would be before day 1. Nothing was changed.")
+
+    def test_junk_and_empty_boxes_are_not_a_time(self) -> None:
+        junk = [
+            ("", ""), ("x", ""), ("", "soon"), ("", "25"), ("", "+:75"), ("", "+30:00 m"),
+            ("0", ""), ("+d", ""), ("", "++1"), ("", "1 hr"), ("", "+1 fortnight"),
+        ]  # fmt: skip
+        for day, hour in junk:
+            with self.subTest((day, hour)):
+                self.assertIsNone(self.change(day, hour))
+
+    def test_without_a_clock_both_boxes_must_be_an_absolute_day_and_time(self) -> None:
+        self.assertEqual(self.change("4", "14:30", None), NOW)
+        for day, hour in (("", "14"), ("4", ""), ("+1", "14"), ("4", "+2")):
+            with self.subTest((day, hour)):
+                self.assertIsNone(self.change(day, hour, None))
+
+    def test_the_end_of_time_is_clamped_not_overrun(self) -> None:
+        self.assertEqual(self.change("+99999", "", NOW), game.MAX_MINUTE)
+
+    def test_the_title_and_placeholders_show_now_and_the_boxes_start_empty(self) -> None:
+        form = ui.SetTimeForm("c1", Clock(NOW, 0))
+        self.assertEqual(form.title, "Game time: now Day 4, 14:30")
+        self.assertEqual(form.day.default, None)
+        self.assertEqual(form.hour.default, None)
+        self.assertFalse(form.day.required or form.hour.required)
+        self.assertEqual(form.day.placeholder, "Now 4. Type a day, or +1 / -1")
+        self.assertEqual(form.hour.placeholder, "Now 14:30. Type 15:00, or +2, +:30, -1 hr")
+        for box in (form.day, form.hour):
+            self.assertEqual(box.max_length, 20)
+            self.assertLessEqual(len(str(box.label)), 45)
+
+    def test_with_no_clock_the_form_is_as_today_with_required_boxes(self) -> None:
+        form = ui.SetTimeForm("c1", None)
+        self.assertEqual(form.title, "Set the game time")
+        self.assertTrue(form.day.required and form.hour.required)
+
+    def test_a_long_day_cannot_push_the_title_past_45_characters(self) -> None:
+        self.assertLessEqual(len(ui.form_title(Clock(game.MAX_MINUTE - 1, 0))), 45)
