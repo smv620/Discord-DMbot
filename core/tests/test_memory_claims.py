@@ -245,6 +245,34 @@ class Steward(unittest.TestCase):
         self.assertEqual(term.synonyms, ())  # no word is ever taken for it by accident
 
 
+class PlaceWordsOnTheSteward(unittest.TestCase):
+    """The place words are the place tie (#3363), and only where the two ends fit it."""
+
+    def place(self, text: str, subject: str, obj: str) -> tuple[str, str]:
+        term, _, label = place_relationship(ONTO, text, subject, obj)
+        return term.key, label
+
+    def test_a_place_word_between_a_character_and_a_place_is_the_place_tie(self) -> None:
+        for text in ("works at", "lives in", "worked in", "grew up in", "lives_in", "visited"):
+            self.assertEqual(self.place(text, "character", "place"), ("located_in", ""), text)
+        self.assertEqual(self.place("is kept in", "item", "place"), ("located_in", ""))
+
+    def test_the_same_word_between_other_kinds_is_not_made_a_place_tie(self) -> None:
+        # nothing is lost: it goes on the catch-all with its words, as before
+        for subject, obj in (("character", "character"), ("character", "faction")):
+            key, label = self.place("works at", subject, obj)
+            self.assertEqual((key, label), (FALLBACK_PREDICATE, "works at"), (subject, obj))
+
+    def test_a_longer_phrase_is_not_taken_for_a_place_word(self) -> None:
+        self.assertEqual(self.place("works for", "character", "faction")[0], "serves")
+        self.assertEqual(
+            self.place("kept prisoner in", "character", "place")[0], FALLBACK_PREDICATE
+        )
+        self.assertEqual(
+            self.place("visited the court of", "character", "faction")[0], FALLBACK_PREDICATE
+        )
+
+
 class Stored(ConfirmedMemoryTest):
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
@@ -310,8 +338,15 @@ class Stored(ConfirmedMemoryTest):
         self.assertEqual(len(waiting), 2)
         for claim in waiting:
             await self.claims.confirm(GUILD_A, self.c, claim.id, opted_in={7})
-        got = {r.detail: r.predicate for r in await self.memory.relations(GUILD_A, self.c)}
-        self.assertEqual(got, {"works in": "located_in", "was last seen in": "located_in"})
+        rels = await self.memory.relations(GUILD_A, self.c)
+        got = {r.detail: (r.predicate, r.subject_id, r.object_id) for r in rels}
+        self.assertEqual(
+            got,
+            {
+                "works in": ("located_in", self.bram, self.town),
+                "was last seen in": ("located_in", self.bram, self.chapel),
+            },
+        )
 
     async def test_such_a_fact_and_its_label_survive_a_backup_and_restore(self) -> None:
         await self.add("Hesper", type="character")

@@ -75,7 +75,7 @@ def is_mobile(kind: str) -> bool:
 
 def way_of(detail: str) -> Way | None:
     """The way a connection's detail says, or None when it says none."""
-    return _WAYS.get(" ".join(detail.split()).casefold())
+    return _WAYS.get(" ".join(detail.replace("_", " ").split()).casefold())
 
 
 def slot(detail: str) -> tuple[str, bool]:

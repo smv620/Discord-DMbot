@@ -111,10 +111,10 @@ Rules for what counts as a claim:
    and "enemy of".
 
 7. Where a character, creature, group or item is tied to a place, the relationship is one of
-   these words: "lives in" ("lived in" for the past), "works in", "is kept in" (an item),
-   "comes from" (born or raised there), or "was last seen in" (anything else, or a visit). A
-   place inside a place, or an event held at a place, is "is in". Never use "is in" for someone
-   who can move.
+   these words: "lives in" (or "lived in"), "works in" (or "worked in"), "is kept in" (an item,
+   or "was kept in"), "comes from" (born or raised there), or "was last seen in" (the line
+   says they were seen, are, or went there). Use only what the line says: a place they merely
+   pass is no claim. A place inside a place, or an event held at a place, is "is in".
 
 For each claim say how it was said:
 - "dm_said": the DM narrating, or the DM speaking as a character.

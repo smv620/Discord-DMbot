@@ -80,6 +80,16 @@ class PlaceWords(unittest.TestCase):
         self.assertIsNone(place_words.canonical("is in"))
         self.assertIsNone(place_words.canonical("knows"))
 
+    def test_the_readers_wording_is_what_the_reader_is_told_to_say(self) -> None:
+        # the six words of the instruction are the ones the code keeps (no drift between them)
+        from dmbot.memory.extractor import SYSTEM
+
+        for word in ("lives in", "lived in", "works in", "worked in", "is kept in", "was kept in",
+                     "comes from", "was last seen in"):  # fmt: skip
+            self.assertIn(f'"{word}"', SYSTEM)
+            self.assertEqual(place_words.canonical(word), word)
+        self.assertEqual(place_words.canonical("lives_in"), "lives in")  # (an ontology spelling)
+
     def test_an_event_took_place_in_a_town(self) -> None:
         self.assertEqual(link_words("located_in", "", False, "event"), "took place in")
         self.assertEqual(
