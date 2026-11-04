@@ -73,7 +73,13 @@ from dmbot.memory.models import (
     MemoryRuleError,
     new_id,
 )
-from dmbot.memory.store import _check_led_to_live, _load_ontology, flag_kept
+from dmbot.memory.store import (
+    _check_led_to_live,
+    _load_ontology,
+    _relation,
+    _settle_whereabouts,
+    flag_kept,
+)
 from dmbot.timebot.stamp import game_time_at, group_of_speakers
 
 WAITING_ALREADY = "That is already waiting for your answer. Answer it there first."
@@ -334,7 +340,10 @@ async def _place_in(
         # Keep on the connection.
         if relation.predicate == "led_to":  # keeping it makes the link live (#2673)
             await _check_led_to_live(w, host, relation.subject_id, relation.object_id)
-        await w.update(RELATIONS, host, {"status": CONFIRMED, "secret": secret})
+        kept_row = await w.update(RELATIONS, host, {"status": CONFIRMED, "secret": secret})
+        # An item has one current whereabouts (#3363): a fact the DM keeps from a reading settles
+        # with the item's other live ones like any fact that becomes live (#3375).
+        await _settle_whereabouts(w, _relation(kept_row))
         flags = [*flags, *await flag_kept(w, host)]  # judged now, as a fact
     if status == SECRET_PLOT:  # the DM's view already holds it, as a plot, from the connection
         # Only a connection this very write made takes the links: the store's Undo does not reverse

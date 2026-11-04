@@ -6,6 +6,7 @@ import type {
   ConfirmAnswer,
   MyNpcNote,
   NameAnswer,
+  NameAnswerResult,
   NameCheckList,
   NamesFixed,
   NamesPage,
@@ -80,6 +81,11 @@ export default function namesArea({ call, waitForAnswer }: ApiHelpers): Partial<
         answer,
       );
     },
+    nameAnswerResult: async (ref, id) =>
+      (await call(
+        "GET",
+        `/me/recaps/${encodeURIComponent(ref)}/names-to-check/${encodeURIComponent(id)}/answer`,
+      )) as NameAnswerResult,
     npcPage: async (ref, entry) =>
       (await call(
         "GET",

@@ -31,6 +31,7 @@ from psycopg import sql
 
 from dmbot import entitlements, fight_style
 from dmbot.campaigns import offer_notify
+from dmbot.campaigns.backup_names import build_commit
 from dmbot.campaigns.invite import parse_invite
 from dmbot.campaigns.models import (
     CONFIRMATION_PURPOSES,
@@ -1625,6 +1626,9 @@ class CampaignStore:
             "format": EXPORT_FORMAT,
             "version": EXPORT_VERSION,
             "exported_at": int(self._clock()),
+            # Which build made this file (#3391), so its lineage survives a renamed file. A restore
+            # never reads it.
+            "dmbot_commit": build_commit(),
             "campaign": {
                 "name": campaign.name,
                 "created_at": campaign.created_at,

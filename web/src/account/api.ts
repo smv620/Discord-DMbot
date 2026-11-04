@@ -941,6 +941,25 @@ export interface NameCheck {
    * and how many more places there are. Missing from an API older than that. */
   places?: NamePlace[];
   morePlaces?: number;
+  /** This waiting name is a list of names, so "These are separate names" applies (#3406). Missing from an API older than that. */
+  isList?: boolean;
+  /** Known groups the list may be: `members` already belong to the group, `others` do not (#3406). */
+  groups?: NameGroupHint[];
+}
+/** A group DMbot already knows that a list of names may be (#3406). */
+export interface NameGroupHint {
+  id: string;
+  name: string;
+  members: string[];
+  others: string[];
+}
+/** The bot's word on the last answer to one name (#3406): its note in plain words, the batch to Undo, and the bot's
+ * fixed refusal word when it failed. */
+export interface NameAnswerResult {
+  state: "waiting" | "working" | "done" | "failed";
+  note: string;
+  error: string | null;
+  batch: number | null;
 }
 /** One window: lines the door only sends for speakers who agree to be recorded; a line whose words were
  * removed after "Stop recording me" is `{ removed: true }` with no speaker, time or words. */
@@ -1013,7 +1032,12 @@ export type NameCheckAnswer =
   | { action: "not_a_name" }
   | { action: "explain"; text: string }
   // The DM widens or corrects the name itself (#2593; core #2570). `heard` is how it was written down.
-  | { action: "change_words"; words: string; heard?: string };
+  | { action: "change_words"; words: string; heard?: string }
+  // Splitting and grouping a list of names (#3406). `group` is the group's entry id; `batch` is the answer's batch.
+  | { action: "split" }
+  | { action: "join_group"; group: string }
+  | { action: "make_group"; name: string }
+  | { action: "undo"; batch: number };
 export interface VoiceResult {
   state: FixState;
   /** Only when `done`: what was heard. */
@@ -2259,7 +2283,7 @@ export interface BackupSet {
   files: BackupFile[];
 }
 /** A name safe to save under: letters, digits, dots, dashes and underscores. */
-export const safeBackupName = (name: string, fallback: string): string => name.replace(/[^A-Za-z0-9._-]+/g, "-").slice(0, 160) || fallback;
+export const safeBackupName = (name: string, fallback: string): string => name.replace(/[^A-Za-z0-9._#-]+/g, "-").slice(0, 160) || fallback;
 
 export class ApiError extends Error {
   /** The words the server gave with a refusal, when it gave some (#3275): shown as they are. */
@@ -2653,6 +2677,8 @@ export interface AccountApi {
   decidePlotProposal?(ref: string, issue: string, proposal: string, action: "save" | "decline"): Promise<PlotProposal>;
   /** Queue one answer for the bot; the name leaves the list once it is applied. */
   answerNameCheck?(ref: string, id: string, answer: NameCheckAnswer): Promise<void>;
+  /** The bot's word on the last answer to this name: its note in plain words, the batch to Undo, the refusal word (#3406). */
+  nameAnswerResult?(ref: string, id: string): Promise<NameAnswerResult>;
   sendFix?(ref: string, text: string): Promise<{ requestId: string }>;
   fixResult?(ref: string, requestId: string): Promise<FixResult>;
   /** "Speak instead" (#2113 part 2): send a recorded note (webm or ogg, at most 2 MB and 2 minutes) and
@@ -2930,7 +2956,7 @@ export interface ApiHelpers {
 /** The calls of each area, by name: what `httpApi` stands in for until the area's file is loaded. */
 export const ACCOUNT_METHODS = ["emailSignInRequest", "emailSignInUse", "offerHandover", "deleteCampaign", "restoreStage", "restorePart", "restoreGo", "restoreStatus", "restoreCancel", "campaignBackup", "takeBackHandover", "handoverLook", "handoverAccept", "handoverDecline", "removeDiscordAccount", "getMoveCode", "myEmail", "changeEmail", "confirmEmail", "cancelEmailChange", "sendSupport", "mySupport", "supportThread", "signOutEverywhere", "startTryIt", "checkoutUrl", "billingPortalUrl", "renewPlan", "extraHoursUrl", "downloadExport", "characters", "linkServer", "acceptOffer", "declineOffer", "withdrawOffer", "stopRecording", "myLines", "deleteMyLines", "myLinesStatus", "requestDelete", "confirmDelete"] as const satisfies readonly (keyof AccountApi)[];
 export const RECAPS_METHODS = ["recapAudioUrl", "recaps", "pastSessions", "sessionReport", "makeSessionReport", "answerReport", "setBeatPresent", "makeRecap", "addRecap", "recapList", "recap", "saveRecap", "approveRecap", "approveUnchecked", "recapAudioLinks", "recapChoices", "setRecapChoice", "askRecapAudioAgain", "plotCheck", "answerPlotIssue", "plotChatSend", "plotChat", "decidePlotProposal", "recapAudioRemake", "sendFix", "fixResult", "sendVoice", "voiceResult", "rewriteWith", "importPreview", "importMembers", "importConsent", "importCheck", "importStart", "importProgress", "importClock", "shareRecap", "publicRecap", "decideRecap"] as const satisfies readonly (keyof AccountApi)[];
-export const NAMES_METHODS = ["namesFixed", "undoNameFix", "campaignNames", "suggestSaidAs", "respellFromVoice", "saveSaidAs", "nameChecks", "answerNameCheck", "npcPage", "saveNpcNote", "myNpcNotes", "deleteMyNpcNotes", "allNames", "smartNames", "changeName", "nameThem", "webGraph", "webSize", "webOverview", "webFind", "webNodeSummary", "webViewers", "confirmKinds", "confirmUndo", "confirmAnswer", "webWaiting", "answerWaiting", "webReadings", "answerReading", "webPeek", "webReveal", "changeWebLink"] as const satisfies readonly (keyof AccountApi)[];
+export const NAMES_METHODS = ["namesFixed", "undoNameFix", "campaignNames", "suggestSaidAs", "respellFromVoice", "saveSaidAs", "nameChecks", "answerNameCheck", "nameAnswerResult", "npcPage", "saveNpcNote", "myNpcNotes", "deleteMyNpcNotes", "allNames", "smartNames", "changeName", "nameThem", "webGraph", "webSize", "webOverview", "webFind", "webNodeSummary", "webViewers", "confirmKinds", "confirmUndo", "confirmAnswer", "webWaiting", "answerWaiting", "webReadings", "answerReading", "webPeek", "webReveal", "changeWebLink"] as const satisfies readonly (keyof AccountApi)[];
 export const CAMPAIGN_METHODS = ["transcriptCampaigns", "transcriptSessions", "transcript", "transcriptFile", "transcriptScript", "transcriptStretch", "transcriptPutBack", "transcriptLeaveOut", "sessionNotesList", "sessionNotes", "pictures", "pictureAction", "setCampaignSetting", "campaignOptionalRules", "campaignGameMasters", "campaignSheets", "chooseSheet", "sheetAnswer", "fixTranscriptLine", "fixAnswer", "campaignGameMasterCandidates", "campaignSettingAnswer", "timeline", "sharedRules", "houseRuleCampaigns", "houseRules", "ruleSharing", "chooseRuleSharing", "ruleSharingAnswer", "houseRulesFile", "improvement", "setImprovement", "homebrewCampaigns", "homebrew", "homebrewFile", "campaignPage", "loreAdd", "loreRead", "recapStyle", "changeRecapStyle", "recapStyleAction", "campaignSpeakers", "removeSpeaker", "speakerRemoval", "saveRecapMusts", "recapMustsDefaults", "houseFile", "houseFileAdd"] as const satisfies readonly (keyof AccountApi)[];
 
 /** A stand-in for each call of an area: the first use loads the area's file (once), and every call goes to it. */

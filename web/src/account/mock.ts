@@ -62,7 +62,7 @@ import type {
   RuleSharingAnswer,
   RuleSharingChoice,
 } from "./api";
-import type { ImportClock } from "./api";
+import type { ImportClock, NameAnswerResult, NameGroupHint } from "./api";
 import { ApiError, type HouseFileRequest, type HouseFileState, type LoreUpload, type RecapStyle, type RecapStyleAction, type WebLinkKind, type FixAnswer, type FixMode, type PlotIssue, type PlotMessage, type PlotProposal, type WaitingLook } from "./api";
 import { NAME_LIMIT } from "../content/names-words";
 import { MUSTS_LINE_CHARS, MUSTS_MAX_LINES } from "../content/recap-style-words";
@@ -1222,6 +1222,10 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
   const nameLooks = new Map<string, number>();
   const nameChanges = new Map<string, { words: string; error: string; looks: number }>();
   const nameFailed = new Set<string>();
+  // Split, group and Undo answers (#3406): the bot's result for each name, read on the second look. An Undo that
+  // works takes the answer back, so the name has none left and the page reads it as done.
+
+  const nameAnswers = new Map<string, { looks: number; result: NameAnswerResult }>();
   // The Plot check (#2124): the recap text last checked, the questions, and how many "checking" looks are left.
   const plotText = new Map<string, string>();
   const plotLooks = new Map<string, number>();
@@ -3023,6 +3027,15 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         { id: "a".repeat(32), name: "Brannoch", note: "A smith in Eastmarch." },
         { id: "b".repeat(32), name: "Veshla", note: "Spoken of as the queen's rider." },
         { id: "c".repeat(32), name: "Garrick", note: "" },
+        // Lists of names (#3406): a split or a group is offered on these; "Brannoch and Veshla" has a group DMbot knows.
+        { id: "f".repeat(32), name: "Aldmoor, Quillgate and Fenwick", note: "Three towns named together.", isList: true, groups: [] as NameGroupHint[] },
+        {
+          id: "1".repeat(32),
+          name: "Brannoch and Veshla",
+          note: "Two names named together.",
+          isList: true,
+          groups: [{ id: "d".repeat(32), name: "The Ashen Circle", members: ["Brannoch"], others: ["Veshla"] }] as NameGroupHint[],
+        },
       ].flatMap((card) => {
         const key = `${ref}:${card.id}`;
         // Change the words (#2593): one look "answering" under the old words, then the same card with the new ones.
@@ -3202,6 +3215,39 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       }
       if (id === "c".repeat(32)) nameFailed.add(`${ref}:${id}`);
       nameLooks.set(`${ref}:${id}`, 0);
+      if (answer.action === "split" || answer.action === "join_group" || answer.action === "make_group" || answer.action === "undo") {
+        const key = `${ref}:${id}`;
+        if (answer.action === "undo") {
+          // A batch that cannot be taken back (99 here) is refused; any other works and leaves no answer behind.
+          if (answer.batch === 99) nameAnswers.set(key, { looks: 0, result: { state: "failed", note: "", error: "answered", batch: null } });
+          else nameAnswers.delete(key);
+          return;
+        }
+        const list = id === "f".repeat(32) || id === "1".repeat(32);
+        const result: NameAnswerResult =
+          answer.action === "split"
+            ? list
+              ? { state: "done", note: "Split into 3 names.", error: null, batch: 7 }
+              : { state: "failed", note: "", error: "not_a_list", batch: null }
+            : answer.action === "join_group"
+              ? answer.group === "d".repeat(32)
+                ? { state: "done", note: "Added to the group The Ashen Circle.", error: null, batch: 8 }
+                : { state: "failed", note: "", error: "not_found", batch: null }
+              : answer.name === "Taken"
+                ? { state: "failed", note: "", error: "spelling_taken", batch: null }
+                : { state: "done", note: `Made the group ${answer.name}.`, error: null, batch: 9 };
+        nameAnswers.set(key, { looks: 0, result });
+      }
+    },
+    async nameAnswerResult(ref, id) {
+      calls.push(`nameAnswerResult:${ref}:${id.slice(0, 1)}`);
+      await reachable();
+      signedIn();
+      const entry = nameAnswers.get(`${ref}:${id}`);
+      if (!entry) throw new ApiError("not-found");
+      entry.looks += 1;
+      if (entry.looks === 1) return { state: "working", note: "", error: null, batch: null };
+      return entry.result;
     },
     async sendFix(ref, text) {
       calls.push(`sendFix:${ref}`);
