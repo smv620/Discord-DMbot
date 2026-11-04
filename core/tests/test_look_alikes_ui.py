@@ -90,7 +90,7 @@ class TheGroupView(unittest.TestCase):
 
     def test_the_rows_fit_and_the_labels_fit_a_phone(self) -> None:
         view = self.view(30, groups=3)
-        self.assertEqual(len(view.children), 6)  # two menus, four buttons
+        self.assertEqual(len(view.children), 7)  # two menus, five buttons
         rows = {c.row for c in view.children if c.row is not None}
         self.assertLessEqual(max(rows), 4)
         self.assertTrue(all(len(x) <= 25 for x in labels(view)), labels(view))
@@ -98,6 +98,57 @@ class TheGroupView(unittest.TestCase):
     def test_next_group_shows_only_when_there_is_another(self) -> None:
         self.assertNotIn("Next group ▸", labels(self.view(3, groups=1)))
         self.assertIn("Next group ▸", labels(self.view(3, groups=2)))
+
+
+class TheWhereButton(unittest.IsolatedAsyncioTestCase):
+    """📜 Where was it said? on the group screen (#3432): the names-to-check reply, per name."""
+
+    async def press(self, which: str, *, dm: bool = True) -> tuple[Any, Any, Any]:
+        view = la.WhichName("c" * 32, NAMES, KINDS)
+        memory = SimpleNamespace(mentions=AsyncMock(return_value=[("s:1:2", 5)]))
+        campaign = SimpleNamespace(guild_id=1, id="c" * 32)
+        tell = AsyncMock()
+        said = AsyncMock(return_value="THE PLACES")
+        consent = SimpleNamespace(consenting=AsyncMock(return_value={7}))
+        asked = interaction()
+        asked.client = SimpleNamespace(transcripts=object(), consent=consent)
+        asked.guild = None
+        with (
+            patch.object(la, "_campaign_for", AsyncMock(return_value=campaign)),
+            patch.object(la, "_memory", MagicMock(return_value=memory)),
+            patch.object(la, "sees_secrets", MagicMock(return_value=dm)),
+            patch.object(la, "_tell", tell),
+            patch.object(la, "_answer_first", AsyncMock()),
+            patch.object(la.name_places, "where_said", said),
+            patch.object(discord.ui.Select, "values", [which], create=True),
+        ):
+            await view._chosen(asked)
+        return asked, said, tell
+
+    def test_the_group_screen_has_the_button_and_it_fits_a_row(self) -> None:
+        view = la.LookAlikeGroup("c1", [NAMES], 0, KINDS)
+        button = next(c for c in view.children if getattr(c, "label", "") == la.WHERE_LABEL)
+        self.assertEqual(button.row, 3)
+        self.assertLessEqual(len(la.WHERE_LABEL), 25)
+
+    def test_it_lists_the_groups_names(self) -> None:
+        view = la.WhichName("c1", NAMES, KINDS)
+        self.assertEqual([o.label for o in selects(view)[0].options], [n.name for n in NAMES])
+
+    async def test_the_reply_is_the_names_to_check_reply_for_that_name(self) -> None:
+        asked, said, _ = await self.press(B)
+        args = said.await_args
+        self.assertEqual(args.args[2:], (1, [("s:1:2", 5)], ["Beleros"], {7}))
+        sent = asked.followup.send.await_args
+        self.assertEqual(sent.args[0], "THE PLACES")
+        self.assertTrue(sent.kwargs["ephemeral"])
+
+    async def test_a_player_is_refused_and_nothing_is_quoted(self) -> None:
+        asked, said, tell = await self.press(B, dm=False)
+        tell.assert_awaited_once()
+        self.assertEqual(tell.await_args.args[1], la.NOT_THE_DM)
+        said.assert_not_awaited()
+        asked.followup.send.assert_not_awaited()
 
 
 class TheCardsOtherRoute(unittest.TestCase):

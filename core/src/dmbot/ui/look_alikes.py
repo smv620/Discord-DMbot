@@ -14,6 +14,7 @@ secret ones included, and the merge moves a secret name as a secret name.
 from __future__ import annotations
 
 import logging
+from typing import Any, cast
 
 import discord
 
@@ -21,7 +22,7 @@ from dmbot.campaigns import Campaign
 from dmbot.memory.lookalikes import Name, by_use, look_alike
 from dmbot.memory.models import DM, MemoryRuleError, days
 from dmbot.memory.store import MemoryStore
-from dmbot.ui import logic
+from dmbot.ui import logic, name_places
 from dmbot.ui.dmbot_commands import (
     _answer_first,
     _Button,
@@ -45,6 +46,7 @@ log = logging.getLogger(__name__)
 PAGE = 25  # what one Discord menu holds
 BUTTON = "🔗 Look-alikes"
 MERGE_SEVERAL = "🔗 Merge several…"
+WHERE_LABEL = "📜 Where was it said?"
 NOT_THE_DM = "Only the DM can merge names. Ask your DM to do it."
 NONE_FOUND = "That's all the groups. No more look-alikes right now."
 NOTHING_CHANGED = "That didn't work, and nothing was changed. Please try again."
@@ -248,6 +250,7 @@ class LookAlikeGroup(_Menu):
         if index + 1 < len(groups):
             self.add_item(_Button(self._next, label="Next group ▸", style=grey, row=2))
         self.add_item(_Button(self._done, label="Done", style=grey, row=2))
+        self.add_item(_Button(self._where, label=WHERE_LABEL, style=grey, row=3))
 
     async def _ticked(self, interaction: discord.Interaction) -> None:
         self.ticked = set(self.members.values)
@@ -327,6 +330,76 @@ class LookAlikeGroup(_Menu):
         await _answer_first(interaction, in_place=True)
         self.stop()
         await _replace(interaction, "Closed. Any that are left wait under 🔗 Look-alikes.", None)
+
+    async def _where(self, interaction: discord.Interaction) -> None:
+        """📜 Where was it said? (#3432): pick one of the group's names, then see up to three
+        places, as on the names-to-check card. A private message; this screen stays as it is."""
+        campaign = await _campaign_for(interaction, self.campaign_id)
+        if campaign is None:
+            return
+        if not sees_secrets(campaign, interaction.user.id):  # DM only, checked on every press
+            await _tell(interaction, NOT_THE_DM)
+            return
+        await _answer_first(interaction)
+        view = WhichName(self.campaign_id, self.names, self.kinds)
+        await interaction.followup.send(
+            "Which name?",
+            view=view,
+            ephemeral=True,
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
+
+
+class WhichName(_Menu):
+    """The names of one group, to pick the one to see the places of."""
+
+    def __init__(self, campaign_id: str, names: list[Name], kinds: dict[str, str]) -> None:
+        super().__init__()
+        self.campaign_id = campaign_id
+        self.names = {n.id: n for n in names}
+        self.pick = _Select(
+            self._chosen,
+            placeholder="Which name?",
+            options=_options(names, kinds, ticked=False),
+            min_values=1,
+            max_values=1,
+        )
+        self.add_item(self.pick)
+
+    async def _chosen(self, interaction: discord.Interaction) -> None:
+        """The same reply as the names-to-check button (`name_places.where_said`), for one name.
+        The DM only, checked again here; counts only in the log."""
+        campaign = await _campaign_for(interaction, self.campaign_id)
+        if campaign is None:
+            return
+        if not sees_secrets(campaign, interaction.user.id):
+            await _tell(interaction, NOT_THE_DM)
+            return
+        await _answer_first(interaction)
+        name = self.names.get(self.pick.values[0])
+        memory = _memory(interaction)
+        transcripts = getattr(interaction.client, "transcripts", None)
+        if name is None or memory is None or transcripts is None:
+            await interaction.followup.send(name_places.NOTHING_KEPT, ephemeral=True)
+            return
+        refs: list[tuple[str, int | None]] = []
+        try:
+            refs = list(await memory.mentions(campaign.guild_id, campaign.id, name.id))
+            text = await name_places.where_said(
+                interaction.guild,
+                transcripts,
+                campaign.guild_id,
+                refs,
+                [name.name],
+                await cast(Any, interaction.client).consent.consenting(campaign.guild_id),
+            )
+        except Exception:
+            log.exception("Couldn't show where a name was said")
+            text = name_places.TRY_AGAIN
+        log.info("Showed where a look-alike name was said: %d places kept", len(refs))
+        await interaction.followup.send(
+            text, ephemeral=True, allowed_mentions=discord.AllowedMentions.none()
+        )
 
 
 async def _reload(memory: MemoryStore, campaign: Campaign) -> list[list[Name]]:
