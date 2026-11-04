@@ -1462,11 +1462,14 @@ def create_app(
         session, _token = signed
         if not settings.recaps_on:
             raise HTTPException(status_code=409, detail="not_allowed")
+        empty = False
         try:
             body = await request.json()
         except ValueError:
-            body = None
-        if not isinstance(body, dict):
+            body, empty = None, True
+        if not empty and not isinstance(body, dict):
+            raise HTTPException(status_code=422, detail="bad_action")  # (a retry spends a try)
+        if empty:
             # No body is the page's "Try again (N left)" (the generic decision route's `again`):
             # retry the failed or finished draft in place. This path was shadowing it since #2608,
             # so the retry came back 409 and the page said "Something went wrong" (#3387).

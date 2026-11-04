@@ -756,8 +756,15 @@ class TheRoutes(Base):
         job = await self.state(self.one.id)
         self.assertEqual((job.tries, job.state), (1, "queued"))
         # "Make a new one" still sends its body and still asks first.
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute("UPDATE recap_jobs SET state = 'ready'")
         asked = await self.client.post(f"/me/recaps/{self.ref}/again", json={"replace": False})
-        self.assertNotEqual(asked.status_code, 200)
+        self.assertEqual(asked.status_code, 409)  # (this fixture has no lines: `no_lines`)
+        self.assertIn(asked.json()["error"], ("needs_confirm", "no_lines"))
+        junk = await self.client.post(f"/me/recaps/{self.ref}/again", json=[1])
+        self.assertEqual((junk.status_code, junk.json()["error"]), (422, "bad_action"))
+        job = await self.state(self.one.id)
+        self.assertEqual(job.tries, 1)  # neither of those spent a try
 
     async def test_approve_unchecked_answers_in_the_pages_words(self) -> None:
         from dmbot.recaps import critics as cr
