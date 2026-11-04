@@ -14,19 +14,23 @@ from __future__ import annotations
 from typing import Any
 
 from dmbot.db import Database
-from dmbot.memory.models import NAME_MAX
+from dmbot.memory.models import NAME_MAX, MemoryRuleError, lookup_key
 from dmbot.memory.name_longer import MAX_OFFERED, longer_names
 from dmbot.memory.places import LINE_CHARS, cut, find_in, trimmed
 from dmbot.names import not_names
 from dmbot.recaps import name_answers
-from dmbot.web import recaps
+from dmbot.web import name_groups, recaps
 from dmbot.web.recaps import RecapError
 from dmbot.web.sessions import Session
 
-ACTIONS = ("confirm", "same", "respell", "not_a_name", "explain", "change_words")
+ACTIONS = (
+    "confirm", "same", "respell", "not_a_name", "explain", "change_words",
+    "split", "join_group", "make_group", "undo",
+)  # fmt: skip
 SPELLING_MAX = 80  # as the database's door and MemoryStore.rename_entity
 NOTE_MAX = name_answers.NOTE_MAX
 ID_LENGTH = 32
+GROUP_NAME_MAX = 120  # as the database's door: the same limits as any name
 
 
 def _entity_id(value: object) -> str:
@@ -51,19 +55,49 @@ async def read_checks(db: Database, session: Session, ref: str) -> dict[str, Any
                 "SELECT dmbot_recap_name_places(%s, %s, %s) AS r", (gid, cid, at)
             )
             found = (await cur.fetchone() or {}).get("r") or {}
-    if got is None:
-        raise RecapError("not_found")
-    # Suggestions made before pronouns were kept out ("We", "I'll") are still stored: they are
-    # not shown (#2358), by the same rule as Discord's lists (`hidden_old_pronoun`): only a
-    # pronoun the database marks as made before the gate. The marker is not passed on.
-    waiting = [
-        _with_places(
-            _with_longer_names({k: v for k, v in n.items() if k != "old"}), found.get(n["id"])
-        )
-        for n in got["names"]
-        if not (n.get("old") and not_names.is_not_name(str(n.get("name", ""))))
-    ]
+        if got is None:
+            raise RecapError("not_found")
+        # Suggestions made before pronouns were kept out ("We", "I'll") are still stored: they are
+        # not shown (#2358), by the same rule as Discord's lists (`hidden_old_pronoun`): only a
+        # pronoun the database marks as made before the gate. The marker is not passed on.
+        waiting = [
+            _with_places(
+                _with_longer_names({k: v for k, v in n.items() if k != "old"}),
+                found.get(n["id"]),
+            )
+            for n in got["names"]
+            if not (n.get("old") and not_names.is_not_name(str(n.get("name", ""))))
+        ]
+        for card in waiting:  # (in this same read, so every door answers from one moment)
+            await _with_groups(conn, gid, cid, card)
     return {"names": waiting, "known": got["known"], "kinds": name_answers.kinds()}
+
+
+async def _with_groups(conn: Any, gid: int, cid: str, card: dict[str, Any]) -> None:
+    """Whether the waiting name is a list the DM could split (#3406), and the known groups it may
+    be (Discord's "Yes, that group"). The parts are worked out with the store's own `split_list`,
+    the groups from the few facts the door gives for those parts, by the store's own rule
+    (`name_groups`), so the page offers what Discord offers. A name that is not a list gets
+    neither key and the page shows neither button."""
+    parts = name_groups.parts_of(str(card.get("name", "")))
+    if not parts:
+        return
+    try:
+        keys = [lookup_key(p) for p in parts]
+    except MemoryRuleError:
+        return  # a part too long to be a name: the card is shown as it was
+    cur = await conn.execute("SELECT dmbot_name_group_info(%s, %s, %s) AS r", (gid, cid, keys))
+    info = (await cur.fetchone() or {}).get("r") or {}
+    card["isList"] = True
+    card["groups"] = [
+        {
+            "id": h.group_id,
+            "name": h.group_name,
+            "members": list(h.members),
+            "others": list(h.others),
+        }
+        for h in name_groups.hints_for(parts, info)
+    ]
 
 
 def _with_longer_names(card: dict[str, Any]) -> dict[str, Any]:
@@ -156,6 +190,17 @@ async def answer(
             raise RecapError("empty")
         if len(text) > NAME_MAX or len(target) > NAME_MAX:
             raise RecapError("too_long")
+    if action == "join_group":
+        target = _known_id(body.get("group"))  # a group's id, 32 hex; the door checks it is one
+    if action == "make_group":
+        text = _text(body.get("name"))
+        if not text or len(text) > GROUP_NAME_MAX:
+            raise RecapError("bad_text")
+    if action == "undo":
+        batch = body.get("batch")  # the batch the earlier answer returned (digits for the door)
+        if not isinstance(batch, int) or isinstance(batch, bool) or not 1 <= batch < 10**18:
+            raise RecapError("bad_text")
+        target = str(batch)
     async with db.user(session.user_id, session=session.id_hash) as conn:
         gid, cid, at, _row = await recaps._one(conn, ref, session, marks=False)
         cur = await conn.execute(
@@ -185,3 +230,27 @@ def _text(value: object) -> str:
     ):
         raise RecapError("bad_text")
     return " ".join(value.split())
+
+
+async def read_answer(
+    db: Database, session: Session, ref: str, entity_id: object
+) -> dict[str, Any]:
+    """The bot's word on the last answer to one of the recap's names (#3406): `state`, `note` (the
+    bot's plain words and counts), `error` (its fixed refusal word, or null) and `batch` (to take
+    it back by). "Not found" when the name has no answer on record, which the page reads as done:
+    an answer that finished is deleted, and so is one that was undone."""
+    ent = _entity_id(entity_id)
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        gid, cid, at, _row = await recaps._one(conn, ref, session, marks=False)
+        cur = await conn.execute(
+            "SELECT dmbot_name_answer_read(%s, %s, %s, %s) AS r", (gid, cid, at, ent)
+        )
+        got = (await cur.fetchone() or {}).get("r")
+    if got is None:
+        raise RecapError("not_found")
+    return {
+        "state": str(got["state"]),
+        "note": str(got["note"]),
+        "error": str(got["error"]) or None,
+        "batch": got["batch"],
+    }
