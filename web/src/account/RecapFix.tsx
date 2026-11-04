@@ -10,9 +10,10 @@ import { useEffect, useRef, useState } from "preact/hooks";
 
 import { FIX_MAX_LETTERS, fixWords as words } from "../content/recap-fix";
 import { RECAP_FIX_LIVE, RECAP_VOICE_LIVE, RECAPS_LIVE } from "../content/recap-words";
-import { ApiError, type AccountApi, type FixPoints, type Recap } from "./api";
+import { ApiError, type AccountApi, type FixPoints, type JobProgress, type Recap } from "./api";
 import { keepFocus } from "./focus";
 import RecapVoice from "./RecapVoice";
+import WorkProgress from "./WorkProgress";
 import { voiceWords } from "../content/recap-voice";
 
 const POLL_MS = 2000;
@@ -44,6 +45,8 @@ export default function RecapFix({
   const [corrections, setCorrections] = useState<Set<string>>(new Set());
   const [style, setStyle] = useState<Set<string>>(new Set());
   const [sorting, setSorting] = useState(false);
+  // The bot's own progress for the sort, when the API sends it (#3355): shown in the wait panel.
+  const [progress, setProgress] = useState<JobProgress | null>(null);
   const [slow, setSlow] = useState(false);
   const [checks, setChecks] = useState(0); // "Check again" on the same request after the page gave up
   const [busy, setBusy] = useState(false);
@@ -77,6 +80,7 @@ export default function RecapFix({
       try {
         const got = await read(recap.ref, requestId);
         if (!live) return;
+        setProgress(got.state === "done" || got.state === "failed" ? null : got.progress ?? null);
         if (got.state === "done") {
           if (!got.points) throw new ApiError("server"); // "done" with nothing to show is a fault
           setPoints(got.points);
@@ -100,6 +104,7 @@ export default function RecapFix({
         polls += 1;
         if (polls >= POLL_LIMIT) {
           setSorting(false);
+          setProgress(null);
           setSlow(true);
           return;
         }
@@ -113,6 +118,7 @@ export default function RecapFix({
           return;
         }
         setSorting(false);
+        setProgress(null);
         fail(error);
       }
     };
@@ -221,7 +227,9 @@ export default function RecapFix({
   };
 
   const status = sorting
-    ? words.sorting
+    ? progress
+      ? "" // the wait panel says it (#3355)
+      : words.sorting
     : slow
       ? words.slow
       : started === "approve"
@@ -254,6 +262,16 @@ export default function RecapFix({
       >
         {status}
       </p>
+      {sorting && progress && (
+        <WorkProgress
+          stage={progress.stage === "waiting" ? words.pickUp : words.sorting}
+          startedAt={progress.startedAt}
+          updatedAt={progress.updatedAt}
+          serverNow={progress.serverNow}
+          state={progress.state === "stalled" ? "stalled" : "running"}
+          whatToDo={progress.state === "stalled" ? words.slow : undefined}
+        />
+      )}
       {cutOff && (
         <p class="note" role="status">
           {voiceWords.cutOff}

@@ -12,7 +12,8 @@ import {
   VOICE_WARN_AT_SECONDS,
   voiceWords as words,
 } from "../content/recap-voice";
-import { ApiError, type AccountApi, type Recap } from "./api";
+import { ApiError, type AccountApi, type JobProgress, type Recap } from "./api";
+import WorkProgress from "./WorkProgress";
 import { pickType } from "./recording";
 
 const POLL_MS = 2000;
@@ -45,6 +46,8 @@ export default function RecapVoice({
   const [problem, setProblem] = useState<string | null>(null);
   const [requestId, setRequestId] = useState<string | null>(null);
   const [slow, setSlow] = useState(false);
+  // The bot's own progress for the words, when the API sends it (#3355): shown in the wait panel.
+  const [progress, setProgress] = useState<JobProgress | null>(null);
   const [checks, setChecks] = useState(0);
   const [heard, setHeard] = useState(false);
   const [atLimit, setAtLimit] = useState(false);
@@ -100,6 +103,7 @@ export default function RecapVoice({
         const got = await read(recap.ref, requestId);
         if (!live) return;
         retried = false; // a later blip gets its own second look
+        setProgress(got.state === "done" || got.state === "failed" ? null : got.progress ?? null);
         if (got.state === "done") {
           if (typeof got.text !== "string" || got.text === "") throw new ApiError("server");
           setPhase("idle");
@@ -118,6 +122,7 @@ export default function RecapVoice({
         polls += 1;
         if (polls >= POLL_LIMIT) {
           setPhase("idle");
+          setProgress(null);
           setSlow(true);
           return;
         }
@@ -131,6 +136,7 @@ export default function RecapVoice({
         }
         setPhase("idle");
         setRequestId(null);
+        setProgress(null);
         fail(error);
       }
     };
@@ -275,8 +281,10 @@ export default function RecapVoice({
           : words.recordingNow
         : phase === "sending"
           ? atLimit
-            ? `${words.atLimit} ${words.sending}`
-            : words.sending
+            ? `${words.atLimit}${progress ? "" : ` ${words.sending}`}`
+            : progress
+              ? "" // the wait panel says it (#3355)
+              : words.sending
           : slow
             ? words.slow
             : cancelled
@@ -295,6 +303,16 @@ export default function RecapVoice({
       <p role="status" aria-live="polite" class="small">
         {status}
       </p>
+      {phase === "sending" && progress && (
+        <WorkProgress
+          stage={progress.stage === "waiting" ? words.pickUp : words.turning}
+          startedAt={progress.startedAt}
+          updatedAt={progress.updatedAt}
+          serverNow={progress.serverNow}
+          state={progress.state === "stalled" ? "stalled" : "running"}
+          whatToDo={progress.state === "stalled" ? words.slow : undefined}
+        />
+      )}
       <div class="with-info">
       {phase === "recording" ? (
         <>

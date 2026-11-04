@@ -30,6 +30,9 @@ export const voiceWords = {
   atLimit: "That is the longest a note can be (1 minute), so recording stopped.",
   empty: "Nothing was recorded. Try again, or type your note instead.",
   sending: "Turning your note into words… this takes a few seconds. Stay on this page.",
+  // The stages the wait panel shows while the bot works on the words (#3355).
+  pickUp: "Waiting for DMbot to pick up your note…",
+  turning: "Turning your note into words…",
   slow: "This is taking longer than usual. Press Check again, or type your note instead.",
   checkAgain: "Check again",
   heard: "Here is what DMbot heard. Check it, change it if you like, then press Send.",

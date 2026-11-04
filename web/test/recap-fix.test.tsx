@@ -563,3 +563,73 @@ describe("over the wire", () => {
     ).rejects.toMatchObject({ kind: "bad-choice" });
   });
 });
+
+// The wait panel for a typed note (#3355): the bot's stage, shown with WorkProgress, from the progress it sends.
+describe("the wait panel for a typed note (#3355)", () => {
+  const now = () => Math.floor(Date.now() / 1000);
+  const points = { corrections: [{ id: "c1", text: "Fix the innkeeper's name" }], style: [], replies: [] };
+
+  it("shows the stage words in turn, while it is being sorted", async () => {
+    const api = mockApi("table");
+    let asked = 0;
+    api.fixResult = async () => {
+      asked += 1;
+      if (asked === 1) return { state: "working", progress: { stage: "waiting", state: "running", startedAt: now() - 5, updatedAt: now() - 5, serverNow: now() } };
+      if (asked === 2) return { state: "working", progress: { stage: "working", state: "running", startedAt: now() - 7, updatedAt: now() - 1, serverNow: now() } };
+      return { state: "done", points };
+    };
+    await open(api);
+    type("Fix the name");
+    fireEvent.click(screen.getByRole("button", { name: w.send }));
+    expect(await screen.findByText(w.pickUp, {}, { timeout: 5000 })).toBeTruthy();
+    expect(await screen.findByText(w.sorting, {}, { timeout: 5000 })).toBeTruthy();
+    await screen.findByText("Fix the innkeeper's name", {}, { timeout: 8000 });
+  }, 30_000);
+
+  it("a stalled sort says so with the existing slow words", async () => {
+    const api = mockApi("table");
+    let asked = 0;
+    api.fixResult = async () => {
+      asked += 1;
+      if (asked <= 2) return { state: "working", progress: { stage: "working", state: "stalled", startedAt: now() - 90, updatedAt: now() - 80, serverNow: now() } };
+      return { state: "done", points };
+    };
+    await open(api);
+    type("Fix the name");
+    fireEvent.click(screen.getByRole("button", { name: w.send }));
+    expect(await screen.findByText(w.slow, {}, { timeout: 5000 })).toBeTruthy();
+    await screen.findByText("Fix the innkeeper's name", {}, { timeout: 8000 });
+  }, 30_000);
+
+  it("without progress from an older API, keeps today's one-line status", async () => {
+    const api = mockApi("table");
+    let asked = 0;
+    api.fixResult = async () => {
+      asked += 1;
+      return asked < 2 ? { state: "working" } : { state: "done", points };
+    };
+    await open(api);
+    type("Fix the name");
+    fireEvent.click(screen.getByRole("button", { name: w.send }));
+    expect(await screen.findByText(w.sorting, {}, { timeout: 5000 })).toBeTruthy();
+    expect(screen.queryByText(w.pickUp)).toBeNull();
+    await screen.findByText("Fix the innkeeper's name", {}, { timeout: 8000 });
+  }, 30_000);
+
+  it("the panel carries stage, counts and times only, never the note's words", async () => {
+    const api = mockApi("table");
+    let asked = 0;
+    api.fixResult = async () => {
+      asked += 1;
+      return asked < 2
+        ? { state: "working", progress: { stage: "working", state: "running", startedAt: now() - 3, updatedAt: now() - 1, serverNow: now() } }
+        : { state: "done", points };
+    };
+    await open(api);
+    type("Fix the name");
+    fireEvent.click(screen.getByRole("button", { name: w.send }));
+    expect(await screen.findByText(w.sorting, {}, { timeout: 5000 })).toBeTruthy();
+    expect(screen.queryByText("Fix the name")).toBeNull();
+    await screen.findByText("Fix the innkeeper's name", {}, { timeout: 8000 });
+  }, 30_000);
+});

@@ -12,6 +12,8 @@ export const fixWords = {
   send: "Send",
   sending: "Sending…",
   sorting: "Sorting your note…",
+  // The stage while DMbot has not picked the note up yet (#3355).
+  pickUp: "Waiting for DMbot to pick up your note…",
   slow: "This is taking longer than usual. Your note is still being sorted. Press Check again.",
   checkAgain: "Check again",
   sorted: (n: number): string => `Done. ${n} ${n === 1 ? "point" : "points"} to look at.`,
