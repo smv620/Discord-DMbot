@@ -992,16 +992,23 @@ def _sureness(status: str, confidence: object) -> str:
     }.get(status, "a guess")
 
 
-async def read_readings(db: Database, session: Session, ref: str) -> dict[str, Any]:
+async def read_readings(
+    db: Database, session: Session, ref: str, *, outside_engine: str | None = None
+) -> dict[str, Any]:
     """What people believe, waiting for the signed-in DM (#2412): claims that carry a reading, not
     yet kept as a belief or turned down. DM only (the door answers anyone else with nothing, here
     `not_found`). The words are the claim's own (names and a relationship), never a transcript
-    line or a quote. Read-only."""
+    line or a quote. Read-only. Only readings whose every speaker is recorded now: under the
+    current wording and, while an outside company hears the voices, for that company
+    (`outside_engine`, as for the recap checks), the bot's rule (#3462)."""
     guild_id, campaign_id = _parse(ref)
     _guild_of(session, guild_id)
     async with db.user(session.user_id, session=session.id_hash) as conn:
         await _scoped(conn, guild_id)
-        cur = await conn.execute("SELECT dmbot_web_readings(%s, %s) AS r", (guild_id, campaign_id))
+        cur = await conn.execute(
+            "SELECT dmbot_web_readings(%s, %s, %s, %s) AS r",
+            (guild_id, campaign_id, TERMS_VERSION, outside_engine),
+        )
         found = await cur.fetchone()
     got = found["r"] if found else None
     if got is None or got.get("status") != "ok":
