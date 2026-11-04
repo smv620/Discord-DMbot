@@ -62,6 +62,10 @@
   Cache-Control: no-store
   X-Robots-Tag: noindex, nofollow
 
+/account/questions*
+  Cache-Control: no-store
+  X-Robots-Tag: noindex, nofollow
+
 /account/web*
   Cache-Control: no-store
   X-Robots-Tag: noindex, nofollow

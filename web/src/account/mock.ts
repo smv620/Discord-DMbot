@@ -1891,6 +1891,31 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
     // A player who agreed to the warning peeks (#2405); the DM would be told once on the DM screen.
     // What waits for the DM (#2635, #2652): a fact, a condition (no "keep it secret"), connections from two
     // uploads (one waiting on a name) and a "Which Mara?" question. Answers remove what they answer.
+    async myQuestions() {
+      calls.push("myQuestions");
+      const now = Math.floor(Date.now() / 1000);
+      return {
+        serverNow: now,
+        campaigns: [
+          {
+            ref: "100.cmp1",
+            name: "The Ashen Road",
+            total: 17,
+            countedAt: now - 30,
+            kinds: [
+              { kind: "names", count: 3, oldest: now - 86_400 },
+              { kind: "connections", count: 12, oldest: now - 7_200 },
+              { kind: "family", count: 2, oldest: now - 3_600 },
+            ],
+          },
+          { ref: "100.cmp2", name: "Salt and Smoke", total: 0, countedAt: now - 60, kinds: [] },
+        ],
+      };
+    },
+    async questionsTotal() {
+      calls.push("questionsTotal");
+      return { total: 17 };
+    },
     async webWaiting(ref) {
       calls.push(`webWaiting:${ref}`);
       await reachable();
