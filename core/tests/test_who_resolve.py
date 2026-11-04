@@ -164,6 +164,33 @@ class TheAnswers(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(pick.candidates, ("Mara", "Bram"))  # (never the named end, Ken)
         self.assertEqual(pick.word, "She")
 
+    def test_a_player_character_comes_first_in_the_question(self) -> None:
+        out = who_resolve.Settled()
+        who_resolve._use(
+            unsettled_of(), asked(("Bram", 55), ("Mara", 45), ("Ken", 30)), out, players={"mara"}
+        )
+        (pick,) = out.picks
+        self.assertEqual(pick.candidates, ("Mara", "Bram"))
+
+    def test_with_the_check_off_an_open_pronoun_naming_a_player_character_waits(self) -> None:
+        out = who_resolve.pc_picks([unsettled_of()], ["Mara", "Ken", "Bram"], {"mara"})
+        (pick,) = out.picks
+        self.assertEqual(
+            pick.candidates, ("Mara", "Bram")
+        )  # (the player character first; never Ken)
+        self.assertEqual((out.unresolved, out.counts["asked"]), (0, 1))
+        self.assertEqual(pick.decided, "who-is-it: not checked")
+
+    def test_with_the_check_off_any_other_open_pronoun_is_left_out_and_counted(self) -> None:
+        out = who_resolve.pc_picks([unsettled_of()], ["Mara", "Ken"], {"bram"})
+        self.assertEqual((out.picks, out.unresolved), ([], 1))
+
+    def test_with_the_check_off_at_most_twenty_wait_and_the_rest_are_counted(self) -> None:
+        many = [unsettled_of() for _ in range(who_resolve.PC_PICKS_PER_READ + 3)]
+        out = who_resolve.pc_picks(many, ["Mara", "Ken"], {"mara"})
+        self.assertEqual(len(out.picks), who_resolve.PC_PICKS_PER_READ)
+        self.assertEqual((out.counts["over_cap"], out.unresolved), (3, 3))
+
     def test_a_doubt_with_only_one_name_to_offer_asks_with_that_name_and_someone_else(self) -> None:
         out = who_resolve.Settled()
         who_resolve._use(unsettled_of(), asked(("Mara", 50), (NOT_LISTED, 30), checked=False), out)
@@ -420,6 +447,25 @@ class ThePath(NamesTest):
     async def test_the_check_off_changes_nothing_but_the_one_count(self) -> None:
         queued, lost = await self.run_links(None)
         self.assertEqual((queued, dict(lost)), (0, {"not_in_text": 1}))
+
+    async def test_the_check_off_with_a_player_character_in_it_waits_as_a_question(self) -> None:
+        lost: Counter[str] = Counter()
+        await ui_bg.queue_links(
+            self.bot, self.memory, self.campaign, [], [[]], set(), dropped=lost,
+            unsettled=[unsettled_of()], players={"mara"},
+        )  # fmt: skip
+        self.assertEqual(lost["which_waiting"], 1)
+        (q,) = await self.store.which_waiting(GUILD, self.campaign.id)
+        self.assertEqual([name for _, name in q.candidates], ["Mara"])
+        self.assertEqual(lost["not_in_text"], 0)
+
+    async def test_the_check_off_without_a_player_character_changes_nothing(self) -> None:
+        lost: Counter[str] = Counter()
+        await ui_bg.queue_links(
+            self.bot, self.memory, self.campaign, [], [[]], set(), dropped=lost,
+            unsettled=[unsettled_of()], players={"bram"},
+        )  # fmt: skip
+        self.assertEqual(dict(lost), {"not_in_text": 1})
 
     async def test_a_doubt_with_one_name_is_a_question_with_someone_else(self) -> None:
         await self.run_links(Scripted([("Mara", 90), (NOT_LISTED, 5)], None))

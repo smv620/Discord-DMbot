@@ -18,7 +18,7 @@ import asyncio
 import logging
 import time
 from collections import Counter
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Collection, Sequence
 from dataclasses import dataclass, field, replace
 
 from dmbot.memory import background as bg
@@ -118,10 +118,20 @@ def _unnamed(u: bg.Unsettled, quote: str, decided: str) -> UnnamedLink:
     )
 
 
-def _pick(u: bg.Unsettled, quote: str, names: Sequence[str], decided: str) -> bg.Pick | None:
-    """The question for the DM: two or three names, the best first, never the named end itself."""
+def _pick(
+    u: bg.Unsettled,
+    quote: str,
+    names: Sequence[str],
+    decided: str,
+    players: Collection[str] = (),
+) -> bg.Pick | None:
+    """The question for the DM: two or three names, the best first, never the named end itself.
+    A player character the passage names comes first (#3238): the family of the table's own
+    characters is what a DM is most likely to be asked about, and the choice is cut at three."""
     fixed = name_key(_fixed(u))
     chosen: list[str] = []
+    mine = {name_key(p) for p in players}
+    names = sorted(names, key=lambda x: name_key(x) not in mine)
     for n in names:
         if n == NOT_LISTED or name_key(n) == fixed or name_key(n) in map(name_key, chosen):
             continue
@@ -135,7 +145,12 @@ def _pick(u: bg.Unsettled, quote: str, names: Sequence[str], decided: str) -> bg
     )  # fmt: skip
 
 
-def _use(u: bg.Unsettled, asked: who_ask.Asked | None, out: Settled) -> None:
+def _use(
+    u: bg.Unsettled,
+    asked: who_ask.Asked | None,
+    out: Settled,
+    players: Collection[str] = (),
+) -> None:
     """Turn one answer (or the lack of one) into what the read keeps."""
     quote = window_of(u.passage)
     if asked is None:  # the AI could not answer: the relationship is kept, nothing guessed
@@ -163,7 +178,7 @@ def _use(u: bg.Unsettled, asked: who_ask.Asked | None, out: Settled) -> None:
     # A doubt (the rule asked, or the AI's own reading and the check disagree, or the named end is
     # too far back to show in the quote): the DM decides between the names.
     order = [top, _missing(u), *ranked]
-    pick = _pick(u, quote, order, decided_words("asked", decision.top))
+    pick = _pick(u, quote, order, decided_words("asked", decision.top), players)
     if pick is None:  # (no name at all to offer: the relationship is kept with an unnamed person)
         out.counts["unsure"] += 1
         out.unnamed.append(_unnamed(u, quote, decided_words("unsure", decision.top)))
@@ -181,6 +196,7 @@ async def settle(
     until: float | None = None,
     time_limit_s: float = WHO_TIME_LIMIT_S,
     progress: Callable[[int, int], None] | None = None,
+    players: Collection[str] = (),
 ) -> Settled:
     """Every open pronoun settled or kept, shortest passage first (the passage ends where the
     quote does, so that is the order of the text within a slice). `names` are the campaign's names
@@ -223,7 +239,7 @@ async def settle(
                 _unnamed(u, window_of(u.passage), decided_words("not checked, out of time"))
             )
         else:
-            _use(u, asked, out)
+            _use(u, asked, out, players)
         if progress is not None:
             progress(min(index + 1, total), total)
     if progress is not None:
@@ -240,4 +256,39 @@ async def settle(
         out.counts["over_cap"],
         out.counts["over_time"],
     )
+    return out
+
+
+PC_PICKS_PER_READ = (
+    20  # open pronouns about the table's characters kept per read when the check is off
+)
+
+
+def pc_picks(
+    unsettled: Sequence[bg.Unsettled], names: Sequence[str], players: Collection[str]
+) -> Settled:
+    """The who-is-it check is off (#3238): an open pronoun whose passage names a player character
+    is not dropped. It waits for the DM as "Which one?" between the names in the passage, the
+    player character first, with no AI and nothing guessed; every other open pronoun is left out
+    and counted as before (`unresolved`). At most `PC_PICKS_PER_READ`, the rest counted
+    (`over_cap`). Counts only, never a name."""
+    out = Settled()
+    mine = {name_key(p) for p in players}
+    for u in sorted(unsettled, key=lambda x: len(x.passage)):
+        offered = bg.names_in(u.passage[-who_ask.MAX_PASSAGE_CHARS :], names)
+        if not any(name_key(n) in mine for n in offered):
+            out.unresolved += 1  # (as with the check off before: left out and counted)
+            continue
+        if out.counts["asked"] >= PC_PICKS_PER_READ:
+            out.counts["over_cap"] += 1
+            out.unresolved += 1
+            continue
+        pick = _pick(
+            u, window_of(u.passage), [_missing(u), *offered], decided_words("not checked"), players
+        )
+        if pick is None:
+            out.unresolved += 1
+            continue
+        out.counts["asked"] += 1
+        out.picks.append(pick)
     return out

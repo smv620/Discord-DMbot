@@ -701,6 +701,7 @@ async def read_background(
     # them may be a change the DM wants to see. Only the same kind the same way round is
     # "already known", once the line is shaped: #3021.)
     who_ai = getattr(bot, "who_ai", None)  # only with DMBOT_WHO_IS_IT on (#2790)
+    player_keys = await keep.player_character_keys(memory, campaign.guild_id, campaign.id)
 
     def on_who(done: int, total: int) -> None:
         if progress is not None:
@@ -717,6 +718,7 @@ async def read_background(
         aliases=aliases,
         hold_open=who_ai is not None,
         known_keys=known,
+        players=player_keys,
     )
     found = bg.merge(
         [read.names],
@@ -785,6 +787,7 @@ async def read_background(
         speaker=speaker,
         known_by=known_by,
         unsettled=read.stats.unsettled or (),
+        players=player_keys,
         unnamed=read.unnamed,
         who_ai=who_ai,
         on_who=on_who,
@@ -1269,6 +1272,7 @@ async def queue_links(
     speaker: str | None = None,
     known_by: str = "",
     unsettled: Sequence[bg.Unsettled] = (),
+    players: Collection[str] = (),
     unnamed: Sequence[who_resolve.UnnamedLink] = (),
     who_ai: who_ask.Client | None = None,
     on_who: Callable[[int, int], None] | None = None,
@@ -1369,10 +1373,13 @@ async def queue_links(
         if who_ai is not None:
             names = [*dict.fromkeys([*ends.values(), *(f.name for f in found)])]
             settled = await who_resolve.settle(
-                unsettled, who_ai, names, until=until, progress=on_who
+                unsettled, who_ai, names, until=until, progress=on_who, players=players
             )
-        else:  # (the check was switched off: left out and counted, as before it existed)
-            settled.unresolved = len(unsettled)
+        else:
+            # (the check was switched off: left out and counted, as before it existed, except an
+            # open pronoun that names a player character, which waits for the DM: #3238)
+            names = [*dict.fromkeys([*ends.values(), *(f.name for f in found)])]
+            settled = who_resolve.pc_picks(unsettled, names, players)
         if dropped is not None:
             dropped["not_in_text"] += settled.unresolved
         answers = [*answers, settled.connections]
