@@ -4,7 +4,7 @@
  "version": 1,
  "how_to_read": {
   "tier": "stated = the words are in the text; inferred = only implied (offered as a suggestion, never extracted); by_rule = made by a rule, not read; known_gap = expected but waits for a slice not yet built",
-  "relation": "parent_of, sibling, spouse, uncle_of, apprentice_of, mentor_of, owns, carries, knows (+ one of nine feeling words), member, leads, works_for, enemy_of, rival_of, held_captive_by, associate; place ties by word: lives_in, works_in, comes_from, last_seen_in, kept_in (anything that moves); in (only a place or an event inside a place)",
+  "relation": "parent_of, sibling, spouse, uncle_of, apprentice_of, mentor_of, owns, carries, knows (+ one of nine feeling words), member, leads, works_for, enemy_of, rival_of, held_captive_by, associate; place ties by word: lives_in, works_in, comes_from, last_seen_in (a character, creature or group), kept_in (an item: only ever kept in a place); in (only a place or an event inside a place)",
   "direction": "a to b: parent_of (a is the parent), owns (a owns b), leads (a leads group b), member (a belongs to b), in (a place or event is inside place b); sibling, spouse and rival_of read the same both ways",
   "must_find": "false = a good find if present, not a miss if absent; an inferred tie that must be found is scored as an offered suggestion"
  },
@@ -1761,7 +1761,7 @@
   {
    "id": "l096",
    "a": "Psi crystal",
-   "relation": "last_seen_in",
+   "relation": "kept_in",
    "b": "The Beautiful Mine",
    "tier": "stated",
    "must_find": false,
