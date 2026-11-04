@@ -127,6 +127,19 @@ class PlaceWords(unittest.TestCase):
         # and a character's place is unchanged
         self.assertEqual(link_words("located_in", "", False, "character"), "was last seen in")
 
+    def test_the_prompts_tell_an_item_it_is_only_kept(self) -> None:
+        from dmbot.memory.extractor import SYSTEM
+
+        self.assertIn("An item is only ever", SYSTEM)
+        for text in (lore_read.read_instructions(), lore_read.shape_instructions()):
+            self.assertIn("an item is only ever kept", text)
+            self.assertNotIn("group or item say whether", text)
+
+    def test_an_item_with_no_word_or_is_in_is_kept_and_a_place_is_never_kept(self) -> None:
+        self.assertEqual(place_words.forward("is in", "item"), "is kept in")
+        self.assertEqual(place_words.forward("", "place"), "is in")
+        self.assertEqual(place_words.forward("", "event"), "took place in")
+
     def test_an_event_took_place_in_a_town(self) -> None:
         self.assertEqual(link_words("located_in", "", False, "event"), "took place in")
         self.assertEqual(

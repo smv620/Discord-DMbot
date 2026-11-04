@@ -63,6 +63,7 @@ _SUMMARY = {
 # With no word said and no kind known the summary claims nothing about when or how.
 _SUMMARY_PLAIN = ("tied to it", "tied to this place")
 # Kinds of entry that move. A place, an event or anything else stays "is in".
+_ITEM_KINDS = frozenset({"item"})  # (the only item type; an item is only ever kept)
 _MOBILE = frozenset({
     "character", "person", "npc", "player_character", "deity", "creature", "faction", "item",
 })  # fmt: skip
@@ -70,9 +71,6 @@ _MOBILE = frozenset({
 
 # The wordings a reader is told to use (the keys of `_FORWARD`, present and past, no repeats).
 WORDS_OFFERED = tuple(dict.fromkeys(w for pair in _FORWARD.values() for w in pair))
-
-
-_ITEM_KINDS = frozenset({"item"})
 
 
 def is_mobile(kind: str) -> bool:

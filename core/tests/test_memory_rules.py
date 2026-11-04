@@ -321,6 +321,11 @@ class Checks(unittest.TestCase):
         problems = check_relation(self.onto, seen, "item", "place", [kept])
         self.assertEqual([(p.kind, p.other_id) for p in problems], [(TOO_MANY, kept.id)])
 
+    def test_an_item_past_keeping_is_never_limited(self) -> None:
+        was = self.place(B, "was kept in", rid="1" * 32)
+        also = self.place(C, "lived in")  # any past word on an item is a past keeping
+        self.assertEqual(check_relation(self.onto, also, "item", "place", [was]), [])
+
     def test_a_past_home_never_ends_the_present_one(self) -> None:
         lived = self.place(B, "lived in", rid="1" * 32)
         now = self.place(C, "lives in")

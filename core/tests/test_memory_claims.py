@@ -356,6 +356,16 @@ class Stored(ConfirmedMemoryTest):
         (rel,) = await self.memory.relations(GUILD_A, self.c)
         self.assertEqual((rel.predicate, rel.detail), ("located_in", "is kept in"))
 
+    async def test_a_character_last_seen_is_unchanged_and_an_item_with_no_word_is_kept(
+        self,
+    ) -> None:
+        await self.propose(said("Bram", "was last seen in", "Veldmoor"))
+        await self.propose(said("Heartseeker", "is in", "Chapel"))
+        for claim in await self.claims.waiting(GUILD_A, self.c, opted_in=EVERYONE):
+            await self.claims.confirm(GUILD_A, self.c, claim.id, opted_in={7})
+        got = {r.subject_id: r.detail for r in await self.memory.relations(GUILD_A, self.c)}
+        self.assertEqual(got, {self.bram: "was last seen in", self.bow: ""})
+
     async def test_such_a_fact_and_its_label_survive_a_backup_and_restore(self) -> None:
         await self.add("Hesper", type="character")
         await self.propose(said("Bram", "is blood-bound to", "Hesper"))
