@@ -13,7 +13,7 @@ What the graph should hold after the sample lore document is read. Names come fr
 
 **Tiers:** `stated` the words are in the text · `inferred` only implied, offered as a suggestion and never extracted · `by_rule` made by a rule, not read · **must find: no** means a good find if present, not a miss if absent. An `inferred` tie marked must-find is scored on whether DMbot *offers* it to the DM as a suggestion.
 
-**Totals:** 142 entries, 178 connections (102 must-find), 14 events.
+**Totals:** 140 entries, 175 connections (102 must-find), 14 events.
 
 ## Connections
 
@@ -39,7 +39,7 @@ What the graph should hold after the sample lore document is read. Names come fr
 | l016 | Oyami Nartok | sibling | Claude Ambere | stated | yes | an adoptive brother of the clan |
 | l017 | Garret Velryn | spouse | Keegan Velryn | stated | yes | her husband |
 | l018 | Bruni Stonewake | sibling | Thorin | stated | yes | brothers |
-| l175 | Brewner | parent_of | Brewner's daughter | stated | no |  |
+| l172 | Brewner | parent_of | Brewner's daughter | stated | no |  |
 
 ### Teaching and work (33)
 
@@ -69,15 +69,15 @@ What the graph should hold after the sample lore document is read. Names come fr
 | l085 | Belleros Stormgrace | member | The party | stated | yes |  |
 | l086 | Okthandom Korran | member | The party | stated | yes |  |
 | l087 | Claude Ambere | member | The party | stated | yes |  |
-| l117 | Xardorok Sunblight | leads | Duergar of Xardorok | stated | yes |  |
-| l121 | Dzaan | member | Red Wizards of Thay | stated | yes |  |
-| l122 | Dzaan | member | Arcane Brotherhood | stated | yes |  |
-| l130 | Naerth Maxildanarr | leads | Zhentarim | stated | yes |  |
-| l132 | Markham Southwell | leads | Bryn Shander guards | stated | yes |  |
-| l134 | Knights of the Black Sword | leads | The Caer | stated | yes | they control the keep |
-| l136 | Kadroth | member | Knights of the Black Sword | inferred | no | named as Black Sword cultists in the DM notes |
-| l137 | Huarwar Mulphoon | member | Knights of the Black Sword | inferred | no | named as Black Sword cultists in the DM notes |
-| l174 | Shafina Fa'ertenya | leads | Shafina's guild | stated | no | a guild leader |
+| l114 | Xardorok Sunblight | leads | Duergar of Xardorok | stated | yes |  |
+| l118 | Dzaan | member | Red Wizards of Thay | stated | yes |  |
+| l119 | Dzaan | member | Arcane Brotherhood | stated | yes |  |
+| l127 | Naerth Maxildanarr | leads | Zhentarim | stated | yes |  |
+| l129 | Markham Southwell | leads | Bryn Shander guards | stated | yes |  |
+| l131 | Knights of the Black Sword | leads | The Caer | stated | yes | they control the keep |
+| l133 | Kadroth | member | Knights of the Black Sword | inferred | no | named as Black Sword cultists in the DM notes |
+| l134 | Huarwar Mulphoon | member | Knights of the Black Sword | inferred | no | named as Black Sword cultists in the DM notes |
+| l171 | Shafina Fa'ertenya | leads | Shafina's guild | stated | no | a guild leader |
 
 ### Feelings and opposition (30)
 
@@ -100,21 +100,21 @@ What the graph should hold after the sample lore document is read. Names come fr
 | l091 | Belleros Stormgrace | knows | Okthandom Korran | by_rule | yes | player characters who play together know each other (#3036) |
 | l092 | Belleros Stormgrace | knows | Claude Ambere | by_rule | yes | player characters who play together know each other (#3036) |
 | l093 | Okthandom Korran | knows | Claude Ambere | by_rule | yes | player characters who play together know each other (#3036) |
-| l109 | Veron Braig | knows (wary) | Craig the Gnome | inferred | no | he wants good reviews |
-| l116 | Fizzlebomb | knows (hostile) | Cerric Vanya'elen | inferred | no | thrown in the water; he pleaded for a reason |
-| l118 | Duergar of Xardorok | enemy_of | The party | stated | yes | they hunt the party |
-| l119 | Duergar of Xardorok | knows (devoted) | Deep Duerra | stated | no | worship her |
-| l162 | The party | enemy_of | Sephek Kaltro | stated | yes | the quarry |
-| l163 | Sephek Kaltro | enemy_of | Claude Ambere | stated | no | stabbed him in the back |
-| l166 | Cerric Vanya'elen | knows (wary) | Belleros Stormgrace | stated | no | argue over attuning to the icy blade |
-| l167 | Oyami Nartok | knows (friendly) | Belleros Stormgrace | stated | no | respect and a promise of safe passage |
-| l168 | Oyami Nartok | knows | Mjenir | inferred | no | sends Okthandom to the seer |
-| l170 | Knights of the Black Sword | knows (devoted) | Levistus | stated | no | cultists of Levistus |
-| l173 | Ice Troll | enemy_of | The Minotaur captain | stated | no | killed him and wrecked his ship |
-| l177 | The ones who came for the tome | enemy_of | Cerric Vanya'elen | inferred | no | 'they are coming'; unknown |
-| l178 | The ones who came for the tome | enemy_of | Wit | inferred | no |  |
+| l106 | Veron Braig | knows (wary) | Craig the Gnome | inferred | no | he wants good reviews |
+| l113 | Fizzlebomb | knows (hostile) | Cerric Vanya'elen | inferred | no | thrown in the water; he pleaded for a reason |
+| l115 | Duergar of Xardorok | enemy_of | The party | stated | yes | they hunt the party |
+| l116 | Duergar of Xardorok | knows (devoted) | Deep Duerra | stated | no | worship her |
+| l159 | The party | enemy_of | Sephek Kaltro | stated | yes | the quarry |
+| l160 | Sephek Kaltro | enemy_of | Claude Ambere | stated | no | stabbed him in the back |
+| l163 | Cerric Vanya'elen | knows (wary) | Belleros Stormgrace | stated | no | argue over attuning to the icy blade |
+| l164 | Oyami Nartok | knows (friendly) | Belleros Stormgrace | stated | no | respect and a promise of safe passage |
+| l165 | Oyami Nartok | knows | Mjenir | inferred | no | sends Okthandom to the seer |
+| l167 | Knights of the Black Sword | knows (devoted) | Levistus | stated | no | cultists of Levistus |
+| l170 | Ice Troll | enemy_of | The Minotaur captain | stated | no | killed him and wrecked his ship |
+| l174 | The ones who came for the tome | enemy_of | Cerric Vanya'elen | inferred | no | 'they are coming'; unknown |
+| l175 | The ones who came for the tome | enemy_of | Wit | inferred | no |  |
 
-### Things (23)
+### Things (20)
 
 | id | from | tie | to | tier | must find | note |
 |---|---|---|---|---|---|---|
@@ -132,15 +132,12 @@ What the graph should hold after the sample lore document is read. Names come fr
 | l094 | The party | owns | Lantern of Greater Tracking | stated | yes | found in the mine |
 | l095 | Cerric Vanya'elen | carries | Psi crystal | stated | yes | attuned; gives telepathy |
 | l097 | Cerric Vanya'elen | carries | Wand of Conducting | stated | no | given by Okthandom |
-| l098 | Cerric Vanya'elen | carries | Wyvern poison | stated | no |  |
-| l099 | The party | owns | Heart of chardalyn | stated | no | found by Claude |
-| l100 | The party | owns | Dog sleds | stated | no |  |
-| l101 | Jebidiah | owns | Dog sleds | stated | no | provided them |
-| l103 | The party | owns | Explorer's League journal | stated | no |  |
-| l104 | Fizzlebomb | owns | Aurora's Wind | stated | yes | 'Fizzlebomb's ship'; the owner flagged this as missing |
-| l106 | Veron Braig | owns | The Blue Clam | stated | yes |  |
-| l113 | The ghost | owns | Penolopi | stated | yes | its pet plant |
-| l120 | Xardorok Sunblight | owns | Chardalyn shipment | inferred | no | meant for him |
+| l098 | The party | owns | Heart of chardalyn | stated | no | found by Claude |
+| l100 | The party | owns | Explorer's League journal | stated | no |  |
+| l101 | Fizzlebomb | owns | Aurora's Wind | stated | yes | 'Fizzlebomb's ship'; the owner flagged this as missing |
+| l103 | Veron Braig | owns | The Blue Clam | stated | yes |  |
+| l110 | The ghost | owns | Penolopi | stated | yes | its pet plant |
+| l117 | Xardorok Sunblight | owns | Chardalyn shipment | inferred | no | meant for him |
 
 ### Places and other ties (73)
 
@@ -170,55 +167,55 @@ What the graph should hold after the sample lore document is read. Names come fr
 | l082 | White Lady Inn | in | Easthaven | stated | yes |  |
 | l083 | The Wet Trout | in | Easthaven | stated | yes |  |
 | l096 | Psi crystal | was_kept_in | The Beautiful Mine | stated | no | found there, then taken by Cerric: the place is history, Cerric carries it now |
-| l102 | Jebidiah | works_in | Targos | stated | no |  |
-| l105 | Fizzlebomb | last_seen_in | Maer Dualdon | stated | no |  |
-| l107 | Veron Braig | works_in | The Blue Clam | stated | yes |  |
-| l108 | The Blue Clam | in | Termalaine | stated | yes |  |
-| l110 | The Beautiful Mine | in | Termalaine | stated | yes |  |
-| l111 | Bruni Stonewake | works_in | The Beautiful Mine | stated | no | a miner |
-| l112 | Trex | associate | The ghost | stated | yes | possessed by it |
-| l114 | Trex | last_seen_in | The Beautiful Mine | stated | no |  |
-| l115 | Grek | last_seen_in | The Beautiful Mine | stated | no |  |
-| l123 | Dzaan | last_seen_in | Easthaven | stated | no |  |
-| l124 | Arveiaturace | associate | Meltharond | stated | yes | his corpse rides on her saddle |
-| l125 | Arveiaturace | lives_in | Reghed Glacier | stated | no | lair |
-| l126 | Arveiaturace | last_seen_in | Sea of Moving Ice | stated | no | hunts there |
-| l127 | Ythryn | in | Reghed Glacier | stated | yes |  |
-| l128 | Caves of Hunger | in | Reghed Glacier | stated | yes |  |
-| l129 | Skytower Shelter | in | Spine of the World | inferred | no |  |
-| l131 | Zhentarim | works_in | Targos | stated | no |  |
-| l133 | Blackiron Blades | in | Bryn Shander | stated | no |  |
-| l135 | The Caer | in | Caer-Dineval | stated | yes |  |
-| l138 | Roark | works_in | The Uphill Climb | stated | yes |  |
-| l139 | The Uphill Climb | in | Caer-Dineval | stated | yes |  |
-| l140 | The Lucky Liar | in | Lonelywood | stated | yes |  |
-| l141 | Three Flags Sailing | in | Targos | stated | yes |  |
-| l142 | Clan Battlehammer | works_in | Kelvin's Cairn | stated | no | near its foothills |
-| l143 | Kelvin's Cairn | in | Icewind Dale | stated | no |  |
-| l144 | Maer Dualdon | in | Icewind Dale | stated | no |  |
-| l145 | Eastway Road | in | Icewind Dale | inferred | no |  |
-| l146 | Eastway Road | associate | Bryn Shander | stated | no | the road joins it to Easthaven |
-| l147 | Eastway Road | associate | Easthaven | stated | no | the road joins it to Bryn Shander |
-| l148 | Targos | in | Ten-Towns | stated | yes |  |
-| l149 | Bryn Shander | in | Ten-Towns | stated | yes |  |
-| l150 | Easthaven | in | Ten-Towns | stated | yes |  |
-| l151 | Termalaine | in | Ten-Towns | stated | yes |  |
-| l152 | Bremen | in | Ten-Towns | stated | yes |  |
-| l153 | Good Mead | in | Ten-Towns | stated | yes |  |
-| l154 | Caer-Dineval | in | Ten-Towns | stated | yes |  |
-| l155 | Caer-Konig | in | Ten-Towns | stated | yes |  |
-| l156 | Lonelywood | in | Ten-Towns | stated | yes |  |
-| l157 | Dougan's Hole | in | Ten-Towns | stated | yes |  |
-| l158 | Ten-Towns | in | Icewind Dale | stated | yes |  |
-| l159 | Auril the Frostmaiden | associate | Icewind Dale | stated | yes | casts the Everlasting Rime over it |
-| l160 | Ten-Towns | associate | Auril the Frostmaiden | stated | no | pay tribute to her |
-| l161 | Okthandom Korran | last_seen_in | Icewind Dale | inferred | no |  |
-| l164 | Arcane Brotherhood | associate | Psi crystal | stated | no | they may want it |
-| l165 | Duergar of Xardorok | associate | Psi crystal | stated | no | they track the party through it |
-| l169 | Okthandom Korran | associate | Mjenir | stated | no | told to seek the seer |
-| l171 | Spires of the Morning | associate | Lathander | stated | no | a temple to him |
-| l172 | Ice Troll | last_seen_in | Maer Dualdon | stated | no |  |
-| l176 | Thorin | works_in | The Beautiful Mine | stated | no | one of the workers |
+| l099 | Jebidiah | works_in | Targos | stated | no |  |
+| l102 | Fizzlebomb | last_seen_in | Maer Dualdon | stated | no |  |
+| l104 | Veron Braig | works_in | The Blue Clam | stated | yes |  |
+| l105 | The Blue Clam | in | Termalaine | stated | yes |  |
+| l107 | The Beautiful Mine | in | Termalaine | stated | yes |  |
+| l108 | Bruni Stonewake | works_in | The Beautiful Mine | stated | no | a miner |
+| l109 | Trex | associate | The ghost | stated | yes | possessed by it |
+| l111 | Trex | last_seen_in | The Beautiful Mine | stated | no |  |
+| l112 | Grek | last_seen_in | The Beautiful Mine | stated | no |  |
+| l120 | Dzaan | last_seen_in | Easthaven | stated | no |  |
+| l121 | Arveiaturace | associate | Meltharond | stated | yes | his corpse rides on her saddle |
+| l122 | Arveiaturace | lives_in | Reghed Glacier | stated | no | lair |
+| l123 | Arveiaturace | last_seen_in | Sea of Moving Ice | stated | no | hunts there |
+| l124 | Ythryn | in | Reghed Glacier | stated | yes |  |
+| l125 | Caves of Hunger | in | Reghed Glacier | stated | yes |  |
+| l126 | Skytower Shelter | in | Spine of the World | inferred | no |  |
+| l128 | Zhentarim | works_in | Targos | stated | no |  |
+| l130 | Blackiron Blades | in | Bryn Shander | stated | no |  |
+| l132 | The Caer | in | Caer-Dineval | stated | yes |  |
+| l135 | Roark | works_in | The Uphill Climb | stated | yes |  |
+| l136 | The Uphill Climb | in | Caer-Dineval | stated | yes |  |
+| l137 | The Lucky Liar | in | Lonelywood | stated | yes |  |
+| l138 | Three Flags Sailing | in | Targos | stated | yes |  |
+| l139 | Clan Battlehammer | works_in | Kelvin's Cairn | stated | no | near its foothills |
+| l140 | Kelvin's Cairn | in | Icewind Dale | stated | no |  |
+| l141 | Maer Dualdon | in | Icewind Dale | stated | no |  |
+| l142 | Eastway Road | in | Icewind Dale | inferred | no |  |
+| l143 | Eastway Road | associate | Bryn Shander | stated | no | the road joins it to Easthaven |
+| l144 | Eastway Road | associate | Easthaven | stated | no | the road joins it to Bryn Shander |
+| l145 | Targos | in | Ten-Towns | stated | yes |  |
+| l146 | Bryn Shander | in | Ten-Towns | stated | yes |  |
+| l147 | Easthaven | in | Ten-Towns | stated | yes |  |
+| l148 | Termalaine | in | Ten-Towns | stated | yes |  |
+| l149 | Bremen | in | Ten-Towns | stated | yes |  |
+| l150 | Good Mead | in | Ten-Towns | stated | yes |  |
+| l151 | Caer-Dineval | in | Ten-Towns | stated | yes |  |
+| l152 | Caer-Konig | in | Ten-Towns | stated | yes |  |
+| l153 | Lonelywood | in | Ten-Towns | stated | yes |  |
+| l154 | Dougan's Hole | in | Ten-Towns | stated | yes |  |
+| l155 | Ten-Towns | in | Icewind Dale | stated | yes |  |
+| l156 | Auril the Frostmaiden | associate | Icewind Dale | stated | yes | casts the Everlasting Rime over it |
+| l157 | Ten-Towns | associate | Auril the Frostmaiden | stated | no | pay tribute to her |
+| l158 | Okthandom Korran | last_seen_in | Icewind Dale | inferred | no |  |
+| l161 | Arcane Brotherhood | associate | Psi crystal | stated | no | they may want it |
+| l162 | Duergar of Xardorok | associate | Psi crystal | stated | no | they track the party through it |
+| l166 | Okthandom Korran | associate | Mjenir | stated | no | told to seek the seer |
+| l168 | Spires of the Morning | associate | Lathander | stated | no | a temple to him |
+| l169 | Ice Troll | last_seen_in | Maer Dualdon | stated | no |  |
+| l173 | Thorin | works_in | The Beautiful Mine | stated | no | one of the workers |
 
 ## Events
 
@@ -392,7 +389,7 @@ What the graph should hold after the sample lore document is read. Names come fr
 | The Caer |  |  |
 | Blackiron Blades |  |  |
 
-### Items (16)
+### Items (14)
 
 | name | also called | note |
 |---|---|---|
@@ -405,13 +402,11 @@ What the graph should hold after the sample lore document is read. Names come fr
 | Lantern of Greater Tracking |  |  |
 | Psi crystal |  | gives telepathy to its attuned owner |
 | Wand of Conducting |  |  |
-| Wyvern poison |  |  |
 | Heart of chardalyn |  |  |
 | Sparkwalker's tome |  | locked tome Cerric saved |
 | Explorer's League journal |  | found on the ferry |
 | Oyami's pipe |  | calming magical pipe |
-| Chardalyn shipment |  | 1,500 pounds on the ferry |
-| Dog sleds |  | two sleds and eight dogs |
+| Chardalyn shipment |  | one consignment on one ferry, meant for Xardorok: the plot turns on it |
 
 ## Must not find
 
@@ -423,6 +418,7 @@ What the graph should hold after the sample lore document is read. Names come fr
 - the book-cover blurb at the top is not the campaign's own story
 - Vellynne Harpell and Nass Lantomir appear only in a proper-names list: names, but no invented ties
 - the Dzaan Red Wizard 'Arcane Brotherhood' tie is stated; do not widen it to the whole party
+- only unique items are tracked (#3373): no entry or tie for Wyvern poison (a vial of poison) or the two dog sleds and eight dogs (ordinary gear and a quantity); the lore does not single them out
 
 ## Waits for a later slice
 

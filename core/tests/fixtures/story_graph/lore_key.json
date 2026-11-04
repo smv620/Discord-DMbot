@@ -883,12 +883,6 @@
    "note": ""
   },
   {
-   "name": "Wyvern poison",
-   "kind": "item",
-   "aliases": [],
-   "note": ""
-  },
-  {
    "name": "Heart of chardalyn",
    "kind": "item",
    "aliases": [],
@@ -916,13 +910,7 @@
    "name": "Chardalyn shipment",
    "kind": "item",
    "aliases": [],
-   "note": "1,500 pounds on the ferry"
-  },
-  {
-   "name": "Dog sleds",
-   "kind": "item",
-   "aliases": [],
-   "note": "two sleds and eight dogs"
+   "note": "one consignment on one ferry, meant for Xardorok: the plot turns on it"
   }
  ],
  "pairs": [
@@ -1778,14 +1766,6 @@
   },
   {
    "id": "l098",
-   "a": "Cerric Vanya'elen",
-   "relation": "carries",
-   "b": "Wyvern poison",
-   "tier": "stated",
-   "must_find": false
-  },
-  {
-   "id": "l099",
    "a": "The party",
    "relation": "owns",
    "b": "Heart of chardalyn",
@@ -1794,24 +1774,7 @@
    "note": "found by Claude"
   },
   {
-   "id": "l100",
-   "a": "The party",
-   "relation": "owns",
-   "b": "Dog sleds",
-   "tier": "stated",
-   "must_find": false
-  },
-  {
-   "id": "l101",
-   "a": "Jebidiah",
-   "relation": "owns",
-   "b": "Dog sleds",
-   "tier": "stated",
-   "must_find": false,
-   "note": "provided them"
-  },
-  {
-   "id": "l102",
+   "id": "l099",
    "a": "Jebidiah",
    "relation": "works_in",
    "b": "Targos",
@@ -1819,7 +1782,7 @@
    "must_find": false
   },
   {
-   "id": "l103",
+   "id": "l100",
    "a": "The party",
    "relation": "owns",
    "b": "Explorer's League journal",
@@ -1827,7 +1790,7 @@
    "must_find": false
   },
   {
-   "id": "l104",
+   "id": "l101",
    "a": "Fizzlebomb",
    "relation": "owns",
    "b": "Aurora's Wind",
@@ -1836,7 +1799,7 @@
    "note": "'Fizzlebomb's ship'; the owner flagged this as missing"
   },
   {
-   "id": "l105",
+   "id": "l102",
    "a": "Fizzlebomb",
    "relation": "last_seen_in",
    "b": "Maer Dualdon",
@@ -1844,7 +1807,7 @@
    "must_find": false
   },
   {
-   "id": "l106",
+   "id": "l103",
    "a": "Veron Braig",
    "relation": "owns",
    "b": "The Blue Clam",
@@ -1852,7 +1815,7 @@
    "must_find": true
   },
   {
-   "id": "l107",
+   "id": "l104",
    "a": "Veron Braig",
    "relation": "works_in",
    "b": "The Blue Clam",
@@ -1860,7 +1823,7 @@
    "must_find": true
   },
   {
-   "id": "l108",
+   "id": "l105",
    "a": "The Blue Clam",
    "relation": "in",
    "b": "Termalaine",
@@ -1868,7 +1831,7 @@
    "must_find": true
   },
   {
-   "id": "l109",
+   "id": "l106",
    "a": "Veron Braig",
    "relation": "knows",
    "b": "Craig the Gnome",
@@ -1878,7 +1841,7 @@
    "note": "he wants good reviews"
   },
   {
-   "id": "l110",
+   "id": "l107",
    "a": "The Beautiful Mine",
    "relation": "in",
    "b": "Termalaine",
@@ -1886,7 +1849,7 @@
    "must_find": true
   },
   {
-   "id": "l111",
+   "id": "l108",
    "a": "Bruni Stonewake",
    "relation": "works_in",
    "b": "The Beautiful Mine",
@@ -1895,7 +1858,7 @@
    "note": "a miner"
   },
   {
-   "id": "l112",
+   "id": "l109",
    "a": "Trex",
    "relation": "associate",
    "b": "The ghost",
@@ -1904,7 +1867,7 @@
    "note": "possessed by it"
   },
   {
-   "id": "l113",
+   "id": "l110",
    "a": "The ghost",
    "relation": "owns",
    "b": "Penolopi",
@@ -1913,7 +1876,7 @@
    "note": "its pet plant"
   },
   {
-   "id": "l114",
+   "id": "l111",
    "a": "Trex",
    "relation": "last_seen_in",
    "b": "The Beautiful Mine",
@@ -1921,7 +1884,7 @@
    "must_find": false
   },
   {
-   "id": "l115",
+   "id": "l112",
    "a": "Grek",
    "relation": "last_seen_in",
    "b": "The Beautiful Mine",
@@ -1929,7 +1892,7 @@
    "must_find": false
   },
   {
-   "id": "l116",
+   "id": "l113",
    "a": "Fizzlebomb",
    "relation": "knows",
    "b": "Cerric Vanya'elen",
@@ -1939,7 +1902,7 @@
    "note": "thrown in the water; he pleaded for a reason"
   },
   {
-   "id": "l117",
+   "id": "l114",
    "a": "Xardorok Sunblight",
    "relation": "leads",
    "b": "Duergar of Xardorok",
@@ -1947,7 +1910,7 @@
    "must_find": true
   },
   {
-   "id": "l118",
+   "id": "l115",
    "a": "Duergar of Xardorok",
    "relation": "enemy_of",
    "b": "The party",
@@ -1956,7 +1919,7 @@
    "note": "they hunt the party"
   },
   {
-   "id": "l119",
+   "id": "l116",
    "a": "Duergar of Xardorok",
    "relation": "knows",
    "b": "Deep Duerra",
@@ -1966,7 +1929,7 @@
    "note": "worship her"
   },
   {
-   "id": "l120",
+   "id": "l117",
    "a": "Xardorok Sunblight",
    "relation": "owns",
    "b": "Chardalyn shipment",
@@ -1975,7 +1938,7 @@
    "note": "meant for him"
   },
   {
-   "id": "l121",
+   "id": "l118",
    "a": "Dzaan",
    "relation": "member",
    "b": "Red Wizards of Thay",
@@ -1983,7 +1946,7 @@
    "must_find": true
   },
   {
-   "id": "l122",
+   "id": "l119",
    "a": "Dzaan",
    "relation": "member",
    "b": "Arcane Brotherhood",
@@ -1991,7 +1954,7 @@
    "must_find": true
   },
   {
-   "id": "l123",
+   "id": "l120",
    "a": "Dzaan",
    "relation": "last_seen_in",
    "b": "Easthaven",
@@ -1999,7 +1962,7 @@
    "must_find": false
   },
   {
-   "id": "l124",
+   "id": "l121",
    "a": "Arveiaturace",
    "relation": "associate",
    "b": "Meltharond",
@@ -2008,7 +1971,7 @@
    "note": "his corpse rides on her saddle"
   },
   {
-   "id": "l125",
+   "id": "l122",
    "a": "Arveiaturace",
    "relation": "lives_in",
    "b": "Reghed Glacier",
@@ -2017,7 +1980,7 @@
    "note": "lair"
   },
   {
-   "id": "l126",
+   "id": "l123",
    "a": "Arveiaturace",
    "relation": "last_seen_in",
    "b": "Sea of Moving Ice",
@@ -2026,7 +1989,7 @@
    "note": "hunts there"
   },
   {
-   "id": "l127",
+   "id": "l124",
    "a": "Ythryn",
    "relation": "in",
    "b": "Reghed Glacier",
@@ -2034,7 +1997,7 @@
    "must_find": true
   },
   {
-   "id": "l128",
+   "id": "l125",
    "a": "Caves of Hunger",
    "relation": "in",
    "b": "Reghed Glacier",
@@ -2042,7 +2005,7 @@
    "must_find": true
   },
   {
-   "id": "l129",
+   "id": "l126",
    "a": "Skytower Shelter",
    "relation": "in",
    "b": "Spine of the World",
@@ -2050,7 +2013,7 @@
    "must_find": false
   },
   {
-   "id": "l130",
+   "id": "l127",
    "a": "Naerth Maxildanarr",
    "relation": "leads",
    "b": "Zhentarim",
@@ -2058,7 +2021,7 @@
    "must_find": true
   },
   {
-   "id": "l131",
+   "id": "l128",
    "a": "Zhentarim",
    "relation": "works_in",
    "b": "Targos",
@@ -2066,7 +2029,7 @@
    "must_find": false
   },
   {
-   "id": "l132",
+   "id": "l129",
    "a": "Markham Southwell",
    "relation": "leads",
    "b": "Bryn Shander guards",
@@ -2074,7 +2037,7 @@
    "must_find": true
   },
   {
-   "id": "l133",
+   "id": "l130",
    "a": "Blackiron Blades",
    "relation": "in",
    "b": "Bryn Shander",
@@ -2082,7 +2045,7 @@
    "must_find": false
   },
   {
-   "id": "l134",
+   "id": "l131",
    "a": "Knights of the Black Sword",
    "relation": "leads",
    "b": "The Caer",
@@ -2091,7 +2054,7 @@
    "note": "they control the keep"
   },
   {
-   "id": "l135",
+   "id": "l132",
    "a": "The Caer",
    "relation": "in",
    "b": "Caer-Dineval",
@@ -2099,7 +2062,7 @@
    "must_find": true
   },
   {
-   "id": "l136",
+   "id": "l133",
    "a": "Kadroth",
    "relation": "member",
    "b": "Knights of the Black Sword",
@@ -2108,7 +2071,7 @@
    "note": "named as Black Sword cultists in the DM notes"
   },
   {
-   "id": "l137",
+   "id": "l134",
    "a": "Huarwar Mulphoon",
    "relation": "member",
    "b": "Knights of the Black Sword",
@@ -2117,7 +2080,7 @@
    "note": "named as Black Sword cultists in the DM notes"
   },
   {
-   "id": "l138",
+   "id": "l135",
    "a": "Roark",
    "relation": "works_in",
    "b": "The Uphill Climb",
@@ -2125,7 +2088,7 @@
    "must_find": true
   },
   {
-   "id": "l139",
+   "id": "l136",
    "a": "The Uphill Climb",
    "relation": "in",
    "b": "Caer-Dineval",
@@ -2133,7 +2096,7 @@
    "must_find": true
   },
   {
-   "id": "l140",
+   "id": "l137",
    "a": "The Lucky Liar",
    "relation": "in",
    "b": "Lonelywood",
@@ -2141,7 +2104,7 @@
    "must_find": true
   },
   {
-   "id": "l141",
+   "id": "l138",
    "a": "Three Flags Sailing",
    "relation": "in",
    "b": "Targos",
@@ -2149,7 +2112,7 @@
    "must_find": true
   },
   {
-   "id": "l142",
+   "id": "l139",
    "a": "Clan Battlehammer",
    "relation": "works_in",
    "b": "Kelvin's Cairn",
@@ -2158,7 +2121,7 @@
    "note": "near its foothills"
   },
   {
-   "id": "l143",
+   "id": "l140",
    "a": "Kelvin's Cairn",
    "relation": "in",
    "b": "Icewind Dale",
@@ -2166,7 +2129,7 @@
    "must_find": false
   },
   {
-   "id": "l144",
+   "id": "l141",
    "a": "Maer Dualdon",
    "relation": "in",
    "b": "Icewind Dale",
@@ -2174,7 +2137,7 @@
    "must_find": false
   },
   {
-   "id": "l145",
+   "id": "l142",
    "a": "Eastway Road",
    "relation": "in",
    "b": "Icewind Dale",
@@ -2182,7 +2145,7 @@
    "must_find": false
   },
   {
-   "id": "l146",
+   "id": "l143",
    "a": "Eastway Road",
    "relation": "associate",
    "b": "Bryn Shander",
@@ -2191,7 +2154,7 @@
    "note": "the road joins it to Easthaven"
   },
   {
-   "id": "l147",
+   "id": "l144",
    "a": "Eastway Road",
    "relation": "associate",
    "b": "Easthaven",
@@ -2200,7 +2163,7 @@
    "note": "the road joins it to Bryn Shander"
   },
   {
-   "id": "l148",
+   "id": "l145",
    "a": "Targos",
    "relation": "in",
    "b": "Ten-Towns",
@@ -2208,7 +2171,7 @@
    "must_find": true
   },
   {
-   "id": "l149",
+   "id": "l146",
    "a": "Bryn Shander",
    "relation": "in",
    "b": "Ten-Towns",
@@ -2216,7 +2179,7 @@
    "must_find": true
   },
   {
-   "id": "l150",
+   "id": "l147",
    "a": "Easthaven",
    "relation": "in",
    "b": "Ten-Towns",
@@ -2224,7 +2187,7 @@
    "must_find": true
   },
   {
-   "id": "l151",
+   "id": "l148",
    "a": "Termalaine",
    "relation": "in",
    "b": "Ten-Towns",
@@ -2232,7 +2195,7 @@
    "must_find": true
   },
   {
-   "id": "l152",
+   "id": "l149",
    "a": "Bremen",
    "relation": "in",
    "b": "Ten-Towns",
@@ -2240,7 +2203,7 @@
    "must_find": true
   },
   {
-   "id": "l153",
+   "id": "l150",
    "a": "Good Mead",
    "relation": "in",
    "b": "Ten-Towns",
@@ -2248,7 +2211,7 @@
    "must_find": true
   },
   {
-   "id": "l154",
+   "id": "l151",
    "a": "Caer-Dineval",
    "relation": "in",
    "b": "Ten-Towns",
@@ -2256,7 +2219,7 @@
    "must_find": true
   },
   {
-   "id": "l155",
+   "id": "l152",
    "a": "Caer-Konig",
    "relation": "in",
    "b": "Ten-Towns",
@@ -2264,7 +2227,7 @@
    "must_find": true
   },
   {
-   "id": "l156",
+   "id": "l153",
    "a": "Lonelywood",
    "relation": "in",
    "b": "Ten-Towns",
@@ -2272,7 +2235,7 @@
    "must_find": true
   },
   {
-   "id": "l157",
+   "id": "l154",
    "a": "Dougan's Hole",
    "relation": "in",
    "b": "Ten-Towns",
@@ -2280,7 +2243,7 @@
    "must_find": true
   },
   {
-   "id": "l158",
+   "id": "l155",
    "a": "Ten-Towns",
    "relation": "in",
    "b": "Icewind Dale",
@@ -2288,7 +2251,7 @@
    "must_find": true
   },
   {
-   "id": "l159",
+   "id": "l156",
    "a": "Auril the Frostmaiden",
    "relation": "associate",
    "b": "Icewind Dale",
@@ -2297,7 +2260,7 @@
    "note": "casts the Everlasting Rime over it"
   },
   {
-   "id": "l160",
+   "id": "l157",
    "a": "Ten-Towns",
    "relation": "associate",
    "b": "Auril the Frostmaiden",
@@ -2306,7 +2269,7 @@
    "note": "pay tribute to her"
   },
   {
-   "id": "l161",
+   "id": "l158",
    "a": "Okthandom Korran",
    "relation": "last_seen_in",
    "b": "Icewind Dale",
@@ -2314,7 +2277,7 @@
    "must_find": false
   },
   {
-   "id": "l162",
+   "id": "l159",
    "a": "The party",
    "relation": "enemy_of",
    "b": "Sephek Kaltro",
@@ -2323,7 +2286,7 @@
    "note": "the quarry"
   },
   {
-   "id": "l163",
+   "id": "l160",
    "a": "Sephek Kaltro",
    "relation": "enemy_of",
    "b": "Claude Ambere",
@@ -2332,7 +2295,7 @@
    "note": "stabbed him in the back"
   },
   {
-   "id": "l164",
+   "id": "l161",
    "a": "Arcane Brotherhood",
    "relation": "associate",
    "b": "Psi crystal",
@@ -2341,7 +2304,7 @@
    "note": "they may want it"
   },
   {
-   "id": "l165",
+   "id": "l162",
    "a": "Duergar of Xardorok",
    "relation": "associate",
    "b": "Psi crystal",
@@ -2350,7 +2313,7 @@
    "note": "they track the party through it"
   },
   {
-   "id": "l166",
+   "id": "l163",
    "a": "Cerric Vanya'elen",
    "relation": "knows",
    "b": "Belleros Stormgrace",
@@ -2360,7 +2323,7 @@
    "note": "argue over attuning to the icy blade"
   },
   {
-   "id": "l167",
+   "id": "l164",
    "a": "Oyami Nartok",
    "relation": "knows",
    "b": "Belleros Stormgrace",
@@ -2370,7 +2333,7 @@
    "note": "respect and a promise of safe passage"
   },
   {
-   "id": "l168",
+   "id": "l165",
    "a": "Oyami Nartok",
    "relation": "knows",
    "b": "Mjenir",
@@ -2379,7 +2342,7 @@
    "note": "sends Okthandom to the seer"
   },
   {
-   "id": "l169",
+   "id": "l166",
    "a": "Okthandom Korran",
    "relation": "associate",
    "b": "Mjenir",
@@ -2388,7 +2351,7 @@
    "note": "told to seek the seer"
   },
   {
-   "id": "l170",
+   "id": "l167",
    "a": "Knights of the Black Sword",
    "relation": "knows",
    "b": "Levistus",
@@ -2398,7 +2361,7 @@
    "note": "cultists of Levistus"
   },
   {
-   "id": "l171",
+   "id": "l168",
    "a": "Spires of the Morning",
    "relation": "associate",
    "b": "Lathander",
@@ -2407,7 +2370,7 @@
    "note": "a temple to him"
   },
   {
-   "id": "l172",
+   "id": "l169",
    "a": "Ice Troll",
    "relation": "last_seen_in",
    "b": "Maer Dualdon",
@@ -2415,7 +2378,7 @@
    "must_find": false
   },
   {
-   "id": "l173",
+   "id": "l170",
    "a": "Ice Troll",
    "relation": "enemy_of",
    "b": "The Minotaur captain",
@@ -2424,7 +2387,7 @@
    "note": "killed him and wrecked his ship"
   },
   {
-   "id": "l174",
+   "id": "l171",
    "a": "Shafina Fa'ertenya",
    "relation": "leads",
    "b": "Shafina's guild",
@@ -2433,7 +2396,7 @@
    "note": "a guild leader"
   },
   {
-   "id": "l175",
+   "id": "l172",
    "a": "Brewner",
    "relation": "parent_of",
    "b": "Brewner's daughter",
@@ -2441,7 +2404,7 @@
    "must_find": false
   },
   {
-   "id": "l176",
+   "id": "l173",
    "a": "Thorin",
    "relation": "works_in",
    "b": "The Beautiful Mine",
@@ -2450,7 +2413,7 @@
    "note": "one of the workers"
   },
   {
-   "id": "l177",
+   "id": "l174",
    "a": "The ones who came for the tome",
    "relation": "enemy_of",
    "b": "Cerric Vanya'elen",
@@ -2459,7 +2422,7 @@
    "note": "'they are coming'; unknown"
   },
   {
-   "id": "l178",
+   "id": "l175",
    "a": "The ones who came for the tome",
    "relation": "enemy_of",
    "b": "Wit",
@@ -2552,6 +2515,7 @@
   "the instructions block (purpose, response style, transcript corrections) is about how to write a summary, not about the story",
   "the book-cover blurb at the top is not the campaign's own story",
   "Vellynne Harpell and Nass Lantomir appear only in a proper-names list: names, but no invented ties",
-  "the Dzaan Red Wizard 'Arcane Brotherhood' tie is stated; do not widen it to the whole party"
+  "the Dzaan Red Wizard 'Arcane Brotherhood' tie is stated; do not widen it to the whole party",
+  "only unique items are tracked (#3373): no entry or tie for Wyvern poison (a vial of poison) or the two dog sleds and eight dogs (ordinary gear and a quantity); the lore does not single them out"
  ]
 }
