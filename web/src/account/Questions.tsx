@@ -26,20 +26,30 @@ export function oldestFirst(kinds: QuestionKind[]): QuestionKind[] {
     .sort((a, b) => (a.oldest ?? Number.MAX_SAFE_INTEGER) - (b.oldest ?? Number.MAX_SAFE_INTEGER));
 }
 
+/** Kinds this page has no words for are one line, "Other questions", with their counts added up. */
+export function mergeUnknown(kinds: QuestionKind[]): QuestionKind[] {
+  const known = kinds.filter((k) => Object.hasOwn(words.kinds, k.kind));
+  const unknown = kinds.filter((k) => !Object.hasOwn(words.kinds, k.kind) && k.count > 0);
+  if (unknown.length === 0) return known;
+  const oldest = unknown.map((k) => k.oldest).filter((t): t is number => t !== null);
+  return [...known, { kind: "other", count: unknown.reduce((n, k) => n + k.count, 0), oldest: oldest.length ? Math.min(...oldest) : null }];
+}
+
 function Campaign({ campaign, serverNow }: { campaign: QuestionCampaign; serverNow: number }) {
-  const kinds = oldestFirst(campaign.kinds);
-  const old = campaign.countedAt !== null && serverNow - campaign.countedAt > CATCHING_UP_SECONDS;
+  const kinds = oldestFirst(mergeUnknown(campaign.kinds));
+  // The bot has never counted this campaign (null) or not lately: the numbers can't be vouched for, so there is no all-clear.
+  const old = campaign.countedAt === null || serverNow - campaign.countedAt > CATCHING_UP_SECONDS;
   return (
     <section class="panel stack" aria-labelledby={`q-${campaign.ref}`}>
       <h2 id={`q-${campaign.ref}`}>
         <a href={campaignHref(campaign.ref)}>{campaign.name}</a>
       </h2>
       {old && <p class="small muted" role="status">{words.catchingUp}</p>}
-      {campaign.total === 0 || kinds.length === 0 ? (
-        <p>{words.nothing}</p>
+      {kinds.length === 0 ? (
+        campaign.countedAt === null ? null : <p>{words.nothing}</p>
       ) : (
         <>
-          <p>{words.campaignLine(campaign.name, campaign.total)}</p>
+          <p>{words.campaignLine(kinds.reduce((n, k) => n + k.count, 0))}</p>
           <ul class="stack">
             {kinds.map((k) => {
               const w = kindWords(k.kind);
@@ -47,7 +57,7 @@ function Campaign({ campaign, serverNow }: { campaign: QuestionCampaign; serverN
                 <li key={k.kind} class="stack">
                   <strong>{words.kindLine(w.label, k.count)}</strong>
                   {w.how === "link" && w.to ? (
-                    <a class="small" href={href(campaign.ref, w.to)}>
+                    <a class="button secondary" href={href(campaign.ref, w.to)}>
                       {w.link}
                     </a>
                   ) : (
@@ -101,7 +111,7 @@ export default function Questions({ api }: { api: AccountApi }) {
       {data.campaigns.map((c) => (
         <Campaign key={c.ref} campaign={c} serverNow={data.serverNow} />
       ))}
-      <p class="small muted">{words.oldestFirst}</p>
+      {data.campaigns.some((c) => oldestFirst(c.kinds).some((k) => kindWords(k.kind).how === "discord")) && <p class="small muted">{words.discordWhere}</p>}
     </div>
   );
 }

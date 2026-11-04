@@ -11,7 +11,10 @@ import { type AccountApi } from "./api";
 export default function QuestionsLink({ api, show = true }: { api: AccountApi; show?: boolean }) {
   const [total, setTotal] = useState(0);
   useEffect(() => {
-    if (!QUESTIONS_LIVE || !show || !api.questionsTotal) return;
+    if (!QUESTIONS_LIVE || !show || !api.questionsTotal) {
+      setTotal(0); // a badge from an earlier look must not outlive its reason
+      return;
+    }
     let live = true;
     api
       .questionsTotal()

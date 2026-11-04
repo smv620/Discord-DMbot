@@ -2546,13 +2546,13 @@ export interface AccountApi {
   confirmUndo?(ref: string, answer: string): Promise<{ answer: string }>;
   /** One look at an "Add all" or Undo answer (#3222). */
   confirmAnswer?(ref: string, answer: string): Promise<ConfirmAnswer>;
-  /** What waits for the DM, and one answer to it (#2635, #2652). `answerWaiting` resolves with how many
-   * connections a Keep all kept, when the API says. Missing from an API older than that. */
   /** Every question DMbot waits on, for each campaign the person is a game master of (#3438): counts by kind, written
    * by the bot (#3435). DM only; missing from an API older than that. */
   myQuestions?(): Promise<QuestionCounts>;
   /** Just the total, for the badge on the links (#3438); fails to no badge. */
   questionsTotal?(): Promise<{ total: number }>;
+  /** What waits for the DM, and one answer to it (#2635, #2652). `answerWaiting` resolves with how many
+   * connections a Keep all kept, when the API says. Missing from an API older than that. */
   webWaiting?(ref: string): Promise<Waiting>;
   /** `onLook` hears how the wait stands each time the page looks (#2921). */
   answerWaiting?(ref: string, answer: WaitingAnswer, onLook?: (look: WaitingLook) => void): Promise<{ kept?: number }>;
