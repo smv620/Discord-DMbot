@@ -62,7 +62,7 @@ import type {
   RuleSharingAnswer,
   RuleSharingChoice,
 } from "./api";
-import type { ImportClock, NameNameAnswerResult, NameGroupHint } from "./api";
+import type { ImportClock, NameAnswerResult, NameGroupHint } from "./api";
 import { ApiError, type HouseFileRequest, type HouseFileState, type LoreUpload, type RecapStyle, type RecapStyleAction, type WebLinkKind, type FixAnswer, type FixMode, type PlotIssue, type PlotMessage, type PlotProposal, type WaitingLook } from "./api";
 import { NAME_LIMIT } from "../content/names-words";
 import { MUSTS_LINE_CHARS, MUSTS_MAX_LINES } from "../content/recap-style-words";
@@ -3239,8 +3239,8 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         nameAnswers.set(key, { looks: 0, result });
       }
     },
-    async nameNameAnswerResult(ref, id) {
-      calls.push(`nameNameAnswerResult:${ref}:${id.slice(0, 1)}`);
+    async nameAnswerResult(ref, id) {
+      calls.push(`nameAnswerResult:${ref}:${id.slice(0, 1)}`);
       await reachable();
       signedIn();
       const entry = nameAnswers.get(`${ref}:${id}`);
