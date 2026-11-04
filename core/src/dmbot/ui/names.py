@@ -33,7 +33,10 @@ from dmbot.memory.models import (
     PROPOSED,
     REJECTED,
     Entity,
+    GroupHint,
+    GroupJoined,
     MemoryRuleError,
+    Written,
     lookup_key,
     name_key,
 )
@@ -1246,6 +1249,29 @@ class ChangeWordsForm(discord.ui.Modal, title="What is the whole name?"):
         await self.review.apply_words(interaction, self.entity_id, self.heard, self.name.value)
 
 
+class GroupNameForm(discord.ui.Modal, title="What is the group called?"):
+    """ "They're a group" (#3383, part 2): the DM names the group the listed names belong to."""
+
+    name: discord.ui.TextInput[GroupNameForm] = discord.ui.TextInput(
+        label="Group's name",
+        placeholder="For example: The Heroes of Waterdeep",
+        max_length=NAME_MAX,
+    )
+
+    def __init__(self, review: SuggestionReview, entity_id: str) -> None:
+        super().__init__(timeout=VIEW_TIMEOUT_S)
+        self.review = review
+        self.entity_id = entity_id
+
+    async def on_error(  # type: ignore[override]  # a form's has no item (discord.py)
+        self, interaction: discord.Interaction, error: Exception
+    ) -> None:
+        await _failed(interaction, error)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        await self.review.apply_group(interaction, self.entity_id, self.name.value)
+
+
 class WordsPicker(_Menu):
     """Up to three likely longer names for the DM to pick from (#2570), or to type their own."""
 
@@ -1304,6 +1330,8 @@ class SuggestionReview(_Menu):
         # names' ids), for ↩ Undo until the next answer.
         self.split_undo: tuple[int, str, str, list[str]] | None = None
         self.is_list = False  # the current one reads as a list of names
+        self.group: GroupHint | None = None  # a known group this list may be (#3383, part 2)
+        self.undo_kind = "split"  # what ↩ Undo takes back: "split" or "group"
         self.name = ""  # the current suggestion's name, for the picker on its card (#2937)
         self.spelled = ""  # the spelling, when the current one was spelled out at the table (#2168)
         self.fix_to = ""  # how someone spelled this pending suggestion, when it differs (#2168)
@@ -1343,8 +1371,9 @@ class SuggestionReview(_Menu):
         self.places = await self._places(interaction, campaign, memory, entity)
         self.entity_id = entity.id
         self.is_list = len(split_list(entity.name, dm=True)) > 1  # (the store checks it again)
+        self.group = await self._group_hint(campaign, memory, entity) if self.is_list else None
         self._buttons()
-        return suggestion_text(
+        text = suggestion_text(
             entity,
             len(self.queue),
             also=self.also,
@@ -1355,6 +1384,13 @@ class SuggestionReview(_Menu):
             places=self.places.text(),
             context=self._context(interaction, campaign, entity),
         )
+        if self.group is not None:  # say which group, so "Yes, that group" has a "that"
+            inside = _and([f"**{_md(logic.shorten(m, 40))}**" for m in self.group.members[:5]])
+            text += (
+                f"\n👥 Is this your group **{_md(logic.shorten(self.group.group_name, 60))}**? "
+                f"Already in it: {inside}. Yes adds this to it."
+            )
+        return text
 
     @staticmethod
     def _context(interaction: discord.Interaction, campaign: Campaign, entity: Entity) -> str:
@@ -1515,11 +1551,29 @@ class SuggestionReview(_Menu):
                     row=3,
                 )
             )
+        if self.is_list:  # the list may be one group (#3383, part 2)
+            if self.group is not None:
+                self.add_item(
+                    _Button(
+                        self._yes_group,
+                        label="👥 Yes, that group",
+                        style=discord.ButtonStyle.success,
+                        row=4,
+                    )
+                )
+            self.add_item(
+                _Button(
+                    self._make_group,
+                    label="👥 They're a group",
+                    style=discord.ButtonStyle.secondary,
+                    row=4,
+                )
+            )
         if self.split_undo is not None:  # until the next answer: the split can still be taken back
             self.add_item(
                 _Button(
                     self._undo_split,
-                    label="↩ Undo the split",
+                    label="↩ Undo the split" if self.undo_kind == "split" else "↩ Undo the group",
                     style=discord.ButtonStyle.secondary,
                     row=3,
                 )
@@ -1944,6 +1998,7 @@ class SuggestionReview(_Menu):
         self.queue[:0] = made  # the new names are asked next
         if written.batch is not None:
             self.split_undo = (written.batch, entity.name, entity.id, made)
+            self.undo_kind = "split"
         names = _and([f"**{_md(p)}**" for p in done.parts])
         held = _and([f"**{_md(p)}**" for p in done.joined]) if done.joined else ""
         extra = (
@@ -1951,6 +2006,108 @@ class SuggestionReview(_Menu):
         )
         await self._next(
             interaction, campaign, memory, note=f"✂️ OK, these are separate names: {names}.{extra}"
+        )
+
+    async def _group_hint(
+        self, campaign: Campaign, memory: MemoryStore, entity: Entity
+    ) -> GroupHint | None:
+        """The known group this list is most likely to be, if any (read only; none on a failure)."""
+        try:
+            found = await memory.group_hints(campaign.guild_id, campaign.id, entity.id)
+        except Exception:
+            log.exception("Couldn't look for a group a list of names may be")
+            return None
+        return found[0] if found else None
+
+    async def _yes_group(self, interaction: discord.Interaction) -> None:
+        """ "Yes, that group" (#3383, part 2): the list is another name of the group."""
+        current = await self._current(interaction)
+        if current is None or self.group is None:
+            return
+        campaign, memory, entity = current
+        if not sees_secrets(campaign, interaction.user.id):
+            await _tell(interaction, logic.NO_CAMPAIGN_ACCESS)
+            return
+        try:
+            written = await memory.join_group(
+                campaign.guild_id, campaign.id, entity.id, self.group.group_id, source=DM
+            )
+        except MemoryRuleError as exc:
+            await _tell(interaction, f"Couldn't add it to the group. {exc} Nothing was changed.")
+            return
+        await self._grouped(interaction, campaign, memory, entity, written)
+
+    async def _make_group(self, interaction: discord.Interaction) -> None:
+        """ "They're a group": no known group fits, so the DM names it."""
+        current = await self._current(interaction)
+        if current is None:
+            return
+        campaign, _, entity = current
+        if not sees_secrets(campaign, interaction.user.id):
+            await _tell(interaction, logic.NO_CAMPAIGN_ACCESS)
+            return
+        await interaction.response.send_modal(GroupNameForm(self, entity.id))
+
+    async def apply_group(
+        self, interaction: discord.Interaction, entity_id: str, group_name: str
+    ) -> None:
+        """The DM named the group (from `GroupNameForm`)."""
+        await _answer_first(interaction, in_place=True)
+        current = await self._current(interaction)
+        if current is None:
+            return
+        campaign, memory, entity = current
+        if entity.id != entity_id or not sees_secrets(campaign, interaction.user.id):
+            await _tell(interaction, GONE)
+            return
+        name = " ".join(group_name.split())
+        if not name:
+            await _tell(
+                interaction, "The group needs a name. Press 👥 They're a group and type it."
+            )
+            return
+        try:
+            written = await memory.make_group(
+                campaign.guild_id, campaign.id, entity.id, name, source=DM
+            )
+        except MemoryRuleError as exc:
+            await _tell(interaction, f"Couldn't make the group. {exc} Nothing was changed.")
+            return
+        await self._grouped(interaction, campaign, memory, entity, written)
+
+    async def _grouped(
+        self,
+        interaction: discord.Interaction,
+        campaign: Campaign,
+        memory: MemoryStore,
+        entity: Entity,
+        written: Written[GroupJoined],
+    ) -> None:
+        """After the list became a group: the parts that are new are asked next, and ↩ Undo."""
+        changed(interaction, campaign)
+        done = written.value
+        by_key = {lookup_key(e.name): e.id for e in await memory.entities(
+            campaign.guild_id, campaign.id, statuses=[PROPOSED]
+        )}  # fmt: skip
+        made = [by_key[k] for p in done.made if (k := lookup_key(p)) in by_key]
+        self.queue.pop(0)
+        self.queue[:0] = made
+        self.split_undo = None
+        if written.batch is not None:
+            self.split_undo = (written.batch, entity.name, entity.id, made)
+            self.undo_kind = "group"
+        shown = [logic.shorten(p, 40) for p in done.parts[:8]]
+        more = f" and {len(done.parts) - 8} more" if len(done.parts) > 8 else ""
+        names = (_and([f"**{_md(p)}**" for p in shown]) + more) if shown else ""
+        group = logic.shorten(done.group_name, 60)
+        extra = (
+            f" Not added: {_and([f'**{_md(p)}**' for p in done.skipped])}." if done.skipped else ""
+        )
+        await self._next(
+            interaction,
+            campaign,
+            memory,
+            note=f"👥 Saved: **{_md(group)}** is a group of {names}.{extra}",
         )
 
     async def _undo_split(self, interaction: discord.Interaction) -> None:
@@ -1969,13 +2126,23 @@ class SuggestionReview(_Menu):
         self.split_undo = None  # a second quick press finds nothing to undo
         batch, name, original, made = pending
         try:
-            await memory.undo_split(campaign.guild_id, campaign.id, batch, name)
+            if self.undo_kind == "group":
+                await memory.undo(campaign.guild_id, campaign.id, batch)
+            else:
+                await memory.undo_split(campaign.guild_id, campaign.id, batch, name)
         except MemoryRuleError:
-            await _tell(interaction, "Can't undo: a part was answered, or it was changed since.")
+            await _tell(
+                interaction,
+                "Can't undo: a part was answered, or it was changed since. "
+                "Change the names by hand if you need to.",
+            )
             return
         changed(interaction, campaign)
         self.queue = [original, *(q for q in self.queue if q not in made)]
-        await self._next(interaction, campaign, memory, note=f"↩ Back to **{_md(name)}**.")
+        undone = "Group undone" if self.undo_kind == "group" else "Split undone"
+        await self._next(
+            interaction, campaign, memory, note=f"↩ {undone}. Back to **{_md(name)}**."
+        )
 
     async def _no(self, interaction: discord.Interaction) -> None:
         current = await self._current(interaction)
