@@ -26,6 +26,8 @@ export const questionsPage = {
   showHere: "Answer them here",
   hideHere: "Hide them",
   sessionOf: (date: string): string => `Session of ${date}`,
+  // Connections, "Which one?" and facts to check are one list on the Story Graph: it opens under the first of them.
+  answeredWith: (label: string): string => `Answered with ${label}, in the same list.`,
   noneHere: "Nothing is waiting here now.",
   // The counts are written by the bot every minute or so: older than five minutes, the page says it is catching up.
   catchingUp: "DMbot is catching up. These numbers may be a little old.",
@@ -42,13 +44,13 @@ export const questionsPage = {
     names: { label: "New names to check", how: "here", to: "recaps", link: "Open the recaps" },
     heard: { label: "Did they mean…?", how: "discord" },
     lookalikes: { label: "Names that look alike", how: "link", to: "names", link: "Open the Names page" },
-    connections: { label: "Connections waiting", how: "link", to: "graph", link: "Open the Story Graph" },
-    which: { label: "Which one?", how: "link", to: "graph", link: "Open the Story Graph" },
+    connections: { label: "Connections waiting", how: "here", to: "graph", link: "Open the Story Graph" },
+    which: { label: "Which one?", how: "here", to: "graph", link: "Open the Story Graph" },
     // Not shown until a screen can answer it, in Discord and here (#3463): today Discord sends the DM back to the
     // website and the website has no card for it, so there would be nowhere to answer. Remove "hidden" then.
     family: { label: "Family ties", how: "hidden" },
-    claims: { label: "Facts to check", how: "link", to: "graph", link: "Open the Story Graph" },
-    readings: { label: "What people believe", how: "link", to: "graph", link: "Open the Story Graph" },
+    claims: { label: "Facts to check", how: "here", to: "graph", link: "Open the Story Graph" },
+    readings: { label: "What people believe", how: "here", to: "graph", link: "Open the Story Graph" },
     plot: { label: "Plot check", how: "link", to: "recaps", link: "Open the recaps" },
     recap_approve: { label: "Recaps to approve", how: "link", to: "recaps", link: "Open the recaps" },
     rules: { label: "House rule updates", how: "discord" },
