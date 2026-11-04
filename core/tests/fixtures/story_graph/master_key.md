@@ -240,10 +240,10 @@ These are the ties the check should find most surely: the session repeats or sha
 | Garret Velryn | Garret | lore+session | missing explorer Missing guide and explorer. |
 | Jebidiah | Jebediah | lore+session | kennel master Kennel master the DM voices. |
 | Cerric's paternal grandfather |  | lore | Unnamed. Died in a storm. |
-| Okthandom's child |  | lore | Unnamed. Mentioned once. |
-| Brewner's daughter |  | lore | Unnamed. Leads Brewner home. |
-| The minotaur captain |  | lore | Unnamed. Captain of the first ship. |
-| The beggar woman |  | lore | Unnamed. Gives a prophecy. |
+| Okthandom's child | Okthandom Korran's child (name unknown) | lore | Unnamed. Mentioned once. |
+| Brewner's daughter | Brewner's daughter (name unknown) | lore | Unnamed. Leads Brewner home. |
+| The minotaur captain | Minotaur captain of the first ship | lore | Unnamed. Captain of the first ship. |
+| The beggar woman | beggar woman | lore | Unnamed. Gives a prophecy. |
 
 ### Creatures (13)
 
@@ -321,9 +321,9 @@ These are the ties the check should find most surely: the session repeats or sha
 | name | also called | in | note |
 |---|---|---|---|
 | Sacrifice of souls |  | lore | every ten-day humanoid souls are sacrificed, spellcasters first, to appease Auril |
-| Sacrifice of warmth |  | lore | recurring Sacrifices of Warmth: all warmth is forsaken, to appease Auril |
+| Sacrifice of warmth | Sacrifices of Warmth | lore | recurring Sacrifices of Warmth: all warmth is forsaken, to appease Auril |
 | Sacrifice of food |  | lore | the residents fast and surrender their daily food to the beasts of the tundra, to appease Auril |
-| The Everlasting Rime |  | lore | the magical winter Auril casts each night so the sun cannot rise |
+| The Everlasting Rime | Everlasting Rime | lore | the magical winter Auril casts each night so the sun cannot rise |
 
 ### Items (10)
 
