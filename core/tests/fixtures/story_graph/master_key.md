@@ -6,7 +6,7 @@ What the graph should hold after the [sample lore](https://docs.google.com/docum
 
 **Tiers:** `stated` the words are in a document · `needs_context` only readable with the other document or the recap · `inferred` only implied, offered to the DM and never extracted · `recap_only` only in the session's 'Previously' recap · `by_rule` made by a rule. **Must find: no** means a good find if present, not a miss if absent. **Current: no** is history.
 
-**Totals:** 100 entries, 134 connections (88 must-find, 19 said by both documents), 25 events (19 in the lore, 6 in the session).
+**Totals:** 95 entries, 133 connections (88 must-find, 19 said by both documents), 25 events (19 in the lore, 6 in the session).
 
 ## Ties both documents say
 
@@ -14,9 +14,9 @@ These are the ties the check should find most surely: the session repeats or sha
 
 | id | from | tie | to | tier | lore line | session line | note |
 |---|---|---|---|---|---|---|---|
-| m028 | Cerric Vanya'elen | owns | Glyph | stated | 21 | 330 | snowy owl familiar / 'Glyph, my owl familiar' |
-| m030 | Okthandom Korran | sibling | Vaelrith | stated | 27 | 481 | elder brother, vanished at 105 / another player says the name (478); Okthandom: 'no that's my brother' |
-| m031 | Nyssara | sibling | Okthandom Korran | stated | 27 | 487 | younger sister; a player character's family must be kept / 'my sister' on line 439 and 454; the name only on line 487 ('her name is Nyssara' |
+| m029 | Cerric Vanya'elen | owns | Glyph | stated | 21 | 330 | snowy owl familiar / 'Glyph, my owl familiar' |
+| m031 | Okthandom Korran | sibling | Vaelrith | stated | 27 | 481 | elder brother, vanished at 105 / another player says the name (478); Okthandom: 'no that's my brother' |
+| m032 | Nyssara | sibling | Okthandom Korran | stated | 27 | 487 | younger sister; a player character's family must be kept / 'my sister' on line 439 and 454; the name only on line 487 ('her name is Nyssara' |
 | m083 | Cerric Vanya'elen | member | The party | stated | 67 | 0 | 'our four adventurers' / the four player characters play together (#3036) |
 | m084 | Belleros Stormgrace | member | The party | stated | 67 | 0 | 'our four adventurers' / the four player characters play together (#3036) |
 | m085 | Okthandom Korran | member | The party | stated | 67 | 0 | 'our four adventurers' / the four player characters play together (#3036) |
@@ -27,12 +27,12 @@ These are the ties the check should find most surely: the session repeats or sha
 | m090 | Belleros Stormgrace | knows | Okthandom Korran | by_rule | 67 | 0 | player characters who play together know each other (#3036) / player characters who play together know each other (#3036); the feeling words |
 | m091 | Belleros Stormgrace | knows | Claude Ambere | by_rule | 67 | 0 | player characters who play together know each other (#3036) / player characters who play together know each other (#3036); the feeling words |
 | m092 | Okthandom Korran | knows | Claude Ambere | by_rule | 67 | 0 | player characters who play together know each other (#3036) / player characters who play together know each other (#3036); the feeling words |
-| m112 | Belleros Stormgrace | knows (friendly) | Boy | stated | 96 | 129 | befriended him / 'I would like Boy to be my lead sled dog'; 'Come on, Boy!' |
-| m115 | Garret Velryn | owns | Boy | inferred | 96 | 15 | Boy led the party to Keegan's home: the owner says he is Garret's dog. The text never says it; offer it to the DM, never extract it / 'if Bo |
-| m116 | Garret Velryn | spouse | Keegan Velryn | stated | 96 | 1 | 'whose husband' / only in the 'Previously' recap ('whose husband, Garret'): background, no session date |
-| m117 | Garret Velryn | member | Explorer's League | stated | 96 | 168 | 'a noted member' / 'a member of the Explorers' League' (also 201: 'his stature in the Explorers' League') |
-| m118 | Garret Velryn | last_seen_in | Kelvin's Cairn | stated | 96 | 192 | vanished five days ago leading an expedition up it / 'Kelvin's Cairn to find Garret': the lore and the recap say he vanished leading an expe |
-| m119 | The party | works_for | Keegan Velryn | stated | 96 | 135 | 50 gold and a route map to find Garret / 'she gave you the 50 gold when Belleros said he would go find him' |
+| m111 | Belleros Stormgrace | knows (friendly) | Boy | stated | 96 | 129 | befriended him / 'I would like Boy to be my lead sled dog'; 'Come on, Boy!' |
+| m114 | Garret Velryn | owns | Boy | inferred | 96 | 15 | Boy led the party to Keegan's home: the owner says he is Garret's dog. The text never says it; offer it to the DM, never extract it / 'if Bo |
+| m115 | Garret Velryn | spouse | Keegan Velryn | stated | 96 | 1 | 'whose husband' / only in the 'Previously' recap ('whose husband, Garret'): background, no session date |
+| m116 | Garret Velryn | member | Explorer's League | stated | 96 | 168 | 'a noted member' / 'a member of the Explorers' League' (also 201: 'his stature in the Explorers' League') |
+| m117 | Garret Velryn | last_seen_in | Kelvin's Cairn | stated | 96 | 192 | vanished five days ago leading an expedition up it / 'Kelvin's Cairn to find Garret': the lore and the recap say he vanished leading an expe |
+| m118 | The party | works_for | Keegan Velryn | stated | 96 | 135 | 50 gold and a route map to find Garret / 'she gave you the 50 gold when Belleros said he would go find him' |
 
 ## All connections
 
@@ -49,37 +49,37 @@ These are the ties the check should find most surely: the session repeats or sha
 | m009 | Qinric | member | Lord's Alliance | stated | yes | yes | lore | L18 | a war mage evoker in it |
 | m010 | Valyra | apprentice_of | Kelfir Ama'Kiir | stated | yes | yes | lore | L18 |  |
 | m011 | Cerric Vanya'elen | works_for | Syllar Sparkwalker | stated | yes | yes | lore | L18 | Keeper of the Sparkwalker Spire under him |
-| m012 | Cerric Vanya'elen | works_in | Sparkwalker Spire | stated | yes | yes | lore | L18 | Keeper of it |
-| m013 | Syllar Sparkwalker | works_in | Blackstaff Tower | inferred | no | yes | lore | L18 | 'Syllar Sparkwalker of Blackstaff Tower' |
-| m014 | Syllar Sparkwalker | mentor_of | Emmerich | inferred | no | yes | lore | L18 | Cerric's fellow apprentices |
-| m015 | Syllar Sparkwalker | mentor_of | Wit | inferred | no | yes | lore | L18 |  |
-| m016 | Cerric Vanya'elen | rival_of | Emmerich | stated | yes | yes | lore | L18 | 'rival apprentices Emmerich and Wit'; the owner flagged backstory rivals as missing |
-| m017 | Cerric Vanya'elen | rival_of | Wit | stated | no | yes | lore | L18 |  |
-| m018 | Cerric Vanya'elen | comes_from | Waterdeep | stated | yes | yes | lore | L18 | born in the Temple of the Seldarine |
-| m019 | Temple of the Seldarine | in | Waterdeep | stated | yes | yes | lore | L18 |  |
-| m020 | Cerric Vanya'elen | lived_in | Castle Ward | stated | no | no | lore | L18 | raised in a mansion there |
-| m021 | Castle Ward | in | Waterdeep | inferred | no | yes | lore | L18 |  |
-| m022 | Cerric Vanya'elen | carries | Azure tome | stated | yes | yes | lore | L21 | grabbed his master's locked tome |
-| m023 | Syllar Sparkwalker | owns | Azure tome | stated | yes | yes | lore | L21 | 'his master's' |
-| m024 | Cerric Vanya'elen | last_seen_in | Neverwinter | stated | no | yes | lore | L21 | fled there by teleportation rune |
-| m025 | Cerric Vanya'elen | last_seen_in | Icewind Dale | stated | no | yes | lore | L21 | journeyed north into it |
-| m026 | Danneth | last_seen_in | Easthaven | inferred | no | yes | lore | L21 | the note is addressed 'Danneth, Easthaven' |
-| m027 | Syllar Sparkwalker | knows | Danneth | inferred | no | yes | lore | L21 | the note is signed S |
-| m028 | Cerric Vanya'elen | owns | Glyph | stated | yes | yes | lore+session | L21, S330 | snowy owl familiar / 'Glyph, my owl familiar' |
-| m029 | Easthaven | in | Icewind Dale | stated | yes | yes | lore | L21 |  |
-| m030 | Okthandom Korran | sibling | Vaelrith | stated | yes | yes | lore+session | L27, S481 | elder brother, vanished at 105 / another player says the name (478); Okthandom: 'no that's my brother' |
-| m031 | Nyssara | sibling | Okthandom Korran | stated | yes | yes | lore+session | L27, S487 | younger sister; a player character's family must be kept / 'my sister' on line 439 and 454; the name only on line 487 ('her name is Nyssara'): the first mention |
-| m032 | Nyssara | sibling | Vaelrith | inferred | no | yes | lore | L27 |  |
-| m033 | Okthandom Korran | parent_of | Okthandom's child | stated | no | yes | lore | L30 | 'his child', named once in passing |
-| m034 | The wind spirit | associate | Okthandom Korran | stated | yes | yes | lore | L30 | guides and guards him |
-| m035 | Okthandom Korran | owns | Ancestral journal | inferred | no | yes | lore | L27 | found the curse in it |
-| m036 | Belleros Stormgrace | member | Explorer's League | stated | yes | yes | lore | L36 | 'a scout associated with the Explorer's League' |
-| m037 | Claude Ambere | comes_from | Spine of the World | stated | yes | yes | lore | L42 |  |
-| m038 | Lee | parent_of | Claude Ambere | stated | yes | yes | lore | L42 | 'Griz, son of Lee'; the owner flagged this as missing |
-| m039 | Claude Ambere | held_captive_by | The circus | stated | yes | no | lore | L42 | before he escaped |
-| m040 | Claude Ambere | found | Wolf figurine | inferred | yes | no | lore | L42 | the owner: Claude found it first (line 42: he carries a unique wolf figurine; line 90: he sells it). Offered to the DM, never extracted |
-| m041 | Auril the Frostmaiden | lives_in | Icewind Dale | stated | yes | yes | lore | L51 | withdrawn there to live among mortals |
-| m042 | Auril the Frostmaiden | associate | White roc | stated | no | yes | lore | L51 | rides it |
+| m012 | Cerric Vanya'elen | leads | Sparkwalker Spire | stated | yes | yes | lore | L18 | Keeper of it (leads; works_in is also true and kept as optional, Supervisor 2026-11-04) |
+| m013 | Cerric Vanya'elen | works_in | Sparkwalker Spire | stated | no | yes | lore | L18 | Keeper of it |
+| m014 | Syllar Sparkwalker | works_in | Blackstaff Tower | inferred | no | yes | lore | L18 | 'Syllar Sparkwalker of Blackstaff Tower' |
+| m015 | Syllar Sparkwalker | mentor_of | Emmerich | inferred | no | yes | lore | L18 | Cerric's fellow apprentices |
+| m016 | Syllar Sparkwalker | mentor_of | Wit | inferred | no | yes | lore | L18 |  |
+| m017 | Cerric Vanya'elen | rival_of | Emmerich | stated | yes | yes | lore | L18 | 'rival apprentices Emmerich and Wit'; the owner flagged backstory rivals as missing |
+| m018 | Cerric Vanya'elen | rival_of | Wit | stated | no | yes | lore | L18 |  |
+| m019 | Cerric Vanya'elen | comes_from | Waterdeep | stated | yes | yes | lore | L18 | born in the Temple of the Seldarine |
+| m020 | Temple of the Seldarine | in | Waterdeep | stated | yes | yes | lore | L18 |  |
+| m021 | Cerric Vanya'elen | lived_in | Castle Ward | stated | no | no | lore | L18 | raised in a mansion there |
+| m022 | Castle Ward | in | Waterdeep | inferred | no | yes | lore | L18 |  |
+| m023 | Cerric Vanya'elen | carries | Azure tome | stated | yes | yes | lore | L21 | grabbed his master's locked tome |
+| m024 | Syllar Sparkwalker | owns | Azure tome | stated | yes | yes | lore | L21 | 'his master's' |
+| m025 | Cerric Vanya'elen | last_seen_in | Neverwinter | stated | no | yes | lore | L21 | fled there by teleportation rune |
+| m026 | Cerric Vanya'elen | last_seen_in | Icewind Dale | stated | no | yes | lore | L21 | journeyed north into it |
+| m027 | Danneth | last_seen_in | Easthaven | inferred | no | yes | lore | L21 | the note is addressed 'Danneth, Easthaven' |
+| m028 | Syllar Sparkwalker | knows | Danneth | inferred | no | yes | lore | L21 | the note is signed S |
+| m029 | Cerric Vanya'elen | owns | Glyph | stated | yes | yes | lore+session | L21, S330 | snowy owl familiar / 'Glyph, my owl familiar' |
+| m030 | Easthaven | in | Icewind Dale | stated | yes | yes | lore | L21 |  |
+| m031 | Okthandom Korran | sibling | Vaelrith | stated | yes | yes | lore+session | L27, S481 | elder brother, vanished at 105 / another player says the name (478); Okthandom: 'no that's my brother' |
+| m032 | Nyssara | sibling | Okthandom Korran | stated | yes | yes | lore+session | L27, S487 | younger sister; a player character's family must be kept / 'my sister' on line 439 and 454; the name only on line 487 ('her name is Nyssara'): the first mention |
+| m033 | Nyssara | sibling | Vaelrith | inferred | no | yes | lore | L27 |  |
+| m034 | Okthandom Korran | parent_of | Okthandom's child | stated | no | yes | lore | L30 | 'his child', named once in passing |
+| m035 | The wind spirit | associate | Okthandom Korran | stated | yes | yes | lore | L30 | guides and guards him |
+| m036 | Okthandom Korran | owns | Ancestral journal | inferred | no | yes | lore | L27 | found the curse in it |
+| m037 | Belleros Stormgrace | member | Explorer's League | stated | yes | yes | lore | L36 | 'a scout associated with the Explorer's League' |
+| m038 | Claude Ambere | comes_from | Spine of the World | stated | yes | yes | lore | L42 |  |
+| m039 | Lee | parent_of | Claude Ambere | stated | yes | yes | lore | L42 | 'Griz, son of Lee'; the owner flagged this as missing |
+| m040 | Claude Ambere | held_captive_by | The circus | stated | yes | no | lore | L42 | before he escaped |
+| m041 | Claude Ambere | found | Wolf figurine | inferred | yes | no | lore | L42 | the owner: Claude found it first (line 42: he carries a unique wolf figurine; line 90: he sells it). Offered to the DM, never extracted |
+| m042 | Auril the Frostmaiden | lives_in | Icewind Dale | stated | yes | yes | lore | L51 | withdrawn there to live among mortals |
 | m043 | Ten-Towns | associate | Auril the Frostmaiden | stated | no | yes | lore | L90 | its towns sacrifice every ten-day to appease her |
 | m044 | Targos | in | Ten-Towns | stated | yes | yes | lore | L90 | listed with its sacrifice (also line 7) |
 | m045 | Bryn Shander | in | Ten-Towns | stated | yes | yes | lore | L90 | listed with its sacrifice (also line 7) |
@@ -148,30 +148,29 @@ These are the ties the check should find most surely: the session repeats or sha
 | m108 | Fizzlebomb | owns | Aurora's Wind | stated | yes | yes | lore | L90 | 'Fizzlebomb's vessel'; the owner flagged this as missing |
 | m109 | Ice troll | enemy_of | The minotaur captain | stated | no | yes | lore | L90 | devoured him and shattered his ship |
 | m110 | Ice troll | last_seen_in | Maer Dualdon | stated | no | yes | lore | L90 |  |
-| m111 | Electric eel | enemy_of | Fizzlebomb | stated | no | yes | lore | L93 | pulled him under |
-| m112 | Belleros Stormgrace | knows (friendly) | Boy | stated | yes | yes | lore+session | L96, S129 | befriended him / 'I would like Boy to be my lead sled dog'; 'Come on, Boy!' |
-| m113 | Boy | last_seen_in | Three Flags Sailing | stated | no | yes | lore | L96 |  |
-| m114 | Three Flags Sailing | in | Targos | inferred | no | yes | lore | L96 |  |
-| m115 | Garret Velryn | owns | Boy | inferred | yes | yes | lore+session | L96, S15 | Boy led the party to Keegan's home: the owner says he is Garret's dog. The text never says it; offer it to the DM, never extract it / 'if Boy made it back and t |
-| m116 | Garret Velryn | spouse | Keegan Velryn | stated | yes | yes | lore+session | L96, S1 | 'whose husband' / only in the 'Previously' recap ('whose husband, Garret'): background, no session date |
-| m117 | Garret Velryn | member | Explorer's League | stated | yes | yes | lore+session | L96, S168 | 'a noted member' / 'a member of the Explorers' League' (also 201: 'his stature in the Explorers' League') |
-| m118 | Garret Velryn | last_seen_in | Kelvin's Cairn | stated | yes | yes | lore+session | L96, S192 | vanished five days ago leading an expedition up it / 'Kelvin's Cairn to find Garret': the lore and the recap say he vanished leading an expedition up it |
-| m119 | The party | works_for | Keegan Velryn | stated | yes | yes | lore+session | L96, S135 | 50 gold and a route map to find Garret / 'she gave you the 50 gold when Belleros said he would go find him' |
-| m120 | Jebidiah | works_in | Targos | inferred | no | yes | lore | L96 | a kennel master the party met there |
-| m121 | Okthandom Korran | carries | Lantern of Greater Tracking | stated | yes | yes | session | S69 | 'my Lantern of Tracking' (also line 292); the lore calls it the Lantern of Greater Tracking |
-| m122 | Garret Velryn | owns | Garret's old sled | stated | yes | yes | session | S21 | 'you can take Garret's old sled' |
-| m123 | Garret Velryn | works_for | Garret's clients | stated | no | yes | session | S78 | 'He was hired as a guide' by people Keegan never met |
-| m124 | Jebidiah | works_in | The kennel | stated | yes | yes | session | S21 | 'Jebidiah down at the kennel' |
-| m125 | The kennel | in | Targos | inferred | no | yes | session | S132 | the party is in Targos (171) and walks down the road to it |
-| m126 | Jebidiah | knows (friendly) | Garret Velryn | stated | no | yes | session | S132 | 'Garret's done a lot for me' |
-| m127 | Jebidiah | associate | Keegan Velryn | needs_context | yes | yes | session | S21 | 'he does owe me a favor': Jebidiah owes her a favor (she is 'she', named only in the recap) |
-| m128 | Claude Ambere | knows (friendly) | Okthandom Korran | stated | yes | yes | session | S448 | offers his wineskin: 'ok we friend' |
-| m129 | Cerric Vanya'elen | knows (friendly) | Okthandom Korran | stated | no | yes | session | S442 | 'What's wrong Oak' |
-| m130 | Belleros Stormgrace | knows (wary) | Cerric Vanya'elen | stated | no | yes | session | S114 | 'that's very self-serving' |
-| m131 | Clan Battlehammer | works_in | Dwarven Valley | inferred | no | yes | session | S207 | 'the dwarven city'; 'the dwarves of Clan Battlehammer' |
-| m132 | The party | last_seen_in | Targos | stated | no | no | session | S171 | 'you're in Targos, right?' (about 2 PM): history by the end of the session |
-| m133 | The party | last_seen_in | Bryn Shander | stated | no | no | session | S283 | they pass it around 3 PM: history by the end |
-| m134 | The party | last_seen_in | The windbreak shelter | stated | yes | yes | session | S412 | the most recent place: the graph shows this one |
+| m111 | Belleros Stormgrace | knows (friendly) | Boy | stated | yes | yes | lore+session | L96, S129 | befriended him / 'I would like Boy to be my lead sled dog'; 'Come on, Boy!' |
+| m112 | Boy | last_seen_in | Three Flags Sailing | stated | no | yes | lore | L96 |  |
+| m113 | Three Flags Sailing | in | Targos | inferred | no | yes | lore | L96 |  |
+| m114 | Garret Velryn | owns | Boy | inferred | yes | yes | lore+session | L96, S15 | Boy led the party to Keegan's home: the owner says he is Garret's dog. The text never says it; offer it to the DM, never extract it / 'if Boy made it back and t |
+| m115 | Garret Velryn | spouse | Keegan Velryn | stated | yes | yes | lore+session | L96, S1 | 'whose husband' / only in the 'Previously' recap ('whose husband, Garret'): background, no session date |
+| m116 | Garret Velryn | member | Explorer's League | stated | yes | yes | lore+session | L96, S168 | 'a noted member' / 'a member of the Explorers' League' (also 201: 'his stature in the Explorers' League') |
+| m117 | Garret Velryn | last_seen_in | Kelvin's Cairn | stated | yes | yes | lore+session | L96, S192 | vanished five days ago leading an expedition up it / 'Kelvin's Cairn to find Garret': the lore and the recap say he vanished leading an expedition up it |
+| m118 | The party | works_for | Keegan Velryn | stated | yes | yes | lore+session | L96, S135 | 50 gold and a route map to find Garret / 'she gave you the 50 gold when Belleros said he would go find him' |
+| m119 | Jebidiah | works_in | Targos | inferred | no | yes | lore | L96 | a kennel master the party met there |
+| m120 | Okthandom Korran | carries | Lantern of Greater Tracking | stated | yes | yes | session | S69 | 'my Lantern of Tracking' (also line 292); the lore calls it the Lantern of Greater Tracking |
+| m121 | Garret Velryn | owns | Garret's old sled | stated | yes | yes | session | S21 | 'you can take Garret's old sled' |
+| m122 | Garret Velryn | works_for | Garret's clients | stated | no | yes | session | S78 | 'He was hired as a guide' by people Keegan never met |
+| m123 | Jebidiah | works_in | The kennel | stated | yes | yes | session | S21 | 'Jebidiah down at the kennel' |
+| m124 | The kennel | in | Targos | inferred | no | yes | session | S132 | the party is in Targos (171) and walks down the road to it |
+| m125 | Jebidiah | knows (friendly) | Garret Velryn | stated | no | yes | session | S132 | 'Garret's done a lot for me' |
+| m126 | Jebidiah | associate | Keegan Velryn | needs_context | yes | yes | session | S21 | 'he does owe me a favor': Jebidiah owes her a favor (she is 'she', named only in the recap) |
+| m127 | Claude Ambere | knows (friendly) | Okthandom Korran | stated | yes | yes | session | S448 | offers his wineskin: 'ok we friend' |
+| m128 | Cerric Vanya'elen | knows (friendly) | Okthandom Korran | stated | no | yes | session | S442 | 'What's wrong Oak' |
+| m129 | Belleros Stormgrace | knows (wary) | Cerric Vanya'elen | stated | no | yes | session | S114 | 'that's very self-serving' |
+| m130 | Clan Battlehammer | works_in | Dwarven Valley | inferred | no | yes | session | S207 | 'the dwarven city'; 'the dwarves of Clan Battlehammer' |
+| m131 | The party | last_seen_in | Targos | stated | no | no | session | S171 | 'you're in Targos, right?' (about 2 PM): history by the end of the session |
+| m132 | The party | last_seen_in | Bryn Shander | stated | no | no | session | S283 | they pass it around 3 PM: history by the end |
+| m133 | The party | last_seen_in | The windbreak shelter | stated | yes | yes | session | S412 | the most recent place: the graph shows this one |
 
 ## Events
 
@@ -236,7 +235,7 @@ These are the ties the check should find most surely: the session repeats or sha
 | Grek |  | lore | surrendered kobold, then killed |
 | Trex |  | lore | kobold leader, killed by Okthandom |
 | Fizzlebomb |  | lore | owner of the ship Aurora's Wind |
-| Keegan Velryn | she, the lady, ma'am | lore+session | Garret's wife, hires the party Garret's wife. Never named in play, only 'she' and 'the lady': the name needs the recap or the lore. |
+| Keegan Velryn |  | lore+session | Garret's wife, hires the party Garret's wife. Never named in play, only 'she' and 'the lady': the name needs the recap or the lore. |
 | Garret Velryn | Garret | lore+session | missing explorer Missing guide and explorer. |
 | Jebidiah | Jebediah | lore+session | kennel master Kennel master the DM voices. |
 | Cerric's paternal grandfather |  | lore | Unnamed. Died in a storm. |
@@ -245,7 +244,7 @@ These are the ties the check should find most surely: the session repeats or sha
 | The minotaur captain | Minotaur captain of the first ship | lore | Unnamed. Captain of the first ship. |
 | The beggar woman | beggar woman | lore | Unnamed. Gives a prophecy. |
 
-### Creatures (13)
+### Creatures (8)
 
 | name | also called | in | note |
 |---|---|---|---|
@@ -254,13 +253,8 @@ These are the ties the check should find most surely: the session repeats or sha
 | The ghost |  | lore | Unnamed possessed ghost that emerged when Trex fell |
 | Penolopi |  | lore | pet plant the party burned |
 | The wind spirit |  | lore | Unnamed ancient spirit that guides and guards Okthandom |
-| White roc |  | lore | Auril's mount |
-| Ice kobolds |  | lore | six fought on the road |
 | Yeti |  | lore+session | evaded on the road Named as a danger and as near the shelter at the end. |
-| Grell |  | lore | killed the familiar |
 | Ice troll |  | lore | ate the first ship's captain |
-| Electric eel |  | lore | pulled Fizzlebomb under |
-| Owlbears |  | lore | three ambushed the party near Targos |
 | Mind flayer |  | lore | petrified skull in the mine |
 
 ### Gods (1)
@@ -342,6 +336,7 @@ These are the ties the check should find most surely: the session repeats or sha
 
 ## Must not find
 
+- a kind of creature is not an entry (#3373 rule, Supervisor 2026-11-04): no entry or tie for the white roc, ice kobolds, grell, electric eel or owlbears; one particular creature is (the mind flayer whose skull held the Psi crystal)
 - any link made from dice rolls, hit points, wasp stings or spear wounds, spells (Moment to Think, Detect Magic) or marching order
 - only unique items are tracked (#3373): no entry or tie for Wyvern poison, the two dog sleds and eight dogs, the scroll of Detect Magic, the scroll of Identify, the Potion of Healing or the waterproof backpacks (ordinary gear)
 - the warning sign 'Kobolds only!' is a sign, not a person or a group
@@ -358,7 +353,7 @@ These are the ties the check should find most surely: the session repeats or sha
 - distances, speeds and times (the map context below) are travel facts, not ties between people
 - 'she' and 'the lady' are never a new person: they are Keegan Velryn, and 'he' in Jebidiah's lines is Jebidiah
 
-The check script looks for these names: `Wyvern poison`, `Dog sleds`, `two sleds and eight dogs`, `scroll of Detect Magic`, `scroll of Identify`, `Potion of Healing`, `waterproof backpacks`, `morningstar barbarian`, `maul barbarian`, `barbarians`, `the attackers`, `Dougan's Hole`, `Eashaven`, `chardalyn maul`, `chardalyn morningstar`, `The Brotherhood members`.
+The check script looks for these names: `Wyvern poison`, `Dog sleds`, `two sleds and eight dogs`, `scroll of Detect Magic`, `scroll of Identify`, `Potion of Healing`, `waterproof backpacks`, `morningstar barbarian`, `maul barbarian`, `barbarians`, `the attackers`, `Dougan's Hole`, `Eashaven`, `chardalyn maul`, `chardalyn morningstar`, `The Brotherhood members`, `White roc`, `Ice kobolds`, `Grell`, `Electric eel`, `Owlbears`.
 
 ## Waits for a later slice
 
