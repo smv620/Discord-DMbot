@@ -315,6 +315,12 @@ class Checks(unittest.TestCase):
         problems = check_relation(self.onto, later_sighting, "character", "place", [home, seen])
         self.assertEqual([(p.kind, p.other_id) for p in problems], [(TOO_MANY, seen.id)])
 
+    def test_an_item_has_one_place_whatever_word_it_was_said_in(self) -> None:
+        kept = self.place(B, "is kept in", rid="1" * 32)
+        seen = self.place(C, "was last seen in")
+        problems = check_relation(self.onto, seen, "item", "place", [kept])
+        self.assertEqual([(p.kind, p.other_id) for p in problems], [(TOO_MANY, kept.id)])
+
     def test_a_past_home_never_ends_the_present_one(self) -> None:
         lived = self.place(B, "lived in", rid="1" * 32)
         now = self.place(C, "lives in")

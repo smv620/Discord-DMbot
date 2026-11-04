@@ -250,9 +250,11 @@ def check_relation(
                 # having been seen in a third are three facts, and a past word never ends a
                 # present one. A past word ("lived in", "worked in") is history and is never
                 # limited at all: two past homes both stay (#3363).
-                mine = place_words.slot(new.detail)
+                mine = place_words.slot(new.detail, subject_type)
                 others = (
-                    [] if mine[1] else [r for r in others if place_words.slot(r.detail) == mine]
+                    []
+                    if mine[1]
+                    else [r for r in others if place_words.slot(r.detail, subject_type) == mine]
                 )
             if p.key == NESTS and nesting is not None:
                 # Being in the inn and in the town it is in is one place, not two.

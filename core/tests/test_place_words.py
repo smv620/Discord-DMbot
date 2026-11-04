@@ -19,7 +19,7 @@ class PlaceWords(unittest.TestCase):
         self.assertEqual(back_words("located_in", "", False, "place"), "is where you find")
 
     def test_something_that_moves_with_no_word_was_last_seen(self) -> None:
-        for kind in ("character", "player_character", "npc", "creature", "faction", "item"):
+        for kind in ("character", "player_character", "npc", "creature", "faction"):
             self.assertEqual(link_words("located_in", "", False, kind), "was last seen in", kind)
         self.assertEqual(back_words("located_in", "", False, "character"), "is where you last saw")
 
@@ -107,6 +107,25 @@ class PlaceWords(unittest.TestCase):
     def test_a_place_word_on_a_place_still_reads_by_its_word(self) -> None:
         # a town that "lives in" another is odd, but it is shown as it was said, not "is in"
         self.assertEqual(link_words("located_in", "lives in", False, "place"), "lives in")
+
+    def test_an_item_is_only_ever_kept_in_a_place(self) -> None:
+        # (owner, 2026-11-04) it never lives, works, comes from or is last seen: it is kept
+        self.assertEqual(link_words("located_in", "", False, "item"), "is kept in")
+        self.assertEqual(back_words("located_in", "", False, "item"), "is where you keep")
+        for detail in ("was last seen in", "lives in", "works in", "comes from", "is kept in"):
+            self.assertEqual(link_words("located_in", detail, False, "item"), "is kept in", detail)
+        self.assertEqual(link_words("located_in", "lived in", False, "item"), "was kept in")
+        self.assertEqual(back_words("located_in", "lived in", False, "item"), "was where you kept")
+        self.assertEqual(place_words.canonical("was last seen in", "item"), "is kept in")
+        self.assertEqual(place_words.canonical("was last seen in", "character"), "was last seen in")
+        self.assertIsNone(place_words.canonical("is in", "item"))
+        self.assertEqual(
+            place_words.summary_phrases("", "item"), ("is kept there", "where it is kept")
+        )
+        # one place for an item whatever word was said
+        self.assertEqual(place_words.slot("was last seen in", "item"), place_words.slot("", "item"))
+        # and a character's place is unchanged
+        self.assertEqual(link_words("located_in", "", False, "character"), "was last seen in")
 
     def test_an_event_took_place_in_a_town(self) -> None:
         self.assertEqual(link_words("located_in", "", False, "event"), "took place in")

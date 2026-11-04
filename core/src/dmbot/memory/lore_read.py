@@ -329,8 +329,9 @@ def shape_instructions(own: Mapping[str, str] | None = None) -> str:
         f"'quote:') and how, which reads 'a <how> b': exactly one of {words}{theirs}. They mean: "
         "family = a is family of b; member = a is a member of b (or belongs to a group); "
         'in = a is in the place b (a place or event inside a place: leave "words" empty); for '
-        'a character, creature, group or item it is tied to the place b: put in "words" '
-        f"exactly one of {', '.join(place_words.WORDS_OFFERED)}; owns = a owns b; "
+        'a character, creature or group it is tied to the place b: put in "words" '
+        f"exactly one of {', '.join(place_words.WORDS_OFFERED)}; an item is only ever kept in a "
+        'place: say "is kept in" or "was kept in"; owns = a owns b; '
         "works for = a works for b; serves = a serves b; knows = a knows b (also friends, "
         'allies and enemies: in "words" give how a feels about b, one of '
         f"{', '.join(feeling_words.WORDS)}, else empty); "

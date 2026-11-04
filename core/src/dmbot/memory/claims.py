@@ -822,14 +822,14 @@ class ClaimStore:
         )
 
     @staticmethod
-    def _detail(predicate: str, claim: Claim) -> str:
+    def _detail(predicate: str, claim: Claim, subject_kind: str = "") -> str:
         """What a confirmed fact keeps as its detail: for the place tie, the one wording of the
         word the table used ("lives in"), so two ways of saying it are one word (#3363)."""
         if predicate == "located_in":
             # (the word may be said as the relationship or, for "is in", as the detail)
             return (
-                place_words.canonical(claim.relationship)
-                or place_words.canonical(claim.details)
+                place_words.canonical(claim.relationship, subject_kind)
+                or place_words.canonical(claim.details, subject_kind)
                 or claim.details
             )
         return claim.details
@@ -1271,9 +1271,10 @@ class ClaimStore:
                 subject_id, object_id = (other[0], who[0]) if from_object else (who[0], other[0])
                 # On the catch-all, the words it was said in are the fact's label and nothing
                 # else: the card sets `detail` between the two names, so side notes can't go there.
+                subject_kind = other[1] if from_object else who[1]
                 relation, flags = await self._store.add_relation_in(
                     w, subject_id, term.key, object_id, confidence=1.0, status=CONFIRMED,
-                    detail=label or self._detail(term.key, claim),
+                    detail=label or self._detail(term.key, claim, subject_kind),
                     from_session_at=claim.session_started_at,
                     secret=secret,
                 )  # fmt: skip
