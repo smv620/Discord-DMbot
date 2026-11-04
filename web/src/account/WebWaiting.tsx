@@ -322,6 +322,7 @@ export default function WebWaiting({
                 <p id={`wc-${c.id}`}>{c.statement}</p>
                 <p class="small muted">{w.tiesWhy}</p>
                 {typeof c.at === "number" && c.at > 0 && <p class="muted small">{w.saidAt(sessionDay(c.at))}</p>}
+                <p class="small">{w.tiesPickHelp}</p>
                 {c.choices?.map((q) => (
                   <div key={q.side} class="stack">
                     <p>
@@ -342,14 +343,12 @@ export default function WebWaiting({
                             })
                           }
                         >
-                          {w.tiesPick(e.name, e.tag)}
-                          {e.note ? <span class="small muted"> {e.note}</span> : null}
+                          {w.tiesPick(e.name, e.tag)}: {e.note || w.tiesNoNote}
                         </button>
                       ))}
                     </div>
                   </div>
                 ))}
-                <p class="small">{w.tiesPickHelp}</p>
                 <div class="row">
                   <button
                     type="button"

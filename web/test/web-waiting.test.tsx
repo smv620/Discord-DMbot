@@ -743,8 +743,8 @@ describe("Which one? for a kept fact (Family ties, #3463)", () => {
     const card = screen.getByText(w.tiesQuestion("Mira")).closest(".panel") as HTMLElement;
     expect(within(card).getByText("Rook is the sister of Mira")).toBeTruthy();
     expect(within(card).getByText(w.tiesWhy)).toBeTruthy();
-    expect(within(card).getByRole("button", { name: /Mira \(NPC\) the ferrywoman/ })).toBeTruthy();
-    expect(within(card).getByRole("button", { name: /Mira \(NPC · secret\)/ })).toBeTruthy();
+    expect(within(card).getByRole("button", { name: /Mira \(NPC\): the ferrywoman/ })).toBeTruthy();
+    expect(within(card).getByRole("button", { name: /Mira \(NPC · secret\): a smuggler/ })).toBeTruthy();
     expect(within(card).getByRole("button", { name: w.tiesNeither })).toBeTruthy();
     expect(within(card).getByText(w.tiesNeitherHelp)).toBeTruthy();
     // It is not also listed as an ordinary fact to Keep.
@@ -754,7 +754,7 @@ describe("Which one? for a kept fact (Family ties, #3463)", () => {
   it("a pick sends the side and the entry, then the fact is an ordinary one, and Undo puts it back", async () => {
     const api = await openTies();
     const card = screen.getByText(w.tiesQuestion("Mira")).closest(".panel") as HTMLElement;
-    press(/Mira \(NPC\) the ferrywoman/, card);
+    press(/Mira \(NPC\): the ferrywoman/, card);
     expect(await screen.findByText(w.done.tiesPick)).toBeTruthy();
     await settled();
     expect(screen.queryByText(w.tiesQuestion("Mira"))).toBeNull();
