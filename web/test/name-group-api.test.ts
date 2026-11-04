@@ -29,12 +29,12 @@ describe("names to check: split and group calls (#3406)", () => {
     const id = "a".repeat(32);
     await api.answerNameCheck!("100.cmp1", id, { action: "split" });
     await api.answerNameCheck!("100.cmp1", id, { action: "join_group", group: "d".repeat(32) });
-    await api.answerNameCheck!("100.cmp1", id, { action: "make_group", name: "The Dynamic Duo" });
+    await api.answerNameCheck!("100.cmp1", id, { action: "make_group", name: "The Ashen Circle" });
     await api.answerNameCheck!("100.cmp1", id, { action: "undo", batch: 7 });
     expect(seen.map((s) => s.body)).toEqual([
       JSON.stringify({ action: "split" }),
       JSON.stringify({ action: "join_group", group: "d".repeat(32) }),
-      JSON.stringify({ action: "make_group", name: "The Dynamic Duo" }),
+      JSON.stringify({ action: "make_group", name: "The Ashen Circle" }),
       JSON.stringify({ action: "undo", batch: 7 }),
     ]);
   });
@@ -59,7 +59,7 @@ describe("the pretend API for split and group answers (#3406)", () => {
 
   it("the pretend API: make_group named Taken fails with spelling_taken, and undo of batch 99 fails with answered", async () => {
     const api = mockApi("table");
-    const id = "g".repeat(32);
+    const id = "1".repeat(32);
     await api.answerNameCheck!(ref, id, { action: "make_group", name: "Taken" });
     await api.nameAnswerResult!(ref, id);
     expect(await api.nameAnswerResult!(ref, id)).toMatchObject({ state: "failed", error: "spelling_taken" });

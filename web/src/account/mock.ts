@@ -3027,14 +3027,14 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         { id: "a".repeat(32), name: "Brannoch", note: "A smith in Eastmarch." },
         { id: "b".repeat(32), name: "Veshla", note: "Spoken of as the queen's rider." },
         { id: "c".repeat(32), name: "Garrick", note: "" },
-        // Lists of names (#3406): a split or a group is offered on these; "Batman and Robin" has a group DMbot knows.
+        // Lists of names (#3406): a split or a group is offered on these; "Brannoch and Veshla" has a group DMbot knows.
         { id: "f".repeat(32), name: "Aldmoor, Quillgate and Fenwick", note: "Three towns named together.", isList: true, groups: [] as NameGroupHint[] },
         {
-          id: "g".repeat(32),
-          name: "Batman and Robin",
-          note: "Two heroes named together.",
+          id: "1".repeat(32),
+          name: "Brannoch and Veshla",
+          note: "Two names named together.",
           isList: true,
-          groups: [{ id: "d".repeat(32), name: "The Dynamic Duo", members: ["Batman"], others: ["Robin"] }] as NameGroupHint[],
+          groups: [{ id: "d".repeat(32), name: "The Ashen Circle", members: ["Brannoch"], others: ["Veshla"] }] as NameGroupHint[],
         },
       ].flatMap((card) => {
         const key = `${ref}:${card.id}`;
@@ -3223,7 +3223,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
           else nameAnswers.delete(key);
           return;
         }
-        const list = id === "f".repeat(32) || id === "g".repeat(32);
+        const list = id === "f".repeat(32) || id === "1".repeat(32);
         const result: NameAnswerResult =
           answer.action === "split"
             ? list
@@ -3231,7 +3231,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
               : { state: "failed", note: "", error: "not_a_list", batch: null }
             : answer.action === "join_group"
               ? answer.group === "d".repeat(32)
-                ? { state: "done", note: "Added to the group The Dynamic Duo.", error: null, batch: 8 }
+                ? { state: "done", note: "Added to the group The Ashen Circle.", error: null, batch: 8 }
                 : { state: "failed", note: "", error: "not_found", batch: null }
               : answer.name === "Taken"
                 ? { state: "failed", note: "", error: "spelling_taken", batch: null }
