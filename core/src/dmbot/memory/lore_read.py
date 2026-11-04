@@ -36,6 +36,7 @@ from typing import Any
 
 from dmbot.ai import OUTPUT_FLOOR, AIError, AIOutOfFunds, Reply, max_output
 from dmbot.memory import background as bg
+from dmbot.memory import place_words
 from dmbot.memory import reputation_words as feeling_words
 from dmbot.memory.end_match import usable_alias
 from dmbot.memory.models import name_key
@@ -144,7 +145,7 @@ RELATIONSHIPS
 - Captain Ryl — mentors — Vessa | quote: "Vessa, Orin and Pell rode north, and Captain Ryl mentored them"
 - Captain Ryl — mentors — Orin | quote: "Orin and Pell rode north, and Captain Ryl mentored them"
 - Captain Ryl — mentors — Pell | quote: "Pell rode north, and Captain Ryl mentored them"
-- Danrel — is in — Eastvale | quote: "Danrel, Eastvale"
+- Danrel — was last seen in — Eastvale | quote: "Danrel, Eastvale"
 - Order — knows — Danrel | quote: "Danrel, Eastvale. The Order knows who you are"
 
 Example 5. Input (a list of names, no relationships):
@@ -167,7 +168,7 @@ NAMES
 - Ashmere | place | quote: "born in Ashmere"
 
 RELATIONSHIPS
-- Garrick Pell — is in (born in) — Ashmere | quote: "Garrick Pell was born in Ashmere"
+- Garrick Pell — comes from (born in) — Ashmere | quote: "Garrick Pell was born in Ashmere"
 
 UNNAMED
 - Garrick Pell | mother | stern ropemaker mother | quote: "Garrick Pell was born in Ashmere, the son of a stern ropemaker mother and an absent father"
@@ -233,8 +234,10 @@ def read_instructions(own: Mapping[str, str] | None = None) -> str:
         "a long document has many. The kinds, in plain words: is family of (say the role, such as "
         "father, sister or cousin, in brackets), is a member of (also: belongs to, is associated "
         "with, served in), works for (also: is employed by, is a bodyguard for), serves, "
-        "mentors, is an apprentice of, is a rival of, owns, is in (also: lives in, resides in, "
-        "is from), leads (also: rules, is the speaker, mayor or captain of), founded, worships, "
+        "mentors, is an apprentice of, is a rival of, owns, is in (a place inside a place; for a "
+        "character, group or item say whether it lives in, lived in, works in, worked in, is kept "
+        "in, comes from or was last seen in), leads (also: rules, is the speaker, mayor or "
+        "captain of), founded, worships, "
         "is a parent of, is a child of, is a sibling of (a brother or sister), is a spouse of "
         "(a husband or wife), is held captive by "
         "(captured, imprisoned), contains (has inside it), knows (a group can know a person; also "
@@ -325,7 +328,9 @@ def shape_instructions(own: Mapping[str, str] | None = None) -> str:
         "For each RELATIONSHIPS line give a and b (the two names as in the line), quote (its "
         f"'quote:') and how, which reads 'a <how> b': exactly one of {words}{theirs}. They mean: "
         "family = a is family of b; member = a is a member of b (or belongs to a group); "
-        "in = a is in b (a place or thing located in a place); owns = a owns b; "
+        'in = a is in the place b (a place or event inside a place: leave "words" empty); for '
+        'a character, creature, group or item it is tied to the place b: put in "words" '
+        f"exactly one of {', '.join(place_words.WORDS_OFFERED)}; owns = a owns b; "
         "works for = a works for b; serves = a serves b; knows = a knows b (also friends, "
         'allies and enemies: in "words" give how a feels about b, one of '
         f"{', '.join(feeling_words.WORDS)}, else empty); "

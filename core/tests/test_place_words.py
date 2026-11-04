@@ -7,7 +7,7 @@ import unittest
 from types import SimpleNamespace
 from typing import Any
 
-from dmbot.memory import place_words
+from dmbot.memory import lore_read, place_words
 from dmbot.memory.link_words import back_words, link_words, reads_both_ways
 from dmbot.memory.models import CONFIRMED, Relation
 from dmbot.ui.name_card import _rows, sentence
@@ -89,6 +89,24 @@ class PlaceWords(unittest.TestCase):
             self.assertIn(f'"{word}"', SYSTEM)
             self.assertEqual(place_words.canonical(word), word)
         self.assertEqual(place_words.canonical("lives_in"), "lives in")  # (an ontology spelling)
+
+    def test_the_lore_reader_is_told_the_same_words(self) -> None:
+        for word in place_words.WORDS_OFFERED:
+            self.assertIn(word, lore_read.shape_instructions(), word)
+            self.assertIsNotNone(place_words.canonical(word), word)
+        self.assertIn("worked in", lore_read.read_instructions())
+        self.assertIn("was last seen in", lore_read.read_instructions())
+
+    def test_the_sayings_a_text_uses_are_each_one_word(self) -> None:
+        for said, kept in {
+            "was born in": "comes from", "Born in": "comes from", "visited": "was last seen in",
+            "  Worked   IN ": "worked in", "lived_in": "lived in", "is from": "comes from",
+        }.items():  # fmt: skip
+            self.assertEqual(place_words.canonical(said), kept, said)
+
+    def test_a_place_word_on_a_place_still_reads_by_its_word(self) -> None:
+        # a town that "lives in" another is odd, but it is shown as it was said, not "is in"
+        self.assertEqual(link_words("located_in", "lives in", False, "place"), "lives in")
 
     def test_an_event_took_place_in_a_town(self) -> None:
         self.assertEqual(link_words("located_in", "", False, "event"), "took place in")
