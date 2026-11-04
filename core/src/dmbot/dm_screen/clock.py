@@ -689,6 +689,9 @@ class SetTimeForm(discord.ui.Modal):
             self.day.required = self.hour.required = True
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
+        # Answer Discord first: the clock is read from the database next, and a modal must be
+        # answered within 3 seconds. Every reply after this is a follow-up.
+        await interaction.response.defer(ephemeral=True)
         client: Any = interaction.client
         guild_id = (
             interaction.guild.id
@@ -698,13 +701,9 @@ class SetTimeForm(discord.ui.Modal):
         stored = await client.clocks.get(guild_id, self.campaign_id) if guild_id else None
         now = None if stored is None else stored.clock.minute  # (read again: it may have moved)
         minute = parse_change(self.day.value, self.hour.value, now)
-        if isinstance(minute, str):
-            await interaction.response.send_message(minute, ephemeral=True)
+        if isinstance(minute, str) or minute is None:
+            await interaction.followup.send(minute or BAD_TIME, ephemeral=True)
             return
-        if minute is None:
-            await interaction.response.send_message(BAD_TIME, ephemeral=True)
-            return
-        await interaction.response.defer(ephemeral=True)
         if now is not None and minute > now:
             # Later than now passes time like the buttons do: dawn, noon, dusk and the 24-hour
             # line are said. Earlier (or the same) is the DM saying what time it is.

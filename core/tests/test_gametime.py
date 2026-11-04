@@ -562,6 +562,33 @@ class NoSecondClock(PlayersClock):
         )  # a caller holding old state
         self.assertEqual(self.chat_lines(), ["-# 🕰️ Day 4, afternoon"])
 
+    async def test_the_form_answers_discord_before_it_reads_the_clock(self) -> None:
+        order: list[str] = []
+        stored = SimpleNamespace(clock=Clock(NOON4, NOON4))
+
+        async def read(*_a: Any) -> Any:
+            order.append("read")
+            return stored
+
+        async def defer(**_k: Any) -> None:
+            order.append("defer")
+
+        it = SimpleNamespace(
+            client=SimpleNamespace(clocks=SimpleNamespace(get=read)),
+            guild=SimpleNamespace(id=GUILD),
+            user=SimpleNamespace(id=DM),
+            response=SimpleNamespace(defer=defer, send_message=AsyncMock()),
+            followup=SimpleNamespace(send=AsyncMock()),
+        )
+        form = ui.SetTimeForm(self.a.id, Clock(NOON4, NOON4))
+        form.day._value = ""
+        form.hour._value = "soon"  # unreadable: the refusal is a follow-up, after the defer
+        await form.on_submit(cast(Any, it))
+        self.assertEqual(order, ["defer", "read"])
+        it.response.send_message.assert_not_awaited()
+        self.assertEqual(it.followup.send.await_args.args[0], ui.BAD_TIME)
+        self.assertTrue(it.followup.send.await_args.kwargs["ephemeral"])
+
     async def test_a_typed_later_time_passes_time_and_an_earlier_one_only_sets_it(self) -> None:
         from unittest.mock import patch
 
