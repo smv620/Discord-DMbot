@@ -755,6 +755,7 @@ async def read_background(
         # a disguise becomes a plain other name only when the DM said everything is known;
         # under the smart guess it stays secret whatever the AI says (DM authority)
         fold_secret=choice == lore_knowledge.WORLD,
+        source=upload.label,
     )
     await save_earlier_names(
         memory,
@@ -764,6 +765,7 @@ async def read_background(
         getattr(bot, "lore_context", None),
         upload.text,
         known_by,
+        upload.label,
     )
     questions: list[str] = []
     keys: set[tuple[str, str, str]] = set()
@@ -880,6 +882,7 @@ async def save_earlier_names(
     held: lore_context.Held | None = None,
     text: str = "",
     known_by: str = "",
+    source: str = "",
 ) -> None:
     """The other names a lore text gives a name the campaign already has (#3034): a pseudonym, an
     earlier or birth name, a nickname. They are saved as suggestions on that entry (never a new
@@ -931,7 +934,7 @@ async def save_earlier_names(
     if held is None or not text:
         return
     for alias in added:  # the sentence around each, for its question (memory only)
-        held.put(campaign.guild_id, alias.id, lore_context.around(text, "", alias.text))
+        held.put(campaign.guild_id, alias.id, lore_context.around(text, "", alias.text), source)
 
 
 async def store(
@@ -943,6 +946,7 @@ async def store(
     known_by: str = "",
     world: Collection[str] = (),
     fold_secret: bool = False,
+    source: str = "",
 ) -> dict[str, list[str]]:
     """Each name as a suggestion with its quote (never confirmed), its other spellings with it and
     a disguise kept as a secret name. One change for the whole list: one reload of the live names,
@@ -1005,6 +1009,7 @@ async def store(
                     campaign.guild_id,
                     entity_id,
                     lore_context.around(text, item.quote, item.name),
+                    source,
                 )
             if known_by and item.secret:
                 await _secret_names_known_by(memory, campaign, entity_id, item.secret, known_by)
