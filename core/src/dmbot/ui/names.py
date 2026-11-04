@@ -1254,7 +1254,7 @@ class GroupNameForm(discord.ui.Modal, title="What is the group called?"):
 
     name: discord.ui.TextInput[GroupNameForm] = discord.ui.TextInput(
         label="Group's name",
-        placeholder="For example: The Dynamic Duo",
+        placeholder="For example: The Heroes of Waterdeep",
         max_length=NAME_MAX,
     )
 
@@ -1386,10 +1386,9 @@ class SuggestionReview(_Menu):
         )
         if self.group is not None:  # say which group, so "Yes, that group" has a "that"
             inside = _and([f"**{_md(m)}**" for m in self.group.members])
-            verb = "is" if len(self.group.members) == 1 else "are"
             text += (
-                f"\n👥 Could this be your group **{_md(self.group.group_name)}**? "
-                f"{inside} {verb} in it."
+                f"\n👥 Is this your group **{_md(self.group.group_name)}**? "
+                f"Already in it: {inside}. Yes adds this to it."
             )
         return text
 
@@ -2098,13 +2097,13 @@ class SuggestionReview(_Menu):
             self.undo_kind = "group"
         names = _and([f"**{_md(p)}**" for p in done.parts]) if done.parts else ""
         extra = (
-            f" Left out: {_and([f'**{_md(p)}**' for p in done.skipped])}." if done.skipped else ""
+            f" Not added: {_and([f'**{_md(p)}**' for p in done.skipped])}." if done.skipped else ""
         )
         await self._next(
             interaction,
             campaign,
             memory,
-            note=f"👥 **{_md(done.group_name)}** is the group: {names}.{extra}",
+            note=f"👥 Saved: **{_md(done.group_name)}** is a group of {names}.{extra}",
         )
 
     async def _undo_split(self, interaction: discord.Interaction) -> None:
@@ -2128,7 +2127,11 @@ class SuggestionReview(_Menu):
             else:
                 await memory.undo_split(campaign.guild_id, campaign.id, batch, name)
         except MemoryRuleError:
-            await _tell(interaction, "Can't undo: a part was answered, or it was changed since.")
+            await _tell(
+                interaction,
+                "Can't undo: a part was answered, or it was changed since. "
+                "Change the names by hand if you need to.",
+            )
             return
         changed(interaction, campaign)
         self.queue = [original, *(q for q in self.queue if q not in made)]
