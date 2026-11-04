@@ -2071,19 +2071,21 @@ class RecapFeatures:
                 if answer is None:
                     break
                 with log_context(guild_id=guild.id, campaign_id=answer.campaign_id):
+                    kept = name_answers.Kept()
                     try:
                         campaign = await self.campaigns.get(guild.id, answer.campaign_id)
                         why = (
                             name_answers.NOT_ALLOWED
                             if campaign is None
                             else await name_answers.apply(
-                                self.memory, guild.id, campaign.dm_user_ids, answer
+                                self.memory, guild.id, campaign.dm_user_ids, answer, kept, store
                             )
                         )
                     except Exception as exc:  # the row must never stay "working" for a bug
                         log.warning("A name answer failed: %s", type(exc).__name__)
                         why = name_answers.FAILED
-                    await store.finish(guild.id, answer, error=why)
+                    stays = answer.action in name_answers.KEPT_ACTIONS and kept.batch is not None
+                    await store.finish(guild.id, answer, error=why, kept=kept if stays else None)
                     log.info("Name answer: %s", why or "done")  # the word only
                     if not why and self.lookup is not None:
                         self.lookup.mark_stale(guild.id, answer.campaign_id)  # lists read it fresh

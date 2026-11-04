@@ -20,16 +20,18 @@ from dataclasses import dataclass
 from typing import Any
 
 from dmbot.db import Database
+from dmbot.memory._changes import NOT_FOUND
 from dmbot.memory.models import (
     CONFIRMED,
     NAME_MAX,
     PROPOSED,
     REJECTED,
     MemoryRuleError,
+    TooLateToUndo,
     name_key,
 )
 from dmbot.memory.name_longer import widens
-from dmbot.memory.store import SPELLING_TAKEN, MemoryStore
+from dmbot.memory.store import NOT_A_LIST, SPELLING_TAKEN, MemoryStore
 
 log = logging.getLogger(__name__)
 
@@ -51,6 +53,16 @@ TOO_LONG = "too_long"  # more than `NAME_MAX` letters
 ALREADY_KNOWN = "already_known"  # the words are a name DMbot already knows
 SECRET_CLASH = "secret_clash"  # the words are another entry's secret name (not said which)
 
+# Split a list, say it is a group, and take that back (#3406, #3383): the words the page turns into
+# plain ones. A refusal changes nothing.
+NOT_A_LIST_WORD = "not_a_list"  # the name is not a list of names (or a list of places or things)
+NOT_FOUND_WORD = "not_found"  # the group is not a confirmed one, or the answer to undo is not here
+SPELLING_TAKEN_WORD = "spelling_taken"  # the group's name is another entry's spelling
+ANSWERED = "answered"  # undo, after a part was answered or the names changed
+NOT_DM = "not_dm"  # the sender is not a DM of the campaign any more
+SPLIT, JOIN_GROUP, MAKE_GROUP, UNDO = "split", "join_group", "make_group", "undo"
+KEPT_ACTIONS = (SPLIT, JOIN_GROUP, MAKE_GROUP)  # a finished one stays as a `done` row for its Undo
+
 PLAYER_CHARACTER = "player_character"  # who plays them is asked in Discord, not on the page
 
 
@@ -65,6 +77,16 @@ class Answer:
     target_id: str = ""
     text: str = ""
     claimed_at: int = 0  # this worker's claim: only it may finish the row
+
+
+@dataclass(slots=True)
+class Kept:
+    """What a finished split or group answer keeps on its row for the page and for its Undo: the
+    store's batch, the list as it was (a split only) and a note in counts and the group's name."""
+
+    batch: int | None = None
+    undo_name: str | None = None
+    note: str = ""
 
 
 class AnswerStore:
@@ -117,12 +139,21 @@ class AnswerStore:
             now,
         )
 
-    async def finish(self, guild_id: int, answer: Answer, *, error: str = "") -> bool:
+    async def finish(
+        self, guild_id: int, answer: Answer, *, error: str = "", kept: Kept | None = None
+    ) -> bool:
         """Done (the row goes: the name is answered, or its note kept) or failed (with why, for the
-        page). Only the worker that holds the current claim can write. False: not its row any
-        more."""
+        page). `kept`: a split or group answer stays as a `done` row with its batch and note until
+        its Undo or the sweep (#3406). Only the worker that holds the current claim can write.
+        False: not its row any more."""
         async with self._db.guild(guild_id) as conn:
-            if not error:
+            if not error and kept is not None:
+                cur = await conn.execute(
+                    "UPDATE name_answers SET state = 'done', batch = %s, undo_name = %s, note = %s"
+                    " WHERE guild_id = %s AND id = %s AND state = 'working' AND claimed_at = %s",
+                    (kept.batch, kept.undo_name, kept.note, guild_id, answer.id, answer.claimed_at),
+                )
+            elif not error:
                 cur = await conn.execute(
                     "DELETE FROM name_answers WHERE guild_id = %s AND id = %s"
                     " AND state = 'working' AND claimed_at = %s",
@@ -136,6 +167,31 @@ class AnswerStore:
                 )
             return bool(cur.rowcount)
 
+    async def done_for(
+        self, guild_id: int, campaign_id: str, entity_id: str, batch: int
+    ) -> tuple[str, str | None] | None:
+        """The finished split or group answer of this name with this batch: (its action, the list
+        as it was), or None."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT action, undo_name FROM name_answers"
+                " WHERE guild_id = %s AND campaign_id = %s"
+                " AND entity_id = %s AND batch = %s AND state = 'done'"
+                " AND action = ANY(%s) ORDER BY created_at DESC LIMIT 1",
+                (guild_id, campaign_id, entity_id, batch, list(KEPT_ACTIONS)),
+            )
+            row = await cur.fetchone()
+        return None if row is None else (str(row["action"]), row["undo_name"])
+
+    async def drop_done(self, guild_id: int, campaign_id: str, entity_id: str, batch: int) -> None:
+        """The answer that was taken back goes, so it can't be taken back twice."""
+        async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "DELETE FROM name_answers WHERE guild_id = %s AND campaign_id = %s"
+                " AND entity_id = %s AND batch = %s AND state = 'done' AND action = ANY(%s)",
+                (guild_id, campaign_id, entity_id, batch, list(KEPT_ACTIONS)),
+            )
+
     async def sweep(self, guild_id: int) -> int:
         """Delete answers older than `KEEP_FOR_S`, whatever their state."""
         async with self._db.guild(guild_id) as conn:
@@ -147,14 +203,21 @@ class AnswerStore:
 
 
 async def apply(
-    memory: MemoryStore, guild_id: int, dm_user_ids: Collection[int], answer: Answer
+    memory: MemoryStore,
+    guild_id: int,
+    dm_user_ids: Collection[int],
+    answer: Answer,
+    kept: Kept | None = None,
+    answers: AnswerStore | None = None,
 ) -> str:
     """Do one answer the way Discord's name check does. Returns "" when it worked, or the
     reason word. Nothing here logs the DM's words. The sender is checked at the moment of use
     (they may have stopped being a DM since); the name must still be a waiting suggestion."""
     if answer.user_id not in dm_user_ids:
-        return NOT_ALLOWED
+        return NOT_DM if answer.action in (SPLIT, JOIN_GROUP, MAKE_GROUP, UNDO) else NOT_ALLOWED
     cid = answer.campaign_id
+    if answer.action == UNDO:
+        return await _undo(memory, answers, guild_id, answer)
     entity = await memory.entity(guild_id, cid, answer.entity_id)
     if entity is None or entity.status != PROPOSED:
         return GONE
@@ -204,6 +267,8 @@ async def apply(
             return await _change_words(memory, guild_id, cid, entity, answer)
         elif answer.action == "not_a_name":
             await memory.set_entity_status(guild_id, cid, entity.id, REJECTED, source="dm")
+        elif answer.action in KEPT_ACTIONS:
+            return await _split_or_group(memory, guild_id, cid, entity, answer, kept)
         elif answer.action == "explain":
             await memory.set_note(
                 guild_id, cid, entity.id, answer.text, source="dm", limit=NOTE_MAX
@@ -212,6 +277,84 @@ async def apply(
             return FAILED
     except MemoryRuleError:
         return GONE  # the name changed under us (answered in Discord a moment ago)
+    return ""
+
+
+def _store_reason(exc: MemoryRuleError) -> str:
+    """The store's reason as the page's fixed word."""
+    text = str(exc)
+    if text == NOT_A_LIST:
+        return NOT_A_LIST_WORD
+    if text == SPELLING_TAKEN:
+        return SPELLING_TAKEN_WORD
+    if text == NOT_FOUND:
+        return NOT_FOUND_WORD
+    return NOT_FOUND_WORD
+
+
+async def _split_or_group(
+    memory: MemoryStore,
+    guild_id: int,
+    campaign_id: str,
+    entity: Any,
+    answer: Answer,
+    kept: Kept | None,
+) -> str:
+    """ "These are separate names", "Yes, that group" and "They're a group" (#3406, #3383): the same
+    store calls as Discord's buttons (#3403, #3404), one change each, so one Undo. What stays on
+    the row is the batch, the list as it was for a split, and a note of counts and the group's
+    name. A refusal changes nothing."""
+    note = ""
+    undo_name: str | None = None
+    try:
+        if answer.action == SPLIT:
+            undo_name = entity.name
+            split = await memory.split_waiting_name(guild_id, campaign_id, entity.id, source="dm")
+            batch = split.batch
+            note = f"Split into {len(split.value.parts)} names."
+        elif answer.action == JOIN_GROUP:
+            joined = await memory.join_group(
+                guild_id, campaign_id, entity.id, answer.target_id, source="dm"
+            )
+            batch = joined.batch
+            note = f"Added to the group {joined.value.group_name}."
+        else:
+            made = await memory.make_group(
+                guild_id, campaign_id, entity.id, answer.text, source="dm"
+            )
+            batch = made.batch
+            note = f"Made the group {made.value.group_name}."
+    except MemoryRuleError as exc:
+        return _store_reason(exc)
+    if kept is not None:
+        kept.batch, kept.undo_name, kept.note = batch, undo_name, note[:200]
+    return ""
+
+
+async def _undo(
+    memory: MemoryStore, answers: AnswerStore | None, guild_id: int, answer: Answer
+) -> str:
+    """Take back a finished split or group of this name by its batch (the answer's target): a
+    split with `undo_split` (the waiting claims it set aside come back), a group with the store's
+    own undo. Refused as `not_found` when no such finished answer is here (already taken back, or
+    swept) and as `answered` when the store refuses (a part was answered, or the names changed)."""
+    if answers is None or not answer.target_id.isdigit():
+        return NOT_FOUND_WORD
+    batch = int(answer.target_id)
+    found = await answers.done_for(guild_id, answer.campaign_id, answer.entity_id, batch)
+    if found is None:
+        return NOT_FOUND_WORD
+    action, undo_name = found
+    try:
+        if action == SPLIT:
+            await memory.undo_split(guild_id, answer.campaign_id, batch, undo_name or "")
+        else:
+            await memory.undo(guild_id, answer.campaign_id, batch)
+    except TooLateToUndo:
+        return ANSWERED
+    except MemoryRuleError:
+        return ANSWERED
+    await answers.drop_done(guild_id, answer.campaign_id, answer.entity_id, batch)
     return ""
 
 
