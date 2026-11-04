@@ -561,7 +561,7 @@ CORE_PREDICATES: tuple[PredicateTerm, ...] = (
             ("the item belongs to them, wherever it is", "owns"),
             ("the item is lying in a place", "located_in"),
         ),
-        examples=("Cerric carries Heartseeker.", "Mira carries a longbow."),
+        examples=("Cerric carries Heartseeker.", "Mira carries the Sealed Letter of Orrin Dace."),
         inverse_label="is held by",
         synonyms=("carrying", "holds", "wields", "wearing", "has_on"),
     ),

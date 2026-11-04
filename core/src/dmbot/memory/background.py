@@ -22,7 +22,7 @@ from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Any
 
-from dmbot.memory import kin, place_words
+from dmbot.memory import kin, place_words, unique_item
 from dmbot.memory import reputation_words as feeling_words
 from dmbot.memory.backstory_links import QUOTE_MAX
 from dmbot.memory.end_match import FILLER, SHORTEST, Ends
@@ -621,21 +621,31 @@ def merge(
     *,
     cap: int = MAX_NAMES,
     rules: tuple[str, str] | None = None,
+    dropped: Counter[str] | None = None,
 ) -> list[Found]:
     """The pieces' names as one list, each once (other spellings joined, the first quote kept),
     leaving out names DMbot already has, ordinary words and game terms, at most `cap`. A name
     that is a disguise of another entry folds into it, and its other spellings become that
     entry's secret spellings. `rules`
-    (target, fallback ruleset): names the rules hold as a monster or spell are left out too."""
+    (target, fallback ruleset): names the rules hold as a monster or spell are left out too. An
+    item that is not one particular thing (a dagger, arrows) is left out and counted in `dropped`
+    as `item_not_unique` (#3373)."""
     skip = {name_key(k) for k in skip_keys} | COMMON | GAME_TERMS
     order: list[str] = []
     merged: dict[str, Found] = {}
+    generic: set[str] = set()
     for found in answers:
         for item in found:
             key = name_key(item.name)
             if not key or key in skip:
                 continue
             if rules is not None and in_the_rules(item.name, item.kind, *rules):
+                continue
+            if item.kind == "item" and not any(
+                unique_item.keeps(spelling, item.quote)
+                for spelling in (item.name, *item.also, *item.secret)
+            ):
+                generic.add(key)  # (not one particular thing under any of its spellings)
                 continue
             item = Found(  # a spelling DMbot already holds (a secret one too) is not offered again
                 item.name,
@@ -659,6 +669,8 @@ def merge(
                 (*old.secret, *more_secret)[:MAX_ALSO],
                 old.quote or item.quote,
             )
+    if dropped is not None and (left_out := generic - merged.keys()):
+        dropped["item_not_unique"] += len(left_out)  # (a count of names, never the names)
     out = [merged[k] for k in order]
     # A disguise is a secret spelling of the real one. When the AI also lists the disguise as a
     # name of its own (as it is told to), that entry folds into the real one's secret spelling:

@@ -354,6 +354,24 @@ class Stored(ConfirmedMemoryTest):
             session_started_at=500,
         )  # fmt: skip
 
+    async def test_only_a_unique_item_is_made_an_entry_from_a_session_claim(self) -> None:
+        # (#3373) "Bram carries a dagger" makes no entry and no tie; a named or owned item does
+        got = await self.propose(
+            said("Bram", "carries", "a dagger"),
+            said("Bram", "carries", "Mira's arrows"),
+            said("Bram", "carries", "Moonblade"),
+            said("Bram", "carries", "Garret's sled"),
+        )
+        self.assertEqual(got.reasons, {claims.ITEM_REASON: 2})
+        self.assertEqual(sorted(got.new), ["Garret's sled", "Moonblade"])
+        # one that is later named is tracked from then on
+        later = await self.propose(said("Bram", "carries", "the Widowmaker"))
+        self.assertEqual(later.new, ("the Widowmaker",))
+        # an item that is already an entry is unaffected, whatever it is called
+        await self.add("a rusty dagger", type="item")
+        known = await self.propose(said("Bram", "carries", "a rusty dagger"))
+        self.assertEqual((known.waiting, known.dropped), (1, 0))
+
     async def test_a_single_action_is_dropped_and_never_makes_a_name_or_a_tie(self) -> None:
         got = await self.propose(
             said("The attackers", "swings at", "Bram"),
