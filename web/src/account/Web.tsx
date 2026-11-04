@@ -9,6 +9,7 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import { NAME_LIMIT } from "../content/names-words";
+import { NOT_NAMED_LIVE } from "../content/not-named-switch";
 import { BIG_WEB, kindWords, webPage as words } from "../content/web-words";
 import {
   type AccountApi,
@@ -27,8 +28,7 @@ import WebMap from "./WebMap";
 import WebOverviewPanel from "./WebOverview";
 import { dimmedName, markSecret, plainGraph, plainOverview } from "./know";
 import { WHO_KNOWS_LIVE } from "../content/who-knows-switch";
-import WebReadings from "./WebReadings";
-import WebWaiting from "./WebWaiting";
+import LazyPanel from "./LazyPanel";
 import { WEB_READINGS_LIVE } from "../content/web-readings";
 import { WEB_WAITING_LIVE } from "../content/web-waiting";
 import { clampHops } from "./webLayout";
@@ -78,6 +78,8 @@ function withTimeout<T>(work: Promise<T>): Promise<T> {
     new Promise<never>((_, reject) => setTimeout(() => reject(new Error("timeout")), QUIET_READ_MS)),
   ]);
 }
+
+const UNNAMED_SUFFIX = "(name unknown)"; // core/memory/unnamed.py: how a person the story never named is labelled
 
 function refusal(error: unknown): string | null {
   const kind = error instanceof ApiError ? error.kind : "network";
@@ -341,6 +343,13 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
     try {
       await api.webReveal(ref, target);
     } catch (error) {
+      if (target.kind === "link" && error instanceof ApiError && (error.kind === "names-not-shown" || error.kind === "name-unnamed")) {
+        // Which end needs what: the page already holds the two names, so it can say them (#3426).
+        const ends = graph?.edges.find((e) => e.links.some((l) => l.id === target.id));
+        const ones = ends ? graph!.nodes.filter((n) => n.id === ends.a || n.id === ends.b) : [];
+        if (error.kind === "name-unnamed") return words.nameThemFirst(ones.find((n) => n.name.endsWith(UNNAMED_SUFFIX))?.name.slice(0, -UNNAMED_SUFFIX.length).trim() ?? null, NOT_NAMED_LIVE && api.nameThem !== undefined);
+        return words.showNamesFirst(ones.filter((n) => n.revealed === false).map((n) => n.name));
+      }
       const said = refusal(error);
       if (said === null) {
         setView("signed-out");
@@ -689,10 +698,13 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
         />
       )}
 
-      {WEB_READINGS_LIVE && overview?.canEdit && asked !== "players" && <WebReadings key={`readings-${ref}`} api={api} campaignRef={ref} />}
+      {/* (both lists load on demand, and the switch is tested here so the build drops a list that is not live: the page stays within its weight budget) */}
+      {WEB_READINGS_LIVE && overview?.canEdit && asked !== "players" && (
+        <LazyPanel key={`readings-${ref}`} load={() => import("./WebReadings")} what="what people believe" props={{ api, campaignRef: ref }} />
+      )}
 
       {WEB_WAITING_LIVE && overview?.canEdit && asked !== "players" && (
-        <WebWaiting key={ref} api={api} campaignRef={ref} onChanged={() => void load(center, hops, true)} />
+        <LazyPanel key={ref} load={() => import("./WebWaiting")} what="the waiting connections" props={{ api, campaignRef: ref, onChanged: () => void load(center, hops, true) }} />
       )}
 
       <details
@@ -1342,6 +1354,11 @@ function LinkRow({
           >
             {words.reveal}
           </button>
+          {problem?.endsWith(words.namesPageEnding) && (
+            <a class="small" href={`/account/names/${encodeURIComponent(refId)}`}>
+              {words.openNames}
+            </a>
+          )}
         </div>
       )}
       {canEdit && (

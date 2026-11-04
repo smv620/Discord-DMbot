@@ -175,3 +175,44 @@ class TheMatchCard(NamesTest):
         view.current = Asked(Offer("u", "n", 100, (STATED,)), "guard at the north gate", "Ken")
         self.assertIn("The story says so.", view.text())
         self.assertNotIn("only guessing", view.text())
+
+
+class TheTwoWomenCard(NamesTest):
+    """Two people the story never named, told apart by what ties them (#3447)."""
+
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        self.bot.plan_gate = AsyncMock(return_value=None)  # type: ignore[method-assign]
+        cid = self.campaign.id
+        self.first = (await self.memory.add_unnamed(GUILD, cid, what="the woman")).entity.id
+        self.second = (await self.memory.add_unnamed(GUILD, cid, what="the woman")).entity.id
+        port = (
+            await self.memory.add_entity(
+                GUILD, cid, name="Termalaine", type="place", status=CONFIRMED, source="dm"
+            )
+        ).value.id  # fmt: skip
+        await self.memory.add_relation(
+            GUILD, cid, self.first, "located_in", port, source="dm", confidence=1.0,
+            status=CONFIRMED,
+        )  # fmt: skip
+
+    async def test_the_question_names_each_with_what_ties_it(self) -> None:
+        view = SamePersonQuestions(self.campaign.id)
+        self.assertTrue(await view.load(self.it(DM)))
+        text = view.text()
+        self.assertIn("Is the woman", text)
+        self.assertIn("(in Termalaine)", text)  # the tag tells the two apart
+        self.assertIn("(name unknown)", text)  # the other has nothing to tell it apart yet
+        self.assertIn("they are described the same way", text)
+        self.assertIn(KEEPS, text)
+
+    async def test_yes_leaves_one_woman(self) -> None:
+        view: Any = SamePersonQuestions(self.campaign.id)
+        await view.load(self.it(DM))
+        yes = next(b for b in view.children if b.label.startswith("✅"))
+        await yes.callback(self.it(DM))
+        left = await self.memory.unnamed(GUILD, self.campaign.id)
+        # (the keeper is the older, then the one with more ties, then the smaller id: the first
+        # woman has the place tie, so she is kept even when both were made in the same second)
+        self.assertEqual([e.id for e, _ in left], [self.first])
+        self.assertEqual(await self.memory.same_person_offers(GUILD, self.campaign.id), [])

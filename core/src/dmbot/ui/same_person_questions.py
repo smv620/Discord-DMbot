@@ -13,6 +13,7 @@ from dataclasses import dataclass
 
 import discord
 
+from dmbot.memory import tags
 from dmbot.memory.models import MemoryRuleError
 from dmbot.memory.same_person import STATED, Offer
 from dmbot.mentions import NO_PINGS
@@ -64,17 +65,39 @@ class SamePersonQuestions(_Menu):
         offers = await memory.same_person_offers(campaign.guild_id, campaign.id)
         if not offers:
             return []
-        labels = {e.id: label for e, label in await memory.unnamed(campaign.guild_id, campaign.id)}
+        people = await memory.unnamed(campaign.guild_id, campaign.id)
+        labels = {e.id: label for e, label in people}
+        entities = {e.id: e for e, _label in people}
         found = {
             e.id: e.name
             for e in await memory.entities(campaign.guild_id, campaign.id)
             if e.id in {o.named_id for o in offers}
         }
-        return [
-            Asked(o, labels[o.unnamed_id], found[o.named_id])
-            for o in offers
-            if o.unnamed_id in labels and o.named_id in found
-        ]
+        # Two people the story never named are told apart by their tags (#3447): where they were
+        # seen or whom they are tied to, so "the woman" and "the woman" are not the same line twice.
+        pairs = [o for o in offers if o.both_unnamed]
+        ties = await memory.tag_ties(
+            campaign.guild_id,
+            campaign.id,
+            [i for o in pairs for i in (o.unnamed_id, o.named_id)],
+        )
+
+        def shown(entity_id: str) -> str:
+            what = entities[entity_id].unnamed_what or labels[entity_id]
+            tag = tags.tag_for(
+                entities[entity_id], ties.get(entity_id, ()), shown_name=what, dm=True
+            )
+            # (with nothing to tell them apart, the plain label: "name unknown" at least says why)
+            return labels[entity_id] if tag == what else tag
+
+        asked: list[Asked] = []
+        for o in offers:
+            if o.both_unnamed:
+                if o.unnamed_id in labels and o.named_id in labels:
+                    asked.append(Asked(o, shown(o.unnamed_id), shown(o.named_id)))
+            elif o.unnamed_id in labels and o.named_id in found:
+                asked.append(Asked(o, labels[o.unnamed_id], found[o.named_id]))
+        return asked
 
     def _set(self, waiting: list[Asked]) -> None:
         self.total = max(self.total, self.yes + self.no + len(waiting))
@@ -98,9 +121,12 @@ class SamePersonQuestions(_Menu):
             if STATED in c.offer.reasons
             else f"DMbot is only guessing: {', '.join(c.offer.reasons)}."
         )
+        other = (
+            _with_the(markdown_safe(c.named)) if c.offer.both_unnamed else markdown_safe(c.named)
+        )
         return (
             f"🔎 **Is {_with_the(markdown_safe(c.unnamed))} the same as "
-            f"{markdown_safe(c.named)}?**{place}\n{why}\n{KEEPS}"
+            f"{other}?**{place}\n{why}\n{KEEPS}"
         )
 
     async def _show(self, interaction: discord.Interaction, waiting: list[Asked]) -> None:
