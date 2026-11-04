@@ -47,7 +47,8 @@ class TheChoices(unittest.TestCase):
 
     def test_it_is_what_the_store_function_gives(self) -> None:
         facts = info([entity("a" * 32, "Mira", description="x"), entity("b" * 32, "Mira")])
-        direct = which_choices(facts["claims"][0], facts["entities"], facts["aliases"])  # type: ignore[index]
+        claims, entities, aliases = facts["claims"], facts["entities"], facts["aliases"]
+        direct = which_choices(claims[0], entities, aliases)  # type: ignore[arg-type,index]
         site = web.choices_by_claim(facts)["c1"]
         self.assertEqual(
             [(p.side, p.words, [o.id for o in p.entries]) for p in direct],
