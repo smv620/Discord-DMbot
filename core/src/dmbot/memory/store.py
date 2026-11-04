@@ -1589,11 +1589,8 @@ class MemoryStore:
         details: str,
         anchor_id: str | None,
         read: dict[str, str] | None = None,
-        *,
-        reuse: bool = False,
     ) -> UnnamedAdded:
-        """`add_unnamed` inside an open write. `reuse`: with no anchor, a live unnamed person with
-        the same word is the same person (a DM's yes to "the woman" twice is one woman; #3431)."""
+        """`add_unnamed` inside an open write."""
         same = unnamed_mod.same_person_key(word, role)
         anchor_name: str | None = None
         if anchor_id is not None:
@@ -1612,8 +1609,6 @@ class MemoryStore:
         ]
         key = f"{anchor_id or ''}|{same}"
         if anchor_id is not None and found:
-            return UnnamedAdded(_entity(found[0]), False)
-        if anchor_id is None and reuse and found:
             return UnnamedAdded(_entity(found[0]), False)
         if anchor_id is None and read is not None and key in read:
             for r in found:

@@ -147,17 +147,27 @@ class ThePersonWithoutAName(MemoryTest):
         self.assertEqual(await self.memory.unnamed(GUILD_A, self.c), [])
         self.assertEqual(len(await self.waiting()), 1)
 
-    async def test_two_kept_claims_about_the_woman_are_one_woman(self) -> None:
-        await self.propose(said("Bram", "knows", "the woman"))
-        other = await self.add("Mira Vane", type="character", status=CONFIRMED)
-        await self.propose(said("Mira Vane", "knows", "the woman"))
-        waiting = await self.waiting()
-        self.assertEqual(len(waiting), 2)
-        for claim in waiting:
+    async def keep_all(self) -> None:
+        for claim in await self.waiting():
             await self.claims.confirm(GUILD_A, self.c, claim.id, opted_in={7})
-        people = await self.memory.unnamed(GUILD_A, self.c)
-        self.assertEqual(len(people), 1)
-        self.assertTrue(other)
+
+    async def test_the_woman_twice_in_one_session_is_one_woman(self) -> None:
+        await self.add("Mira Vane", type="character", status=CONFIRMED)
+        await self.propose(said("Bram", "knows", "the woman"))
+        await self.propose(said("Mira Vane", "knows", "the woman"))
+        self.assertEqual(len(await self.waiting()), 2)
+        await self.keep_all()
+        self.assertEqual(len(await self.memory.unnamed(GUILD_A, self.c)), 1)
+
+    async def test_the_woman_in_two_sessions_is_two_women(self) -> None:
+        await self.propose(said("Bram", "knows", "the woman"))
+        await self.keep_all()
+        await self.claims.propose(
+            GUILD_A, self.c, [said("Bram", "talks to", "the woman")], {"1": 7}, opted_in={7},
+            prompt_version="p1", model="m1", session_started_at=900,
+        )  # fmt: skip
+        await self.keep_all()
+        self.assertEqual(len(await self.memory.unnamed(GUILD_A, self.c)), 2)
 
     async def test_a_claim_whose_person_was_named_since_is_written_the_ordinary_way(self) -> None:
         await self.propose(said("Bram", "knows", "the woman"))

@@ -32,7 +32,8 @@ from dmbot.memory import (
     reputation_words,
     unique_item,
 )
-from dmbot.memory._changes import ALIASES, CLAIMS, ENTITIES, Changes
+from dmbot.memory import unnamed as unnamed_mod
+from dmbot.memory._changes import ALIASES, CLAIMS, ENTITIES, RELATIONS, Changes
 from dmbot.memory.list_names import split_list
 from dmbot.memory.models import (
     CLAIM_CONFIRMED,
@@ -1573,6 +1574,37 @@ class ClaimStore:
         return await placing.place(self, guild_id, campaign_id, claim_id, opted_in=opted_in)
 
     @staticmethod
+    async def _same_session_person(w: Changes, claim: Claim, described: str) -> str | None:
+        """The unnamed person an earlier Keep of this same session already made for the same
+        words (#3431): within one session "the woman" is one woman. Across sessions it is a new
+        person, and the same-person question offers the join; never campaign-wide, since two
+        women a month apart are often two women."""
+        if claim.session_started_at is None:
+            return None
+        same = unnamed_mod.same_person_key(described, None)
+        kept = await w.select(
+            CLAIMS,
+            " AND status = 'confirmed' AND reason = %s AND session_started_at = %s"
+            " AND fact_id IS NOT NULL",
+            [DESCRIBED_REASON, claim.session_started_at],
+        )
+        facts = [str(r["fact_id"]) for r in kept]
+        if not facts:
+            return None
+        ends: set[str] = set()
+        for row in await w.select(RELATIONS, " AND id = ANY(%s)", [facts]):
+            ends |= {str(row["subject_id"]), str(row["object_id"])}
+        for row in await w.select(
+            ENTITIES,
+            " AND unnamed AND status = 'confirmed' AND unnamed_anchor IS NULL AND id = ANY(%s)"
+            " ORDER BY created_at, id",
+            [sorted(ends)],
+        ):
+            if unnamed_mod.same_person_key(str(row["unnamed_what"]), row["unnamed_role"]) == same:
+                return str(row["id"])
+        return None
+
+    @staticmethod
     def _described_end(claim: Claim, names: Names) -> str | None:
         """The one end of a kept "person with no name" claim that still matches no entry (#3431),
         or None when there is none any more (the DM named them since: the fact is then written the
@@ -1672,8 +1704,11 @@ class ClaimStore:
             if current is None or current["status"] != CLAIM_PROPOSED:
                 raise MemoryRuleError(GONE)
             if described is not None:
-                added = await self._store._add_unnamed_in(w, described, None, "", None, reuse=True)
-                person = await w.update(ENTITIES, added.entity.id, {"status": CONFIRMED})
+                person_id = await self._same_session_person(w, claim, described)
+                if person_id is None:
+                    added = await self._store._add_unnamed_in(w, described, None, "", None)
+                    person_id = added.entity.id
+                person = await w.update(ENTITIES, person_id, {"status": CONFIRMED})
                 who = (str(person["id"]), "character") if who[0] == NEW_PERSON else who
                 if other and not isinstance(other, str) and other[0] == NEW_PERSON:
                     other = (str(person["id"]), "character")
