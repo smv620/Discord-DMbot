@@ -86,7 +86,10 @@ async def _connections(src: Sources, g: int, c: str) -> Counted:
     confirmed entries, unnamed people who may be a named one, and the family links worked out."""
     total = 0
     if src.backstory is not None:
-        total += int(await src.backstory.count(g, c)) - int(await src.backstory.count_which(g, c))
+        # (two reads: a "Which one?" added between them must not make this negative)
+        total += max(
+            0, int(await src.backstory.count(g, c)) - int(await src.backstory.count_which(g, c))
+        )
     if src.memory is not None:
         total += len(await src.memory.suggested_names(g, c))
         total += len(await src.memory.same_person_offers(g, c))
@@ -111,8 +114,13 @@ async def _claims(src: Sources, g: int, c: str) -> Counted:
     reader counts those too, and the page would show them twice."""
     if src.claims is None or src.agreed is None:
         return Counted(0)
-    waiting = int(await src.claims.waiting_for_check(g, c, opted_in=await src.agreed(g)))
-    return Counted(max(0, waiting - int(await src.claims.unplaced_count(g, c))))
+    return Counted(
+        int(
+            await src.claims.waiting_for_check(
+                g, c, opted_in=await src.agreed(g), without_unplaced=True
+            )
+        )
+    )
 
 
 async def _readings(src: Sources, g: int, c: str) -> Counted:

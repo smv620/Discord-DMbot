@@ -56,8 +56,10 @@ def total(counts: Mapping[str, Counted]) -> int:
 
 def answered(before: Mapping[str, Counted], after: Mapping[str, Counted]) -> bool:
     """Whether something was answered between two counts (#3435): a kind that waited now waits
-    less, or, for a kind whose questions also expire, more answers were given. A kind that was not
-    counted before (the first round, a count that failed) is never an answer."""
+    less (a few things also lower a count without an answer, such as "Stop recording me" or a
+    recap text edit; that only resets a reminder a little early), or, for a kind whose questions
+    also expire, more answers were given. A kind that was not counted before (the first round, a
+    count that failed) is never an answer."""
     from dmbot.questions import kinds
 
     for kind, now in after.items():
