@@ -11,6 +11,7 @@ import type {
   NamesFixed,
   NamesPage,
   NpcPage,
+  QuestionCounts,
   Readings,
   SmartNamesAnswer,
   Waiting,
@@ -256,6 +257,8 @@ export default function namesArea({ call, waitForAnswer }: ApiHelpers): Partial<
       );
       return { answerId: queued.answer, undoable: got.undoable === true };
     },
+    myQuestions: async () => (await call("GET", "/me/questions")) as QuestionCounts,
+    questionsTotal: async () => (await call("GET", "/me/questions/count")) as { total: number },
     webPeek: async (ref) => {
       await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/web/peek`, {});
     },
