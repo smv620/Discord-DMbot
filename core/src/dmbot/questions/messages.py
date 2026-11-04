@@ -12,6 +12,7 @@ from dmbot.discord_limits import fit_message
 
 NOT_NOW = "🔕 Not now"
 NOT_NOW_DONE = "👍 No more reminders until there is a new question."
+NOT_NOW_FAILED = "That didn't save. Press 🔕 Not now again in a moment."
 NAME_MAX = 60
 
 

@@ -224,3 +224,41 @@ class TheRound(Base):
         await DiscordSender(bot).send(ALICE.id, "x")
         view = bot._dm_message.await_args.args[2]
         self.assertTrue(any(isinstance(item, NotNowButton) for item in view.children))
+
+    async def test_with_the_notices_off_the_counts_are_written_and_nothing_is_sent(self) -> None:
+        self.round.notify = False
+        await self.ask(self.one.id)
+        self.assertEqual(await self.tick(), 0)
+        self.assertEqual(await self.tick(3600), 0)
+        self.assertEqual(self.sender.sent, [])
+        counts = await QuestionCounts(self.db).read(self.g, self.one.id)
+        self.assertEqual(counts[kinds.NAMES].n, 1)  # (the website still has its number)
+        stored = await NoticeStore(self.db).get(self.g, self.one.id, ALICE.id)
+        self.assertIsNone(stored.notice.due_at)
+
+    async def test_not_now_answers_discord_before_it_writes_and_confirms_after(self) -> None:
+        from unittest.mock import AsyncMock, MagicMock
+
+        from dmbot.questions.discord import NotNowButton
+
+        order: list[str] = []
+
+        async def defer(**_k: object) -> None:
+            order.append("defer")
+
+        async def mute(*_a: object) -> int:
+            order.append("mute")
+            return 1
+
+        async def followup(text: str, **_k: object) -> None:
+            order.append("followup")
+
+        bot = MagicMock()
+        bot.guilds = [MagicMock(id=self.g)]
+        bot.question_notices = MagicMock(mute_all=mute)
+        interaction = MagicMock(client=bot, user=MagicMock(id=ALICE.id))
+        interaction.response.defer = defer
+        interaction.followup.send = AsyncMock(side_effect=followup)
+        await NotNowButton().callback(interaction)
+        self.assertEqual(order, ["defer", "mute", "followup"])
+        interaction.response.send_message.assert_not_called()

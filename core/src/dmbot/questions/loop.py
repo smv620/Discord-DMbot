@@ -52,6 +52,7 @@ class Round:
     sender: Sender
     campaigns: Callable[[int], Awaitable[list[Campaign]]]
     clock: Callable[[], float] = time.time
+    notify: bool = True  # False: count only (the notices are off, DMBOT_QUESTIONS=0)
     rounds: int = 0
 
     async def run(self, guild_ids: Collection[int]) -> int:
@@ -106,9 +107,9 @@ class Round:
         merged: Mapping[str, Counted] = {**before, **now_counts}  # a kind that failed keeps its old
         n = total(merged)
         was_answered, new_question = answered(before, merged), grew(before, merged)
-        recording = await self.sender.recording(g, c)
+        recording = await self.sender.recording(g, c) if self.notify else False
         now = int(self.clock())
-        for user_id in campaign.dm_user_ids:
+        for user_id in campaign.dm_user_ids if self.notify else ():
             try:  # one DM's trouble never costs the others their notice
                 await self._user(
                     campaign,

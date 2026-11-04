@@ -135,6 +135,9 @@ class Settings:
     recaps_on: bool = False  # cinematic recaps (#1382): off until dev1's quality check
     # PlotBot's check of each recap before it is accepted (#2122); needs recaps on. Off by default.
     plot_check_on: bool = False
+    # "Questions for you" (#3435): the private notices and reminders. Off by default until the
+    # Questions message they point to is live; the counts for the website are written either way.
+    questions_on: bool = False
     # Importing older sessions (#2105): off for everyone until dev1 has checked a real import,
     # and on for the listed servers alone (#2259). The web API reads the same two settings.
     imports_on: bool = False
@@ -551,6 +554,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         handover_email_on=handover_email_raw in ("1", "true", "on"),
         plot_check_on=recaps_raw in ("1", "true", "on")
         and (get("DMBOT_PLOT_CHECK") or "0").lower() in ("1", "true", "on"),
+        questions_on=(get("DMBOT_QUESTIONS") or "0").lower() in ("1", "true", "on"),
         imports_on=imports_raw in ("1", "true", "on"),
         imports_servers=imports_servers,
         time_suggestions=suggestions_raw in ("1", "true", "on"),

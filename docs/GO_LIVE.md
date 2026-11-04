@@ -122,3 +122,9 @@ Before the site switches flip, dev1 reads the "Server setting" column for the sw
 a feature whose setting is off on the server must keep its switch off, or the site will promise
 something Discord does not do. The next deploy's two switches need no setting. The one deployed
 feature that does is `TIME_SUGGESTIONS_LIVE`, which needs `DMBOT_TIME_SUGGESTIONS=1`.
+
+The bot's own switch for "Questions for you" (#3435) is `DMBOT_QUESTIONS` (off by default, `.env.example`). It
+turns on the private notice and the backed-off reminders. Counts for the website's Questions page are
+written either way. Turn it on only after the Questions message the notices point to is deployed
+and dev1 has seen a notice, a reminder replace the one before, and 🔕 Not now stop them; it goes with the
+site's Questions switch.

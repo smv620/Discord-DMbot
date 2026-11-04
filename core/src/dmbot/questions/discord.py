@@ -47,15 +47,21 @@ class NotNowButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], t
         return cls()
 
     async def callback(self, interaction: discord.Interaction) -> Any:
+        # Answer Discord first: the mute is written to the database next, and a button must be
+        # answered within 3 seconds. The confirmation is a follow-up.
+        await interaction.response.defer(ephemeral=True)
         bot: Any = interaction.client
         notices: NoticeStore | None = getattr(bot, "question_notices", None)
-        if notices is None:
-            return
-        try:
-            await notices.mute_all(interaction.user.id, [g.id for g in bot.guilds])
-        except Exception as exc:
-            log.warning("Questions: Not now didn't save (%s)", type(exc).__name__)
-        await interaction.response.send_message(messages.NOT_NOW_DONE, ephemeral=True)
+        saved = False
+        if notices is not None:
+            try:
+                await notices.mute_all(interaction.user.id, [g.id for g in bot.guilds])
+                saved = True
+            except Exception as exc:
+                log.warning("Questions: Not now didn't save (%s)", type(exc).__name__)
+        await interaction.followup.send(
+            messages.NOT_NOW_DONE if saved else messages.NOT_NOW_FAILED, ephemeral=True
+        )
 
 
 class DiscordSender:
@@ -104,6 +110,7 @@ def build_round(bot: DMBot) -> Round | None:
         notices=NoticeStore(db),
         sender=DiscordSender(bot),
         campaigns=bot.campaigns.list_campaigns,
+        notify=bot.settings.questions_on,
     )
 
 
