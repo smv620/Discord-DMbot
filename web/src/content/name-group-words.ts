@@ -22,6 +22,7 @@ export const nameGroupWords = {
     spelling_taken: "A name with that spelling is already in your campaign. Pick another name for the group.",
     answered: "One of those names was already answered, so this can't be undone. Keep the names as they are.",
     not_dm: "Only a game master of this campaign can do that.",
+    bad_spelling: "That can't be used as a group's name. Try another name for the group.",
   },
   other: "That didn't go through. Try again in a minute.",
   // The sentence for a refusal word. Anything else, including null and undefined, gets `other`.
