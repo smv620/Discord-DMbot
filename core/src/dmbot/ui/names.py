@@ -23,6 +23,7 @@ from discord import app_commands
 
 from dmbot.campaigns import Campaign
 from dmbot.discord_limits import MESSAGE_MAX, fit_message
+from dmbot.memory.list_names import split_list
 from dmbot.memory.lookup import CampaignLookup
 from dmbot.memory.models import (
     BACKGROUND_SOURCE,
@@ -33,6 +34,7 @@ from dmbot.memory.models import (
     REJECTED,
     Entity,
     MemoryRuleError,
+    lookup_key,
     name_key,
 )
 from dmbot.memory.name_longer import longer_names, widens
@@ -1298,6 +1300,10 @@ class SuggestionReview(_Menu):
         self.match: Match | None = None  # the known name the current one sounds like
         self.known_kind = ""  # the kind a name from the DM's background already has (#2167)
         self.entity_id = ""  # the current suggestion, for "Where was it said?" (#3384)
+        # After "These are separate names" (#3383): (batch, the list as it was, its id, the new
+        # names' ids), for ↩ Undo until the next answer.
+        self.split_undo: tuple[int, str, str, list[str]] | None = None
+        self.is_list = False  # the current one reads as a list of names
         self.name = ""  # the current suggestion's name, for the picker on its card (#2937)
         self.spelled = ""  # the spelling, when the current one was spelled out at the table (#2168)
         self.fix_to = ""  # how someone spelled this pending suggestion, when it differs (#2168)
@@ -1336,6 +1342,7 @@ class SuggestionReview(_Menu):
         self.refs = []
         self.places = await self._places(interaction, campaign, memory, entity)
         self.entity_id = entity.id
+        self.is_list = len(split_list(entity.name, dm=True)) > 1  # (the store checks it again)
         self._buttons()
         return suggestion_text(
             entity,
@@ -1499,6 +1506,24 @@ class SuggestionReview(_Menu):
                 row=1,
             )
         )
+        if self.is_list:  # a list the readers offered as one name (#3383)
+            self.add_item(
+                _Button(
+                    self._split,
+                    label="✂️ These are separate names",
+                    style=discord.ButtonStyle.primary,
+                    row=3,
+                )
+            )
+        if self.split_undo is not None:  # until the next answer: the split can still be taken back
+            self.add_item(
+                _Button(
+                    self._undo_split,
+                    label="↩ Undo the split",
+                    style=discord.ButtonStyle.secondary,
+                    row=3,
+                )
+            )
         self.add_item(  # up to three places, newest first (#3384; was "More places", #2329)
             _Button(
                 self._where,
@@ -1525,6 +1550,7 @@ class SuggestionReview(_Menu):
         entity = await memory.entity(campaign.guild_id, campaign.id, self.queue[0])
         if entity is None or entity.status != PROPOSED:
             self.queue.pop(0)
+            self.split_undo = None  # a part is gone: the split can't be taken back as it was
             await self._next(interaction, campaign, memory, note=None)
             return None
         return campaign, memory, entity
@@ -1568,6 +1594,7 @@ class SuggestionReview(_Menu):
         memory: MemoryStore,
         note: str,
     ) -> None:
+        self.split_undo = None  # an answer ends the chance to undo the split
         decided = self.queue.pop(0)
         held = getattr(interaction.client, "lore_context", None)
         if held is not None:
@@ -1890,6 +1917,66 @@ class SuggestionReview(_Menu):
         changed(interaction, campaign)
         await self._next(interaction, campaign, memory, note=f"✏️ Saved as **{_md(new)}**.")
 
+    async def _split(self, interaction: discord.Interaction) -> None:
+        """ "These are separate names" (#3383): a list offered as one name becomes a waiting name
+        for each part, in one change that can be undone until a part is answered."""
+        current = await self._current(interaction)
+        if current is None:
+            return
+        campaign, memory, entity = current
+        if not sees_secrets(campaign, interaction.user.id):  # the DM's call, as the store holds
+            await _tell(interaction, logic.NO_CAMPAIGN_ACCESS)
+            return
+        try:
+            written = await memory.split_waiting_name(
+                campaign.guild_id, campaign.id, entity.id, source=DM
+            )
+        except MemoryRuleError:
+            await _tell(interaction, GONE)
+            return
+        changed(interaction, campaign)
+        done = written.value
+        by_key = {lookup_key(e.name): e.id for e in await memory.entities(
+            campaign.guild_id, campaign.id, statuses=[PROPOSED]
+        )}  # fmt: skip
+        made = [by_key[k] for p in done.made if (k := lookup_key(p)) in by_key]
+        self.queue.pop(0)
+        self.queue[:0] = made  # the new names are asked next
+        if written.batch is not None:
+            self.split_undo = (written.batch, entity.name, entity.id, made)
+        names = _and([f"**{_md(p)}**" for p in done.parts])
+        held = _and([f"**{_md(p)}**" for p in done.joined]) if done.joined else ""
+        extra = (
+            f" {held} {'was' if len(done.joined) == 1 else 'were'} already known." if held else ""
+        )
+        await self._next(
+            interaction, campaign, memory, note=f"✂️ OK, these are separate names: {names}.{extra}"
+        )
+
+    async def _undo_split(self, interaction: discord.Interaction) -> None:
+        """Take the split back while none of its parts has been answered."""
+        pending = self.split_undo
+        campaign = await _campaign_for(interaction, self.campaign_id)
+        memory = _memory(interaction)
+        if campaign is None or memory is None:
+            return
+        if not sees_secrets(campaign, interaction.user.id):  # the DM's change, the DM's undo
+            await _tell(interaction, logic.NO_CAMPAIGN_ACCESS)
+            return
+        if pending is None:  # a second press, or an old card
+            await _tell(interaction, GONE)
+            return
+        self.split_undo = None  # a second quick press finds nothing to undo
+        batch, name, original, made = pending
+        try:
+            await memory.undo_split(campaign.guild_id, campaign.id, batch, name)
+        except MemoryRuleError:
+            await _tell(interaction, "Can't undo: a part was answered, or it was changed since.")
+            return
+        changed(interaction, campaign)
+        self.queue = [original, *(q for q in self.queue if q not in made)]
+        await self._next(interaction, campaign, memory, note=f"↩ Back to **{_md(name)}**.")
+
     async def _no(self, interaction: discord.Interaction) -> None:
         current = await self._current(interaction)
         if current is None:
@@ -1913,6 +2000,7 @@ class SuggestionReview(_Menu):
         if current is None:
             return
         campaign, memory, entity = current
+        self.split_undo = None
         self.later += 1
         self.queue.pop(0)  # this round only; it's still waiting next time
         try:  # and remembered, so it no longer holds a recap back (#2174)
