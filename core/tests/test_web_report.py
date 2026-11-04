@@ -155,7 +155,7 @@ class TheWords(unittest.TestCase):
             "Rook lives in Far Hall",
         )
         self.assertEqual(
-            report._words(self.rel("Far Hall", subjectKind="place")), "Far Hall is in Far Hall"
+            report._words(self.rel("Brass Ford", subjectKind="place")), "Brass Ford is in Far Hall"
         )
 
     def test_a_connection_with_no_kind_keeps_the_old_words(self) -> None:

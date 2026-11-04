@@ -27,7 +27,7 @@ _KIND = (
 assert _OLD.SQL.count(_FROM) == 1
 _DOOR = _OLD.SQL[_OLD.SQL.index(_FROM) :]
 _COUNT = _DOOR.count(_SUBJECT)
-assert _COUNT >= 1  # (every connection the door sends is built from this one template)
+assert _COUNT == 4  # (0249 builds every connection it sends from one template, used four times)
 
 REPORT_SUBJECT_KIND = r"""
     -- Each connection the report sends (the two sides of a difference, a liar's claim and the

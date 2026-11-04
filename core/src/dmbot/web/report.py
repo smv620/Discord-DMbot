@@ -57,7 +57,7 @@ def _words(rel: dict[str, Any]) -> str:
         str(rel["predicate"]),
         str(rel.get("detail") or ""),
         bool(rel.get("directional")),
-        str(rel.get("subjectKind") or ""),
+        subject_kind=str(rel.get("subjectKind") or ""),
     )
     return f"{rel['subject']} {said} {rel['object']}"
 
