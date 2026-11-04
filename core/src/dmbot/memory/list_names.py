@@ -16,7 +16,9 @@ from collections.abc import Collection
 from dmbot.memory.models import name_key
 
 MAX_PART_WORDS = 4
-MAX_PARTS = 8  # a longer list is more likely a sentence than names: keep it whole
+# A longer list is more likely a sentence than names: keep it whole. Twelve, because the sample lore
+# lists the ten towns of one region in a row (each part must still look like a name).
+MAX_PARTS = 12
 # Small words allowed inside a name ("Tower of Joy", "Hans de Vries").
 _JOINERS = frozenset({"of", "the", "de", "del", "la", "le", "von", "van", "du", "da", "al", "el"})
 _HARD = re.compile(r"\s*[,;/]\s*")
