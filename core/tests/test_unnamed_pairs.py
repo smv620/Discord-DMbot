@@ -115,6 +115,27 @@ class TheJoinRules(MemoryTest):
         self.assertEqual(await self.memory.same_person_offers(GUILD_A, other.id), [])
 
 
+class TheKeeper(unittest.TestCase):
+    """Which of two a Yes keeps is one answer, even for two made in the same second (#3457)."""
+
+    def keeper(self, rows: list[dict[str, object]], ties: dict[str, int] | None = None) -> str:
+        (offer,) = same_person.unnamed_pairs(rows, (), ties)
+        return offer.unnamed_id
+
+    def test_the_strictly_older_is_kept(self) -> None:
+        rows = [_row("b", "the woman", 1), _row("a", "the woman", 2)]
+        self.assertEqual(self.keeper(rows, {"a": 5}), "b")  # (more ties do not beat age)
+
+    def test_in_a_tie_of_age_the_one_with_more_confirmed_ties_is_kept(self) -> None:
+        rows = [_row("a", "the woman", 7), _row("b", "the woman", 7)]
+        self.assertEqual(self.keeper(rows, {"b": 2, "a": 1}), "b")
+
+    def test_in_a_tie_of_both_the_smaller_id_is_kept_whatever_the_order_given(self) -> None:
+        rows = [_row("m", "the woman", 7), _row("c", "the woman", 7)]
+        self.assertEqual(self.keeper(rows), "c")
+        self.assertEqual(self.keeper(rows[::-1]), "c")
+
+
 class ThePairRule(unittest.TestCase):
     def test_a_no_to_one_pair_does_not_hide_the_others(self) -> None:
         rows = [_row("a", "the woman", 1), _row("b", "the woman", 2), _row("c", "the woman", 3)]
