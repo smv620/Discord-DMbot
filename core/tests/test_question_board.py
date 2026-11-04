@@ -148,3 +148,84 @@ class TheCommand(unittest.IsolatedAsyncioTestCase):
         text = it.followup.send.await_args.args[0]  # type: ignore[attr-defined]
         self.assertIn("[Open the list](https://discord.test/55)", text)
         round_.notices.set_message.assert_awaited_once_with(GUILD, CAMPAIGN, 7, 55)
+
+
+class TheLookAlikesButton(unittest.IsolatedAsyncioTestCase):
+    async def test_it_answers_privately_first_so_the_questions_message_is_never_replaced(
+        self,
+    ) -> None:
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        order: list[str] = []
+        interaction = MagicMock()
+
+        async def defer(**kw: object) -> None:
+            order.append(f"defer ephemeral={kw.get('ephemeral')}")
+
+        async def show(_it: object, _campaign: str) -> None:
+            order.append("show")
+
+        interaction.response.defer = defer
+        with patch("dmbot.ui.look_alikes.show_look_alikes", AsyncMock(side_effect=show)):
+            await board.LookAlikesButton(CAMPAIGN).callback(interaction)
+        self.assertEqual(order, ["defer ephemeral=True", "show"])
+        interaction.response.edit_message.assert_not_called()
+
+
+class TheSender(unittest.IsolatedAsyncioTestCase):
+    """DiscordSender.board: edit in place, make one when there is none or it was deleted."""
+
+    def sender(self, partial: object):  # type: ignore[no-untyped-def]
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock, MagicMock
+
+        from dmbot.questions.discord import DiscordSender
+
+        channel = MagicMock()
+        channel.get_partial_message = MagicMock(return_value=partial)
+        channel.send = AsyncMock(return_value=SimpleNamespace(id=99, jump_url="https://j/99"))
+        user = MagicMock(dm_channel=channel)
+        bot = MagicMock()
+        bot.get_user = MagicMock(return_value=user)
+        return DiscordSender(bot), channel
+
+    def campaign(self):  # type: ignore[no-untyped-def]
+        from types import SimpleNamespace
+
+        return SimpleNamespace(guild_id=GUILD, id=CAMPAIGN, name="Frostmaiden")
+
+    async def test_an_existing_message_is_edited_not_remade(self) -> None:
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+
+        partial = SimpleNamespace(edit=AsyncMock(), jump_url="https://j/5")
+        sender, channel = self.sender(partial)
+        got = await sender.board(7, self.campaign(), found(names=1), 5, create=True)
+        self.assertEqual(got, (5, "https://j/5"))
+        partial.edit.assert_awaited_once()
+        channel.send.assert_not_called()
+
+    async def test_a_deleted_message_is_made_again_only_when_asked(self) -> None:
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock, MagicMock
+
+        gone = discord.NotFound(MagicMock(status=404), "gone")
+        partial = SimpleNamespace(edit=AsyncMock(side_effect=gone), jump_url="x")
+        sender, channel = self.sender(partial)
+        self.assertEqual(
+            await sender.board(7, self.campaign(), found(names=1), 5, create=False), (None, "")
+        )
+        channel.send.assert_not_called()
+        self.assertEqual(
+            await sender.board(7, self.campaign(), found(names=1), 5, create=True),
+            (99, "https://j/99"),
+        )
+
+    async def test_a_closed_private_chat_loses_nothing_and_raises_nothing(self) -> None:
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock, MagicMock
+
+        sender, channel = self.sender(SimpleNamespace())
+        channel.send = AsyncMock(side_effect=discord.HTTPException(MagicMock(status=403), "no"))
+        got = await sender.board(7, self.campaign(), found(names=1), None, create=True)
+        self.assertEqual(got, (None, ""))

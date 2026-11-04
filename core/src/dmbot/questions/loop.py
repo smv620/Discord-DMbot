@@ -72,6 +72,7 @@ class Round:
     async def run(self, guild_ids: Collection[int]) -> int:
         """One round over these servers. Returns how many messages were sent."""
         self.rounds += 1
+        self.latest.clear()  # only this round's counts are kept
         sent = 0
         for guild_id in guild_ids:
             try:

@@ -74,6 +74,10 @@ class LookAlikesButton(
     async def callback(self, interaction: discord.Interaction) -> Any:
         from dmbot.ui.look_alikes import show_look_alikes
 
+        # Answer with a private "thinking" message first: the screen swaps the message it is
+        # opened from for each group, and that must be this private one, never the Questions
+        # message (which would lose its list and buttons).
+        await interaction.response.defer(ephemeral=True, thinking=True)
         await show_look_alikes(interaction, self.campaign_id)
 
 

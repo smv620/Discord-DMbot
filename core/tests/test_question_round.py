@@ -258,6 +258,7 @@ class TheRound(Base):
         self.assertEqual(await self.tick(), 0)
         self.assertEqual(await self.tick(3600), 0)
         self.assertEqual(self.sender.sent, [])
+        self.assertEqual((self.sender.made, self.sender.edits), ([], []))
         counts = await QuestionCounts(self.db).read(self.g, self.one.id)
         self.assertEqual(counts[kinds.NAMES].n, 1)  # (the website still has its number)
         stored = await NoticeStore(self.db).get(self.g, self.one.id, ALICE.id)
