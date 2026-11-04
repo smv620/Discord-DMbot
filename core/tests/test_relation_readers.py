@@ -102,6 +102,8 @@ STORE = {
     "recheck_definitions": CONFIRMED_ONLY,
     "add_relation_in": "writes: `placing` makes a guess connection here (fresh, leave, made_by)",
     "update_relation": "writes: the DM's Keep or No",
+    "tag_ties": "confirmed ties for the DM's private same-person question, secret ones marked; "
+    "the tag never shows a secret tie to a player",
     "group_hints": "confirmed member_of ties for the DM's name question; names only",
     "_confirm_group_memberships": "writes: confirms the DM's own proposed member_of; no reading",
     "_settle_whereabouts": "writes: ends an item's other whereabouts; shows players nothing",
