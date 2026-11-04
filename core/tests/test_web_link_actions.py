@@ -917,6 +917,17 @@ class TheEdits(Editing):
         self.assertEqual([c["id"] for c in got["claims"]], [plain])
         self.assertEqual(got["counts"]["claims"], 1)
 
+    async def test_a_waiting_place_tie_reads_by_what_its_subject_is(self) -> None:
+        """#3368: the door sends the subject's kind, so Rook (an NPC) "was last seen in" the
+        hall and not "is in" it, as on the relationship web (#3363)."""
+        await self.backstory.add(
+            self.g, self.one.id, [NewLink(self.rook, "located_in", self.hall, "q")]
+        )
+        got = await self.waiting_now()
+        (row,) = [b for b in got["backstory"] if b["predicate"] == "located_in"]
+        self.assertEqual(row["subjectKind"], "npc")
+        self.assertEqual(row["how"], "was last seen in")
+
     async def test_the_door_lists_what_waits_with_the_upload_and_the_counts(self) -> None:
         claim = await self.claim()
         link = await self.waiting_link(self.mira, self.hall)
