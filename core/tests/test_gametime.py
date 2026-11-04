@@ -612,6 +612,7 @@ class NoSecondClock(PlayersClock):
         stored = await self.clocks.get(GUILD, self.a.id)
         assert stored is not None
         self.assertEqual(stored.clock.minute, NOON4 + 7 * 60)
+        assert said.await_args is not None
         lines = said.await_args.args[2]
         self.assertTrue(any("dusk" in line.lower() for line in lines), lines)  # time passed
         self.assertIn("Clock set to", it.followup.send.await_args.args[0])
@@ -623,6 +624,7 @@ class NoSecondClock(PlayersClock):
         stored = await self.clocks.get(GUILD, self.a.id)
         assert stored is not None
         self.assertEqual(stored.clock.minute, NOON4 + 4 * 60)
+        assert said.await_args is not None
         self.assertEqual(said.await_args.args[2], [])
 
     async def test_a_typed_time_from_the_panel_gets_its_reply(self) -> None:
