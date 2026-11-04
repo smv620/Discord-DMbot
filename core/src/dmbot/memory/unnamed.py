@@ -17,6 +17,9 @@ from dmbot.memory.models import name_key
 
 SUFFIX = "(name unknown)"
 NAME_FIRST = "Give them a name first: DMbot doesn't know who they are yet."
+# Showing a connection to an end the story never named (#3426); the website says what to do.
+# (`web_actions` matches this text to give the website its own refusal word: reword both together.)
+NAME_BEFORE_SHOWING = "Give the unnamed person a name first, then show this connection."
 STORED_MAX = 100  # the name column's limit
 ANCHOR_MAX = 40  # a long anchor name is cut in the label, never the suffix
 GROUP = "Not named yet"  # the heading on the name list (slice 4b)
