@@ -447,6 +447,48 @@ class Stored(ConfirmedMemoryTest):
         facts = await self.memory.relations(GUILD_A, self.c, entity_id=smuggler)
         self.assertEqual(len(facts), 1)  # the fact is about the one picked, not the other Mira
 
+    async def test_unpick_restores_the_same_choices_and_the_family_count(self) -> None:
+        claim_id = await self._kept()
+        before = await self.claims.which_one(GUILD_A, self.c, claim_id)
+        picked = await self.claims.pick_one(
+            GUILD_A, self.c, claim_id, "object", before[0].entries[0].id
+        )
+        self.assertEqual(await self.claims.unplaced_count(GUILD_A, self.c), 0)
+        self.assertTrue(await self.claims.unpick(GUILD_A, self.c, picked.id))
+        self.assertEqual(await self.claims.which_one(GUILD_A, self.c, claim_id), before)
+        self.assertEqual(await self.claims.unplaced_count(GUILD_A, self.c), 1)
+        again = await self.claims.get(GUILD_A, self.c, claim_id)
+        assert again is not None
+        self.assertEqual((again.object_picked, again.reason), (None, claims.UNPLACED_REASON))
+
+    async def test_unpick_does_nothing_after_a_keep_a_no_or_with_no_pick(self) -> None:
+        claim_id = await self._kept()
+        self.assertFalse(await self.claims.unpick(GUILD_A, self.c, claim_id))  # nothing picked
+        (choice,) = await self.claims.which_one(GUILD_A, self.c, claim_id)
+        await self.claims.pick_one(GUILD_A, self.c, claim_id, "object", choice.entries[0].id)
+        await self.claims.confirm(GUILD_A, self.c, claim_id, opted_in={7})
+        self.assertFalse(await self.claims.unpick(GUILD_A, self.c, claim_id))  # kept since
+        again = await self.claims.get(GUILD_A, self.c, claim_id)
+        assert again is not None
+        self.assertEqual((again.status, again.object_picked), ("confirmed", choice.entries[0].id))
+
+    async def test_unpick_does_nothing_after_the_dm_turned_the_claim_down(self) -> None:
+        claim_id = await self._kept()
+        (choice,) = await self.claims.which_one(GUILD_A, self.c, claim_id)
+        await self.claims.pick_one(GUILD_A, self.c, claim_id, "object", choice.entries[0].id)
+        await self.claims.reject(GUILD_A, self.c, claim_id)
+        self.assertFalse(await self.claims.unpick(GUILD_A, self.c, claim_id))
+
+    async def test_unpick_never_touches_a_claim_of_another_campaign(self) -> None:
+        claim_id = await self._kept()
+        (choice,) = await self.claims.which_one(GUILD_A, self.c, claim_id)
+        await self.claims.pick_one(GUILD_A, self.c, claim_id, "object", choice.entries[0].id)
+        other = (await self.campaigns.create(GUILD_A, "Sunken City", 7)).id
+        self.assertFalse(await self.claims.unpick(GUILD_A, other, claim_id))
+        again = await self.claims.get(GUILD_A, self.c, claim_id)
+        assert again is not None
+        self.assertEqual(again.object_picked, choice.entries[0].id)  # (still picked)
+
     async def test_a_choice_that_is_not_one_of_the_entries_is_refused_and_changes_nothing(
         self,
     ) -> None:

@@ -969,6 +969,7 @@ async def read_lore(
     aliases: Mapping[str, Sequence[str]] | None = None,
     hold_open: bool = False,
     known_keys: Collection[str] = (),
+    players: Collection[str] = (),
 ) -> LoreRead:
     """Both passes over the whole text. Nothing here stores anything: the caller merges the
     names, keeps what the campaign can hold and shows the DM every suggestion.
@@ -984,8 +985,12 @@ async def read_lore(
     slices finished of all of them.
 
     `hold_open` (#2790, the who-is-it check is on): a connection whose pronoun the sentence before
-    did not settle is kept in `LoreRead.stats.unsettled` for `who_resolve.settle`, not dropped."""
-    stats = Stats(unsettled=[] if hold_open else None)
+    did not settle is kept in `LoreRead.stats.unsettled` for `who_resolve.settle`, not dropped.
+    `players` (#3238): the name keys of the campaign's player characters. With the check off, an
+    open pronoun is still held in `stats.unsettled` when any exist, so one that names a player
+    character can wait for the DM (`who_resolve.pc_picks`) instead of being dropped; the rest are
+    left out and counted exactly as before."""
+    stats = Stats(unsettled=[] if (hold_open or players) else None)
     started = time.monotonic()
     tick: Callable[[], None] | None = None
     look: Callable[[int, int], None] | None = None
