@@ -53,3 +53,23 @@ class CommonNouns(unittest.TestCase):
         self.assertIsNone(why_not("the Speaker", text="the Speaker rose"))
         self.assertIsNone(why_not("the Lady", text="the Lady of Pain"))
         self.assertEqual(why_not("Lady"), "address")  # said alone, a title is no name
+
+
+class Clauses(unittest.TestCase):
+    """A clause cut out of a sentence is no name (#3394); real names with small words stay."""
+
+    def test_a_linking_word_inside_or_at_the_start_makes_it_a_clause(self) -> None:
+        for text in ("twenty miles from Aldmoor", "Quillgate to the ford", "prophecy to Tavin",
+                     "in Elvish", "past Fenwick", "the people who hired Mira",
+                     "Tavin to shove Brin into the water"):  # fmt: skip
+            self.assertEqual(why_not(text, text=text), "clause", text)
+
+    def test_real_names_with_small_words_are_kept(self) -> None:
+        for text in ("Tower of Joy", "Heart of chardalyn", "Fort at the Pass", "the Kennel",
+                     "Lord Quillgate", "Bridge of Sighs", "Cask and Cleaver"):  # fmt: skip
+            self.assertNotEqual(why_not(text, text=text), "clause", text)
+
+    def test_the_six_word_rule_was_left_out_on_purpose(self) -> None:
+        self.assertNotEqual(
+            why_not("Name Known In The Old Stories", text="Name Known In The Old Stories"), "clause"
+        )
