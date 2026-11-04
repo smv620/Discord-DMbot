@@ -12,8 +12,9 @@ Discord, no AI. `--docs lore` scores only what the lore says (run it after the l
 `--docs session` only what the session says; `both` is the master key.
 
 Only ids and counts are printed with `--counts-only`; without it, the key's own words (public
-sample names) are printed beside each id so a person can read the report. Never run it on a
-campaign that is not the public sample: the report would print its names.
+sample names) are printed beside each id so a person can read the report. The report never prints
+a name from the backup, but its counts describe the campaign's shape, so the tool refuses a backup
+whose campaign is not the public sample (`--i-know-this-is-the-test-campaign` overrides it).
 """
 
 from __future__ import annotations
@@ -23,12 +24,12 @@ import json
 import sys
 from collections import Counter
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-from dmbot.campaigns.store import decode_backup
-from dmbot.memory import place_words, reputation_words
+from dmbot.campaigns.store import CampaignError, decode_backup
+from dmbot.memory import kin, place_words, reputation_words
 from dmbot.memory.models import name_key
 
 DEFAULT_KEY = (
@@ -74,14 +75,16 @@ GROUPS: dict[str, str] = {
     "kept_in": "places",
     "was_kept_in": "places",
 }
-PARENT = ("parent", "mother", "father")
-CHILD = ("child", "son", "daughter")
-SIBLING = ("sibling", "brother", "sister", "twin")
-SPOUSE = ("spouse", "husband", "wife", "partner")
-UNCLE = ("uncle", "aunt")
-NEPHEW = ("nephew", "niece")
-GRAND_UP = ("grandparent", "grandmother", "grandfather")
-GRAND_DOWN = ("grandchild", "grandson", "granddaughter")
+# The family roles a stored detail must be exactly (a grandparent is not a parent).
+PARENT = frozenset({"parent", "mother", "father"})
+CHILD = frozenset({"child", "son", "daughter"})
+SIBLING = frozenset({"sibling", "brother", "sister"})
+SPOUSE = frozenset({"spouse", "husband", "wife"})
+UNCLE = frozenset({"uncle", "aunt", "aunt or uncle"})
+NEPHEW = frozenset({"nephew", "niece", "niece or nephew"})
+GRAND_UP = frozenset({"grandparent", "grandmother", "grandfather"})
+GRAND_DOWN = frozenset({"grandchild", "grandson", "granddaughter"})
+SAMPLE_CAMPAIGN = "test of the frostmaiden (sample)"
 # What slot (word, past) each key place tie means, as `place_words.slot` reads a stored detail.
 PLACE_SLOTS = {
     "lives_in": (place_words.LIVES, False), "lived_in": (place_words.LIVES, True),
@@ -176,16 +179,17 @@ class Graph:
 
 def _slot(detail: str, kind: str) -> tuple[str, bool]:
     """Which place tie a stored detail is (the word and whether it is past). An item is only ever
-    kept in a place, whatever word it carries; no word is a sighting for anything that moves."""
+    kept in a place, so an item with any other word, or none, is a different tie."""
     way = place_words.way_of(detail)
     if kind == "item":
-        return place_words.KEPT, bool(way and way.past)
+        return (place_words.KEPT if way and way.key == place_words.KEPT else ""), bool(
+            way and way.past
+        )
     return (way.key, way.past) if way is not None else (place_words.LAST_SEEN, False)
 
 
-def _has(detail: str, words: Sequence[str]) -> bool:
-    d = detail.casefold()
-    return any(w in d for w in words)
+def _role(detail: str, roles: frozenset[str]) -> bool:
+    return kin.role_of(detail) in roles
 
 
 def _tie_status(
@@ -199,70 +203,102 @@ def _tie_status(
         return MISSING, "", set()
     best = WRONG
     used: set[str] = set()
-    why = "other kind"
+    whys: list[str] = []
     for r, forward in rows:
-        pred, detail = str(r["predicate"]), str(r.get("detail") or "")
-        ok = False
-        if rel in ("sibling", "spouse"):
-            ok = pred == "kin_of" and _has(detail, SIBLING if rel == "sibling" else SPOUSE)
-            why = "family without the role" if pred == "kin_of" else why
-        elif rel == "parent_of":
-            ok = pred == "kin_of" and _has(detail, PARENT if forward else CHILD)
-            why = "family without the role" if pred == "kin_of" else why
-        elif rel == "grandparent_of":
-            ok = pred == "kin_of" and _has(detail, GRAND_UP if forward else GRAND_DOWN)
-            why = "family without the role" if pred == "kin_of" else why
-        elif rel == "uncle_of":
-            ok = pred == "kin_of" and _has(detail, UNCLE if forward else NEPHEW)
-            why = "family without the role" if pred == "kin_of" else why
-        elif rel in ("mentor_of", "apprentice_of"):
-            ok = pred == "mentor_of" and (forward == (rel == "mentor_of"))
-        elif rel in ("owns", "carries", "leads"):
-            ok = pred == rel and forward
-        elif rel == "member":
-            ok = pred == "member_of" and forward
-        elif rel == "works_for":
-            ok = pred == "serves" and forward
-        elif rel == "rival_of":
-            ok = pred == "rival_of"
-        elif rel == "held_captive_by":
-            ok = pred == "captive_of" and forward
-        elif rel == "enemy_of":
-            ok = pred == "enemy_of" or (pred == "knows" and reputation_words.sign_of(detail) == -1)
-        elif rel == "found":
-            ok = pred == "associated_with" and _has(detail, ("found",))
-            why = "kept as a plain link"
-        elif rel == "knows":
-            if pred == "knows":
-                want = reputation_words.sign_of(str(tie.get("feeling") or ""))
-                got = reputation_words.sign_of(detail)
-                ok = want is None or got is None or got == want or not tie.get("feeling")
-                if tie["tier"] == "by_rule":
-                    ok = True
-                elif not forward and tie.get("feeling"):
-                    ok = False
-                why = "other feeling" if not ok else why
-        elif rel == "associate":
-            ok = pred != "kin_of"
-        elif rel == "in":
-            ok = pred == "located_in" and forward and not place_words.way_of(detail)
-            why = "wrong place word" if pred == "located_in" else why
-        elif rel in PLACE_SLOTS:
-            if pred == "located_in" and forward:
-                subject = next(iter(a), "")
-                got_slot = _slot(detail, kinds.get(subject, ""))
-                want_slot = PLACE_SLOTS[rel]
-                ended = r.get("to_session_at") is not None
-                past_ok = want_slot[1] and (ended or got_slot[1])
-                ok = got_slot[0] == want_slot[0] and (got_slot[1] == want_slot[1] or past_ok)
-                why = "wrong place word"
+        ok, why = _row_ok(tie, rel, r, forward, a, kinds)
         if ok:
             used.add(str(r["id"]))
             if r.get("status") == "confirmed":
                 best = FOUND
             elif best != FOUND:
                 best = WAITING
-    return best, (why if best == WRONG else ""), used
+        elif why:
+            whys.append(why)
+    return (
+        best,
+        (whys[0] if best == WRONG and whys else "other kind" if best == WRONG else ""),
+        used,
+    )
+
+
+def _row_ok(
+    tie: Mapping[str, Any],
+    rel: str,
+    r: Mapping[str, Any],
+    forward: bool,
+    subjects: set[str],
+    kinds: Mapping[str, str],
+) -> tuple[bool, str]:
+    """Does one stored connection satisfy a key tie; if not, a fixed-words reason or ''."""
+    pred, detail = str(r["predicate"]), str(r.get("detail") or "")
+    ended = r.get("to_session_at") is not None
+    current = tie.get("current", True)
+    ok, why = False, ""
+    if rel in ("sibling", "spouse"):
+        ok = pred == "kin_of" and _role(detail, SIBLING if rel == "sibling" else SPOUSE)
+        why = "family without the role" if pred == "kin_of" else ""
+    elif rel in ("parent_of", "grandparent_of", "uncle_of"):
+        up, down = {
+            "parent_of": (PARENT, CHILD),
+            "grandparent_of": (GRAND_UP, GRAND_DOWN),
+            "uncle_of": (UNCLE, NEPHEW),
+        }[rel]
+        ok = pred == "kin_of" and _role(detail, up if forward else down)
+        why = "family without the role" if pred == "kin_of" else ""
+    elif rel in ("mentor_of", "apprentice_of"):
+        ok = pred == "mentor_of" and (forward == (rel == "mentor_of"))
+    elif rel in ("owns", "carries", "leads"):
+        ok = pred == rel and forward
+    elif rel == "member":
+        ok = pred == "member_of" and forward
+    elif rel == "works_for":
+        ok = pred == "serves" and forward
+    elif rel == "rival_of":
+        ok = pred == "rival_of"
+    elif rel == "held_captive_by":
+        ok = pred == "captive_of" and forward
+    elif rel == "enemy_of":
+        ok = pred == "enemy_of" or (pred == "knows" and reputation_words.sign_of(detail) == -1)
+    elif rel == "found":
+        ok = pred == "associated_with" and forward and "found" in detail.casefold().split()
+        why = "kept as a plain link"
+    elif rel == "knows":
+        if pred == "knows":
+            feeling = str(tie.get("feeling") or "")
+            got = reputation_words.word_of(detail)
+            if tie["tier"] == "by_rule" or not feeling:
+                ok = True
+            elif not forward:
+                ok = False
+            elif feeling == reputation_words.WARY:
+                ok = got == reputation_words.WARY
+            else:
+                ok = reputation_words.sign_of(detail) == reputation_words.sign_of(feeling)
+            why = "" if ok else "other feeling"
+    elif rel == "associate":
+        ok = pred == "associated_with"
+    elif rel == "in":
+        ok = pred == "located_in" and forward and not place_words.way_of(detail)
+        why = "wrong place word" if pred == "located_in" else ""
+    elif rel in PLACE_SLOTS:
+        if pred == "located_in" and forward:
+            word, past = PLACE_SLOTS[rel]
+            want_past = past or not current
+            # one subject at a time: a name that resolves to several entries is right if any is
+            ok = any(
+                (got := _slot(detail, kinds.get(sid, "")))[0] == word
+                and (got[1] or ended) == want_past
+                for sid in subjects
+            )
+            why = "wrong place word"
+    if ok and not current and rel not in PLACE_SLOTS and not ended and not _past_word(detail):
+        ok, why = False, "should be history"
+    return ok, why
+
+
+def _past_word(detail: str) -> bool:
+    way = place_words.way_of(detail)
+    return bool(way and way.past) or detail.casefold().split()[:1] in (["was"], ["used"], ["once"])
 
 
 def _text(tie: Mapping[str, Any]) -> str:
@@ -427,24 +463,31 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--docs", choices=("lore", "session", "both"), default="both")
     parser.add_argument("--counts-only", action="store_true", help="print ids and counts, no names")
     parser.add_argument("--json", type=Path, help="also write the counts and rows as json")
+    parser.add_argument("--i-know-this-is-the-test-campaign", action="store_true", dest="force")
     args = parser.parse_args(argv)
-    backup = decode_backup(args.backup.read_bytes())
-    key = json.loads(args.key.read_text())
-    report = check(backup, key, args.docs)
-    sys.stdout.write(render(report, args.counts_only))
+    try:
+        backup = decode_backup(args.backup.read_bytes())
+        key = json.loads(args.key.read_text())
+        campaign = backup.get("campaign") if isinstance(backup, dict) else None
+        name = campaign.get("name") if isinstance(campaign, dict) else None
+        if name != SAMPLE_CAMPAIGN and not args.force:
+            raise ValueError(
+                f'This campaign is not "{SAMPLE_CAMPAIGN}"; the check is only for the sample.'
+            )
+        report = check(backup, key, args.docs)
+    except (ValueError, OSError, CampaignError) as exc:
+        sys.stderr.write(f"{exc}\n")
+        return 2
+    sys.stdout.write(f"Documents scored: {args.docs}\n" + render(report, args.counts_only))
     if args.json:
+        rows = [asdict(t) for t in report.ties]
+        entries = [asdict(e) for e in report.entries]
+        if args.counts_only:
+            rows = [{k: v for k, v in r.items() if k not in ("text", "detail")} for r in rows]
+            entries = [{k: v for k, v in e.items() if k not in ("id", "text")} for e in entries]
         args.json.write_text(
             json.dumps(
-                {
-                    "summary": summarize(report),
-                    "ties": [
-                        vars(t)
-                        if not hasattr(t, "__slots__")
-                        else {k: getattr(t, k) for k in t.__slots__}
-                        for t in report.ties
-                    ],
-                    "entries": [{k: getattr(e, k) for k in e.__slots__} for e in report.entries],
-                },
+                {"docs": args.docs, "summary": summarize(report), "ties": rows, "entries": entries},
                 indent=1,
             )
         )

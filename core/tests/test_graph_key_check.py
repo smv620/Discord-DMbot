@@ -7,7 +7,7 @@ import io
 import json
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from typing import Any
 
@@ -93,7 +93,7 @@ def backup(
         for k, (i, t) in enumerate(aliases)
     ]
     rows += relations
-    return {"sections": {"memory": rows}}
+    return {"campaign": {"name": gkc.SAMPLE_CAMPAIGN}, "sections": {"memory": rows}}
 
 
 def rel(
@@ -208,16 +208,97 @@ class Scoring(unittest.TestCase):
         for detail, expected in [("lives in", gkc.FOUND), ("works in", gkc.WRONG), ("", gkc.WRONG)]:
             data = backup(self.entities(), [rel("1", "c", "located_in", "a", detail)])
             self.assertEqual(self.status(gkc.check(data, KEY))["m3"], expected, detail)
-        # no word is a sighting for something that moves, and "kept in" for an item
+        # no word is a sighting for something that moves; an item is only ever "kept in"
         data = backup(
             self.entities(),
             [
                 rel("1", "v", "located_in", "a", ""),
-                rel("2", "m", "located_in", "t", "was last seen in"),
+                rel("2", "m", "located_in", "t", "is kept in"),
             ],
         )
         got = self.status(gkc.check(data, KEY))
         self.assertEqual((got["m5"], got["m4"]), (gkc.FOUND, gkc.FOUND))
+        for detail in ("", "lives in", "was last seen in"):
+            data = backup(self.entities(), [rel("2", "m", "located_in", "t", detail)])
+            self.assertEqual(self.status(gkc.check(data, KEY))["m4"], gkc.WRONG, detail)
+
+    def test_a_grandparent_is_not_a_parent(self) -> None:
+        key = {
+            "nodes": [
+                {"name": "A", "kind": "person", "aliases": []},
+                {"name": "B", "kind": "person", "aliases": []},
+            ],
+            "pairs": [
+                {"id": "k1", "a": "A", "relation": "parent_of", "b": "B", "tier": "stated",
+                 "must_find": True},
+            ],
+        }  # fmt: skip
+        ents = [("a", "A", "character"), ("b", "B", "character")]
+        for detail, expected in [
+            ("grandparent", gkc.WRONG), ("parent", gkc.FOUND), ("mother", gkc.FOUND),
+            ("grandmother", gkc.WRONG),
+        ]:  # fmt: skip
+            data = backup(ents, [rel("1", "a", "kin_of", "b", detail)])
+            self.assertEqual(self.status(gkc.check(data, key))["k1"], expected, detail)
+
+    def test_wary_is_not_a_plain_knows(self) -> None:
+        key = {
+            "nodes": [
+                {"name": "A", "kind": "person", "aliases": []},
+                {"name": "B", "kind": "person", "aliases": []},
+            ],
+            "pairs": [
+                {"id": "k1", "a": "A", "relation": "knows", "feeling": "wary", "b": "B",
+                 "tier": "stated", "must_find": True},
+            ],
+        }  # fmt: skip
+        ents = [("a", "A", "character"), ("b", "B", "character")]
+        for detail, expected in [("", gkc.WRONG), ("neutral", gkc.WRONG), ("wary", gkc.FOUND)]:
+            data = backup(ents, [rel("1", "a", "knows", "b", detail)])
+            self.assertEqual(self.status(gkc.check(data, key))["k1"], expected, detail)
+
+    def test_a_past_key_tie_needs_an_ended_or_past_row_and_a_present_one_does_not_accept_it(
+        self,
+    ) -> None:
+        key = {
+            "nodes": [
+                {"name": "A", "kind": "person", "aliases": []},
+                {"name": "P", "kind": "place", "aliases": []},
+            ],
+            "pairs": [
+                {"id": "now", "a": "A", "relation": "lives_in", "b": "P", "tier": "stated",
+                 "must_find": True},
+                {"id": "then", "a": "A", "relation": "lived_in", "b": "P", "tier": "stated",
+                 "must_find": True, "current": False},
+            ],
+        }  # fmt: skip
+        ents = [("a", "A", "character"), ("p", "P", "place")]
+        live = backup(ents, [rel("1", "a", "located_in", "p", "lives in")])
+        got = self.status(gkc.check(live, key))
+        self.assertEqual((got["now"], got["then"]), (gkc.FOUND, gkc.WRONG))
+        ended = backup(
+            ents, [{**rel("1", "a", "located_in", "p", "lives in"), "to_session_at": "x"}]
+        )
+        got = self.status(gkc.check(ended, key))
+        self.assertEqual((got["now"], got["then"]), (gkc.WRONG, gkc.FOUND))
+
+    def test_the_command_refuses_another_campaign(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            data = backup(self.entities(), [])
+            data["campaign"] = {"name": "someone else's table"}
+            path = Path(tmp) / "b.json"
+            path.write_text(json.dumps(data))
+            err = io.StringIO()
+            with redirect_stderr(err):
+                self.assertEqual(gkc.main([str(path)]), 2)
+            self.assertNotIn("someone", err.getvalue())
+
+    def test_the_command_reports_a_bad_file_without_a_traceback(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "b.json"
+            path.write_text("not a backup")
+            with redirect_stderr(io.StringIO()):
+                self.assertEqual(gkc.main([str(path)]), 2)
 
     def test_a_waiting_suggestion_is_not_a_fact(self) -> None:
         data = backup(self.entities(), [rel("1", "c", "owns", "g", status="proposed")])
