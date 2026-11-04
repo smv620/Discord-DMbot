@@ -1297,11 +1297,13 @@ class SuggestionReview(_Menu):
         self.later = 0  # left for another time this round
         self.match: Match | None = None  # the known name the current one sounds like
         self.known_kind = ""  # the kind a name from the DM's background already has (#2167)
+        self.entity_id = ""  # the current suggestion, for "Where was it said?" (#3384)
         self.name = ""  # the current suggestion's name, for the picker on its card (#2937)
         self.spelled = ""  # the spelling, when the current one was spelled out at the table (#2168)
         self.fix_to = ""  # how someone spelled this pending suggestion, when it differs (#2168)
         self.also: list[str] = []  # names heard with the current one
         self.places = name_places.Places()  # where the current one was said (#2329)
+        self.refs: list[tuple[str, int | None]] = []  # its pointers, for "Where was it said?"
         self.spellings: list[str] = []
         self._buttons()
 
@@ -1331,7 +1333,9 @@ class SuggestionReview(_Menu):
             if a.key != own
         ]
         self.spellings = [entity.name, *self.also]
+        self.refs = []
         self.places = await self._places(interaction, campaign, memory, entity)
+        self.entity_id = entity.id
         self._buttons()
         return suggestion_text(
             entity,
@@ -1372,6 +1376,7 @@ class SuggestionReview(_Menu):
         except Exception:
             log.exception("Couldn't read where a suggested name was said")
             return name_places.Places()
+        self.refs = list(refs)
         site = getattr(getattr(interaction.client, "settings", None), "site_url", "") or ""
         return await name_places.first_places(
             interaction.guild,
@@ -1386,24 +1391,33 @@ class SuggestionReview(_Menu):
             site if isinstance(site, str) else "",
         )
 
-    async def _more_places(self, interaction: discord.Interaction) -> None:
-        """Up to five more windows, in a private message of their own."""
-        transcripts = getattr(interaction.client, "transcripts", None)
-        if transcripts is None or not self.places.more:
-            await _tell(interaction, name_places.GONE)
-            return
+    async def _where(self, interaction: discord.Interaction) -> None:
+        """ "Where was it said?" (#3384): up to three places, newest first, in a private message.
+        The DM only, checked on every press; counts only in the log."""
         campaign = await _campaign_for(interaction, self.campaign_id)
         if campaign is None:
             return
+        transcripts = getattr(interaction.client, "transcripts", None)
         await _answer_first(interaction)
-        text = await name_places.more_places(
-            interaction.guild,
-            transcripts,
-            campaign.guild_id,
-            self.places.more,
-            self.spellings,
-            await cast(Any, interaction.client).consent.consenting(campaign.guild_id),
-        )
+        held = getattr(interaction.client, "lore_context", None)
+        lore = source = ""
+        if held is not None and sees_secrets(campaign, interaction.user.id):
+            lore = str(held.get(campaign.guild_id, self.entity_id))
+            source = str(held.source(campaign.guild_id, self.entity_id))
+        if transcripts is None:
+            text = name_places.NOTHING_KEPT
+        else:
+            text = await name_places.where_said(
+                interaction.guild,
+                transcripts,
+                campaign.guild_id,
+                self.refs,
+                self.spellings,
+                await cast(Any, interaction.client).consent.consenting(campaign.guild_id),
+                lore=lore,
+                lore_source=source,
+            )
+        log.info("Showed where a name was said: %d places kept", len(self.refs))
         await interaction.followup.send(text, ephemeral=True)
 
     def _buttons(self) -> None:
@@ -1478,15 +1492,14 @@ class SuggestionReview(_Menu):
                 row=1,
             )
         )
-        if self.places.more:  # more windows behind a button (#2329)
-            self.add_item(
-                _Button(
-                    self._more_places,
-                    label="🔎 More places",
-                    style=discord.ButtonStyle.secondary,
-                    row=2,
-                )
+        self.add_item(  # up to three places, newest first (#3384; was "More places", #2329)
+            _Button(
+                self._where,
+                label="📜 Where was it said?",
+                style=discord.ButtonStyle.secondary,
+                row=2,
             )
+        )
         if self.places.link:  # the session's page on the website
             self.add_item(
                 discord.ui.Button(label="📜 Open in transcript", url=self.places.link, row=2)
