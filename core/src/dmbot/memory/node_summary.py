@@ -31,7 +31,7 @@ import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
 
-from dmbot.memory import reputation_words
+from dmbot.memory import place_words, reputation_words
 
 DM, PLAYER = "dm", "player"
 MAX_NEIGHBOURS = 8  # the neighbours named; the rest are counted ("and 12 more")
@@ -160,7 +160,6 @@ _PHRASES: dict[str, tuple[str, str]] = {
     "travels_with": ("travels with them", "travels with them"),
     "sworn_to": ("sworn to them", "sworn to them"),
     "member_of": ("in their group", "their group"),
-    "located_in": ("lives there", "where they live"),
     "owns": ("owned by them", "owns it"),
     "ally_of": ("allied with them", "allied with them"),
     "enemy_of": ("an enemy of theirs", "an enemy of theirs"),
@@ -274,6 +273,8 @@ def _wording(fact: Fact) -> str:
         return table.get(fact.deed, fact.detail or "")
     if fact.kind == "kin_of":
         return fact.detail.strip() or "family"
+    if fact.kind == "located_in":  # (by the word it says; never "lives there" for a sighting)
+        return place_words.summary_phrases(fact.detail)[0 if fact.outward else 1]
     if fact.kind in _PHRASES:
         return _PHRASES[fact.kind][0 if fact.outward else 1]
     return fact.detail.strip()
