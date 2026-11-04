@@ -205,7 +205,7 @@ class Cards(NamesTest):
         self.assertEqual(text.count("_Session 1, 0:"), 3)
         self.assertIn("**Hrothgar**", text)
         self.assertIn("> Mia: okay then", text)  # a line either side
-        self.assertIn(f"Heard {places.MAX_PLACES} times. Showing 3.", text)
+        self.assertTrue(text.startswith(f"Heard {places.MAX_PLACES} times. Showing 3."))
         clocks = [
             int(x.split(":")[1].split("_")[0]) for x in re.findall(r"_Session 1, \d+:\d+_", text)
         ]

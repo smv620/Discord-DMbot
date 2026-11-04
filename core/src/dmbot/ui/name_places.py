@@ -222,6 +222,7 @@ async def more_places(
 
 REMOVED = "That line was removed."
 NOTHING_KEPT = "No place is kept for this name."
+TRY_AGAIN = "Couldn't read the transcript just now. Try again in a moment."
 SHOWN_BEHIND_BUTTON = 3  # "📜 Where was it said?" shows this many, newest first (#3384)
 
 
@@ -275,13 +276,13 @@ async def where_said(
             parts.append(window_text(header, around, names, spellings))
     except Exception:
         log.exception("Couldn't read where a name was said")
-        return NOTHING_KEPT
+        return TRY_AGAIN
     if lore:
         source = f" ({_plain(lore_source)})" if lore_source else ""
         shown = discord.utils.escape_markdown(lore, ignore_links=False)
         parts.append(f"_From your lore{source}_\n> “{shown}”")
     if not parts:
         return NOTHING_KEPT
-    if len(pointers) > SHOWN_BEHIND_BUTTON:
-        parts.append(f"Heard {len(pointers)} times. Showing {SHOWN_BEHIND_BUTTON}.")
+    if len(pointers) > SHOWN_BEHIND_BUTTON:  # first, so a long message never cuts it off
+        parts.insert(0, f"Heard {len(pointers)} times. Showing {SHOWN_BEHIND_BUTTON}.")
     return fit_message("\n".join(parts))
