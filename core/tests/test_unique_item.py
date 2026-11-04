@@ -15,6 +15,10 @@ class Judging(unittest.TestCase):
             ("Icy Rapier of Life Stealing", "name"), ("the Widowmaker", "name"),
             ("Garret's sled", "owner"), ("Sparkwalker's tome", "owner"), ("Oyami's pipe", "owner"),
             ("the crystal from the mind flayer's skull", "description"),
+            ("the Sunbrand sword", "name"), ("Vorpal sword", "name"), ("Moonblade", "name"),
+            ("Orb of Dragonkind", "name"), ("Staff of Power", "name"), ("Cerra's ring", "owner"),
+            ("Cerra\u2019s ring", "owner"), ("Garret's boots", "owner"),
+            ("Mira's longbow", "owner"),
         ]:  # fmt: skip
             verdict = unique_item.judge(name)
             self.assertEqual((verdict.keep, verdict.why), (True, why), name)
@@ -22,7 +26,9 @@ class Judging(unittest.TestCase):
     def test_ordinary_gear_and_quantities_are_not_tracked(self) -> None:
         for name in ("a dagger", "dagger", "a longbow", "arrows", "Mira's arrows", "rations",
                      "a sled", "sled", "two sleds and eight dogs", "Dog sleds", "Wyvern poison",
-                     "a vial of poison", "a ring of iron keys", "tome", "a tome"):  # fmt: skip
+                     "a vial of poison", "a ring of iron keys", "tome", "a tome",
+                     "two potions of healing", "Waterskin", "the guard's sword", "Iron sword",
+                     "Wyvern poison", "his sled", "rope"):  # fmt: skip
             self.assertFalse(unique_item.keeps(name), name)
 
     def test_a_dagger_later_named_is_tracked_from_then_on(self) -> None:
@@ -49,6 +55,22 @@ class Judging(unittest.TestCase):
         self.assertFalse(unique_item.keeps("Wyvern poison"))
         self.assertFalse(unique_item.keeps("a ring of iron keys"))
         self.assertFalse(unique_item.keeps("longbow", "Mira has the longbow in her hands"))
+
+    def test_a_story_word_in_another_sentence_says_nothing_about_the_item(self) -> None:
+        far = (
+            "Tavin buys a dagger at the market. "
+            + "The town was quiet that day. " * 8
+            + "Later the party talks about the plan to find the villain's plan."
+        )
+        self.assertFalse(unique_item.keeps("a dagger", far))
+        near = (
+            "Tavin buys a dagger. "
+            + "The town was quiet that day. " * 8
+            + "The dagger was stolen from the shrine."
+        )
+        self.assertTrue(unique_item.keeps("a dagger", near))
+        # and the plain words (plan, quest, forge) alone do not make an item a story
+        self.assertFalse(unique_item.keeps("a dagger", "Tavin has a dagger for the quest"))
 
     def test_the_curse_that_follows_one_item_is_a_story(self) -> None:
         self.assertTrue(unique_item.keeps("Chardalyn spear", "the whispers of the chardalyn spear"))
@@ -80,6 +102,28 @@ class Applied(unittest.TestCase):
         self.assertEqual([f.name for f in kept], ["Heartseeker", "Garret's sled", "Aldmoor"])
         self.assertEqual(lost["item_not_unique"], 2)  # (a count, never the names)
 
+    def test_an_item_is_kept_if_any_of_its_spellings_is_one_particular_thing(self) -> None:
+        from collections import Counter
+
+        from dmbot.memory import background as bg
+
+        lost: Counter[str] = Counter()
+        names = [
+            bg.Found("the sword", "item", ("Moonblade",), (), "the sword"),
+            bg.Found("a dagger", "item", (), (), "a dagger"),
+            bg.Found("a dagger", "item", (), (), "a dagger"),  # said again: counted once
+        ]
+        kept = bg.merge([names], dropped=lost)
+        self.assertEqual([f.name for f in kept], ["the sword"])
+        self.assertEqual(lost["item_not_unique"], 1)
+        self.assertEqual(len(bg.merge([names])), 1)  # (no counter given: nothing breaks)
+
+    def test_a_story_quote_keeps_what_the_bare_name_would_drop(self) -> None:
+        from dmbot.memory import background as bg
+
+        found = bg.Found("ore bins", "item", (), (), "the ore bins meant for Xardorok")
+        self.assertEqual([f.name for f in bg.merge([[found]])], ["ore bins"])
+
     def test_the_readers_are_told_the_same_rule(self) -> None:
         from dmbot.memory import lore_read
         from dmbot.memory.extractor import SYSTEM
@@ -88,9 +132,11 @@ class Applied(unittest.TestCase):
         self.assertIn("one particular thing", lore_read.read_instructions())
 
     def test_the_examples_teach_unique_items_only(self) -> None:
+        import inspect
+
         from dmbot.memory import ontology, rel_golden, rel_type_texts
 
-        text = repr(vars(ontology)) + repr(vars(rel_type_texts)) + repr(vars(rel_golden))
+        text = "".join(inspect.getsource(m) for m in (ontology, rel_type_texts, rel_golden))
         for generic in ("carries a longbow", "bears a sealed letter", "ring of iron keys",
                         "carved wooden holy symbol", "has the longbow"):  # fmt: skip
             self.assertNotIn(generic, text)

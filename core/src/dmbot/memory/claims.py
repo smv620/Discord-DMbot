@@ -729,11 +729,6 @@ class ClaimStore:
                 cued = not_names.cued_in("\n".join((said or {}).get(r, "") for r in claim.lines))
                 if reason == UNKNOWN_NAME_REASON:
                     unknown = _unknown_names(claim, names)
-                    if _generic_items(onto, claim, unknown, (said or {})):
-                        # A new item that is clearly everyday gear is not made into an entry, so
-                        # its claim goes with it (#3373): no owns, carries or kept-in is stored.
-                        work.append((claim, ITEM_REASON, []))
-                        continue
                     if not make_names:
                         unknown = []  # dropped below with its reason, not kept waiting
                     elif any(name_key(n) in refused_names for n in unknown):
@@ -743,6 +738,10 @@ class ClaimStore:
                         unknown = []  # a person at the table: not a story name
                     elif not all(not_names.allowed(n, cued) for n in unknown):
                         unknown = []  # a pronoun ("he", "we"): never made into a name (#2358)
+                    elif _generic_items(onto, claim, unknown, said or {}):
+                        # A new item that is clearly everyday gear is not made into an entry, so
+                        # its claim goes with it (#3373): no owns, carries or kept-in is stored.
+                        reason, unknown = ITEM_REASON, []
                 work.append((claim, reason, unknown))
             # Claims kept from an earlier session for a name that was past its limit come first:
             # their names are proposed before this session's own (#1367).

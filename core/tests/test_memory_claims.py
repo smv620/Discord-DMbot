@@ -305,6 +305,10 @@ class Stored(ConfirmedMemoryTest):
         # one that is later named is tracked from then on
         later = await self.propose(said("Bram", "carries", "the Widowmaker"))
         self.assertEqual(later.new, ("the Widowmaker",))
+        # an item that is already an entry is unaffected, whatever it is called
+        await self.add("a rusty dagger", type="item")
+        known = await self.propose(said("Bram", "carries", "a rusty dagger"))
+        self.assertEqual((known.waiting, known.dropped), (1, 0))
 
     async def test_what_passes_waits_as_a_proposal_and_nothing_is_a_fact_yet(self) -> None:
         got = await self.propose(

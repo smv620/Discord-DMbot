@@ -13,7 +13,10 @@ An item is kept when any one of these holds:
 4. the story turns on it (sought, stolen, delivered, fought over, or tied to a villain's plan):
    one consignment on one ferry is one thing, even when it is described by weight.
 Otherwise a small score of signs decides. Pure and word-based: no database, no AI. The closed
-lists are plain words, so the judgement can be read and argued with."""
+lists are plain words, so the judgement can be read and argued with.
+
+`models.looks_named` is the older, looser guess behind an existing entry's `unique_item` (any
+capital letter counts). It is left as it is: stored entries are not touched by this rule."""
 
 from __future__ import annotations
 
@@ -31,9 +34,17 @@ COMMON_KINDS = frozenset({
     "silver", "gem", "gems", "oil", "flask", "flasks", "bedroll", "tent", "pick", "shovel",
     "hammer", "key", "keys", "dog", "dogs", "horse", "horses",
 })  # fmt: skip
+# Words that start a phrase in capitals only because it starts the sentence or the list line: a
+# creature, a material, an adjective. "Wyvern poison" is a kind of thing; "Sunbrand sword" is named.
+PLAIN_CAPITALS = frozenset({
+    "wyvern", "dragon", "goblin", "orc", "kobold", "troll", "giant", "ogre", "wolf", "bear",
+    "owl", "elven", "dwarven", "iron", "steel", "silver", "golden", "gold", "wooden", "leather",
+    "healing", "magic", "magical", "old", "ancient", "small", "large", "heavy", "light", "dog",
+    "horse", "ice", "frost", "snow", "fire", "oil", "holy", "rusty", "broken", "plain",
+})  # fmt: skip
 _SMALL = frozenset({"a", "an", "the", "of", "from", "in", "on", "at", "for", "and", "to", "with"})
 _QUANTITY = re.compile(
-    r"\b(\d[\d,]*|two|three|four|five|six|seven|eight|nine|ten|several|some|many|pair of|"
+    r"\b(\d{1,3}(?:,\d{3})*|two|three|four|five|six|seven|eight|nine|ten|several|some|many|pair of|"
     r"pairs of|bunch of|pile of|handful of|stack of)\b",
     re.IGNORECASE,
 )
@@ -45,10 +56,9 @@ _CLAUSE = re.compile(
 _POSSESSIVE = re.compile(r"^(?:the\s+)?([A-Z][\w'-]*(?:\s+[A-Z][\w'-]*)*)'s\s+(.+)$")
 # What makes an item the story turns on: sought, stolen, delivered, fought over, a villain's plan.
 _SIGNIFICANT = re.compile(
-    r"\b(stole|stolen|steal|steals|theft|deliver|delivered|delivery|consignment|shipment|"
-    r"tribute|smuggl\w*|sought|seeking|seek|hunt(?:s|ed|ing)? for|quest|bounty|ransom|"
-    r"fought over|fight over|race to|plot|plan|scheme|ritual|villain|meant for|intended for|"
-    r"destined|forge[sd]?|everyone wants|wants it|after it|cursed|corrupt\w*|madness|whisper\w*)\b",
+    r"\b(stole|stolen|steal|steals|theft|delivered|delivery|deliver|consignment|shipment|tribute|"
+    r"smuggl\w*|sought|seeking|ransom|bounty|meant for|intended for|fought over|fight over|"
+    r"villain's plan|the plan|plot thread|the ritual|cursed|corrupt\w*|madness)\b",
     re.IGNORECASE,
 )
 
@@ -57,6 +67,11 @@ _SIGNIFICANT = re.compile(
 class Verdict:
     keep: bool
     why: str  # the test that decided, a fixed word (never the campaign's own words): for tests
+
+
+_SINGLE_PAIRS = frozenset(
+    {"boots", "gloves", "glasses", "spectacles", "bracers", "greaves", "pants"}
+)
 
 
 def _words(name: str) -> list[str]:
@@ -73,6 +88,8 @@ def _core(name: str) -> list[str]:
 def _plural_head(words: list[str]) -> bool:
     """Does the thing named end in a plural ("arrows", "two sleds", "rations")?"""
     head = words[-1].casefold() if words else ""
+    if head in _SINGLE_PAIRS:
+        return False  # one pair of boots is one thing
     return head.endswith("s") and not head.endswith(("ss", "us", "is")) and len(head) > 3
 
 
@@ -83,7 +100,30 @@ def _proper(words: list[str]) -> bool:
         return False
     if len(words) == 1:
         return words[0][:1].isupper() and words[0].casefold() not in COMMON_KINDS
-    return any(w[:1].isupper() and w.casefold() not in _SMALL for w in words[1:])
+    if any(w[:1].isupper() and w.casefold() not in _SMALL for w in words[1:]):
+        return True
+    # "Sunbrand sword", "Vorpal sword": a capitalised first word before a common kind is a name,
+    # unless it is only a creature, a material or an adjective ("Wyvern poison", "Iron sword")
+    first = words[0]
+    return (
+        first[:1].isupper()
+        and not first.endswith(("'s", "’s"))  # (an owner: the possessive rule judges that)
+        and not _plural_head(words)
+        and words[-1].casefold() in COMMON_KINDS
+        and first.casefold() not in PLAIN_CAPITALS
+        and first.casefold() not in COMMON_KINDS
+        and first.casefold() not in _SMALL
+    )
+
+
+def _near(name: str, context: str) -> str:
+    """The sentences of `context` that speak of this item (its last word): a word like "plan" in
+    another sentence says nothing about it. A short context (one quote) is taken whole."""
+    if len(context) < 200:
+        return context
+    head = re.escape(_core(name)[-1].casefold()) if _core(name) else ""
+    parts = re.split(r"(?<=[.!?])\s+|\n+", context)
+    return " ".join(p for p in parts if head and re.search(rf"\b{head}", p.casefold()))
 
 
 def judge(name: str, context: str = "") -> Verdict:
@@ -102,6 +142,7 @@ def judge(name: str, context: str = "") -> Verdict:
             return Verdict(True, "owner")
     if _CLAUSE.search(text.replace("’", "'")) and not _QUANTITY.search(text):
         return Verdict(True, "description")
+    context = _near(text, context)
     if _SIGNIFICANT.search(f"{text} {context}"):
         return Verdict(True, "story")
     # A judgement of the signs left: keep when more likely than not one particular thing.

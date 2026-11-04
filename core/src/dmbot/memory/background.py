@@ -633,6 +633,7 @@ def merge(
     skip = {name_key(k) for k in skip_keys} | COMMON | GAME_TERMS
     order: list[str] = []
     merged: dict[str, Found] = {}
+    generic: set[str] = set()
     for found in answers:
         for item in found:
             key = name_key(item.name)
@@ -640,9 +641,11 @@ def merge(
                 continue
             if rules is not None and in_the_rules(item.name, item.kind, *rules):
                 continue
-            if item.kind == "item" and not unique_item.keeps(item.name, item.quote):
-                if dropped is not None:
-                    dropped["item_not_unique"] += 1  # (a count, never the name)
+            if item.kind == "item" and not any(
+                unique_item.keeps(spelling, item.quote)
+                for spelling in (item.name, *item.also, *item.secret)
+            ):
+                generic.add(key)  # (not one particular thing under any of its spellings)
                 continue
             item = Found(  # a spelling DMbot already holds (a secret one too) is not offered again
                 item.name,
@@ -666,6 +669,8 @@ def merge(
                 (*old.secret, *more_secret)[:MAX_ALSO],
                 old.quote or item.quote,
             )
+    if dropped is not None and (left_out := generic - merged.keys()):
+        dropped["item_not_unique"] += len(left_out)  # (a count of names, never the names)
     out = [merged[k] for k in order]
     # A disguise is a secret spelling of the real one. When the AI also lists the disguise as a
     # name of its own (as it is told to), that entry folds into the real one's secret spelling:

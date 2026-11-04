@@ -117,10 +117,11 @@ Rules for what counts as a claim:
    what the line says: a place they merely pass is no claim. An item is only ever "is kept in" a
    place (or "was kept in"). A place inside a place, or an event held at a place, is "is in".
 
-8. Leave out ordinary gear with no identity of its own (a dagger, arrows, rations, a sled, a vial
-   of poison), even with an owner ("Mira's arrows"). An item is a claim only when it is one
-   particular thing: its own name (Heartseeker), one named owner or story (Garret's sled), or
-   something the story turns on (a shipment the villain is waiting for).
+8. Leave out ordinary gear with no identity of its own (a dagger, rations, a vial of poison) and
+   quantities of common things, even with an owner ("Mira's arrows"). An item is a claim only
+   when it is one particular thing: its own name (Heartseeker), one named owner's single thing
+   (Garret's sled), a description tying it to one story, or something the story turns on (a
+   shipment the villain is waiting for).
 
 For each claim say how it was said:
 - "dm_said": the DM narrating, or the DM speaking as a character.
