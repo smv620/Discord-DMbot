@@ -241,6 +241,7 @@ Unlocks: #1831
   character confirmed as dead, and today only the story extractor (#1282) starts that, so there is nothing to check yet.
 - **Bring in older sessions (#2105, #2106, #2107):** not built yet, so there is nothing to check yet.
 - **A script of your session (#3244):** dev1 checks the button on the test server before the entry leaves held. It spends real AI money, so DMbot shows the cost first, and nothing needs the owner until dev1 has seen it work.
+- **Split and group names on the website (#3406):** dev1 checks it on the test server before the What's new entry leaves held; nothing needs the owner until dev1 has seen it work.
 - **See where a name was said (#3384):** dev1 presses 📜 Where was it said? on a name question in the test campaign and sees up to three places with a line either side; a player who presses it is refused. Then the entry leaves held. Nothing needs the owner until dev1 has seen it work.
 
 The reasons are in `docs/GO_LIVE.md`.
