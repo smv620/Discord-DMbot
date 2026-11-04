@@ -707,18 +707,23 @@ async def _answer_which_one(guild_id: int, cid: str, a: Action, w: Waiting) -> O
     if a.action == "claim-unpick":
         return Outcome() if await w.claims.unpick(guild_id, cid, a.target_id) else _failed(GONE)
     side, _, entry_id = a.text.partition(":")
-    try:
-        await w.claims.pick_one(guild_id, cid, a.target_id, side, entry_id)
-    except MemoryRuleError:
-        claim = await w.claims.get(guild_id, cid, a.target_id)
-        made = (
-            claim is not None
-            and side in ("subject", "object")
-            and entry_id
-            and (getattr(claim, f"{side}_picked") == entry_id)
-        )
-        return Outcome() if made else _failed(GONE)
-    return Outcome()
+    # Only a side still waiting for its pick, and only one of its choices: a second tab sending a
+    # different entry for a side already picked must not overwrite the first pick.
+    choices = await w.claims.which_one(guild_id, cid, a.target_id)
+    if any(c.side == side and entry_id in {o.id for o in c.entries} for c in choices):
+        try:
+            await w.claims.pick_one(guild_id, cid, a.target_id, side, entry_id)
+        except MemoryRuleError:
+            return _failed(GONE)
+        return Outcome()
+    claim = await w.claims.get(guild_id, cid, a.target_id)
+    made = (
+        claim is not None
+        and side in ("subject", "object")
+        and bool(entry_id)
+        and getattr(claim, f"{side}_picked") == entry_id
+    )
+    return Outcome() if made else _failed(GONE)
 
 
 async def _answer_waiting(
