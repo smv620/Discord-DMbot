@@ -4,10 +4,12 @@ that waits and has a flow in Discord), and the words for the rest. Pure; no data
 from __future__ import annotations
 
 import unittest
+from typing import Any
 
 import discord
 
 from dmbot.questions import board, kinds
+from dmbot.questions import counts as counting
 from dmbot.questions.counts import Counted
 
 GUILD, CAMPAIGN = 111, "c" * 32
@@ -113,7 +115,8 @@ class TheCommand(unittest.IsolatedAsyncioTestCase):
 
         tell = AsyncMock()
         with patch.object(qd, "_tell", tell):
-            await qd.dmbot_questions.callback(self.interaction(8, object()))  # type: ignore[arg-type]
+            await qd.dmbot_questions.callback(self.interaction(8, object()))  # type: ignore[arg-type,call-arg]
+        assert tell.await_args is not None
         self.assertEqual(tell.await_args.args[1], qd.NOT_A_DM)
 
     async def test_a_dm_gets_the_list_and_a_link_to_it(self) -> None:
@@ -142,8 +145,8 @@ class TheCommand(unittest.IsolatedAsyncioTestCase):
         it = self.interaction(7, round_)
         from unittest.mock import patch
 
-        with patch.object(qd.counting, "count_kinds", AsyncMock(return_value=found(names=2))):
-            await qd.dmbot_questions.callback(it)  # type: ignore[arg-type]
+        with patch.object(counting, "count_kinds", AsyncMock(return_value=found(names=2))):
+            await qd.dmbot_questions.callback(it)  # type: ignore[arg-type,call-arg]
         self.assertEqual(made, [(7, CAMPAIGN, None, True)])
         text = it.followup.send.await_args.args[0]  # type: ignore[attr-defined]
         self.assertIn("[Open the list](https://discord.test/55)", text)
@@ -189,7 +192,7 @@ class TheSender(unittest.IsolatedAsyncioTestCase):
         bot.get_user = MagicMock(return_value=user)
         return DiscordSender(bot), channel
 
-    def campaign(self):  # type: ignore[no-untyped-def]
+    def campaign(self) -> Any:
         from types import SimpleNamespace
 
         return SimpleNamespace(guild_id=GUILD, id=CAMPAIGN, name="Frostmaiden")
@@ -273,6 +276,7 @@ class TheCardButtonsPress(unittest.IsolatedAsyncioTestCase):
         tell = AsyncMock()
         with patch("dmbot.ui.dmbot_commands._tell", tell):
             await board.QuestionsButton(CAMPAIGN).callback(self.interaction(8, object()))
+        assert tell.await_args is not None
         self.assertEqual(tell.await_args.args[1], NOT_A_DM)
 
     async def test_a_dm_gets_the_list_made(self) -> None:
@@ -282,6 +286,7 @@ class TheCardButtonsPress(unittest.IsolatedAsyncioTestCase):
         round_ = object()
         with patch("dmbot.questions.discord.send_lists", sent):
             await board.QuestionsButton(CAMPAIGN).callback(self.interaction(7, round_))
+        assert sent.await_args is not None
         self.assertEqual(sent.await_args.args[1], round_)
         self.assertEqual([c.id for c in sent.await_args.args[2]], [CAMPAIGN])
 

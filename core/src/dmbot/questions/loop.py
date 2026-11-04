@@ -229,12 +229,12 @@ class Round:
                 await self.notices.set_reminder(guild_id, campaign.id, user_id, None)
         linked: list[messages.Line] = []
         for line in lines:  # each campaign's list is made now if they have none, and linked to
-            campaign = next((c for c in mine if c.id == line.id), None)
+            about = next((c for c in mine if c.id == line.id), None)
             stored = await self.notices.get(guild_id, line.id, user_id)
             link = ""
-            if campaign is not None:
+            if about is not None:
                 try:
-                    link = await self._show(user_id, campaign, stored.message_id, create=True)
+                    link = await self._show(user_id, about, stored.message_id, create=True)
                 except Exception as exc:
                     log.warning("Questions: the list could not be shown (%s)", type(exc).__name__)
             linked.append(replace(line, link=link))

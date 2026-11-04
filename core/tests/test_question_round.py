@@ -3,6 +3,9 @@ Discord; the database is real. Invented names throughout."""
 
 from __future__ import annotations
 
+from typing import Any
+
+from dmbot.campaigns.models import Campaign
 from dmbot.memory.models import DM, PROPOSED
 from dmbot.memory.store import MemoryStore
 from dmbot.questions import kinds
@@ -39,12 +42,12 @@ class FakeSender:
     async def board(
         self,
         user_id: int,
-        campaign,
-        found,
-        message_id,
+        campaign: Any,
+        found: Any,
+        message_id: int | None,
         *,
-        create: bool,  # type: ignore[no-untyped-def]
-    ):  # type: ignore[no-untyped-def]
+        create: bool,
+    ) -> Any:
         """The Questions message: edited when there is one, made when asked."""
         if message_id is not None:
             self.edits.append(
@@ -70,8 +73,8 @@ class TheRound(Base):
         self.round = self.make()
 
     def make(self) -> Round:
-        async def campaigns(guild_id: int) -> list:  # type: ignore[type-arg]
-            return await self.campaign_store.list_campaigns(guild_id)
+        async def campaigns(guild_id: int) -> list[Campaign]:
+            return list(await self.campaign_store.list_campaigns(guild_id))
 
         return Round(
             sources=Sources(db=self.db, memory=self.memory),
@@ -112,7 +115,7 @@ class TheRound(Base):
     async def test_reminders_come_one_two_four_minutes_apart_each_replacing_the_last(self) -> None:
         await self.ask(self.one.id)
         await self.tick()
-        times = []
+        times: list[float] = []
         for wait in (60, 120, 240):
             await self.tick(wait - 1)
             self.assertEqual(len(self.sender.sent), len(times) + 1)  # nothing early

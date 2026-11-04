@@ -24,7 +24,7 @@ Action = Literal["first", "remind", "clear", "none"]
 def gap_minutes(step: int) -> int:
     """Minutes before the next reminder once `step` reminders have been sent: 1, 2, 4, 8 ... up to
     a day."""
-    return min(2 ** min(step, 20), MAX_GAP_MIN)
+    return min(1 << min(step, 20), MAX_GAP_MIN)
 
 
 @dataclass(frozen=True, slots=True)
