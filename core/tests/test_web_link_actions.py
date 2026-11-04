@@ -1512,6 +1512,39 @@ class TheReveal(Editing):
         assert hidden is not None
         self.assertTrue(hidden.unrevealed)  # ONE Undo, as on the Discord card
 
+    async def answer_error(self, answer: str) -> str:
+        done = await self.poll(answer)
+        self.assertEqual(done["state"], "failed")
+        return str(done["error"])
+
+    async def test_a_connection_to_a_name_still_held_back_stays_held_back_and_says_why(
+        self,
+    ) -> None:
+        """#3426: the rule is unchanged, but the refusal has its own word instead of bad_target."""
+        link = await self.hidden_link()
+        await self.memory.set_hidden_from_players(
+            self.g, self.one.id, self.hall, True, source=DM_SOURCE
+        )
+        answer = await self.reveal("link", link)
+        self.assertEqual([o.error for o in await self.apply_all()], ["names_not_shown"])
+        self.assertEqual(await self.answer_error(answer), "names_not_shown")
+        held = await self.memory.relation(self.g, self.one.id, link)
+        assert held is not None
+        self.assertTrue(held.unrevealed)
+
+    async def test_a_connection_to_a_person_the_story_never_named_says_to_name_them(self) -> None:
+        """#3426: an unnamed end is told apart from a hidden one (the page points to naming)."""
+        sister = await self.memory.add_unnamed(
+            self.g, self.one.id, what="sister", role="sibling", anchor_id=self.rook
+        )
+        made = await self.memory.add_relation(
+            self.g, self.one.id, self.rook, "ally_of", sister.entity.id, source=DM_SOURCE,
+            confidence=1.0, status="confirmed", unrevealed=True,
+        )  # fmt: skip
+        answer = await self.reveal("link", made.value[0].id)
+        self.assertEqual([o.error for o in await self.apply_all()], ["name_unnamed"])
+        self.assertEqual(await self.answer_error(answer), "name_unnamed")
+
     async def test_a_dm_reveals_a_name_and_undo_hides_it_again(self) -> None:
         name = await self.add("Hidden Tower", "place")
         await self.memory.set_hidden_from_players(self.g, self.one.id, name, True, source=DM_SOURCE)

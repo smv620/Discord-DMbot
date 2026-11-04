@@ -276,6 +276,20 @@ export const webPage = {
     network: "We couldn't reach DMbot, so nothing was changed. Check your connection and try again.",
   } as Record<string, string>,
   errorFallback: "That didn't work. Try again in a minute.",
+  // Showing a connection is refused until its names are shown to the players (#3426). The ending is what the
+  // connection's row looks for to offer the link to the Names page.
+  namesPageEnding: "You can do that on the Names page.",
+  showNamesFirst: (held: string[]): string =>
+    held.length === 0
+      ? "Show both names to the players first, then this connection. You can do that on the Names page."
+      : held.length === 1
+        ? `Show the name first: ${held[0]} isn't shown to the players yet. You can do that on the Names page.`
+        : `Show the names first: ${held.join(" and ")} aren't shown to the players yet. You can do that on the Names page.`,
+  nameThemFirst: (who: string | null): string =>
+    who === null
+      ? "Give the unnamed person a name first, then show this connection. You can do that on the Names page."
+      : `Give ${who} a name first, then show this connection. You can do that on the Names page.`,
+  openNames: "Open the Names page",
 } as const;
 
 /** The words for a kind: the API's key if no words are known. */

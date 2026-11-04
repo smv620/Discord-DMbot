@@ -79,6 +79,8 @@ function withTimeout<T>(work: Promise<T>): Promise<T> {
   ]);
 }
 
+const UNNAMED_SUFFIX = "(name unknown)"; // core/memory/unnamed.py: how a person the story never named is labelled
+
 function refusal(error: unknown): string | null {
   const kind = error instanceof ApiError ? error.kind : "network";
   if (kind === "signed-out") return null;
@@ -341,6 +343,13 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
     try {
       await api.webReveal(ref, target);
     } catch (error) {
+      if (target.kind === "link" && error instanceof ApiError && (error.kind === "names-not-shown" || error.kind === "name-unnamed")) {
+        // Which end needs what: the page already holds the two names, so it can say them (#3426).
+        const ends = graph?.edges.find((e) => e.links.some((l) => l.id === target.id));
+        const ones = ends ? graph!.nodes.filter((n) => n.id === ends.a || n.id === ends.b) : [];
+        if (error.kind === "name-unnamed") return words.nameThemFirst(ones.find((n) => n.name.endsWith(UNNAMED_SUFFIX))?.name ?? null);
+        return words.showNamesFirst(ones.filter((n) => n.revealed === false).map((n) => n.name));
+      }
       const said = refusal(error);
       if (said === null) {
         setView("signed-out");
@@ -1342,6 +1351,11 @@ function LinkRow({
           >
             {words.reveal}
           </button>
+          {problem?.endsWith(words.namesPageEnding) && (
+            <a class="small" href={`/account/names/${encodeURIComponent(refId)}`}>
+              {words.openNames}
+            </a>
+          )}
         </div>
       )}
       {canEdit && (

@@ -221,6 +221,7 @@ async def _live_ids(scope: Scope, among: Collection[str] | None = None) -> set[s
 
 
 PARTY_NAME = "The party"
+NAMES_NOT_SHOWN = "Show both names to the players first, then this connection."
 LED_TO_KINDS = "A clue, an event or a thread can lead to a thread or an event."
 LED_TO_CONFIRM = "One of them isn't confirmed yet. Confirm it, then try again."
 LED_TO_LOOP = "That would make a loop: the other one already led here."
@@ -4504,9 +4505,16 @@ class MemoryStore:
                         [[current["subject_id"], current["object_id"]]],
                     )
                     if len(ends) < 2:
-                        raise MemoryRuleError(
-                            "Show both names to the players first, then this connection."
+                        # Two different refusals, so the website can say which (#3426): an end the
+                        # story never named is given a name first; any other end is shown first.
+                        both = await w.select(
+                            ENTITIES,
+                            " AND id = ANY(%s)",
+                            [[current["subject_id"], current["object_id"]]],
                         )
+                        if any(e["unnamed"] for e in both):
+                            raise MemoryRuleError(unnamed_mod.NAME_BEFORE_SHOWING)
+                        raise MemoryRuleError(NAMES_NOT_SHOWN)
                 changes["unrevealed"] = unrevealed
             if to_session_at is not None:
                 _check_span(current["from_session_at"], to_session_at)

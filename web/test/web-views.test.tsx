@@ -116,6 +116,46 @@ describe("a DM's Full View and Players View", () => {
   });
 });
 
+describe("a connection that can't be shown until its names are (#3426)", () => {
+  async function pressRevealOnAConnection(kind: "names-not-shown" | "name-unnamed") {
+    const api = await open();
+    api.webReveal = async () => {
+      throw new ApiError(kind);
+    };
+    let button: HTMLButtonElement | undefined;
+    for (const see of screen.getAllByRole("button", { name: /^See the connections/ })) {
+      fireEvent.click(see);
+      button = screen.queryAllByRole("button", { name: /^Reveal connection \d+ to the players$/ })[0] as HTMLButtonElement | undefined;
+      if (button) break;
+    }
+    expect(button).toBeTruthy();
+    fireEvent.click(button!);
+    // (the page's own empty alert is always there, so the connection's line is found by its words)
+    return screen.findByText(new RegExp(w.namesPageEnding.replace(".", "\\.")));
+  }
+
+  it("says to show the names first, and links to the Names page", async () => {
+    const alert = await pressRevealOnAConnection("names-not-shown");
+    expect(alert.textContent).toMatch(/^Show (both names|the names?) (to the players )?first/);
+    expect(alert.textContent).toContain(w.namesPageEnding);
+    const link = screen.getByRole("link", { name: w.openNames });
+    expect(link.getAttribute("href")).toBe("/account/names/100.cmp1");
+  });
+
+  it("says to give the unnamed person a name first, and links to the Names page", async () => {
+    const alert = await pressRevealOnAConnection("name-unnamed");
+    expect(alert.textContent).toMatch(/^Give .* a name first, then show this connection\./);
+    expect(alert.textContent).not.toBe(w.errorFallback);
+    expect(screen.getByRole("link", { name: w.openNames })).toBeTruthy();
+  });
+
+  it("builds each sentence from the names that are held back", () => {
+    expect(w.showNamesFirst(["Brannoch"])).toBe("Show the name first: Brannoch isn't shown to the players yet. You can do that on the Names page.");
+    expect(w.showNamesFirst(["Brannoch", "Veshla"])).toContain("Brannoch and Veshla aren't shown");
+    expect(w.nameThemFirst("someone's sister (name unknown)")).toContain("Give someone's sister (name unknown) a name first");
+  });
+});
+
 describe("what a player must never see", () => {
   it("keeps secret and unrevealed things off the screen even if the API sends them", async () => {
     const api = mockApi("table");
