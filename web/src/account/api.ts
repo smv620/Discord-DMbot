@@ -1044,6 +1044,8 @@ export interface VoiceResult {
   text?: string;
   /** Only when `failed`: "bad_clip", "too_long", "no_words", "transcribe_failed" or "no_consent". */
   error?: string;
+  /** The bot's progress while it works on the words (#3355): the wait panel shows it. Missing from an older API. */
+  progress?: JobProgress | null;
 }
 export type FixState = "waiting" | "working" | "done" | "failed";
 export interface FixResult {
@@ -1052,6 +1054,8 @@ export interface FixResult {
   points?: FixPoints;
   /** Only when `failed`: "sort_failed", "not_allowed" or "too_soon". */
   error?: string;
+  /** The bot's progress while it sorts the note (#3355): the wait panel shows it. Missing from an older API. */
+  progress?: JobProgress | null;
 }
 export interface Rewritten {
   recap: Recap;
