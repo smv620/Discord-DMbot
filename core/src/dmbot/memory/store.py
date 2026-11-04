@@ -1578,55 +1578,72 @@ class MemoryStore:
             raise MemoryRuleError("That relationship word is too long.")
         if len(details) > DESCRIPTION_MAX:
             raise MemoryRuleError(f"That's too long (at most {DESCRIPTION_MAX} characters).")
-        same = unnamed_mod.same_person_key(word, role)
         async with self._write(guild_id, campaign_id, "extractor") as w:
-            anchor_name: str | None = None
-            if anchor_id is not None:
-                anchor = await _entity_row(w, anchor_id)
-                if anchor["status"] not in (PROPOSED, CONFIRMED):
-                    raise MemoryRuleError("That entry is not in the story any more.")
-                anchor_name = anchor["name"]
-            live = await w.select(
-                ENTITIES, " AND unnamed AND status IN ('proposed', 'confirmed') ORDER BY id"
-            )
-            found = [
-                r
-                for r in live
-                if r["unnamed_anchor"] == anchor_id
-                and unnamed_mod.same_person_key(r["unnamed_what"], r["unnamed_role"]) == same
-            ]
-            key = f"{anchor_id or ''}|{same}"
-            if anchor_id is not None and found:
-                return UnnamedAdded(_entity(found[0]), False)
-            if anchor_id is None and read is not None and key in read:
-                for r in found:
-                    if r["id"] == read[key]:
-                        return UnnamedAdded(_entity(r), False)
-            row = await w.insert(
-                ENTITIES,
-                {
-                    "id": new_id(),
-                    "type": "character",
-                    "name": unnamed_mod.stored(word, anchor_name),
-                    "description": details.strip(),
-                    "status": PROPOSED,
-                    "merged_into": None,
-                    "source": "extractor",
-                    "created_at": w.now,
-                    "played_by": None,
-                    "role": NPC,
-                    "needs_look": False,
-                    "unique_item": None,
-                    "unnamed": True,
-                    "unnamed_anchor": anchor_id,
-                    "unnamed_role": role,
-                    "unnamed_what": word,
-                },
-            )
-            if read is not None and anchor_id is None:
-                read[key] = row["id"]
-            similar = tuple(str(r["id"]) for r in found) if anchor_id is None else ()
-            return UnnamedAdded(_entity(row), True, similar, w.batch)
+            return await self._add_unnamed_in(w, word, role, details, anchor_id, read)
+
+    async def _add_unnamed_in(
+        self,
+        w: Changes,
+        word: str,
+        role: str | None,
+        details: str,
+        anchor_id: str | None,
+        read: dict[str, str] | None = None,
+        *,
+        reuse: bool = False,
+    ) -> UnnamedAdded:
+        """`add_unnamed` inside an open write. `reuse`: with no anchor, a live unnamed person with
+        the same word is the same person (a DM's yes to "the woman" twice is one woman; #3431)."""
+        same = unnamed_mod.same_person_key(word, role)
+        anchor_name: str | None = None
+        if anchor_id is not None:
+            anchor = await _entity_row(w, anchor_id)
+            if anchor["status"] not in (PROPOSED, CONFIRMED):
+                raise MemoryRuleError("That entry is not in the story any more.")
+            anchor_name = anchor["name"]
+        live = await w.select(
+            ENTITIES, " AND unnamed AND status IN ('proposed', 'confirmed') ORDER BY id"
+        )
+        found = [
+            r
+            for r in live
+            if r["unnamed_anchor"] == anchor_id
+            and unnamed_mod.same_person_key(r["unnamed_what"], r["unnamed_role"]) == same
+        ]
+        key = f"{anchor_id or ''}|{same}"
+        if anchor_id is not None and found:
+            return UnnamedAdded(_entity(found[0]), False)
+        if anchor_id is None and reuse and found:
+            return UnnamedAdded(_entity(found[0]), False)
+        if anchor_id is None and read is not None and key in read:
+            for r in found:
+                if r["id"] == read[key]:
+                    return UnnamedAdded(_entity(r), False)
+        row = await w.insert(
+            ENTITIES,
+            {
+                "id": new_id(),
+                "type": "character",
+                "name": unnamed_mod.stored(word, anchor_name),
+                "description": details.strip(),
+                "status": PROPOSED,
+                "merged_into": None,
+                "source": "extractor",
+                "created_at": w.now,
+                "played_by": None,
+                "role": NPC,
+                "needs_look": False,
+                "unique_item": None,
+                "unnamed": True,
+                "unnamed_anchor": anchor_id,
+                "unnamed_role": role,
+                "unnamed_what": word,
+            },
+        )
+        if read is not None and anchor_id is None:
+            read[key] = row["id"]
+        similar = tuple(str(r["id"]) for r in found) if anchor_id is None else ()
+        return UnnamedAdded(_entity(row), True, similar, w.batch)
 
     async def unnamed(self, guild_id: int, campaign_id: str) -> list[tuple[Entity, str]]:
         """The campaign's unnamed people, each with the label to show now: built from the anchor's

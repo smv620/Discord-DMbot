@@ -125,3 +125,44 @@ class ThePersonWithoutAName(MemoryTest):
         (entity, _label) = people[0]
         self.assertEqual(entity.status, CONFIRMED)
         self.assertEqual(done.claim.status, CLAIM_CONFIRMED)
+
+    async def test_a_race_or_a_job_is_not_a_described_person(self) -> None:
+        got = await self.propose(
+            said("Bram", "is", "a dwarf"),
+            said("Bram", "is", "a wizard"),
+            said("Bram", "is", "a guard"),
+        )
+        self.assertEqual(got.described, 0)
+        self.assertEqual(await self.memory.unnamed(GUILD_A, self.c), [])
+
+    async def test_a_fact_that_fails_leaves_no_person_behind(self) -> None:
+        await self.propose(said("Bram", "knows", "the woman"))
+        (claim,) = await self.waiting()
+
+        async def refuse(_w: object) -> None:  # (runs inside the same write as the fact)
+            raise MemoryRuleError("refused")
+
+        with self.assertRaises(MemoryRuleError):
+            await self.claims.confirm(GUILD_A, self.c, claim.id, opted_in={7}, before=refuse)
+        self.assertEqual(await self.memory.unnamed(GUILD_A, self.c), [])
+        self.assertEqual(len(await self.waiting()), 1)
+
+    async def test_two_kept_claims_about_the_woman_are_one_woman(self) -> None:
+        await self.propose(said("Bram", "knows", "the woman"))
+        other = await self.add("Mira Vane", type="character", status=CONFIRMED)
+        await self.propose(said("Mira Vane", "knows", "the woman"))
+        waiting = await self.waiting()
+        self.assertEqual(len(waiting), 2)
+        for claim in waiting:
+            await self.claims.confirm(GUILD_A, self.c, claim.id, opted_in={7})
+        people = await self.memory.unnamed(GUILD_A, self.c)
+        self.assertEqual(len(people), 1)
+        self.assertTrue(other)
+
+    async def test_a_claim_whose_person_was_named_since_is_written_the_ordinary_way(self) -> None:
+        await self.propose(said("Bram", "knows", "the woman"))
+        await self.add("the woman", source="dm", type="character", status=CONFIRMED)
+        (claim,) = await self.waiting()
+        done = await self.claims.confirm(GUILD_A, self.c, claim.id, opted_in={7})
+        self.assertEqual(done.claim.status, CLAIM_CONFIRMED)
+        self.assertEqual(await self.memory.unnamed(GUILD_A, self.c), [])

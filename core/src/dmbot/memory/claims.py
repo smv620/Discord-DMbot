@@ -122,6 +122,7 @@ NEW_NAME_LIMIT = 20  # new names one session sends to the DM; the rest wait for 
 # A claim with a player character at one end is never dropped unseen (#3238): when a name in it
 # could mean two entries, it is kept for the DM's answer, with its lines, instead of being dropped.
 UNPLACED_REASON = "kept for your answer: a name in it could be two different entries"
+NEW_PERSON = "new-person"  # stands for the unnamed person a Keep is about to make (#3431)
 DESCRIBED_REASON = "kept for your answer: a person the story never names"  # #3431
 UNPLACED_LIMIT = 20  # such claims one session keeps; the rest are counted and not stored
 SESSION_CLAIMS = 3000  # claims one session may hand to `propose` at once
@@ -1571,25 +1572,17 @@ class ClaimStore:
 
         return await placing.place(self, guild_id, campaign_id, claim_id, opted_in=opted_in)
 
-    async def _person_without_a_name(
-        self, guild_id: int, campaign_id: str, claim: Claim, names: Names
-    ) -> Names:
-        """The DM said yes to "a person with no name" (#3431): the described end becomes an
-        unnamed person (confirmed, as the DM's yes) and the claim's words now mean that person, so
-        the fact is written the ordinary way. Nothing is guessed: a claim whose described end is
-        gone, or no longer a person word, is refused and stays waiting."""
+    @staticmethod
+    def _described_end(claim: Claim, names: Names) -> str | None:
+        """The one end of a kept "person with no name" claim that still matches no entry (#3431),
+        or None when there is none any more (the DM named them since: the fact is then written the
+        ordinary way). A claim whose end is not a described person any more is refused."""
         ends = [n for n in (claim.subject, claim.object) if not names.by_key.get(name_key(n))]
+        if not ends:
+            return None
         if len(ends) != 1 or not descriptions.is_described_person(ends[0]):
             raise MemoryRuleError(GONE)
-        added = await self._store.add_unnamed(guild_id, campaign_id, what=ends[0])
-        entity = added.entity
-        if entity.status != CONFIRMED:
-            await self._store.set_entity_status(
-                guild_id, campaign_id, entity.id, CONFIRMED, source=DM
-            )
-        found = dict(names.by_key)
-        found[name_key(ends[0])] = ((entity.id, "character"),)
-        return replace(names, by_key=found)
+        return ends[0]
 
     async def confirm(
         self,
@@ -1641,12 +1634,15 @@ class ClaimStore:
             )
             aliases = await scope.select(ALIASES, " AND status <> 'rejected'")
         names = names_of(entities, aliases)
+        described: str | None = None
         if claim.reason == DESCRIBED_REASON:
-            names = await self._person_without_a_name(guild_id, campaign_id, claim, names)
-            async with self._store._read(guild_id, campaign_id) as scope:
-                entities = await scope.select(
-                    ENTITIES, " AND status IN ('proposed', 'confirmed') AND type <> 'person'"
-                )
+            # The person is made inside the same write as the fact (below), so a fact the rules
+            # refuse leaves nothing behind; here the end only stands for them (#3431).
+            described = self._described_end(claim, names)
+            if described is not None:
+                found = dict(names.by_key)
+                found[name_key(described)] = ((NEW_PERSON, "character"),)
+                names = replace(names, by_key=found)
         waiting_ids = {str(e["id"]) for e in entities if e["status"] == PROPOSED}
         # Asked again against what is known now: a name may have been merged or renamed since.
         who = _entry_of(names, claim.subject, claim.subject_picked)
@@ -1675,6 +1671,12 @@ class ClaimStore:
             current = await w.get(CLAIMS, claim_id)
             if current is None or current["status"] != CLAIM_PROPOSED:
                 raise MemoryRuleError(GONE)
+            if described is not None:
+                added = await self._store._add_unnamed_in(w, described, None, "", None, reuse=True)
+                person = await w.update(ENTITIES, added.entity.id, {"status": CONFIRMED})
+                who = (str(person["id"]), "character") if who[0] == NEW_PERSON else who
+                if other and not isinstance(other, str) and other[0] == NEW_PERSON:
+                    other = (str(person["id"]), "character")
             if before is not None:
                 await before(w)
             if condition is not None:
