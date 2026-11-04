@@ -216,6 +216,17 @@ class Proposed:
 
 
 @dataclass(frozen=True, slots=True)
+class WhichOne:
+    """A name in a claim kept for the DM's answer (#3238) that could mean two entries: the words as
+    said, which side of the claim they are on ("subject" or "object"), and the entries they could
+    be, each as (entry id, entry name). Names only, for the "Which one?" choice."""
+
+    words: str
+    side: str
+    entries: tuple[tuple[str, str], ...]
+
+
+@dataclass(frozen=True, slots=True)
 class Confirmed:
     claim: Claim
     flags: tuple[Flag, ...]  # problems the store's checks raised for the DM
@@ -1191,6 +1202,63 @@ class ClaimStore:
                     },
                 )
             return len(stale)
+
+    async def which_one(self, guild_id: int, campaign_id: str, claim_id: str) -> list[WhichOne]:
+        """The "Which one?" choices of a claim kept because a name in it could be two entries
+        (#3238): one `WhichOne` for each such name. Empty when the claim is gone, is not one of
+        those, or its names are no longer ambiguous."""
+        async with self._store._read(guild_id, campaign_id) as scope:
+            row = await scope.get(CLAIMS, claim_id, lock=False)
+            if row is None or row["status"] != CLAIM_PROPOSED or row["reason"] != UNPLACED_REASON:
+                return []
+            entities = await scope.select(
+                ENTITIES, " AND status IN ('proposed', 'confirmed') AND type <> 'person'"
+            )
+            aliases = await scope.select(ALIASES, " AND status <> 'rejected'")
+        called = {str(e["id"]): str(e["name"]) for e in entities}
+        names = names_of(entities, aliases)
+        out: list[WhichOne] = []
+        for side in ("subject", "object"):
+            found = names.by_key.get(name_key(str(row[side])), ())
+            if len(found) > 1:
+                out.append(
+                    WhichOne(
+                        str(row[side]), side, tuple((i, called[i]) for i, _ in found if i in called)
+                    )
+                )
+        return out
+
+    async def pick_one(
+        self, guild_id: int, campaign_id: str, claim_id: str, side: str, entry_id: str
+    ) -> Claim:
+        """The DM's "Which one?" (#3238): the name on this `side` of a kept claim is the entry
+        `entry_id` (one of `which_one`'s). The claim now says that entry's own name, so the
+        ordinary Keep can write it; once no name in it is ambiguous it is an ordinary waiting claim
+        again. Refused, with nothing changed, if the claim or the choice is not there any more."""
+        if side not in ("subject", "object"):
+            raise MemoryRuleError(GONE)
+        async with self._store._write(guild_id, campaign_id, DM) as w:
+            row = await w.get(CLAIMS, claim_id)
+            if row is None or row["status"] != CLAIM_PROPOSED or row["reason"] != UNPLACED_REASON:
+                raise MemoryRuleError(GONE)
+            entities = await w.select(
+                ENTITIES, " AND status IN ('proposed', 'confirmed') AND type <> 'person'"
+            )
+            aliases = await w.select(ALIASES, " AND status <> 'rejected'")
+            names = names_of(entities, aliases)
+            options = {i for i, _ in names.by_key.get(name_key(str(row[side])), ())}
+            chosen = next((e for e in entities if str(e["id"]) == entry_id), None)
+            if chosen is None or entry_id not in options:
+                raise MemoryRuleError(GONE)
+            if len(names.by_key.get(name_key(str(chosen["name"])), ())) != 1:
+                raise MemoryRuleError(
+                    TWO_ENTRIES_REASON
+                )  # its own name is shared: no way to say it
+            changes: dict[str, Any] = {side: str(chosen["name"])}
+            other = "object" if side == "subject" else "subject"
+            still = len(names.by_key.get(name_key(str(row[other])), ())) > 1
+            changes["reason"] = UNPLACED_REASON if still else ""
+            return claim_of(await w.update(CLAIMS, claim_id, changes))
 
     async def unplaced_count(self, guild_id: int, campaign_id: str) -> int:
         """How many claims about the player characters are kept for the DM's answer (#3238), for the

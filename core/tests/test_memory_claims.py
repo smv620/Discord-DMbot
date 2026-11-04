@@ -392,6 +392,42 @@ class Stored(ConfirmedMemoryTest):
         self.assertEqual((row["subject"], row["status"]), ("Mira", "proposed"))
         self.assertTrue(row["lines"])  # its quote is kept
 
+    async def _kept(self) -> str:
+        await self.add("Mira", type="player_character")
+        await self._two_maras()
+        await self.propose(said("Mira", "is the sister of", "Mara"))
+        async with self.db.guild(GUILD_A) as conn:
+            cur = await conn.execute(
+                "SELECT id FROM memory_claims WHERE reason = %s", (claims.UNPLACED_REASON,)
+            )
+            (row,) = await cur.fetchall()
+        return str(row["id"])
+
+    async def test_which_one_lists_the_two_entries_and_picking_one_makes_it_an_ordinary_claim(
+        self,
+    ) -> None:
+        claim_id = await self._kept()
+        (choice,) = await self.claims.which_one(GUILD_A, self.c, claim_id)
+        self.assertEqual((choice.words, choice.side), ("Mara", "object"))
+        self.assertEqual(sorted(n for _, n in choice.entries), ["Mara Ashgrove", "Mara Vell"])
+        ashgrove = next(i for i, n in choice.entries if n == "Mara Ashgrove")
+        picked = await self.claims.pick_one(GUILD_A, self.c, claim_id, "object", ashgrove)
+        self.assertEqual((picked.object, picked.reason), ("Mara Ashgrove", ""))
+        self.assertEqual(await self.claims.which_one(GUILD_A, self.c, claim_id), [])
+        self.assertEqual(await self.claims.unplaced_count(GUILD_A, self.c), 0)
+        # ... and the ordinary Keep now writes it
+        done = await self.claims.confirm(GUILD_A, self.c, claim_id, opted_in={7})
+        self.assertEqual(done.claim.status, "confirmed")
+
+    async def test_a_choice_that_is_not_one_of_the_two_is_refused_and_changes_nothing(self) -> None:
+        claim_id = await self._kept()
+        with self.assertRaises(MemoryRuleError):
+            await self.claims.pick_one(GUILD_A, self.c, claim_id, "object", self.bram)
+        with self.assertRaises(MemoryRuleError):
+            await self.claims.pick_one(GUILD_A, self.c, claim_id, "nonsense", self.bram)
+        (choice,) = await self.claims.which_one(GUILD_A, self.c, claim_id)
+        self.assertEqual(len(choice.entries), 2)
+
     async def test_the_claims_kept_for_an_answer_are_capped_for_a_session(self) -> None:
         await self.add("Mira", type="player_character")
         await self._two_maras()
