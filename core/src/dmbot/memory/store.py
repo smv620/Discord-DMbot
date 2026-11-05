@@ -4377,9 +4377,9 @@ class MemoryStore:
         """The DM gave a player their character (#3036, Supervisor's ruling 2026-11-02): while the
         campaign has had no session and no import, the players are the party being set up, so the
         same step that follows a session links them now (a lore-only start). After the first
-        session it does nothing: a character who joins later joins The party at their first
-        session, not before they have met. Never fails the assignment; a failure is logged by class
-        and the next session's step makes the links."""
+        session it adds membership only (#3363: the party is who the DM assigned), and the
+        characters "know" each other only from a session they were in together. Never fails the
+        assignment; a failure is logged by class and the next session's step makes the links."""
         try:
             async with self._read(guild_id, campaign_id) as scope:
                 cur = await scope.conn.execute(
@@ -4387,8 +4387,7 @@ class MemoryStore:
                     " LIMIT 1",
                     (guild_id, campaign_id),
                 )
-                if await cur.fetchone() is not None:
-                    return
+                had_session = await cur.fetchone() is not None
                 cur = await scope.conn.execute(
                     "SELECT DISTINCT played_by FROM memory_entities WHERE guild_id = %s"
                     " AND campaign_id = %s AND role = %s AND status = %s"
@@ -4397,7 +4396,10 @@ class MemoryStore:
                 )
                 players = {int(r["played_by"]) for r in await cur.fetchall()}
             if players:
-                linked = await self.link_party(guild_id, campaign_id, players)
+                # after a session they have not all met: membership only (#3363), no `knows`
+                linked = await self.link_party(
+                    guild_id, campaign_id, set() if had_session else players
+                )
                 log.info(
                     "Party on assignment: %d characters, %d pairs, %d members",
                     linked.characters, linked.pairs, linked.members,
@@ -4408,20 +4410,25 @@ class MemoryStore:
     async def link_party(
         self, guild_id: int, campaign_id: str, user_ids: Collection[int]
     ) -> party_mod.PartyLinked:
-        """The player characters whose players took part in a session know each other and are
-        members of "The party" (#3036). By rule, as the DM's standing choice, never by the AI: see
-        `memory.party`. One change (one Undo), idempotent, and a connection that exists in any
-        state, a removed one included, is left as it is."""
+        """The party (#3036, and #3363 for who is in it). The player characters whose players took
+        part in a session (`user_ids`) know each other; **every** confirmed player character that
+        has a player (`party_mod.members_of`, the newest of each player) is a member of "The
+        party", whether or not its player spoke in this session, so lore first, a session first or
+        an assignment later give the same members. A player's older character, replaced by a newer
+        one, leaves the party as history (its tie ends, nothing is deleted). By rule, as the DM's
+        standing choice, never by the AI: see `memory.party`. One change (one Undo), idempotent,
+        and a connection that exists in any state, a removed one included, is left as it is."""
         async with self._write(guild_id, campaign_id, DM) as w:
             chars = await party_mod.characters_of(w, user_ids)
-            if not chars:
+            member_ids = await party_mod.members_of(w)
+            if not chars and not member_ids:
                 return party_mod.PartyLinked(0, 0, 0, False)
             faction, made = await party_mod.find_or_make(w)
             held = await w.select(
                 RELATIONS,
                 " AND ((predicate = %s AND subject_id = ANY(%s) AND object_id = ANY(%s))"
-                " OR (predicate = %s AND subject_id = ANY(%s) AND object_id = %s))",
-                [party_mod.KNOWS, chars, chars, party_mod.MEMBER_OF, chars, faction or ""],
+                " OR (predicate = %s AND object_id = %s))",
+                [party_mod.KNOWS, chars, chars, party_mod.MEMBER_OF, faction or ""],
             )  # (every status: a connection the DM removed is still "had")
             have = {(r["subject_id"], r["predicate"], r["object_id"]) for r in held}
             pairs = members = 0
@@ -4433,7 +4440,7 @@ class MemoryStore:
                 )
                 pairs += 1
             if faction is not None:  # (none: the DM rejected the party, so nobody is added to it)
-                for c in chars:
+                for c in member_ids:
                     if (c, party_mod.MEMBER_OF, faction) in have:
                         continue
                     await self.add_relation_in(
@@ -4441,6 +4448,22 @@ class MemoryStore:
                         confidence=1.0, status=CONFIRMED, leave=True,
                     )  # fmt: skip
                     members += 1
+                # a player's replaced character leaves the party as history (the newest entry of
+                # a player is the one in; an older one the DM re-assigns later is not reopened)
+                current = set(member_ids)
+                for r in held:
+                    if (
+                        r["predicate"] == party_mod.MEMBER_OF
+                        and r["status"] == CONFIRMED
+                        and r["to_session_at"] is None
+                        and r["subject_id"] not in current
+                        and await party_mod.is_replaced(w, str(r["subject_id"]), current)
+                    ):
+                        await w.update(
+                            RELATIONS,
+                            r["id"],
+                            {"to_session_at": max(w.now, int(r["from_session_at"] or 0) + 1)},
+                        )  # fmt: skip  (a span is never empty)
             return party_mod.PartyLinked(len(chars), pairs, members, made)
 
     async def add_relation(
