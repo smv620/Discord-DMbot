@@ -81,7 +81,7 @@ class TheParty(NamesTest):
         old = [r for r in out if r.predicate == "member_of" and r.subject_id == self.ids["Mara"]]
         self.assertEqual(len(old), 1)
         self.assertIsNotNone(old[0].to_session_at)  # (history, not deleted)
-        self.assertGreater(old[0].to_session_at, old[0].from_session_at or 0)
+        self.assertGreater(old[0].to_session_at or 0, old[0].from_session_at or 0)
         again = await self.link(101)  # (a second run changes nothing)
         self.assertEqual(again.members, 0)
 
