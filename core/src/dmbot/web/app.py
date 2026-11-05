@@ -118,6 +118,7 @@ from dmbot.web.payments import (
 )
 from dmbot.web.plot import answer_issue, answer_proposal, read_chat, read_plot, send_chat
 from dmbot.web.public_paths import TUNNEL_HEADER, is_public, request_host
+from dmbot.web.question_counts import read_questions, read_total
 from dmbot.web.recap_choices import read_choices, set_choice
 from dmbot.web.recap_requests import (
     STATUS,
@@ -913,6 +914,18 @@ def create_app(
         "bad_sort": (400, "bad_sort"),
     }
     recap_files = audio_links.audio_files(settings.recap_audio_dir)
+
+    @app.get("/me/questions")
+    async def me_questions(signed: Signed) -> dict[str, Any]:
+        """What waits for the signed-in game master, by campaign and kind (#3438). Counts only."""
+        session, _token = signed
+        return await read_questions(db, session, now=clock())
+
+    @app.get("/me/questions/count")
+    async def me_questions_count(signed: Signed) -> dict[str, int]:
+        """Just the total across the signed-in game master's campaigns, for the account page."""
+        session, _token = signed
+        return await read_total(db, session, now=clock())
 
     @app.get("/me/recaps")
     async def me_recaps(signed: Signed) -> dict[str, Any]:
