@@ -13,10 +13,12 @@ export interface LineReading {
 }
 
 /** One connection, read from `from` (one of the edge's two names). */
-export function mapReadLink(edge: Pick<WebEdge, "a" | "b">, link: Pick<WebLink, "words" | "direction" | "back">, from: string): LineReading {
+export function mapReadLink(edge: Pick<WebEdge, "a" | "b">, link: Pick<WebLink, "words" | "direction" | "back" | "backAfter">, from: string): LineReading {
   if (link.direction === "both") return { verb: link.words.trim() === "" ? null : link.words, arrow: false };
   const source = link.direction === "a-b" ? edge.a : edge.b;
-  const text = from === source ? link.words : (link.back ?? "");
+  // A reading with words after the name ("is where … was last seen") keeps both parts, with the name left out of the map's short label.
+  const backText = link.back && link.backAfter?.trim() ? `${link.back} … ${link.backAfter.trim()}` : (link.back ?? "");
+  const text = from === source ? link.words : backText;
   const verb = text.trim() === "" ? null : text;
   return { verb, arrow: verb !== null };
 }
