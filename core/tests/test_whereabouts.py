@@ -104,6 +104,153 @@ class Deciding(unittest.TestCase):
         self.assertEqual(set(got.ends), {"1" * 32})
 
 
+PARTY, TOWN_A, TOWN_B = "p" * 32, "a" * 32, "b" * 32
+
+
+def seen(place: str, rid: str, **kw: object) -> Relation:
+    return rel(PARTY, "located_in", place, "was last seen in", rid=rid, **kw)  # type: ignore[arg-type]
+
+
+class Movers(unittest.TestCase):
+    """A character or a group (the party) has one present place of each kind (#3363, Supervisor
+    2026-11-05): the most recent wins, by when it happened, and only the same kind is ended."""
+
+    def test_a_later_sighting_ends_the_older_one_and_it_becomes_history(self) -> None:
+        old = seen(TOWN_A, "1" * 32, start=100)
+        got = whereabouts.settle(seen(TOWN_B, "2" * 32, start=200), "faction", "place", [old])
+        self.assertEqual(dict(got.ends), {old.id: {"to_session_at": 200}})
+        self.assertEqual(dict(got.new_changes), {})
+
+    def test_an_earlier_sighting_read_late_is_history_and_never_ends_the_newer(self) -> None:
+        newer = seen(TOWN_A, "1" * 32, start=300)
+        got = whereabouts.settle(seen(TOWN_B, "2" * 32, start=200), "faction", "place", [newer])
+        self.assertEqual(dict(got.ends), {})
+        self.assertEqual(dict(got.new_changes), {"to_session_at": 300})
+
+    def test_with_no_order_on_either_side_both_stay_for_the_dm_to_settle(self) -> None:
+        got = whereabouts.settle(
+            seen(TOWN_B, "2" * 32), "faction", "place", [seen(TOWN_A, "1" * 32)]
+        )
+        self.assertEqual((dict(got.ends), dict(got.new_changes)), ({}, {}))
+        same_session = whereabouts.settle(
+            seen(TOWN_B, "2" * 32, start=100),
+            "faction",
+            "place",
+            [seen(TOWN_A, "1" * 32, start=100)],
+        )
+        self.assertEqual((dict(same_session.ends), dict(same_session.new_changes)), ({}, {}))
+
+    def test_a_newer_place_that_is_only_proposed_ends_nothing(self) -> None:
+        old = seen(TOWN_A, "1" * 32, start=100)
+        got = whereabouts.settle(
+            seen(TOWN_B, "2" * 32, start=200, status=PROPOSED), "faction", "place", [old]
+        )
+        self.assertEqual((dict(got.ends), dict(got.new_changes)), ({}, {}))
+
+    def test_a_proposed_older_place_is_never_ended_by_a_confirmed_one(self) -> None:
+        proposed = seen(TOWN_A, "1" * 32, start=100, status=PROPOSED)
+        got = whereabouts.settle(seen(TOWN_B, "2" * 32, start=200), "faction", "place", [proposed])
+        self.assertEqual(dict(got.ends), {})
+
+    def test_only_the_same_kind_of_place_is_ended(self) -> None:
+        lives = rel(PARTY, "located_in", TOWN_A, "lives in", rid="1" * 32, start=100)
+        got = whereabouts.settle(seen(TOWN_B, "2" * 32, start=200), "faction", "place", [lives])
+        self.assertEqual(dict(got.ends), {})  # (a sighting never ends where someone lives)
+        lived = rel(PARTY, "located_in", TOWN_A, "lived in", rid="3" * 32, start=100)
+        new_home = rel(PARTY, "located_in", TOWN_B, "lives in", rid="4" * 32, start=200)
+        self.assertEqual(dict(whereabouts.settle(new_home, "faction", "place", [lived]).ends), {})
+
+    def test_a_new_home_ends_the_old_one_and_reads_in_the_past(self) -> None:
+        lives = rel(TAVIN, "located_in", TOWN_A, "lives in", rid="1" * 32, start=100)
+        new_home = rel(TAVIN, "located_in", TOWN_B, "lives in", rid="2" * 32, start=200)
+        got = whereabouts.settle(new_home, "character", "place", [lives])
+        self.assertEqual(dict(got.ends), {lives.id: {"detail": "lived in", "to_session_at": 200}})
+
+    def test_where_someone_comes_from_is_never_ended(self) -> None:
+        born = rel(TAVIN, "located_in", TOWN_A, "comes from", rid="1" * 32, start=100)
+        other = rel(TAVIN, "located_in", TOWN_B, "comes from", rid="2" * 32, start=200)
+        self.assertEqual(dict(whereabouts.settle(other, "character", "place", [born]).ends), {})
+
+    def test_a_fact_the_dm_types_is_the_newest(self) -> None:
+        old = seen(TOWN_A, "1" * 32, start=500)
+        got = whereabouts.settle(
+            seen(TOWN_B, "2" * 32, start=100), "faction", "place", [old], by_hand=True, now=900
+        )
+        self.assertEqual(
+            dict(got.ends), {old.id: {"to_session_at": 500}}
+        )  # (never before it began)
+
+    def test_a_hidden_fact_never_ends_one_the_players_can_see(self) -> None:
+        old = seen(TOWN_A, "1" * 32, start=100)
+        got = whereabouts.settle(
+            seen(TOWN_B, "2" * 32, start=200, secret=True), "faction", "place", [old]
+        )
+        self.assertEqual(dict(got.ends), {})
+
+    def test_the_same_place_again_and_a_place_in_a_place_are_left_alone(self) -> None:
+        same = whereabouts.settle(
+            seen(TOWN_A, "2" * 32, start=200),
+            "faction",
+            "place",
+            [seen(TOWN_A, "1" * 32, start=100)],
+        )
+        self.assertEqual(dict(same.ends), {})
+        # a tavern (a place) in a town is not something that moves
+        tavern = rel(TOWN_A, "located_in", TOWN_B, "", rid="5" * 32, start=200)
+        self.assertEqual(
+            dict(whereabouts.settle(tavern, "place", "place", [seen(TOWN_A, "1" * 32)]).ends), {}
+        )
+
+    def test_a_hidden_newer_place_never_turns_a_visible_one_into_history(self) -> None:
+        visible = seen(TOWN_A, "1" * 32, start=100)
+        hidden = seen(TOWN_B, "2" * 32, start=200, secret=True)
+        # (settling the visible one later, with the hidden newer one in the facts)
+        got = whereabouts.settle(visible, "faction", "place", [hidden])
+        self.assertEqual((dict(got.ends), dict(got.new_changes)), ({}, {}))
+        # a hidden fact read late is history itself, since only hidden facts could see it
+        hidden_old = seen(TOWN_A, "3" * 32, start=100, secret=True)
+        late = whereabouts.settle(
+            seen(TOWN_B, "4" * 32, start=300, secret=True), "faction", "place", [hidden_old]
+        )
+        self.assertEqual(dict(late.ends), {hidden_old.id: {"to_session_at": 300}})
+
+    def test_a_home_read_late_is_history_and_reads_in_the_past(self) -> None:
+        newer = rel(TAVIN, "located_in", TOWN_B, "lives in", rid="1" * 32, start=300)
+        older = rel(TAVIN, "located_in", TOWN_A, "lives in", rid="2" * 32, start=100)
+        got = whereabouts.settle(older, "character", "place", [newer])
+        self.assertEqual(dict(got.new_changes), {"to_session_at": 300, "detail": "lived in"})
+
+    def test_a_date_missing_on_either_side_is_no_order(self) -> None:
+        dated = seen(TOWN_A, "1" * 32, start=100)
+        undated = seen(TOWN_B, "2" * 32)
+        for new, old in ((undated, dated), (dated, undated)):
+            got = whereabouts.settle(new, "faction", "place", [old])
+            self.assertEqual((dict(got.ends), dict(got.new_changes)), ({}, {}))
+
+    def test_a_place_inside_the_other_is_one_place_and_ends_nothing(self) -> None:
+        inn = seen(TOWN_A, "1" * 32, start=100)
+        got = whereabouts.settle(
+            seen(TOWN_B, "2" * 32, start=200), "faction", "place", [inn],
+            related=lambda a, b: {a, b} == {TOWN_A, TOWN_B},
+        )  # fmt: skip
+        self.assertEqual(dict(got.ends), {})
+
+    def test_an_object_that_is_not_a_place_ends_nothing(self) -> None:
+        old = seen(TOWN_A, "1" * 32, start=100)
+        got = whereabouts.settle(seen(MIRA, "2" * 32, start=200), "faction", "character", [old])
+        self.assertEqual(dict(got.ends), {})
+
+    def test_a_group_only_has_its_sighting_replaced(self) -> None:
+        based = rel(PARTY, "located_in", TOWN_A, "is based in", rid="1" * 32, start=100)
+        new = rel(PARTY, "located_in", TOWN_B, "is based in", rid="2" * 32, start=200)
+        self.assertEqual(dict(whereabouts.settle(new, "faction", "place", [based]).ends), {})
+        # a character's work place is replaced
+        works = rel(TAVIN, "located_in", TOWN_A, "works in", rid="3" * 32, start=100)
+        moved = rel(TAVIN, "located_in", TOWN_B, "works in", rid="4" * 32, start=200)
+        got = whereabouts.settle(moved, "character", "place", [works])
+        self.assertEqual(dict(got.ends), {works.id: {"detail": "worked in", "to_session_at": 200}})
+
+
 class ByHand(unittest.TestCase):
     def test_a_fact_the_dm_types_is_the_newest_and_never_history(self) -> None:
         # Tavin carries it, then the DM types "kept in the chest": the carrying ends
@@ -150,6 +297,42 @@ class InTheStore(ConfirmedMemoryTest):
     async def held(self) -> dict[tuple[str, str], tuple[str, int | None]]:
         rels = await self.memory.relations(GUILD_A, self.c)
         return {(r.predicate, r.object_id): (r.detail, r.to_session_at) for r in rels}
+
+    async def test_the_party_seen_in_two_towns_keeps_the_later_one_present(self) -> None:
+        party = await self.add("The party", type="faction")
+        await self.put(party, "located_in", self.vault, "was last seen in", 100)
+        await self.put(party, "located_in", self.chest, "was last seen in", 200)
+        held = await self.held()
+        self.assertEqual(held[("located_in", self.vault)], ("was last seen in", 200))  # history
+        self.assertEqual(held[("located_in", self.chest)], ("was last seen in", None))  # present
+
+    async def test_a_proposed_newer_place_waits_and_ends_the_confirmed_one_only_when_kept(
+        self,
+    ) -> None:
+        party = await self.add("The party", type="faction")
+        await self.put(party, "located_in", self.vault, "was last seen in", 100)
+        proposed = await self.put(
+            party, "located_in", self.chest, "was last seen in", 200, status=PROPOSED
+        )
+        self.assertEqual((await self.held())[("located_in", self.vault)][1], None)  # still present
+        await self.memory.update_relation(
+            GUILD_A, self.c, proposed.id, status=CONFIRMED, source="dm"
+        )
+        self.assertEqual((await self.held())[("located_in", self.vault)][1], 200)
+
+    async def test_undo_of_the_move_brings_the_old_place_back(self) -> None:
+        party = await self.add("The party", type="faction")
+        await self.put(party, "located_in", self.vault, "was last seen in", 100)
+        newest = await self.memory.add_relation(
+            GUILD_A, self.c, party, "located_in", self.chest, source="dm", confidence=1.0,
+            status=CONFIRMED, detail="was last seen in", from_session_at=200,
+        )  # fmt: skip
+        self.assertEqual((await self.held())[("located_in", self.vault)][1], 200)
+        assert newest.batch is not None
+        await self.memory.undo(GUILD_A, self.c, newest.batch, source="dm")
+        held = await self.held()
+        self.assertEqual(held[("located_in", self.vault)][1], None)  # present again
+        self.assertNotIn(("located_in", self.chest), held)
 
     async def test_a_sword_kept_in_a_vault_then_carried_is_carried_and_was_kept(self) -> None:
         await self.put(self.sword, "located_in", self.vault, "is kept in", 100)

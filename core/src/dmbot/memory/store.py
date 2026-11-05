@@ -6249,9 +6249,14 @@ async def _settle_whereabouts(
         if end not in kinds:
             kinds[end] = (await _entity_row(w, end))["type"]
     others = await _relations_touching(w, rel.subject_id, rel.object_id)
+    related = None
+    if rel.predicate == whereabouts.LOCATED and kinds[rel.subject_id] != "item":
+        # a place inside another is one place (the inn and its town): the mover rule asks
+        related = (await states.place_nesting(w, await _load_ontology(w))).related
     settled = whereabouts.settle(
-        rel, kinds[rel.subject_id], kinds[rel.object_id], others, by_hand=by_hand, now=w.now
-    )
+        rel, kinds[rel.subject_id], kinds[rel.object_id], others, by_hand=by_hand, now=w.now,
+        related=related,
+    )  # fmt: skip
     if settled.new_changes:
         rel = _relation(await w.update(RELATIONS, rel.id, dict(settled.new_changes)))
     for ended_id, changes in settled.ends.items():
