@@ -44,10 +44,14 @@ dev = [
     "pytest>=8",
     "pytest-xdist>=3.5",  # CI runs the tests on every core (#1323); each test has its own schema
     "pytest-cov>=5",  # coverage, reported in CI but not enforced (#1858)
-    "ruff>=0.8",
-    "mypy>=1.13",
+    # The three checks CI runs are pinned to exact versions (#3521): a new release adds or changes
+    # a rule and turns `development` red with nothing of ours changed (ruff 0.17.4 did, on code
+    # that passed the day before). To upgrade one, a session changes the number here in its own
+    # PR, runs `pip install -e ".[dev]"`, and fixes what the new version reports in that same PR.
+    "ruff==0.17.4",
+    "mypy==2.4.1",
     "httpx>=0.27",  # testing the web API in-process
-    "import-linter>=2.0",  # feature boundaries, checked in CI (#2130)
+    "import-linter==2.15",  # feature boundaries, checked in CI (#2130)
 ]
 
 [project.scripts]
