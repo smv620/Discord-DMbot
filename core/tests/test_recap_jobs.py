@@ -295,6 +295,7 @@ class WorkerHarness(Base):
         critics: bool = False,
         final_read: bool = False,
         musts: Sequence[str] = (),
+        stored_split: Any = None,
     ) -> None:
         self.fast = fast
         self.careful = careful or fx.Canned()
@@ -336,6 +337,7 @@ class WorkerHarness(Base):
             story=story,
             critics=critics,
             final_read=final_read,
+            stored_split=stored_split,
         )
         await self.store.enqueue(1, self.one.id, 100, dm_user_id=fx.DM)
 
@@ -1410,6 +1412,37 @@ class Working(WorkerHarness):
         self.assertNotIn("Redfall", transcript)
         self.assertIn("Greywater Keep at dusk", transcript)
         self.assertIn("<last_time_recap>", fast.sent[2])  # and the writer has it as context
+
+    async def test_a_split_kept_for_the_session_is_used_and_the_call_is_not_made(self) -> None:
+        """#3298: the story reader (or an earlier try) kept the split: the recap reads it, so the
+        AI is asked once for the session, never twice."""
+        offset = len(st.TALK) + len(st.READ_ALOUD)
+        kept = sp.Split(
+            (
+                sp.Part(sp.TALK, 1, 2),
+                sp.Part(sp.RECAP, 3, offset),
+                sp.Part(sp.PLAY, offset + 1, 99),
+            ),
+            False,
+            "ai",
+        )
+        asked: list[tuple[int, str, int]] = []
+
+        async def stored(gid: int, cid: str, at: int) -> sp.Split:
+            asked.append((gid, cid, at))
+            return kept
+
+        fast = fx.Canned(st.beats_after(offset), fx.PROSE_ANSWER, fx.GRADE_ANSWER, fx.FINISH_ANSWER)
+        await self.setUpWorker(
+            fast, lines=self.story(), earlier=st.EARLIER, previous="", names=[*fx.NAMES],
+            stored_split=stored,
+        )  # fmt: skip
+        job = await self.go()
+        self.assertEqual(job.state, "ready")
+        self.assertEqual(asked, [(1, self.one.id, 100)])
+        self.assertEqual(sp.from_json(job.split), kept)
+        self.assertTrue(all("<opening>" not in sent for sent in fast.sent))  # no split call
+        self.assertIn("<last_time_recap>", fast.sent[0])  # the beats got the retelling apart
 
     async def test_a_session_with_no_earlier_session_makes_no_split_call(self) -> None:
         fast = fx.Canned(fx.BEATS_ANSWER, fx.PROSE_ANSWER, fx.GRADE_ANSWER, fx.FINISH_ANSWER)

@@ -231,6 +231,7 @@ AUDIENCE: dict[str, str] = {
             "ui.recap_audio.ListenButton",
             "ui.recap_audio.MakeAudioAgainButton",
             "ui.name_pass_undo.UndoNamePassButton",
+            "ui.recap_lines.RecapLinesUndoButton",  # `dm_user_ids` on every press (#3298)
             "ui.recap_dm.RecapButton",
             "ui.recap_hold.WriteNowButton",
             "ui.recap_share.ShareButton",
