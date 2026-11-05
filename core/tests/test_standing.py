@@ -5,7 +5,6 @@ them, and the 🤝 Standing screen."""
 
 from __future__ import annotations
 
-import time
 import unittest
 from types import SimpleNamespace
 from typing import Any
@@ -176,30 +175,52 @@ class Rule(unittest.TestCase):
         self.assertIsNone(index.standing("guard", "guard").step)
         self.assertIsNone(index.standing("nobody", "kesh").step)
 
-    def test_thirty_pairs_are_worked_out_well_inside_five_milliseconds(self) -> None:
-        nodes = [node(f"n{i}") for i in range(3000)] + [
+    @staticmethod
+    def big_index(people: int) -> Index:
+        """The graph the old timing test used, with `people` plain characters in 300 groups."""
+        nodes = [node(f"n{i}") for i in range(people)] + [
             node(f"g{i}", "faction") for i in range(300)
         ]
         nodes += [node(f"p{i}", "place") for i in range(100)]
         nodes += [node(f"c{i}", player_character=True) for i in range(6)]
         nodes += [node("party", "faction", party=True), node("tabaxi", "people")]
-        links = [Link(f"n{i}", st.MEMBER_OF, f"g{i % 300}") for i in range(3000)]
-        links += [Link(f"n{i}", st.LOCATED_IN, f"p{i % 100}") for i in range(3000)]
+        links = [Link(f"n{i}", st.MEMBER_OF, f"g{i % 300}") for i in range(people)]
+        links += [Link(f"n{i}", st.LOCATED_IN, f"p{i % 100}") for i in range(people)]
         links += [Link(f"c{i}", st.OF_PEOPLE, "tabaxi") for i in range(6)]
         rows = [imp(f"g{i}", f"c{i % 6}", "Wary") for i in range(300)]
         rows += [att(f"p{i}", "tabaxi", "Unfriendly") for i in range(100)]
-        rows += [imp(f"n{i}", "party", "Friendly") for i in range(0, 3000, 3)]
-        index = Index(nodes, links, rows)
-        pairs = [(f"n{i}", f"c{j}") for i in range(5) for j in range(6)]
-        best = min(self.timed(index, pairs) for _ in range(5))
-        self.assertLess(best, 5.0, f"30 pairs took {best:.2f} ms")
+        rows += [imp(f"n{i}", "party", "Friendly") for i in range(0, people, 3)]
+        return Index(nodes, links, rows)
 
     @staticmethod
-    def timed(index: Index, pairs: list[tuple[str, str]]) -> float:
-        start = time.perf_counter()
+    def lookups(index: Index, pairs: list[tuple[str, str]]) -> int:
+        """How many (judge, subject) pairs the rule looks up to answer `pairs`."""
+        count = 0
+
+        class Counting(dict):  # type: ignore[type-arg]
+            def get(self, key: Any, default: Any = None) -> Any:
+                nonlocal count
+                count += 1
+                return super().get(key, default)
+
+        index.impressions = Counting(index.impressions)
+        index.attitudes = Counting(index.attitudes)
         for viewer, subject in pairs:
             index.standing(viewer, subject)
-        return (time.perf_counter() - start) * 1000
+        return count
+
+    def test_thirty_pairs_are_worked_out_by_looking_at_the_ladders_only(self) -> None:
+        # (#3498) This guarded "30 pairs well inside 5 ms" with a clock, which fails on a busy CI
+        # runner. What it really guards is that a question climbs only its own two ladders and
+        # never scans the graph, so count the lookups: the same on a tenfold bigger graph, and
+        # under a fixed ceiling. A scan would multiply the count; a clock proves nothing more.
+        pairs = [(f"n{i}", f"c{j}") for i in range(5) for j in range(6)]
+        small = self.lookups(self.big_index(3000), pairs)
+        large = self.lookups(self.big_index(30000), pairs)
+        self.assertEqual(small, large, "answering grew with the size of the graph")
+        self.assertLessEqual(
+            small, 1000
+        )  # 540 today (18 a pair); a scan of the graph would be thousands
 
 
 class Stored(ConfirmedMemoryTest):
