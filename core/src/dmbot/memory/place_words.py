@@ -42,14 +42,16 @@ _FORWARD = {
     FROM: ("comes from", "comes from"),  # where someone began never ends, so it has no past
     LAST_SEEN: ("was last seen in", "was last seen in"),
 }
-# The same from the place's side, before the name: "Aldmoor is home to Tavin". The past stays
-# past here too, so a past home never reads as a present one.
+# The same from the place's side: (words before the name, words after it), present then past
+# ("Aldmoor is home to Tavin", "Aldmoor is where Tavin was last seen"). The past stays past here
+# too, so a past home never reads as a present one. Plain words that claim only what was recorded
+# (Supervisor and the ux-critic, 2026-11-05): no "you", no "last saw".
 _BACK = {
-    LIVES: ("is home to", "was home to"),
-    WORKS: ("is the workplace of", "was the workplace of"),
-    KEPT: ("is where you keep", "was where you kept"),
-    FROM: ("is the home town of", "is the home town of"),
-    LAST_SEEN: ("is where you last saw", "is where you last saw"),
+    LIVES: (("is home to", ""), ("was home to", "")),
+    WORKS: (("is the workplace of", ""), ("was the workplace of", "")),
+    KEPT: (("holds", ""), ("held", "")),
+    FROM: (("is where", "comes from"), ("is where", "comes from")),
+    LAST_SEEN: (("is where", "was last seen"), ("is where", "was last seen")),
 }
 # How a place tie reads in a node's summary: (when the node is the subject, when it is the object),
 # before any word is known and after ("lives there", "where they live").
@@ -123,12 +125,27 @@ def forward(detail: str, subject_kind: str) -> str:
     return _FORWARD[LAST_SEEN][0] if is_mobile(subject_kind) else "is in"
 
 
-def backward(detail: str, subject_kind: str) -> str:
-    """How it reads from the place's side: "is home to", "is where you last saw"."""
+def backward_parts(detail: str, subject_kind: str) -> tuple[str, str]:
+    """How it reads from the place's side, as (words before the name, words after it): "is home to"
+    and "", or "is where" and "was last seen" (the name goes between). A place inside a place keeps
+    "is where you find"; when the first name's kind is not known the tie claims nothing: "is linked
+    to"."""
     way = way_for(detail, subject_kind)
     if way is not None:
         return _BACK[way.key][1 if way.past else 0]
-    return _BACK[LAST_SEEN][0] if is_mobile(subject_kind) else "is where you find"
+    if is_mobile(subject_kind):
+        return _BACK[LAST_SEEN][0]
+    return ("is where you find", "") if subject_kind else ("is linked to", "")
+
+
+def backward(detail: str, subject_kind: str) -> str:
+    """The words before the name when it reads from the place's side."""
+    return backward_parts(detail, subject_kind)[0]
+
+
+def backward_after(detail: str, subject_kind: str) -> str:
+    """The words after the name, when there are any ("was last seen", "comes from"); else empty."""
+    return backward_parts(detail, subject_kind)[1]
 
 
 def summary_phrases(detail: str, subject_kind: str = "") -> tuple[str, str]:

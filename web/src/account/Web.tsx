@@ -868,11 +868,11 @@ function WebLines({ lines, onOpen }: { lines: WebLine[]; onOpen: (a: string, b: 
           {markSecret(l.link) && <span aria-hidden="true">{words.secretMark} </span>}
           {l.link.belief && <span aria-hidden="true">{words.theoryMark} </span>}
           <span aria-hidden="true">
-            {l.from} → {l.words} → {l.to}
+            {l.after ? `${l.from} ${l.words} ${l.to} ${l.after}` : `${l.from} → ${l.words} → ${l.to}`}
           </span>
           {l.link.knowWord && words.knowWords[l.link.knowWord] && <span class="small muted"> ({words.knowWords[l.link.knowWord]})</span>}
           <span class="visually-hidden">
-            {words.lineText(l.from, l.words, l.to)}
+            {words.lineText(l.from, l.words, l.to, l.after)}
             {!l.link.knowWord && l.link.secret ? ` (${words.secretWords})` : ""}
             {l.link.belief ? ` (${words.theoryWords})` : ""}
           </span>{" "}

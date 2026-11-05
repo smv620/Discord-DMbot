@@ -22,6 +22,7 @@ CONNECTION_WORDS = {
     "mentor_of": "teaches",
     "leads": "leads",
     "founded": "founded",
+    "travels_with": "travels with",
     "captive_of": "is held captive by",
     "contains": "contains",
     "disguised_as": "is disguised as",
@@ -29,7 +30,7 @@ CONNECTION_WORDS = {
 # The same connection read from the other name's card ("Frostwolf tribe has as members
 # Ulfgar"). Connections that read the same both ways use CONNECTION_WORDS.
 CONNECTION_BACK = {
-    "located_in": "is where you find",
+    "located_in": "is linked to",  # (the menu has no kind to go by: it claims nothing)
     "member_of": "has as a member",
     "owns": "is owned by",
     "knows": "is known to",
@@ -39,6 +40,7 @@ CONNECTION_BACK = {
     "mentor_of": "is taught by",
     "leads": "is led by",
     "founded": "was founded by",
+    "travels_with": "is joined by",
     "captive_of": "holds captive",
     "contains": "is inside",
     "disguised_as": "is impersonated by",
@@ -111,6 +113,14 @@ def link_words(
     if predicate == KIN and (role := kin.role_of(detail)) and (directional or role in kin.MUTUAL):
         return kin.forward(role)
     return connection_words(predicate)
+
+
+def back_after(
+    predicate: str, detail: str, directional: bool = False, subject_kind: str = ""
+) -> str:
+    """The words that follow the name when a connection reads from its second name ("was last
+    seen" in "Aldmoor is where Tavin was last seen"); empty for every other connection."""
+    return place_words.backward_after(detail, subject_kind) if predicate == "located_in" else ""
 
 
 def back_words(

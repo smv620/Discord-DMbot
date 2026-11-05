@@ -35,6 +35,7 @@ from dmbot.ui.dmbot_commands import (
     _tell,
 )
 from dmbot.ui.name_card import (
+    NOT_IN_MENU,
     NOTHING_MORE,
     SECRET_DENIED_PRESS,
     Row,
@@ -61,7 +62,11 @@ WORDS_MAX = 100  # the longest "other words": the same as the website's and the 
 
 def plain(row: Row) -> str:
     """The card's line for this connection, as plain text a menu can show."""
-    return f"{row.words} {row.other}" + (" 🤫" if row.secret else "")
+    return (
+        f"{row.words} {row.other}"
+        + (f" {row.after}" if row.after else "")
+        + (" 🤫" if row.secret else "")
+    )
 
 
 def choices(rows: list[Row]) -> list[discord.SelectOption]:
@@ -195,7 +200,7 @@ class OneConnection(_Menu):
                         value=predicate,
                     )
                     for predicate, words in CONNECTION_WORDS.items()
-                    if predicate != r.predicate
+                    if predicate != r.predicate and predicate not in NOT_IN_MENU
                 ],
             )
             self.add_item(self.words)

@@ -1635,6 +1635,10 @@ export interface WebLink {
   /** How it reads from the second name when that differs ("has as a member"); null or missing
    * when it reads the same either way or has no fixed reading back (#2666). */
   back?: string | null;
+  /** The words after the far name when the connection reads into the middle name and the name goes in the middle of
+   * the line (#3363): "Aldmoor is where Tavin was last seen" is `back` "is where" and `backAfter` "was last seen".
+   * Empty or missing for every other connection, and from an API that does not send it yet. */
+  backAfter?: string | null;
   /** DMbot's check of a pronoun, in plain words, for a DM only (#2859). */
   check?: string;
   /** False: not revealed to the players yet (#2405). */

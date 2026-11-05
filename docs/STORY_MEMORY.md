@@ -1550,6 +1550,21 @@ gods and royalty, even while their name is hidden), 5 player character.
   a link The party makes count for nothing; a worked-out family link counts once the DM has confirmed it.
   Every kind of entry has a rank, not only characters (places, items, events, groups), and a player
   character's companion (`travels_with`) has a floor of Significant.
+- **Companions (`travels_with`, #3176, owner 2026-11-01, Supervisor's ruling):** a companion (a familiar,
+  a hired guide, a rescued prisoner) is linked by the kind `travels_with` to a player character or to the
+  party group entry. **The party stays the players' point of view and only they are its members**: a
+  companion is a connection, never a member, and nothing about what the party knows comes from a
+  companion. The party entry may be the target of `travels_with` and of nothing else, for now; a
+  document (the lore and backstory readers) never points at it, because it is written before the party
+  exists, so a lore link goes to the player character it names. Only the session readers and the DM
+  propose it to the party. The span is the connection's own from-session and to-session: leaving the
+  party closes it, rejoining adds a new row, and one with no end is with the party now. The DM can
+  hide one (a spy posing as a guide) through the normal who-knows lists. Words for users: "travels with
+  the party" or "travels with Cerric". "Session events" ("the party was ambushed") are not defined
+  yet and need a design note before the party can be their end. Built so far: the kind, the target
+  rule (kept on every write, a merge and a change of kind), and the words. By convention only, not
+  enforced: nothing stops a `member_of` from an NPC to the party; the importance floor of Significant
+  applies to a companion of a player character, not yet to one linked to the party.
 - **Stored with codes, not words:** a fixed list of reasons (`importance_rank.BASES`), session and line
   numbers. A person's erased words leave the rank alone. A backup carries the table in its own section
   (`memory/importance_backup.py`): PlotBot's reading cannot be made again from a backup (the lines are not

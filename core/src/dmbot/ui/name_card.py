@@ -32,6 +32,7 @@ from dmbot.memory.link_words import (
     CONNECTION_BACK,
     CONNECTION_WORDS,
     KIN,
+    back_after,
     back_words,
     connection_words,
     link_words,
@@ -176,11 +177,19 @@ def sentence(lookup: CampaignLookup, r: Relation) -> str | None:
 NO_BACK_OPTION = frozenset({"located_in", "sworn_to", "captive_of", "founded", "disguised_as"})
 
 
+# Kinds with words but not in the "How is it connected?" menu: Discord's menu holds 25 options and
+# is full. A companion travels with a player character or the party (#3176): the session readers
+# and the DM's own button propose it, not this menu.
+NOT_IN_MENU = frozenset({"travels_with"})
+
+
 def connect_choices(name: str) -> list[tuple[str, str, str | None]]:
     """(value, label, description) for "How is it connected?": each connection from this
     name's side, each followed by the same one the other way round."""
     out: list[tuple[str, str, str | None]] = []
     for p, w in CONNECTION_WORDS.items():
+        if p in NOT_IN_MENU:
+            continue
         out.append((p, logic.shorten(f"{name} {w}…", logic.OPTION_LABEL_MAX), None))
         if p in CONNECTION_BACK and p not in NO_BACK_OPTION:
             label = logic.shorten(f"{name} {CONNECTION_BACK[p]}…", logic.OPTION_LABEL_MAX)
@@ -221,6 +230,9 @@ class Row:
     other: str  # the other name, as typed
     secret: bool
     relation: Relation
+    after: str = (
+        ""  # words after the name, for the few that read "is where **Tavin** was last seen"
+    )
 
 
 def _rows(
@@ -257,7 +269,12 @@ def _rows(
                 )
             )
         )
-        found.setdefault(words, []).append(Row(r.id, words, other.name, r.secret, r))
+        after = (
+            ""
+            if ahead or r.predicate != "located_in"
+            else back_after(r.predicate, r.detail, r.directional, subject_kind)
+        )
+        found.setdefault(words, []).append(Row(r.id, words, other.name, r.secret, r, after))
     return [row for group in found.values() for row in group]
 
 
@@ -269,7 +286,9 @@ def _groups(
     groups: dict[str, list[str]] = {}
     for row in _rows(lookup, entity_id, connections, secrets):
         groups.setdefault(row.words, []).append(
-            f"**{_md(row.other)}**" + (" 🤫" if row.secret else "")
+            f"**{_md(row.other)}**"
+            + (f" {row.after}" if row.after else "")
+            + (" 🤫" if row.secret else "")
         )
     return groups
 
@@ -277,7 +296,11 @@ def _groups(
 def connection_line(row: Row) -> str:
     """ "is a member of **Frostwolf tribe**", with " 🤫" only when it is secret (a known one has no
     icon: the quiet case stays quiet)."""
-    return f"{row.words} **{_md(row.other)}**" + (" 🤫" if row.secret else "")
+    return (
+        f"{row.words} **{_md(row.other)}**"
+        + (f" {row.after}" if row.after else "")
+        + (" 🤫" if row.secret else "")
+    )
 
 
 # What Show all can open, in the card's order: key -> how the select names it.
