@@ -29,6 +29,11 @@ def read(word: str, a: str, b: str, quote: str) -> list[bg.Connection]:
 
 
 class TheWords(unittest.TestCase):
+    def test_travels_with_is_a_word_the_readers_know(self) -> None:
+        self.assertEqual(bg.CONNECTIONS["travels with"], "travels_with")
+        self.assertIn("travels with", lore_read.read_instructions())
+        self.assertIn("travels with", lore_read.shape_instructions())
+
     def test_each_new_word_is_a_kind_of_its_own(self) -> None:
         rivals = "Dorn and Ilse are the rival apprentices of Doran"
         captor = "Tor is held captive by the circus master"
@@ -141,6 +146,29 @@ class TheEnds(NamesTest):
         self.assertEqual(len(got), 2)
         self.assertEqual(lost["bad_kind"], 0)
 
+    async def test_a_companion_in_a_document_travels_with_a_player_character_only(self) -> None:
+        await self.make_names(("Glyph", "character", "npc"), ("Old Marn", "character", "npc"))
+        await self.memory.add_entity(
+            GUILD, self.campaign.id, name="Cerric", type="character", role="player_character",
+            played_by=101, status=CONFIRMED, source="dm",
+        )  # fmt: skip
+        lost = await self.queue(
+            bg.Connection("Glyph", "travels_with", "Cerric", "Glyph goes everywhere with Cerric"),
+            bg.Connection("Glyph", "travels_with", "Old Marn", "Glyph goes with Old Marn"),
+        )
+        got = await self.waiting()
+        self.assertEqual([(a, p, b) for a, p, b in got], [("Glyph", "travels_with", "Cerric")])
+        self.assertEqual(len(got), 1)  # (the NPC end is dropped and counted)
+        self.assertEqual(lost["bad_kind"], 1)
+
+    async def test_a_document_never_points_a_companion_at_the_party(self) -> None:
+        await self.make_names(("Glyph", "character", "npc"), ("The party", "faction", None))
+        lost = await self.queue(
+            bg.Connection("Glyph", "travels_with", "The party", "Glyph travels with the party")
+        )
+        self.assertEqual(await self.waiting(), [])
+        self.assertGreaterEqual(sum(lost.values()), 1)  # (counted, whichever check caught it)
+
     async def test_a_connection_whose_ends_do_not_fit_is_dropped_and_counted(self) -> None:
         await self.make_names(("Mira", "npc", "npc"), ("Brindle", "place", None))
         lost = await self.queue(
@@ -183,12 +211,13 @@ class TheEnds(NamesTest):
 class TheMenuAndTheTerms(unittest.TestCase):
     def test_the_connect_menu_fits_discords_limit_and_every_kind_can_be_chosen(self) -> None:
         from dmbot.memory.link_words import CONNECTION_WORDS
-        from dmbot.ui.name_card import BACK, connect_choices
+        from dmbot.ui.name_card import BACK, NOT_IN_MENU, connect_choices
 
         values = [v for v, _, _ in connect_choices("Mira")]
         self.assertEqual(len(values), 25)  # (Discord's limit; exactly 25 is the plan)
         chosen = {v.removesuffix(BACK) for v in values}
-        self.assertEqual(chosen, set(CONNECTION_WORDS))  # every kind, in some direction
+        # every kind, in some direction (a companion's is proposed by the readers, not this menu)
+        self.assertEqual(chosen, set(CONNECTION_WORDS) - NOT_IN_MENU)
 
     def test_a_family_line_that_names_no_role_stays_without_one(self) -> None:
         (got,) = read("family", "Ilse", "Dorn", "Ilse is the sister of Dorn")

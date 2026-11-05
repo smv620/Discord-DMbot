@@ -35,6 +35,7 @@ from dmbot.ui.dmbot_commands import (
     _tell,
 )
 from dmbot.ui.name_card import (
+    NOT_IN_MENU,
     NOTHING_MORE,
     SECRET_DENIED_PRESS,
     Row,
@@ -195,7 +196,7 @@ class OneConnection(_Menu):
                         value=predicate,
                     )
                     for predicate, words in CONNECTION_WORDS.items()
-                    if predicate != r.predicate
+                    if predicate != r.predicate and predicate not in NOT_IN_MENU
                 ],
             )
             self.add_item(self.words)

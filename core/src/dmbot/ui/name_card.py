@@ -176,11 +176,19 @@ def sentence(lookup: CampaignLookup, r: Relation) -> str | None:
 NO_BACK_OPTION = frozenset({"located_in", "sworn_to", "captive_of", "founded", "disguised_as"})
 
 
+# Kinds with words but not in the "How is it connected?" menu: Discord's menu holds 25 options and
+# is full. A companion travels with a player character or the party (#3176): the session readers
+# and the DM's own button propose it, not this menu.
+NOT_IN_MENU = frozenset({"travels_with"})
+
+
 def connect_choices(name: str) -> list[tuple[str, str, str | None]]:
     """(value, label, description) for "How is it connected?": each connection from this
     name's side, each followed by the same one the other way round."""
     out: list[tuple[str, str, str | None]] = []
     for p, w in CONNECTION_WORDS.items():
+        if p in NOT_IN_MENU:
+            continue
         out.append((p, logic.shorten(f"{name} {w}…", logic.OPTION_LABEL_MAX), None))
         if p in CONNECTION_BACK and p not in NO_BACK_OPTION:
             label = logic.shorten(f"{name} {CONNECTION_BACK[p]}…", logic.OPTION_LABEL_MAX)
