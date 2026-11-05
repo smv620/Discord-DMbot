@@ -127,6 +127,7 @@ from dmbot.memory.models import (
     MERGE_MANY_MAX,
     MERGED,
     NPC,
+    PARTY_SOURCE,
     PLAYER_CHARACTER,
     PROPOSED,
     REJECTED,
@@ -189,6 +190,7 @@ log = logging.getLogger(__name__)
 
 PERSON = "person"
 PLAYS = "plays"
+TRAVELS_WITH = "travels_with"  # a companion goes along with a player character or the party
 # The version of the core `plays` definition, so a link made by DMbot is never behind (#1189).
 PLAYS_VERSION = next(p.version for p in CORE_PREDICATES if p.key == PLAYS)
 NOT_HERE = "That campaign doesn't exist in this server."
@@ -2201,6 +2203,7 @@ class MemoryStore:
             await states.settle_kind(w, onto, [entity_id], type)
             row = await _entity_row(w, entity_id)
             await _sync_plays(w, entity_id)
+            await _recheck_companions(w, [entity_id])
             return Written(_entity(row), w.batch)
 
     async def rule_links(
@@ -3706,7 +3709,9 @@ class MemoryStore:
             # The other entry's name was a secret one: the main name everyone sees
             # must never be.
             raise MemoryRuleError("A secret name can't be the main name.")
-        await _move_relations(w, keep_id, gone_id, join=join_alias is not None, via=join_alias)
+        moved_companions = await _move_relations(
+            w, keep_id, gone_id, join=join_alias is not None, via=join_alias
+        )
         await _move_standing(w, keep_id, gone_id)
         await merge_restore.move_notes(w.conn, w.ids, keep_id, gone_id)
         await merge_restore.move_links(w.conn, w.ids, keep_id, gone_id, kept["type"])
@@ -3757,6 +3762,8 @@ class MemoryStore:
         # batch is known.
         assert w.batch is not None
         await merge_restore.save(w.conn, w.ids, w.batch, keep_id, gone_id, before_moves)
+        if moved_companions:  # (read from the merge's own rows: no extra statement for most merges)
+            await _recheck_companions(w, [keep_id])
         return keep_id
 
     async def check_people(
@@ -4570,6 +4577,8 @@ class MemoryStore:
         if pred.key == PLAYS:
             # Who plays a character is set on the character, then kept here (#1188).
             raise MemoryRuleError("Say who plays a character on the character itself.")
+        if pred.key == TRAVELS_WITH:
+            await _check_travels_with(w, source, subject_id, object_id)
         if pred.key == threads_mod.LED_TO:
             # Whatever the path (extractor, "Connect to…"), a "led to" link is the DM's secret
             # and may not close a loop (#1679).
@@ -5980,6 +5989,53 @@ async def _relabel_unnamed(w: Changes, anchor_name: str, rows: Sequence[dict[str
         await w.update_rows(ENTITIES, changed)
 
 
+def _companion_problem(subject: dict[str, Any], target: dict[str, Any], source: str) -> str | None:
+    """Why this companion link is not allowed, or None (#3176, Supervisor's ruling). The companion
+    is a character who is not a player character (a player character is who it travels *with*);
+    it travels with a player character or with the party entry and nothing else. The party is a
+    point of view, so a document (the lore and backstory readers, or anything but the DM and the
+    session reader) can never point at it: it can only name the player character. The party is
+    found by its source, as `party.find_or_make` does (the entity table's `party` flag is for
+    standing, not this rule)."""
+    if subject["type"] != "character" or subject["role"] == PLAYER_CHARACTER:
+        return "Only a character who is not a player character travels with the party."
+    if target["type"] == "character" and target["role"] == PLAYER_CHARACTER:
+        return None
+    if target["type"] == "faction" and target["source"] == PARTY_SOURCE:
+        if source in (DM, "extractor"):
+            return None
+        return "Only the DM or a session can say who travels with the party."
+    return "A companion travels with a player character or with the party."
+
+
+async def _check_travels_with(w: Changes, source: str, subject_id: str, object_id: str) -> None:
+    problem = _companion_problem(
+        await _entity_row(w, subject_id), await _entity_row(w, object_id), source
+    )
+    if problem is not None:
+        raise MemoryRuleError(problem)
+
+
+async def _recheck_companions(w: Changes, entity_ids: Collection[str]) -> None:
+    """After a merge or a change of kind: no live companion link may be left with an end that
+    would not be allowed today (a player character turned into an NPC, the party merged into an
+    ordinary group). The change is refused, nothing is written, and the DM ends the link first."""
+    ids = sorted(set(entity_ids))
+    for r in await w.select(
+        RELATIONS,
+        " AND predicate = %s AND status <> %s AND to_session_at IS NULL"
+        " AND (subject_id = ANY(%s) OR object_id = ANY(%s))",
+        [TRAVELS_WITH, REJECTED, ids, ids],
+    ):
+        problem = _companion_problem(
+            await _entity_row(w, str(r["subject_id"])),
+            await _entity_row(w, str(r["object_id"])),
+            str(r["source"]),
+        )
+        if problem is not None:
+            raise MemoryRuleError(f"A companion still travels with that. {problem}")
+
+
 async def _entity_row(w: Scope, entity_id: str, *, allow_rejected: bool = False) -> dict[str, Any]:
     row = await w.get(ENTITIES, entity_id)
     allowed = (*LIVE, REJECTED) if allow_rejected else LIVE
@@ -6488,10 +6544,11 @@ async def _refuse_led_to_loop(
 
 async def _move_relations(
     w: Changes, keep_id: str, gone_id: str, *, join: bool = False, via: str | None = None
-) -> None:
-    """The other entry's facts move over. They're checked one by one, in the same order
-    as before, against an in-memory copy of every fact they could clash with (so the
-    same duplicates are folded and the same problems flagged); the moves themselves are
+) -> bool:
+    """The other entry's facts move over. Returns whether a companion link (`travels_with`) was
+    among them, so the caller re-checks its ends only then (#3176). They're checked one by one,
+    in the same order as before, against an in-memory copy of every fact they could clash with
+    (so the same duplicates are folded and the same problems flagged); the moves themselves are
     then written in one statement (#164)."""
     onto = await _load_ontology(w)
     rows = await w.select(  # oldest first, so the same merge always folds the same way
@@ -6500,7 +6557,8 @@ async def _move_relations(
         [gone_id, gone_id],
     )
     if not rows:
-        return
+        return False
+    companions = any(r["predicate"] == TRAVELS_WITH for r in rows)
     ends = {keep_id, gone_id} | {r["subject_id"] for r in rows} | {r["object_id"] for r in rows}
     state = {r.id: r for r in await _relations_touching(w, *ends)}  # as the walk sees them
     await _refuse_led_to_loop(w, keep_id, gone_id, rows, state)
@@ -6638,6 +6696,8 @@ async def _move_relations(
                 # shown, folding into one they were not, hands over nothing.
                 await knowers.move_rows(w, "relation_id", relation_id, folded[relation_id])
         await _delete_relation(w, relation_id)
+
+    return companions
 
 
 async def _check_growth(w: Changes, session_started_at: int | None) -> None:
