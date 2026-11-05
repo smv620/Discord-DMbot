@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { httpApi } from "../src/account/api";
 import { mockApi } from "../src/account/mock";
 import RecapStyleView from "../src/account/RecapStyle";
-import { mustsPage as m, recapStylePage as words } from "../src/content/recap-style-words";
+import { mustsPage as m, RECAP_STYLE_LIVE, recapStylePage as words } from "../src/content/recap-style-words";
 import { entries, held } from "../src/content/whats-new";
 
 const live = vi.hoisted(() => ({ on: true }));
@@ -148,9 +148,9 @@ describe("the must-haves list", () => {
 });
 
 describe("the words", () => {
-  it("hold the What's new entry back exactly while the switch is off", () => {
-    expect(held.some((h) => h.title === "See and change what every recap covers")).toBe(true);
-    expect(entries.some((e) => e.title === "See and change what every recap covers")).toBe(false);
+  it("hold the What's new entry back until the Recap style page itself is linked", () => {
+    expect(held.some((h) => h.title === "See and change what every recap covers")).toBe(!RECAP_STYLE_LIVE);
+    expect(entries.some((e) => e.title === "See and change what every recap covers")).toBe(RECAP_STYLE_LIVE);
   });
 });
 
