@@ -131,6 +131,14 @@ const isDate = (s: string): boolean =>
   /^\d{4}-\d{2}-\d{2}$/.test(s) &&
   new Date(`${s}T00:00:00Z`).toISOString().slice(0, 10) === s;
 
+/** Today as the reader's own calendar says it (not UTC, which can already be tomorrow): the latest day a session can
+ * have been played. A date is never in the future. */
+const todayLocal = (): string => {
+  const d = new Date();
+  const two = (n: number): string => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())}`;
+};
+
 interface Folded {
   label: string;
   lines: number;
@@ -660,7 +668,10 @@ export default function Import({
       return next;
     });
 
-  const allDates = order.every((n) => isDate(dates[n] ?? ""));
+  const today = todayLocal();
+  // A typed date can still be in the future (the picker's `max` only stops the clicks), so it is refused here too.
+  const futureDates = order.some((n) => isDate(dates[n] ?? "") && (dates[n] ?? "") > today);
+  const allDates = order.every((n) => isDate(dates[n] ?? "") && (dates[n] ?? "") <= today);
   // The choice is offered while recaps are on for the site and only where the API says the bot
   // would write them (#2229, from the preview): never a tick it would refuse.
   const offerRecaps = RECAPS_LIVE && preview?.recapsPossible === true;
@@ -1220,6 +1231,11 @@ export default function Import({
                       {words.datesOutOfOrder}
                     </p>
                   )}
+                {futureDates && (
+                  <p class="warn" role="alert">
+                    {words.datesInFuture}
+                  </p>
+                )}
                 <p class="sr-only" role="status" aria-live="polite">
                   {moved}
                 </p>
@@ -1234,6 +1250,7 @@ export default function Import({
                         {words.dateLabel(words.shownName(name))}
                         <input
                           type="date"
+                          max={today}
                           value={dates[name] ?? ""}
                           onInput={(e) => {
                             const value = (e.target as HTMLInputElement).value;
