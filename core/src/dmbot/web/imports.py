@@ -777,10 +777,12 @@ async def check(
     }
 
 
-def _started_at(date: object, order: object) -> int:
+def _started_at(date: object, order: object, now: int) -> int:
     """The session's start (Unix seconds) from the DM's date: 12:00 UTC of that day (so a DM
     anywhere on earth sees the day they meant), plus the order within the day in seconds, so two
-    files on one day stay in the DM's order."""
+    files on one day stay in the DM's order. A session can't be on a day that has not happened
+    yet (#3483): the page uses the DM's own calendar, so the server allows one day ahead of UTC
+    (a DM east of UTC is never refused today) and refuses anything later (`future_date`)."""
     if not isinstance(date, str):
         raise RecapError("bad_date")
     try:
@@ -789,6 +791,8 @@ def _started_at(date: object, order: object) -> int:
         raise RecapError("bad_date") from None
     if not dt.date(2000, 1, 1) <= day <= dt.date(2100, 1, 1):
         raise RecapError("bad_date")
+    if day > dt.datetime.fromtimestamp(now, dt.UTC).date() + dt.timedelta(days=1):
+        raise RecapError("future_date")
     extra = (
         order if isinstance(order, int) and not isinstance(order, bool) and 0 <= order < 3600 else 0
     )
@@ -846,7 +850,7 @@ async def confirm(
         plan = plans[found.name]
         if plan.kept == 0:
             raise RecapError("no_lines_kept")
-        chosen.append((found, plan, _started_at(entry.get("date"), entry.get("order"))))
+        chosen.append((found, plan, _started_at(entry.get("date"), entry.get("order"), now)))
         recaps_on[found.name] = entry.get("writeRecap") is True  # only a plain true counts
     batch = uuid.uuid4().hex
     stored: list[dict[str, str | bool]] = []
