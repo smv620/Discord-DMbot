@@ -777,7 +777,9 @@ class Speed(MemoryTest):
                 "INSERT INTO memory_relations (guild_id, campaign_id, id, subject_id, predicate,"
                 " object_id, detail, confidence, status, source, mention_ids, from_session_at,"
                 " secret, created_at)"
-                " SELECT %s, %s, md5('r' || n), md5('e' || s), 'ally_of', md5('e' || o), '', 1.0,"
+                " SELECT %s, %s, md5('r' || n), md5('e' || s),"
+                " CASE WHEN n %% 5 = 0 THEN 'associated_with' ELSE 'ally_of' END, md5('e' || o),"
+                " CASE WHEN n %% 5 = 0 THEN 'swore a vow to guard' ELSE '' END, 1.0,"
                 " 'confirmed', 'dm', ARRAY[md5('m' || n)], 1000 + n, (n %% 50 = 0), 1"
                 f" FROM (SELECT n, {subject} AS s, 1 + (n * 7) %% (%s - 1) AS o"
                 " FROM generate_series(0, %s - 1) AS n) x WHERE s <> o",
