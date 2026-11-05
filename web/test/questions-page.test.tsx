@@ -3,7 +3,7 @@
 // The Questions page (#3438): every question DMbot waits on, by kind, for each campaign the person runs. It shows
 // counts and links only; a kind it cannot answer yet says how to answer it in Discord, and an unknown kind is never
 // dropped. The switch is mocked on here; off, nothing shows.
-import { cleanup, render, screen, waitFor, within } from "@testing-library/preact";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { mockApi } from "../src/account/mock";
@@ -20,9 +20,48 @@ vi.mock("../src/content/questions-switch", () => ({
   },
 }));
 
+// The names-to-check cards are on only where a test turns them on (#3438).
+const names = vi.hoisted(() => ({ on: false }));
+vi.mock("../src/content/recap-words", async (original) => {
+  const real = await original<typeof import("../src/content/recap-words")>();
+  return {
+    ...real,
+    get RECAP_NAME_CHECKS_LIVE() {
+      return names.on;
+    },
+    get RECAPS_LIVE() {
+      return true;
+    },
+  };
+});
+
+// The Story Graph's lists (waiting connections, readings) are on only where a test turns them on (#3438).
+const lists = vi.hoisted(() => ({ waiting: false, readings: false }));
+vi.mock("../src/content/web-waiting", async (original) => {
+  const real = await original<typeof import("../src/content/web-waiting")>();
+  return {
+    ...real,
+    get WEB_WAITING_LIVE() {
+      return lists.waiting;
+    },
+  };
+});
+vi.mock("../src/content/web-readings", async (original) => {
+  const real = await original<typeof import("../src/content/web-readings")>();
+  return {
+    ...real,
+    get WEB_READINGS_LIVE() {
+      return lists.readings;
+    },
+  };
+});
+
 afterEach(() => {
   cleanup();
   on.live = true;
+  names.on = false;
+  lists.waiting = false;
+  lists.readings = false;
 });
 
 const now = 1_800_000_000;
@@ -47,7 +86,7 @@ describe("the Questions page", () => {
     expect(lines.map((l) => l.querySelector("strong")?.textContent)).toEqual([
       `${kindWords("names").label} · 3`,
       `${kindWords("connections").label} · 12`,
-      `${kindWords("family").label} · 2`,
+      `${kindWords("heard").label} · 2`,
     ]); // (oldest first, by when each kind's oldest question began)
   });
 
@@ -56,10 +95,20 @@ describe("the Questions page", () => {
     await screen.findByRole("heading", { name: "The Ashen Road" });
     const names = screen.getByText(`${kindWords("names").label} · 3`).closest("li") as HTMLElement;
     expect(within(names).getByRole("link").getAttribute("href")).toBe("/account/recaps?campaign=100.cmp1");
-    const family = screen.getByText(`${kindWords("family").label} · 2`).closest("li") as HTMLElement;
-    expect(within(family).queryByRole("link")).toBeNull();
-    expect(within(family).getByText(w.discord)).toBeTruthy();
+    const heard = screen.getByText(`${kindWords("heard").label} · 2`).closest("li") as HTMLElement;
+    expect(within(heard).queryByRole("link")).toBeNull();
+    expect(within(heard).getByText(w.discord)).toBeTruthy();
     expect(screen.getByText(w.discordWhere)).toBeTruthy(); // (said once, under the list)
+  });
+
+  it("never shows Family ties until a screen can answer them (#3463), in the lines or the count", async () => {
+    const api = mockApi("table");
+    api.myQuestions = async () =>
+      counts({ total: 7, kinds: [{ kind: "names", count: 5, oldest: now - 100 }, { kind: "family", count: 2, oldest: now - 50 }] });
+    render(<Questions api={api} />);
+    await screen.findByText(`${kindWords("names").label} · 5`);
+    expect(screen.queryByText(new RegExp(kindWords("family").label))).toBeNull();
+    expect(screen.getByText(w.campaignLine(5))).toBeTruthy();
   });
 
   it("a campaign with nothing waiting says so", async () => {
@@ -156,6 +205,131 @@ describe("the Questions page", () => {
         expect(kind.link, key).toBeTruthy();
       }
     }
+  });
+});
+
+describe("new names to check, answered on the page (#3438)", () => {
+  const openNames = async (api = mockApi("table")) => {
+    names.on = true;
+    render(<Questions api={api} />);
+    const line = (await screen.findByText(`${kindWords("names").label} · 3`)).closest("li") as HTMLElement;
+    return { api, line };
+  };
+
+  it("offers to answer them here, not a link away", async () => {
+    const { line } = await openNames();
+    expect(within(line).getByRole("button", { name: `${w.showHere}: ${kindWords("names").label}` })).toBeTruthy();
+    expect(within(line).queryByRole("link")).toBeNull();
+  });
+
+  it("shows each recap with names waiting as a session heading with its own list", async () => {
+    const { api, line } = await openNames();
+    fireEvent.click(within(line).getByRole("button", { name: `${w.showHere}: ${kindWords("names").label}` }));
+    expect(await within(line).findByRole("heading", { name: w.sessionOf("3 January 2027") })).toBeTruthy();
+    expect(api.calls).toContain("campaignNameChecks:100.cmp1");
+    await waitFor(() => expect(api.calls.some((c) => c.startsWith("nameChecks:100.cmp1.100"))).toBe(true));
+  });
+
+  it("hides them again, and says what it is doing while the read is made", async () => {
+    const { line } = await openNames();
+    const button = within(line).getByRole("button", { name: `${w.showHere}: ${kindWords("names").label}` });
+    fireEvent.click(button);
+    expect(button.getAttribute("aria-expanded")).toBe("true");
+    expect(within(line).getByText(w.loading)).toBeTruthy();
+    fireEvent.click(within(line).getByRole("button", { name: `${w.hideHere}: ${kindWords("names").label}` }));
+    expect(within(line).queryByRole("heading")).toBeNull();
+  });
+
+  it("says nothing is waiting when no recap has names left", async () => {
+    const api = mockApi("table");
+    api.campaignNameChecks = async () => ({ recaps: [] });
+    const { line } = await openNames(api);
+    fireEvent.click(within(line).getByRole("button", { name: `${w.showHere}: ${kindWords("names").label}` }));
+    expect(await within(line).findByText(w.noneHere)).toBeTruthy();
+  });
+
+  it("says so when the list can't be read", async () => {
+    const api = mockApi("table");
+    api.campaignNameChecks = async () => {
+      throw new Error("down");
+    };
+    const { line } = await openNames(api);
+    fireEvent.click(within(line).getByRole("button", { name: `${w.showHere}: ${kindWords("names").label}` }));
+    expect(await within(line).findByText(w.failed)).toBeTruthy();
+  });
+
+  it("falls back to the link while the cards are switched off or the API can't read them", async () => {
+    names.on = false;
+    render(<Questions api={mockApi("table")} />);
+    const line = (await screen.findByText(`${kindWords("names").label} · 3`)).closest("li") as HTMLElement;
+    expect(within(line).getByRole("link").getAttribute("href")).toBe("/account/recaps?campaign=100.cmp1");
+    expect(within(line).queryByRole("button")).toBeNull();
+    cleanup();
+    names.on = true;
+    const { campaignNameChecks: _gone, ...old } = mockApi("table");
+    render(<Questions api={old} />);
+    const again = (await screen.findByText(`${kindWords("names").label} · 3`)).closest("li") as HTMLElement;
+    expect(within(again).getByRole("link")).toBeTruthy();
+  });
+});
+
+describe("connections, Which one? and readings, answered on the page (#3438)", () => {
+  const many = (): QuestionCounts => ({
+    serverNow: now,
+    campaigns: [
+      {
+        ref: "100.cmp1",
+        name: "The Ashen Road",
+        total: 9,
+        countedAt: now - 30,
+        kinds: [
+          { kind: "connections", count: 4, oldest: now - 400 },
+          { kind: "which", count: 2, oldest: now - 300 },
+          { kind: "readings", count: 3, oldest: now - 200 },
+          { kind: "heard", count: 1, oldest: now - 100 },
+        ],
+      },
+    ],
+  });
+  const show = async () => {
+    const api = mockApi("table");
+    api.myQuestions = async () => many();
+    lists.waiting = true;
+    lists.readings = true;
+    render(<Questions api={api} />);
+    await screen.findByText(`${kindWords("connections").label} · 4`);
+    return api;
+  };
+  const line = (kind: string, n: number) => screen.getByText(`${kindWords(kind).label} · ${n}`).closest("li") as HTMLElement;
+
+  it("opens the Story Graph's waiting list under the first of its kinds, and says the others are answered with it", async () => {
+    const api = await show();
+    const first = line("connections", 4);
+    fireEvent.click(within(first).getByRole("button", { name: `${w.showHere}: ${kindWords("connections").label}` }));
+    await waitFor(() => expect(api.calls.some((c) => c.startsWith("webWaiting:100.cmp1"))).toBe(true));
+    expect(within(line("which", 2)).getByText(w.answeredWith(kindWords("connections").label))).toBeTruthy();
+    expect(within(line("which", 2)).queryByRole("button")).toBeNull();
+  });
+
+  it("opens what people believe as its own list", async () => {
+    const api = await show();
+    fireEvent.click(within(line("readings", 3)).getByRole("button", { name: `${w.showHere}: ${kindWords("readings").label}` }));
+    await waitFor(() => expect(api.calls.some((c) => c.startsWith("webReadings:100.cmp1"))).toBe(true));
+  });
+
+  it("a kind the page cannot answer still says how to answer it in Discord", async () => {
+    await show();
+    expect(within(line("heard", 1)).getByText(w.discord)).toBeTruthy();
+  });
+
+  it("falls back to the link while the lists are switched off", async () => {
+    const api = mockApi("table");
+    api.myQuestions = async () => many();
+    render(<Questions api={api} />);
+    await screen.findByText(`${kindWords("connections").label} · 4`);
+    expect(within(line("connections", 4)).getByRole("link").getAttribute("href")).toBe("/account/web/100.cmp1");
+    expect(within(line("readings", 3)).getByRole("link")).toBeTruthy();
+    expect(screen.queryByText(w.answeredWith(kindWords("connections").label))).toBeNull();
   });
 });
 

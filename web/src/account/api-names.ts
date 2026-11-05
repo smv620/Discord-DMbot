@@ -11,6 +11,7 @@ import type {
   NamesFixed,
   NamesPage,
   NpcPage,
+  CampaignNameChecks,
   QuestionCounts,
   Readings,
   SmartNamesAnswer,
@@ -257,6 +258,8 @@ export default function namesArea({ call, waitForAnswer }: ApiHelpers): Partial<
       );
       return { answerId: queued.answer, undoable: got.undoable === true };
     },
+    campaignNameChecks: async (campaignRef) =>
+      (await call("GET", `/me/campaigns/${encodeURIComponent(campaignRef)}/names-to-check`)) as CampaignNameChecks,
     myQuestions: async () => (await call("GET", "/me/questions")) as QuestionCounts,
     questionsTotal: async () => (await call("GET", "/me/questions/count")) as { total: number },
     webPeek: async (ref) => {
