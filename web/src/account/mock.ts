@@ -1904,6 +1904,16 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         view: all ? "full" : "players",
       };
     },
+    // The version number (#3294): here a hash of the pretend story, so it moves whenever a name or connection does.
+    async webVersion(ref) {
+      calls.push(`webVersion:${ref}`);
+      await reachable();
+      signedIn();
+      const text = JSON.stringify(web(ref));
+      let h = 0;
+      for (let i = 0; i < text.length; i += 1) h = (h * 31 + text.charCodeAt(i)) % 2147483647;
+      return { version: h };
+    },
     async webSize(ref, query: WebQuery) {
       calls.push(`webSize:${ref}:center=${query.center ?? ""}:hops=${query.hops}`);
       await reachable();

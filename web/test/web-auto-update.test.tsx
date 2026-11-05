@@ -21,10 +21,18 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+/** The pretend API without its version door: a turn then reads the whole graph, as it did before #3294. */
+function withoutVersion(api: AccountApi): AccountApi {
+  const copy = { ...api };
+  delete copy.webVersion;
+  return copy;
+}
+
 /** The pretend API, counting how often the web is read, and growing by one name from the second read on
  * when `grow` is set. */
 function counting(grow: boolean): { api: AccountApi; reads: () => number } {
-  const base = mockApi("table");
+  // (without the version door: the turn then reads the whole graph, as it did before #3294)
+  const base = withoutVersion(mockApi("table"));
   let reads = 0;
   const api: AccountApi = {
     ...base,
@@ -161,7 +169,7 @@ describe("when nobody is looking", () => {
 
   it("keeps quiet when a read fails, and tries again at the next turn", async () => {
     vi.spyOn(Math, "random").mockReturnValue(0);
-    const base = mockApi("table");
+    const base = withoutVersion(mockApi("table"));
     let reads = 0;
     const api: AccountApi = {
       ...base,
@@ -184,7 +192,7 @@ describe("when nobody is looking", () => {
 describe("what a read may and may not do", () => {
   it("shows a change to a secret or a know word, not only new names", async () => {
     vi.spyOn(Math, "random").mockReturnValue(0);
-    const base = mockApi("table");
+    const base = withoutVersion(mockApi("table"));
     let reads = 0;
     const api: AccountApi = {
       ...base,
@@ -206,7 +214,7 @@ describe("what a read may and may not do", () => {
 
   it("does not read a web that needs the big-web question, and does not draw it", async () => {
     vi.spyOn(Math, "random").mockReturnValue(0);
-    const base = mockApi("table");
+    const base = withoutVersion(mockApi("table"));
     let big = false;
     let graphReads = 0;
     const api: AccountApi = {
@@ -230,7 +238,7 @@ describe("what a read may and may not do", () => {
 
   it("tells a person who has been signed out, as any read would", async () => {
     vi.spyOn(Math, "random").mockReturnValue(0);
-    const base = mockApi("table");
+    const base = withoutVersion(mockApi("table"));
     let reads = 0;
     const api: AccountApi = {
       ...base,
@@ -247,7 +255,7 @@ describe("what a read may and may not do", () => {
 
   it("drops a read that was in flight when the graph was frozen", async () => {
     vi.spyOn(Math, "random").mockReturnValue(0);
-    const base = mockApi("table");
+    const base = withoutVersion(mockApi("table"));
     let reads = 0;
     let release: () => void = () => {};
     const api: AccountApi = {
@@ -296,7 +304,7 @@ describe("backing off while nothing changes (#3294, until a graph version exists
 
   it("goes back to 5 s when the graph changes", async () => {
     vi.spyOn(Math, "random").mockReturnValue(0);
-    const base = mockApi("table");
+    const base = withoutVersion(mockApi("table"));
     let reads = 0;
     let grown = false;
     const api: AccountApi = {
@@ -415,5 +423,85 @@ describe("not redrawing under a hand (#3324)", () => {
     fireEvent.pointerUp(window, { clientX: 340, clientY: 340, pointerId: 1 });
     await tick(6000);
     expect(screen.getAllByText("Late Arrival").length).toBeGreaterThan(0);
+  });
+});
+
+describe("the version number (#3294)", () => {
+  /** A pretend API whose story has a version number the test sets, counting the full reads. */
+  function versioned(): { api: AccountApi; reads: () => number; asked: () => number; story: { version: number }; viewerSeen: string[] } {
+    const base = mockApi("table");
+    const story = { version: 1 };
+    const viewerSeen: string[] = [];
+    let reads = 0;
+    let asked = 0;
+    const api: AccountApi = {
+      ...base,
+      async webVersion() {
+        asked += 1;
+        return { version: story.version };
+      },
+      async webGraph(ref, query): Promise<WebGraph> {
+        reads += 1;
+        viewerSeen.push(query.view ?? "");
+        const got = await base.webGraph!(ref, query);
+        return story.version === 1 ? got : { ...got, nodes: [...got.nodes, { id: "late", name: "Late Arrival", kind: "npc" }] };
+      },
+    };
+    return { api, reads: () => reads, asked: () => asked, story, viewerSeen };
+  }
+
+  it("makes no full read at a turn when the number has not moved", async () => {
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    const { api, reads, asked } = versioned();
+    await ready(api);
+    const first = reads();
+    await tick(5200);
+    await tick(5200);
+    await tick(5200);
+    expect(asked()).toBeGreaterThanOrEqual(2); // it did ask the number
+    expect(reads()).toBe(first); // and never read the graph again
+  });
+
+  it("makes exactly one full read when the number moves, and draws what is new", async () => {
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    const { api, reads, story } = versioned();
+    await ready(api);
+    await tick(5200); // (the first turn reads once to learn the number)
+    const before = reads();
+    story.version = 2;
+    await tick(5200);
+    expect(reads()).toBe(before + 1);
+    expect(screen.getAllByText("Late Arrival").length).toBeGreaterThan(0);
+    await tick(15200); // (and the same number again costs nothing)
+    expect(reads()).toBe(before + 1);
+  });
+
+  it("reads the whole graph again when the viewer changes, then goes quiet for that viewer", async () => {
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    const { api, reads, viewerSeen } = versioned();
+    await ready(api);
+    await tick(5200);
+    const before = reads();
+    fireEvent.click(screen.getByLabelText(w.playersView));
+    await tick(300);
+    expect(reads()).toBeGreaterThan(before);
+    expect(viewerSeen).toContain("players");
+    await tick(5200); // (one turn to learn the number for this viewer)
+    const settled = reads();
+    await tick(5200);
+    await tick(5200);
+    expect(reads()).toBe(settled);
+  });
+
+  it("falls back to a full read each turn when the number cannot be had", async () => {
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    const { api, reads } = versioned();
+    api.webVersion = async () => {
+      throw new ApiError("server");
+    };
+    await ready(api);
+    const first = reads();
+    await tick(5200);
+    expect(reads()).toBe(first + 1);
   });
 });
