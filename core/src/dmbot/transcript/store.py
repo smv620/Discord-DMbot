@@ -203,22 +203,29 @@ class TranscriptStore:
             )
             return cur.rowcount > 0
 
-    async def undo_session_split(self, guild_id: int, session_id: str) -> bool:
-        """The DM says last time's recap was play after all (#3298): the split becomes "all play"
-        (method "dm"), so neither the story reader nor the recap leaves those lines out. The lines
-        already left out of an earlier read are read the next time the session is read again.
-        Returns False when the session has no split to undo."""
-        stored = await self.session_split(guild_id, session_id)
-        if stored is None:
-            return False
-        parts = stored.get("parts") or []
-        if not parts:
-            return False
-        first = min(int(p[1]) for p in parts)
-        last = max(int(p[2]) for p in parts)
-        play = {"parts": [["play", first, last]], "unsure": False, "method": "dm"}
-        await self.save_session_split(guild_id, session_id, play, only_if_empty=False)
-        return True
+    async def undo_session_split(self, guild_id: int, session_id: str) -> frozenset[int]:
+        """The DM says last time's recap was play after all (#3298): the lines the split labels as
+        recap become play (method "dm"); talk and catch-up stay what they were. Returns the line
+        numbers released, none when there was no recap to undo. **This changes what later reads
+        do, not what an earlier read already left out:** a read resumes after the lines it has
+        got through (`extracted_through_ms`), and the recap lines come first, so the caller reads
+        the released lines itself (as put-back lines are read) if the DM wants them read now."""
+        from dmbot.recaps import split as sp
+
+        stored = sp.from_json(await self.session_split(guild_id, session_id))
+        if stored is None or not stored.has(sp.RECAP):
+            return frozenset()
+        released = frozenset(
+            n for p in stored.parts if p.label == sp.RECAP for n in range(p.first, p.last + 1)
+        )
+        play = sp.Split(
+            tuple(sp.Part(sp.PLAY if p.label == sp.RECAP else p.label, p.first, p.last)
+                  for p in stored.parts),
+            False,
+            "dm",
+        )  # fmt: skip
+        await self.save_session_split(guild_id, session_id, play.to_json(), only_if_empty=False)
+        return released
 
     async def extractor_calls_since(self, guild_id: int, campaign_id: str, since: int) -> int:
         """AI calls the extractor made for this campaign in sessions it last ran in since
