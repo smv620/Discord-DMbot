@@ -19,6 +19,7 @@ The rules, all in `visible` (pure, so they are tested without a database):
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal, LiteralString
@@ -33,7 +34,7 @@ from dmbot.memory._changes import (
     Scope,
     Table,
 )
-from dmbot.memory.models import CONFIRMED, PLAYER_CHARACTER, lookup_key
+from dmbot.memory.models import CONFIRMED, PLAYER_CHARACTER, lookup_key, spelling_key
 
 ENTRY, PROPERTY, CONNECTION, ALIAS = "entry", "property", "connection", "alias"
 KINDS = (ENTRY, PROPERTY, CONNECTION, ALIAS)
@@ -146,6 +147,81 @@ def display_name(
         if alias_id in seen.aliases:
             return text
     return None
+
+
+def _joined_words(text: str) -> list[str]:
+    """`_label_words` with a hyphen joining its parts instead ("Ka-Zeth" is "kazeth", as the
+    names themselves are compared)."""
+    words = spelling_key(text).split()
+    return [w[:-1] if len(w) > 3 and w.endswith("s") else w for w in words]
+
+
+def _label_words(text: str) -> list[str]:
+    """The words of a label or name for the #3153 check: `spelling_key` with hyphens read as
+    spaces ("Veil-bound" holds "Veil") and a plural or possessive s dropped from the end of a word
+    of four letters or more ("Veils'" and "Veil's" are "Veil")."""
+    words = spelling_key(re.sub(r"[-\u2010-\u2015]", " ", text)).split()
+    return [w[:-1] if len(w) > 3 and w.endswith("s") else w for w in words]
+
+
+class NameGuard:
+    """The names one viewer may not be told, prepared once so checking a label is a set lookup (a
+    big campaign has thousands of names and tens of thousands of connections). A label names a
+    forbidden name when it holds the whole name as consecutive words, or any one word of the name
+    that is four letters or more (or the name's last word at three: "Veil" for "Lord Veil"), the
+    way people say a name; a word that also belongs to a name the viewer may use ("Lord" in a
+    shown "Lord Dorn") never counts. Over-blanking is the safe direction. Pure."""
+
+    __slots__ = ("_phrases", "_words")
+
+    def __init__(self, forbidden: Iterable[str], allowed: Iterable[str] = ()) -> None:
+        ok = {w for name in allowed for w in _label_words(name)}
+        phrases: set[str] = set()
+        words: set[str] = set()
+        for name in forbidden:
+            tokens = _label_words(name)
+            if not tokens:
+                continue
+            phrases.add(" ".join(tokens))
+            phrases.add(" ".join(_joined_words(name)))
+            for n, w in enumerate(tokens):
+                last = n == len(tokens) - 1
+                if w not in ok and (len(w) >= 4 or (last and len(w) >= 3)):
+                    words.add(w)
+        self._phrases = frozenset(phrases)
+        self._words = frozenset(words)
+
+    def __bool__(self) -> bool:
+        return bool(self._phrases)
+
+    def names(self, label: str) -> bool:
+        tokens = _label_words(label)
+        if not tokens:
+            return False
+        if self._words.intersection(tokens):
+            return True
+        for forms in (tokens, _joined_words(label)):
+            padded = f" {' '.join(forms)} "
+            if any(f" {p} " in padded for p in self._phrases):
+                return True
+        return False
+
+
+def label_names(label: str, forbidden: Iterable[str], allowed: Iterable[str] = ()) -> bool:
+    """Whether a connection's own words (the label of the catch-all, "swore on Veil's grave to
+    guard") name any of these names, which the viewer may not be told (#3153). See `NameGuard`."""
+    return NameGuard(forbidden, allowed).names(label)
+
+
+def safe_label(label: str, guard: NameGuard | Iterable[str]) -> str:
+    """The label as this viewer may read it: unchanged, or empty (the plain catch-all words, as for
+    a connection with no label) when it names an entry or a spelling the viewer may not name. The
+    DM's guard is empty, so the DM's view is never changed. Pure."""
+    if not label:
+        return label
+    if not isinstance(guard, NameGuard):
+        guard = NameGuard(guard)
+    return "" if guard.names(label) else label
 
 
 def public_name(seen: Visible, entity_id: str, main: str, others: Sequence[tuple[str, str]]) -> str:
