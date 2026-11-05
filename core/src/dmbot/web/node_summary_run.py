@@ -33,7 +33,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from dmbot.memory import gate, importance, node_summary
+from dmbot.memory import gate, importance, importance_rank, node_summary
 from dmbot.memory.node_summary import DM, PLAYER, Fact, Focus, Neighbour
 from dmbot.web import graph_view
 
@@ -49,6 +49,35 @@ class Result:
     more: int
     needs_peek: bool
     version: str  # "dm" or "players"
+
+
+def ranks_of(inputs: Mapping[str, Any]) -> dict[str, int]:
+    """The rank of every live entry from the rank-inputs door's answer (`dmbot_web_rank_inputs`):
+    `entities` ({id, type, role, status, mergedInto}), `relations` ([subject, object, predicate]),
+    `assessed` ([entity, seq, rank]) and `heard` ([entity, session time]). The same functions the
+    bot's reader uses, so the website and the bot cannot disagree. Used in Python only: the rank
+    never goes to a browser."""
+    entities: dict[str, Mapping[str, object]] = {
+        str(e["id"]): {
+            "type": e["type"], "role": e["role"], "status": e["status"],
+            "merged_into": e.get("mergedInto"),
+        }
+        for e in inputs["entities"]
+    }  # fmt: skip
+    ended = importance_rank.roots(entities)
+    newest: dict[str, tuple[int, int]] = {}
+    for entity, seq, rank in inputs["assessed"]:
+        if int(seq) > newest.get(str(entity), (0, 0))[0]:
+            newest[str(entity)] = (int(seq), int(rank))
+    heard: dict[str, set[int]] = {}
+    for entity, at in inputs["heard"]:
+        heard.setdefault(str(entity), set()).add(int(at))
+    links, companions = importance_rank.links_from(
+        ((str(a), str(b), str(p)) for a, b, p in inputs["relations"]), entities, ended
+    )
+    return importance_rank.ranks_from(
+        entities, ended, importance_rank.newest_by_group(ended, newest), heard, links, companions
+    )
 
 
 def _when(value: object) -> int | None:

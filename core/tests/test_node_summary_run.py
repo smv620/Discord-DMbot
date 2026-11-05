@@ -5,7 +5,7 @@ two source doors' answers are written by hand. Invented names throughout."""
 from __future__ import annotations
 
 import unittest
-from typing import Any
+from typing import Any, ClassVar
 from unittest.mock import patch
 
 from dmbot.memory import gate, node_summary
@@ -193,3 +193,30 @@ class TheRules(unittest.TestCase):
         ranks = {**RANKS, DORN: 1, VEIL: 4}
         got = run.summary_for(src, kn, ranks, MIRA, clicker=gate.Viewer.player([PC]), peek=False)
         assert got is not None and "through them Lord Veil" in got.text
+
+
+class TheRankInputs(unittest.TestCase):
+    INPUTS: ClassVar[dict[str, Any]] = {
+        "entities": [
+            {"id": "pc", "type": "character", "role": "player_character", "status": "confirmed",
+             "mergedInto": None},
+            {"id": "ally", "type": "character", "role": "npc", "status": "confirmed",
+             "mergedInto": None},
+            {"id": "old", "type": "character", "role": "npc", "status": "merged",
+             "mergedInto": "ally"},
+        ],
+        "relations": [["ally", "pc", "travels_with"]],
+        "assessed": [["old", 3, 4], ["old", 1, 2]],
+        "heard": [["old", 100], ["ally", 200], ["ally", 200]],
+    }  # fmt: skip
+
+    def test_the_door_answer_gives_the_same_ranks_as_the_bots_reader(self) -> None:
+        ranks = run.ranks_of(self.INPUTS)
+        assert ranks["pc"] == 5
+        assert ranks["ally"] == 4  # (the merged twin's newest assessment stands for it)
+        assert "old" not in ranks
+
+    def test_a_companion_and_two_sessions_floor_without_an_assessment(self) -> None:
+        bare = {**self.INPUTS, "assessed": []}
+        ranks = run.ranks_of(bare)
+        assert ranks["ally"] >= 3  # (a player character's companion, and heard in two sessions)
