@@ -8,10 +8,12 @@
 // `held` and RECAP_STYLE_LIVE becomes true in the same change; DMBOT_WEB_RECAP_STYLE=1 is set after the bot (GO_LIVE.md).
 export const RECAP_STYLE_LIVE = false;
 
-/** The recap must-haves list on this page (#3329; docs/RECAP_STANDARD.md). Off until CloudDev-lead's half (#3328: the list in
- * the recap style read, the save and the defaults) is deployed and dev1 has edited the list and seen a recap follow it;
- * then the What's new entry "See and change what every recap covers" moves out of `held` and this becomes true. */
-export const RECAP_MUSTS_LIVE = false;
+/** The recap must-haves list on this page (#3329; docs/RECAP_STANDARD.md). CloudDev-lead's half (#3328: the list in
+ * the recap style read, the save and the defaults) is deployed, so the list shows on the page, which is reached by its
+ * address while RECAP_STYLE_LIVE is off (#3474: the owner checks the list there). The What's new entry "See and change
+ * what every recap covers" stays in `held` until RECAP_STYLE_LIVE links the page, as it would announce a page nobody can
+ * find; it moves out of `held` in the change that turns RECAP_STYLE_LIVE on. */
+export const RECAP_MUSTS_LIVE = true;
 
 /** Mirror the door's limits (core, #3328): change them together. */
 export const MUSTS_MAX_LINES = 40;
