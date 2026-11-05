@@ -115,6 +115,7 @@ def _settle_mover(
     if past or word in _NEVER_ENDS or (kind == "faction" and word != place_words.LAST_SEEN):
         return Settled()
     ends: dict[str, dict[str, Any]] = {}
+    new_changes: dict[str, Any] | None = None
     for r in others:
         if r.id == new.id or r.predicate != LOCATED or r.subject_id != new.subject_id:
             continue
@@ -135,11 +136,13 @@ def _settle_mover(
         elif _dated_after(r, new) and (not _hidden(r) or _hidden(new)):
             # The older fact was read late: it is history, and the newer place stands. (A hidden
             # newer place never turns a visible one into history: that would say the party moved.)
+            # (Keep looping: an even older place still ends, whatever order the rows come in.)
             changes: dict[str, Any] = {"to_session_at": r.from_session_at}
             if word in _PAST_WORD:
                 changes["detail"] = _PAST_WORD[word]
-            return Settled(new_changes=changes)
-    return Settled(ends)
+            if new_changes is None or changes["to_session_at"] < new_changes["to_session_at"]:
+                new_changes = changes
+    return Settled(ends, new_changes or {})
 
 
 def _dated_after(a: Relation, b: Relation) -> bool:

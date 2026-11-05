@@ -127,6 +127,14 @@ class Movers(unittest.TestCase):
         self.assertEqual(dict(got.ends), {})
         self.assertEqual(dict(got.new_changes), {"to_session_at": 300})
 
+    def test_an_older_and_a_newer_place_together_whatever_the_row_order(self) -> None:
+        older = seen(TOWN_A, "1" * 32, start=100)
+        newer = seen(TOWN_B, "3" * 32, start=300)
+        for rows in ([older, newer], [newer, older]):
+            got = whereabouts.settle(seen("c" * 32, "2" * 32, start=200), "faction", "place", rows)
+            self.assertEqual(dict(got.ends), {older.id: {"to_session_at": 200}})
+            self.assertEqual(dict(got.new_changes), {"to_session_at": 300})
+
     def test_with_no_order_on_either_side_both_stay_for_the_dm_to_settle(self) -> None:
         got = whereabouts.settle(
             seen(TOWN_B, "2" * 32), "faction", "place", [seen(TOWN_A, "1" * 32)]
