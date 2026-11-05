@@ -104,6 +104,32 @@ describe("the Travels with choice", () => {
     expect(changes).toHaveLength(1);
   });
 
+  // Only the store's rule saying no gets the companion words; a failure of any other kind keeps its usual words (#3527 review).
+  it.each([
+    ["a network failure", new ApiError("network"), w.errors.network!],
+    ["a busy server", new ApiError("still-waiting"), w.errors["still-waiting"]!],
+    ["a gone name", new ApiError("not-found"), ""],
+    ["a server fault", new ApiError("server"), w.errorFallback],
+  ])("does not say the companion rule refused after %s", async (_name, failure, usual) => {
+    const changes: WebLinkChange[] = [];
+    const panel = await openPanel(pageWith(graph("npc", "player_character"), changes, failure));
+    fireEvent.click(within(panel).getByRole("button", { name: w.travelsWithPick }));
+    fireEvent.click(within(panel).getByRole("button", { name: w.addButton }));
+    await screen.findByRole("heading", { level: 2, name: /.+ and .+/ }).catch(() => undefined);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByText(w.travelsWithRefused)).toBeNull();
+    if (usual) expect(screen.getAllByText(usual).length).toBeGreaterThan(0);
+    expect(changes).toHaveLength(1);
+  });
+
+  it("does not say the companion rule refused when the person was signed out", async () => {
+    const panel = await openPanel(pageWith(graph("npc", "player_character"), [], new ApiError("signed-out")));
+    fireEvent.click(within(panel).getByRole("button", { name: w.travelsWithPick }));
+    fireEvent.click(within(panel).getByRole("button", { name: w.addButton }));
+    await screen.findByText(w.signedOut).catch(() => undefined);
+    expect(screen.queryByText(w.travelsWithRefused)).toBeNull();
+  });
+
   it("sends other words as they were, in the order they were stored", async () => {
     const changes: WebLinkChange[] = [];
     const panel = await openPanel(pageWith(graph("player_character", "npc"), changes));

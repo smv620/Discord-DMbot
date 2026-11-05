@@ -434,12 +434,14 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
   }, [api, ref]);
 
   /** One change to the connections; the web is read again after it so the lines are the API's own. */
-  async function act(change: WebLinkChange, ok: string): Promise<string | null> {
+  /** `own` words one kind of refusal for this one call (the store's rule saying no to a companion, #3505); every other
+   * failure, a network failure, a busy server, being signed out, is worded as it always is. */
+  async function act(change: WebLinkChange, ok: string, own?: Partial<Record<string, string>>): Promise<string | null> {
     if (!ref || !api.changeWebLink) return words.errorFallback;
     try {
       await api.changeWebLink(ref, change);
     } catch (error) {
-      const said = refusal(error);
+      const said = (error instanceof ApiError && own?.[error.kind]) || refusal(error);
       if (said === null) {
         setView("signed-out");
         return "";
@@ -1110,7 +1112,7 @@ function LinePanel({
   nameOf: (id: string) => string;
   kindOf: (id: string) => string;
   canEdit: boolean;
-  act: (change: WebLinkChange, ok: string) => Promise<string | null>;
+  act: (change: WebLinkChange, ok: string, own?: Partial<Record<string, string>>) => Promise<string | null>;
   reveal: (target: WebRevealTarget) => Promise<string | null>;
   revealing: Set<string>;
   api: AccountApi;
@@ -1482,7 +1484,7 @@ function AddLink({
   edge: WebEdge;
   kindOf: (id: string) => string;
   nameOf: (id: string) => string;
-  act: (change: WebLinkChange, ok: string) => Promise<string | null>;
+  act: (change: WebLinkChange, ok: string, own?: Partial<Record<string, string>>) => Promise<string | null>;
 }) {
   const [text, setText] = useState("");
   const [secret, setSecret] = useState(false);
@@ -1499,8 +1501,13 @@ function AddLink({
         if (travels && companion === null) return setProblem(words.travelsWithNo);
         // The companion is the connection's first name: "Cerric travels with Rook", never the other way round.
         const [first, second] = travels && companion === "b" ? [edge.b, edge.a] : [edge.a, edge.b];
-        const said = await act({ action: "add", a: first, b: second, words: text, secret }, words.added);
-        setProblem(said !== null && travels ? words.travelsWithRefused : said);
+        // Only the store's rule saying no (`bad-target`) gets the companion words; every other failure is worded as usual.
+        const said = await act(
+          { action: "add", a: first, b: second, words: text, secret },
+          words.added,
+          travels ? { "bad-target": words.travelsWithRefused } : undefined,
+        );
+        setProblem(said);
         if (said === null) {
           setText("");
           setSecret(false);
