@@ -39,18 +39,19 @@ NOTE = (
 )
 WHY = "DMbot isn't sure which one this name means, so it is asking you."
 PICK_HELP = (
-    "Pressing a name only records your choice. Nothing is added to your story until you "
-    "answer it in 🗣️ Check what was said."
+    "Picking only saves your choice. To add it to your story, answer it in 🗣️ Check what was said."
 )
 NEITHER = "None of these"
-NEITHER_HELP = "Not either one? DMbot forgets this fact. This can't be undone."
+NEITHER_HELP = f"{NEITHER}: DMbot forgets this fact for good."
 UNDO = "↩️ Undo my pick"
 NO_NOTE = "No note"
-PICKED = "Saved your choice. The fact is now in 🗣️ Check what was said. Answer it there to add it to your story."
+PICKED = "Choice saved. Now answer it in 🗣️ Check what was said to add it to your story. ↩️ Undo my pick takes it back."
 NEITHER_DONE = "Forgotten. DMbot won't ask about this fact again."
-UNDONE = "Your pick is taken back. The fact is under Which one? again."
-GONE_NOW = "That one isn't waiting any more. The list now shows what is."
-NOTHING_LEFT = "✅ Nothing left to pick here. DMbot will ask again after the next session."
+UNDONE = "Pick taken back. That fact is back on this card."
+GONE_NOW = "Already answered. Showing what is left."
+NOTHING_LEFT = (
+    "✅ Nothing left to pick. If DMbot finds more after the next session, it will ask here."
+)
 NOT_AVAILABLE = (
     "Remembering names isn't switched on for this DMbot yet. Ask whoever runs DMbot to turn it on."
 )
@@ -63,14 +64,13 @@ def question(words: str) -> str:
 
 
 def card_text(claim: Claim, choices: list[WhichOne], waiting: int, said: str = "") -> str:
-    """The six parts of a question card, in the website's words: the question, the choices (the
-    menus below), why DMbot asks, where it was said (not shown: the statement is all that is kept
-    here), what each answer does, and the buttons."""
-    lines = [HEADING, NOTE, "", statement(claim), f"_{WHY}_", ""]
-    lines += [f"**{question(c.words)}**" for c in choices]
-    lines += ["", f"_{PICK_HELP}_", f"_{NEITHER}: {NEITHER_HELP}_"]
-    if waiting > 1:
-        lines.append(f"_{waiting - 1} more after this one._")
+    """The question card: what was said first, then why DMbot asks; the names to pick for are the
+    menus below (their placeholders are the question), the help lines are last. The six parts of
+    a question (PLAN, "Questions for you"): the question, the choices, why, where it was said (the
+    claim's own statement is all that is kept here), what each answer does, the buttons."""
+    count = f" ({waiting} waiting)" if waiting > 1 else ""
+    lines = [f"{HEADING}{count}", statement(claim), f"_{WHY}_", ""]
+    lines += [f"_{NOTE}_", f"_{PICK_HELP}_", f"_{NEITHER_HELP}_"]
     body = "\n".join(lines)
     return f"{said}\n\n{body}" if said else body
 
@@ -147,7 +147,7 @@ class FamilyTies(_Menu):
             _Button(
                 self._neither(claim.id),
                 label=NEITHER,
-                style=discord.ButtonStyle.secondary,
+                style=discord.ButtonStyle.danger,  # the one answer that cannot be taken back
                 row=len(choices),
             )
         )

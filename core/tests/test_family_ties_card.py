@@ -83,7 +83,6 @@ class TheCard(Base):
             text, _ = (await view._load(it)) or ("", [])
         for words in (
             "Which one?",
-            "Which Mira does this mean?",
             ft.WHY,
             ft.PICK_HELP,
             ft.NEITHER,
@@ -91,6 +90,7 @@ class TheCard(Base):
             self.assertIn(words, text)
         menus = [i for i in view.children if isinstance(i, discord.ui.Select)]
         (menu,) = menus
+        self.assertEqual(menu.placeholder, "Which Mira does this mean?")  # the question
         self.assertEqual(
             sorted(o.description for o in menu.options),
             ["a smuggler's daughter", "the ferrywoman"],
