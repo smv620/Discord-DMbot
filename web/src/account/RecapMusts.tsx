@@ -76,7 +76,7 @@ export default function RecapMustsPanel({
         {rows.map(({ heading, d, n }) => (
           <li key={d.key} class="stack">
             {grouped && heading && <h3 class="small">{heading}</h3>}
-            <p>
+            <div class="row">
               <input
                 type="text"
                 class="wide"
@@ -88,7 +88,7 @@ export default function RecapMustsPanel({
                   const text = (e.target as HTMLInputElement).value;
                   setDraft((now) => now.map((x) => (x.key === d.key ? { ...x, text } : x)));
                 }}
-              />{" "}
+              />
               <button
                 type="button"
                 class="button secondary"
@@ -98,7 +98,7 @@ export default function RecapMustsPanel({
               >
                 {words.remove(n)}
               </button>
-            </p>
+            </div>
           </li>
         ))}
       </ol>
