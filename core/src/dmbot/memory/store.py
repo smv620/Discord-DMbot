@@ -127,6 +127,7 @@ from dmbot.memory.models import (
     MERGE_MANY_MAX,
     MERGED,
     NPC,
+    PARTY_SOURCE,
     PLAYER_CHARACTER,
     PROPOSED,
     REJECTED,
@@ -189,6 +190,7 @@ log = logging.getLogger(__name__)
 
 PERSON = "person"
 PLAYS = "plays"
+TRAVELS_WITH = "travels_with"  # a companion goes along with a player character or the party
 # The version of the core `plays` definition, so a link made by DMbot is never behind (#1189).
 PLAYS_VERSION = next(p.version for p in CORE_PREDICATES if p.key == PLAYS)
 NOT_HERE = "That campaign doesn't exist in this server."
@@ -2201,6 +2203,7 @@ class MemoryStore:
             await states.settle_kind(w, onto, [entity_id], type)
             row = await _entity_row(w, entity_id)
             await _sync_plays(w, entity_id)
+            await _recheck_companions(w, [entity_id])
             return Written(_entity(row), w.batch)
 
     async def rule_links(
@@ -3757,6 +3760,7 @@ class MemoryStore:
         # batch is known.
         assert w.batch is not None
         await merge_restore.save(w.conn, w.ids, w.batch, keep_id, gone_id, before_moves)
+        await _recheck_companions(w, [keep_id])
         return keep_id
 
     async def check_people(
@@ -4570,6 +4574,8 @@ class MemoryStore:
         if pred.key == PLAYS:
             # Who plays a character is set on the character, then kept here (#1188).
             raise MemoryRuleError("Say who plays a character on the character itself.")
+        if pred.key == TRAVELS_WITH:
+            await _check_travels_with(w, source, subject_id, object_id)
         if pred.key == threads_mod.LED_TO:
             # Whatever the path (extractor, "Connect to…"), a "led to" link is the DM's secret
             # and may not close a loop (#1679).
@@ -5978,6 +5984,53 @@ async def _relabel_unnamed(w: Changes, anchor_name: str, rows: Sequence[dict[str
     }
     if changed:
         await w.update_rows(ENTITIES, changed)
+
+
+def _companion_problem(subject: dict[str, Any], target: dict[str, Any], source: str) -> str | None:
+    """Why this companion link is not allowed, or None (#3176, Supervisor's ruling). The companion
+    is a character who is not a player character (a player character is who it travels *with*);
+    it travels with a player character or with the party entry and nothing else. The party is a
+    point of view, so a document (the lore and backstory readers, or anything but the DM and the
+    session reader) can never point at it: it can only name the player character. The party is
+    found by its source, as `party.find_or_make` does (the entity table's `party` flag is for
+    standing, not this rule)."""
+    if subject["type"] != "character" or subject["role"] == PLAYER_CHARACTER:
+        return "Only a character who is not a player character travels with the party."
+    if target["type"] == "character" and target["role"] == PLAYER_CHARACTER:
+        return None
+    if target["type"] == "faction" and target["source"] == PARTY_SOURCE:
+        if source in (DM, "extractor"):
+            return None
+        return "Only the DM or a session can say who travels with the party."
+    return "A companion travels with a player character or with the party."
+
+
+async def _check_travels_with(w: Changes, source: str, subject_id: str, object_id: str) -> None:
+    problem = _companion_problem(
+        await _entity_row(w, subject_id), await _entity_row(w, object_id), source
+    )
+    if problem is not None:
+        raise MemoryRuleError(problem)
+
+
+async def _recheck_companions(w: Changes, entity_ids: Collection[str]) -> None:
+    """After a merge or a change of kind: no live companion link may be left with an end that
+    would not be allowed today (a player character turned into an NPC, the party merged into an
+    ordinary group). The change is refused, nothing is written, and the DM ends the link first."""
+    ids = sorted(set(entity_ids))
+    for r in await w.select(
+        RELATIONS,
+        " AND predicate = %s AND status <> %s AND to_session_at IS NULL"
+        " AND (subject_id = ANY(%s) OR object_id = ANY(%s))",
+        [TRAVELS_WITH, REJECTED, ids, ids],
+    ):
+        problem = _companion_problem(
+            await _entity_row(w, str(r["subject_id"])),
+            await _entity_row(w, str(r["object_id"])),
+            str(r["source"]),
+        )
+        if problem is not None:
+            raise MemoryRuleError(f"A companion still travels with that. {problem}")
 
 
 async def _entity_row(w: Scope, entity_id: str, *, allow_rejected: bool = False) -> dict[str, Any]:
