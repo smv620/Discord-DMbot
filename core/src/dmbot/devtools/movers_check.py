@@ -12,7 +12,12 @@ nothing: closing the older rows as history is a design note first.
 What is counted: confirmed, current (no end) `located_in` connections from a mover to a place
 (not an item and not another mover), of one kind of tie each ("lives in", "works in", "was last
 seen in"; "comes from" and a past tie are never limited). A place inside another place is counted as
-two, so the numbers are an upper bound. A group counts only for its sightings, as the rule does.
+two, and a hidden (secret) connection is counted although the rule would never close a visible one
+for it, so the numbers are an upper bound in those two ways. In one way they undercount: a mover,
+a place or a connection that is only proposed, rejected or merged away is not looked at. A group
+counts only for its sightings, as the rule does. It shares the `whereabouts` rules on purpose, so a
+change there is a change here. Connect as the normal `dmbot` user (the database refuses a
+superuser); the command only ever runs one SELECT.
 One line of counts: no names, no ids, no words of any session.
 """
 

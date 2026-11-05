@@ -79,3 +79,33 @@ class TheRead(NamesTest):
         got = mc.count_movers(rows)
         self.assertEqual(dict(got.over), {("character", 2): 1})
         self.assertEqual(await mc.read_rows(self.db, GUILD, "x" * 32), [])
+
+    async def test_it_leaves_out_ended_unconfirmed_and_other_servers_rows(self) -> None:
+        async def add(name: str, kind: str, role: str | None, status: str = CONFIRMED) -> str:
+            made = await self.memory.add_entity(
+                GUILD, self.campaign.id, name=name, type=kind, role=role, status=status,
+                source="dm",
+            )  # fmt: skip
+            return str(made.value.id)
+
+        mira = await add("Mira", "character", "npc")
+        towns = [await add(n, "place", None) for n in ("Hold", "Port", "Reach")]
+        maybe = await add("Maybe", "place", None, "proposed")
+
+        async def tie(place: str, **kw: object) -> str:
+            made = await self.memory.add_relation(
+                GUILD, self.campaign.id, mira, "located_in", place, source="dm", confidence=1.0,
+                **kw,  # type: ignore[arg-type]
+            )  # fmt: skip
+            return str(made.value[0].id)
+
+        await tie(towns[0], status=CONFIRMED)
+        ended = await tie(towns[1], status=CONFIRMED)
+        await self.memory.update_relation(
+            GUILD, self.campaign.id, ended, source="dm", to_session_at=5
+        )
+        await tie(towns[2], status="proposed")
+        await tie(maybe, status=CONFIRMED)  # (a proposed place)
+        got = await mc.read_rows(self.db, GUILD, None)
+        self.assertEqual(len(got), 1)  # only the one confirmed, current tie to a confirmed place
+        self.assertEqual(await mc.read_rows(self.db, GUILD + 1, None), [])
