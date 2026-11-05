@@ -1974,6 +1974,14 @@ export interface WaitingClaim {
   canSecret: boolean;
   /** When the session it was said in began (Unix seconds). */
   at?: number | null;
+  /** Set while a name in it could be two entries (Family ties, #3463): the questions still to answer. */
+  choices?: WaitingChoice[];
+}
+/** One name in a kept claim and the entries it could mean; each carries its kind, a note and a plain tag. */
+export interface WaitingChoice {
+  side: "subject" | "object";
+  words: string;
+  entries: { id: string; name: string; kind: string; note: string; tag: string }[];
 }
 export interface WaitingBackstory {
   id: string;
@@ -2091,6 +2099,8 @@ export interface WaitingLook {
 /** One answer to a waiting item; the API queues it for the bot and the page waits for it. */
 export type WaitingAnswer =
   | { kind: "claim"; action: "confirm" | "reject"; id: string; secret?: boolean }
+  | { kind: "claim"; action: "pick"; id: string; side: "subject" | "object"; entity: string }
+  | { kind: "claim"; action: "unpick"; id: string }
   | { kind: "backstory"; action: "keep" | "skip"; id: string; secret?: boolean }
   | { kind: "backstory"; action: "keep_all"; ids: string[] }
   | { kind: "which"; action: "pick"; id: string; entity: string }
