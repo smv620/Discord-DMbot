@@ -1661,6 +1661,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         )  # 📜 Upload campaign lore, from the Main Menu (#2380)
         self.add_dynamic_items(links_ready.ReadyButton)  # connections became ready (#2650)
         self.add_dynamic_items(theatre_button.ScriptButton)  # make a script of a session (#3244)
+        self.add_dynamic_items(theatre_button.OldScriptButton)  # a question from before #3478
         # the Shared story switch (#1692), named one by one so the registration test sees them
         self.add_dynamic_items(StoryButton, StoryChoiceButton, StoryYesButton, StoryNoButton)
         # giving DMbot an adventure (#1698), named one by one so the registration test sees them
@@ -9778,7 +9779,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 return
             if not await self.plan_allows("story", gid, campaign, fail_open=False):
                 return
-            await self.ask_dm(table, theatre_button.ask_for(gid, sid))
+            await self.ask_dm(table, theatre_button.ask_for(gid, sid, session.lines))
 
     async def warn_about_continuity(self, table: Table) -> None:
         """After a session: if what was said clashes with the story the DM already confirmed
