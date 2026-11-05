@@ -95,7 +95,18 @@ class TheGraphLinks(unittest.TestCase):
         (link,) = edge["links"]
         self.assertEqual(
             set(link),
-            {"id", "words", "back", "secret", "revealed", "pinned", "check", "direction", "kind"},
+            {
+                "id",
+                "words",
+                "back",
+                "backAfter",
+                "secret",
+                "revealed",
+                "pinned",
+                "check",
+                "direction",
+                "kind",
+            },
         )
         self.assertFalse(link["secret"])  # (still masked for a player)
 

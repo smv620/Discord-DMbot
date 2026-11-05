@@ -32,6 +32,7 @@ from dmbot.memory.link_words import (
     CONNECTION_BACK,
     CONNECTION_WORDS,
     KIN,
+    back_after,
     back_words,
     connection_words,
     link_words,
@@ -230,6 +231,9 @@ class Row:
     other: str  # the other name, as typed
     secret: bool
     relation: Relation
+    after: str = (
+        ""  # words after the name, for the few that read "is where **Tavin** was last seen"
+    )
 
 
 def _rows(
@@ -266,7 +270,12 @@ def _rows(
                 )
             )
         )
-        found.setdefault(words, []).append(Row(r.id, words, other.name, r.secret, r))
+        after = (
+            ""
+            if ahead or r.predicate != "located_in"
+            else back_after(r.predicate, r.detail, r.directional, subject_kind)
+        )
+        found.setdefault(words, []).append(Row(r.id, words, other.name, r.secret, r, after))
     return [row for group in found.values() for row in group]
 
 
@@ -278,7 +287,9 @@ def _groups(
     groups: dict[str, list[str]] = {}
     for row in _rows(lookup, entity_id, connections, secrets):
         groups.setdefault(row.words, []).append(
-            f"**{_md(row.other)}**" + (" 🤫" if row.secret else "")
+            f"**{_md(row.other)}**"
+            + (f" {row.after}" if row.after else "")
+            + (" 🤫" if row.secret else "")
         )
     return groups
 
@@ -286,7 +297,11 @@ def _groups(
 def connection_line(row: Row) -> str:
     """ "is a member of **Frostwolf tribe**", with " 🤫" only when it is secret (a known one has no
     icon: the quiet case stays quiet)."""
-    return f"{row.words} **{_md(row.other)}**" + (" 🤫" if row.secret else "")
+    return (
+        f"{row.words} **{_md(row.other)}**"
+        + (f" {row.after}" if row.after else "")
+        + (" 🤫" if row.secret else "")
+    )
 
 
 # What Show all can open, in the card's order: key -> how the select names it.
