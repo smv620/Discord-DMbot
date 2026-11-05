@@ -246,6 +246,9 @@ class TheCounts(Base):
     async def agreed(self, _guild: int) -> Collection[int]:
         return {SAID_BY}
 
+    async def nobody(self, _guild: int) -> Collection[int]:
+        return set()
+
     async def with_claims(self) -> ClaimStore:
         """The claim reader switched on, as the bot has it: only SAID_BY agreed to be recorded."""
         claims = ClaimStore(self.memory)
@@ -343,6 +346,20 @@ class TheCounts(Base):
         # (the answered claim is an ordinary fact to check now, so the two still add up)
         after = (await self.count(kinds.FAMILY)).n + (await self.count(kinds.CLAIMS)).n
         self.assertEqual(after, await claims.listed_count(self.g, self.c, opted_in={SAID_BY}))
+
+    async def test_family_ties_equal_the_card_and_skip_a_speaker_who_stopped(self) -> None:
+        """The message's count and the card's list are one list (#3463): a kept claim whose
+        speaker stopped being recorded is in neither."""
+        claims = await self.with_claims()
+        await self.kept_for_an_answer(claims, self.c, "Mira")
+        card = await claims.unplaced(self.g, self.c, opted_in={SAID_BY})
+        self.assertEqual((await self.count(kinds.FAMILY)).n, len(card))
+        self.assertEqual(len(card), 2)  # (the helper keeps two claims for the name)
+        self.src = replace(self.src, agreed=self.nobody)  # the speaker stopped being recorded
+        self.assertEqual((await claims.unplaced(self.g, self.c, opted_in=set())), [])
+        self.assertEqual((await self.count(kinds.FAMILY)).n, 0)
+        # the facts-to-check count follows the same list, so the two still add up to the page
+        self.assertEqual((await self.count(kinds.CLAIMS)).n, 0)
 
     async def test_facts_to_check_equal_the_claims_waiting_and_skip_a_speaker_not_recorded(
         self,
@@ -551,14 +568,14 @@ class TheStoredCounts(Base):
         self.assertEqual(texty, {"campaign_id", "kind"})  # no free text anywhere
 
 
-class FamilyTiesAreCountedButNotShown(unittest.TestCase):
-    """Nothing answers a family tie yet (#3463): it stays in `question_counts` but is left out of
-    the total, of "answered" and of "a new question", so it never starts or keeps a reminder."""
+class FamilyTiesAreShownAndAnswerable(unittest.TestCase):
+    """Family ties have their own screen since #3463, so they count in the total, answer a
+    reminder when they go down and start one when a new one arrives."""
 
-    def test_the_total_leaves_it_out(self) -> None:
-        self.assertEqual(total({kinds.NAMES: Counted(2), kinds.FAMILY: Counted(5)}), 2)
+    def test_the_total_counts_them(self) -> None:
+        self.assertEqual(total({kinds.NAMES: Counted(2), kinds.FAMILY: Counted(5)}), 7)
 
-    def test_it_is_neither_an_answer_nor_a_new_question(self) -> None:
+    def test_one_going_down_is_an_answer_and_one_going_up_is_new(self) -> None:
         before = {kinds.FAMILY: Counted(3)}
-        self.assertFalse(answered(before, {kinds.FAMILY: Counted(1)}))
-        self.assertFalse(grew(before, {kinds.FAMILY: Counted(4)}))
+        self.assertTrue(answered(before, {kinds.FAMILY: Counted(1)}))
+        self.assertTrue(grew(before, {kinds.FAMILY: Counted(4)}))
