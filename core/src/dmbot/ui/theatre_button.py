@@ -1,6 +1,7 @@
 """The DM's "Make a script of this session" button (#3244, slice 5c): the question that comes with
-a live session's other after-session questions, a confirm step that says what it will cost, and the
-job (`transcript.theatre_job`) with its progress card.
+a live session's other after-session questions, which says what it will cost right in the question,
+so one press makes the script (no second "are you sure?" button), and the job
+(`transcript.theatre_job`) with its progress card.
 
 Everything private: the button works for a DM of the campaign only (checked on every press, the
 DM screen can be seen by players), the confirm and the progress card are replies only the DM sees,
@@ -22,6 +23,7 @@ from dmbot.dm_questions import SCRIPT, Ask
 from dmbot.mentions import NO_PINGS
 from dmbot.transcript import rel_run
 from dmbot.transcript import theatre_job as job
+from dmbot.transcript.theatre_runs import TheatreRuns
 from dmbot.ui.dmbot_commands import _bot, _tell
 
 log = logging.getLogger(__name__)
@@ -30,18 +32,23 @@ ONLY_DMS = "Only a DM of this campaign can make a script."
 OFF = "Scripts are switched off."
 NO_PLAN = "Scripts need the story memory that comes with a paid campaign."
 GONE = "That session is gone."
-ASK_TEXT = (
-    '📜 **A script of this session** can be made: every "he", "it" and "that one" named in '
-    "brackets, for the DMs alone.\nPress the button; it tells you what it will cost before it "
-    "spends anything, and only the DMs can read it."
-)
-CONFIRM_YES = "Make the script"
-CONFIRM_NO = "Cancel"
+OLD_QUESTION = "That question is from before the script button changed. Here it is again:"
+ALREADY_MADE = "A script was already made for this session."
+
+
+def ask_text(lines: int) -> str:
+    """The question: what it makes, what it costs and who can read it, so the button is the one
+    and only "yes" (a second confirm after the press was the same question twice)."""
+    return (
+        '📜 **Make a script of this session?** Each "he", "it" and "that one" gets the name it '
+        f"means, in brackets.\n{job.estimate_line(lines)} {job.PRIVATE_NOTE}\n"
+        "Nothing is used until you press the button."
+    )
 
 
 class ScriptButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
-    template=r"dmbot:script:(?P<guild>[0-9]{1,20}):(?P<session>[0-9a-f]{32})",
+    template=r"dmbot:script2:(?P<guild>[0-9]{1,20}):(?P<session>[0-9a-f]{32})",
 ):
     """In the DM's private questions: opens the confirm step. Works after a restart (the server
     and session are in the button's ID)."""
@@ -52,7 +59,7 @@ class ScriptButton(
                 label="Make a script",
                 emoji="📜",
                 style=discord.ButtonStyle.primary,
-                custom_id=f"dmbot:script:{guild_id}:{session_id}",
+                custom_id=f"dmbot:script2:{guild_id}:{session_id}",
             )
         )
         self.guild_id, self.session_id = guild_id, session_id
@@ -67,67 +74,106 @@ class ScriptButton(
         await press(interaction, self.guild_id, self.session_id)
 
 
-def ask_for(guild_id: int, session_id: str) -> Ask:
-    """The question for the DM's private message after a session."""
+class OldScriptButton(
+    discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
+    template=r"dmbot:script:(?P<guild>[0-9]{1,20}):(?P<session>[0-9a-f]{32})",
+):
+    """The button of a question sent before one press made the script. Those questions promised a
+    cost screen first, so pressing one makes nothing and spends nothing: after the usual checks it
+    answers with the new question and its one-press button for the same session."""
+
+    def __init__(self, guild_id: int, session_id: str) -> None:
+        super().__init__(
+            discord.ui.Button(
+                label="Make a script",
+                emoji="📜",
+                style=discord.ButtonStyle.secondary,
+                custom_id=f"dmbot:script:{guild_id}:{session_id}",
+            )
+        )
+        self.guild_id, self.session_id = guild_id, session_id
+
+    @classmethod
+    async def from_custom_id(
+        cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
+    ) -> OldScriptButton:
+        return cls(int(match["guild"]), match["session"])
+
+    async def callback(self, interaction: discord.Interaction) -> Any:
+        await press_old(interaction, self.guild_id, self.session_id)
+
+
+def ask_for(guild_id: int, session_id: str, lines: int) -> Ask:
+    """The question for the DM's private message after a session (`lines`: how many it has, for
+    the cost it names)."""
+    text = ask_text(lines)
     return Ask(
         SCRIPT,
-        ASK_TEXT,
+        text,
         "a script of the session can be made",
         lambda: ScriptButton(guild_id, session_id),
         lambda: ScriptButton(guild_id, session_id),
-        ASK_TEXT,
+        text,
     )
 
 
-async def press(interaction: discord.Interaction, guild_id: int, session_id: str) -> None:
-    """The button was pressed: check who and what, then show the confirm step."""
+async def _checked(interaction: discord.Interaction, guild_id: int, session_id: str) -> Any:
+    """The checks both buttons make before anything is shown or started: the session is there, the
+    presser is one of the campaign's DMs, the switch and the plan allow it. Tells the presser why
+    not and returns None; otherwise the session. The interaction is already answered."""
     bot = _bot(interaction)
     session = await bot.transcripts.session(guild_id, session_id) if bot.transcripts else None
     if session is None:
         await _tell(interaction, GONE)
-        return
+        return None
     campaign = await bot.campaigns.get(guild_id, session.campaign_id)
     if campaign is None or interaction.user.id not in campaign.dm_user_ids:
         await _tell(interaction, ONLY_DMS)
-        return
+        return None
     if not bot.settings.theatre_on or bot.theatre_ai is None or bot.memory is None:
         await _tell(interaction, OFF)
-        return
+        return None
     if not await bot.plan_allows("story", guild_id, campaign, fail_open=False):
         await _tell(interaction, NO_PLAN)
+        return None
+    return session
+
+
+async def _already_made(
+    interaction: discord.Interaction, guild_id: int, session_id: str, session: Any
+) -> bool:
+    """A script of this session is there: say so, with its page. The question's button stays on
+    its message, so a later press (scrolling back, a second DM) must not spend a second run."""
+    bot = _bot(interaction)
+    if await TheatreRuns(bot.campaigns.db).state(guild_id, session_id) != "done":
+        return False
+    link = script_link(bot.settings.site_url, guild_id, session.campaign_id, session.number)
+    await _tell(interaction, f"{ALREADY_MADE} {link}".strip())
+    return True
+
+
+async def press(interaction: discord.Interaction, guild_id: int, session_id: str) -> None:
+    """The button was pressed: check who and what, then make the script. Answered first (the
+    checks below can take a moment); the same private card is then kept current by `run`."""
+    await interaction.response.defer(ephemeral=True)
+    session = await _checked(interaction, guild_id, session_id)
+    if session is None or await _already_made(interaction, guild_id, session_id, session):
         return
-    view = Confirm(guild_id, session_id, interaction.user.id)
-    await _tell(interaction, f"{job.estimate_line(session.lines)}\n{job.PRIVATE_NOTE}", view=view)
+    await interaction.edit_original_response(content=job.TITLE)
+    await run(interaction, guild_id, session_id)
 
 
-class Confirm(discord.ui.View):
-    """Make it, or not. Only the DM who pressed can answer it."""
-
-    def __init__(self, guild_id: int, session_id: str, user_id: int) -> None:
-        super().__init__(timeout=600)
-        self.guild_id, self.session_id, self.user_id = guild_id, session_id, user_id
-        yes: discord.ui.Button[Confirm] = discord.ui.Button(
-            label=CONFIRM_YES, style=discord.ButtonStyle.primary
-        )
-        no: discord.ui.Button[Confirm] = discord.ui.Button(
-            label=CONFIRM_NO, style=discord.ButtonStyle.secondary
-        )
-        yes.callback = self._make  # type: ignore[method-assign]
-        no.callback = self._cancel  # type: ignore[method-assign]
-        self.add_item(yes)
-        self.add_item(no)
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        return interaction.user.id == self.user_id
-
-    async def _cancel(self, interaction: discord.Interaction) -> None:
-        self.stop()
-        await interaction.response.edit_message(content="Cancelled. Nothing was spent.", view=None)
-
-    async def _make(self, interaction: discord.Interaction) -> None:
-        self.stop()
-        await interaction.response.edit_message(content=job.TITLE, view=None)
-        await run(interaction, self.guild_id, self.session_id)
+async def press_old(interaction: discord.Interaction, guild_id: int, session_id: str) -> None:
+    """The button of a question sent before one press made the script (it promised a cost screen
+    first). It starts nothing: after the same checks it answers privately with the new question
+    and its one-press button for this session, so the DM still gets to make the script."""
+    await interaction.response.defer(ephemeral=True)
+    session = await _checked(interaction, guild_id, session_id)
+    if session is None or await _already_made(interaction, guild_id, session_id, session):
+        return
+    view = discord.ui.View(timeout=None)
+    view.add_item(ScriptButton(guild_id, session_id))
+    await _tell(interaction, f"{OLD_QUESTION}\n\n{ask_text(session.lines)}", view=view)
 
 
 def _plain_name(bot: Any, guild_id: int, user_id: int) -> str | None:
@@ -135,6 +181,14 @@ def _plain_name(bot: Any, guild_id: int, user_id: int) -> str | None:
     "Speaker N" and never a Discord id)."""
     name: str = bot.name_of(guild_id, user_id)
     return None if name.startswith("<@") else name
+
+
+def script_link(site_url: str, guild_id: int, campaign_id: str, number: int) -> str:
+    """The session's page on the website (its Transcripts page), where the script is read and
+    saved. Empty when there is no site address or the session has no number yet."""
+    if not site_url or number <= 0:
+        return ""
+    return f"{site_url.rstrip('/')}/account/transcripts/{guild_id}.{campaign_id}/{number}"
 
 
 async def run(interaction: discord.Interaction, guild_id: int, session_id: str) -> job.Outcome:
@@ -192,6 +246,7 @@ async def run(interaction: discord.Interaction, guild_id: int, session_id: str) 
         known=await memory.table_names(guild_id, session.campaign_id),
         still_agreed=agreed_now,
         edit=edit,
+        link=script_link(bot.settings.site_url, guild_id, session.campaign_id, session.number),
     )
     if outcome.ok and bot.settings.rel_read_on and bot.voyage is not None:
         await read_relationships(

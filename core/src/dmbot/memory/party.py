@@ -54,6 +54,42 @@ async def characters_of(w: Changes, user_ids: Collection[int]) -> list[str]:
     return sorted(str(r["id"]) for r in newest.values())
 
 
+async def members_of(w: Changes) -> list[str]:
+    """The party's members (#3363, Supervisor 2026-11-05): the campaign's confirmed player
+    characters that have a player, the newest of each player, whether or not that player spoke in a
+    given session. So lore first, a session first or an assignment later all give the same members.
+    A merged or unconfirmed entry is not one, and a character with no player is not a member. A
+    replaced character (the player's older one) is no longer the newest: it leaves as history, not
+    deleted."""
+    rows = await w.select(
+        ENTITIES,
+        " AND role = %s AND status = %s AND played_by IS NOT NULL AND merged_into IS NULL",
+        [PLAYER_CHARACTER, CONFIRMED],
+    )
+    newest: dict[int, dict[str, Any]] = {}
+    for row in rows:
+        best = newest.get(int(row["played_by"]))
+        if best is None or (row["created_at"], row["id"]) > (best["created_at"], best["id"]):
+            newest[int(row["played_by"])] = row
+    return sorted(str(r["id"]) for r in newest.values())
+
+
+async def is_replaced(w: Changes, entity_id: str, current: Collection[str]) -> bool:
+    """Is this player character no longer its player's newest one (another entry of the same
+    player is a current member)? Then its party tie is history. A character with no player, or a
+    merged one, is never judged here: its tie is the DM's to keep or remove."""
+    row = await w.get(ENTITIES, entity_id)
+    if row is None or row["role"] != PLAYER_CHARACTER or row["played_by"] is None:
+        return False
+    if row["merged_into"] is not None:
+        return False
+    mine = await w.select(
+        ENTITIES, " AND played_by = %s AND role = %s AND id = ANY(%s)",
+        [row["played_by"], PLAYER_CHARACTER, sorted(current)],
+    )  # fmt: skip
+    return bool(mine)
+
+
 async def find_or_make(w: Changes) -> tuple[str | None, bool]:
     """(the party faction's id, whether it was just made). Found by its source, whatever the DM
     renamed it to. One the DM rejected is their word that there is no such group: no id (None),

@@ -11,7 +11,7 @@ the history cannot give it away. Pure: no database, so the rules are tested alon
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -75,6 +75,95 @@ def _ends_at(old: Relation, new: Relation, now: int) -> int:
     return max(new.from_session_at or now, old.from_session_at or 0)
 
 
+# Something that moves (a character, a creature, a god, a group such as the party) is somewhere, and
+# the graph shows the most recent place of each kind (owner, 2026-11-04, extended by Supervisor,
+# 2026-11-05, after the party showed as "last seen in" two towns). An item has its own rule above.
+_MOVERS = frozenset(
+    {"character", "person", "npc", "player_character", "deity", "creature", "faction"}
+)
+_NEVER_ENDS = (place_words.FROM,)  # where someone began is not a place they left
+
+
+def _moves(kind: str) -> bool:
+    return kind in _MOVERS
+
+
+_PAST_WORD = {place_words.LIVES: "lived in", place_words.WORKS: "worked in"}
+
+
+def _settle_mover(
+    new: Relation,
+    kind: str,
+    others: Sequence[Relation],
+    *,
+    by_hand: bool,
+    now: int,
+    related: Callable[[str, str], bool] | None = None,
+) -> Settled:
+    """A new present place of one kind ("lives in", "works in", "was last seen in") ends the older
+    present place of the SAME kind (never another kind), by when it happened, not when it was
+    read: a later session ends an earlier one; an earlier one read late becomes history itself;
+    with no order (a date missing on either side, or the same session) both stay and the
+    one-at-a-time flag asks the DM, as before. A place the DM added by hand is the newest. Only a
+    confirmed fact does this: a newer place that is still only proposed ends nothing until the DM
+    confirms it (`settle` is run again then). A hidden fact never changes what players see: it
+    ends nothing they can see, and a visible fact never turns into history because of it. A place
+    inside the other (the inn and its town) is one place and ends nothing. For a group only the
+    sighting is replaced (a guild based in two towns is the DM's to settle). The ended fact stays,
+    as history, with its end; the DM's Undo brings it back."""
+    word, past = place_words.slot(new.detail, kind)
+    if past or word in _NEVER_ENDS or (kind == "faction" and word != place_words.LAST_SEEN):
+        return Settled()
+    ends: dict[str, dict[str, Any]] = {}
+    new_changes: dict[str, Any] | None = None
+    for r in others:
+        if r.id == new.id or r.predicate != LOCATED or r.subject_id != new.subject_id:
+            continue
+        if not _live(r) or r.object_id == new.object_id:
+            continue
+        if place_words.slot(r.detail, kind) != (word, False):
+            continue  # another kind of place tie, or one that is past already
+        if related is not None and related(r.object_id, new.object_id):
+            continue  # the inn and the town it is in: one place, not two
+        if by_hand:
+            if _can_touch(new, r):
+                ends[r.id] = _ended(
+                    r, max(new.from_session_at or now, r.from_session_at or 0), word
+                )
+        elif _dated_after(new, r):
+            if _can_touch(new, r):
+                ends[r.id] = _ended(r, new.from_session_at or now, word)
+        elif _dated_after(r, new) and (not _hidden(r) or _hidden(new)):
+            # The older fact was read late: it is history, and the newer place stands. (A hidden
+            # newer place never turns a visible one into history: that would say the party moved.)
+            # (Keep looping: an even older place still ends, whatever order the rows come in.)
+            changes: dict[str, Any] = {"to_session_at": r.from_session_at}
+            if word in _PAST_WORD:
+                changes["detail"] = _PAST_WORD[word]
+            if new_changes is None or changes["to_session_at"] < new_changes["to_session_at"]:
+                new_changes = changes
+    return Settled(ends, new_changes or {})
+
+
+def _dated_after(a: Relation, b: Relation) -> bool:
+    """Is `a` known to be later than `b`? Both must be dated: with a date missing on either side
+    there is no order, and neither ends the other."""
+    return (
+        a.from_session_at is not None
+        and b.from_session_at is not None
+        and a.from_session_at > b.from_session_at
+    )
+
+
+def _ended(old: Relation, at: int, word: str) -> dict[str, Any]:
+    """The change that makes an old place history: its end (never before it began) and, where the
+    way has a past wording, that ("lived in")."""
+    changes: dict[str, Any] = {"to_session_at": max(at, old.from_session_at or 0)}
+    if word in _PAST_WORD:
+        changes["detail"] = _PAST_WORD[word]
+    return changes
+
+
 def settle(
     new: Relation,
     subject_kind: str,
@@ -83,11 +172,21 @@ def settle(
     *,
     by_hand: bool = False,
     now: int = 0,
+    related: Callable[[str, str], bool] | None = None,
 ) -> Settled:
     """What a new, confirmed fact does to the live facts already known about its item.
-    `by_hand`: the DM added it themselves, so it counts as the newest of all (`now` dates it)."""
+    `by_hand`: the DM added it themselves, so it counts as the newest of all (`now` dates it).
+    `related(a, b)`: whether one place is inside the other (a mover in the inn and in the town it is
+    in is in one place, not two: it ends nothing)."""
     if new.status != CONFIRMED or new.to_session_at is not None:
         return Settled()
+    if (
+        new.predicate == LOCATED
+        and _moves(subject_kind)
+        and not _moves(object_kind)
+        and (object_kind != "item")
+    ):
+        return _settle_mover(new, subject_kind, others, by_hand=by_hand, now=now, related=related)
     if new.predicate == CARRIES and object_kind == "item":
         ends: dict[str, dict[str, Any]] = {}
         for r in others:

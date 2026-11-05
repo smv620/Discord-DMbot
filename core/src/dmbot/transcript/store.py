@@ -203,6 +203,31 @@ class TranscriptStore:
             )
             return cur.rowcount > 0
 
+    async def save_split_and_queue(
+        self, guild_id: int, session_id: str, split: Mapping[str, Any], numbers: Collection[int]
+    ) -> int:
+        """The DM's Undo of a split (#3298), in ONE transaction: keep this split (replacing the
+        one kept) and queue these lines to be read again by the put-back sweep (#2587), by their
+        place in the session (1-based, the numbering `lines` and the story reader use). A failure
+        between the two can never leave the split saying "play" with the lines never read. How
+        many lines were queued."""
+        wanted = sorted(set(numbers))
+        async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "UPDATE transcript_sessions SET recap_split = %s::jsonb WHERE id = %s",
+                (json.dumps(dict(split)), session_id),
+            )
+            if not wanted:
+                return 0
+            cur = await conn.execute(
+                "UPDATE transcript_lines l SET reread = TRUE FROM ("
+                " SELECT id, row_number() OVER (ORDER BY started_ms, id) AS n"
+                " FROM transcript_lines WHERE session_id = %s) x"
+                " WHERE l.id = x.id AND x.n = ANY(%s)",
+                (session_id, wanted),
+            )
+            return cur.rowcount
+
     async def extractor_calls_since(self, guild_id: int, campaign_id: str, since: int) -> int:
         """AI calls the extractor made for this campaign in sessions it last ran in since
         `since` (a Unix time): the daily ceiling's count (#1367). A session counts in full at

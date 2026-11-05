@@ -142,6 +142,15 @@ describe("the page", () => {
       target: { value: "2026-09-21" },
     });
     expect(start.disabled).toBe(false);
+    // A day that hasn't happened yet is refused, however it got there (the picker's max only stops clicks).
+    const picker = screen.getByLabelText(w.dateLabel("session-2.txt")) as HTMLInputElement;
+    expect(picker.max).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    fireEvent.input(picker, { target: { value: "2999-01-01" } });
+    expect(start.disabled).toBe(true);
+    expect(screen.getByText(w.datesInFuture)).toBeTruthy();
+    fireEvent.input(picker, { target: { value: "2026-09-21" } });
+    expect(start.disabled).toBe(false);
+    expect(screen.queryByText(w.datesInFuture)).toBeNull();
     fireEvent.click(
       screen.getByRole("button", { name: w.moveUp("session-2.txt") }),
     );
