@@ -8,7 +8,8 @@ no job, so this module is the same labelling without the job: `split_for` reads 
 first; with none, it makes the one fast-tier call, checks the answer against the earlier session's
 words exactly as the job does, and keeps the result (first writer wins). Anything unsure or wrong
 is used for that read only and not kept, so the next read tries again: extraction is never
-blocked on it, and a line is never dropped on a guess. Counts only in logs, never a word of a transcript."""
+blocked on it, and a line is never dropped on a guess. Counts only in logs, never a word of a
+transcript."""
 
 from __future__ import annotations
 
