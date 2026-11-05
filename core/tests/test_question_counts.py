@@ -241,14 +241,14 @@ class TheStoredCounts(Base):
         self.assertEqual(texty, {"campaign_id", "kind"})  # no free text anywhere
 
 
-class FamilyTiesAreCountedButNotShown(unittest.TestCase):
-    """Nothing answers a family tie yet (#3463): it stays in `question_counts` but is left out of
-    the total, of "answered" and of "a new question", so it never starts or keeps a reminder."""
+class FamilyTiesAreShownAndAnswerable(unittest.TestCase):
+    """Family ties have their own screen since #3463, so they count in the total, answer a
+    reminder when they go down and start one when a new one arrives."""
 
-    def test_the_total_leaves_it_out(self) -> None:
-        self.assertEqual(total({kinds.NAMES: Counted(2), kinds.FAMILY: Counted(5)}), 2)
+    def test_the_total_counts_them(self) -> None:
+        self.assertEqual(total({kinds.NAMES: Counted(2), kinds.FAMILY: Counted(5)}), 7)
 
-    def test_it_is_neither_an_answer_nor_a_new_question(self) -> None:
+    def test_one_going_down_is_an_answer_and_one_going_up_is_new(self) -> None:
         before = {kinds.FAMILY: Counted(3)}
-        self.assertFalse(answered(before, {kinds.FAMILY: Counted(1)}))
-        self.assertFalse(grew(before, {kinds.FAMILY: Counted(4)}))
+        self.assertTrue(answered(before, {kinds.FAMILY: Counted(1)}))
+        self.assertTrue(grew(before, {kinds.FAMILY: Counted(4)}))
