@@ -6,6 +6,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from dmbot.memory.gate import CONNECTION, ENTRY
+from dmbot.memory.models import DM as DM_SOURCE
 from dmbot.web import node_summary_route
 from dmbot.web.recaps import RecapError
 from tests.test_recap_web import BOB
@@ -51,3 +53,36 @@ class NodeSummary(Web):
     async def test_an_outsider_is_not_found(self) -> None:
         outsider = await self.signed(BOB, QUILLON)
         self.assertEqual(await self.refusal_of(self.mira, outsider), "not_found")
+
+    async def tell(self, kind: str, statement: str, who: list[str]) -> None:
+        """Say exactly who knows one entry or connection (new things start out told to the player
+        characters, so the tests set it themselves)."""
+        await self.memory.set_statement_knowers(
+            self.g, self.one.id, kind, statement, who, source=DM_SOURCE
+        )
+
+    async def test_a_node_no_player_character_knows_is_not_found_for_a_player_but_read_by_the_dm(
+        self,
+    ) -> None:
+        idol = await self.add("Hidden Idol", "place")
+        link = await self.link("located_in", idol, self.keep, "idol-keep")
+        await self.tell(ENTRY, idol, [])
+        await self.tell(CONNECTION, link, [])
+        self.assertIn("Hidden Idol", (await self.read(idol))["text"])
+        self.assertEqual(await self.refusal_of(idol, self.player), "not_found")
+        # the same code as for an id that does not exist, so nothing hints at a hidden one
+        self.assertEqual(await self.refusal_of("f" * 32, self.player), "not_found")
+
+    async def test_a_player_behind_the_spoiler_gate_gets_no_text_until_they_peek(self) -> None:
+        wen = await self.add("Wen", "character", role="player_character", played_by=777)
+        tam = await self.add("Old Tam", "npc")
+        link = await self.link("knows", self.mira, tam, "mira-tam")
+        # Wen's character knows Mira knows Old Tam; Bob's hero does not: a spoiler for him
+        await self.tell(ENTRY, tam, [wen])
+        await self.tell(CONNECTION, link, [wen])
+        closed = await self.read(self.mira, self.player)
+        self.assertEqual((closed["text"], closed["more"], closed["needsPeek"]), ("", 0, True))
+        self.assertEqual(set(closed), set(node_summary_route.KEYS))
+        opened = await self.read(self.mira, self.player, peek=True)
+        self.assertIn("Mira", opened["text"])
+        self.assertTrue(opened["needsPeek"])
