@@ -16,8 +16,8 @@ from tests.test_web_relationships import Web
 class RankInputs(Web):
     @staticmethod
     def joined(got: dict[str, Any]) -> set[tuple[str, frozenset[str]]]:
-        """The connections as (kind, the two ends): a tie that reads the same both ways is stored in one
-        fixed direction, so the tests do not depend on which."""
+        """The connections as (kind, the two ends): a tie that reads the same both ways is stored in
+        one fixed direction, so the tests do not depend on which."""
         return {(str(p), frozenset({str(s), str(o)})) for s, o, p in got["relations"]}
 
     async def read(self, who: Any = None) -> dict[str, Any]:
