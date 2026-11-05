@@ -12,13 +12,13 @@ What the text says, in order:
   short facts about how they are joined, then "and N more";
 - for each of those, the single best entry joined to *it* (the second hop), not already named.
 
-Sorting. A neighbour sorts by (its rank, highest first, DM version only), the best category of its
-facts, its connection score, the newest session it was in, and its name. The player version leaves
-the rank out of the order: the rank knows DM secrets, so an order built from it could hint that an
-innocent-looking neighbour matters. A fact sorts by its category (the table below, worked out from
-the connection's type every time and never stored, so reordering it needs no migration), then
-newest session first, then facts with a detail before bare ones, then its text, so the same node
-always reads the same.
+Sorting. A neighbour sorts by its rank (highest first), the best category of its facts, its
+connection score, the newest session it was in, and its name, the same for the DM and for players
+(owner, 2026-11-01: two orders would be two things to debug, and what a player may not see never
+reaches the list). The rank word is never in a player's text. A fact sorts by its category (the
+table below, worked out from the connection's type every time and never stored, so
+reordering it needs no migration), then newest session first, then facts with a detail before
+bare ones, then its text, so the same node always reads the same.
 
 Who may see what is decided by the caller, through the gate: a fact or neighbour the players
 cannot see arrives marked `players_know=False` and never reaches the player version, and the
@@ -36,7 +36,7 @@ from dmbot.memory import place_words, reputation_words
 DM, PLAYER = "dm", "player"
 MAX_NEIGHBOURS = 8  # the neighbours named; the rest are counted ("and 12 more")
 MAX_FACTS = 3  # the facts shown for one neighbour; the rest are counted
-MIN_RANK = 1  # a neighbour must be at least Minor (the DM version); the player version has no rank
+MIN_RANK = 1  # a neighbour must be at least Minor, for the DM and the player version alike
 
 # The categories, most important first. A lookup from the connection's type, never stored.
 LASTING, LIFE_AND_DEATH, STANDING, ROLES, OTHER_DEEDS, BELIEFS, OTHER = range(1, 8)
@@ -215,11 +215,12 @@ class Neighbour:
     id: str
     name: str
     kind: str  # the entry's kind ("character", "place", ...)
-    rank: int = 0  # 0 to 5; used for eligibility and order in the DM version only
-    score: float = 0.0  # the connection score (`importance.py`) over every connection: DM order
-    # The same score over the connections the players can see only: the player order. Separate
-    # fields, so an order for players can never be built from a hidden connection.
-    player_score: float = 0.0
+    # 0 to 5; the eligibility cut and the first sort key for both versions. The default 0 is below
+    # Minor, so a caller that forgets it gets no neighbours: always pass it.
+    rank: int = 0
+    # The connection score (`importance.py`), the third sort key. For a player's click the caller
+    # must build it from connections the players can see, never a hidden one.
+    score: float = 0.0
     facts: tuple[Fact, ...] = ()
     players_know: bool = False  # the players know this entry exists (and may be told its name)
     further: tuple[Neighbour, ...] = ()  # entries joined to this one, for the second hop
@@ -330,37 +331,41 @@ def _newest(n: Neighbour) -> int:
     return max((f.session for f in n.facts if f.session is not None), default=-1)
 
 
-def _order(
-    audience: str, focus: str
-) -> Callable[[Neighbour], tuple[int, int, float, int, str, str]]:
+def _order(focus: str) -> Callable[[Neighbour], tuple[int, int, float, int, str, str]]:
+    """One order for everyone (owner, 2026-11-01): rank, best category, connection score, newest
+    session, name. What a player may not see never reaches this list, so the rank only orders what
+    they are allowed to read. The order is deliberately rank-led for players too."""
+
     def key(n: Neighbour) -> tuple[int, int, float, int, str, str]:
-        rank = -n.rank if audience == DM else 0  # (the player order never sees the rank)
-        score = n.score if audience == DM else n.player_score
-        return (rank, _best_category(n, focus), -score, -_newest(n), n.name.casefold(), n.id)
+        return (-n.rank, _best_category(n, focus), -n.score, -_newest(n), n.name.casefold(), n.id)
 
     return key
 
 
 def _visible(n: Neighbour, audience: str) -> Neighbour | None:
     """The neighbour as this audience may see it, or None; its own neighbours are cut the same way.
-    The DM sees everything at Minor or above; a player sees only what some player character knows,
-    and a neighbour is dropped when the players do not know it exists or know none of the ways it
-    is joined."""
+    Both see only entries at Minor or above. The DM sees everything; a player sees only what some
+    player character knows, and a neighbour is dropped when the players do not know it exists or
+    know none of the ways it is joined."""
     further = tuple(v for v in (_visible(x, audience) for x in n.further) if v is not None)
+    if n.rank < MIN_RANK:
+        return None
     if audience == DM:
-        return replace(n, further=further) if n.rank >= MIN_RANK else None
+        return replace(n, further=further)
     facts = tuple(f for f in n.facts if f.players_know)
     if not n.players_know or not facts:
         return None
-    return Neighbour(n.id, n.name, n.kind, 0, 0.0, n.player_score, facts, True, further)
+    return replace(n, facts=facts, further=further)
 
 
 def needs_peek(neighbours: Sequence[Neighbour]) -> bool:
     """Whether this node has a fact the players hold that the person who clicked does not, in the
     neighbours or in the second hop: the summary then sits behind "Contains spoilers … let me peek
-    anyway". Looks at every entry the players know, whatever the caps leave out of the text."""
+    anyway". Looks at every entry the players know, whatever the caps leave out of the text, but
+    not at an entry below Minor: the text never names it, so a gate for it would hint at nothing
+    the person could read."""
     for n in neighbours:
-        if not n.players_know:
+        if not n.players_know or n.rank < MIN_RANK:
             continue
         if any(f.players_know and not f.viewer_knows for f in n.facts) or needs_peek(n.further):
             return True
@@ -390,7 +395,7 @@ def summarize(focus: Focus, neighbours: Sequence[Neighbour], audience: str) -> S
     pool = [
         v for v in (_visible(n, audience) for n in neighbours if n.id != focus.id) if v is not None
     ]
-    pool.sort(key=_order(audience, focus.name))
+    pool.sort(key=_order(focus.name))
     shown, rest = pool[:MAX_NEIGHBOURS], pool[MAX_NEIGHBOURS:]
     peek = audience == PLAYER and needs_peek(list(neighbours))
     head = f"{focus.name} ({focus.kind})."
@@ -405,7 +410,7 @@ def summarize(focus: Focus, neighbours: Sequence[Neighbour], audience: str) -> S
         clause = _clause(n, focus.name)
         also = [
             x
-            for x in sorted(n.further, key=_order(audience, focus.name))
+            for x in sorted(n.further, key=_order(focus.name))
             if x.id != focus.id and x.name.casefold() not in taken
         ]
         if also:
