@@ -61,6 +61,7 @@ from dmbot.memory.store import SAID_AS_MAX, MemoryStore
 from dmbot.mentions import NO_PINGS
 from dmbot.transcript.respell import contains, done_note, left_note, recaps_note, undone_note
 from dmbot.ui import all_names, logic, player_id
+from dmbot.ui import companion as companion_ui
 from dmbot.ui.dmbot_commands import (
     VIEW_TIMEOUT_S,
     _answer_first,
@@ -626,6 +627,11 @@ async def show_card(
             and not entity.party
             and sees_secrets(campaign, interaction.user.id)
         ),
+        companion=(
+            entity.type == "character"
+            and not entity.is_player_character
+            and sees_secrets(campaign, interaction.user.id)
+        ),
         deed=(
             (entity.is_player_character or entity.party)
             and sees_secrets(campaign, interaction.user.id)
@@ -764,6 +770,7 @@ class NameCard(_Menu):
         clue: bool = False,
         standing: bool = False,
         deed: bool = False,
+        companion: bool = False,
         thread: bool = False,
         promise: bool = False,
         led: bool = False,
@@ -836,6 +843,8 @@ class NameCard(_Menu):
             self.add_item(_Button(self._standing, label=STANDING_BUTTON, style=grey, row=3))
         if deed:  # a player character or the party: a deed the DM records (#1732)
             self.add_item(_Button(self._deed, label=DEED_BUTTON, style=grey, row=3))
+        if companion:  # a character who is not a player character: who it travels with (#3505)
+            self.add_item(_Button(self._travels, label=companion_ui.BUTTON, style=grey, row=3))
         if clue:  # a clue or secret: who knows it (#1649); an item has the row-3 button instead
             self.add_item(_Button(self._who_knows, label=CLUE_BUTTON, style=grey, row=3))
         if cut:
@@ -928,6 +937,10 @@ class NameCard(_Menu):
             await _tell(interaction, "Only the DM can change a story thread.")
             return
         await interaction.response.send_modal(LinkForm(self.campaign_id, self.entity_id))
+
+    async def _travels(self, interaction: discord.Interaction) -> None:
+        self.stop()
+        await companion_ui.start(interaction, self.campaign_id, self.entity_id)
 
     async def _deed(self, interaction: discord.Interaction) -> None:
         from dmbot.ui.deeds import start
