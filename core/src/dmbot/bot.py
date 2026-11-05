@@ -9741,7 +9741,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 return
             if not await self.plan_allows("story", gid, campaign, fail_open=False):
                 return
-            await self.ask_dm(table, theatre_button.ask_for(gid, sid))
+            await self.ask_dm(table, theatre_button.ask_for(gid, sid, session.lines))
 
     async def warn_about_continuity(self, table: Table) -> None:
         """After a session: if what was said clashes with the story the DM already confirmed

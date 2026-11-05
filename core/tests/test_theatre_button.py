@@ -1,6 +1,7 @@
 """The DM's "Make a script" question and button (#3244, 5c): offered only when the switch and the
-plan allow it, usable by a DM only, and it says what it costs before it spends anything. Invented
-ids."""
+plan allow it, usable by a DM only. The question itself says what it costs, so one press makes the
+script (no second "are you sure?" step), and the finished card links to the session's page.
+Invented ids."""
 
 from __future__ import annotations
 
@@ -22,11 +23,13 @@ DM, PLAYER, GUILD, SESSION = 7, 8, 5, "a" * 32
 
 def bot(*, on: bool = True, plan: bool = True, lines: int = 300) -> Any:
     me = SimpleNamespace(
-        settings=SimpleNamespace(theatre_on=on),
+        settings=SimpleNamespace(theatre_on=on, site_url="https://x.test"),
         theatre_ai=object() if on else None,
         memory=object(),
         transcripts=SimpleNamespace(
-            session=AsyncMock(return_value=SimpleNamespace(lines=lines, campaign_id="c" * 32))
+            session=AsyncMock(
+                return_value=SimpleNamespace(lines=lines, campaign_id="c" * 32, number=2)
+            )
         ),
         campaigns=SimpleNamespace(
             get=AsyncMock(
@@ -61,6 +64,10 @@ class TheOffer(unittest.IsolatedAsyncioTestCase):
         ask = me.ask_dm.await_args.args[1]
         self.assertEqual(ask.kind, SCRIPT)
         self.assertIsInstance(ask.button(), tb.ScriptButton)
+        # the cost and who can read it are in the question, so the button is the one "yes"
+        self.assertIn(job.estimate_line(300), ask.alone)
+        self.assertIn(job.PRIVATE_NOTE, ask.alone)
+        self.assertIn("nothing is spent until you do", ask.alone)
 
     async def test_it_is_hidden_when_the_switch_is_off(self) -> None:
         me = bot(on=False)
@@ -91,17 +98,17 @@ class ThePress(unittest.IsolatedAsyncioTestCase):
     def said(self, interaction: Any) -> str:
         return str(interaction.response.send_message.await_args.args[0])
 
-    async def test_a_dm_sees_what_it_costs_and_a_confirm_step(self) -> None:
+    async def test_one_press_by_a_dm_starts_the_script_with_no_second_confirm_step(self) -> None:
+        from unittest.mock import patch
+
         me = bot(lines=300)
         interaction = pressed(me, DM)
-        await tb.press(interaction, GUILD, SESSION)
-        text = self.said(interaction)
-        self.assertIn("about 2 AI calls", text)
-        self.assertIn("only the DMs can read", text)
-        view = interaction.response.send_message.await_args.kwargs["view"]
-        self.assertEqual([c.label for c in view.children], [tb.CONFIRM_YES, tb.CONFIRM_NO])
-        self.assertTrue(await view.interaction_check(pressed(me, DM)))
-        self.assertFalse(await view.interaction_check(pressed(me, PLAYER)))
+        run = AsyncMock()
+        with patch.object(tb, "run", run):
+            await tb.press(interaction, GUILD, SESSION)
+        interaction.response.send_message.assert_awaited_once_with(job.TITLE, ephemeral=True)
+        run.assert_awaited_once_with(interaction, GUILD, SESSION)
+        self.assertFalse(hasattr(tb, "Confirm"))
 
     async def test_a_player_is_refused_even_when_the_screen_shows_the_button(self) -> None:
         me = bot()
@@ -165,6 +172,7 @@ class TheRun(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(kw["names"], {DM: "Dana"})  # (Pat stopped: no name goes)
         self.assertEqual(kw["known"], ["Kell"])
         self.assertEqual(kw["agreed"], {DM})
+        self.assertEqual(kw["link"], f"https://x.test/account/transcripts/{GUILD}.{'c' * 32}/2")
 
     async def test_the_switch_and_the_plan_are_checked_again_when_it_is_confirmed(self) -> None:
         for me, words in ((self.bot(on=False), tb.OFF), (self.bot(plan=False), tb.NO_PLAN)):
@@ -202,3 +210,23 @@ class TheRun(unittest.IsolatedAsyncioTestCase):
         me.sidebar_send_dm.assert_not_awaited()
         await self.go(self.card(me, expired=True), job.Outcome("", started=True, taken_over=True))
         me.sidebar_send_dm.assert_not_awaited()
+
+
+class TheLink(unittest.TestCase):
+    def test_the_sessions_page_on_the_website(self) -> None:
+        self.assertEqual(
+            tb.script_link("https://getdmbot.com/", GUILD, "c" * 32, 3),
+            f"https://getdmbot.com/account/transcripts/{GUILD}.{'c' * 32}/3",
+        )
+        self.assertEqual(tb.script_link("", GUILD, "c" * 32, 3), "")  # no site address
+        self.assertEqual(tb.script_link("https://x.test", GUILD, "c" * 32, 0), "")  # no number
+
+    def test_a_finished_script_card_links_to_it_and_a_failed_one_does_not(self) -> None:
+        from dmbot.transcript import theatre_run as tr
+
+        report = tr.Report(parts=2, lines=10, kept=9, saved=True)
+        done = job.done_text(report, "https://x.test/p")
+        self.assertIn("Script ready: 9 lines from 2 scenes. Only the DMs can read it.", done)
+        self.assertIn("https://x.test/p", done)
+        self.assertNotIn("http", job.done_text(report))  # no site: as before
+        self.assertNotIn("http", job.stopped_text(1, 2))

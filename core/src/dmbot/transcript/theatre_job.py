@@ -62,11 +62,13 @@ def stopped_text(part: int, of: int) -> str:
     return f"{where}{FAILED}"
 
 
-def done_text(report: tr.Report) -> str:
-    """What the card ends on after a run that reached the end. Counts only."""
+def done_text(report: tr.Report, link: str = "") -> str:
+    """What the card ends on after a run that reached the end. Counts only. `link`: the session's
+    page on the website, where a game master reads and saves it (empty when there is no site)."""
     if report.saved:
         scenes = f"{report.parts} scene{'' if report.parts == 1 else 's'}"
-        return f"Script ready: {report.kept} lines from {scenes}. Only the DMs can read it."
+        where = f"\nRead it or save it from the session's page: {link}" if link else ""
+        return f"Script ready: {report.kept} lines from {scenes}. Only the DMs can read it.{where}"
     if report.parts == 0 or report.lines == 0:
         return "There was nothing to put in a script. Nothing was changed."
     return "No lines were kept. Nothing was changed."
@@ -95,6 +97,7 @@ async def make_script(
     known: Sequence[str],
     still_agreed: Callable[[], Awaitable[Collection[int]]],
     edit: Callable[[str], Awaitable[None]],
+    link: str = "",
     clock: Callable[[], float] = time.monotonic,
     scene_size: int = th.SCENE_LINES,
     every: float | None = None,
@@ -146,7 +149,7 @@ async def make_script(
                 still_agreed=consent, progress=progress, clock=clock, scene_size=scene_size,
             )  # fmt: skip
         ok = not report.failed_parts
-        text = done_text(report) if ok else stopped_text(*where)
+        text = done_text(report, link) if ok else stopped_text(*where)
     except RunTakenOver:
         return Outcome("", started=True, taken_over=True)
     except asyncio.CancelledError:

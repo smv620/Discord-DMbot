@@ -1,6 +1,7 @@
 """The DM's "Make a script of this session" button (#3244, slice 5c): the question that comes with
-a live session's other after-session questions, a confirm step that says what it will cost, and the
-job (`transcript.theatre_job`) with its progress card.
+a live session's other after-session questions, which says what it will cost right in the question,
+so one press makes the script (no second "are you sure?" button), and the job
+(`transcript.theatre_job`) with its progress card.
 
 Everything private: the button works for a DM of the campaign only (checked on every press, the
 DM screen can be seen by players), the confirm and the progress card are replies only the DM sees,
@@ -25,13 +26,16 @@ ONLY_DMS = "Only a DM of this campaign can make a script."
 OFF = "Scripts are switched off."
 NO_PLAN = "Scripts need the story memory that comes with a paid campaign."
 GONE = "That session is gone."
-ASK_TEXT = (
-    '📜 **A script of this session** can be made: every "he", "it" and "that one" named in '
-    "brackets, for the DMs alone.\nPress the button; it tells you what it will cost before it "
-    "spends anything, and only the DMs can read it."
-)
-CONFIRM_YES = "Make the script"
-CONFIRM_NO = "Cancel"
+
+
+def ask_text(lines: int) -> str:
+    """The question: what it makes, what it costs and who can read it, so the button is the one
+    and only "yes" (a second confirm after the press was the same question twice)."""
+    return (
+        '📜 **A script of this session** can be made: every "he", "it" and "that one" named in '
+        f"brackets, for the DMs alone.\n{job.estimate_line(lines)} {job.PRIVATE_NOTE}\n"
+        "Press the button to make it; nothing is spent until you do."
+    )
 
 
 class ScriptButton(
@@ -62,20 +66,22 @@ class ScriptButton(
         await press(interaction, self.guild_id, self.session_id)
 
 
-def ask_for(guild_id: int, session_id: str) -> Ask:
-    """The question for the DM's private message after a session."""
+def ask_for(guild_id: int, session_id: str, lines: int) -> Ask:
+    """The question for the DM's private message after a session (`lines`: how many it has, for
+    the cost it names)."""
+    text = ask_text(lines)
     return Ask(
         SCRIPT,
-        ASK_TEXT,
+        text,
         "a script of the session can be made",
         lambda: ScriptButton(guild_id, session_id),
         lambda: ScriptButton(guild_id, session_id),
-        ASK_TEXT,
+        text,
     )
 
 
 async def press(interaction: discord.Interaction, guild_id: int, session_id: str) -> None:
-    """The button was pressed: check who and what, then show the confirm step."""
+    """The button was pressed: check who and what, then make the script."""
     bot = _bot(interaction)
     session = await bot.transcripts.session(guild_id, session_id) if bot.transcripts else None
     if session is None:
@@ -91,38 +97,10 @@ async def press(interaction: discord.Interaction, guild_id: int, session_id: str
     if not await bot.plan_allows("story", guild_id, campaign, fail_open=False):
         await _tell(interaction, NO_PLAN)
         return
-    view = Confirm(guild_id, session_id, interaction.user.id)
-    await _tell(interaction, f"{job.estimate_line(session.lines)}\n{job.PRIVATE_NOTE}", view=view)
-
-
-class Confirm(discord.ui.View):
-    """Make it, or not. Only the DM who pressed can answer it."""
-
-    def __init__(self, guild_id: int, session_id: str, user_id: int) -> None:
-        super().__init__(timeout=600)
-        self.guild_id, self.session_id, self.user_id = guild_id, session_id, user_id
-        yes: discord.ui.Button[Confirm] = discord.ui.Button(
-            label=CONFIRM_YES, style=discord.ButtonStyle.primary
-        )
-        no: discord.ui.Button[Confirm] = discord.ui.Button(
-            label=CONFIRM_NO, style=discord.ButtonStyle.secondary
-        )
-        yes.callback = self._make  # type: ignore[method-assign]
-        no.callback = self._cancel  # type: ignore[method-assign]
-        self.add_item(yes)
-        self.add_item(no)
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        return interaction.user.id == self.user_id
-
-    async def _cancel(self, interaction: discord.Interaction) -> None:
-        self.stop()
-        await interaction.response.edit_message(content="Cancelled. Nothing was spent.", view=None)
-
-    async def _make(self, interaction: discord.Interaction) -> None:
-        self.stop()
-        await interaction.response.edit_message(content=job.TITLE, view=None)
-        await run(interaction, self.guild_id, self.session_id)
+    # One press makes it: the question already named the cost. A new private card, which the run
+    # keeps current (a second press while one runs is told so: `make_script` claims the session).
+    await interaction.response.send_message(job.TITLE, ephemeral=True)
+    await run(interaction, guild_id, session_id)
 
 
 def _plain_name(bot: Any, guild_id: int, user_id: int) -> str | None:
@@ -130,6 +108,14 @@ def _plain_name(bot: Any, guild_id: int, user_id: int) -> str | None:
     "Speaker N" and never a Discord id)."""
     name: str = bot.name_of(guild_id, user_id)
     return None if name.startswith("<@") else name
+
+
+def script_link(site_url: str, guild_id: int, campaign_id: str, number: int) -> str:
+    """The session's page on the website (its Transcripts page), where the script is read and
+    saved. Empty when there is no site address or the session has no number yet."""
+    if not site_url or number <= 0:
+        return ""
+    return f"{site_url.rstrip('/')}/account/transcripts/{guild_id}.{campaign_id}/{number}"
 
 
 async def run(interaction: discord.Interaction, guild_id: int, session_id: str) -> job.Outcome:
@@ -187,6 +173,7 @@ async def run(interaction: discord.Interaction, guild_id: int, session_id: str) 
         known=await memory.table_names(guild_id, session.campaign_id),
         still_agreed=agreed_now,
         edit=edit,
+        link=script_link(bot.settings.site_url, guild_id, session.campaign_id, session.number),
     )
     if not outcome.started and not outcome.taken_over:
         await edit(outcome.text)  # a second card for a run already going: say so, never hang
