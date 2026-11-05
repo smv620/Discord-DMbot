@@ -31,6 +31,18 @@ export function connectionCounts(edges: WebEdge[]): Map<string, number> {
   return new Map([...near].map(([id, others]) => [id, others.size]));
 }
 
+/** A companion travels with a player character or with the party (#3505, the store's rule #3504). Which end of a pair is the
+ * companion: a character who is not a player character, with a player character or a group (the party is a group) at
+ * the other end. "a" or "b" for the companion's end, or null when neither order fits, so no choice is offered. The party
+ * cannot be told from another group here, so a group is allowed through and the bot's rule refuses the rest. */
+export function companionEnd(kindA: string, kindB: string): "a" | "b" | null {
+  const companion = (k: string): boolean => k === "npc" || k === "character";
+  const target = (k: string): boolean => k === "player_character" || k === "faction";
+  if (companion(kindA) && target(kindB)) return "a";
+  if (companion(kindB) && target(kindA)) return "b";
+  return null;
+}
+
 /** Which end the words start at, from the edge's `a` and `b`. The door says "a-b", "b-a" or "both". */
 function readsFrom(link: WebLink): "a" | "b" | "both" {
   return link.direction === "a-b" ? "a" : link.direction === "b-a" ? "b" : "both";

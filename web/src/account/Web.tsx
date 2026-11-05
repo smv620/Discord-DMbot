@@ -33,7 +33,7 @@ import { WEB_READINGS_LIVE } from "../content/web-readings";
 import { WEB_WAITING_LIVE } from "../content/web-waiting";
 import { clampHops } from "./webLayout";
 import { readAuto, saveAuto } from "./webPrefs";
-import { listLines, type WebLine } from "./webLines";
+import { companionEnd, listLines, type WebLine } from "./webLines";
 import CampaignNav from "./CampaignNav";
 import { npcPageHref } from "./webNodes";
 
@@ -559,6 +559,7 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
     })
     .filter((e) => e.links.length > 0);
   const nameOf = (id: string): string => nodes.find((n) => n.id === id)?.name ?? id;
+  const kindOf = (id: string): string => nodes.find((n) => n.id === id)?.kind ?? "";
   const { own, further } = listLines(edges, center, nameOf);
   const maxHops = graph.maxHops;
   // The − and + beside the steps box: one step more or fewer, kept between 1 and the most the API allows.
@@ -703,6 +704,7 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
                   key={`${chosen.a}|${chosen.b}`}
                   edge={chosen}
                   nameOf={nameOf}
+                  kindOf={kindOf}
                   canEdit={canEdit}
                   act={act}
                   reveal={reveal} revealing={revealing}
@@ -1095,6 +1097,7 @@ function CentrePicker({
 function LinePanel({
   edge,
   nameOf,
+  kindOf,
   canEdit,
   act,
   reveal,
@@ -1105,6 +1108,7 @@ function LinePanel({
 }: {
   edge: WebEdge;
   nameOf: (id: string) => string;
+  kindOf: (id: string) => string;
   canEdit: boolean;
   act: (change: WebLinkChange, ok: string) => Promise<string | null>;
   reveal: (target: WebRevealTarget) => Promise<string | null>;
@@ -1152,7 +1156,7 @@ function LinePanel({
           </div>
         )}
       </div>
-      {canEdit && <AddLink edge={edge} act={act} />}
+      {canEdit && <AddLink edge={edge} kindOf={kindOf} nameOf={nameOf} act={act} />}
       <button type="button" class="button secondary" onClick={onClose}>
         {words.close}
       </button>
@@ -1469,18 +1473,34 @@ function LinkRow({
   );
 }
 
-function AddLink({ edge, act }: { edge: WebEdge; act: (change: WebLinkChange, ok: string) => Promise<string | null> }) {
+function AddLink({
+  edge,
+  kindOf,
+  nameOf,
+  act,
+}: {
+  edge: WebEdge;
+  kindOf: (id: string) => string;
+  nameOf: (id: string) => string;
+  act: (change: WebLinkChange, ok: string) => Promise<string | null>;
+}) {
   const [text, setText] = useState("");
   const [secret, setSecret] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
+  // "Travels with" (#3505): which end is the companion, when the pair can be one at all.
+  const companion = companionEnd(kindOf(edge.a), kindOf(edge.b));
+  const travels = text.trim().toLowerCase() === words.travelsWithWords;
   return (
     <form
       class="stack"
       noValidate
       onSubmit={async (e) => {
         e.preventDefault();
-        const said = await act({ action: "add", a: edge.a, b: edge.b, words: text, secret }, words.added);
-        setProblem(said);
+        if (travels && companion === null) return setProblem(words.travelsWithNo);
+        // The companion is the connection's first name: "Cerric travels with Rook", never the other way round.
+        const [first, second] = travels && companion === "b" ? [edge.b, edge.a] : [edge.a, edge.b];
+        const said = await act({ action: "add", a: first, b: second, words: text, secret }, words.added);
+        setProblem(said !== null && travels ? words.travelsWithRefused : said);
         if (said === null) {
           setText("");
           setSecret(false);
@@ -1492,6 +1512,18 @@ function AddLink({ edge, act }: { edge: WebEdge; act: (change: WebLinkChange, ok
         {words.addWords}
         <input type="text" value={text} maxLength={100} onInput={(e) => setText((e.target as HTMLInputElement).value)} />
       </label>
+      {companion !== null && (
+        <p class="row">
+          <button type="button" class="button secondary" aria-pressed={travels} onClick={() => setText(words.travelsWithWords)}>
+            {words.travelsWithPick}
+          </button>
+          {travels && (
+            <span class="small muted">
+              {words.travelsWithHint(nameOf(companion === "a" ? edge.a : edge.b), nameOf(companion === "a" ? edge.b : edge.a))}
+            </span>
+          )}
+        </p>
+      )}
       <label class="choice">
         <input type="checkbox" checked={secret} onChange={(e) => setSecret((e.target as HTMLInputElement).checked)} />
         <span>{words.addSecret}</span>
