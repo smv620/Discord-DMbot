@@ -476,6 +476,34 @@ class TheChoices(Settings):
         # The DM is told in Discord's own words.
         self.assertEqual(done["note"], messages.visibility_changed("open", was="peek"))
 
+    async def test_a_choice_shows_how_long_it_has_waited_in_the_shared_progress_shape(self) -> None:
+        """#3355: stage, when it began, when it last moved, the server's clock and whether it
+        stalled: times and codes only, beside every old field."""
+        answer = await self.queue(setting="visibility", value="open")
+        waiting = (await self.poll(answer))["progress"]
+        self.assertEqual((waiting["stage"], waiting["state"]), ("waiting", "running"))
+        for key in ("startedAt", "updatedAt", "serverNow"):
+            self.assertIsInstance(waiting[key], int, key)
+        self.assertLessEqual(waiting["startedAt"], waiting["updatedAt"])
+        self.assertLessEqual(waiting["updatedAt"], waiting["serverNow"])
+        self.assertEqual(
+            set(waiting), {"stage", "startedAt", "updatedAt", "serverNow", "state", "reason"}
+        )  # (nothing but codes and times)
+        self.assertIsNone(waiting["reason"])  # none while it runs
+        await self.run_bot()
+        done = (await self.poll(answer))["progress"]
+        self.assertEqual((done["stage"], done["state"]), ("done", "done"))
+
+    async def test_a_choice_the_bot_never_takes_reads_as_stalled(self) -> None:
+        answer = await self.queue(setting="visibility", value="open")
+        async with self.db.guild(self.g) as conn:  # queued ten minutes ago, still waiting
+            await conn.execute(
+                "UPDATE setting_actions SET created_at = created_at - 600 WHERE id = %s", (answer,)
+            )
+        stalled = (await self.poll(answer))["progress"]
+        self.assertEqual((stalled["state"], stalled["reason"]), ("stalled", "stalled"))
+        self.assertEqual((await self.poll(answer))["state"], "waiting")  # the old field stands
+
     async def test_how_much_dmbot_says_follows_the_store_call_of_the_discord_button(self) -> None:
         await self.queue(setting="level", value="quiet")
         await self.run_bot()
