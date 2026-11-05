@@ -9,6 +9,7 @@ import PausePanel from "../src/account/PausePanel";
 import { PAUSE_LIVE } from "../src/content/pause-switch";
 import { pausePanel as words } from "../src/content/pause-words";
 import { entries, held } from "../src/content/whats-new";
+import { workWords } from "../src/content/work-progress";
 
 afterEach(() => {
   cleanup();
@@ -77,6 +78,18 @@ describe("the wait and the focus (reviewer and ux-critic, #2985)", () => {
     for (let i = 0; i < 50; i++) await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
     expect(await screen.findByText(words.timedOut)).toBeTruthy();
     expect((screen.getByRole("button", { name: words.pauseButton }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("uses the API's own times and says so when the choice has stalled (#3355)", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const api = mockApi("table");
+    render(<PausePanel api={api} campaignRef="100.cmp1.cs-stalled" paused={false} />);
+    fireEvent.click(screen.getByRole("button", { name: words.pauseButton }));
+    fireEvent.click(screen.getByRole("button", { name: words.yesPause }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(3_000); });
+    // (the choice was queued ten minutes ago by the server's clock: the wait says it stalled, not "just now")
+    expect(await screen.findByText(workWords.stalled)).toBeTruthy();
+    expect(screen.getAllByText(/10 min/).length).toBeGreaterThan(0);
   });
 
   it("does not say it failed when only the look at the answer failed", async () => {
