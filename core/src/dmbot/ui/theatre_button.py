@@ -11,15 +11,20 @@ Counts and stages only on the card.
 
 from __future__ import annotations
 
+import logging
 import re
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 import discord
 
 from dmbot.dm_questions import SCRIPT, Ask
 from dmbot.mentions import NO_PINGS
+from dmbot.transcript import rel_run
 from dmbot.transcript import theatre_job as job
 from dmbot.ui.dmbot_commands import _bot, _tell
+
+log = logging.getLogger(__name__)
 
 ONLY_DMS = "Only a DM of this campaign can make a script."
 OFF = "Scripts are switched off."
@@ -188,8 +193,57 @@ async def run(interaction: discord.Interaction, guild_id: int, session_id: str) 
         still_agreed=agreed_now,
         edit=edit,
     )
+    if outcome.ok and bot.settings.rel_read_on and bot.voyage is not None:
+        await read_relationships(
+            bot, guild_id, session_id, ai, agreed_now, names, memory, campaign, edit
+        )
     if not outcome.started and not outcome.taken_over:
         await edit(outcome.text)  # a second card for a run already going: say so, never hang
     elif outcome.started and not outcome.taken_over and edit_failed:
         await bot.sidebar_send_dm(user, outcome.text)  # the last word still reaches the DM
     return outcome
+
+
+async def read_relationships(
+    bot: Any,
+    guild_id: int,
+    session_id: str,
+    ai: Any,
+    agreed_now: Any,
+    names: Mapping[int, str],
+    memory: Any,
+    campaign: Any,
+    edit: Any = None,
+) -> None:
+    """Beside the script (#3244 slice 6), only with DMBOT_REL_READ_ON (off; the test server only):
+    read the session's relationships once for dev1's comparison. Nothing the DM sees changes, the
+    result is read by nothing else, and a failure is logged by class only and never shows."""
+    try:
+        agreed = await agreed_now()
+        voyage = bot.voyage
+
+        async def ask(instructions: str, window: str) -> Any:
+            return await ai.complete(instructions, window)
+
+        async def embed(texts: Sequence[str], as_query: bool) -> list[list[float]]:
+            return list(await voyage.embed(texts, query=as_query))
+
+        async def progress(p: rel_run.Progress) -> None:
+            if edit is not None:  # the wait shows its stage, part n of m and time (counts only)
+                done = p.stage in (rel_run.STAGE_DONE, rel_run.STAGE_STOPPED)
+                await edit(
+                    f"{'Finished reading' if done else 'Reading'} who is tied to whom: part "
+                    f"{p.part} of {p.of}, {int(p.elapsed)}s so far."
+                )
+
+        report = await rel_run.run(
+            bot.campaigns.db, ask, embed, guild_id, session_id,
+            agreed=agreed, names=names, still_agreed=agreed_now, progress=progress,
+            known=await memory.table_names(guild_id, campaign.id),
+        )  # fmt: skip
+        log.info(
+            "Relationships read: %d windows, %d ties, %d kept, %d dropped, counts %s",
+            report.windows, report.ties, report.kept, report.dropped, dict(report.counts),
+        )  # fmt: skip
+    except Exception as exc:
+        log.warning("The relationship reader failed (%s)", type(exc).__name__)

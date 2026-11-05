@@ -22,7 +22,7 @@ DM, PLAYER, GUILD, SESSION = 7, 8, 5, "a" * 32
 
 def bot(*, on: bool = True, plan: bool = True, lines: int = 300) -> Any:
     me = SimpleNamespace(
-        settings=SimpleNamespace(theatre_on=on),
+        settings=SimpleNamespace(theatre_on=on, rel_read_on=False),
         theatre_ai=object() if on else None,
         memory=object(),
         transcripts=SimpleNamespace(
