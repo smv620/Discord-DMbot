@@ -146,7 +146,9 @@ def rows_of(recasts: Sequence[th.Recast], said: Mapping[int, th.Said]) -> list[t
     return rows
 
 
-def _labels(raw: Sequence[tuple[int, int, str, bool]], names: Mapping[int, str]) -> dict[int, str]:
+def speaker_labels(
+    raw: Sequence[tuple[int, int, str, bool]], names: Mapping[int, str]
+) -> dict[int, str]:
     """A distinct label for each speaker, in the order they first speak: their display name, or
     "Speaker 2" when there is none (never a Discord id), and "Alex 2" for a second person with the
     same name, so a script line can always be traced to one person."""
@@ -187,7 +189,7 @@ async def run(
     started = clock()
     report = Report()
     raw = await ts.script_input(db, guild_id, session_id, agreed)
-    labels = _labels(raw, names)
+    labels = speaker_labels(raw, names)
     said = [th.Said(i, u, labels[u], text, typed) for i, u, text, typed in raw]
     report.lines = len(said)
     scenes = th.scenes(said, agreed, size=scene_size)

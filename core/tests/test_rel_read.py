@@ -91,3 +91,10 @@ def test_a_long_feeling_or_a_capitalised_type_keeps_the_tie() -> None:
 
 def test_counts_default_and_empty_sources() -> None:
     assert rel_read.parse("1 | Tavin | Vela | knows | friendly | x", set(), ["Tavin", "Vela"]) == []
+
+
+def test_the_instructions_tie_a_hired_hand_to_the_person_not_the_group() -> None:
+    text = rel_read.instructions(["Vela", "Hale"])
+    assert "bodyguard employed by a merchant" in text
+    assert "not to the group" in text
+    assert "hires others against a third person" in text

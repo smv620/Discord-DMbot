@@ -218,7 +218,7 @@ class TheRun(NamesTest):
 
     async def test_no_discord_id_is_ever_a_speakers_label(self) -> None:
         raw = [(1, 123456789012345678, "x", False), (2, 987654321098765432, "y", False)]
-        labels = tr._labels(raw, {})
+        labels = tr.speaker_labels(raw, {})
         self.assertEqual(sorted(labels.values()), ["Speaker 1", "Speaker 2"])
 
     async def test_two_people_with_one_display_name_are_told_apart(self) -> None:
