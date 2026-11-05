@@ -43,6 +43,16 @@ class TheatreRuns:
             )
             return token if cur.rowcount else None
 
+    async def state(self, guild_id: int, session_id: str) -> str | None:
+        """The latest run's state ('running', 'done' or 'failed'), or None when there was none."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT state FROM theatre_runs WHERE guild_id = %s AND session_id = %s",
+                (guild_id, session_id),
+            )
+            row = await cur.fetchone()
+        return None if row is None else str(row["state"])
+
     async def moved(
         self, guild_id: int, session_id: str, token: str, part: int, parts: int
     ) -> bool:

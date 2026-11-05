@@ -67,7 +67,7 @@ def done_text(report: tr.Report, link: str = "") -> str:
     page on the website, where a game master reads and saves it (empty when there is no site)."""
     if report.saved:
         scenes = f"{report.parts} scene{'' if report.parts == 1 else 's'}"
-        where = f"\nRead it or save it from the session's page: {link}" if link else ""
+        where = f"\nRead or save it here: {link}" if link else "\nIt is saved with the session."
         return f"Script ready: {report.kept} lines from {scenes}. Only the DMs can read it.{where}"
     if report.parts == 0 or report.lines == 0:
         return "There was nothing to put in a script. Nothing was changed."

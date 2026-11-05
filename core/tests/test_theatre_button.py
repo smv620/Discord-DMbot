@@ -48,11 +48,21 @@ def table() -> Any:
 
 
 def pressed(me: Any, user: int) -> Any:
+    answered = {"yes": False}
+
+    async def defer(**_: Any) -> None:
+        answered["yes"] = True
+
     return SimpleNamespace(
         user=SimpleNamespace(id=user),
         client=me,
-        response=SimpleNamespace(is_done=lambda: False, send_message=AsyncMock()),
+        response=SimpleNamespace(
+            is_done=lambda: answered["yes"],
+            send_message=AsyncMock(),
+            defer=AsyncMock(side_effect=defer),
+        ),
         followup=SimpleNamespace(send=AsyncMock()),
+        edit_original_response=AsyncMock(),
     )
 
 
@@ -67,7 +77,7 @@ class TheOffer(unittest.IsolatedAsyncioTestCase):
         # the cost and who can read it are in the question, so the button is the one "yes"
         self.assertIn(job.estimate_line(300), ask.alone)
         self.assertIn(job.PRIVATE_NOTE, ask.alone)
-        self.assertIn("nothing is spent until you do", ask.alone)
+        self.assertIn("Nothing is used until you press the button.", ask.alone)
 
     async def test_it_is_hidden_when_the_switch_is_off(self) -> None:
         me = bot(on=False)
@@ -89,45 +99,105 @@ class TheOffer(unittest.IsolatedAsyncioTestCase):
         button = tb.ScriptButton(GUILD, SESSION)
         custom_id = button.item.custom_id
         assert custom_id is not None
-        match = re.fullmatch(r"dmbot:script:([0-9]{1,20}):([0-9a-f]{32})", custom_id)
+        match = re.fullmatch(r"dmbot:script2:([0-9]{1,20}):([0-9a-f]{32})", custom_id)
         assert match is not None
         self.assertEqual((int(match[1]), match[2]), (GUILD, SESSION))
 
 
 class ThePress(unittest.IsolatedAsyncioTestCase):
     def said(self, interaction: Any) -> str:
-        return str(interaction.response.send_message.await_args.args[0])
+        return str(interaction.followup.send.await_args.args[0])
 
-    async def test_one_press_by_a_dm_starts_the_script_with_no_second_confirm_step(self) -> None:
+    def bot(self, **kw: Any) -> Any:
+        me = bot(**kw)
+        me.campaigns.db = object()
+        return me
+
+    async def test_one_press_by_a_dm_answers_first_then_starts_the_script(self) -> None:
         from unittest.mock import patch
 
-        me = bot(lines=300)
+        me = self.bot(lines=300)
         interaction = pressed(me, DM)
-        run = AsyncMock()
-        with patch.object(tb, "run", run):
+        order: list[str] = []
+        interaction.response.defer = AsyncMock(side_effect=lambda **_: order.append("defer"))
+        interaction.edit_original_response = AsyncMock(side_effect=lambda **_: order.append("card"))
+
+        async def run(*_: Any) -> None:
+            order.append("run")
+
+        with (
+            patch.object(tb, "TheatreRuns") as runs,
+            patch.object(tb, "run", AsyncMock(side_effect=run)) as made,
+        ):
+            runs.return_value.state = AsyncMock(return_value=None)
             await tb.press(interaction, GUILD, SESSION)
-        interaction.response.send_message.assert_awaited_once_with(job.TITLE, ephemeral=True)
-        run.assert_awaited_once_with(interaction, GUILD, SESSION)
-        self.assertFalse(hasattr(tb, "Confirm"))
+        self.assertEqual(order, ["defer", "card", "run"])
+        made.assert_awaited_once_with(interaction, GUILD, SESSION)
+        self.assertFalse(hasattr(tb, "Confirm"))  # no second "are you sure?" step
+
+    async def test_a_press_after_the_script_is_made_spends_nothing_and_says_so(self) -> None:
+        from unittest.mock import patch
+
+        me = self.bot()
+        interaction = pressed(me, DM)
+        with (
+            patch.object(tb, "TheatreRuns") as runs,
+            patch.object(tb, "run", AsyncMock()) as made,
+        ):
+            runs.return_value.state = AsyncMock(return_value="done")
+            await tb.press(interaction, GUILD, SESSION)
+        made.assert_not_awaited()
+        self.assertIn(tb.ALREADY_MADE, self.said(interaction))
+        self.assertIn(f"/account/transcripts/{GUILD}.{'c' * 32}/2", self.said(interaction))
+
+    async def test_a_failed_earlier_run_may_be_tried_again(self) -> None:
+        from unittest.mock import patch
+
+        interaction = pressed(self.bot(), DM)
+        with (
+            patch.object(tb, "TheatreRuns") as runs,
+            patch.object(tb, "run", AsyncMock()) as made,
+        ):
+            runs.return_value.state = AsyncMock(return_value="failed")
+            await tb.press(interaction, GUILD, SESSION)
+        made.assert_awaited_once()
 
     async def test_a_player_is_refused_even_when_the_screen_shows_the_button(self) -> None:
-        me = bot()
+        from unittest.mock import patch
+
+        me = self.bot()
         interaction = pressed(me, PLAYER)
-        await tb.press(interaction, GUILD, SESSION)
+        with patch.object(tb, "run", AsyncMock()) as made:
+            await tb.press(interaction, GUILD, SESSION)
+        made.assert_not_awaited()
         self.assertEqual(self.said(interaction), tb.ONLY_DMS)
 
     async def test_a_stale_card_with_the_switch_off_or_no_plan_says_why(self) -> None:
-        for me, words in ((bot(on=False), tb.OFF), (bot(plan=False), tb.NO_PLAN)):
+        for me, words in ((self.bot(on=False), tb.OFF), (self.bot(plan=False), tb.NO_PLAN)):
             interaction = pressed(me, DM)
             await tb.press(interaction, GUILD, SESSION)
             self.assertEqual(self.said(interaction), words)
 
     async def test_a_session_that_is_gone_says_so(self) -> None:
-        me = bot()
+        me = self.bot()
         me.transcripts.session = AsyncMock(return_value=None)
         interaction = pressed(me, DM)
         await tb.press(interaction, GUILD, SESSION)
         self.assertEqual(self.said(interaction), tb.GONE)
+
+    async def test_a_question_from_before_this_change_starts_nothing(self) -> None:
+        from unittest.mock import patch
+
+        interaction = pressed(self.bot(), DM)
+        old = tb.OldScriptButton(GUILD, SESSION)
+        with patch.object(tb, "run", AsyncMock()) as made:
+            await old.callback(interaction)
+        made.assert_not_awaited()
+        self.assertEqual(interaction.response.send_message.await_args.args[0], tb.OLD_QUESTION)
+        self.assertEqual(old.item.custom_id, f"dmbot:script:{GUILD}:{SESSION}")
+        self.assertEqual(
+            tb.ScriptButton(GUILD, SESSION).item.custom_id, f"dmbot:script2:{GUILD}:{SESSION}"
+        )
 
 
 class TheRun(unittest.IsolatedAsyncioTestCase):
@@ -228,5 +298,5 @@ class TheLink(unittest.TestCase):
         done = job.done_text(report, "https://x.test/p")
         self.assertIn("Script ready: 9 lines from 2 scenes. Only the DMs can read it.", done)
         self.assertIn("https://x.test/p", done)
-        self.assertNotIn("http", job.done_text(report))  # no site: as before
+        self.assertIn("It is saved with the session.", job.done_text(report))  # no site address
         self.assertNotIn("http", job.stopped_text(1, 2))

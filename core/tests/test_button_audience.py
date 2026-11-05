@@ -106,6 +106,8 @@ AUDIENCE: dict[str, str] = {
     ),
     **dict.fromkeys(
         [
+            # Only says the question is out of date; starts nothing, spends nothing (#3478).
+            "ui.theatre_button.OldScriptButton",
             # A player who chose to peek hides again: changes only their own channel overwrite.
             "dm_screen.buttons.HideButton",
             # Peek asks the visibility the DM set (private, opt-in or open) before it shows

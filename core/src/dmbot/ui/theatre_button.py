@@ -20,27 +20,33 @@ import discord
 from dmbot.dm_questions import SCRIPT, Ask
 from dmbot.mentions import NO_PINGS
 from dmbot.transcript import theatre_job as job
+from dmbot.transcript.theatre_runs import TheatreRuns
 from dmbot.ui.dmbot_commands import _bot, _tell
 
 ONLY_DMS = "Only a DM of this campaign can make a script."
 OFF = "Scripts are switched off."
 NO_PLAN = "Scripts need the story memory that comes with a paid campaign."
 GONE = "That session is gone."
+OLD_QUESTION = (
+    "This question is out of date, so nothing was started and nothing was used. A script is "
+    "offered again after your next session, and pressing its button makes it at once."
+)
+ALREADY_MADE = "A script was already made for this session."
 
 
 def ask_text(lines: int) -> str:
     """The question: what it makes, what it costs and who can read it, so the button is the one
     and only "yes" (a second confirm after the press was the same question twice)."""
     return (
-        '📜 **A script of this session** can be made: every "he", "it" and "that one" named in '
-        f"brackets, for the DMs alone.\n{job.estimate_line(lines)} {job.PRIVATE_NOTE}\n"
-        "Press the button to make it; nothing is spent until you do."
+        '📜 **Make a script of this session?** Each "he", "it" and "that one" gets the name it '
+        f"means, in brackets.\n{job.estimate_line(lines)} {job.PRIVATE_NOTE}\n"
+        "Nothing is used until you press the button."
     )
 
 
 class ScriptButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
-    template=r"dmbot:script:(?P<guild>[0-9]{1,20}):(?P<session>[0-9a-f]{32})",
+    template=r"dmbot:script2:(?P<guild>[0-9]{1,20}):(?P<session>[0-9a-f]{32})",
 ):
     """In the DM's private questions: opens the confirm step. Works after a restart (the server
     and session are in the button's ID)."""
@@ -51,7 +57,7 @@ class ScriptButton(
                 label="Make a script",
                 emoji="📜",
                 style=discord.ButtonStyle.primary,
-                custom_id=f"dmbot:script:{guild_id}:{session_id}",
+                custom_id=f"dmbot:script2:{guild_id}:{session_id}",
             )
         )
         self.guild_id, self.session_id = guild_id, session_id
@@ -64,6 +70,34 @@ class ScriptButton(
 
     async def callback(self, interaction: discord.Interaction) -> Any:
         await press(interaction, self.guild_id, self.session_id)
+
+
+class OldScriptButton(
+    discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
+    template=r"dmbot:script:(?P<guild>[0-9]{1,20}):(?P<session>[0-9a-f]{32})",
+):
+    """The button of a question sent before one press made the script. Those questions promised a
+    cost screen first, so pressing one makes nothing and spends nothing: it points to the new
+    question (a press now makes the script at once). Kept so an old message never just fails."""
+
+    def __init__(self, guild_id: int, session_id: str) -> None:
+        super().__init__(
+            discord.ui.Button(
+                label="Make a script",
+                emoji="📜",
+                style=discord.ButtonStyle.secondary,
+                custom_id=f"dmbot:script:{guild_id}:{session_id}",
+            )
+        )
+
+    @classmethod
+    async def from_custom_id(
+        cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
+    ) -> OldScriptButton:
+        return cls(int(match["guild"]), match["session"])
+
+    async def callback(self, interaction: discord.Interaction) -> Any:
+        await _tell(interaction, OLD_QUESTION)
 
 
 def ask_for(guild_id: int, session_id: str, lines: int) -> Ask:
@@ -81,7 +115,9 @@ def ask_for(guild_id: int, session_id: str, lines: int) -> Ask:
 
 
 async def press(interaction: discord.Interaction, guild_id: int, session_id: str) -> None:
-    """The button was pressed: check who and what, then make the script."""
+    """The button was pressed: check who and what, then make the script. Answered first (the
+    checks below can take a moment); the same private card is then kept current by `run`."""
+    await interaction.response.defer(ephemeral=True)
     bot = _bot(interaction)
     session = await bot.transcripts.session(guild_id, session_id) if bot.transcripts else None
     if session is None:
@@ -97,9 +133,13 @@ async def press(interaction: discord.Interaction, guild_id: int, session_id: str
     if not await bot.plan_allows("story", guild_id, campaign, fail_open=False):
         await _tell(interaction, NO_PLAN)
         return
-    # One press makes it: the question already named the cost. A new private card, which the run
-    # keeps current (a second press while one runs is told so: `make_script` claims the session).
-    await interaction.response.send_message(job.TITLE, ephemeral=True)
+    if await TheatreRuns(bot.campaigns.db).state(guild_id, session_id) == "done":
+        # The question's button stays on the message: a later press (scrolling back, a second DM)
+        # must not spend a second run over a script that is there.
+        link = script_link(bot.settings.site_url, guild_id, session.campaign_id, session.number)
+        await _tell(interaction, f"{ALREADY_MADE} {link}".strip())
+        return
+    await interaction.edit_original_response(content=job.TITLE)
     await run(interaction, guild_id, session_id)
 
 
