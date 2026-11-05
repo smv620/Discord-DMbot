@@ -47,7 +47,8 @@ class TheText(unittest.TestCase):
         self.assertIn("• Plot check: **2** (answer on the website)", text)
         self.assertIn("• Recaps to approve: **1** (answer on the DM screen)", text)
         self.assertIn("• House rule updates: **1** (answer on the DM screen)", text)
-        self.assertNotIn("Family ties", text)  # nothing answers it yet (#3463)
+        self.assertIn("• Family ties: **1**", text)
+        self.assertNotIn("• Family ties: **1** (", text)  # it has its own button now (#3463)
         self.assertIn("• What people believe: **4** (answer on the website)", text)
 
     def test_a_campaign_name_cannot_change_the_message(self) -> None:
@@ -69,6 +70,12 @@ class TheButtons(unittest.TestCase):
             ],
         )
 
+    def test_family_ties_get_their_own_button(self) -> None:
+        view = board.view(GUILD, CAMPAIGN, found(family=2, claims=1))
+        self.assertEqual(
+            ids(view), [f"dmbot:family:ties:{CAMPAIGN}", f"dmbot:claims:review:{CAMPAIGN}"]
+        )
+
     def test_connections_and_which_one_share_the_one_connections_button(self) -> None:
         for waiting in (found(connections=2), found(which=1), found(connections=1, which=1)):
             self.assertEqual(
@@ -79,9 +86,9 @@ class TheButtons(unittest.TestCase):
         self.assertEqual(ids(board.view(GUILD, CAMPAIGN, found(names=0))), [])
         self.assertEqual(ids(board.view(GUILD, CAMPAIGN, found(plot=3, rules=1))), [])
 
-    def test_the_most_buttons_fit_one_row(self) -> None:
+    def test_the_most_buttons_fit_two_rows(self) -> None:
         everything = found(**{k: 1 for k in kinds.ORDER})
-        self.assertLessEqual(len(board.view(GUILD, CAMPAIGN, everything).children), 5)
+        self.assertLessEqual(len(board.view(GUILD, CAMPAIGN, everything).children), 10)
 
     def test_the_look_alikes_button_carries_the_campaign_for_a_restart(self) -> None:
         item = board.LookAlikesButton(CAMPAIGN)
@@ -301,10 +308,10 @@ class TheCardButtonsPress(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(await board.total_for(self.interaction(7, broken), CAMPAIGN))
         self.assertIsNone(await board.total_for(self.interaction(7, None), CAMPAIGN))
 
-    async def test_family_ties_are_left_out_of_the_total(self) -> None:
+    async def test_family_ties_are_in_the_total_now_that_a_screen_answers_them(self) -> None:
         from types import SimpleNamespace
         from unittest.mock import AsyncMock
 
         counts = SimpleNamespace(read=AsyncMock(return_value=found(names=2, family=3)))
         it = self.interaction(7, SimpleNamespace(counts=counts))
-        self.assertEqual(await board.total_for(it, CAMPAIGN), 2)
+        self.assertEqual(await board.total_for(it, CAMPAIGN), 5)
