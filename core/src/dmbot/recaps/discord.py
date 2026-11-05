@@ -61,6 +61,7 @@ from dmbot.recaps import feedback as recap_feedback
 from dmbot.recaps import hold as recap_hold
 from dmbot.recaps import post as recap_post
 from dmbot.recaps import requests as recap_requests
+from dmbot.recaps import split as sp
 from dmbot.recaps.accepted import AcceptedStore
 from dmbot.recaps.approval import text_hash
 from dmbot.recaps.audio import names as audio_names
@@ -1176,6 +1177,20 @@ class RecapFeatures:
             await recap_said(self.transcripts, campaign.guild_id, campaign.id, session_at),
             await self._recanted(campaign.guild_id, campaign.id, session_at),
         )[0]
+
+    async def recap_stored_split(self, gid: int, cid: str, session_at: int) -> sp.Split | None:
+        """The split kept once for the session (#3298), or None when none is kept (the recap then
+        makes it, as before). Read only; never raises."""
+        if self.transcripts is None:
+            return None
+        try:
+            found = await self.transcripts.session_at(gid, cid, session_at)
+            if found is None:
+                return None
+            return sp.from_json(await self.transcripts.session_split(gid, found.id))
+        except Exception as exc:
+            log.warning("Recap: the kept split could not be read (%s)", type(exc).__name__)
+            return None
 
     async def recap_inputs(self, gid: int, cid: str, job: Job) -> Inputs | None:
         """What the recap stages read for one job (see `dmbot.recaps.inputs`)."""

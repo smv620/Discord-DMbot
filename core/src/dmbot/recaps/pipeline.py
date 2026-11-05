@@ -359,6 +359,7 @@ class RecapWorker:
         structured_split: bool = False,
         structured_beats: bool = False,
         final_read: bool = False,
+        stored_split: Callable[[int, str, int], Awaitable[sp.Split | None]] | None = None,
     ) -> None:
         # Two models write the prose (#2074): `creative` writes it as plain text, `formatting`
         # cuts it into the schema's sections without changing a word. With either missing, the one
@@ -370,6 +371,9 @@ class RecapWorker:
         self._reads = reads
         # The opening's split by a draft and a form (#2714, RECAP_STRUCTURED_OUTPUT_SPLIT).
         self._structured_split = structured_split
+        # The split kept once for the session (#3298, `recaps.session_split`): when the story
+        # reader has made it, the recap uses it and the AI is not asked again.
+        self._stored_split = stored_split
         self._structured_beats = structured_beats
         # The final read (#2952): off for a tool or test that does not pass it; the bot turns it on.
         self._final_read_on = final_read
@@ -811,6 +815,14 @@ class RecapWorker:
         fast-tier call labels the opening and code checks the answer against the earlier session's
         words; an answer it cannot read falls back to strong evidence only, else all play, and a
         line is never dropped on a guess."""
+        if self._stored_split is not None:
+            kept = await self._stored_split(gid, cid, job.session_at)
+            if kept is not None:  # made already for this session: no call, the same answer
+                await self._store.update(
+                    gid, cid, job.session_at, split=kept.to_json(), errors=0, next_at=0,
+                    last_error="",
+                )  # fmt: skip
+                return await self._store.get(gid, cid, job.session_at)
         split = sp.all_play(said)
         earlier = inputs.earlier
         if earlier is not None and job.errors >= SPLIT_ERRORS_MAX:
