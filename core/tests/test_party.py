@@ -51,12 +51,54 @@ class TheParty(NamesTest):
         self.assertEqual({o for _, _, o in members}, {faction})
         self.assertEqual(len(members), 4)
 
-    async def test_a_player_who_did_not_take_part_gets_nothing(self) -> None:
+    async def test_a_player_who_did_not_take_part_is_a_member_but_knows_nobody_yet(self) -> None:
         done = await self.link(101, 102, 103)  # (Ilse was away)
-        self.assertEqual((done.characters, done.pairs, done.members), (3, 3, 3))
+        self.assertEqual((done.characters, done.pairs, done.members), (3, 3, 4))
         touched = {x for a, _, b in await self.edges("knows") for x in (a, b)}
         self.assertNotIn(self.ids["Ilse"], touched)
-        self.assertNotIn(self.ids["Ilse"], {s for s, _, _ in await self.edges("member_of")})
+        self.assertIn(self.ids["Ilse"], {s for s, _, _ in await self.edges("member_of")})
+
+    async def test_no_session_players_still_adds_every_assigned_character(self) -> None:
+        done = await self.link()
+        self.assertEqual((done.pairs, done.members), (0, 4))
+        self.assertEqual(len(await self.edges("knows")), 0)
+
+    async def test_a_character_with_no_player_is_not_a_member(self) -> None:
+        await self.link(*PLAYERS.values())
+        self.assertNotIn(self.ids["Rook"], {s for s, _, _ in await self.edges("member_of")})
+
+    async def test_a_player_with_two_characters_has_only_the_newest_in(self) -> None:
+        await self.link(*PLAYERS.values())
+        newer = await self.memory.add_entity(
+            GUILD, self.campaign.id, name="Mara the Second", type="character",
+            role="player_character", played_by=101, status=CONFIRMED, source="dm",
+        )  # fmt: skip
+        done = await self.link(101)
+        self.assertEqual(done.members, 1)
+        members = {s for s, _, _ in await self.edges("member_of")}
+        self.assertIn(newer.value.id, members)
+        out = await self.memory.relations(GUILD, self.campaign.id, include_secret=True)
+        old = [r for r in out if r.predicate == "member_of" and r.subject_id == self.ids["Mara"]]
+        self.assertEqual(len(old), 1)
+        self.assertIsNotNone(old[0].to_session_at)  # (history, not deleted)
+        self.assertGreater(old[0].to_session_at or 0, old[0].from_session_at or 0)
+        again = await self.link(101)  # (a second run changes nothing)
+        self.assertEqual(again.members, 0)
+
+    async def test_a_member_the_dm_removed_who_did_not_speak_stays_removed(self) -> None:
+        await self.link()
+        out = await self.memory.relations(GUILD, self.campaign.id, include_secret=True)
+        tie = next(
+            r for r in out if r.predicate == "member_of" and r.subject_id == self.ids["Ilse"]
+        )
+        await self.memory.update_relation(
+            GUILD, self.campaign.id, tie.id, source="dm", status=REJECTED
+        )
+        again = await self.link(101)
+        self.assertEqual(again.members, 0)
+        out = await self.memory.relations(GUILD, self.campaign.id, include_secret=True)
+        live = [r for r in out if r.subject_id == self.ids["Ilse"] and r.status == CONFIRMED]
+        self.assertEqual(live, [])
 
     async def test_an_npc_never_gets_one(self) -> None:
         await self.link(*PLAYERS.values())
@@ -64,9 +106,9 @@ class TheParty(NamesTest):
         every |= {s for s, _, _ in await self.edges("member_of")}
         self.assertNotIn(self.ids["Rook"], every)
 
-    async def test_one_player_alone_is_in_the_party_but_knows_nobody(self) -> None:
+    async def test_one_player_alone_knows_nobody_but_every_assigned_character_is_in(self) -> None:
         done = await self.link(101)
-        self.assertEqual((done.characters, done.pairs, done.members), (1, 0, 1))
+        self.assertEqual((done.characters, done.pairs, done.members), (1, 0, 4))
 
     async def test_a_pair_that_already_knows_each_other_gets_nothing_more(self) -> None:
         await self.memory.add_relation(
@@ -160,4 +202,4 @@ class TheParty(NamesTest):
         await self.link(101, 102)
         rows = await self.memory.relations(GUILD, self.campaign.id)  # (the public reader)
         self.assertEqual(len([r for r in rows if r.predicate == "knows"]), 1)
-        self.assertEqual(len([r for r in rows if r.predicate == "member_of"]), 2)
+        self.assertEqual(len([r for r in rows if r.predicate == "member_of"]), 4)
