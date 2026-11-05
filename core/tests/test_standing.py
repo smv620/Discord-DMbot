@@ -177,6 +177,10 @@ class Rule(unittest.TestCase):
 
     @staticmethod
     def big_index(people: int) -> Index:
+        return Index(*Rule.parts(people))
+
+    @staticmethod
+    def parts(people: int) -> tuple[list[Node], list[Link], list[Row]]:
         """The graph the old timing test used, with `people` plain characters in 300 groups."""
         nodes = [node(f"n{i}") for i in range(people)] + [
             node(f"g{i}", "faction") for i in range(300)
@@ -190,11 +194,12 @@ class Rule(unittest.TestCase):
         rows = [imp(f"g{i}", f"c{i % 6}", "Wary") for i in range(300)]
         rows += [att(f"p{i}", "tabaxi", "Unfriendly") for i in range(100)]
         rows += [imp(f"n{i}", "party", "Friendly") for i in range(0, people, 3)]
-        return Index(nodes, links, rows)
+        return nodes, links, rows
 
     @staticmethod
     def lookups(index: Index, pairs: list[tuple[str, str]]) -> int:
-        """How many (judge, subject) pairs the rule looks up to answer `pairs`."""
+        """How many entries of the rows the rule touches to answer `pairs`: every `get`, `[]`,
+        `in`, and an iteration, `items()`, `keys()` or `values()` counted as the whole table."""
         count = 0
 
         class Counting(dict):  # type: ignore[type-arg]
@@ -203,11 +208,67 @@ class Rule(unittest.TestCase):
                 count += 1
                 return super().get(key, default)
 
+            def __getitem__(self, key: Any) -> Any:
+                nonlocal count
+                count += 1
+                return super().__getitem__(key)
+
+            def __contains__(self, key: object) -> bool:
+                nonlocal count
+                count += 1
+                return super().__contains__(key)
+
+            def __iter__(self) -> Any:
+                nonlocal count
+                count += len(self)
+                return super().__iter__()
+
+            def items(self) -> Any:
+                nonlocal count
+                count += len(self)
+                return super().items()
+
+            def keys(self) -> Any:
+                nonlocal count
+                count += len(self)
+                return super().keys()
+
+            def values(self) -> Any:
+                nonlocal count
+                count += len(self)
+                return super().values()
+
         index.impressions = Counting(index.impressions)
         index.attitudes = Counting(index.attitudes)
         for viewer, subject in pairs:
             index.standing(viewer, subject)
         return count
+
+    def test_the_counter_catches_a_scan_by_every_way_of_reading(self) -> None:
+        # (#3498) A guard that only saw `.get` would stay green on a rule that loops over the
+        # table. Each scanning stand-in must count as growing with the graph.
+        pairs = [("n1", "c1")]
+
+        def scanning(read: Any) -> type[Index]:
+            class Scan(Index):
+                def standing(self, viewer: str, subject: str) -> Any:
+                    for _ in read(self.impressions):
+                        pass
+                    return super().standing(viewer, subject)
+
+            return Scan
+
+        for name, read in {
+            "iteration": lambda t: t,
+            "items": lambda t: t.items(),
+            "keys": lambda t: t.keys(),
+            "values": lambda t: t.values(),
+        }.items():
+            with self.subTest(name):
+                cls = scanning(read)
+                small = self.lookups(cls(*self.parts(3000)), pairs)
+                large = self.lookups(cls(*self.parts(30000)), pairs)
+                self.assertGreater(large, small)
 
     def test_thirty_pairs_are_worked_out_by_looking_at_the_ladders_only(self) -> None:
         # (#3498) This guarded "30 pairs well inside 5 ms" with a clock, which fails on a busy CI
