@@ -694,6 +694,20 @@ describe("a refusal", () => {
     expect(screen.queryByRole("link", { name: w.signIn })).toBeNull();
   });
 
+  it("reads the API's future_date refusal as the date step's own sentence (#3491)", async () => {
+    const real = httpApi(
+      "https://api.example.test",
+      (async () =>
+        new Response(JSON.stringify({ detail: "future_date" }), {
+          status: 400,
+        })) as unknown as typeof fetch,
+    ).importPreview!("100.cmp1", []);
+    await expect(real).rejects.toMatchObject({ kind: "future-date" });
+    expect(w.problem["future-date"]).toBe(w.datesInFuture);
+    await refused(new ApiError("future-date"));
+    expect((await screen.findByRole("alert")).textContent).toBe(w.datesInFuture);
+  });
+
   it("says what to do when every line in a file would be dropped", async () => {
     const api = mockApi("table");
     api.importStart = async () => {
