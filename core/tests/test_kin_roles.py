@@ -186,7 +186,8 @@ def entity(entity_id: str, name: str) -> Any:
 
 class TheCard(unittest.TestCase):
     lookup = SimpleNamespace(
-        entities={"mira": entity("mira", "Mira"), "aldric": entity("aldric", "Aldric")}
+        entities={"mira": entity("mira", "Mira"), "aldric": entity("aldric", "Aldric")},
+        guarded=frozenset(),
     )
 
     def words(self, card_of: str, detail: str) -> str:

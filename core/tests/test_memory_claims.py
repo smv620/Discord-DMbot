@@ -630,7 +630,8 @@ class Stored(ConfirmedMemoryTest):
         from dmbot.ui.name_card import sentence
 
         lookup = SimpleNamespace(
-            entities={e.id: e for e in await self.memory.entities(GUILD_A, self.c)}
+            entities={e.id: e for e in await self.memory.entities(GUILD_A, self.c)},
+            guarded=frozenset(),
         )
         self.assertEqual(sentence(lookup, rel), "Bram is blood-bound to Hesper")  # type: ignore[arg-type]
 

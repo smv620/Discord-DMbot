@@ -16,7 +16,8 @@ from dmbot.ui.name_card import _rows, connection_line, sentence
 class PlaceWords(unittest.TestCase):
     def test_a_place_inside_a_place_stays_is_in(self) -> None:
         self.assertEqual(link_words("located_in", "", False, "place"), "is in")
-        self.assertEqual(back_words("located_in", "", False, "place"), "is where you find")
+        self.assertEqual(back_words("located_in", "", False, "place"), "has")
+        self.assertEqual(back_after("located_in", "", False, "place"), "inside it")
 
     def test_something_that_moves_with_no_word_was_last_seen(self) -> None:
         for kind in ("character", "player_character", "npc", "creature", "faction"):
@@ -177,7 +178,8 @@ class OnTheCard(unittest.TestCase):
         self.town = entity("a" * 32, "Aldmoor", "place")
         self.region = entity("r" * 32, "The Reach", "place")
         self.lookup: Any = SimpleNamespace(
-            entities={e.id: e for e in (self.tavin, self.town, self.region)}
+            entities={e.id: e for e in (self.tavin, self.town, self.region)},
+            guarded=frozenset(),
         )
 
     def relation(self, subject: str, obj: str, detail: str = "") -> Relation:
@@ -239,6 +241,15 @@ class OnTheCard(unittest.TestCase):
         self.assertEqual(connection_line(rows[0]), "is the workplace of **Silver Lanterns**")
         self.assertEqual(connection_line(rows[1]), "holds **Heartseeker**")
         self.assertEqual(connection_line(rows[2]), "is where **Tavin** comes from")
+
+    def test_a_town_in_a_region_reads_has_inside_it_and_an_event_took_place(self) -> None:
+        inside = self.relation(self.town.id, self.region.id)
+        rows = _rows(self.lookup, self.region.id, [inside], False)
+        self.assertEqual([connection_line(r) for r in rows], ["has **Aldmoor** inside it"])
+        fair = SimpleNamespace(id="f" * 32, name="The Fair", type="event", status=CONFIRMED)
+        self.lookup.entities[fair.id] = fair
+        rows = _rows(self.lookup, self.town.id, [self.relation(fair.id, self.town.id)], False)
+        self.assertEqual([connection_line(r) for r in rows], ["is where **The Fair** took place"])
 
     def test_a_place_with_no_kind_known_never_says_it_moves(self) -> None:
         # (the Connect menu has no kind to go by: the old words, which claim nothing)
