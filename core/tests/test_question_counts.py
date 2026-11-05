@@ -549,3 +549,16 @@ class TheStoredCounts(Base):
             )
             texty = {r["column_name"] for r in await cur.fetchall()}
         self.assertEqual(texty, {"campaign_id", "kind"})  # no free text anywhere
+
+
+class FamilyTiesAreCountedButNotShown(unittest.TestCase):
+    """Nothing answers a family tie yet (#3463): it stays in `question_counts` but is left out of
+    the total, of "answered" and of "a new question", so it never starts or keeps a reminder."""
+
+    def test_the_total_leaves_it_out(self) -> None:
+        self.assertEqual(total({kinds.NAMES: Counted(2), kinds.FAMILY: Counted(5)}), 2)
+
+    def test_it_is_neither_an_answer_nor_a_new_question(self) -> None:
+        before = {kinds.FAMILY: Counted(3)}
+        self.assertFalse(answered(before, {kinds.FAMILY: Counted(1)}))
+        self.assertFalse(grew(before, {kinds.FAMILY: Counted(4)}))

@@ -84,16 +84,17 @@ class SettingsCardTest(unittest.TestCase):
         items: list[Any] = list(view.children)
         self.assertEqual(
             [i.row for i in items],
-            [0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3],
-        )  # rows 0 and 1: what needs Discord (levels, Who can see, Rules cards, Clock, chat, Stop
-        # when quiet, What's switched on); rows 2 and up wait for the website (#2986)
+            [0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3],
+        )  # rows 0 and 1: what needs Discord (Questions, levels, Who can see, Rules cards, Clock,
+        # chat, Stop when quiet, What's switched on); rows 2 and up wait for the website (#2986)
         labels = [i.item.label for i in items]
-        self.assertEqual(labels[:2], ["✓ Quiet", "Normal"])  # no Chatty
-        self.assertEqual(labels[2], "Who can see the DM screen")
-        self.assertEqual(labels[8], "Campaign management")  # the first that waits for the website
+        self.assertEqual(labels[0], "📬 Questions for you")  # first, and open at zero (#3435)
+        self.assertEqual(labels[1:3], ["✓ Quiet", "Normal"])  # no Chatty
+        self.assertEqual(labels[3], "Who can see the DM screen")
+        self.assertEqual(labels[9], "Campaign management")  # the first that waits for the website
         self.assertEqual(
             [i.item.disabled for i in items],
-            [True] + [False] * (len(items) - 1),
+            [False, True] + [False] * (len(items) - 2),  # (the ticked level is the disabled one)
         )
         for item in items:
             self.assertLessEqual(len(item.item.label), 25)
@@ -339,3 +340,25 @@ class CardTrimTest(unittest.TestCase):
         )
         self.assertIsNotNone(match)
         self.assertLessEqual(len(str(button.item.label)), 25)
+
+
+class TheQuestionsButton(unittest.TestCase):
+    """📬 Questions for you (n), first on the card, for the campaign's DMs only (#3435)."""
+
+    def labels(self, viewer: int, questions: int | None) -> list[str]:
+        view = settings_view(campaign(), None, viewer, "", questions)
+        return [str(i.item.label) for i in view.children]  # type: ignore[attr-defined]
+
+    def test_it_is_first_with_the_total_and_open_at_zero(self) -> None:
+        self.assertEqual(self.labels(DM, 12)[0], "📬 Questions for you (12)")
+        self.assertEqual(self.labels(DM, 0)[0], "📬 Questions for you")
+        self.assertEqual(self.labels(DM, None)[0], "📬 Questions for you")
+        self.assertEqual(self.labels(DM, 250)[0], "📬 Questions for you (99+)")
+
+    def test_only_the_dm_is_shown_it(self) -> None:
+        self.assertNotIn("📬 Questions for you", " ".join(self.labels(PLAYER, 3)))
+
+    def test_it_is_not_a_fifth_button_for_the_main_menu(self) -> None:
+        from dmbot.dm_screen import dm_bot_panel as panel
+
+        self.assertLessEqual(max(len(b) for b in panel._BUTTONS.values()), 4)  # (#2986)

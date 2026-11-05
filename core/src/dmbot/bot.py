@@ -354,6 +354,10 @@ from dmbot.pictures.bucket import Bucket
 from dmbot.pictures.keeper import Context as PictureContext
 from dmbot.pictures.keeper import PictureKeeper
 from dmbot.pictures.store import PictureStore
+from dmbot.questions import board as questions_board
+from dmbot.questions import discord as questions_discord
+from dmbot.questions.loop import Round as QuestionRound
+from dmbot.questions.notices import NoticeStore as QuestionNotices
 from dmbot.recaps import discord as recaps_discord
 from dmbot.recaps import feedback as recap_feedback
 from dmbot.recaps import hold as recap_hold
@@ -1016,6 +1020,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self._plan_slots = asyncio.Semaphore(PLAN_READS_AT_ONCE)
         # "Did they mean…?" questions left unanswered at a session's end (#1572).
         self.heard_questions = heard_questions
+        self.question_round: QuestionRound | None = None  # "Questions for you" (#3435)
+        self.question_notices: QuestionNotices | None = None
         # The last entries a DM removed, per campaign, so the list can put them back (memory only).
         self.homebrew_removed: dict[tuple[int, str], list[Any]] = {}
         self._short_asks: dict[str, int] = {}  # campaign -> session its open question is about
@@ -1658,6 +1664,14 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self.add_dynamic_items(FeaturesButton)  # what is switched on (#1831)
         await recaps_discord.setup(self)  # the recap buttons (#2129)
         self.add_dynamic_items(name_pass_undo.UndoNamePassButton)  # Undo of the name pass (#2628)
+        self.add_dynamic_items(questions_discord.NotNowButton)  # 🔕 under a reminder (#3435)
+        self.add_dynamic_items(
+            questions_board.LookAlikesButton, questions_board.QuestionsButton
+        )  # the Questions message and the card's button (#3435)
+        self.question_round = questions_discord.build_round(self)
+        self.question_notices = (
+            self.question_round.notices if self.question_round is not None else None
+        )
         await self._sync_commands()
         await self.ears.start()
         self._background = [
@@ -1667,6 +1681,11 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             self._watched(self._meter_loop(), "hours-meter"),
             self._watched(self._idle_loop(), "idle-stop"),  # #2034
             *([self._watched(self._trial_loop(), "trial-jobs")] if self.trial_jobs else []),
+            *(
+                [self._watched(questions_discord.run_loop(self, self.question_round), "questions")]
+                if self.question_round is not None
+                else []
+            ),
             *self.recap_tasks(),
             *(
                 [self._watched(self._plot_loop(), "plot-checks")]
