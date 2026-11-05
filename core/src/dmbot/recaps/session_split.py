@@ -152,4 +152,29 @@ class SessionSplitter:
         return split
 
 
-__all__ = ["SessionSplitter"]
+async def release_recap_lines(store: Any, guild_id: int, session_id: str) -> frozenset[int]:
+    """The DM says last time's recap was play after all (#3298): the lines the kept split labels
+    as recap become play (method "dm"; talk and catch-up stay what they were) and are queued to be
+    read again, in one transaction (`TranscriptStore.save_split_and_queue`). Returns the line
+    numbers released, none when there was no recap to hand back or the kept split cannot be read.
+    This changes what later reads do; an earlier read does not re-read them by itself (a read
+    resumes after `extracted_through_ms`), which is why they are queued as put-back lines."""
+    stored = sp.from_json(await store.session_split(guild_id, session_id))
+    if stored is None or not stored.has(sp.RECAP):
+        return frozenset()
+    released = frozenset(
+        n for p in stored.parts if p.label == sp.RECAP for n in range(p.first, p.last + 1)
+    )
+    play = sp.Split(
+        tuple(
+            sp.Part(sp.PLAY if p.label == sp.RECAP else p.label, p.first, p.last)
+            for p in stored.parts
+        ),
+        False,
+        "dm",
+    )
+    await store.save_split_and_queue(guild_id, session_id, play.to_json(), released)
+    return released
+
+
+__all__ = ["SessionSplitter", "release_recap_lines"]

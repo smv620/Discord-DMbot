@@ -8,6 +8,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 from dmbot.recaps import split as sp
+from dmbot.recaps.session_split import release_recap_lines
 from dmbot.transcript.models import Line
 from dmbot.transcript.store import TranscriptStore
 from dmbot.ui import recap_lines as rl
@@ -43,9 +44,8 @@ class TheUndo(Base):
         await self.lines.save_session_split(self.g, self.sid, KEPT.to_json())
 
     async def test_the_lines_are_handed_back_and_queued_to_be_read_again(self) -> None:
-        released = await self.lines.undo_session_split(self.g, self.sid)
+        released = await release_recap_lines(self.lines, self.g, self.sid)
         self.assertEqual(released, frozenset({2, 3}))
-        self.assertEqual(await self.lines.put_back_numbers(self.g, self.sid, released), 2)
         async with self.db.guild(self.g) as conn:
             cur = await conn.execute(
                 "SELECT text, reread FROM transcript_lines WHERE session_id = %s"
@@ -54,11 +54,21 @@ class TheUndo(Base):
             )
             rows = [(r["text"], r["reread"]) for r in await cur.fetchall()]
         self.assertEqual([again for _, again in rows], [False, True, True, False, False])
+        stored = sp.from_json(await self.lines.session_split(self.g, self.sid))
+        assert stored is not None
+        # only the recap parts became play; talk stays talk, play stays play
+        self.assertEqual(
+            ([p.label for p in stored.parts], stored.method),
+            ([sp.TALK, sp.PLAY, sp.PLAY], "dm"),
+        )
         # nothing more to hand back the second time
-        self.assertEqual(await self.lines.undo_session_split(self.g, self.sid), frozenset())
+        self.assertEqual(await release_recap_lines(self.lines, self.g, self.sid), frozenset())
 
-    async def test_nothing_is_queued_for_no_lines(self) -> None:
-        self.assertEqual(await self.lines.put_back_numbers(self.g, self.sid, set()), 0)
+    async def test_nothing_is_queued_for_no_lines_and_a_split_that_cannot_be_read_frees_none(
+        self,
+    ) -> None:
+        self.assertEqual(await self.lines.save_split_and_queue(self.g, self.sid, {}, set()), 0)
+        self.assertEqual(await release_recap_lines(self.lines, self.g, self.sid), frozenset())
 
     def press(self, user: int, campaign: object | None) -> tuple[object, object]:
         bot = MagicMock()
@@ -86,24 +96,6 @@ class TheUndo(Base):
         item = rl.RecapLinesUndoButton("a" * 32, "b" * 32)
         self.assertEqual(item.item.custom_id, f"dmbot:recaplines:undo:{'a' * 32}:{'b' * 32}")
         self.assertLessEqual(len(item.item.custom_id or ""), 100)
-
-    async def test_release_hands_back_and_queues_in_one_step_and_a_second_press_finds_none(
-        self,
-    ) -> None:
-        released = await self.lines.release_recap_lines(self.g, self.sid)
-        self.assertEqual(released, frozenset({2, 3}))
-        stored = sp.from_json(await self.lines.session_split(self.g, self.sid))
-        assert stored is not None
-        self.assertEqual((stored.has(sp.RECAP), stored.method), (False, "dm"))
-        async with self.db.guild(self.g) as conn:
-            cur = await conn.execute(
-                "SELECT count(*) AS n FROM transcript_lines WHERE session_id = %s AND reread",
-                (self.sid,),
-            )
-            row = await cur.fetchone()
-        assert row is not None
-        self.assertEqual(row["n"], 2)
-        self.assertEqual(await self.lines.release_recap_lines(self.g, self.sid), frozenset())
 
     async def test_the_bots_undo_checks_the_campaign_and_reads_only_what_was_released(self) -> None:
         from dmbot.bot import DMBot

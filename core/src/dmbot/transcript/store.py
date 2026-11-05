@@ -203,15 +203,22 @@ class TranscriptStore:
             )
             return cur.rowcount > 0
 
-    async def put_back_numbers(
-        self, guild_id: int, session_id: str, numbers: Collection[int]
+    async def save_split_and_queue(
+        self, guild_id: int, session_id: str, split: Mapping[str, Any], numbers: Collection[int]
     ) -> int:
-        """Queue lines to be read again by the put-back sweep (#2587), by their place in the
-        session (1-based, the numbering `lines` and the story reader use). How many were queued."""
+        """The DM's Undo of a split (#3298), in ONE transaction: keep this split (replacing the
+        one kept) and queue these lines to be read again by the put-back sweep (#2587), by their
+        place in the session (1-based, the numbering `lines` and the story reader use). A failure
+        between the two can never leave the split saying "play" with the lines never read. How
+        many lines were queued."""
         wanted = sorted(set(numbers))
-        if not wanted:
-            return 0
         async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "UPDATE transcript_sessions SET recap_split = %s::jsonb WHERE id = %s",
+                (json.dumps(dict(split)), session_id),
+            )
+            if not wanted:
+                return 0
             cur = await conn.execute(
                 "UPDATE transcript_lines l SET reread = TRUE FROM ("
                 " SELECT id, row_number() OVER (ORDER BY started_ms, id) AS n"
@@ -220,63 +227,6 @@ class TranscriptStore:
                 (session_id, wanted),
             )
             return cur.rowcount
-
-    async def undo_session_split(self, guild_id: int, session_id: str) -> frozenset[int]:
-        """The DM says last time's recap was play after all (#3298): the lines the split labels as
-        recap become play (method "dm"); talk and catch-up stay what they were. Returns the line
-        numbers released, none when there was no recap to undo. **This changes what later reads
-        do, not what an earlier read already left out:** a read resumes after the lines it has
-        got through (`extracted_through_ms`), and the recap lines come first, so the caller reads
-        the released lines itself (as put-back lines are read) if the DM wants them read now."""
-        from dmbot.recaps import split as sp
-
-        stored = sp.from_json(await self.session_split(guild_id, session_id))
-        if stored is None or not stored.has(sp.RECAP):
-            return frozenset()
-        released = frozenset(
-            n for p in stored.parts if p.label == sp.RECAP for n in range(p.first, p.last + 1)
-        )
-        play = sp.Split(
-            tuple(sp.Part(sp.PLAY if p.label == sp.RECAP else p.label, p.first, p.last)
-                  for p in stored.parts),
-            False,
-            "dm",
-        )  # fmt: skip
-        await self.save_session_split(guild_id, session_id, play.to_json(), only_if_empty=False)
-        return released
-
-    async def release_recap_lines(self, guild_id: int, session_id: str) -> frozenset[int]:
-        """The import result's Undo (#3298): `undo_session_split` and the queueing of the released
-        lines for a new read (`put_back_numbers`) in ONE transaction, so a failure between them
-        can never leave the split saying "play" with the lines never read. Returns the line
-        numbers released, none when there was no recap to hand back."""
-        from dmbot.recaps import split as sp
-
-        stored = sp.from_json(await self.session_split(guild_id, session_id))
-        if stored is None or not stored.has(sp.RECAP):
-            return frozenset()
-        released = frozenset(
-            n for p in stored.parts if p.label == sp.RECAP for n in range(p.first, p.last + 1)
-        )
-        play = sp.Split(
-            tuple(sp.Part(sp.PLAY if p.label == sp.RECAP else p.label, p.first, p.last)
-                  for p in stored.parts),
-            False,
-            "dm",
-        )  # fmt: skip
-        async with self._db.guild(guild_id) as conn:
-            await conn.execute(
-                "UPDATE transcript_sessions SET recap_split = %s::jsonb WHERE id = %s",
-                (json.dumps(play.to_json()), session_id),
-            )
-            await conn.execute(
-                "UPDATE transcript_lines l SET reread = TRUE FROM ("
-                " SELECT id, row_number() OVER (ORDER BY started_ms, id) AS n"
-                " FROM transcript_lines WHERE session_id = %s) x"
-                " WHERE l.id = x.id AND x.n = ANY(%s)",
-                (session_id, sorted(released)),
-            )
-        return released
 
     async def extractor_calls_since(self, guild_id: int, campaign_id: str, since: int) -> int:
         """AI calls the extractor made for this campaign in sessions it last ran in since

@@ -380,7 +380,7 @@ from dmbot.recaps.plot import PlotRunner, PlotStore
 from dmbot.recaps.plot_backup import PlotFineSection, PlotIssuesSection
 from dmbot.recaps.plot_talk_run import TalkRunner, TalkStore
 from dmbot.recaps.requests import RequestStore
-from dmbot.recaps.session_split import SessionSplitter
+from dmbot.recaps.session_split import SessionSplitter, release_recap_lines
 from dmbot.recaps.store import RecapRightsSection, RecapSection, RecapStore
 from dmbot.recaps.style import NotesSection, NoteStore, StyleSection, StyleStore
 from dmbot.retention import RetentionJob
@@ -529,6 +529,7 @@ from dmbot.ui.exposure_summary import (
     summary_text,
     summary_view,
 )
+from dmbot.ui.family_ties import FamilyTiesButton
 from dmbot.ui.guide import GuideButton
 from dmbot.ui.heard_review import HeardReviewButton, heard_review_view
 from dmbot.ui.heard_review import waiting_text as heard_waiting_text
@@ -1685,7 +1686,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self.add_dynamic_items(recap_lines_ui.RecapLinesUndoButton)  # last time's recap (#3298)
         self.add_dynamic_items(questions_discord.NotNowButton)  # 🔕 under a reminder (#3435)
         self.add_dynamic_items(
-            questions_board.LookAlikesButton, questions_board.QuestionsButton
+            questions_board.LookAlikesButton, questions_board.QuestionsButton, FamilyTiesButton
         )  # the Questions message and the card's button (#3435)
         self.question_round = questions_discord.build_round(self)
         self.question_notices = (
@@ -10619,7 +10620,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         session = await self.transcripts.session(gid, sid)
         if session is None or session.campaign_id != cid:
             return 0
-        released = await self.transcripts.release_recap_lines(gid, sid)  # one transaction
+        released = await release_recap_lines(self.transcripts, gid, sid)  # one transaction
         if released:
             await self.read_put_back_lines(gid)
         return len(released)
