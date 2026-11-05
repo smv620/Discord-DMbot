@@ -6,9 +6,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from dmbot.memory import gate
 from dmbot.memory.gate import CONNECTION, ENTRY
 from dmbot.memory.models import DM as DM_SOURCE
-from dmbot.web import node_summary_route
+from dmbot.web import graph_view, node_summary_route, relationships
 from dmbot.web.recaps import RecapError
 from tests.test_recap_web import BOB
 from tests.test_web_api import QUILLON
@@ -90,6 +91,11 @@ class NodeSummary(Web):
         await self.tell(ENTRY, self.mira, [self.hero, wen])
         await self.tell(ENTRY, tam, [wen])
         await self.tell(CONNECTION, link, [wen])
+        # (the players' characters together must hold the tie, or nothing can be a spoiler)
+        src, known, _pages = await relationships.source_of(self.web, self.session, self.cref)
+        self.assertIn(wen, known["playerCharacters"])
+        union = graph_view.build(src, known, gate.Viewer.player(known["playerCharacters"]))
+        self.assertIn(tam, union.nodes, f"the knowers: {known['knowers']}")
         closed = await self.read(self.mira, self.player)
         self.assertEqual((closed["text"], closed["more"], closed["needsPeek"]), ("", 0, True))
         self.assertEqual(set(closed), set(node_summary_route.KEYS))
