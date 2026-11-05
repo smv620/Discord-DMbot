@@ -127,15 +127,18 @@ def forward(detail: str, subject_kind: str) -> str:
 
 def backward_parts(detail: str, subject_kind: str) -> tuple[str, str]:
     """How it reads from the place's side, as (words before the name, words after it): "is home to"
-    and "", or "is where" and "was last seen" (the name goes between). A place inside a place keeps
-    "is where you find"; when the first name's kind is not known the tie claims nothing: "is linked
-    to"."""
+    and "", or "is where" and "was last seen" (the name goes between). A place inside a place reads
+    "has **X** inside it" (no "you": it is not an instruction); an event "is where it took place",
+    as its own side says "took place in"; when the first name's kind is not known the tie claims
+    nothing: "is linked to"."""
     way = way_for(detail, subject_kind)
     if way is not None:
         return _BACK[way.key][1 if way.past else 0]
     if is_mobile(subject_kind):
         return _BACK[LAST_SEEN][0]
-    return ("is where you find", "") if subject_kind else ("is linked to", "")
+    if subject_kind == "event":
+        return ("is where", "took place")
+    return ("has", "inside it") if subject_kind else ("is linked to", "")
 
 
 def backward(detail: str, subject_kind: str) -> str:
