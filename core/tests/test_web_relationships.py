@@ -340,7 +340,9 @@ class Shaping(unittest.TestCase):
         self.assertEqual(by_id["1"]["back"], "is where")
         self.assertEqual(by_id["1"]["backAfter"], "was last seen")  # (the name goes between)
         self.assertEqual(by_id["2"]["words"], "is in")  # a town in a region
-        self.assertEqual(by_id["2"]["back"], "is where you find")
+        self.assertEqual(
+            (by_id["2"]["back"], by_id["2"]["backAfter"]), ("has", "inside it")
+        )  # (a town in a region: the region "has the town inside it")
         self.assertEqual(by_id["3"]["words"], "lives in")
         self.assertEqual(by_id["3"]["back"], "is home to")
         self.assertEqual(by_id["3"]["backAfter"], "")
