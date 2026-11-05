@@ -164,7 +164,7 @@ def summary_for(
     gated = audience == PLAYER and built.needs_peek and not peek
     return Result(
         "" if gated else built.text,
-        built.more,
+        0 if gated else built.more,
         built.needs_peek,
         "dm" if audience == DM else "players",
     )

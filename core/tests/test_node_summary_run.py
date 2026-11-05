@@ -6,8 +6,9 @@ from __future__ import annotations
 
 import unittest
 from typing import Any
+from unittest.mock import patch
 
-from dmbot.memory import gate
+from dmbot.memory import gate, node_summary
 from dmbot.web import node_summary_run as run
 
 MIRA, KESH, DORN, VEIL = "mira", "kesh", "dorn", "veil"
@@ -140,8 +141,12 @@ class TheRules(unittest.TestCase):
 
     def test_a_closed_gate_sends_no_text_and_no_count(self) -> None:
         src, kn = self.two_players(["pc2"])
-        shut = run.summary_for(src, kn, RANKS, MIRA, clicker=gate.Viewer.player([PC]), peek=False)
+        viewer = gate.Viewer.player([PC])
+        with patch.object(node_summary, "MAX_NEIGHBOURS", 0):  # (so one neighbour is "left out")
+            shut = run.summary_for(src, kn, RANKS, MIRA, clicker=viewer, peek=False)
+            opened = run.summary_for(src, kn, RANKS, MIRA, clicker=viewer, peek=True)
         assert shut is not None and (shut.text, shut.more) == ("", 0)
+        assert opened is not None and opened.text != "" and opened.more == 1
 
     def test_a_connection_no_player_knows_changes_nothing_a_player_reads(self) -> None:
         links = [("l1", MIRA, KESH, "mentor_of")]
