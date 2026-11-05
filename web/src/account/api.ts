@@ -1735,6 +1735,8 @@ export type WebView = "players" | "full";
 /** A picked name's summary (#3243): `needsPeek` holds the text back from a player until they ask for it. */
 export interface NodeSummary {
   text: string;
+  /** How many neighbours the caps left out (the text says "and N more"); 0 while the spoiler gate holds the text (#3236). */
+  more?: number;
   needsPeek: boolean;
   version: "dm" | "players";
 }
