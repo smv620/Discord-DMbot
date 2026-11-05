@@ -154,7 +154,7 @@ export const webPage = {
   inMiddle: "In the middle",
   seeLine: (a: string, b: string): string => `See the connections between ${a} and ${b}`,
   // One connection as a sentence, read subject, then what it does, then object (#2666).
-  lineText: (from: string, words: string, to: string): string => `${from} ${words} ${to}`,
+  lineText: (from: string, words: string, to: string, after = ""): string => (after ? `${from} ${words} ${to} ${after}` : `${from} ${words} ${to}`),
   furtherOut: "Further out",
   furtherOutHint: (name: string): string => `Connections between other names, not ${name}.`,
   theoryWords: "only a theory",
