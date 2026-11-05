@@ -3709,7 +3709,9 @@ class MemoryStore:
             # The other entry's name was a secret one: the main name everyone sees
             # must never be.
             raise MemoryRuleError("A secret name can't be the main name.")
-        await _move_relations(w, keep_id, gone_id, join=join_alias is not None, via=join_alias)
+        moved_companions = await _move_relations(
+            w, keep_id, gone_id, join=join_alias is not None, via=join_alias
+        )
         await _move_standing(w, keep_id, gone_id)
         await merge_restore.move_notes(w.conn, w.ids, keep_id, gone_id)
         await merge_restore.move_links(w.conn, w.ids, keep_id, gone_id, kept["type"])
@@ -3760,7 +3762,8 @@ class MemoryStore:
         # batch is known.
         assert w.batch is not None
         await merge_restore.save(w.conn, w.ids, w.batch, keep_id, gone_id, before_moves)
-        await _recheck_companions(w, [keep_id])
+        if moved_companions:  # (read from the merge's own rows: no extra statement for most merges)
+            await _recheck_companions(w, [keep_id])
         return keep_id
 
     async def check_people(
@@ -6541,10 +6544,11 @@ async def _refuse_led_to_loop(
 
 async def _move_relations(
     w: Changes, keep_id: str, gone_id: str, *, join: bool = False, via: str | None = None
-) -> None:
-    """The other entry's facts move over. They're checked one by one, in the same order
-    as before, against an in-memory copy of every fact they could clash with (so the
-    same duplicates are folded and the same problems flagged); the moves themselves are
+) -> bool:
+    """The other entry's facts move over. Returns whether a companion link (`travels_with`) was
+    among them, so the caller re-checks its ends only then (#3176). They're checked one by one,
+    in the same order as before, against an in-memory copy of every fact they could clash with
+    (so the same duplicates are folded and the same problems flagged); the moves themselves are
     then written in one statement (#164)."""
     onto = await _load_ontology(w)
     rows = await w.select(  # oldest first, so the same merge always folds the same way
@@ -6553,7 +6557,8 @@ async def _move_relations(
         [gone_id, gone_id],
     )
     if not rows:
-        return
+        return False
+    companions = any(r["predicate"] == TRAVELS_WITH for r in rows)
     ends = {keep_id, gone_id} | {r["subject_id"] for r in rows} | {r["object_id"] for r in rows}
     state = {r.id: r for r in await _relations_touching(w, *ends)}  # as the walk sees them
     await _refuse_led_to_loop(w, keep_id, gone_id, rows, state)
@@ -6691,6 +6696,8 @@ async def _move_relations(
                 # shown, folding into one they were not, hands over nothing.
                 await knowers.move_rows(w, "relation_id", relation_id, folded[relation_id])
         await _delete_relation(w, relation_id)
+
+    return companions
 
 
 async def _check_growth(w: Changes, session_started_at: int | None) -> None:
