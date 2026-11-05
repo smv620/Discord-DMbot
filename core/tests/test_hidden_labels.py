@@ -26,6 +26,16 @@ class ThePureRule(unittest.TestCase):
         self.assertTrue(gate.label_names("swore on Veil's grave", ["Lord Veil"]))
         self.assertFalse(gate.label_names("swore on an oak", ["Lord Ox"]))  # (too short a word)
 
+    def test_variants_of_a_name_are_found_too(self) -> None:
+        for label in ("a Veil-bound oath", "Veils' grave", "swore on Veil", "owes Veil a debt"):
+            with self.subTest(label):
+                self.assertTrue(gate.label_names(label, ["Veil the Grey"]), label)
+        self.assertTrue(gate.label_names("Mira swore", ["Mira Veil"]))  # (the first word, too)
+
+    def test_a_word_a_shown_name_also_has_never_counts(self) -> None:
+        self.assertFalse(gate.label_names("served the lord well", ["Lord Veil"], ["Lord Dorn"]))
+        self.assertTrue(gate.label_names("served Veil well", ["Lord Veil"], ["Lord Dorn"]))
+
     def test_a_part_of_a_word_is_not_a_name(self) -> None:
         self.assertFalse(gate.label_names("swore on Veiled things", ["Veil"]))
         self.assertFalse(gate.label_names("pays in coin", []))
@@ -87,6 +97,54 @@ class OnTheGraph(unittest.TestCase):
         graph = graph_view.build(src, kn, gate.Viewer.player([PC]))
         (edge,) = [e for e in graph.edges if e["id"] == "l1"]
         self.assertEqual(edge["detail"], LABEL)
+
+
+class OnTheGraphEverywhere(unittest.TestCase):
+    """Names the source door never sends (a merged entry's old name, a quest) and every kind of
+    other name (#3153, review)."""
+
+    def build(self, mutate: Any, label: str) -> str | None:
+        src, kn = source(label)
+        mutate(src, kn)
+        graph = graph_view.build(src, kn, gate.Viewer.player([PC]))
+        edges = [e for e in graph.edges if e["id"] == "l1"]
+        return str(edges[0]["detail"]) if edges else None
+
+    def test_a_name_only_the_knowers_door_has_is_still_forbidden(self) -> None:
+        def add_quest(src: dict[str, Any], kn: dict[str, Any]) -> None:
+            kn["entities"].append(entity_row("quest1", "The Ember Quest"))  # (not in src names)
+
+        self.assertEqual(self.build(add_quest, "failed the Ember Quest"), "")
+
+    def test_the_old_name_of_a_merged_entry_is_forbidden_unless_it_lives_on(self) -> None:
+        def merged(src: dict[str, Any], kn: dict[str, Any]) -> None:
+            old = entity_row("old1", "Brann Stoneheart")
+            old.update(status="merged", merged_into=VEIL)
+            kn["entities"].append(old)
+
+        self.assertEqual(self.build(merged, "feared Stoneheart"), "")
+
+    def test_a_proposed_other_name_is_not_yet_public(self) -> None:
+        def alias(src: dict[str, Any], kn: dict[str, Any]) -> None:
+            kn["aliasRows"].append(
+                {"id": "al2", "entity_id": KESH, "text": "Ashen Crow", "key": "ashen crow",
+                 "secret": False, "status": "proposed", "kind": "nickname"}
+            )  # fmt: skip
+
+        self.assertEqual(self.build(alias, "betrayed by the Ashen Crow"), "")
+
+    def test_a_secret_name_the_viewer_holds_is_kept(self) -> None:
+        def held(src: dict[str, Any], kn: dict[str, Any]) -> None:
+            kn["knowers"].append([gate.ALIAS, "al1", "party", 1.0])
+            kn["aliases"] = {"al1": [VEIL]}
+
+        self.assertEqual(self.build(held, "owes the Grey Fox a debt"), "owes the Grey Fox a debt")
+
+
+def entity_row(entity_id: str, name: str) -> dict[str, Any]:
+    from tests.test_node_summary_run import entity
+
+    return entity(entity_id, name)
 
 
 class OnTheNodeSummary(unittest.TestCase):
