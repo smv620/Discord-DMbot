@@ -250,6 +250,8 @@ def read_instructions(own: Mapping[str, str] | None = None) -> str:
         "about the second; when the text says they feel it about each other, write the line "
         "twice, once each way), "
         "is disguised as (a second character posing as another), "
+        "travels with (a companion that goes along with a player character: a familiar, a "
+        "hired guide; the second name is the player character, never 'the party'), "
         "is sworn to (an oath, vow, pact or fealty), pays"
         f"{theirs}). Write each relationship's two ends as the full "
         "names you listed under NAMES (or one of that name's other or secret names, as the "
@@ -349,8 +351,10 @@ def shape_instructions(own: Mapping[str, str] | None = None) -> str:
         "leads = a leads b (a group or a place: its leader, ruler, speaker, mayor or captain); "
         "captive = a is held captive by b; contains = a contains b (a note in a book, a gem in "
         "a chest); disguised as = a is disguised as b (a second character posing as b, never the "
-        "same person under another name); worships = a worships b. A family line that names a "
-        "role uses that role's word; use 'family' only when the line names none. "
+        "same person under another name); travels with = a travels with b (a companion that goes "
+        "along with b, a player character: a familiar, a guide); worships = a worships b. A "
+        "family line that names a role uses that role's word; use 'family' only when the line "
+        "names none. "
         f"When none of them fits the line's words, use \"{bg.OTHER}\" and put the line's own "
         f'words in "words" (at most {bg.WORDS_CHARS} characters, for example "pays"); otherwise '
         '"words" is empty. Never pick a kind that changes what the line says.\n'
