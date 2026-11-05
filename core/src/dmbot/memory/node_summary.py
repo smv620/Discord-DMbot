@@ -215,8 +215,12 @@ class Neighbour:
     id: str
     name: str
     kind: str  # the entry's kind ("character", "place", ...)
-    rank: int = 0  # 0 to 5; the eligibility cut and the first sort key, for both versions
-    score: float = 0.0  # the connection score (`importance.py`), the third sort key
+    # 0 to 5; the eligibility cut and the first sort key for both versions. The default 0 is below
+    # Minor, so a caller that forgets it gets no neighbours: always pass it.
+    rank: int = 0
+    # The connection score (`importance.py`), the third sort key. For a player's click the caller
+    # must build it from connections the players can see, never a hidden one.
+    score: float = 0.0
     facts: tuple[Fact, ...] = ()
     players_know: bool = False  # the players know this entry exists (and may be told its name)
     further: tuple[Neighbour, ...] = ()  # entries joined to this one, for the second hop
@@ -330,7 +334,7 @@ def _newest(n: Neighbour) -> int:
 def _order(focus: str) -> Callable[[Neighbour], tuple[int, int, float, int, str, str]]:
     """One order for everyone (owner, 2026-11-01): rank, best category, connection score, newest
     session, name. What a player may not see never reaches this list, so the rank only orders what
-    they are allowed to read; a neighbour that keeps coming up first is a hint the owner wants."""
+    they are allowed to read. The order is deliberately rank-led for players too."""
 
     def key(n: Neighbour) -> tuple[int, int, float, int, str, str]:
         return (-n.rank, _best_category(n, focus), -n.score, -_newest(n), n.name.casefold(), n.id)
@@ -357,9 +361,11 @@ def _visible(n: Neighbour, audience: str) -> Neighbour | None:
 def needs_peek(neighbours: Sequence[Neighbour]) -> bool:
     """Whether this node has a fact the players hold that the person who clicked does not, in the
     neighbours or in the second hop: the summary then sits behind "Contains spoilers … let me peek
-    anyway". Looks at every entry the players know, whatever the caps leave out of the text."""
+    anyway". Looks at every entry the players know, whatever the caps leave out of the text, but
+    not at an entry below Minor: the text never names it, so a gate for it would hint at nothing
+    the person could read."""
     for n in neighbours:
-        if not n.players_know:
+        if not n.players_know or n.rank < MIN_RANK:
             continue
         if any(f.players_know and not f.viewer_knows for f in n.facts) or needs_peek(n.further):
             return True

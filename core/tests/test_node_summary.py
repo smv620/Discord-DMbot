@@ -4,6 +4,7 @@ player versions, the spoiler check. Pure: no database. Invented names throughout
 from __future__ import annotations
 
 import unittest
+from dataclasses import replace
 from typing import Any
 
 from dmbot.memory import node_summary as ns
@@ -290,12 +291,30 @@ class ThePlayerVersion(unittest.TestCase):
         self.assertEqual(ns.summarize(MIRA, [person("Kesh", 0, kin())], ns.PLAYER).named, ())
         self.assertEqual(ns.summarize(MIRA, [person("Kesh", 1, kin())], ns.PLAYER).named, ("Kesh",))
 
+    def test_a_second_hop_entry_below_minor_is_dropped_for_both(self) -> None:
+        for audience in (ns.DM, ns.PLAYER):
+            low = replace(person("Dim", 0, kin()), players_know=True)
+            high = replace(person("Bright", 4, kin()), players_know=True)
+            via = replace(person("Kesh", 3, kin()), players_know=True, further=(low, high))
+            self.assertEqual(ns.summarize(MIRA, [via], audience).named, ("Kesh", "Bright"))
+
+    def test_rank_and_score_never_reach_a_players_text(self) -> None:
+        n = replace(person("Kesh", 5, kin(), score=77.0), players_know=True)
+        text = ns.summarize(MIRA, [n], ns.PLAYER).text
+        for word in ("5", "77", "rank", "score"):
+            self.assertNotIn(word, text)
+
 
 class TheSpoilerCheck(unittest.TestCase):
     def test_a_fact_the_players_hold_and_this_person_does_not_needs_a_peek(self) -> None:
         n = person("Kesh", 3, kin(viewer_knows=False))
         self.assertTrue(ns.needs_peek([n]))
         self.assertTrue(ns.summarize(MIRA, [n], ns.PLAYER).needs_peek)
+
+    def test_an_entry_below_minor_cannot_set_the_gate(self) -> None:
+        n = person("Kesh", 0, kin(viewer_knows=False))
+        self.assertFalse(ns.needs_peek([n]))
+        self.assertFalse(ns.summarize(MIRA, [n], ns.PLAYER).needs_peek)
 
     def test_nothing_hidden_from_this_person_means_no_peek(self) -> None:
         self.assertFalse(ns.summarize(MIRA, [person("Kesh", 3, kin())], ns.PLAYER).needs_peek)
