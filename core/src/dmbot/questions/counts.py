@@ -106,7 +106,10 @@ async def _which(src: Sources, g: int, c: str) -> Counted:
 async def _family(src: Sources, g: int, c: str) -> Counted:
     if src.claims is None:
         return Counted(0)
-    return Counted(int(await src.claims.unplaced_count(g, c)))
+    # the card's own list (`ClaimStore.unplaced`): the claims of speakers no longer recorded are in
+    # neither, so the message never says 1 over an empty card (#3463)
+    opted_in = await src.agreed(g) if src.agreed is not None else None
+    return Counted(int(await src.claims.unplaced_count(g, c, opted_in=opted_in)))
 
 
 async def _claims(src: Sources, g: int, c: str) -> Counted:
@@ -115,8 +118,9 @@ async def _claims(src: Sources, g: int, c: str) -> Counted:
     which that list also shows."""
     if src.claims is None or src.agreed is None:
         return Counted(0)
-    listed = int(await src.claims.listed_count(g, c, opted_in=await src.agreed(g)))
-    return Counted(max(0, listed - int(await src.claims.unplaced_count(g, c))))
+    opted_in = await src.agreed(g)
+    listed = int(await src.claims.listed_count(g, c, opted_in=opted_in))
+    return Counted(max(0, listed - int(await src.claims.unplaced_count(g, c, opted_in=opted_in))))
 
 
 async def _readings(src: Sources, g: int, c: str) -> Counted:
