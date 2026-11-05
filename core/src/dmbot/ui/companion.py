@@ -30,14 +30,17 @@ log = logging.getLogger(__name__)
 
 BUTTON = "🐾 Travels with…"  # on the name card
 ONLY_DM = "Only the DM can say who travels with whom."
-NOT_A_COMPANION = "Only a character who is not a player character can travel with the party."
+NOT_A_COMPANION = (
+    "🐾 Travels with… is for characters who are not player characters, like a familiar or a "
+    "hired guide. Pick a different name, or use 🧭 Connect to…."
+)
 NOBODY = "No player characters yet. Add one under Names, then try again."
-PLACEHOLDER = "Pick who it travels with…"
+PLACEHOLDER = "Pick a player or the party…"
 PARTY_LABEL = "The party"
 BACK = "◀ Back"
 MENU_MAX = 25  # Discord: a menu holds 25 choices
 LABEL_MAX = 100
-END_HELP = "To say it has left, use 🧭 Connect to… then ✏️ Edit a connection…."
+END_HELP = "To change or remove this: 🧭 Connect to…, then ✏️ Edit a connection…"
 
 
 async def _checked(interaction: discord.Interaction, campaign_id: str) -> tuple[Any, Any] | None:
@@ -66,7 +69,7 @@ def choices(lookup: CampaignLookup, own_id: str) -> list[tuple[str, str]]:
     ]
     found.sort(key=lambda item: item[1].casefold())
     party = [
-        (e.id, e.name)
+        (e.id, PARTY_LABEL)  # (whatever the DM renamed it to, it is "The party" here)
         for e in lookup.entities.values()
         if e.type == "faction" and e.source == PARTY_SOURCE and e.status == CONFIRMED
         and not e.merged_into
@@ -136,8 +139,9 @@ async def start(interaction: discord.Interaction, campaign_id: str, entity_id: s
         return
     await _replace(
         interaction,
-        f"**Who does {_md(entity.name)} travel with?** Pick a player character or the party. "
-        "DMbot only records what you say.",
+        f"**Who does {_md(entity.name)} travel with?** Pick a player character"
+        + (" or the party." if any(label == PARTY_LABEL for _, label in options) else ".")
+        + " DMbot only records what you say.",
         TravelsWith(campaign.id, entity_id, entity.name, options),
     )
 
