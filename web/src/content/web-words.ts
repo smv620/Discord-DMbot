@@ -276,6 +276,24 @@ export const webPage = {
     network: "We couldn't reach DMbot, so nothing was changed. Check your connection and try again.",
   } as Record<string, string>,
   errorFallback: "That didn't work. Try again in a minute.",
+  // Showing a connection is refused until its names are shown to the players (#3426). The ending is what the
+  // connection's row looks for to offer the link to the Names page.
+  namesPageEnding: "on the Names page.",
+  showNamesFirst: (held: string[]): string =>
+    held.length === 0
+      ? "Show both names to the players first. You can do that on the Names page."
+      : held.length === 1
+        ? `${held[0]} isn't shown to the players yet. Show that name first, on the Names page.`
+        : `${held.join(" and ")} aren't shown to the players yet. Show those names first, on the Names page.`,
+  // `who` is how the page calls the person ("someone's sister"), without the "(name unknown)" label.
+  nameThemFirst: (who: string | null, onWeb: boolean): string =>
+    onWeb
+      ? who === null
+        ? "One end of this connection has no name yet. Add one on the Names page."
+        : `This connection needs a name first: ${who} has none yet. Add one on the Names page.`
+      : // While the Names page can't name anyone (NOT_NAMED_LIVE), the way is Discord's, and there is no link.
+        `${who === null ? "One end of this connection has" : `${who} has`} no name yet. In Discord, press 📚 Browse and choose Give them a name, then show this connection.`,
+  openNames: "Open Names page",
 } as const;
 
 /** The words for a kind: the API's key if no words are known. */

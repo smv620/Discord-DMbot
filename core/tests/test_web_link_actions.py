@@ -61,6 +61,25 @@ class Editing(Web):
         self.actions = wa.ActionStore(self.db)
         self.claims = ClaimStore(self.memory)
         self.backstory = BackstoryLinks(self.db)
+        await self.agree(7)  # (the doors read who is recorded now from the consent table, #3466)
+
+    async def agree(self, user: int, terms: int | None = None) -> None:
+        """A consent row for the person, under the current wording unless told otherwise."""
+        from dmbot.consent import TERMS_VERSION
+
+        async with self.db.guild(self.g) as conn:
+            await conn.execute(
+                "INSERT INTO consent (guild_id, user_id, granted_at, terms_version)"
+                " VALUES (%s, %s, 0, %s) ON CONFLICT (guild_id, user_id)"
+                " DO UPDATE SET terms_version = EXCLUDED.terms_version",
+                (self.g, user, TERMS_VERSION if terms is None else terms),
+            )
+
+    async def stop(self, user: int) -> None:
+        async with self.db.guild(self.g) as conn:
+            await conn.execute(
+                "DELETE FROM consent WHERE guild_id = %s AND user_id = %s", (self.g, user)
+            )
 
     async def apply_all(
         self, dms: Any = None, waiting: wa.Waiting | None = None
@@ -329,6 +348,7 @@ class TheEdits(Editing):
         speaker: int = 7,
     ) -> str:
         """A claim PlotBot found at the table, waiting for the DM: not a relation."""
+        await self.agree(speaker)
         await self.claims.propose(
             self.g, self.one.id, [said(subject, "knows", obj)], {"1": speaker},
             opted_in={speaker}, prompt_version="p1", model="m1", session_started_at=500,
@@ -893,7 +913,52 @@ class TheEdits(Editing):
         return found.id
 
     async def waiting_now(self, who: Any = None) -> dict[str, Any]:
-        return await relationships.read_waiting(self.web, who or self.session, self.cref)
+        return await relationships.read_waiting(
+            self.web, who or self.session, self.cref, outside_engine=None
+        )
+
+    async def test_a_claim_from_someone_who_stopped_being_recorded_is_left_out(self) -> None:
+        """#3466: the claims list and its count keep only claims whose every speaker is recorded
+        now, as Discord's list does, and the claim comes back if they agree again."""
+        await self.claim()
+        self.assertEqual((await self.waiting_now())["counts"]["claims"], 1)
+        await self.stop(7)
+        gone = await self.waiting_now()
+        self.assertEqual((gone["claims"], gone["counts"]["claims"]), ([], 0))
+        await self.agree(7)
+        self.assertEqual(len((await self.waiting_now())["claims"]), 1)
+
+    async def test_a_claim_from_someone_under_older_wording_is_left_out(self) -> None:
+        from dmbot.consent import TERMS_VERSION
+
+        await self.claim()
+        await self.agree(7, TERMS_VERSION - 1)
+        self.assertEqual((await self.waiting_now())["claims"], [])
+        await self.agree(7)
+        self.assertEqual(len((await self.waiting_now())["claims"]), 1)
+
+    async def test_the_website_counts_what_the_bot_lists_for_who_is_recorded_now(self) -> None:
+        """The bot's own count (`ClaimStore.waiting_for_check`, read-only, with who the consent
+        source says is recorded) equals the website's, as the speaker stops, is on older
+        wording, and agrees again. (`ClaimStore.waiting` would wipe the claim when they stop.)"""
+        from dmbot import consent
+
+        await self.claim()
+
+        async def both() -> tuple[int, int]:
+            async with self.db.guild(self.g) as conn:
+                recorded = await consent._select(conn, self.g, None)
+            site = (await self.waiting_now())["counts"]["claims"]
+            bot = await self.claims.waiting_for_check(self.g, self.one.id, opted_in=recorded)
+            return site, bot
+
+        self.assertEqual(await both(), (1, 1))
+        await self.stop(7)
+        self.assertEqual(await both(), (0, 0))
+        await self.agree(7, consent.TERMS_VERSION - 1)
+        self.assertEqual(await both(), (0, 0))
+        await self.agree(7)
+        self.assertEqual(await both(), (1, 1))
 
     async def test_a_membership_the_group_button_held_is_not_asked_about_again(self) -> None:
         """#3383 part 2: "Yes, that group" decided it; the waiting door lists no row for it, and the
@@ -1317,7 +1382,9 @@ class TheEdits(Editing):
         self.assertEqual(limited, {"Mara Ashgrove": True, "Mara Vell": False})
         other = await self.campaigns.create(self.g, "Elsewhere", ALICE.id)
         async with self.db.guild(self.g) as conn:
-            cur = await conn.execute("SELECT dmbot_web_waiting(%s, %s) AS r", (self.g, other.id))
+            cur = await conn.execute(
+                "SELECT dmbot_web_waiting(%s, %s, 1, NULL) AS r", (self.g, other.id)
+            )
             row = await cur.fetchone()
             assert row is not None
             self.assertIsNone(row["r"])  # not this person's campaign: nothing
@@ -1348,7 +1415,9 @@ class TheEdits(Editing):
             )
         async with self.web.user(ALICE.id, session=self.session.id_hash) as conn:
             await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(self.g),))
-            cur = await conn.execute("SELECT dmbot_web_waiting(%s, %s) AS r", (self.g, two.id))
+            cur = await conn.execute(
+                "SELECT dmbot_web_waiting(%s, %s, 1, NULL) AS r", (self.g, two.id)
+            )
             row = await cur.fetchone()
             assert row is not None
             self.assertIsNone(row["r"])  # Alice is not a DM of campaign two
@@ -1356,7 +1425,9 @@ class TheEdits(Editing):
         self.assertEqual([w["id"] for w in got["which"]], [mine])  # and hers holds only hers
         self.assertEqual(got["claims"], [])  # not the other campaign's claim
         with self.assertRaises(RecapError) as caught:
-            await relationships.read_waiting(self.web, self.session, f"{self.g}.{two.id}")
+            await relationships.read_waiting(
+                self.web, self.session, f"{self.g}.{two.id}", outside_engine=None
+            )
         self.assertEqual(caught.exception.code, "not_found")
 
     async def test_a_flag_on_a_which_answer_is_refused_by_the_door(self) -> None:
@@ -1512,6 +1583,49 @@ class TheReveal(Editing):
         assert hidden is not None
         self.assertTrue(hidden.unrevealed)  # ONE Undo, as on the Discord card
 
+    async def answer_error(self, answer: str) -> str:
+        done = await self.poll(answer)
+        self.assertEqual(done["state"], "failed")
+        return str(done["error"])
+
+    async def test_a_connection_to_a_name_still_held_back_stays_held_back_and_says_why(
+        self,
+    ) -> None:
+        """#3426: the rule is unchanged, but the refusal has its own word instead of bad_target."""
+        link = await self.hidden_link()
+        await self.memory.set_hidden_from_players(
+            self.g, self.one.id, self.hall, True, source=DM_SOURCE
+        )
+        answer = await self.reveal("link", link)
+        self.assertEqual([o.error for o in await self.apply_all()], ["names_not_shown"])
+        self.assertEqual(await self.answer_error(answer), "names_not_shown")
+        held = await self.memory.relation(self.g, self.one.id, link)
+        assert held is not None
+        self.assertTrue(held.unrevealed)
+
+    async def test_a_connection_to_a_person_the_story_never_named_says_to_name_them(self) -> None:
+        """#3426: an unnamed end is told apart from a hidden one (the page points to naming)."""
+        sister = await self.memory.add_unnamed(
+            self.g, self.one.id, what="sister", role="sibling", anchor_id=self.rook
+        )
+        # (as the owner's campaign had them: confirmed, still unnamed)
+        async with self.db.guild(
+            self.g
+        ) as conn:  # (as the owner's campaign had them: confirmed, still unnamed)
+            await conn.execute(
+                "UPDATE memory_entities SET status = 'confirmed' WHERE id = %s", (sister.entity.id,)
+            )
+        made = await self.memory.add_relation(
+            self.g, self.one.id, self.rook, "ally_of", sister.entity.id, source=DM_SOURCE,
+            confidence=1.0, status="confirmed", unrevealed=True,
+        )  # fmt: skip
+        answer = await self.reveal("link", made.value[0].id)
+        self.assertEqual([o.error for o in await self.apply_all()], ["name_unnamed"])
+        self.assertEqual(await self.answer_error(answer), "name_unnamed")
+        held = await self.memory.relation(self.g, self.one.id, made.value[0].id)
+        assert held is not None
+        self.assertTrue(held.unrevealed)
+
     async def test_a_dm_reveals_a_name_and_undo_hides_it_again(self) -> None:
         name = await self.add("Hidden Tower", "place")
         await self.memory.set_hidden_from_players(self.g, self.one.id, name, True, source=DM_SOURCE)
@@ -1563,6 +1677,25 @@ class WhatPeopleBelieve(Editing):
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
         self.recorded = {7}
+        await self.agree(7)  # (the door reads who is recorded now from the consent table, #3462)
+
+    async def agree(self, user: int, terms: int | None = None) -> None:
+        """A consent row for the person, under the current wording unless told otherwise."""
+        from dmbot.consent import TERMS_VERSION
+
+        async with self.db.guild(self.g) as conn:
+            await conn.execute(
+                "INSERT INTO consent (guild_id, user_id, granted_at, terms_version)"
+                " VALUES (%s, %s, 0, %s) ON CONFLICT (guild_id, user_id)"
+                " DO UPDATE SET terms_version = EXCLUDED.terms_version",
+                (self.g, user, TERMS_VERSION if terms is None else terms),
+            )
+
+    async def stop(self, user: int) -> None:
+        async with self.db.guild(self.g) as conn:
+            await conn.execute(
+                "DELETE FROM consent WHERE guild_id = %s AND user_id = %s", (self.g, user)
+            )
 
     async def reading(
         self,
@@ -1629,6 +1762,58 @@ class WhatPeopleBelieve(Editing):
             ("accusation", "Rook", "Mira Voss knows Far Hall", "fairly sure", True),
         )
         self.assertEqual((got["counts"], got["capped"]), ({"readings": 1}, False))
+
+    async def test_a_reading_from_someone_who_stopped_being_recorded_is_left_out(self) -> None:
+        """#3462: the list and its count keep only readings whose every speaker is recorded now, as
+        Discord's list does, and the reading comes back if they agree again."""
+        await self.reading()
+        self.assertEqual((await self.listed())["counts"], {"readings": 1})
+        await self.stop(7)
+        gone = await self.listed()
+        self.assertEqual((gone["readings"], gone["counts"]), ([], {"readings": 0}))
+        await self.agree(7)
+        back = await self.listed()
+        self.assertEqual((len(back["readings"]), back["counts"]), (1, {"readings": 1}))
+
+    async def test_a_reading_from_someone_under_older_wording_is_left_out(self) -> None:
+        """The bot counts a person as recorded only under the current wording (`consent._select`),
+        so the door is asked the same and agrees with it."""
+        from dmbot.consent import TERMS_VERSION
+
+        await self.reading()
+        await self.agree(7, TERMS_VERSION - 1)
+        self.assertEqual((await self.listed())["readings"], [])
+        await self.agree(7)
+        self.assertEqual(len((await self.listed())["readings"]), 1)
+
+    async def test_the_website_counts_what_the_bot_counts_for_who_is_recorded_now(self) -> None:
+        """The bot's own count (`readings_waiting`, with who the consent source says is recorded)
+        equals the website's: with a recorded speaker, one who stopped, one on older wording."""
+        from dmbot import consent
+
+        await self.reading()
+
+        async def both() -> tuple[int, int]:
+            async with self.db.guild(self.g) as conn:
+                recorded = await consent._select(conn, self.g, None)
+            site = (await self.listed())["counts"]["readings"]
+            bot = await self.claims.readings_waiting(self.g, self.one.id, opted_in=recorded)
+            return site, bot
+
+        self.assertEqual(await both(), (1, 1))
+        await self.stop(7)
+        self.assertEqual(await both(), (0, 0))
+        await self.agree(7, consent.TERMS_VERSION - 1)
+        self.assertEqual(await both(), (0, 0))
+        await self.agree(7)
+        self.assertEqual(await both(), (1, 1))
+
+    async def test_a_reading_is_still_listed_while_its_speaker_is_only_paused(self) -> None:
+        """The one gap, said in the migration: a pause is in the bot's memory, so the door still
+        lists the reading (Discord already leaves it out)."""
+        await self.reading()
+        self.recorded = set()  # (the bot's view: paused)
+        self.assertEqual(len((await self.listed())["readings"]), 1)
 
     async def test_only_a_dm_reads_them_or_answers(self) -> None:
         ident = await self.reading()
