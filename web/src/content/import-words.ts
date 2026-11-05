@@ -246,6 +246,8 @@ export const importPage = {
     stale: "The words people agree to have changed. Read them, tick the boxes again, then press Check.",
     "bot-picked": "A bot's lines can't be kept. Choose Leave out for it.",
     "bad-date": "One of the dates isn't a date. Check them and try again.",
+    // The same sentence the date step shows (datesInFuture), for an old tab whose page let the date through.
+    "future-date": "A session can't be on a day that hasn't happened yet. Pick today or an earlier day.",
     "no-lines-kept":
       "Every line in one of the files would be dropped, so nothing was imported. Match more people, or ask players to agree to be recorded in Discord, then try again.",
     "signed-out": "You were signed out. Sign in again.",

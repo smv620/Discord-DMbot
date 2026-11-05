@@ -2239,6 +2239,7 @@ export type ApiErrorKind =
   | "bad-files" // the files could not be read as sent (#2107)
   | "bad-mapping" // the speaker choices don't fit the files (#2107)
   | "bad-date" // a session's date is not a date (#2107)
+  | "future-date" // a session's date is a day that has not happened yet (#3491)
   | "no-lines-kept" // every line of a file would be dropped (#2107)
   | "not-posted" // only a posted or approved recap can have a public link (#2118, #2119)
   | "bad-action" // not one of on, off or new (#2118)
@@ -2962,6 +2963,7 @@ export const errorKinds: Record<string, ApiErrorKind> = {
   bad_files: "bad-files",
   bad_mapping: "bad-mapping",
   bad_date: "bad-date",
+  future_date: "future-date",
   no_lines_kept: "no-lines-kept",
   not_posted: "not-posted",
   bad_action: "bad-action",
