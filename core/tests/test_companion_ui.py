@@ -108,3 +108,40 @@ class TravelsWith(base.NamesTest):
         plain = name_card.NameCard(self.campaign.id, self.sled.id)
         self.assertIn(companion.BUTTON, labels(shown))
         self.assertNotIn(companion.BUTTON, labels(plain))
+
+    async def test_a_refused_press_leaves_the_card_working(self) -> None:
+        shown = name_card.NameCard(self.campaign.id, self.sled.id, companion=True)
+        it = self.it()
+        await shown._travels(it)  # no player characters yet: told, not replaced
+        self.assertFalse(shown.is_finished())
+        await self.pc("Mara", 1001)
+        await shown._travels(self.it())
+        self.assertTrue(shown.is_finished())
+
+    async def test_only_the_group_the_sessions_made_is_the_party(self) -> None:
+        await self.pc("Mara", 1001)
+        await ui.save_name(self.memory, self.campaign, "The party", "faction", [], [])
+        self.fresh()
+        _, view = (await self.menu()).response.edited[0]
+        self.assertEqual([o.label for o in view.children[0].options], ["Mara"])
+
+    async def test_a_menu_never_holds_more_than_25_and_keeps_the_party(self) -> None:
+        for i in range(30):
+            await self.pc(f"Hero {i:02d}", 2000 + i)
+        await self.memory.party_on_assignment(GUILD, self.campaign.id)
+        self.fresh()
+        _, view = (await self.menu()).response.edited[0]
+        labels = [o.label for o in view.children[0].options]
+        self.assertEqual(len(labels), 25)
+        self.assertEqual(labels[-1], companion.PARTY_LABEL)
+
+    async def test_a_merged_player_character_saves_nothing(self) -> None:
+        mara = await self.pc("Mara", 1001)
+        tavin = await self.pc("Mara the Bold", 1001)
+        await self.menu()
+        await self.memory.merge(
+            GUILD, self.campaign.id, tavin.id, mara.id, source="dm", dm_said_same=True
+        )
+        self.fresh()
+        await companion.save(self.it(), self.campaign.id, self.sled.id, mara.id)
+        self.assertEqual(await self.kept(), [])

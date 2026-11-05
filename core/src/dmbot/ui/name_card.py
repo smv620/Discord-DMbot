@@ -939,8 +939,8 @@ class NameCard(_Menu):
         await interaction.response.send_modal(LinkForm(self.campaign_id, self.entity_id))
 
     async def _travels(self, interaction: discord.Interaction) -> None:
-        self.stop()
-        await companion_ui.start(interaction, self.campaign_id, self.entity_id)
+        if await companion_ui.start(interaction, self.campaign_id, self.entity_id):
+            self.stop()  # (only when the menu replaced the card; a refusal leaves it working)
 
     async def _deed(self, interaction: discord.Interaction) -> None:
         from dmbot.ui.deeds import start

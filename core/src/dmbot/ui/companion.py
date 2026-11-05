@@ -118,25 +118,27 @@ class TravelsWith(_Menu):
         await show_card(interaction, self.campaign_id, self.entity_id, replace=True)
 
 
-async def start(interaction: discord.Interaction, campaign_id: str, entity_id: str) -> None:
-    """The pick: a menu of who this character may travel with, in place of the card."""
+async def start(interaction: discord.Interaction, campaign_id: str, entity_id: str) -> bool:
+    """The pick: a menu of who this character may travel with, in place of the card. True when
+    the menu replaced the card; False when a refusal was told instead (the card stays as it was,
+    so the caller must not stop its buttons)."""
     await _answer_first(interaction, in_place=True)  # the lookup can be slow (3-second limit)
     checked = await _checked(interaction, campaign_id)
     if checked is None:
-        return
+        return False
     campaign, memory = checked
     entity = await memory.entity(campaign.guild_id, campaign.id, entity_id)
     if entity is None or entity.status != CONFIRMED:
         await _tell(interaction, GONE)
-        return
+        return False
     if entity.type != "character" or entity.role == PLAYER_CHARACTER:
         await _tell(interaction, NOT_A_COMPANION)
-        return
+        return False
     lookup = CampaignLookup.build(await memory.lookup_data(campaign.guild_id, campaign.id))
     options = choices(lookup, entity_id)
     if not options:
         await _tell(interaction, NOBODY)
-        return
+        return False
     await _replace(
         interaction,
         f"**Who does {_md(entity.name)} travel with?** Pick a player character"
@@ -144,6 +146,7 @@ async def start(interaction: discord.Interaction, campaign_id: str, entity_id: s
         + " DMbot only records what you say.",
         TravelsWith(campaign.id, entity_id, entity.name, options),
     )
+    return True
 
 
 async def save(
