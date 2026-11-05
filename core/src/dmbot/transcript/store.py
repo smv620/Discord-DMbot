@@ -245,6 +245,39 @@ class TranscriptStore:
         await self.save_session_split(guild_id, session_id, play.to_json(), only_if_empty=False)
         return released
 
+    async def release_recap_lines(self, guild_id: int, session_id: str) -> frozenset[int]:
+        """The import result's Undo (#3298): `undo_session_split` and the queueing of the released
+        lines for a new read (`put_back_numbers`) in ONE transaction, so a failure between them
+        can never leave the split saying "play" with the lines never read. Returns the line
+        numbers released, none when there was no recap to hand back."""
+        from dmbot.recaps import split as sp
+
+        stored = sp.from_json(await self.session_split(guild_id, session_id))
+        if stored is None or not stored.has(sp.RECAP):
+            return frozenset()
+        released = frozenset(
+            n for p in stored.parts if p.label == sp.RECAP for n in range(p.first, p.last + 1)
+        )
+        play = sp.Split(
+            tuple(sp.Part(sp.PLAY if p.label == sp.RECAP else p.label, p.first, p.last)
+                  for p in stored.parts),
+            False,
+            "dm",
+        )  # fmt: skip
+        async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "UPDATE transcript_sessions SET recap_split = %s::jsonb WHERE id = %s",
+                (json.dumps(play.to_json()), session_id),
+            )
+            await conn.execute(
+                "UPDATE transcript_lines l SET reread = TRUE FROM ("
+                " SELECT id, row_number() OVER (ORDER BY started_ms, id) AS n"
+                " FROM transcript_lines WHERE session_id = %s) x"
+                " WHERE l.id = x.id AND x.n = ANY(%s)",
+                (session_id, sorted(released)),
+            )
+        return released
+
     async def extractor_calls_since(self, guild_id: int, campaign_id: str, since: int) -> int:
         """AI calls the extractor made for this campaign in sessions it last ran in since
         `since` (a Unix time): the daily ceiling's count (#1367). A session counts in full at

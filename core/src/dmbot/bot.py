@@ -10596,6 +10596,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         if self.transcripts is None:
             return frozenset()
         if self.session_splitter is not None and await self.transcripts.is_import(gid, sid):
+            # (a split that is not kept, a doubt or the code's guess, is used for this read only
+            # and made again by the next one: bounded, and every try falls back to all play)
             session = await self.transcripts.session(gid, sid)
             if session is not None:
                 await self.session_splitter.split_for(
@@ -10617,9 +10619,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         session = await self.transcripts.session(gid, sid)
         if session is None or session.campaign_id != cid:
             return 0
-        released = await self.transcripts.undo_session_split(gid, sid)
-        queued = await self.transcripts.put_back_numbers(gid, sid, released)
-        if queued:
+        released = await self.transcripts.release_recap_lines(gid, sid)  # one transaction
+        if released:
             await self.read_put_back_lines(gid)
         return len(released)
 

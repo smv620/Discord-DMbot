@@ -4,6 +4,7 @@ only, the DM checked on every press, the lines handed back. Real Postgres, fake 
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 from dmbot.recaps import split as sp
@@ -85,3 +86,39 @@ class TheUndo(Base):
         item = rl.RecapLinesUndoButton("a" * 32, "b" * 32)
         self.assertEqual(item.item.custom_id, f"dmbot:recaplines:undo:{'a' * 32}:{'b' * 32}")
         self.assertLessEqual(len(item.item.custom_id or ""), 100)
+
+    async def test_release_hands_back_and_queues_in_one_step_and_a_second_press_finds_none(
+        self,
+    ) -> None:
+        released = await self.lines.release_recap_lines(self.g, self.sid)
+        self.assertEqual(released, frozenset({2, 3}))
+        stored = sp.from_json(await self.lines.session_split(self.g, self.sid))
+        assert stored is not None
+        self.assertEqual((stored.has(sp.RECAP), stored.method), (False, "dm"))
+        async with self.db.guild(self.g) as conn:
+            cur = await conn.execute(
+                "SELECT count(*) AS n FROM transcript_lines WHERE session_id = %s AND reread",
+                (self.sid,),
+            )
+            row = await cur.fetchone()
+        assert row is not None
+        self.assertEqual(row["n"], 2)
+        self.assertEqual(await self.lines.release_recap_lines(self.g, self.sid), frozenset())
+
+    async def test_the_bots_undo_checks_the_campaign_and_reads_only_what_was_released(self) -> None:
+        from dmbot.bot import DMBot
+
+        reads: list[int] = []
+
+        async def read(gid: int) -> None:
+            reads.append(gid)
+
+        me: Any = SimpleNamespace(transcripts=self.lines, read_put_back_lines=read)
+        undo: Any = DMBot.undo_recap_lines
+        self.assertEqual(await undo(me, self.g, "f" * 32, self.sid), 0)  # another campaign's
+        self.assertEqual(await undo(me, self.g, self.c, "e" * 32), 0)  # no such session
+        self.assertEqual(reads, [])
+        self.assertEqual(await undo(me, self.g, self.c, self.sid), 2)
+        self.assertEqual(reads, [self.g])
+        self.assertEqual(await undo(me, self.g, self.c, self.sid), 0)  # nothing left: no sweep
+        self.assertEqual(reads, [self.g])
