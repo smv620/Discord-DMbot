@@ -14,6 +14,12 @@ from tests.test_web_relationships import Web
 
 
 class RankInputs(Web):
+    @staticmethod
+    def joined(got: dict[str, Any]) -> set[tuple[str, frozenset[str]]]:
+        """The connections as (kind, the two ends): a tie that reads the same both ways is stored in one
+        fixed direction, so the tests do not depend on which."""
+        return {(str(p), frozenset({str(s), str(o)})) for s, o, p in got["relations"]}
+
     async def read(self, who: Any = None) -> dict[str, Any]:
         return await rank_inputs.read_rank_inputs(self.web, who or self.session, self.cref)
 
@@ -25,8 +31,7 @@ class RankInputs(Web):
         self.assertIn(self.rook, ids)
         self.assertEqual(ids[self.rook]["role"], "player_character")
         self.assertEqual(set(ids[self.rook]), {"id", "type", "role", "status", "mergedInto"})
-        pairs = {(s, o, p) for s, o, p in got["relations"]}
-        self.assertIn((self.mira, self.rook, "ally_of"), pairs)
+        self.assertIn(("ally_of", frozenset({self.mira, self.rook})), self.joined(got))
         self.assertFalse(got["limited"])
         self.assertEqual(
             set(got), {"status", "limited", "entities", "relations", "assessed", "heard"}
@@ -65,9 +70,9 @@ class RankInputs(Web):
                 (self.g, self.links["mira-keep"]),
             )
         got = await self.read()
-        pairs = {(s, o, p) for s, o, p in got["relations"]}
-        self.assertNotIn((self.mira, self.keep, "knows"), pairs)
-        self.assertIn((self.mira, self.rook, "ally_of"), pairs)
+        joined = self.joined(got)
+        self.assertNotIn(("knows", frozenset({self.mira, self.keep})), joined)
+        self.assertIn(("ally_of", frozenset({self.mira, self.rook})), joined)
 
     async def test_an_outsider_and_another_campaign_are_not_found(self) -> None:
         outsider = await self.signed(BOB, QUILLON)
