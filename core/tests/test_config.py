@@ -157,6 +157,12 @@ class PlanChecksSetting(unittest.TestCase):
         with self.assertRaisesRegex(ConfigError, "DMBOT_THEATRE_ON must be 1"):
             load_settings({**BASE, "DMBOT_THEATRE_ON": "maybe"})
 
+    def test_relationship_reader_switch_is_off_by_default(self) -> None:
+        self.assertFalse(load_settings(BASE).rel_read_on)
+        self.assertTrue(load_settings({**BASE, "DMBOT_REL_READ_ON": "1"}).rel_read_on)
+        with self.assertRaisesRegex(ConfigError, "DMBOT_REL_READ_ON must be 1"):
+            load_settings({**BASE, "DMBOT_REL_READ_ON": "maybe"})
+
     def test_grading_contradictions_is_off_unless_asked(self) -> None:
         self.assertFalse(load_settings(BASE).story_contradictions_on)
         self.assertTrue(
