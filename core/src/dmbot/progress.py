@@ -64,6 +64,11 @@ STALL_AFTER_S: Final[Mapping[str, int | None]] = {
     "recap_finishing": 10 * 60,
     # The audio being made on the recap page (#2630): a part of the voice, the music call (up to
     # 7 minutes), the mix.
+    # The posting half of a recap (#3355): the checks made again before it goes out, the send, and
+    # the narration made before it (a part of the voice, the music, the mix).
+    "posting_check": 5 * 60,
+    "posting_post": 5 * 60,
+    "posting_audio": 15 * 60,
     "audio_voice": 10 * 60,
     "audio_music": 15 * 60,
     "audio_mix": 10 * 60,

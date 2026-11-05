@@ -85,6 +85,58 @@ def reason_of(row: Mapping[str, Any]) -> str | None:
     return REASONS.get(str(row["last_error"]), progress.RECAP_FAILED_REASON)
 
 
+# Why a post that was sent back as a draft was refused (#3355): the sentence the DM reads (kept in
+# `last_error` by `RecapStore.back_to_draft`) and the code the page puts into words. One place, so
+# the bot's sentences and the page's codes can never drift apart.
+POST_NOTES: Final[Mapping[str, str]] = {
+    "plan": (
+        "Your plan doesn't include recaps right now, so nothing was posted. Your draft is saved."
+    ),
+    "no_table_chat": (
+        "DMbot has no table chat to post in yet: start a session in a voice channel, or "
+        "pick a chat channel in ⚙️ Manage DMbot. Then press Post."
+    ),
+    "cannot_check_secrets": "DMbot couldn't check your secret names just now. Try Post again.",
+    "secret_name": "It names something you keep secret. Change the text, then post.",
+    "player_stopped": (
+        "A player stopped being recorded since this was written, so it can't be posted. "
+        "Write a new recap, or leave this one out."
+    ),
+    "send_failed": (
+        "DMbot couldn't write in the table's chat. Check it can post there, then press Post again."
+    ),
+    "post_failed": "Couldn't post it. Try Post again.",
+}
+_POST_CODES: Final[Mapping[str, str]] = {v: k for k, v in POST_NOTES.items()}
+_POSTING_STAGES: Final[Mapping[str, str]] = {
+    "check": "posting_check",
+    "post": "posting_post",
+    "audio": "posting_audio",
+}
+
+
+def posting_of(row: Mapping[str, Any], *, now: int) -> dict[str, Any] | None:
+    """The posting half of a recap in the shared shape (#3355): while it goes out or its audio is
+    made, the step (`posting_check` / `posting_post` / `posting_audio`), when it began (the posting
+    clock's `posting_since`) and when it last moved (`updated_at`, stamped by every step); when a
+    post was refused and the recap is a draft again, `failed` with the refusal's code. None
+    otherwise. Times and codes only: never the sentence."""
+    since = int(row.get("posting_since") or 0)
+    step = row.get("posting_step")
+    if since and step in _POSTING_STAGES:
+        return progress.shape(
+            _POSTING_STAGES[str(step)],
+            started_at=since,
+            updated_at=max(int(row.get("updated_at") or 0), since),
+            now=now,
+        )
+    code = _POST_CODES.get(str(row.get("last_error") or ""))
+    if row["status"] == "draft" and code is not None:
+        moved = int(row.get("updated_at") or 0) or int(row["created_at"])
+        return progress.shape("failed", started_at=moved, updated_at=moved, now=now, reason=code)
+    return None
+
+
 def of(row: Mapping[str, Any], *, now: int) -> dict[str, Any] | None:
     """The progress object for the recap view: None once the recap is posted or dropped."""
     if row["status"] != "draft":

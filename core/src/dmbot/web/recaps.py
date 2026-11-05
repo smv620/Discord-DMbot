@@ -298,6 +298,10 @@ def _view(row: dict[str, Any]) -> dict[str, Any]:
         # it last moved, and `state` (running, stalled, failed or done); a failure is a fixed code
         # in `reason`. Counts and codes only. Null once the recap is posted or dropped.
         "progress": recap_progress.of(row, now=now),
+        # The posting half (#3355): the step it is on (while it goes out or its audio is made),
+        # when it began and last moved, whether it has stalled; or `failed` with a code when a
+        # post was refused and the recap is a draft again. Null otherwise. Counts and codes only.
+        "postingProgress": recap_progress.posting_of(row, now=now),
         "canTryAgain": status == "draft"
         and state in ("ready", "failed")
         and row["tries"] < MAX_TRIES,

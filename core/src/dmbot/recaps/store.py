@@ -507,12 +507,14 @@ class RecapStore:
                 # (the database's own clock, as the trigger uses, so the two never differ)
                 " posting_since = COALESCE(posting_since,"
                 " floor(extract(epoch FROM clock_timestamp()))::BIGINT)"
+                ", updated_at = %s"
                 " WHERE guild_id = %s AND campaign_id = %s"
                 f" AND session_at = %s AND leased_to <= %s AND {AUDIO_DUE_WHERE}"
                 " AND NOT EXISTS (SELECT 1 FROM recap_jobs r2 WHERE r2.guild_id = %s"
                 "   AND r2.campaign_id = %s AND r2.leased_to > %s)",
                 (
                     now + AUDIO_LEASE_S,
+                    now,  # updated_at: the narration's first move
                     guild_id,
                     campaign_id,
                     session_at,
@@ -1232,9 +1234,10 @@ class RecapStore:
             raise ValueError(step)
         async with self._db.guild(guild_id) as conn:
             await conn.execute(
-                "UPDATE recap_jobs SET posting_step = %s WHERE guild_id = %s AND campaign_id = %s"
-                " AND session_at = %s AND status = 'posting' AND posting_step IS NOT NULL",
-                (step, guild_id, campaign_id, session_at),
+                "UPDATE recap_jobs SET posting_step = %s, updated_at = %s WHERE guild_id = %s"
+                " AND campaign_id = %s AND session_at = %s AND status = 'posting'"
+                " AND posting_step IS NOT NULL",
+                (step, int(self._now()), guild_id, campaign_id, session_at),
             )
 
     async def decide(
@@ -1372,10 +1375,10 @@ class RecapStore:
         on the page."""
         async with self._db.guild(guild_id) as conn:
             await conn.execute(
-                "UPDATE recap_jobs SET status = 'draft', decided_at = NULL, last_error = %s"
-                " WHERE guild_id = %s AND campaign_id = %s AND session_at = %s"
+                "UPDATE recap_jobs SET status = 'draft', decided_at = NULL, last_error = %s,"
+                " updated_at = %s WHERE guild_id = %s AND campaign_id = %s AND session_at = %s"
                 " AND status = 'posting'",
-                (note[:200], guild_id, campaign_id, session_at),
+                (note[:200], int(self._now()), guild_id, campaign_id, session_at),
             )
 
     async def address(self, guild_id: int, user_id: int) -> str | None:
