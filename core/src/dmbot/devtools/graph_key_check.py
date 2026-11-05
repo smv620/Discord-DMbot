@@ -280,17 +280,16 @@ def _row_ok(
     elif rel == "in":
         ok = pred == "located_in" and forward and not place_words.way_of(detail)
         why = "wrong place word" if pred == "located_in" else ""
-    elif rel in PLACE_SLOTS:
-        if pred == "located_in" and forward:
-            word, past = PLACE_SLOTS[rel]
-            want_past = past or not current
-            # one subject at a time: a name that resolves to several entries is right if any is
-            ok = any(
-                (slot := _slot(detail, kinds.get(sid, "")))[0] == word
-                and (slot[1] or ended) == want_past
-                for sid in subjects
-            )
-            why = "wrong place word"
+    elif rel in PLACE_SLOTS and pred == "located_in" and forward:
+        word, past = PLACE_SLOTS[rel]
+        want_past = past or not current
+        # one subject at a time: a name that resolves to several entries is right if any is
+        ok = any(
+            (slot := _slot(detail, kinds.get(sid, "")))[0] == word
+            and (slot[1] or ended) == want_past
+            for sid in subjects
+        )
+        why = "wrong place word"
     if ok and not current and rel not in PLACE_SLOTS and not ended and not _past_word(detail):
         ok, why = False, "should be history"
     return ok, why
