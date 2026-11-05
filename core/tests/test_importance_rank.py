@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import unittest
-from typing import Any, cast
+from typing import Any, ClassVar, cast
 
 from dmbot.memory import importance_rank as ir
 from dmbot.memory.importance_backup import ImportanceSection
@@ -392,3 +392,49 @@ class TheFloorsInTheStore(Base):
             )  # fmt: skip
         ranks = await self.ranks()
         self.assertEqual(ranks[self.ashmere], ir.MINOR)  # four places in it
+
+
+class ThePurePart(unittest.TestCase):
+    """The website hands over only counted facts; the same functions the bot's reader uses turn
+    them into ranks (#3236), so the two cannot disagree. Invented ids."""
+
+    ENTITIES: ClassVar[dict[str, dict[str, object]]] = {
+        "pc": {"type": "character", "role": "player_character", "status": "confirmed",
+               "merged_into": None},
+        "friend": {"type": "character", "role": "npc", "status": "confirmed", "merged_into": None},
+        "old": {"type": "character", "role": "npc", "status": "merged", "merged_into": "friend"},
+        "town": {"type": "place", "role": None, "status": "confirmed", "merged_into": None},
+    }  # fmt: skip
+
+    def test_a_player_character_is_five_and_a_companion_is_at_least_significant(self) -> None:
+        ended = ir.roots(self.ENTITIES)
+        links, companions = ir.links_from(
+            [("friend", "pc", ir.COMPANION_PREDICATE)], self.ENTITIES, ended
+        )
+        out = ir.ranks_from(self.ENTITIES, ended, {}, {}, links, companions)
+        self.assertEqual(out["pc"], ir.PLAYER)
+        self.assertGreaterEqual(out["friend"], ir.COMPANION_FLOOR)
+        self.assertNotIn("old", out)
+
+    def test_a_merged_names_sessions_and_assessment_count_for_the_survivor(self) -> None:
+        ended = ir.roots(self.ENTITIES)
+        heard = {"old": {1}, "friend": {2}}
+        group = ir.newest_by_group(ended, {"old": (5, 4)})
+        out = ir.ranks_from(self.ENTITIES, ended, group, heard, {}, ())
+        self.assertEqual(out["friend"], 4)  # (the older twin's assessment stands for it)
+        self.assertEqual(
+            ir.ranks_from(self.ENTITIES, ended, {}, heard, {}, ())["friend"],
+            ir.RECURRING,  # (two sessions across the merge)
+        )
+
+    def test_a_pair_counts_once_and_an_unconfirmed_end_counts_for_nothing(self) -> None:
+        ghost: dict[str, object] = {
+            "type": "character", "role": "npc", "status": "proposed", "merged_into": None
+        }  # fmt: skip
+        entities: dict[str, dict[str, object]] = {**self.ENTITIES, "ghost": ghost}
+        ended = ir.roots(entities)
+        links, _ = ir.links_from(
+            [("friend", "town", "lives_in"), ("town", "friend", "ruled_by"),
+             ("friend", "ghost", "knows")], entities, ended
+        )  # fmt: skip
+        self.assertEqual(links, {"friend": 1, "town": 1})
