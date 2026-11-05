@@ -679,10 +679,14 @@ class CampaignStore:
             current = await self._require(conn, guild_id, campaign_id, lock=True)
             if user_id not in current.dm_user_ids and len(current.dm_user_ids) >= MAX_DMS:
                 raise CampaignError(TOO_MANY_DMS)
+            # One statement: the row is added and, only if it was new, the story's number moves
+            # (who the DMs are changes what a viewer sees, #3294).
             await conn.execute(
-                "INSERT INTO campaign_dms (campaign_id, guild_id, user_id) VALUES (%s, %s, %s)"
-                " ON CONFLICT DO NOTHING",
-                (campaign_id, guild_id, user_id),
+                "WITH added AS (INSERT INTO campaign_dms (campaign_id, guild_id, user_id)"
+                " VALUES (%s, %s, %s) ON CONFLICT DO NOTHING RETURNING 1)"
+                " UPDATE campaigns SET memory_version = memory_version + 1"
+                " WHERE guild_id = %s AND id = %s AND EXISTS (SELECT 1 FROM added)",
+                (campaign_id, guild_id, user_id, guild_id, campaign_id),
             )
             # (no read after: the locked row cannot change under this transaction)
             return dataclasses.replace(current, dm_user_ids=current.dm_user_ids | {user_id})
@@ -696,9 +700,11 @@ class CampaignStore:
             if user_id in campaign.dm_user_ids and len(campaign.dm_user_ids) == 1:
                 raise CampaignError(LAST_DM)
             await conn.execute(
-                "DELETE FROM campaign_dms"
-                " WHERE guild_id = %s AND campaign_id = %s AND user_id = %s",
-                (guild_id, campaign_id, user_id),
+                "WITH gone AS (DELETE FROM campaign_dms"
+                " WHERE guild_id = %s AND campaign_id = %s AND user_id = %s RETURNING 1)"
+                " UPDATE campaigns SET memory_version = memory_version + 1"
+                " WHERE guild_id = %s AND id = %s AND EXISTS (SELECT 1 FROM gone)",
+                (guild_id, campaign_id, user_id, guild_id, campaign_id),
             )
             return dataclasses.replace(campaign, dm_user_ids=campaign.dm_user_ids - {user_id})
 
