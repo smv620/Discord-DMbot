@@ -11,7 +11,7 @@ import type { AccountApi, WebGraph, WebLinkChange } from "../src/account/api";
 import { ApiError } from "../src/account/api";
 import { mockApi } from "../src/account/mock";
 import Web from "../src/account/Web";
-import { companionEnd } from "../src/account/webLines";
+import { companionEnd } from "../src/account/AddLink";
 import { webPage as w } from "../src/content/web-words";
 
 afterEach(cleanup);
@@ -33,6 +33,7 @@ const graph = (kindA: string, kindB: string, canEdit = true): WebGraph => ({
 function pageWith(g: WebGraph, changes: WebLinkChange[], fail?: ApiError): AccountApi {
   const api = mockApi("table");
   api.webGraph = async () => g;
+  (api as unknown as { canEdit: boolean }).canEdit = g.canEdit;
   api.webSize = async () => ({ names: 2 });
   api.changeWebLink = async (_ref, change) => {
     changes.push(change);
@@ -42,11 +43,16 @@ function pageWith(g: WebGraph, changes: WebLinkChange[], fail?: ApiError): Accou
   return api;
 }
 
+const graphCanEdit = (api: AccountApi): boolean => (api as unknown as { canEdit?: boolean }).canEdit !== false;
+
 async function openPanel(api: AccountApi): Promise<HTMLElement> {
   render(<Web api={api} path="/account/web/100.cmp1" />);
   await screen.findByText(/names?, \d+ lines?/);
   fireEvent.click(screen.getAllByRole("button", { name: /^See the connections between/ })[0] as HTMLElement);
-  return (await screen.findByRole("heading", { level: 2, name: /.+ and .+/ })).closest("section") as HTMLElement;
+  const panel = (await screen.findByRole("heading", { level: 2, name: /.+ and .+/ })).closest("section") as HTMLElement;
+  // The form is its own file, fetched when a DM opens a line (the page-weight budget): wait for it, unless it is not there
+  if (graphCanEdit(api)) await within(panel).findByRole("button", { name: w.addButton });
+  return panel;
 }
 
 describe("which end is the companion", () => {

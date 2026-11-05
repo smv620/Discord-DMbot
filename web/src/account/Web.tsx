@@ -33,7 +33,7 @@ import { WEB_READINGS_LIVE } from "../content/web-readings";
 import { WEB_WAITING_LIVE } from "../content/web-waiting";
 import { clampHops } from "./webLayout";
 import { readAuto, saveAuto } from "./webPrefs";
-import { companionEnd, listLines, type WebLine } from "./webLines";
+import { listLines, type WebLine } from "./webLines";
 import CampaignNav from "./CampaignNav";
 import { npcPageHref } from "./webNodes";
 
@@ -1158,7 +1158,9 @@ function LinePanel({
           </div>
         )}
       </div>
-      {canEdit && <AddLink edge={edge} kindOf={kindOf} nameOf={nameOf} act={act} />}
+      {canEdit && (
+        <LazyPanel key={`add-${edge.a}|${edge.b}`} load={() => import("./AddLink")} what="the form to add a connection" props={{ edge, kindOf, nameOf, act }} />
+      )}
       <button type="button" class="button secondary" onClick={onClose}>
         {words.close}
       </button>
@@ -1472,78 +1474,6 @@ function LinkRow({
         </div>
       )}
     </li>
-  );
-}
-
-function AddLink({
-  edge,
-  kindOf,
-  nameOf,
-  act,
-}: {
-  edge: WebEdge;
-  kindOf: (id: string) => string;
-  nameOf: (id: string) => string;
-  act: (change: WebLinkChange, ok: string, own?: Partial<Record<string, string>>) => Promise<string | null>;
-}) {
-  const [text, setText] = useState("");
-  const [secret, setSecret] = useState(false);
-  const [problem, setProblem] = useState<string | null>(null);
-  // "Travels with" (#3505): which end is the companion, when the pair can be one at all.
-  const companion = companionEnd(kindOf(edge.a), kindOf(edge.b));
-  const travels = text.trim().toLowerCase() === words.travelsWithWords;
-  return (
-    <form
-      class="stack"
-      noValidate
-      onSubmit={async (e) => {
-        e.preventDefault();
-        if (travels && companion === null) return setProblem(words.travelsWithNo);
-        // The companion is the connection's first name: "Cerric travels with Rook", never the other way round.
-        const [first, second] = travels && companion === "b" ? [edge.b, edge.a] : [edge.a, edge.b];
-        // Only the store's rule saying no (`bad-target`) gets the companion words; every other failure is worded as usual.
-        const said = await act(
-          { action: "add", a: first, b: second, words: text, secret },
-          words.added,
-          travels ? { "bad-target": words.travelsWithRefused } : undefined,
-        );
-        setProblem(said);
-        if (said === null) {
-          setText("");
-          setSecret(false);
-        }
-      }}
-    >
-      <h3 class="small">{words.addHeading}</h3>
-      <label class="field">
-        {words.addWords}
-        <input type="text" value={text} maxLength={100} onInput={(e) => setText((e.target as HTMLInputElement).value)} />
-      </label>
-      {companion !== null && (
-        <p class="row">
-          <button type="button" class="button secondary" aria-pressed={travels} onClick={() => setText(words.travelsWithWords)}>
-            {words.travelsWithPick}
-          </button>
-          {travels && (
-            <span class="small muted">
-              {words.travelsWithHint(nameOf(companion === "a" ? edge.a : edge.b), nameOf(companion === "a" ? edge.b : edge.a))}
-            </span>
-          )}
-        </p>
-      )}
-      <label class="choice">
-        <input type="checkbox" checked={secret} onChange={(e) => setSecret((e.target as HTMLInputElement).checked)} />
-        <span>{words.addSecret}</span>
-      </label>
-      <button type="submit" class="button">
-        {words.addButton}
-      </button>
-      {problem && (
-        <p class="warn" role="alert">
-          {problem}
-        </p>
-      )}
-    </form>
   );
 }
 
