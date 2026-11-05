@@ -105,6 +105,8 @@ class Settings:
     # every "him" and "it" resolved in brackets. Off until dev1's measured run; with it off nothing
     # is asked of the AI and the session is exactly as it was.
     theatre_on: bool = False
+    # The relationship reader beside the old one (#3244), on the test server only.
+    rel_read_on: bool = False
     # After a session, PlotBot grades the contradictions one point of view holds (#2660), major or
     # minor, and the grades are kept for the DM. Off until the extractor is; it runs inside the
     # extractor's plan check and call limits (at most a few calls a session).
@@ -357,6 +359,11 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     theatre_raw = (get("DMBOT_THEATRE_ON") or "0").lower()
     if theatre_raw not in ("0", "1", "true", "on", "false", "off"):
         raise ConfigError('DMBOT_THEATRE_ON must be 1 (on) or 0 (off), got "' + theatre_raw + '".')
+    rel_read_raw = (get("DMBOT_REL_READ_ON") or "0").lower()
+    if rel_read_raw not in ("0", "1", "true", "on", "false", "off"):
+        raise ConfigError(
+            'DMBOT_REL_READ_ON must be 1 (on) or 0 (off), got "' + rel_read_raw + '".'
+        )
     readings_raw = (get("DMBOT_STORY_READINGS") or "0").lower()
     if readings_raw not in ("0", "1", "true", "on", "false", "off"):
         raise ConfigError(
@@ -540,6 +547,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         story_readings_on=readings_raw in ("1", "true", "on"),
         story_family_only=family_raw in ("1", "true", "on"),
         theatre_on=theatre_raw in ("1", "true", "on"),
+        rel_read_on=rel_read_raw in ("1", "true", "on"),
         story_contradictions_on=contradictions_raw in ("1", "true", "on"),
         story_report_on=report_raw in ("1", "true", "on"),
         table_images_on=images_raw in ("1", "true", "on"),

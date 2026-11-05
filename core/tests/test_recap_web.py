@@ -510,6 +510,32 @@ class TheDmsPage(Base):
         listed = await list_recaps(self.web, self.session)
         self.assertTrue(all("serverNow" in r for r in listed))
 
+    async def test_the_recap_view_carries_the_posting_progress_and_a_refusal_clears_on_an_edit(
+        self,
+    ) -> None:
+        """#3355: `postingProgress` is null with nothing under way, `posting_check` while a post
+        waits for the bot, and `failed` with a code (never the sentence) after a refusal; editing
+        the text or pressing Post again clears an old refusal."""
+        from dmbot.recaps import progress as rp
+
+        await self.speaker_agreed()
+        self.assertIsNone((await read_recap(self.web, self.session, self.ref))["postingProgress"])
+        posting = await decide(self.web, self.session, self.ref, "post")
+        self.assertEqual(posting["postingProgress"]["stage"], "posting_check")
+        self.assertEqual(posting["postingProgress"]["state"], "running")
+        async with self.db.guild(THURSDAY.id) as conn:  # the bot refused it
+            await conn.execute(
+                "UPDATE recap_jobs SET status = 'draft', last_error = %s",
+                (rp.POST_NOTES["secret_name"],),
+            )
+        refused = (await read_recap(self.web, self.session, self.ref))["postingProgress"]
+        self.assertEqual((refused["state"], refused["reason"]), ("failed", "secret_name"))
+        self.assertNotIn(rp.POST_NOTES["secret_name"], str(refused))
+        edited = await edit_recap(
+            self.web, self.session, self.ref, summary="A new line.", housekeeping=[]
+        )
+        self.assertIsNone(edited["postingProgress"])  # an edit clears the old refusal
+
     async def test_the_recap_view_carries_progress_for_a_recap_being_made_and_not_after(
         self,
     ) -> None:
@@ -626,11 +652,18 @@ class TheDmsPage(Base):
             await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(THURSDAY.id),))
             for column in (
                 "leased_to", "decided_at", "updated_at", "attempt", "errors", "next_at",
-                "beats", "problems", "last_error", "restarts",
+                "beats", "problems", "restarts",
             ):  # fmt: skip
                 with self.assertRaises(psycopg.errors.InsufficientPrivilege):
                     async with conn.transaction():
                         await conn.execute(f"UPDATE recap_jobs SET {column} = {column}")
+
+    async def test_the_website_may_clear_a_refusal_but_nothing_else_of_the_workers(self) -> None:
+        """#3355: `last_error` is writable only so an edit or a new Post can blank the old
+        "couldn't post" sentence; the lease columns above stay the worker's."""
+        async with self.web.user(ALICE.id, session=self.session.id_hash) as conn:
+            await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(THURSDAY.id),))
+            await conn.execute("UPDATE recap_jobs SET last_error = last_error")
 
     async def test_the_website_cannot_write_the_bots_columns(self) -> None:
         async with self.web.user(ALICE.id, session=self.session.id_hash) as conn:

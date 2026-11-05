@@ -1296,6 +1296,74 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
     return found;
   };
 
+  // The choice's answer without its progress (#3355): the long body `campaignSettingAnswer` puts the progress on.
+  const settingAnswerBase = async (ref: string, answer: string): Promise<CampaignSettingAnswer> => {
+      calls.push(`campaignSettingAnswer:${ref}:${answer}`);
+      await reachable();
+      signedIn();
+      const asked = settingAnswers.get(answer);
+      if (!asked || asked.ref !== ref) throw new ApiError("not-found");
+      const base = { setting: asked.setting, value: asked.value, note: "", error: "" };
+      if (/\.cs-(offline|stalled)$/.test(ref)) return { ...base, state: "waiting" };
+      // `.cs-late`: the bot answers on the 40th look, long after the page gave up waiting live.
+      if (/\.cs-late$/.test(ref) && (lateLooks.set(answer, (lateLooks.get(answer) ?? 0) + 1).get(answer) ?? 0) < 40)
+        return { ...base, state: "waiting" };
+      if (/\.cs-refused$/.test(ref)) return { ...base, state: "failed", error: "refused", note: "That limit is **not** allowed." };
+      if (
+        /\.cs-failed$/.test(ref) ||
+        (asked.setting === "optional_rule" && /\.or-failed$/.test(ref)) ||
+        (asked.setting === "co_dm" && /\.gm-failed$/.test(ref))
+      )
+        return { ...base, state: "failed", error: "failed" };
+      if (asked.setting === "co_dm") {
+        const list = gameMastersOf(ref);
+        const person = list.find((g) => g.userId === asked.value);
+        if (asked.on === true) {
+          const member = PRETEND_MEMBERS.find((m) => m.userId === asked.value);
+          if (person) return { ...base, state: "failed", error: "refused", note: `**${person.name}** is already a game master.` };
+          if (!member) return { ...base, state: "failed", error: "bad_value" };
+          if (list.length >= GAME_MASTERS_MAX)
+            return { ...base, state: "failed", error: "refused", note: `A campaign can have at most ${GAME_MASTERS_MAX} game masters. Remove one before adding another.` };
+          list.push({ userId: member.userId, name: member.name, plan: false, you: false });
+          return { ...base, state: "done", note: `**${member.name}** is now a game master.` };
+        }
+        if (!person) return { ...base, state: "failed", error: "refused", note: "They aren't a game master any more." };
+        if (person.plan)
+          return { ...base, state: "failed", error: "refused", note: `**${person.name}** holds this campaign's plan, so they can't be removed.` };
+        list.splice(list.indexOf(person), 1);
+        return { ...base, state: "done", note: `**${person.name}** is no longer a game master.` };
+      }
+      if (asked.setting === "pause") {
+        if (/\.pa-noroom$/.test(ref) && asked.on === false)
+          return { ...base, state: "failed", error: "refused", note: "You have no free place on your plan. Pause another campaign first." };
+        return { ...base, state: "done", note: asked.on ? "Paused." : "Unpaused." };
+      }
+      if (asked.setting === "rulesets") {
+        if (/\.rs-refused$/.test(ref)) return { ...base, state: "failed", error: "refused", note: "**Your plan** can't change the `rules`." };
+        return { ...base, state: "done", note: "" };
+      }
+      if (asked.setting === "dndbeyond_invite") {
+        if (/\.di-refused$/.test(ref)) return { ...base, state: "failed", error: "refused", note: "**Your plan** doesn't allow a `join` button." };
+        return { ...base, state: "done", note: "" };
+      }
+      if (asked.setting === "story_mode") {
+        if (/\.sm-refused$/.test(ref)) return { ...base, state: "failed", error: "refused", note: "**Shared story** needs a `confirmation`." };
+        return { ...base, state: "done", note: "" };
+      }
+      if (asked.setting === "optional_rule") {
+        const rule = PRETEND_RULES.find((r) => r.id === asked.value);
+        if (!rule) return { ...base, state: "failed", error: "bad_value" };
+        const mine = ruleChoices.get(ref) ?? new Map<string, boolean>();
+        mine.set(rule.id, asked.on === true);
+        ruleChoices.set(ref, mine);
+        return { ...base, state: "done", note: `${rule.name} is now ${asked.on ? "on" : "off"}.` };
+      }
+      if (asked.setting === "retention" && asked.value === "30" && asked.confirm !== true)
+        return { ...base, state: "failed", error: "needs_confirm" };
+      const note =
+        asked.setting === "retention" ? `Saved. Sessions older than ${asked.value} days are deleted every night.` : "";
+      return { ...base, state: "done", note };
+    };
   return {
     calls,
     async recaps() {
@@ -1590,6 +1658,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
           canTryAgain: false,
           postingSince: now,
           postingStep: "check",
+          postingProgress: { stage: "posting_check", startedAt: now, updatedAt: now, serverNow: now, state: "running" },
           serverNow: now,
         });
       }
@@ -2466,71 +2535,23 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       return PRETEND_MEMBERS.filter((m) => !have.has(m.userId) && (q === "" || m.name.toLowerCase().includes(q)));
     },
     async campaignSettingAnswer(ref, answer): Promise<CampaignSettingAnswer> {
-      calls.push(`campaignSettingAnswer:${ref}:${answer}`);
-      await reachable();
-      signedIn();
-      const asked = settingAnswers.get(answer);
-      if (!asked || asked.ref !== ref) throw new ApiError("not-found");
-      const base = { setting: asked.setting, value: asked.value, note: "", error: "" };
-      if (/\.cs-offline$/.test(ref)) return { ...base, state: "waiting" };
-      // `.cs-late`: the bot answers on the 40th look, long after the page gave up waiting live.
-      if (/\.cs-late$/.test(ref) && (lateLooks.set(answer, (lateLooks.get(answer) ?? 0) + 1).get(answer) ?? 0) < 40)
-        return { ...base, state: "waiting" };
-      if (/\.cs-refused$/.test(ref)) return { ...base, state: "failed", error: "refused", note: "That limit is **not** allowed." };
-      if (
-        /\.cs-failed$/.test(ref) ||
-        (asked.setting === "optional_rule" && /\.or-failed$/.test(ref)) ||
-        (asked.setting === "co_dm" && /\.gm-failed$/.test(ref))
-      )
-        return { ...base, state: "failed", error: "failed" };
-      if (asked.setting === "co_dm") {
-        const list = gameMastersOf(ref);
-        const person = list.find((g) => g.userId === asked.value);
-        if (asked.on === true) {
-          const member = PRETEND_MEMBERS.find((m) => m.userId === asked.value);
-          if (person) return { ...base, state: "failed", error: "refused", note: `**${person.name}** is already a game master.` };
-          if (!member) return { ...base, state: "failed", error: "bad_value" };
-          if (list.length >= GAME_MASTERS_MAX)
-            return { ...base, state: "failed", error: "refused", note: `A campaign can have at most ${GAME_MASTERS_MAX} game masters. Remove one before adding another.` };
-          list.push({ userId: member.userId, name: member.name, plan: false, you: false });
-          return { ...base, state: "done", note: `**${member.name}** is now a game master.` };
-        }
-        if (!person) return { ...base, state: "failed", error: "refused", note: "They aren't a game master any more." };
-        if (person.plan)
-          return { ...base, state: "failed", error: "refused", note: `**${person.name}** holds this campaign's plan, so they can't be removed.` };
-        list.splice(list.indexOf(person), 1);
-        return { ...base, state: "done", note: `**${person.name}** is no longer a game master.` };
-      }
-      if (asked.setting === "pause") {
-        if (/\.pa-noroom$/.test(ref) && asked.on === false)
-          return { ...base, state: "failed", error: "refused", note: "You have no free place on your plan. Pause another campaign first." };
-        return { ...base, state: "done", note: asked.on ? "Paused." : "Unpaused." };
-      }
-      if (asked.setting === "rulesets") {
-        if (/\.rs-refused$/.test(ref)) return { ...base, state: "failed", error: "refused", note: "**Your plan** can't change the `rules`." };
-        return { ...base, state: "done", note: "" };
-      }
-      if (asked.setting === "dndbeyond_invite") {
-        if (/\.di-refused$/.test(ref)) return { ...base, state: "failed", error: "refused", note: "**Your plan** doesn't allow a `join` button." };
-        return { ...base, state: "done", note: "" };
-      }
-      if (asked.setting === "story_mode") {
-        if (/\.sm-refused$/.test(ref)) return { ...base, state: "failed", error: "refused", note: "**Shared story** needs a `confirmation`." };
-        return { ...base, state: "done", note: "" };
-      }
-      if (asked.setting === "optional_rule") {
-        const rule = PRETEND_RULES.find((r) => r.id === asked.value);
-        if (!rule) return { ...base, state: "failed", error: "bad_value" };
-        const mine = ruleChoices.get(ref) ?? new Map<string, boolean>();
-        mine.set(rule.id, asked.on === true);
-        ruleChoices.set(ref, mine);
-        return { ...base, state: "done", note: `${rule.name} is now ${asked.on ? "on" : "off"}.` };
-      }
-      if (asked.setting === "retention" && asked.value === "30" && asked.confirm !== true)
-        return { ...base, state: "failed", error: "needs_confirm" };
-      const note =
-        asked.setting === "retention" ? `Saved. Sessions older than ${asked.value} days are deleted every night.` : "";
-      return { ...base, state: "done", note };
+      // The shared progress shape (#3355) is put on whatever the pretend bot answered below; `.cs-stalled` is a
+      // choice nobody has taken for ten minutes.
+      const got = await settingAnswerBase(ref, answer);
+      const now = Math.floor(Date.now() / 1000);
+      const stalled = /\.cs-stalled$/.test(ref) && got.state === "waiting";
+      const started = stalled ? now - 600 : now - 3;
+      return {
+        ...got,
+        progress: {
+          stage: got.state === "failed" ? "failed" : got.state,
+          startedAt: started,
+          updatedAt: got.state === "waiting" ? started : now - 1,
+          serverNow: now,
+          state: got.state === "failed" ? "failed" : got.state === "done" ? "done" : stalled ? "stalled" : "running",
+          reason: got.state === "failed" ? got.error || "setting_failed" : null,
+        },
+      };
     },
     // The pretend NPC pages (#2266): entry "gone" is not found; a campaign ending `.npc-outside` is
     // one the person is not in; `.npc-dm` shows a DM's own note.
@@ -3430,6 +3451,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
             canPost: false,
             postingSince: now,
             postingStep: "check",
+            postingProgress: { stage: "posting_check", startedAt: now, updatedAt: now, serverNow: now, state: "running" },
             serverNow: now,
           });
         }

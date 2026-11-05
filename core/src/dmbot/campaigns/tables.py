@@ -105,6 +105,9 @@ NOT_IN_BACKUP: dict[str, str] = {
     "pressing the button again makes it (#3244)",
     "theatre_lines": "the theatrical transcript of a session (DM-only): made from the cleaned "
     "lines by an AI and made again on request, never carries content of its own (#3244)",
+    "rel_ties": "the relationship reader's ties for a session (DM-only, read only by the "
+    "comparison against the old reader): made by an AI from the script and made again on request, "
+    "never carries content of its own (#3244)",
     "web_backups": "a request for a copy for the website and the copy made for it, kept 15 "
     "minutes: a copy of a copy, never content (#2554)",
     "web_backup_parts": "the transcripts files of a website copy, kept with it for 15 minutes: a "

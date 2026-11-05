@@ -9,7 +9,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 
 import { gameMasterWords as w } from "../content/game-masters-words";
 import { stageWords } from "../content/work-progress";
-import { ApiError, type AccountApi, type GameMaster, type GameMasterCandidate, type GameMasters } from "./api";
+import { ApiError, type AccountApi, type GameMaster, type GameMasterCandidate, type GameMasters, type JobProgress } from "./api";
 import { GIVE_UP_MS, LATE_POLL_MS, OFFLINE_AFTER_MS, POLL_MS } from "./settings-timing";
 import { useObservedWait } from "./useObservedWait";
 import WorkProgress from "./WorkProgress";
@@ -20,7 +20,7 @@ type Report = { kind: "saved"; text: string } | { kind: "error"; text: string } 
 
 type Phase =
   | { kind: "asking" } // the remove button was pressed: one confirmation
-  | { kind: "saving"; seen: "waiting" | "working" }
+  | { kind: "saving"; seen: "waiting" | "working"; progress?: JobProgress | null | undefined }
   | { kind: "gaveup" };
 
 const SEARCH_DELAY_MS = 250;
@@ -48,9 +48,10 @@ function Waiting({ phase }: { phase: Phase | undefined }) {
       {phase?.kind === "saving" && seen.startedAt !== null && (
         <WorkProgress
           stage={stageWords(w.stage, phase.seen)}
-          startedAt={seen.startedAt}
-          updatedAt={seen.movedAt}
-          state={seen.quiet ? "stalled" : "running"}
+          startedAt={phase.progress?.startedAt ?? seen.startedAt}
+          updatedAt={phase.progress?.updatedAt ?? seen.movedAt}
+          serverNow={phase.progress?.serverNow}
+          state={phase.progress?.state ?? (seen.quiet ? "stalled" : "running")}
           whatToDo={w.quiet}
         />
       )}
@@ -175,7 +176,7 @@ export default function GameMastersSection({ api, campaignRef }: { api: AccountA
         return fail(botWords(got.error, got.note));
       }
       if (final) return gaveUp(id);
-      phase(id, { kind: "saving", seen: got.state === "working" ? "working" : "waiting" });
+      phase(id, { kind: "saving", seen: got.state === "working" ? "working" : "waiting", progress: got.progress });
     }
   }
 

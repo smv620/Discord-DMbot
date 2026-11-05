@@ -17,6 +17,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from dmbot import progress
 from dmbot.campaigns.invite import parse_invite
 from dmbot.campaigns.models import CampaignError, check_rulesets
 from dmbot.campaigns.store import MAX_DMS
@@ -202,6 +203,25 @@ async def queue_setting(
     return str(got["id"])
 
 
+def _progress(got: dict[str, Any]) -> dict[str, Any]:
+    """How long a choice has waited, in the shared progress shape (#3355). Times only:
+    `createdAt` is when the page queued it (seconds), `claimedAt` when the bot took it (0 before;
+    milliseconds, the queue's own stamp). A waiting choice's last movement is its start; a taken
+    one's is the moment it was taken. A rule the DM can fix (a refusal with a note) is a failure
+    here, with its reason code, so the page can say what to do next."""
+    state = str(got["state"])
+    created = int(got.get("createdAt") or 0)
+    taken = int(got.get("claimedAt") or 0) // 1000
+    stage = {"waiting": "waiting", "working": "working", "done": "done"}.get(state, "failed")
+    return progress.shape(
+        stage,
+        started_at=created,
+        updated_at=taken if state != "waiting" and taken else created,
+        now=int(got.get("now") or created),
+        reason=(str(got.get("error") or "") or "setting_failed") if stage == "failed" else None,
+    )
+
+
 async def read_setting(db: Database, session: Session, ref: str, answer: str) -> dict[str, Any]:
     """Where one of the caller's own choices stands: `state` (waiting, working, done, failed), the
     `error` word when it failed, and `note`, the words Discord would say (for a rule the DM can
@@ -225,4 +245,5 @@ async def read_setting(db: Database, session: Session, ref: str, answer: str) ->
         "setting": got["setting"],
         "value": got["value"],
         "note": got["note"],
+        "progress": _progress(got),
     }
