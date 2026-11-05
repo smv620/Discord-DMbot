@@ -89,7 +89,8 @@ class ThePartyBackfill(NamesTest):
 
     async def test_the_backfill_reads_consent_the_way_the_live_bot_does(self) -> None:
         # Real consent rows, and the bot's outside engine: a yes given for another engine (or for
-        # none) does not count, so that person's character is not linked.
+        # none) does not count, so that person's character does not "know" the others. The party
+        # is who the DM assigned (#3363), so that character is still a member.
         self.consent_patch.stop()
         consent = ConsentStore(self.db)
         await consent.grant(GUILD, 101, outside_to="deepgram")
@@ -99,13 +100,15 @@ class ThePartyBackfill(NamesTest):
         with patch.object(link_party, "load_transcription_settings", return_value=settings):
             totals = await link_party.backfill(self.db, args())
 
-        self.assertEqual(totals.members, 2)
+        self.assertEqual(totals.members, 3)
         rels = await self.memory.relations(GUILD, self.campaign.id, include_secret=True)
         members = {r.subject_id for r in rels if r.predicate == "member_of"}
         entities = await self.memory.entities(GUILD, self.campaign.id)
         tavin = next(e.id for e in entities if e.name == "Tavin")
-        self.assertNotIn(tavin, members)
-        self.assertEqual(len(members), 2)
+        self.assertIn(tavin, members)
+        self.assertEqual(len(members), 3)
+        knowing = {x for r in rels if r.predicate == "knows" for x in (r.subject_id, r.object_id)}
+        self.assertNotIn(tavin, knowing)
 
     async def test_a_campaign_filter_limits_the_run(self) -> None:
         totals = await link_party.backfill(self.db, args(campaign="not-this-one"))
