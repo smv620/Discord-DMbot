@@ -4,6 +4,7 @@ nothing the DM removed comes back. Invented names."""
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from dmbot.memory import party
@@ -69,6 +70,8 @@ class TheParty(NamesTest):
 
     async def test_a_player_with_two_characters_has_only_the_newest_in(self) -> None:
         await self.link(*PLAYERS.values())
+        # (a later second, so "newest" is not decided by the random id of two same-second entries)
+        self.memory._clock = lambda: time.time() + 60
         newer = await self.memory.add_entity(
             GUILD, self.campaign.id, name="Mara the Second", type="character",
             role="player_character", played_by=101, status=CONFIRMED, source="dm",
