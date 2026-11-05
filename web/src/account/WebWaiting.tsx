@@ -64,6 +64,8 @@ export default function WebWaiting({
   const headingRef = useRef<HTMLHeadingElement>(null);
   const shown = useRef(campaignRef);
   const [said, setSaid] = useState<Said>(null);
+  // The claim whose "Which one?" pick can still be taken back (#3463): only the latest pick offers Undo.
+  const [undo, setUndo] = useState<string | null>(null);
   const counter = useRef(0);
   const latest = useRef(0);
   // A second tap before the page redraws must not send a second answer.
@@ -103,6 +105,7 @@ export default function WebWaiting({
   ): Promise<void> {
     if (!api.answerWaiting || inFlight.current) return;
     inFlight.current = true;
+    setUndo(null);
     setSending({ since: Math.floor(Date.now() / 1000), stage, keepAll: answer.action === "keep_all", look: null });
     setSaid(null);
     try {
@@ -170,6 +173,22 @@ export default function WebWaiting({
       <p class={said && !said.ok ? "warn" : "visually-hidden"} role="alert">
         {said && !said.ok ? <span key={said.n}>{said.text}</span> : ""}
       </p>
+      {undo && said?.ok && (
+        <p>
+          <button
+            type="button"
+            class="button secondary"
+            disabled={busy}
+            onClick={() => {
+              const id = undo;
+              setUndo(null);
+              void send({ kind: "claim", action: "unpick", id }, w.tiesUndone);
+            }}
+          >
+            {w.tiesUndo}
+          </button>
+        </p>
+      )}
       {sending && (() => {
         const wait = waitShown(sending);
         return (
@@ -292,11 +311,66 @@ export default function WebWaiting({
         </div>
       )}
 
-      {list.claims.length > 0 && (
+      {list.claims.some((c) => c.choices?.length) && (
+        <div class="stack">
+          <h4>{w.tiesHeading}</h4>
+          <p class="small">{w.tiesNote}</p>
+          {list.claims
+            .filter((c) => c.choices?.length)
+            .map((c) => (
+              <div key={c.id} class="panel">
+                <p id={`wc-${c.id}`}>{c.statement}</p>
+                <p class="small muted">{w.tiesWhy}</p>
+                {typeof c.at === "number" && c.at > 0 && <p class="muted small">{w.saidAt(sessionDay(c.at))}</p>}
+                <p class="small">{w.tiesPickHelp}</p>
+                {c.choices?.map((q) => (
+                  <div key={q.side} class="stack">
+                    <p>
+                      <strong>{w.tiesQuestion(q.words)}</strong>
+                    </p>
+                    <div class="row">
+                      {q.entries.map((e) => (
+                        <button
+                          key={e.id}
+                          type="button"
+                          class="button"
+                          disabled={busy}
+                          aria-describedby={`wc-${c.id}`}
+                          onClick={() =>
+                            void send({ kind: "claim", action: "pick", id: c.id, side: q.side, entity: e.id }, () => {
+                              setUndo(c.id);
+                              return w.done.tiesPick;
+                            })
+                          }
+                        >
+                          {w.tiesPick(e.name, e.tag)}: {e.note || w.tiesNoNote}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+                <div class="row">
+                  <button
+                    type="button"
+                    class="button secondary"
+                    disabled={busy}
+                    aria-describedby={`wc-${c.id}`}
+                    onClick={() => void send({ kind: "claim", action: "reject", id: c.id }, w.done.tiesNeither)}
+                  >
+                    {w.tiesNeither}
+                  </button>
+                </div>
+                <p class="small muted">{w.tiesNeitherHelp}</p>
+              </div>
+            ))}
+        </div>
+      )}
+
+      {list.claims.some((c) => !c.choices?.length) && (
         <div class="stack">
           <h4>{w.claimsHeading}</h4>
           <p class="small">{w.claimsNote}</p>
-          {list.claims.map((c) => (
+          {list.claims.filter((c) => !c.choices?.length).map((c) => (
             <div key={c.id} class="panel">
               <p id={`wc-${c.id}`}>{c.statement}</p>
               {typeof c.at === "number" && c.at > 0 && <p class="muted small">{w.saidAt(sessionDay(c.at))}</p>}

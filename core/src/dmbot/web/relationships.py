@@ -27,7 +27,7 @@ from dmbot.memory.link_kinds import link_kind
 from dmbot.memory.link_words import back_words, link_words, reads_both_ways
 from dmbot.memory.web_actions import RETAKE_AFTER_S
 from dmbot.memory.who_resolve import checked_line
-from dmbot.web import all_names, graph_view
+from dmbot.web import all_names, graph_view, which_choices
 from dmbot.web.names import _parse
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
 from dmbot.web.sessions import Session
@@ -803,10 +803,14 @@ async def queue_edit(db: Database, session: Session, ref: str, link_id: str, bod
 # "backstory" (from the DM's own backstory; actions keep, skip; `secret` is "keep as secret";
 # `keep_all` keeps the ones named in `ids` (at most 50) that are ready now, and no others), or
 # "which" (a "Which Mara?" question, #2652; actions pick, with `entity` the candidate chosen, and
-# neither).
+# neither). A fact kept for "Which one?" (#3463, Family ties) is answered as `claim`: `pick` with
+# `side` ("subject" or "object") and `entity` (the entry chosen), `unpick` (Undo, while it waits),
+# and "None of these" is the ordinary `reject`.
 WAITING_QUEUE = {
     ("claim", "confirm"): "claim-confirm",
     ("claim", "reject"): "claim-reject",
+    ("claim", "pick"): "claim-pick",
+    ("claim", "unpick"): "claim-unpick",
     ("backstory", "keep"): "backstory-keep",
     ("backstory", "skip"): "backstory-skip",
     ("backstory", "keep_all"): "backstory-keep-all",
@@ -852,6 +856,11 @@ async def queue_waiting(db: Database, session: Session, ref: str, body: object) 
         if not ID_PATTERN.match(picked):
             raise RecapError("not_found")
         text = picked
+    if action == "claim-pick":
+        side, entry = body.get("side"), str(body.get("entity") or "")
+        if side not in ("subject", "object") or not ID_PATTERN.match(entry):
+            raise RecapError("not_found")
+        text = f"{side}:{entry}"  # the door checks the shape; the bot checks the choice
     return await _queue(
         db, session, ref, entity="", action=action, target=target, text=text,
         flag=secret and action in ("claim-confirm", "backstory-keep"),
@@ -1113,11 +1122,26 @@ async def read_waiting(
             (guild_id, campaign_id, TERMS_VERSION, outside_engine),
         )
         found = await cur.fetchone()
-    got = found["r"] if found else None
+        got = found["r"] if found else None
+        info = None
+        if got is not None and got.get("status") == "ok" and got["claims"]:
+            # The claims kept for a "Which one?" answer (#3463): the choices come from the
+            # store's own function, run on the facts this door sends for the ids the list showed.
+            ids = [str(c["id"]) for c in got["claims"]][:200]
+            cur = await conn.execute(
+                "SELECT dmbot_web_which_info(%s, %s, %s) AS r", (guild_id, campaign_id, ids)
+            )
+            info = (await cur.fetchone() or {}).get("r")
     if got is None or got.get("status") != "ok":
         raise RecapError("not_found")
+    choices = which_choices.choices_by_claim(info) if info else {}
     claims = [
-        {**c, "statement": _claim_statement(c), "canSecret": _can_be_secret(c)}
+        {
+            **c,
+            "statement": _claim_statement(c),
+            "canSecret": _can_be_secret(c),
+            **({"choices": choices[str(c["id"])]} if str(c["id"]) in choices else {}),
+        }
         for c in got["claims"]
     ]
     backstory = [
