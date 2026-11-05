@@ -185,19 +185,45 @@ class ThePress(unittest.IsolatedAsyncioTestCase):
         await tb.press(interaction, GUILD, SESSION)
         self.assertEqual(self.said(interaction), tb.GONE)
 
-    async def test_a_question_from_before_this_change_starts_nothing(self) -> None:
+    async def test_a_question_from_before_this_change_starts_nothing_and_offers_the_new_one(
+        self,
+    ) -> None:
         from unittest.mock import patch
 
-        interaction = pressed(self.bot(), DM)
+        interaction = pressed(self.bot(lines=300), DM)
         old = tb.OldScriptButton(GUILD, SESSION)
-        with patch.object(tb, "run", AsyncMock()) as made:
+        with (
+            patch.object(tb, "TheatreRuns") as runs,
+            patch.object(tb, "run", AsyncMock()) as made,
+        ):
+            runs.return_value.state = AsyncMock(return_value=None)
             await old.callback(interaction)
-        made.assert_not_awaited()
-        self.assertEqual(interaction.response.send_message.await_args.args[0], tb.OLD_QUESTION)
+        made.assert_not_awaited()  # nothing started, nothing spent
+        sent = interaction.followup.send.await_args
+        self.assertIn(tb.OLD_QUESTION, sent.args[0])
+        self.assertIn(job.estimate_line(300), sent.args[0])  # the new question, with its cost
+        (button,) = sent.kwargs["view"].children
+        self.assertEqual(button.item.custom_id, f"dmbot:script2:{GUILD}:{SESSION}")
         self.assertEqual(old.item.custom_id, f"dmbot:script:{GUILD}:{SESSION}")
-        self.assertEqual(
-            tb.ScriptButton(GUILD, SESSION).item.custom_id, f"dmbot:script2:{GUILD}:{SESSION}"
-        )
+
+    async def test_the_old_button_makes_the_same_checks_and_never_re_offers_a_made_script(
+        self,
+    ) -> None:
+        from unittest.mock import patch
+
+        for me, user, words in (
+            (self.bot(), PLAYER, tb.ONLY_DMS),
+            (self.bot(on=False), DM, tb.OFF),
+            (self.bot(plan=False), DM, tb.NO_PLAN),
+        ):
+            interaction = pressed(me, user)
+            await tb.OldScriptButton(GUILD, SESSION).callback(interaction)
+            self.assertEqual(self.said(interaction), words)
+        interaction = pressed(self.bot(), DM)
+        with patch.object(tb, "TheatreRuns") as runs:
+            runs.return_value.state = AsyncMock(return_value="done")
+            await tb.OldScriptButton(GUILD, SESSION).callback(interaction)
+        self.assertIn(tb.ALREADY_MADE, self.said(interaction))
 
 
 class TheRun(unittest.IsolatedAsyncioTestCase):

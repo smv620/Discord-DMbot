@@ -27,10 +27,7 @@ ONLY_DMS = "Only a DM of this campaign can make a script."
 OFF = "Scripts are switched off."
 NO_PLAN = "Scripts need the story memory that comes with a paid campaign."
 GONE = "That session is gone."
-OLD_QUESTION = (
-    "This question is out of date, so nothing was started and nothing was used. A script is "
-    "offered again after your next session, and pressing its button makes it at once."
-)
+OLD_QUESTION = "That question is from before the script button changed. Here it is again:"
 ALREADY_MADE = "A script was already made for this session."
 
 
@@ -77,8 +74,8 @@ class OldScriptButton(
     template=r"dmbot:script:(?P<guild>[0-9]{1,20}):(?P<session>[0-9a-f]{32})",
 ):
     """The button of a question sent before one press made the script. Those questions promised a
-    cost screen first, so pressing one makes nothing and spends nothing: it points to the new
-    question (a press now makes the script at once). Kept so an old message never just fails."""
+    cost screen first, so pressing one makes nothing and spends nothing: after the usual checks it
+    answers with the new question and its one-press button for the same session."""
 
     def __init__(self, guild_id: int, session_id: str) -> None:
         super().__init__(
@@ -89,6 +86,7 @@ class OldScriptButton(
                 custom_id=f"dmbot:script:{guild_id}:{session_id}",
             )
         )
+        self.guild_id, self.session_id = guild_id, session_id
 
     @classmethod
     async def from_custom_id(
@@ -97,7 +95,7 @@ class OldScriptButton(
         return cls(int(match["guild"]), match["session"])
 
     async def callback(self, interaction: discord.Interaction) -> Any:
-        await _tell(interaction, OLD_QUESTION)
+        await press_old(interaction, self.guild_id, self.session_id)
 
 
 def ask_for(guild_id: int, session_id: str, lines: int) -> Ask:
@@ -114,33 +112,63 @@ def ask_for(guild_id: int, session_id: str, lines: int) -> Ask:
     )
 
 
-async def press(interaction: discord.Interaction, guild_id: int, session_id: str) -> None:
-    """The button was pressed: check who and what, then make the script. Answered first (the
-    checks below can take a moment); the same private card is then kept current by `run`."""
-    await interaction.response.defer(ephemeral=True)
+async def _checked(interaction: discord.Interaction, guild_id: int, session_id: str) -> Any:
+    """The checks both buttons make before anything is shown or started: the session is there, the
+    presser is one of the campaign's DMs, the switch and the plan allow it. Tells the presser why
+    not and returns None; otherwise the session. The interaction is already answered."""
     bot = _bot(interaction)
     session = await bot.transcripts.session(guild_id, session_id) if bot.transcripts else None
     if session is None:
         await _tell(interaction, GONE)
-        return
+        return None
     campaign = await bot.campaigns.get(guild_id, session.campaign_id)
     if campaign is None or interaction.user.id not in campaign.dm_user_ids:
         await _tell(interaction, ONLY_DMS)
-        return
+        return None
     if not bot.settings.theatre_on or bot.theatre_ai is None or bot.memory is None:
         await _tell(interaction, OFF)
-        return
+        return None
     if not await bot.plan_allows("story", guild_id, campaign, fail_open=False):
         await _tell(interaction, NO_PLAN)
-        return
-    if await TheatreRuns(bot.campaigns.db).state(guild_id, session_id) == "done":
-        # The question's button stays on the message: a later press (scrolling back, a second DM)
-        # must not spend a second run over a script that is there.
-        link = script_link(bot.settings.site_url, guild_id, session.campaign_id, session.number)
-        await _tell(interaction, f"{ALREADY_MADE} {link}".strip())
+        return None
+    return session
+
+
+async def _already_made(
+    interaction: discord.Interaction, guild_id: int, session_id: str, session: Any
+) -> bool:
+    """A script of this session is there: say so, with its page. The question's button stays on
+    its message, so a later press (scrolling back, a second DM) must not spend a second run."""
+    bot = _bot(interaction)
+    if await TheatreRuns(bot.campaigns.db).state(guild_id, session_id) != "done":
+        return False
+    link = script_link(bot.settings.site_url, guild_id, session.campaign_id, session.number)
+    await _tell(interaction, f"{ALREADY_MADE} {link}".strip())
+    return True
+
+
+async def press(interaction: discord.Interaction, guild_id: int, session_id: str) -> None:
+    """The button was pressed: check who and what, then make the script. Answered first (the
+    checks below can take a moment); the same private card is then kept current by `run`."""
+    await interaction.response.defer(ephemeral=True)
+    session = await _checked(interaction, guild_id, session_id)
+    if session is None or await _already_made(interaction, guild_id, session_id, session):
         return
     await interaction.edit_original_response(content=job.TITLE)
     await run(interaction, guild_id, session_id)
+
+
+async def press_old(interaction: discord.Interaction, guild_id: int, session_id: str) -> None:
+    """The button of a question sent before one press made the script (it promised a cost screen
+    first). It starts nothing: after the same checks it answers privately with the new question
+    and its one-press button for this session, so the DM still gets to make the script."""
+    await interaction.response.defer(ephemeral=True)
+    session = await _checked(interaction, guild_id, session_id)
+    if session is None or await _already_made(interaction, guild_id, session_id, session):
+        return
+    view = discord.ui.View(timeout=None)
+    view.add_item(ScriptButton(guild_id, session_id))
+    await _tell(interaction, f"{OLD_QUESTION}\n\n{ask_text(session.lines)}", view=view)
 
 
 def _plain_name(bot: Any, guild_id: int, user_id: int) -> str | None:
