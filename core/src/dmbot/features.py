@@ -50,6 +50,15 @@ FEATURES: tuple[Feature, ...] = (
         ("recaps_on",),
     ),
     Feature(
+        "questions",
+        "Questions for you",
+        "DMbot gathers what it is waiting to ask you in one message, and reminds you less and "
+        "less often.",
+        lambda s: s.questions_on,
+        ("questions_on",),
+        for_dms=False,  # for whoever runs DMbot: the reminders are off until it turns them on
+    ),
+    Feature(
         "plot checks",
         "Story checks on recaps",
         "PlotBot compares each recap with the earlier ones and asks you about anything that "

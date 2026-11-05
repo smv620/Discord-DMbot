@@ -13,6 +13,7 @@ import asyncio
 import contextlib
 import logging
 import time
+from collections import Counter
 from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, replace
 from functools import partial
@@ -30,6 +31,7 @@ from dmbot.memory import (
     kin,
     lore_context,
     lore_knowledge,
+    lore_pc_names,
     lore_read,
     pronouns,
     who_ask,
@@ -726,6 +728,22 @@ async def read_background(
         rules=(campaign.target_ruleset, campaign.fallback_ruleset),
         dropped=read.stats.dropped,
     )
+    # A name tied to a player character that pass 1 never listed becomes a name to check, ahead of
+    # the read's own limit (#3238): the family of the table's characters is kept, not dropped.
+    pc_counts: Counter[str] = Counter()
+    spelled = {sp for main, sps in read.known_spellings.items() for sp in (main, *sps)} | set(
+        read.secret_spellings
+    )
+    made = lore_pc_names.pc_new_names(
+        read.links, found, known, player_keys, pc_counts, spellings=spelled
+    )
+    # (the same checks as any new name: ordinary words, game terms, the rules and one-off items)
+    made = bg.merge(
+        [made], {*known, *spelled}, rules=(campaign.target_ruleset, campaign.fallback_ruleset)
+    )
+    found = [*found, *made]
+    if pc_counts:
+        log.info("Names added next to a player character: %s", dict(pc_counts))  # counts only
     choice = lore_knowledge.normalize(choice)
     if speaker:  # a character's backstory stays as it was: the choices are for campaign lore
         choice = lore_knowledge.SPOILERS

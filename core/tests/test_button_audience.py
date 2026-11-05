@@ -86,6 +86,7 @@ AUDIENCE: dict[str, str] = {
             "dm_screen.handover.AcceptOfferButton",  # the person the offer is for
             "dm_screen.handover.DeclineOfferButton",
             "dm_screen.handover.NotNowButton",
+            "questions.discord.NotNowButton",  # mutes the presser's own reminders only
             "ui.sheets.MySheetButton",  # `characters_of(guild, interaction.user.id)`
             # Only the person the list was made for (`kept.owner_id`, the DM who asked): anyone else
             # gets "not yours" before anything is shown (#1957).
@@ -195,6 +196,8 @@ AUDIENCE: dict[str, str] = {
             "dm_screen.transcript_keep.KeepYesButton",
             "dm_screen.transcript_keep.TranscriptsButton",
             "ui.claims_review.ClaimsReviewButton",
+            "questions.board.LookAlikesButton",  # the screen it opens asks `sees_secrets`
+            "questions.board.QuestionsButton",  # checks `dm_user_ids` before sending the list
             "ui.continuity.ContinuityButton",
             "ui.guide.GuideButton",
             "ui.heard_review.HeardReviewButton",
@@ -277,6 +280,8 @@ CHECKED_ELSEWHERE: dict[str, list[str]] = {
     # The names home asks `logic.can_run` (the campaign's DMs and server managers) when it opens.
     "dm_screen.names_button.NamesButton": ["dmbot.ui.names:_campaign_for"],
     # The menu it opens asks for the campaign's DMs on every open and on every press inside it.
+    # The look-alikes screen asks `sees_secrets` before it shows a group.
+    "questions.board.LookAlikesButton": ["dmbot.ui.look_alikes:show_look_alikes"],
     "dm_screen.backstory_button.BackstoryButton": ["dmbot.ui.name_background:open_background"],
 }
 

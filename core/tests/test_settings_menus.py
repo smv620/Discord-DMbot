@@ -40,7 +40,8 @@ class Menus(unittest.TestCase):
     def test_the_card_holds_both_menu_buttons_for_a_dm_who_has_something_in_them(self) -> None:
         c = campaign()
         shown = labels(settings_view(c, None, DM))
-        self.assertEqual(shown[2], "Who can see the DM screen")  # the one sub-page, by the levels
+        # (📬 Questions for you is first for a DM, #3435)
+        self.assertEqual(shown[3], "Who can see the DM screen")  # the one sub-page, by the levels
         self.assertIn("Campaign management", shown)  # (until the website has it)
 
     def test_a_player_has_neither_menu_and_no_management_button(self) -> None:
