@@ -48,10 +48,10 @@ LABELS: Final[dict[str, str]] = {
     RULES: "House rule updates",
 }
 
-# The kinds the DM is told about and counted in the total. "Family ties" is still counted and stored
-# (the website reads it) but is left out here until there is a screen that answers it (#3463): a
-# question nobody can answer must not keep a reminder going.
-SHOWN: Final[tuple[str, ...]] = tuple(k for k in ORDER if k != FAMILY)
+# The kinds the DM is told about and counted in the total: every one has a screen that answers it
+# (Family ties has the 👪 card since #3463). A kind with no screen would be counted and stored but
+# left out of this tuple, so it could not start or keep a reminder going.
+SHOWN: Final[tuple[str, ...]] = ORDER
 
 # Kinds whose questions also leave by themselves (they expire), so an answer is counted from the
 # answers given (`settled`) and never from the open count going down.

@@ -799,6 +799,42 @@ def implied_kind(onto: Ontology, claim: Extracted, side: str) -> str:
     return pick if pick != "person" else CONCEPT
 
 
+def which_choices(
+    row: Mapping[str, Any],
+    entities: Sequence[Mapping[str, Any]],
+    aliases: Sequence[Mapping[str, Any]],
+) -> list[WhichOne]:
+    """The "Which one?" choices of a kept claim's row, from the campaign's live entries and other
+    names (#3238): one `WhichOne` for each name in it that could mean two entries and has not been
+    picked for. Pure, so the website reads the same choices from the facts a database door sends it
+    (#3463). A secret name is never used, even to tell two entries apart."""
+    by_id = {str(e["id"]): e for e in entities}
+    others: dict[str, list[str]] = {}
+    for a in aliases:
+        if not a.get("secret"):  # never a secret name, even to tell two entries apart
+            others.setdefault(str(a["entity_id"]), []).append(str(a["text"]))
+    names = names_of(entities, aliases)
+    out: list[WhichOne] = []
+    for side in ("subject", "object"):
+        found = names.by_key.get(name_key(str(row[side])), ())
+        if len(found) < 2 or row[f"{side}_picked"] is not None:
+            continue
+        options = []
+        for entry_id, _kind in found:
+            e = by_id.get(entry_id)
+            if e is None:
+                continue
+            note = (
+                " ".join(str(e["description"]).split())[:80]
+                or ", ".join(
+                    t for t in others.get(entry_id, []) if name_key(t) != name_key(str(e["name"]))
+                )[:80]
+            )
+            options.append(EntryOption(entry_id, str(e["name"]), str(e["type"]), note))
+        out.append(WhichOne(str(row[side]), side, tuple(options)))
+    return out
+
+
 class ClaimStore:
     """Proposals from the extractor, and the DM's answers to them."""
 
@@ -1295,33 +1331,7 @@ class ClaimStore:
                 ENTITIES, " AND status IN ('proposed', 'confirmed') AND type <> 'person'"
             )
             aliases = await scope.select(ALIASES, " AND status <> 'rejected'")
-        by_id = {str(e["id"]): e for e in entities}
-        others: dict[str, list[str]] = {}
-        for a in aliases:
-            if not a.get("secret"):  # never a secret name, even to tell two entries apart
-                others.setdefault(str(a["entity_id"]), []).append(str(a["text"]))
-        names = names_of(entities, aliases)
-        out: list[WhichOne] = []
-        for side in ("subject", "object"):
-            found = names.by_key.get(name_key(str(row[side])), ())
-            if len(found) < 2 or row[f"{side}_picked"] is not None:
-                continue
-            options = []
-            for entry_id, _kind in found:
-                e = by_id.get(entry_id)
-                if e is None:
-                    continue
-                note = (
-                    " ".join(str(e["description"]).split())[:80]
-                    or ", ".join(
-                        t
-                        for t in others.get(entry_id, [])
-                        if name_key(t) != name_key(str(e["name"]))
-                    )[:80]
-                )
-                options.append(EntryOption(entry_id, str(e["name"]), str(e["type"]), note))
-            out.append(WhichOne(str(row[side]), side, tuple(options)))
-        return out
+        return which_choices(row, entities, aliases)
 
     async def pick_one(
         self, guild_id: int, campaign_id: str, claim_id: str, side: str, entry_id: str
@@ -1390,9 +1400,16 @@ class ClaimStore:
             )
             return True
 
-    async def unplaced_count(self, guild_id: int, campaign_id: str) -> int:
+    async def unplaced_count(
+        self, guild_id: int, campaign_id: str, *, opted_in: Collection[int] | None = None
+    ) -> int:
         """How many claims about the player characters are kept for the DM's answer (#3238), for the
-        count the import or recap result and the names-to-check list show. A count only."""
+        count the import or recap result, the names-to-check list and "Questions for you" show.
+        A count only. With `opted_in` it counts exactly the rows `unplaced` lists (a reading is
+        not one, and only claims whose every speaker is recorded now), so the Family ties count
+        and card agree (#3463); without it, every kept claim."""
+        if opted_in is not None:
+            return len(await self.unplaced(guild_id, campaign_id, opted_in=opted_in, limit=None))
         async with self._store._read(guild_id, campaign_id) as scope:
             cur = await scope.conn.execute(
                 "SELECT count(*) AS n FROM memory_claims WHERE guild_id = %s AND campaign_id = %s"
@@ -1401,6 +1418,31 @@ class ClaimStore:
             )
             row = await cur.fetchone()
         return int(row["n"]) if row else 0
+
+    async def unplaced(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        *,
+        opted_in: Collection[int],
+        limit: int | None = 50,
+    ) -> list[Claim]:
+        """The claims kept for the DM's answer (#3238) that `unplaced_count` counts, oldest first,
+        for the Family ties card (#3463): the very rows the count counts, read only (`waiting` wipes
+        claims of speakers no longer recorded and drops claims whose names are not all confirmed
+        yet, so its list can be shorter than the count). Only those whose every speaker is
+        recorded now (`opted_in`)."""
+        async with self._store._read(guild_id, campaign_id) as scope:
+            rows = await scope.select(
+                CLAIMS,
+                " AND status = 'proposed' AND reason = %s AND reading IS NULL"
+                " ORDER BY created_at, id",
+                (UNPLACED_REASON,),
+            )
+        mine = set(opted_in)
+        found = [claim_of(r) for r in rows]
+        ready = [c for c in found if set(c.speaker_ids) <= mine]
+        return ready if limit is None else ready[:limit]
 
     async def waiting(
         self, guild_id: int, campaign_id: str, *, opted_in: Collection[int], limit: int = 200

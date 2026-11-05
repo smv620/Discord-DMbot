@@ -173,6 +173,36 @@ class TranscriptStore:
                 (through_ms, calls, calls, now, session_id),
             )
 
+    async def session_split(self, guild_id: int, session_id: str) -> dict[str, Any] | None:
+        """The stored split of this session (#3298): `recaps.split.Split.to_json()`, or None when it
+        has not been made (or the session is not here). Labels and line numbers only."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT recap_split FROM transcript_sessions WHERE id = %s", (session_id,)
+            )
+            row = await cur.fetchone()
+        stored = row["recap_split"] if row else None
+        return dict(stored) if isinstance(stored, dict) else None
+
+    async def save_session_split(
+        self,
+        guild_id: int,
+        session_id: str,
+        split: Mapping[str, Any],
+        *,
+        only_if_empty: bool = True,
+    ) -> bool:
+        """Keep the split (#3298). By default only while none is kept, so two callers that raced
+        (the story reader and the recap) keep the first and neither asks again. Returns whether
+        it wrote."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "UPDATE transcript_sessions SET recap_split = %s::jsonb WHERE id = %s"
+                + (" AND recap_split IS NULL" if only_if_empty else ""),
+                (json.dumps(dict(split)), session_id),
+            )
+            return cur.rowcount > 0
+
     async def extractor_calls_since(self, guild_id: int, campaign_id: str, since: int) -> int:
         """AI calls the extractor made for this campaign in sessions it last ran in since
         `since` (a Unix time): the daily ceiling's count (#1367). A session counts in full at

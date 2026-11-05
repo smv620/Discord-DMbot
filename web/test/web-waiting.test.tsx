@@ -728,3 +728,50 @@ describe("over the wire: the wait's looks (#2921)", () => {
   }, 15000);
 });
 
+
+describe("Which one? for a kept fact (Family ties, #3463)", () => {
+  const TIES_REF = "100.cmp1.ties";
+  async function openTies(api = mockApi("table")) {
+    render(<WebWaiting api={api} campaignRef={TIES_REF} />);
+    await screen.findByRole("heading", { name: w.heading });
+    return api;
+  }
+
+  it("asks the question with a button for each entry, its tag, and None of these", async () => {
+    await openTies();
+    expect(screen.getByRole("heading", { name: w.tiesHeading })).toBeTruthy();
+    const card = screen.getByText(w.tiesQuestion("Mira")).closest(".panel") as HTMLElement;
+    expect(within(card).getByText("Rook is the sister of Mira")).toBeTruthy();
+    expect(within(card).getByText(w.tiesWhy)).toBeTruthy();
+    expect(within(card).getByRole("button", { name: /Mira \(NPC\): the ferrywoman/ })).toBeTruthy();
+    expect(within(card).getByRole("button", { name: /Mira \(NPC · secret\): a smuggler/ })).toBeTruthy();
+    expect(within(card).getByRole("button", { name: w.tiesNeither })).toBeTruthy();
+    expect(within(card).getByText(w.tiesNeitherHelp)).toBeTruthy();
+    // It is not also listed as an ordinary fact to Keep.
+    expect(screen.queryByRole("button", { name: w.confirm })).toBeNull();
+  });
+
+  it("a pick sends the side and the entry, then the fact is an ordinary one, and Undo puts it back", async () => {
+    const api = await openTies();
+    const card = screen.getByText(w.tiesQuestion("Mira")).closest(".panel") as HTMLElement;
+    press(/Mira \(NPC\): the ferrywoman/, card);
+    expect(await screen.findByText(w.done.tiesPick)).toBeTruthy();
+    await settled();
+    expect(screen.queryByText(w.tiesQuestion("Mira"))).toBeNull();
+    expect(screen.getByRole("button", { name: w.confirm })).toBeTruthy();
+    press(w.tiesUndo);
+    expect(await screen.findByText(w.tiesUndone)).toBeTruthy();
+    await settled();
+    expect(screen.getByText(w.tiesQuestion("Mira"))).toBeTruthy();
+    expect((api as { calls: string[] }).calls).toContain("answerWaiting:100.cmp1.ties:claim:pick:t1:e5");
+  });
+
+  it("None of these drops the fact", async () => {
+    await openTies();
+    const card = screen.getByText(w.tiesQuestion("Mira")).closest(".panel") as HTMLElement;
+    press(w.tiesNeither, card);
+    expect(await screen.findByText(w.done.tiesNeither)).toBeTruthy();
+    await settled();
+    expect(screen.queryByText(w.tiesQuestion("Mira"))).toBeNull();
+  });
+});

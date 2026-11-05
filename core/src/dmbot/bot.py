@@ -527,6 +527,7 @@ from dmbot.ui.exposure_summary import (
     summary_text,
     summary_view,
 )
+from dmbot.ui.family_ties import FamilyTiesButton
 from dmbot.ui.guide import GuideButton
 from dmbot.ui.heard_review import HeardReviewButton, heard_review_view
 from dmbot.ui.heard_review import waiting_text as heard_waiting_text
@@ -1667,7 +1668,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self.add_dynamic_items(name_pass_undo.UndoNamePassButton)  # Undo of the name pass (#2628)
         self.add_dynamic_items(questions_discord.NotNowButton)  # 🔕 under a reminder (#3435)
         self.add_dynamic_items(
-            questions_board.LookAlikesButton, questions_board.QuestionsButton
+            questions_board.LookAlikesButton, questions_board.QuestionsButton, FamilyTiesButton
         )  # the Questions message and the card's button (#3435)
         self.question_round = questions_discord.build_round(self)
         self.question_notices = (
@@ -8869,6 +8870,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 if renew is not None:
                     await renew()  # (an import's claim: nobody else retakes it while this runs)
 
+            # Last time's recap read aloud at the start of the session (#3298) is not this
+            # session's events: the lines the stored split labels so are left out. A session with
+            # no split yet is read as all play.
+            recap_lines = await self._recap_lines(gid, sid)
             report = await extractor.run(
                 self.extractor_ai,
                 ClaimStore(self.memory),
@@ -8879,6 +8884,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 consenting=lambda: self.consent.consenting(gid),
                 model=lambda: self.extractor_ai.model if self.extractor_ai else "",
                 session_started_at=session.started_at,
+                recap_lines=recap_lines,
                 tally=tally,
                 max_calls=allowed,
                 skip=skip,
@@ -9037,6 +9043,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 consenting=lambda: self.consent.consenting(gid),
                 model=lambda: self.extractor_ai.model if self.extractor_ai else "",
                 session_started_at=session.started_at,
+                recap_lines=await self._recap_lines(gid, sid),
                 max_calls=allowed,
                 skip=skip,
                 after_ms=0,
@@ -10551,6 +10558,14 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             except Exception:
                 log.exception("Couldn't post a question for the DM on the DM screen")
         return posted
+
+    async def _recap_lines(self, gid: int, sid: str) -> frozenset[int]:
+        """The line numbers of a session that retell earlier sessions (#3298), from the stored
+        split, for every place the story reader is run so they cannot drift. None when no split
+        is kept: every line is play."""
+        if self.transcripts is None:
+            return frozenset()
+        return extractor.recap_numbers(await self.transcripts.session_split(gid, sid))
 
     async def count_waiting(self, gid: int, cid: str) -> WaitingChecks:
         """What waits for the DM now, by kind, counted the way the names panel counts it (#3314).

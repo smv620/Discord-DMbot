@@ -86,6 +86,7 @@ def view(guild_id: int, campaign_id: str, found: Mapping[str, Counted]) -> disco
     the connections flow, which asks it first, so the two share one button."""
     from dmbot.dm_screen.links_ready import ReadyButton
     from dmbot.ui.claims_review import ClaimsReviewButton
+    from dmbot.ui.family_ties import FamilyTiesButton
     from dmbot.ui.heard_review import HeardReviewButton
     from dmbot.ui.names import RecapNamesButton
 
@@ -99,6 +100,8 @@ def view(guild_id: int, campaign_id: str, found: Mapping[str, Counted]) -> disco
         out.add_item(LookAlikesButton(campaign_id))
     if kinds.CONNECTIONS in waiting or kinds.WHICH in waiting:
         out.add_item(ReadyButton(campaign_id))
+    if kinds.FAMILY in waiting:
+        out.add_item(FamilyTiesButton(campaign_id))
     if kinds.CLAIMS in waiting:
         out.add_item(ClaimsReviewButton(campaign_id))
     return out

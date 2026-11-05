@@ -101,14 +101,15 @@ describe("the Questions page", () => {
     expect(screen.getByText(w.discordWhere)).toBeTruthy(); // (said once, under the list)
   });
 
-  it("never shows Family ties until a screen can answer them (#3463), in the lines or the count", async () => {
+  it("shows Family ties now that the Story Graph can answer them (#3463), with a link to it", async () => {
     const api = mockApi("table");
     api.myQuestions = async () =>
       counts({ total: 7, kinds: [{ kind: "names", count: 5, oldest: now - 100 }, { kind: "family", count: 2, oldest: now - 50 }] });
     render(<Questions api={api} />);
     await screen.findByText(`${kindWords("names").label} · 5`);
-    expect(screen.queryByText(new RegExp(kindWords("family").label))).toBeNull();
-    expect(screen.getByText(w.campaignLine(5))).toBeTruthy();
+    const ties = screen.getByText(`${kindWords("family").label} · 2`).closest("li") as HTMLElement;
+    expect(within(ties).getByRole("link")).toBeTruthy();
+    expect(screen.getByText(w.campaignLine(7))).toBeTruthy();
   });
 
   it("a campaign with nothing waiting says so", async () => {

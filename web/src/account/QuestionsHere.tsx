@@ -13,7 +13,7 @@ export type HereGroup = "names" | "waiting" | "readings";
 /** The panel a kind opens, or null when it is not answered on this page. Kinds in one group share one panel. */
 export function groupOf(kind: string): HereGroup | null {
   if (kind === "names") return "names";
-  if (kind === "connections" || kind === "which" || kind === "claims") return "waiting";
+  if (kind === "connections" || kind === "which" || kind === "family" || kind === "claims") return "waiting";
   if (kind === "readings") return "readings";
   return null;
 }

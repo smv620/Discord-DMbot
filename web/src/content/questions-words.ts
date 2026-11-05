@@ -4,7 +4,7 @@
 // "link" (the page that answers it), or "discord" (not on the website yet: its count and how to answer it there).
 // A kind the page does not know yet is shown by its key's count with the Discord line, never dropped.
 
-// "hidden": counted by the bot, but not shown on this page at all (see `family`).
+// "hidden": counted by the bot, but not shown on this page at all (no kind uses it now; kept for the next one).
 export type QuestionHow = "here" | "link" | "discord" | "hidden";
 
 export interface QuestionKindWords {
@@ -46,9 +46,8 @@ export const questionsPage = {
     lookalikes: { label: "Names that look alike", how: "link", to: "names", link: "Open the Names page" },
     connections: { label: "Connections waiting", how: "here", to: "graph", link: "Open the Story Graph" },
     which: { label: "Which one?", how: "here", to: "graph", link: "Open the Story Graph" },
-    // Not shown until a screen can answer it, in Discord and here (#3463): today Discord sends the DM back to the
-    // website and the website has no card for it, so there would be nowhere to answer. Remove "hidden" then.
-    family: { label: "Family ties", how: "hidden" },
+    // Answered in the Story Graph's waiting list ("Which one?" card for a kept fact, #3463) and in Discord.
+    family: { label: "Family ties", how: "here", to: "graph", link: "Open the Story Graph" },
     claims: { label: "Facts to check", how: "here", to: "graph", link: "Open the Story Graph" },
     readings: { label: "What people believe", how: "here", to: "graph", link: "Open the Story Graph" },
     plot: { label: "Plot check", how: "link", to: "recaps", link: "Open the recaps" },
