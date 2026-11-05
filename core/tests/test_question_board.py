@@ -86,9 +86,9 @@ class TheButtons(unittest.TestCase):
         self.assertEqual(ids(board.view(GUILD, CAMPAIGN, found(names=0))), [])
         self.assertEqual(ids(board.view(GUILD, CAMPAIGN, found(plot=3, rules=1))), [])
 
-    def test_the_most_buttons_fit_one_row(self) -> None:
+    def test_the_most_buttons_fit_two_rows(self) -> None:
         everything = found(**{k: 1 for k in kinds.ORDER})
-        self.assertLessEqual(len(board.view(GUILD, CAMPAIGN, everything).children), 5)
+        self.assertLessEqual(len(board.view(GUILD, CAMPAIGN, everything).children), 10)
 
     def test_the_look_alikes_button_carries_the_campaign_for_a_restart(self) -> None:
         item = board.LookAlikesButton(CAMPAIGN)

@@ -33,7 +33,13 @@ class TheCard(Base):
             ("Mira", "character", "a smuggler's daughter"),
         ):
             await self.memory.add_entity(
-                self.g, self.c, type=type_, name=name, description=note, source=DM_SOURCE
+                self.g,
+                self.c,
+                type=type_,
+                name=name,
+                description=note,
+                source=DM_SOURCE,
+                status="confirmed",
             )
         await self.claims.propose(
             self.g, self.c, [said("Tavin", "is the sister of", "Mira")], {"1": 7},
@@ -156,7 +162,10 @@ class TheCard(Base):
         it = self.interaction()
         order: list[str] = []
         it.response.defer = AsyncMock(side_effect=lambda **_: order.append("defer"))
-        refused = AsyncMock(side_effect=lambda *_a, **_k: order.append("check") or None)
+
+        async def refused(*_a: object, **_k: object) -> None:
+            order.append("check")
+
         with (
             patch.object(ft, "_memory", lambda _it: self.memory),
             patch.object(ft, "_campaign_for", refused),

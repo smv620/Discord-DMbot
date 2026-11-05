@@ -163,7 +163,8 @@ class FamilyTies(_Menu):
 
     def _pick(self, claim_id: str, side: str) -> Any:
         async def handler(interaction: discord.Interaction) -> None:
-            chosen = (interaction.data or {}).get("values") or []  # type: ignore[call-overload]
+            data: Any = interaction.data or {}
+            chosen = data.get("values") or [""]
             await self._decide(interaction, claim_id, "pick", side=side, entry=str(chosen[0]))
 
         return handler
