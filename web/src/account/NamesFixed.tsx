@@ -7,7 +7,9 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import { namesFixedWords as w } from "../content/names-fixed-words";
-import { ApiError, type AccountApi, type NamesFixed as Fixed } from "./api";
+import { stageWords } from "../content/work-progress";
+import { ApiError, type AccountApi, type JobProgress, type NamesFixed as Fixed } from "./api";
+import WorkProgress from "./WorkProgress";
 
 // An unknown kind gets the general sentence, never the code itself.
 const say = (error: unknown): string => {
@@ -23,6 +25,8 @@ export default function NamesFixed({ api, recapRef }: { api: AccountApi; recapRe
   const [busy, setBusy] = useState<string | null>(null);
   const [said, setSaid] = useState(""); // one polite place for results
   const [waited, setWaited] = useState(0); // seconds the Undo in progress has waited
+  // The API's own times for the Undo in progress (#3355); null until it sends them (an older server never does).
+  const [seen, setSeen] = useState<JobProgress | null>(null);
   const latest = useRef(0); // the newest look's number: an older, slower answer is ignored
   const inFlight = useRef(false); // Undo goes one at a time, even two clicks in one tick
   const box = useRef<HTMLElement>(null);
@@ -83,11 +87,12 @@ export default function NamesFixed({ api, recapRef }: { api: AccountApi; recapRe
     if (!api.undoNameFix || busy || inFlight.current) return;
     inFlight.current = true;
     setBusy(id);
+    setSeen(null);
     setUndoProblem("");
     setSaid("");
     let message = "";
     try {
-      const done = await api.undoNameFix(recapRef, id);
+      const done = await api.undoNameFix(recapRef, id, (progress) => setSeen(progress));
       message = done.putBack > 0 ? w.putBack(done.putBack) : w.nothingBack;
     } catch (error) {
       setUndoProblem(say(error));
@@ -146,10 +151,20 @@ export default function NamesFixed({ api, recapRef }: { api: AccountApi; recapRe
                     {w.undo}
                   </button>
                 )}
-                {busy === f.id && (
+                {busy === f.id && !seen && (
                   <span class="small muted">
                     {w.working(f.name, waited)} {waited >= 20 ? w.slow : ""}
                   </span>
+                )}
+                {busy === f.id && seen && (
+                  <WorkProgress
+                    stage={stageWords(w.stage, seen.stage)}
+                    startedAt={seen.startedAt}
+                    updatedAt={seen.updatedAt}
+                    serverNow={seen.serverNow}
+                    state={seen.state}
+                    whatToDo={w.slow}
+                  />
                 )}
               </div>
             </li>

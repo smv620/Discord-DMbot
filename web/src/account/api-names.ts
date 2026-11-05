@@ -27,20 +27,23 @@ import {
   READING_POLLS,
   errorKinds,
 } from "./api";
+import { countsOf, sharedOf } from "./api";
 import type { AccountApi, ApiHelpers, NodeSummary } from "./api";
 
 export default function namesArea({ call, waitForAnswer }: ApiHelpers): Partial<AccountApi> {
   return {
     namesFixed: async (recapRef) =>
       (await call("GET", `/me/recaps/${encodeURIComponent(recapRef)}/names-fixed`)) as NamesFixed,
-    undoNameFix: async (recapRef, id) => {
+    undoNameFix: async (recapRef, id, onLook) => {
       const queued = (await call("POST", `/me/recaps/${encodeURIComponent(recapRef)}/names-fixed/${encodeURIComponent(id)}/undo`, {})) as {
         answer: string;
       };
       if (!queued?.answer) throw new ApiError("server");
       // The bot's answer is polled under the campaign, as the report's are (the campaign is the recap's first two parts).
       const campaign = recapRef.split(".").slice(0, 2).join(".");
-      const got = await waitForAnswer(`/me/campaigns/${encodeURIComponent(campaign)}/web/answers/${encodeURIComponent(queued.answer)}`);
+      const got = await waitForAnswer(`/me/campaigns/${encodeURIComponent(campaign)}/web/answers/${encodeURIComponent(queued.answer)}`, (look) =>
+        onLook?.(sharedOf(look.progress)),
+      );
       return { putBack: got.putBack ?? 0 };
     },
     campaignNames: async (campaignRef) =>
@@ -240,7 +243,7 @@ export default function namesArea({ call, waitForAnswer }: ApiHelpers): Partial<
       const queued = (await call("POST", `${base}/waiting`, body)) as { answer: string };
       if (!queued?.answer) throw new ApiError("server");
       const got = await waitForAnswer(`${base}/answers/${encodeURIComponent(queued.answer)}`, (look) =>
-        onLook?.({ waits: look.waits ?? null, progress: look.progress ?? null }),
+        onLook?.({ waits: look.waits ?? null, progress: countsOf(look.progress) }),
       );
       const kept = (got as { kept?: unknown }).kept;
       return typeof kept === "number" ? { kept } : {};

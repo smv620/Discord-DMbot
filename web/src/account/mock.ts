@@ -1585,12 +1585,18 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         new: none ? 0 : 1,
       };
     },
-    async undoNameFix(recapRef, id) {
+    async undoNameFix(recapRef, id, onLook) {
       calls.push(`undoNameFix:${recapRef}:${id}`);
       await reachable();
       signedIn();
       if (id === "nf-gone") throw new ApiError("gone");
       if (id === "nf-busy") throw new ApiError("cannot-write");
+      // The pretend bot takes the undo, works on it, and (for `nf-stalled`) nobody has moved it for ten minutes (#3355).
+      const now = Math.floor(Date.now() / 1000);
+      const stalled = id === "nf-stalled";
+      const at = stalled ? now - 600 : now - 2;
+      onLook?.({ stage: "waiting", startedAt: at, updatedAt: at, serverNow: now, state: stalled ? "stalled" : "running" });
+      if (!stalled) onLook?.({ stage: "working", startedAt: at, updatedAt: now - 1, serverNow: now, state: "running" });
       namesUndone.add(`${recapRef}:${id}`);
       return { putBack: 8 };
     },

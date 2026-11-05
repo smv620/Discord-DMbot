@@ -1889,9 +1889,12 @@ interface WebAnswer {
   /** An answer about a reading (#2412): whether it can be undone, and where the wait stands. */
   undoable?: boolean;
   waits?: WaitingWaits;
-  /** A Keep all on "Waiting for you" (#2921): how many connections are done of how many. */
-  progress?: { done: number; total: number } | null;
+  /** A Keep all on "Waiting for you" (#2921) has how many connections are done of how many; the Undo of a name
+   * fix (#3355) has the shared shape (stage, times, state). Told apart by `countsOf` and `sharedOf`. */
+  progress?: { done: number; total: number } | JobProgress | null;
 }
+export const countsOf = (p: WebAnswer["progress"]): { done: number; total: number } | null => (p && !("stage" in p) ? p : null);
+export const sharedOf = (p: WebAnswer["progress"]): JobProgress | null => (p && "stage" in p ? p : null);
 
 /** The changed row, or `{ removed: true }` after a removal. */
 export type NameChanged = NameRow | { removed: true };
@@ -2467,7 +2470,8 @@ export interface AccountApi {
   namesFixed?(recapRef: string): Promise<NamesFixed>;
   /** Undo one fix, queued for the bot like the DM screen's Undo; resolves with how many lines were put back.
    * A refusal is an `ApiError` (`gone`, `not-allowed`, `cannot-write`, `queue-full`). */
-  undoNameFix?(recapRef: string, id: string): Promise<{ putBack: number }>;
+  /** `onLook` hears the shared progress of the wait each time the page looks (#3355); null before the server sends it. */
+  undoNameFix?(recapRef: string, id: string, onLook?: (progress: JobProgress | null) => void): Promise<{ putBack: number }>;
   /** Make a recap for a session, or make it again (`POST /me/recaps/{ref}/again`, #2608); `replace` after
    * the DM said yes to "This session already has a recap". The recap comes back, queued. */
   makeRecap?(recapRef: string, replace: boolean): Promise<Recap>;

@@ -3,12 +3,13 @@
 // "Names fixed this session" (#2645), against the shapes agreed on the issue: the list with counts and the
 // spellings replaced, Undo through the bot (with the page told how many lines came back), the refusals in
 // plain words, and nothing at all for anyone but the DM.
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/preact";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/preact";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { mockApi } from "../src/account/mock";
 import NamesFixed from "../src/account/NamesFixed";
 import { namesFixedWords as w } from "../src/content/names-fixed-words";
+import { workWords } from "../src/content/work-progress";
 
 afterEach(cleanup);
 
@@ -116,6 +117,31 @@ describe("the real client reads the Undo's answer", () => {
     }
   });
 
+  it("hands the page the shared progress object of each look (#3355), and nothing from an older answer", async () => {
+    const { httpApi } = await import("../src/account/api");
+    let looks = 0;
+    const fetchMock = async (_url: string, init?: { method?: string }): Promise<Response> => {
+      if (init?.method === "POST") return new Response(JSON.stringify({ answer: "ans1" }), { status: 202, headers: { "content-type": "application/json" } });
+      looks += 1;
+      const body =
+        looks === 1
+          ? { state: "working", error: null, progress: { stage: "working", startedAt: 5, updatedAt: 6, serverNow: 9, state: "running", reason: null } }
+          : { state: "done", error: null, putBack: 2 };
+      return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+    };
+    const original = globalThis.fetch;
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    try {
+      const heard: unknown[] = [];
+      const api = httpApi("https://api.example.test");
+      const got = await api.undoNameFix!(REF, "12", (p) => heard.push(p));
+      expect(got.putBack).toBe(2);
+      expect(heard).toEqual([{ stage: "working", startedAt: 5, updatedAt: 6, serverNow: 9, state: "running", reason: null }, null]);
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
   // The door refuses an Undo made too soon after the last with 429 and `too_soon`: the page must say the
   // "bit quick" sentence, not the generic failure.
   it("says the 'a bit quick' sentence for a 429 too_soon", async () => {
@@ -131,5 +157,41 @@ describe("the real client reads the Undo's answer", () => {
     } finally {
       globalThis.fetch = original;
     }
+  });
+});
+
+describe("the wait for an Undo (#3355)", () => {
+  /** An API whose undo is held open until the test lets it go, telling the page what the server said meanwhile. */
+  function holding(progress: Parameters<NonNullable<ReturnType<typeof mockApi>["undoNameFix"]>>[2] extends ((p: infer P) => void) | undefined ? P : never) {
+    const api = mockApi("table");
+    let release: () => void = () => {};
+    api.undoNameFix = async (_ref, _id, onLook) => {
+      onLook?.(progress);
+      await new Promise<void>((resolve) => (release = resolve));
+      return { putBack: 3 };
+    };
+    return { api, release: () => release() };
+  }
+
+  it("shows the API's own stage and times, and says so when the Undo has stalled", async () => {
+    const { api, release } = holding({ stage: "working", startedAt: 1_000, updatedAt: 1_050, serverNow: 1_700, state: "stalled" });
+    await open(REF, api);
+    await heading();
+    fireEvent.click(screen.getByRole("button", { name: "Undo Kethrandil" }));
+    expect(await screen.findByText(w.stage.working!)).toBeTruthy();
+    expect(screen.getByText(workWords.stalled)).toBeTruthy();
+    expect(screen.queryByText(/seconds so far/)).toBeNull();
+    await act(async () => release());
+    await waitFor(() => expect(screen.getByText(w.putBack(3))).toBeTruthy());
+  });
+
+  it("counts the seconds itself when the server sends no progress (an older server)", async () => {
+    const { api, release } = holding(null);
+    await open(REF, api);
+    await heading();
+    fireEvent.click(screen.getByRole("button", { name: "Undo Kethrandil" }));
+    expect(await screen.findByText(/seconds so far/)).toBeTruthy();
+    await act(async () => release());
+    await waitFor(() => expect(screen.getByText(w.putBack(3))).toBeTruthy());
   });
 });
