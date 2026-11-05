@@ -4,6 +4,7 @@ anything unsure is all play and kept for nobody. Invented lines; no database (a 
 from __future__ import annotations
 
 import unittest
+from types import SimpleNamespace
 from typing import Any
 
 from dmbot.ai import Reply
@@ -19,8 +20,11 @@ EVERYONE = {fx.DM, fx.ALICE, fx.BOB}
 
 
 class FakeStore:
-    def __init__(self, kept: dict[str, Any] | None = None) -> None:
-        self.kept, self.saves = kept, 0
+    def __init__(self, kept: dict[str, Any] | None = None, session: str = SESSION) -> None:
+        self.kept, self.saves, self.session = kept, 0, session
+
+    async def session_at(self, guild_id: int, campaign_id: str, started_at: int) -> Any:
+        return SimpleNamespace(id=self.session)
 
     async def session_split(self, guild_id: int, session_id: str) -> dict[str, Any] | None:
         return self.kept
@@ -104,12 +108,25 @@ class TheSplitForASession(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(await self.ask(self.splitter(store, fast)))
         self.assertEqual((store.kept, store.saves), (None, 0))
 
-    async def test_an_answer_that_cannot_be_read_is_all_play_by_code_and_kept(self) -> None:
+    async def test_an_answer_that_cannot_be_read_is_used_once_and_never_kept(self) -> None:
         store = FakeStore()
         got = await self.ask(self.splitter(store, FakeClient("I cannot tell")))
         assert got is not None
         self.assertEqual(got.method, "fallback")
-        self.assertEqual(store.saves, 1)
+        self.assertEqual((store.kept, store.saves), (None, 0))  # asked again next time
+
+    async def test_a_doubtful_retelling_is_used_once_and_never_kept(self) -> None:
+        answer = '{"parts": [{"label": "recap", "last": 1}]}'
+        store = FakeStore()
+        got = await self.ask(self.splitter(store, FakeClient(answer)))
+        assert got is not None
+        self.assertTrue(got.unsure)
+        self.assertEqual((store.kept, store.saves), (None, 0))
+
+    async def test_another_campaigns_session_is_never_read_or_written(self) -> None:
+        store, fast = FakeStore(session="someone-elses"), FakeClient(st.SPLIT_ANSWER)
+        self.assertIsNone(await self.ask(self.splitter(store, fast)))
+        self.assertEqual((fast.sent, store.saves), ([], 0))
 
     async def test_a_session_with_no_earlier_session_makes_no_call(self) -> None:
         store, fast = FakeStore(), FakeClient()

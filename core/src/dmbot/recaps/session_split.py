@@ -7,8 +7,8 @@ only caller, inside its own stage, with the job's call count and error budget. T
 no job, so this module is the same labelling without the job: `split_for` reads the kept split
 first; with none, it makes the one fast-tier call, checks the answer against the earlier session's
 words exactly as the job does, and keeps the result (first writer wins). Anything unsure or wrong
-is all play and is not kept, so the next read tries again: extraction is never blocked on it, and a
-line is never dropped on a guess. Counts only in logs, never a word of a transcript."""
+is used for that read only and not kept, so the next read tries again: extraction is never
+blocked on it, and a line is never dropped on a guess. Counts only in logs, never a word of a transcript."""
 
 from __future__ import annotations
 
@@ -36,6 +36,8 @@ class SplitStore(Protocol):
     async def save_session_split(
         self, guild_id: int, session_id: str, split: Any, *, only_if_empty: bool = True
     ) -> bool: ...
+
+    async def session_at(self, guild_id: int, campaign_id: str, started_at: int) -> Any: ...
 
 
 class SessionSplitter:
@@ -72,6 +74,10 @@ class SessionSplitter:
         """The session's split: the kept one, else made now and kept. None when it cannot be made
         (no inputs, no lines): the caller reads every line as play. Never raises."""
         try:
+            # The session must be this campaign's (a split is kept by the session's id alone)
+            found = await self._store.session_at(guild_id, campaign_id, session_at)
+            if found is None or str(found.id) != session_id:
+                return None
             kept = await self.stored(guild_id, session_id)
             if kept is not None:
                 return kept
@@ -85,6 +91,11 @@ class SessionSplitter:
             split = await self._make(said, inputs, consenting)
             if split is None:  # a failed call: all play for now, tried again next time
                 return None
+            if split.method != "ai" or split.unsure:
+                # Only an answer the AI gave and the code backed up is kept for good. A cut or
+                # unreadable answer, a doubt, or the code's own guess is used for this read and
+                # asked again next time, so one bad reply never fixes the session's split.
+                return split
             await self._store.save_session_split(guild_id, session_id, split.to_json())
             # (the first writer wins: read back what is kept, which is ours or a racer's)
             return await self.stored(guild_id, session_id) or split
