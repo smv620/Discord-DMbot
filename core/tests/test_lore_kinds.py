@@ -29,6 +29,11 @@ def read(word: str, a: str, b: str, quote: str) -> list[bg.Connection]:
 
 
 class TheWords(unittest.TestCase):
+    def test_travels_with_is_a_word_the_readers_know(self) -> None:
+        self.assertEqual(bg.CONNECTIONS["travels with"], "travels_with")
+        self.assertIn("travels with", lore_read.read_instructions())
+        self.assertIn("travels with", lore_read.shape_instructions())
+
     def test_each_new_word_is_a_kind_of_its_own(self) -> None:
         rivals = "Dorn and Ilse are the rival apprentices of Doran"
         captor = "Tor is held captive by the circus master"
@@ -140,6 +145,29 @@ class TheEnds(NamesTest):
         self.assertEqual({p for _, p, _ in got}, {"located_in"})
         self.assertEqual(len(got), 2)
         self.assertEqual(lost["bad_kind"], 0)
+
+    async def test_a_companion_in_a_document_travels_with_a_player_character_only(self) -> None:
+        await self.make_names(("Glyph", "character", "npc"), ("Old Marn", "character", "npc"))
+        await self.memory.add_entity(
+            GUILD, self.campaign.id, name="Cerric", type="character", role="player_character",
+            played_by=101, status=CONFIRMED, source="dm",
+        )  # fmt: skip
+        lost = await self.queue(
+            bg.Connection("Glyph", "travels_with", "Cerric", "Glyph goes everywhere with Cerric"),
+            bg.Connection("Glyph", "travels_with", "Old Marn", "Glyph goes with Old Marn"),
+        )
+        got = await self.waiting()
+        self.assertEqual([(a, p, b) for a, p, b in got], [("Glyph", "travels_with", "Cerric")])
+        self.assertEqual(len(got), 1)  # (the NPC end is dropped and counted)
+        self.assertEqual(lost["bad_kind"], 1)
+
+    async def test_a_document_never_points_a_companion_at_the_party(self) -> None:
+        await self.make_names(("Glyph", "character", "npc"), ("The party", "faction", None))
+        lost = await self.queue(
+            bg.Connection("Glyph", "travels_with", "The party", "Glyph travels with the party")
+        )
+        self.assertEqual(await self.waiting(), [])
+        self.assertGreaterEqual(sum(lost.values()), 1)  # (counted, whichever check caught it)
 
     async def test_a_connection_whose_ends_do_not_fit_is_dropped_and_counted(self) -> None:
         await self.make_names(("Mira", "npc", "npc"), ("Brindle", "place", None))

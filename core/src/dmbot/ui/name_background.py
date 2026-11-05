@@ -1451,6 +1451,10 @@ async def queue_links(
         """The kind this connection may have between these two entries (#3035): its own when the
         ends fit it, "is in" for a place in a place that the AI called a membership, else None.
         A campaign's own kind and the catch-all take any ends."""
+        if c.how == "travels_with":
+            b = lookup.entities[b_id]
+            if not (b.type == "character" and b.role == "player_character"):
+                return None  # a document names the player character, never the party (#3176)
         term = onto.predicates.get(c.how)
         if term is None or not term.core or c.how == FALLBACK_PREDICATE:
             return c.how

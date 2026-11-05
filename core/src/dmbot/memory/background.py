@@ -83,6 +83,10 @@ CONNECTIONS = {
     # A second character posing as another (a doppelganger, an impostor): two people, never a name
     # of one (#3091). A secret identity of ONE person stays a secret name; this is a connection.
     "disguised as": "disguised_as",  # a is disguised as b
+    # A companion goes along with a player character (#3176). A document never points at the
+    # party (it is written before there is one), so the store refuses any other end and the
+    # suggestion is dropped with the rest of the refused ones.
+    "travels with": "travels_with",  # a travels with b (a player character)
 }
 # The relationships lore is mostly made of (#2757), built in so the AI never has to word them
 # itself (a free label may use only the quote's own words, which "mentors" or "is a rival of"
