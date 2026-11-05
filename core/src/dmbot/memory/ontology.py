@@ -604,6 +604,28 @@ CORE_PREDICATES: tuple[PredicateTerm, ...] = (
         synonyms=("rules", "heads", "speaker_of", "leader_of", "captain_of", "mayor_of"),
     ),
     PredicateTerm(
+        "travels_with",
+        "travels with",
+        "Goes along with a player character or with the party for a stretch of the story: a "
+        "familiar, a hired guide, a rescued prisoner. The first name is the companion. It covers "
+        "the sessions they were together, so a companion can join and leave. The party itself "
+        "never has a companion as a member (#3176).",
+        _BEINGS,
+        ("character", "faction"),
+        covers=(
+            "a familiar or animal companion that goes everywhere with a player character",
+            "a guide or hireling who travels with the party for a while",
+        ),
+        not_this=(
+            ("one works for the other and is paid", "serves"),
+            ("they merely know each other", "knows"),
+            ("a member of a group", "member_of"),
+        ),
+        examples=("Glyph travels with Cerric.", "Old Marn travels with the party."),
+        inverse_label="is joined by",
+        synonyms=("companion_of", "accompanies", "travels_with_party"),
+    ),
+    PredicateTerm(
         "founded",
         "founded",
         "Started a group or built a place. The founder may be long dead and not a member.",

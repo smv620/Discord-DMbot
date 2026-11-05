@@ -183,12 +183,13 @@ class TheEnds(NamesTest):
 class TheMenuAndTheTerms(unittest.TestCase):
     def test_the_connect_menu_fits_discords_limit_and_every_kind_can_be_chosen(self) -> None:
         from dmbot.memory.link_words import CONNECTION_WORDS
-        from dmbot.ui.name_card import BACK, connect_choices
+        from dmbot.ui.name_card import BACK, NOT_IN_MENU, connect_choices
 
         values = [v for v, _, _ in connect_choices("Mira")]
         self.assertEqual(len(values), 25)  # (Discord's limit; exactly 25 is the plan)
         chosen = {v.removesuffix(BACK) for v in values}
-        self.assertEqual(chosen, set(CONNECTION_WORDS))  # every kind, in some direction
+        # every kind, in some direction (a companion's is proposed by the readers, not this menu)
+        self.assertEqual(chosen, set(CONNECTION_WORDS) - NOT_IN_MENU)
 
     def test_a_family_line_that_names_no_role_stays_without_one(self) -> None:
         (got,) = read("family", "Ilse", "Dorn", "Ilse is the sister of Dorn")
