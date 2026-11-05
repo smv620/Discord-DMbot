@@ -15,10 +15,12 @@ characters. The DM's own full graph is not this: it comes straight from the grap
 from __future__ import annotations
 
 from collections import deque
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
 from dmbot.memory import gate
+from dmbot.memory.ontology import FALLBACK_PREDICATE
 
 ALIAS = "alias:"  # the id of a node that stands for a secret other name
 
@@ -112,6 +114,7 @@ def build(src: dict[str, Any], kn: dict[str, Any], viewer: gate.Viewer) -> Graph
         }
         for i, name in shown.items()
     }
+    forbidden = _forbidden_names(src, kn, seen, shown)
     edges: list[dict[str, Any]] = []
     touched: set[str] = set()
     for link in live:
@@ -133,7 +136,8 @@ def build(src: dict[str, Any], kn: dict[str, Any], viewer: gate.Viewer) -> Graph
         edges.append(
             {
                 "id": link["id"], "a": a, "b": b, "predicate": link["predicate"],
-                "detail": "" if changed else link["detail"], "directional": link["directional"],
+                "detail": "" if changed else _label(link, forbidden),
+                "directional": link["directional"],
                 "secret": link["secret"], "at": link["at"], "held": None, "knownBy": None,
                 "decided": None, "revealed": True, "pinned": False,
             }
@@ -152,6 +156,37 @@ def build(src: dict[str, Any], kn: dict[str, Any], viewer: gate.Viewer) -> Graph
         bool(src["isDm"]) or src["visibility"] in ("peek", "open"),
         bool(src.get("limited", False)),
     )
+
+
+def _forbidden_names(
+    src: dict[str, Any], kn: dict[str, Any], seen: gate.Visible, shown: Mapping[str, str]
+) -> frozenset[str]:
+    """Every name this viewer may not be told (#3153): the main name and every other name of an
+    entry they do not know, the main name of one they know only by another name, and any secret
+    other name they do not hold. The words of a catch-all connection are checked against these, so
+    a label cannot name what the page itself would not show."""
+    if seen.everything:
+        return frozenset()  # (the DM)
+    out: set[str] = set()
+    mains = {str(n["id"]): str(n["name"]) for n in src["names"]}
+    for entity, main in mains.items():
+        if entity not in shown or shown[entity] != main:
+            out.add(main)
+    for alias in kn["aliasRows"]:
+        entity = str(alias["entity_id"])
+        held = str(alias["id"]) in seen.aliases
+        if not held and (entity not in shown or alias["secret"]):
+            out.add(str(alias["text"]))
+    return frozenset(out)
+
+
+def _label(link: Mapping[str, Any], forbidden: frozenset[str]) -> str:
+    """The link's own words, blanked when the catch-all's free text names something the viewer may
+    not be told. Other kinds carry fixed words and are not looked at."""
+    detail = str(link["detail"] or "")
+    if link["predicate"] != FALLBACK_PREDICATE:
+        return detail
+    return gate.safe_label(detail, forbidden)
 
 
 def _plain(graph: Graph) -> list[dict[str, Any]]:

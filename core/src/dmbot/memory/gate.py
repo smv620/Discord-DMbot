@@ -33,7 +33,7 @@ from dmbot.memory._changes import (
     Scope,
     Table,
 )
-from dmbot.memory.models import CONFIRMED, PLAYER_CHARACTER, lookup_key
+from dmbot.memory.models import CONFIRMED, PLAYER_CHARACTER, lookup_key, spelling_key
 
 ENTRY, PROPERTY, CONNECTION, ALIAS = "entry", "property", "connection", "alias"
 KINDS = (ENTRY, PROPERTY, CONNECTION, ALIAS)
@@ -146,6 +146,33 @@ def display_name(
         if alias_id in seen.aliases:
             return text
     return None
+
+
+def label_names(label: str, forbidden: Iterable[str]) -> bool:
+    """Whether a connection's own words (the label of the catch-all, "swore on Veil's grave to
+    guard") name any of these names, which the viewer may not be told (#3153). Compared as whole
+    words after `spelling_key`, so a possessive, case, an accent or a hyphen does not hide a name
+    ("Veil's" is Veil), and "Brun" is not "Bruno". A name is also named by its last word when that
+    is at least three letters ("Veil" for "Lord Veil", the way people say a name), which is the
+    end-matching the readers use. A name that is empty or has no letters is ignored. Over-blanking
+    is the safe direction: a common word that is also a hidden entry's name blanks the label for a
+    player and nothing more. Pure."""
+    words = f" {spelling_key(label)} "
+    for name in forbidden:
+        key = spelling_key(name)
+        if not key:
+            continue
+        last = key.rsplit(" ", 1)[-1]
+        if f" {key} " in words or (len(last) >= 3 and f" {last} " in words):
+            return True
+    return False
+
+
+def safe_label(label: str, forbidden: Iterable[str]) -> str:
+    """The label as this viewer may read it: unchanged, or empty (the plain catch-all words, as for
+    a connection with no label) when it names an entry or a spelling the viewer may not name. The
+    DM's forbidden set is empty, so the DM's view is never changed. Pure."""
+    return "" if label and label_names(label, forbidden) else label
 
 
 def public_name(seen: Visible, entity_id: str, main: str, others: Sequence[tuple[str, str]]) -> str:
