@@ -60,6 +60,7 @@ from dmbot.recaps import critics, cues, name_answers, short, uploaded, voice
 from dmbot.recaps import feedback as recap_feedback
 from dmbot.recaps import hold as recap_hold
 from dmbot.recaps import post as recap_post
+from dmbot.recaps import progress as recap_progress
 from dmbot.recaps import requests as recap_requests
 from dmbot.recaps import split as sp
 from dmbot.recaps.accepted import AcceptedStore
@@ -1752,7 +1753,7 @@ class RecapFeatures:
                 except Exception:
                     log.exception("Recap: posting failed")
                     await self.recaps.back_to_draft(
-                        guild_id, cid, at, note="Couldn't post it. Try Post again."
+                        guild_id, cid, at, note=recap_progress.POST_NOTES["post_failed"]
                     )
 
     async def _post_one_recap(self, gid: int, cid: str, at: int) -> None:
@@ -1767,26 +1768,20 @@ class RecapFeatures:
         if job is None or campaign is None or job.status != "posting":
             return
         if not await self.plan_allows("recap", gid, campaign, fail_open=False):
-            return await back(
-                "Your plan doesn't include recaps right now, so nothing was posted. "
-                "Your draft is saved."
-            )
+            return await back(recap_progress.POST_NOTES["plan"])
         channel = self.get_channel(campaign.table_chat_id) if campaign.table_chat_id else None
         if (
             channel is None
             or not hasattr(channel, "send")
             or (getattr(getattr(channel, "guild", None), "id", gid) != gid)
         ):
-            return await back(
-                "DMbot has no table chat to post in yet: start a session in a voice channel, or "
-                "pick a chat channel in ⚙️ Manage DMbot. Then press Post."
-            )
+            return await back(recap_progress.POST_NOTES["no_table_chat"])
         secrets = await self.recap_secret_names(campaign, job.session_at)
         if secrets is None:
-            return await back("DMbot couldn't check your secret names just now. Try Post again.")
+            return await back(recap_progress.POST_NOTES["cannot_check_secrets"])
         text = recap_post.to_the_table(job)
         if names_a_secret(text, secrets, await self.recap_allowed_names(campaign, job.session_at)):
-            return await back("It names something you keep secret. Change the text, then post.")
+            return await back(recap_progress.POST_NOTES["secret_name"])
         try:  # (the progress clock's step: cosmetic, so it never stops a post, and never sits
             # between the consent read and the send, which must stay back to back)
             await self.recaps.posting_step(gid, cid, at, "post")
@@ -1798,10 +1793,7 @@ class RecapFeatures:
         if not set(job.speakers) <= set(agreed):
             for f in audio:
                 f.close()
-            return await back(
-                "A player stopped being recorded since this was written, so it can't be posted. "
-                "Write a new recap, or leave this one out."
-            )
+            return await back(recap_progress.POST_NOTES["player_stopped"])
         # Sent first and marked posted after, so a failed send is never recorded as a post.
         link = ""
         try:
@@ -1818,10 +1810,7 @@ class RecapFeatures:
             for f in audio:
                 f.close()
             log.warning("Recap: the send failed")
-            return await back(
-                "DMbot couldn't write in the table's chat. Check it can post there, "
-                "then press Post again."
-            )
+            return await back(recap_progress.POST_NOTES["send_failed"])
         await self.recaps.posted(gid, cid, at, url=link)
         if campaign.dm_screen_channel_id:
             await self.post(
