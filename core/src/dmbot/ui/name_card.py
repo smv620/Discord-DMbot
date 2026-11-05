@@ -13,6 +13,7 @@ checks again.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import logging
 import re
 import time
@@ -26,6 +27,7 @@ from discord import app_commands
 from dmbot.campaigns import Campaign
 from dmbot.discord_limits import MESSAGE_MAX
 from dmbot.memory import kin, link_edits, name_edits
+from dmbot.memory.gate import NameGuard, safe_label
 from dmbot.memory.kinds import kind_phrase
 from dmbot.memory.link_words import (
     CARD_BACK,
@@ -164,12 +166,27 @@ def fact_words(r: Relation, subject_kind: str = "") -> str:
     )  # (family reads with its role: "is the niece of")
 
 
+def _guard(lookup: CampaignLookup) -> NameGuard:
+    """The names this card's reader must not be told (#3153), ready to check a label against. Empty
+    for a DM, who is given the whole lookup."""
+    return NameGuard(lookup.guarded, allowed=(e.name for e in lookup.entities.values()))
+
+
+def _safe(r: Relation, guard: NameGuard) -> Relation:
+    """The connection, its own catch-all words blanked when they name an entry or a spelling the
+    reader may not be told ("swore on Veil's grave" with Veil hidden)."""
+    if r.predicate != FALLBACK_PREDICATE or not r.detail or not guard:
+        return r
+    safe = safe_label(r.detail, guard)
+    return r if safe == r.detail else dataclasses.replace(r, detail=safe)
+
+
 def sentence(lookup: CampaignLookup, r: Relation) -> str | None:
     """ "Ulfgar is a member of Frostwolf tribe", or None if either end is gone."""
     subject, obj = lookup.entities.get(r.subject_id), lookup.entities.get(r.object_id)
     if subject is None or obj is None:
         return None
-    return f"{subject.name} {fact_words(r, subject.type)} {obj.name}"
+    return f"{subject.name} {fact_words(_safe(r, _guard(lookup)), subject.type)} {obj.name}"
 
 
 # Kinds whose "other way round" reading is not offered in the menu: Discord allows 25 options, and
@@ -243,6 +260,7 @@ def _rows(
     order each reading first appears. A secret one is left out unless `secrets`. This is the one
     list the card, Show all and the Edit a connection menu all read, so they never disagree."""
     found: dict[str, list[Row]] = {}
+    guard = _guard(lookup)
     for r in connections:
         if r.status != CONFIRMED or (r.secret and not secrets):
             continue
@@ -254,12 +272,13 @@ def _rows(
             continue
         first = lookup.entities.get(r.subject_id)  # the connection's own first name
         subject_kind = first.type if first is not None else ""
+        shown = _safe(r, guard)  # (the words as this reader may read them; the row keeps `r`)
         words = (
-            fact_words(r, subject_kind)
+            fact_words(shown, subject_kind)
             if ahead
             else (
-                f"is linked (“{_md(r.detail)}”) to"
-                if r.predicate == FALLBACK_PREDICATE and r.detail
+                f"is linked (“{_md(shown.detail)}”) to"
+                if shown.predicate == FALLBACK_PREDICATE and shown.detail
                 else (
                     (
                         back_words(r.predicate, r.detail, r.directional, subject_kind)

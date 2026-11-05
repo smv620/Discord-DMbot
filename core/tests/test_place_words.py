@@ -178,7 +178,8 @@ class OnTheCard(unittest.TestCase):
         self.town = entity("a" * 32, "Aldmoor", "place")
         self.region = entity("r" * 32, "The Reach", "place")
         self.lookup: Any = SimpleNamespace(
-            entities={e.id: e for e in (self.tavin, self.town, self.region)}
+            entities={e.id: e for e in (self.tavin, self.town, self.region)},
+            guarded=frozenset(),
         )
 
     def relation(self, subject: str, obj: str, detail: str = "") -> Relation:
