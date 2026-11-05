@@ -15,10 +15,12 @@ characters. The DM's own full graph is not this: it comes straight from the grap
 from __future__ import annotations
 
 from collections import deque
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
 from dmbot.memory import gate
+from dmbot.memory.ontology import FALLBACK_PREDICATE
 
 ALIAS = "alias:"  # the id of a node that stands for a secret other name
 
@@ -112,6 +114,7 @@ def build(src: dict[str, Any], kn: dict[str, Any], viewer: gate.Viewer) -> Graph
         }
         for i, name in shown.items()
     }
+    guard = _name_guard(kn, seen, shown)
     edges: list[dict[str, Any]] = []
     touched: set[str] = set()
     for link in live:
@@ -133,7 +136,8 @@ def build(src: dict[str, Any], kn: dict[str, Any], viewer: gate.Viewer) -> Graph
         edges.append(
             {
                 "id": link["id"], "a": a, "b": b, "predicate": link["predicate"],
-                "detail": "" if changed else link["detail"], "directional": link["directional"],
+                "detail": "" if changed else _label(link, guard),
+                "directional": link["directional"],
                 "secret": link["secret"], "at": link["at"], "held": None, "knownBy": None,
                 "decided": None, "revealed": True, "pinned": False,
             }
@@ -152,6 +156,44 @@ def build(src: dict[str, Any], kn: dict[str, Any], viewer: gate.Viewer) -> Graph
         bool(src["isDm"]) or src["visibility"] in ("peek", "open"),
         bool(src.get("limited", False)),
     )
+
+
+def _name_guard(kn: dict[str, Any], seen: gate.Visible, shown: Mapping[str, str]) -> gate.NameGuard:
+    """The names this viewer may not be told (#3153), from the knowers door's every entry (the
+    source door leaves out merged ones, quests and mysteries, and is cut on a very large campaign):
+    the main name of an entry they do not know or know only by another name, the old name of a
+    merged one unless it lives on under that name, and every other name they do not hold that is
+    secret, not confirmed, or an entry they do not know. A catch-all connection's words are checked
+    against them, so a label cannot name what the page itself would not show."""
+    if seen.everything:
+        return gate.NameGuard(())  # (the DM)
+    forbidden: list[str] = []
+    for row in kn["entities"]:
+        entity = str(row["id"])
+        if row["status"] == "rejected":
+            continue
+        name = str(row["name"])
+        survivor = row["merged_into"]
+        if survivor is not None:
+            if shown.get(str(survivor)) != name:
+                forbidden.append(name)
+        elif shown.get(entity) != name:
+            forbidden.append(name)
+    for alias in kn["aliasRows"]:
+        held = str(alias["id"]) in seen.aliases
+        public = alias["status"] == "confirmed" and not alias["secret"]
+        if not held and (not public or str(alias["entity_id"]) not in shown):
+            forbidden.append(str(alias["text"]))
+    return gate.NameGuard(forbidden, allowed=shown.values())
+
+
+def _label(link: Mapping[str, Any], guard: gate.NameGuard) -> str:
+    """The link's own words, blanked when the catch-all's free text names something the viewer may
+    not be told. Other kinds carry fixed words and are not looked at."""
+    detail = str(link["detail"] or "")
+    if link["predicate"] != FALLBACK_PREDICATE or not detail:
+        return detail
+    return gate.safe_label(detail, guard)
 
 
 def _plain(graph: Graph) -> list[dict[str, Any]]:

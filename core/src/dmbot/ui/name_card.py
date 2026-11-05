@@ -13,6 +13,7 @@ checks again.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import logging
 import re
 import time
@@ -26,6 +27,7 @@ from discord import app_commands
 from dmbot.campaigns import Campaign
 from dmbot.discord_limits import MESSAGE_MAX
 from dmbot.memory import kin, link_edits, name_edits
+from dmbot.memory.gate import NameGuard, safe_label
 from dmbot.memory.kinds import kind_phrase
 from dmbot.memory.link_words import (
     CARD_BACK,
@@ -62,6 +64,7 @@ from dmbot.memory.store import SAID_AS_MAX, MemoryStore
 from dmbot.mentions import NO_PINGS
 from dmbot.transcript.respell import contains, done_note, left_note, recaps_note, undone_note
 from dmbot.ui import all_names, logic, player_id
+from dmbot.ui import companion as companion_ui
 from dmbot.ui.dmbot_commands import (
     VIEW_TIMEOUT_S,
     _answer_first,
@@ -163,12 +166,27 @@ def fact_words(r: Relation, subject_kind: str = "") -> str:
     )  # (family reads with its role: "is the niece of")
 
 
+def _guard(lookup: CampaignLookup) -> NameGuard:
+    """The names this card's reader must not be told (#3153), ready to check a label against. Empty
+    for a DM, who is given the whole lookup."""
+    return NameGuard(lookup.guarded, allowed=(e.name for e in lookup.entities.values()))
+
+
+def _safe(r: Relation, guard: NameGuard) -> Relation:
+    """The connection, its own catch-all words blanked when they name an entry or a spelling the
+    reader may not be told ("swore on Veil's grave" with Veil hidden)."""
+    if r.predicate != FALLBACK_PREDICATE or not r.detail or not guard:
+        return r
+    safe = safe_label(r.detail, guard)
+    return r if safe == r.detail else dataclasses.replace(r, detail=safe)
+
+
 def sentence(lookup: CampaignLookup, r: Relation) -> str | None:
     """ "Ulfgar is a member of Frostwolf tribe", or None if either end is gone."""
     subject, obj = lookup.entities.get(r.subject_id), lookup.entities.get(r.object_id)
     if subject is None or obj is None:
         return None
-    return f"{subject.name} {fact_words(r, subject.type)} {obj.name}"
+    return f"{subject.name} {fact_words(_safe(r, _guard(lookup)), subject.type)} {obj.name}"
 
 
 # Kinds whose "other way round" reading is not offered in the menu: Discord allows 25 options, and
@@ -242,6 +260,7 @@ def _rows(
     order each reading first appears. A secret one is left out unless `secrets`. This is the one
     list the card, Show all and the Edit a connection menu all read, so they never disagree."""
     found: dict[str, list[Row]] = {}
+    guard = _guard(lookup)
     for r in connections:
         if r.status != CONFIRMED or (r.secret and not secrets):
             continue
@@ -253,12 +272,13 @@ def _rows(
             continue
         first = lookup.entities.get(r.subject_id)  # the connection's own first name
         subject_kind = first.type if first is not None else ""
+        shown = _safe(r, guard)  # (the words as this reader may read them; the row keeps `r`)
         words = (
-            fact_words(r, subject_kind)
+            fact_words(shown, subject_kind)
             if ahead
             else (
-                f"is linked (“{_md(r.detail)}”) to"
-                if r.predicate == FALLBACK_PREDICATE and r.detail
+                f"is linked (“{_md(shown.detail)}”) to"
+                if shown.predicate == FALLBACK_PREDICATE and shown.detail
                 else (
                     (
                         back_words(r.predicate, r.detail, r.directional, subject_kind)
@@ -641,6 +661,11 @@ async def show_card(
             and not entity.party
             and sees_secrets(campaign, interaction.user.id)
         ),
+        companion=(
+            entity.type == "character"
+            and not entity.is_player_character
+            and sees_secrets(campaign, interaction.user.id)
+        ),
         deed=(
             (entity.is_player_character or entity.party)
             and sees_secrets(campaign, interaction.user.id)
@@ -779,6 +804,7 @@ class NameCard(_Menu):
         clue: bool = False,
         standing: bool = False,
         deed: bool = False,
+        companion: bool = False,
         thread: bool = False,
         promise: bool = False,
         led: bool = False,
@@ -851,6 +877,8 @@ class NameCard(_Menu):
             self.add_item(_Button(self._standing, label=STANDING_BUTTON, style=grey, row=3))
         if deed:  # a player character or the party: a deed the DM records (#1732)
             self.add_item(_Button(self._deed, label=DEED_BUTTON, style=grey, row=3))
+        if companion:  # a character who is not a player character: who it travels with (#3505)
+            self.add_item(_Button(self._travels, label=companion_ui.BUTTON, style=grey, row=3))
         if clue:  # a clue or secret: who knows it (#1649); an item has the row-3 button instead
             self.add_item(_Button(self._who_knows, label=CLUE_BUTTON, style=grey, row=3))
         if cut:
@@ -943,6 +971,10 @@ class NameCard(_Menu):
             await _tell(interaction, "Only the DM can change a story thread.")
             return
         await interaction.response.send_modal(LinkForm(self.campaign_id, self.entity_id))
+
+    async def _travels(self, interaction: discord.Interaction) -> None:
+        if await companion_ui.start(interaction, self.campaign_id, self.entity_id):
+            self.stop()  # (only when the menu replaced the card; a refusal leaves it working)
 
     async def _deed(self, interaction: discord.Interaction) -> None:
         from dmbot.ui.deeds import start

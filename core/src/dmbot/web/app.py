@@ -109,6 +109,7 @@ from dmbot.web.name_checks import read_campaign_checks, read_checks
 from dmbot.web.names import list_names, set_said_as
 from dmbot.web.names_fixed import queue_undo_polled as queue_names_fixed_undo_polled
 from dmbot.web.names_fixed import read_names_fixed
+from dmbot.web.node_summary_route import read_node_summary
 from dmbot.web.payments import (
     NotResumable,
     PaymentError,
@@ -2053,6 +2054,19 @@ def create_app(
         session, _token = signed
         try:
             return await relationships.read_version(db, session, ref)
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/web/nodes/{node}/summary")
+    async def me_campaign_web_node_summary(
+        ref: str, node: str, signed: Signed, peek: str | None = None
+    ) -> dict[str, Any]:
+        """Who or what one name is, in two or three plain sentences (#3236). Only `text`, `more`,
+        `needsPeek` and `version`; a player's is built from what their characters know."""
+        session, _token = signed
+        try:
+            return await read_node_summary(db, session, ref, node, peek=peek == "1")
         except RecapError as err:
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
