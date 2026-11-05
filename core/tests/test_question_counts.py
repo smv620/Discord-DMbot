@@ -246,6 +246,9 @@ class TheCounts(Base):
     async def agreed(self, _guild: int) -> Collection[int]:
         return {SAID_BY}
 
+    async def nobody(self, _guild: int) -> Collection[int]:
+        return set()
+
     async def with_claims(self) -> ClaimStore:
         """The claim reader switched on, as the bot has it: only SAID_BY agreed to be recorded."""
         claims = ClaimStore(self.memory)
@@ -343,6 +346,20 @@ class TheCounts(Base):
         # (the answered claim is an ordinary fact to check now, so the two still add up)
         after = (await self.count(kinds.FAMILY)).n + (await self.count(kinds.CLAIMS)).n
         self.assertEqual(after, await claims.listed_count(self.g, self.c, opted_in={SAID_BY}))
+
+    async def test_family_ties_equal_the_card_and_skip_a_speaker_who_stopped(self) -> None:
+        """The message's count and the card's list are one list (#3463): a kept claim whose
+        speaker stopped being recorded is in neither."""
+        claims = await self.with_claims()
+        await self.kept_for_an_answer(claims, self.c, "Mira")
+        card = await claims.unplaced(self.g, self.c, opted_in={SAID_BY})
+        self.assertEqual((await self.count(kinds.FAMILY)).n, len(card))
+        self.assertEqual(len(card), 2)  # (the helper keeps two claims for the name)
+        self.src = replace(self.src, agreed=self.nobody)  # the speaker stopped being recorded
+        self.assertEqual((await claims.unplaced(self.g, self.c, opted_in=set())), [])
+        self.assertEqual((await self.count(kinds.FAMILY)).n, 0)
+        # the facts-to-check count follows the same list, so the two still add up to the page
+        self.assertEqual((await self.count(kinds.CLAIMS)).n, 0)
 
     async def test_facts_to_check_equal_the_claims_waiting_and_skip_a_speaker_not_recorded(
         self,

@@ -204,7 +204,8 @@ class TheCard(Base):
         await self.kept()
         async with self.db.guild(self.g) as conn:
             await conn.execute(
-                "UPDATE memory_entities SET status = 'rejected' WHERE description LIKE 'a smuggler%'"
+                "UPDATE memory_entities SET status = 'rejected'"
+                " WHERE description LIKE 'a smuggler%'"
             )
         view = ft.FamilyTies(self.c, self.g)
         it = self.interaction()

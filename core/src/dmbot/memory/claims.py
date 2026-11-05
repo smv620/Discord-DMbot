@@ -1390,9 +1390,16 @@ class ClaimStore:
             )
             return True
 
-    async def unplaced_count(self, guild_id: int, campaign_id: str) -> int:
+    async def unplaced_count(
+        self, guild_id: int, campaign_id: str, *, opted_in: Collection[int] | None = None
+    ) -> int:
         """How many claims about the player characters are kept for the DM's answer (#3238), for the
-        count the import or recap result and the names-to-check list show. A count only."""
+        count the import or recap result, the names-to-check list and "Questions for you" show.
+        A count only. With `opted_in` it counts exactly the rows `unplaced` lists (a reading is
+        not one, and only claims whose every speaker is recorded now), so the Family ties count
+        and card agree (#3463); without it, every kept claim."""
+        if opted_in is not None:
+            return len(await self.unplaced(guild_id, campaign_id, opted_in=opted_in, limit=None))
         async with self._store._read(guild_id, campaign_id) as scope:
             cur = await scope.conn.execute(
                 "SELECT count(*) AS n FROM memory_claims WHERE guild_id = %s AND campaign_id = %s"
@@ -1403,10 +1410,15 @@ class ClaimStore:
         return int(row["n"]) if row else 0
 
     async def unplaced(
-        self, guild_id: int, campaign_id: str, *, opted_in: Collection[int], limit: int = 50
+        self,
+        guild_id: int,
+        campaign_id: str,
+        *,
+        opted_in: Collection[int],
+        limit: int | None = 50,
     ) -> list[Claim]:
-        """The claims kept for the DM's answer (#3238) that `unplaced_count` counts, oldest first, for
-        the Family ties card (#3463): the very rows the count counts, read only (`waiting` wipes
+        """The claims kept for the DM's answer (#3238) that `unplaced_count` counts, oldest first,
+        for the Family ties card (#3463): the very rows the count counts, read only (`waiting` wipes
         claims of speakers no longer recorded and drops claims whose names are not all confirmed
         yet, so its list can be shorter than the count). Only those whose every speaker is
         recorded now (`opted_in`)."""
@@ -1419,7 +1431,8 @@ class ClaimStore:
             )
         mine = set(opted_in)
         found = [claim_of(r) for r in rows]
-        return [c for c in found if set(c.speaker_ids) <= mine][:limit]
+        ready = [c for c in found if set(c.speaker_ids) <= mine]
+        return ready if limit is None else ready[:limit]
 
     async def waiting(
         self, guild_id: int, campaign_id: str, *, opted_in: Collection[int], limit: int = 200

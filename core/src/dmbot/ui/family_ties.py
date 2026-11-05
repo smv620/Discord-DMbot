@@ -45,7 +45,10 @@ NEITHER = "None of these"
 NEITHER_HELP = f"{NEITHER}: DMbot forgets this fact for good."
 UNDO = "↩️ Undo my pick"
 NO_NOTE = "No note"
-PICKED = "Choice saved. Now answer it in 🗣️ Check what was said to add it to your story. ↩️ Undo my pick takes it back."
+PICKED = (
+    "Choice saved. Now answer it in 🗣️ Check what was said to add it to your story. "
+    "↩️ Undo my pick takes it back."
+)
 NEITHER_DONE = "Forgotten. DMbot won't ask about this fact again."
 UNDONE = "Pick taken back. That fact is back on this card."
 GONE_NOW = "Already answered. Showing what is left."
