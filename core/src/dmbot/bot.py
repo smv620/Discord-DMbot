@@ -527,6 +527,7 @@ from dmbot.ui.exposure_summary import (
     summary_text,
     summary_view,
 )
+from dmbot.ui.family_ties import FamilyTiesButton
 from dmbot.ui.guide import GuideButton
 from dmbot.ui.heard_review import HeardReviewButton, heard_review_view
 from dmbot.ui.heard_review import waiting_text as heard_waiting_text
@@ -1666,7 +1667,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self.add_dynamic_items(name_pass_undo.UndoNamePassButton)  # Undo of the name pass (#2628)
         self.add_dynamic_items(questions_discord.NotNowButton)  # 🔕 under a reminder (#3435)
         self.add_dynamic_items(
-            questions_board.LookAlikesButton, questions_board.QuestionsButton
+            questions_board.LookAlikesButton, questions_board.QuestionsButton, FamilyTiesButton
         )  # the Questions message and the card's button (#3435)
         self.question_round = questions_discord.build_round(self)
         self.question_notices = (
