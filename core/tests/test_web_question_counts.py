@@ -68,10 +68,12 @@ class Counts(Web):
         (mine,) = [c for c in got["campaigns"] if c["ref"] == self.cref]
         self.assertEqual((mine["total"], mine["kinds"], mine["countedAt"]), (0, [], None))
 
-    async def test_a_player_sees_no_campaign_and_no_count(self) -> None:
+    async def test_a_player_sees_nothing_of_a_campaign_they_do_not_run(self) -> None:
+        """Bob only plays in campaign one (he runs campaign two), so its counts are not his."""
         await self.count(self.one.id, kinds.NAMES, 3)
         got = await question_counts.read_questions(self.web, self.player, now=NOW)
-        self.assertEqual(got["campaigns"], [])
+        self.assertNotIn(self.cref, {c["ref"] for c in got["campaigns"]})
+        self.assertEqual(sum(c["total"] for c in got["campaigns"]), 0)
         self.assertEqual(
             await question_counts.read_total(self.web, self.player, now=NOW), {"total": 0}
         )
