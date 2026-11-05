@@ -65,6 +65,7 @@ class Base(DatabaseTest):
             story_family_only=False,
         )
         dm.extractor_ai = None
+        dm.session_splitter = None  # (no recap split here: #3298)
         dm._put_back_tasks = {}
         dm.tables = {}
         dm._ending = {}
