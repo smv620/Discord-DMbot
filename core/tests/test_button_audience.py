@@ -139,6 +139,7 @@ AUDIENCE: dict[str, str] = {
             "dm_screen.backstory_button.BackstoryButton",
             "dm_screen.links_ready.ReadyButton",
             "ui.theatre_button.ScriptButton",  # press() checks dm_user_ids (#3244)
+            "ui.theatre_button.OldScriptButton",  # the same checks, then the new question (#3478)
             "dm_screen.buttons.StopListeningButton",
             "dm_screen.buttons.VisibilityButton",
             "dm_screen.clock.ClockButton",
