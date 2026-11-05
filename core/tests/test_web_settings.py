@@ -494,6 +494,29 @@ class TheChoices(Settings):
         done = (await self.poll(answer))["progress"]
         self.assertEqual((done["stage"], done["state"]), ("done", "done"))
 
+    async def test_a_taken_choice_moves_at_the_millisecond_stamp_and_a_refusal_reads_failed(
+        self,
+    ) -> None:
+        answer = await self.queue(setting="visibility", value="open")
+        now_s = int(time.time())
+        async with self.db.guild(self.g) as conn:  # taken 30 seconds ago (the queue stamps ms)
+            await conn.execute(
+                "UPDATE setting_actions SET state = 'working', created_at = %s, claimed_at = %s"
+                " WHERE id = %s",
+                (now_s - 60, (now_s - 30) * 1000, answer),
+            )
+        working = (await self.poll(answer))["progress"]
+        self.assertEqual((working["stage"], working["state"]), ("working", "running"))
+        self.assertAlmostEqual(working["updatedAt"], now_s - 30, delta=3)  # seconds, not ms
+        async with self.db.guild(self.g) as conn:  # a choice that needs the DM's yes first
+            await conn.execute(
+                "UPDATE setting_actions SET state = 'failed', error = 'needs_confirm'"
+                " WHERE id = %s",
+                (answer,),
+            )
+        failed = (await self.poll(answer))["progress"]
+        self.assertEqual((failed["state"], failed["reason"]), ("failed", "needs_confirm"))
+
     async def test_a_choice_the_bot_never_takes_reads_as_stalled(self) -> None:
         answer = await self.queue(setting="visibility", value="open")
         async with self.db.guild(self.g) as conn:  # queued ten minutes ago, still waiting
