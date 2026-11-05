@@ -8868,6 +8868,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 if renew is not None:
                     await renew()  # (an import's claim: nobody else retakes it while this runs)
 
+            # Last time's recap read aloud at the start of the session (#3298) is not this
+            # session's events: the lines the stored split labels so are left out. A session with
+            # no split yet is read as all play.
+            recap_lines = extractor.recap_numbers(await transcripts.session_split(gid, sid))
             report = await extractor.run(
                 self.extractor_ai,
                 ClaimStore(self.memory),
@@ -8878,6 +8882,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 consenting=lambda: self.consent.consenting(gid),
                 model=lambda: self.extractor_ai.model if self.extractor_ai else "",
                 session_started_at=session.started_at,
+                recap_lines=recap_lines,
                 tally=tally,
                 max_calls=allowed,
                 skip=skip,

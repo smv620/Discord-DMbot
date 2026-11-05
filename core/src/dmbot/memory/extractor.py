@@ -19,9 +19,9 @@ import asyncio
 import logging
 import time
 from collections import Counter
-from collections.abc import Awaitable, Callable, Collection, Sequence
+from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from typing import Protocol
+from typing import Any, Protocol
 
 from dmbot.ai import AIOutOfFunds, Reply
 from dmbot.memory.claims import (
@@ -183,6 +183,24 @@ def readable(lines: Sequence[Line]) -> list[Said]:
     ]
 
 
+def recap_numbers(split: Mapping[str, Any] | None) -> frozenset[int]:
+    """The line numbers a stored split (`recaps.split.Split.to_json()`) labels as last time's recap
+    (#3298), or none: no split, one that cannot be read, or one whose recap the comparison could
+    not back up (`unsure`) all mean every line is play. Pure."""
+    if not split or split.get("unsure"):
+        return frozenset()
+    out: set[int] = set()
+    parts = split.get("parts")
+    for part in parts if isinstance(parts, list) else ():
+        try:
+            label, first, last = part
+            if label == "recap" and int(first) <= int(last):
+                out.update(range(int(first), int(last) + 1))
+        except (TypeError, ValueError):
+            return frozenset()
+    return frozenset(out)
+
+
 def batches(said: Sequence[Said]) -> list[list[Said]]:
     """Groups of `BATCH_LINES` in order; a tail shorter than `MIN_BATCH_LINES` joins the last
     group instead of being a call of its own."""
@@ -242,6 +260,7 @@ class Report:
     readings_cut: int = 0  # the same for the readings answers
     stopped: str = ""  # why it ended early, if it did
     through_ms: int = 0  # every line that began up to this was read and its claims stored
+    recap_lines: int = 0  # lines left out because they retell earlier sessions (#3298): a count
 
     def line(self) -> str:
         why = ", ".join(f"{n} {r}" for r, n in sorted(self.dropped.items())) or "none"
@@ -251,6 +270,7 @@ class Report:
             f"{self.malformed} malformed, {self.named} new name(s), {self.joined} joined, "
             f"{self.deferred} deferred, {self.unsent} line(s) not sent"
             + (f", {self.cut} answer(s) cut short" if self.cut else "")
+            + (f", {self.recap_lines} recap line(s) left out" if self.recap_lines else "")
             + (
                 f", readings: {self.readings} found, {self.readings_refused} refused,"
                 f" {self.readings_failed} failed, {self.readings_cut} cut short"
@@ -296,6 +316,7 @@ async def run(
     family_only: bool = False,
     imported: bool = False,
     progress: Callable[[int, int], Awaitable[None]] | None = None,
+    recap_lines: Collection[int] = (),
 ) -> Report:
     """Read the session's lines and store what the AI found as proposals, all at once at the end
     (the linker picks the most-said new names across the whole session). `consenting` is asked
@@ -319,6 +340,10 @@ async def run(
     `imported`: the session was loaded from a file, so its readings carry no moment for the game
     clock's log to be read at (#3091).
 
+    `recap_lines` (#3298): the numbers of lines that retell earlier sessions (the session's stored
+    split, `recap_numbers`). They are left out of what is sent, so a retelling read aloud at the
+    start of a session gives no claim and no name as this session's events; they are only counted.
+
     `progress`: awaited with (batch n, of m) before each batch is sent (an import's progress card,
     #3307); a failing one is logged by type and never stops the read.
 
@@ -332,7 +357,10 @@ async def run(
     everyone: dict[str, int | None] = {}  # every line sent, to who said it
     heard: dict[str, str] = {}  # every line sent, as said: where a naming cue is looked for
     answered_by = ""  # the model that answered last (it can change on a fallback)
-    work = batches([s for s in readable(lines) if s.started_ms > after_ms])
+    left_out = set(recap_lines)
+    candidates = [s for s in readable(lines) if s.started_ms > after_ms]
+    report.recap_lines = sum(1 for s in candidates if s.number in left_out)
+    work = batches([s for s in candidates if s.number not in left_out])
     report.through_ms = after_ms
     reached = after_ms  # how far the batches in a row, all answered, go
     broken = False  # a batch failed: later ones are read, but a restart must come back to it

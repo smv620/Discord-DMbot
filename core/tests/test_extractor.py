@@ -9,7 +9,7 @@ import json
 import unittest
 from collections.abc import Collection, Sequence
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, ClassVar
 
 from dmbot.ai import AIError, AIOutOfFunds, Reply
 from dmbot.bot import DMBot
@@ -290,6 +290,48 @@ class ReadingPass(unittest.IsolatedAsyncioTestCase):
         report = await go(Believing(), Kept(), session(10), readings=True)
         self.assertIn("readings: 1 found, 0 refused, 0 failed, 0 cut short", report.line())
         self.assertNotIn("Heartseeker", report.line())
+
+
+class RecapLines(unittest.IsolatedAsyncioTestCase):
+    """Last time's recap read aloud at the start is not this session's events (#3298)."""
+
+    split: ClassVar[dict[str, Any]] = {
+        "parts": [["recap", 1, 3], ["play", 4, 12]],
+        "unsure": False,
+        "method": "ai",
+    }
+
+    def test_the_numbers_come_from_the_recap_part_only(self) -> None:
+        self.assertEqual(extractor.recap_numbers(self.split), frozenset({1, 2, 3}))
+
+    def test_no_split_an_unsure_one_or_a_broken_one_means_every_line_is_play(self) -> None:
+        for split in (
+            None,
+            {},
+            {**self.split, "unsure": True},
+            {"parts": [["recap", "a", 3]]},
+            {"parts": "nonsense"},
+        ):
+            self.assertEqual(extractor.recap_numbers(split), frozenset(), split)
+
+    async def test_the_recap_lines_are_not_sent_and_are_counted(self) -> None:
+        ai, store = Canned(), Recorder()
+        report = await go(ai, store, session(12), recap_lines=extractor.recap_numbers(self.split))
+        (call,) = ai.sent
+        self.assertNotIn("\n1 ", call)
+        self.assertNotIn("\n3 ", call)
+        self.assertIn("\n4 ", call)
+        self.assertEqual(report.recap_lines, 3)
+        self.assertIn("3 recap line(s) left out", report.line())
+        ((claims, _, _),) = store.calls
+        self.assertEqual(claims[0].lines, ("4",))  # (a claim never rests on a recap line)
+
+    async def test_a_session_with_no_recap_is_read_whole_and_the_line_says_nothing(self) -> None:
+        ai, store = Canned(), Recorder()
+        report = await go(ai, store, session(12))
+        self.assertEqual(report.recap_lines, 0)
+        self.assertNotIn("recap", report.line())
+        self.assertIn("\n1 ", ai.sent[0])
 
 
 class Running(unittest.IsolatedAsyncioTestCase):

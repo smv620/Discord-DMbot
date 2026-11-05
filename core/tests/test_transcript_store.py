@@ -50,6 +50,26 @@ class StoreTests(DatabaseTest):
         lines = await self.store.lines(GUILD, sid)
         self.assertEqual([(x.heard, x.text) for x in lines], [("first",) * 2, ("second",) * 2])
 
+    async def test_a_sessions_split_is_kept_once_read_back_and_undone_by_the_dm(self) -> None:
+        sid = await self.store.open_session(GUILD, self.campaign.id, START)
+        self.assertIsNone(await self.store.session_split(GUILD, sid))  # not made yet
+        recap = {"parts": [["recap", 1, 2], ["play", 3, 9]], "unsure": False, "method": "ai"}
+        self.assertTrue(await self.store.save_session_split(GUILD, sid, recap))
+        other = {"parts": [["play", 1, 9]], "unsure": False, "method": "fallback"}
+        self.assertFalse(await self.store.save_session_split(GUILD, sid, other))  # first one kept
+        self.assertEqual(await self.store.session_split(GUILD, sid), recap)
+        self.assertTrue(await self.store.undo_session_split(GUILD, sid))
+        undone = await self.store.session_split(GUILD, sid)
+        assert undone is not None
+        self.assertEqual((undone["parts"], undone["method"]), ([["play", 1, 9]], "dm"))
+
+    async def test_a_split_is_never_read_across_servers_or_for_a_missing_session(self) -> None:
+        sid = await self.store.open_session(GUILD, self.campaign.id, START)
+        await self.store.save_session_split(GUILD, sid, {"parts": [["recap", 1, 2]]})
+        self.assertIsNone(await self.store.session_split(GUILD + 1, sid))
+        self.assertIsNone(await self.store.session_split(GUILD, "0" * 32))
+        self.assertFalse(await self.store.undo_session_split(GUILD + 1, sid))
+
     async def test_the_next_session_start_counts_only_later_sessions_with_lines(self) -> None:
         first = await self.store.open_session(GUILD, self.campaign.id, START)
         await self.store.add_lines(GUILD, first, [line(1, PLAYER, "hello")])

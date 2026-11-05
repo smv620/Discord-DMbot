@@ -196,6 +196,7 @@ class Gates(unittest.IsolatedAsyncioTestCase):
             extractor_calls_since=AsyncMock(return_value=day),
             record_extraction=AsyncMock(),
             is_import=AsyncMock(return_value=False),
+            session_split=AsyncMock(return_value=None),  # (no split yet: every line is play)
         )
         me = SimpleNamespace(
             settings=SimpleNamespace(
@@ -307,6 +308,7 @@ class Contradictions(unittest.IsolatedAsyncioTestCase):
             extractor_calls_since=AsyncMock(return_value=day),
             record_extraction=AsyncMock(),
             is_import=AsyncMock(return_value=False),
+            session_split=AsyncMock(return_value=None),  # (no split yet: every line is play)
         )
         return SimpleNamespace(
             settings=SimpleNamespace(
