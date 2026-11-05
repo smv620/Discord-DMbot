@@ -333,7 +333,7 @@ class RecallService:
             " AND e.campaign_id = %s AND e.type <> 'person' AND NOT (e.status = 'confirmed'"
             " AND NOT e.audience_limited AND NOT e.hidden_from_players AND NOT e.unnamed"
             " AND NOT e.type = ANY(%s))"
-            " UNION SELECT a.text FROM memory_aliases a JOIN memory_entities e"
+            " UNION ALL SELECT a.text FROM memory_aliases a JOIN memory_entities e"
             " ON e.guild_id = a.guild_id AND e.campaign_id = a.campaign_id AND e.id = a.entity_id"
             " WHERE a.guild_id = %s AND a.campaign_id = %s AND e.type <> 'person'"
             " AND (a.secret OR a.status <> 'confirmed' OR NOT (e.status = 'confirmed'"

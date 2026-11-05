@@ -52,3 +52,8 @@ class OnTheRecall(ConfirmedMemoryTest):
     async def test_words_naming_only_what_players_know_are_kept(self) -> None:
         await self.link(self.cerric, "associated_with", self.temple, "taught by Ulfgar")
         self.assertIn("taught by Ulfgar", await self.says(PLAYERS))
+
+    async def test_a_proposed_entry_the_dm_has_not_confirmed_is_not_named(self) -> None:
+        await self.add("Sir Dunmoor", type="character", status="proposed")
+        await self.link(self.cerric, "associated_with", self.temple, "bound by oath to Sir Dunmoor")
+        self.assertNotIn("Dunmoor", await self.says(PLAYERS))
