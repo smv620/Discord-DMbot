@@ -278,14 +278,17 @@ class ThePlayerVersion(unittest.TestCase):
         for word in ("Roles", "rank", "major", "Major", "significant"):
             self.assertNotIn(word, player)
 
-    def test_the_player_order_ignores_the_rank_and_the_dm_score(self) -> None:
-        low = person("Lowrank", 1, kin(), score=1.0, player_score=5.0)
-        high = person("Highrank", 5, kin(), score=99.0, player_score=1.0)
-        self.assertEqual(ns.summarize(MIRA, [low, high], ns.DM).named, ("Highrank", "Lowrank"))
-        self.assertEqual(ns.summarize(MIRA, [low, high], ns.PLAYER).named, ("Lowrank", "Highrank"))
+    def test_players_and_the_dm_get_the_same_order(self) -> None:
+        low = person("Lowrank", 1, kin(), score=99.0)
+        high = person("Highrank", 5, kin(), score=1.0)
+        for audience in (ns.DM, ns.PLAYER):
+            self.assertEqual(
+                ns.summarize(MIRA, [low, high], audience).named, ("Highrank", "Lowrank")
+            )
 
-    def test_a_player_neighbour_is_not_cut_for_a_low_rank(self) -> None:
-        self.assertEqual(ns.summarize(MIRA, [person("Kesh", 0, kin())], ns.PLAYER).named, ("Kesh",))
+    def test_a_player_neighbour_below_minor_is_cut_too(self) -> None:
+        self.assertEqual(ns.summarize(MIRA, [person("Kesh", 0, kin())], ns.PLAYER).named, ())
+        self.assertEqual(ns.summarize(MIRA, [person("Kesh", 1, kin())], ns.PLAYER).named, ("Kesh",))
 
 
 class TheSpoilerCheck(unittest.TestCase):
