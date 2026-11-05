@@ -203,6 +203,24 @@ class TranscriptStore:
             )
             return cur.rowcount > 0
 
+    async def put_back_numbers(
+        self, guild_id: int, session_id: str, numbers: Collection[int]
+    ) -> int:
+        """Queue lines to be read again by the put-back sweep (#2587), by their place in the
+        session (1-based, the numbering `lines` and the story reader use). How many were queued."""
+        wanted = sorted(set(numbers))
+        if not wanted:
+            return 0
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "UPDATE transcript_lines l SET reread = TRUE FROM ("
+                " SELECT id, row_number() OVER (ORDER BY started_ms, id) AS n"
+                " FROM transcript_lines WHERE session_id = %s) x"
+                " WHERE l.id = x.id AND x.n = ANY(%s)",
+                (session_id, wanted),
+            )
+            return cur.rowcount
+
     async def undo_session_split(self, guild_id: int, session_id: str) -> frozenset[int]:
         """The DM says last time's recap was play after all (#3298): the lines the split labels as
         recap become play (method "dm"); talk and catch-up stay what they were. Returns the line

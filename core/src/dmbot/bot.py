@@ -380,6 +380,7 @@ from dmbot.recaps.plot import PlotRunner, PlotStore
 from dmbot.recaps.plot_backup import PlotFineSection, PlotIssuesSection
 from dmbot.recaps.plot_talk_run import TalkRunner, TalkStore
 from dmbot.recaps.requests import RequestStore
+from dmbot.recaps.session_split import SessionSplitter
 from dmbot.recaps.store import RecapRightsSection, RecapSection, RecapStore
 from dmbot.recaps.style import NotesSection, NoteStore, StyleSection, StyleStore
 from dmbot.retention import RetentionJob
@@ -512,6 +513,7 @@ from dmbot.ui import (
 )
 from dmbot.ui import guide as guide_screen
 from dmbot.ui import logic as ui_logic
+from dmbot.ui import recap_lines as recap_lines_ui
 from dmbot.ui import sheets as sheets_ui
 from dmbot.ui.claims_review import ClaimsReviewButton, claims_review_view
 from dmbot.ui.claims_review import question_text as claims_question
@@ -1432,6 +1434,21 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self._clean_failed_at = -HINTS_FAIL_LOG_S
         # Stored session transcripts anyone in the server can download (#41, #125).
         self.transcripts = transcripts
+        # The split of an imported session into talk, last time's recap and play, made once and
+        # kept on the session, so the story reader leaves the recap out (#3298).
+        self.session_splitter: SessionSplitter | None = (
+            SessionSplitter(
+                transcripts,
+                self.split_inputs,
+                self.recap_ai,
+                self.recap_retry_ai,
+                structured=settings.recap_structured_output_split,
+            )
+            if transcripts is not None
+            and self.recap_ai is not None
+            and self.recap_retry_ai is not None
+            else None
+        )
         # Cleaning the sessions a DM imported from a file (#2105), in the background.
         self.import_job: ImportJob | None = (
             ImportJob(
@@ -1665,6 +1682,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self.add_dynamic_items(FeaturesButton)  # what is switched on (#1831)
         await recaps_discord.setup(self)  # the recap buttons (#2129)
         self.add_dynamic_items(name_pass_undo.UndoNamePassButton)  # Undo of the name pass (#2628)
+        self.add_dynamic_items(recap_lines_ui.RecapLinesUndoButton)  # last time's recap (#3298)
         self.add_dynamic_items(questions_discord.NotNowButton)  # 🔕 under a reminder (#3435)
         self.add_dynamic_items(
             questions_board.LookAlikesButton, questions_board.QuestionsButton
@@ -8895,6 +8913,17 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 progress=progress,
             )
             log.info(report.line())
+            if report.recap_lines and notice_channel is not None:
+                # Said once, with the way back, before anything else is relied on (#3298): counts
+                # only. Only an imported session is ever split by the story reader.
+                try:
+                    await self.post(
+                        notice_channel,
+                        recap_lines_ui.note(report.recap_lines),
+                        view=recap_lines_ui.undo_view(cid, sid),
+                    )
+                except Exception as exc:
+                    log.warning("Recap lines: the note was not posted (%s)", type(exc).__name__)
             try:  # what a restart resumes from, and what the day's limit counts
                 await transcripts.record_extraction(
                     gid, sid, through_ms=report.through_ms, calls=0, now=now
@@ -10561,8 +10590,38 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
     async def _recap_lines(self, gid: int, sid: str) -> frozenset[int]:
         """The line numbers of a session that retell earlier sessions (#3298), from the stored
         split, for every place the story reader is run so they cannot drift. None when no split
-        is kept: every line is play."""
+        is kept: every line is play. For an imported session the split is made first, once, if
+        there is none (a session from a file may open with a recap read aloud); the DM is told how
+        many lines it left out and can hand them back (`undo_recap_lines`)."""
+        if self.transcripts is None:
+            return frozenset()
+        if self.session_splitter is not None and await self.transcripts.is_import(gid, sid):
+            session = await self.transcripts.session(gid, sid)
+            if session is not None:
+                await self.session_splitter.split_for(
+                    gid,
+                    session.campaign_id,
+                    sid,
+                    session.started_at,
+                    lambda: self.consent.consenting(gid),
+                )
         return extractor.recap_numbers(await self.transcripts.session_split(gid, sid))
+
+    async def undo_recap_lines(self, gid: int, cid: str, sid: str) -> int:
+        """The DM says the lines read as last time's recap were play (#3298): the session's split
+        is kept with them as play, and they are queued to be read again by the put-back sweep
+        (names, then the story reader). A recap already written stays as it is. How many lines;
+        none when the session is not the campaign's or had no recap to hand back."""
+        if self.transcripts is None:
+            return 0
+        session = await self.transcripts.session(gid, sid)
+        if session is None or session.campaign_id != cid:
+            return 0
+        released = await self.transcripts.undo_session_split(gid, sid)
+        queued = await self.transcripts.put_back_numbers(gid, sid, released)
+        if queued:
+            await self.read_put_back_lines(gid)
+        return len(released)
 
     async def count_waiting(self, gid: int, cid: str) -> WaitingChecks:
         """What waits for the DM now, by kind, counted the way the names panel counts it (#3314).

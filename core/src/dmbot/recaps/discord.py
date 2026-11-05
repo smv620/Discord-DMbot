@@ -1192,6 +1192,23 @@ class RecapFeatures:
             log.warning("Recap: the kept split could not be read (%s)", type(exc).__name__)
             return None
 
+    async def split_inputs(self, gid: int, cid: str, session_at: int) -> Inputs | None:
+        """What the split of one session reads (#3298): the session's lines and the earlier
+        session to compare with, nothing the writer needs. None when they cannot be loaded."""
+        if self.transcripts is None or self.lookup is None or self.recaps is None:
+            return None
+        return await load_inputs(
+            campaigns=self.campaigns,
+            lookup=self.lookup,
+            transcripts=self.transcripts,
+            recaps=self.recaps,
+            clocks=self.clocks,
+            guild_id=gid,
+            campaign_id=cid,
+            session_at=session_at,
+            with_earlier=True,
+        )
+
     async def recap_inputs(self, gid: int, cid: str, job: Job) -> Inputs | None:
         """What the recap stages read for one job (see `dmbot.recaps.inputs`)."""
         if self.transcripts is None or self.lookup is None or self.recaps is None:
