@@ -17,6 +17,7 @@ EVERY_ACTION = (
     "name", "name-join", "name-undo",  # "Not named yet" on the Names page (#2803)
     "link-who", "alias-who",  # "Who knows this?" (#2999)
     "confirm-kinds", "confirm-undo",  # "Add all" for an upload's names (#3207)
+    "claim-pick", "claim-unpick",  # "Which one?" for a kept fact (#3463)
 )  # fmt: skip
 
 
