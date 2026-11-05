@@ -2231,3 +2231,125 @@ class TheRoutes(Editing):
             self.assertEqual((nope.status_code, nope.json()["error"]), (404, "not_found"))
             junk = await client.post(f"/me/campaigns/{self.cref}/web/links", content=b"not json")
             self.assertEqual((junk.status_code, junk.json()["error"]), (400, "bad_action"))
+
+
+class WhichOneFromTheWebsite(Editing):
+    """ "Which one?" for a kept claim, answered from the Family ties card (#3463): the calls the
+    Discord card makes, applied one action at a time."""
+
+    async def kept(self) -> str:
+        c = self.one.id
+        for name, type_, note in (
+            ("Tavin", "player_character", ""),
+            ("Mira", "character", "the ferrywoman"),
+            ("Mira", "character", "a smuggler's daughter"),
+        ):
+            await self.memory.add_entity(
+                self.g, c, type=type_, name=name, description=note, source=DM_SOURCE
+            )
+        await self.claims.propose(
+            self.g, c, [said("Tavin", "is the sister of", "Mira")], {"1": 7},
+            opted_in={7}, prompt_version="p1", model="m1", session_started_at=500,
+        )  # fmt: skip
+        async with self.db.guild(self.g) as conn:
+            cur = await conn.execute("SELECT id FROM memory_claims WHERE reason <> ''")
+            (row,) = await cur.fetchall()
+        return str(row["id"])
+
+    async def press(self, action: str, claim: str, text: str = "") -> wa.Outcome:
+        now = wa.Waiting(self.claims, self.backstory, self._now)
+        done = wa.Action(
+            id="a" * 32, campaign_id=self.one.id, entity_id="", user_id=ALICE.id,
+            action=action, target_id=claim, text=text,
+        )  # fmt: skip
+        return await wa.apply(self.memory, self.g, {ALICE.id}, done, now)
+
+    async def _now(self) -> set[int]:
+        return {7}
+
+    async def test_a_pick_is_the_same_call_as_the_discord_button_and_a_retry_is_done(self) -> None:
+        claim = await self.kept()
+        (choice,) = await self.claims.which_one(self.g, self.one.id, claim)
+        entry = choice.entries[0].id
+        text = f"{choice.side}:{entry}"
+        self.assertEqual((await self.press("claim-pick", claim, text)).error, "")
+        picked = await self.claims.get(self.g, self.one.id, claim)
+        assert picked is not None
+        self.assertEqual((picked.object_picked, picked.reason), (entry, ""))
+        self.assertEqual(await self.claims.unplaced_count(self.g, self.one.id), 0)
+        self.assertEqual((await self.press("claim-pick", claim, text)).error, "")  # sent twice
+
+    async def test_a_pick_of_something_that_is_not_a_choice_is_gone(self) -> None:
+        claim = await self.kept()
+        for text in ("", "object:", "object:" + "f" * 32, "sideways:x", "no colon"):
+            with self.subTest(text=text):
+                self.assertEqual((await self.press("claim-pick", claim, text)).error, wa.GONE)
+        self.assertEqual(await self.claims.unplaced_count(self.g, self.one.id), 1)
+
+    async def test_undo_puts_the_choices_back_and_is_gone_when_nothing_was_picked(self) -> None:
+        claim = await self.kept()
+        self.assertEqual((await self.press("claim-unpick", claim)).error, wa.GONE)
+        (choice,) = await self.claims.which_one(self.g, self.one.id, claim)
+        await self.press("claim-pick", claim, f"{choice.side}:{choice.entries[0].id}")
+        self.assertEqual((await self.press("claim-unpick", claim)).error, "")
+        self.assertEqual(await self.claims.unplaced_count(self.g, self.one.id), 1)
+
+    async def test_none_of_these_is_a_no_and_the_pick_cannot_follow_it(self) -> None:
+        claim = await self.kept()
+        self.assertEqual((await self.press("claim-reject", claim)).error, "")
+        self.assertEqual(await self.claims.unplaced_count(self.g, self.one.id), 0)
+        self.assertEqual(await self.claims.which_one(self.g, self.one.id, claim), [])
+        self.assertEqual((await self.press("claim-pick", claim, "object:x")).error, wa.GONE)
+
+    async def test_a_second_pick_for_a_side_already_picked_does_not_overwrite_it(self) -> None:
+        claim = await self.kept()
+        (choice,) = await self.claims.which_one(self.g, self.one.id, claim)
+        first, second = (o.id for o in choice.entries[:2])
+        await self.press("claim-pick", claim, f"{choice.side}:{first}")
+        self.assertEqual(
+            (await self.press("claim-pick", claim, f"{choice.side}:{second}")).error, wa.GONE
+        )
+        again = await self.claims.get(self.g, self.one.id, claim)
+        assert again is not None
+        self.assertEqual(again.object_picked, first)
+
+    async def test_another_campaigns_claim_is_never_found_or_changed(self) -> None:
+        claim = await self.kept()
+        (choice,) = await self.claims.which_one(self.g, self.one.id, claim)
+        entry = choice.entries[0].id
+        await self.press("claim-pick", claim, f"{choice.side}:{entry}")
+        now = wa.Waiting(self.claims, self.backstory, self._now)
+        for action, text in (("claim-unpick", ""), ("claim-pick", f"{choice.side}:{entry}")):
+            other = wa.Action(
+                id="b" * 32, campaign_id=self.two.id, entity_id="", user_id=ALICE.id,
+                action=action, target_id=claim, text=text,
+            )  # fmt: skip
+            out = await wa.apply(self.memory, self.g, {ALICE.id}, other, now)
+            self.assertEqual(out.error, wa.GONE, action)
+        kept = await self.claims.get(self.g, self.one.id, claim)
+        assert kept is not None
+        self.assertEqual(kept.object_picked, entry)
+
+    async def test_someone_who_is_not_a_dm_cannot_pick_or_undo(self) -> None:
+        claim = await self.kept()
+        (choice,) = await self.claims.which_one(self.g, self.one.id, claim)
+        now = wa.Waiting(self.claims, self.backstory, self._now)
+        text = f"{choice.side}:{choice.entries[0].id}"
+        for action, said_text in (("claim-pick", text), ("claim-reject", "")):
+            stranger = wa.Action(
+                id="c" * 32, campaign_id=self.one.id, entity_id="", user_id=99,
+                action=action, target_id=claim, text=said_text,
+            )  # fmt: skip
+            out = await wa.apply(self.memory, self.g, {ALICE.id}, stranger, now)
+            self.assertEqual(out.error, wa.NOT_ALLOWED, action)
+        self.assertEqual(await self.claims.unplaced_count(self.g, self.one.id), 1)
+        await self.press("claim-pick", claim, text)
+        stranger = wa.Action(
+            id="d" * 32, campaign_id=self.one.id, entity_id="", user_id=99,
+            action="claim-unpick", target_id=claim,
+        )  # fmt: skip
+        self.assertEqual(
+            (await wa.apply(self.memory, self.g, {ALICE.id}, stranger, now)).error, wa.NOT_ALLOWED
+        )
+        picked = await self.claims.get(self.g, self.one.id, claim)
+        assert picked is not None and picked.object_picked is not None

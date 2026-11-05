@@ -80,6 +80,8 @@ AMBIGUOUS = "ambiguous"  # ... and more than one entry has it: nothing is writte
 WAITING = (
     "claim-confirm",
     "claim-reject",
+    "claim-pick",  # "Which one?" for a claim kept because a name could be two entries (#3463)
+    "claim-unpick",
     "backstory-keep",
     "backstory-skip",
     "backstory-keep-all",
@@ -696,12 +698,42 @@ async def _link(memory: MemoryStore, guild_id: int, cid: str, entity_id: str, a:
     return Outcome(**pair)
 
 
+async def _answer_which_one(guild_id: int, cid: str, a: Action, w: Waiting) -> Outcome:
+    """ "Which one?" for a kept claim (#3463): the very calls the Discord card makes. The pick's
+    `text` is `subject:<entry id>` or `object:<entry id>`; `ClaimStore.pick_one` checks the entry is
+    one of the choices and that the claim still waits. A retried job finds the pick already made:
+    done. Neither is `claim-reject`. Undo is `ClaimStore.unpick`, which holds only while the claim
+    still waits with a pick to take back; otherwise `gone`."""
+    if a.action == "claim-unpick":
+        return Outcome() if await w.claims.unpick(guild_id, cid, a.target_id) else _failed(GONE)
+    side, _, entry_id = a.text.partition(":")
+    # Only a side still waiting for its pick, and only one of its choices: a second tab sending a
+    # different entry for a side already picked must not overwrite the first pick.
+    choices = await w.claims.which_one(guild_id, cid, a.target_id)
+    if any(c.side == side and entry_id in {o.id for o in c.entries} for c in choices):
+        try:
+            await w.claims.pick_one(guild_id, cid, a.target_id, side, entry_id)
+        except MemoryRuleError:
+            return _failed(GONE)
+        return Outcome()
+    claim = await w.claims.get(guild_id, cid, a.target_id)
+    made = (
+        claim is not None
+        and side in ("subject", "object")
+        and bool(entry_id)
+        and getattr(claim, f"{side}_picked") == entry_id
+    )
+    return Outcome() if made else _failed(GONE)
+
+
 async def _answer_waiting(
     memory: MemoryStore, guild_id: int, cid: str, a: Action, w: Waiting
 ) -> Outcome:
     """The DM's answer to a waiting connection from the website (#2635, #2642): the very calls
     the DM screen's buttons make, so the fact is the DM's own word, consent and the plan are
     checked again, and Undo is the same. A retried job finds the answer already given: done."""
+    if a.action in ("claim-pick", "claim-unpick"):
+        return await _answer_which_one(guild_id, cid, a, w)
     if a.action in ("claim-confirm", "claim-reject"):
         claim = await w.claims.get(guild_id, cid, a.target_id)
         if claim is None:
