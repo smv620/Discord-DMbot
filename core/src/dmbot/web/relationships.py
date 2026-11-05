@@ -19,6 +19,7 @@ import re
 from collections.abc import Callable, Collection, Mapping
 from typing import Any
 
+from dmbot import progress
 from dmbot.consent import TERMS_VERSION
 from dmbot.db import Database
 from dmbot.memory import gate, kin
@@ -941,6 +942,7 @@ async def read_answer(db: Database, session: Session, ref: str, answer: str) -> 
             if got["state"] == "done" and str(got["resultOther"] or "").isdigit()
             else None,
             "waits": waited["waits"],
+            "progress": _name_action_progress(got),
         }
     edge = None
     if str(got["action"]).startswith(("claim-", "backstory-")):
@@ -1072,6 +1074,24 @@ async def queue_reading(db: Database, session: Session, ref: str, body: object) 
         raise RecapError("not_found")
     return await _queue(
         db, session, ref, entity="", action=action, target=target, text="", flag=False
+    )
+
+
+def _name_action_progress(got: dict[str, Any]) -> dict[str, Any]:
+    """The same wait in the shared progress shape (#3355): the stage, when the page queued it, when
+    it last moved and whether it has stalled, times and codes only. A queue row waits for the bot
+    (`waiting`), then is taken (`working`, then the bot stamps its own progress), then ends."""
+    state = str(got["state"])
+    created = int(got.get("createdAt") or 0)
+    taken = int(got.get("claimedAt") or 0) // 1000  # (the queue marks pickups in milliseconds)
+    moved = max(taken, int(got.get("progressAt") or 0))
+    stage = {"waiting": "waiting", "working": "working", "done": "done"}.get(state, "failed")
+    return progress.shape(
+        stage,
+        started_at=created,
+        updated_at=moved if state != "waiting" and moved else created,
+        now=int(got.get("now") or created),
+        reason=(str(got.get("error") or "") or "undo_failed") if stage == "failed" else None,
     )
 
 

@@ -20,7 +20,7 @@ from typing import Any
 
 from dmbot.db import Database, row_int
 from dmbot.memory import evidence, forget_readings
-from dmbot.transcript import theatre_store
+from dmbot.transcript import rel_store, theatre_store
 from dmbot.transcript.export import UNKNOWN_SPEAKER, clean_name
 from dmbot.transcript.models import Line, Lineage, TranscriptSession, line_ref
 from dmbot.transcript.respell import put_back, respell
@@ -1097,6 +1097,7 @@ class TranscriptStore:
                 (guild_id, user_id),
             )
             await theatre_store.forget_person(conn, guild_id, user_id)  # the script made of them
+            await rel_store.forget_person(conn, guild_id, user_id)  # and the ties found in it
             await conn.execute(  # where a fixed spelling was written into their lines (#2170)
                 "DELETE FROM transcript_respells WHERE guild_id = %s AND user_id = %s",
                 (guild_id, user_id),
@@ -1210,6 +1211,7 @@ class TranscriptStore:
                 (*scope, speaker),
             )
             await theatre_store.forget_person(conn, guild_id, speaker, campaign_id)
+            await rel_store.forget_person(conn, guild_id, speaker, campaign_id)
             await conn.execute(
                 "DELETE FROM transcript_respells"
                 " WHERE guild_id = %s AND campaign_id = %s AND user_id = %s",
@@ -1307,6 +1309,7 @@ class TranscriptStore:
                 (guild_id, session_id),
             )
             await theatre_store.forget_session(conn, guild_id, session_id)
+            await rel_store.forget_session(conn, guild_id, session_id)
             await conn.execute(
                 "DELETE FROM transcript_respells WHERE guild_id = %s AND session_id = %s",
                 (guild_id, session_id),

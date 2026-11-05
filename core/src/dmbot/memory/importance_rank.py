@@ -24,7 +24,7 @@ Counts and fixed codes only: no word of a transcript is stored.
 from __future__ import annotations
 
 import time
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Collection, Iterable, Mapping
 from dataclasses import dataclass, field
 
 from dmbot.db import Conn, Database
@@ -135,6 +135,90 @@ def _is_player(row: Mapping[str, object]) -> bool:
     return row["type"] == "character" and row["role"] == "player_character"
 
 
+def links_from(
+    relations: Iterable[tuple[str, str, str]],
+    entities: Mapping[str, Mapping[str, object]],
+    ended: Mapping[str, str | None],
+) -> tuple[dict[str, int], set[str]]:
+    """For each live entry, how many other live entries it is joined to by a current, confirmed
+    connection, and which entries are a player character's companion. `relations`: (subject id,
+    object id, predicate) of the connections that are confirmed, not ended, not a `plays` link and
+    not made by The party (the caller filters those; the database reader does it in its query).
+
+    A pair counts once however many connections join it, and a joined (merged) entry counts for
+    the one it became, so the union of their connections is counted. Every source counts in full:
+    a lore upload, play, and a secret or not yet revealed connection (the rank is never shown to a
+    player, STORY_MEMORY 9c). A family link worked out from two stated ones counts once the DM has
+    confirmed it, as any other. Pure."""
+    pairs: set[frozenset[str]] = set()
+    companions: set[str] = set()
+    for subject, obj, predicate in relations:
+        one, other = ended.get(subject), ended.get(obj)
+        if one is None or other is None or one == other:
+            continue
+        if entities[one]["status"] != "confirmed" or entities[other]["status"] != "confirmed":
+            continue
+        pairs.add(frozenset((one, other)))
+        if predicate == COMPANION_PREDICATE:
+            for mine, theirs in ((one, other), (other, one)):
+                if _is_player(entities[theirs]) and not _is_player(entities[mine]):
+                    companions.add(mine)
+    count: dict[str, int] = {}
+    for pair in pairs:
+        for entity_id in pair:
+            count[entity_id] = count.get(entity_id, 0) + 1
+    return count, companions
+
+
+def newest_by_group(
+    ended: Mapping[str, str | None], newest: Mapping[str, tuple[int, int]]
+) -> dict[str, tuple[int, int]]:
+    """Each live entry's newest assessment across its merged group, as (seq, rank). `newest`: the
+    latest assessment of each entry by itself, as (seq, rank). Pure."""
+    group: dict[str, tuple[int, int]] = {}
+    for entity_id, at in ended.items():
+        if (
+            at is not None
+            and entity_id in newest
+            and newest[entity_id][0] > group.get(at, (0, 0))[0]
+        ):
+            group[at] = newest[entity_id]
+    return group
+
+
+def ranks_from(
+    entities: Mapping[str, Mapping[str, object]],
+    ended: Mapping[str, str | None],
+    group: Mapping[str, tuple[int, int]],
+    heard: Mapping[str, set[int]],
+    links: Mapping[str, int],
+    companions: Collection[str],
+) -> dict[str, int]:
+    """The current rank of every live entry from the counted facts (entry id -> 0 to 5). `group`:
+    the newest assessment of each live entry's merged group as (seq, rank); `heard`: the session
+    times each entry was heard in. A merged name's sessions join the survivor's. Pure, so the
+    website's door (which hands over only these inputs) and the bot's reader cannot disagree."""
+    sessions: dict[str, set[int]] = {}
+    for entity_id, at in ended.items():
+        if at is not None:
+            sessions.setdefault(at, set()).update(heard.get(entity_id, ()))
+    out: dict[str, int] = {}
+    for entity_id, row in entities.items():
+        if row["status"] == "merged":
+            continue  # (a merged name has no rank of its own)
+        latest = group.get(entity_id)
+        out[entity_id] = effective(
+            floor(
+                _is_player(row),
+                len(sessions.get(entity_id, ())),
+                links.get(entity_id, 0),
+                entity_id in companions,
+            ),
+            latest[1] if latest else None,
+        )
+    return out
+
+
 class ImportanceStore:
     """Reads and appends assessments. The caller has already checked who may ask; the rows are
     this campaign's only (row-level security and composite keys)."""
@@ -166,14 +250,7 @@ class ImportanceStore:
             str(r["entity_id"]): (int(r["seq"]), int(r["rank"])) for r in await cur.fetchall()
         }
         ended = roots(entities)
-        group: dict[str, tuple[int, int]] = {}
-        for entity_id, at in ended.items():
-            if (
-                at is not None
-                and entity_id in newest
-                and newest[entity_id][0] > group.get(at, (0, 0))[0]
-            ):
-                group[at] = newest[entity_id]
+        group = newest_by_group(ended, newest)
         return entities, ended, group
 
     async def add(self, guild_id: int, campaign_id: str, assessments: Iterable[Assessment]) -> int:
@@ -220,39 +297,18 @@ class ImportanceStore:
         entities: Mapping[str, Mapping[str, object]],
         ended: Mapping[str, str | None],
     ) -> tuple[dict[str, int], set[str]]:
-        """For each live entry, how many other live entries it is joined to by a current,
-        confirmed connection, and which entries are a player character's companion.
-
-        A pair counts once however many connections join it, and a joined (merged) entry counts
-        for the one it became, so the union of their connections is counted. Every source counts
-        in full: a lore upload, play, and a secret or not yet revealed connection (the rank is
-        never shown to a player, STORY_MEMORY 9c). An ended connection, a `plays` link and a link
-        The party makes (a rule's, on facts already counted) count for nothing. A family link
-        worked out from two stated ones counts once the DM has confirmed it, as any other."""
+        """The campaign's current confirmed connections, counted by `links_from`."""
         cur = await conn.execute(
             "SELECT subject_id, object_id, predicate FROM memory_relations"
             " WHERE guild_id = %s AND campaign_id = %s AND status = 'confirmed'"
             " AND to_session_at IS NULL AND predicate <> 'plays' AND source <> 'party'",
             (guild_id, campaign_id),
         )
-        pairs: set[frozenset[str]] = set()
-        companions: set[str] = set()
-        for r in await cur.fetchall():
-            one, other = ended.get(str(r["subject_id"])), ended.get(str(r["object_id"]))
-            if one is None or other is None or one == other:
-                continue
-            if entities[one]["status"] != "confirmed" or entities[other]["status"] != "confirmed":
-                continue
-            pairs.add(frozenset((one, other)))
-            if r["predicate"] == COMPANION_PREDICATE:
-                for mine, theirs in ((one, other), (other, one)):
-                    if _is_player(entities[theirs]) and not _is_player(entities[mine]):
-                        companions.add(mine)
-        count: dict[str, int] = {}
-        for pair in pairs:
-            for entity_id in pair:
-                count[entity_id] = count.get(entity_id, 0) + 1
-        return count, companions
+        rows = [
+            (str(r["subject_id"]), str(r["object_id"]), str(r["predicate"]))
+            for r in await cur.fetchall()
+        ]
+        return links_from(rows, entities, ended)
 
     async def ranks(self, guild_id: int, campaign_id: str) -> dict[str, int]:
         """The current rank of every live entry of the campaign (entry id -> 0 to 5).
@@ -270,25 +326,7 @@ class ImportanceStore:
             )
             heard = {str(r["entity_id"]): set(r["sessions"]) for r in await cur.fetchall()}
             links, companions = await self._links(conn, guild_id, campaign_id, entities, ended)
-        sessions: dict[str, set[int]] = {}
-        for entity_id, at in ended.items():
-            if at is not None:
-                sessions.setdefault(at, set()).update(heard.get(entity_id, ()))
-        out: dict[str, int] = {}
-        for entity_id, row in entities.items():
-            if row["status"] == "merged":
-                continue  # (a merged name has no rank of its own)
-            latest = group.get(entity_id)
-            out[entity_id] = effective(
-                floor(
-                    _is_player(row),
-                    len(sessions.get(entity_id, ())),
-                    links.get(entity_id, 0),
-                    entity_id in companions,
-                ),
-                latest[1] if latest else None,
-            )
-        return out
+        return ranks_from(entities, ended, group, heard, links, companions)
 
 
 def counts(ranks: Mapping[str, int]) -> list[int]:
