@@ -15,7 +15,7 @@ from typing import Any
 import discord
 
 from dmbot.memory import tags
-from dmbot.memory.claims import UNPLACED_REASON, Claim, ClaimStore, WhichOne
+from dmbot.memory.claims import Claim, ClaimStore, WhichOne
 from dmbot.memory.models import MemoryRuleError
 from dmbot.ui.claims_review import statement
 from dmbot.ui.dmbot_commands import (
@@ -52,6 +52,7 @@ GONE_NOW = "Already answered. Showing what is left."
 NOTHING_LEFT = (
     "✅ Nothing left to pick. If DMbot finds more after the next session, it will ask here."
 )
+ONLY_DMS = "Only a DM of this campaign can do that."
 NOT_AVAILABLE = (
     "Remembering names isn't switched on for this DMbot yet. Ask whoever runs DMbot to turn it on."
 )
@@ -83,7 +84,9 @@ class FamilyTies(_Menu):
         self.campaign_id = campaign_id
         self.guild_id = guild_id  # from the campaign: a DM's private chat has no server (#3210)
         self.current: str | None = None  # the claim shown (kept in view across its two sides)
-        self.undo_of: str | None = None  # the claim whose pick can still be taken back
+        # The claim whose pick can still be taken back: the last one picked (the website can undo
+        # any kept claim; here Undo is offered right after the pick).
+        self.undo_of: str | None = None
 
     async def _load(self, interaction: discord.Interaction) -> tuple[str, list[WhichOne]] | None:
         """The text and menus for the next kept fact, or None when none is left."""
@@ -92,15 +95,17 @@ class FamilyTies(_Menu):
             return None
         claims = ClaimStore(memory)
         agreed = await _bot(interaction).consent.consenting(self.guild_id)
-        kept = [
-            c
-            for c in await claims.waiting(self.guild_id, self.campaign_id, opted_in=agreed)
-            if c.reason == UNPLACED_REASON
-        ]
+        kept = await claims.unplaced(self.guild_id, self.campaign_id, opted_in=agreed)
         # the one in hand first, then the oldest
         kept.sort(key=lambda c: c.id != self.current)
         for claim in kept:
-            choices = await claims.which_one(self.guild_id, self.campaign_id, claim.id)
+            # (a menu needs two choices: a name with fewer is no question, and an empty menu would
+            # make Discord refuse the whole card)
+            choices = [
+                c
+                for c in await claims.which_one(self.guild_id, self.campaign_id, claim.id)
+                if len(c.entries) >= 2
+            ]
             if not choices:
                 continue
             self.current = claim.id
@@ -191,10 +196,11 @@ class FamilyTies(_Menu):
         entry: str = "",
     ) -> None:
         await _answer_first(interaction, in_place=True)
-        campaign = await _campaign_for(interaction, self.campaign_id)  # asked again each press
+        campaign = await _dm_campaign(interaction, self.campaign_id)  # asked again each press
         memory = _memory(interaction)
         if campaign is None or memory is None:
             return
+        self.guild_id = campaign.guild_id  # (the campaign may have moved to another server)
         claims = ClaimStore(memory)
         said = GONE_NOW
         try:
@@ -248,13 +254,26 @@ class FamilyTiesButton(
         await start_family_ties(interaction, self.campaign_id)
 
 
+async def _dm_campaign(interaction: discord.Interaction, campaign_id: str) -> Any:
+    """The campaign, only for one of its DMs: a server manager who is not a DM may run the names
+    screens but is not shown a story fact, and cannot pick or forget it (the Questions message's
+    own rule)."""
+    campaign = await _campaign_for(interaction, campaign_id)
+    if campaign is None:
+        return None
+    if interaction.user.id not in campaign.dm_user_ids:
+        await _tell(interaction, ONLY_DMS)
+        return None
+    return campaign
+
+
 async def start_family_ties(interaction: discord.Interaction, campaign_id: str) -> None:
     # A new private message (the Questions message is never replaced), answered first.
     await interaction.response.defer(ephemeral=True, thinking=True)
     if _memory(interaction) is None:
         await _tell(interaction, NOT_AVAILABLE)
         return
-    campaign = await _campaign_for(interaction, campaign_id)
+    campaign = await _dm_campaign(interaction, campaign_id)
     if campaign is None:
         return
     view = FamilyTies(campaign.id, campaign.guild_id)

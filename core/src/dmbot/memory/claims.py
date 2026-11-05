@@ -1402,6 +1402,25 @@ class ClaimStore:
             row = await cur.fetchone()
         return int(row["n"]) if row else 0
 
+    async def unplaced(
+        self, guild_id: int, campaign_id: str, *, opted_in: Collection[int], limit: int = 50
+    ) -> list[Claim]:
+        """The claims kept for the DM's answer (#3238) that `unplaced_count` counts, oldest first, for
+        the Family ties card (#3463): the very rows the count counts, read only (`waiting` wipes
+        claims of speakers no longer recorded and drops claims whose names are not all confirmed
+        yet, so its list can be shorter than the count). Only those whose every speaker is
+        recorded now (`opted_in`)."""
+        async with self._store._read(guild_id, campaign_id) as scope:
+            rows = await scope.select(
+                CLAIMS,
+                " AND status = 'proposed' AND reason = %s AND reading IS NULL"
+                " ORDER BY created_at, id",
+                (UNPLACED_REASON,),
+            )
+        mine = set(opted_in)
+        found = [claim_of(r) for r in rows]
+        return [c for c in found if set(c.speaker_ids) <= mine][:limit]
+
     async def waiting(
         self, guild_id: int, campaign_id: str, *, opted_in: Collection[int], limit: int = 200
     ) -> list[Claim]:

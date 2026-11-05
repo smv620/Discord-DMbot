@@ -73,6 +73,7 @@ class TheCard(Base):
         stack.enter_context(
             patch.object(ft, "_campaign_for", AsyncMock(return_value=self._campaign))
         )
+        stack.enter_context(patch.object(ft, "_tell", AsyncMock()))
         return stack
 
     async def test_the_card_shows_the_question_in_the_websites_words_with_a_menu(self) -> None:
@@ -173,3 +174,39 @@ class TheCard(Base):
         ):
             await ft.start_family_ties(it, self.c)
         self.assertEqual(order, ["defer", "check"])
+
+    async def test_a_server_manager_who_is_not_a_dm_sees_and_changes_nothing(self) -> None:
+        claim = await self.kept()
+        it = self.interaction()
+        it.user.id = 99  # may run the names screens (the campaign check passes) but is no DM
+        view = ft.FamilyTies(self.c, self.g)
+        with self.patches():
+            await ft.start_family_ties(it, self.c)
+            await view._decide(it, claim, "neither")
+        self.assertEqual(await self.claims.unplaced_count(self.g, self.c), 1)
+        it.followup.send.assert_not_called()
+
+    async def test_a_kept_fact_naming_a_proposed_entry_is_still_on_the_card_with_the_count(
+        self,
+    ) -> None:
+        claim = await self.kept()
+        async with self.db.guild(self.g) as conn:  # one Mira is not confirmed yet
+            await conn.execute(
+                "UPDATE memory_entities SET status = 'proposed' WHERE name = 'Mira'"
+                " AND description LIKE 'a smuggler%'"
+            )
+        self.assertEqual(await self.claims.unplaced_count(self.g, self.c), 1)
+        listed = await self.claims.unplaced(self.g, self.c, opted_in={7})
+        self.assertEqual([c.id for c in listed], [claim])
+        self.assertEqual(await self.claims.unplaced(self.g, self.c, opted_in=set()), [])
+
+    async def test_a_name_with_one_choice_is_no_question_and_makes_no_menu(self) -> None:
+        await self.kept()
+        async with self.db.guild(self.g) as conn:
+            await conn.execute(
+                "UPDATE memory_entities SET status = 'rejected' WHERE description LIKE 'a smuggler%'"
+            )
+        view = ft.FamilyTies(self.c, self.g)
+        it = self.interaction()
+        with self.patches():
+            self.assertIsNone(await view._load(it))
