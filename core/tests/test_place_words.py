@@ -10,7 +10,7 @@ from typing import Any
 from dmbot.memory import lore_read, place_words
 from dmbot.memory.link_words import back_words, link_words, reads_both_ways
 from dmbot.memory.models import CONFIRMED, Relation
-from dmbot.ui.name_card import _rows, sentence
+from dmbot.ui.name_card import _rows, connection_line, sentence
 
 
 class PlaceWords(unittest.TestCase):
@@ -208,6 +208,38 @@ class OnTheCard(unittest.TestCase):
         self.assertEqual(
             [r.words for r in rows], ["is home to", "was home to", "is where you last saw"]
         )
+
+    def test_every_back_reading_on_the_towns_card_and_in_its_lines(self) -> None:
+        silver = SimpleNamespace(
+            id="s" * 32, name="Silver Lanterns", type="faction", status=CONFIRMED
+        )
+        sword = SimpleNamespace(id="w" * 32, name="Heartseeker", type="item", status=CONFIRMED)
+        self.lookup.entities.update({silver.id: silver, sword.id: sword})
+        rows = _rows(
+            self.lookup,
+            self.town.id,
+            [
+                self.relation(silver.id, self.town.id, "works in"),
+                self.relation(sword.id, self.town.id, "is kept in"),
+                self.relation(self.tavin.id, self.town.id, "grew up in"),
+                self.relation(self.tavin.id, self.town.id, "worked in"),
+            ],
+            False,
+        )
+        self.assertEqual(
+            [(r.words, r.other) for r in rows],
+            [
+                ("is the workplace of", "Silver Lanterns"),
+                ("is where you keep", "Heartseeker"),
+                ("is the home town of", "Tavin"),
+                ("was the workplace of", "Tavin"),
+            ],
+        )
+        self.assertEqual(connection_line(rows[0]), "is the workplace of **Silver Lanterns**")
+
+    def test_a_place_with_no_kind_known_never_says_it_moves(self) -> None:
+        # (the Connect menu has no kind to go by: the old words, which claim nothing)
+        self.assertEqual(back_words("located_in", "", False, ""), "is where you find")
 
     def test_the_edit_note_does_not_turn_a_place_tie_round(self) -> None:
         self.assertFalse(reads_both_ways("located_in", "", False))
