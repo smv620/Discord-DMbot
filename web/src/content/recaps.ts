@@ -132,6 +132,23 @@ export const text = {
   /** The running time's label (the clock is not in a live region, so it is not read out each second). */
   clockLabel: "Time so far",
   postedLink: "Open it in Discord",
+  /** Said when a post has not moved for a while (`postingProgress.state` is stalled). Posting twice would put the recap in
+   * the chat twice, so it says to look at the channel first. */
+  postStalled:
+    "Nothing new for a while. You can leave this page; DMbot keeps going. If it has not moved in 5 more minutes, look at your table's channel in Discord before you press Post again.",
+  /** Why a post was refused (`postingProgress.reason`), each with what to do next. Nothing was posted in any of them. */
+  postWhy: {
+    plan: "Your plan doesn't include recaps right now, so nothing was posted. Your draft is saved here.",
+    no_table_chat:
+      "DMbot has no table chat to post in yet, so nothing was posted. Start a session in a voice channel, or pick a chat channel in ⚙️ Manage DMbot in Discord, then press Post.",
+    cannot_check_secrets: "DMbot couldn't check your secret names just now, so nothing was posted. Press Post to try again.",
+    secret_name: "The recap names something you keep secret, so nothing was posted. Change the text, then press Post.",
+    player_stopped:
+      "A player has stopped being recorded since this was written, so it can't be posted. Write a new recap, or leave this one out.",
+    send_failed:
+      "DMbot couldn't write in your table's chat, so nothing was posted. Check that it is allowed to post there, then press Post again.",
+    post_failed: "Nothing was posted. Press Post to try again. If it keeps failing, look at your table's channel in Discord first.",
+  } as Record<string, string>,
   /** The bot stopped trying to post and the recap is a draft again: nothing went to the table. */
   postFailed:
     "DMbot couldn't confirm this recap was posted. Look at your table's channel in Discord before you try again. The recap is still saved here as a draft; approve it again to post it.",
