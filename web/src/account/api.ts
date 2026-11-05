@@ -140,6 +140,9 @@ export interface CampaignSettingAnswer {
   setting: QueuedSetting;
   value: string;
   note: string;
+  /** How long the choice has waited, in the shared shape (#3355): the stage, when it began and last moved, the
+   * server's clock, and `stalled` or `failed` with a reason code. Times and codes only. Absent from an older server. */
+  progress?: JobProgress | null;
 }
 
 /** A campaign's shared and followed house rules, for the DM (#2783). Never a share code (they are read in Discord,
