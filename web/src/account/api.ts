@@ -463,6 +463,11 @@ export interface Recap {
    * API or bot that doesn't record them yet. */
   postingSince?: number | null;
   postingStep?: "check" | "post" | "audio" | null;
+  /** The same wait in the shared shape (#3355): the stage (`posting_check`, `posting_post`, `posting_audio`), when it
+   * began and last moved, `stalled` when it has not moved for too long, and, when a post was refused and the recap is
+   * a draft again, `failed` with a reason code (`plan`, `no_table_chat`, `cannot_check_secrets`, `secret_name`,
+   * `player_stopped`, `send_failed`, `post_failed`). Null when nothing is posting. Missing from an older API. */
+  postingProgress?: JobProgress | null;
   serverNow?: number;
   /** The posted message's link in Discord, when the bot kept it. */
   postedUrl?: string | null;
