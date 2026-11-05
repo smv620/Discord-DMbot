@@ -133,6 +133,7 @@ export const importPage = {
   datesHeading: "Date and order",
   datesLead: "Set the date of each session. DMbot reads the sessions in the order below, so put the oldest first.",
   datesOutOfOrder: "These dates aren't in order, oldest first. Check them.",
+  datesInFuture: "A session can't be on a day that hasn't happened yet. Pick today or an earlier day.",
   moved: (name: string, i: number, n: number): string => `${name} moved to ${i} of ${n}.`,
   dateLabel: (name: string): string => `Date of ${name}`,
   dateGuess: "The page guessed this date. Check it.",
