@@ -31,7 +31,7 @@ from dmbot.audio_due import AUDIO_MAX_TRIES as AUDIO_MAX_TRIES
 from dmbot.campaigns.models import CampaignError
 from dmbot.db import Conn, Database
 from dmbot.memory.models import name_key
-from dmbot.recaps import notes
+from dmbot.recaps import notes, post_notes
 from dmbot.recaps.allowance import Usage, month_bounds
 from dmbot.recaps.approval import CHOICES, TEXT, text_hash
 from dmbot.recaps.fixed_lines import STORY_COLUMN_MAX
@@ -1256,7 +1256,11 @@ class RecapStore:
         `require_current`: only if the DM's approval is of the text as it is now, in the same
         statement (an edit after approving, or a draft never approved, posts nothing)."""
         if action == "post":
-            sql = "status = 'posting' WHERE state = 'ready' AND status = 'draft'"
+            sql = (
+                "status = 'posting', "
+                + post_notes.CLEAR_REFUSAL
+                + " WHERE state = 'ready' AND status = 'draft'"
+            )
             if require_current:  # an approval of other words than these ends here, in SQL
                 sql += (
                     " AND approved_hash = encode(sha256(convert_to("
@@ -1277,11 +1281,13 @@ class RecapStore:
             sql = "status = 'dropped' WHERE status = 'draft'"
         else:
             raise ValueError(action)
+        # (a new post clears an old refusal's sentence, so it never reads as a current failure)
+        first: tuple[Any, ...] = (post_notes.REFUSALS,) if action == "post" else ()
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 f"UPDATE recap_jobs SET {sql} AND guild_id = %s AND campaign_id = %s"
                 " AND session_at = %s",
-                (guild_id, campaign_id, session_at),
+                (*first, guild_id, campaign_id, session_at),
             )
             return bool(cur.rowcount)
 

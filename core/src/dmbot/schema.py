@@ -185,9 +185,11 @@ WEB_ROLE_GRANTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("SELECT", ("character_sheets",)),
     # A DM's recaps (#1382): read, edit the text, Post, Try again and Don't post. Never the
     # speakers, the call count, the original draft or the grade, which only the bot writes.
+    # last_error is there only so an edit or a new Post clears the bot's old "couldn't post"
+    # sentence (#3355); the page's statements set it back to '' and never to other words.
     ("SELECT", ("recap_jobs",)),
     (
-        "UPDATE (summary, housekeeping, status, tries, state)",
+        "UPDATE (summary, housekeeping, status, tries, state, last_error)",
         ("recap_jobs",),
     ),
     ("SELECT, DELETE", ("consent",)),

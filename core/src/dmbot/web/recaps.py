@@ -639,9 +639,11 @@ async def edit_recap(
         if fixed_lines.changes_fixed_lines(_row["summary"], text):
             raise RecapError("fixed_lines")  # the opening and closing lines are DMbot's (#2630)
         cur = await conn.execute(
-            "UPDATE recap_jobs SET summary = %s, housekeeping = %s WHERE guild_id = %s"
+            "UPDATE recap_jobs SET summary = %s, housekeeping = %s, "
+            + recap_progress.CLEAR_REFUSAL
+            + " WHERE guild_id = %s"
             " AND campaign_id = %s AND session_at = %s AND state = 'ready' AND status = 'draft'",
-            (text, bullets, gid, cid, at),
+            (text, bullets, recap_progress.REFUSALS, gid, cid, at),
         )
         if not cur.rowcount:
             raise RecapError("not_editable")
@@ -677,14 +679,15 @@ async def decide(
         args: tuple[Any, ...] = (gid, cid, at)
         if action == "post":
             cur = await conn.execute(
-                "UPDATE recap_jobs SET status = 'posting' "
+                "UPDATE recap_jobs SET status = 'posting', "
+                + recap_progress.CLEAR_REFUSAL
                 + where
                 + " AND state = 'ready' AND status = 'draft'"
                 # Only the text the DM approved: an edit between the read above and this statement
                 # (or since the approval) posts nothing. The page's role may read the hash.
                 + " AND approved_hash = encode(sha256(convert_to(title || E'\\n' || summary,"
                 " 'UTF8')), 'hex')",
-                args,
+                (recap_progress.REFUSALS, *args),
             )
         elif action == "drop":
             cur = await conn.execute(
@@ -791,9 +794,11 @@ async def approve_recap(
             raise RecapError("not_allowed")
         if post:  # the same hand-over as `decide(..., "post")`, in this transaction
             cur = await conn.execute(
-                "UPDATE recap_jobs SET status = 'posting' WHERE guild_id = %s AND campaign_id = %s"
+                "UPDATE recap_jobs SET status = 'posting', "
+                + recap_progress.CLEAR_REFUSAL
+                + " WHERE guild_id = %s AND campaign_id = %s"
                 " AND session_at = %s AND state = 'ready' AND status = 'draft'",
-                (gid, cid, at),
+                (recap_progress.REFUSALS, gid, cid, at),
             )
             if not cur.rowcount:
                 raise RecapError("not_allowed")  # (the approval is rolled back with it)

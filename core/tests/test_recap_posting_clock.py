@@ -246,6 +246,32 @@ class ThePostingProgress(TheClock):
         assert later is not None
         self.assertEqual((later["state"], later["reason"]), ("stalled", "stalled"))
 
+    async def test_a_long_narration_that_keeps_moving_is_not_stalled(self) -> None:
+        """The audio worker stamps `audio_moved_at` for each part, not `updated_at`: the posting
+        half takes the later of the two, so a 16-minute narration with parts still finishing
+        reads running."""
+        from dmbot.recaps import progress as rp
+
+        at = await self.ready()
+        await self.store.decide(1, self.one.id, at, "post")
+        await self.store.posting_step(1, self.one.id, at, "post")
+        async with self.db.guild(1) as conn:
+            cur = await conn.execute("SELECT * FROM recap_jobs WHERE session_at = %s", (at,))
+            found = await cur.fetchone()
+        assert found is not None
+        raw = dict(found)
+        raw["posting_step"] = "audio"
+        since = int(raw["posting_since"])
+        raw["updated_at"] = since
+        raw["audio_moved_at"] = since + 15 * 60  # a part finished a minute ago
+        busy = rp.posting_of(raw, now=since + 16 * 60)
+        assert busy is not None
+        self.assertEqual((busy["stage"], busy["state"]), ("posting_audio", "running"))
+        raw["audio_moved_at"] = 0  # nothing finished in all that time
+        quiet = rp.posting_of(raw, now=since + 16 * 60)
+        assert quiet is not None
+        self.assertEqual(quiet["state"], "stalled")
+
     async def test_a_refused_post_reads_failed_with_a_code_and_never_the_sentence(self) -> None:
         from dmbot.recaps import progress as rp
 

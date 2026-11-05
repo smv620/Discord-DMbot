@@ -16,6 +16,7 @@ from typing import Any, Final
 from dmbot import progress
 from dmbot.recaps import critics
 from dmbot.recaps import pipeline as pl
+from dmbot.recaps import post_notes as _notes
 
 # The pipeline's own steps (docs in `recaps.pipeline`), as the stage codes the page puts into words.
 NAMES = "recap_names"  # waiting for PlotBot's name pass on the transcript (#2628)
@@ -85,28 +86,11 @@ def reason_of(row: Mapping[str, Any]) -> str | None:
     return REASONS.get(str(row["last_error"]), progress.RECAP_FAILED_REASON)
 
 
-# Why a post that was sent back as a draft was refused (#3355): the sentence the DM reads (kept in
-# `last_error` by `RecapStore.back_to_draft`) and the code the page puts into words. One place, so
-# the bot's sentences and the page's codes can never drift apart.
-POST_NOTES: Final[Mapping[str, str]] = {
-    "plan": (
-        "Your plan doesn't include recaps right now, so nothing was posted. Your draft is saved."
-    ),
-    "no_table_chat": (
-        "DMbot has no table chat to post in yet: start a session in a voice channel, or "
-        "pick a chat channel in ⚙️ Manage DMbot. Then press Post."
-    ),
-    "cannot_check_secrets": "DMbot couldn't check your secret names just now. Try Post again.",
-    "secret_name": "It names something you keep secret. Change the text, then post.",
-    "player_stopped": (
-        "A player stopped being recorded since this was written, so it can't be posted. "
-        "Write a new recap, or leave this one out."
-    ),
-    "send_failed": (
-        "DMbot couldn't write in the table's chat. Check it can post there, then press Post again."
-    ),
-    "post_failed": "Couldn't post it. Try Post again.",
-}
+# Why a post that was sent back as a draft was refused: see `recaps.post_notes` (a leaf module, so
+# the store can use it too).
+POST_NOTES = _notes.POST_NOTES
+REFUSALS = _notes.REFUSALS
+CLEAR_REFUSAL = _notes.CLEAR_REFUSAL
 _POST_CODES: Final[Mapping[str, str]] = {v: k for k, v in POST_NOTES.items()}
 _POSTING_STAGES: Final[Mapping[str, str]] = {
     "check": "posting_check",
@@ -127,7 +111,12 @@ def posting_of(row: Mapping[str, Any], *, now: int) -> dict[str, Any] | None:
         return progress.shape(
             _POSTING_STAGES[str(step)],
             started_at=since,
-            updated_at=max(int(row.get("updated_at") or 0), since),
+            # (the narration's own parts stamp `audio_moved_at`, not `updated_at`)
+            updated_at=max(
+                int(row.get("updated_at") or 0),
+                int(row.get("audio_moved_at") or 0) if step == "audio" else 0,
+                since,
+            ),
             now=now,
         )
     code = _POST_CODES.get(str(row.get("last_error") or ""))
