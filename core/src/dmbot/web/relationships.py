@@ -469,6 +469,25 @@ async def read_size(
     return {"names": int(got["names"])}
 
 
+async def read_version(db: Database, session: Session, ref: str) -> dict[str, int]:
+    """The Story Graph's version number and nothing else (#3294): it goes up in the same
+    transaction as every graph write, so the page can read the whole graph only when it, or the
+    viewer, has changed. Members of the server only, as the graph doors; anyone else gets
+    `not_found`. A player who polls it learns only that something changed: the full read they then
+    make shows only what they may see."""
+    guild_id, campaign_id = _parse(ref)
+    _guild_of(session, guild_id)
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        cur = await conn.execute(
+            "SELECT dmbot_web_graph_version(%s, %s) AS v", (guild_id, campaign_id)
+        )
+        found = await cur.fetchone()
+    if found is None or found["v"] is None:
+        raise RecapError("not_found")
+    return {"version": int(found["v"])}
+
+
 # The overview's order for the "Not connected yet" tray: the kinds a table asks about first.
 TRAY_KIND_ORDER = {"place": 0, "npc": 1, "player_character": 2, "character": 3, "organization": 4}
 
