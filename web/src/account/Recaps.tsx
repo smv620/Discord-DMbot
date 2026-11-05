@@ -114,6 +114,14 @@ export default function Recaps({
   );
 }
 
+/** Why a post was refused, in words, when the API says so (#3355): the reason code of a failed posting progress. A code the
+ * page has no words for gives null, and the general "couldn't confirm" line is used. */
+function refusal(recap: Recap): string | null {
+  const shared = recap.postingProgress;
+  if (shared?.state !== "failed" || !shared.reason) return null;
+  return text.postWhy[shared.reason] ?? null;
+}
+
 function SignedOut() {
   return (
     <div class="panel" role="status">
@@ -769,9 +777,9 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
         </p>
       )}
       <RecapProgress recap={recap} />
-      {recap.status === "draft" && sawPosting.current && !recap.working && (
+      {recap.status === "draft" && !recap.working && (sawPosting.current || refusal(recap) !== null) && (
         <p class="warn" role="alert">
-          {text.postFailed}
+          {refusal(recap) ?? text.postFailed}
         </p>
       )}
       {recap.status === "dropped" && <p role="status">{text.dropped}</p>}

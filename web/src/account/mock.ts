@@ -1658,6 +1658,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
           canTryAgain: false,
           postingSince: now,
           postingStep: "check",
+          postingProgress: { stage: "posting_check", startedAt: now, updatedAt: now, serverNow: now, state: "running" },
           serverNow: now,
         });
       }
@@ -3450,6 +3451,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
             canPost: false,
             postingSince: now,
             postingStep: "check",
+            postingProgress: { stage: "posting_check", startedAt: now, updatedAt: now, serverNow: now, state: "running" },
             serverNow: now,
           });
         }
