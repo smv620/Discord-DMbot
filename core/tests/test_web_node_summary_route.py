@@ -61,23 +61,33 @@ class NodeSummary(Web):
             self.g, self.one.id, kind, statement, who, source=DM_SOURCE
         )
 
+    async def from_nothing(self) -> None:
+        """Start from nobody knowing anything (as the player-gate tests do): new things start out
+        told to the player characters, so each test then says exactly who knows what."""
+        await self.sql("DELETE FROM memory_knowers WHERE campaign_id = %s", self.one.id)
+
     async def test_a_node_no_player_character_knows_is_not_found_for_a_player_but_read_by_the_dm(
         self,
     ) -> None:
+        assert self.hero is not None
         idol = await self.add("Hidden Idol", "place")
-        link = await self.link("located_in", idol, self.keep, "idol-keep")
-        await self.tell(ENTRY, idol, [])
-        await self.tell(CONNECTION, link, [])
+        await self.link("located_in", idol, self.keep, "idol-keep")
+        await self.from_nothing()
+        await self.tell(ENTRY, self.mira, [self.hero])  # (the player's own page is not empty)
         self.assertIn("Hidden Idol", (await self.read(idol))["text"])
         self.assertEqual(await self.refusal_of(idol, self.player), "not_found")
         # the same code as for an id that does not exist, so nothing hints at a hidden one
         self.assertEqual(await self.refusal_of("f" * 32, self.player), "not_found")
 
     async def test_a_player_behind_the_spoiler_gate_gets_no_text_until_they_peek(self) -> None:
+        assert self.hero is not None
         wen = await self.add("Wen", "character", role="player_character", played_by=777)
         tam = await self.add("Old Tam", "npc")
         link = await self.link("knows", self.mira, tam, "mira-tam")
-        # Wen's character knows Mira knows Old Tam; Bob's hero does not: a spoiler for him
+        await self.from_nothing()
+        # both players' characters know Mira; only Wen's knows that she knows Old Tam, which is
+        # a spoiler for Bob's hero (the click is Bob's)
+        await self.tell(ENTRY, self.mira, [self.hero, wen])
         await self.tell(ENTRY, tam, [wen])
         await self.tell(CONNECTION, link, [wen])
         closed = await self.read(self.mira, self.player)
