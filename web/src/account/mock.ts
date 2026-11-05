@@ -729,6 +729,28 @@ function pretendWaiting(): Waiting {
     counts: { claims: 0, backstory: 0, ready: 0, which: 0, all: 0 },
   };
 }
+/** A campaign ref ending `.ties` has a fact kept for "Which one?" (#3463): two entries share the name Mira. */
+function tiesWaiting(): Waiting {
+  return {
+    claims: [
+      {
+        id: "t1", statement: "Rook is the sister of Mira", canSecret: true, at: 1791000000,
+        choices: [
+          {
+            side: "object", words: "Mira",
+            entries: [
+              { id: "e5", name: "Mira", kind: "character", note: "the ferrywoman", tag: "NPC" },
+              { id: "e6", name: "Mira", kind: "character", note: "a smuggler's daughter", tag: "NPC · secret" },
+            ],
+          },
+        ],
+      },
+    ],
+    backstory: [],
+    which: [],
+    counts: { claims: 0, backstory: 0, ready: 0, which: 0, all: 0 },
+  };
+}
 /** A campaign ref ending `.pronoun` has only pronoun questions (#2831): one with a name, one with none. */
 function pronounWaiting(): Waiting {
   return {
@@ -1925,7 +1947,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       await reachable();
       signedIn();
       if (webView(ref) !== "dm") throw new ApiError("not-found");
-      const waiting = (waitingState[ref] ??= (/\.pronoun$/.test(ref) ? pronounWaiting() : pretendWaiting()));
+      const waiting = (waitingState[ref] ??= (/\.pronoun$/.test(ref) ? pronounWaiting() : /\.ties$/.test(ref) ? tiesWaiting() : pretendWaiting()));
       return structuredClone({
         ...waiting,
         counts: {
@@ -1944,8 +1966,23 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       await reachable();
       signedIn();
       if (webView(ref) !== "dm") throw new ApiError("not-found");
-      const waiting = (waitingState[ref] ??= (/\.pronoun$/.test(ref) ? pronounWaiting() : pretendWaiting()));
+      const waiting = (waitingState[ref] ??= (/\.pronoun$/.test(ref) ? pronounWaiting() : /\.ties$/.test(ref) ? tiesWaiting() : pretendWaiting()));
       const ids = "ids" in answer ? answer.ids : [answer.id];
+      // Family ties (#3463): a pick settles one name of a kept claim (the claim becomes an ordinary waiting one
+      // once none is left), and Undo puts it back; "None of these" is the ordinary reject below.
+      if (answer.kind === "claim" && (answer.action === "pick" || answer.action === "unpick")) {
+        const claim = waiting.claims.find((c) => c.id === answer.id);
+        const original = tiesWaiting().claims.find((c) => c.id === answer.id);
+        if (!claim || !original) throw new ApiError("gone");
+        if (answer.action === "pick") {
+          const open = claim.choices ?? [];
+          if (!open.some((q) => q.side === answer.side && q.entries.some((e) => e.id === answer.entity))) throw new ApiError("gone");
+          claim.choices = open.filter((q) => q.side !== answer.side);
+        } else {
+          claim.choices = structuredClone(original.choices ?? []);
+        }
+        return {};
+      }
       if (answer.kind === "which" && answer.action === "pick") {
         const q = waiting.which.find((x) => x.id === answer.id);
         if (!q?.candidates.some((c) => c.id === answer.entity)) throw new ApiError("gone");
