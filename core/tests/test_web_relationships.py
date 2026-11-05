@@ -337,11 +337,13 @@ class Shaping(unittest.TestCase):
             for x in e["links"]
         }
         self.assertEqual(by_id["1"]["words"], "was last seen in")
-        self.assertEqual(by_id["1"]["back"], "is where you last saw")
+        self.assertEqual(by_id["1"]["back"], "is where")
+        self.assertEqual(by_id["1"]["backAfter"], "was last seen")  # (the name goes between)
         self.assertEqual(by_id["2"]["words"], "is in")  # a town in a region
         self.assertEqual(by_id["2"]["back"], "is where you find")
         self.assertEqual(by_id["3"]["words"], "lives in")
         self.assertEqual(by_id["3"]["back"], "is home to")
+        self.assertEqual(by_id["3"]["backAfter"], "")
         self.assertEqual(by_id["4"]["words"], "is in")  # no kind known: the safe old words
 
     def test_the_page_reads_each_edge_by_its_subjects_kind_from_the_nodes(self) -> None:

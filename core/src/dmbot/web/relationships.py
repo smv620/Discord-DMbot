@@ -25,7 +25,7 @@ from dmbot.db import Database
 from dmbot.memory import gate, kin
 from dmbot.memory.claims import Extracted, condition_of
 from dmbot.memory.link_kinds import link_kind
-from dmbot.memory.link_words import back_words, link_words, reads_both_ways
+from dmbot.memory.link_words import back_after, back_words, link_words, reads_both_ways
 from dmbot.memory.web_actions import RETAKE_AFTER_S
 from dmbot.memory.who_resolve import checked_line
 from dmbot.web import all_names, graph_view, which_choices
@@ -119,6 +119,14 @@ def edges_from(
                     directional,
                     subject_kind,
                 ),
+                # the words that follow the name for the two place readings that need them ("is
+                # where Tavin was last seen"): empty for every other connection (#3363)
+                "backAfter": back_after(
+                    str(row["predicate"]),
+                    str(row["detail"] or ""),
+                    directional,
+                    subject_kind,
+                ),
                 "secret": bool(row["secret"]),  # (the real flag; masked on the way out)
                 "revealed": bool(row.get("revealed", True)),  # (the party believes it; masked too)
                 "pinned": bool(row.get("pinned", False)),  # (the DM's 📌; only a DM ever sees it)
@@ -148,6 +156,7 @@ def edges_from(
                         "id": x["id"],
                         "words": x["words"],
                         "back": x["back"],
+                        "backAfter": x["backAfter"],
                         "secret": x["secret"] if can_edit else False,
                         "revealed": x["revealed"] if can_edit else True,
                         "pinned": x["pinned"] if can_edit else False,
