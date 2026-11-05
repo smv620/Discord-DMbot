@@ -12,6 +12,7 @@ import { mockApi } from "../src/account/mock";
 import { INVITE_LIVE } from "../src/content/invite-switch";
 import { INVITE_PATTERN, invitePanel as words } from "../src/content/invite-words";
 import { entries, held } from "../src/content/whats-new";
+import { workWords } from "../src/content/work-progress";
 
 afterEach(() => {
   cleanup();
@@ -155,5 +156,19 @@ describe("The D&D Beyond invite on the website", () => {
     fireEvent.click(screen.getByRole("button", { name: words.cancel }));
     expect(screen.getByRole("button", { name: words.add })).toBeTruthy();
     expect(api.calls.some((c) => c.startsWith("setCampaignSetting"))).toBe(false);
+  });
+});
+
+describe("the wait shows the API's own times (#3355)", () => {
+  it("uses the API's own times and says so when the choice has stalled (#3355)", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    render(<InvitePanel api={mockApi("table")} campaignRef="100.cmp1.cs-stalled" invite="" />);
+    fireEvent.click(screen.getByRole("button", { name: words.add }));
+    fireEvent.input(screen.getByLabelText(words.label), { target: { value: LINK } });
+    fireEvent.click(screen.getByRole("button", { name: words.save }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(3_000); });
+    // (the choice was queued ten minutes ago by the server's clock: the wait says it stalled, not "just now")
+    expect(await screen.findByText(workWords.stalled)).toBeTruthy();
+    expect(screen.getAllByText(/10 min/).length).toBeGreaterThan(0);
   });
 });

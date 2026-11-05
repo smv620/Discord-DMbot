@@ -9,13 +9,13 @@ import { useEffect, useRef, useState } from "preact/hooks";
 
 import { optionalWords as w } from "../content/optional-rules-words";
 import { stageWords } from "../content/work-progress";
-import { ApiError, type AccountApi, type OptionalRule, type OptionalRules } from "./api";
+import { ApiError, type AccountApi, type JobProgress, type OptionalRule, type OptionalRules } from "./api";
 import { GIVE_UP_MS, LATE_POLL_MS, OFFLINE_AFTER_MS, POLL_MS } from "./settings-timing";
 import { useObservedWait } from "./useObservedWait";
 import WorkProgress from "./WorkProgress";
 
 type Phase =
-  | { kind: "saving"; seen: "waiting" | "working" }
+  | { kind: "saving"; seen: "waiting" | "working"; progress?: JobProgress | null | undefined }
   | { kind: "gaveup" }
   | { kind: "saved"; note: string }
   | { kind: "error"; message: string };
@@ -51,9 +51,10 @@ function Row({ rule, phase, onSwitch }: { rule: OptionalRule; phase: Phase | und
       {phase?.kind === "saving" && seen.startedAt !== null && (
         <WorkProgress
           stage={stageWords(w.stage, phase.seen)}
-          startedAt={seen.startedAt}
-          updatedAt={seen.movedAt}
-          state={seen.quiet ? "stalled" : "running"}
+          startedAt={phase.progress?.startedAt ?? seen.startedAt}
+          updatedAt={phase.progress?.updatedAt ?? seen.movedAt}
+          serverNow={phase.progress?.serverNow}
+          state={phase.progress?.state ?? (seen.quiet ? "stalled" : "running")}
           whatToDo={w.quiet}
         />
       )}
@@ -134,7 +135,7 @@ export default function OptionalRulesSection({ api, campaignRef }: { api: Accoun
       }
       if (got.state === "failed") return phase(rule.id, { kind: "error", message: botWords(got.error) });
       if (final) return gaveUp(rule);
-      phase(rule.id, { kind: "saving", seen: got.state === "working" ? "working" : "waiting" });
+      phase(rule.id, { kind: "saving", seen: got.state === "working" ? "working" : "waiting", progress: got.progress });
     }
   }
 

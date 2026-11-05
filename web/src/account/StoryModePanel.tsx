@@ -5,7 +5,7 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import { type StoryMode, storyModePanel as words } from "../content/story-mode-words";
-import { type AccountApi, ApiError, type CampaignSettingAnswer } from "./api";
+import { type AccountApi, ApiError, type CampaignSettingAnswer, type JobProgress } from "./api";
 import WorkProgress from "./WorkProgress";
 
 const POLL_MS = 1500;
@@ -15,7 +15,14 @@ const MODES: StoryMode[] = ["off", "watch", "guide"];
 /** The bot's words with Discord's `**bold**` and `code` marks taken out: the page shows plain text. */
 const plain = (note: string): string => note.replaceAll("**", "").replaceAll("`", "").replace(/\s*\n+\s*/g, " ").trim();
 
-type Wait = { to: StoryMode; state: CampaignSettingAnswer["state"] | "sending" | "timed_out"; note: string; since: number };
+type Wait = {
+  to: StoryMode;
+  state: CampaignSettingAnswer["state"] | "sending" | "timed_out";
+  note: string;
+  since: number;
+  /** The API's own times and state for the wait (#3355); absent from an older server, then the page's clock is used. */
+  progress?: JobProgress | null | undefined;
+};
 
 export default function StoryModePanel({ api, campaignRef, mode, onChanged }: { api: AccountApi; campaignRef: string; mode: StoryMode; onChanged?: (mode: StoryMode) => void }) {
   const [current, setCurrent] = useState<StoryMode>(mode);
@@ -60,7 +67,7 @@ export default function StoryModePanel({ api, campaignRef, mode, onChanged }: { 
         await new Promise((r) => setTimeout(r, POLL_MS));
         const got = await api.campaignSettingAnswer(campaignRef, id);
         if (!live.current) return;
-        setWait({ to, state: got.state, note: got.note, since });
+        setWait({ to, state: got.state, note: got.note, since, progress: got.progress });
         if (got.state === "done") {
           setCurrent(to);
           onChanged?.(to);
@@ -93,8 +100,10 @@ export default function StoryModePanel({ api, campaignRef, mode, onChanged }: { 
       {wait && wait.state !== "timed_out" && (
         <WorkProgress
           stage={wait.state === "done" ? words.done(wait.to) : wait.state === "working" ? words.working : words.waiting}
-          startedAt={wait.since}
-          state={wait.state === "failed" ? "failed" : wait.state === "done" ? "done" : "running"}
+          startedAt={wait.progress?.startedAt ?? wait.since}
+          updatedAt={wait.progress?.updatedAt}
+          serverNow={wait.progress?.serverNow}
+          state={wait.progress?.state ?? (wait.state === "failed" ? "failed" : wait.state === "done" ? "done" : "running")}
           reason={wait.state === "failed" ? failedReason(wait) : null}
         />
       )}
