@@ -434,12 +434,14 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
   }, [api, ref]);
 
   /** One change to the connections; the web is read again after it so the lines are the API's own. */
-  async function act(change: WebLinkChange, ok: string): Promise<string | null> {
+  /** `own` words one kind of refusal for this one call (the store's rule saying no to a companion, #3505); every other
+   * failure, a network failure, a busy server, being signed out, is worded as it always is. */
+  async function act(change: WebLinkChange, ok: string, own?: Partial<Record<string, string>>): Promise<string | null> {
     if (!ref || !api.changeWebLink) return words.errorFallback;
     try {
       await api.changeWebLink(ref, change);
     } catch (error) {
-      const said = refusal(error);
+      const said = (error instanceof ApiError && own?.[error.kind]) || refusal(error);
       if (said === null) {
         setView("signed-out");
         return "";
@@ -559,6 +561,7 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
     })
     .filter((e) => e.links.length > 0);
   const nameOf = (id: string): string => nodes.find((n) => n.id === id)?.name ?? id;
+  const kindOf = (id: string): string => nodes.find((n) => n.id === id)?.kind ?? "";
   const { own, further } = listLines(edges, center, nameOf);
   const maxHops = graph.maxHops;
   // The − and + beside the steps box: one step more or fewer, kept between 1 and the most the API allows.
@@ -703,6 +706,7 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
                   key={`${chosen.a}|${chosen.b}`}
                   edge={chosen}
                   nameOf={nameOf}
+                  kindOf={kindOf}
                   canEdit={canEdit}
                   act={act}
                   reveal={reveal} revealing={revealing}
@@ -1095,6 +1099,7 @@ function CentrePicker({
 function LinePanel({
   edge,
   nameOf,
+  kindOf,
   canEdit,
   act,
   reveal,
@@ -1105,8 +1110,9 @@ function LinePanel({
 }: {
   edge: WebEdge;
   nameOf: (id: string) => string;
+  kindOf: (id: string) => string;
   canEdit: boolean;
-  act: (change: WebLinkChange, ok: string) => Promise<string | null>;
+  act: (change: WebLinkChange, ok: string, own?: Partial<Record<string, string>>) => Promise<string | null>;
   reveal: (target: WebRevealTarget) => Promise<string | null>;
   revealing: Set<string>;
   api: AccountApi;
@@ -1152,7 +1158,9 @@ function LinePanel({
           </div>
         )}
       </div>
-      {canEdit && <AddLink edge={edge} act={act} />}
+      {canEdit && (
+        <LazyPanel key={`add-${edge.a}|${edge.b}`} load={() => import("./AddLink")} what="the form to add a connection" props={{ edge, kindOf, nameOf, act }} />
+      )}
       <button type="button" class="button secondary" onClick={onClose}>
         {words.close}
       </button>
@@ -1466,45 +1474,6 @@ function LinkRow({
         </div>
       )}
     </li>
-  );
-}
-
-function AddLink({ edge, act }: { edge: WebEdge; act: (change: WebLinkChange, ok: string) => Promise<string | null> }) {
-  const [text, setText] = useState("");
-  const [secret, setSecret] = useState(false);
-  const [problem, setProblem] = useState<string | null>(null);
-  return (
-    <form
-      class="stack"
-      noValidate
-      onSubmit={async (e) => {
-        e.preventDefault();
-        const said = await act({ action: "add", a: edge.a, b: edge.b, words: text, secret }, words.added);
-        setProblem(said);
-        if (said === null) {
-          setText("");
-          setSecret(false);
-        }
-      }}
-    >
-      <h3 class="small">{words.addHeading}</h3>
-      <label class="field">
-        {words.addWords}
-        <input type="text" value={text} maxLength={100} onInput={(e) => setText((e.target as HTMLInputElement).value)} />
-      </label>
-      <label class="choice">
-        <input type="checkbox" checked={secret} onChange={(e) => setSecret((e.target as HTMLInputElement).checked)} />
-        <span>{words.addSecret}</span>
-      </label>
-      <button type="submit" class="button">
-        {words.addButton}
-      </button>
-      {problem && (
-        <p class="warn" role="alert">
-          {problem}
-        </p>
-      )}
-    </form>
   );
 }
 

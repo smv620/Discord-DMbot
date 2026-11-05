@@ -189,6 +189,12 @@ export const webPage = {
   addHeading: "Add a connection",
   addWords: "Words, like “works with”",
   addButton: "Add",
+  // "Travels with" (#3505): a companion goes along with a player character or with the party. DM only, like the rest.
+  travelsWithPick: "Travels with",
+  travelsWithWords: "travels with",
+  travelsWithHint: (companion: string, target: string): string => `${companion} travels with ${target}. Press Add.`,
+  travelsWithNo: "A companion is a character who is not a player character, and it travels with a player character or with the party. Pick the two names that way round.",
+  travelsWithRefused: "DMbot can't save that. A companion travels with a player character or with the party, and nothing else. Nothing was changed.",
   addSecret: "Secret (DM only)",
   saved: "Saved.",
   added: "Added.",
