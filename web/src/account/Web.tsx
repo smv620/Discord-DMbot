@@ -135,6 +135,10 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
   const dragging = useRef(false);
   // Reads in a row that found the same graph; it sets the wait before the next read (autoDelay).
   const unchanged = useRef(0);
+  // The graph's version number and the view it was read for, as of the last full read (#3294): while both are the same
+  // the story has not changed, so the turn makes no full read. Null until a full read has been made, or after one the
+  // person asked for.
+  const seenVersion = useRef<{ key: string; version: number } | null>(null);
   // Bumped when the person reads a web themselves, so a long wait already running starts again at the quick pace.
   const [pulse, setPulse] = useState(0);
 
@@ -143,6 +147,7 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
     if (!ref || !api.webGraph) return;
     const mine = ++latest.current;
     unchanged.current = 0;
+    seenVersion.current = null;
     setPulse((n) => n + 1);
     const view = askedNow.current;
     setBig(null);
@@ -158,6 +163,15 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
         }
       }
       readingSeeAs = seeAsNow.current !== undefined;
+      // The version number from before the read, so the first quiet turn after it has something to compare (#3294).
+      let version: number | null = null;
+      if (api.webVersion) {
+        try {
+          version = (await api.webVersion(ref)).version;
+        } catch {
+          version = null; // (the turns then read the whole graph, as before)
+        }
+      }
       const read = await api.webGraph(ref, {
         center: at,
         hops: steps,
@@ -165,6 +179,16 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
         ...(seeAsNow.current !== undefined ? { seeAs: seeAsNow.current } : {}),
       });
       if (mine !== latest.current) return;
+      if (version !== null) {
+        // (the same query a quiet turn makes: the centre and steps as the page now holds them)
+        const key = JSON.stringify({
+          center: read.center,
+          hops: clampHops(steps, read.maxHops),
+          ...(view ? { view } : {}),
+          ...(seeAsNow.current !== undefined ? { seeAs: seeAsNow.current } : {}),
+        });
+        seenVersion.current = { key, version };
+      }
       setGraph(read.canEdit ? read : plainGraph(read));
       if (read.canEdit) setIsDm(true);
       setMeta((now) => ({
@@ -223,6 +247,20 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
     // A read that was on its way when a drag began is dropped too, so the map is not redrawn under the hand (#3324).
     const stale = (): boolean =>
       !alive.current || !autoNow.current || stamp !== latest.current || graphNow.current !== shown || dragging.current;
+    // The cheap read first (#3294): a number that goes up with every change to the story. The same number for the same
+    // view means nothing to read. Any trouble with it just means a full read this turn, as before it existed.
+    const viewKey = JSON.stringify(query);
+    let version: number | null = null;
+    if (api.webVersion) {
+      try {
+        version = (await withTimeout(api.webVersion(ref))).version;
+      } catch {
+        version = null;
+      }
+      if (stale()) return "skipped";
+      const seen = seenVersion.current;
+      if (version !== null && seen && seen.key === viewKey && seen.version === version) return "same";
+    }
     try {
       if (api.webSize && seeAsNow.current === undefined) {
         const size = await withTimeout(api.webSize(ref, { center: at, hops: steps, ...(askedNow.current ? { view: askedNow.current } : {}) }));
@@ -230,6 +268,8 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
       }
       const read = await withTimeout(api.webGraph(ref, query));
       if (stale()) return "skipped";
+      // (the number from before the read, so a change made while it was read shows at the next turn)
+      seenVersion.current = version === null ? null : { key: viewKey, version };
       const next = read.canEdit ? read : plainGraph(read);
       if (graphSignature(next) === graphSignature(shown)) return "same";
       setGraph(next);

@@ -2047,6 +2047,16 @@ def create_app(
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 
+    @app.get("/me/campaigns/{ref}/web/version")
+    async def me_campaign_web_version(ref: str, signed: Signed) -> dict[str, int]:
+        """The Story Graph's version number only: the page reads the whole graph when it changes."""
+        session, _token = signed
+        try:
+            return await relationships.read_version(db, session, ref)
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
     relationship_refusals = {
         "not_found": (404, "not_found"),
         "bad_hops": (400, "bad_hops"),

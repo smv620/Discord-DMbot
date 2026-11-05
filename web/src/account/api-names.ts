@@ -187,6 +187,8 @@ export default function namesArea({ call, waitForAnswer }: ApiHelpers): Partial<
         `/me/campaigns/${encodeURIComponent(ref)}/web?${params.toString()}`,
       )) as WebGraph;
     },
+    webVersion: async (ref) =>
+      (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/web/version`)) as { version: number },
     webSize: async (ref, q) => {
       const params = new URLSearchParams({ hops: String(q.hops) });
       if (q.center) params.set("center", q.center);
