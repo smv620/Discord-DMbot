@@ -8,7 +8,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from dmbot.memory import lore_read, place_words
-from dmbot.memory.link_words import back_words, link_words, reads_both_ways
+from dmbot.memory.link_words import back_after, back_words, link_words, reads_both_ways
 from dmbot.memory.models import CONFIRMED, Relation
 from dmbot.ui.name_card import _rows, connection_line, sentence
 
@@ -21,23 +21,25 @@ class PlaceWords(unittest.TestCase):
     def test_something_that_moves_with_no_word_was_last_seen(self) -> None:
         for kind in ("character", "player_character", "npc", "creature", "faction"):
             self.assertEqual(link_words("located_in", "", False, kind), "was last seen in", kind)
-        self.assertEqual(back_words("located_in", "", False, "character"), "is where you last saw")
+        self.assertEqual(back_words("located_in", "", False, "character"), "is where")
+        self.assertEqual(back_after("located_in", "", False, "character"), "was last seen")
 
     def test_a_kind_the_caller_does_not_know_keeps_the_old_words(self) -> None:
         self.assertEqual(link_words("located_in", ""), "is in")
 
     def test_each_word_reads_forward_and_back(self) -> None:
         cases = {
-            "lives in": ("lives in", "is home to"),
-            "works at": ("works in", "is the workplace of"),
-            "based in": ("works in", "is the workplace of"),  # a group works in a town too
-            "is kept in": ("is kept in", "is where you keep"),
-            "grew up in": ("comes from", "is the home town of"),
-            "visited": ("was last seen in", "is where you last saw"),
+            "lives in": ("lives in", "is home to", ""),
+            "works at": ("works in", "is the workplace of", ""),
+            "based in": ("works in", "is the workplace of", ""),  # a group works in a town too
+            "is kept in": ("is kept in", "holds", ""),
+            "grew up in": ("comes from", "is where", "comes from"),
+            "visited": ("was last seen in", "is where", "was last seen"),
         }
-        for detail, (forward, back) in cases.items():
+        for detail, (forward, back, after) in cases.items():
             self.assertEqual(link_words("located_in", detail, False, "character"), forward)
             self.assertEqual(back_words("located_in", detail, False, "character"), back)
+            self.assertEqual(back_after("located_in", detail, False, "character"), after)
 
     def test_the_past_stays_past_from_both_names(self) -> None:
         self.assertEqual(link_words("located_in", "lived in", False, "character"), "lived in")
@@ -45,9 +47,7 @@ class PlaceWords(unittest.TestCase):
         self.assertEqual(
             back_words("located_in", "worked in", False, "character"), "was the workplace of"
         )
-        self.assertEqual(
-            back_words("located_in", "was kept in", False, "item"), "was where you kept"
-        )
+        self.assertEqual(back_words("located_in", "was kept in", False, "item"), "held")
         way, now = place_words.way_of("lived in"), place_words.way_of("lives in")
         self.assertIsNotNone(way)
         self.assertIsNotNone(now)
@@ -111,11 +111,11 @@ class PlaceWords(unittest.TestCase):
     def test_an_item_is_only_ever_kept_in_a_place(self) -> None:
         # (owner, 2026-11-04) it never lives, works, comes from or is last seen: it is kept
         self.assertEqual(link_words("located_in", "", False, "item"), "is kept in")
-        self.assertEqual(back_words("located_in", "", False, "item"), "is where you keep")
+        self.assertEqual(back_words("located_in", "", False, "item"), "holds")
         for detail in ("was last seen in", "lives in", "works in", "comes from", "is kept in"):
             self.assertEqual(link_words("located_in", detail, False, "item"), "is kept in", detail)
         self.assertEqual(link_words("located_in", "lived in", False, "item"), "was kept in")
-        self.assertEqual(back_words("located_in", "lived in", False, "item"), "was where you kept")
+        self.assertEqual(back_words("located_in", "lived in", False, "item"), "held")
         self.assertEqual(place_words.canonical("was last seen in", "item"), "is kept in")
         self.assertEqual(place_words.canonical("was last seen in", "character"), "was last seen in")
         self.assertIsNone(place_words.canonical("is in", "item"))
@@ -206,7 +206,8 @@ class OnTheCard(unittest.TestCase):
             False,
         )
         self.assertEqual(
-            [r.words for r in rows], ["is home to", "was home to", "is where you last saw"]
+            [(r.words, r.after) for r in rows],
+            [("is home to", ""), ("was home to", ""), ("is where", "was last seen")],
         )
 
     def test_every_back_reading_on_the_towns_card_and_in_its_lines(self) -> None:
@@ -230,16 +231,18 @@ class OnTheCard(unittest.TestCase):
             [(r.words, r.other) for r in rows],
             [
                 ("is the workplace of", "Silver Lanterns"),
-                ("is where you keep", "Heartseeker"),
-                ("is the home town of", "Tavin"),
+                ("holds", "Heartseeker"),
+                ("is where", "Tavin"),
                 ("was the workplace of", "Tavin"),
             ],
         )
         self.assertEqual(connection_line(rows[0]), "is the workplace of **Silver Lanterns**")
+        self.assertEqual(connection_line(rows[1]), "holds **Heartseeker**")
+        self.assertEqual(connection_line(rows[2]), "is where **Tavin** comes from")
 
     def test_a_place_with_no_kind_known_never_says_it_moves(self) -> None:
         # (the Connect menu has no kind to go by: the old words, which claim nothing)
-        self.assertEqual(back_words("located_in", "", False, ""), "is where you find")
+        self.assertEqual(back_words("located_in", "", False, ""), "is linked to")
 
     def test_the_edit_note_does_not_turn_a_place_tie_round(self) -> None:
         self.assertFalse(reads_both_ways("located_in", "", False))

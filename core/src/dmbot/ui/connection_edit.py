@@ -62,7 +62,11 @@ WORDS_MAX = 100  # the longest "other words": the same as the website's and the 
 
 def plain(row: Row) -> str:
     """The card's line for this connection, as plain text a menu can show."""
-    return f"{row.words} {row.other}" + (" 🤫" if row.secret else "")
+    return (
+        f"{row.words} {row.other}"
+        + (f" {row.after}" if row.after else "")
+        + (" 🤫" if row.secret else "")
+    )
 
 
 def choices(rows: list[Row]) -> list[discord.SelectOption]:
