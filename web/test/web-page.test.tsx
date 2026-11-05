@@ -112,7 +112,8 @@ describe("the connections", () => {
 
   it("tells a DM when the words are empty", async () => {
     const { panel } = await openLine();
-    fireEvent.click(within(panel).getByRole("button", { name: "Add" }));
+    // (the form is its own file, fetched when a DM opens a line: wait for it)
+    fireEvent.click(await within(panel).findByRole("button", { name: "Add" }));
     expect(await within(panel).findByText(/Type some words/)).toBeTruthy();
   });
 });
