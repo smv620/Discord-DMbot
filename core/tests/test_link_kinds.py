@@ -106,7 +106,7 @@ class TheGraphLinks(unittest.TestCase):
                 "check",
                 "direction",
                 "kind",
-            },  # fmt: skip
+            },
         )
         self.assertFalse(link["secret"])  # (still masked for a player)
 
