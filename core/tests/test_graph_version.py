@@ -76,7 +76,7 @@ class TheNumberMoves(ConfirmedMemoryTest):
     async def test_a_dm_screen_setting_moves_it_only_when_it_changes(self) -> None:
         v = await self.version()
         await self.campaigns.set_dm_screen_visibility(GUILD_A, self.c, "open")
-        self.assertTrue(await self.moved(v))
+        self.assertEqual(await self.version(), v + 1)
         v = await self.version()
         await self.campaigns.set_dm_screen_visibility(GUILD_A, self.c, "open")  # (the same)
         self.assertEqual(await self.version(), v)
@@ -84,10 +84,28 @@ class TheNumberMoves(ConfirmedMemoryTest):
     async def test_a_dm_added_or_removed_moves_it(self) -> None:
         v = await self.version()
         await self.campaigns.add_dm(GUILD_A, self.c, OTHER_DM)
-        self.assertTrue(await self.moved(v))
+        self.assertEqual(await self.version(), v + 1)
         v = await self.version()
+        await self.campaigns.add_dm(GUILD_A, self.c, OTHER_DM)  # (already one: nothing changes)
+        self.assertEqual(await self.version(), v)
         await self.campaigns.remove_dm(GUILD_A, self.c, OTHER_DM)
-        self.assertTrue(await self.moved(v))
+        self.assertEqual(await self.version(), v + 1)
+
+    async def test_a_new_owner_moves_it_once(self) -> None:
+        v = await self.version()
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "UPDATE campaigns SET owner_user_id = %s WHERE guild_id = %s AND id = %s",
+                (OTHER_DM, GUILD_A, self.c),
+            )
+        self.assertEqual(await self.version(), v + 1)
+
+    async def test_a_campaign_with_dms_can_be_deleted(self) -> None:
+        await self.campaigns.add_dm(GUILD_A, self.c, OTHER_DM)
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "DELETE FROM campaigns WHERE guild_id = %s AND id = %s", (GUILD_A, self.c)
+            )
 
     async def test_another_campaigns_change_does_not_move_this_one(self) -> None:
         other = (await self.campaigns.create(GUILD_A, "Other Wastes", DM)).id
@@ -96,20 +114,32 @@ class TheNumberMoves(ConfirmedMemoryTest):
         self.assertEqual(await self.version(), v)
 
 
-# Where a statement writes a `memory_*` table. Every one of these runs inside `MemoryStore._write`
+# A tripwire for raw SQL, not proof that every writer bumps (the tests above are): where a
+# statement writes a `memory_*` table. Every one of these runs inside `MemoryStore._write`
 # (the version moves with it), or touches a table the graph never draws. A new file that writes one
 # fails here until someone decides which it is.
-WRITES = re.compile(
-    r"(?:INSERT INTO|UPDATE|DELETE FROM)\s+memory_"
-    r"(?:entities|aliases|relations|states|beliefs|knowers|group)"
-)
+WRITES = re.compile(r"(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+memory_(?!changes)\w+", re.I)
 INSIDE_WRITE = "runs on the change's own connection inside `_write`, so the version moves with it"
-NOT_DRAWN = "writes lineage (evidence ids) or claims the graph does not draw"
+BUMPS = "moves `memory_version` itself, in the same transaction"
+NOT_DRAWN = "writes lineage, claims or working data the Story Graph's doors never read"
 FILES: dict[str, str] = {
+    "campaigns/store.py": NOT_DRAWN + " (the heard-words cleanup of a campaign move)",
+    "memory/_changes.py": INSIDE_WRITE + " (evidence rows)",
+    "memory/backup.py": BUMPS + " (a backup load)",
     "memory/beliefs.py": INSIDE_WRITE,
-    "memory/evidence.py": NOT_DRAWN,
-    "memory/forget_readings.py": "bumps `memory_version` itself, in the same statement",
-    "memory/store.py": INSIDE_WRITE + " (`_drop_person`, the scan cleanup)",
+    "memory/claims.py": NOT_DRAWN,
+    "memory/contradiction_grades.py": NOT_DRAWN,
+    "memory/evidence.py": NOT_DRAWN + " (evidence ids)",
+    "memory/forget_readings.py": BUMPS,
+    "memory/heard_backup.py": NOT_DRAWN,
+    "memory/importance_backup.py": NOT_DRAWN + " (the importance rank)",
+    "memory/importance_rank.py": NOT_DRAWN + " (the importance rank)",
+    "memory/knowers.py": INSIDE_WRITE,
+    "memory/merge_restore.py": INSIDE_WRITE,
+    "memory/report_store.py": NOT_DRAWN,
+    "memory/store.py": INSIDE_WRITE + " (`_drop_person`, the scan cleanup, heard words)",
+    "memory/vectors.py": NOT_DRAWN + " (search vectors)",
+    "transcript/store.py": NOT_DRAWN + " (erasing a person's words)",
 }
 
 

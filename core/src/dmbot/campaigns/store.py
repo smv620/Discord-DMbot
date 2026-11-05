@@ -679,11 +679,13 @@ class CampaignStore:
             current = await self._require(conn, guild_id, campaign_id, lock=True)
             if user_id not in current.dm_user_ids and len(current.dm_user_ids) >= MAX_DMS:
                 raise CampaignError(TOO_MANY_DMS)
-            await conn.execute(
+            added = await conn.execute(
                 "INSERT INTO campaign_dms (campaign_id, guild_id, user_id) VALUES (%s, %s, %s)"
                 " ON CONFLICT DO NOTHING",
                 (campaign_id, guild_id, user_id),
             )
+            if added.rowcount:  # who the DMs are changes what a viewer sees: the story's number
+                await self._bump_view(conn, guild_id, campaign_id)
             # (no read after: the locked row cannot change under this transaction)
             return dataclasses.replace(current, dm_user_ids=current.dm_user_ids | {user_id})
 
@@ -695,12 +697,25 @@ class CampaignStore:
                 raise CampaignError(OWNER_STAYS)
             if user_id in campaign.dm_user_ids and len(campaign.dm_user_ids) == 1:
                 raise CampaignError(LAST_DM)
-            await conn.execute(
+            removed = await conn.execute(
                 "DELETE FROM campaign_dms"
                 " WHERE guild_id = %s AND campaign_id = %s AND user_id = %s",
                 (guild_id, campaign_id, user_id),
             )
+            if removed.rowcount:
+                await self._bump_view(conn, guild_id, campaign_id)
             return dataclasses.replace(campaign, dm_user_ids=campaign.dm_user_ids - {user_id})
+
+    @staticmethod
+    async def _bump_view(conn: Conn, guild_id: int, campaign_id: str) -> None:
+        """Move the campaign's story number (`memory_version`, #3294): the Story Graph page reads
+        the graph again when it moves, and who the DMs are changes what a viewer sees. Not a
+        memory write, so no change-log row; a gap in the versions is harmless."""
+        await conn.execute(
+            "UPDATE campaigns SET memory_version = memory_version + 1"
+            " WHERE guild_id = %s AND id = %s",
+            (guild_id, campaign_id),
+        )
 
     async def set_dm_screen(
         self, guild_id: int, campaign_id: str, channel_id: int | None
