@@ -113,7 +113,7 @@ class ThePlayer(unittest.TestCase):
         assert "Kesh" not in got.text
 
     def test_a_fact_another_character_holds_shuts_the_gate_until_peeked(self) -> None:
-        # the party knows the tie (the other PC does); the one who clicked has no character that does
+        # the party knows the tie (the other PC does); the one who clicked has no such character
         src, kn = world([("l1", MIRA, KESH, "mentor_of")], {"l1": ["pc2"]})
         kn["playerCharacters"] = [PC, "pc2"]
         kn["groups"] = [[PC, "party"], ["pc2", "party"]]
