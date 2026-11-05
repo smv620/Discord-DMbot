@@ -10561,6 +10561,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         """The line numbers of a session that retell earlier sessions (#3298), from the stored
         split, for every place the story reader is run so they cannot drift. None when no split
         is kept: every line is play."""
+        if self.transcripts is None:
+            return frozenset()
         return extractor.recap_numbers(await self.transcripts.session_split(gid, sid))
 
     async def count_waiting(self, gid: int, cid: str) -> WaitingChecks:
