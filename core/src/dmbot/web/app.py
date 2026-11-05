@@ -888,6 +888,7 @@ def create_app(
             "stale_consent",
         ),  # the consent words changed (not the recap's "stale")
         "bad_date": (422, "bad_date"),
+        "future_date": (422, "future_date"),  # a day that has not happened yet (#3483)
         "no_lines_kept": (422, "no_lines_kept"),
         "too_many_lines": (413, "too_many_lines"),
         "too_many_speakers": (413, "too_many_speakers"),

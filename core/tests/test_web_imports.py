@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import datetime as dt
 import json
 import time
 import unittest.mock
@@ -848,14 +849,43 @@ class TheStore(WithImports):
         self.assertEqual(refused.exception.code, "no_lines_kept")
         self.assertEqual(await self.sessions(), 0)
 
-    async def test_session_dates_must_be_from_2000_to_2100(self) -> None:
-        cases = {"1999-12-31": False, "2000-01-01": True, "2100-01-01": True, "2100-01-02": False}
-        for day, ok in cases.items():
-            if ok:
-                self.assertIsInstance(imports._started_at(day, 0), int, day)
+    async def test_session_dates_must_be_from_2000_and_not_in_the_future(self) -> None:
+        now = int(dt.datetime(2026, 11, 5, 9, 30, tzinfo=dt.UTC).timestamp())
+        cases = {
+            "1999-12-31": "bad_date",
+            "2000-01-01": "",
+            "2026-11-05": "",
+            "2101-01-01": "bad_date",
+        }
+        for day, code in cases.items():
+            if not code:
+                self.assertIsInstance(imports._started_at(day, 0, now), int, day)
             else:
-                with self.assertRaises(RecapError, msg=day):
-                    imports._started_at(day, 0)
+                with self.assertRaises(RecapError, msg=day) as refused:
+                    imports._started_at(day, 0, now)
+                self.assertEqual(refused.exception.code, code, day)
+
+    async def test_a_day_that_has_not_happened_yet_is_refused_with_its_own_code(self) -> None:
+        """#3483: the page stops it, but an old tab or a direct call must not store one. The
+        server allows one day ahead of UTC (the DM's own calendar may be a day ahead) and refuses
+        anything later."""
+        now = int(dt.datetime(2026, 11, 5, 9, 30, tzinfo=dt.UTC).timestamp())
+        for day in ("2026-11-04", "2026-11-05", "2026-11-06"):  # past, today, one day ahead
+            self.assertIsInstance(imports._started_at(day, 0, now), int, day)
+        for day in ("2026-11-07", "2027-01-01"):  # tomorrow+1 and later
+            with self.assertRaises(RecapError, msg=day) as refused:
+                imports._started_at(day, 0, now)
+            self.assertEqual(refused.exception.code, "future_date", day)
+
+    async def test_the_import_refuses_a_future_date_before_anything_is_stored(self) -> None:
+        future = (dt.datetime.now(dt.UTC) + dt.timedelta(days=3)).date().isoformat()
+        with self.assertRaises(RecapError) as refused:
+            await self.confirm(
+                {"mapping": MAPPING, "sessions": [{"file": "a.txt", "date": future}]},
+                ("a.txt", CRAIG),
+            )
+        self.assertEqual(refused.exception.code, "future_date")
+        self.assertEqual(await self.sessions(), 0)
 
     async def test_a_new_session_is_stored_at_noon_utc_of_its_day(self) -> None:
         await self.confirm(
