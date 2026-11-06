@@ -57,7 +57,7 @@ describe("the page of one name", () => {
     expect(await screen.findByText(w.done.confirm("Brannoch"), {}, slow)).toBeTruthy();
     expect(calls(api, "answerNameCheck")[0]).toContain('"action":"confirm"');
     fireEvent.click(await screen.findByRole("button", { name: w.undo }));
-    expect(await screen.findByText(w.undone, {}, slow)).toBeTruthy();
+    expect(await screen.findByText(w.undone("Brannoch"), {}, slow)).toBeTruthy();
     expect(calls(api, "answerNameCheck")[1]).toContain('"action":"undo","batch":11');
     expect(await screen.findByRole("heading", { name: "Brannoch" }, slow)).toBeTruthy();
   }, 30000);
@@ -65,7 +65,7 @@ describe("the page of one name", () => {
   it("searches only this campaign's names, asks once, and joins on Yes", async () => {
     const api = await open();
     fireEvent.input(screen.getByLabelText(w.searchLabel), { target: { value: "mira" } });
-    fireEvent.click(await screen.findByRole("button", { name: w.pick("Mira Voss") }, slow));
+    fireEvent.click(await screen.findByRole("button", { name: /^Same person as Mira Voss/ }, slow));
     expect(calls(api, "allNames")[0]).toContain(":q=mira");
     expect(calls(api, "allNames")[0]).toMatch(/allNames:100\.cl\d+:/); // (this campaign's reference)
     expect(calls(api, "answerNameCheck")).toHaveLength(0); // asking changes nothing
@@ -79,11 +79,10 @@ describe("the page of one name", () => {
     const api = await open();
     fireEvent.click(screen.getByRole("button", { name: w.trivial }));
     expect(screen.getByText(w.trivialAsk)).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: w.no }));
+    fireEvent.click(screen.getByRole("button", { name: w.trivialNo }));
     expect(calls(api, "answerNameCheck")).toHaveLength(0);
     fireEvent.click(screen.getByRole("button", { name: w.trivial }));
-    const group = screen.getByRole("group");
-    fireEvent.click(group.querySelector("button.button:not(.secondary)") as HTMLElement);
+    fireEvent.click(screen.getByRole("button", { name: w.trivialYes }));
     await waitFor(() => expect(calls(api, "answerNameCheck")).toHaveLength(1));
     expect(calls(api, "answerNameCheck")[0]).toContain('"action":"not_a_name"');
     expect(await screen.findByText(w.done.not_a_name("Brannoch"), {}, slow)).toBeTruthy();

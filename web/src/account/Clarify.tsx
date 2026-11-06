@@ -26,6 +26,7 @@ export default function Clarify({ api, refId, nameId }: { api: AccountApi; refId
   const [report, setReport] = useState("");
   const [last, setLast] = useState<{ text: string; batch: number | null } | null>(null);
   const [undone, setUndone] = useState(false);
+  const [undoneWho, setUndoneWho] = useState("");
   const [find, setFind] = useState("");
   const [kind, setKind] = useState("");
   const [matches, setMatches] = useState<Match[] | null>(null);
@@ -36,6 +37,10 @@ export default function Clarify({ api, refId, nameId }: { api: AccountApi; refId
   const [newKind, setNewKind] = useState("");
   const [askTrivial, setAskTrivial] = useState(false);
   const flight = useRef(false);
+  const lastWho = useRef(""); // the name just answered, for the line after Undo
+  const askBox = useRef<HTMLParagraphElement>(null);
+  const trivialBox = useRef<HTMLParagraphElement>(null);
+  const resultBox = useRef<HTMLDivElement>(null);
   const seen = useObservedWait(working, String(last?.text ?? ""));
 
   async function load(): Promise<void> {
@@ -97,6 +102,7 @@ export default function Clarify({ api, refId, nameId }: { api: AccountApi; refId
   async function send(answer: NameCheckAnswer, text: string): Promise<void> {
     if (flight.current || !api.answerNameCheck) return;
     flight.current = true;
+    lastWho.current = name?.name ?? "";
     setWorking(true);
     setReport("");
     setUndone(false);
@@ -159,6 +165,7 @@ export default function Clarify({ api, refId, nameId }: { api: AccountApi; refId
           throw error;
         }
       }
+      setUndoneWho(lastWho.current);
       setLast(null);
       setUndone(true);
       setGone(false);
@@ -171,13 +178,18 @@ export default function Clarify({ api, refId, nameId }: { api: AccountApi; refId
     }
   }
 
+  // After an answer the form is gone: focus goes to the line that says what happened, so keyboard and screen-reader users aren't dropped.
+  useEffect(() => {
+    if (last) resultBox.current?.focus();
+  }, [last]);
+
   if (!api.clarifyName || !api.answerNameCheck || !api.nameAnswerResult) return <p class="muted">{w.notYet}</p>;
   if (failed) return <p class="warn" role="alert">{failed}</p>;
   const who = name?.name ?? "";
   return (
     <div class="stack clarify">
       {last && (
-        <div class="stack" role="status">
+        <div class="stack" role="status" tabIndex={-1} ref={resultBox}>
           <p>{last.text}</p>
           {last.batch !== null && (
             <p>
@@ -188,7 +200,7 @@ export default function Clarify({ api, refId, nameId }: { api: AccountApi; refId
           )}
         </div>
       )}
-      {undone && <p class="small" role="status">{w.undone}</p>}
+      {undone && <p class="small" role="status">{w.undone(undoneWho)}</p>}
       {working && seen.startedAt !== null && (
         <WorkProgress stage={w.stage.working} startedAt={seen.startedAt} updatedAt={seen.movedAt} state={seen.quiet ? "stalled" : "running"} whatToDo={w.quiet} />
       )}
@@ -235,7 +247,7 @@ export default function Clarify({ api, refId, nameId }: { api: AccountApi; refId
               <ul class="stack plain-list">
                 {matches.map((m) => (
                   <li key={m.id}>
-                    <button type="button" class="button secondary" aria-label={w.pick(m.name)} aria-disabled={working} onClick={() => !working && setPicked({ id: m.id, name: m.name })}>
+                    <button type="button" class="button secondary" aria-label={w.pick(m.name, m.kind)} aria-disabled={working} onClick={() => { if (working) return; setPicked({ id: m.id, name: m.name }); setTimeout(() => askBox.current?.focus(), 0); }}>
                       {m.name}{m.kind ? ` (${m.kind})` : ""}
                     </button>
                     {m.scene && <span class="small muted"> {m.scene}</span>}
@@ -249,7 +261,7 @@ export default function Clarify({ api, refId, nameId }: { api: AccountApi; refId
             </p>
             {picked && (
               <div class="stack" role="group" aria-label={w.askSame(who, picked.name)}>
-                <p role="status">{w.askSame(who, picked.name)}</p>
+                <p tabIndex={-1} ref={askBox}>{w.askSame(who, picked.name)}</p>
                 <div class="row">
                   <button type="button" class="button" aria-disabled={working} onClick={() => !working && void send({ action: "same", known: picked.id }, w.done.same(who, picked.name))}>{w.yes}</button>
                   <button type="button" class="button secondary" onClick={() => setPicked(null)}>{w.no}</button>
@@ -261,30 +273,31 @@ export default function Clarify({ api, refId, nameId }: { api: AccountApi; refId
             <h3 id="clarify-new">{w.newHeading}</h3>
             <label class="field" for="clarify-new-kind">{w.newLabel}</label>
             <select id="clarify-new-kind" value={newKind} onChange={(e) => setNewKind((e.target as HTMLSelectElement).value)}>
-              <option value="" />
+              <option value="">{w.chooseKind}</option>
               {name.kinds.map((k) => (
                 <option key={k.key} value={k.key}>{k.label}</option>
               ))}
             </select>
             <p>
-              <button type="button" class="button secondary" aria-disabled={working || newKind === ""} onClick={() => !working && newKind !== "" && void send({ action: "confirm", kind: newKind }, w.done.confirm(who))}>
+              <button type="button" class="button secondary" aria-disabled={working || newKind === ""} aria-describedby="clarify-need-kind" onClick={() => !working && newKind !== "" && void send({ action: "confirm", kind: newKind }, w.done.confirm(who))}>
                 {w.newButton}
               </button>
+              {newKind === "" && <span class="small muted" id="clarify-need-kind"> {w.needKind}</span>}
             </p>
           </section>
           <section class="stack" aria-labelledby="clarify-trivial">
             <h3 id="clarify-trivial">{w.trivialHeading}</h3>
             {askTrivial ? (
               <div class="stack" role="group" aria-label={w.trivialAsk}>
-                <p role="status">{w.trivialAsk}</p>
+                <p tabIndex={-1} ref={trivialBox}>{w.trivialAsk}</p>
                 <div class="row">
-                  <button type="button" class="button" aria-disabled={working} onClick={() => !working && void send({ action: "not_a_name" }, w.done.not_a_name(who))}>{w.trivial}</button>
-                  <button type="button" class="button secondary" onClick={() => setAskTrivial(false)}>{w.no}</button>
+                  <button type="button" class="button" aria-disabled={working} onClick={() => !working && void send({ action: "not_a_name" }, w.done.not_a_name(who))}>{w.trivialYes}</button>
+                  <button type="button" class="button secondary" onClick={() => setAskTrivial(false)}>{w.trivialNo}</button>
                 </div>
               </div>
             ) : (
               <p>
-                <button type="button" class="button secondary" aria-disabled={working} onClick={() => !working && setAskTrivial(true)}>{w.trivial}</button>
+                <button type="button" class="button secondary" aria-disabled={working} onClick={() => { if (working) return; setAskTrivial(true); setTimeout(() => trivialBox.current?.focus(), 0); }}>{w.trivial}</button>
               </p>
             )}
           </section>
