@@ -20,6 +20,7 @@ EVERY_ACTION = (
     "claim-pick", "claim-unpick",  # "Which one?" for a kept fact (#3463)
     "spelling-yes", "spelling-no",  # "Is this the same place?" (#3533)
     "players-line",  # the line for the players (#3568)
+    "offer-clear",  # lift a Never on words (#3577)
     "told-add", "told-remove",  # "Tell a character" (#3542)
 )  # fmt: skip
 

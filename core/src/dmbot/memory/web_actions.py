@@ -326,6 +326,11 @@ async def apply(
     if action.user_id not in dm_user_ids:
         return _failed(NOT_ALLOWED)
     cid = action.campaign_id
+    if (
+        action.action == "offer-clear"
+    ):  # lift a Never or Not now on words (#3577); filed under no name
+        await memory.clear_kind_offer(guild_id, cid, action.text)
+        return Outcome()  # (lifting words that are already lifted is done, not a failure)
     if action.action in UNNAMED_ACTIONS:
         try:
             return await _unnamed(memory, guild_id, cid, action, named_batch)
