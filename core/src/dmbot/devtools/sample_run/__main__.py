@@ -26,11 +26,16 @@ import sys
 import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from dmbot.devtools.sample_run import plan, steps
 from dmbot.devtools.sample_run.plan import SampleError, Step
 from dmbot.transcript import import_plan as ip
 
+if TYPE_CHECKING:
+    from dmbot.db import Database
+
+Accept = Callable[["Database", int, str], Awaitable[Mapping[str, int]]]
 DEFAULT_BACKUPS = Path("/var/lib/dmbot-sample-backups")
 _ON = {"1", "true", "on", "yes"}
 
@@ -87,11 +92,12 @@ def read_text(path: Path, what: str) -> str:
 async def run(
     args: argparse.Namespace,
     *,
-    accept: Callable[[object, int, str], Awaitable[Mapping[str, int]]] | None = None,
+    accept: Accept | None = None,
     say: Callable[[str], None] | None = None,
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
 ) -> int:
     say = say or (lambda line: print(line, flush=True))
+    accept = accept or _accept_all()
     now = int(time.time())
     # Everything that can refuse the run without a database comes first, so a mistake costs
     # nothing: the players, the files, the choice, the date.
@@ -115,8 +121,6 @@ async def run(
     if not args.yes:
         say("Nothing was run. Add --yes to spend the money.")
         return 0
-    if accept is None:
-        raise SampleError("accept_all (#3544) is not in this build; nothing was changed")
     url = os.environ.get("DATABASE_URL", "")
     if not url:
         raise SampleError("DATABASE_URL isn't set")
@@ -126,7 +130,6 @@ async def run(
     from dmbot.consent import ConsentStore
     from dmbot.db import Database
     from dmbot.devtools import common
-    from dmbot.memory.store import MemoryStore
 
     commit = common.commit(
         args.commit, tool="sample_run"
@@ -134,7 +137,7 @@ async def run(
     db = await Database.open(url, migrate=False, max_size=4)
     done: list[Step] = []
     try:
-        campaigns, memory = steps.campaign_store(db), MemoryStore(db)
+        campaigns = steps.campaign_store(db)
         today = dt.date.today().isoformat()
         gid, dm = args.guild, args.dm
         # The checks that need the database, still before anything is changed or spent.
@@ -165,8 +168,7 @@ async def run(
             return await steps.wait_lore(db, gid, upload, say=say, sleep=sleep)
 
         async def accept_step() -> Mapping[str, int | str]:
-            assert accept is not None
-            return await accept(memory, gid, cid)
+            return await accept(db, gid, cid)
 
         async def score_step(label: str, docs: str) -> Mapping[str, int | str]:
             path = await steps.backup(campaigns, gid, cid, folder, label)
@@ -215,15 +217,21 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
 
 
-def _accept_all() -> Callable[[object, int, str], Awaitable[Mapping[str, int]]] | None:
-    """The 'Accept all' of #3544, when this build has it (None until it merges)."""
-    try:
-        from dmbot.memory import accept_all  # type: ignore[attr-defined]
+def _accept_all() -> Accept:
+    """'Accept all' (#3544, `devtools.accept_all`): what the DM would press Yes for, through the
+    store's own calls, on the sample campaign only. Counts only come back."""
+    from dmbot.devtools import accept_all
 
-        entry: Callable[[object, int, str], Awaitable[Mapping[str, int]]] = accept_all.run
-    except (ImportError, AttributeError):  # not merged yet, or named differently
-        return None
-    return entry
+    async def accept(db: Database, guild: int, campaign: str) -> Mapping[str, int]:
+        got = await accept_all.run(db, guild, campaign, dry_run=False)
+        return {
+            "accepted": sum(got.accepted.values()),
+            "left waiting": sum(got.waiting.values()),
+            "refused by a rule": sum(got.refused.values()),
+            "changes": len(got.batches),
+        }
+
+    return accept
 
 
 if __name__ == "__main__":

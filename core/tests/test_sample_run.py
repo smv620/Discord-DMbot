@@ -452,6 +452,17 @@ class Steps(DatabaseTest):
         self.assertIn("look-alike", str(err.exception))
         self.assertIsNotNone(await self.campaigns.get(GUILD, like.id))
 
+    async def test_the_accept_all_step_gives_counts_only_and_keeps_to_the_sample(self) -> None:
+        camp = await self.made()
+        accept = cli._accept_all()
+        got = await accept(self.db, GUILD, camp.id)
+        self.assertEqual(sorted(got), ["accepted", "changes", "left waiting", "refused by a rule"])
+        other = await self.made(name="Frostmaiden")
+        from dmbot.devtools.accept_all import WrongCampaign
+
+        with self.assertRaises(WrongCampaign):
+            await accept(self.db, GUILD, other.id)
+
     async def test_the_backup_goes_to_a_private_file_and_scores_with_counts_only(self) -> None:
         camp = await self.made()
         import tempfile
@@ -499,21 +510,6 @@ class TheCommand(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(await cli.run(args, say=said.append), 0)
         self.assertTrue(said[0].startswith("Up to "))
         self.assertIn("Add --yes", said[-1])
-
-    async def test_with_yes_but_no_accept_all_it_refuses_before_touching_anything(self) -> None:
-        import tempfile
-
-        with tempfile.TemporaryDirectory() as tmp:
-            lore, session = Path(tmp) / "lore.txt", Path(tmp) / "session.txt"
-            lore.write_text("Mira was raised by the Ashen Crown.")
-            session.write_text(SESSION)
-            args = cli.parse_args(
-                ["--guild", "1", "--dm", "2", "--players", "ist=3,jac=4",
-                 "--lore", str(lore), "--session", str(session), "--yes"]
-            )  # fmt: skip
-            with self.assertRaises(SampleError) as err:
-                await cli.run(args, accept=None, say=lambda _l: None)
-        self.assertIn("nothing was changed", str(err.exception))
 
     async def test_a_bad_lore_choice_or_date_stops_before_the_cost_is_even_printed(self) -> None:
         import tempfile
