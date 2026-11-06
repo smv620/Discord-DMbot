@@ -5958,6 +5958,21 @@ dozen screens, and gets the same list, words and context in both places.
   yet", it offers every way to clear it up, plainly: **Give them a name**, **Same as someone DMbot knows…** (pick
   the known name; they become one person and the description is kept as how they were described) and **Remove
   this person** (asks once). Each has Undo. Its scene (4a) shows above the answers.
+- **Who is this? DMbot answers first** (owner, 2026-11-06, #3602, #3603, #3604): before asking about a name, DMbot
+  tries to answer with the AI, from the name, its scene, its lines and the campaign's own entries.
+  - **Sure:** it applies the answer itself and says so on the card with **Undo** and **That's wrong** ("DMbot took
+    **the man of steel** to be **Superman**"), and the after-session card counts these for the DM to check. This is
+    the one place DMbot settles a question without a press, so it is kept narrow: only "this new name is an other
+    name of X" or "this is a new <kind>", never a split, a merge of two existing entries or a removal, and **never**
+    when either side is secret, hidden from players, a disguise, a player character or a told-or-not name: those
+    always ask. Its threshold is set from the sample run's numbers (share applied, share undone) and starts
+    conservative.
+  - **Unsure:** the question shows DMbot's **top 5** answers, most likely first: an existing entry as `a.k.a. <name>,
+    <its most significant property or connection>` ("a.k.a. Superman, the Kryptonian superhero"), or `new NPC` (or
+    another kind). The label never shows a secret to anyone else.
+  - **None of those:** a 6th choice, **More options…**, links to the website's clarify page for that name: search,
+    filters, DMbot's top answers, the scene and where it was said, and a last answer, **Trivial: no need to track
+    this name**.
 - **What context each kind needs** (the card's parts 2 to 5):
 
   | Kind | About (with tags) | Why | Evidence | Consequence |
