@@ -10,14 +10,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import discord
 
 from dmbot.audio.segmenter import Segmenter, Utterance
-from dmbot.bot import DMBot
+from dmbot.bot import DMBot, Table
 from dmbot.campaigns import CampaignStore
 from dmbot.config import Settings
 from dmbot.consent import ConsentStore
-from dmbot.dm_questions import NO_PRIVATE_MESSAGE
 from dmbot.dm_screen import messages as screen_messages
 from dmbot.sessions import SessionStore
-from dmbot.table import Table
 from dmbot.transcript import export, fix_notes
 from dmbot.transcript import questions as name_questions
 from dmbot.transcript.models import SIDEBAR_ANSWER, SIDEBAR_QUESTION, VIA_VOICE, Line, Lineage
@@ -49,21 +47,6 @@ class StoreTests(DatabaseTest):
         self.assertEqual(len(ids), 2)
         lines = await self.store.lines(GUILD, sid)
         self.assertEqual([(x.heard, x.text) for x in lines], [("first",) * 2, ("second",) * 2])
-
-    async def test_a_sessions_split_is_kept_once_and_read_back(self) -> None:
-        sid = await self.store.open_session(GUILD, self.campaign.id, START)
-        self.assertIsNone(await self.store.session_split(GUILD, sid))  # not made yet
-        recap = {"parts": [["recap", 1, 2], ["play", 3, 9]], "unsure": False, "method": "ai"}
-        self.assertTrue(await self.store.save_session_split(GUILD, sid, recap))
-        other = {"parts": [["play", 1, 9]], "unsure": False, "method": "fallback"}
-        self.assertFalse(await self.store.save_session_split(GUILD, sid, other))  # first one kept
-        self.assertEqual(await self.store.session_split(GUILD, sid), recap)
-
-    async def test_a_split_is_never_read_across_servers_or_for_a_missing_session(self) -> None:
-        sid = await self.store.open_session(GUILD, self.campaign.id, START)
-        await self.store.save_session_split(GUILD, sid, {"parts": [["recap", 1, 2]]})
-        self.assertIsNone(await self.store.session_split(GUILD + 1, sid))
-        self.assertIsNone(await self.store.session_split(GUILD, "0" * 32))
 
     async def test_the_next_session_start_counts_only_later_sessions_with_lines(self) -> None:
         first = await self.store.open_session(GUILD, self.campaign.id, START)
@@ -1323,38 +1306,9 @@ class BotTests(DatabaseTest):
         self.assertIn("I saw Belleros 0", text)
         self.assertEqual(
             [c.item.custom_id for c in view.children],
-            [f"dmbot:linefix:yes:{GUILD}:{sid}", f"dmbot:linefix:no:{GUILD}:{sid}"],  # (#3210)
+            [f"dmbot:linefix:yes:{sid}", f"dmbot:linefix:no:{sid}"],
         )
         self.assertEqual(cast(Any, self.bot.post_message).await_args_list[0].args[0], SCREEN)
-
-    async def test_with_a_dm_who_can_be_reached_the_fixes_go_to_their_private_chat(self) -> None:
-        # #3210: not on the screen; the server is in the buttons' ids; each copy is remembered.
-        table, ids = await self.waiting_setup(5)
-        copies: list[Any] = []
-
-        async def dm_message(user_id: int, text: str, view: Any) -> Any:
-            message = MagicMock(id=900 + len(copies), content=text, edit=AsyncMock())
-            message.view = view
-            copies.append(message)
-            return message
-
-        self.bot._dm_message = dm_message  # type: ignore[method-assign]
-        self.bot.sidebar_send_dm = AsyncMock(return_value="sent")  # type: ignore[method-assign]
-        await self.bot._waiting_suggestions(table)
-        cast(Any, self.bot.post_message).assert_not_awaited()  # nothing on the DM screen
-        self.assertEqual(len(copies), 3)  # the three shown, one DM
-        for i, message in enumerate(copies):
-            self.assertTrue(message.content.startswith("❓ **DMbot has a question** · "))
-            self.assertEqual(
-                message.view.children[0].item.custom_id, f"dmbot:linefix:yes:{GUILD}:{ids[i]}"
-            )
-        # the count of the rest goes privately too, with the campaign's name
-        sent = cast(Any, self.bot.sidebar_send_dm).await_args
-        self.assertIn("…and 2 more", sent.args[1])
-        self.assertIn("DMbot has a question", sent.args[1])
-        # each copy was remembered, so a decision takes the buttons off the others
-        await self.bot.decision_lines.close(("fix", ids[0]), "Accepted.", pressed_id=None)
-        copies[0].edit.assert_awaited_once()
 
     async def test_nothing_for_an_answered_or_dropped_suggestion(self) -> None:
         table, (first, second) = await self.waiting_setup(2)
@@ -1372,12 +1326,8 @@ class BotTests(DatabaseTest):
         self.assertEqual(len(shown), 4)
         for i, (text, view) in enumerate(shown[:3]):
             self.assertIn(f"I saw Belleros {i}", text)
-            self.assertEqual(view.children[0].item.custom_id, f"dmbot:linefix:yes:{GUILD}:{ids[i]}")
-        # (no DM can be reached here, so the count is on the screen with the reason, #3210)
-        self.assertEqual(
-            shown[3],
-            ("…and 2 more that go when this session ends." + NO_PRIVATE_MESSAGE, None),
-        )
+            self.assertEqual(view.children[0].item.custom_id, f"dmbot:linefix:yes:{ids[i]}")
+        self.assertEqual(shown[3], ("…and 2 more that go when this session ends.", None))
 
     async def test_nothing_after_a_restart_in_the_middle_of_a_session(self) -> None:
         table, _ = await self.waiting_setup(1)

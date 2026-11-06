@@ -43,8 +43,6 @@ export default function SayIt({
   const [seconds, setSeconds] = useState(0);
   const [clipUrl, setClipUrl] = useState<string | null>(null);
   const [suggesting, setSuggesting] = useState(false);
-  // Seconds spent on a slow request (a suggestion, or a clip being heard), so a wait shows DMbot is still working (#3347).
-  const [waited, setWaited] = useState(0);
   const [problem, setProblem] = useState<string | null>(null);
   const [said, setSaid] = useState<string | null>(null);
   const clip = useRef<Blob | null>(null);
@@ -271,16 +269,6 @@ export default function SayIt({
     window.speechSynthesis.speak(new SpeechSynthesisUtterance(value));
   };
 
-  const waiting = suggesting || phase === "sending";
-  useEffect(() => {
-    if (!waiting) {
-      setWaited(0);
-      return;
-    }
-    const timer = setInterval(() => setWaited((n) => n + 1), 1000);
-    return () => clearInterval(timer);
-  }, [waiting]);
-
   if (!canSuggest && !canRecord && !canHear) return null;
 
   const busy = disabled || suggesting || phase === "asking" || phase === "sending";
@@ -346,7 +334,6 @@ export default function SayIt({
         </div>
       )}
       {phase === "sending" && <p class="small muted">{words.sending}</p>}
-      {waiting && waited >= 5 && <p class="small muted">{waited >= 30 ? words.stalled(waited) : words.slow(waited)}</p>}
       {said && phase === "idle" && <p class="small muted">{said}</p>}
       <p class="sr-only" role="status">
         {spoken}

@@ -14,7 +14,6 @@ from dmbot.memory.lookalikes import Name
 from dmbot.memory.models import DM, MemoryRuleError
 from dmbot.ui import look_alikes as la
 from dmbot.ui import name_dropdown as dd
-from dmbot.ui import name_places
 from dmbot.ui.name_card import SAME
 from dmbot.ui.names import NamesHome, Reviews
 
@@ -34,27 +33,11 @@ def selects(view: discord.ui.View) -> list[discord.ui.Select[Any]]:
 class TheGroupMessage(unittest.TestCase):
     def test_every_name_is_listed_with_its_kind_and_how_often_it_was_heard(self) -> None:
         text = la.group_text(NAMES, KINDS, number=2, of=5)
-        self.assertEqual(text.splitlines()[0], "**Are these the same?** (2 of 5)")
+        self.assertIn("DMbot thinks these may be one name", text)
+        self.assertIn("(2 of 5)", text)
         self.assertIn("**Belleros** (NPC, heard 9 times)", text)
         self.assertIn("**the Belleros** (place)", text)
-        self.assertIn(
-            "If they are, DMbot keeps one name and the others become its other names "
-            "(they still find it).",
-            text,
-        )
-        self.assertIn("**Top box:** the names that are the same. Untick any that aren't.", text)
-        self.assertIn(
-            "**Bottom box:** the name to keep, now **Belleros**, the one heard most. "
-            "Pick another if you like, then press 🔗 Merge.",
-            text,
-        )
-        self.assertIn("If none of them are the same, press **None are the same**.", text)
-
-    def test_nobody_is_said_to_be_heard_most_when_no_name_was_heard_more(self) -> None:
-        same = [Name(A, "Belleros", 1), Name(B, "Beleros", 1)]
-        text = la.group_text(same, KINDS, number=1, of=1)
-        self.assertIn("**Bottom box:** the name to keep, now **Belleros**. Pick another", text)
-        self.assertNotIn("heard most", text)
+        self.assertIn("I'd keep **Belleros**, the one heard most", text)
 
     def test_a_group_of_a_kind_of_one_needs_no_number(self) -> None:
         self.assertNotIn(" of ", la.group_text(NAMES, KINDS, number=1, of=1).splitlines()[0])
@@ -98,8 +81,7 @@ class TheGroupView(unittest.TestCase):
         self.assertTrue(all(o.default for o in ticked.options))
         self.assertEqual([o.default for o in keep.options], [True, False, False])  # most heard
         self.assertEqual([o.label for o in keep.options], ["Name 000", "Name 001", "Name 002"])
-        self.assertEqual(keep.placeholder, "Name to keep")
-        self.assertEqual(ticked.placeholder, "Names that are the same")
+        self.assertEqual(keep.placeholder, "Keep which name? ▾")
 
     def test_a_menu_holds_25_so_a_big_group_shows_the_first_25(self) -> None:
         view = self.view(40)
@@ -108,7 +90,7 @@ class TheGroupView(unittest.TestCase):
 
     def test_the_rows_fit_and_the_labels_fit_a_phone(self) -> None:
         view = self.view(30, groups=3)
-        self.assertEqual(len(view.children), 7)  # two menus, five buttons
+        self.assertEqual(len(view.children), 6)  # two menus, four buttons
         rows = {c.row for c in view.children if c.row is not None}
         self.assertLessEqual(max(rows), 4)
         self.assertTrue(all(len(x) <= 25 for x in labels(view)), labels(view))
@@ -116,89 +98,6 @@ class TheGroupView(unittest.TestCase):
     def test_next_group_shows_only_when_there_is_another(self) -> None:
         self.assertNotIn("Next group ▸", labels(self.view(3, groups=1)))
         self.assertIn("Next group ▸", labels(self.view(3, groups=2)))
-
-
-class TheWhereButton(unittest.IsolatedAsyncioTestCase):
-    """📜 Where was it said? on the group screen (#3432): the names-to-check reply, per name."""
-
-    async def press(
-        self, which: str, *, dm: bool = True, fail: bool = False
-    ) -> tuple[Any, Any, Any]:
-        view = la.WhichName("c" * 32, NAMES, KINDS)
-        memory = SimpleNamespace(mentions=AsyncMock(return_value=[("s:1:2", 5)]))
-        campaign = SimpleNamespace(guild_id=1, id="c" * 32)
-        tell = AsyncMock()
-        said = AsyncMock(side_effect=RuntimeError) if fail else AsyncMock(return_value="THE PLACES")
-        consent = SimpleNamespace(consenting=AsyncMock(return_value={7}))
-        asked = interaction()
-        asked.client = SimpleNamespace(transcripts=object(), consent=consent)
-        asked.guild = None
-        with (
-            patch.object(la, "_campaign_for", AsyncMock(return_value=campaign)),
-            patch.object(la, "_memory", MagicMock(return_value=memory)),
-            patch.object(la, "sees_secrets", MagicMock(return_value=dm)),
-            patch.object(la, "_tell", tell),
-            patch.object(la, "_answer_first", AsyncMock()),
-            patch.object(name_places, "where_said", said),
-            patch.object(discord.ui.Select, "values", [which], create=True),
-        ):
-            await view._chosen(asked)
-        return asked, said, tell
-
-    def test_the_group_screen_has_the_button_and_it_fits_a_row(self) -> None:
-        view = la.LookAlikeGroup("c1", [NAMES], 0, KINDS)
-        button = next(c for c in view.children if getattr(c, "label", "") == la.WHERE_LABEL)
-        self.assertEqual(button.row, 3)
-        self.assertLessEqual(len(la.WHERE_LABEL), 25)
-
-    def test_it_lists_the_groups_names(self) -> None:
-        view = la.WhichName("c1", NAMES, KINDS)
-        self.assertEqual([o.label for o in selects(view)[0].options], [n.name for n in NAMES])
-
-    async def test_the_reply_is_the_names_to_check_reply_for_that_name(self) -> None:
-        asked, said, _ = await self.press(B)
-        args = said.await_args
-        assert args is not None
-        self.assertEqual(args.args[2:], (1, [("s:1:2", 5)], ["Beleros"], {7}))
-        sent = asked.followup.send.await_args
-        self.assertEqual(sent.args[0], "THE PLACES")
-        self.assertTrue(sent.kwargs["ephemeral"])
-
-    async def test_the_button_asks_which_name_privately_and_only_for_a_dm(self) -> None:
-        for dm in (True, False):
-            view = la.LookAlikeGroup("c" * 32, [NAMES], 0, KINDS)
-            tell = AsyncMock()
-            asked = interaction()
-            with (
-                patch.object(la, "_campaign_for", AsyncMock(return_value=object())),
-                patch.object(la, "sees_secrets", MagicMock(return_value=dm)),
-                patch.object(la, "_tell", tell),
-                patch.object(la, "_answer_first", AsyncMock()),
-            ):
-                await view._where(asked)
-            if dm:
-                sent = asked.followup.send.await_args
-                self.assertEqual(sent.args[0], "Which name?")
-                self.assertTrue(sent.kwargs["ephemeral"])
-                self.assertIsInstance(sent.kwargs["view"], la.WhichName)
-            else:
-                tell.assert_awaited_once()
-                asked.followup.send.assert_not_awaited()
-
-    async def test_a_failed_read_says_try_again_and_a_missing_name_says_nothing_kept(self) -> None:
-        asked, said, _ = await self.press(B, fail=True)
-        self.assertEqual(asked.followup.send.await_args.args[0], name_places.TRY_AGAIN)
-        asked, said, _ = await self.press("x" * 32)
-        self.assertEqual(asked.followup.send.await_args.args[0], name_places.NOTHING_KEPT)
-        said.assert_not_awaited()
-
-    async def test_a_player_is_refused_and_nothing_is_quoted(self) -> None:
-        asked, said, tell = await self.press(B, dm=False)
-        tell.assert_awaited_once()
-        assert tell.await_args is not None
-        self.assertEqual(tell.await_args.args[1], la.NOT_THE_DM)
-        said.assert_not_awaited()
-        asked.followup.send.assert_not_awaited()
 
 
 class TheCardsOtherRoute(unittest.TestCase):

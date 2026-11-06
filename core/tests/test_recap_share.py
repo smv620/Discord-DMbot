@@ -20,7 +20,7 @@ TOKEN = "T" * 43
 
 def make(user: int = DM_ID, *, recent: Any = None, link: Any = (TOKEN, "")) -> Any:
     campaign = SimpleNamespace(
-        guild_id=GUILD, id=CID, dm_user_ids=frozenset({DM_ID}), table_chat_id=CHAT
+        guild_id=GUILD, id=CID, dm_user_ids=frozenset({DM_ID}), dmbchat_channel_id=CHAT
     )
     channel = SimpleNamespace(send=AsyncMock(), guild=SimpleNamespace(id=GUILD))
     bot = SimpleNamespace(
@@ -279,10 +279,7 @@ class TheLinkChecks(unittest.IsolatedAsyncioTestCase):
             post_recaps=AsyncMock(),
             recap_secret_names=AsyncMock(return_value=kw.get("secrets", [])),
             recap_allowed_names=AsyncMock(return_value=[]),
-            consent=SimpleNamespace(
-                consenting=AsyncMock(return_value=kw.get("agreed", {1, 2})),
-                recorded_in=AsyncMock(return_value=kw.get("agreed", {1, 2})),  # (#3305)
-            ),
+            consent=SimpleNamespace(consenting=AsyncMock(return_value=kw.get("agreed", {1, 2}))),
             decision_lines=SimpleNamespace(close=AsyncMock()),
         )
         return bot, store

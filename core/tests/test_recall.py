@@ -318,27 +318,6 @@ class Recalling(MemoryTest):
                 GUILD_A, self.c, link.id, source="dm", status="rejected"
             )
 
-    async def test_a_two_way_family_role_stored_undirected_keeps_its_role(self) -> None:
-        """#3111: a sibling, cousin or spouse is true of both names, so the roster tie and the
-        recall line carry the role from either side even though the link is not directional."""
-        names = {e.name: e.id for e in await self.memory.entities(GUILD_A, self.c)}
-        for role in ("sibling", "cousin", "spouse"):
-            made = await self.memory.add_relation(
-                GUILD_A, self.c, names["Mira"], "kin_of", names["Ulfgar"], source="dm",
-                confidence=1.0, status="confirmed", detail=role, directional=False,
-            )  # fmt: skip
-            ties = await self.roster_ties()
-            self.assertIn(f"is the {role} of Ulfgar", ties["Mira"])
-            self.assertIn(f"is the {role} of Mira", ties["Ulfgar"])
-            text = self.texts(await self.recall(PLAYERS, "Mira", hops=1))
-            # (a two-way link is stored id-sorted, so either name may come first)
-            self.assertTrue(
-                f"Mira is the {role} of Ulfgar" in text or f"Ulfgar is the {role} of Mira" in text
-            )
-            await self.memory.update_relation(
-                GUILD_A, self.c, made.value[0].id, source="dm", status="rejected"
-            )
-
     async def lookup_ids(self) -> tuple[set[str], set[str]]:
         data = await self.memory.lookup_data(GUILD_A, self.c)
         return {r.id for r in data.relations}, {r.id for r in data.secret_relations}
@@ -798,9 +777,7 @@ class Speed(MemoryTest):
                 "INSERT INTO memory_relations (guild_id, campaign_id, id, subject_id, predicate,"
                 " object_id, detail, confidence, status, source, mention_ids, from_session_at,"
                 " secret, created_at)"
-                " SELECT %s, %s, md5('r' || n), md5('e' || s),"
-                " CASE WHEN n %% 5 = 0 THEN 'associated_with' ELSE 'ally_of' END, md5('e' || o),"
-                " CASE WHEN n %% 5 = 0 THEN 'swore a vow to guard' ELSE '' END, 1.0,"
+                " SELECT %s, %s, md5('r' || n), md5('e' || s), 'ally_of', md5('e' || o), '', 1.0,"
                 " 'confirmed', 'dm', ARRAY[md5('m' || n)], 1000 + n, (n %% 50 = 0), 1"
                 f" FROM (SELECT n, {subject} AS s, 1 + (n * 7) %% (%s - 1) AS o"
                 " FROM generate_series(0, %s - 1) AS n) x WHERE s <> o",
@@ -850,14 +827,6 @@ class Speed(MemoryTest):
         reports: list[str] = []
         bests: list[float] = []
         busy = speed.slowdown()  # how slow this machine is right now (#2490)
-
-        async def busy_db() -> float:
-            """How slow the database is right now: a recall is mostly queries, and other workers
-            can starve the database while this process looks idle to the CPU probe (#2694)."""
-            async with self.db.guild(GUILD_A) as conn:
-                return await speed.db_slowdown(conn)
-
-        busy = max(busy, await busy_db())
         for audience in (DM_SCREEN, PLAYERS):
             await once(audience)  # the first call warms the connection and the plans
             asked.clear()
@@ -868,7 +837,6 @@ class Speed(MemoryTest):
             tries: list[list[tuple[float, Recall]]] = []
             for _ in range(2):
                 tries.append([await once(audience) for _ in range(7)])
-                busy = max(busy, await busy_db())  # (it may have changed during the runs)
                 if min(ms for ms, _ in tries[-1]) < speed.allowed(CEILING_MS, busy):
                     break
             runs = min(tries, key=lambda t: min(ms for ms, _ in t))
@@ -905,7 +873,6 @@ class Speed(MemoryTest):
         # 50 ms goal stands, and dev1 measures it on the server itself.
         # The ceiling follows how busy the machine was (never below 100 ms, never above ten times
         # it): a loaded runner is not a slow recall, a slow query plan still is (#2490).
-        busy = max(busy, await busy_db())
         ceiling = speed.allowed(CEILING_MS, busy)
         self.assertLess(max(bests), ceiling, f"ceiling {ceiling:.0f} ms || " + " || ".join(reports))
 

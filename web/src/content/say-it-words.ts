@@ -7,9 +7,6 @@ export const CLIP_SECONDS = 10;
 export const sayIt = {
   suggest: "💡 Suggest",
   suggesting: "Thinking…",
-  // A slow wait says it is still going and how long it has been, then (as the name summary does) that it can be left (#3347).
-  slow: (n: number): string => `Still working (${n}s). This is taking longer than usual.`,
-  stalled: (n: number): string => `Nothing new yet after ${n}s. You can leave this and try again.`,
   sayIt: "🎤 Say it",
   asking: "Waiting for the microphone…",
   askingHint: "Your browser may ask to use the microphone. Choose Allow.",

@@ -18,8 +18,6 @@ from dmbot.transcript.models import (
     SIDEBAR_TABLE_QUESTION,
     Line,
 )
-from dmbot.ui import looked_at
-from dmbot.ui.rule_clash import ClashView
 from tests.test_sidebar_memo import ogg_opus
 
 GUILD, OTHER_GUILD, DM, CO_DM, PLAYER, STARTER = 1, 2, 7, 70, 8, 99
@@ -75,7 +73,7 @@ def make_table(
         recent=Recent.new(),
         sidebar_limiter=AskLimiter(),
         dmbchat_channel_id=chat,
-        chat_nudged=set(),
+        dmbchat_nudged=set(),
         person_limits={},
     )
 
@@ -148,16 +146,6 @@ class FakeHost:
 
     async def sidebar_record_win(self, campaign: Any, winner: Any, loser: Any, by: int) -> bool:
         return True
-
-    def sidebar_clash_view(self, campaign: Any, clash: Any, retry: Any) -> Any:
-        # (what the bot builds: the sidebar itself imports nothing from `ui`, #2827)
-        async def record(winner: Any, loser: Any, by: int) -> bool:
-            return await self.sidebar_record_win(campaign, winner, loser, by)
-
-        return ClashView(clash, dm_ids=campaign.dm_user_ids, record=record, retry=retry)
-
-    def sidebar_looked_view(self, key: str) -> Any:
-        return looked_at.view(key)
 
     def sidebar_house_rule(self, table: Any, user_id: int, text: str) -> str:
         self.house_rules.append((table.guild_id, user_id, text))
@@ -730,53 +718,25 @@ class SaidAtTheTable(unittest.IsolatedAsyncioTestCase):
         await self.settle()
         self.assertEqual(len(self.answerer.asked), ASK_PER_MINUTE + 1)
 
-    async def test_hey_dmbot_is_answered_in_the_table_chat(self) -> None:
+    async def test_hey_dmbot_gets_a_private_answer(self) -> None:
         self.assertTrue(
             self.sidebar.ask_at_table(self.table, DM, "Hey DMbot, what's the range of fireball?")
         )
         await self.settle()
         self.assertEqual(self.answerer.asked[0][1], "what's the range of fireball")
-        self.assertEqual(len(self.host.chat), 1)  # the table's chat (#3212), for everyone to read
-        self.assertEqual((self.host.dms, self.host.screen), ([], []))  # never the DM screen
+        self.assertEqual(self.host.dms, [(DM, FakeAnswer().text)])  # the DM's chat only
+        self.assertEqual(self.host.screen, [])  # never the screen, a channel or the voice room
         self.assertEqual(
             [x.sidebar for x in self.host.saved], [SIDEBAR_QUESTION, SIDEBAR_ANSWER]
         )  # the raw transcript keeps its lines, as for "hold on"
 
-    async def test_the_dms_question_is_answered_privately_when_the_chat_cannot_be_written_to(
-        self,
-    ) -> None:
-        async def refuse(_table: Any, _text: str) -> bool:
-            return False
-
-        self.host.sidebar_post_chat = refuse  # type: ignore[method-assign,assignment]
-        self.sidebar.ask_at_table(self.table, DM, "Hey DMbot, what's the range of fireball?")
-        await self.settle()
-        self.assertEqual(len(self.host.dms), 1)  # not dropped: the DM still gets the answer
-
-    async def test_a_players_question_is_not_answered_privately_when_the_chat_fails(self) -> None:
-        async def refuse(_table: Any, _text: str) -> bool:
-            return False
-
-        self.host.sidebar_post_chat = refuse  # type: ignore[method-assign,assignment]
-        self.sidebar.ask_at_table(self.table, PLAYER, "Hey DMbot, what's the range of fireball?")
-        await self.settle()
-        self.assertEqual(self.host.dms, [])
-
-    async def test_nothing_is_posted_in_the_chat_while_table_chat_is_off(self) -> None:
-        self.table.chat_on = False
-        self.sidebar.ask_at_table(self.table, DM, "Hey DMbot, what's the range of fireball?")
-        await self.settle()
-        self.assertEqual(self.host.chat, [])
-        self.assertEqual(len(self.host.dms), 1)  # the DM's answer is private instead
-
-    async def test_a_player_saying_hey_dmbot_asks_in_the_table_chat(self) -> None:
-        self.assertTrue(
+    async def test_a_player_saying_hey_dmbot_starts_nothing(self) -> None:
+        self.assertFalse(
             self.sidebar.ask_at_table(
                 self.table, PLAYER, "Hey DMbot, what's the range of fireball?"
             )
         )
-        await self.settle()
-        self.assertEqual((len(self.host.chat), self.host.dms), (1, []))
+        self.assertEqual((self.sidebar._tasks, self.host.dms, self.answerer.asked), (set(), [], []))
 
     async def test_the_phrase_in_the_middle_of_a_line_asks_what_follows_it(self) -> None:
         said = "so they're in the cave, hey DMbot what's the range of fireball"
@@ -798,14 +758,12 @@ class SaidAtTheTable(unittest.IsolatedAsyncioTestCase):
         await asyncio.sleep(0)
         self.assertFalse(self.sidebar.ask_at_table(self.table, DM, "DMbot, what about prone"))
         await asyncio.sleep(0)
-        self.assertTrue(any(service.NOT_SOON_AGAIN in line for line in self.host.chat))
+        self.assertIn((DM, service.NOT_SOON_AGAIN), self.host.dms)
         self.answerer.gate.set()
         await self.settle()
 
     async def test_the_session_limit_stops_a_looping_line(self) -> None:
         self.table.sidebar_limiter = AskLimiter(per_minute=1000, per_session=3)
-        # (the table's questions also have a limit for each person: out of the way here)
-        self.table.person_limits[DM] = AskLimiter(per_minute=1000, per_session=1000)
         for _ in range(3):
             self.assertTrue(
                 self.sidebar.ask_at_table(self.table, DM, "DMbot, how does grapple work")
@@ -814,7 +772,7 @@ class SaidAtTheTable(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.sidebar.ask_at_table(self.table, DM, "DMbot, how does grapple work"))
         await asyncio.gather(*self.sidebar._tasks)
         self.assertEqual(len(self.answerer.asked), 3)
-        self.assertTrue(any(service.TOO_MANY in line for line in self.host.chat))
+        self.assertEqual(self.host.dms[-1], (DM, service.TOO_MANY))
 
     async def test_a_dm_who_stopped_being_recorded_gets_nothing(self) -> None:
         self.host.agreed.discard((GUILD, DM))
@@ -1111,6 +1069,12 @@ class TableQuestions(unittest.IsolatedAsyncioTestCase):
         await self.settle()
         self.assertEqual(len(self.host.chat), 1)
 
+    async def test_without_a_chat_channel_a_players_question_has_nowhere_to_go(self) -> None:
+        self.table.dmbchat_channel_id = None
+        self.assertFalse(
+            self.sidebar.ask_at_table(self.table, PLAYER, "Hey DMbot, how does grappling work?")
+        )
+
     async def test_a_message_typed_in_the_chat_from_someone_who_agreed_is_a_question(self) -> None:
         self.assertTrue(
             self.sidebar.ask_in_chat(self.table, PLAYER, "does fireball need line of sight?")
@@ -1118,17 +1082,6 @@ class TableQuestions(unittest.IsolatedAsyncioTestCase):
         await self.settle()
         self.assertEqual(len(self.host.chat), 1)
         self.assertEqual(self.answerer.asked[0][1], "does fireball need line of sight?")
-
-    async def test_the_same_question_from_someone_not_paused_is_stored_in_the_raw_transcript(
-        self,
-    ) -> None:
-        """The pair of the test below (#2466): off the record is what makes the difference."""
-        self.assertTrue(
-            self.sidebar.ask_in_chat(self.table, PLAYER, "does fireball need line of sight?")
-        )
-        await self.settle()
-        self.assertEqual(len(self.host.chat), 1)
-        self.assertEqual(len(self.host.saved), 2)  # their question and DMbot's answer
 
     async def test_a_paused_players_typed_question_is_answered_but_nothing_is_stored(self) -> None:
         """Off the record (#2466): they agreed, so the question gets its answer in the chat; no
@@ -1568,6 +1521,12 @@ class GuideMe(unittest.IsolatedAsyncioTestCase):
         self.sidebar.ask_at_table(self.table, DM, self.SAID)
         await self.settle()
         self.assertEqual((self.host.dms, self.host.saved), ([], []))
+
+    async def test_the_private_path_without_a_table_chat_also_gets_it(self) -> None:
+        self.table.dmbchat_channel_id = None
+        self.sidebar.ask_at_table(self.table, DM, self.SAID)
+        await self.settle()
+        self.assertEqual(self.host.dms, [(DM, self.GUIDE)])
 
     async def test_typed_in_the_tables_text_chat_goes_the_usual_way(self) -> None:
         self.sidebar.ask_at_table(self.table, DM, self.SAID, typed=True)

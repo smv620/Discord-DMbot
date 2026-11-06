@@ -19,10 +19,10 @@ import discord
 from dmbot import bot as bot_module
 from dmbot import table_chat
 from dmbot.audio.segmenter import Segmenter
+from dmbot.bot import Table
 from dmbot.consent import TERMS_VERSION
 from dmbot.dm_screen import table_chat_panel as panel
 from dmbot.sidebar.service import Recent
-from dmbot.table import Table
 from dmbot.transcript import export
 from dmbot.transcript.models import Line, TranscriptSession
 from tests.test_timebot import (
@@ -589,7 +589,7 @@ class Panel(unittest.IsolatedAsyncioTestCase):
         )
         it = self.interaction(store)
         await panel.TableChatPanel(campaign).save(it, channel_id=EXTRA)
-        self.assertIn("can't be table chat", it.response.send_message.await_args.args[0])
+        self.assertIn("won't read the DM screen", it.response.send_message.await_args.args[0])
         store.set_table_chat.assert_not_awaited()
 
     async def test_a_store_that_fails_is_told_not_crashed(self) -> None:

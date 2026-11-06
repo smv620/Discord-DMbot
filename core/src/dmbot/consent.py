@@ -143,11 +143,6 @@ class ConsentStore:
                     " outside_to = EXCLUDED.outside_to",
                     (guild_id, user_id, int(time.time()), TERMS_VERSION, method, outside_to),
                 )
-                # They said yes now, so an earlier "no" no longer stands (#3305).
-                await conn.execute(
-                    "DELETE FROM consent_refusals WHERE guild_id = %s AND user_id = %s",
-                    (guild_id, user_id),
-                )
                 users = await _select(conn, guild_id, self._outside)
             if self._stops.get((guild_id, user_id), 0) == stops_before:
                 self._held_back.get(guild_id, set()).discard(user_id)
@@ -185,15 +180,6 @@ class ConsentStore:
                     (guild_id, user_id),
                 )
                 removed = await cur.fetchone() is not None
-                # Every "no" is remembered (#3305), so an import cannot tick in someone who
-                # refused: `stopped` had agreed, `declined` never did. Written with the delete, in
-                # the same transaction. (Nothing earlier than this was recorded.)
-                await conn.execute(
-                    "INSERT INTO consent_refusals (guild_id, user_id, kind, refused_at)"
-                    " VALUES (%s, %s, %s, %s) ON CONFLICT (guild_id, user_id)"
-                    " DO UPDATE SET kind = EXCLUDED.kind, refused_at = EXCLUDED.refused_at",
-                    (guild_id, user_id, "stopped" if removed else "declined", int(self._wall())),
-                )
                 if removed and in_transaction is not None:
                     await in_transaction(conn)
                 users = await _select(conn, guild_id, self._outside)
@@ -219,26 +205,6 @@ class ConsentStore:
     async def consenting(self, guild_id: int) -> frozenset[int]:
         """Who may be recorded now: those who agreed, minus anyone off the record."""
         return self._recordable(guild_id, await self._agreed(guild_id))
-
-    async def recorded_in(self, guild_id: int, campaign_id: str) -> frozenset[int]:
-        """Who counts as recorded in ONE campaign's imported sessions (#3305): everyone
-        `consenting` returns, plus the people the uploader confirmed for an import into this
-        campaign (a member who had not agreed, or a speaker without Discord, whose number is
-        negative), except anyone who has a "no" on record. (A "no" is removed when the person says
-        yes again, so any one on record is a current one; and a confirmation restored from a
-        backup made in another server never outweighs it.) It is for readers of a campaign's
-        stored sessions only. The live allowlist and `consenting` are unchanged: a confirmation
-        never lets a voice be recorded, and never counts in another campaign or server."""
-        async with self._db.guild(guild_id) as conn:
-            cur = await conn.execute(
-                "SELECT DISTINCT c.user_id FROM import_consents c WHERE c.guild_id = %s"
-                " AND c.campaign_id = %s AND c.removed_at IS NULL"
-                " AND NOT EXISTS (SELECT 1 FROM consent_refusals r"
-                " WHERE r.guild_id = c.guild_id AND r.user_id = c.user_id)",
-                (guild_id, campaign_id),
-            )
-            confirmed = frozenset(int(r["user_id"]) for r in await cur.fetchall())
-        return await self.consenting(guild_id) | confirmed
 
     async def _agreed(self, guild_id: int) -> frozenset[int]:
         if guild_id not in self._cache:
@@ -418,21 +384,6 @@ class ConsentStore:
     async def granted_at(self, guild_id: int, user_id: int) -> int | None:
         """When this player consented here (Unix seconds), or None if they haven't."""
         return (await self.granted_times(guild_id, [user_id])).get(user_id)
-
-    async def agreed_under(self, guild_id: int, user_id: int) -> tuple[int, int] | None:
-        """When this player said yes here and under which wording (granted_at, terms_version),
-        from the stored record; None when there is none. A kept picture records the poster's own
-        yes (#3274), not whatever the current wording is."""
-        if user_id in self._held_back.get(guild_id, set()):
-            return None
-        async with self._db.guild(guild_id) as conn:
-            cur = await conn.execute(
-                "SELECT granted_at, terms_version FROM consent"
-                " WHERE guild_id = %s AND user_id = %s",
-                (guild_id, user_id),
-            )
-            row = await cur.fetchone()
-        return None if row is None else (int(row["granted_at"]), int(row["terms_version"]))
 
     def has_consent(self, guild_id: int, user_id: int) -> bool:
         """Fast, synchronous check for the audio path. Unknown servers deny, and so does anyone

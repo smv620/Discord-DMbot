@@ -10,9 +10,7 @@ import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import {
   IMPORT_MAX_FILES,
   IMPORT_MAX_MB,
-  IMPORT_CONFIRM_LIVE,
   IMPORT_LIVE,
-  confirmWords,
   importPage as words,
 } from "../content/import-words";
 import { RECAPS_LIVE } from "../content/recap-words";
@@ -20,7 +18,6 @@ import {
   ApiError,
   type AccountApi,
   type ImportCheck,
-  type ImportConsent,
   type ImportFileIn,
   type ImportMember,
   type ImportPreview,
@@ -28,8 +25,7 @@ import {
   type JobProgress,
 } from "./api";
 import CampaignNav from "./CampaignNav";
-import WorkProgress, { RunningCounts } from "./WorkProgress";
-import ClockOffer from "./ClockOffer";
+import WorkProgress from "./WorkProgress";
 import { stageWords } from "../content/work-progress";
 
 /** The campaign's address, read from `/account/import/<server>.<campaign>`. */
@@ -39,8 +35,6 @@ export function campaignFromPath(path: string): string | null {
 }
 
 const DROP = "drop";
-/** A speaker without Discord, kept by name (#3306). */
-const NEW_SPEAKER = "new";
 const POLL_MS = 3000;
 /** While every unfinished session is only waiting for the DM's answers about names, nothing on the
  * page changes until they answer, so ask once a minute instead (#2230). */
@@ -68,28 +62,11 @@ function isFinal(s: Session): boolean {
   );
 }
 
-/** The connections read of a session that is still going or waiting for the daily limit (#3307). */
-function storyOpen(s: Session): boolean {
-  // (a read that has failed or finished is not open whatever its stage says, so the page never polls for it)
-  const st = s.story;
-  return st != null && (st.state === "running" || st.state === "stalled") && (st.stage === "reading_connections" || st.stage === "waiting_for_limit");
-}
-/** A known stage of the read that is still going, waiting or has failed (its failure stays on the page). */
-function storyShown(s: Session): boolean {
-  const st = s.story;
-  if (!st || !Object.hasOwn(words.story, st.stage) || st.stage === "connections_read") return false;
-  return storyOpen(s) || st.state === "failed";
-}
-function storyWaiting(s: Session): boolean {
-  return s.story?.stage === "waiting_for_limit";
-}
-
 /** The whole import's progress as the shared wait shows it. The server says `failed` as soon as one session
  * has, but the others go on: while any can still move it is shown as running (or stalled, when the server
  * says so); once none can, as failed only if every session failed, else done. */
 function shownState(imp: JobProgress, sessions: Session[]): "running" | "stalled" | "failed" | "done" {
-  // (the connections read goes on after a session is imported, and the whole import is still working until it stops)
-  if (sessions.some((s) => !isFinal(s) || storyOpen(s))) return imp.state === "stalled" ? "stalled" : "running";
+  if (sessions.some((s) => !isFinal(s))) return imp.state === "stalled" ? "stalled" : "running";
   return sessions.length > 0 && sessions.every(isFailed) ? "failed" : "done";
 }
 
@@ -131,14 +108,6 @@ const isDate = (s: string): boolean =>
   /^\d{4}-\d{2}-\d{2}$/.test(s) &&
   new Date(`${s}T00:00:00Z`).toISOString().slice(0, 10) === s;
 
-/** Today as the reader's own calendar says it (not UTC, which can already be tomorrow): the latest day a session can
- * have been played. A date is never in the future. */
-const todayLocal = (): string => {
-  const d = new Date();
-  const two = (n: number): string => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())}`;
-};
-
 interface Folded {
   label: string;
   lines: number;
@@ -165,11 +134,6 @@ function lineCount(s: Session): string {
 function reasonLine(state: string, reason: string | null): string {
   const known = reason ? words.failedReason[reason] : undefined;
   return known ?? (state === "failed" ? words.failedFallback : "");
-}
-
-/** The words beside a tick: the server's own once it sends them (`{name}` filled in here), else the page's. */
-function tickWords(fromServer: string | undefined, name: string): string {
-  return fromServer ? fromServer.split("{name}").join(name) : confirmWords.tick(name);
 }
 
 export default function Import({
@@ -199,12 +163,6 @@ export default function Import({
   const [known, setKnown] = useState<Record<string, ImportMember>>({});
   const [query, setQuery] = useState("");
   const [mapping, setMapping] = useState<Record<string, string>>({});
-  // Consent confirmed per speaker (#3306): the words people agree to, as the API gives them, and the labels ticked.
-  const [consent, setConsent] = useState<ImportConsent | null>(null);
-  const [consentFailed, setConsentFailed] = useState(false);
-  const [ticks, setTicks] = useState<Record<string, boolean>>({});
-  const confirmOn = IMPORT_CONFIRM_LIVE && !!api.importConsent;
-  const consentSeq = useRef(0);
   const [check, setCheck] = useState<ImportCheck | null>(null);
   const [dates, setDates] = useState<Record<string, string>>({});
   const [guessed, setGuessed] = useState<Record<string, boolean>>({});
@@ -229,14 +187,12 @@ export default function Import({
   const [pollTries, setPollTries] = useState(0);
   // The newest `updatedAt` shown: a late reply that is older never moves the page backwards (#2564).
   const lastUpdated = useRef(0);
-  const lastStory = useRef(0); // the latest move of any session's connections read, so a read that moves keeps the page looking quickly
   const idleLooks = useRef(0); // looks in a row where nothing moved forward
   const watchStart = useRef(0);
 
   const fail = (error: unknown): void => {
     const kind = error instanceof ApiError ? error.kind : "server";
     if (kind === "signed-out") setSignedOut(true);
-    void wordingChanged(error); // (the consent words changed since they were read: read them again and ask for the ticks again)
     // The message is announced by its role="alert"; moving focus too would read it twice.
     // A doc can stop opening after Preview (sharing turned off), so "the files" is the wrong advice.
     const key = kind === "bad-files" && sentLinks.length > 0 ? "bad-files-docs" : kind;
@@ -322,23 +278,17 @@ export default function Import({
         if (!live) return;
         const stamp = next.import?.updatedAt;
         const older = typeof stamp === "number" && stamp < lastUpdated.current;
-        const storyStamp = Math.max(0, ...next.sessions.map((x) => x.story?.updatedAt ?? 0));
-        const storyMoved = storyStamp > lastStory.current;
-        if (storyStamp > lastStory.current) lastStory.current = storyStamp;
-        const moved = (typeof stamp === "number" ? stamp > lastUpdated.current : true) || storyMoved;
+        const moved = typeof stamp === "number" ? stamp > lastUpdated.current : true;
         if (typeof stamp === "number" && !older) lastUpdated.current = stamp;
         if (!older) setProgress(next); // (an older answer: keep what is shown, ask again)
         idleLooks.current = moved && !older ? 0 : idleLooks.current + 1;
-        // A session's connections are read after it is imported, so the page keeps looking until that is done or waiting.
-        const open = next.sessions.filter((s) => !isFinal(s) || storyOpen(s));
+        const open = next.sessions.filter((s) => !isFinal(s));
         if (open.length > 0) {
-          // Waiting for the daily limit can take hours and carries on by itself, so it never trips the limit; the page just looks slowly.
-          const onlyLimit = open.every((x) => storyWaiting(x) && isFinal(x));
-          if (!onlyLimit && Date.now() - watchStart.current > WATCH_LIMIT_MS) {
+          if (Date.now() - watchStart.current > WATCH_LIMIT_MS) {
             setProblem(words.stoppedWatching); // the page stops here; "Check again" starts it afresh
             return;
           }
-          const onlyNames = open.every((s) => s.stage === "waiting_for_names" || storyWaiting(s));
+          const onlyNames = open.every((s) => s.stage === "waiting_for_names");
           const wait = onlyNames ? SLOW_POLL_MS : Math.min(POLL_MS * 2 ** idleLooks.current, IDLE_POLL_MAX_MS);
           timer = setTimeout(() => void tick(), wait);
         }
@@ -391,10 +341,6 @@ export default function Import({
     setCheck(null);
     setOrder([]);
     setMapping({});
-    consentSeq.current++;
-    setConsent(null);
-    setConsentFailed(false);
-    setTicks({});
     setDates({});
     setGuessed({});
     setKnown({});
@@ -553,10 +499,8 @@ export default function Import({
       const start: Record<string, string> = {};
       for (const f of good)
         for (const s of f.speakers)
-          // With confirming on, a name nobody suggested waits for a choice (the uploader must decide for every speaker).
-          start[s.label] ??= s.suggested?.userId ?? (confirmOn ? "" : DROP);
+          start[s.label] ??= s.suggested?.userId ?? DROP;
       setMapping(start);
-      if (confirmOn && api.importConsent) await loadConsent();
       setDates(
         Object.fromEntries(good.map((f) => [f.name, f.suggestedDate ?? ""])),
       );
@@ -573,8 +517,6 @@ export default function Import({
                 {
                   userId: s.suggested.userId,
                   name: s.suggested.name.trim() || s.label,
-                  // The API says when the suggested member said no (#3305 PR 1).
-                  ...(s.blocked ? { blocked: s.blocked } : {}),
                 },
               ]
             : [],
@@ -603,58 +545,10 @@ export default function Import({
   const sentFiles = (): ImportFileIn[] =>
     texts.filter((t) => order.includes(t.name));
 
-  // The words people agree to are read fresh each time: a stale answer from the API means they changed (#3306).
-  const loadConsent = async (): Promise<void> => {
-    const mine = ++consentSeq.current; // a late answer after the files changed is ignored
-    try {
-      const got = await api.importConsent!(ref);
-      if (mine !== consentSeq.current) return;
-      setConsent(got);
-      setConsentFailed(false);
-    } catch {
-      if (mine !== consentSeq.current) return;
-      setConsent(null);
-      setConsentFailed(true);
-    }
-  };
-  /** The wording changed since it was read (`stale`): show the new words, ask for the ticks again, and make Check run again. */
-  const wordingChanged = async (error: unknown): Promise<void> => {
-    if (confirmOn && error instanceof ApiError && error.kind === "stale") {
-      setTicks({});
-      setCheck(null);
-      await loadConsent();
-    }
-  };
-
-  /** Does this choice need the uploader's tick? A speaker without Discord, or a member who hasn't agreed. */
-  const needsTick = (to: string): boolean => {
-    if (!confirmOn) return false;
-    if (to === NEW_SPEAKER) return true;
-    if (to === "" || to === DROP) return false;
-    // A member whose state isn't known yet needs the tick too (it goes away if they turn out to have agreed).
-    const m = known[to];
-    return m?.agreed !== true && !m?.blocked;
-  };
-  const blockedChoice = (to: string): boolean => confirmOn && !!known[to]?.blocked;
-  /** Everything the plan sends about confirming: the ticked labels that need one, with the wording's version. */
-  const confirmation = (): { confirmed: string[]; consentVersion: number } | undefined => {
-    if (!confirmOn || !consent) return undefined;
-    const confirmed = folded.filter((s) => needsTick(mapping[s.label] ?? "") && ticks[s.label]).map((s) => s.label);
-    return confirmed.length > 0 ? { confirmed, consentVersion: consent.version } : undefined;
-  };
-  /** Every speaker has a choice, nobody who said no is chosen, and every choice that needs a tick has one. */
-  const ready =
-    !confirmOn ||
-    (consent !== null &&
-      folded.every((s) => {
-        const to = mapping[s.label] ?? "";
-        return to !== "" && !blockedChoice(to) && (!needsTick(to) || ticks[s.label] === true);
-      }));
-
   const doCheck = (): Promise<void> =>
     run(async () => {
       if (!api.importCheck) return;
-      setCheck(await api.importCheck(ref, sentFiles(), mapping, sentLinks, confirmation()));
+      setCheck(await api.importCheck(ref, sentFiles(), mapping, sentLinks));
     });
 
   const move = (name: string, by: -1 | 1): void =>
@@ -668,10 +562,7 @@ export default function Import({
       return next;
     });
 
-  const today = todayLocal();
-  // A typed date can still be in the future (the picker's `max` only stops the clicks), so it is refused here too.
-  const futureDates = order.some((n) => isDate(dates[n] ?? "") && (dates[n] ?? "") > today);
-  const allDates = order.every((n) => isDate(dates[n] ?? "") && (dates[n] ?? "") <= today);
+  const allDates = order.every((n) => isDate(dates[n] ?? ""));
   // The choice is offered while recaps are on for the site and only where the API says the bot
   // would write them (#2229, from the preview): never a tick it would refuse.
   const offerRecaps = RECAPS_LIVE && preview?.recapsPossible === true;
@@ -692,7 +583,6 @@ export default function Import({
         sentFiles(),
         {
           mapping,
-          ...(confirmation() ?? {}),
           sessions: order.map((file, i) => ({
             file: sentName(file),
             date: dates[file] ?? "",
@@ -770,7 +660,6 @@ export default function Import({
             done={progress.import.done}
             total={progress.import.total}
             unit={progress.import.unit ? words.unit[progress.import.unit] : undefined}
-            counts={progress.import.counts}
             startedAt={progress.import.startedAt}
             updatedAt={progress.import.updatedAt}
             serverNow={progress.import.serverNow}
@@ -802,7 +691,6 @@ export default function Import({
                 {lineCount(s) ? ` · ${lineCount(s)}` : ""}
                 {s.progress?.state === "stalled" ? ` · ${words.sessionStalled}` : ""}
               </span>
-              <RunningCounts counts={s.progress?.counts} running={s.progress?.state === "running"} reading={s.progress?.serverNow} />
               {s.stage === "waiting_for_names" && (
                 <a
                   class="small"
@@ -811,26 +699,6 @@ export default function Import({
                 >
                   {words.namesLink}
                 </a>
-              )}
-              {storyShown(s) && s.story && (
-                <WorkProgress
-                  stage={stageWords(words.story, s.story.stage)}
-                  done={s.story.done}
-                  total={s.story.total}
-                  unit={s.story.unit ? words.unit[s.story.unit] : undefined}
-                  startedAt={s.story.startedAt}
-                  updatedAt={s.story.updatedAt}
-                  serverNow={s.story.serverNow}
-                  state={s.story.state}
-                  waiting={storyWaiting(s)}
-                  frozen={problem !== null}
-                  reason={s.story.state === "failed" ? words.storyFailed : undefined}
-                  whatToDo={s.story.state === "failed" ? words.storyFailedDo : words.stalledDo}
-                />
-              )}
-              {s.story?.stage === "connections_read" && s.story.state !== "failed" && <p class="small">{words.story.connections_read}</p>}
-              {importId && isFinal(s) && s.clock && (
-                <ClockOffer api={api} campaignRef={ref} importId={importId} file={s.file} clock={s.clock} />
               )}
               {(s.stage === "recap_ready" || s.stage === "recap_failed") && (
                 <a
@@ -1037,40 +905,10 @@ export default function Import({
                 <p class="muted small" id="import-find-hint">
                   {words.findHint}
                 </p>
-                {confirmOn && (
-                  <div class="note" role="group" aria-labelledby="import-consent">
-                    <h3 id="import-consent">{confirmWords.heading}</h3>
-                    <p class="small">{confirmWords.lead}</p>
-                    {consent ? (
-                      <ul class="small">
-                        {consent.text
-                          .split("\n")
-                          .map((line) => line.trim())
-                          .filter((line) => line !== "")
-                          // The position is part of the key, so two identical lines both show (#3323).
-                          .map((line, i) => (
-                            <li key={`${i}-${line}`}>{line}</li>
-                          ))}
-                      </ul>
-                    ) : (
-                      consentFailed && (
-                        <>
-                          <p class="note bad" role="alert">
-                            {confirmWords.loadFailed}
-                          </p>
-                          <button type="button" class="button secondary" onClick={() => void loadConsent()}>
-                            {confirmWords.retry}
-                          </button>
-                        </>
-                      )
-                    )}
-                  </div>
-                )}
                 <ul class="campaigns">
                   {folded.map((s) => {
-                    const chosen = mapping[s.label] ?? (confirmOn ? "" : DROP);
+                    const chosen = mapping[s.label] ?? DROP;
                     const who = known[chosen];
-                    const existing = preview?.files.flatMap((f) => f.speakers).find((x) => x.label === s.label)?.speaker;
                     return (
                       <li key={s.label}>
                         <span class="campaign-name">{s.label}</span>
@@ -1082,56 +920,21 @@ export default function Import({
                         </span>
                         <select
                           aria-label={`${s.label}: ${words.matchHeading}`}
-                          aria-invalid={confirmOn && blockedChoice(chosen) ? true : undefined}
                           value={chosen}
                           onChange={(e) => {
                             const value = (e.target as HTMLSelectElement).value;
                             setCheck(null);
-                            // A tick belongs to the choice it was made for.
-                            setTicks((now) => ({ ...now, [s.label]: false }));
                             setMapping((now) => ({ ...now, [s.label]: value }));
                           }}
                         >
-                          {confirmOn && chosen === "" && (
-                            <option value="" disabled>
-                              {confirmWords.choose}
-                            </option>
-                          )}
                           <option value={DROP}>{words.leaveOut}</option>
-                          {confirmOn && <option value={NEW_SPEAKER}>{confirmWords.notInDiscord}</option>}
                           {memberOptions.map((m) => (
-                            <option key={m.userId} value={m.userId} disabled={confirmOn && !!m.blocked}>
-                              {confirmOn && m.blocked ? confirmWords.blockedOption(m.name) : label(m)}
+                            <option key={m.userId} value={m.userId}>
+                              {label(m)}
                             </option>
                           ))}
                         </select>
-                        {existing && (
-                          <span class="small" role="note">
-                            {confirmWords.sameAs(existing.name)}
-                          </span>
-                        )}
-                        {confirmOn && who?.blocked && (
-                          <span class="small" role="note">
-                            {confirmWords.saidNo(who.name)}
-                          </span>
-                        )}
-                        {needsTick(chosen) && (
-                          <fieldset class="small">
-                            <legend class="visually-hidden">{confirmWords.tickLegend(s.label)}</legend>
-                            <label class="choice">
-                              <input
-                                type="checkbox"
-                                checked={ticks[s.label] === true}
-                                onChange={(e) => {
-                                  setCheck(null);
-                                  setTicks((now) => ({ ...now, [s.label]: (e.target as HTMLInputElement).checked }));
-                                }}
-                              />
-                              <span>{tickWords(consent?.tick, chosen === NEW_SPEAKER ? s.label : (who?.name ?? s.label))}</span>
-                            </label>
-                          </fieldset>
-                        )}
-                        {who && who.agreed === false && !confirmOn && (
+                        {who && who.agreed === false && (
                           <span class="small" role="note">
                             {words.droppedReason.not_agreed}
                           </span>
@@ -1143,17 +946,11 @@ export default function Import({
                 <button
                   type="button"
                   class="button secondary"
-                  disabled={busy || !ready}
-                  aria-describedby={!ready ? "import-choose-all" : undefined}
+                  disabled={busy}
                   onClick={() => void doCheck()}
                 >
                   {words.checkButton}
                 </button>
-                {!ready && (
-                  <p class="small" id="import-choose-all">
-                    {confirmWords.chooseAll}
-                  </p>
-                )}
                 {/* A live region that is always there, so the result is announced when it fills in. */}
                 <div role="status" aria-live="polite">
                   {check && (
@@ -1200,7 +997,6 @@ export default function Import({
                               {f.speakers.map((x) => (
                                 <li class="small" key={x.label}>
                                   {x.label}: {words.kept(x.kept)}
-                                  {x.confirmed && x.kept > 0 ? ` (${confirmWords.keptConfirmed})` : ""}
                                   {Object.entries(x.dropped)
                                     .filter(([, n]) => n > 0)
                                     .map(
@@ -1233,11 +1029,6 @@ export default function Import({
                       {words.datesOutOfOrder}
                     </p>
                   )}
-                {futureDates && (
-                  <p class="warn" role="alert">
-                    {words.datesInFuture}
-                  </p>
-                )}
                 <p class="sr-only" role="status" aria-live="polite">
                   {moved}
                 </p>
@@ -1252,7 +1043,6 @@ export default function Import({
                         {words.dateLabel(words.shownName(name))}
                         <input
                           type="date"
-                          max={today}
                           value={dates[name] ?? ""}
                           onInput={(e) => {
                             const value = (e.target as HTMLInputElement).value;

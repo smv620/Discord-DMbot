@@ -8,9 +8,8 @@ from unittest.mock import AsyncMock, MagicMock
 import discord
 
 from dmbot.audio.segmenter import Segmenter
-from dmbot.bot import DMBot
+from dmbot.bot import DMBot, Table
 from dmbot.config import Settings
-from dmbot.table import Table
 from dmbot.transcript.models import SIDEBAR_QUESTION, Line
 
 GUILD, DM, PLAYER = 1, 7, 8

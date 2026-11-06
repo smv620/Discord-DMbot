@@ -75,9 +75,7 @@ PICK_DM = (
     "The player is not told."
 )
 
-# The server is in the id only on a copy in a DM's private chat (#3210), which has no server of its
-# own; the older form without it (on the DM screen, and every message already posted) still works.
-_TEMPLATE = r"dmbot:linefix:(?P<act>yes|no):(?:(?P<guild>[0-9]{1,20}):)?(?P<id>[0-9]{1,18})"
+_TEMPLATE = r"dmbot:linefix:(?P<act>yes|no):(?P<id>[0-9]{1,18})"
 _FIX_BUTTON = r"dmbot:fixline:(?P<guild>[0-9]{1,20}):(?P<session>[0-9a-f]{32})"
 
 
@@ -108,46 +106,36 @@ class LineFixButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], 
     """Accept / No on the DM screen. The suggestion is in the button's ID, so it works after a
     restart; the server comes from where it is pressed, so a made-up ID finds nothing."""
 
-    def __init__(self, act: str, suggestion_id: int, guild_id: int | None = None) -> None:
+    def __init__(self, act: str, suggestion_id: int) -> None:
         yes = act == "yes"
-        where = f"{guild_id}:" if guild_id is not None else ""
         super().__init__(
             discord.ui.Button(
                 label="Accept" if yes else "Keep as is",
                 style=discord.ButtonStyle.success if yes else discord.ButtonStyle.secondary,
-                custom_id=f"dmbot:linefix:{act}:{where}{suggestion_id}",
+                custom_id=f"dmbot:linefix:{act}:{suggestion_id}",
             )
         )
-        self.act, self.suggestion_id, self.guild_id = act, suggestion_id, guild_id
+        self.act, self.suggestion_id = act, suggestion_id
 
     @classmethod
     async def from_custom_id(
         cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
     ) -> LineFixButton:
-        guild = match["guild"]
-        return cls(match["act"], int(match["id"]), int(guild) if guild is not None else None)
+        return cls(match["act"], int(match["id"]))
 
     async def callback(self, interaction: discord.Interaction) -> Any:
-        bot = _bot(interaction)
+        bot, guild = _bot(interaction), interaction.guild
         store = bot.suggestions
-        # On the DM screen the server is where it is pressed. In a DM's private chat there is
-        # none, so it comes from the button's id (#3210); a press in a server with another server
-        # in its id is closed, and a made-up id still finds nothing in that server's own rows.
-        in_server = interaction.guild.id if interaction.guild is not None else None
-        if in_server is not None and self.guild_id not in (None, in_server):
-            await _tell(interaction, GONE)
-            return
-        guild_id = in_server if in_server is not None else self.guild_id
-        if guild_id is None or store is None:
+        if guild is None or store is None:
             await _tell(interaction, GONE)
             return
         # Answer Discord first (#1798): the checks below are several database trips, and a DM at a
         # live table must not see "interaction failed". Every reply after this is a follow-up
         # (a button's defer is a quiet update; each follow-up sets ephemeral itself).
         await interaction.response.defer(ephemeral=True, thinking=False)
-        found = await store.get(guild_id, self.suggestion_id)
+        found = await store.get(guild.id, self.suggestion_id)
         campaign = (
-            await bot.campaigns.get(guild_id, found.campaign_id) if found is not None else None
+            await bot.campaigns.get(guild.id, found.campaign_id) if found is not None else None
         )
         if found is None or campaign is None:
             await _tell(interaction, GONE)
@@ -160,12 +148,12 @@ class LineFixButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], 
             return
         bot.decision_lines.remember_pressed(("fix", found.id), interaction)
         if self.act == "no":
-            if await store.decide(guild_id, found.id, suggestions.DECLINED, interaction.user.id):
+            if await store.decide(guild.id, found.id, suggestions.DECLINED, interaction.user.id):
                 await _finish(interaction, bot, found, LEFT, ANSWER_NO, KEPT)
             else:
                 await _tell(interaction, DECIDED)
             return
-        await self._accept(interaction, bot, guild_id, found)
+        await self._accept(interaction, bot, guild.id, found)
 
     async def _accept(
         self, interaction: discord.Interaction, bot: DMBot, guild_id: int, found: Any
@@ -463,11 +451,10 @@ async def submit_dm(
     )
 
 
-def suggestion_view(suggestion_id: int, guild_id: int | None = None) -> discord.ui.View:
-    """The two buttons. `guild_id` goes in their ids for a copy in a DM's private chat (#3210)."""
+def suggestion_view(suggestion_id: int) -> discord.ui.View:
     view = discord.ui.View(timeout=None)
     for act in ("yes", "no"):
-        view.add_item(LineFixButton(act, suggestion_id, guild_id))
+        view.add_item(LineFixButton(act, suggestion_id))
     return view
 
 

@@ -22,7 +22,7 @@ describe("importing older sessions", () => {
       "agreed to be recorded in Discord",
       "For each name in a file",
       "Craig is a Discord recording bot",
-      "you can tick that they agreed",
+      "Your word that everyone agreed is not enough",
       "never stored",
       "can be read by everyone in your server",
       "Nothing becomes a fact without your say",

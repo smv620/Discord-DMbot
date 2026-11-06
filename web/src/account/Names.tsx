@@ -9,10 +9,7 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import PageBar from "../admin/PageBar";
-import { NAME_LIMIT, NAMES_PAGE_SIZE, NAMES_PAGE_SIZES, NAMES_SMART_LIVE, namesPage as words } from "../content/names-words";
-import { NOT_NAMED_LIVE } from "../content/not-named-switch";
-import { PLAYERS_LINE_LIVE } from "../content/players-line-switch";
-import { notNamedWords as notNamed } from "../content/not-named-words";
+import { NAME_LIMIT, namesPage as words } from "../content/names-words";
 import {
   type AccountApi,
   ApiError,
@@ -23,12 +20,7 @@ import {
   type NameSort,
 } from "./api";
 import CampaignNav from "./CampaignNav";
-import { InfoButton, InfoText } from "./InfoTip";
-import NameThem, { type NamedInfo } from "./NameThem";
-import { useObservedWait } from "./useObservedWait";
-import WorkProgress from "./WorkProgress";
 import SayIt from "./SayIt";
-import LazyPanel from "./LazyPanel";
 
 /** The campaign's address, read from `/account/names/<server>.<campaign>`. */
 export function namesRefFromPath(path: string): string | null {
@@ -44,14 +36,6 @@ export function namesRefFromPath(path: string): string | null {
 type View = "loading" | "ok" | "none" | "down" | "signed-out";
 
 const SEARCH_MS = 250;
-/** The kind key of a player character, the one that can say who plays it (#2985). */
-const PLAYER = "player_character";
-/** Kinds a DM can always choose, even when the campaign has no name of that kind yet: the list the API
- * sends holds only kinds that have names, so a campaign with no player character could never make one. */
-const ALWAYS_OFFERED: NameKind[] = [
-  { key: "npc", label: "NPCs", count: 0 },
-  { key: PLAYER, label: "PCs", count: 0 },
-];
 
 /** The words for a refusal, or null when it means the page should react instead (signed out). */
 function refusal(error: unknown): string | null {
@@ -85,35 +69,17 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  // The types ticked (none ticked is every type), and how many names a page holds (#2295, owner
-  // request 2026-10-27: compact rows, so a page can be long).
-  const [kinds, setKinds] = useState<string[]>([]);
-  const kind = kinds.join(",");
-  const [size, setSize] = useState<number>(NAMES_PAGE_SIZE);
+  const [kind, setKind] = useState("");
   const [sort, setSort] = useState<NameSort>("name");
-  // "Search by meaning" (#2733) is a separate file (NamesSmart, fetched only when it is on and for a DM). Here is
-  // only what the list needs of it: the names it found (replacing the list until "Back to all names"), and two
-  // counters that tell it a name changed (read the search again) or the list's own controls were used (it is over).
-  const [smart, setSmart] = useState<NameRow[] | null>(null);
-  const [smartRefresh, setSmartRefresh] = useState(0);
-  const [smartLeave, setSmartLeave] = useState(0);
-  const smartNow = useRef<NameRow[] | null>(null);
-  smartNow.current = smart;
   const [busy, setBusy] = useState(false);
   const [pageNotice, setPageNotice] = useState<string | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
   const [news, setNews] = useState<{ ok: boolean; text: string; n: number } | null>(null);
-  // A name just given (#2803) can be taken back until the next change; `undoing` is the wait for the bot.
-  const [undo, setUndo] = useState<{ answer: string; rowId: string; join: boolean } | null>(null);
-  const [undoing, setUndoing] = useState(false);
-  const [undoLooks, setUndoLooks] = useState(0);
-  const undoFlight = useRef(false);
-  const undoSeen = useObservedWait(undoing, String(undoLooks));
   // Only the newest read may set what is shown, so a slow old answer never overwrites a new one.
   const latest = useRef(0);
   const pageNow = useRef(1);
-  const queryNow = useRef({ q, kind, sort, size });
-  queryNow.current = { q, kind, sort, size };
+  const queryNow = useRef({ q, kind, sort });
+  queryNow.current = { q, kind, sort };
   // Names ticked for "Merge selected" (#2427): kept across searches and pages, so look-alikes found
   // by different searches can be merged together.
   const [picked, setPicked] = useState<NameRow[]>([]);
@@ -135,7 +101,7 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
     setBusy(true);
     const asked = queryNow.current;
     try {
-      const read = await api.allNames(ref, { ...asked, page, unnamed: NOT_NAMED_LIVE && api.nameThem !== undefined });
+      const read = await api.allNames(ref, { ...asked, page });
       if (mine !== latest.current) return pageNow.current;
       setData(read);
       setView("ok");
@@ -185,16 +151,11 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
     const wait = first.current ? 0 : SEARCH_MS;
     first.current = false;
     setNews(null);
-    if (smartNow.current !== null) {
-      // (typing in Find a name, or a type, sort or size, is back to the list)
-      setSmart(null);
-      setSmartLeave((n) => n + 1);
-    }
     const timer = setTimeout(() => void load(1), wait);
     return () => clearTimeout(timer);
-    // `load` reads the latest query through a ref, so only these restart the read.
+    // `load` reads the latest query through a ref, so only these three restart the read.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [api, ref, q, kind, sort, size]);
+  }, [api, ref, q, kind, sort]);
 
   // The most-mentioned name first, as the one to keep by default.
   const ordered = [...picked].sort(
@@ -239,7 +200,7 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
       setMerging(false);
       setNews({ ok: true, text: words.mergedMany(keep.name), n: ++sayings.current });
       setTimeout(() => newsBox.current?.focus(), 0);
-      await reload();
+      await load(pageNow.current, true);
     } catch (error) {
       const said = refusal(error);
       if (said === null) {
@@ -252,7 +213,7 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
         // It may have happened, or a name is gone: read the list again and start the ticking over.
         setPicked([]);
         setMerging(false);
-        await reload();
+        await load(pageNow.current, true);
       }
     } finally {
       mergeFlight.current = false;
@@ -260,49 +221,9 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
     }
   }
 
-  /** A person was given a name (#2803): say so, offer Undo, close the editor and read the list again. */
-  async function named(row: NameRow, info: NamedInfo): Promise<void> {
-    setNews({ ok: true, text: info.text, n: ++sayings.current });
-    setUndo(info.undo ? { answer: info.undo, rowId: row.id, join: info.join } : null);
-    setEditing(null);
-    setTimeout(() => newsBox.current?.focus(), 0);
-    await reload();
-  }
-
-  async function undoNamed(): Promise<void> {
-    if (!undo || !ref || !api.nameThem || undoFlight.current) return;
-    undoFlight.current = true;
-    setUndoing(true);
-    setUndoLooks(0);
-    try {
-      await api.nameThem(ref, undo.rowId, { action: "name-undo", answer: undo.answer }, () => setUndoLooks((n) => n + 1));
-      setUndo(null);
-      setNews({ ok: true, text: notNamed.undone, n: ++sayings.current });
-    } catch (error) {
-      const kind = error instanceof ApiError ? error.kind : "network";
-      if (kind === "signed-out") return void setView("signed-out");
-      // It may still be applied: a second press would queue a second undo of the same step.
-      if (kind === "still-waiting") setUndo(null);
-      setNews({ ok: false, text: notNamed.undoProblems[kind] ?? notNamed.undoProblems["server"]!, n: ++sayings.current });
-    } finally {
-      undoFlight.current = false;
-      setUndoing(false);
-    }
-    await reload();
-  }
-
-  /** The list as it is now, and the search results too when they are showing (they would be out of date). */
-  function reload(): Promise<unknown> {
-    const read = load(pageNow.current, true);
-    // (no extra step when no search is showing: the editor stays busy only as long as the list read takes)
-    if (smartNow.current !== null) void read.then(() => setSmartRefresh((n) => n + 1)); // (the search is read again)
-    return read;
-  }
-
   /** One change to one name. Resolves with the refusal's words, or null when it worked. */
   async function act(row: NameRow, change: NameChange, ok: string): Promise<string | null> {
     if (!ref || !api.changeName) return words.errorFallback;
-    setUndo(null); // a later change ends the chance to undo a name just given
     try {
       await api.changeName(ref, row.id, change);
       // A name that has gone (removed, or merged into another) is not ticked any more.
@@ -318,7 +239,7 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
       if (error instanceof ApiError && error.kind === "still-waiting") {
         // It may still happen: say so, and read the list again so it shows if it did.
         setNews({ ok: false, text: said, n: ++sayings.current });
-        await reload();
+        await load(pageNow.current, true);
         return null;
       }
       if (error instanceof ApiError && error.kind === "not-found") {
@@ -327,7 +248,7 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
         setNews({ ok: false, text: said, n: ++sayings.current });
         // The editor is gone: the keyboard goes to the news, as after a remove or a merge.
         setTimeout(() => newsBox.current?.focus(), 0);
-        await reload();
+        await load(pageNow.current, true);
         return null;
       }
       return said;
@@ -338,7 +259,7 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
       // The editor is gone: the keyboard goes to the news, where the result is said.
       setTimeout(() => newsBox.current?.focus(), 0);
     }
-    await reload();
+    await load(pageNow.current, true);
     return null;
   }
 
@@ -370,12 +291,8 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
 
   // The API never sends a secret name to someone who isn't a DM; this keeps one from showing if
   // it ever did (the rule is the API's, this is only a backstop).
-  // "Not named yet" is a DM's, and only while the switch is on (the API sends it to a DM only; this is the backstop).
-  const unnamedOn = NOT_NAMED_LIVE && data.canEdit && api.nameThem !== undefined;
-  const shown = (smart ?? data.names).filter((n) => (data.canEdit || !n.secret) && (unnamedOn || !n.unnamed));
-  const kindList = unnamedOn ? data.kinds : data.kinds.filter((k) => k.key !== "not_named");
-  const smartOn = NAMES_SMART_LIVE && data.canEdit && api.smartNames !== undefined;
-  const everything = kindList.reduce((sum, k) => sum + k.count, 0);
+  const shown = data.names.filter((n) => data.canEdit || !n.secret);
+  const everything = data.kinds.reduce((sum, k) => sum + k.count, 0);
   return (
     <div class="stack names-page">
       <section class="stack" aria-labelledby="names-campaign">
@@ -386,9 +303,7 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
           {words.webLink}
         </a>
         {data.canEdit ? (
-          <p class="small muted">
-            <span id="names-press-hint">{words.pressName}</span> {words.undoNote}
-          </p>
+          <p class="small muted">{words.undoNote}</p>
         ) : (
           <p class="note" role="note">
             {words.readOnly}
@@ -413,71 +328,28 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
           {words.searchHint}
         </p>
         <label class="field">
+          {words.kindLabel}
+          <select value={kind} onChange={(e) => setKind((e.target as HTMLSelectElement).value)}>
+            <option value="">{words.allKinds(everything)}</option>
+            {data.kinds.map((k) => (
+              <option key={k.key} value={k.key}>
+                {words.kindOption(k.label, k.count)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label class="field">
           {words.sortLabel}
           <select value={sort} onChange={(e) => setSort((e.target as HTMLSelectElement).value as NameSort)}>
             <option value="name">{words.sortName}</option>
             <option value="newest">{words.sortNewest}</option>
           </select>
         </label>
-        <label class="field">
-          {words.perPageLabel}
-          <select value={String(size)} onChange={(e) => setSize(Number((e.target as HTMLSelectElement).value))}>
-            {NAMES_PAGE_SIZES.map((n) => (
-              <option key={n} value={String(n)}>
-                {words.perPageOption(n)}
-              </option>
-            ))}
-          </select>
-        </label>
-        <fieldset class="names-types">
-          <legend>{words.kindLabel}</legend>
-          <div class="names-type-list">
-            {kindList.map((k) => (
-              <label class="choice names-type" key={k.key}>
-                <input
-                  type="checkbox"
-                  checked={kinds.includes(k.key)}
-                  onChange={() =>
-                    setKinds((now) => (now.includes(k.key) ? now.filter((x) => x !== k.key) : [...now, k.key]))
-                  }
-                />{" "}
-                {words.kindOption(k.label, k.count)}
-              </label>
-            ))}
-            {/* Always there (and dimmed when nothing is ticked), so pressing it never drops the keyboard. */}
-            {/* aria-disabled, not disabled: a disabled button drops the keyboard when it is pressed last. */}
-            <button
-              type="button"
-              class="link-button small"
-              aria-disabled={kinds.length === 0}
-              onClick={() => kinds.length > 0 && setKinds([])}
-            >
-              {words.allKinds(everything)}
-            </button>
-          </div>
-        </fieldset>
       </form>
-
-      {smartOn && (
-        <LazyPanel
-          load={() => import("./NamesSmart")}
-          what="the search by meaning"
-          props={{
-            api,
-            campaignRef: ref,
-            onResults: setSmart,
-            showing: smart !== null,
-            refreshKey: smartRefresh,
-            leaveKey: smartLeave,
-            count: smart?.length ?? 0,
-            onSignedOut: () => setView("signed-out"),
-          }}
-        />
-      )}
 
       {/* Always on the page, so a screen reader hears each new count and each result. */}
       <p class="small" role="status" aria-live="polite" aria-busy={busy}>
-        {words.howMany(smart !== null ? smart.length : data.total)}
+        {words.howMany(data.total)}
       </p>
       {/* Two boxes that are always there, each with one role for good: a role that changes is
           missed by screen readers. A result that repeats ("Saved." twice) is a new node, so it is
@@ -488,25 +360,6 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
       <p class={news && !news.ok ? "warn" : "visually-hidden"} role="alert">
         {news && !news.ok ? <span key={news.n}>{news.text}</span> : ""}
       </p>
-
-      {undo && !undoing && (
-        <p class="row">
-          <button type="button" class="button secondary" onClick={() => void undoNamed()}>
-            {undo.join ? notNamed.undoJoin : notNamed.undo}
-          </button>
-          <span class="small muted">{notNamed.undoHint}</span>
-        </p>
-      )}
-      {undoing && (
-        <WorkProgress
-          stage={undoLooks === 0 ? (notNamed.stage["waiting"] as string) : (notNamed.stage["undoing"] as string)}
-          startedAt={undoSeen.startedAt}
-          updatedAt={undoSeen.movedAt}
-          state={undoSeen.quiet ? "stalled" : "running"}
-          progressUnknown
-          whatToDo={notNamed.quiet}
-        />
-      )}
 
       {data.canEdit && picked.length >= 1 && (
         <section class="panel merge-bar" aria-label={words.selectedBar}>
@@ -541,14 +394,14 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
       )}
 
       {shown.length === 0 ? (
-        smart !== null ? null : <p class="muted">{q.trim() !== "" || kinds.length > 0 ? words.noMatch : words.noNames}</p>
+        <p class="muted">{q.trim() !== "" || kind !== "" ? words.noMatch : words.noNames}</p>
       ) : (
         <ul class="names-list" aria-label={words.listLabel} aria-busy={busy}>
           {shown.map((row) => (
             <NameItem
               key={row.id}
               row={row}
-              kinds={kindList}
+              kinds={data.kinds}
               canEdit={data.canEdit}
               ticked={picked.some((r) => r.id === row.id)}
               onTick={() => pick(row)}
@@ -556,8 +409,6 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
               focusSaid={focusRow === row.id}
               onToggle={() => setEditing(editing === row.id ? null : row.id)}
               act={act}
-              onNamed={(info) => named(row, info)}
-              onSignedOut={() => setView("signed-out")}
               api={api}
               refId={ref}
               campaignPath={`/account/npc/${encodeURIComponent(ref)}/`}
@@ -566,7 +417,7 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
         </ul>
       )}
 
-      {smart === null && <PageBar
+      <PageBar
         id="names-page"
         label={words.pagesNav}
         moves={{ first: words.pageFirst, previous: words.pagePrevious, next: words.pageNext, last: words.pageLast }}
@@ -575,7 +426,7 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
         busy={busy}
         notice={pageNotice}
         onGo={(wanted) => load(wanted)}
-      />}
+      />
     </div>
   );
 }
@@ -677,19 +528,17 @@ interface ItemProps {
   focusSaid?: boolean;
   onToggle: () => void;
   act: (row: NameRow, change: NameChange, ok: string) => Promise<string | null>;
-  onNamed: (info: NamedInfo) => Promise<void>;
-  onSignedOut: () => void;
   api: AccountApi;
   refId: string;
   campaignPath: string;
 }
 
-function NameItem({ row, kinds, canEdit, ticked, onTick, open, focusSaid, onToggle, act, onNamed, onSignedOut, api, refId, campaignPath }: ItemProps) {
+function NameItem({ row, kinds, canEdit, ticked, onTick, open, focusSaid, onToggle, act, api, refId, campaignPath }: ItemProps) {
   const panel = `name-edit-${row.id}`;
   return (
     <li class="name-row">
       <div class="name-head">
-        {canEdit && !row.unnamed && (
+        {canEdit && (
           <label class="name-tick">
             <input
               type="checkbox"
@@ -700,27 +549,7 @@ function NameItem({ row, kinds, canEdit, ticked, onTick, open, focusSaid, onTogg
             />
           </label>
         )}
-        {canEdit ? (
-          // The name itself opens the editor: a button that looks like a link, because it changes
-          // the page rather than going to another one.
-          <button
-            type="button"
-            class="link-button campaign-name name-open"
-            aria-expanded={open}
-            aria-controls={panel}
-            aria-describedby="names-press-hint"
-            onClick={onToggle}
-          >
-            {row.name}
-          </button>
-        ) : (
-          <span class="campaign-name">{row.name}</span>
-        )}
-        {row.others.length > 0 && (
-          <span class="small muted name-aka" title={row.others.join(", ")}>
-            {words.alsoCalled}: {row.others.join(", ")}
-          </span>
-        )}
+        <span class="campaign-name">{row.name}</span>
         <span class="tags">
           <span class="tag">{kindWords(kinds, row.kind)}</span>
           {row.secret && (
@@ -729,17 +558,33 @@ function NameItem({ row, kinds, canEdit, ticked, onTick, open, focusSaid, onTogg
               <span>{words.secretWords}</span>
             </span>
           )}
-          {row.npcId && (
-            <a class="small" href={`${campaignPath}${encodeURIComponent(row.npcId)}`} aria-label={words.npcLinkFor(row.name)}>
-              {words.npcLink}
-            </a>
-          )}
         </span>
       </div>
-      {canEdit && open && row.unnamed && (
-        <NameThem id={panel} row={row} api={api} refId={refId} onDone={onNamed} onSignedOut={onSignedOut} />
+      {row.others.length > 0 && (
+        <p class="small muted">
+          {words.alsoCalled}: {row.others.join(", ")}
+        </p>
       )}
-      {canEdit && open && !row.unnamed && (
+      <div class="row">
+        {row.npcId && (
+          <a class="button secondary" href={`${campaignPath}${encodeURIComponent(row.npcId)}`} aria-label={words.npcLinkFor(row.name)}>
+            {words.npcLink}
+          </a>
+        )}
+        {canEdit && (
+          <button
+            type="button"
+            class="button secondary"
+            aria-expanded={open}
+            aria-controls={panel}
+            aria-label={open ? words.doneFor(row.name) : words.changeFor(row.name)}
+            onClick={onToggle}
+          >
+            {open ? words.done : words.change}
+          </button>
+        )}
+      </div>
+      {canEdit && open && (
         <NameEditor id={panel} row={row} kinds={kinds} act={act} api={api} refId={refId} focusSaid={focusSaid === true} />
       )}
     </li>
@@ -759,19 +604,7 @@ interface EditorProps {
 function NameEditor({ id, row, kinds, act, api, refId, focusSaid }: EditorProps) {
   const [spelling, setSpelling] = useState(row.name);
   const [kindKey, setKindKey] = useState(row.kind);
-  // Who plays it, for a player character: a Discord ID, or empty for "not yet" (#2985).
-  const [player, setPlayer] = useState("");
-  const [playerInfo, setPlayerInfo] = useState(false);
-  // Who Discord says the typed ID is, shown for the DM to confirm before anything is linked (#3004).
-  const [lookup, setLookup] = useState<{ id: string; name: string; inServer: boolean } | null>(null);
-  const [looking, setLooking] = useState(false);
-  const [looks, setLooks] = useState(0);
-  const lookWait = useObservedWait(looking, String(looks));
-  const confirmBox = useRef<HTMLParagraphElement>(null);
-  const playerId = player.replace(/[<@!>\s]/g, "");
   const [other, setOther] = useState("");
-  // Saving is for a new kind, or (for a player character already) a Discord ID to attach.
-  const kindChanged = kindKey !== row.kind || (kindKey === PLAYER && playerId !== "");
   const [mergeQ, setMergeQ] = useState("");
   const [mergeFound, setMergeFound] = useState<NameRow[] | null>(null);
   // The search itself failed (not "nothing matches"), or has more matches than the first page.
@@ -872,27 +705,6 @@ function NameEditor({ id, row, kinds, act, api, refId, focusSaid }: EditorProps)
     };
   }, [api, refId, mergeQ, row.id]);
 
-  /** Ask the bot who a Discord ID is; nothing is linked until the DM confirms the name it shows. */
-  async function check(typed: string): Promise<void> {
-    if (looking) return;
-    setProblem(null);
-    setLookup(null);
-    if (!api.nameThem) return void setProblem(words.errors["lookup-failed"] ?? words.errorFallback); // nothing links unchecked
-    setLooking(true);
-    setLooks(0);
-    try {
-      const got = await api.nameThem(refId, row.id, { action: "kind", kind: "player_lookup", player: typed }, () => setLooks((n) => n + 1));
-      if (got.state === "player") {
-        setLookup({ id: typed, name: got.name, inServer: got.inServer });
-        setTimeout(() => confirmBox.current?.focus(), 0);
-      }
-    } catch (error) {
-      setProblem(refusal(error) ?? words.errorFallback);
-    } finally {
-      setLooking(false);
-    }
-  }
-
   /** Resolves true when the change worked, so a box is emptied only then. */
   async function run(change: NameChange, ok: string): Promise<boolean> {
     setWorking(true);
@@ -924,10 +736,6 @@ function NameEditor({ id, row, kinds, act, api, refId, focusSaid }: EditorProps)
           {words.saveSpelling}
         </button>
       </form>
-
-      {PLAYERS_LINE_LIVE && row.playersText !== undefined && (
-        <LazyPanel load={() => import("./PlayersLine")} what="the line for the players" props={{ row, act: (change: NameChange, ok: string) => act(row, change, ok) }} />
-      )}
 
       {row.aliasId && api.saveSaidAs && (
         <form
@@ -984,100 +792,22 @@ function NameEditor({ id, row, kinds, act, api, refId, focusSaid }: EditorProps)
         class="name-form"
         onSubmit={(e) => {
           e.preventDefault();
-          if (!kindChanged) return;
-          // A pasted mention (<@123…>) or stray spaces are tidied, so a real ID is not refused for them. An ID is
-          // asked about first and linked only once the DM has confirmed the name Discord shows (#3004).
-          if (kindKey === PLAYER && playerId !== "") void check(playerId);
-          else void run({ action: "kind", kind: kindKey }, words.saved);
+          if (kindKey !== row.kind) void run({ action: "kind", kind: kindKey }, words.saved);
         }}
       >
         <label class="field">
           {words.kindChange}
-          <select
-            value={kindKey}
-            onChange={(e) => {
-              setKindKey((e.target as HTMLSelectElement).value);
-              setLookup(null);
-            }}
-          >
-            {[...kinds, ...ALWAYS_OFFERED.filter((a) => !kinds.some((k) => k.key === a.key))].map((k) => (
+          <select value={kindKey} onChange={(e) => setKindKey((e.target as HTMLSelectElement).value)}>
+            {kinds.map((k) => (
               <option key={k.key} value={k.key}>
                 {k.label}
               </option>
             ))}
           </select>
         </label>
-        {kindKey === PLAYER && (
-          <div class="field">
-            <label for={`${id}-player`}>{words.playerLabel}</label>
-            <span class="row info-tip-row">
-              <input
-                id={`${id}-player`}
-                type="text"
-                inputMode="numeric"
-                autocomplete="off"
-                value={player}
-                aria-describedby={`${id}-player-note`}
-                onInput={(e) => {
-                  setPlayer((e.target as HTMLInputElement).value);
-                  setLookup(null); // a confirmation is for the ID it was asked about
-                }}
-              />
-              <InfoButton
-                id={`${id}-player-info`}
-                open={playerInfo}
-                label={words.playerInfoLabel}
-                closeLabel={words.playerInfoClose}
-                onToggle={() => setPlayerInfo(!playerInfo)}
-              />
-            </span>
-            <InfoText id={`${id}-player-info`} open={playerInfo} steps={words.playerInfoSteps} />
-            <span id={`${id}-player-note`} class="small muted">
-              {words.playerNote}
-            </span>
-          </div>
-        )}
-        <button type="submit" class="button secondary" disabled={working || looking || !kindChanged}>
-          {kindKey === PLAYER && playerId !== "" ? words.playerCheck : words.saveKind}
+        <button type="submit" class="button secondary" disabled={working || kindKey === row.kind}>
+          {words.saveKind}
         </button>
-        {looking && (
-          <WorkProgress
-            stage={looks === 0 ? (words.playerStage["waiting"] as string) : (words.playerStage["working"] as string)}
-            startedAt={lookWait.startedAt}
-            updatedAt={lookWait.movedAt}
-            state={lookWait.quiet ? "stalled" : "running"}
-            progressUnknown
-            whatToDo={words.playerQuiet}
-          />
-        )}
-        {lookup && (
-          <div class="stack" role="group" aria-label={words.playerConfirm(lookup.name)}>
-            <p tabIndex={-1} ref={confirmBox}>
-              <strong>{lookup.inServer ? words.playerConfirm(lookup.name) : words.playerNotHere(lookup.name)}</strong>
-            </p>
-            <p class="small muted">{words.playerNotRecording}</p>
-            <p class="row">
-              <button
-                type="button"
-                class="button"
-                disabled={working}
-                onClick={() =>
-                  void run({ action: "kind", kind: PLAYER, player: lookup.id, confirmed: true }, words.saved).then((done) => {
-                    if (done) {
-                      setLookup(null);
-                      setPlayer(""); // linked: the box is empty again, so Save does not offer the same ID twice
-                    }
-                  })
-                }
-              >
-                {words.playerYes}
-              </button>
-              <button type="button" class="button secondary" disabled={working} onClick={() => setLookup(null)}>
-                {words.playerCancel}
-              </button>
-            </p>
-          </div>
-        )}
       </form>
 
       <label class="choice">

@@ -98,8 +98,6 @@ export const hiddenBotLabels = [
   { label: "DMbot Main Menu", file: "dm_screen/dm_bot_panel.py" },
   { label: "Transcript retention", file: "dm_screen/transcript_keep.py" },
   { label: "Transcripts", file: "dm_screen/dm_bot_panel.py" },
-  { label: "Manage campaign", file: "dm_screen/dm_bot_panel.py" }, // a link button built from LABELS (#2986)
-  { label: "My data", file: "dm_screen/dm_bot_panel.py" },
   { label: "Species", file: "ui/homebrew.py" },
   { label: "Start a timer", file: "dm_screen/clock.py" },
   { label: "Rejoin the party", file: "dm_screen/clock.py" },
@@ -126,18 +124,11 @@ export const hiddenBotLabels = [
 
 /** Buttons and menu items of the website itself, which the bot's code can't hold. */
 export const siteButtons = [
-  "Download a backup", // the campaign page's Keep a copy (#3148), a website button, not in Discord
-  "Save the link", // the campaign invite panel (#2985), a website button, not in Discord
-  "Remove the link", // the campaign invite panel (#2985), a website button, not in Discord
   "Cleaned",
   "House rules",
   "Session transcripts",
   "Forgot your password",
   "Merge selected", // the All names page (#2427), on the website, not in Discord
-  "Change", // the recap page (#2577): changes who was in a scene, on the website, not in Discord
-  "Save list", // the same panel: saves the scene's list (#2577)
-  "Keep as a belief", // the Story graph's What people believe (#2412): keeps a reading as a belief, on the website, not in Discord
-  "Drop it", // the same panel: says a reading is not wanted
   "Rewrite with these", // the recap page (#2114), on the website, not in Discord
   "Speak instead", // the recap page (#2114), on the website, not in Discord
   "Send", // the same page: sends the typed or spoken note
@@ -148,17 +139,13 @@ export const siteButtons = [
   "Make a link",
   "Turn the link off",
   "Make a new link",
-  "Remake the voice", // the recap page's audio part (#2630), on the website, not in Discord
-  "Remake voice and music",
-  "Replace everywhere", // "Fix a name everywhere" in the recap editor (#2630)
   "Save how to say it", // the Names page row editor (#2317), on the website, not in Discord
 ];
 
 /** Buttons the site names before the bot has them: a held Help step written ahead of the code that
  * ships the button (#1958 for #1957). The test fails once core has the label, so the entry is
  * removed in the same change that sees it, and a typo here can't hide a wrong name for long. */
-export const pendingBotLabels = /** @type {{ label: string; issue: number }[]} */ ([
-]);
+export const pendingBotLabels = /** @type {{ label: string; issue: number }[]} */ ([]);
 
 /** Discord's own controls, which the bot doesn't label. */
 export const discordControls = ["Save Changes", "Reset Token"];

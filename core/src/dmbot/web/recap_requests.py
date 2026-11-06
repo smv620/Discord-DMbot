@@ -6,10 +6,8 @@ at most an hour, never logged, never returned to anyone but the DM who sent them
 
 from __future__ import annotations
 
-import time
 from typing import Any
 
-from dmbot import progress
 from dmbot.consent import TERMS_VERSION
 from dmbot.db import Database
 from dmbot.web import recaps
@@ -31,8 +29,6 @@ STATUS: dict[str, tuple[int, str]] = {
     "bad_clip": (422, "bad_clip"),
     "busy": (409, "busy"),  # an answer for that name is already on its way
     "bad_action": (422, "bad_action"),
-    "empty": (422, "empty"),  # change the words: no words (#2593)
-    "too_long": (422, "too_long"),  # change the words: more than the name limit
     "bad_target": (422, "bad_target"),  # the known name is not one the page offers
     "no_consent": (403, "no_consent"),  # the DM has not agreed to be recorded in Discord
 }
@@ -72,24 +68,6 @@ async def send_instructions(
     return {"requestId": got["id"]}
 
 
-def _progress(got: dict[str, Any], failed_reason: str) -> dict[str, Any]:
-    """How long a typed or spoken note has waited, in the shared progress shape (#3355). Times
-    only: `created_at` is when the page queued it (seconds), `claimed_at` when the bot took it (0
-    before; milliseconds, see `recaps.requests.claim_next`). A waiting note's last movement is its
-    start; a taken one's is the moment it was taken."""
-    state = str(got["state"])
-    created = int(got.get("created_at") or 0)
-    taken = int(got.get("claimed_at") or 0) // 1000
-    stage = {"waiting": "waiting", "working": "working", "done": "done"}.get(state, "failed")
-    return progress.shape(
-        stage,
-        started_at=created,
-        updated_at=taken if state != "waiting" and taken else created,
-        now=int(time.time()),
-        reason=(got.get("error") or failed_reason) if stage == "failed" else None,
-    )
-
-
 async def read_instructions(
     db: Database, session: Session, ref: str, request_id: object
 ) -> dict[str, Any]:
@@ -103,7 +81,7 @@ async def read_instructions(
         got = (await cur.fetchone() or {}).get("r")
     if got is None:
         raise RecapError("not_found")
-    out: dict[str, Any] = {"state": got["state"], "progress": _progress(got, "sort_failed")}
+    out: dict[str, Any] = {"state": got["state"]}
     if got["state"] == "done":
         out["points"] = got["answer"]
     if got["state"] == "failed":
@@ -151,7 +129,7 @@ async def read_voice(
         got = (await cur.fetchone() or {}).get("r")
     if got is None:
         raise RecapError("not_found")
-    out: dict[str, Any] = {"state": got["state"], "progress": _progress(got, "transcribe_failed")}
+    out: dict[str, Any] = {"state": got["state"]}
     if got["state"] == "done":
         out["text"] = (got["answer"] or {}).get("text", "")
     if got["state"] == "failed":

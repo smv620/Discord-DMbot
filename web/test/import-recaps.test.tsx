@@ -20,10 +20,6 @@ vi.mock("../src/content/import-words", async (original) => {
     get IMPORT_LIVE() {
       return live.import;
     },
-    // These tests drive the older choices (a member or Leave out); the consent step has its own tests (import-confirm).
-    get IMPORT_CONFIRM_LIVE() {
-      return false;
-    },
   };
 });
 vi.mock("../src/content/recap-words", async (original) => {

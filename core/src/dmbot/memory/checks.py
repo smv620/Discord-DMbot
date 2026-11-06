@@ -2,35 +2,6 @@
 
 Pure functions, no database. A failed check never blocks or changes the fact: it
 becomes a flag for review, because only the DM decides what's true in their story.
-
-Every rule about the story's memory is one of two kinds, and a new rule says which (#2663;
-docs/STORY_MEMORY.md, "Hard rules and warnings"):
-
-**Structural: never broken, so the write is refused.** These protect the data's shape, not the
-story, so no reading of the story can excuse them:
-- a connection joins two different names (`MemoryStore.add_relation_in`, and a database check);
-- every row, and both ends of every connection or belief, belong to the one campaign the write is
-  for: composite keys on `(guild_id, campaign_id, ...)` in the database, never a check in code;
-- a "led to" link, when it is made, joins confirmed names and does not close a loop
-  (`threads.would_loop`). Confirming a rejected link, merging two names and restoring a backup do
-  not run this check yet (follow-up issue);
-- a confidence is 0 to 1, a status is a known one and a session span ends after it starts (checked
-  in code before the write, `store._check_span` and the like; the span has no database check), and
-  a campaign has one "truth" view and one "party" view (unique indexes).
-
-**A warning: flagged for the DM, never refused.** The story may be right and the data odd: the
-`FLAG_KINDS` below. A one-of-a-kind item in two holders' hands may be a handoff, a theft or a
-mistaken belief; a dead name acting may be a flashback. The fact is stored as given, a flag asks
-the DM, and the DM decides.
-
-**Safe when two writes race.** A structural rule that reads before it writes (the loop check, the
-"already known" check) is only safe if no other write to the campaign slips in between. Every
-rule-checked write goes through `MemoryStore._write`, which takes the campaign's row lock
-(`SELECT ... FOR NO KEY UPDATE` on `campaigns`) and holds it to the end of the transaction, so one
-campaign's writes run one at a time. A path that reads and writes memory outside `_write` must lock
-the same campaign row (an advisory lock would not keep `_write` out), or lean on a database
-constraint. Every check stays inside one campaign: no query here or in the store reads another
-campaign's items, so a same-named item elsewhere raises nothing.
 """
 
 from __future__ import annotations
@@ -39,8 +10,8 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import NamedTuple
 
-from dmbot.memory import kin, place_words
-from dmbot.memory.models import PROPOSED, REJECTED, Relation
+from dmbot.memory import kin
+from dmbot.memory.models import REJECTED, Relation
 from dmbot.memory.ontology import Ontology, PredicateTerm
 
 WRONG_SUBJECT, WRONG_OBJECT = "wrong_subject", "wrong_object"
@@ -60,7 +31,7 @@ NESTS = "located_in"
 # word: a new relationship acts only when it is added here.
 ACTING = frozenset(
     {"carries", "serves", "sworn_to", "member_of", "knows", "appears_in", "ally_of",
-     "enemy_of", "rival_of", "leads", "mentor_of", "travels_with"}
+     "enemy_of"}
 )  # fmt: skip
 
 
@@ -121,12 +92,6 @@ def _same_order(old: Relation, new: Relation) -> bool:
     if new.predicate == "kin_of" and not (old.directional and new.directional):
         return (old.subject_id, old.object_id) == (new.object_id, new.subject_id)
     return False
-
-
-def waiting_guess(r: Relation) -> bool:
-    """A connection made only to hold what someone believes (`placing.py`): proposed, secret and
-    the extractor's. No other proposal is one (the speaker scan's are not secret)."""
-    return r.status == PROPOSED and r.secret and r.source == "extractor"
 
 
 def duplicate_of(new: Relation, existing: Iterable[Relation]) -> Relation | None:
@@ -226,14 +191,7 @@ def check_relation(
         problems.append(Problem(WRONG_SUBJECT))
     if not onto.is_any(object_type, p.object_types):
         problems.append(Problem(WRONG_OBJECT))
-    # A secret proposal is a place to hang a guess (#2412), not a claim about the story: it is
-    # neither judged against facts nor are facts judged against it. Every other proposal is.
-    if waiting_guess(new):
-        return problems
-    live = [
-        r for r in existing
-        if r.status != REJECTED and not waiting_guess(r) and r.id != new.id and same_time(r, new)
-    ]  # fmt: skip
+    live = [r for r in existing if r.status != REJECTED and r.id != new.id and same_time(r, new)]
     if p.max_per_subject is not None:
         # Two-way facts are stored smaller ID first, so count each side either way.
         ends = (new.subject_id, new.object_id) if p.symmetric else (new.subject_id,)
@@ -245,17 +203,6 @@ def check_relation(
                 and not same_pair(r, new)
                 and (end in (r.subject_id, r.object_id) if p.symmetric else r.subject_id == end)
             ]
-            if p.key == NESTS:
-                # Each word of a place tie is its own: living in one town, working in another and
-                # having been seen in a third are three facts, and a past word never ends a
-                # present one. A past word ("lived in", "worked in") is history and is never
-                # limited at all: two past homes both stay (#3363).
-                mine = place_words.slot(new.detail, subject_type)
-                others = (
-                    []
-                    if mine[1]
-                    else [r for r in others if place_words.slot(r.detail, subject_type) == mine]
-                )
             if p.key == NESTS and nesting is not None:
                 # Being in the inn and in the town it is in is one place, not two.
                 others = [r for r in others if not nesting.related(r.object_id, new.object_id)]

@@ -1,10 +1,11 @@
 """Standing the DM sets (#1655): the pure rule (the five steps, the DM always wins, direct evidence
 outweighing prejudice, two rungs at most, no loops, the timing budget), the dated impressions and
 attitudes (history kept), the party, who may set them, isolation, backups, recall never reading
-them, and the 🤝 Reputation screen."""
+them, and the 🤝 Standing screen."""
 
 from __future__ import annotations
 
+import time
 import unittest
 from types import SimpleNamespace
 from typing import Any
@@ -175,113 +176,30 @@ class Rule(unittest.TestCase):
         self.assertIsNone(index.standing("guard", "guard").step)
         self.assertIsNone(index.standing("nobody", "kesh").step)
 
-    @staticmethod
-    def big_index(people: int) -> Index:
-        return Index(*Rule.parts(people))
-
-    @staticmethod
-    def parts(people: int) -> tuple[list[Node], list[Link], list[Row]]:
-        """The graph the old timing test used, with `people` plain characters in 300 groups."""
-        nodes = [node(f"n{i}") for i in range(people)] + [
+    def test_thirty_pairs_are_worked_out_well_inside_five_milliseconds(self) -> None:
+        nodes = [node(f"n{i}") for i in range(3000)] + [
             node(f"g{i}", "faction") for i in range(300)
         ]
         nodes += [node(f"p{i}", "place") for i in range(100)]
         nodes += [node(f"c{i}", player_character=True) for i in range(6)]
         nodes += [node("party", "faction", party=True), node("tabaxi", "people")]
-        links = [Link(f"n{i}", st.MEMBER_OF, f"g{i % 300}") for i in range(people)]
-        links += [Link(f"n{i}", st.LOCATED_IN, f"p{i % 100}") for i in range(people)]
+        links = [Link(f"n{i}", st.MEMBER_OF, f"g{i % 300}") for i in range(3000)]
+        links += [Link(f"n{i}", st.LOCATED_IN, f"p{i % 100}") for i in range(3000)]
         links += [Link(f"c{i}", st.OF_PEOPLE, "tabaxi") for i in range(6)]
         rows = [imp(f"g{i}", f"c{i % 6}", "Wary") for i in range(300)]
         rows += [att(f"p{i}", "tabaxi", "Unfriendly") for i in range(100)]
-        rows += [imp(f"n{i}", "party", "Friendly") for i in range(0, people, 3)]
-        return nodes, links, rows
+        rows += [imp(f"n{i}", "party", "Friendly") for i in range(0, 3000, 3)]
+        index = Index(nodes, links, rows)
+        pairs = [(f"n{i}", f"c{j}") for i in range(5) for j in range(6)]
+        best = min(self.timed(index, pairs) for _ in range(5))
+        self.assertLess(best, 5.0, f"30 pairs took {best:.2f} ms")
 
     @staticmethod
-    def lookups(index: Index, pairs: list[tuple[str, str]]) -> int:
-        """How many entries of the rows the rule touches to answer `pairs`: every `get`, `[]`,
-        `in`, and an iteration, `items()`, `keys()` or `values()` counted as the whole table."""
-        count = 0
-
-        class Counting(dict):  # type: ignore[type-arg]
-            def get(self, key: Any, default: Any = None) -> Any:
-                nonlocal count
-                count += 1
-                return super().get(key, default)
-
-            def __getitem__(self, key: Any) -> Any:
-                nonlocal count
-                count += 1
-                return super().__getitem__(key)
-
-            def __contains__(self, key: object) -> bool:
-                nonlocal count
-                count += 1
-                return super().__contains__(key)
-
-            def __iter__(self) -> Any:
-                nonlocal count
-                count += len(self)
-                return super().__iter__()
-
-            def items(self) -> Any:
-                nonlocal count
-                count += len(self)
-                return super().items()
-
-            def keys(self) -> Any:
-                nonlocal count
-                count += len(self)
-                return super().keys()
-
-            def values(self) -> Any:
-                nonlocal count
-                count += len(self)
-                return super().values()
-
-        index.impressions = Counting(index.impressions)
-        index.attitudes = Counting(index.attitudes)
+    def timed(index: Index, pairs: list[tuple[str, str]]) -> float:
+        start = time.perf_counter()
         for viewer, subject in pairs:
             index.standing(viewer, subject)
-        return count
-
-    def test_the_counter_catches_a_scan_by_every_way_of_reading(self) -> None:
-        # (#3498) A guard that only saw `.get` would stay green on a rule that loops over the
-        # table. Each scanning stand-in must count as growing with the graph.
-        pairs = [("n1", "c1")]
-
-        def scanning(read: Any) -> type[Index]:
-            class Scan(Index):
-                def standing(self, viewer: str, subject: str) -> Any:
-                    for _ in read(self.impressions):
-                        pass
-                    return super().standing(viewer, subject)
-
-            return Scan
-
-        for name, read in {
-            "iteration": lambda t: t,
-            "items": lambda t: t.items(),
-            "keys": lambda t: t.keys(),
-            "values": lambda t: t.values(),
-        }.items():
-            with self.subTest(name):
-                cls = scanning(read)
-                small = self.lookups(cls(*self.parts(3000)), pairs)
-                large = self.lookups(cls(*self.parts(30000)), pairs)
-                self.assertGreater(large, small)
-
-    def test_thirty_pairs_are_worked_out_by_looking_at_the_ladders_only(self) -> None:
-        # (#3498) This guarded "30 pairs well inside 5 ms" with a clock, which fails on a busy CI
-        # runner. What it really guards is that a question climbs only its own two ladders and
-        # never scans the graph, so count the lookups: the same on a tenfold bigger graph, and
-        # under a fixed ceiling. A scan would multiply the count; a clock proves nothing more.
-        pairs = [(f"n{i}", f"c{j}") for i in range(5) for j in range(6)]
-        small = self.lookups(self.big_index(3000), pairs)
-        large = self.lookups(self.big_index(30000), pairs)
-        self.assertEqual(small, large, "answering grew with the size of the graph")
-        self.assertLessEqual(
-            small, 1000
-        )  # 540 today (18 a pair); a scan of the graph would be thousands
+        return (time.perf_counter() - start) * 1000
 
 
 class Stored(ConfirmedMemoryTest):

@@ -7,7 +7,7 @@
 import { useRef, useState } from "preact/hooks";
 
 import { text } from "../content/recaps";
-import { ApiError, type AccountApi, type Recap } from "./api";
+import type { AccountApi, Recap } from "./api";
 import { keepFocus } from "./focus";
 
 export default function RecapUnchecked({
@@ -23,34 +23,24 @@ export default function RecapUnchecked({
   pageFocus?: () => HTMLElement | null | undefined;
 }) {
   const [busy, setBusy] = useState(false);
-  const [problem, setProblem] = useState<string | null>(null);
+  const [problem, setProblem] = useState(false);
   const inFlight = useRef(false);
   const headingRef = useRef<HTMLHeadingElement>(null);
   const draft = recap.uncheckedDraft ?? [];
   if (!recap.working || draft.length === 0) return null;
   const marked = new Set(recap.uncheckedSentences ?? []);
-  // The fingerprint of the words on the page goes with the press, so only these words are approved.
-  const canUse = recap.canApproveUnchecked === true && !!api.approveUnchecked && !!recap.textHash;
+  const canUse = recap.canApproveUnchecked === true && !!api.approveUnchecked;
 
   const use = async (): Promise<void> => {
     if (!api.approveUnchecked || inFlight.current) return;
     inFlight.current = true;
     setBusy(true);
-    setProblem(null);
+    setProblem(false);
     try {
-      onRecap(await api.approveUnchecked(recap.ref, recap.textHash ?? ""));
+      onRecap(await api.approveUnchecked(recap.ref));
       keepFocus(() => pageFocus?.());
-    } catch (error) {
-      const kind = error instanceof ApiError ? error.kind : "server";
-      if (kind === "changed" && api.recap) {
-        // The words moved under the DM: show the new draft, and ask them to read it again.
-        try {
-          onRecap(await api.recap(recap.ref));
-        } catch {
-          // the message below already says to read again
-        }
-      }
-      setProblem(kind === "changed" ? text.uncheckedChanged : kind === "not-yet" ? text.uncheckedNotYet : text.uncheckedFailed);
+    } catch {
+      setProblem(true);
       keepFocus(() => headingRef.current);
     } finally {
       inFlight.current = false;
@@ -89,7 +79,7 @@ export default function RecapUnchecked({
       )}
       {problem && (
         <p class="warn" role="alert">
-          {problem}
+          {text.uncheckedFailed}
         </p>
       )}
     </section>

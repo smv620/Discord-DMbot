@@ -5,7 +5,6 @@ The store tests need Postgres; the rest use fakes."""
 
 from __future__ import annotations
 
-import asyncio
 import unittest
 from types import SimpleNamespace
 from typing import Any, cast
@@ -303,8 +302,10 @@ class DmSide(unittest.IsolatedAsyncioTestCase):
                 for i in player_view.children
             )
         )
-        # (the card has no line for it any more: it waits on the "Not on the website yet" list)
-        self.assertIn("D&D Beyond invite", screen_settings.settings_text(campaign, None, DM))
+        self.assertIn("not set", screen_settings.settings_text(campaign, None, DM))
+        self.assertIn(
+            "Join on D&D Beyond", screen_settings.settings_text(self.campaign(LINK), None, DM)
+        )
 
     def test_the_buttons_id_matches_its_template(self) -> None:
         custom_id = screen_settings.InviteButton(CAMPAIGN).item.custom_id
@@ -400,8 +401,7 @@ def sheet_interaction(*, found: list[PlayerCharacter] | None = None) -> Any:
     memory = SimpleNamespace(
         add_entity=AsyncMock(
             return_value=SimpleNamespace(value=SimpleNamespace(id=ENTITY, name="Test Character"))
-        ),
-        party_on_assignment=AsyncMock(),  # (a character given to a player, #3036)
+        )
     )
     campaign = SimpleNamespace(
         id=CAMPAIGN,
@@ -452,23 +452,11 @@ class FromTheSheet(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         it = sheet_interaction()
         await ui.MySheetButton(GUILD, CAMPAIGN).callback(it)
-        # The form opens on the same press (#2986); the panel with its one button is the fallback
-        # when the read is slow.
-        it.response.send_modal.assert_awaited_once()
-        self.assertIsInstance(it.response.send_modal.await_args.args[0], ui.NewSheetForm)
-        slow = sheet_interaction()
-        read = slow.client.sheets.characters_of
-
-        async def slow_read(*args: Any) -> Any:
-            await asyncio.sleep(0.2)
-            return await read(*args)
-
-        slow.client.sheets.characters_of = slow_read
-        with patch.object(ui, "FORM_WAIT_S", 0.01):
-            await ui.MySheetButton(GUILD, CAMPAIGN).callback(slow)
-        self.assertIn("Link my D&D Beyond sheet", said(slow))
-        call = slow.followup.send.await_args or slow.response.send_message.await_args
-        self.assertEqual([i.label for i in call.kwargs["view"].children], [ui.LINK_LABEL])
+        text = said(it)
+        self.assertIn("Link my D&D Beyond sheet", text)
+        call = it.followup.send.await_args or it.response.send_message.await_args
+        labels = [i.label for i in call.kwargs["view"].children]
+        self.assertEqual(labels, [ui.LINK_LABEL])
         # From the consent confirmation (no campaign) it still says who adds it.
         plain = sheet_interaction()
         await ui.MySheetButton(GUILD).callback(plain)
@@ -480,7 +468,6 @@ class FromTheSheet(unittest.IsolatedAsyncioTestCase):
             await ui.add_from_sheet(it, GUILD, CAMPAIGN, 42)
         bot = it.client
         bot.memory.add_entity.assert_awaited_once()
-        bot.memory.party_on_assignment.assert_awaited_once_with(GUILD, CAMPAIGN)
         kwargs = bot.memory.add_entity.await_args.kwargs
         self.assertEqual((kwargs["type"], kwargs["played_by"]), ("player_character", PLAYER))
         bot.sheets.link.assert_awaited_once_with(GUILD, CAMPAIGN, ENTITY, 42, player=PLAYER)

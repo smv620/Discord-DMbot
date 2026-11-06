@@ -30,13 +30,8 @@ export const voiceWords = {
   atLimit: "That is the longest a note can be (1 minute), so recording stopped.",
   empty: "Nothing was recorded. Try again, or type your note instead.",
   sending: "Turning your note into words… this takes a few seconds. Stay on this page.",
-  // The stages the wait panel shows while the bot works on the words (#3355).
-  pickUp: "Waiting for DMbot to pick up your note…",
-  turning: "Turning your note into words…",
   slow: "This is taking longer than usual. Press Check again, or type your note instead.",
   checkAgain: "Check again",
-  // The stalled wait panel's line (#3442): it does not name the Check again button, which shows only once the page gives up.
-  stalled: "This is taking longer than usual. DMbot may still finish it. Wait a little longer, or reload the page to check.",
   heard: "Here is what DMbot heard. Check it, change it if you like, then press Send.",
   privacy:
     "Your recording goes to our speech service, is turned into words, and is deleted as soon as the words are ready. We keep only the words.",
@@ -56,7 +51,7 @@ export const voiceWords = {
     "no-consent":
       "Agree to recording in Discord first, then try again. DMbot only listens to people who have agreed to be recorded; it sends you a button in a private message to agree. Or type your note instead.",
     "not-allowed":
-      "Recaps are turned off for this campaign or its plan right now. Check the Recaps page on the website (🌐 Manage campaign).",
+      "Recaps are turned off for this campaign or its plan right now. Check ⚙️ Settings → 📜 Recaps.",
     "not-editable":
       "This recap can't change now (it was posted or skipped, or it is being written). Open the recap list to see where it is.",
     "too-soon": "You sent a recording a moment ago. Wait a minute, then try again.",

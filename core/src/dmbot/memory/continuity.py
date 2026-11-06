@@ -12,9 +12,6 @@ mass"), and nothing here runs during play. Pure functions first (they need no da
 `ContinuityStore`, which reads one campaign at a time and writes only when the DM presses a
 button, in one transaction (like #1301).
 
-Not here: contradictions between beliefs of one point of view (`memory/contradictions.py`, the
-after-session grading and the DM-screen line).
-
 Isolation and consent: every read is scoped to one campaign by the memory store. A line is
 quoted only when every speaker it came from is recorded now (`opted_in`, read just before);
 otherwise the conflict is still shown, with the fact in DMbot's own words and no quote.
@@ -23,12 +20,11 @@ otherwise the conflict is still shown, with the fact in DMbot's own words and no
 from __future__ import annotations
 
 import contextlib
-import dataclasses
 import logging
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 
-from dmbot.memory import beliefs, kin, reputation_words
+from dmbot.memory import beliefs, kin
 from dmbot.memory._changes import ALIASES, CLAIMS, ENTITIES, RELATIONS, STATES, Changes
 from dmbot.memory.checks import (
     ACTS_AFTER_END,
@@ -195,18 +191,6 @@ class Report:
     claims: int = 0  # claims looked at
 
 
-def _as_old_kind(r: Relation, subject_id: str, object_id: str) -> Relation:
-    """A held feeling (`knows` with a reputation word) as the old ally or enemy it is the same fact
-    as, for the clash check only (#3181); any other row as it is. Only a feeling that runs the
-    same way as the claim: how Cerric feels about Belleros says nothing of how Belleros feels
-    about Cerric, though the old ally and enemy were both ways."""
-    if r.predicate != "knows" or (r.subject_id, r.object_id) != (subject_id, object_id):
-        return r
-    word = reputation_words.word_of(r.detail)
-    legacy = reputation_words.old_kind_of(word) if word is not None else None
-    return r if legacy is None else dataclasses.replace(r, predicate=legacy)
-
-
 def reached_critical_mass(facts: int, sessions: int, levels: Levels) -> bool:
     return facts >= levels.min_facts and sessions >= levels.min_sessions
 
@@ -216,15 +200,10 @@ def _is_ended(world: World, entity_id: str) -> State | None:
     return state if state is not None and state.condition in ENDED else None
 
 
-def claim_conflicts_in(claims: Sequence[Claim], world: World, levels: Levels) -> list[Conflict]:
-    """The possible conflicts between these waiting CLAIMS (what the extractor heard and the DM has
-    not answered) and the confirmed story. Pure. A claim that names nothing DMbot knows, or fits no
-    rule, makes none. At most one conflict for each claim and rule; the surest first.
-
-    This is the only question it answers: "does this new claim clash with what the DM confirmed?".
-    Whether two things a point of view BELIEVES clash with each other is a different question, kept
-    in `memory/contradictions.py` (#2660); nothing here reads beliefs, so there is one answer to
-    each question and not two (Supervisor, #2660)."""
+def conflicts_in(claims: Sequence[Claim], world: World, levels: Levels) -> list[Conflict]:
+    """The possible conflicts between these claims and the confirmed story. Pure. A claim that
+    names nothing DMbot knows, or fits no rule, makes none. At most one conflict for each claim
+    and rule; the surest first."""
     found: list[Conflict | None] = []
     ended = {
         eid: Ended(state.from_session_at, state.created_at)
@@ -255,17 +234,9 @@ def claim_conflicts_in(claims: Sequence[Claim], world: World, levels: Levels) ->
         other = world.names.one(claim.object)
         if isinstance(other, str):
             continue
-        term, from_object, label = place_relationship(
-            world.onto, claim.relationship, who[1], other[1], details=claim.details or ""
+        term, from_object, _label = place_relationship(
+            world.onto, claim.relationship, who[1], other[1]
         )
-        # A feeling is `knows` with a word now (#3181), and an ally and an enemy were the two kinds
-        # that cannot stand together: for this check a good word is the old ally and a bad one the
-        # old enemy, on the claim and on what the campaign holds, so old rows and new still clash.
-        checked_term = term
-        if term.key == "knows":
-            legacy = reputation_words.old_kind_of(label)
-            if legacy is not None and legacy in world.onto.predicates:
-                checked_term = world.onto.predicates[legacy]
         subject_id, object_id = (other[0], who[0]) if from_object else (who[0], other[0])
         if subject_id == object_id:
             continue
@@ -274,17 +245,12 @@ def claim_conflicts_in(claims: Sequence[Claim], world: World, levels: Levels) ->
             found.append(outsider)
         s, o = ordered(term, subject_id, object_id)
         candidate = Relation(
-            id=new_id(), subject_id=s, predicate=checked_term.key, object_id=o, detail="",
-            confidence=1.0,
+            id=new_id(), subject_id=s, predicate=term.key, object_id=o, detail="", confidence=1.0,
             status=CONFIRMED, source=DM, mention_ids=(), from_session_at=claim.session_started_at,
             to_session_at=None, from_game_time=None, to_game_time=None, secret=False,
             created_at=claim.created_at,
         )  # fmt: skip
-        held = list({r.id: r for r in (*by_entry.get(s, ()), *by_entry.get(o, ()))}.values())
-        touching = [
-            _as_old_kind(r, subject_id, object_id) if checked_term is not term else r for r in held
-        ]
-        originals = {r.id: r for r in held}
+        touching = list({r.id: r for r in (*by_entry.get(s, ()), *by_entry.get(o, ()))}.values())
         for problem in check_relation(
             world.onto,
             candidate,
@@ -297,7 +263,7 @@ def claim_conflicts_in(claims: Sequence[Claim], world: World, levels: Levels) ->
         ):
             if problem.kind not in RULE_PROBABILITY:
                 continue  # types, place loops: structure, not continuity
-            clash = [originals[r.id] for r in touching if r.id == problem.other_id]
+            clash = [r for r in touching if r.id == problem.other_id]
             if problem.kind == ACTS_AFTER_END:
                 actor = next((e for e in (s, o) if e in ended), who[0])
                 found.append(
@@ -425,10 +391,8 @@ def _make(
 
 def _predicate_words(onto: Ontology, key: str, detail: str, directional: bool = False) -> str:
     term = onto.predicates.get(key)
-    # "is the niece of", not "is family of" (#2457); a role true of both names (sibling, cousin,
-    # spouse) reads so whatever its stored direction is (#3102, #3111)
-    if key == "kin_of" and (role := kin.role_of(detail)) and (directional or role in kin.MUTUAL):
-        return kin.forward(role)
+    if key == "kin_of" and directional and (role := kin.role_of(detail)):
+        return kin.forward(role)  # "is the niece of", not "is family of" (#2457)
     return detail if key == "associated_with" and detail else (term.label if term else key)
 
 
@@ -470,7 +434,7 @@ class ContinuityStore:
         if not ready and not pinned:
             return Report((), facts, sessions, ready, len(waiting))
         world = await self._world(guild_id, campaign_id, opted_in, pinned)
-        found = claim_conflicts_in(waiting, world, levels)
+        found = conflicts_in(waiting, world, levels)
         if not ready:
             found = [c for c in found if c.pinned]
         return Report(tuple(found), facts, sessions, ready, len(waiting))
@@ -519,7 +483,7 @@ class ContinuityStore:
             nesting = await place_nesting(scope, onto)
             state_rows = await scope.select(STATES, " AND closed_at IS NULL")
             claim_rows = await scope.select(
-                CLAIMS, " AND status = 'confirmed' AND fact_id IS NOT NULL AND reading IS NULL"
+                CLAIMS, " AND status = 'confirmed' AND fact_id IS NOT NULL"
             )
             # Who the DM listed for each clue only some people know (#1649). Read apart from
             # the facts above: a listed fact the DM marked secret still counts as listed.
@@ -597,7 +561,7 @@ class ContinuityStore:
             raise MemoryRuleError("DMbot doesn't know that button any more.")
         pinned = await self._memory.pinned_connections(guild_id, campaign_id)
         world = await self._world(guild_id, campaign_id, opted_in, pinned)
-        mine = [c for c in claim_conflicts_in([claim], world, levels) if c.claim.id == claim_id]
+        mine = [c for c in conflicts_in([claim], world, levels) if c.claim.id == claim_id]
         clash_ids = tuple(dict.fromkeys(i for c in mine for i in c.clash_ids))
         revive = {c.revive_id: c.ended_condition for c in mine if c.revive_id is not None}
         # "They learned it" (#1649): the character joins the clue's list, dated to the session.

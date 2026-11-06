@@ -28,12 +28,11 @@ describe("the tick boxes", () => {
   it("are for the campaign's DMs only", async () => {
     open(MANAGER);
     await ready();
-    // (the type filter's boxes are not these: they are in the Type group)
-    expect(document.querySelectorAll(".name-pick")).toHaveLength(0);
+    expect(screen.queryAllByRole("checkbox")).toHaveLength(0);
     cleanup();
     open();
     await ready();
-    expect(document.querySelectorAll(".name-pick").length).toBeGreaterThan(1);
+    expect(screen.getAllByRole("checkbox").length).toBeGreaterThan(1);
   });
 
   it("show the bar only with two or more ticked, and Clear takes them back", async () => {
@@ -71,7 +70,7 @@ describe("what stays ticked", () => {
     tick("Brother Anselm");
     expect(screen.getByText(w.selected(3))).toBeTruthy();
     const row = screen.getAllByRole("listitem").find((li) => li.textContent?.includes("Mira Voss")) as HTMLElement;
-    fireEvent.click(within(row).getByRole("button", { name: "Mira Voss" }));
+    fireEvent.click(within(row).getByRole("button", { name: w.changeFor("Mira Voss") }));
     fireEvent.click(within(row).getByRole("button", { name: /Remove this name/ }));
     fireEvent.click(await within(row).findByRole("button", { name: /Yes, remove it/ }));
     expect(await screen.findByText(w.selected(2))).toBeTruthy();
@@ -87,7 +86,7 @@ describe("what stays ticked", () => {
     tick("Mira Voss");
     tick("Brother Anselm");
     const row = screen.getAllByRole("listitem").find((li) => li.textContent?.includes("Mira Voss")) as HTMLElement;
-    fireEvent.click(within(row).getByRole("button", { name: "Mira Voss" }));
+    fireEvent.click(within(row).getByRole("button", { name: w.changeFor("Mira Voss") }));
     fireEvent.input(within(row).getByLabelText(w.spellLabel), { target: { value: "Mira Vosk" } });
     fireEvent.click(within(row).getByRole("button", { name: w.saveSpelling }));
     await screen.findByText(w.saved);
@@ -160,7 +159,7 @@ describe("merging the ticked names", () => {
   it("warns when the kinds differ, and not when they don't", async () => {
     await ask("Mira Voss", "Brynwater Crossing");
     const note = screen.getByRole("note");
-    expect(note.textContent).toBe(w.mergeManyKinds("NPCs and Places", "NPCs"));
+    expect(note.textContent).toBe(w.mergeManyKinds("People and Places", "People"));
     cleanup();
     await ask("Mira Voss", "Brother Anselm");
     expect(screen.queryByRole("note")).toBeNull();

@@ -28,14 +28,6 @@ class Feature:
 
 FEATURES: tuple[Feature, ...] = (
     Feature(
-        "handover by email",
-        "Hand over by email",
-        "A campaign is handed over by a link sent to an email address.",
-        lambda s: s.handover_email_on,
-        ("handover_email_on",),
-        for_dms=False,  # for whoever runs DMbot: on only when the whole hand-over is live (#2532)
-    ),
-    Feature(
         "time suggestions",
         "Clock suggestions",
         "DMbot offers to move the game clock when time passes. You choose.",
@@ -50,15 +42,6 @@ FEATURES: tuple[Feature, ...] = (
         ("recaps_on",),
     ),
     Feature(
-        "questions",
-        "Questions for you",
-        "DMbot gathers what it is waiting to ask you in one message, and reminds you less and "
-        "less often.",
-        lambda s: s.questions_on,
-        ("questions_on",),
-        for_dms=False,  # for whoever runs DMbot: the reminders are off until it turns them on
-    ),
-    Feature(
         "plot checks",
         "Story checks on recaps",
         "PlotBot compares each recap with the earlier ones and asks you about anything that "
@@ -68,43 +51,11 @@ FEATURES: tuple[Feature, ...] = (
         for_dms=False,
     ),
     Feature(
-        "meaning search",
-        "Finding notes by meaning",
-        "PlotBot also finds notes that mean the same thing in different words.",
-        lambda s: s.meaning_search_on,
-        ("meaning_search", "voyage_key"),
-        for_dms=False,  # for whoever runs DMbot: it needs the Voyage key (#2664)
-    ),
-    Feature(
         "recap audio",
         "Spoken recaps",
         "DMbot reads a recap aloud, with music.",
         lambda s: s.recap_audio_on,
         ("recaps_on", "elevenlabs_key", "elevenlabs_voice_id", "recap_voice_tags"),
-    ),
-    Feature(
-        "structured split",
-        "Recap opening split in two steps",
-        "",
-        lambda s: s.recap_structured_output_split,
-        ("recap_structured_output_split",),
-        for_dms=False,  # how the work is done, not something a DM sees (#2714)
-    ),
-    Feature(
-        "final read",
-        "Recap final read",
-        "",
-        lambda s: s.recap_final_read,
-        ("recap_final_read",),
-        for_dms=False,  # how the work is done, not something a DM chooses (#2952)
-    ),
-    Feature(
-        "structured beats",
-        "Recap beat sheet in two steps",
-        "",
-        lambda s: s.recap_structured_output_beats,
-        ("recap_structured_output_beats",),
-        for_dms=False,  # how the work is done, not something a DM sees (#2714)
     ),
     Feature(
         "sidebar",
@@ -134,13 +85,6 @@ FEATURES: tuple[Feature, ...] = (
         lambda s: s.story_extractor_on,
         (
             "story_extractor_on",
-            "story_readings_on",
-            "story_deeds_on",
-            "story_family_only",
-            "theatre_on",
-            "rel_read_on",
-            "story_contradictions_on",
-            "story_report_on",
             "story_extractor_tier",
             "story_extractor_max_calls",
             "story_extractor_max_calls_day",
@@ -209,22 +153,6 @@ FEATURES: tuple[Feature, ...] = (
         for_dms=False,  # not live yet: it is listed for whoever runs DMbot, not on the card
     ),
     Feature(
-        "kept pictures",
-        "Pictures kept with the campaign",
-        "A picture posted in the table's chat is kept with the campaign and gets a link.",
-        lambda s: s.pictures_ready,
-        ("pictures_kept",),
-        for_dms=False,  # not live until the consent wording is: for whoever runs DMbot
-    ),
-    Feature(
-        "who is he",
-        'Who "he" and "she" are in a document',
-        "",
-        lambda s: s.who_is_it,
-        ("who_is_it",),
-        for_dms=False,  # not live yet: on only after the calibration run on #2790
-    ),
-    Feature(
         "test recordings",
         "Test recordings",
         "",
@@ -257,19 +185,12 @@ NOT_A_SWITCH: dict[str, str] = {
     "memory_keep_days": "a number of days",
     "free_users": "the owner's own accounts: never listed",
     "elevenlabs_speech_model": "which voice model, a choice",
-    "voyage_embed_model": "which meaning-search model, a choice",
-    "voyage_rerank_model": "which meaning-search ranking model, a choice",
     "recap_audio_max_credits": "a cost limit",
     "recaps_per_month": "a limit",
     "recap_audio_per_month": "a limit",
     "continuity": "tuning numbers",
     "thread_stalled_sessions": "a number",
     "table_images_per_day": "a limit",
-    "picture_storage_mb": "a limit",
-    "r2_account_id": "which storage account, a setting; never listed",
-    "r2_access_key": "a key; never listed",
-    "r2_secret_key": "a key; never listed",
-    "r2_bucket": "which storage bucket, a setting; never listed",
     "admin_primary_id": "who is told of problems; never listed",
     "admin_secondary_id": "who is told of problems; never listed",
 }

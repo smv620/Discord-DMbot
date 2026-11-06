@@ -32,39 +32,11 @@ export const RECAP_FIX_LIVE = false;
 // microphone header (public/_headers) live, and dev1 to have seen a note spoken and heard back. It moves
 // with the What's new entry "Speak a note to DMbot" and can only be true with RECAP_FIX_LIVE.
 export const RECAP_VOICE_LIVE = false;
-// RECAP_NAME_CHECKS_LIVE is "Names to check" on the recap page (#2113, #2114 part 3): the DM answers
-// the new names of a recap on the website, with the same effect as Discord's 📝 Check new names. It
-// needs the web API's names-to-check routes deployed and seen to work. It moves with the What's new
-// entry "Check a recap's new names online" and can only be true with RECAPS_LIVE.
-export const RECAP_NAME_CHECKS_LIVE = false;
-// NAME_CHANGE_WORDS_LIVE is "Change the words" on a name to check (#2593; core #2570): the DM widens or
-// corrects the name ("Harrow" is really "Harrow's Keep") before saying what it is. It needs the core
-// change_words answer and the cards' longerNames deployed and seen to work. It moves with the What's new
-// entry "Change a new name's words online" and can only be true with RECAP_NAME_CHECKS_LIVE.
-export const NAME_CHANGE_WORDS_LIVE = false;
-// NAME_PLACES_LIVE is "Where it was said" on a name to check (#2403; core #2329): up to three short windows of the
-// session's transcript around where DMbot heard the name, for the DM, with a placeholder for a line a
-// player had removed. It needs the names-to-check list to send `places` (deployed and seen to work) and
-// moves with the What's new entry "See where a recap's new name was said". Only true with RECAP_NAME_CHECKS_LIVE.
-export const NAME_PLACES_LIVE = false;
-// PLOT_CHECK_LIVE is the "Plot check" panel on the recap page (#2124; core #2122, #2123): PlotBot's
-// questions about a recap, the chat to talk one through, and Approve waiting until each has an answer.
-// It needs those routes deployed and seen to work. It moves with the What's new entry "Plot check on a
-// recap" and can only be true with RECAPS_LIVE.
-export const PLOT_CHECK_LIVE = false;
 // RECAP_SHARE_LIVE is the shared recap link (#2118, #2119): a game master shares a posted recap by a
 // link anyone can open without signing in (owner decision, 2026-10-20). It moves with the What's new
 // entry for the link, and can only be true with RECAPS_LIVE. Until then the privacy page says nothing
 // of it, so it never describes a link nobody can make.
 export const RECAP_SHARE_LIVE = false;
-
-// RECAP_REMAKE_LIVE is "Remake the voice" after editing a recap's words (#2630): the page asks the API
-// what making the audio again would do, says whether only the voice or everything is made again and
-// why, shows how far the voice has got, and offers "Fix a name everywhere" in the editor. It needs the
-// API of #2644 deployed and dev1 to have seen one word changed and only the voice made again. It moves
-// with the What's new entry "Fix a word, remake only the voice" and can only be true with
-// RECAP_AUDIO_LIVE.
-export const RECAP_REMAKE_LIVE = false;
 
 export const recapsHeading = "Recaps";
 
@@ -103,7 +75,7 @@ export const recapSteps: { text: string; names?: { name: string; file: string }[
     text: "After a session, DMbot can write a short story-style recap of what happened, to read at the start of next time. Recaps are for paid plans.",
   },
   {
-    text: "A recap's length follows your session: about 250 words for a one-hour game, about 450 for three hours. A game of four and a half hours or more gets about 600 words, the longest.",
+    text: "A recap's length follows your session: about 150 words for a one-hour game, about 300 for three hours. A game of five hours or more gets about 450 words, the longest.",
   },
   {
     text: "It is written only from what was said by people who said yes to being recorded, and DMbot checks the sentences against what was said, has it written again once if one doesn't match, and cuts any that still don't. If too little is left, there is no recap. It also takes out compass directions. It leaves out any name you marked secret. Anything said out loud at the table can still be in it, so read it before you post.",
@@ -121,7 +93,7 @@ export const recapSteps: { text: string; names?: { name: string; file: string }[
     ],
   },
   {
-    text: `Press Recaps on ⚙️ Manage DMbot to stop the recaps, to stop only the email (the DM screen still tells you when a recap is ready)${
+    text: `Press Recaps on ⚙️ Settings to stop the recaps, to stop only the email (the DM screen still tells you when a recap is ready)${
       RECAP_AUDIO_LIVE ? ", or, on plans with narration, to stop the narration" : ""
     }. You can turn them back on there. Your plan decides what you can have.`,
     names: [{ name: "Recaps", file: "dm_screen/recap_panel.py" }],
@@ -130,12 +102,12 @@ export const recapSteps: { text: string; names?: { name: string; file: string }[
     text: "You read it first. You can change the words. Try again writes a new one and throws away your changes; you can do that up to twice. On your recap page you can also press Approve but don't post, to keep it without sending it. Nothing goes to your players until you press Post to the table or Approve and post text only.",
   },
   {
-    text: "Post to the table puts the recap in the table's chat (the voice channel's chat, or the channel your game master picked). It can also list hit points, items and conditions. DMbot checks again first: if a player has stopped being recorded since it was written, or it names something you keep secret, it won't post and tells you why. It can take about a minute.",
+    text: "Post to the table puts the recap in your table's chat channel, dmb-chat. It can also list hit points, items and conditions. DMbot checks again first: if a player has stopped being recorded since it was written, or it names something you keep secret, it won't post and tells you why. It can take about a minute.",
   },
   ...(RECAP_FIX_LIVE
     ? [
         {
-          text: "To change a recap without editing it yourself, open it on the website, type what you'd like changed under Tell DMbot what to fix, and press Send. DMbot sorts your note into points. Remove any you don't want and keep the style notes you do; a style note you keep is saved for this campaign's later recaps too. DMbot keeps the newest 10. You can remove them in ⚙️ Manage DMbot → ✍️ Recap style. Then choose Rewrite with these. That uses one Try again, and you approve the new text again. DMbot only sorts what you wrote and rewrites with what you kept; it never adds story, and you decide what is kept.",
+          text: "To change a recap without editing it yourself, open it on the website, type what you'd like changed under Tell DMbot what to fix, and press Send. DMbot sorts your note into points. Remove any you don't want and keep the style notes you do; a style note you keep is saved for this campaign's later recaps too. DMbot keeps the newest 10. You can remove them in ⚙️ Settings → 📜 Recaps → ✍️ Recap style. Then choose Rewrite with these. That uses one Try again, and you approve the new text again. DMbot only sorts what you wrote and rewrites with what you kept; it never adds story, and you decide what is kept.",
         },
       ]
     : []),

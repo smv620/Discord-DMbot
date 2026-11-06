@@ -1,54 +1,47 @@
 // The words of the Names page (#2295; docs/PLAN.md, "All names on the website"): every name DMbot
 // remembers in a campaign, searched, filtered and, for the campaign's DMs, fixed. Plain words: a
-// name's "kind" is what it is (an NPC, a PC, a place, a group, an item, an event), and nothing here
+// name's "kind" is what it is (a person, a place, a group, an item, an event), and nothing here
 // says DMbot decides: a DM changes what DMbot remembers, and Undo is on the name's card in Discord.
 // The kinds' own words come from the API, so a new kind needs no change here.
 // The longest a name may be: core's `NAME_MAX` (memory/models.py) and the Discord card's
 // `NAME_LIMIT` (ui/name_card.py). Keep the three equal, or a DM can't fix a long name here.
 export const NAME_LIMIT = 100;
-// How many names a page holds: what the page offers, and the usual. Core's `PAGE_SIZES` and
-// `PAGE_SIZE` (web/all_names.py) refuse any other size: keep them equal.
-export const NAMES_PAGE_SIZES = [20, 50, 200, 500] as const;
-export const NAMES_PAGE_SIZE = 50;
-// NAMES_SMART_LIVE is "Search by meaning" on the Names page (#2733): "ice goddess" finds the frost goddess,
-// "friend of Brannoc" finds who is connected. It needs the meaning search (core, after #2664's embeddings)
-// deployed and seen to work, and moves with the What's new entry "Search names by what they mean".
-export const NAMES_SMART_LIVE = false;
 
 export const namesPage = {
   heading: "Names",
-  lead: "Everything DMbot remembers by name in this campaign: NPCs, PCs, places, groups and more. Search them, tick types to narrow the list, and (if you are the DM) fix them here.",
+  lead: "Everything DMbot remembers by name in this campaign: people, places, groups and more. Search them, filter by kind, and (if you are the DM) fix them here.",
   loading: "Loading…",
   signedOut: "You were signed out. Sign in again.",
   signIn: "Sign in with Discord",
   // Someone who may not see the list gets the same line as a campaign that isn't there.
   notYours:
-    "We can't show that list. Players can read about NPCs on the Story Graph.",
+    "We can't show that list. Players can read about NPCs from the NPC list in Discord.",
   down: "We couldn't reach DMbot. Check your connection and try again.",
   tryAgain: "Try again",
   searchLabel: "Find a name",
   searchHint: "Type part of a name or a nickname.",
-  kindLabel: "Type (none ticked shows all)",
-  allKinds: (n: number): string => `Show all types (${n})`,
-  perPageLabel: "Names per page",
-  perPageOption: (n: number): string => String(n),
+  kindLabel: "Show",
+  allKinds: (n: number): string => `Everything (${n})`,
   kindOption: (label: string, n: number): string => `${label} (${n})`,
   sortLabel: "Sort by",
   sortName: "Name, A to Z",
   sortNewest: "Newest first",
   howMany: (n: number): string => (n === 1 ? "1 name" : `${n} names`),
   noNames: "DMbot doesn't know any names here yet.",
-  noMatch: "No names match. Try fewer letters, or untick some types.",
+  noMatch: "No names match. Try fewer letters, or choose Everything.",
   listLabel: "Names",
   secretMark: "🤫",
   secretWords: "Secret (DM only)",
   alsoCalled: "Also called",
-  npcLink: "NPC page",
-  webLink: "Open the Story Graph",
+  npcLink: "Open the NPC page",
+  webLink: "Open the relationship web",
   npcLinkFor: (name: string): string => `Open the NPC page for ${name}`,
   readOnly: "Only this campaign's DM can change names.",
   undoNote: "A change made here can be undone with ↩️ Undo on the name's card in Discord.",
-  pressName: "Press a name to change it.",
+  change: "Change",
+  changeFor: (name: string): string => `Change ${name}`,
+  done: "Done",
+  doneFor: (name: string): string => `Done changing ${name}`,
   spellLabel: "Spelling",
   saveSpelling: "Save spelling",
   // How to say it (#2317): the box the narrator reads from, with the buttons that fill it.
@@ -62,25 +55,6 @@ export const namesPage = {
   sayTooLong: "DMbot can't use that. Use 80 letters or fewer, with no odd characters.",
   kindChange: "What it is",
   saveKind: "Save what it is",
-  // Making a name a player character (#2985): who plays it can be added now or later, in Discord or here.
-  playerLabel: "Who plays it? Their Discord ID (optional)",
-  playerNote: "Not sure yet? Leave this empty. It is still a player character, and you can add the player later. Adding an ID doesn't start recording anyone: they still choose that themselves.",
-  playerInfoLabel: "How to find a Discord ID",
-  playerInfoSteps: [
-    "In Discord, open User Settings (App Settings on a phone), then Advanced, and turn on Developer Mode. You only do this once.",
-    "Go back to the server and right-click the player's name (on a phone, press and hold it). Choose Copy User ID, not Copy Message ID.",
-    "Paste it here. It is a long number, like 123456789012345678.",
-  ],
-  playerInfoClose: "Hide the hint",
-  // Confirming who an ID is before it is linked (#3004). Linking is not recording: consent is separate.
-  playerCheck: "Check who that is",
-  playerConfirm: (name: string): string => `Please confirm: ${name}`,
-  playerNotHere: (name: string): string => `${name} isn't in this server yet. Link them anyway?`,
-  playerNotRecording: "This only links the ID to the character. It doesn't start recording anyone: they still choose that themselves.",
-  playerYes: "✅ That's them",
-  playerCancel: "Cancel",
-  playerStage: { waiting: "Waiting for DMbot to ask Discord.", working: "DMbot is asking Discord who that is." } as Record<string, string>,
-  playerQuiet: "Discord is slow to answer. You can keep waiting, or cancel and try again.",
   othersHeading: "Other names",
   noOthers: "It has no other names.",
   addOtherLabel: "Add another name for it",
@@ -88,7 +62,7 @@ export const namesPage = {
   removeShort: "Remove",
   removeOther: (other: string): string => `Remove the other name ${other}`,
   hideCheck: "🙈 Hide from players",
-  hideHint: "Players don't know this one yet, so it stays off the Story Graph for players, and out of answers and recaps. Untick it (👀 Players know it now on its card in Discord) when they find out.",
+  hideHint: "Players don't know this one yet, so it stays out of the NPC list, answers and recaps. Untick it (👀 Players know it now on its card in Discord) when they find out.",
   waiting: "Waiting for DMbot…",
   mergeHeading: "Same as another name",
   mergeLead: "Two names for the same thing? Pick the one to keep. This name and its other names are added to it, and this name is removed. Undo is on the name's card in Discord.",
@@ -133,10 +107,6 @@ export const namesPage = {
   errors: {
     "bad-name": "Type a name using letters, numbers or common marks.",
     "bad-kind": "Pick a kind from the list.",
-    "bad-player": "That doesn't look like a Discord ID. It should be 17 to 19 numbers, with no letters. Tap the (i) to see how to copy one.",
-    "bot-player": "That's a bot account. A bot can't play a character.",
-    "unknown-id": "Discord doesn't know that ID. Check it and try again.",
-    "lookup-failed": "Couldn't check that ID with Discord. Try again in a minute.",
     "name-exists": "A name like that already exists. Pick another spelling, or merge the two.",
     // The API's "too_long" is shared with the support form's: for a name it means this.
     "ticket-too-long": `That name is too long. Use ${NAME_LIMIT} letters or fewer.`,

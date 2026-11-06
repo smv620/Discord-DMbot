@@ -4,7 +4,6 @@ limits."""
 
 from __future__ import annotations
 
-import re
 import unittest
 from dataclasses import replace
 from types import SimpleNamespace
@@ -17,9 +16,9 @@ from dmbot.discord_limits import MESSAGE_MAX
 from dmbot.memory import places
 from dmbot.transcript.models import Line
 from dmbot.transcript.store import Around, TranscriptStore
-from dmbot.ui import logic, name_places
+from dmbot.ui import name_places
 from dmbot.ui import names as ui
-from tests.test_memory_names import DM, GUILD, MANAGER, PLAYER, NamesTest
+from tests.test_memory_names import DM, GUILD, PLAYER, NamesTest
 
 START = 1_700_000_000
 SAID = "we ride to meet Hrothgar at the old gate before dawn"
@@ -192,75 +191,19 @@ class Cards(NamesTest):
         self.assertLess(text.index("heard"), text.index("_Session 1"))
         self.assertLessEqual(len(text), MESSAGE_MAX)
 
-    def where(self, view: ui.SuggestionReview) -> Any:
-        return next(b for b in view.children if getattr(b, "label", "") == "📜 Where was it said?")
-
-    async def test_where_was_it_said_shows_three_places_newest_first_privately(self) -> None:
+    async def test_more_places_shows_the_rest_in_a_private_message(self) -> None:
         await self.said(10)
         view, _text = await self.card()
+        labels = [getattr(b, "label", "") for b in view.children]
+        self.assertIn("🔎 More places", labels)
+        self.assertEqual(len(view.places.more), places.MAX_PLACES - 2)
         it = self.it()
-        await self.where(view).callback(it)
+        button = next(b for b in view.children if getattr(b, "label", "") == "🔎 More places")
+        await button.callback(it)
         text, kw = it.response.sent[-1]
         self.assertTrue(kw.get("ephemeral"))
-        self.assertEqual(text.count("_Session 1, 0:"), 3)
-        self.assertIn("**Hrothgar**", text)
-        self.assertIn("> Mia: okay then", text)  # a line either side
-        self.assertTrue(text.startswith(f"Heard {places.MAX_PLACES} times. Showing 3."))
-        clocks = [
-            int(x.split(":")[1].split("_")[0]) for x in re.findall(r"_Session 1, \d+:\d+_", text)
-        ]
-        self.assertEqual(clocks, sorted(clocks, reverse=True))  # newest first
+        self.assertEqual(text.count("_Session 1, 0:"), places.MAX_PLACES - 2)
         self.assertLessEqual(len(text), MESSAGE_MAX)
-
-    async def test_a_player_pressing_it_is_refused(self) -> None:
-        await self.said(4)
-        view, _text = await self.card()
-        it = self.it(PLAYER)
-        await self.where(view).callback(it)
-        self.assertEqual(it.response.sent[-1][0], logic.NO_CAMPAIGN_ACCESS)  # (nothing quoted)
-        self.assertNotIn("Session", it.response.sent[-1][0])
-
-    async def test_a_server_manager_who_is_not_a_dm_is_refused(self) -> None:
-        await self.said(4)
-        view, _text = await self.card()
-        it = self.it(MANAGER)
-        await self.where(view).callback(it)
-        self.assertEqual(it.response.sent[-1][0], logic.NO_CAMPAIGN_ACCESS)
-
-    async def test_the_count_and_lore_survive_long_lines(self) -> None:
-        wall = "word " * 200
-        await self.said(10, f"{wall}Hrothgar{wall}")
-        view, _text = await self.card()
-        it = self.it()
-        await self.where(view).callback(it)
-        self.assertTrue(it.response.sent[-1][0].startswith("Heard"))
-
-    async def test_a_removed_line_says_so(self) -> None:
-        await self.said(2)
-        view, _text = await self.card()
-        await self.store.delete_person(GUILD, DM)
-        await self.store.delete_person(GUILD, PLAYER)
-        it = self.it()
-        await self.where(view).callback(it)
-        self.assertIn(name_places.REMOVED, it.response.sent[-1][0])
-
-    async def test_a_name_with_no_place_kept_says_so(self) -> None:
-        text = await name_places.where_said(None, self.store, GUILD, [], ["Hrothgar"], {DM})
-        self.assertEqual(text, name_places.NOTHING_KEPT)
-
-    async def test_a_lore_name_shows_its_sentence_and_the_upload(self) -> None:
-        text = await name_places.where_said(
-            None,
-            self.store,
-            GUILD,
-            [],
-            ["Hrothgar"],
-            {DM},
-            lore="Hrothgar rules the old gate.",
-            lore_source="My notes",
-        )
-        self.assertIn("From your lore (My notes)", text)
-        self.assertIn("Hrothgar rules the old gate.", text)
 
     async def test_the_link_opens_the_sessions_page(self) -> None:
         await self.said(4)
@@ -271,11 +214,11 @@ class Cards(NamesTest):
             f"https://dmbot.example/account/transcripts/{GUILD}.{self.campaign.id}/1",
         )
 
-    async def test_the_where_button_is_always_on_the_card(self) -> None:
+    async def test_few_places_have_no_more_button(self) -> None:
         await self.said(2)
         view, text = await self.card()
         self.assertEqual(text.count("_Session 1, 0:"), 2)
-        self.assertIn("📜 Where was it said?", [getattr(b, "label", "") for b in view.children])
+        self.assertNotIn("🔎 More places", [getattr(b, "label", "") for b in view.children])
 
     async def test_a_deleted_transcript_says_so_and_the_count_stays(self) -> None:
         await self.said(6)
@@ -365,7 +308,8 @@ class Cards(NamesTest):
         view, text = await self.card()
         self.assertLessEqual(len(text), MESSAGE_MAX)
         it = self.it()
-        await self.where(view).callback(it)
+        button = next(b for b in view.children if getattr(b, "label", "") == "🔎 More places")
+        await button.callback(it)
         self.assertLessEqual(len(it.response.sent[-1][0]), MESSAGE_MAX)
 
     async def test_a_suggestion_with_no_pointers_is_the_card_it_was(self) -> None:

@@ -17,14 +17,8 @@ import {
   type TranscriptSkip,
   type TranscriptVersion,
   type TranscriptView,
-  type FixableLine,
 } from "./api";
 import CampaignNav from "./CampaignNav";
-import FixLine from "./FixLine";
-import SessionNotesPanel from "./SessionNotes";
-import SpeakerRemovalPanel from "./SpeakerRemoval";
-import { FIX_LINE_LIVE } from "../content/fix-line-switch";
-import { THEATRE_DOWNLOAD_LIVE } from "../content/theatre-download-switch";
 
 /** Where in the pages the address points: `/account/transcripts`, `/<campaign>`, `/<campaign>/<n>`. */
 export function placeFromPath(path: string): { ref: string; number: number | null } | null {
@@ -209,8 +203,6 @@ function Sessions({ api, campaignRef }: { api: AccountApi; campaignRef: string }
               ))}
             </ul>
           )}
-          <SessionNotesPanel key={campaignRef} api={api} campaignRef={campaignRef} />
-          <SpeakerRemovalPanel key={`removal-${campaignRef}`} api={api} campaignRef={campaignRef} />
         </>
       )}
     </Shell>
@@ -296,7 +288,6 @@ function Reading({
         {(view: TranscriptView) => (
           <>
             <Download api={api} campaignRef={campaignRef} view={view} />
-            <ScriptDownload api={api} campaignRef={campaignRef} view={view} />
             <Lines key={`${version}-${number}`} api={api} campaignRef={campaignRef} view={view} />
             <details class="small muted">
               <summary>{text.about}</summary>
@@ -356,61 +347,6 @@ function Download({
       <span role="status" class="warn">
         {state === "failed" ? text.downloadFailed : ""}
       </span>
-    </p>
-  );
-}
-
-/** The game master's button to save a session's script (#3244): a copy of the session where who and what is meant is
- * written in brackets. Only for a game master, only while the switch is on and the API has the call; a session with
- * none says so instead of failing. */
-function ScriptDownload({
-  api,
-  campaignRef,
-  view,
-}: {
-  api: AccountApi;
-  campaignRef: string;
-  view: TranscriptView;
-}) {
-  const isDm = useIsDm(api, campaignRef);
-  const [state, setState] = useState<"idle" | "busy" | "failed" | "none" | "big">("idle");
-  const busy = useRef(false);
-  if (!THEATRE_DOWNLOAD_LIVE || !api.transcriptScript || !isDm) return null;
-  async function save() {
-    if (busy.current) return;
-    busy.current = true;
-    setState("busy");
-    try {
-      const blob = await api.transcriptScript!(campaignRef, view.number);
-      const href = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = href;
-      link.download = view.fileName.replace(/-(cleaned|heard)\.txt$/, "-script.txt") || "script.txt";
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      URL.revokeObjectURL(href);
-      setState("idle");
-    } catch (error) {
-      const kind = error instanceof ApiError ? error.kind : "";
-      setState(kind === "no-script" ? "none" : kind === "too-big" ? "big" : "failed");
-    } finally {
-      busy.current = false;
-    }
-  }
-  const said = { idle: "", busy: "", failed: text.scriptFailed, none: text.scriptNone, big: text.scriptTooBig }[state];
-  return (
-    <p>
-      <button type="button" class="button secondary" onClick={() => void save()}>
-        {state === "busy" ? text.scriptSaving : text.scriptDownload}
-      </button>{" "}
-      <span role="status" class="warn">
-        {said}
-      </span>
-      <details class="small muted">
-        <summary>{text.scriptAboutLabel}</summary>
-        <p>{text.scriptAbout}</p>
-      </details>
     </p>
   );
 }
@@ -608,9 +544,6 @@ function Lines({
   const [extra, setExtra] = useState<string[]>([]);
   // The left-out stretches of the pages loaded after the first, with the marker's place among all the lines.
   const [extraSkips, setExtraSkips] = useState<{ skip: TranscriptSkip; index: number }[]>([]);
-  // The lines this viewer may fix, with the place each stands among all the lines (#2858), like the skips above.
-  const [extraFix, setExtraFix] = useState<{ fix: FixableLine; index: number }[]>([]);
-  const [fixBusy, setFixBusy] = useState(false);
   const [next, setNext] = useState<number | null>(view.next ?? null);
   const [state, setState] = useState<"idle" | "busy" | "failed">("idle");
   const busy = useRef(false);
@@ -619,13 +552,7 @@ function Lines({
     ...(view.skips ?? []).map((s): [number, TranscriptSkip] => [s.line, s]),
     ...extraSkips.map((e): [number, TranscriptSkip] => [e.index, e.skip]),
   ]);
-  const fixAt = new Map<number, FixableLine>([
-    ...(view.fixable ?? []).map((f): [number, FixableLine] => [f.line, f]),
-    ...extraFix.map((e): [number, FixableLine] => [e.index, e.fix]),
-  ]);
   const isDm = useIsDm(api, campaignRef);
-  // Only the cleaned reading has fixes, and only when the switch is on and the API has the calls (#2858).
-  const fixable = FIX_LINE_LIVE && view.version === "cleaned" && !!api.fixTranscriptLine && !!api.fixAnswer;
   async function more() {
     if (busy.current || next === null || !api.transcript) return;
     busy.current = true;
@@ -633,7 +560,6 @@ function Lines({
     try {
       const page = await api.transcript(campaignRef, view.number, view.version, next);
       setExtraSkips((before) => [...before, ...(page.skips ?? []).map((skip) => ({ skip, index: lines.length + skip.line }))]);
-      setExtraFix((before) => [...before, ...(page.fixable ?? []).map((fix) => ({ fix, index: lines.length + fix.line }))]);
       setExtra((before) => [...before, ...page.lines]);
       setNext(page.next ?? null);
       setState("idle");
@@ -683,19 +609,6 @@ function Lines({
           >
             {line}
             {skipAt.has(i) && <LeftOut api={api} campaignRef={campaignRef} number={view.number} skip={skipAt.get(i)!} isDm={isDm} />}
-            {fixable && fixAt.has(i) && (
-              <FixLine
-                api={api}
-                campaignRef={campaignRef}
-                number={view.number}
-                line={line}
-                startedMs={fixAt.get(i)!.startedMs}
-                speaker={fixAt.get(i)!.speaker}
-                isDm={view.viewer?.isDm ?? isDm}
-                busy={fixBusy}
-                setBusy={setFixBusy}
-              />
-            )}
           </li>
         ))}
       </ul>

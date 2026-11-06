@@ -62,14 +62,11 @@ class ReviewTextTest(unittest.TestCase):
                 ("🚫 Not a name", 1),
                 ("⏳ Later", 1),
                 ("✏️ Change the words", 1),
-                # the lookup button has a row of its own, below the two answer rows (#3384)
-                ("📜 Where was it said?", 2),
             ],
         )
         view.match = None
         view._buttons()
-        # with no kind guessed, the picker is the first row (#2937), the buttons below it
-        self.assertEqual([b.row for b in view.children], [0, 1, 1, 1, 1, 2])
+        self.assertEqual([b.row for b in view.children], [0, 0, 1, 1, 1])
 
     def test_names_are_shown_as_written(self) -> None:
         text = ui.suggestion_text(suggested("*Star*"), 1, match=Match("b" * 32, "*Sun*"))

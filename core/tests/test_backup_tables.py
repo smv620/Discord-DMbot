@@ -125,42 +125,6 @@ class EveryClaimedTableComesBack(DatabaseTest):
                 " WHERE p.guild_id = %s AND p.campaign_id = %s",
                 (g, c, REL, g, c),
             ),
-            "memory_alias_knowers": (
-                # a secret name, a character's point of view, and the row that joins them (#2935)
-                "WITH al AS (INSERT INTO memory_aliases (guild_id, campaign_id, id, entity_id,"
-                " text, key, kind, secret, status, sound_codes, source, created_at)"
-                " VALUES (%s, %s, %s, %s, 'Zz', 'zz', 'title', true, 'confirmed', '{}', 'dm', 1)"
-                " RETURNING id),"
-                " p AS (INSERT INTO memory_perspectives (guild_id, campaign_id, id, kind,"
-                " entity_id, created_at) VALUES (%s, %s, %s, 'pc', %s, 1) RETURNING id)"
-                " INSERT INTO memory_alias_knowers (guild_id, campaign_id, id, alias_id,"
-                " perspective_id, created_at) SELECT %s, %s, %s, al.id, p.id, 1 FROM al, p",
-                (g, c, new_id(), A, g, c, new_id(), B, g, c, new_id()),
-            ),
-            "memory_told": (
-                # a secret name and the character the DM told it is an entry (#3089)
-                "WITH al AS (INSERT INTO memory_aliases (guild_id, campaign_id, id, entity_id,"
-                " text, key, kind, secret, status, sound_codes, source, created_at)"
-                " VALUES (%s, %s, %s, %s, 'Yy', 'yy', 'title', true, 'confirmed', '{}', 'dm', 1)"
-                " RETURNING id)"
-                " INSERT INTO memory_told (guild_id, campaign_id, id, alias_id, character_id,"
-                " added_entry, created_at) SELECT %s, %s, %s, al.id, %s, true, 1 FROM al",
-                (g, c, new_id(), A, g, c, new_id(), B),
-            ),
-            "memory_knowers": (
-                # a character's point of view (the one the secret-name seed made) that knows an
-                # entry exists (#2995)
-                "INSERT INTO memory_knowers (guild_id, campaign_id, id, perspective_id,"
-                " about_entity_id, created_at) SELECT %s, %s, %s, p.id, %s, 1"
-                " FROM memory_perspectives p WHERE p.guild_id = %s AND p.campaign_id = %s"
-                " AND p.entity_id IS NOT NULL LIMIT 1",
-                (g, c, new_id(), A, g, c),
-            ),
-            "memory_evidence": (
-                "INSERT INTO memory_evidence (guild_id, campaign_id, id, relation_id, kind,"
-                " target_id, session_started_at, added_at) VALUES (%s, %s, %s, %s, 'clue', %s, 1, 1)",
-                (g, c, new_id(), REL, A),
-            ),
             "memory_states": (
                 "INSERT INTO memory_states (guild_id, campaign_id, id, entity_id, condition, source,"
                 " created_at) VALUES (%s, %s, %s, %s, 'dead', 'dm', 1)",
@@ -192,17 +156,6 @@ class EveryClaimedTableComesBack(DatabaseTest):
                 "INSERT INTO memory_heard (guild_id, campaign_id, entity_id, session_started_at,"
                 " speaker_id, times) VALUES (%s, %s, %s, 100, %s, 2)",
                 (g, c, A, SPEAKER),
-            ),
-            "memory_importance": (
-                "INSERT INTO memory_importance (guild_id, campaign_id, entity_id, rank, basis,"
-                " source, session_started_at, lines, recorded_at)"
-                " VALUES (%s, %s, %s, 3, 'mentor', 'plotbot', 100, '{}', 5)",
-                (g, c, A),
-            ),
-            "memory_kind_offers": (
-                "INSERT INTO memory_kind_offers (guild_id, campaign_id, words_key, state, seen,"
-                " created_at) VALUES (%s, %s, 'sworn on the ashes of', 'never', 3, 5)",
-                (g, c),
             ),
             "house_rules": (
                 "INSERT INTO house_rules (guild_id, campaign_id, number, rule, created_by,"
@@ -249,41 +202,12 @@ class EveryClaimedTableComesBack(DatabaseTest):
                 " %s, 1)",
                 (g, c, text_hash("T", "S"), DM),
             ),
-            "campaign_speakers": (
-                "INSERT INTO campaign_speakers (guild_id, campaign_id, user_id, name, created_by,"
-                " created_at) VALUES (%s, %s, -1, 'Old Greg', %s, 1)",
-                (g, c, DM),
-            ),
-            "import_consents": (
-                "INSERT INTO import_consents (guild_id, campaign_id, id, import_id, user_id, basis,"
-                " confirmed_by, confirmed_at, terms_version, lines)"
-                " VALUES (%s, %s, repeat('c', 32), 'batch', -1, 'uploader_confirmed', %s, 1, 7, 3)",
-                (g, c, DM),
-            ),
-            "speaker_erasures": (  # (-2: -1 is the speaker above, who stays)
-                "INSERT INTO speaker_erasures (guild_id, campaign_id, user_id, erased_at)"
-                " VALUES (%s, %s, -2, 5)",
-                (g, c),
-            ),
-            "session_notes": (
-                "INSERT INTO session_notes (guild_id, campaign_id, session_at, beats, written_at,"
-                " job_created_at) VALUES (%s, %s, 1,"
-                ' \'[{"what": "Mira opened the door.", "who": [], "lines": [1],'
-                ' "kind": "event"}]\'::jsonb, 1, 0)',
-                (g, c),
-            ),
             "plot_issues": (
                 "INSERT INTO plot_issues (guild_id, campaign_id, id, session_at, text_hash, kind,"
                 " level, sentence, sentence_text, reason, source_text, fine_key, created_at)"
                 " VALUES (%s, %s, repeat('a', 32), 1, repeat('b', 32), 'timeline', 'possible', 1, 'S', 'why', 'src', 'k',"
                 " 1)",
                 (g, c),
-            ),
-            "report_answers": (
-                "INSERT INTO report_answers (guild_id, campaign_id, item_key, item_kind, answer,"
-                " answered_by, answered_at) VALUES (%s, %s, repeat('c', 32), 'difference',"
-                " 'intended', %s, 1)",
-                (g, c, DM),
             ),
             "plot_fine": (
                 "INSERT INTO plot_fine (guild_id, campaign_id, fine_key, note, by_user, at)"
@@ -293,11 +217,6 @@ class EveryClaimedTableComesBack(DatabaseTest):
             "recap_style_notes": (
                 "INSERT INTO recap_style_notes (guild_id, campaign_id, position, text, created_by,"
                 " created_at) VALUES (%s, %s, 1, 'Short', %s, 1)",
-                (g, c, DM),
-            ),
-            "recap_must_haves": (
-                "INSERT INTO recap_must_haves (guild_id, campaign_id, position, text, created_by,"
-                " created_at) VALUES (%s, %s, 1, 'Name the tavern.', %s, 1)",
                 (g, c, DM),
             ),
             "recap_style_examples": (
@@ -415,30 +334,6 @@ class EveryClaimedTableComesBack(DatabaseTest):
         restored = await self.store.import_backup(OTHER, data, DM, parts=parts)
         after = {t: await self.count(OTHER, restored.id, t) for t in claimed}
         self.assertEqual(after, before)
-
-    async def test_a_restore_with_no_transcripts_files_tells_a_plain_progress_nothing(self) -> None:
-        """Discord's waiting message hears only the transcripts files: nothing at all when a copy
-        has none (not a 0 of 0, and not the sections), as before #2746."""
-        data, _parts = await self.store.export_set(GUILD, self.campaign.id)
-        told: list[tuple[int, int]] = []
-        steps: list[int] = []
-        await self.store.import_backup(
-            OTHER, data, DM, parts=(), progress=lambda d, t: told.append((d, t)),
-            step=lambda: steps.append(1),
-        )  # fmt: skip
-        self.assertEqual(told, [])
-        self.assertTrue(steps)  # the website's "still moving" is told as the sections are written
-
-    async def test_a_plain_progress_hears_zero_then_each_transcripts_file(self) -> None:
-        for statement, args in self.seeds().values():  # (a row in every table, transcripts too)
-            await self.sql(statement, *args)
-        data, parts = await self.store.export_set(GUILD, self.campaign.id)
-        self.assertTrue(parts)
-        told: list[tuple[int, int]] = []
-        await self.store.import_backup(
-            OTHER, data, DM, parts=parts, progress=lambda d, t: told.append((d, t))
-        )
-        self.assertEqual(told, [(i, len(parts)) for i in range(len(parts) + 1)])
 
     async def test_the_sections_listed_are_the_registered_ones(self) -> None:
         self.assertEqual(set(self.store._sections), set(SECTION_TABLES))

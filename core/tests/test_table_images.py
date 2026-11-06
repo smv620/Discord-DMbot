@@ -16,7 +16,6 @@ from dmbot.campaigns.models import SHARED_STORY
 from dmbot.consent import IMAGE_TERMS_VERSION
 from dmbot.image_desk import DAY_S, ImageDesk, ImageUseStore
 from dmbot.map_notes import MapNoteStore
-from dmbot.pictures.keeper import Result
 from dmbot.transcript.models import Line
 from tests import test_table_chat as chat
 from tests.test_table_chat import EXTRA, VOICE, message
@@ -56,18 +55,6 @@ class MapVision(Vision):
             "layout": "A road runs east.",
         }
         return SimpleNamespace(text=json.dumps(body), refused=False, cut=False)
-
-
-class WithSite:
-    """The bot's settings, with the website's address set."""
-
-    site_url = "https://example.org"
-
-    def __init__(self, inner: Any) -> None:
-        self._inner = inner
-
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self._inner, name)
 
 
 def picture(text: str = "", **kw: Any) -> Any:
@@ -463,147 +450,6 @@ class TableImages(chat.AtTheTableTyped):
 
     def reads(self, kind: str) -> None:
         self.bot.image_desk = self.make_desk(vision=Vision(kind=kind))
-
-    def keeper(self, result: Any = None, boom: bool = False) -> Any:
-        """A stand-in for the picture keeper (#3274) that records what it was given."""
-        calls: list[Any] = []
-        answer = result or Result(cast(Any, SimpleNamespace(code="CODE", id=77)), True)
-
-        async def keep(ctx: Any, data: bytes) -> Result:
-            calls.append((ctx, data))
-            if boom:
-                raise RuntimeError("the bucket fell over")
-            return answer
-
-        self.discarded: list[Any] = []
-
-        async def discard(guild_id: int, campaign_id: str, picture: Any) -> None:
-            self.discarded.append(picture)
-
-        self.keeper_stub = SimpleNamespace(keep=keep, discard=discard)
-        self.bot.picture_keeper = cast(Any, self.keeper_stub)
-        self.bot.settings = cast(Any, WithSite(self.bot.settings))
-        granted = patch.object(
-            self.bot.consent, "agreed_under", AsyncMock(return_value=(900, IMAGE_TERMS_VERSION))
-        )
-        granted.start()  # the stored date of the poster's yes
-        self.addCleanup(granted.stop)
-        return calls
-
-    async def test_a_kept_picture_gets_its_link_under_it(self) -> None:
-        said = self.say_into()
-        calls = self.keeper()
-        msg = picture()
-        await self.hear(msg)
-        [(ctx, data)] = calls
-        self.assertEqual((ctx.poster_id, ctx.guild_id, data), (DM, GUILD_A, PNG.data))
-        self.assertEqual(ctx.consent_version, IMAGE_TERMS_VERSION)
-        self.assertIn("A torn letter with a wax seal.", ctx.description)
-        said.assert_awaited_once()
-        assert said.await_args is not None
-        self.assertEqual(said.await_args.args[2], "🖼️ https://example.org/pictures/CODE")
-        # (Make private and Delete for this very picture, #3274)
-        self.assertEqual(
-            [i.item.custom_id for i in said.await_args.args[3].children],
-            ["dmbot:picpriv:77", "dmbot:picdel:77"],
-        )
-        self.assertEqual(len(self.lines()), 1)
-
-    async def test_the_same_picture_again_says_no_second_link(self) -> None:
-        said = self.say_into()
-        self.keeper(Result(cast(Any, SimpleNamespace(code="CODE", id=77)), False))
-        await self.hear(picture())
-        said.assert_not_awaited()
-
-    async def test_a_picture_that_is_not_kept_still_gets_its_line_and_no_link(self) -> None:
-        said = self.say_into()
-        self.keeper(Result(None, why_not="full"))
-        await self.hear(picture())
-        said.assert_not_awaited()
-        self.assertEqual(len(self.lines()), 1)
-
-    async def test_a_keeper_that_breaks_never_loses_the_pictures_line(self) -> None:
-        self.say_into()
-        self.keeper(boom=True)
-        await self.hear(picture())
-        self.assertEqual(len(self.lines()), 1)
-
-    async def test_a_poster_who_stops_while_it_is_stored_has_it_taken_back(self) -> None:
-        said = self.say_into()
-        self.keeper()
-        keep = self.keeper_stub.keep
-
-        agreed = {"yes": True}
-        self.bot.consent.has_image_consent = lambda guild_id, user_id: agreed["yes"]  # type: ignore[method-assign]
-
-        async def stops_meanwhile(ctx: Any, data: bytes) -> Result:
-            result: Result = await keep(ctx, data)
-            agreed["yes"] = False  # they press Stop recording me
-            return result
-
-        self.keeper_stub.keep = stops_meanwhile
-        await self.hear(picture())
-        self.assertEqual(len(self.discarded), 1)
-        said.assert_not_awaited()  # and no link is given
-
-    async def test_a_yes_to_older_wording_keeps_nothing_and_the_row_records_the_posters_own(
-        self,
-    ) -> None:
-        self.say_into()
-        calls = self.keeper()
-        older = AsyncMock(return_value=(900, IMAGE_TERMS_VERSION - 1))
-        with patch.object(self.bot.consent, "agreed_under", older):
-            await self.hear(picture())
-        self.assertEqual(calls, [])
-        newer = AsyncMock(return_value=(900, IMAGE_TERMS_VERSION + 3))
-        with patch.object(self.bot.consent, "agreed_under", newer):
-            await self.hear(picture())
-        [(ctx, _)] = calls
-        self.assertEqual(
-            (ctx.consent_version, ctx.right_granted_at), (IMAGE_TERMS_VERSION + 3, 900)
-        )
-
-    async def test_a_picture_with_no_record_of_the_yes_is_not_kept(self) -> None:
-        self.say_into()
-        calls = self.keeper()
-        with patch.object(self.bot.consent, "agreed_under", AsyncMock(return_value=None)):
-            await self.hear(picture())
-        self.assertEqual(calls, [])  # (the helper's own patch is replaced for this call)
-        self.assertEqual(len(self.lines()), 1)
-
-    async def test_a_link_sent_for_a_message_deleted_meanwhile_is_taken_back(self) -> None:
-        said = self.say_into()
-        self.keeper()
-        msg = picture()
-        original = said.side_effect
-
-        async def deleted_while_sent(*args: Any, **kw: Any) -> Any:
-            self.bot._deleted_messages[msg.id] = 0.0
-            return original() if original else object()
-
-        said.side_effect = deleted_while_sent
-        with patch.object(self.bot, "_delete_reply", AsyncMock()) as taken:
-            await self.hear(msg)
-        taken.assert_awaited_once()
-
-    async def test_nothing_is_kept_without_the_switch(self) -> None:
-        self.say_into()
-        self.assertIsNone(self.bot.picture_keeper)  # off by default
-        await self.hear(picture())
-        self.assertEqual(len(self.lines()), 1)
-
-    async def test_the_dms_hear_once_that_old_pictures_were_removed(self) -> None:
-        self.say_into()
-        self.keeper(Result(cast(Any, SimpleNamespace(code="CODE", id=77)), True, removed=2))
-        with patch("dmbot.bot.private_note.send", new=AsyncMock(return_value=True)) as told:
-            await self.hear(picture())
-            await self.hear(picture())
-        told.assert_awaited_once()
-        self.assertEqual(
-            told.await_args.args[2],  # type: ignore[union-attr]
-            "DMbot removed 2 old pictures to make room. "
-            "Mark the ones to keep as permanent on the website.",
-        )
 
     async def test_a_picture_of_text_is_answered_in_the_chat_it_was_posted_in(self) -> None:
         said = self.say_into()

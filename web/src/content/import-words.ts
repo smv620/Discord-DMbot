@@ -11,11 +11,6 @@ import type { RecapsWhy } from "../account/api";
 
 export const IMPORT_LIVE = false;
 
-/** The uploader confirms consent for each speaker, including people who aren't in Discord (#3306; PLAN, "Import
- * sessions → Consent"). Off until the core half (#3305) is deployed: the routes it needs don't exist before that, so
- * the page keeps its old choices (a member or Leave out) while this is false. */
-export const IMPORT_CONFIRM_LIVE = true;
-
 /** How many files one import takes, and how big each may be (PLAN: "up to 20 files at once, each
  * up to 2 MB of text"). These MIRROR the importer's limits (#2105): change them together, or the
  * page promises a number DMbot does not keep. */
@@ -25,7 +20,7 @@ export const IMPORT_MAX_MB = 2;
 /** The Help step. Written from PLAN; check it against #2105's code before IMPORT_LIVE is true. */
 export const importSteps: { text: string }[] = [
   {
-    text: `Importing is for game masters on paid plans. To bring in sessions DMbot didn't record, such as a written-out Craig recording (Craig is a Discord recording bot), open your campaign's session transcripts on the website and press Import sessions. Pick up to ${IMPORT_MAX_FILES} text files, each up to ${IMPORT_MAX_MB} MB, and press Preview. You can also paste the link of a Google Doc (Share, then General access, then Anyone with the link, then Viewer); DMbot reads it without signing in to your Google account, only when you press Preview, Check or Import; files and links count together, up to ${IMPORT_MAX_FILES} in all. For each name in a file, pick the server member it is, ${IMPORT_CONFIRM_LIVE ? "pick Not in Discord, " : ""}or Leave out. DMbot suggests a person for a name it has seen in an earlier import or that matches a member's name; you decide. ${IMPORT_CONFIRM_LIVE ? "DMbot keeps a player's lines if they agreed to be recorded in Discord. For someone who isn't in Discord, or hasn't agreed there, you can tick that they agreed; the words they agree to are shown on the page. Anyone who said no to being recorded is always left out, and so are bots. Everyone else's lines (a person you left out) are dropped" : "DMbot keeps a player's lines only if they have agreed to be recorded in Discord, the same as for a live session. Your word that everyone agreed is not enough. Everyone else's lines (a person you left out, a person who has not agreed, and bots) are dropped"} before anything is saved and are never stored, and the page shows how many lines each choice keeps or drops. Then set each file's date and order, check how much work it will take, and press Import. Imported sessions can be read by everyone in your server, like any transcript.`,
+    text: `Importing is for game masters on paid plans. To bring in sessions DMbot didn't record, such as a written-out Craig recording (Craig is a Discord recording bot), open your campaign's session transcripts on the website and press Import sessions. Pick up to ${IMPORT_MAX_FILES} text files, each up to ${IMPORT_MAX_MB} MB, and press Preview. You can also paste the link of a Google Doc (Share, then General access, then Anyone with the link, then Viewer); DMbot reads it without signing in to your Google account, only when you press Preview, Check or Import; files and links count together, up to ${IMPORT_MAX_FILES} in all. For each name in a file, pick the server member it is, or Leave out. DMbot suggests a person for a name it has seen in an earlier import or that matches a member's name; you decide. DMbot keeps a player's lines only if they have agreed to be recorded in Discord, the same as for a live session. Your word that everyone agreed is not enough. Everyone else's lines (a person you left out, a person who has not agreed, and bots) are dropped before anything is saved and are never stored, and the page shows how many lines each choice keeps or drops. Then set each file's date and order, check how much work it will take, and press Import. Imported sessions can be read by everyone in your server, like any transcript.`,
   },
   {
     text: "After an import, DMbot goes through the imported sessions in date order, as it does after a live session, and asks you about any new names. Nothing becomes a fact without your say. Recaps are optional. For each session you tick under Recaps, DMbot writes one after you've answered the questions about names, like after a live session, and sends you one message in Discord when they start. The files themselves are not kept after the import.",
@@ -37,7 +32,7 @@ export const importSteps: { text: string }[] = [
 export const importPage = {
   heading: "Import sessions",
   back: "Back to the sessions",
-  lead: `Bring in sessions DMbot didn't record, from text files or Google Docs. ${IMPORT_CONFIRM_LIVE ? "DMbot keeps the lines of players who agreed to be recorded, and of people you tick as having agreed." : "DMbot keeps only the lines of players who have agreed to be recorded."} Imported sessions can be read by everyone in your server, like any transcript.`,
+  lead: `Bring in sessions DMbot didn't record, from text files or Google Docs. DMbot keeps only the lines of players who have agreed to be recorded. Imported sessions can be read by everyone in your server, like any transcript.`,
   loading: "Loading…",
   // Shown instead of the page while neither the site switch nor this campaign's server has imports on.
   notOpen: "This page isn't open yet.",
@@ -108,9 +103,8 @@ export const importPage = {
     `${files} ${files === 1 ? "file" : "files"} and ${links} ${links === 1 ? "link" : "links"} chosen`,
   noUsableFiles: "None of these files or links can be used. Fix the notes above, or choose others.",
   matchHeading: "Who is who?",
-  matchLead: IMPORT_CONFIRM_LIVE
-    ? "For each name in your files, pick the server member it is, pick Not in Discord, or Leave out. Keep someone's lines only if they agreed. If they haven't agreed in Discord, tick the box to say they did."
-    : "For each name in your files, pick the server member it is, or Leave out. A player's lines are kept only if they have agreed to be recorded. A player agrees in Discord, the same as for a live session.",
+  matchLead:
+    "For each name in your files, pick the server member it is, or Leave out. A player's lines are kept only if they have agreed to be recorded. A player agrees in Discord, the same as for a live session.",
   find: "Find a person",
   findHint: "Type part of a name to see more people.",
   leaveOut: "Leave out",
@@ -133,7 +127,6 @@ export const importPage = {
   datesHeading: "Date and order",
   datesLead: "Set the date of each session. DMbot reads the sessions in the order below, so put the oldest first.",
   datesOutOfOrder: "These dates aren't in order, oldest first. Check them.",
-  datesInFuture: "A session can't be on a day that hasn't happened yet. Pick today or an earlier day.",
   moved: (name: string, i: number, n: number): string => `${name} moved to ${i} of ${n}.`,
   dateLabel: (name: string): string => `Date of ${name}`,
   dateGuess: "The page guessed this date. Check it.",
@@ -164,7 +157,7 @@ export const importPage = {
     `DMbot will tidy up and read ${sessions} ${sessions === 1 ? "session" : "sessions"}. This will use about ${calls} quick AI ${calls === 1 ? "request" : "requests"}.`,
   renumberNote: "Sessions after these will be renumbered.",
   confirmNote:
-    `${IMPORT_CONFIRM_LIVE ? "Only lines from people who agreed, in Discord or by your tick, are kept." : "Only lines from players who have agreed are kept."} Everyone in your server can read the imported sessions. The files themselves are not kept. Nothing becomes a fact without your say, and DMbot will ask you about any new names on your DM screen.`,
+    "Only lines from players who have agreed are kept. Everyone in your server can read the imported sessions. The files themselves are not kept. Nothing becomes a fact without your say, and DMbot will ask you about any new names on your DM screen.",
   importButton: "Import",
   progressHeading: "Importing",
   state: {
@@ -193,15 +186,6 @@ export const importPage = {
     done: "Imported",
     failed: "Couldn't import this one",
   } as Record<string, string>,
-  // The read of each session's connections, after the import itself (#3307). Its stages come from the API in the same
-  // shared shape; the waiting one is not a failure, so it says it carries on by itself.
-  story: {
-    reading_connections: "Reading connections",
-    waiting_for_limit: "Waiting for DMbot's daily limit, will carry on by itself",
-    connections_read: "Connections ready",
-  } as Record<string, string>,
-  storyFailed: "The connections couldn't be read for this session.",
-  storyFailedDo: "The session itself is imported and safe.",
   // What the counts of the whole import's progress count (the API's `unit` code) (#2565).
   unit: { sessions: "sessions", parts: "pieces", lines: "lines" } as Record<string, string>,
   // Said when the server calls the import stalled: it can still move, and the files are safe.
@@ -241,13 +225,7 @@ export const importPage = {
     "bad-files-docs":
       "One of your Google Docs couldn't be opened just now. Check it's still shared as Anyone with the link, then press Preview again.",
     "bad-mapping": "One of the choices of who is who doesn't fit. Check them and try again.",
-    "said-no": "Someone you matched said no to being recorded. Their name is greyed out. Choose Leave out for them.",
-    "not-ticked": "Some people you kept haven't agreed in Discord. Tick the box for each one, or choose Leave out.",
-    stale: "The words people agree to have changed. Read them, tick the boxes again, then press Check.",
-    "bot-picked": "A bot's lines can't be kept. Choose Leave out for it.",
     "bad-date": "One of the dates isn't a date. Check them and try again.",
-    // The same sentence the date step shows (datesInFuture), for an old tab whose page let the date through.
-    "future-date": "A session can't be on a day that hasn't happened yet. Pick today or an earlier day.",
     "no-lines-kept":
       "Every line in one of the files would be dropped, so nothing was imported. Match more people, or ask players to agree to be recorded in Discord, then try again.",
     "signed-out": "You were signed out. Sign in again.",
@@ -255,41 +233,4 @@ export const importPage = {
     "not-found": "We can't find that campaign. Go back and open it again.",
     server: "Something went wrong on our side. Try again in a minute.",
   } as Record<string, string>,
-} as const;
-
-// Confirming consent for each speaker (#3306). The consent words themselves come from the API (the same lines a player
-// reads in Discord) and are never copied here.
-export const confirmWords = {
-  heading: "What they are agreeing to",
-  lead: "Before you keep someone's lines, they must have agreed to the words below. Players see the same words in Discord.",
-  loadFailed: "Couldn't load the words people agree to. Reload the page to try again.",
-  choose: "Choose…",
-  retry: "Try again",
-  notInDiscord: "Not in Discord",
-  blockedOption: (name: string): string => `Said no: ${name}`,
-  tick: (name: string): string => `I confirm ${name} agreed to this.`,
-  // The group's name for a screen reader (the box itself carries the words above).
-  tickLegend: (label: string): string => `Do they agree? ${label}`,
-  saidNo: (name: string): string => `${name} said no to being recorded, so their lines can't be kept.`,
-  sameAs: (name: string): string => `${name} is already kept in this campaign, so these lines join theirs.`,
-  needsTick: "Tick the box to keep their lines, or choose Leave out.",
-  chooseAll: "Choose a person, Not in Discord, or Leave out for every name, then press Check.",
-  keptConfirmed: "you said they agreed",
-} as const;
-
-// The clock offer on an imported session (#3199, #3259): once a session is in, DMbot offers to set the game clock to
-// where it ended, and says what came of the DM's answer. The label is shown in bold by the page, not here.
-export const clockWords = {
-  endedOn: "This session ended on",
-  question: "Set the clock to that?",
-  setIt: "Set it",
-  notNow: "Not now",
-  setting: (n: number): string => `Setting the clock… (${n}s)`,
-  stalled: (n: number): string => `Nothing new yet after ${n}s. Check again in a minute.`,
-  set: (label: string): string => `Clock set to ${label}.`,
-  dismissed: "Not now.",
-  movedOn: "The clock is already at or past that. Nothing moved.",
-  split: "The party is split, so the clock wasn't moved.",
-  error: "DMbot couldn't send that. Try again in a minute.",
-  notDm: "Only the DM can set the clock.",
 } as const;

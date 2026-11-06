@@ -30,7 +30,7 @@ export const featureSteps: FeatureStep[] = [
   {
     audience: "account",
     whatsNew: "Delete a campaign from the website",
-    text: "Open the campaign's page from My Account and scroll to the bottom. Press Delete this campaign. Only the person whose plan the campaign uses sees it. It says what goes and that it can't be undone. To keep a copy, download a backup first. Then type the campaign's name and press Delete it. You can't delete while a session is running. A campaign on a server DMbot can't reach any more still shows in your list with its own Delete button, and you can back it up or delete it there; its Discord channels stay until a server admin removes them.",
+    text: "On My Account, open the campaign's card and press Delete this campaign. Only the person whose plan the campaign uses sees it. It says what goes and that it can't be undone. To keep a copy, download a backup first. Then type the campaign's name and press Delete it. You can't delete while a session is running. A campaign on a server DMbot can't reach any more still shows in your list; you can back it up or delete it there, and its Discord channels stay until a server admin removes them.",
   },
   {
     audience: "account",
@@ -45,17 +45,7 @@ export const featureSteps: FeatureStep[] = [
   {
     audience: "gameMaster",
     whatsNew: "Your campaign has its own home",
-    text: "Each campaign has its own page on the website, in five parts: Overview, Story, Add to the story, Rules and Settings. Add to the story and Settings are only for game masters. A trail at the top shows where you are, the tabs jump to another part, and under them are the pages in the part you are in.",
-  },
-  {
-    audience: "gameMaster",
-    whatsNew: "The website can show what is waiting for you, and answer \"Which Mara?\"",
-    text: "Under the count line, Waiting for you lists what DMbot needs your answer on. Facts heard at the table: Yes, that's true, True, but keep it secret, or Not right. Connections found in a backstory are grouped by the upload they came from: Keep or Skip each one, or Keep all, which keeps the ready ones shown, up to 50 at a time. Skip is the same as No on Discord. A connection with a new name in it waits until you answer that name in Check new names. Same name, which one? has a button for each match and Neither. DMbot never decides these. Players never see this list.",
-  },
-  {
-    audience: "gameMaster",
-    whatsNew: "Fix a word, remake only the voice",
-    text: "Heard a word said wrong in a narrated recap? On the recap page press Edit, change the words and save. Before you approve the new text, a line beside the audio choice says what the new audio will be. After a small change: only the paragraphs you changed are spoken again, and the music stays. After a bigger change, or if the old parts weren't kept: the voice and the music are both made again, and the line says why. Choose your audio when you approve and it starts. On a recap that is already posted, the same line sits under the player, with a Remake the voice or Remake voice and music button. While it works you see the step, how many paragraphs are done, and when it last moved. The first and last lines of a recap are fixed, so they can't be edited. DMbot never changes your text on its own. In the editor, Fix a name everywhere replaces every use of a spelling in the box, apart from those two lines. Nothing is kept until you press Save.",
+    text: "Each campaign has its own page on the website, in four parts: Story, At the table, Rules and Settings. Settings is only for game masters. A trail at the top shows where you are, and four tabs let you jump to another part.",
   },
   {
     audience: "gameMaster",
@@ -64,28 +54,8 @@ export const featureSteps: FeatureStep[] = [
   },
   {
     audience: "gameMaster",
-    whatsNew: "After the session: things to check",
-    text: "Under a session's recap, After the session: things to check lists what DMbot noticed. First, things it holds that may not fit together, with both sides and where each came from; if the words behind a line are gone, it says a line from that session is no longer available. Then what the party has wrong, in three groups: disguised on purpose, misunderstood, and simply false. Each one has four answers: That's intended (kept, and not raised again), Fix the DM's view (opens the Story Graph), Not a problem, and Remind me next session. Undo takes an answer back. Only the DM sees this list, never a player. DMbot only lists; you decide.",
-  },
-  {
-    audience: "gameMaster",
-    whatsNew: "Names fixed this session, with Undo",
-    text: "Below a session's recap text, Names fixed this session shows the names DMbot fixed in the cleaned transcript. Each name says how many times it was fixed and how it was written before. Press Undo to put a name back as it was heard. DMbot then leaves that spelling alone. Only you, the DM, see this list.",
-  },
-  {
-    audience: "gameMaster",
-    whatsNew: "Who was in each scene",
-    text: "Under a recap, Who was in each scene shows the characters DMbot guesses were in each scene. If it is wrong, press Change on that scene, tick the right characters and press Save list. Your list is final: DMbot never changes it. Do it before you approve the recap. Only you, the DM, see this.",
-  },
-  {
-    audience: "gameMaster",
-    whatsNew: "What people believe, on the Story Graph",
-    text: "On a campaign's Story Graph, What people believe lists theories, accusations and reveals DMbot heard. Press Keep as a belief to note what that person thinks, or Drop it to skip one. Undo is there right after you keep one. A belief is never treated as a fact. If a new name is in it, answer Check new names first. Only you, the DM, see this.",
-  },
-  {
-    audience: "gameMaster",
-    whatsNew: "Every name on the Story Graph",
-    text: "At the top of the Story Graph, a line counts every name and every connection in the campaign, not only the ones drawn. Not connected yet lists the names that have no connection, by kind. Tap one to check: it says it has no connections yet. If the names form more than one group, Other groups of linked names has a button for each. Tap one to put that group in the middle of the map. Players see only what they are allowed to see.",
+    whatsNew: "Every name on the Story graph",
+    text: "At the top of the Story graph, a line counts every name and every connection in the campaign, not only the ones drawn. Not connected yet lists the names that have no connection, by kind. Tap one to check: it says it has no connections yet. If the names form more than one group, Other groups of linked names has a button for each. Tap one to put that group in the middle of the map. Players see only what they are allowed to see.",
   },
   {
     audience: "gameMaster",
@@ -95,12 +65,12 @@ export const featureSteps: FeatureStep[] = [
   {
     audience: "gameMaster",
     whatsNew: "Your shared rules in one place",
-    text: "My Account has a Shared rules page. For each campaign you run, it lists the house rules and homebrew packs you share with other tables, and the ones you use from other tables. It is for looking only. To share, stop sharing or follow a set, do it in Discord: ⚙️ Manage DMbot, then 📚 Shared rules.",
+    text: "My Account has a Shared rules page. For each campaign you run, it lists the house rules and homebrew packs you share with other tables, and the ones you use from other tables. It is for looking only. To share, stop sharing or follow a set, do it in Discord: ⚙️ Settings, then 📚 Shared rules.",
   },
   {
     audience: "gameMaster",
     whatsNew: "Change a campaign's settings on the website",
-    text: "On a campaign's Settings tab, game masters can change who can see the DM screen, how much DMbot says, and how long transcripts are kept. The page says it is saving, then that it is saved. If you pick a shorter time for keeping transcripts, you see a warning first, and nothing is deleted until you say yes on the page. Changes need DMbot to be online. If it is away, your change waits for up to an hour. If DMbot is not back by then, the change is dropped and you can choose again. Hand over and pause are still done in Discord, and only the campaign's owner sees them.",
+    text: "On a campaign's Settings tab, game masters can change who can see the DM screen, how much DMbot says, and how long transcripts are kept. The page says it is saving, then that it is saved. If you pick a shorter time for keeping transcripts, you see a warning first, and nothing is deleted until you say yes on the page. Changes need DMbot to be online. If it is away, your change waits for up to an hour. If DMbot is not back by then, the change is dropped and you can choose again. Hand over, pause and delete are still done in Discord, and only the campaign's owner sees them.",
   },
   {
     audience: "gameMaster",
@@ -119,16 +89,6 @@ export const featureSteps: FeatureStep[] = [
     text: "When DMbot asks you to check a name, the link 📜 Open in transcript opens that session on the website at the line where the name was said, with that line marked. Anyone who can read the transcript can use the link.",
   },
   {
-    audience: "gameMaster",
-    whatsNew: "Check a recap's new names online",
-    text: "Under a recap on the website, Names to check lists the new names DMbot was not sure about. For each one, say what it is, that it is a name you already have, how it is spelled, or that it is not a name. You can also explain it in a few words. It does the same as the new names list in Discord, so answering in one place answers both. DMbot never decides what a name is.",
-  },
-  {
-    audience: "gameMaster",
-    whatsNew: "Plot check on a recap",
-    text: "Before you approve a recap, its page can show a Plot check: things that don't seem to match your earlier sessions, with the recap's sentence and the earlier note beside it. For each one you can fix the recap (that adds the words to the box under Tell DMbot what to fix), talk it through (DMbot may suggest a note, and it is kept only if you say Save), say it is not a problem, or leave it as it is. Approve opens when every question has an answer. DMbot only asks. You decide, and only you see these questions.",
-  },
-  {
     audience: "player",
     whatsNew: "Go off the record for a while",
     text: "Need a break from being recorded? Press ⏸️ Pause recording me in your 🗂️ Menu, or on the reminder DMbot sends when a session starts. Pick 5 minutes, 15 minutes or Until I resume. While you are paused, nothing you say is recorded. It does not remove what you said before you paused. Press ▶️ Resume now to come back sooner. A pause ends when the session ends. Your yes stays as it was, and Stop recording me is still in the menu.",
@@ -145,24 +105,6 @@ export const featureSteps: FeatureStep[] = [
     names: [
       { name: "Pause the table", file: "dm_screen/messages.py" },
       { name: "Resume now", file: "dm_screen/table_pause.py" },
-    ],
-  },
-  {
-    audience: "gameMaster",
-    whatsNew: "A script of your session",
-    text: "After a session, press 📜 Make a script. DMbot writes a copy of the transcript with every \"he\", \"it\" and \"that one\" named in brackets. It tells you what it will cost before it starts and does nothing until you say yes, and only the campaign's game masters can read it. It comes with a paid campaign.",
-    names: [
-      { name: "Make a script", file: "ui/theatre_button.py" },
-    ],
-  },
-  {
-    audience: "gameMaster",
-    whatsNew: "Split a list of names, or say it is a group",
-    text: "When a name in Names to check is really several names, like \"Mira and Cerric\", press ✂️ These are separate names and DMbot splits it into one name for each part; the new names wait in the list for your answer. If DMbot suggests a group the name may belong to, press 👥 Yes, that group; if not, press 👥 They're a group and type what the group is called. Undo takes it back until you answer one of the new names.",
-    names: [
-      { name: "✂️ These are separate names", file: "ui/names.py" },
-      { name: "👥 Yes, that group", file: "ui/names.py" },
-      { name: "👥 They're a group", file: "ui/names.py" },
     ],
   },
 ];

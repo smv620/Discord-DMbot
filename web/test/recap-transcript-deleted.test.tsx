@@ -52,8 +52,7 @@ describe("the recap pages", () => {
     );
     expect(await screen.findByText(line)).toBeTruthy();
     expect(screen.getByText(/The party crossed/)).toBeTruthy(); // the recap stays
-    // (the campaign's own tabs list its Transcripts page for everyone: it is the session's transcript link that is gone)
-    expect([...document.querySelectorAll('a[href*="transcripts"]')].filter((a) => !a.closest(".campaign-nav"))).toEqual([]);
+    expect(document.querySelector('a[href*="transcripts"]')).toBeNull();
   });
 
   it("say it in the list too", async () => {

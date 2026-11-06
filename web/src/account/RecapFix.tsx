@@ -10,10 +10,9 @@ import { useEffect, useRef, useState } from "preact/hooks";
 
 import { FIX_MAX_LETTERS, fixWords as words } from "../content/recap-fix";
 import { RECAP_FIX_LIVE, RECAP_VOICE_LIVE, RECAPS_LIVE } from "../content/recap-words";
-import { ApiError, type AccountApi, type FixPoints, type JobProgress, type Recap } from "./api";
+import { ApiError, type AccountApi, type FixPoints, type Recap } from "./api";
 import { keepFocus } from "./focus";
 import RecapVoice from "./RecapVoice";
-import WorkProgress from "./WorkProgress";
 import { voiceWords } from "../content/recap-voice";
 
 const POLL_MS = 2000;
@@ -30,13 +29,10 @@ export default function RecapFix({
   api,
   recap,
   onRecap,
-  prefill,
 }: {
   api: AccountApi;
   recap: Recap;
   onRecap: (next: Recap) => void;
-  /** Words from the Plot check's "Fix the recap" (#2124): added to the box, never sent by themselves. */
-  prefill?: { n: number; text: string } | null;
 }) {
   const [text, setText] = useState("");
   const [requestId, setRequestId] = useState<string | null>(null);
@@ -45,8 +41,6 @@ export default function RecapFix({
   const [corrections, setCorrections] = useState<Set<string>>(new Set());
   const [style, setStyle] = useState<Set<string>>(new Set());
   const [sorting, setSorting] = useState(false);
-  // The bot's own progress for the sort, when the API sends it (#3355): shown in the wait panel.
-  const [progress, setProgress] = useState<JobProgress | null>(null);
   const [slow, setSlow] = useState(false);
   const [checks, setChecks] = useState(0); // "Check again" on the same request after the page gave up
   const [busy, setBusy] = useState(false);
@@ -80,7 +74,6 @@ export default function RecapFix({
       try {
         const got = await read(recap.ref, requestId);
         if (!live) return;
-        setProgress(got.state === "done" || got.state === "failed" ? null : got.progress ?? null);
         if (got.state === "done") {
           if (!got.points) throw new ApiError("server"); // "done" with nothing to show is a fault
           setPoints(got.points);
@@ -104,7 +97,6 @@ export default function RecapFix({
         polls += 1;
         if (polls >= POLL_LIMIT) {
           setSorting(false);
-          setProgress(null);
           setSlow(true);
           return;
         }
@@ -118,7 +110,6 @@ export default function RecapFix({
           return;
         }
         setSorting(false);
-        setProgress(null);
         fail(error);
       }
     };
@@ -128,16 +119,6 @@ export default function RecapFix({
       if (timer) clearTimeout(timer);
     };
   }, [api, recap.ref, requestId, checks]);
-
-  // "Fix the recap" in the Plot check puts its words in the box after whatever was typed; the DM sends them.
-  const lastPrefill = useRef(0);
-  useEffect(() => {
-    if (!prefill || prefill.n === lastPrefill.current) return;
-    lastPrefill.current = prefill.n;
-    const now = textRef.current;
-    setText((now.trim() === "" ? prefill.text : `${now.trimEnd()} ${prefill.text}`).slice(0, FIX_MAX_LETTERS));
-    noteRef.current?.focus();
-  }, [prefill]);
 
   // The "being written again" line goes when the new draft is ready and can be changed again.
   useEffect(() => {
@@ -172,7 +153,6 @@ export default function RecapFix({
     try {
       const { requestId: id } = await api.sendFix(recap.ref, text.trim());
       setSorting(true);
-      setProgress(null);
       setRequestId(id);
     } catch (error) {
       fail(error);
@@ -228,9 +208,7 @@ export default function RecapFix({
   };
 
   const status = sorting
-    ? progress
-      ? "" // the wait panel says it (#3355)
-      : words.sorting
+    ? words.sorting
     : slow
       ? words.slow
       : started === "approve"
@@ -263,16 +241,6 @@ export default function RecapFix({
       >
         {status}
       </p>
-      {sorting && progress && (
-        <WorkProgress
-          stage={progress.stage === "waiting" ? words.pickUp : words.sorting}
-          startedAt={progress.startedAt}
-          updatedAt={progress.updatedAt}
-          serverNow={progress.serverNow}
-          state={progress.state === "stalled" ? "stalled" : "running"}
-          whatToDo={progress.state === "stalled" ? words.stalled : undefined}
-        />
-      )}
       {cutOff && (
         <p class="note" role="status">
           {voiceWords.cutOff}
@@ -327,7 +295,6 @@ export default function RecapFix({
             // Look again at the same request: the bot may still finish it, and a new Send counts toward the limit.
             setSlow(false);
             setSorting(true);
-            setProgress(null);
             setChecks((n) => n + 1);
           }}
         >

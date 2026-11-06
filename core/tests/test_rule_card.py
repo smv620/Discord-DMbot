@@ -7,9 +7,10 @@ from __future__ import annotations
 import re
 import unittest
 
-from dmbot.rules import index, rule_card
+from dmbot.rules import index
 from dmbot.rules.house import HouseRule
-from dmbot.rules.rule_card import PART_MAX
+from dmbot.ui import rule_card
+from dmbot.ui.rule_card import PART_MAX
 
 NOW = 1_700_000_000
 

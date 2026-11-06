@@ -129,53 +129,6 @@ class TheJob(DatabaseTest):
         self.assertGreater(row["step_total"], 0)
         self.assertGreater(row["updated_at"], 5)  # moved forward by the steps and the finish
 
-    async def test_cleaning_counts_the_words_it_handled_and_the_ai_calls_it_made(self) -> None:
-        """#3534: counts only, added in the same statement as the lines done."""
-        ai = FakeAI("1. game\n2. other")
-        await self.job(ai).run_round(GUILD)
-        async with self.db.guild(GUILD) as conn:
-            cur = await conn.execute("SELECT words_done, calls_made FROM session_imports")
-            row = await cur.fetchone()
-        assert row is not None
-        words = 6 + 4  # "We meet Kazeth at the gate." and "Anyone seen the pizza?"
-        self.assertEqual((row["words_done"], row["calls_made"]), (words, ai.calls))
-        self.assertGreaterEqual(ai.calls, 1)
-
-    async def test_starting_the_cleaning_again_starts_every_count_again(self) -> None:
-        """#3534: a run put back in the queue goes over every line again, so the words and calls
-        start from nothing too (not twice the transcript)."""
-        ai = FakeAI("1. game\n2. other")
-        await self.job(ai).run_round(GUILD)
-        async with self.db.guild(GUILD) as conn:
-            await conn.execute("UPDATE session_imports SET state = 'waiting'")
-        await self.job(ai).run_round(GUILD)
-        async with self.db.guild(GUILD) as conn:
-            cur = await conn.execute(
-                "SELECT words_done, calls_made, step_done FROM session_imports"
-            )
-            row = await cur.fetchone()
-        assert row is not None
-        self.assertEqual((row["words_done"], row["step_done"]), (10, 2))
-        self.assertEqual(row["calls_made"], 1)
-
-    async def test_a_line_of_someone_who_stopped_is_not_counted_as_handled(self) -> None:
-        async with self.db.guild(GUILD) as conn:
-            await conn.execute("DELETE FROM consent WHERE user_id = %s", (MIRA,))
-        await self.job(FakeAI("1. game\n2. other")).run_round(GUILD)
-        async with self.db.guild(GUILD) as conn:
-            cur = await conn.execute("SELECT words_done, calls_made FROM session_imports")
-            row = await cur.fetchone()
-        assert row is not None
-        self.assertEqual((row["words_done"], row["calls_made"]), (0, 0))
-
-    async def test_without_an_ai_it_counts_words_and_no_calls(self) -> None:
-        await self.job(None).run_round(GUILD)
-        async with self.db.guild(GUILD) as conn:
-            cur = await conn.execute("SELECT words_done, calls_made FROM session_imports")
-            row = await cur.fetchone()
-        assert row is not None
-        self.assertEqual((row["words_done"] > 0, row["calls_made"]), (True, 0))
-
     async def test_a_misheard_name_is_fixed_in_the_cleaned_text_only(self) -> None:
         await self.job(None).run_round(GUILD)
         first = (await self.transcripts.lines(GUILD, self.session))[0]
@@ -317,9 +270,7 @@ class TheJob(DatabaseTest):
     async def test_a_session_gets_at_most_so_many_ai_windows(self) -> None:
 
         job = self.job(FakeAI("1. game"))
-        topics, left, _failures, skipped = await job._topics(
-            GUILD, self.campaign.id, [(MIRA, "a line")] * 30, 2, 0
-        )
+        topics, left, _failures, skipped = await job._topics(GUILD, [(MIRA, "a line")] * 30, 2, 0)
         self.assertEqual((len(topics), left, skipped), (30, 0, True))
 
     async def test_nothing_of_the_transcript_is_logged(self) -> None:

@@ -34,33 +34,21 @@ def question_text(s: PeopleSuggestion, who: str, count: int) -> str:
     )
 
 
-def waiting_text(count: int, *, private: bool = False) -> str:
-    """After a session: how many, never who. `private` is the DM's own chat (#3210): it says what
-    to do next and drops the line about who will see the button."""
+def waiting_text(count: int) -> str:
+    """For the DM screen after a session: how many, never who."""
     what = "question" if count == 1 else "questions"
-    if private:
-        return (
-            f"🧑 **{count} quick {what} about who is who.** DMbot noticed who answers to "
-            "which name. Nothing changes until you say so. Press the button."
-        )
     return (
         f"🧑 **{count} quick {what} about who is who.** DMbot noticed who answers to "
         "which name. Nothing changes until you say so. Press the button; only you will see it."
     )
 
 
-def waiting_line(count: int) -> str:
-    """The short line for the combined after-session message."""
-    what = "question" if count == 1 else "questions"
-    return f"{count} quick {what} about who is who"
-
-
 class PeopleReviewButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
     template=r"dmbot:names:people:(?P<campaign>[0-9a-f]{32})",
 ):
-    """In the DM's private chat after a session (or the DM screen if no DM can be reached); works
-    after a restart (the campaign is in the button's ID)."""
+    """On the DM screen after a session; works after a restart (the campaign is in the
+    button's ID)."""
 
     def __init__(self, campaign_id: str) -> None:
         super().__init__(
@@ -82,6 +70,12 @@ class PeopleReviewButton(
         await start_people_review(interaction, self.campaign_id)
 
 
+def people_review_view(campaign_id: str) -> discord.ui.View:
+    view = discord.ui.View(timeout=None)
+    view.add_item(PeopleReviewButton(campaign_id))
+    return view
+
+
 async def start_people_review(interaction: discord.Interaction, campaign_id: str) -> None:
     memory = _memory(interaction)
     if memory is None:
@@ -90,7 +84,7 @@ async def start_people_review(interaction: discord.Interaction, campaign_id: str
     campaign = await _campaign_for(interaction, campaign_id)
     if campaign is None:
         return
-    view = PeopleReview(campaign.id, campaign.guild_id)
+    view = PeopleReview(campaign.id)
     text = await view.current_text(interaction)
     if text is None:
         await _tell(interaction, NOTHING_WAITING)
@@ -111,26 +105,25 @@ class PeopleReview(_Menu):
     """Yes / Someone else… / Not a player / Later for a name; Yes / No / Later for a
     character. Later keeps the question waiting for the next time."""
 
-    def __init__(self, campaign_id: str, guild_id: int) -> None:
+    def __init__(self, campaign_id: str) -> None:
         super().__init__()
         self.campaign_id = campaign_id
-        # The server comes with the question, not from the press: the question may be in the
-        # DM's private chat, where a press has no server (#3210).
-        self.guild_id = guild_id
         self.later: set[str] = set()  # left for another time this round
         self.shown: PeopleSuggestion | None = None
 
     def _name_of(self, interaction: discord.Interaction, s: PeopleSuggestion) -> str:
-        shown = _bot(interaction).name_of(self.guild_id, s.user_id)
+        guild = interaction.guild
+        shown = _bot(interaction).name_of(guild.id, s.user_id) if guild else s.shown
         return s.shown if shown.startswith("<@") else shown
 
     async def current_text(self, interaction: discord.Interaction) -> str | None:
         """The next waiting question with its buttons set, or None when none is left."""
         memory = _memory(interaction)
-        if memory is None:
+        guild = interaction.guild
+        if memory is None or guild is None:
             return None
         waiting = [
-            s for s in await memory.people_suggestions(self.guild_id, self.campaign_id)
+            s for s in await memory.people_suggestions(guild.id, self.campaign_id)
             if s.row_id not in self.later
         ]  # fmt: skip
         self.clear_items()
@@ -170,21 +163,22 @@ class PeopleReview(_Menu):
         memory = _memory(interaction)
         if campaign is None or memory is None or self.shown is None:
             return None
-        self.guild_id = campaign.guild_id  # (the campaign may have moved server since this opened)
         return memory, self.shown
 
     async def _yes(self, interaction: discord.Interaction) -> None:
         got = await self._check(interaction)
-        if got is None:
+        if got is None or interaction.guild is None:
             return
         memory, s = got
         who = self._name_of(interaction, s)
         try:
             if s.kind == "name":
-                await memory.accept_person_name(self.guild_id, self.campaign_id, s.row_id)
+                await memory.accept_person_name(interaction.guild.id, self.campaign_id, s.row_id)
                 done = f"✅ **{_md(s.name)}** is now a name for **{_md(who)}**."
             else:
-                await memory.decide_plays(self.guild_id, self.campaign_id, s.row_id, yes=True)
+                await memory.decide_plays(
+                    interaction.guild.id, self.campaign_id, s.row_id, yes=True
+                )
                 done = f"✅ **{_md(who)}** plays **{_md(s.name)}**."
         except MemoryRuleError:
             await _tell(interaction, GONE)
@@ -193,15 +187,17 @@ class PeopleReview(_Menu):
 
     async def _no(self, interaction: discord.Interaction) -> None:
         got = await self._check(interaction)
-        if got is None:
+        if got is None or interaction.guild is None:
             return
         memory, s = got
         try:
             if s.kind == "name":
-                await memory.reject_person_name(self.guild_id, self.campaign_id, s.row_id)
+                await memory.reject_person_name(interaction.guild.id, self.campaign_id, s.row_id)
                 done = f"🚫 **{_md(s.name)}** is not a player's name. DMbot won't ask again."
             else:
-                await memory.decide_plays(self.guild_id, self.campaign_id, s.row_id, yes=False)
+                await memory.decide_plays(
+                    interaction.guild.id, self.campaign_id, s.row_id, yes=False
+                )
                 done = (
                     f"❌ **{_md(self._name_of(interaction, s))}** is not marked as playing "
                     f"**{_md(s.name)}**. DMbot won't ask again."
@@ -234,11 +230,12 @@ class PeopleReview(_Menu):
         self, interaction: discord.Interaction, person: discord.User | discord.Member
     ) -> None:
         got = await self._check(interaction)
-        if got is None:
+        guild = interaction.guild
+        if got is None or guild is None:
             return
         memory, s = got
         bot = _bot(interaction)
-        if person.bot or person.id not in await bot.consent.agreed(self.guild_id):
+        if person.bot or person.id not in await bot.consent.agreed(guild.id):
             # Only people who agreed to be recorded here could have been at the table.
             await _tell(
                 interaction,
@@ -247,14 +244,12 @@ class PeopleReview(_Menu):
             )
             return
         try:
-            await memory.accept_person_name(
-                self.guild_id, self.campaign_id, s.row_id, user_id=person.id
-            )
+            await memory.accept_person_name(guild.id, self.campaign_id, s.row_id, user_id=person.id)
         except MemoryRuleError:
             await _tell(interaction, GONE)
             return
-        shown = bot.name_of(self.guild_id, person.id)
+        shown = bot.name_of(guild.id, person.id)
         await self._next(interaction, f"✅ **{_md(s.name)}** is now a name for **{_md(shown)}**.")
 
 
-__all__ = ["PeopleReviewButton", "start_people_review", "waiting_line", "waiting_text"]
+__all__ = ["PeopleReviewButton", "people_review_view", "start_people_review", "waiting_text"]

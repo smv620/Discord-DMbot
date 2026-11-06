@@ -69,7 +69,7 @@ class Catalog(unittest.TestCase):
         for r in left_out:
             self.assertIn(r.name[1:], ui.COVERED_2024)
         self.assertNotIn("Spotting a spell"[1:], ui.COVERED_2024)
-        self.assertEqual(optional.covered_note("2014"), "")  # 2014 leaves nothing out
+        self.assertEqual(ui.covered_note("2014"), "")  # 2014 leaves nothing out
 
     def test_a_rule_follows_the_default_until_the_dm_switches_it(self) -> None:
         self.assertTrue(optional.is_on("xge-sleep", {}, True))
@@ -162,7 +162,7 @@ class Command(DatabaseTest):
         text, view = it.edited[0]
         self.assertTrue(text.startswith("⬜ **Sleeping in armor** is now off.\n📚"))  # news first
         self.assertIn("⬜ **Sleeping in armor**:", text)
-        self.assertNotIn(optional.NO_SCREEN_NOTE, text)
+        self.assertNotIn(ui.NO_SCREEN_NOTE, text)
         (note,) = self.posted.await_args_list
         self.assertEqual(note.args[0], SCREEN)
         self.assertTrue(
@@ -236,7 +236,7 @@ class Command(DatabaseTest):
         it = await self.switch(menu, "tce-parley")
         text, _ = it.edited[0]
         self.assertTrue(
-            text.startswith(f"⬜ **Talking with monsters** is now off. {optional.NO_SCREEN_NOTE}\n")
+            text.startswith(f"⬜ **Talking with monsters** is now off. {ui.NO_SCREEN_NOTE}\n")
         )
         self.assertLessEqual(len(text), ui.TEXT_MAX)
 
@@ -281,7 +281,7 @@ class Command(DatabaseTest):
         it.followup.send = AsyncMock(side_effect=gone)
         await menu._switch(it)  # doesn't raise
         it.followup.send.assert_awaited_once()
-        self.assertIn(optional.NO_SCREEN_NOTE, it.followup.send.await_args.args[0])
+        self.assertIn(ui.NO_SCREEN_NOTE, it.followup.send.await_args.args[0])
         self.assertEqual(
             await self.campaigns.optional_rule_overrides(GUILD, self.campaign.id),
             {"tce-parley": False},

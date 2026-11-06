@@ -24,7 +24,7 @@ from dmbot.web import sessions
 from tests.test_recap_web import BOB, NOW
 from tests.test_transcript_cleaner import alias, entity, lookup
 from tests.test_web_api import ALICE, THURSDAY
-from tests.test_web_recap_requests import WithRequests, plain
+from tests.test_web_recap_requests import WithRequests
 
 CLIP = b"\x1a\x45\xdf\xa3 not really audio, the doors do not decode it"
 
@@ -85,8 +85,7 @@ class TheDoors(WithClips):
         rid = await self.send_clip()
         self.assertRegex(rid, r"^[0-9a-f]{32}$")
         self.assertEqual(
-            plain(await web.read_voice(self.web, self.session, self.ref, rid)),
-            {"state": "waiting"},
+            await web.read_voice(self.web, self.session, self.ref, rid), {"state": "waiting"}
         )
         self.assertEqual(await self.clip_in_row(rid), CLIP)
 
@@ -230,7 +229,7 @@ class TheBot(WithClips):
         self.assertEqual(outcome, "done")
         self.assertIsNone(await self.clip_in_row(rid))
         self.assertEqual(
-            plain(await web.read_voice(self.web, self.session, self.ref, rid)),
+            await web.read_voice(self.web, self.session, self.ref, rid),
             {"state": "done", "text": "Mira did not draw her blade."},
         )
 
@@ -249,7 +248,7 @@ class TheBot(WithClips):
             self.assertEqual(outcome, expected)
             self.assertIsNone(await self.clip_in_row(rid), expected)
             got = await web.read_voice(self.web, self.session, self.ref, rid)
-            self.assertEqual(plain(got), {"state": "failed", "error": expected})
+            self.assertEqual(got, {"state": "failed", "error": expected})
 
     async def test_a_retaken_claim_is_not_billed_and_changes_nothing(self) -> None:
         import dataclasses
@@ -270,10 +269,8 @@ class TheBot(WithClips):
         self.assertEqual(outcome, "done")  # (what this worker saw)
         meter.assert_not_awaited()  # the row was not its to finish, so no minutes either
         self.assertEqual(await self.clip_in_row(rid), CLIP)
-        got = await web.read_voice(self.web, self.session, self.ref, rid)
-        self.assertEqual(plain(got), {"state": "working"})
         self.assertEqual(
-            (got["progress"]["stage"], got["progress"]["state"]), ("working", "running")
+            await web.read_voice(self.web, self.session, self.ref, rid), {"state": "working"}
         )
 
     async def test_a_gate_that_says_no_transcribes_nothing_and_deletes_the_clip(self) -> None:
@@ -600,10 +597,8 @@ class TheLoop(WithClips):
         store = SimpleNamespace(claim_next=claim, sweep_clips=AsyncMock())
         bot = self.bot(store)
         with (
-            mock.patch("dmbot.recaps.discord.recap_requests.run_voice", AsyncMock()) as v,
-            mock.patch(
-                "dmbot.recaps.discord.recap_requests.run_one", AsyncMock(return_value="done")
-            ) as one,
+            mock.patch("dmbot.bot.recap_requests.run_voice", AsyncMock()) as v,
+            mock.patch("dmbot.bot.recap_requests.run_one", AsyncMock(return_value="done")) as one,
         ):
             await DMBot.run_recap_requests(cast(Any, bot))
         self.assertEqual(seen, [False, False])  # typed only
@@ -634,8 +629,8 @@ class TheLoop(WithClips):
             return "done"
 
         with (
-            mock.patch("dmbot.recaps.discord.recap_requests.run_voice", slow),
-            mock.patch("dmbot.recaps.discord.recap_requests.run_one", AsyncMock()) as sorted_,
+            mock.patch("dmbot.bot.recap_requests.run_voice", slow),
+            mock.patch("dmbot.bot.recap_requests.run_one", AsyncMock()) as sorted_,
         ):
             await asyncio.wait_for(DMBot.run_recap_voice(cast(Any, bot)), 2)
             self.assertEqual(seen, [True])  # voice only
@@ -643,7 +638,7 @@ class TheLoop(WithClips):
             # a slow clip does not hold up the round: a typed note is worked while it runs
             typed = rq.Request("b" * 32, "c" * 32, 100, 7, "fix", 2, "instructions", b"", "")
             run_one = AsyncMock(return_value="done")
-            with mock.patch("dmbot.recaps.discord.recap_requests.run_one", run_one):
+            with mock.patch("dmbot.bot.recap_requests.run_one", run_one):
                 typed_claims = [typed, None]
 
                 async def claim_typed(gid: int, *, voice: bool | None = None) -> Any:
@@ -679,7 +674,7 @@ class TheLoop(WithClips):
         async def boom(*a: Any, **k: Any) -> str:
             raise RuntimeError("decoder fell over")
 
-        with mock.patch("dmbot.recaps.discord.recap_requests.run_voice", boom):
+        with mock.patch("dmbot.bot.recap_requests.run_voice", boom):
             await asyncio.wait_for(DMBot.run_recap_voice(cast(Any, bot)), 2)
             await asyncio.sleep(0.05)
             self.assertEqual(bot._voice_tasks, {})  # the failure freed every slot
@@ -691,7 +686,7 @@ class TheLoop(WithClips):
         import asyncio
         from unittest import mock
 
-        from dmbot.recaps.discord import RECAP_VOICE_AT_ONCE
+        from dmbot.bot import RECAP_VOICE_AT_ONCE
 
         guilds = [SimpleNamespace(id=1000 + n) for n in range(RECAP_VOICE_AT_ONCE + 2)]
         made = []
@@ -707,7 +702,7 @@ class TheLoop(WithClips):
             await release.wait()
             return "done"
 
-        with mock.patch("dmbot.recaps.discord.recap_requests.run_voice", slow):
+        with mock.patch("dmbot.bot.recap_requests.run_voice", slow):
             await asyncio.wait_for(DMBot.run_recap_voice(cast(Any, bot)), 2)
             self.assertEqual(len(bot._voice_tasks), RECAP_VOICE_AT_ONCE)
             self.assertEqual(len(made), RECAP_VOICE_AT_ONCE)  # the rest were not even claimed
@@ -820,7 +815,7 @@ class TheRoutes(WithClips):
         )
         self.assertEqual(got.status_code, 202, got.text)
         poll = await self.client.get(f"{self.url}/{got.json()['requestId']}")
-        self.assertEqual((poll.status_code, plain(poll.json())), (200, {"state": "waiting"}))
+        self.assertEqual((poll.status_code, poll.json()), (200, {"state": "waiting"}))
 
     async def test_the_content_type_decides(self) -> None:
         for kind in ("audio/mpeg", "application/json", ""):
@@ -906,7 +901,7 @@ class TheDeepgramTimeout(unittest.TestCase):
         self.assertGreaterEqual(deepgram.request_timeout_s(120.0), 50)
         self.assertEqual(deepgram.request_timeout_s(10_000.0), deepgram.LONG_REQUEST_MAX_S)
         # inside the time the whole job is given (decode, hints, request, name fixing)
-        from dmbot.recaps.discord import VOICE_TRANSCRIBE_S
+        from dmbot.bot import VOICE_TRANSCRIBE_S
         from dmbot.recaps.requests import VOICE_TIMEOUT_S
 
         self.assertLess(deepgram.LONG_REQUEST_MAX_S, VOICE_TRANSCRIBE_S)
@@ -926,7 +921,7 @@ class TheSweepRounds(WithClips):
         )
 
     async def test_clips_are_swept_about_once_a_minute_even_with_recaps_off(self) -> None:
-        from dmbot.recaps.discord import CLIP_SWEEP_EVERY
+        from dmbot.bot import CLIP_SWEEP_EVERY
 
         bot = self.bot(recaps_on=False)
         for _ in range(CLIP_SWEEP_EVERY):

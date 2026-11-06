@@ -107,24 +107,13 @@ class HandoverOffer:
     # ran out of days (#690).
     message_id: int | None = None
     end_told_at: int | None = None
-    # Made by email (#2532): to whoever opens its link on the website; `to_name` is empty.
-    via_email: bool = False
-    # The person accepted and chose another server (#2532, slice C): the bot moves the campaign
-    # there. Until it has, the offer is neither open to answer nor allowed to run out or be taken
-    # back. (`moved_campaign_id` is from an earlier design that copied it; nothing writes it.)
-    move_to_guild_id: int | None = None
-    moved_campaign_id: str | None = None  # (unused since the move changes the campaign's server)
-    move_claimed_at: int | None = None  # the bot's lease on the move that is under way
-    move_asked_at: int | None = None
-    move_failed_for: int | None = None  # who had accepted when a move did not happen,
-    move_failed_reason: str | None = None  # and the plain reason, for that person only
 
     @property
     def expires_at(self) -> int:
         return self.created_at + HANDOVER_SECONDS
 
     def is_open(self, now: int) -> bool:
-        return self.status == "open" and now < self.expires_at and self.move_to_guild_id is None
+        return self.status == "open" and now < self.expires_at
 
 
 class CampaignError(ValueError):
@@ -151,9 +140,7 @@ class Campaign:
     # The live transcript channel (#124); None until the first session.
     transcript_channel_id: int | None = None
     gametime_channel_id: int | None = None  # the players' game-time channel (#1116)
-    # The old `#dmb-chat` channel (#1187): no longer made, read or posted to (#3212). Kept only so
-    # the DM can be offered to remove it, and so the retention rules still treat it as kept.
-    dmbchat_channel_id: int | None = None
+    dmbchat_channel_id: int | None = None  # where the table asks DMbot questions (#1187)
     dm_bot_channel_id: int | None = None  # the DM Bot channel: settings by role (#1666)
     rules_channel_id: int | None = None  # the rules archive: house rules, read only (#1752)
     npcs_channel_id: int | None = None  # the NPC roster: people and groups, read only (#1761)
@@ -203,14 +190,6 @@ class Campaign:
     owner_left_at: int | None = None
     # When DMbot first saw the owner was not in the server (#1214); None while they are here.
     owner_missing_since: int | None = None
-
-    @property
-    def table_chat_id(self) -> int | None:
-        """The table's chat (#3212): the one text channel the DM picked, else the voice channel's
-        own text chat (the last one used). It replaces the old `dmb-chat` channel everywhere:
-        table questions are read and answered here, and the clock line and the recap are posted
-        here. None until a session has been started in a voice channel and none was picked."""
-        return self.table_chat_channel_id or self.last_voice_channel_id
 
     @property
     def last_active_at(self) -> int:

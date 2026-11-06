@@ -37,8 +37,6 @@ public_paths=(
   /recap-audio/ref/voice
   /recaps/token
   /recaps/token/audio/voice
-  /pictures/code
-  /pictures/code/preview
 )
 # END-PUBLIC-PATHS
 closed_paths=(/health /personal /not-a-route-at-all)

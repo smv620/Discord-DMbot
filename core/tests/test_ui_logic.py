@@ -103,12 +103,10 @@ class Wording(unittest.TestCase):
 
     def test_backup_filename(self) -> None:
         self.assertEqual(
-            backup_filename("Rime of the Frostmaiden!", NOW, "unknown"),
-            "rime-of-the-frostmaiden-2027-01-15.dmbot#unknown.json.gz",
+            backup_filename("Rime of the Frostmaiden!", NOW),
+            "rime-of-the-frostmaiden-2027-01-15.dmbot.json.gz",
         )
-        self.assertEqual(
-            backup_filename("✨✨", NOW, "unknown"), "campaign-2027-01-15.dmbot#unknown.json.gz"
-        )
+        self.assertEqual(backup_filename("✨✨", NOW), "campaign-2027-01-15.dmbot.json.gz")
 
 
 class MenuChoices(unittest.TestCase):
@@ -165,7 +163,7 @@ class MenuChoices(unittest.TestCase):
         self.assertNotIn("recommended", quiet)
         normal = settings_summary("2024", "2014", True, "peek", "normal")[-1]
         self.assertIn("**Normal** (recommended) — how much DMbot says", normal)
-        self.assertIn("press ⚙️ Manage DMbot in the DM Bot channel", normal)
+        self.assertIn("press ⚙️ Settings in the DM Bot channel", normal)
 
     def test_campaign_names_are_cut_for_a_phone(self) -> None:
         from dmbot.ui.logic import NAME_LABEL_MAX, name_label

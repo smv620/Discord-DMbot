@@ -161,12 +161,9 @@ class Tiers(unittest.TestCase):
                 Feature.RECAP: AIModelTier.FAST,  # the cinematic recap (#1382), off by default
                 Feature.RECAP_RETRY: AIModelTier.CAREFUL,
                 Feature.NAME_PASS: AIModelTier.CAREFUL,  # the name pass (#2628)
-                Feature.WHO_IS_IT: AIModelTier.FAST,  # who "he" is, scored (#2790)
                 Feature.RECAP_FEEDBACK: AIModelTier.FAST,  # the DM's feedback on a recap (#2076)
                 Feature.PLAN_READER: AIModelTier.CAREFUL,
                 Feature.TIME_SUGGEST: AIModelTier.FAST,  # a time jump suggested (#1758)
-                Feature.IMPORT_TIME: AIModelTier.FAST,  # where an imported session ended (#2979)
-                Feature.THEATRE: AIModelTier.FAST,  # a scene recast as a script (#3244)
                 Feature.SUPPORT: AIModelTier.DEEP,
                 Feature.RECAP_WRITE: AIModelTier.CREATIVE,  # the recap as plain text (#2074)
                 Feature.RECAP_FORMAT: AIModelTier.FORMATTING,  # its sections, no word changed
@@ -174,7 +171,6 @@ class Tiers(unittest.TestCase):
                 Feature.IMAGE: AIModelTier.FAST,  # an image posted in the table chat (#2450)
                 Feature.IMAGE_MAP: AIModelTier.CAREFUL,  # a map read again for its layout (#2450)
                 Feature.PLOT_CHECK: AIModelTier.CAREFUL,  # advice for the DM (#2122)
-                Feature.PLOT_TALK: AIModelTier.CAREFUL,  # talking an issue through (#2123)
             },
         )
         self.assertEqual(set(FEATURE_TIERS), set(Feature))  # none left out

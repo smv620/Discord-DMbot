@@ -19,9 +19,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from dmbot.db import Conn
-from dmbot.memory import evidence as evidence_links
 from dmbot.memory._changes import (
-    ALIAS_KNOWERS,
     BELIEFS,
     ENTITIES,
     PERSPECTIVES,
@@ -29,33 +27,18 @@ from dmbot.memory._changes import (
     Changes,
     Scope,
 )
-from dmbot.memory._changes import TOLD as TOLD_ROWS
-from dmbot.memory.evidence import CLAIM, LINE
 from dmbot.memory.models import (
-    ACCUSATION,
     BELIEF_STATUSES,
-    BRANCH,
-    CHANGE_KINDS,
     CONFIRMED,
     DM,
-    EVASION_UNDER_MAGIC,
     EVIDENCE_ID_MAX,
     EVIDENCE_MAX,
-    FALSE_EVIDENCE,
     KNOWN,
-    KNOWN_LIE,
-    LIE_STATUSES,
     MAGICALLY_VERIFIED,
     PARTY,
-    PC_VIEW,
-    RETRACTION,
     REVEALED_FACT,
     SECRET_PLOT,
-    SUSPECTED_LIE,
-    THEORY,
-    TOLD,
     TRUTH,
-    UPDATE,
     Belief,
     MemoryRuleError,
     new_id,
@@ -70,8 +53,7 @@ def belief_of(row: dict[str, Any]) -> Belief:
     return Belief(
         row["id"], row["perspective_id"], row["relation_id"], float(row["confidence"]),
         row["status"], row["session_at"], tuple(row["evidence_ids"]), int(row["seq"]),
-        row["recorded_at"], bool(row.get("pinned", False)), row.get("derived_from"),
-        row.get("change_kind"), row.get("game_time"),
+        row["recorded_at"], bool(row.get("pinned", False)),
     )  # fmt: skip
 
 
@@ -111,67 +93,6 @@ async def _newest(
     return newest
 
 
-BAD_LINEAGE = "That belief doesn't come from that one."
-NOT_A_SOURCE = "Pick someone from this campaign who said it."
-PINNED_RETRACTION = "That is pinned as 100% true. Unpin it first, then take it back."
-SAY_WHO_LIED = "Say which character lied."
-SUSPECTED_MAX = 0.5  # a suspected lie is doubted, never leaned towards (the accusation rule: 0.5)
-NOT_A_LIE = (
-    "A lie is believed false: a sure lie is 0%, a suspected one is above 0% and at most 50%."
-)
-LIE_NOT_HERE = "The players' view as a whole can't hold a lie; a character can."
-
-
-async def _check_lineage(
-    w: Changes,
-    perspective_id: str,
-    relation_id: str,
-    confidence: float,
-    derived_from: str | None,
-    change_kind: str | None,
-) -> None:
-    """Where a belief came from (#3091), checked before it is written. A change kind needs the
-    belief it comes from, in this campaign, and each kind has its shape: an `update` or a
-    `retraction` revises the same point of view's belief in the same connection (a retraction is
-    no longer held as fact); a `branch` is the same point of view's competing theory on ANOTHER
-    connection; `told` passes the same connection on from ANOTHER point of view."""
-    if derived_from is None and change_kind is None:
-        return
-    if derived_from is None or change_kind not in CHANGE_KINDS:
-        raise MemoryRuleError(BAD_LINEAGE)
-    earlier = await w.get(BELIEFS, derived_from)
-    if earlier is None:
-        raise MemoryRuleError(BAD_LINEAGE)
-    if change_kind == RETRACTION and earlier["pinned"]:
-        raise MemoryRuleError(PINNED_RETRACTION)
-    same_view = earlier["perspective_id"] == perspective_id
-    same_relation = earlier["relation_id"] == relation_id
-    shape = {
-        UPDATE: same_view and same_relation,
-        RETRACTION: same_view and same_relation and confidence < KNOWN,
-        BRANCH: same_view and not same_relation,
-        TOLD: same_relation and not same_view,
-    }[change_kind]
-    if not shape:
-        raise MemoryRuleError(BAD_LINEAGE)
-
-
-async def _check_lie(w: Changes, status: str, confidence: float, sources: Sequence[str]) -> None:
-    """A belief that someone lied (#3091): false for whoever holds it, so a known lie is held at
-    0.0 and a suspected one above 0 and at most 0.5 (its confidence is still how sure the
-    connection is TRUE), and it names who lied: characters of this campaign, never nobody."""
-    if status == KNOWN_LIE and confidence != 0.0:
-        raise MemoryRuleError(NOT_A_LIE)
-    if status == SUSPECTED_LIE and not 0.0 < confidence <= SUSPECTED_MAX:
-        raise MemoryRuleError(NOT_A_LIE)
-    liars = set(sources)
-    if not liars:
-        raise MemoryRuleError(SAY_WHO_LIED)
-    found = await w.select(ENTITIES, " AND id = ANY(%s) AND type = 'character'", [sorted(liars)])
-    if len(found) != len(liars):
-        raise MemoryRuleError(NOT_A_SOURCE)
-
-
 async def _add(
     w: Changes,
     perspective_id: str,
@@ -181,56 +102,15 @@ async def _add(
     evidence: Sequence[str] = (),
     session_at: int | None = None,
     pinned: bool | None = None,
-    copy_from: str | None = None,
-    derived_from: str | None = None,
-    change_kind: str | None = None,
-    sources: Sequence[str] = (),
-    game_time: int | None = None,
 ) -> dict[str, Any]:
     """The checked insert behind `believe_in` and `follow`. `pinned` (the DM's 📌, #2447): None
-    keeps what the pair's last belief said, so a new belief never silently unpins.
-    `copy_from`: the id of an earlier belief of this campaign whose evidence links this one
-    carries on (a placeholder stays a placeholder); `evidence` is then that belief's old list.
-    Without it `evidence` is new and each item must be a claim or line of this campaign (#2662).
-    `derived_from` and `change_kind`: the belief this one revises, and how (#3091).
-    `sources`: the entries of this campaign that said it (a `source` link each). `game_time`: the
-    game minute a LIVE session's clock read when it was made (#3091), else None; a copy keeps its
-    origin's, because it is the same belief."""
+    keeps what the pair's last belief said, so a new belief never silently unpins."""
     if not 0.0 <= confidence <= 1.0:
         raise MemoryRuleError("A confidence runs from 0 to 1.")
-    if game_time is not None and (isinstance(game_time, bool) or game_time < 0):
-        raise MemoryRuleError("A game time is a number of minutes from 0.")
     if status not in BELIEF_STATUSES:
         raise MemoryRuleError("That is not a kind of belief.")
     if len(evidence) > EVIDENCE_MAX or any(not e or len(e) > EVIDENCE_ID_MAX for e in evidence):
         raise MemoryRuleError("That evidence is not in the right shape.")
-    if copy_from is not None and (derived_from is not None or change_kind is not None):
-        raise ValueError("A copy keeps the lineage of the belief it copies; it is never given one.")
-    if copy_from is None:
-        await _check_lineage(w, perspective_id, relation_id, confidence, derived_from, change_kind)
-    else:
-        # a copy (a reworded connection's, a pin's) is the same belief: it keeps where it came
-        # from, whatever connection it now sits on (#3091)
-        origin = await w.get(BELIEFS, copy_from)
-        if origin is not None:
-            derived_from, change_kind = origin["derived_from"], origin["change_kind"]
-            game_time = origin["game_time"]
-    if status in LIE_STATUSES and copy_from is None:
-        await _check_lie(w, status, confidence, sources)
-    for who in dict.fromkeys(sources):
-        if not await evidence_links.resolves(
-            w.conn, w.guild_id, w.campaign_id, evidence_links.SOURCE, who
-        ):
-            raise MemoryRuleError(NOT_A_SOURCE)
-    kinds: dict[str, str] = {}
-    if copy_from is None:  # new evidence: each item a claim or a line of THIS campaign, or refused
-        for item in dict.fromkeys(evidence):
-            for kind in (CLAIM, LINE):
-                if await evidence_links.resolves(w.conn, w.guild_id, w.campaign_id, kind, item):
-                    kinds[item] = kind
-                    break
-            else:
-                raise MemoryRuleError(evidence_links.NOT_THIS_CAMPAIGN)
     last = await w.select(
         BELIEFS,
         " AND perspective_id = %s AND relation_id = %s ORDER BY seq DESC LIMIT 1",
@@ -239,7 +119,7 @@ async def _add(
     # the version its own log row takes, so newer rows sort later; one past the pair's last when
     # that is higher (a restored backup brings rows numbered by another campaign's history)
     seq = max(w.version + 1, int(last[0]["seq"]) + 1 if last else 0)
-    row = await w.insert(
+    return await w.insert(
         BELIEFS,
         {
             "id": new_id(),
@@ -252,40 +132,8 @@ async def _add(
             "seq": seq,
             "recorded_at": w.now,
             "pinned": bool(last[0]["pinned"]) if pinned is None and last else bool(pinned),
-            "derived_from": derived_from,
-            "change_kind": change_kind,
-            "game_time": game_time,
         },
     )
-    if copy_from is not None:
-        await w.conn.execute(
-            "INSERT INTO memory_evidence (guild_id, campaign_id, belief_id, kind, target_id,"
-            " session_started_at, added_at)"
-            " SELECT guild_id, campaign_id, %s, kind, target_id, session_started_at, added_at"
-            " FROM memory_evidence WHERE guild_id = %s AND campaign_id = %s AND belief_id = %s"
-            " ON CONFLICT DO NOTHING",
-            (row["id"], *w.ids, copy_from),
-        )
-    for item, kind in kinds.items():
-        await evidence_links.add_in(
-            w, kind=kind, target_id=item, belief_id=row["id"],
-            session_started_at=session_at, trusted=True,
-        )  # fmt: skip
-    for who in dict.fromkeys(sources):
-        await evidence_links.add_in(
-            w, kind=evidence_links.SOURCE, target_id=who, belief_id=row["id"],
-            session_started_at=session_at, trusted=True,
-        )  # fmt: skip
-    return row
-
-
-async def add_belief(
-    w: Changes, perspective_id: str, relation_id: str, confidence: float, status: str
-) -> None:
-    """A belief of a character's point of view, written by the DM's "Who knows this?" (#2935)
-    through `memory.knowers`: the one place that writes a player character's certain belief. A
-    new row, so the history stays and Undo works; The truth and The party are not written here."""
-    await _add(w, perspective_id, relation_id, confidence, status)
 
 
 async def set_pin(w: Changes, relation_id: str, pinned: bool) -> Belief:
@@ -311,22 +159,14 @@ async def set_pin(w: Changes, relation_id: str, pinned: bool) -> Belief:
         if status not in (SECRET_PLOT, REVEALED_FACT, MAGICALLY_VERIFIED):
             status = SECRET_PLOT if held else REVEALED_FACT  # a doubt or a lie is not 100% truth
         row = await _add(
-            w,
-            ids[TRUTH],
-            relation_id,
-            KNOWN,
-            status,
-            evidence,
-            session_at,
-            pinned=True,
-            copy_from=truth["id"] if truth is not None else None,
+            w, ids[TRUTH], relation_id, KNOWN, status, evidence, session_at, pinned=True
         )
     else:
         if truth is None or not bool(truth["pinned"]):
             raise MemoryRuleError("That connection isn't pinned.")
         row = await _add(
             w, ids[TRUTH], relation_id, float(truth["confidence"]), status, evidence,
-            session_at, pinned=False, copy_from=truth["id"],
+            session_at, pinned=False,
         )  # fmt: skip
     return belief_of(row)
 
@@ -340,29 +180,15 @@ async def believe_in(
     *,
     evidence: Sequence[str] = (),
     session_at: int | None = None,
-    derived_from: str | None = None,
-    change_kind: str | None = None,
-    sources: Sequence[str] = (),
-    game_time: int | None = None,
 ) -> Belief:
     """A perspective comes to believe a connection (or stops, at 0.0), inside an open write. Both
-    ends must be in this campaign; only the DM writes The truth. `derived_from`, `change_kind`
-    and `sources` say where the belief came from; `game_time` is the live game minute (#3091)."""
+    ends must be in this campaign; only the DM writes The truth."""
     perspective = await w.get(PERSPECTIVES, perspective_id)
     relation = await w.get(RELATIONS, relation_id)
     if perspective is None or relation is None:
         raise MemoryRuleError(NOT_THERE)
     if perspective["kind"] == TRUTH and w.source != DM:
         raise MemoryRuleError(ONLY_THE_DM)
-    if perspective["kind"] == PARTY and status in LIE_STATUSES:
-        raise MemoryRuleError(LIE_NOT_HERE)
-    if perspective["kind"] == TRUTH and status == SUSPECTED_LIE:
-        raise MemoryRuleError(NOT_A_LIE)  # (The truth knows: it confirms a lie, it never suspects)
-    if perspective["kind"] == TRUTH:
-        held = (await _newest(w, [relation_id])).get((relation_id, perspective_id))
-        if held is not None and held["pinned"] and (confidence < KNOWN or status in LIE_STATUSES):
-            # 📌 is the DM's word that it is 100% true, whatever the lineage of the write
-            raise MemoryRuleError(PINNED_RETRACTION)
     if perspective["kind"] == PARTY and (
         confidence < KNOWN
         or relation["secret"]
@@ -374,97 +200,7 @@ async def believe_in(
         # own switch, and a guess is not recorded here.
         raise MemoryRuleError(NOT_A_REVEAL)
     return belief_of(
-        await _add(
-            w,
-            perspective_id,
-            relation_id,
-            confidence,
-            status,
-            evidence,
-            session_at,
-            derived_from=derived_from,
-            change_kind=change_kind,
-            sources=sources,
-            game_time=game_time,
-        )
-    )
-
-
-BAD_READING = "That is not a belief DMbot can place."
-ALREADY_KNOWN = "The players already know that, so a guess about it adds nothing."
-SECRET_FIRST = "That connection is secret. Show it to the players first."
-
-
-async def place_belief(
-    w: Changes,
-    perspective_id: str,
-    relation_id: str,
-    confidence: float,
-    status: str,
-    *,
-    evidence: Sequence[str] = (),
-    session_at: int | None = None,
-    sources: Sequence[str] = (),
-    game_time: int | None = None,
-) -> Belief:
-    """A belief the DM placed from a reading (#2412), inside an open write. `believe_in` is for
-    the DM's own beliefs and refuses a guess on the party's view; this is the one door a reading
-    comes through, so it holds each view to the kind of belief it may have:
-    - **The truth** (the DM's alone): a false public statement, 0.0 False Evidence.
-    - **The party**: a guess or an accusation or a dodge under a spell (above 0 and below 1) on
-      any connection; or, at 1.0, a Revealed Fact or a Magically Verified word on a connection that
-      is confirmed and shown (a secret one is revealed first, which is the DM's own step).
-    - **A character** (a player's or an NPC): a guess or an accusation, above 0 and below 1; or
-      a suspected lie (above 0 and at most 50%) that names who lied in `sources` (#3091).
-    The relation it hangs on is whatever the caller found; this never changes it."""
-    perspective = await w.get(PERSPECTIVES, perspective_id)
-    relation = await w.get(RELATIONS, relation_id)
-    if perspective is None or relation is None:
-        raise MemoryRuleError(NOT_THERE)
-    kind = perspective["kind"]
-    guess = (THEORY, ACCUSATION)
-    if kind == TRUTH:
-        if w.source != DM:
-            raise MemoryRuleError(ONLY_THE_DM)
-        ok = status == FALSE_EVIDENCE and confidence == 0.0
-        held = (await _newest(w, [relation_id])).get((relation_id, perspective_id))
-        if ok and held is not None and held["pinned"]:
-            # 📌 is the DM's word that it is 100% true; a reading never takes that back (#3116)
-            raise MemoryRuleError(PINNED_RETRACTION)
-    elif kind == PARTY:
-        if status in (REVEALED_FACT, MAGICALLY_VERIFIED):
-            if confidence != KNOWN:
-                raise MemoryRuleError(BAD_READING)
-            if relation["status"] != CONFIRMED:
-                raise MemoryRuleError(NOT_A_REVEAL)
-            if relation["secret"] or relation["unrevealed"]:
-                raise MemoryRuleError(SECRET_FIRST)
-            ok = True
-        else:
-            ok = status in (*guess, EVASION_UNDER_MAGIC) and 0.0 < confidence < KNOWN
-            held = (await _newest(w, [relation_id])).get((relation_id, perspective_id))
-            if ok and held is not None and float(held["confidence"]) >= KNOWN:
-                # (the players' readers take the party's newest belief, so a guess would hide a
-                # connection they already know)
-                raise MemoryRuleError(ALREADY_KNOWN)
-    else:
-        ok = (status in guess and 0.0 < confidence < KNOWN) or (
-            status == SUSPECTED_LIE and bool(sources)  # (_check_lie holds the range)
-        )
-    if not ok or (sources and status != SUSPECTED_LIE):
-        raise MemoryRuleError(BAD_READING)
-    return belief_of(
-        await _add(
-            w,
-            perspective_id,
-            relation_id,
-            confidence,
-            status,
-            evidence,
-            session_at,
-            sources=sources,
-            game_time=game_time,
-        )
+        await _add(w, perspective_id, relation_id, confidence, status, evidence, session_at)
     )
 
 
@@ -546,21 +282,12 @@ async def backfill(conn: Conn, guild_id: int, campaign_id: str) -> None:
     )
 
 
-async def carry(
-    w: Changes,
-    old: dict[str, Any],
-    new_id: str,
-    *,
-    copy_beliefs: bool = True,
-    skip_players: bool = False,
-) -> None:
+async def carry(w: Changes, old: dict[str, Any], new_id: str) -> None:
     """A reworded connection (#2408) is the same claim in other words, so the new one takes over
     what the old one held: each perspective's current belief (what it thought, how sure, the
     evidence and the session), the mentions it points to and its session span. Beliefs are copied
     as new rows (history is kept on the old connection, which is ended). The players are never
-    handed a belief in a secret connection this way. `skip_players`: copy every point of view's
-    belief except the player characters' (a merge folding a fact the players were shown into a twin
-    they were not shown)."""
+    handed a belief in a secret connection this way."""
     new = await w.get(RELATIONS, new_id)
     if new is None:
         return
@@ -572,28 +299,11 @@ async def carry(
             changes[column] = old[column]
     if changes:
         new = await w.update(RELATIONS, new_id, changes)
-    await w.conn.execute(  # and what the old one stood on (#2662), unless the new one has its own
-        "INSERT INTO memory_evidence (guild_id, campaign_id, relation_id, kind, target_id,"
-        " session_started_at, added_at)"
-        " SELECT guild_id, campaign_id, %s, kind, target_id, session_started_at, added_at"
-        " FROM memory_evidence WHERE guild_id = %s AND campaign_id = %s AND relation_id = %s"
-        " AND NOT EXISTS (SELECT 1 FROM memory_evidence n WHERE n.guild_id = %s"
-        "   AND n.campaign_id = %s AND n.relation_id = %s)"
-        " ON CONFLICT DO NOTHING",
-        (new_id, *w.ids, old["id"], *w.ids, new_id),
-    )
-    if not copy_beliefs:  # a join: the twin keeps its own flag and what is believed of it
-        return
     ids = await perspective_ids(w)
     party = ids[PARTY]
-    pc_views = (
-        {str(p["id"]) for p in await w.select(PERSPECTIVES, " AND kind = %s", [PC_VIEW])}
-        if skip_players
-        else set()
-    )
     held = await _newest(w, [old["id"], new_id])
     for (relation_id, perspective_id), belief in sorted(held.items(), key=lambda kv: kv[1]["seq"]):
-        if relation_id != old["id"] or perspective_id in pc_views:
+        if relation_id != old["id"]:
             continue
         mine = held.get((new_id, perspective_id))
 
@@ -611,16 +321,9 @@ async def carry(
             continue
         if perspective_id == party and (new["secret"] or new["unrevealed"]):
             continue  # (the flag decides what the players know; see `follow`)
-        if (
-            perspective_id == party
-            and mine is not None
-            and float(mine["confidence"]) >= KNOWN > float(belief["confidence"])
-        ):
-            continue  # (a guess never hides what the players already know)
         await _add(
             w, perspective_id, new_id, float(belief["confidence"]), belief["status"],
             list(belief["evidence_ids"]), belief["session_at"], pinned=bool(belief["pinned"]),
-            copy_from=belief["id"],
         )  # fmt: skip
 
 
@@ -667,7 +370,7 @@ def party_knows(table: str = "memory_relations") -> str:
     )
 
 
-async def fold_perspective(w: Changes, keep_id: str, gone_id: str) -> tuple[str, str] | None:
+async def fold_perspective(w: Changes, keep_id: str, gone_id: str) -> None:
     """A merged-away character's beliefs become the kept entry's (#2438, #2433). The kept entry
     gets a perspective if it had none, and every belief of the other entry's moves onto it. History
     is kept, so a pair both believed has both rows and the newest (highest `seq`) is the one read.
@@ -676,7 +379,7 @@ async def fold_perspective(w: Changes, keep_id: str, gone_id: str) -> tuple[str,
     resting on it)."""
     gone_p = await w.select(PERSPECTIVES, " AND entity_id = %s", [gone_id])
     if not gone_p:
-        return None
+        return
     keep_p = await w.select(PERSPECTIVES, " AND entity_id = %s", [keep_id])
     if keep_p:
         target = keep_p[0]["id"]
@@ -692,24 +395,3 @@ async def fold_perspective(w: Changes, keep_id: str, gone_id: str) -> tuple[str,
     await w.update_where(
         BELIEFS, {"perspective_id": target}, " AND perspective_id = %s", [gone_p[0]["id"]]
     )
-    # Who knows an other name moves too (#2935); a name both knew keeps one row.
-    have = {
-        r["alias_id"] for r in await w.select(ALIAS_KNOWERS, " AND perspective_id = %s", [target])
-    }
-    for row in await w.select(ALIAS_KNOWERS, " AND perspective_id = %s", [gone_p[0]["id"]]):
-        if row["alias_id"] in have:
-            await w.delete(ALIAS_KNOWERS, row["id"])
-    await w.update_where(
-        ALIAS_KNOWERS, {"perspective_id": target}, " AND perspective_id = %s", [gone_p[0]["id"]]
-    )
-    # Who was told an other name is an entry moves with the character (#3089); a telling both had
-    # keeps one row.
-    kept_tellings = {
-        r["alias_id"] for r in await w.select(TOLD_ROWS, " AND character_id = %s", [keep_id])
-    }
-    for row in await w.select(TOLD_ROWS, " AND character_id = %s", [gone_id]):
-        if row["alias_id"] in kept_tellings:
-            await w.delete(TOLD_ROWS, row["id"])
-        else:
-            await w.update(TOLD_ROWS, row["id"], {"character_id": keep_id})
-    return str(gone_p[0]["id"]), str(target)  # (who knows what folds with it: #2995)

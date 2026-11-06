@@ -15,7 +15,6 @@ from unittest.mock import patch
 from dmbot.ai import AIError
 from dmbot.campaigns.store import CampaignStore
 from dmbot.devtools.recap_run import __main__ as run
-from dmbot.devtools.recap_run import review as rv
 from dmbot.devtools.recap_run.ephemeral import EphemeralStore, blank
 from dmbot.recaps import pipeline as pl
 from dmbot.recaps.audio.eleven import ElevenLabs
@@ -62,22 +61,6 @@ class TheRun(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Calls: 5", text)  # beats, prose, fact check, grader, finish
         self.assertIn("spend $", text)
 
-    async def test_structured_asks_both_steps_the_two_pass_way_and_reports_counts_only(
-        self,
-    ) -> None:
-        draft = "event | lines 1 | who | where | The party reached the keep at dusk"
-        fast = fx.Canned(fx.BEATS_ANSWER, fx.PROSE_ANSWER, fx.GRADE_ANSWER, fx.FINISH_ANSWER)
-        careful = fx.Canned(draft)
-        out = await run.run_text(inputs(), fast, careful, structured=True)
-        self.assertEqual(out.job.state, "ready")
-        self.assertEqual(out.structured and out.structured["runs"], 1)
-        text = "\n".join(run.report(out, {}))
-        self.assertIn("Structured: runs 1, passes 2", text)
-        self.assertNotIn(draft, text)
-        plain = await run.run_text(inputs(), happy(), fx.Canned())
-        self.assertIsNone(plain.structured)
-        self.assertNotIn("Structured:", "\n".join(run.report(plain, {})))
-
     async def test_the_report_shows_how_the_opening_was_split_by_count_never_by_word(self) -> None:
         from tests import test_recap_split as st
 
@@ -95,56 +78,6 @@ class TheRun(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Split (ai): talk 2, recap 5, play 7.", text)
         self.assertIn("lines talk 1-2, recap 3-7, play 8-14", text)
         self.assertNotIn("Redfall", text)
-
-    async def test_the_report_counts_the_away_check_and_the_beat_sheet_never_a_word(self) -> None:
-        # (#2738) Both lines are always there, so two variants can be compared side by side.
-        out = await run.run_text(inputs(), happy(), fx.Canned())
-        self.assertEqual(out.job.state, "ready")
-        lines = run.report(out, {})
-        away = [x for x in lines if x.startswith("Away: ")]
-        beats = [x for x in lines if x.startswith("Beats: ")]
-        self.assertEqual(len(away), 1)
-        self.assertEqual(len(beats), 1)
-        self.assertRegex(away[0], r"^Away: (notes \d+, fixed \d+, rounds \d+|not run)$")
-        self.assertRegex(beats[0], r"^Beats: windows \d+, parts \d+, beats \d+$")
-        self.assertRegex(beats[0], r"beats [1-9]\d*$")  # the sheet had beats
-        for word in ("Mira", "Oskar", "Greywater", "keep", "torch"):
-            self.assertNotIn(word, away[0] + beats[0])
-
-    def test_the_away_counts_say_what_was_found_what_is_left_and_so_what_was_fixed(self) -> None:
-        from types import SimpleNamespace
-
-        from dmbot.recaps import critics as cr
-
-        note = "Check: the recap opens without saying who it is about."
-        job = SimpleNamespace(
-            critics=cr.Loop(round=2, notes=(note, "Check: something the DM wrote")).to_json(),
-            split=None,
-            window_count=3,
-            beats=[{}, {}, {}, {}],
-        )
-        self.assertEqual(
-            rv.count_lines(job, 4),
-            ["Away: notes 1, fixed 3, rounds 2", "Beats: windows 3, parts 0, beats 4"],
-        )
-        # not reported: nothing is claimed fixed
-        self.assertEqual(rv.count_lines(job, None)[0], "Away: notes 1, fixed 0, rounds 2")
-        # the exact count of what the final text still has wins over the notes
-        self.assertEqual(rv.count_lines(job, 4, 0)[0], "Away: notes 0, fixed 4, rounds 2")
-
-    def test_a_check_that_never_ran_says_so_and_odd_stored_data_never_breaks_the_report(
-        self,
-    ) -> None:
-        from types import SimpleNamespace
-
-        job = SimpleNamespace(critics=None, split={"parts": "x"}, window_count=1, beats=None)
-        self.assertEqual(
-            rv.count_lines(job, None), ["Away: not run", "Beats: windows 1, parts 0, beats 0"]
-        )
-
-    async def test_a_run_with_the_critics_off_says_the_away_check_was_not_run(self) -> None:
-        out = await run.run_text(inputs(), happy(), fx.Canned())
-        self.assertIn("Away: not run", run.report(out, {}))
 
     async def test_a_run_that_fails_its_beat_sheet_twice_says_why_for_each_try(self) -> None:
         # Both tries cite no real line, so the sheet is refused twice (#1997).
@@ -316,33 +249,6 @@ class TheFlags(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 run.parse_args(bad)
         self.assertTrue(run.parse_args(["--golden"]).golden)
-
-    def test_structured_goes_with_a_session_or_a_transcript_only(self) -> None:
-        self.assertTrue(
-            run.parse_args(["--session", "1", "c" * 32, "100", "--structured"]).structured
-        )
-        self.assertTrue(
-            run.parse_args(["--transcript", "t.txt", "--dm", "Quill", "--structured"]).structured
-        )
-        for bad in (
-            ["--golden", "--structured"],
-            ["--transcript", "t.txt", "--dm", "Quill", "--compare", "--structured"],
-            ["--review", "somewhere", "--structured"],
-        ):
-            with self.assertRaises(SystemExit, msg=bad):
-                run.parse_args(bad)
-
-    async def test_structured_with_out_writes_the_counts_line_into_the_report_file(self) -> None:
-        draft = "event | lines 1 | who | where | The party reached the keep at dusk"
-        fast = fx.Canned(fx.BEATS_ANSWER, fx.PROSE_ANSWER, fx.GRADE_ANSWER, fx.FINISH_ANSWER)
-        out = await run.run_text(inputs(), fast, fx.Canned(draft), structured=True)
-        lines = run.report(out, {})
-        with tempfile.TemporaryDirectory() as tmp:
-            folder = Path(tmp) / "run"
-            run.save_text(folder, out, lines, names_given=False)
-            report = (folder / rv.REPORT_FILE).read_text()
-        self.assertIn("Structured: runs 1, passes 2", report)
-        self.assertNotIn(draft, report)  # counts only
 
     def test_prices_are_given_or_on_file_and_never_guessed(self) -> None:
         got = run.prices_of(["m=3,15"], ["m", "claude-haiku-4-5-20251001", "unknown-model"])
@@ -518,95 +424,3 @@ class TheSharedLoader(DatabaseTest):
         self.assertEqual(got.previous, "")
         self.assertIsNone(await load(1, 12345))  # no such session
         self.assertIsNone(await load(2, 1_700_000_000))  # another server sees nothing
-
-
-class TheToolsLookup(DatabaseTest):
-    """`recap_run --session` finds the session and the names the way the bot does, on tables with
-    forced row-level security, and says WHICH of the three things failed (#2680)."""
-
-    async def setUp_one(self, lines: bool = True) -> tuple[str, str]:
-        from dmbot.transcript.store import TranscriptStore
-
-        camp = await CampaignStore(self.db).create(1, "One", fx.DM)
-        transcripts = TranscriptStore(self.db)
-        sid = await transcripts.open_session(1, camp.id, 1_700_000_000)
-        if lines:
-            await transcripts.add_lines(1, sid, fx.lines())
-        return camp.id, sid
-
-    async def test_the_session_and_the_names_load(self) -> None:
-        from dmbot.devtools.recap_run.__main__ import inputs_for
-
-        cid, _ = await self.setUp_one()
-        got = await inputs_for(self.db, 1, cid, 1_700_000_000)
-        self.assertEqual(len(got.lines), len(fx.lines()))
-
-    async def test_each_failure_says_which_it_was(self) -> None:
-        from unittest.mock import patch
-
-        from dmbot.devtools.recap_run.__main__ import inputs_for, not_loaded_line
-        from dmbot.memory.lookup import LookupCache
-        from dmbot.recaps.inputs import NotLoaded
-
-        cid, _ = await self.setUp_one()
-        with self.assertRaises(NotLoaded) as no_campaign:
-            await inputs_for(self.db, 1, "0" * 32, 1_700_000_000)
-        self.assertEqual(no_campaign.exception.why, "campaign")
-        with self.assertRaises(NotLoaded) as elsewhere:
-            await inputs_for(self.db, 2, cid, 1_700_000_000)  # another server sees nothing
-        self.assertEqual(elsewhere.exception.why, "campaign")
-        with self.assertRaises(NotLoaded) as wrong_time:
-            await inputs_for(self.db, 1, cid, 12345)
-        self.assertEqual(wrong_time.exception.why, "session")
-        self.assertEqual(wrong_time.exception.started, (1_700_000_000,))
-        line = not_loaded_line(wrong_time.exception, 1, cid, 12345)
-        self.assertIn("12345", line)
-        self.assertIn("1700000000", line)  # the times that do exist, to see the mismatch
-        with (
-            patch.object(LookupCache, "get", side_effect=RuntimeError("boom")),
-            self.assertRaises(NotLoaded) as names,
-        ):
-            await inputs_for(self.db, 1, cid, 1_700_000_000)
-        self.assertEqual(names.exception.why, "names")
-        self.assertNotEqual(
-            not_loaded_line(names.exception, 1, cid, 1),
-            not_loaded_line(wrong_time.exception, 1, cid, 1),
-        )
-
-    async def test_a_session_with_no_stored_lines_says_so(self) -> None:
-        from dmbot.devtools.recap_run.__main__ import inputs_for, not_loaded_line
-        from dmbot.recaps.inputs import NotLoaded
-
-        cid, _ = await self.setUp_one(lines=False)
-        with self.assertRaises(NotLoaded) as empty:
-            await inputs_for(self.db, 1, cid, 1_700_000_000)
-        self.assertEqual((empty.exception.why, empty.exception.lines_in_it), ("session", 0))
-        self.assertIn("0 stored lines", not_loaded_line(empty.exception, 1, cid, 1_700_000_000))
-
-    async def test_the_line_count_is_one_servers_own(self) -> None:
-        from dmbot.transcript.store import TranscriptStore
-
-        cid, _ = await self.setUp_one()
-        transcripts = TranscriptStore(self.db)
-        self.assertEqual(await transcripts.line_count_at(1, cid, 1_700_000_000), len(fx.lines()))
-        self.assertIsNone(await transcripts.line_count_at(1, cid, 5))  # no such session
-        self.assertIsNone(await transcripts.line_count_at(2, cid, 1_700_000_000))  # another server
-
-    async def test_the_lines_name_what_to_look_at(self) -> None:
-        from unittest.mock import patch
-
-        from dmbot.devtools.recap_run.__main__ import inputs_for, not_loaded_line
-        from dmbot.memory.lookup import LookupCache
-        from dmbot.recaps.inputs import NotLoaded
-
-        cid, _ = await self.setUp_one()
-        self.assertEqual(
-            not_loaded_line(NotLoaded("campaign"), 1, cid, 9), f"no campaign {cid} in server 1"
-        )
-        self.assertIn("names can't be read", not_loaded_line(NotLoaded("names"), 1, cid, 9))
-        with (
-            patch.object(LookupCache, "get", side_effect=RuntimeError("boom")),
-            self.assertRaises(NotLoaded) as names,
-        ):
-            await inputs_for(self.db, 1, cid, 1_700_000_000)
-        self.assertIsInstance(names.exception.__cause__, RuntimeError)

@@ -795,34 +795,6 @@ class DeleteAndChildRows(StoreTest):
         self.assertEqual(await self.store.list_campaigns(GUILD_B), [])
 
 
-class TheBuildsCommitInABackup(StoreTest):
-    """A backup says which build made it (#3391), and a restore never needs the field."""
-
-    async def test_a_backup_holds_the_commit_of_the_build_that_made_it(self) -> None:
-        from unittest import mock
-
-        c = await self.make("A")
-        full = "bd8ae13a" + "c0ffee00" * 4
-        with mock.patch.dict("os.environ", {"GIT_COMMIT": full}):
-            backup = await self.store.export(GUILD_A, c.id)
-        self.assertEqual(backup["dmbot_commit"], full)
-
-    async def test_a_build_without_a_commit_writes_unknown_and_the_backup_still_restores(
-        self,
-    ) -> None:
-        from unittest import mock
-
-        c = await self.make("A")
-        with mock.patch.dict("os.environ", clear=True):
-            backup = await self.store.export(GUILD_A, c.id)
-        self.assertEqual(backup["dmbot_commit"], "unknown")
-        restored = await self.store.import_backup(GUILD_B, backup, DM)
-        self.assertTrue(restored.name.startswith("A"))
-        del backup["dmbot_commit"]  # a file made before this has no such field
-        again = await self.store.import_backup(GUILD_B, backup, DM)
-        self.assertTrue(again.name.startswith("A"))
-
-
 class SectionRegistry(StoreTest):
     async def test_custom_section_is_exported_imported_and_deleted(self) -> None:
         async with self.db.unscoped() as conn:

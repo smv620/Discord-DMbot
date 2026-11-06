@@ -24,15 +24,9 @@ SRC = Path(index.__file__).resolve().parents[1]
 
 
 def within(measure: Callable[[], float], limit: float) -> float:
-    """The measurement, retaken while it misses the limit, up to five times (the best of them):
-    one pause on a busy runner can spoil a run, code that is really slow is slow in every run
-    (#3525)."""
-    best = measure()
-    for _ in range(4):
-        if best <= limit:
-            break
-        best = min(best, measure())
-    return best
+    """The measurement, taken once more if it misses the limit (the better of the two)."""
+    value = measure()
+    return value if value <= limit else min(value, measure())
 
 
 class IndexBudget(unittest.TestCase):

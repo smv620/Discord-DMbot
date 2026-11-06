@@ -4,6 +4,7 @@ byte-order mark, WebVTT voice tags, and the reason a file cannot be read. Every 
 from __future__ import annotations
 
 import contextlib
+import time
 import unittest
 
 from dmbot.transcript import importer
@@ -208,12 +209,10 @@ class Speed(unittest.TestCase):
 
     def took_under_a_second(self, cue: str) -> None:
         vtt = "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\n" + cue + "\n"
-
-        def parse() -> None:
-            with contextlib.suppress(importer.TranscriptError):
-                importer.parse(vtt)
-
-        self.assertLess(speed.fastest(parse, runs=3), speed.allowed(1.0))
+        start = time.perf_counter()
+        with contextlib.suppress(importer.TranscriptError):
+            importer.parse(vtt)
+        self.assertLess(time.perf_counter() - start, speed.allowed(1.0))
 
     def test_a_voice_tag_of_dots_is_read_in_linear_time(self) -> None:
         self.took_under_a_second("<v" + "." * 5000)

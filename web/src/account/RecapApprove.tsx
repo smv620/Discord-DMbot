@@ -13,7 +13,6 @@ import {
   approveWords as words,
 } from "../content/recap-approve";
 import { errors } from "../content/recaps";
-import { remakeSentence } from "../content/recap-panel";
 import { RECAP_AUDIO_LIVE } from "../content/recap-words";
 import {
   ApiError,
@@ -22,11 +21,9 @@ import {
   type AudioUnavailable,
   type CueProblem,
   type Recap,
-  type RecapRemake,
 } from "./api";
 import { CueProblems } from "./CueParts";
 import { keepFocus } from "./focus";
-import { audioIsStale } from "./useRemake";
 
 /** The text was approved but the post step after it failed: the page says both. */
 class ApprovedNotPosted extends Error {
@@ -48,22 +45,12 @@ export default function RecapApprove({
   recap,
   onRecap,
   pageFocus,
-  blockedBy,
-  onPlotOpen,
-  remake = null,
 }: {
   api: AccountApi;
   recap: Recap;
   onRecap: (next: Recap) => void;
-  /** What the new audio would be if the DM asks for it with Approve (#2630): shown beside the audio
-   * choice while the audio on the page was made from older text. */
-  remake?: RecapRemake | null;
   /** Where focus goes when this part is gone (the recap was posted): the page's own heading. */
   pageFocus?: () => HTMLElement | null | undefined;
-  /** Why Approve is waiting (the Plot check still has questions, #2124): the buttons stay, greyed, with this line. */
-  blockedBy?: string | null;
-  /** The API says a Plot check question is still open: the page reads the check again. */
-  onPlotOpen?: () => void;
 }) {
   const [picking, setPicking] = useState(false);
   // Why the narration can't be made: undefined while it is being asked, "" when it can be.
@@ -137,7 +124,6 @@ export default function RecapApprove({
         : `${late ? `${words.approvedNotPostedPrefix} ` : ""}${approveErrors[kind] ?? errors.other}`,
     );
     // The plan or the month changed under us: stop offering the audio.
-    if (kind === "plot-open") onPlotOpen?.();
     if (kind === "not-in-plan") setWhy("plan");
     if (kind === "audio-unavailable") setWhy("allowance");
     // The page may be out of date (decided in Discord, say): read it again.
@@ -226,9 +212,6 @@ export default function RecapApprove({
   // (Recaps.tsx) shows while RECAP_AUDIO_LIVE is on, so this does too (#2617).
   const deciding = RECAP_AUDIO_LIVE && audioChosen && audioMade && !kept;
   const settled = approval.approved && !deciding && !making;
-  // The audio on the page was made from older text and the DM is about to approve the new text: say what
-  // the new audio will be (only the changed paragraphs spoken again, or everything) before they choose.
-  const remakeLine = recap.status === "draft" && audioIsStale(recap) ? remakeSentence(remake) : null;
 
   return (
     <section class="panel" aria-labelledby="recap-approve">
@@ -303,11 +286,6 @@ export default function RecapApprove({
               action="approve"
             />
           )}
-          {remakeLine && (
-            <p id="recap-remake-line" class="small" role="status">
-              {remakeLine}
-            </p>
-          )}
           {!picking ? (
             <>
               <div class="row">
@@ -315,8 +293,7 @@ export default function RecapApprove({
                   type="button"
                   class="button"
                   aria-busy={busy === "post"}
-                  aria-describedby={blockedBy ? "recap-approve-blocked" : undefined}
-                  disabled={busy !== null || !!blockedBy}
+                  disabled={busy !== null}
                   onClick={approveAndPost}
                 >
                   {busy === "post" ? words.busy : words.postText}
@@ -325,10 +302,8 @@ export default function RecapApprove({
                   type="button"
                   class="button"
                   ref={audioBtnRef}
-                  aria-describedby={
-                    [blockedBy ? "recap-approve-blocked" : "", why !== "" ? "recap-audio-why" : ""].filter(Boolean).join(" ") || undefined
-                  }
-                  disabled={busy !== null || why !== "" || !!blockedBy}
+                  aria-describedby={why !== "" ? "recap-audio-why" : undefined}
+                  disabled={busy !== null || why !== ""}
                   onClick={() => {
                     setPicking(true);
                     setProblem(null);
@@ -341,18 +316,12 @@ export default function RecapApprove({
                   type="button"
                   class="button secondary"
                   aria-busy={busy === "text"}
-                  aria-describedby={blockedBy ? "recap-approve-blocked" : undefined}
-                  disabled={busy !== null || !!blockedBy}
+                  disabled={busy !== null}
                   onClick={() => approve("text")}
                 >
                   {busy === "text" ? words.busy : words.keepIt}
                 </button>
               </div>
-              {blockedBy && (
-                <p id="recap-approve-blocked" class="note" role="status">
-                  {blockedBy}
-                </p>
-              )}
               {why !== "" && (
                 <p id="recap-audio-why" class="muted small">
                   {why === undefined

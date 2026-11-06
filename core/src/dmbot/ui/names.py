@@ -13,8 +13,7 @@ import difflib
 import logging
 import re
 import time
-from collections.abc import Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from functools import partial
 from typing import TYPE_CHECKING, Any, cast
 
@@ -23,29 +22,22 @@ from discord import app_commands
 
 from dmbot.campaigns import Campaign
 from dmbot.discord_limits import MESSAGE_MAX, fit_message
-from dmbot.memory import tags
-from dmbot.memory.list_names import split_list
 from dmbot.memory.lookup import CampaignLookup
 from dmbot.memory.models import (
     BACKGROUND_SOURCE,
     CONFIRMED,
     DM,
     NAME_MAX,
-    PLAYER_CHARACTER,
     PROPOSED,
     REJECTED,
     Entity,
-    GroupHint,
-    GroupJoined,
     MemoryRuleError,
-    Written,
-    lookup_key,
     name_key,
 )
-from dmbot.memory.name_longer import longer_names, widens
+from dmbot.memory.name_longer import longer_names
 from dmbot.memory.scan import Match, near_match_in, sound_keys
 from dmbot.memory.sounds import sound_codes
-from dmbot.ui import all_names, logic, name_places, player_id
+from dmbot.ui import all_names, logic, name_places
 from dmbot.ui.dmbot_commands import (
     NOT_IN_SERVER,
     VIEW_TIMEOUT_S,
@@ -75,20 +67,20 @@ PC = "player_character"
 
 # What the DM can say a name is, in plain words. Keys are the memory rules' kinds.
 KINDS: dict[str, str] = {
-    "npc": "NPC (the DM plays them)",
+    "npc": "NPC (a character you play)",
     PC: "PC (a player's character)",
     "place": "A place",
-    "faction": "A group (guild, cult)",
+    "faction": "A group (guild, cult, family…)",
     "item": "An item",
-    "event": "An event",
+    "event": "Something that happened (event)",
     "clue": "A clue or secret",
-    "people": "A people (elves…)",
+    "people": "A whole people or kind (tabaxi, elves)",
     "quest": "A quest",
     "mystery": "A mystery",
     "hook": "A hook (a lead)",
     "goal": "A goal",
     "promise": "A promise",
-    "concept": "An idea or other thing",
+    "concept": "Something else",
 }
 KIND_SHORT: dict[str, str] = {
     "npc": "NPC",
@@ -161,27 +153,13 @@ def changed(interaction: discord.Interaction, campaign: Campaign) -> None:
         cache.mark_stale(campaign.guild_id, campaign.id)
 
 
-# The server of a campaign whose cards were opened from a private message (#2977): a private message
-# has no server, so the card's buttons would all answer "Use this in a server". Only the campaign's
-# own DM (checked by `can_run` when the card is opened) puts a campaign here, and every press is
-# checked again below. Lost on a restart; `_campaign_for` then asks the database (`guild_of`,
-# #3210), so a card from before the restart still works.
-_PRIVATE_SERVERS: dict[str, int] = {}
-
-
 async def _campaign_for(interaction: discord.Interaction, campaign_id: str) -> Campaign | None:
     """The campaign, if this person may manage its names; tells them otherwise."""
-    guild_id = interaction.guild.id if interaction.guild is not None else None
-    if guild_id is None:
-        guild_id = _PRIVATE_SERVERS.get(campaign_id)
-    if guild_id is None:
-        # Not remembered (a restart, or a question sent to the DM's private chat, #3210): the
-        # database says which server the campaign is in, so old buttons keep working.
-        guild_id = await _bot(interaction).campaigns.guild_of(campaign_id)
-    if guild_id is None:
+    guild = interaction.guild
+    if guild is None:
         await _tell(interaction, NOT_IN_SERVER)
         return None
-    campaign = await _bot(interaction).campaigns.get(guild_id, campaign_id)
+    campaign = await _bot(interaction).campaigns.get(guild.id, campaign_id)
     if campaign is None or not logic.can_run(
         campaign, interaction.user.id, _is_manager(interaction)
     ):
@@ -460,9 +438,8 @@ class NamesHome(_Menu):
             await interaction.response.send_modal(AddNameForm(self.campaign_id, secrets=secrets))
 
     async def _character(self, interaction: discord.Interaction) -> None:
-        campaign = await _campaign_for(interaction, self.campaign_id)
-        if campaign:
-            view = PlayerPicker(self.campaign_id, campaign.guild_id)
+        if await _campaign_for(interaction, self.campaign_id):
+            view = PlayerPicker(self.campaign_id)
             await _send(interaction, "**Who plays this character?**", view)
 
     async def _check(self, interaction: discord.Interaction) -> None:
@@ -562,19 +539,6 @@ async def show_home(interaction: discord.Interaction, campaign_id: str) -> None:
             connections = await links.count(campaign.guild_id, campaign.id)
         except Exception:
             log.exception("Couldn't count the waiting connections")
-        try:  # other names an AI read suggested wait behind the same button (#3034)
-            connections += len(await memory.suggested_names(campaign.guild_id, campaign.id))
-        except Exception:
-            log.exception("Couldn't count the suggested names")
-        try:  # and unnamed people who may be a named one (#3037)
-            connections += len(await memory.same_person_offers(campaign.guild_id, campaign.id))
-        except Exception:
-            log.exception("Couldn't count the possible matches")
-        try:  # so do family links worked out from the DM's own (#2960)
-            await memory.rework_family(campaign.guild_id, campaign.id)
-            connections += len(await memory.worked_out_waiting(campaign.guild_id, campaign.id))
-        except Exception:
-            log.exception("Couldn't count the worked-out family links")
     look_alikes = None
     if memory is not None and sees_secrets(campaign, interaction.user.id):  # DMs only (#2426)
         from dmbot.ui.look_alikes import count_groups
@@ -866,12 +830,7 @@ class KindPicker(_Menu):
 
         # What was saved, then the hint, then the rest: the card's note is cut to fit,
         # from the end (#353, #393).
-        saved, *rest = saved_text(
-            entity,
-            self.others,
-            self.secret,
-            hidden=self.hidden and sees_secrets(campaign, interaction.user.id),
-        ).split("\n")
+        saved, *rest = saved_text(entity, self.others, self.secret).split("\n")
         note = "\n".join([saved, MISTAKE_HINT, *rest])
         await show_card(interaction, campaign.id, entity.id, replace=True, note=note)
 
@@ -895,8 +854,6 @@ async def save_name(
         hidden_from_players=hidden,
     )  # fmt: skip
     entity = written.value
-    if played_by is not None:  # a player's character: the party step for a lore-only start (#3036)
-        await memory.party_on_assignment(gid, cid)
     for other in others:
         await memory.add_alias(
             gid, cid, entity.id, other, kind="nickname", source=DM, status=CONFIRMED
@@ -908,15 +865,10 @@ async def save_name(
     return entity
 
 
-def saved_text(
-    entity: Entity, others: list[str], secret: list[str], *, hidden: bool = False
-) -> str:
-    """What was saved. `hidden`: the DM asked for it hidden from the players (#2321). It is the DM's
-    choice just made, not read back from the entry: who may see an entry is the lists' business
-    (#2995), so this text never looks at a flag."""
+def saved_text(entity: Entity, others: list[str], secret: list[str]) -> str:
     kind = KIND_SHORT.get(entity.kind_key, entity.kind_key)
     lines = [f"✅ DMbot will remember **{_md(entity.name)}** ({kind})."]
-    if hidden:
+    if entity.hidden_from_players:
         lines.append("🙈 Hidden from players. Only you see it.")
     if others:
         lines.append(f"DMbot also listens for: {', '.join(map(_md, others))}.")
@@ -941,20 +893,10 @@ class _UserSelect(discord.ui.UserSelect[Any]):
 
 
 class PlayerPicker(_Menu):
-    def __init__(self, campaign_id: str, guild_id: int | None = None) -> None:
+    def __init__(self, campaign_id: str) -> None:
         super().__init__()
         self.campaign_id = campaign_id
         self.add_item(_UserSelect(self.picked))
-        if guild_id is not None:  # (#3004) a player who has not joined the server yet
-            self.add_item(player_id.type_id_button(guild_id, self._allowed, self._typed))
-
-    async def _allowed(self, interaction: discord.Interaction) -> bool:
-        return await _campaign_for(interaction, self.campaign_id) is not None
-
-    async def _typed(self, interaction: discord.Interaction, user_id: int, name: str) -> None:
-        if await _campaign_for(interaction, self.campaign_id):
-            self.stop()
-            await interaction.response.send_modal(CharacterForm(self.campaign_id, user_id, name))
 
     async def picked(
         self, interaction: discord.Interaction, player: discord.User | discord.Member
@@ -986,12 +928,12 @@ class CharacterForm(discord.ui.Modal, title="Add a player's character"):
         max_length=200,
     )
 
-    def __init__(self, campaign_id: str, player_discord_id: int, player_name: str) -> None:
+    def __init__(self, campaign_id: str, player_id: int, player_name: str) -> None:
         super().__init__(
             title=logic.shorten(f"{player_name}'s character", 45), timeout=VIEW_TIMEOUT_S
         )
         self.campaign_id = campaign_id
-        self.player_id = player_discord_id
+        self.player_id = player_id
         self.player_name = player_name
 
     async def on_error(  # type: ignore[override]  # a form's has no item (discord.py)
@@ -1044,14 +986,12 @@ def _heard(entity: Entity) -> str:
 
 
 def background_kind(entity: Entity) -> str:
-    """The kind a suggestion was given when it was read (npc, place…), or "" when it has none to
-    confirm as (an idea, or nothing guessed). From the DM's background (#2167) or from the name
-    scan, whose AI guesses a kind from the sentence (#2937)."""
-    if entity.source not in (BACKGROUND_SOURCE, "scan"):  # marked by where it came from
+    """The kind a suggestion read from the DM's background was given (npc, place…), or "" when
+    it has none to confirm as (an idea, or not from a background)."""
+    if entity.source != BACKGROUND_SOURCE:  # marked by where it came from, not by its words
         return ""
     if entity.type == "character":
-        # (read from a text that says so, #3553; confirmed with its player)
-        return {"npc": "npc", PLAYER_CHARACTER: PLAYER_CHARACTER}.get(entity.role or "", "")
+        return "npc" if entity.role == "npc" else ""
     return entity.type if entity.type in ("place", "faction", "item", "event") else ""
 
 
@@ -1097,7 +1037,6 @@ def suggestion_text(
     fix_to: str = "",
     places: str = "",
     context: str = "",
-    tagged: str = "",
 ) -> str:
     # A name read from the DM's writing was read, not heard.
     verb = "written" if entity.source == BACKGROUND_SOURCE else "heard"
@@ -1120,11 +1059,7 @@ def suggestion_text(
     elif match is not None:
         question = f"Sounds like **{_md(match.name)}**. The same, or new?"
     else:
-        question = (
-            "Is this a name in your game?"
-            if kind
-            else "Is this a name in your game? Pick what it is to add it, or press 🚫 Not a name."
-        )
+        question = "Is this a name in your game?"
     heard = (
         "" if fix_to else _heard(entity)
     )  # the note is the spelling: shown once, in the question
@@ -1134,21 +1069,7 @@ def suggestion_text(
     # (links kept as plain text too: a masked link in the DM's text must not become clickable)
     shown = discord.utils.escape_markdown(context, ignore_links=False)
     around = f"\nAround it in your text: \u201c{shown}\u201d" if context else ""
-    # (`tagged`: the name with its tag, for a description such as "beggar woman", #3431)
-    title = _md(tagged or entity.name)
-    return f"📝 **{title}**{heard}{where}{around}{others}{read}\n{question}{more}"
-
-
-async def tagged_name(memory: MemoryStore, campaign: Campaign, entity: Entity) -> str:
-    """The name with a short tag when it is only a description ("beggar woman (on the dock in
-    Termalaine)", #3431 ruling 2), else "". The tag comes from the entry's confirmed ties only: a
-    waiting name's own note is the "heard 3 times" count shown beside it, not a context."""
-    if not tags.needs_tag(entity):
-        return ""
-    bare = replace(entity, description="")
-    ties = await memory.tag_ties(campaign.guild_id, campaign.id, [entity.id])
-    shown = tags.tag_for(bare, ties.get(entity.id, ()), dm=True)
-    return "" if shown == entity.name else shown
+    return f"📝 **{_md(entity.name)}**{heard}{where}{around}{others}{read}\n{question}{more}"
 
 
 def _and(items: list[str]) -> str:
@@ -1173,9 +1094,7 @@ async def _review_match(memory: MemoryStore, campaign: Campaign, entity: Entity)
     return near_match_in(entity.name, (r for r in rows if r[0] != entity.id))
 
 
-async def start_review(
-    interaction: discord.Interaction, campaign_id: str, *, bulk: bool = True
-) -> None:
+async def start_review(interaction: discord.Interaction, campaign_id: str) -> None:
     memory = _memory(interaction)
     if memory is None:
         await _tell(interaction, NOT_AVAILABLE)
@@ -1183,11 +1102,11 @@ async def start_review(
     campaign = await _campaign_for(interaction, campaign_id)
     if campaign is None:
         return
-    await _review(interaction, memory, campaign, bulk=bulk)
+    await _review(interaction, memory, campaign)
 
 
 async def _review(
-    interaction: discord.Interaction, memory: MemoryStore, campaign: Campaign, *, bulk: bool = True
+    interaction: discord.Interaction, memory: MemoryStore, campaign: Campaign
 ) -> None:
     waiting = await memory.entities(campaign.guild_id, campaign.id, statuses=[PROPOSED])
     if not waiting:
@@ -1197,49 +1116,9 @@ async def _review(
         await offer_ready(interaction, campaign.id)  # a backstory's connections, if ready
         return
     waiting.sort(key=lambda e: (e.created_at, e.name))
-    if bulk and await _offer_add_all(interaction, memory, campaign, waiting):
-        return
     view = SuggestionReview(campaign.id, [e.id for e in waiting])
     text = await view.prepare(interaction, campaign, memory, waiting[0])
     await _send(interaction, text, view)
-
-
-async def _offer_add_all(
-    interaction: discord.Interaction,
-    memory: MemoryStore,
-    campaign: Campaign,
-    waiting: Sequence[Entity],
-) -> bool:
-    """The lore review's "✅ Add all 4 places" for the name scan's suggestions that were given a
-    kind (#2937), opened by the same persistent "Check new names" button, so it works after a
-    restart. Only names with nothing to look at first: one that sounds like a known name, or that
-    someone spelled out, is checked on its own card. True when it was offered (its "Check them one
-    by one" opens the cards); False when there is nothing to add in bulk."""
-    from dmbot.ui.name_background import BulkConfirm  # (it imports this module)
-
-    by_kind: dict[str, list[str]] = {}
-    for entity in waiting:
-        kind = background_kind(entity)
-        if (
-            not kind
-            or kind == PLAYER_CHARACTER  # its player is asked on its own card (#3553)
-            or entity.source != "scan"
-            or entity.description.startswith(SPELLED_OUT)
-            or spelled_fix(entity)
-            or await _review_match(memory, campaign, entity) is not None
-        ):
-            continue
-        by_kind.setdefault(kind, []).append(entity.id)
-    if not any(len(ids) > 1 for ids in by_kind.values()):  # one name is one press on its card
-        return False
-    count = sum(len(ids) for ids in by_kind.values())
-    await _send(
-        interaction,
-        f"📝 **{_plural(len(waiting), 'new name')} to check.** DMbot guessed what {count} of them "
-        "are. Nothing is added until you press a button.",
-        BulkConfirm(campaign.id, by_kind),
-    )
-    return True
 
 
 class ChangeWordsForm(discord.ui.Modal, title="What is the whole name?"):
@@ -1266,29 +1145,6 @@ class ChangeWordsForm(discord.ui.Modal, title="What is the whole name?"):
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
         await self.review.apply_words(interaction, self.entity_id, self.heard, self.name.value)
-
-
-class GroupNameForm(discord.ui.Modal, title="What is the group called?"):
-    """ "They're a group" (#3383, part 2): the DM names the group the listed names belong to."""
-
-    name: discord.ui.TextInput[GroupNameForm] = discord.ui.TextInput(
-        label="Group's name",
-        placeholder="For example: The Heroes of Waterdeep",
-        max_length=NAME_MAX,
-    )
-
-    def __init__(self, review: SuggestionReview, entity_id: str) -> None:
-        super().__init__(timeout=VIEW_TIMEOUT_S)
-        self.review = review
-        self.entity_id = entity_id
-
-    async def on_error(  # type: ignore[override]  # a form's has no item (discord.py)
-        self, interaction: discord.Interaction, error: Exception
-    ) -> None:
-        await _failed(interaction, error)
-
-    async def on_submit(self, interaction: discord.Interaction) -> None:
-        await self.review.apply_group(interaction, self.entity_id, self.name.value)
 
 
 class WordsPicker(_Menu):
@@ -1344,19 +1200,10 @@ class SuggestionReview(_Menu):
         self.later = 0  # left for another time this round
         self.match: Match | None = None  # the known name the current one sounds like
         self.known_kind = ""  # the kind a name from the DM's background already has (#2167)
-        self.entity_id = ""  # the current suggestion, for "Where was it said?" (#3384)
-        # After "These are separate names" (#3383): (batch, the list as it was, its id, the new
-        # names' ids), for ↩ Undo until the next answer.
-        self.split_undo: tuple[int, str, str, list[str]] | None = None
-        self.is_list = False  # the current one reads as a list of names
-        self.group: GroupHint | None = None  # a known group this list may be (#3383, part 2)
-        self.undo_kind = "split"  # what ↩ Undo takes back: "split" or "group"
-        self.name = ""  # the current suggestion's name, for the picker on its card (#2937)
         self.spelled = ""  # the spelling, when the current one was spelled out at the table (#2168)
         self.fix_to = ""  # how someone spelled this pending suggestion, when it differs (#2168)
         self.also: list[str] = []  # names heard with the current one
         self.places = name_places.Places()  # where the current one was said (#2329)
-        self.refs: list[tuple[str, int | None]] = []  # its pointers, for "Where was it said?"
         self.spellings: list[str] = []
         self._buttons()
 
@@ -1376,7 +1223,6 @@ class SuggestionReview(_Menu):
         self.match = await _review_match(memory, campaign, entity)
         # A name read from the DM's background already has its kind; "Yes" confirms it as that.
         self.known_kind = background_kind(entity)
-        self.name = entity.name
         self.spelled = entity.name if entity.description.startswith(SPELLED_OUT) else ""
         self.fix_to = spelled_fix(entity)
         own = name_key(entity.name)
@@ -1386,13 +1232,9 @@ class SuggestionReview(_Menu):
             if a.key != own
         ]
         self.spellings = [entity.name, *self.also]
-        self.refs = []
         self.places = await self._places(interaction, campaign, memory, entity)
-        self.entity_id = entity.id
-        self.is_list = len(split_list(entity.name, dm=True)) > 1  # (the store checks it again)
-        self.group = await self._group_hint(campaign, memory, entity) if self.is_list else None
         self._buttons()
-        text = suggestion_text(
+        return suggestion_text(
             entity,
             len(self.queue),
             also=self.also,
@@ -1402,15 +1244,7 @@ class SuggestionReview(_Menu):
             kind=self.known_kind,
             places=self.places.text(),
             context=self._context(interaction, campaign, entity),
-            tagged=await tagged_name(memory, campaign, entity),
         )
-        if self.group is not None:  # say which group, so "Yes, that group" has a "that"
-            inside = _and([f"**{_md(logic.shorten(m, 40))}**" for m in self.group.members[:5]])
-            text += (
-                f"\n👥 Is this your group **{_md(logic.shorten(self.group.group_name, 60))}**? "
-                f"Already in it: {inside}. Yes adds this to it."
-            )
-        return text
 
     @staticmethod
     def _context(interaction: discord.Interaction, campaign: Campaign, entity: Entity) -> str:
@@ -1439,7 +1273,6 @@ class SuggestionReview(_Menu):
         except Exception:
             log.exception("Couldn't read where a suggested name was said")
             return name_places.Places()
-        self.refs = list(refs)
         site = getattr(getattr(interaction.client, "settings", None), "site_url", "") or ""
         return await name_places.first_places(
             interaction.guild,
@@ -1454,40 +1287,24 @@ class SuggestionReview(_Menu):
             site if isinstance(site, str) else "",
         )
 
-    async def _where(self, interaction: discord.Interaction) -> None:
-        """ "Where was it said?" (#3384): up to three places, newest first, in a private message.
-        The DM only, checked on every press; counts only in the log."""
+    async def _more_places(self, interaction: discord.Interaction) -> None:
+        """Up to five more windows, in a private message of their own."""
+        transcripts = getattr(interaction.client, "transcripts", None)
+        if transcripts is None or not self.places.more:
+            await _tell(interaction, name_places.GONE)
+            return
         campaign = await _campaign_for(interaction, self.campaign_id)
         if campaign is None:
             return
-        if not sees_secrets(campaign, interaction.user.id):  # DM only, not a server manager
-            await _tell(interaction, logic.NO_CAMPAIGN_ACCESS)
-            return
-        transcripts = getattr(interaction.client, "transcripts", None)
         await _answer_first(interaction)
-        held = getattr(interaction.client, "lore_context", None)
-        lore = source = ""
-        if held is not None and sees_secrets(campaign, interaction.user.id):
-            lore = str(held.get(campaign.guild_id, self.entity_id))
-            source = str(held.source(campaign.guild_id, self.entity_id))
-        try:
-            if transcripts is None:
-                text = name_places.NOTHING_KEPT
-            else:
-                text = await name_places.where_said(
-                    interaction.guild,
-                    transcripts,
-                    campaign.guild_id,
-                    self.refs,
-                    self.spellings,
-                    await cast(Any, interaction.client).consent.consenting(campaign.guild_id),
-                    lore=lore,
-                    lore_source=source,
-                )
-        except Exception:
-            log.exception("Couldn't show where a name was said")
-            text = name_places.TRY_AGAIN
-        log.info("Showed where a name was said: %d places kept", len(self.refs))
+        text = await name_places.more_places(
+            interaction.guild,
+            transcripts,
+            campaign.guild_id,
+            self.places.more,
+            self.spellings,
+            await cast(Any, interaction.client).consent.consenting(campaign.guild_id),
+        )
         await interaction.followup.send(text, ephemeral=True)
 
     def _buttons(self) -> None:
@@ -1524,26 +1341,10 @@ class SuggestionReview(_Menu):
                 (self._same, "🔗 Same as a known name…", discord.ButtonStyle.secondary),
             ]
         else:
-            # No kind was guessed: the picker is on the card itself, so one press still adds it
-            # (#2937). "Same as a known name" waits beside the "not now" answers below.
-            buttons = []
-            self.kind = _Select(
-                self._kind_picked,
-                placeholder=logic.shorten(f"What is {self.name or 'it'}? Pick to add it", 150),
-                options=[
-                    discord.SelectOption(label=label, value=kind) for kind, label in KINDS.items()
-                ],
-                row=0,
-            )
-            self.add_item(self.kind)
-            self.add_item(
-                _Button(
-                    self._same,
-                    label="🔗 Same as a known name…",
-                    style=discord.ButtonStyle.primary,
-                    row=1,
-                )
-            )
+            buttons = [
+                (self._yes, "✅ Yes, add it", discord.ButtonStyle.success),
+                (self._same, "🔗 Same as a known name…", discord.ButtonStyle.primary),
+            ]
         for handler, label, style in buttons:
             self.add_item(_Button(handler, label=label, style=style, row=0))
         # The two "not now" answers on their own row, so a phone never cuts the labels.
@@ -1562,50 +1363,15 @@ class SuggestionReview(_Menu):
                 row=1,
             )
         )
-        if self.is_list:  # a list the readers offered as one name (#3383)
+        if self.places.more:  # more windows behind a button (#2329)
             self.add_item(
                 _Button(
-                    self._split,
-                    label="✂️ These are separate names",
-                    style=discord.ButtonStyle.primary,
-                    row=3,
-                )
-            )
-        if self.is_list:  # the list may be one group (#3383, part 2)
-            if self.group is not None:
-                self.add_item(
-                    _Button(
-                        self._yes_group,
-                        label="👥 Yes, that group",
-                        style=discord.ButtonStyle.success,
-                        row=4,
-                    )
-                )
-            self.add_item(
-                _Button(
-                    self._make_group,
-                    label="👥 They're a group",
+                    self._more_places,
+                    label="🔎 More places",
                     style=discord.ButtonStyle.secondary,
-                    row=4,
+                    row=2,
                 )
             )
-        if self.split_undo is not None:  # until the next answer: the split can still be taken back
-            self.add_item(
-                _Button(
-                    self._undo_split,
-                    label="↩ Undo the split" if self.undo_kind == "split" else "↩ Undo the group",
-                    style=discord.ButtonStyle.secondary,
-                    row=3,
-                )
-            )
-        self.add_item(  # up to three places, newest first (#3384; was "More places", #2329)
-            _Button(
-                self._where,
-                label="📜 Where was it said?",
-                style=discord.ButtonStyle.secondary,
-                row=2,
-            )
-        )
         if self.places.link:  # the session's page on the website
             self.add_item(
                 discord.ui.Button(label="📜 Open in transcript", url=self.places.link, row=2)
@@ -1624,7 +1390,6 @@ class SuggestionReview(_Menu):
         entity = await memory.entity(campaign.guild_id, campaign.id, self.queue[0])
         if entity is None or entity.status != PROPOSED:
             self.queue.pop(0)
-            self.split_undo = None  # a part is gone: the split can't be taken back as it was
             await self._next(interaction, campaign, memory, note=None)
             return None
         return campaign, memory, entity
@@ -1668,7 +1433,6 @@ class SuggestionReview(_Menu):
         memory: MemoryStore,
         note: str,
     ) -> None:
-        self.split_undo = None  # an answer ends the chance to undo the split
         decided = self.queue.pop(0)
         held = getattr(interaction.client, "lore_context", None)
         if held is not None:
@@ -1680,9 +1444,6 @@ class SuggestionReview(_Menu):
         if current is None:
             return
         campaign, memory, entity = current
-        if entity.role == PLAYER_CHARACTER:  # the text says it is a player's character (#3553)
-            await self._ask_player(interaction, campaign, entity)
-            return
         if self.known_kind:  # it was read with its kind: one press (#2167)
             try:
                 await memory.confirm_entity(
@@ -1715,16 +1476,6 @@ class SuggestionReview(_Menu):
         self.add_item(_Button(self._back, label="Back", style=discord.ButtonStyle.secondary))
         await _replace(interaction, f"**What is {_md(entity.name)}?**", self)
 
-    async def _ask_player(
-        self, interaction: discord.Interaction, campaign: Campaign, entity: Entity
-    ) -> None:
-        """ "Who plays them?": a player character is confirmed with its player, never guessed."""
-        self.clear_items()
-        self.add_item(_UserSelect(self._player_picked))
-        self.add_item(self._type_id(campaign, entity))
-        self.add_item(_Button(self._back, label="Back", style=discord.ButtonStyle.secondary))
-        await _replace(interaction, f"**Who plays {_md(entity.name)}?**", self)
-
     async def _kind_picked(self, interaction: discord.Interaction) -> None:
         current = await self._current(interaction)
         if current is None:
@@ -1732,7 +1483,10 @@ class SuggestionReview(_Menu):
         campaign, memory, entity = current
         kind = self.kind.values[0]
         if kind == PC:  # who plays them?
-            await self._ask_player(interaction, campaign, entity)
+            self.clear_items()
+            self.add_item(_UserSelect(self._player_picked))
+            self.add_item(_Button(self._back, label="Back", style=discord.ButtonStyle.secondary))
+            await _replace(interaction, f"**Who plays {_md(entity.name)}?**", self)
             return
         try:
             await memory.confirm_entity(campaign.guild_id, campaign.id, entity.id, kind, source=DM)
@@ -1742,47 +1496,25 @@ class SuggestionReview(_Menu):
         changed(interaction, campaign)  # the next card sees it at once
         await self._saved(interaction, campaign, memory, f"✅ Added {self._added(entity)}.")
 
-    def _type_id(self, campaign: Campaign, entity: Entity) -> _Button:
-        """⌨️ Type a Discord ID, for a player who is not in the server yet (#3004). It is for this
-        suggestion only: a confirmation that comes after the queue moved on links nothing."""
-
-        async def allowed(interaction: discord.Interaction) -> bool:
-            return await _campaign_for(interaction, self.campaign_id) is not None
-
-        async def linked(interaction: discord.Interaction, user_id: int, name: str) -> None:
-            await self._link_player(interaction, user_id, name, expected=entity.id)
-
-        return player_id.type_id_button(campaign.guild_id, allowed, linked, self._back)
-
     async def _player_picked(
         self, interaction: discord.Interaction, player: discord.User | discord.Member
     ) -> None:
         if player.bot:
             await _tell(interaction, "Pick a person, not a bot.")
             return
-        await self._link_player(interaction, player.id, player.display_name)
-
-    async def _link_player(
-        self, interaction: discord.Interaction, user_id: int, name: str, expected: str | None = None
-    ) -> None:
-        await _answer_first(interaction, in_place=True)  # (the save and the next card follow)
         current = await self._current(interaction)
         if current is None:
             return
         campaign, memory, entity = current
-        if expected is not None and entity.id != expected:
-            await _tell(interaction, "That one's already done.")
-            return
         try:
             await memory.confirm_entity(
-                campaign.guild_id, campaign.id, entity.id, PC, source=DM, played_by=user_id
+                campaign.guild_id, campaign.id, entity.id, PC, source=DM, played_by=player.id
             )
         except MemoryRuleError:
             await _tell(interaction, GONE)
             return
-        await memory.party_on_assignment(campaign.guild_id, campaign.id)  # (a lore-only start)
         changed(interaction, campaign)
-        note = f"✅ Added {self._added(entity)}, played by **{_md(name)}**."
+        note = f"✅ Added {self._added(entity)}, played by **{_md(player.display_name)}**."
         await self._saved(interaction, campaign, memory, note)
 
     async def _same(self, interaction: discord.Interaction) -> None:
@@ -1793,9 +1525,7 @@ class SuggestionReview(_Menu):
         known = await memory.entities(campaign.guild_id, campaign.id, statuses=[CONFIRMED])
         if not known:
             await _tell(
-                interaction,
-                "DMbot doesn't know any names yet, so there's nothing to match. "
-                "Add this one as a new name instead.",
+                interaction, "DMbot doesn't know any names yet. Press ✅ Yes, add it instead."
             )
             return
         self.clear_items()
@@ -1981,9 +1711,11 @@ class SuggestionReview(_Menu):
             if clash is not None:
                 await _tell(interaction, already_known(new, clash))
                 return
+        old = name_key(entity.name)
         # The old word is part of the new name: keeping it as an old spelling would turn every
         # "Harrow" said alone into "Harrow's Keep".
-        part = widens(entity.name, new)
+        bare = name_key(re.sub(r"['\u2019]s\b", "", new))  # "Harrow's Keep" holds "Harrow"
+        part = f" {old} " in f" {bare} " and name_key(new) != old
         try:  # one change, so one Undo: the new name and how it was heard
             await memory.rename_entity(
                 campaign.guild_id,
@@ -1999,179 +1731,6 @@ class SuggestionReview(_Menu):
             return
         changed(interaction, campaign)
         await self._next(interaction, campaign, memory, note=f"✏️ Saved as **{_md(new)}**.")
-
-    async def _split(self, interaction: discord.Interaction) -> None:
-        """ "These are separate names" (#3383): a list offered as one name becomes a waiting name
-        for each part, in one change that can be undone until a part is answered."""
-        current = await self._current(interaction)
-        if current is None:
-            return
-        campaign, memory, entity = current
-        if not sees_secrets(campaign, interaction.user.id):  # the DM's call, as the store holds
-            await _tell(interaction, logic.NO_CAMPAIGN_ACCESS)
-            return
-        try:
-            written = await memory.split_waiting_name(
-                campaign.guild_id, campaign.id, entity.id, source=DM
-            )
-        except MemoryRuleError:
-            await _tell(interaction, GONE)
-            return
-        changed(interaction, campaign)
-        done = written.value
-        by_key = {lookup_key(e.name): e.id for e in await memory.entities(
-            campaign.guild_id, campaign.id, statuses=[PROPOSED]
-        )}  # fmt: skip
-        made = [by_key[k] for p in done.made if (k := lookup_key(p)) in by_key]
-        self.queue.pop(0)
-        self.queue[:0] = made  # the new names are asked next
-        if written.batch is not None:
-            self.split_undo = (written.batch, entity.name, entity.id, made)
-            self.undo_kind = "split"
-        names = _and([f"**{_md(p)}**" for p in done.parts])
-        held = _and([f"**{_md(p)}**" for p in done.joined]) if done.joined else ""
-        extra = (
-            f" {held} {'was' if len(done.joined) == 1 else 'were'} already known." if held else ""
-        )
-        await self._next(
-            interaction, campaign, memory, note=f"✂️ OK, these are separate names: {names}.{extra}"
-        )
-
-    async def _group_hint(
-        self, campaign: Campaign, memory: MemoryStore, entity: Entity
-    ) -> GroupHint | None:
-        """The known group this list is most likely to be, if any (read only; none on a failure)."""
-        try:
-            found = await memory.group_hints(campaign.guild_id, campaign.id, entity.id)
-        except Exception:
-            log.exception("Couldn't look for a group a list of names may be")
-            return None
-        return found[0] if found else None
-
-    async def _yes_group(self, interaction: discord.Interaction) -> None:
-        """ "Yes, that group" (#3383, part 2): the list is another name of the group."""
-        current = await self._current(interaction)
-        if current is None or self.group is None:
-            return
-        campaign, memory, entity = current
-        if not sees_secrets(campaign, interaction.user.id):
-            await _tell(interaction, logic.NO_CAMPAIGN_ACCESS)
-            return
-        try:
-            written = await memory.join_group(
-                campaign.guild_id, campaign.id, entity.id, self.group.group_id, source=DM
-            )
-        except MemoryRuleError as exc:
-            await _tell(interaction, f"Couldn't add it to the group. {exc} Nothing was changed.")
-            return
-        await self._grouped(interaction, campaign, memory, entity, written)
-
-    async def _make_group(self, interaction: discord.Interaction) -> None:
-        """ "They're a group": no known group fits, so the DM names it."""
-        current = await self._current(interaction)
-        if current is None:
-            return
-        campaign, _, entity = current
-        if not sees_secrets(campaign, interaction.user.id):
-            await _tell(interaction, logic.NO_CAMPAIGN_ACCESS)
-            return
-        await interaction.response.send_modal(GroupNameForm(self, entity.id))
-
-    async def apply_group(
-        self, interaction: discord.Interaction, entity_id: str, group_name: str
-    ) -> None:
-        """The DM named the group (from `GroupNameForm`)."""
-        await _answer_first(interaction, in_place=True)
-        current = await self._current(interaction)
-        if current is None:
-            return
-        campaign, memory, entity = current
-        if entity.id != entity_id or not sees_secrets(campaign, interaction.user.id):
-            await _tell(interaction, GONE)
-            return
-        name = " ".join(group_name.split())
-        if not name:
-            await _tell(
-                interaction, "The group needs a name. Press 👥 They're a group and type it."
-            )
-            return
-        try:
-            written = await memory.make_group(
-                campaign.guild_id, campaign.id, entity.id, name, source=DM
-            )
-        except MemoryRuleError as exc:
-            await _tell(interaction, f"Couldn't make the group. {exc} Nothing was changed.")
-            return
-        await self._grouped(interaction, campaign, memory, entity, written)
-
-    async def _grouped(
-        self,
-        interaction: discord.Interaction,
-        campaign: Campaign,
-        memory: MemoryStore,
-        entity: Entity,
-        written: Written[GroupJoined],
-    ) -> None:
-        """After the list became a group: the parts that are new are asked next, and ↩ Undo."""
-        changed(interaction, campaign)
-        done = written.value
-        by_key = {lookup_key(e.name): e.id for e in await memory.entities(
-            campaign.guild_id, campaign.id, statuses=[PROPOSED]
-        )}  # fmt: skip
-        made = [by_key[k] for p in done.made if (k := lookup_key(p)) in by_key]
-        self.queue.pop(0)
-        self.queue[:0] = made
-        self.split_undo = None
-        if written.batch is not None:
-            self.split_undo = (written.batch, entity.name, entity.id, made)
-            self.undo_kind = "group"
-        shown = [logic.shorten(p, 40) for p in done.parts[:8]]
-        more = f" and {len(done.parts) - 8} more" if len(done.parts) > 8 else ""
-        names = (_and([f"**{_md(p)}**" for p in shown]) + more) if shown else ""
-        group = logic.shorten(done.group_name, 60)
-        extra = (
-            f" Not added: {_and([f'**{_md(p)}**' for p in done.skipped])}." if done.skipped else ""
-        )
-        await self._next(
-            interaction,
-            campaign,
-            memory,
-            note=f"👥 Saved: **{_md(group)}** is a group of {names}.{extra}",
-        )
-
-    async def _undo_split(self, interaction: discord.Interaction) -> None:
-        """Take the split back while none of its parts has been answered."""
-        pending = self.split_undo
-        campaign = await _campaign_for(interaction, self.campaign_id)
-        memory = _memory(interaction)
-        if campaign is None or memory is None:
-            return
-        if not sees_secrets(campaign, interaction.user.id):  # the DM's change, the DM's undo
-            await _tell(interaction, logic.NO_CAMPAIGN_ACCESS)
-            return
-        if pending is None:  # a second press, or an old card
-            await _tell(interaction, GONE)
-            return
-        self.split_undo = None  # a second quick press finds nothing to undo
-        batch, name, original, made = pending
-        try:
-            if self.undo_kind == "group":
-                await memory.undo(campaign.guild_id, campaign.id, batch)
-            else:
-                await memory.undo_split(campaign.guild_id, campaign.id, batch, name)
-        except MemoryRuleError:
-            await _tell(
-                interaction,
-                "Can't undo: a part was answered, or it was changed since. "
-                "Change the names by hand if you need to.",
-            )
-            return
-        changed(interaction, campaign)
-        self.queue = [original, *(q for q in self.queue if q not in made)]
-        undone = "Group undone" if self.undo_kind == "group" else "Split undone"
-        await self._next(
-            interaction, campaign, memory, note=f"↩ {undone}. Back to **{_md(name)}**."
-        )
 
     async def _no(self, interaction: discord.Interaction) -> None:
         current = await self._current(interaction)
@@ -2196,7 +1755,6 @@ class SuggestionReview(_Menu):
         if current is None:
             return
         campaign, memory, entity = current
-        self.split_undo = None
         self.later += 1
         self.queue.pop(0)  # this round only; it's still waiting next time
         try:  # and remembered, so it no longer holds a recap back (#2174)
@@ -2273,8 +1831,6 @@ class RecapNamesButton(
         if campaign is None or not logic.can_run(campaign, interaction.user.id, False):
             await _tell(interaction, logic.NO_CAMPAIGN_ACCESS)
             return
-        if interaction.guild is None:
-            _PRIVATE_SERVERS[campaign.id] = campaign.guild_id  # so the cards' buttons work here
         await _review(interaction, memory, campaign)
 
 
@@ -2317,19 +1873,6 @@ def recap_names_reminder(count: int) -> str:
         f"📝 **{_plural(count, 'new name')}** from the last recap "
         f"{'is' if count == 1 else 'are'} still unchecked. Tap **Check new names** when you "
         "have a moment."
-    )
-
-
-def private_after_session_text(names: list[str], where: str = "your last session") -> str:
-    """The same question, in the DM's private chat (#3210): nobody else reads it, so nothing here
-    is held back. Names only, as on the DM screen. It says "your last session", not "this
-    session", because the DM may read it later."""
-    shown = ", ".join(f"**{_md(n)}**" for n in names[:5])
-    more = f" and {len(names) - 5} more" if len(names) > 5 else ""
-    ask = "say if it is in your game" if len(names) == 1 else "say which are in your game"
-    return (
-        f"📝 **{_plural(len(names), 'new name')} to check** from {where}: {shown}{more}.\n"
-        f"Press the button to {ask}. DMbot will spell {'it' if len(names) == 1 else 'them'} right."
     )
 
 

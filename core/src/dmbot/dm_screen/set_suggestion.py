@@ -22,7 +22,6 @@ import discord
 
 from dmbot.campaigns import Campaign
 from dmbot.discord_limits import MESSAGE_MAX, fit_message
-from dmbot.dm_screen import private_note
 from dmbot.logs import set_log_context
 from dmbot.rules import rule_sets, set_diff
 from dmbot.rules.house import HouseRuleError
@@ -109,28 +108,16 @@ async def _close_note(interaction: discord.Interaction, text: str) -> None:
         log.warning("Couldn't close a suggestion note", exc_info=True)
 
 
-async def _close_stale(interaction: discord.Interaction) -> None:
-    """Another DM already answered: this copy of the note (the same note sits in each DM's private
-    chat, #3210) loses its buttons too."""
-    message = interaction.message
-    if message is not None:
-        await _close_note(interaction, f"{message.content}\n_Already answered._")
-
-
 async def press(
     interaction: discord.Interaction, campaign_id: str, action: str, suggestion_id: str
 ) -> None:
     await _answer_first(interaction)
     bot = _bot(interaction)
     sets = bot.rule_sets
-    if sets is None:
+    if interaction.guild is None or sets is None:
         await _tell(interaction, COULDNT)
         return
-    # In the DM's private chat a press has no server: the database says where the campaign is.
-    guild_id = interaction.guild.id if interaction.guild is not None else None
-    if guild_id is None:
-        guild_id = await bot.campaigns.guild_of(campaign_id)
-    campaign = await bot.campaigns.get(guild_id, campaign_id) if guild_id is not None else None
+    campaign = await bot.campaigns.get(interaction.guild.id, campaign_id)
     if campaign is None:
         await _tell(interaction, GONE)
         return
@@ -142,7 +129,6 @@ async def press(
         await _tell(interaction, EXPIRED)
         return
     if asked is None or asked.status != "open":
-        await _close_stale(interaction)
         await _tell(interaction, ANSWERED)
         return
     if action == "see":
@@ -156,7 +142,6 @@ async def press(
             await _tell(interaction, str(exc))
             return
         if not done:
-            await _close_stale(interaction)
             await _tell(interaction, ANSWERED)
             return
         await _close_note(
@@ -227,22 +212,23 @@ async def _accept(
 async def post_note(
     bot: Any, guild_id: int, campaign_id: str, suggestion: rule_sets.Suggestion, set_name: str
 ) -> bool:
-    """Ask the publishing campaign's DMs, privately. False if it could not be posted
+    """Put the note on the publishing campaign's DM screen. False if it could not be posted
     (it is tried again at that campaign's next session start)."""
     sets = bot.rule_sets
     try:
         campaign = await bot.campaigns.get(guild_id, campaign_id)
-        if campaign is None:
+        if campaign is None or campaign.dm_screen_channel_id is None:
             return False
         replaces = False
         shared = await sets.current_content(guild_id, campaign_id)
         if shared is not None:  # say whether Add to set would replace one of its rules or add
             replaces = rule_sets.replaced_rule(shared[1]["rules"], suggestion.instead) is not None
-        # The publisher's DMs are asked privately (#3210); the screen only if none can be reached.
-        text = note_text(set_name, suggestion.rule, suggestion.instead, replaces)
-        if not await private_note.send(
-            bot, campaign, text, lambda: note_view(campaign_id, suggestion.id)
-        ):
+        posted = await bot.post_message(
+            campaign.dm_screen_channel_id,
+            note_text(set_name, suggestion.rule, suggestion.instead, replaces),
+            note_view(campaign_id, suggestion.id),
+        )
+        if posted is None:
             return False
         await sets.mark_noted(guild_id, campaign_id, suggestion.id)
         return True

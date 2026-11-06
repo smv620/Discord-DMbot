@@ -15,7 +15,6 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import gzip
-import inspect
 import io
 import json
 import logging
@@ -31,7 +30,6 @@ from psycopg import sql
 
 from dmbot import entitlements, fight_style
 from dmbot.campaigns import offer_notify
-from dmbot.campaigns.backup_names import build_commit
 from dmbot.campaigns.invite import parse_invite
 from dmbot.campaigns.models import (
     CONFIRMATION_PURPOSES,
@@ -82,11 +80,7 @@ log = logging.getLogger(__name__)
 EXPORT_FORMAT = "dmbot-campaign"
 # 2: written compressed since #164; contents unchanged from 1. Plain files of either
 # version still restore: the file's first bytes, not its version, say if it's packed.
-# 3: carries the who-knows lists (`memory_knowers`, #2995). An older file has none, so its restore
-# works them out from the old flags; a file of this version keeps the lists it holds, however few.
-# 4: carries each session's notes (`session_notes`, #3026). An older file has none, and its restore
-# simply has none; a DMbot that predates the section refuses a file of this version as too new.
-EXPORT_VERSION = 4
+EXPORT_VERSION = 2
 
 RULE_ID_MAX = 64
 # Discord IDs and Unix timestamps must fit Postgres BIGINT (signed 64-bit).
@@ -103,9 +97,6 @@ DAMAGED = (
     "This backup file is damaged or isn't a DMbot campaign backup. "
     "Pick the file you got from `/dmbot backup`."
 )
-DAMAGED_DM = "This backup file is damaged (bad DM entry)."
-DAMAGED_CONFIRMATION = "This backup file is damaged (bad confirmation)."
-DAMAGED_OPTIONAL_RULE = "This backup file is damaged (bad optional rule)."
 TOO_BIG = "That file is too big to be a DMbot backup. Pick the file you got from `/dmbot backup`."
 NOT_A_BACKUP = (
     "That file isn't a DMbot campaign backup. Pick the file you got from `/dmbot backup`."
@@ -114,14 +105,6 @@ CAMPAIGN_TOO_BIG = "This campaign is too big for DMbot to copy yet. Nothing was 
 PARTS_NOT_THIS_COPY = (
     "Those transcripts files don't belong to this copy. Use the ones DMbot gave with it."
 )
-
-
-NOT_THIS_DM = "Only this campaign's DM can replace it with a backup."
-
-
-class PartsError(CampaignError):
-    """The transcripts files are not exactly the set the copy came with (#2552): a file from
-    another copy, repeated, or one missing."""
 
 
 class BackupTooBig(CampaignError):
@@ -181,7 +164,7 @@ class _DMSection:
     async def load(self, conn: Conn, guild_id: int, campaign_id: str, rows: list[Any]) -> None:
         for raw in rows:
             if not _valid_user_id(raw):
-                raise CampaignError(DAMAGED_DM)
+                raise CampaignError("This backup file is damaged (bad DM entry).")
         async with conn.cursor() as cur:
             await cur.executemany(
                 "INSERT INTO campaign_dms (campaign_id, guild_id, user_id) VALUES (%s, %s, %s)"
@@ -250,7 +233,7 @@ class _ConfirmationsSection:
                 and 0 <= at <= INT64_MAX
                 and rid not in seen
             ):
-                raise CampaignError(DAMAGED_CONFIRMATION)
+                raise CampaignError("This backup file is damaged (bad confirmation).")
             seen.add(rid)
             assert isinstance(user, str) and isinstance(purpose, str)
             values.append((rid, int(user), purpose, fp, at))
@@ -289,7 +272,7 @@ class _OptionalRulesSection:
             rule = row.get("rule") if isinstance(row, dict) else None
             enabled = row.get("enabled") if isinstance(row, dict) else None
             if not _valid_rule_id(rule) or not isinstance(enabled, bool):
-                raise CampaignError(DAMAGED_OPTIONAL_RULE)
+                raise CampaignError("This backup file is damaged (bad optional rule).")
             assert isinstance(rule, str)
             values.append((campaign_id, guild_id, rule, enabled))
         async with conn.cursor() as cur:
@@ -348,17 +331,13 @@ KEEP_CHOICES = (None, 365, 90, 30)  # how long transcripts are kept (#1533); Non
 
 # Hand-over (#437 part 1b): plain words for the person who tried.
 NOT_THE_OWNER = "Only the campaign's owner can hand it over. Ask them to do it."
-MOVE_UNDER_WAY = (
-    "The new owner has accepted and DMbot is moving the campaign to their server. Nothing can be "
-    "changed until that is done."
-)
 NO_OWNER_YET = (
     "This campaign has no owner yet. Whoever runs `/dmbot start` next will be asked to take it "
     "on (their plan pays for its hours)."
 )
 OFFER_TO_SELF = "This campaign is already yours. Pick someone else."
 OFFER_WAITING = (
-    "You already offered this campaign to someone. Take that offer back first (⚙️ Manage DMbot "
+    "You already offered this campaign to someone. Take that offer back first (⚙️ Settings "
     "→ 🗂️ Campaign management, "
     f"then **Take back offer**), or wait: it ends by itself after {HANDOVER_DAYS} days."
 )
@@ -369,7 +348,7 @@ NO_ROOM_TO_RESTORE = (
 NOT_THE_OWNER_PAUSE = "Only the campaign's owner can pause or unpause it."
 NO_ROOM_TO_UNPAUSE = (
     "Your plan has no room to unpause this campaign. Pause one of your other campaigns first "
-    "(open it, then ⚙️ Manage DMbot → 🗂️ Campaign management → ⏸️ **Pause this campaign**)."
+    "(open it, then ⚙️ Settings → 🗂️ Campaign management → ⏸️ **Pause this campaign**)."
 )
 MAX_DMS = 5  # a campaign's game masters at most (#1600)
 TOO_MANY_DMS = (
@@ -445,10 +424,6 @@ class CampaignStore:
         async with self._db.guild(guild_id) as conn:
             await self._require(conn, guild_id, campaign_id)
             return await self._sections["confirmations"].dump(conn, guild_id, campaign_id)
-
-    @property
-    def db(self) -> Database:
-        return self._db
 
     def register_section(self, section: ExportSection) -> None:
         """Include another feature's per-campaign data in backups and deletes."""
@@ -528,16 +503,6 @@ class CampaignStore:
             if await self.has_campaign(guild_id, campaign_id):
                 return True
         return False
-
-    async def guild_of(self, campaign_id: str) -> int | None:
-        """The server a campaign is in now, read fresh from the database (#3210). A question sent
-        to a DM's private chat has no server around it, and a lookup kept in memory would be
-        lost on every restart, leaving old buttons dead. A moved campaign keeps its ID, so this
-        finds it in its new server."""
-        for guild_id in await self.guilds_with_campaigns():
-            if await self.has_campaign(guild_id, campaign_id):
-                return guild_id
-        return None
 
     async def forget_guild_if_empty(self, guild_id: int) -> bool:
         """Drop a server from the list once it holds no campaigns and no website-delete note
@@ -679,14 +644,10 @@ class CampaignStore:
             current = await self._require(conn, guild_id, campaign_id, lock=True)
             if user_id not in current.dm_user_ids and len(current.dm_user_ids) >= MAX_DMS:
                 raise CampaignError(TOO_MANY_DMS)
-            # One statement: the row is added and, only if it was new, the story's number moves
-            # (who the DMs are changes what a viewer sees, #3294).
             await conn.execute(
-                "WITH added AS (INSERT INTO campaign_dms (campaign_id, guild_id, user_id)"
-                " VALUES (%s, %s, %s) ON CONFLICT DO NOTHING RETURNING 1)"
-                " UPDATE campaigns SET memory_version = memory_version + 1"
-                " WHERE guild_id = %s AND id = %s AND EXISTS (SELECT 1 FROM added)",
-                (campaign_id, guild_id, user_id, guild_id, campaign_id),
+                "INSERT INTO campaign_dms (campaign_id, guild_id, user_id) VALUES (%s, %s, %s)"
+                " ON CONFLICT DO NOTHING",
+                (campaign_id, guild_id, user_id),
             )
             # (no read after: the locked row cannot change under this transaction)
             return dataclasses.replace(current, dm_user_ids=current.dm_user_ids | {user_id})
@@ -700,11 +661,9 @@ class CampaignStore:
             if user_id in campaign.dm_user_ids and len(campaign.dm_user_ids) == 1:
                 raise CampaignError(LAST_DM)
             await conn.execute(
-                "WITH gone AS (DELETE FROM campaign_dms"
-                " WHERE guild_id = %s AND campaign_id = %s AND user_id = %s RETURNING 1)"
-                " UPDATE campaigns SET memory_version = memory_version + 1"
-                " WHERE guild_id = %s AND id = %s AND EXISTS (SELECT 1 FROM gone)",
-                (guild_id, campaign_id, user_id, guild_id, campaign_id),
+                "DELETE FROM campaign_dms"
+                " WHERE guild_id = %s AND campaign_id = %s AND user_id = %s",
+                (guild_id, campaign_id, user_id),
             )
             return dataclasses.replace(campaign, dm_user_ids=campaign.dm_user_ids - {user_id})
 
@@ -1032,108 +991,26 @@ class CampaignStore:
                 or (current.owner_user_id is not None and current.owner_user_id != only_if_owner)
             ):
                 raise CampaignError(PLAN_HOLDER_CHANGED)
-            had_session = await self.delete_in(conn, guild_id, campaign_id)
+            for section in self._sections.values():
+                await section.clear(conn, guild_id, campaign_id)
+            # The saved session would go with the campaign anyway (ON DELETE CASCADE);
+            # removing it here logs it and leaves no restart note behind (#147).
+            cur = await conn.execute(
+                "DELETE FROM active_sessions WHERE guild_id = %s AND campaign_id = %s"
+                " RETURNING guild_id",
+                (guild_id, campaign_id),
+            )
+            had_session = await cur.fetchone() is not None
+            if had_session:
+                await conn.execute(
+                    "DELETE FROM live_session_guilds WHERE guild_id = %s", (guild_id,)
+                )
+            await conn.execute(
+                "DELETE FROM campaigns WHERE guild_id = %s AND id = %s", (guild_id, campaign_id)
+            )
         if had_session:
             with log_context(guild_id=guild_id, campaign_id=campaign_id):
                 log.info("Saved session removed: its campaign was deleted")
-
-    async def move_in(
-        self,
-        conn: Conn,
-        guild_id: int,
-        target: int,
-        campaign_id: str,
-        *,
-        new_owner: int,
-        old_owner: int,
-        consenting: frozenset[int],
-    ) -> str:
-        """Move the campaign to another server, inside a transaction the caller holds (and has
-        locked the campaign in; #2532). Returns its name in the new server.
-
-        The campaign's own row changes server and migration 0215's foreign keys carry every row
-        that hangs off it, so nothing is read back and written again and nothing can be left
-        behind (tests/test_campaign_tables.py lists the tables; tests/test_campaign_move.py proves
-        them). What belongs to the old server is reset: channels and messages, which the new
-        owner makes again with /dmbot start; who recorded is not carried (see `consenting`)."""
-        await _scope(conn, guild_id)
-        cur = await conn.execute(
-            "SELECT name FROM campaigns WHERE guild_id = %s AND id = %s", (guild_id, campaign_id)
-        )
-        row = await cur.fetchone()
-        if row is None:
-            raise CampaignError(NOT_HERE)
-        await _scope(conn, target)
-        name = await self._free_name(conn, target, str(row["name"]), "moved")  # a clash is renamed
-        await _scope(conn, guild_id)
-        # What is only about the old server's Discord messages is dropped before the move.
-        await conn.execute(
-            "DELETE FROM npcs_channel_messages WHERE guild_id = %s AND campaign_id = %s",
-            (guild_id, campaign_id),
-        )
-        await conn.execute(
-            "UPDATE game_clocks SET channel_id = NULL, message_id = NULL,"
-            " players_channel_id = NULL, players_message_id = NULL"
-            " WHERE guild_id = %s AND campaign_id = %s",
-            (guild_id, campaign_id),
-        )
-        await conn.execute(
-            "UPDATE map_notes SET message_id = 0 WHERE guild_id = %s AND campaign_id = %s",
-            (guild_id, campaign_id),
-        )
-        await conn.execute(
-            "UPDATE campaign_pictures SET message_id = 0 WHERE guild_id = %s AND campaign_id = %s",
-            (guild_id, campaign_id),
-        )
-        await conn.execute("SELECT set_config('dmbot.moving_campaign', %s, true)", (campaign_id,))
-        await conn.execute("SELECT set_config('dmbot.moving_to', %s, true)", (str(target),))
-        cur = await conn.execute(
-            "UPDATE campaigns SET guild_id = %s, name = %s, name_key = %s, owner_user_id = %s,"
-            " channel_number = NULL, dm_screen_channel_id = NULL, transcript_channel_id = NULL,"
-            " gametime_channel_id = NULL, dmbchat_channel_id = NULL, dm_bot_channel_id = NULL,"
-            " dm_bot_message_id = NULL, rules_channel_id = NULL, npcs_channel_id = NULL,"
-            " last_voice_channel_id = NULL, table_chat_channel_id = NULL,"
-            " dndbeyond_invite = NULL, owner_left_at = NULL, owner_missing_since = NULL,"
-            " retention_warned_stage = 0, retention_warned_for = NULL,"
-            " memory_version = memory_version + 1"
-            " WHERE guild_id = %s AND id = %s RETURNING id",
-            (target, name, name_key(name), new_owner, guild_id, campaign_id),
-        )
-        if await cur.fetchone() is None:
-            raise CampaignError(NOT_HERE)
-        await _scope(conn, target)  # from here the campaign is the new server's
-        await conn.execute(
-            "INSERT INTO campaign_dms (campaign_id, guild_id, user_id)"
-            " SELECT %s, %s, u FROM unnest(%s::bigint[]) AS u ON CONFLICT DO NOTHING",
-            (campaign_id, target, [new_owner, old_owner]),  # the old owner stays a DM
-        )
-        # Counts of names said are kept only for who is recorded in this server (#1747).
-        await conn.execute(
-            "DELETE FROM memory_heard WHERE guild_id = %s AND campaign_id = %s"
-            " AND NOT (speaker_id = ANY(%s))",
-            (target, campaign_id, sorted(consenting)),
-        )
-        return name
-
-    async def delete_in(self, conn: Conn, guild_id: int, campaign_id: str) -> bool:
-        """The deletion itself, inside a transaction the caller holds (and has locked the
-        campaign in). True if a saved session went with it."""
-        for section in self._sections.values():
-            await section.clear(conn, guild_id, campaign_id)
-        # The saved session would go with the campaign anyway (ON DELETE CASCADE);
-        # removing it here logs it and leaves no restart note behind (#147).
-        cur = await conn.execute(
-            "DELETE FROM active_sessions WHERE guild_id = %s AND campaign_id = %s"
-            " RETURNING guild_id",
-            (guild_id, campaign_id),
-        )
-        had_session = await cur.fetchone() is not None
-        if had_session:
-            await conn.execute("DELETE FROM live_session_guilds WHERE guild_id = %s", (guild_id,))
-        await conn.execute(
-            "DELETE FROM campaigns WHERE guild_id = %s AND id = %s", (guild_id, campaign_id)
-        )
-        return had_session
 
     # ---- hand-over (#437 part 1b) --------------------------------------------
     # One place for every hand-over write, used by the bot's buttons and the website's
@@ -1206,61 +1083,6 @@ class CampaignStore:
                 await offer_notify.send(conn, guild_id, offer.id)
             return offer
 
-    async def offer_handover_by_email(
-        self,
-        guild_id: int,
-        campaign_id: str,
-        from_user_id: int,
-        now: int,
-        *,
-        from_name: str,
-        token_hash: str,
-    ) -> HandoverOffer:
-        """The owner offers the campaign by email (#2532): to whoever opens the one-use link
-        on the website and accepts, not to a Discord account. The offer holds only a SHA-256
-        of the link's token (`token_hash`) and no address. `to_user_id` is 0, which matches no
-        one, until the website's claim sets it. A new offer takes back the campaign's open
-        one, whichever way it was made. Raises CampaignError in plain words."""
-        async with self._db.guild(guild_id) as conn:
-            await self._lock(conn, guild_id, campaign_id)
-            campaign = await self._require(conn, guild_id, campaign_id)
-            if campaign.owner_user_id is None:
-                raise CampaignError(NO_OWNER_YET)
-            if campaign.owner_user_id != from_user_id:
-                raise CampaignError(NOT_THE_OWNER)
-            moving = await conn.execute(
-                "SELECT 1 FROM campaign_handover_offers WHERE guild_id = %s AND campaign_id = %s"
-                " AND status = 'open' AND move_to_guild_id IS NOT NULL",
-                (guild_id, campaign_id),
-            )
-            if await moving.fetchone() is not None:  # a move that was asked for is not taken back
-                raise CampaignError(MOVE_UNDER_WAY)
-            await conn.execute(
-                "UPDATE campaign_handover_offers SET status = 'withdrawn', decided_at = %s"
-                " WHERE guild_id = %s AND campaign_id = %s AND status = 'open'",
-                (now, guild_id, campaign_id),
-            )
-            try:  # the index is the last word, should a writer ever skip the lock
-                cur = await conn.execute(
-                    "INSERT INTO campaign_handover_offers (guild_id, campaign_id, from_user_id,"
-                    " to_user_id, from_name, to_name, created_at, delivered_at, via_email,"
-                    " token_hash) VALUES (%s, %s, %s, 0, %s, '', %s, %s, true, %s) RETURNING *",
-                    (
-                        guild_id,
-                        campaign_id,
-                        from_user_id,
-                        _offer_name(from_name),
-                        now,
-                        now,
-                        token_hash,
-                    ),
-                )  # (delivered_at: nothing is sent in Discord for it)
-            except pg_errors.UniqueViolation as exc:
-                raise CampaignError(OFFER_WAITING) from exc
-            row = await cur.fetchone()
-            assert row is not None
-            return _to_offer(row)
-
     async def claim_delivery(self, guild_id: int, offer_id: int, now: int) -> HandoverOffer | None:
         """Claim an offer made on the website for a few minutes, just before the bot sends
         its private message (#690). None if it's sent, or claimed by someone else (another
@@ -1312,8 +1134,7 @@ class CampaignStore:
             await conn.execute(
                 "UPDATE campaign_handover_offers SET status = 'expired',"
                 " decided_at = created_at + %s"
-                " WHERE guild_id = %s AND status = 'open' AND created_at + %s <= %s"
-                " AND move_to_guild_id IS NULL",  # (a move that was asked for runs to its end)
+                " WHERE guild_id = %s AND status = 'open' AND created_at + %s <= %s",
                 (HANDOVER_SECONDS, guild_id, HANDOVER_SECONDS, now),
             )
             cur = await conn.execute(
@@ -1438,7 +1259,7 @@ class CampaignStore:
         """The offer as it stands now: one past its 7 days reads as expired, never open."""
         async with self._db.guild(guild_id) as conn:
             offer = await self._offer(conn, guild_id, offer_id)
-        if offer is not None and offer.status == "open" and now >= offer.expires_at:
+        if offer is not None and offer.status == "open" and not offer.is_open(now):
             return dataclasses.replace(offer, status="expired", decided_at=offer.expires_at)
         return offer
 
@@ -1446,10 +1267,7 @@ class CampaignStore:
         """The campaign's offer waiting for an answer, if any (not one past its 7 days)."""
         async with self._db.guild(guild_id) as conn:
             offer = await self._open_offer(conn, guild_id, campaign_id)
-        waiting = offer is not None and (
-            offer.is_open(now) or offer.move_to_guild_id is not None  # (a move runs to its end)
-        )
-        return offer if waiting else None
+        return offer if offer is not None and offer.is_open(now) else None
 
     async def take_ownership(
         self, guild_id: int, campaign_id: str, user_id: int, now: int
@@ -1563,7 +1381,7 @@ class CampaignStore:
 
     async def _expire(self, conn: Conn, offer: HandoverOffer, now: int) -> None:
         """An open offer found past its 7 days is marked so, for the website's lists."""
-        if offer.status == "open" and now >= offer.expires_at and offer.move_to_guild_id is None:
+        if offer.status == "open" and not offer.is_open(now):
             await self._decide(conn, offer.guild_id, offer.id, "expired", offer.expires_at)
 
     async def _decide(
@@ -1632,9 +1450,6 @@ class CampaignStore:
             "format": EXPORT_FORMAT,
             "version": EXPORT_VERSION,
             "exported_at": int(self._clock()),
-            # Which build made this file (#3391), so its lineage survives a renamed file. A restore
-            # never reads it.
-            "dmbot_commit": build_commit(),
             "campaign": {
                 "name": campaign.name,
                 "created_at": campaign.created_at,
@@ -1689,19 +1504,8 @@ class CampaignStore:
         replace_campaign_id: str | None = None,
         parts: Sequence[bytes] = (),
         left_out: LeftOut | None = None,
-        progress: Callable[[int, int], Awaitable[None] | None] | None = None,
-        in_transaction: Callable[[Conn, str], Awaitable[None]] | None = None,
-        step: Callable[[], Awaitable[None] | None] | None = None,
     ) -> Campaign:
         """Restore a backup into this server, as a new campaign or replacing one.
-
-        `progress(done, total)`: told only when there are transcripts files: 0 of N before the
-        first and then after each one is loaded (#2564, #2746). Plain or awaited. It cannot change
-        the restore; a failure in it is not the restore's.
-        `step()`: told when the file has been checked and after each section is written, so a
-        page can show the copy still moving while no transcripts file is loading (#2746).
-        `in_transaction(conn, campaign_id)`: run on the restore's own connection just before it
-        commits, so a record of the outcome commits with the copy or not at all.
 
         `left_out` counts the lines not brought back because their speaker erased them after the
         copy was made (#2605).
@@ -1723,17 +1527,6 @@ class CampaignStore:
         # meanwhile (#164).
         info, sections = await asyncio.to_thread(self._checked, data)
         order = await self._part_order(data, parts)
-
-        async def tell(call: Callable[..., Awaitable[None] | None] | None, *args: int) -> None:
-            if call is not None:
-                try:
-                    told = call(*args)  # (Discord's callback is a plain call; the website's awaits)
-                    if inspect.isawaitable(told):
-                        await told
-                except Exception as exc:  # (only a progress line: never the restore's)
-                    log.warning("A restore's progress line failed: %s", type(exc).__name__)
-
-        await tell(step)
         # The Shared story switch comes back on only for the person who confirmed the right to
         # use the material (the file's confirmation is theirs); anyone else restoring the file
         # starts with it off and confirms for themselves (#1692, CLAUDE.md IP rule).
@@ -1751,7 +1544,7 @@ class CampaignStore:
                 await self._lock(conn, guild_id, replace_campaign_id)
                 existing = await self._require(conn, guild_id, replace_campaign_id)
                 if importer_id not in existing.dm_user_ids:
-                    raise CampaignError(NOT_THIS_DM)
+                    raise CampaignError("Only this campaign's DM can replace it with a backup.")
                 if existing.owner_user_id is None:  # the importer becomes its owner
                     await self._require_slot(conn, importer_id)
                 campaign_id = replace_campaign_id
@@ -1872,16 +1665,10 @@ class CampaignStore:
                     raise
                 except (ValueError, TypeError, KeyError, AttributeError, OverflowError) as exc:
                     raise CampaignError(DAMAGED) from exc
-                await tell(step)
-            if _has_no_lists(sections, data):
-                from dmbot.memory import knowers
-
-                await knowers.move_flags(conn, guild_id, campaign_id)  # (#2995, slice 2b)
             if order:
                 if replace_campaign_id is not None:  # the copy's transcripts replace the old ones
                     await TranscriptParts().clear(conn, guild_id, campaign_id)
-                await tell(progress, 0, len(order))
-                for done, index in enumerate(order, 1):
+                for index in order:
                     # (unpacked again here, one at a time: nothing but the part in hand is held)
                     part = await asyncio.to_thread(decode_part, parts[index])
                     try:
@@ -1889,7 +1676,6 @@ class CampaignStore:
                     except (pg_errors.DataError, pg_errors.IntegrityError) as exc:
                         # (the tables' own types and CHECKs refused a value in the file)
                         raise CampaignError(TRANSCRIPTS_DAMAGED) from exc
-                    await tell(progress, done, len(order))
             # The importer, and the owner when replacing (who stays the owner, #609), are
             # DMs whatever the copy's DM list says: the owner must stay one (#437).
             await conn.execute(
@@ -1899,8 +1685,6 @@ class CampaignStore:
                 " WHERE u IS NOT NULL ON CONFLICT DO NOTHING",
                 (campaign_id, guild_id, importer_id, guild_id, campaign_id),
             )
-            if in_transaction is not None:
-                await in_transaction(conn, campaign_id)
             return await self._require(conn, guild_id, campaign_id)
 
     @staticmethod
@@ -1916,17 +1700,17 @@ class CampaignStore:
             or not isinstance(manifest.get("id"), str)
             or type(manifest.get("count")) is not int
         ):
-            raise PartsError(PARTS_NOT_THIS_COPY)
+            raise CampaignError(PARTS_NOT_THIS_COPY)
         numbered: dict[int, int] = {}
         for index, raw in enumerate(parts):
             part = await asyncio.to_thread(decode_part, raw)
             if part["backup"] != manifest["id"]:
-                raise PartsError(PARTS_NOT_THIS_COPY)
+                raise CampaignError(PARTS_NOT_THIS_COPY)
             if part["part"] in numbered or not 1 <= part["part"] <= manifest["count"]:
-                raise PartsError(PARTS_NOT_THIS_COPY)
+                raise CampaignError(PARTS_NOT_THIS_COPY)
             numbered[part["part"]] = index
         if len(numbered) != manifest["count"]:
-            raise PartsError(
+            raise CampaignError(
                 f"This copy has {manifest['count']} transcripts file"
                 f"{'' if manifest['count'] == 1 else 's'}, and you gave {len(numbered)}. "
                 "Give all of them, or none to restore without the transcripts."
@@ -2061,25 +1845,18 @@ class CampaignStore:
         )
         return campaign_id
 
-    async def _free_name(self, conn: Conn, guild_id: int, base: str, word: str = "restored") -> str:
-        """`base`, or `base (<word>)`, `base (<word> 2)`, … whichever is free ("restored" for a
-        restore, "moved" for a move)."""
+    async def _free_name(self, conn: Conn, guild_id: int, base: str) -> str:
+        """`base`, or `base (restored)`, `base (restored 2)`, … whichever is free."""
         cur = await conn.execute("SELECT name_key FROM campaigns WHERE guild_id = %s", (guild_id,))
         taken = {r["name_key"] for r in await cur.fetchall()}
         if name_key(base) not in taken:
             return base
         for n in range(1, 1000):
-            suffix = f" ({word})" if n == 1 else f" ({word} {n})"
+            suffix = " (restored)" if n == 1 else f" (restored {n})"
             candidate = clean_name(base[: NAME_MAX - len(suffix)].rstrip() + suffix)
             if name_key(candidate) not in taken:
                 return candidate
         raise CampaignError("Too many campaigns with that name. Rename one and try again.")
-
-
-async def _scope(conn: Conn, guild_id: int) -> None:
-    """Look at another server's rows for the rest of this transaction (a move reads and writes
-    both; row-level security still shows only the one in scope at a time)."""
-    await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(int(guild_id)),))
 
 
 def _to_campaign(row: dict[str, Any], dms: set[int]) -> Campaign:
@@ -2183,13 +1960,6 @@ def _to_offer(row: dict[str, Any]) -> HandoverOffer:
         claimed_at=row_int(row, "claimed_at"),
         message_id=row_int(row, "message_id"),
         end_told_at=row_int(row, "end_told_at"),
-        via_email=bool(row.get("via_email", False)),
-        move_to_guild_id=row_int(row, "move_to_guild_id"),
-        moved_campaign_id=row.get("moved_campaign_id"),
-        move_claimed_at=row_int(row, "move_claimed_at"),
-        move_asked_at=row_int(row, "move_asked_at"),
-        move_failed_for=row_int(row, "move_failed_for"),
-        move_failed_reason=row.get("move_failed_reason"),
     )
 
 
@@ -2275,22 +2045,6 @@ def _unpack(raw: bytes) -> bytes:
     if not unpacker.eof or unpacker.unused_data:  # cut short, or more after the end
         raise CampaignError(NOT_A_BACKUP)
     return text
-
-
-def _has_no_lists(sections: dict[str, Any], data: object) -> bool:
-    """A backup made before the lists existed (#2995): version 2 or older with no who-knows rows in
-    its memory. Its restore works them out from the old flags (`knowers.move_flags`). A file of
-    version 3 keeps its lists as they are, empty or trimmed, so a list the DM narrowed is never
-    widened again and a campaign that showed nothing stays that way. A version-2 file that already
-    has rows is kept as it is for the same reason."""
-    version = data.get("version") if isinstance(data, dict) else None
-    memory = sections.get("memory")
-    return (
-        isinstance(version, int)
-        and version < 3
-        and isinstance(memory, dict)
-        and not memory.get("knower")
-    )
 
 
 def _validate_backup(

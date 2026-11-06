@@ -58,30 +58,6 @@ class Again(Base):
     async def again(self, at: int = SESSION, who: int = fx.DM, **kw: Any) -> str:
         return await self.store.start_over(1, self.one.id, at, who, **kw)
 
-    async def test_decide_post_with_require_current_only_posts_the_text_that_was_approved(
-        self,
-    ) -> None:
-        # the store's own check, in SQL (#2530): an approval of other words posts nothing
-        await self.lines(SESSION)
-        await self.written(SESSION, approved=True)
-        self.assertTrue(
-            await self.store.decide(1, self.one.id, SESSION, "post", require_current=True)
-        )
-        await self.lines(SESSION + 1)
-        await self.written(SESSION + 1, approved=True)
-        await self.store.update(1, self.one.id, SESSION + 1, summary="Edited after approving.")
-        self.assertFalse(
-            await self.store.decide(1, self.one.id, SESSION + 1, "post", require_current=True)
-        )
-        job = await self.store.get(1, self.one.id, SESSION + 1)
-        assert job is not None
-        self.assertEqual(job.status, "draft")  # (nothing was posted)
-        await self.lines(SESSION + 2)
-        await self.written(SESSION + 2)  # never approved
-        self.assertFalse(
-            await self.store.decide(1, self.one.id, SESSION + 2, "post", require_current=True)
-        )
-
     async def test_a_session_that_never_had_a_recap_gets_one_queued(self) -> None:
         await self.lines(SESSION)
         self.assertEqual(await self.again(), "queued")

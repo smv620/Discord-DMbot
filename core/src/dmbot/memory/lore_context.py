@@ -71,17 +71,17 @@ class Held:
 
     def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
         self._now = clock
-        self._items: dict[tuple[int, str], tuple[float, str, str]] = {}
+        self._items: dict[tuple[int, str], tuple[float, str]] = {}
 
-    def put(self, guild_id: int, entity_id: str, sentence: str, source: str = "") -> None:
-        """Hold a sentence, with the name of the upload it came from (#3384).
-        More than `HOLD_MAX` at once: the oldest go, their cards fall back to the short quote."""
+    def put(self, guild_id: int, entity_id: str, sentence: str) -> None:
+        """Hold a sentence. More than `HOLD_MAX` at once: the oldest go, and their cards fall back
+        to the short quote."""
         if not sentence:
             return
         self._drop_old()
         while len(self._items) >= HOLD_MAX:  # the oldest goes first
             self._items.pop(next(iter(self._items)))
-        self._items[(guild_id, entity_id)] = (self._now() + HOLD_S, sentence, source)
+        self._items[(guild_id, entity_id)] = (self._now() + HOLD_S, sentence)
 
     def get(self, guild_id: int, entity_id: str) -> str:
         self._drop_old()  # (so an idle bot frees what has run out too)
@@ -90,17 +90,11 @@ class Held:
             return ""
         return found[1]
 
-    def source(self, guild_id: int, entity_id: str) -> str:
-        """The name of the upload the held sentence was read from, or ""."""
-        self._drop_old()
-        found = self._items.get((guild_id, entity_id))
-        return "" if found is None else found[2]
-
     def forget(self, guild_id: int, entity_id: str) -> None:
         """The name was decided: its sentence is not needed any more."""
         self._items.pop((guild_id, entity_id), None)
 
     def _drop_old(self) -> None:
         now = self._now()
-        for key in [k for k, (until, _, _s) in self._items.items() if until <= now]:
+        for key in [k for k, (until, _) in self._items.items() if until <= now]:
             del self._items[key]

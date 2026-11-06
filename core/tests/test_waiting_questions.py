@@ -12,13 +12,12 @@ from unittest.mock import AsyncMock, MagicMock
 import discord
 
 from dmbot.audio.segmenter import Segmenter
-from dmbot.bot import DMBot
+from dmbot.bot import DMBot, Table
 from dmbot.campaigns import CampaignStore
 from dmbot.config import Settings
 from dmbot.consent import ConsentStore
 from dmbot.memory.store import MemoryStore
 from dmbot.sessions import SessionStore
-from dmbot.table import Table
 from dmbot.transcript import questions
 from dmbot.transcript.models import Line
 from dmbot.transcript.store import TranscriptStore

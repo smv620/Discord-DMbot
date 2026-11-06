@@ -142,50 +142,6 @@ class Continuity(ConfirmedMemoryTest):
         (conflict,) = (await self.check()).conflicts
         self.assertEqual((conflict.kind, conflict.level), (CONTRADICTION, LIKELY))
 
-    async def test_a_friend_held_as_a_feeling_called_an_enemy_is_a_likely_contradiction(
-        self,
-    ) -> None:
-        await self.relate(
-            self.ulfgar, "knows", self.cerric, status="confirmed", from_session_at=EARLIER,
-            detail="friendly",
-        )  # fmt: skip
-        await self.claim(said("Ulfgar", "enemy of", "Cerric"))
-        (conflict,) = (await self.check()).conflicts
-        self.assertEqual((conflict.kind, conflict.level), (CONTRADICTION, LIKELY))
-
-    async def test_how_one_feels_does_not_clash_with_how_the_other_feels(self) -> None:
-        await self.relate(
-            self.cerric, "knows", self.ulfgar, status="confirmed", from_session_at=EARLIER,
-            detail="friendly",
-        )  # fmt: skip
-        await self.claim(said("Ulfgar", "enemy of", "Cerric"))  # Ulfgar's side, the other way
-        self.assertEqual((await self.check()).conflicts, ())
-
-    async def test_confirming_a_feeling_stores_the_word_and_a_note_stays_a_note(self) -> None:
-        await self.claims.propose(
-            GUILD_A, self.c,
-            [Extracted("Ulfgar", "knows", "Cerric", "trusts", ("1",), "dm_said"),
-             Extracted("Cerric", "knows", "Ulfgar", "met in Waterdeep", ("1",), "dm_said")],
-            {"1": 7}, opted_in=AGREED, prompt_version="p1", model="m1",
-            session_started_at=LATER, dms={7},
-        )  # fmt: skip
-        for waiting in await self.claims.waiting(GUILD_A, self.c, opted_in=AGREED):
-            await self.claims.confirm(GUILD_A, self.c, waiting.id, opted_in=AGREED)
-        details = {
-            (r.subject_id, r.object_id): r.detail
-            for r in await self.memory.relations(GUILD_A, self.c)
-            if r.predicate == "knows"
-        }
-        self.assertEqual(details[(self.ulfgar, self.cerric)], "trusts")
-        self.assertEqual(details[(self.cerric, self.ulfgar)], "met in Waterdeep")
-
-    async def test_a_plain_acquaintance_called_an_enemy_is_no_contradiction(self) -> None:
-        await self.relate(
-            self.ulfgar, "knows", self.cerric, status="confirmed", from_session_at=EARLIER
-        )
-        await self.claim(said("Ulfgar", "enemy of", "Cerric"))
-        self.assertEqual((await self.check()).conflicts, ())
-
     async def test_raising_the_settings_above_a_rule_silences_it(self) -> None:
         await self.relate(
             self.ulfgar, "ally_of", self.cerric, status="confirmed", from_session_at=EARLIER
@@ -443,19 +399,3 @@ class Crossing(ConfirmedMemoryTest):
             await ContinuityStore(self.memory).check(GUILD_A, self.c, opted_in=AGREED, levels=SMALL)
             await ContinuityStore(self.memory).check(GUILD_A, self.c, opted_in=AGREED, levels=SMALL)
         self.assertEqual(len(logged.output), 1)
-
-
-class FamilyWords(unittest.TestCase):
-    def test_a_two_way_role_keeps_its_role_even_stored_undirected(self) -> None:
-        """#3111: continuity's wording uses the same rule as the cards (#3106): the role when the
-        link is directional or the role is true of both names."""
-        from types import SimpleNamespace
-
-        from dmbot.memory.continuity import _predicate_words
-
-        onto: Any = SimpleNamespace(predicates={})
-        for role in ("sibling", "cousin", "spouse"):
-            self.assertEqual(_predicate_words(onto, "kin_of", role), f"is the {role} of")
-        # a one-way role is told only when its direction is known
-        self.assertEqual(_predicate_words(onto, "kin_of", "niece", True), "is the niece of")
-        self.assertEqual(_predicate_words(onto, "kin_of", "niece"), "kin_of")

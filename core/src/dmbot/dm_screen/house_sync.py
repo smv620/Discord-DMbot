@@ -18,7 +18,6 @@ restart an old button says so. Register with `bot.add_dynamic_items(HouseSyncBut
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import io
 import logging
 import re
@@ -47,7 +46,7 @@ READ_MAX_BYTES = 4 * house_file.MAX_FILE_CHARS  # as bytes: UTF-8 is up to 4 per
 
 CLOSED = (
     "This offer has ended (DMbot restarted, or it was already handled). To compare again, "
-    "press ⚙️ Manage DMbot, then 📄 House-rules file, then 🔄 Compare now, or upload the file again."
+    "press ⚙️ Settings, then 📄 House-rules file, then 🔄 Compare now, or upload the file again."
 )
 ONLY_DMS = "Only this campaign's DMs can use these buttons."
 FAILED = (
@@ -108,48 +107,12 @@ LABELS = {
     "file": ("Download the full list", "📥", discord.ButtonStyle.secondary),
 }
 
-
-@dataclass(slots=True)
-class Tally:
-    """What a comparison found, for a caller that wants numbers and not words (the website's
-    request, #3087): how many rules it read, and how many changes it offered. Counts only."""
-
-    rules_read: int = 0
-    to_add: int = 0
-    to_change: int = 0
-    to_remove: int = 0
-
-
 Send = Callable[[str, discord.ui.View], Awaitable[bool]]
-Progress = Callable[[str], None]  # told the words of the step that is starting (#2564)
-STEP_FINDING = "Step 2 of 2: finding the rules in it"
-STEP_RETRY = "Step 2 of 2: the answer was cut off, asking again (second try)"
-
-
-def stopped(words: str | None) -> bool:
-    """Whether words from a comparison say it did not get done (so the DM's waiting message ends as
-    stopped, not finished): the file could not be fetched or read, the AI could not read it, a limit
-    was hit, or something broke. Matches, found no rules, and offers are results, not failures."""
-    if words is None:
-        return False
-    return words.startswith(COULDNT_READ_START) or words in (
-        TOO_BIG,
-        TOO_MANY_RULES,
-        TOO_MANY_RULES_LINKED,
-        NOT_READ,
-        NO_AI_PLAN,
-        BUSY,
-        TOO_MANY_READS,
-        FAILED,
-    )
-
-
-COULDNT_READ_START = "I couldn't read your house-rules file"
 
 
 def couldnt_read(why: str) -> str:
     return fit_message(
-        f"{COULDNT_READ_START}: {why}{SHARING} The session goes on with "
+        f"I couldn't read your house-rules file: {why}{SHARING} The session goes on with "
         "DMbot's copy. Nothing was changed.",
         limit=TEXT_MAX,
     )
@@ -474,8 +437,6 @@ async def compare_text(
     from_link: bool,
     respect_ignore: bool = True,
     file_name: str | None = None,
-    progress: Progress | None = None,
-    tally: Tally | None = None,
 ) -> str | None:
     """Compare a file's text with the campaign's house rules and, if they differ, offer
     the buttons through `send`. Returns words for the DM when there is nothing to offer
@@ -490,17 +451,15 @@ async def compare_text(
     parsed = await asyncio.to_thread(house_file.parse, text)
     if parsed.rules and not parsed.problems:
         return await _compare_numbered(
-            bot, campaign, parsed, send, from_link, respect_ignore, file_name, tally
+            bot, campaign, parsed, send, from_link, respect_ignore, file_name
         )
     if not _ai_may_read(bot, campaign):
         if parsed.rules:
             return await _compare_numbered(
-                bot, campaign, parsed, send, from_link, respect_ignore, file_name, tally
+                bot, campaign, parsed, send, from_link, respect_ignore, file_name
             )
         return no_rules(len(parsed.problems))
-    return await _compare_found(
-        bot, campaign, text, send, from_link, respect_ignore, file_name, progress, tally
-    )
+    return await _compare_found(bot, campaign, text, send, from_link, respect_ignore, file_name)
 
 
 async def _compare_numbered(
@@ -511,13 +470,10 @@ async def _compare_numbered(
     from_link: bool,
     respect_ignore: bool,
     file_name: str | None,
-    tally: Tally | None = None,
 ) -> str | None:
     unreadable = len(parsed.problems)
     if not parsed.rules:
         return no_rules(unreadable)
-    if tally is not None:
-        tally.rules_read = len(parsed.rules)
     fingerprint = house_file_sync.fingerprint(parsed.rules)
     if from_link and respect_ignore:
         links = bot.house_file_links
@@ -532,12 +488,6 @@ async def _compare_numbered(
     items = house_file_sync.items_of(diff)
     if not items:
         return SAME
-    if tally is not None:
-        tally.to_add, tally.to_change, tally.to_remove = (
-            len(diff.added),
-            len(diff.changed),
-            len(diff.removed),
-        )
     removals = len(diff.removed)
     big = removals >= BIG_REMOVALS or (removals >= 2 and removals * 2 > len(mine))
     pending = Pending(
@@ -594,11 +544,8 @@ async def _compare_found(
     from_link: bool,
     respect_ignore: bool,
     file_name: str | None,
-    progress: Progress | None = None,
-    tally: Tally | None = None,
 ) -> str | None:
-    """A file that is not in the numbered format: one AI call lists its rules (#2377). `progress`
-    is told when the slow step starts, for the DM's waiting message (#2564)."""
+    """A file that is not in the numbered format: one AI call lists its rules (#2377)."""
     gid = campaign.guild_id
     allows = getattr(bot, "plan_allows", None)
     if allows is not None and not await allows("ai", gid, campaign):
@@ -624,15 +571,12 @@ async def _compare_found(
     _ai_busy.add(gid)
     found = house_ai.Found(unread=True)
     try:
-        if progress is not None:
-            progress(STEP_FINDING)
         mine = await store.list(gid, campaign.id)
         found = await house_ai.read(
             bot.house_file_ai.complete,
             text,
             [(r.rule, r.supersedes) for r in mine],
             budget=left,  # the retry of a cut answer is a call of the day's too
-            on_retry=(lambda: progress(STEP_RETRY)) if progress is not None else None,
         )
     finally:
         _ai_busy.discard(gid)
@@ -654,8 +598,6 @@ async def _compare_found(
         if remember:  # nothing to offer: this version is done with
             await links.set_read(gid, campaign.id, fingerprint)
         return BOOK if found.published_book else NOTHING_FOUND
-    if tally is not None:
-        tally.rules_read = tally.to_add = len(found.rules)
     first = max((r.number for r in mine), default=0) + 1
     added = tuple(
         house_file.FileRule(first + i, c.text, c.instead_of) for i, c in enumerate(found.rules)
@@ -713,40 +655,20 @@ async def read_link(bot: Any, campaign: Campaign) -> tuple[str | None, str | Non
         return None, couldnt_read(str(exc))
 
 
-async def check_linked(
-    bot: Any,
-    campaign: Campaign,
-    send: Send,
-    *,
-    quiet_if_same: bool,
-    progress: Progress | None = None,
-) -> str | None:
+async def check_linked(bot: Any, campaign: Campaign, send: Send, *, quiet_if_same: bool) -> None:
     """Read the campaign's linked file and offer what differs. Says one short line when it
     can't be read; says nothing when there is no link or (at a session start) nothing to
-    change. `progress` is for a DM waiting on a button (#2564). Returns the words it sent, so that
-    DM's waiting message can end as stopped when they were a failure (see `stopped`). Never
-    raises."""
+    change. Never raises."""
     try:
         text, problem = await read_link(bot, campaign)
         words = problem
         if text is not None:
             words = await compare_text(
-                bot,
-                campaign,
-                text,
-                send,
-                from_link=True,
-                respect_ignore=quiet_if_same,
-                progress=progress,
+                bot, campaign, text, send, from_link=True, respect_ignore=quiet_if_same
             )
             if words == SAME and quiet_if_same:
                 words = None
         if words:
             await send(words, discord.ui.View())
-        return words or None
     except Exception:
         log.exception("Couldn't compare the house-rules file")
-        if not quiet_if_same:  # a DM pressed a button: told, not left with a silent stop
-            with contextlib.suppress(Exception):
-                await send(FAILED, discord.ui.View())
-        return FAILED

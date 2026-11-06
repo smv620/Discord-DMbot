@@ -19,8 +19,6 @@ from dataclasses import dataclass
 from typing import Any
 
 from dmbot.db import Database, row_int
-from dmbot.memory import evidence, forget_readings
-from dmbot.transcript import rel_store, theatre_store
 from dmbot.transcript.export import UNKNOWN_SPEAKER, clean_name
 from dmbot.transcript.models import Line, Lineage, TranscriptSession, line_ref
 from dmbot.transcript.respell import put_back, respell
@@ -34,16 +32,12 @@ MAX_SCANNED = 100_000  # candidate lines looked at in one run, rewritten or not
 
 # The lines a respelling may reach (the filter shared by the pages and the count): this campaign's
 # ended sessions, speech only, saying the name's longest word, not already done by this fix.
-def _candidates(one_session: bool = False, speakers: bool = False, game: bool = False) -> str:
+def _candidates(one_session: bool = False) -> str:
     # A line is "done by this fix" when this batch already replaced this very spelling in it: one
     # list name may be meant by several heard spellings (they share a batch, #2649), and a line
     # that says two of them gets both fixed.
     # `one_session` (the name pass, #2628): only the session whose id is the next parameter after
     # the campaign's, whatever its end (it is being finished now), instead of every ended session.
-    # `speakers` and `game` (#2655): only the lines the pass read, so a line of a person who has
-    # since stopped agreeing is never written: the speakers (an array parameter after the name),
-    # and game talk (the topic, after that).
-    read = (" AND l.user_id = ANY(%s)" if speakers else "") + (" AND l.topic = %s" if game else "")
     return (
         " FROM transcript_lines l JOIN transcript_sessions s ON s.id = l.session_id"
         " WHERE s.guild_id = %s AND s.campaign_id = %s"
@@ -52,7 +46,6 @@ def _candidates(one_session: bool = False, speakers: bool = False, game: bool = 
         " AND strpos(lower(coalesce(l.text, l.heard)), lower(%s)) > 0"
         " AND NOT EXISTS (SELECT 1 FROM transcript_respells r"
         "   WHERE r.line_id = l.id AND r.campaign_id = %s AND r.batch = %s AND r.old_text = %s)"
-        + read
     )
 
 
@@ -136,16 +129,6 @@ class TranscriptStore:
             assert row is not None
             return str(row["id"])
 
-    async def is_import(self, guild_id: int, session_id: str) -> bool:
-        """Was this session loaded from a file? Its lines carry the dates the DM chose, not the
-        moments they were spoken at (#3091)."""
-        async with self._db.guild(guild_id) as conn:
-            cur = await conn.execute(
-                "SELECT 1 FROM session_imports WHERE guild_id = %s AND session_id = %s",
-                (guild_id, session_id),
-            )
-            return await cur.fetchone() is not None
-
     async def extraction(self, guild_id: int, session_id: str) -> tuple[int, int]:
         """How far the story extractor got in this session (#1367): (when the last line it read
         began, in Unix milliseconds; AI calls used). (0, 0) for a session never read, or one that
@@ -172,61 +155,6 @@ class TranscriptStore:
                 " extracted_at = CASE WHEN %s > 0 THEN %s ELSE extracted_at END WHERE id = %s",
                 (through_ms, calls, calls, now, session_id),
             )
-
-    async def session_split(self, guild_id: int, session_id: str) -> dict[str, Any] | None:
-        """The stored split of this session (#3298): `recaps.split.Split.to_json()`, or None when it
-        has not been made (or the session is not here). Labels and line numbers only."""
-        async with self._db.guild(guild_id) as conn:
-            cur = await conn.execute(
-                "SELECT recap_split FROM transcript_sessions WHERE id = %s", (session_id,)
-            )
-            row = await cur.fetchone()
-        stored = row["recap_split"] if row else None
-        return dict(stored) if isinstance(stored, dict) else None
-
-    async def save_session_split(
-        self,
-        guild_id: int,
-        session_id: str,
-        split: Mapping[str, Any],
-        *,
-        only_if_empty: bool = True,
-    ) -> bool:
-        """Keep the split (#3298). By default only while none is kept, so two callers that raced
-        (the story reader and the recap) keep the first and neither asks again. Returns whether
-        it wrote."""
-        async with self._db.guild(guild_id) as conn:
-            cur = await conn.execute(
-                "UPDATE transcript_sessions SET recap_split = %s::jsonb WHERE id = %s"
-                + (" AND recap_split IS NULL" if only_if_empty else ""),
-                (json.dumps(dict(split)), session_id),
-            )
-            return cur.rowcount > 0
-
-    async def save_split_and_queue(
-        self, guild_id: int, session_id: str, split: Mapping[str, Any], numbers: Collection[int]
-    ) -> int:
-        """The DM's Undo of a split (#3298), in ONE transaction: keep this split (replacing the
-        one kept) and queue these lines to be read again by the put-back sweep (#2587), by their
-        place in the session (1-based, the numbering `lines` and the story reader use). A failure
-        between the two can never leave the split saying "play" with the lines never read. How
-        many lines were queued."""
-        wanted = sorted(set(numbers))
-        async with self._db.guild(guild_id) as conn:
-            await conn.execute(
-                "UPDATE transcript_sessions SET recap_split = %s::jsonb WHERE id = %s",
-                (json.dumps(dict(split)), session_id),
-            )
-            if not wanted:
-                return 0
-            cur = await conn.execute(
-                "UPDATE transcript_lines l SET reread = TRUE FROM ("
-                " SELECT id, row_number() OVER (ORDER BY started_ms, id) AS n"
-                " FROM transcript_lines WHERE session_id = %s) x"
-                " WHERE l.id = x.id AND x.n = ANY(%s)",
-                (session_id, wanted),
-            )
-            return cur.rowcount
 
     async def extractor_calls_since(self, guild_id: int, campaign_id: str, since: int) -> int:
         """AI calls the extractor made for this campaign in sessions it last ran in since
@@ -538,54 +466,6 @@ class TranscriptStore:
                 for r in await cur.fetchall()
             ]
 
-    async def sessions_with_put_back(self, guild_id: int, limit: int = 50) -> list[tuple[str, str]]:
-        """(campaign id, session id) of the sessions in this server that are over and have put-back
-        lines waiting to be read (#2587), oldest first. Ids only: no words."""
-        async with self._db.guild(guild_id) as conn:
-            cur = await conn.execute(
-                "SELECT s.campaign_id, s.id FROM transcript_sessions s WHERE s.guild_id = %s"
-                " AND s.ended_at IS NOT NULL AND EXISTS (SELECT 1 FROM transcript_lines l"
-                "  WHERE l.session_id = s.id AND l.reread)"
-                " ORDER BY s.started_at, s.id LIMIT %s",
-                (guild_id, limit),
-            )
-            return [(str(r["campaign_id"]), str(r["id"])) for r in await cur.fetchall()]
-
-    async def put_back_in(self, guild_id: int, session_id: str) -> list[tuple[int, int]]:
-        """(person, when the line began) of each put-back line of this session still waiting to be
-        read (#2587): which lines to read, never their words."""
-        async with self._db.guild(guild_id) as conn:
-            cur = await conn.execute(
-                "SELECT l.user_id, l.started_ms FROM transcript_lines l"
-                " JOIN transcript_sessions s ON s.id = l.session_id"
-                " WHERE s.guild_id = %s AND l.session_id = %s AND l.reread"
-                " ORDER BY l.started_ms, l.id",
-                (guild_id, session_id),
-            )
-            return [(int(r["user_id"]), int(r["started_ms"])) for r in await cur.fetchall()]
-
-    async def leaned_lines(self, guild_id: int, session_id: str) -> list[Line]:
-        """The lines the end-of-session pass turned back into game talk (#2587), speech only: the
-        live readers skipped them while the session ran because they were labelled off-topic."""
-        async with self._db.guild(guild_id) as conn:
-            cur = await conn.execute(
-                "SELECT l.started_ms, l.user_id, l.heard, coalesce(l.text, l.heard) AS text,"
-                " l.duration_ms FROM transcript_lines l JOIN transcript_sessions s"
-                " ON s.id = l.session_id WHERE s.guild_id = %s AND l.session_id = %s"
-                " AND l.leaned AND l.sidebar IS NULL AND NOT l.typed ORDER BY l.started_ms, l.id",
-                (guild_id, session_id),
-            )
-            return [
-                Line(
-                    int(r["started_ms"]),
-                    int(r["user_id"]),
-                    r["heard"],
-                    r["text"],
-                    int(r["duration_ms"]),
-                )
-                for r in await cur.fetchall()
-            ]
-
     async def mark_read(
         self, guild_id: int, campaign_id: str, user_id: int, started: Collection[int]
     ) -> int:
@@ -605,18 +485,10 @@ class TranscriptStore:
         if not ids:
             return
         async with self._db.guild(guild_id) as conn:
-            # The session's row is locked first, as a script save does, so a save that read these
-            # lines cannot commit a row citing them after this has removed their words (the
-            # trigger on `transcript_lines` then removes any row that already cited them).
-            await conn.execute(
-                "SELECT 1 FROM transcript_sessions WHERE guild_id = %s AND id = %s FOR UPDATE",
-                (guild_id, session_id),
-            )
             await conn.execute(
                 "DELETE FROM transcript_lines WHERE session_id = %s AND id = ANY(%s)",
                 (session_id, list(ids)),
             )
-            await _drop_note_pointers(conn, guild_id, [session_id])
             await conn.execute(
                 "UPDATE transcript_sessions SET"
                 " line_count = (SELECT count(*) FROM transcript_lines"
@@ -647,19 +519,6 @@ class TranscriptStore:
                 (campaign_id, limit),
             )
             return [_session(r) for r in await cur.fetchall()]
-
-    async def line_count_at(self, guild_id: int, campaign_id: str, started_at: int) -> int | None:
-        """How many lines the campaign's session that began at `started_at` has, or None when it
-        has no such session. A session with no lines (or whose transcript was deleted) is not in
-        `sessions`; this says that is why (#2680)."""
-        async with self._db.guild(guild_id) as conn:
-            cur = await conn.execute(
-                "SELECT max(line_count) AS n FROM transcript_sessions"
-                " WHERE campaign_id = %s AND started_at = %s",
-                (campaign_id, started_at),
-            )
-            row = await cur.fetchone()
-        return None if row is None or row["n"] is None else int(row["n"])
 
     async def latest_before(
         self, guild_id: int, campaign_id: str, before: int
@@ -701,20 +560,6 @@ class TranscriptStore:
                 " WHERE line_count > 0 GROUP BY campaign_id"
             )
             return {r["campaign_id"]: r["n"] for r in await cur.fetchall()}
-
-    async def session_at(
-        self, guild_id: int, campaign_id: str, started_at: int
-    ) -> TranscriptSession | None:
-        """The campaign's session that began at `started_at` (Unix seconds), or None when it has
-        none: how the website names a session (#2805). The first of them if two began together."""
-        async with self._db.guild(guild_id) as conn:
-            cur = await conn.execute(
-                "SELECT id FROM transcript_sessions WHERE campaign_id = %s AND started_at = %s"
-                " ORDER BY id LIMIT 1",
-                (campaign_id, started_at),
-            )
-            row = await cur.fetchone()
-        return None if row is None else await self.session(guild_id, str(row["id"]))
 
     async def session(self, guild_id: int, session_id: str) -> TranscriptSession | None:
         async with self._db.guild(guild_id) as conn:
@@ -822,8 +667,6 @@ class TranscriptStore:
         now: int,
         forget_before: int,
         session_id: str | None = None,
-        speakers: Collection[int] | None = None,
-        game_only: bool = False,
     ) -> PastRespell:
         """Write `new` where this campaign's past cleaned lines say `old` as a whole name, in
         ONE transaction (so a failure changes nothing), at most `MAX_RESPELLED` lines in session
@@ -834,9 +677,7 @@ class TranscriptStore:
         inside a longer name in `longer` is left alone, and so is a line the change would make say
         a name in `hidden`. The places are kept under `batch` and the run for `undo_respell`;
         places older than `forget_before` are dropped. `session_id`: only that session, ended or
-        not (the name pass of a session being finished, #2628); then `speakers` (when given) limits
-        the writes to those people's lines and `game_only` to lines kept as game talk: exactly the
-        lines the pass read (#2655)."""
+        not (the name pass of a session being finished, #2628)."""
         # The longest run of letters and digits: an apostrophe or dash in the name may be written
         # with a look-alike (a curly one), so a prefilter on a whole word would miss it.
         longest = max(re.findall(r"\w+", old), key=len, default="")
@@ -849,13 +690,6 @@ class TranscriptStore:
         remaining = 0
         scope: tuple[Any, ...] = (
             (guild_id, campaign_id) if session_id is None else (guild_id, campaign_id, session_id)
-        )
-        only = session_id is not None  # (the limits belong to a pass over one session)
-        use_speakers = only and speakers is not None
-        use_game = only and game_only
-        read: tuple[Any, ...] = (
-            *([list(speakers)] if use_speakers and speakers is not None else []),
-            *([GAME] if use_game else []),
         )
         async with self._db.guild(guild_id) as conn:
             # Two presses of Finish at once take turns, so no two runs share a number.
@@ -881,10 +715,10 @@ class TranscriptStore:
                 cur = await conn.execute(
                     "SELECT l.id, l.session_id, l.user_id, l.started_ms, s.started_at,"
                     " coalesce(l.text, l.heard) AS cleaned"
-                    + _candidates(only, use_speakers, use_game)
+                    + _candidates(session_id is not None)
                     + " AND (s.started_at, l.started_ms, l.id) > (%s, %s, %s)"
                     " ORDER BY s.started_at, l.started_ms, l.id LIMIT %s FOR UPDATE OF l",
-                    (*scope, longest, campaign_id, batch, old, *read, *after, PAGE),
+                    (*scope, longest, campaign_id, batch, old, *after, PAGE),
                 )
                 page = await cur.fetchall()
                 if not page:
@@ -920,9 +754,9 @@ class TranscriptStore:
             # never change (inside a longer name), so it is "up to" this many.
             cur = await conn.execute(
                 "SELECT count(*) AS n"
-                + _candidates(only, use_speakers, use_game)
+                + _candidates(session_id is not None)
                 + " AND (s.started_at, l.started_ms, l.id) > (%s, %s, %s)",
-                (*scope, longest, campaign_id, batch, old, *read, *after),
+                (*scope, longest, campaign_id, batch, old, *after),
             )
             remaining = int((await cur.fetchone() or {"n": 0})["n"])
             if updates:
@@ -1081,12 +915,6 @@ class TranscriptStore:
                 " ON CONFLICT (guild_id, user_id) DO UPDATE SET erased_at = EXCLUDED.erased_at",
                 (guild_id, user_id),
             )
-            await conn.execute(  # what an uploader confirmed for them: kept as a record, no lines
-                "UPDATE import_consents SET lines = 0,"
-                " removed_at = extract(epoch FROM now())::BIGINT"
-                " WHERE guild_id = %s AND user_id = %s",
-                (guild_id, user_id),
-            )
             await conn.execute(  # the name kept for the website's transcripts first (#2337)
                 "UPDATE transcript_sessions SET speaker_names = speaker_names - %s"
                 " WHERE guild_id = %s AND speaker_names ? %s",
@@ -1096,8 +924,6 @@ class TranscriptStore:
                 "DELETE FROM transcript_suggestions WHERE guild_id = %s AND user_id = %s",
                 (guild_id, user_id),
             )
-            await theatre_store.forget_person(conn, guild_id, user_id)  # the script made of them
-            await rel_store.forget_person(conn, guild_id, user_id)  # and the ties found in it
             await conn.execute(  # where a fixed spelling was written into their lines (#2170)
                 "DELETE FROM transcript_respells WHERE guild_id = %s AND user_id = %s",
                 (guild_id, user_id),
@@ -1121,7 +947,6 @@ class TranscriptStore:
                 await _forget_memory_traces(conn, guild_id, user_id, [])
                 return Deleted(0, 0)
             sessions = sorted({str(r["session_id"]) for r in gone})
-            await _drop_note_pointers(conn, guild_id, sessions)
             await _forget_memory_traces(
                 conn,
                 guild_id,
@@ -1137,122 +962,6 @@ class TranscriptStore:
                 " WHERE s.guild_id = %s AND s.id = ANY(%s)",
                 (guild_id, sessions),
             )
-            return Deleted(len(gone), len(sessions))
-
-    async def count_speaker(self, guild_id: int, campaign_id: str, speaker: int) -> Deleted:
-        """How many lines this speaker has in ONE campaign's sessions, and in how many sessions
-        (the numbers a removal reports; counts only)."""
-        async with self._db.guild(guild_id) as conn:
-            cur = await conn.execute(
-                "SELECT count(*) AS lines, count(DISTINCT l.session_id) AS sessions"
-                " FROM transcript_lines l JOIN transcript_sessions t"
-                "   ON t.id = l.session_id AND t.guild_id = l.guild_id"
-                " WHERE l.guild_id = %s AND t.campaign_id = %s AND l.user_id = %s",
-                (guild_id, campaign_id, speaker),
-            )
-            row = await cur.fetchone()
-        return Deleted(int(row["lines"]), int(row["sessions"])) if row else Deleted(0, 0)
-
-    async def remove_speaker(self, guild_id: int, campaign_id: str, speaker: int) -> Deleted:
-        """A DM's removal of one speaker's lines from ONE campaign (#3305), in ONE transaction:
-        if anything fails nothing is removed. `speaker` is a member or a negative speaker without
-        Discord; the same traces go as `delete_person` takes, but only those of this campaign's
-        sessions and claims. Another campaign's lines of the same member, and another campaign's
-        speaker with the same negative number, are never touched: every statement names the
-        campaign.
-
-        Also written, whether or not any line was left: the campaign's marker
-        (`speaker_erasures`, ids and a time), which every restore reads so an older copy of this
-        campaign cannot bring the lines back, and which keeps the number from being given again.
-        The speaker without Discord is deleted as a name; what the uploader confirmed for them
-        stays as the record, marked removed, with no lines."""
-        scope = (guild_id, campaign_id)
-        async with self._db.guild(guild_id) as conn:
-            # The campaign's sessions that hold this speaker are locked first, so a save adding
-            # lines at the same moment can't make the recount below come out one batch short.
-            await conn.execute(
-                "SELECT 1 FROM transcript_sessions WHERE guild_id = %s AND campaign_id = %s"
-                " AND id IN (SELECT session_id FROM transcript_lines"
-                "   WHERE guild_id = %s AND user_id = %s) ORDER BY id FOR UPDATE",
-                (*scope, guild_id, speaker),
-            )
-            await conn.execute(
-                "INSERT INTO speaker_erasures (guild_id, campaign_id, user_id, erased_at)"
-                " VALUES (%s, %s, %s, extract(epoch FROM now())::BIGINT)"
-                " ON CONFLICT (guild_id, campaign_id, user_id)"
-                " DO UPDATE SET erased_at = EXCLUDED.erased_at",
-                (*scope, speaker),
-            )
-            await conn.execute(
-                "UPDATE import_consents SET lines = 0,"
-                " removed_at = extract(epoch FROM now())::BIGINT"
-                " WHERE guild_id = %s AND campaign_id = %s AND user_id = %s",
-                (*scope, speaker),
-            )
-            await conn.execute(
-                "UPDATE transcript_sessions SET speaker_names = speaker_names - %s"
-                " WHERE guild_id = %s AND campaign_id = %s AND speaker_names ? %s",
-                (str(speaker), *scope, str(speaker)),
-            )
-            await conn.execute(  # the labels this campaign's imports mapped to them (member only)
-                "DELETE FROM import_speakers"
-                " WHERE guild_id = %s AND campaign_id = %s AND user_id = %s",
-                (*scope, speaker),
-            )
-            if speaker < 0:  # (the name is the person's data too; the marker keeps the number)
-                await conn.execute(
-                    "DELETE FROM campaign_speakers"
-                    " WHERE guild_id = %s AND campaign_id = %s AND user_id = %s",
-                    (*scope, speaker),
-                )
-            await conn.execute(
-                "DELETE FROM transcript_suggestions"
-                " WHERE guild_id = %s AND campaign_id = %s AND user_id = %s",
-                (*scope, speaker),
-            )
-            await theatre_store.forget_person(conn, guild_id, speaker, campaign_id)
-            await rel_store.forget_person(conn, guild_id, speaker, campaign_id)
-            await conn.execute(
-                "DELETE FROM transcript_respells"
-                " WHERE guild_id = %s AND campaign_id = %s AND user_id = %s",
-                (*scope, speaker),
-            )
-            await conn.execute(
-                "DELETE FROM map_notes WHERE guild_id = %s AND campaign_id = %s AND user_id = %s",
-                (*scope, speaker),
-            )
-            await conn.execute(
-                "DELETE FROM waiting_name_questions"
-                " WHERE guild_id = %s AND campaign_id = %s AND speaker_id = %s",
-                (*scope, speaker),
-            )
-            cur = await conn.execute(
-                "DELETE FROM transcript_lines l USING transcript_sessions t"
-                " WHERE l.guild_id = %s AND l.user_id = %s AND t.id = l.session_id"
-                " AND t.guild_id = l.guild_id AND t.campaign_id = %s"
-                " RETURNING l.session_id, l.started_ms",
-                (guild_id, speaker, campaign_id),
-            )
-            gone = await cur.fetchall()
-            sessions = sorted({str(r["session_id"]) for r in gone})
-            await _drop_note_pointers(conn, guild_id, sessions)
-            await _forget_memory_traces(
-                conn,
-                guild_id,
-                speaker,
-                [line_ref(str(r["session_id"]), int(r["started_ms"]), speaker) for r in gone],
-                campaign_id,
-            )
-            if sessions:
-                await conn.execute(
-                    "UPDATE transcript_sessions s SET"
-                    " line_count = (SELECT count(*) FROM transcript_lines l"
-                    "   WHERE l.session_id = s.id AND l.sidebar IS NULL),"
-                    " speakers = ARRAY(SELECT DISTINCT l.user_id FROM transcript_lines l"
-                    "   WHERE l.session_id = s.id AND l.sidebar IS NULL ORDER BY l.user_id)"
-                    " WHERE s.guild_id = %s AND s.id = ANY(%s)",
-                    (guild_id, sessions),
-                )
             return Deleted(len(gone), len(sessions))
 
     # ---- Keep transcripts for (#1533) ---------------------------------------------------
@@ -1299,7 +1008,6 @@ class TranscriptStore:
                 (guild_id, session_id),
             )
             gone = await cur.fetchall()
-            await _drop_note_pointers(conn, guild_id, [session_id])
             await conn.execute(
                 "DELETE FROM transcript_suggestions WHERE guild_id = %s AND session_id = %s",
                 (guild_id, session_id),
@@ -1308,8 +1016,6 @@ class TranscriptStore:
                 "DELETE FROM waiting_name_questions WHERE guild_id = %s AND session_id = %s",
                 (guild_id, session_id),
             )
-            await theatre_store.forget_session(conn, guild_id, session_id)
-            await rel_store.forget_session(conn, guild_id, session_id)
             await conn.execute(
                 "DELETE FROM transcript_respells WHERE guild_id = %s AND session_id = %s",
                 (guild_id, session_id),
@@ -1327,29 +1033,6 @@ class TranscriptStore:
                 (now, guild_id, session_id),
             )
             return len(gone)
-
-
-# The session notes' beats with every pointer to transcript lines emptied (#3026): the numbers a
-# beat cites mean nothing once lines of its session are gone (the numbering shifts), and the text
-# of each beat stays.
-_NO_POINTERS = (
-    "(SELECT COALESCE(jsonb_agg(CASE WHEN jsonb_typeof(e) = 'object'"
-    " THEN e || '{\"lines\": []}'::jsonb ELSE e END ORDER BY ord), '[]'::jsonb)"
-    " FROM jsonb_array_elements(n.beats) WITH ORDINALITY AS t(e, ord))"
-)
-
-
-async def _drop_note_pointers(conn: Any, guild_id: int, session_ids: Any) -> None:
-    """Lines of these sessions (transcript session ids) were just deleted, in this transaction:
-    their session notes keep every beat's text and lose the pointers."""
-    if not session_ids:
-        return
-    await conn.execute(
-        f"UPDATE session_notes n SET beats = {_NO_POINTERS} FROM transcript_sessions s"
-        " WHERE s.guild_id = %s AND s.id = ANY(%s) AND n.guild_id = s.guild_id"
-        " AND n.campaign_id = s.campaign_id AND n.session_at = s.started_at",
-        (guild_id, sorted(session_ids)),
-    )
 
 
 # How long a session has been kept: an imported one from the day it was imported (a 2024 game
@@ -1428,44 +1111,29 @@ async def _forget_mentions(
         for mention in await cur.fetchall():
             mentions.setdefault(str(mention["campaign_id"]), []).append(str(mention["id"]))
     await _drop_log_rows(conn, guild_id, "memory_mentions", mentions)
-    # and every evidence link to one of these lines keeps its kind and session and loses the line
-    # (its reference names the speaker): "a line from session 12, no longer available" (#2662)
-    await evidence.placeholder_lines(conn, guild_id, refs)
-    await evidence.scrub_claim_lines(conn, guild_id, refs=refs)  # and out of the claims' `lines`
 
 
 async def _forget_memory_traces(
-    conn: Any, guild_id: int, user_id: int, refs: Sequence[str], campaign_id: str | None = None
+    conn: Any, guild_id: int, user_id: int, refs: Sequence[str]
 ) -> None:
     """The story-memory rows that exist only because of this person's lines (see
     `delete_person`), in the caller's transaction. Memory relations may still list a deleted
-    mention's id; recall skips ids it can't find. `campaign_id`: only that campaign's rows (a DM's
-    removal of one speaker, #3305)."""
-    # What the DM placed of their guesses goes first, under each campaign's lock (#2412).
-    await forget_readings.forget(conn, guild_id, user_id, campaign_id)
+    mention's id; recall skips ids it can't find."""
+    await _forget_mentions(conn, guild_id, refs)
+    await conn.execute(
+        "DELETE FROM memory_heard WHERE guild_id = %s AND speaker_id = %s", (guild_id, user_id)
+    )
     # A claim that cites this person goes even if it cites others too: it is only a waiting
-    # proposal, and keeping it would keep their words in its details. First of all: the clean-ups
-    # below take the person's id out of the claims that stay, and this finds them by it.
+    # proposal, and keeping it would keep their words in its details.
     cur = await conn.execute(
         "DELETE FROM memory_claims WHERE guild_id = %s AND %s = ANY(speaker_ids)"
-        " AND status <> 'confirmed' AND (%s::text IS NULL OR campaign_id = %s)"
-        " RETURNING campaign_id, id",
-        (guild_id, user_id, campaign_id, campaign_id),
+        " AND status <> 'confirmed' RETURNING campaign_id, id",
+        (guild_id, user_id),
     )
     claims: dict[str, list[str]] = {}
     for claim in await cur.fetchall():
         claims.setdefault(str(claim["campaign_id"]), []).append(str(claim["id"]))
     await _drop_log_rows(conn, guild_id, "memory_claims", claims)
-    await evidence.placeholder_claims(conn, guild_id, [i for ids in claims.values() for i in ids])
-    await _forget_mentions(conn, guild_id, refs)
-    # whatever else names them (a reference to a line that was not in the list): by speaker; the
-    # claims the DM confirmed stay, without their line references and their id (#2676, #2679)
-    await evidence.scrub_claim_lines(conn, guild_id, user_id=user_id, campaign_id=campaign_id)
-    await conn.execute(
-        "DELETE FROM memory_heard WHERE guild_id = %s AND speaker_id = %s"
-        " AND (%s::text IS NULL OR campaign_id = %s)",
-        (guild_id, user_id, campaign_id, campaign_id),
-    )
 
 
 async def _drop_log_rows(

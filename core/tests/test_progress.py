@@ -25,17 +25,6 @@ class TheShape(unittest.TestCase):
             },
         )  # fmt: skip
 
-    def test_the_story_read_stages_count_parts_stall_and_end_as_they_should(self) -> None:
-        got = one("reading_connections", NOW - 5, done=2, total=5, unit="parts")
-        self.assertEqual(
-            (got["state"], got["done"], got["total"], got["unit"]), ("running", 2, 5, "parts")
-        )
-        late = NOW - pg.STALL_AFTER_S["reading_connections"] - 1  # type: ignore[operator]
-        self.assertEqual(one("reading_connections", late)["state"], "stalled")
-        # waiting for the daily limit never stalls, and a finished read is done
-        self.assertEqual(one("waiting_for_limit", 1001)["state"], "running")
-        self.assertEqual(one("connections_read", 1001)["state"], "done")
-
     def test_counts_are_left_out_when_not_known_and_never_pass_the_total(self) -> None:
         self.assertNotIn("done", one("checking_names", NOW))
         self.assertNotIn("done", one("cleaning", NOW, done=0, total=0))

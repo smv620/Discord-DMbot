@@ -67,12 +67,6 @@ class HeldTest(unittest.TestCase):
         self.assertEqual(held.get(1, "e0"), "")
         self.assertEqual(held.get(1, f"e{HOLD_MAX + 4}"), "x")
 
-    def test_the_upload_it_came_from_is_held_with_it(self) -> None:
-        held = Held()
-        held.put(1, "e1", "A sentence.", "My notes")
-        self.assertEqual(held.source(1, "e1"), "My notes")
-        self.assertEqual(held.source(2, "e1"), "")
-
     def test_an_empty_sentence_is_not_held(self) -> None:
         held = Held()
         held.put(1, "e1", "")

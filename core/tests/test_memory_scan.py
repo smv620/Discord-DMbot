@@ -238,15 +238,3 @@ class GroupAlikeTest(unittest.TestCase):
         # "Frostmaiden" is another name of Auril: known_keys skips it already
         lines = ["We pray to the Frostmaiden.", "The Frostmaiden answers."]
         self.assertEqual(find_new_names(lines, ["auril", "frostmaiden"]), [])
-
-
-class ListOfNames(unittest.TestCase):
-    """A list of names is never offered as one name (#3383)."""
-
-    def test_a_comma_list_is_offered_as_separate_names(self) -> None:
-        lines = [
-            "We passed Aldmoor, Quillgate, Fenwick on the road.",
-            "Later we sold goods in Aldmoor, Quillgate, Fenwick again.",
-        ]
-        names = {s.name for s in find_new_names(lines, min_times=2)}
-        self.assertEqual(names, {"Aldmoor", "Quillgate", "Fenwick"})

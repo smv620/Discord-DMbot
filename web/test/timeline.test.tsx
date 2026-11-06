@@ -57,8 +57,7 @@ describe("the sessions", () => {
   it("give a player the title without a link, and no unposted recap", async () => {
     page(mockApi("table"), `${REF}.tl-player`);
     await screen.findByText("The river crossing");
-    // (the campaign's own tabs are not the page's sessions)
-    expect(document.querySelector("ol.timeline a")).toBeNull(); // no session links to a recap
+    expect(screen.queryByRole("link", { name: /recap/i })).toBeNull();
     expect(within(session(2)).getByText(text.noRecap)).toBeTruthy();
   });
 });

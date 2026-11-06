@@ -1,7 +1,7 @@
 """⚔️ Record a deed, on a player character's or the party's name card (#1732; docs/STORY_MEMORY.md,
 section 5): the DM types what happened, picks who it mattered to (up to five NPCs, groups or
 places) and how it landed, confirms once, and can undo it. The deed then moves how those it
-mattered to feel about the doer (🤝 Reputation lists it as a reason). DM only, asked again on every
+mattered to feel about the doer (🤝 Standing lists it as a reason). DM only, asked again on every
 step; never shown to players or put in a transcript. Nothing here reads speech: DMbot records only
 what the DM says happened.
 """
@@ -326,11 +326,8 @@ class DoneMenu(_Menu):
             await memory.undo(campaign.guild_id, campaign.id, self.batch)
             changed(interaction, campaign)
         except TooLateToUndo:
-            text = "Too late to undo. Open the name card, then Reputation, to see it."
+            text = "Too late to undo. Open Standing to see it."
         except MemoryRuleError:
-            text = (
-                "Not undone, because something changed. Check Reputation on the name card,"
-                " then try again."
-            )
+            text = "Not undone, because something changed. Check Standing, then try again."
         self.stop()
         await _replace(interaction, text, None)

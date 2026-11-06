@@ -1,5 +1,5 @@
-"""Adding and removing a campaign's game masters from ⚙️ Manage DMbot (#1600, item 2 of #618): DMs
-only on every press, a bot / a duplicate / the cap refused, the plan holder and the last game master
+"""Adding and removing a campaign's game masters from ⚙️ Settings (#1600, item 2 of #618): DMs only
+on every press, a bot / a duplicate / the cap refused, the plan holder and the last game master
 kept, self-removal allowed, a private message to a new game master, no change to anyone's consent,
 the DM screen's access re-applied, and a running table's DM set following at once."""
 
@@ -16,7 +16,7 @@ import aiohttp
 import discord
 
 from dmbot.audio.segmenter import Segmenter
-from dmbot.bot import DMBot
+from dmbot.bot import DMBot, Table
 from dmbot.campaigns import CampaignStore
 from dmbot.campaigns.store import LAST_DM, MAX_DMS, OWNER_STAYS, TOO_MANY_DMS
 from dmbot.config import Settings
@@ -25,7 +25,6 @@ from dmbot.dm_screen import game_masters as gm
 from dmbot.dm_screen.channel import DMScreenError
 from dmbot.dm_screen.settings import management_view
 from dmbot.sessions import SessionStore
-from dmbot.table import Table
 from tests.pg import DatabaseTest
 
 GUILD, OWNER, CO, NEWBIE, MANAGER, PLAYER = 1, 7, 8, 9, 10, 11
@@ -376,6 +375,12 @@ class GameMasters(DatabaseTest):
         )
         self.assertEqual(sum(isinstance(r, Exception) for r in results), 1)
         self.assertEqual(len(await self.dms()), MAX_DMS)
+
+    async def test_an_existing_game_time_channel_is_updated_too(self) -> None:
+        await self.campaigns.set_gametime_channel(GUILD, self.campaign.id, 600)
+        with patch.object(gm, "setup_gametime_channel", AsyncMock()) as gametime:
+            await self.add()
+        gametime.assert_awaited_once()
 
 
 class Names(unittest.IsolatedAsyncioTestCase):

@@ -39,12 +39,8 @@ NEAR_ONE_WORD = 0.9
 TIE = 0.05  # two known names this close in likeness: neither is offered
 
 _SENTENCE = re.compile(r"(?<=[.!?…])\s+|\n+")
-# Letters, any script. A comma, semicolon or slash is kept as a word of its own ("," below), so a
-# list of names ("Caer-Dineval, Caer-Konig, Lonelywood") is never read as one run of name words
-# (#3383); it is not name-like, so it ends a run.
-_WORD = re.compile(r"[^\W\d_](?:[^\W\d_]|['’-](?=[^\W\d_]))*|[,;/]")
+_WORD = re.compile(r"[^\W\d_](?:[^\W\d_]|['’-](?=[^\W\d_]))*")  # letters, any script
 _POSSESSIVE = re.compile(r"['’]s$")
-_BREAKS = frozenset({",", ";", "/"})
 
 
 def _words(text: str) -> frozenset[str]:
@@ -97,8 +93,6 @@ def _sentences(lines: Iterable[str]) -> list[list[str]]:
     for line in lines:
         for sentence in _SENTENCE.split(line):
             words = [_POSSESSIVE.sub("", w) for w in _WORD.findall(sentence)]
-            while words and words[0] in _BREAKS:
-                words.pop(0)  # a sentence led by a comma would shift the mid-sentence test
             if words:
                 out.append(words)
     return out
@@ -166,9 +160,6 @@ def _candidates(
             not_names.keep(" ".join(words[i:j]), " ".join(words), sentence_start=i == 0)
         ):
             i = j
-            continue
-        if not_names.shape_of(" ".join(words[i:j])) is not None:
-            i = j  # a form of address ("Friend"), a number, a measure or a time: no name (#3394)
             continue
         if j - i <= MAX_WORDS:
             out.append((" ".join(words[i:j]), i > 0))

@@ -1,4 +1,4 @@
-"""🤝 Reputation, on an NPC's, group's or place's name card (#1655; STORY_MEMORY.md, section 5).
+"""🤝 Standing, on an NPC's, group's or place's name card (#1655; docs/STORY_MEMORY.md, section 5).
 What the DM has said about how this one feels about each player character and the party, in five
 plain steps, with the reasons; and the buttons to set it. DMbot only reminds the DM: it never
 decides how anyone acts. DM only, asked again on every press; never shown to players or put in a
@@ -32,7 +32,7 @@ from dmbot.ui.names import GONE, _campaign_for, _md, _memory, changed, sees_secr
 
 log = logging.getLogger(__name__)
 
-BUTTON = "🤝 Reputation"  # on the name card
+BUTTON = "🤝 Standing"  # on the name card
 ONLY_DM = "Only the DM can see or change that."
 
 
@@ -58,7 +58,7 @@ def standing_text(
 ) -> str:
     """The reminder comes first and is never cut; a long list of characters is, by whole line."""
     lines = [note] if note else []
-    lines.append(f"🤝 **{_md(viewer.name)}**: Reputation (how they feel)")
+    lines.append(f"🤝 **{_md(viewer.name)}**: how they feel")
     lines.append(f"_{standing.REMINDER}_")
     if not targets:
         lines.append(
@@ -289,8 +289,7 @@ class PickStep(_Menu):
             await show_standing(interaction, self.campaign_id, self.viewer.id, note=f"⚠️ {exc}")
             return
         changed(interaction, campaign)
-        kind = "attitude" if self.attitude else "impression"
-        log.info("Reputation set: %s", kind)  # a count only
+        log.info("Standing set: %s", "attitude" if self.attitude else "impression")  # a count only
         self.stop()
         who, whom = _md(self.viewer.name), _md(self.target.name)
         note = f"✅ Saved: **{who}** is **{step}** toward **{whom}**."

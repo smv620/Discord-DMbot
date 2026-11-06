@@ -8,7 +8,7 @@ they go back to the guess; either can be undone.
 
 Nothing is invented or advised: every name and summary is what the reader stored. Only while Shared
 story is on **Guide me**, a DM said here they have the right to the material and the owner's plan
-allows it; asked again on every press. Never players, never a transcript, never a chat channel.
+allows it; asked again on every press. Never players, never a transcript, never `dmb-chat`.
 """
 
 from __future__ import annotations

@@ -19,20 +19,17 @@ import asyncio
 import logging
 import time
 from collections import Counter
-from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
-from dataclasses import dataclass, field, replace
-from typing import Any, Protocol
+from collections.abc import Awaitable, Callable, Collection, Sequence
+from dataclasses import dataclass, field
+from typing import Protocol
 
 from dmbot.ai import AIOutOfFunds, Reply
 from dmbot.memory.claims import (
     INJECTION_REASON,
-    ITEM_REASON,
     NAME_REJECTED_REASON,
     NEW_NAME_LIMIT,
     NO_SPEAKER_REASON,
-    ONE_OFF_REASON,
     PLAN_REASON,
-    PREDICTION_REASON,
     SAME_ENTRY_REASON,
     SECRET_NAME_REASON,
     SESSION_CLAIMS,
@@ -42,20 +39,15 @@ from dmbot.memory.claims import (
     UNKNOWN_NAME_REASON,
     ClaimStore,
     Extracted,
-    is_family,
     parse_answer,
 )
-from dmbot.memory.deed_reading import DEED_SYSTEM, DeedProposal, parse_deeds
 from dmbot.memory.ontology import Tally
-from dmbot.memory.readings import READING_SYSTEM, as_claim, parse_readings, proposals
 from dmbot.transcript.models import Line
 from dmbot.transcript.topics import OFF_TOPIC
 
 log = logging.getLogger(__name__)
 
-PROMPT_VERSION = "extractor-2"  # bump when SYSTEM changes (it is recorded with every claim)
-DEED_PROMPT_VERSION = "deeds-1"  # bump when deed_reading.DEED_SYSTEM changes (stored with each)
-READING_PROMPT_VERSION = "readings-1"  # bump when readings.READING_SYSTEM changes
+PROMPT_VERSION = "extractor-1"  # bump when SYSTEM changes (it is recorded with every claim)
 MAX_TOKENS = 3000  # per batch: a minute of talk gives a few dozen claims. Haiku 5.5 writes about
 # three times what Haiku 4.5 did (9 of the story answers were cut off at 1500, #2152)
 BATCH_LINES = 10  # about 30 to 60 seconds of talk, as in the golden set (docs/costs.md)
@@ -105,39 +97,6 @@ Rules for what counts as a claim:
    own claim with the relationship "is" and the one word as the object. Example: subject
    "the old bridge", relationship "is", object "destroyed". If only a cause is told and
    no result is stated, give the cause as a claim and no state change.
-
-6. How two characters feel about each other is the relationship "knows" with the feeling as
-   the claim's "details", one of these words and no other: sworn enemy, hostile, distrusts,
-   wary, neutral, trusts, friendly, close, devoted. "Cerric and Belleros are friends" is two
-   claims, each way, with "friendly" (or "close" when it says so). "Strahd is Cerric's sworn
-   enemy" is one claim with "sworn enemy". Use the word only when a line says or plainly shows
-   the feeling; a plain meeting is "knows" with no details. Never use "ally", "friend" or
-   "enemy" as a relationship between two characters; two groups allied or at war stay "ally of"
-   and "enemy of".
-
-7. Where a character, creature or group is tied to a place, the relationship is one of these
-   words: "lives in" (or "lived in"), "works in" (or "worked in"), "comes from" (born or raised
-   there), or "was last seen in" (the line says they were seen, are, or went there). Use only
-   what the line says: a place they merely pass is no claim. An item is only ever "is kept in" a
-   place (or "was kept in"). A place inside a place, or an event held at a place, is "is in".
-
-8. Leave out ordinary gear with no identity of its own (a dagger, rations, a vial of poison) and
-   quantities of common things, even with an owner ("Mira's arrows"). An item is a claim only
-   when it is one particular thing: its own name (Heartseeker), one named owner's single thing
-   (Garret's sled), a description tying it to one story, or something the story turns on (a
-   shipment the villain is waiting for).
-
-9. A subject or object is a particular someone or something: a name, or a clear description of
-   one particular thing. Never a number or amount ("two", "a few copper"), a measure or a time
-   ("four miles per hour", "five days ago"), weather or scenery ("snow", "a blizzard"), a form of
-   address or a title said alone ("Friend", "Captain"), or a plain word for a crowd or a kind
-   ("the dogs", "people"). If a line only says one of those, it is no claim.
-
-10. Someone who goes along with a player character or with the whole group for a stretch (a
-   familiar, a hired guide, a rescued prisoner) is the relationship "travels with": the
-   companion first, then the player character's name, or "the party" when the line means the
-   whole group. Only when a line says they are travelling together, not for a visit or a chat.
-   "Glyph goes everywhere with Cerric" and "Old Marn is travelling with us" are claims.
 
 For each claim say how it was said:
 - "dm_said": the DM narrating, or the DM speaking as a character.
@@ -191,24 +150,6 @@ def readable(lines: Sequence[Line]) -> list[Said]:
     ]
 
 
-def recap_numbers(split: Mapping[str, Any] | None) -> frozenset[int]:
-    """The line numbers a stored split (`recaps.split.Split.to_json()`) labels as last time's recap
-    (#3298), or none: no split, one that cannot be read, or one whose recap the comparison could
-    not back up (`unsure`) all mean every line is play. Pure."""
-    if not split or split.get("unsure"):
-        return frozenset()
-    out: set[int] = set()
-    parts = split.get("parts")
-    for part in parts if isinstance(parts, list) else ():
-        try:
-            label, first, last = part
-            if label == "recap" and int(first) <= int(last):
-                out.update(range(int(first), int(last) + 1))
-        except (TypeError, ValueError):
-            return frozenset()
-    return frozenset(out)
-
-
 def batches(said: Sequence[Said]) -> list[list[Said]]:
     """Groups of `BATCH_LINES` in order; a tail shorter than `MIN_BATCH_LINES` joins the last
     group instead of being a call of its own."""
@@ -231,8 +172,6 @@ def batches(said: Sequence[Said]) -> list[list[Said]]:
 # label), so they are counted as "other": the log gets counts, never words.
 _LOGGED_REASONS = {
     PLAN_REASON: "plan",
-    ONE_OFF_REASON: "one-off action",
-    PREDICTION_REASON: "prediction",
     INJECTION_REASON: "instruction",
     NO_SPEAKER_REASON: "no speaker",
     STOPPED_REASON: "stopped",
@@ -241,7 +180,6 @@ _LOGGED_REASONS = {
     SAME_ENTRY_REASON: "same entry",
     STATE_REASON: "bad condition",
     NAME_REJECTED_REASON: "not a name",
-    ITEM_REASON: "generic item",
     SECRET_NAME_REASON: "secret name",
 }
 
@@ -261,22 +199,8 @@ class Report:
     joined: int = 0  # spellings joined to a name already waiting
     deferred: int = 0  # claims left for next time (their name was past the limit)
     unsent: int = 0  # lines never sent: the call cap, or the run stopped
-    readings: int = 0  # beliefs found (theories, reveals, frame-ups, divinations), kept as claims
-    readings_refused: int = 0  # answers or items the reading rules turned down
-    readings_failed: int = 0  # reading calls that failed (the claims pass is not affected)
-    deeds: int = 0  # deeds the party did, proposed for the DM to record (#3175)
-    deeds_refused: int = 0  # answers or items the deed rules turned down
-    deeds_repeated: int = 0  # a pair the session already has a deed for
-    deeds_failed: int = 0  # deed calls that failed (the claims pass is not affected)
-    deeds_cut: int = 0  # deed answers that stopped at the length limit
-    # The words: never logged (so never in a repr either). Held for the DM's press; whoever stores
-    # them must keep only those whose speakers are all recorded *then* (PR 2b).
-    deed_proposals: list[DeedProposal] = field(default_factory=list, repr=False)
-    cut: int = 0  # claims answers that stopped at the length limit (the whole items were kept)
-    readings_cut: int = 0  # the same for the readings answers
     stopped: str = ""  # why it ended early, if it did
     through_ms: int = 0  # every line that began up to this was read and its claims stored
-    recap_lines: int = 0  # lines left out because they retell earlier sessions (#3298): a count
 
     def line(self) -> str:
         why = ", ".join(f"{n} {r}" for r, n in sorted(self.dropped.items())) or "none"
@@ -285,28 +209,6 @@ class Report:
             f"{self.proposed} proposed, dropped: {why}, {self.repeated} repeated, "
             f"{self.malformed} malformed, {self.named} new name(s), {self.joined} joined, "
             f"{self.deferred} deferred, {self.unsent} line(s) not sent"
-            + (f", {self.cut} answer(s) cut short" if self.cut else "")
-            + (f", {self.recap_lines} recap line(s) left out" if self.recap_lines else "")
-            + (
-                f", readings: {self.readings} found, {self.readings_refused} refused,"
-                f" {self.readings_failed} failed, {self.readings_cut} cut short"
-                if self.readings
-                or self.readings_refused
-                or self.readings_failed
-                or self.readings_cut
-                else ""
-            )
-            + (
-                f", deeds: {self.deeds} found, {self.deeds_refused} refused,"
-                f" {self.deeds_repeated} repeated, {self.deeds_failed} failed,"
-                f" {self.deeds_cut} cut short"
-                if self.deeds
-                or self.deeds_refused
-                or self.deeds_repeated
-                or self.deeds_failed
-                or self.deeds_cut
-                else ""
-            )
             + (f", stopped: {self.stopped}" if self.stopped else "")
         )
 
@@ -319,60 +221,6 @@ def calls_left(session_max: int, session_used: int, day_max: int, day_used: int)
 
 
 Consenting = Callable[[], Awaitable[Collection[int]]]
-
-
-async def _ask_deeds(
-    client: Client,
-    report: Report,
-    batch: Sequence[Said],
-    dm_ids: Collection[int],
-    consenting: Consenting,
-    count_call: Callable[[], Awaitable[None]] | None,
-    pairs: set[tuple[str, str]],
-) -> bool:
-    """The third question of one batch (#3175): which deeds the party did. Asked again who is
-    recorded (the claims call took seconds), counted like any call, never fatal. Returns False
-    when the run must stop (the AI is out of money). The proposals go to the report."""
-    agreed = await consenting()
-    heard = [s for s in batch if s.user_id in agreed]
-    if not heard:
-        return True
-    rows = [(str(s.number), "DM" if s.user_id in dm_ids else "Player", s.text) for s in heard]
-    dm_lines = {str(s.number) for s in heard if s.user_id in dm_ids}
-    report.calls += 1
-    if count_call is not None:
-        try:
-            await count_call()
-        except Exception as exc:
-            log.warning("Story extractor: couldn't count a call (%s)", type(exc).__name__)
-    try:
-        answer = await asyncio.wait_for(
-            client.complete(DEED_SYSTEM, transcript_of(rows), max_tokens=MAX_TOKENS),
-            CALL_TIMEOUT_S,
-        )
-    except AIOutOfFunds:
-        report.failed += 1
-        report.stopped = "out of funds"
-        return False
-    except Exception as exc:  # never fatal, and the claims above stand
-        log.warning("Story extractor: a deed call failed (%s)", type(exc).__name__)
-        report.deeds_failed += 1
-        return True
-    got = parse_deeds(
-        answer.text, [r[0] for r in rows], dm_lines=dm_lines, cut=answer.cut, covered=pairs
-    )
-    # Asked again after the answer (the call took seconds): a deed whose cited lines include
-    # someone who has stopped being recorded is dropped, as `propose` does for a claim.
-    still = await consenting()
-    speaker = {str(s.number): s.user_id for s in heard}
-    kept = tuple(d for d in got.deeds if all(speaker.get(n) in still for n in d.lines))
-    report.deeds += len(kept)
-    report.deeds_refused += got.refused + (len(got.deeds) - len(kept))
-    report.deeds_repeated += got.repeated
-    if answer.cut:
-        report.deeds_cut += 1
-    report.deed_proposals.extend(kept)
-    return True
 
 
 async def run(
@@ -393,12 +241,6 @@ async def run(
     new_names: int = NEW_NAME_LIMIT,
     after_ms: int = 0,
     count_call: Callable[[], Awaitable[None]] | None = None,
-    readings: bool = False,
-    deeds: bool = False,
-    family_only: bool = False,
-    imported: bool = False,
-    progress: Callable[[int, int], Awaitable[None]] | None = None,
-    recap_lines: Collection[int] = (),
 ) -> Report:
     """Read the session's lines and store what the AI found as proposals, all at once at the end
     (the linker picks the most-said new names across the whole session). `consenting` is asked
@@ -411,45 +253,13 @@ async def run(
     `Report.through_ms`), so a restart never sends the same lines twice (#1367). A claim's lines
     are numbered by their place in the stored session; they are not looked up anywhere yet, so if
     a stop-recording clean-up removes lines, whatever resolves them later must key on more than
-    the position.
-
-    `readings`: after each batch's claims, ask the second question of the same lines (theories,
-    reveals, frame-ups, divinations; `readings.py`), inside the same ceilings: it is a call like
-    any other, counted before it is made and held to `max_calls`, so turning it on does not raise
-    what a session may spend. Its answers wait as claims that carry a reading and are placed by
-    the DM, never written.
-
-    `deeds` (#3175 slice 4): after each batch's claims, ask a third question of the same lines,
-    which deeds the party did (`deed_reading.py`), inside the same ceilings and counted like any
-    call. What comes back is only *proposed* (`Report.deed_proposals`, held for the DM's press);
-    nothing is recorded here, and one deed for a (doer, viewer) pair holds across the batches.
-
-    `imported`: the session was loaded from a file, so its readings carry no moment for the game
-    clock's log to be read at (#3091).
-
-    `recap_lines` (#3298): the numbers of lines that retell earlier sessions (the session's stored
-    split, `recap_numbers`). They are left out of what is sent, so a retelling read aloud at the
-    start of a session gives no claim and no name as this session's events; they are only counted.
-
-    `progress`: awaited with (batch n, of m) before each batch is sent (an import's progress card,
-    #3307); a failing one is logged by type and never stops the read.
-
-    `family_only` (#2960; owner, 2026-10-29: families first, allies and enemies not yet): only a
-    claim that says a family role ("is the niece of") is kept, whatever else the AI returned; the
-    rest are counted as `not family` and never stored. No readings are asked in this mode."""
+    the position."""
     report = Report()
-    readings = readings and not family_only
-    deeds = deeds and not family_only
-    deed_pairs: set[tuple[str, str]] = set()  # the pairs a deed was proposed for, so far
     collected: list[Extracted] = []
-    believed: list[Extracted] = []
     everyone: dict[str, int | None] = {}  # every line sent, to who said it
     heard: dict[str, str] = {}  # every line sent, as said: where a naming cue is looked for
     answered_by = ""  # the model that answered last (it can change on a fallback)
-    left_out = set(recap_lines)
-    candidates = [s for s in readable(lines) if s.started_ms > after_ms]
-    report.recap_lines = sum(1 for s in candidates if s.number in left_out)
-    work = batches([s for s in candidates if s.number not in left_out])
+    work = batches([s for s in readable(lines) if s.started_ms > after_ms])
     report.through_ms = after_ms
     reached = after_ms  # how far the batches in a row, all answered, go
     broken = False  # a batch failed: later ones are read, but a restart must come back to it
@@ -473,11 +283,6 @@ async def run(
         rows = [(str(s.number), "DM" if s.user_id in dm_ids else "Player", s.text) for s in batch]
         speakers: dict[str, int | None] = {str(s.number): s.user_id for s in batch}
         report.calls += 1
-        if progress is not None:
-            try:
-                await progress(index + 1, len(work))
-            except Exception as exc:
-                log.warning("Story extractor: the progress note failed (%s)", type(exc).__name__)
         if count_call is not None:
             # Counted before the call, so a crash or restart mid-run cannot hide it from the
             # ceilings (the lines read are only noted when the claims are stored, at the end).
@@ -507,80 +312,13 @@ async def run(
             continue
         streak = 0
         found, bad = parse_answer(reply.text, speakers.keys())
-        if family_only:
-            family = [c for c in found if is_family(c)]
-            report.dropped["not family"] += len(found) - len(family)
-            found = family
         collected.extend(found)
         answered_by = reply.model or answered_by
         everyone.update(speakers)
         heard.update((number, text) for number, _who, text in rows)
         report.malformed += bad
-        if reply.cut:  # stopped at the length limit: the whole items before it are kept
-            report.cut += 1
         if not broken:
-            reached = end_ms  # (the claims of this batch are in hand: a restart need not redo it)
-        if (
-            deeds
-            and report.calls < max_calls
-            and not await _ask_deeds(
-                client, report, batch, dm_ids, consenting, count_call, deed_pairs
-            )
-        ):
-            report.unsent += sum(len(b) for b in work[index + 1 :])
-            break
-        if not readings or report.calls >= max_calls:
-            continue
-        # The second question. Asked again who is recorded: the first call took seconds, and
-        # someone may have stopped since (CLAUDE.md: re-check after every async step).
-        agreed = await consenting()
-        batch = [s for s in batch if s.user_id in agreed]
-        if not batch:
-            continue
-        rows = [(str(s.number), "DM" if s.user_id in dm_ids else "Player", s.text) for s in batch]
-        speakers = {str(s.number): s.user_id for s in batch}
-        dm_lines = {str(s.number) for s in batch if s.user_id in dm_ids}
-        report.calls += 1
-        if count_call is not None:
-            try:
-                await count_call()
-            except Exception as exc:
-                log.warning("Story extractor: couldn't count a call (%s)", type(exc).__name__)
-        try:
-            second = await asyncio.wait_for(
-                client.complete(READING_SYSTEM, transcript_of(rows), max_tokens=MAX_TOKENS),
-                CALL_TIMEOUT_S,
-            )
-        except AIOutOfFunds:
-            report.failed += 1
-            report.stopped = "out of funds"
-            report.unsent += sum(len(b) for b in work[index + 1 :])
-            break
-        except Exception as exc:  # never fatal, and the claims above stand
-            log.warning("Story extractor: a reading call failed (%s)", type(exc).__name__)
-            report.readings_failed += 1
-            continue
-        kept, refused = parse_readings(
-            second.text, speakers.keys(), dm_lines=dm_lines, cut=second.cut
-        )
-        report.readings_refused += refused
-        report.readings += len(kept)
-        if second.cut:
-            report.readings_cut += 1
-        for belief in proposals(kept).beliefs:
-            how = "dm_said" if any(n in dm_lines for n in belief.lines) else "player_said"
-            claim = as_claim(belief, how)
-            # The real moment of the newest line it came from (a line's `started_ms` is Unix
-            # milliseconds): placing it reads the game clock's log at that moment, so the belief
-            # gets the game time of the line, never of the clock as it reads later (#3091).
-            spoken = max((s.started_ms for s in batch if str(s.number) in belief.lines), default=0)
-            # (never for an imported session: its lines carry the dates the DM chose, not the
-            # moments they were spoken at, so no clock log can say what time they had)
-            if spoken > 0 and claim.reading is not None and not imported:
-                claim = replace(claim, reading={**claim.reading, "spoken_at": spoken // 1000})
-            believed.append(claim)
-        everyone.update(speakers)
-        heard.update((number, text) for number, _who, text in rows)
+            reached = end_ms
     # One hand-over for the whole session: the linker picks the most-said new names across all of
     # it, and the campaign's memory is read once, not once a batch. Consent is asked again here,
     # after the last answer (CLAUDE.md: after every async step), and `propose` checks it per claim.
@@ -619,35 +357,6 @@ async def run(
             report.joined += done.joined
             report.deferred += done.deferred
             for reason, n in done.reasons.items():
-                report.dropped[_LOGGED_REASONS.get(reason, "other")] += n
-    if believed:
-        agreed = await consenting()
-        try:
-            stored = await claims.propose(
-                guild_id,
-                campaign_id,
-                believed,
-                everyone,
-                said=heard,
-                opted_in=agreed,
-                prompt_version=READING_PROMPT_VERSION,
-                model=answered_by or model(),
-                session_started_at=session_started_at,
-                malformed=0,
-                tally=tally,
-                dms=dm_ids,
-                skip=skip,
-                make_names=False,  # a reading never makes a new name, now or a session later
-                new_names=0,
-                limit=SESSION_CLAIMS,
-            )
-        except Exception as exc:
-            log.warning("Story extractor: storing the readings failed (%s)", type(exc).__name__)
-            report.failed += 1
-        else:
-            report.repeated += stored.repeated
-            report.deferred += stored.deferred
-            for reason, n in stored.reasons.items():
                 report.dropped[_LOGGED_REASONS.get(reason, "other")] += n
     report.through_ms = reached
     return report

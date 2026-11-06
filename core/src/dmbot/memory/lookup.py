@@ -122,10 +122,6 @@ class CampaignLookup:
     # Who is joined to whom by a confirmed secret connection: a DM's view only (`for_viewer`
     # drops it for anyone else), so an order built from it can never hint at a secret.
     secret_neighbours: dict[str, frozenset[str]] = field(default_factory=dict)
-    # The names a person who may not see secrets must not be told (#3153): every name of the entries
-    # `for_viewer` takes away and every secret spelling of the ones it keeps. A catch-all
-    # connection's own words are checked against them before a card shows them. Empty for a DM.
-    guarded: frozenset[str] = frozenset()
 
     @classmethod
     def build(cls, data: LookupData) -> CampaignLookup:
@@ -233,18 +229,13 @@ class CampaignLookup:
             return self
         gone = self.hidden
         if not gone and not self.secret_neighbours:
-            secret_spellings = frozenset(e.text for e in self.names if e.secret)
-            return dataclasses.replace(self, guarded=secret_spellings) if secret_spellings else self
+            return self
 
         def keep(entries: tuple[NameEntry, ...]) -> tuple[NameEntry, ...]:
             return tuple(e for e in entries if e.entity_id not in gone)
 
-        guarded = frozenset(e.text for e in self.names if e.entity_id in gone or e.secret) | {
-            self.entities[g].name for g in gone if g in self.entities
-        }
         return dataclasses.replace(
             self,
-            guarded=guarded,
             secret_neighbours={},  # a DM's view of secret connections: nobody else's
             entities={k: v for k, v in self.entities.items() if k not in gone},
             names=keep(self.names),

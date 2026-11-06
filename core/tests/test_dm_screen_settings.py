@@ -1,4 +1,4 @@
-"""⚙️ Manage DMbot on the DM screen (#515), with a stand-in Discord interaction."""
+"""⚙️ Settings on the DM screen (#515), with a stand-in Discord interaction."""
 
 import unittest
 from typing import Any
@@ -84,17 +84,16 @@ class SettingsCardTest(unittest.TestCase):
         items: list[Any] = list(view.children)
         self.assertEqual(
             [i.row for i in items],
-            [0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3],
-        )  # rows 0 and 1: what needs Discord (Questions, levels, Who can see, Rules cards, Clock,
-        # chat, Stop when quiet, What's switched on); rows 2 and up wait for the website (#2986)
+            [0, 0, 1, 1, 3, 3, 3, 3, 3, 4, 4, 0, 4, 4, 4, 1, 0],
+        )  # the two menus (Who can see, Campaign management) sit by the levels (#2281) ...
+        # ... then Look up, Rules cards, Clock, House file, Invite, chat, Recaps, Stop when quiet,
+        # Shared rules, Homebrew, Names, What's switched on and Shared story
         labels = [i.item.label for i in items]
-        self.assertEqual(labels[0], "📬 Questions for you")  # first, and open at zero (#3435)
-        self.assertEqual(labels[1:3], ["✓ Quiet", "Normal"])  # no Chatty
-        self.assertEqual(labels[3], "Who can see the DM screen")
-        self.assertEqual(labels[9], "Campaign management")  # the first that waits for the website
+        self.assertEqual(labels[:2], ["✓ Quiet", "Normal"])  # no Chatty
+        self.assertEqual(labels[2:4], ["Who can see the DM screen", "Campaign management"])
         self.assertEqual(
             [i.item.disabled for i in items],
-            [False, True] + [False] * (len(items) - 2),  # (the ticked level is the disabled one)
+            [True] + [False] * (len(items) - 1),
         )
         for item in items:
             self.assertLessEqual(len(item.item.label), 25)
@@ -106,12 +105,11 @@ class SettingsCardTest(unittest.TestCase):
             SettingsButton.__discord_ui_compiled_template__.fullmatch(str(button.item.custom_id))
         )
 
-    def test_the_card_says_what_it_is_and_where_the_rest_is(self) -> None:
-        text = settings_text(campaign(), None, DM)
-        self.assertIn("What DMbot does in this Discord server.", text)
-        self.assertIn("🌐 Manage campaign", text)
-        self.assertIn("**Not on the website yet:**", text)
-        self.assertNotIn("Look up a rule", text)  # it is on the Help card now
+    def test_the_rules_line_is_only_for_the_campaigns_dms(self) -> None:
+        c = campaign()
+        for viewer, expected in ((DM, True), (PLAYER, False), (None, False)):
+            self.assertEqual("Look up a rule" in settings_text(c, None, viewer), expected, viewer)
+        self.assertIn("free rules (SRD)", settings_text(c, None, DM))
 
     def test_the_help_card_no_longer_has_settings(self) -> None:
         ids = [str(i.item.custom_id) for i in card_view(campaign()).children]  # type: ignore[attr-defined]
@@ -222,7 +220,7 @@ class SettingsButtonsTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Who can see the DM screen", kwargs["content"])  # the visibility card
         labels = [i.item.label for i in kwargs["view"].children]
         self.assertIn("✓ Only the DM", labels)  # the card shows what's saved now
-        self.assertIn("Back", labels)
+        self.assertIn("Back to Settings", labels)
 
     async def test_a_refused_visibility_tap_leaves_the_card(self) -> None:
         it = press(PLAYER)
@@ -238,7 +236,7 @@ class SettingsWordsTest(unittest.IsolatedAsyncioTestCase):
     def test_the_card_says_what_cant_be_changed_and_what_follows(self) -> None:
         text = settings_text(campaign())
         self.assertNotIn("Kept until the campaign is deleted", text)  # moved to its own card
-        self.assertNotIn("Tap a button to change it", text)  # one short card (#2986)
+        self.assertIn("If DMbot is listening now, it follows the change from now on.", text)
         self.assertNotIn("next line", text)
         self.assertEqual(LOAD_FAILED, "Sorry, something went wrong. Please try again.")
 
@@ -311,54 +309,3 @@ class HelpCardVisibilityTest(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
-
-class CardTrimTest(unittest.TestCase):
-    """What left Manage DMbot because the website has it (#2986): Import sessions, Names, and Recaps
-    except the recap style, which only Discord has."""
-
-    def test_import_names_and_recaps_are_off_the_card_and_the_style_button_is_on_it(self) -> None:
-        from dmbot.dm_screen.recap_style import RecapStyleButton
-
-        view = settings_view(campaign(), None, DM)
-        items: list[Any] = [getattr(i, "item", i) for i in view.children]
-        labels = [str(i.label) for i in items]
-        for gone in ("Names", "Recaps", "Import sessions"):
-            self.assertNotIn(gone, labels)
-        self.assertIn("Recap style", labels)
-        self.assertTrue(any(isinstance(i, RecapStyleButton) for i in view.children))
-        text = settings_text(campaign(), None, DM)
-        for gone in ("📇 Names", "📜 Recaps", "📥 Import sessions"):
-            self.assertNotIn(gone, text)
-
-    def test_the_style_button_survives_a_restart(self) -> None:
-        from dmbot.dm_screen.recap_style import RecapStyleButton
-
-        button = RecapStyleButton(CAMPAIGN)
-        match = RecapStyleButton.__discord_ui_compiled_template__.fullmatch(
-            str(button.item.custom_id)
-        )
-        self.assertIsNotNone(match)
-        self.assertLessEqual(len(str(button.item.label)), 25)
-
-
-class TheQuestionsButton(unittest.TestCase):
-    """📬 Questions for you (n), first on the card, for the campaign's DMs only (#3435)."""
-
-    def labels(self, viewer: int, questions: int | None) -> list[str]:
-        view = settings_view(campaign(), None, viewer, "", questions)
-        return [str(i.item.label) for i in view.children]  # type: ignore[attr-defined]
-
-    def test_it_is_first_with_the_total_and_open_at_zero(self) -> None:
-        self.assertEqual(self.labels(DM, 12)[0], "📬 Questions for you (12)")
-        self.assertEqual(self.labels(DM, 0)[0], "📬 Questions for you")
-        self.assertEqual(self.labels(DM, None)[0], "📬 Questions for you")
-        self.assertEqual(self.labels(DM, 250)[0], "📬 Questions for you (99+)")
-
-    def test_only_the_dm_is_shown_it(self) -> None:
-        self.assertNotIn("📬 Questions for you", " ".join(self.labels(PLAYER, 3)))
-
-    def test_it_is_not_a_fifth_button_for_the_main_menu(self) -> None:
-        from dmbot.dm_screen import dm_bot_panel as panel
-
-        self.assertLessEqual(max(len(b) for b in panel._BUTTONS.values()), 4)  # (#2986)

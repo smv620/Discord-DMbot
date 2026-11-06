@@ -1,14 +1,12 @@
-// The words of the Story Graph page (#2324; docs/PLAN.md, "The Story Graph on the website"):
+// The words of the relationship web page (#2324; docs/PLAN.md, "The relationship web on the website"):
 // the names of a campaign as dots, the connections between them as lines. Plain words. DMbot never
 // decides: a DM changes what DMbot remembers, and Undo is on the name's card in Discord.
-import type { KnowWord } from "../account/api";
-
 /** Over this many names the page asks before drawing (PLAN: "about 300"). */
 export const BIG_WEB = 300;
 
 export const webPage = {
-  heading: "Story Graph",
-  lead: "How the names in this campaign are connected. Tap a name to see what is known about it. Double tap it, or use the button in its panel, to put it in the middle. Tap a line to read its connections.",
+  heading: "Relationship web",
+  lead: "How the names in this campaign are connected. Tap a name to put it in the middle. Tap a line to read its connections.",
   loading: "Loading…",
   signedOut: "You were signed out. Sign in again.",
   notYours: "We couldn't find that web. Open it from the Names page.",
@@ -18,29 +16,10 @@ export const webPage = {
   centreLabel: "Middle of the web",
   centreSearch: "Find a name",
   centreHint: "Type part of a name, then choose it.",
-  // "See as…" (#2999): the DM looks at the web as one character, or the party, knows it. Read-only while on.
-  seeAsLabel: "See as…",
-  seeAsPlaceholder: "Search a character",
-  seeAsHint: "Shows only what that character knows. You can't change anything here.",
-  seeAsMore: (shown: number, total: number): string => `Showing ${shown} of ${total}. Type to narrow.`,
-  seeAsParty: "The party",
-  seeAsNow: (name: string): string => `Seeing the story as ${name}.`,
-  seeAsBack: "Back to the party",
-  seeAsLoadFailed: "Couldn't load the list. Try again.",
-  seeAsGone: "That character isn't in this story any more.",
-  seeAsListLabel: "Characters to see the story as",
   centreNone: "No name matches.",
   centreNow: (name: string): string => `In the middle: ${name}`,
-  // The button that stops and starts the map reading itself again every few seconds. It names what
-  // pressing it does, so while the map updates it says "Freeze the graph".
-  freezeGraph: "Freeze the graph",
-  autoUpdateGraph: "Auto update graph",
-  updatingNote: "The graph updates by itself every few seconds.",
-  frozenNote: "The graph is frozen. Press Auto update graph to see new names.",
   hopsLabel: "Steps out from the middle",
-  hopsLess: "One step fewer",
-  hopsMore: "One step more",
-  hopsHint: (max: number): string => `Start at 1 to see only the names joined directly to the middle one. Up to ${max}.`,
+  hopsHint: (max: number): string => `1 shows only names joined straight to it. Up to ${max}.`,
   bigAsk: (n: number): string => `This will draw ${n} names and may be slow. Show it anyway, or pick a smaller number above.`,
   bigYes: "Show it anyway",
   bigNo: "Not now",
@@ -56,8 +35,6 @@ export const webPage = {
   groupsHeading: "Other groups of linked names",
   groupsLead: "Names linked to each other form a group. Tap a group to put it in the middle of the map.",
   groupButton: (centre: string, size: number): string => `${centre}'s group (${size} names)`,
-  openItsPage: "📖 Open its page",
-  openItsPageFor: (name: string): string => ` for ${name}`,
   groupHere: "shown now",
   howMany: (names: number, lines: number): string =>
     `${names} ${names === 1 ? "name" : "names"}, ${lines} ${lines === 1 ? "line" : "lines"}`,
@@ -66,86 +43,20 @@ export const webPage = {
   zoomIn: "Zoom in",
   zoomOut: "Zoom out",
   resetView: "Reset the view",
-  panHint: "Drag a name to move it. It stays where you drop it. Drag the empty space to look around. Pinch or use the zoom buttons to zoom.",
-  fullScreen: "Full screen",
-  leaveFullScreen: "Leave full screen",
-  layoutLabel: "How the names are laid out",
-  layoutTooBig: "That is too many names to move around. Choose fewer steps out to rearrange them.",
-  sideNone: "No connections shown for this name.",
-  putInMiddle: "Put it in the middle",
-  doubleTapHint: "Double tap a name to put it in the middle.",
-  legendReading: "Point at or tap a name and its lines read from that name, with an arrow to the other name. A plain line has no words from that name; tap it to read it. No arrow means it works both ways.",
-  keepHere: "Keep it here",
-  letMove: "Let it move",
-  bothWays: "Both ways",
-  oneWay: (a: string, b: string): string => `${a} → ${b}`,
-  layoutFree: "Spread out",
-  layoutGroups: "Cluster by kind",
-  layoutQuests: "Cluster by quest",
-  noQuest: "Not part of a quest",
-  alsoIn: (quests: string): string => `Also in: ${quests}`,
-  kindLabel: "Kinds of connection",
-  kindHint: "Tap a kind to hide or show it. A line through it means hidden.",
-  hiddenMark: "(hidden)",
-  linkKind: { family: "Family", ally: "Friends and allies", group: "Clubs and groups", work: "Work", other: "Something else" } as Record<string, string>,
-  letGo: "Let everything move again",
-  nConnections: (n: number): string => `${n} connections`,
-  // The last line of a line's tooltip when it holds more connections than the four it lists (#3279).
-  plusMore: (n: number): string => `plus ${n} more…`,
-  lineBetween: (a: string, b: string): string => `Open the connections between ${a} and ${b}`,
-  nameButton: (name: string): string => `${name}. Press Enter to pick it.`,
-  legendHeading: "What the shapes and lines mean",
+  panHint: "Drag to move around. Pinch, or use the buttons, to zoom.",
+  legendHeading: "What the shapes mean",
   // Kinds the API may send; any other key is shown as it comes.
   kinds: {
-    npc: "NPCs",
-    player_character: "PCs",
+    npc: "People",
     place: "Places",
     group: "Groups",
     item: "Items",
     event: "Events",
-    // The rest are the Names page's words for them (core web/all_names.py).
-    faction: "Groups",
-    creature: "Creatures",
-    deity: "Gods",
-    character: "Characters",
-    concept: "Ideas",
-    quest: "Quests",
-    mystery: "Mysteries",
-    hook: "Hooks",
-    goal: "Goals",
-    promise: "Promises",
-    clue: "Clues",
-    people: "Folk and peoples",
-    thread: "Story threads",
-  } as Record<string, string>,
-  // The singular of each kind, for a kind with one name waiting: "Add 1 place" (#3224). Same keys as `kinds`.
-  kindOne: {
-    npc: "NPC",
-    player_character: "PC",
-    place: "place",
-    group: "group",
-    item: "item",
-    event: "event",
-    faction: "group",
-    creature: "creature",
-    deity: "god",
-    character: "character",
-    concept: "idea",
-    quest: "quest",
-    mystery: "mystery",
-    hook: "hook",
-    goal: "goal",
-    promise: "promise",
-    clue: "clue",
-    people: "people group",
-    thread: "story thread",
   } as Record<string, string>,
   secretMark: "🤫",
   secretWords: "Secret: only the DM sees this",
   listHeading: "The same web, as a list",
   namesHeading: "Names",
-  expandAll: "Expand all",
-  collapseAll: "Collapse all",
   linesHeading: "Connections",
   makeMiddleShort: "Make middle",
   seeLineShort: "Open",
@@ -153,11 +64,8 @@ export const webPage = {
   makeMiddle: (name: string): string => `Put ${name} in the middle`,
   inMiddle: "In the middle",
   seeLine: (a: string, b: string): string => `See the connections between ${a} and ${b}`,
-  // One connection as a sentence, read subject, then what it does, then object (#2666).
-  lineText: (from: string, words: string, to: string, after = ""): string => (after ? `${from} ${words} ${to} ${after}` : `${from} ${words} ${to}`),
-  furtherOut: "Further out",
-  furtherOutHint: (name: string): string => `Connections between other names, not ${name}.`,
-  theoryWords: "only a theory",
+  lineText: (a: string, b: string, label: string, more: number): string =>
+    `${a} ↔ ${b}: ${label}${more > 0 ? ` (+${more})` : ""}`,
   readOnly: "Only this campaign's DM can change names and connections.",
   undoNote: "DMbot only uses what you confirm. Changes made here can be undone with ↩️ Undo on the name's card in Discord.",
   close: "Close",
@@ -171,8 +79,8 @@ export const webPage = {
   kindChange: "What it is",
   saveKind: "Save what it is",
   edgePanel: (a: string, b: string): string => `${a} and ${b}`,
-  linkText: (a: string, b: string, words: string, direction: "a-b" | "b-a" | "both"): string =>
-    direction === "a-b" ? `${a} ${words} ${b}` : direction === "b-a" ? `${b} ${words} ${a}` : `${a} and ${b}: ${words}`,
+  linkText: (a: string, b: string, words: string, direction: "ab" | "ba" | "both"): string =>
+    direction === "ab" ? `${a} ${words} ${b}` : direction === "ba" ? `${b} ${words} ${a}` : `${a} and ${b}: ${words}`,
   wordsLabel: (n: number): string => `Words for connection ${n}`,
   saveWords: (n: number): string => `Save words for connection ${n}`,
   makeSecretShort: "Make secret",
@@ -189,12 +97,6 @@ export const webPage = {
   addHeading: "Add a connection",
   addWords: "Words, like “works with”",
   addButton: "Add",
-  // "Travels with" (#3505): a companion goes along with a player character or with the party. DM only, like the rest.
-  travelsWithPick: "Travels with",
-  travelsWithWords: "travels with",
-  travelsWithHint: (companion: string, target: string): string => `${companion} travels with ${target}. Press Add.`,
-  travelsWithNo: "A companion is a character who is not a player character, and it travels with a player character or with the party. Pick the two names that way round.",
-  travelsWithRefused: "DMbot can't save that. A companion travels with a player character or with the party, and nothing else. Nothing was changed.",
   addSecret: "Secret (DM only)",
   saved: "Saved.",
   added: "Added.",
@@ -208,7 +110,7 @@ export const webPage = {
   normalView: "Normal view",
   peekSwitch: "Peek behind the DM screen",
   peekOffNote:
-    "Turned off by the DM. To turn it on, the DM opens 👤 DMbot Main Menu → ⚙️ Manage DMbot → 👁️ Who can see the DM screen → 👀 Players can peek.",
+    "Turned off by the DM. To turn it on, the DM opens 👤 DMbot Main Menu → ⚙️ Settings → 👁️ Who can see the DM screen → 👀 Players can peek.",
   peekTitle: "Peek behind the DM screen?",
   peekWarn:
     "Peeking shows you the DM's secrets and things your characters haven't found yet. It can spoil the mystery and the fun. Your DM will be told you peeked.",
@@ -216,18 +118,6 @@ export const webPage = {
   peekCancel: "Cancel",
   peeking: "You are peeking. This shows what your DM hasn't told you. Turn the switch off to go back.",
   notRevealed: "players don't know yet",
-  /** Where a connection came from (#2946): nothing for an unknown source. The API sends upload and DM kinds to the DM only. */
-  sourceLine: (s?: { type: string; n?: number; label?: string }): string | null =>
-    s?.type === "session" && s.n ? `From session ${s.n}` : s?.type === "upload" && s.label ? `From your upload: ${s.label.slice(0, 80)}` : s?.type === "dm" ? "Added by you" : null,
-  // Who knows a name or connection, in the DM's full view (#3167). Plain words; the mark is 🤫 for secret only.
-  knowWords: {
-    secret: "Secret: only you know this",
-    hidden_from_the_players: "Hidden from the players: only NPCs know this",
-    known_to_an_npc: "Only one NPC knows this",
-    partly_revealed: "Some of the party know this",
-    known_to_the_party: "The whole party knows this",
-  } as Record<KnowWord, string>,
-  knowHint: "Worked out from what happened in your sessions. Only you see these marks.",
   notRevealedFull: "Players don't know this yet",
   legendNotRevealed: "Faded: players don't know this yet",
   legendTheory: "Dotted line with ?: something the party suspects",
@@ -235,7 +125,6 @@ export const webPage = {
   // 📌 100% truth (#2448): the DM pins a connection as certainly true. Players never see it.
   pinMark: "📌",
   pinnedWords: "100% truth",
-  checkLine: (check: string): string => `DMbot's check: ${check}`,
   pin: "📌 Pin as 100% truth",
   unpin: "Unpin",
   pinLabel: (n: number): string => `Pin connection ${n} as 100% truth`,
@@ -243,30 +132,6 @@ export const webPage = {
   pinnedDone: "Pinned. Only you see it. Unpin any time.",
   unpinnedDone: "Unpinned.",
   pinHint: "Only you see pins. Players never do.",
-  // "Who knows this?" on a held connection (#2935 D4, #3214). Plain words; the bot applies the answer.
-  whoKnowsHeading: "Who knows this?",
-  whoOnlyDm: "🤫 Only the DM",
-  whoSome: "👥 Only some characters",
-  whoEveryone: "👁️ Everyone at the table",
-  whoStateDm: "Hidden from the party. Only you know it.",
-  whoStateSome: (names: string): string => `Hidden from the party. Only ${names} know it.`,
-  whoStateAll: "Everyone at the table can see it.",
-  whoSearch: "Search a character",
-  whoSomeLabel: "Characters who know it",
-  whoPickOne: "Pick at least one character.",
-  whoSave: "Save",
-  whoDoneDm: "Now only you know this.",
-  whoDoneSome: (names: string): string => `Now only ${names} know this.`,
-  whoDoneAll: "Now everyone at the table can see this.",
-  whoAlready: "It was already like that.",
-  // Names in a list: "Mara, Tavin and Brann"; past five, the first four and how many more.
-  whoNames: (names: string[]): string => {
-    if (names.length <= 5) {
-      if (names.length <= 1) return names[0] ?? "";
-      return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
-    }
-    return `${names.slice(0, 4).join(", ")} and ${names.length - 4} more`;
-  },
   legendPinned: "📌: pinned as 100% truth (only you see this)",
   believesFalse: "⚠️ The party believes this; it's false",
   reveal: "👁️ Reveal to players",
@@ -285,32 +150,9 @@ export const webPage = {
     network: "We couldn't reach DMbot, so nothing was changed. Check your connection and try again.",
   } as Record<string, string>,
   errorFallback: "That didn't work. Try again in a minute.",
-  // Showing a connection is refused until its names are shown to the players (#3426). The ending is what the
-  // connection's row looks for to offer the link to the Names page.
-  namesPageEnding: "on the Names page.",
-  showNamesFirst: (held: string[]): string =>
-    held.length === 0
-      ? "Show both names to the players first. You can do that on the Names page."
-      : held.length === 1
-        ? `${held[0]} isn't shown to the players yet. Show that name first, on the Names page.`
-        : `${held.join(" and ")} aren't shown to the players yet. Show those names first, on the Names page.`,
-  // `who` is how the page calls the person ("someone's sister"), without the "(name unknown)" label.
-  nameThemFirst: (who: string | null, onWeb: boolean): string =>
-    onWeb
-      ? who === null
-        ? "One end of this connection has no name yet. Add one on the Names page."
-        : `This connection needs a name first: ${who} has none yet. Add one on the Names page.`
-      : // While the Names page can't name anyone (NOT_NAMED_LIVE), the way is Discord's, and there is no link.
-        `${who === null ? "One end of this connection has" : `${who} has`} no name yet. In Discord, press 📚 Browse and choose Give them a name, then show this connection.`,
-  openNames: "Open Names page",
 } as const;
 
 /** The words for a kind: the API's key if no words are known. */
 export function kindWords(key: string): string {
   return webPage.kinds[key] ?? key;
-}
-
-/** A kind's singular word; a key with no entry shows the key with `_` as a space (#3224). */
-export function kindWord(key: string): string {
-  return webPage.kindOne[key] ?? key.replace(/_/g, " ");
 }

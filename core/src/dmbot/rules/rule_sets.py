@@ -31,6 +31,7 @@ from dmbot.campaigns.models import CampaignError
 from dmbot.db import Conn, Database
 from dmbot.memory.definition_content import valid_definitions
 from dmbot.rules import pack_content, set_diff
+from dmbot.rules.changes import ChangeHook, notifies
 from dmbot.rules.house import (
     HOUSE_RULES_MAX,
     RULE_MAX,
@@ -315,6 +316,8 @@ class RuleSetStore:
         self._db = db
         self._clock = clock
         self._wrong: dict[tuple[int, int], deque[float]] = {}  # (server, person) -> guesses
+        # Told after a change to what a campaign follows or merged in (the rules channel, #1752).
+        self.on_change: ChangeHook | None = None
 
     def _now(self) -> int:
         return int(self._clock())
@@ -518,23 +521,13 @@ class RuleSetStore:
             code,
         )  # fmt: skip
 
-    async def by_code(self, guild_id: int, user_id: int, code: str, *, count: bool = True) -> Offer:
+    async def by_code(self, guild_id: int, user_id: int, code: str) -> Offer:
         """The shared set a code opens, from any server: its name, its publisher campaign's
         name and the content it would copy. For a DM who is about to confirm following it:
         the caller checks that (this returns the full content). A wrong code counts toward a
         short limit for that person in that server (kept in memory, so it resets on a restart;
         a code is 10 letters from 32, about 10**15, so the limit only slows a determined
-        guesser). `count=False`: a try that was already counted (the website's choice taken again
-        after a slow first run) is not counted twice, and is not held back by the limit."""
-        if not count:
-            offer = None
-            wanted = clean_code(code)
-            if len(wanted) == CODE_LENGTH:
-                async with self._db.guild(guild_id) as conn:
-                    offer = await self._door(conn, wanted)
-            if offer is None:
-                raise RuleSetError(BAD_CODE)
-            return offer
+        guesser)."""
         key = (guild_id, user_id)
         now = self._clock()
         tries = self._wrong.setdefault(key, deque())
@@ -561,6 +554,7 @@ class RuleSetStore:
         async with self._db.guild(guild_id) as conn:
             return await _followed(conn, guild_id, campaign_id)
 
+    @notifies
     async def follow(self, guild_id: int, campaign_id: str, user_id: int, offer: Offer) -> Follow:
         """Follow the set in `offer` (from `shared_here` or `by_code`, which the DM has just
         confirmed): the campaign takes its own copy. The set is read again here, in the same
@@ -607,6 +601,7 @@ class RuleSetStore:
             raise RuleSetError(NO_SUCH_SET)
         return fresh
 
+    @notifies
     async def unfollow(self, guild_id: int, campaign_id: str, user_id: int) -> Follow:
         """Stop following the house-rules set. Returns what was removed, so the caller's Undo
         can `restore` it."""
@@ -624,6 +619,7 @@ class RuleSetStore:
             )
         return mine[0]
 
+    @notifies
     async def restore(self, guild_id: int, campaign_id: str, user_id: int, follow: Follow) -> None:
         """Undo an unfollow: the copy comes back as it was (unless the campaign follows
         another set by now)."""
@@ -1100,6 +1096,7 @@ class RuleSetStore:
             )
             return int(cur.rowcount)
 
+    @notifies
     async def take_update(
         self,
         guild_id: int,
@@ -1265,6 +1262,7 @@ class RuleSetStore:
                 raise RuleSetError(NOTHING_TO_UNDO)
             return mine[0]
 
+    @notifies
     async def undo_take(self, guild_id: int, campaign_id: str, user_id: int, taken: Taken) -> int:
         """Put back what `take_update` did: the old copy returns (and, after a merge, the
         rules it added are removed; their numbers are not used again). Returns how many

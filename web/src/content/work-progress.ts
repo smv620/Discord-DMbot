@@ -9,17 +9,6 @@ export const workWords = {
   unknownStage: "DMbot is working on it.",
   /** "3 of 10 sessions", "part 1 of 2". */
   progress: (done: number, total: number, unit?: string): string => (unit ? `${done} of ${total} ${unit}` : `${done} of ${total}`),
-  /** A count that is an estimate between two real readings (#3534): "about 42 of 100 lines". */
-  progressAbout: (done: number, total: number, unit?: string): string => `about ${done} of ${total}${unit ? ` ${unit}` : ""}`,
-  /** The running counts line (#3534), one phrase per count the API sends; a code the page doesn't know is left out. */
-  countPhrase: {
-    words: (n: number): string => `${n.toLocaleString()} ${n === 1 ? "word" : "words"} processed`,
-    calls: (n: number): string => `${n.toLocaleString()} ${n === 1 ? "call" : "calls"} made`,
-    checks: (n: number): string => `${n.toLocaleString()} ${n === 1 ? "check" : "checks"} completed`,
-    names: (n: number): string => `${n.toLocaleString()} ${n === 1 ? "name" : "names"} found`,
-  } as Record<string, (n: number) => string>,
-  /** A running count that is an estimate between two readings. */
-  aboutCount: (phrase: string): string => `about ${phrase}`,
   running: (elapsed: string): string => `Running for ${elapsed}.`,
   lastChange: (ago: string): string => `Last progress ${ago} ago.`,
   justNow: "Last progress just now.",

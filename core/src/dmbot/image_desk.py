@@ -28,9 +28,6 @@ log = logging.getLogger(__name__)
 DAY_S = 86400
 Fetcher = Callable[[str], Awaitable[Image]]
 StillOk = Callable[[], bool]
-# Called with a picture's place in the message, the picture and what was made of it, right after it
-# was described, so it can be kept (#3274).
-OnImage = Callable[[int, Image, Read | None], Awaitable[None]]
 
 
 class Stopped(Exception):
@@ -120,7 +117,6 @@ class ImageDesk:
         campaign_id: str,
         links: Sequence[str],
         still_ok: StillOk = lambda: True,
-        on_image: OnImage | None = None,
     ) -> list[Read | None]:
         """What was made of each link (at most `MAX_PER_MESSAGE`), in order; None where it was not
         described. `still_ok` is asked before each download and each AI call; once it says no the
@@ -149,15 +145,7 @@ class ImageDesk:
                 image = await self._fetch(link)
                 if not still_ok():
                     raise Stopped
-                read = await images.read(image, fast, careful)
-                out.append(read)
-                if on_image is not None and still_ok():
-                    # Keeping a picture (#3274) must never cost the picture its line: its own
-                    # trouble is logged by class and the next picture goes on.
-                    try:
-                        await on_image(len(out) - 1, image, read)
-                    except Exception as exc:
-                        log.info("Table image: couldn't keep one (%s)", type(exc).__name__)
+                out.append(await images.read(image, fast, careful))
             except Stopped:
                 break
             except ImageError:

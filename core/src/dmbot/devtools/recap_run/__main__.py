@@ -42,7 +42,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import json
 import math
 import os
 import shutil
@@ -54,7 +53,6 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
-from dmbot import ai_structured
 from dmbot.ai import AIModels, AIModelTier, AnthropicClient, Reply
 from dmbot.config import ConfigError, parse_ai_models
 from dmbot.devtools.costs.prices import UnknownPrice, price_of
@@ -67,12 +65,11 @@ from dmbot.memory.extractor import readable
 from dmbot.recaps import beats as bt
 from dmbot.recaps import calls as cl
 from dmbot.recaps import draft as rd
-from dmbot.recaps import fixed_lines, must_haves
+from dmbot.recaps import fixed_lines
 from dmbot.recaps import pipeline as pl
 from dmbot.recaps import split as sp
 from dmbot.recaps.audio.eleven import ProviderError, check_line
 from dmbot.recaps.audio.names import SpokenName
-from dmbot.recaps.inputs import NotLoaded
 from dmbot.recaps.pipeline import Client
 from dmbot.recaps.store import Job, RecapStore
 from dmbot.recaps.style import StyleStore
@@ -140,10 +137,6 @@ class Outcome:
     # (stage, try, the check's problems) for each prose or finish check that failed (#1969)
     failures: list[tuple[str, int, list[str]]] = field(default_factory=list)
     calls: list[cl.CallEvent] = field(default_factory=list)  # each AI call, in order (#2053)
-    # With --structured (#2714): how the draft-then-form passes went, counts only; else None
-    structured: dict[str, int] | None = None
-    # Counts the worker reported (#2738): the away check's first finds. Numbers, never words.
-    counts: dict[str, int] = field(default_factory=dict)
 
 
 def estimate(inputs: pl.Inputs) -> tuple[int, int]:
@@ -153,11 +146,6 @@ def estimate(inputs: pl.Inputs) -> tuple[int, int]:
     windows = max(1, math.ceil(chars / inputs.window_chars))
     tokens = chars // 4 * 2 + 2500 * 3  # the transcript for beats, the beats for prose, prompts
     return pl.MAX_CALLS + windows - 1, tokens
-
-
-def count_lines(out: Outcome) -> list[str]:
-    """The away check's and the beat sheet's counts (#2738): see `review.count_lines`."""
-    return rv.count_lines(out.job, out.counts.get("away_found"), out.counts.get("away_left"))
 
 
 def split_lines(out: Outcome) -> list[str]:
@@ -201,7 +189,6 @@ async def run_text(
     story: pl.Story | None = None,
     start: tuple[str, dict[str, Any]] | None = None,
     reads: str = "beats",
-    structured: bool = False,
 ) -> Outcome:
     """The recap worker on one session, in memory. Returns the job as it ended. With `creative`
     and `formatting` the prose is written and shaped by two models, as live (#2074)."""
@@ -213,7 +200,6 @@ async def run_text(
     formatting_c = Counting(formatting, creative_models[1]) if formatting is not None else None
     failures: list[tuple[str, int, list[str]]] = []
     calls: list[cl.CallEvent] = []
-    counts: dict[str, int] = {}
     notes: list[str] = []
     speakers = {s.user_id for s in readable(inputs.lines)}
 
@@ -242,16 +228,12 @@ async def run_text(
         ),
         on_note=notes.append,
         on_call=calls.append,
-        on_count=counts.__setitem__,
         creative=creative_c,
         formatting=formatting_c,
         critics=critics,
         story=story,  # PlotBot's story memory, when a test or tool connects it (#2254)
         reads=reads,  # what the writer reads (#2590)
-        structured_split=structured,  # the draft-then-form way for both steps (#2714)
-        structured_beats=structured,
     )
-    structured_before = ai_structured.STATS.as_dict()
     stopped = ""
     for _ in range(40):  # each pass is one stage; a run never spins
         before = store.job
@@ -277,12 +259,6 @@ async def run_text(
         sheets=store.sheets,
         failures=failures,
         calls=calls,
-        counts=counts,
-        structured=(
-            {k: v - structured_before[k] for k, v in ai_structured.STATS.as_dict().items()}
-            if structured
-            else None
-        ),
     )
 
 
@@ -452,7 +428,6 @@ def report(out: Outcome, prices: dict[str, tuple[float, float]], *, show: bool =
     if job.state != "ready" and out.failures:
         lines += ["", *explain_failures(out)]
     lines += split_lines(out)
-    lines += count_lines(out)
     lines += cl.section(out.calls)  # counts and fixed words only (#2053)
     if out.notes:
         lines += ["", *(f"Note: {n}" for n in out.notes)]
@@ -487,12 +462,6 @@ def report(out: Outcome, prices: dict[str, tuple[float, float]], *, show: bool =
         f"Calls: {sum(c.calls for _, c in counted)} ({split}); "
         f"tokens in {tokens_in}, out {tokens_out}; spend {spend}",
     ]
-    if out.structured is not None:  # counts only, for the comparison with the one-call way (#2714)
-        lines.append(
-            "Structured: " + ", ".join(f"{k} {v}" for k, v in out.structured.items() if v)
-            if any(out.structured.values())
-            else "Structured: no step used it (nothing to split or write)"
-        )
     return lines
 
 
@@ -501,8 +470,6 @@ def _copy_out(source: Path, into: Path) -> None:
     into.mkdir(parents=True, exist_ok=True, mode=0o700)
     into.chmod(0o700)  # (mkdir's mode is narrowed by the umask and ignored for an existing folder)
     for path in sorted(source.iterdir()):
-        if not path.is_file():  # (the kept parts of a small change live in a folder, #2630)
-            continue
         target = into / path.name
         shutil.copyfile(path, target)
         target.chmod(0o600)
@@ -585,17 +552,6 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     )  # fmt: skip
     what.add_argument("--golden", action="store_true", help="the invented golden set")
     what.add_argument(
-        "--score-recap", metavar="FILE",
-        help="score a recap written earlier (a recap.txt from --out, or the recap as plain text) "
-        "per must-have, against the beat sheet in --beats; one AI call, needs --yes. For the "
-        "'before' of a writer change, written by a build with no --score (#3328)",
-    )  # fmt: skip
-    parser.add_argument(
-        "--beats", metavar="FILE",
-        help="with --score-recap: the beats.json an --out run of the SAME session saved, so the "
-        "before and the after are held to the same facts",
-    )  # fmt: skip
-    what.add_argument(
         "--transcript", metavar="FILE",
         help="a transcript file (DMbot's download, 'Name: words' lines, WebVTT or SRT)",
     )  # fmt: skip
@@ -617,8 +573,8 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     )  # fmt: skip
     parser.add_argument(
         "--out", metavar="DIR",
-        help="with --session or --transcript: keep recap.txt, report.txt and review.html here, "
-        "and with --audio the mp3s",
+        help="with --transcript: keep recap.txt, report.txt and review.html here, and with "
+        "--audio the mp3s",
     )  # fmt: skip
     parser.add_argument(
         "--no-critics", action="store_true",
@@ -627,8 +583,7 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser.add_argument(
         "--compare", action="store_true",
         help="with --session or --transcript: the same beats written by Claude and by Gemini, "
-        "saved blind as A.txt and B.txt in --out with the key apart (a Gemini writer needs "
-        "--gemini-model and --paid-gemini-key; claude,claude needs neither)",
+        "saved blind as A.txt and B.txt in --out with the key apart (needs --gemini-model)",
     )  # fmt: skip
     parser.add_argument("--gemini-model", metavar="NAME", help="with --compare: the Gemini model")
     parser.add_argument(
@@ -649,20 +604,6 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser.add_argument(
         "--claude-model", metavar="NAME",
         help="with --compare: the Claude writer (default: the creative model on file)",
-    )  # fmt: skip
-    parser.add_argument(
-        "--structured", action="store_true",
-        help="with --session or --transcript only (not --golden, --compare or --review): ask the "
-        "split and the beat sheet the structured way (a strong model drafts, a fast one fills the "
-        "form, #2714); the report adds the counts. To compare, run the session once without it "
-        "and once with it",
-    )  # fmt: skip
-    parser.add_argument(
-        "--score", action="store_true",
-        help="with --session or --transcript: after the run, score the recap per must-have "
-        "(covered, missed, or not given by the session) and by the fact check, with one more AI "
-        "call that the estimate does not include. Counts only, so it can be posted; run on the "
-        "fixed set before and after a writer change (#3328)",
     )  # fmt: skip
     parser.add_argument("--audio", action="store_true", help="also make the narration and music")
     parser.add_argument("--keep", action="store_true", help="keep the result as a draft recap row")
@@ -688,12 +629,11 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
             parser.error(
                 "--compare goes with --session or --transcript, and takes no --audio or --keep"
             )
-        gemini_writes = "gemini" in [w.strip() for w in args.writers.split(",")]
-        if not args.out:
-            parser.error("--compare needs --out DIR (for the drafts and the key)")
-        if gemini_writes and not args.gemini_model:
-            parser.error("--compare with a Gemini writer needs --gemini-model")
-        if gemini_writes and not args.paid_gemini_key:
+        if not args.out or not args.gemini_model:
+            parser.error(
+                "--compare needs --out DIR (for the drafts and the key) and --gemini-model"
+            )
+        if not args.paid_gemini_key:
             parser.error(
                 "--compare sends the session to Google: add --paid-gemini-key to confirm the key "
                 "is on a billing-enabled account (the free tier lets Google use what is sent)"
@@ -703,20 +643,8 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     elif args.writers != "claude,gemini":
         parser.error("--writers goes with --compare")
     args.reads_each = parse_reads(args.reads, parser.error)
-    if args.structured and (args.golden or args.compare or args.review):
-        parser.error(
-            "--structured goes with --session or --transcript, not --golden, --compare or --review"
-        )
-    if args.score_recap and not args.beats:
-        parser.error("--score-recap needs --beats (the beats.json of a run of the same session)")
-    if args.beats and not args.score_recap:
-        parser.error("--beats goes with --score-recap")
-    if (args.score and not (args.session or args.transcript)) or (
-        args.score and (args.compare or args.review or args.golden)
-    ):
-        parser.error("--score goes with --session or --transcript only")
-    if args.out and not (args.transcript or args.compare or args.session):
-        parser.error("--out goes with --session, --transcript or --compare")
+    if args.out and not (args.transcript or args.compare):
+        parser.error("--out goes with --transcript or --compare")
     if args.hours is not None and not 0.25 <= args.hours <= 24:
         parser.error("--hours is the session's length in hours, from 0.25 to 24")
     if args.hours is not None and args.golden:
@@ -841,8 +769,6 @@ async def main_async(args: argparse.Namespace) -> int:
 async def _main_async(args: argparse.Namespace) -> int:
     if args.review:
         return review_folder(Path(args.review))
-    if args.score_recap:
-        return await _score_recap(args)
     got = clients_from_env()
     if got is None:
         return 2
@@ -866,33 +792,6 @@ async def _main_async(args: argparse.Namespace) -> int:
     if args.transcript:
         return await _transcript(args, fast, careful, models, prices)
     return await _session(args, fast, careful, models, prices)
-
-
-async def _score_recap(args: argparse.Namespace) -> int:
-    """`--score-recap FILE --beats FILE`: score a recap written earlier (#3328). Counts only; the
-    recap is sent to the AI as in any run, and nothing of it is printed."""
-    from dmbot.devtools.recap_run import score as sc
-
-    recap, beats = Path(args.score_recap), Path(args.beats)
-    for path in (recap, beats):
-        if not path.is_file():
-            print(f"recap_run: {path} is not a file", file=sys.stderr)
-            return 2
-    if not args.yes:
-        print("One AI call to score the recap. Nothing was run. Add --yes to spend the money.")
-        return 0
-    got = clients_from_env()
-    if got is None:
-        return 2
-    _, careful, _ = got
-    try:
-        recap_text, beats_text = await asyncio.to_thread(sc.read_texts, recap, beats)
-        lines = await sc.score_recap_file(recap_text, beats_text, [], careful)
-    except OSError as exc:  # the kind only: never the path's contents
-        print(f"recap_run: could not read a file ({type(exc).__name__})", file=sys.stderr)
-        return 2
-    print("\n".join(lines))
-    return 0
 
 
 def review_folder(folder: Path) -> int:
@@ -924,12 +823,6 @@ def save_text(folder: Path, out: Outcome, printed: Sequence[str], *, names_given
             ),
         )
     rv.write_private(folder / rv.REPORT_FILE, "\n".join(printed) + "\n")
-    if out.job.state == "ready" and isinstance(job.beats, list) and job.beats:
-        # the beat sheet the recap was written from, so `--score-recap` can hold an earlier recap
-        # of the same session to the same facts (#3328)
-        from dmbot.devtools.recap_run import score as sc
-
-        rv.write_private(folder / sc.BEATS_FILE, json.dumps(job.beats))
 
 
 def audio_failure(exc: Exception) -> list[str]:
@@ -957,53 +850,6 @@ def _golden_inputs(session: object) -> pl.Inputs:
     )  # fmt: skip
 
 
-async def inputs_for(db: Any, gid: int, cid: str, at: int) -> pl.Inputs:
-    """The recap inputs of one stored session, read the way the bot reads them (every store on
-    this one database, each read scoped to the server by `Database.guild`). Raises `NotLoaded` with
-    the reason (#2680)."""
-    from dmbot.campaigns.store import CampaignStore
-    from dmbot.memory.lookup import LookupCache
-    from dmbot.memory.store import MemoryStore
-    from dmbot.recaps.inputs import load_inputs_or_why
-    from dmbot.recaps.must_haves import MustStore
-    from dmbot.recaps.store import RecapStore
-    from dmbot.timebot.store import ClockStore
-    from dmbot.transcript.store import TranscriptStore
-
-    return await load_inputs_or_why(
-        campaigns=CampaignStore(db),
-        lookup=LookupCache(MemoryStore(db)),
-        transcripts=TranscriptStore(db),
-        recaps=RecapStore(db),
-        clocks=ClockStore(db),
-        guild_id=gid,
-        campaign_id=cid,
-        session_at=at,
-        styles=StyleStore(db),
-        musts=MustStore(db),
-    )
-
-
-def not_loaded_line(why: NotLoaded, gid: int, cid: str, at: int) -> str:
-    """Which of the three it was, in words that say what to look at. Numbers only: no name or
-    word of a transcript."""
-    if why.why == "campaign":
-        return f"no campaign {cid} in server {gid}"
-    if why.why == "names":
-        return f"the campaign {cid}'s names can't be read (see the log above for why)"
-    near = ", ".join(str(t) for t in why.started) or "none"
-    # (when several sessions share a start time, the count is the largest; harmless)
-    if why.lines_in_it is not None:  # the session is there, but there is nothing to read in it
-        return (
-            f"campaign {cid} has a session that began at {at}, but with {why.lines_in_it} stored "
-            f"lines (a session with none is not listed; was its transcript copied, or deleted?)"
-        )
-    return (
-        f"campaign {cid} has no stored session that began at {at}; its newest sessions with "
-        f"lines began at: {near}"
-    )
-
-
 async def _session(
     args: argparse.Namespace,
     fast: Client,
@@ -1014,8 +860,12 @@ async def _session(
     from dmbot.campaigns.store import CampaignStore
     from dmbot.consent import ConsentStore
     from dmbot.db import Database
-    from dmbot.recaps.inputs import NotLoaded
+    from dmbot.memory.lookup import LookupCache
+    from dmbot.memory.store import MemoryStore
+    from dmbot.recaps.inputs import load_inputs
     from dmbot.recaps.store import RecapStore
+    from dmbot.timebot.store import ClockStore
+    from dmbot.transcript.store import TranscriptStore
 
     try:
         gid, cid, at = int(args.session[0]), args.session[1], int(args.session[2])
@@ -1030,10 +880,21 @@ async def _session(
     try:
         recaps = RecapStore(db)
         campaigns = CampaignStore(db)
-        try:
-            inputs = await inputs_for(db, gid, cid, at)
-        except NotLoaded as why:
-            print(f"recap_run: {not_loaded_line(why, gid, cid, at)}", file=sys.stderr)
+        inputs = await load_inputs(
+            campaigns=campaigns,
+            lookup=LookupCache(MemoryStore(db)),
+            transcripts=TranscriptStore(db),
+            recaps=recaps,
+            clocks=ClockStore(db),
+            guild_id=gid,
+            campaign_id=cid,
+            session_at=at,
+            styles=StyleStore(db),
+        )
+        if inputs is None:
+            print(
+                "recap_run: no such session, or the campaign's names can't be read", file=sys.stderr
+            )
             return 2
         # The improvement opt-out (#1609): this is a test run on real words, not a table, so
         # the lines of anyone who opted out are left out, read now.
@@ -1064,31 +925,22 @@ async def _session(
         if not args.yes:
             print("Nothing was run. Add --yes to spend the money.")
             return 0
-        if args.out:
-            rv.clear_old(Path(args.out))  # nothing of an earlier run is left to be mixed in
         if args.compare:
             return await _compare(args, inputs, fast, careful, models, prices, agreed, at)
         out = await run_text(
             inputs, fast, careful, agreed, session_at=at, models=models,
-            reads=args.reads_each[0], structured=args.structured, **_WRITERS,
+            reads=args.reads_each[0], **_WRITERS,
         )  # fmt: skip
         lines = report(out, prices)
         if lines == [REFUSED]:
             print(REFUSED)
             return 3
         print("\n".join(lines))  # the paid text report first: nothing below can lose it
-        if args.score:
-            print("\n".join(await _score(out, careful)))
-        folder = Path(args.out) if args.out else None
-        if folder is not None:  # the text is saved before the audio can fail
-            save_text(folder, out, lines, names_given=False)
         if args.audio and out.job.state == "ready":
             try:
-                print("\n".join(await _audio(out, keep_in=folder)))
+                print("\n".join(await _audio(out)))
             except Exception as exc:  # the provider, ffmpeg: say the kind, never the message
                 print("\n".join(audio_failure(exc)))
-        if folder is not None:
-            print(f"\nReview page: {rv.write_page(folder)} (open it in a browser).")
         if args.keep and out.job.state == "ready":
             campaign = await campaigns.get(gid, cid)
             assert campaign is not None  # load_inputs found it
@@ -1141,19 +993,14 @@ async def _compare(
         lambda name: os.environ.get(name, ""),
         all_models,
         claude_model,
-        args.gemini_model or "",
+        args.gemini_model,
         register=_OPEN_CLIENTS.append,
         which=which,
         reads=args.reads_each,
     )
     if writers is None:
         return 2
-    shown = {
-        **prices,
-        **prices_of(
-            args.price, [claude_model, *([args.gemini_model] if args.gemini_model else [])]
-        ),
-    }
+    shown = {**prices, **prices_of(args.price, [claude_model, args.gemini_model])}
     return await cmp.run_compare(
         run_text,
         inputs,
@@ -1193,7 +1040,6 @@ def read_transcript_inputs(
         previous="",
         day=None,
         hours=hours,
-        musts=must_haves.default_texts(),  # a file has no campaign list: DMbot's defaults (#3328)
     )
     return inputs, transcript, names
 
@@ -1241,16 +1087,13 @@ async def _transcript(
     if args.compare:
         return await _compare(args, inputs, fast, careful, models, prices, None, 1)
     out = await run_text(
-        inputs, fast, careful, session_at=1, models=models, reads=args.reads_each[0],
-        structured=args.structured, **_WRITERS,
-    )  # fmt: skip
+        inputs, fast, careful, session_at=1, models=models, reads=args.reads_each[0], **_WRITERS
+    )
     lines = report(out, prices)
     if lines == [REFUSED]:
         print(REFUSED)
         return 3
     print("\n".join(lines))  # the paid text report first: nothing below can lose it
-    if args.score:
-        print("\n".join(await _score(out, careful)))
     printed = list(lines)
     if out.job.state == "ready":
         cues = _cue_lines(out)
@@ -1305,18 +1148,6 @@ def _tolerated(transcript: tf.Transcript) -> str:
 def voice_tags_on() -> bool:
     """DMBOT_RECAP_VOICE_TAGS as the bot reads it (on unless 0/false/off)."""
     return os.environ.get("DMBOT_RECAP_VOICE_TAGS", "1").lower() in ("1", "true", "on")
-
-
-async def _score(out: Outcome, careful: Client) -> list[str]:
-    """`--score`: the must-have counts of a recap that is ready (#3328)."""
-    from dmbot.devtools.recap_run import score as sc
-
-    if out.job.state != "ready" or not out.job.summary:
-        return ["", "Must-haves: nothing to score, the run did not finish."]
-    sheet = out.job.beats if isinstance(out.job.beats, list) else None  # what it was written from
-    return await sc.score(
-        out.job.summary, sheet, out.inputs.musts, final_checks(out.job, out.inputs), careful
-    )
 
 
 def _cue_lines(out: Outcome) -> list[str]:

@@ -3,12 +3,11 @@ link allowlist and the bot's hook for messages typed in the DMbot chat."""
 
 from __future__ import annotations
 
-import asyncio
 import unittest
 from collections.abc import Sequence
 from types import SimpleNamespace
 from typing import Any, cast
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import discord
 
@@ -27,6 +26,7 @@ CHAT = 555
 
 
 def run(coro: Any) -> Any:
+    import asyncio
 
     return asyncio.run(coro)
 
@@ -227,7 +227,7 @@ class LinkAllowlist(unittest.TestCase):
 
 
 def message(
-    text: str = "Hey DMbot, does fireball need line of sight?",
+    text: str = "does fireball need line of sight",
     *,
     channel: int = CHAT,
     author: int = PLAYER,
@@ -246,148 +246,50 @@ def message(
 
 
 class TheChatHook(unittest.TestCase):
-    """#3212: the table's chat is the channel the DM picked, else the voice channel's own chat."""
-
     def setUp(self) -> None:
         self.bot = make_bot()
         self.table = make_table()
-        self.table.chat_channel_id = CHAT
+        self.table.dmbchat_channel_id = CHAT
         self.table.listening = True
         self.bot.tables[GUILD] = self.table
         self.asked = MagicMock()
         self.bot.sidebar.ask_in_chat = self.asked  # type: ignore[method-assign]
 
-    def test_a_question_there_is_asked_for_its_author(self) -> None:
-        self.assertTrue(self.bot._hear_table_question(message()))
-        self.asked.assert_called_once_with(
-            self.table, PLAYER, "Hey DMbot, does fireball need line of sight?"
-        )
-
-    def test_the_voice_channels_own_chat_counts_when_none_was_picked(self) -> None:
-        self.table.chat_channel_id = None
-        self.assertEqual(self.table.chat_id, self.table.voice_channel_id)
-        self.assertTrue(self.bot._hear_table_question(message(channel=self.table.voice_channel_id)))
-        self.asked.assert_called_once()
-
-    def test_ordinary_chat_is_left_to_the_typed_chat_path(self) -> None:
-        self.assertFalse(self.bot._hear_table_question(message("we go through the north door")))
-        self.asked.assert_not_called()
-
-    def test_a_question_mark_alone_does_not_call_dmbot(self) -> None:
-        for text in ("anyone got a spare d20?", "Mira, are you casting?", "who goes first?"):
-            for who in (PLAYER, DM):
-                self.assertFalse(self.bot._hear_table_question(message(text, author=who)))
-        self.asked.assert_not_called()  # read as ordinary typed chat, no Q line, no limit used
-
-    def test_dmbot_at_the_start_calls_it(self) -> None:
-        text = "DMbot what's the range of misty step?"
-        self.assertTrue(self.bot._hear_table_question(message(text)))
-        self.asked.assert_called_once_with(self.table, PLAYER, text)
+    def test_a_message_there_is_a_question_from_its_author(self) -> None:
+        self.assertTrue(self.bot._hear_dmbchat(message()))
+        self.asked.assert_called_once_with(self.table, PLAYER, "does fireball need line of sight")
 
     def test_bots_webhooks_and_dmbot_itself_are_never_answered(self) -> None:
         cast(Any, self.bot._connection).user = SimpleNamespace(id=999)
         for msg in (message(bot=True), message(webhook=5), message(author=999)):
-            self.assertFalse(self.bot._hear_table_question(msg))
+            self.assertTrue(self.bot._hear_dmbchat(msg))  # (handled: nothing else reads it)
         self.asked.assert_not_called()
 
     def test_not_while_dmbot_is_not_listening(self) -> None:
         self.table.listening = False
-        self.assertFalse(self.bot._hear_table_question(message()))
+        self.assertTrue(self.bot._hear_dmbchat(message()))
         self.asked.assert_not_called()
 
     def test_only_this_campaigns_chat_counts(self) -> None:
-        self.assertFalse(self.bot._hear_table_question(message(channel=556)))  # another campaign's
-        self.asked.assert_not_called()
-
-    def test_the_dm_screen_and_transcript_channel_are_never_read_as_chat(self) -> None:
-        self.table.chat_channel_id = self.table.screen_channel_id
-        self.assertFalse(
-            self.bot._hear_table_question(message(channel=self.table.screen_channel_id))
-        )
-        self.asked.assert_not_called()
-
-    def test_nothing_is_read_while_the_dm_has_table_chat_off(self) -> None:
-        self.table.chat_on = False
-        self.assertFalse(self.bot._hear_table_question(message()))
+        self.assertFalse(self.bot._hear_dmbchat(message(channel=556)))  # another campaign's
         self.asked.assert_not_called()
 
     def test_without_a_session_nothing_is_read(self) -> None:
         self.bot.tables.clear()
-        self.assertFalse(self.bot._hear_table_question(message()))
+        self.assertFalse(self.bot._hear_dmbchat(message()))
         self.asked.assert_not_called()
-
-
-class TheDmsStatements(unittest.IsolatedAsyncioTestCase):
-    """#3209 in the table's chat (#3212): a DM's statement is never a table question, so it gets no
-    Q line; only a message that calls DMbot is answered."""
-
-    def setUp(self) -> None:
-        self.bot = make_bot()
-        self.table = make_table()
-        self.table.chat_channel_id = CHAT
-        self.table.listening = True
-        self.bot.tables[GUILD] = self.table
-        self.asked = MagicMock()
-        self.bot.sidebar.ask_in_chat = self.asked  # type: ignore[method-assign]
-
-    async def say(self, text: str, author: int = DM) -> bool:
-        return bool(self.bot._hear_table_question(message(text, author=author)))
-
-    async def test_a_statement_gets_no_question_and_is_left_to_the_typed_chat_path(self) -> None:
-        for who in (DM, PLAYER):
-            self.assertFalse(
-                await self.say("Mira and Tam are the children of the old smith of Redfall", who)
-            )
-        self.asked.assert_not_called()
-
-    async def test_a_question_to_dmbot_or_with_a_question_mark_is_answered(self) -> None:
-        for text in (
-            "Hey DMbot, does fireball need line of sight?",
-            "Hey DMbot, what does grappling need",
-            "DMbot, how far can a rogue jump",
-        ):
-            self.asked.reset_mock()
-            self.assertTrue(await self.say(text))
-            self.asked.assert_called_once_with(self.table, DM, text)
-
-    async def test_a_short_yes_or_correct_gets_nothing_at_all(self) -> None:
-        for text in ("yes", "no", "correct", "yes please do"):
-            self.assertFalse(await self.say(text))
-        self.asked.assert_not_called()
-
-    async def test_a_message_is_handled_once(self) -> None:
-        typed = MagicMock()
-        self.bot._hear_typed = typed  # type: ignore[method-assign]
-        self.bot._chat_channel_allowed = AsyncMock(return_value=True)  # type: ignore[method-assign]
-        await self.bot.on_message(message("Hey DMbot, a question here", author=DM))
-        typed.assert_not_called()  # a question is not also read as table chat
-        await self.bot.on_message(message("a statement of more than four words here", author=DM))
-        typed.assert_called_once()  # ordinary chat is, once
 
 
 class TheChatThroughOnMessage(unittest.IsolatedAsyncioTestCase):
-    async def test_a_picked_channel_that_is_another_campaigns_screen_is_never_read(self) -> None:
+    async def test_a_chat_message_is_not_also_read_as_table_chat(self) -> None:
         bot = make_bot()
         table = make_table()
-        table.chat_channel_id = CHAT
-        table.listening = True
-        bot.tables[GUILD] = table
-        asked = MagicMock()
-        bot.sidebar.ask_in_chat = asked  # type: ignore[method-assign]
-        bot._chat_channel_allowed = AsyncMock(return_value=False)  # type: ignore[method-assign]
-        await bot.on_message(message())
-        asked.assert_not_called()
-
-    async def test_a_question_is_not_also_read_as_table_chat(self) -> None:
-        bot = make_bot()
-        table = make_table()
-        table.chat_channel_id = CHAT
+        table.dmbchat_channel_id = CHAT
         table.listening = True
         bot.tables[GUILD] = table
         asked, typed = MagicMock(), MagicMock()
         bot.sidebar.ask_in_chat = asked  # type: ignore[method-assign]
         bot._hear_typed = typed  # type: ignore[method-assign]
-        bot._chat_channel_allowed = AsyncMock(return_value=True)  # type: ignore[method-assign]
         await bot.on_message(message())
         asked.assert_called_once()
         typed.assert_not_called()
@@ -395,11 +297,10 @@ class TheChatThroughOnMessage(unittest.IsolatedAsyncioTestCase):
     async def test_the_dm_asking_there_is_a_question_like_anyone(self) -> None:
         bot = make_bot()
         table = make_table()
-        table.chat_channel_id = CHAT
+        table.dmbchat_channel_id = CHAT
         table.listening = True
         bot.tables[GUILD] = table
         asked = MagicMock()
         bot.sidebar.ask_in_chat = asked  # type: ignore[method-assign]
-        bot._chat_channel_allowed = AsyncMock(return_value=True)  # type: ignore[method-assign]
-        await bot.on_message(message("Hey DMbot, does fireball need line of sight?", author=DM))
-        asked.assert_called_once_with(table, DM, "Hey DMbot, does fireball need line of sight?")
+        await bot.on_message(message(author=DM))
+        asked.assert_called_once_with(table, DM, "does fireball need line of sight")

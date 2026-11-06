@@ -40,7 +40,6 @@ from dmbot.devtools.stt_bakeoff.data import NAMES as BAKEOFF_NAMES
 from dmbot.ears.protocol import BYTES_PER_SAMPLE, SAMPLE_RATE
 from dmbot.transcription.base import MIN_UTTERANCE_S
 from dmbot.transcription.pipeline import QUEUE_SIZE
-from tests import speed
 
 SCRIPTS = Path(__file__).resolve().parents[2] / "docs" / "test-scripts"
 
@@ -508,7 +507,7 @@ class ReviewFixTests(unittest.TestCase):
     def test_realtime_ends_pieces_after_the_chosen_quiet(self) -> None:
         engine = ScriptedTranscriber(["hi"])
         result = asyncio.run(replay([piece_at(0)], engine, realtime=True, end_delay_ms=100))
-        self.assertLess(result.took_s, speed.allowed((300 + END_DELAY_MS) / 1000))  # (#3525)
+        self.assertLess(result.took_s, (300 + END_DELAY_MS) / 1000)
 
 
 class CostTests(unittest.TestCase):

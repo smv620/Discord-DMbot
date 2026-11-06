@@ -223,7 +223,6 @@ class WebMoveCode(DatabaseTest):
         async with self.db.unscoped() as conn:
             cur = await conn.execute(
                 "SELECT prosrc FROM pg_proc WHERE proname = 'dmbot_web_move_code'"
-                " AND pronamespace = current_schema()::regnamespace"
             )
             row = await cur.fetchone()
         assert row is not None

@@ -21,12 +21,7 @@ from dmbot.transcript.models import Line
 from tests import recap_fixtures as fx
 from tests.test_recap_jobs import WorkerHarness
 
-# No purpose stated, and each name said with who they are the first time (the away-reader check
-# of #2680 would otherwise ask the writer for a fix, a call these tests do not script).
-CLEAN = fx.SUMMARY.replace("to keep her hands from shaking", "as her hands shook").replace(
-    "as Mira and Oskar came to Greywater Keep,",
-    "as Mira, the scout, and Oskar, the priest, came to Greywater Keep, an empty old fortress,",
-)
+CLEAN = fx.SUMMARY.replace("to keep her hands from shaking", "as her hands shook")  # no purpose
 MOTIVE = "Mira wanted to avenge her brother, who had fallen in the keep long ago."
 WITH_MOTIVE = CLEAN.replace(
     "Mira drew her blade without a word,", f"{MOTIVE} Mira drew her blade without a word,", 1
@@ -35,12 +30,6 @@ MOTIVE_AT = rd.sentences_of(WITH_MOTIVE).index(MOTIVE) + 1
 MEMORY = sg.Memory("f1" * 16, "The silver lock belongs to the Order of the Lantern.", True)
 NO_NOTES = json.dumps({"notes": [], "details": []})
 AGREE = json.dumps({"changes": []})
-MUSTS_LIST = ["Say where the party ended.", "Say how long the journey took.", "Name the loot."]
-
-
-def coverage_answer(*states: str) -> str:
-    items = [{"n": n, "state": s} for n, s in enumerate(states, start=1)]
-    return json.dumps({"items": items})
 
 
 def change(sentence: int, kind: str, text: str = "x", *ties: str) -> str:
@@ -90,13 +79,12 @@ class Smart(fx.Canned):
 
 def ending_fails_after_the_draft(real: Any) -> Any:
     """A `check_prose` that finds the draft clean (the closure `checked`) and every later check
-    failing on a secret: a check that fails only once the critics have had their say. (Not the
-    ending: a cut that takes the ending off a draft is allowed to stand, #2741.)"""
+    failing on the ending: the check that fails only once the critics have had their say."""
 
     def check(*a: Any, **k: Any) -> list[str]:
         if sys._getframe(1).f_code.co_name == "checked":
             return list(real(*a, **k))
-        return ["it names something the DM keeps secret: leave it out"]
+        return ["the recap must end exactly where the session stopped"]
 
     return check
 
@@ -130,55 +118,6 @@ class Criticising(WorkerHarness):
         self.assertEqual((job.state, loop.done, loop.round, loop.notes), ("ready", True, 1, ()))
         self.assertEqual(len(fast.motive_sent), 1)  # every sentence was asked about, once
         self.assertEqual(job.calls, 6)  # the five of before and the motive check
-
-    async def test_a_name_with_no_introduction_goes_to_the_writer_once_and_the_fix_is_read(
-        self,
-    ) -> None:
-        # (#2680) The plain fixture says Mira and Oskar with no word on who they are.
-        fast = self.fast_for(fx.SUMMARY, grades=2)
-        careful = fx.Canned(fx.prose_answer(CLEAN))  # the one revision
-        await self.setUpWorker(fast, careful, critics=True)
-        job = await self.go()
-        self.assertEqual(job.state, "ready")
-        self.assertIn("the scout", job.summary)
-        told = careful.sent[0]
-        self.assertIn("<previous_draft>", told)
-        self.assertIn("say in a few words who or what", told)
-        loop = cr.loop_from_json(job.critics)
-        self.assertEqual((loop.done, loop.round, loop.notes), (True, 2, ()))
-
-    async def test_the_revision_is_checked_with_the_sheet_and_the_earlier_recaps(self) -> None:
-        # the revise path once lost them (#2964): every draft check reads what the writer read
-        from dmbot.recaps import draft as rd_mod
-
-        seen: list[bool] = []
-        real = rd_mod.check_prose
-
-        def spy(*args: Any, **kw: Any) -> Any:
-            seen.append("who_and_what" in kw and "story" in kw)
-            return real(*args, **kw)
-
-        fast = self.fast_for(fx.SUMMARY, grades=2)
-        careful = fx.Canned(fx.prose_answer(CLEAN))  # the one revision
-        await self.setUpWorker(fast, careful, critics=True)
-        with patch.object(rd_mod, "check_prose", spy):
-            await self.go()
-        self.assertGreaterEqual(len(seen), 2)  # the first draft's and the revision's
-        self.assertTrue(all(seen))
-
-    async def test_what_the_writer_leaves_unexplained_becomes_a_note_for_the_dm_never_a_round(
-        self,
-    ) -> None:
-        fast = self.fast_for(fx.SUMMARY, grades=2)
-        careful = fx.Canned(fx.prose_answer(fx.SUMMARY))  # a revision that fixes nothing
-        await self.setUpWorker(fast, careful, critics=True)
-        job = await self.go()
-        self.assertEqual(job.state, "ready")
-        loop = cr.loop_from_json(job.critics)
-        self.assertEqual((loop.done, loop.round), (True, 2))
-        self.assertTrue(loop.notes)
-        self.assertTrue(all(n.startswith("Check: ") for n in loop.notes))
-        self.assertEqual(len(careful.sent), 1)  # asked once, not again
 
     async def test_an_invented_motive_is_caught_and_fixed_in_the_second_round(self) -> None:
         fast = self.fast_for(WITH_MOTIVE, grades=2)
@@ -349,7 +288,7 @@ class Criticising(WorkerHarness):
         self.assertNotEqual(job.state, "failed", job.last_error)  # it waits for its check
         self.assertEqual(job.last_error, pl.CHECK_WAIT)
         # (the reason shown is only CHECK_WAIT: the log is where the failed rule is named)
-        self.assertTrue(any("the draft fails" in m and "secret" in m for m in logged.output))
+        self.assertTrue(any("the draft fails" in m and "ending" in m for m in logged.output))
 
     async def test_a_long_hold_tells_the_dm_once_and_never_fails(self) -> None:
         real = rd.check_prose
@@ -507,62 +446,6 @@ class Criticising(WorkerHarness):
         )  # fmt: skip
         return await self.worker._stop_critics(1, self.one.id, job, loop, inputs, why)
 
-    # --- what the DM was told about the draft (#2741) ------------------------------------
-
-    async def test_the_not_fact_checked_note_survives_the_critics_agreeing(self) -> None:
-        fast = self.fast_for()
-        await self.setUpWorker(fast, fx.Canned(facts=["not json at all"]), critics=True)
-        job = await self.go()
-        loop = cr.loop_from_json(job.critics)
-        self.assertEqual((job.state, loop.done), ("ready", True))
-        self.assertIn(pl.NOT_FACT_CHECKED_NOTE, loop.notes)
-
-    async def test_a_revision_that_was_fact_checked_drops_the_not_fact_checked_note(self) -> None:
-        fast = self.fast_for(WITH_MOTIVE, grades=2)
-        careful = fx.Canned(fx.prose_answer(CLEAN), facts=["not json at all"])
-        await self.setUpWorker(fast, careful, critics=True)
-        job = await self.go()
-        loop = cr.loop_from_json(job.critics)
-        self.assertEqual(job.state, "ready")
-        self.assertNotIn("avenge", job.summary)  # the revision replaced the text
-        self.assertNotIn(pl.NOT_FACT_CHECKED_NOTE, loop.notes)  # the new text was checked
-
-    async def stop_with(self, told: tuple[str, ...], cuts: tuple[int, ...] = ()) -> Any:
-        """The critics stop on the stored draft, which carries `told` and whose best draft is the
-        same text (with `cuts` hard-flagged sentences when given)."""
-        await self.setUpWorker(fx.Canned(), fx.Canned(), critics=True)
-        async with self.db.guild(1) as conn:
-            await conn.execute("UPDATE recap_jobs SET summary = %s", (CLEAN,))
-        job = await self.store.get(1, self.one.id, 100)
-        assert job is not None
-        best = cr.Best(
-            CLEAN, ("1. Low strings.", "2. A drone."), {}, 1 if cuts else 0, 0, (), cuts, False
-        )
-        loop = cr.Loop(round=1, best=best, notes=told)
-        inputs = pl.Inputs(
-            lines=fx.lines(), dm_ids={fx.DM}, allowed_names=list(fx.NAMES), secret_names=[],
-            previous="", earlier=None, day=4, window_chars=40_000, hours=2.5, campaign_name="",
-        )  # fmt: skip
-        done = await self.worker._stop_critics(1, self.one.id, job, loop, inputs, pl.STOP_TALLY)
-        assert done is not None
-        return cr.loop_from_json(done.critics)
-
-    async def test_the_notes_survive_the_critics_stopping(self) -> None:
-        loop = await self.stop_with((pl.NOT_FACT_CHECKED_NOTE,))
-        self.assertIn(pl.NOT_FACT_CHECKED_NOTE, loop.notes)
-
-    async def test_a_critics_stop_cut_that_takes_the_ending_off_says_so(self) -> None:
-        last = len(rd.sentences_of(CLEAN))
-        real = rd.check_prose
-
-        def ends_badly(*a: Any, **k: Any) -> list[str]:
-            return [*real(*a, **k), "it must end exactly where the session stopped"]
-
-        with patch.object(rd, "check_prose", ends_badly):
-            loop = await self.stop_with((), cuts=(last,))
-        self.assertIn(pl.ENDING_CUT_NOTE, loop.notes)
-        self.assertEqual(loop.cut, 1)
-
     async def test_an_unfixable_draft_holds_when_the_service_or_the_tally_stopped_the_loop(
         self,
     ) -> None:
@@ -694,14 +577,14 @@ class Criticising(WorkerHarness):
         with patch.object(rd, "check_prose", ending_fails_after_the_draft(rd.check_prose)):
             job = await self.stopped("no agreement", tries=1)
         self.assertEqual(job.state, "failed")
-        self.assertIn("(check: secret)", job.last_error)
+        self.assertIn("(check: ending)", job.last_error)
         self.assertEqual(job.tries, 0)  # given back
 
     async def test_the_job_ceiling_with_a_failed_check_fails_and_keeps_the_try(self) -> None:
         with patch.object(rd, "check_prose", ending_fails_after_the_draft(rd.check_prose)):
             job = await self.stopped(pl.STOP_CEILING, tries=1)
         self.assertEqual((job.state, job.tries), ("failed", 1))
-        self.assertIn("(check: secret)", job.last_error)
+        self.assertIn("(check: ending)", job.last_error)
 
     async def test_an_unfixable_draft_with_no_agreement_fails_and_gives_the_try_back(self) -> None:
         job = await self.stopped("no agreement", unfixable=True, tries=1)
@@ -1161,86 +1044,3 @@ class Criticising(WorkerHarness):
 
     def test_the_job_type_carries_the_loop(self) -> None:
         self.assertIn("critics", Job.__dataclass_fields__)
-
-    # --- the must-haves' coverage check (#3328) ---
-    async def test_a_missed_must_have_goes_to_the_one_revision(self) -> None:
-        fast = self.fast_for(CLEAN, grades=2)
-        careful = fx.Canned(
-            coverage_answer("covered", "not_given", "missed"),
-            fx.prose_answer(CLEAN),
-            coverage_answer("covered", "not_given", "covered"),  # the revision is read too
-        )
-        await self.setUpWorker(fast, careful, critics=True, musts=MUSTS_LIST)
-        job = await self.go()
-        self.assertEqual(job.state, "ready")
-        revision = careful.sent[1]
-        self.assertIn("<previous_draft>", revision)
-        self.assertIn("include this must-have", revision)
-        self.assertIn("Name the loot.", revision)
-        self.assertNotIn("how long the journey", revision)  # not given: never asked for
-        loop = cr.loop_from_json(job.critics)
-        self.assertTrue(loop.done)
-
-    async def test_a_failed_coverage_call_is_retried_alone_plotbot_is_not_asked_again(self) -> None:
-        fast = self.fast_for(CLEAN)
-        careful = fx.Canned(
-            NO_NOTES,  # the notes before the writing
-            AGREE,  # PlotBot: nothing to change
-            AIError("down"),  # the coverage check fails once
-            coverage_answer("covered", "covered", "covered"),
-        )
-        await self.setUpWorker(
-            fast, careful, critics=True, story=self.story_of(MEMORY), musts=MUSTS_LIST
-        )
-        job = await self.settle(await self.go())
-        self.assertEqual(job.state, "ready")
-        asked_plotbot = [t for t in careful.sent if "<memory>" in t and "<sentences>" in t]
-        self.assertEqual(len(asked_plotbot), 1)  # PlotBot paid for once
-        self.assertEqual(len([t for t in careful.sent if "<must_haves>" in t]), 2)
-
-    async def _no_flag_from(self, reply: Reply) -> None:
-        fast = self.fast_for(CLEAN)
-        careful = fx.Canned(reply)
-        await self.setUpWorker(fast, careful, critics=True, musts=MUSTS_LIST)
-        job = await self.go()
-        self.assertEqual(job.state, "ready")
-        self.assertEqual(len(careful.sent), 1)  # no revision was asked for
-
-    async def test_an_answer_cut_off_raises_no_flag_and_fails_nothing(self) -> None:
-        await self._no_flag_from(Reply(coverage_answer("missed", "missed")[:20], True, 10, 10, "m"))
-
-    async def test_an_answer_declined_raises_no_flag_and_fails_nothing(self) -> None:
-        await self._no_flag_from(Reply("no", False, 10, 10, "m", refused=True))
-
-    async def test_a_must_have_the_session_did_not_give_asks_for_nothing(self) -> None:
-        fast = self.fast_for(CLEAN)
-        careful = fx.Canned(coverage_answer("covered", "not_given", "not_given"))
-        await self.setUpWorker(fast, careful, critics=True, musts=MUSTS_LIST)
-        job = await self.go()
-        self.assertEqual(job.state, "ready")
-        self.assertEqual(len(careful.sent), 1)  # only the coverage check: no revision
-        self.assertEqual(cr.loop_from_json(job.critics).notes, ())
-
-    async def test_an_answer_that_cannot_be_read_raises_no_flag_and_fails_nothing(self) -> None:
-        fast = self.fast_for(CLEAN)
-        careful = fx.Canned("not json at all")
-        await self.setUpWorker(fast, careful, critics=True, musts=MUSTS_LIST)
-        job = await self.go()
-        self.assertEqual(job.state, "ready")
-        self.assertEqual(len(careful.sent), 1)
-
-    async def test_the_list_reaches_the_coverage_check_and_the_writer_not_the_beats(self) -> None:
-        fast = self.fast_for(CLEAN)
-        careful = fx.Canned(coverage_answer("covered", "covered", "covered"))
-        await self.setUpWorker(fast, careful, critics=True, musts=MUSTS_LIST)
-        await self.go()
-        self.assertIn("<must_haves>", careful.sent[0])
-        self.assertTrue(any("<must_haves>" in system for system in fast.systems))  # the writer
-        self.assertNotIn("Name the loot.", fast.systems[0] + fast.sent[0])  # the beats never see it
-
-    async def test_a_recap_with_no_list_makes_no_extra_call(self) -> None:
-        fast = self.fast_for(CLEAN)
-        careful = fx.Canned()
-        await self.setUpWorker(fast, careful, critics=True)
-        job = await self.go()
-        self.assertEqual((job.state, len(careful.sent), job.calls), ("ready", 0, 6))

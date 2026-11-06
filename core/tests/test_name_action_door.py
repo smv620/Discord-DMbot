@@ -11,16 +11,6 @@ from tests.test_memory_store import MemoryTest
 EVERY_ACTION = (
     "spell", "kind", "add-other", "remove-other", "secret", "hide", "merge", "merge-many",
     "remove", "link-add", "link-words", "link-secret", "link-remove", "link-pin",
-    "claim-confirm", "claim-reject", "backstory-keep", "backstory-skip", "backstory-keep-all",
-    "backstory-which-pick", "backstory-which-neither",
-    "reading-place", "reading-no", "reading-undo", "names-fixed-undo",
-    "name", "name-join", "name-undo",  # "Not named yet" on the Names page (#2803)
-    "link-who", "alias-who",  # "Who knows this?" (#2999)
-    "confirm-kinds", "confirm-undo",  # "Add all" for an upload's names (#3207)
-    "claim-pick", "claim-unpick",  # "Which one?" for a kept fact (#3463)
-    "spelling-yes", "spelling-no",  # "Is this the same place?" (#3533)
-    "players-line",  # the line for the players (#3568)
-    "told-add", "told-remove",  # "Tell a character" (#3542)
 )  # fmt: skip
 
 
