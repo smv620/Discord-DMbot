@@ -1627,6 +1627,9 @@ export type WebLinkSource = { type: "session"; n: number } | { type: "upload"; l
 export interface WebLink {
   id: string;
   words: string;
+  /** The table's own words as said, without the curly quotes `words` shows them in (#3574): only for a connection with no kind
+   * of its own. The edit form starts from these. Missing for every other connection and from an older API. */
+  rawWords?: string;
   secret: boolean;
   /** Who knows the connection, in the DM's full view only (#3167). */
   knowWord?: KnowWord;
@@ -1797,6 +1800,9 @@ export interface NameRow {
   unnamedWhat?: string;
   /** For an unnamed person: the name they hang from ("Ken"), or null when it is not a name. */
   unnamedAnchor?: string | null;
+  /** The line the players are told about this name (#3568, core #3564): a DM's list only, null when there is none. Missing
+   * from an older API. */
+  playersText?: string | null;
 }
 
 export interface NameKind {
@@ -1844,6 +1850,8 @@ export interface NamesQuery {
 
 /** What a DM can do to one name: the same actions as the name card in Discord (#2295). */
 export type NameChange =
+  // The line the players are told about a name; a blank clears it (#3568).
+  | { action: "players-line"; line: string }
   | { action: "spell"; name: string }
   // `player`: for a player character, the Discord ID of who plays it (#2985); the bot checks the person is in the server.
   | { action: "kind"; kind: string; player?: string; confirmed?: true }
