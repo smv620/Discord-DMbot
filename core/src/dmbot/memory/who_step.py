@@ -31,17 +31,17 @@ from collections.abc import Awaitable, Callable, Collection, Sequence
 from dataclasses import dataclass, field
 from typing import Protocol
 
-from dmbot.ai import AIOutOfFunds, Reply
+from dmbot.ai import OUTPUT_FLOOR, AIOutOfFunds, Reply
 from dmbot.memory import who_ranking as ranking
 from dmbot.memory import who_reading as reading
 from dmbot.memory.lookup import CampaignLookup
 from dmbot.memory.models import PROPOSED, Entity
-from dmbot.memory.who_answers import ENTITY, NEW, StoredAnswer, WhoAnswers
+from dmbot.memory.who_answers import ENTITY, MAX_RANK, NEW, StoredAnswer, WhoAnswers
 
 log = logging.getLogger(__name__)
 
 CALL_TIMEOUT_S = 300.0  # above the slowest tier's own request limit, as the extractor's
-BACKGROUND_FLOOR = 16_000  # background calls never send less (ai.py's tier floor)
+BACKGROUND_FLOOR = OUTPUT_FLOOR  # background calls never send less than the tier floor
 Consenting = Callable[[], Awaitable[Collection[int]]]
 
 
@@ -50,11 +50,14 @@ class Report:
     """What the step came to. Counts only."""
 
     names: int = 0  # waiting names looked at
-    no_choices: int = 0  # ... of which nothing could be offered (the AI is not asked)
+    no_choices: int = 0  # ... of which nothing could be offered (the caller counts these: `build`)
     calls: int = 0
     failed: int = 0
     ranked: int = 0  # names with at least one answer kept
-    empty: int = 0  # names the AI gave no usable answer for
+    empty: int = 0  # names the AI gave no usable answer for (it may overlap `dropped`)
+    omitted: int = 0  # names the AI's whole reply left out
+    refused: int = 0  # calls the service declined (the text is not an answer)
+    not_kept: int = 0  # answers the store would not keep (malformed, or the name is not an entry)
     dropped: int = 0  # answers dropped (off the lists, not offered, odd rows)
     stopped_early: int = 0
     dropped_for_consent: int = 0
@@ -64,7 +67,8 @@ class Report:
     def line(self) -> str:
         return (
             f"Who is this: {self.names} name(s), {self.ranked} ranked, {self.empty} with no "
-            f"answer, {self.no_choices} with no choice, {self.dropped} answer(s) dropped, "
+            f"answer, {self.omitted} left out, {self.no_choices} with no choice, "
+            f"{self.refused} refused, {self.not_kept} not kept, {self.dropped} answer(s) dropped, "
             f"{self.stopped_early} stopped early, {self.dropped_for_consent} dropped for consent, "
             f"{self.calls} call(s), {self.failed} failed, {self.unsent} left for next time"
             + (f", stopped: {self.stopped}" if self.stopped else "")
@@ -111,21 +115,17 @@ def candidates_from(
                 continue
             if n.secret and not hidden:
                 continue  # a visible entry's secret name stays out of the choice
+            if not n.confirmed:
+                continue  # a name DMbot only guessed is not offered as one of the entry's
             names.append(n.text)
         ties = frozenset(
             t for t in lookup.confirmed_neighbours.get(entity.id, frozenset())
             if t not in lookup.hidden
         )  # fmt: skip
         out.append(
-            ranking.Candidate(
-                entity.id, _kind_of(entity), tuple(dict.fromkeys(names)), ties, hidden
-            )
+            ranking.Candidate(entity.id, entity.type, tuple(dict.fromkeys(names)), ties, hidden)
         )
     return out
-
-
-def _kind_of(entity: Entity) -> str:
-    return entity.type
 
 
 def build(
@@ -135,14 +135,22 @@ def build(
     number: int,
     scene: str = "",
     lines: Sequence[str] = (),
-    speaker_ids: Sequence[int] = (),
+    speaker_ids: Collection[int] = (),
+    scene_speaker_ids: Collection[int],
     scene_ids: Collection[str] = (),
     session_ids: Collection[str] = (),
     owner_ids: Collection[str] = (),
-    include_hidden: bool = True,
+    include_hidden: bool,
 ) -> Pending | None:
-    """The question for one waiting name, or None when nothing can be offered. The choices are the
-    best five by `who_ranking.rank`, labelled c1, c2, ... for this item only."""
+    """The question for one waiting name, or None when nothing can be offered (or when session
+    lines would be sent with no one named to check consent for). The choices are the best five by
+    `who_ranking.rank`, labelled c1, c2, ... for this item only. `speaker_ids` are the people whose
+    lines are sent and `scene_speaker_ids` those the scene was made from (`Scene.speaker_ids`): the
+    item carries both, so the consent check covers every word sent. A name read from the DM's own
+    document has no session lines and no speakers, and is sent as it is."""
+    speakers = tuple(sorted({*speaker_ids, *scene_speaker_ids}))
+    if lines and not speaker_ids:
+        return None
     ask = ranking.Ask(
         entity.name,
         entity.type,
@@ -168,7 +176,7 @@ def build(
             )
         )
     item = reading.WhoItem(
-        number, entity.name, entity.type, scene, tuple(lines), tuple(speaker_ids), tuple(choices)
+        number, entity.name, entity.type, scene, tuple(lines), speakers, tuple(choices)
     )
     return Pending(entity.id, item, refs)
 
@@ -176,7 +184,7 @@ def build(
 def to_stored(answers: Sequence[reading.Answer], refs: dict[str, str]) -> list[StoredAnswer]:
     """The AI's answers as the table keeps them: a choice becomes the entry it stands for."""
     out: list[StoredAnswer] = []
-    for a in answers:
+    for a in list(answers)[:MAX_RANK]:  # (the store keeps at most this many)
         if a.pick == reading.NEW:
             out.append(StoredAnswer(NEW, a.confidence, new_kind=a.kind))
         elif a.pick in refs:
@@ -204,6 +212,8 @@ async def run(
     report.names += len(pending)
     items = [p.item for p in pending]
     by_number = {p.item.number: p for p in pending}
+    if len(by_number) != len(pending):
+        raise ValueError("Each question needs its own number.")
     parts = reading.chunks(items)
     for index, part in enumerate(parts):
         if report.calls >= max_calls:
@@ -247,10 +257,17 @@ async def run(
             report.failed += 1
             report.unsent += len(sendable)
             continue
+        if reply.refused:  # the service declined: its text is not an answer
+            report.refused += 1
+            report.empty += len(sendable)
+            continue
         got = reading.parse_answers(reply.text, sendable, cut=reply.cut)
         report.dropped += sum(got.dropped.values())
+        left_out = max(0, len(sendable) - len(got.answers))
         if got.stopped_early:
-            report.stopped_early += max(0, len(sendable) - len(got.answers))
+            report.stopped_early += left_out
+        else:
+            report.omitted += left_out
         try:
             still = set(await consenting())  # asked again after the answer
         except Exception as exc:  # can't know who is recorded now: keep none of this part
@@ -283,8 +300,14 @@ async def run(
                 log.warning("Who is this: storing failed (%s)", type(exc).__name__)
                 report.failed += 1
                 continue
-            report.ranked += 1 if kept else 0
-            report.dropped_for_consent += 0 if kept else 1
+            if kept:
+                report.ranked += 1
+            else:
+                report.not_kept += 1  # (consent was checked above: the store found it malformed)
+    try:
+        await answers.sweep(guild_id, campaign_id)  # a name answered during the wait goes now
+    except Exception as exc:
+        log.warning("Who is this: sweeping failed (%s)", type(exc).__name__)
     return report
 
 

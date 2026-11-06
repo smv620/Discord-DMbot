@@ -63,17 +63,41 @@ class Candidates(unittest.TestCase):
         self.assertTrue(ghost.hidden)
         self.assertEqual(set(ghost.names), {"The Grey Fox", "Old Rook"})
 
+    def test_a_proposed_alias_of_a_confirmed_entry_is_not_one_of_its_names(self) -> None:
+        guess = dataclasses.replace(alias(MIRA, "Miri"), status=PROPOSED)
+        data = LookupData(
+            1, (entity(MIRA, "Mira Vale"),), (alias(MIRA, "Mira Vale"), guess), (), ()
+        )
+        got = step.candidates_from(CampaignLookup.build(data), include_hidden=False)
+        self.assertEqual(got[0].names, ("Mira Vale",))
+
+    def test_a_hidden_entry_reaches_a_question_only_when_the_dms_ranking_asks(self) -> None:
+        e = entity(WAITING, "Fox", PROPOSED)
+        for hidden in (False, True):
+            cands = step.candidates_from(lookup(), include_hidden=True, leave_out=[WAITING])
+            built = step.build(
+                e, cands, number=1, scene_speaker_ids=(), scene_ids={GHOST}, include_hidden=hidden
+            )
+            offered = built is not None and GHOST in built.refs.values()
+            self.assertEqual(offered, hidden)
+
     def test_the_waiting_name_and_unconfirmed_entries_are_never_choices(self) -> None:
         got = step.candidates_from(lookup(), include_hidden=True)  # (no leave_out: still not it)
         self.assertNotIn(WAITING, {c.id for c in got})
 
 
-def waiting(number: int = 1, speakers: tuple[int, ...] = (8,), eid: str = WAITING) -> step.Pending:
+def waiting(
+    number: int = 1,
+    speakers: tuple[int, ...] = (8,),
+    eid: str = WAITING,
+    scene_speakers: tuple[int, ...] = (),
+) -> step.Pending:
     e = entity(eid, "Vale", PROPOSED)
     cands = step.candidates_from(lookup(), include_hidden=False, leave_out=[eid])
     built = step.build(
         e, cands, number=number, scene="Mira argued with the baker.", lines=("DM: Vale waves.",),
-        speaker_ids=speakers, scene_ids={MIRA}, include_hidden=False,
+        speaker_ids=speakers, scene_speaker_ids=scene_speakers, scene_ids={MIRA},
+        include_hidden=False,
     )  # fmt: skip
     assert built is not None
     return built
@@ -91,7 +115,7 @@ class Building(unittest.TestCase):
 
     def test_nothing_to_offer_is_no_item(self) -> None:
         e = entity(WAITING, "Zorblax", PROPOSED)
-        self.assertIsNone(step.build(e, [], number=1))
+        self.assertIsNone(step.build(e, [], number=1, scene_speaker_ids=(), include_hidden=False))
 
     def test_the_answers_become_entries_and_new(self) -> None:
         p = waiting()
@@ -125,6 +149,11 @@ class FakeClient:
 class FakeAnswers:
     def __init__(self) -> None:
         self.kept: list[dict[str, Any]] = []
+        self.swept = 0
+
+    async def sweep(self, guild: int, campaign: str) -> int:
+        self.swept += 1
+        return 0
 
     async def keep(self, guild: int, campaign: str, entity: str, answers: Any, **kw: Any) -> int:
         if not set(kw["speaker_ids"]) <= set(kw["opted_in"]):
@@ -150,8 +179,10 @@ async def run(
         calls["n"] += 1
         return after if (after is not None and calls["n"] > 1) else agreed
 
+    counted: list[int] = kw.setdefault("counted", [])
+
     async def count() -> None:
-        kw.setdefault("counted", []).append(1)
+        counted.append(1)
 
     return await step.run(
         client, answers,  # type: ignore[arg-type]
@@ -189,16 +220,16 @@ class Running(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((answers.kept, report.dropped_for_consent, report.ranked), ([], 1, 0))
 
     async def test_the_call_limit_stops_the_step_and_the_rest_wait_for_next_time(self) -> None:
-        one, two = waiting(1), waiting(2, eid=OTHER)
-        client = FakeClient(reply(one, ("c1", "sure")))
-        big = [
-            dataclasses.replace(
+        def fat(n: int) -> step.Pending:
+            p = waiting(n, eid=f"{n:032x}")
+            return dataclasses.replace(
                 p, item=dataclasses.replace(p.item, scene="s" * 300, lines=("l" * 300,) * 3)
             )
-            for p in (one, two)
-        ]
-        report = await run(client, FakeAnswers(), big * 40, max_calls=1)  # (many parts)
-        self.assertEqual(report.calls, 1)
+
+        many = [fat(n) for n in range(1, 120)]  # (too many for one request)
+        client, counted = FakeClient(reply(many[0], ("c1", "sure"))), []
+        report = await run(client, FakeAnswers(), many, max_calls=1, counted=counted)
+        self.assertEqual((report.calls, len(counted)), (1, 1))  # (each call is counted first)
         self.assertEqual(report.stopped, "call limit")
         self.assertGreater(report.unsent, 0)
 
@@ -227,3 +258,117 @@ class Running(unittest.IsolatedAsyncioTestCase):
     async def test_the_report_line_has_counts_only(self) -> None:
         line = step.Report(names=3, ranked=2).line()
         self.assertIn("3 name(s), 2 ranked", line)
+
+    async def test_a_scene_made_from_someone_not_recorded_drops_the_item_though_its_lines_are_fine(
+        self,
+    ) -> None:
+        p = waiting(speakers=(8,), scene_speakers=(77,))  # (the scene's speaker is not recorded)
+        self.assertEqual(p.item.speaker_ids, (8, 77))
+        client = FakeClient()
+        report = await run(client, FakeAnswers(), [p])
+        self.assertEqual((client.calls, report.dropped_for_consent), ([], 1))
+
+    async def test_session_lines_with_nobody_named_are_never_built_into_a_question(self) -> None:
+        e = entity(WAITING, "Vale", PROPOSED)
+        cands = step.candidates_from(lookup(), include_hidden=False, leave_out=[WAITING])
+        built = step.build(
+            e, cands, number=1, lines=("DM: Vale waves.",), speaker_ids=(),
+            scene_speaker_ids=(), scene_ids={MIRA}, include_hidden=False,
+        )  # fmt: skip
+        self.assertIsNone(built)
+
+    async def test_a_name_from_the_dms_own_document_has_no_speakers_and_is_sent(self) -> None:
+        e = entity(WAITING, "Vale", PROPOSED)
+        cands = step.candidates_from(lookup(), include_hidden=False, leave_out=[WAITING])
+        built = step.build(
+            e, cands, number=1, scene="From the backstory.", scene_speaker_ids=(),
+            scene_ids={MIRA}, include_hidden=False,
+        )  # fmt: skip
+        assert built is not None
+        client = FakeClient(reply(built, ("c1", "sure")))
+        report = await run(client, FakeAnswers(), [built], agreed=set())
+        self.assertEqual((report.calls, report.ranked), (1, 1))
+
+    async def test_a_refusal_is_counted_and_never_read_as_an_answer(self) -> None:
+        p = waiting()
+        refused = Reply("I can't help with that.", False, 1, 1, "m", refused=True)
+        answers = FakeAnswers()
+        report = await run(FakeClient(refused), answers, [p])
+        self.assertEqual((report.refused, report.dropped, answers.kept), (1, 0, []))
+
+    async def test_a_name_the_reply_leaves_out_is_counted(self) -> None:
+        one, two = waiting(1), waiting(2, eid=OTHER)
+        report = await run(FakeClient(reply(one, ("c1", "sure"))), FakeAnswers(), [one, two])
+        self.assertEqual((report.ranked, report.omitted), (1, 1))
+
+    async def test_an_answer_the_store_will_not_keep_is_counted_apart_from_consent(self) -> None:
+        class Refusing(FakeAnswers):
+            async def keep(self, *a: Any, **kw: Any) -> int:
+                return 0
+
+        p = waiting()
+        report = await run(FakeClient(reply(p, ("c1", "sure"))), Refusing(), [p])
+        self.assertEqual((report.not_kept, report.dropped_for_consent, report.ranked), (1, 0, 0))
+
+    async def test_the_step_sweeps_at_the_end_and_a_failing_sweep_is_not_fatal(self) -> None:
+        p = waiting()
+        answers = FakeAnswers()
+        await run(FakeClient(reply(p, ("c1", "sure"))), answers, [p])
+        self.assertEqual(answers.swept, 1)
+
+        class BadSweep(FakeAnswers):
+            async def sweep(self, guild: int, campaign: str) -> int:
+                raise RuntimeError("x")
+
+        report = await run(FakeClient(reply(p, ("c1", "sure"))), BadSweep(), [p])
+        self.assertEqual(report.ranked, 1)
+
+    async def test_two_questions_may_not_share_a_number(self) -> None:
+        with self.assertRaises(ValueError):
+            await run(FakeClient(), FakeAnswers(), [waiting(1), waiting(1, eid=OTHER)])
+
+    async def test_the_model_that_answered_is_stored_else_the_configured_one(self) -> None:
+        p = waiting()
+        answers = FakeAnswers()
+        await run(FakeClient(reply(p, ("c1", "sure"))), answers, [p])
+        self.assertEqual(answers.kept[0]["model"], "model-x")
+        plain = Reply(reply(p, ("c1", "sure")).text, False, 1, 1, "")
+        again = FakeAnswers()
+        await run(FakeClient(plain), again, [p])
+        self.assertEqual(again.kept[0]["model"], "m")
+
+    async def test_a_failed_count_sends_nothing_and_a_failed_consent_lookup_sends_nothing(
+        self,
+    ) -> None:
+        p = waiting()
+        client = FakeClient()
+
+        async def no_consent() -> Collection[int]:
+            raise RuntimeError("x")
+
+        async def no_count() -> None:
+            raise RuntimeError("x")
+
+        report = await step.run(
+            client, FakeAnswers(), [p], guild_id=1, campaign_id="c",  # type: ignore[arg-type]
+            consenting=no_consent, model=lambda: "m", session_started_at=1, max_calls=3,
+        )  # fmt: skip
+        self.assertEqual((client.calls, report.failed, report.unsent), ([], 1, 1))
+
+        async def agreed() -> Collection[int]:
+            return {8}
+
+        report = await step.run(
+            client, FakeAnswers(), [p], guild_id=1, campaign_id="c",  # type: ignore[arg-type]
+            consenting=agreed, model=lambda: "m", session_started_at=1, max_calls=3,
+            count_call=no_count,
+        )  # fmt: skip
+        self.assertEqual((client.calls, report.failed, report.unsent), ([], 1, 1))
+
+    async def test_the_floor_is_the_tiers_own(self) -> None:
+        from dmbot import ai
+
+        p = waiting()
+        client = FakeClient(reply(p, ("c1", "sure")))
+        await run(client, FakeAnswers(), [p])
+        self.assertGreaterEqual(client.calls[0]["max_tokens"], ai.OUTPUT_FLOOR)
