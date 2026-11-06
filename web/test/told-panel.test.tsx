@@ -39,7 +39,8 @@ describe("who has been told a secret name", () => {
   it("asks once before taking back, and Keep it changes nothing", async () => {
     const api = await open();
     fireEvent.click(await screen.findByRole("button", { name: w.takeBackFor("Wen", "the guard") }));
-    expect(screen.getByText(w.sure("Wen", "the guard", "Ken"))).toBeTruthy();
+    // a secret name can belong to a place or a group, so it is "names", not "people" (Supervisor, #3565)
+    expect(screen.getByText("Take back? Wen will see the guard and Ken as two different names again.")).toBeTruthy();
     expect(changes(api)).toEqual([]);
     fireEvent.click(screen.getByRole("button", { name: w.keep }));
     expect(changes(api)).toEqual([]);

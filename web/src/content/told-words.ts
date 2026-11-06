@@ -11,11 +11,11 @@ export const toldWords = {
   takeBack: "Take back",
   takeBackFor: (who: string, secret: string): string => `Take back what ${who} was told about ${secret}`,
   /** Asked once, before it is taken back. */
-  sure: (who: string, secret: string, entry: string): string => `Take back? ${who} will see ${secret} and ${entry} as two people again.`,
+  sure: (who: string, secret: string, entry: string): string => `Take back? ${who} will see ${secret} and ${entry} as two different names again.`,
   yesTakeBack: "Yes, take back",
   keep: "Keep it",
   saidTold: (who: string, secret: string, entry: string): string => `${who} now knows ${secret} is ${entry}.`,
-  saidBack: (who: string, secret: string, entry: string): string => `${who} sees ${secret} and ${entry} as two people again.`,
+  saidBack: (who: string, secret: string, entry: string): string => `${who} sees ${secret} and ${entry} as two different names again.`,
   working: "Saving…",
   loadFailed: "DMbot couldn't check who knows these secret names. Reload the page to try again.",
   problems: {
