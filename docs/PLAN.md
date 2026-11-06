@@ -5942,9 +5942,22 @@ dozen screens, and gets the same list, words and context in both places.
   4. **Where it was said:** up to three places, newest first, each with a line either side, the session and its
      date. Only lines from people who agreed. In Discord behind `📜 Where was it said?`; on the website the newest
      shows inline and the others open (#3384).
+  4a. **The scene** (owner, 2026-11-06, #3596): for every question about an entry or a connection, a short summary
+     written by the AI from the lines it came from, saying **who, where and what** happened around it, and for
+     an unnamed person everything the DM's narration said about them or what they did. Example: "When the party
+     entered the Three Flags tavern in Targos, this someone was just leaving and bumped into Claude while the
+     party talked to the bartender." Or: "the patron at the bar who put 5 copper down for Marge, the bartender,
+     to buy Claude a drink." It is kept until the question is answered (named, joined, removed or decided),
+     shown in Discord and on the website alike, and to the DM only. It is made only from lines of people who
+     agreed to be recorded, goes when any of them stops, never invents (a detail the lines don't give is left
+     out) and is counted, never logged, in words.
   5. **What each answer does**, said before it's pressed where it isn't obvious ("**the woman** is kept as how she
      was described, not as a name").
   6. **The answers**, the same buttons in the same order with the same words, then **Undo** until the next answer.
+- **A person the story never named** (owner, 2026-11-06, #3595, #3597): opened from the Names page's "Not named
+  yet", it offers every way to clear it up, plainly: **Give them a name**, **Same as someone DMbot knows…** (pick
+  the known name; they become one person and the description is kept as how they were described) and **Remove
+  this person** (asks once). Each has Undo. Its scene (4a) shows above the answers.
 - **What context each kind needs** (the card's parts 2 to 5):
 
   | Kind | About (with tags) | Why | Evidence | Consequence |
