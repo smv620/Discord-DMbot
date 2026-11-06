@@ -41,6 +41,7 @@ from dmbot.memory import (
     evidence,
     gate,
     kin,
+    kind_offers,
     knowers,
     lineage,
     merge_restore,
@@ -174,6 +175,8 @@ from dmbot.memory.ontology import (
     DEPRECATED,
     DISGUISED_AS,
     DM_WORD_REFUSED,
+    FALLBACK_PREDICATE,
+    LABEL_MAX,
     MAX_NEW_TERMS_PER_SESSION,
     PERSON_NOT_LISTED,
     Ontology,
@@ -5478,35 +5481,88 @@ class MemoryStore:
         """A new kind of relationship for this campaign only (see `add_type`)."""
         _check_list(examples, "examples")
         async with self._write(guild_id, campaign_id, source) as w:
+            return await _insert_predicate(w, term, examples, reason, session_started_at)
+
+    async def kind_offer(self, guild_id: int, campaign_id: str) -> kind_offers.Offer | None:
+        """The one offer to put to the DM now: see `kind_offer_list`."""
+        return next(iter(await self.kind_offer_list(guild_id, campaign_id)), None)
+
+    async def kind_offer_list(self, guild_id: int, campaign_id: str) -> list[kind_offers.Offer]:
+        """The offers to put to the DM, most-said first (#3033): the words on the campaign's
+        catch-all connections that no kind covers, that could become a kind (the rules on new
+        kinds would accept them) and that the DM has not turned down. Also deletes the
+        answers whose words have left the campaign. Counts only. (The sweep's writes run outside
+        `_write` on purpose: they are only this bookkeeping, and one landing beside a Yes at worst
+        leaves a row the next sweep deletes.)"""
+        async with self._read(guild_id, campaign_id) as scope:
+            onto = await _load_ontology(scope)
+            found = await kind_offers.sweep(scope, await _covered_words(scope, onto))
+        return [o for o in found if _kind_problem(onto, o) is None]
+
+    async def answer_kind_offer(
+        self, guild_id: int, campaign_id: str, words_key: str, state: str, *, seen: int
+    ) -> None:
+        """The DM's Not now (`later`: asked again once the count is `seen` + 3) or Never."""
+        if state not in (kind_offers.LATER, kind_offers.NEVER):
+            raise MemoryRuleError("Pick Not now or Never.")
+        async with self._read(guild_id, campaign_id) as scope:
+            await kind_offers.answer(scope, words_key, state, seen, int(self._clock()))
+
+    async def clear_kind_offer(self, guild_id: int, campaign_id: str, words_key: str) -> bool:
+        """The DM lifts a Never: these words may be offered again."""
+        async with self._read(guild_id, campaign_id) as scope:
+            return await kind_offers.clear(scope, words_key)
+
+    async def make_kind_of_words(
+        self, guild_id: int, campaign_id: str, words_key: str, *, source: str
+    ) -> Written[PredicateTerm]:
+        """The DM said Yes (#3033): the words become a kind of connection for this campaign, and
+        every catch-all connection with those words moves to it, in ONE change (one Undo). The
+        kind reads forward as the words and back as "is linked (“…”) to" (no reverse words are
+        invented). Refused when the words are no longer offered (they changed since the question,
+        or a kind now covers them) or a rule on new kinds says no; then nothing is written."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can make a kind of connection.")
+        async with self._write(guild_id, campaign_id, source) as w:
             onto = await _load_ontology(w)
-            onto.check_new_term(term.key, term.label, term.description, examples, reason)
-            onto.check_new_predicate(term)
-            await _check_growth(w, session_started_at)
-            row = await w.insert(
-                PREDICATES,
-                {
-                    "key": term.key,
-                    "parent": term.parent,
-                    "label": term.label.strip(),
-                    "description": term.description.strip(),
-                    "examples": [e.strip() for e in examples],
-                    "reason": reason.strip(),
-                    "subject_types": list(term.subject_types),
-                    "object_types": list(term.object_types),
-                    "is_symmetric": term.symmetric,
-                    "max_per_subject": term.max_per_subject,
-                    "conflicts_with": list(term.conflicts_with),
-                    "status": ACTIVE,
-                    "replaced_by": None,
-                    "created_at": w.now,
-                    "covers": list(term.covers),
-                    "not_this": encode_not_this(term.not_this),
-                    "inverse_label": term.inverse_label,
-                    "synonyms": list(term.synonyms),
-                    "version": 1,
-                },
-            )
-            return Written(_predicate_term(row), w.batch)
+            found = await kind_offers.sweep(w, await _covered_words(w, onto))
+            offer = next((o for o in found if o.words_key == words_key), None)
+            if offer is None:
+                raise MemoryRuleError("Those words have changed since DMbot asked. Ask again.")
+            problem = _kind_problem(onto, offer)
+            if problem is not None:
+                raise MemoryRuleError(problem)
+            term = _kind_term(offer)
+            written = await _insert_predicate(
+                w, term, [f"{offer.words} (the table said it {offer.count} times)"],
+                "The same words were kept three times.", None,
+            )  # fmt: skip
+            for rid in offer.relation_ids:
+                current = await w.get(RELATIONS, rid)
+                if current is None or current["status"] != CONFIRMED:
+                    continue
+                before = {
+                    r.id: r.status
+                    for r in await _relations_touching(
+                        w, current["subject_id"], current["object_id"]
+                    )
+                }
+                new, _ = await self.add_relation_in(
+                    w, current["subject_id"], term.key, current["object_id"], confidence=1.0,
+                    status=CONFIRMED, detail="", secret=bool(current["secret"]),
+                    unrevealed=bool(current["unrevealed"]), directional=True,
+                )  # fmt: skip
+                # (two old connections that fold to one new one: only the first carries its beliefs)
+                if before.get(new.id) != CONFIRMED:
+                    await beliefs.carry(w, current, new.id)
+                    moved = await w.get(RELATIONS, new.id)
+                    assert moved is not None
+                    new = _relation(moved)
+                if current["secret"] and not new.secret:  # (a secret never leaves a public twin)
+                    await w.update(RELATIONS, new.id, {"secret": True})
+                check_status_change(current["status"], REJECTED, source)
+                await w.update(RELATIONS, rid, {"status": REJECTED})
+            return written
 
     async def deprecate_term(
         self,
@@ -6791,6 +6847,97 @@ async def _move_relations(
         await _delete_relation(w, relation_id)
 
     return companions
+
+
+def _kind_term(offer: kind_offers.Offer) -> PredicateTerm:
+    """The campaign kind the offered words would become: the words forward, and
+    "is linked (“…”) to" back (no reverse words are invented)."""
+    from dmbot.memory.claims import _phrase
+
+    return PredicateTerm(
+        key=_phrase(offer.words)[:40].strip("_"),
+        label=offer.words,
+        description=f"The table's own words for a tie: {offer.words}.",
+        subject_types=offer.subject_types,
+        object_types=offer.object_types,
+        core=False,
+        inverse_label=f"is linked (“{offer.words}”) to",
+    )
+
+
+def _kind_problem(onto: Ontology, offer: kind_offers.Offer) -> str | None:
+    """Why these words cannot become a kind (the same checks a new kind passes), or None. An offer
+    the DM's Yes would only be refused is never made."""
+    if len(offer.words) > LABEL_MAX:
+        return "Those words are too long to be a kind of connection."
+    term = _kind_term(offer)
+    if term.key.replace("_", " ") != kind_offers.fold(offer.words):
+        # (a kind reads by its key, which keeps letters and digits only: words with a mark in
+        # them, "Veil's oath", would read differently on the cards than the DM saw)
+        return "Those words have marks in them that a kind of connection can't keep."
+    try:
+        onto.check_new_term(
+            term.key, term.label, term.description, [offer.words], "The same words were kept."
+        )
+        onto.check_new_predicate(term)
+    except MemoryRuleError as exc:
+        return str(exc)
+    return None
+
+
+async def _covered_words(scope: Scope, onto: Ontology) -> set[str]:
+    """The folded catch-all words a kind already means ("is a member of"): never offered."""
+    from dmbot.memory.claims import resolve_relationship
+
+    rows = await scope.select(
+        RELATIONS,
+        " AND predicate = %s AND status = %s AND to_session_at IS NULL AND detail <> ''",
+        [FALLBACK_PREDICATE, CONFIRMED],
+    )
+    return {
+        kind_offers.fold(str(r["detail"]))
+        for r in rows
+        if resolve_relationship(onto, str(r["detail"])) is not None
+    }
+
+
+async def _insert_predicate(
+    w: Changes,
+    term: PredicateTerm,
+    examples: Sequence[str],
+    reason: str,
+    session_started_at: int | None,
+) -> Written[PredicateTerm]:
+    """Make a campaign's own kind of connection, checked by the rules on new terms."""
+    onto = await _load_ontology(w)
+    onto.check_new_term(term.key, term.label, term.description, examples, reason)
+    onto.check_new_predicate(term)
+    await _check_growth(w, session_started_at)
+    row = await w.insert(
+        PREDICATES,
+        {
+            "key": term.key,
+            "parent": term.parent,
+            "label": term.label.strip(),
+            "description": term.description.strip(),
+            "examples": [e.strip() for e in examples],
+            "reason": reason.strip(),
+            "subject_types": list(term.subject_types),
+            "object_types": list(term.object_types),
+            "is_symmetric": term.symmetric,
+            "max_per_subject": term.max_per_subject,
+            "conflicts_with": list(term.conflicts_with),
+            "status": ACTIVE,
+            "replaced_by": None,
+            "created_at": w.now,
+            "covers": list(term.covers),
+            "not_this": encode_not_this(term.not_this),
+            "inverse_label": term.inverse_label,
+            "synonyms": list(term.synonyms),
+            "version": 1,
+        },
+    )
+    return Written(_predicate_term(row), w.batch)
 
 
 async def _check_growth(w: Changes, session_started_at: int | None) -> None:

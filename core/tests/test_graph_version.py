@@ -134,6 +134,8 @@ FILES: dict[str, str] = {
     "memory/heard_backup.py": NOT_DRAWN,
     "memory/importance_backup.py": NOT_DRAWN + " (the importance rank)",
     "memory/importance_rank.py": NOT_DRAWN + " (the importance rank)",
+    "memory/kind_offers.py": NOT_DRAWN + " (the DM's answers about kinds, #3033)",
+    "memory/kind_offers_backup.py": NOT_DRAWN + " (the same answers in a backup)",
     "memory/knowers.py": INSIDE_WRITE,
     "memory/merge_restore.py": INSIDE_WRITE,
     "memory/report_store.py": NOT_DRAWN,
