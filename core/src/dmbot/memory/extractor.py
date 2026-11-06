@@ -45,6 +45,7 @@ from dmbot.memory.claims import (
     is_family,
     parse_answer,
 )
+from dmbot.memory.deed_reading import DEED_SYSTEM, DeedProposal, parse_deeds
 from dmbot.memory.ontology import Tally
 from dmbot.memory.readings import READING_SYSTEM, as_claim, parse_readings, proposals
 from dmbot.transcript.models import Line
@@ -53,6 +54,7 @@ from dmbot.transcript.topics import OFF_TOPIC
 log = logging.getLogger(__name__)
 
 PROMPT_VERSION = "extractor-2"  # bump when SYSTEM changes (it is recorded with every claim)
+DEED_PROMPT_VERSION = "deeds-1"  # bump when deed_reading.DEED_SYSTEM changes (stored with each)
 READING_PROMPT_VERSION = "readings-1"  # bump when readings.READING_SYSTEM changes
 MAX_TOKENS = 3000  # per batch: a minute of talk gives a few dozen claims. Haiku 5.5 writes about
 # three times what Haiku 4.5 did (9 of the story answers were cut off at 1500, #2152)
@@ -262,6 +264,14 @@ class Report:
     readings: int = 0  # beliefs found (theories, reveals, frame-ups, divinations), kept as claims
     readings_refused: int = 0  # answers or items the reading rules turned down
     readings_failed: int = 0  # reading calls that failed (the claims pass is not affected)
+    deeds: int = 0  # deeds the party did, proposed for the DM to record (#3175)
+    deeds_refused: int = 0  # answers or items the deed rules turned down
+    deeds_repeated: int = 0  # a pair the session already has a deed for
+    deeds_failed: int = 0  # deed calls that failed (the claims pass is not affected)
+    deeds_cut: int = 0  # deed answers that stopped at the length limit
+    # The words: never logged (so never in a repr either). Held for the DM's press; whoever stores
+    # them must keep only those whose speakers are all recorded *then* (PR 2b).
+    deed_proposals: list[DeedProposal] = field(default_factory=list, repr=False)
     cut: int = 0  # claims answers that stopped at the length limit (the whole items were kept)
     readings_cut: int = 0  # the same for the readings answers
     stopped: str = ""  # why it ended early, if it did
@@ -286,6 +296,17 @@ class Report:
                 or self.readings_cut
                 else ""
             )
+            + (
+                f", deeds: {self.deeds} found, {self.deeds_refused} refused,"
+                f" {self.deeds_repeated} repeated, {self.deeds_failed} failed,"
+                f" {self.deeds_cut} cut short"
+                if self.deeds
+                or self.deeds_refused
+                or self.deeds_repeated
+                or self.deeds_failed
+                or self.deeds_cut
+                else ""
+            )
             + (f", stopped: {self.stopped}" if self.stopped else "")
         )
 
@@ -298,6 +319,60 @@ def calls_left(session_max: int, session_used: int, day_max: int, day_used: int)
 
 
 Consenting = Callable[[], Awaitable[Collection[int]]]
+
+
+async def _ask_deeds(
+    client: Client,
+    report: Report,
+    batch: Sequence[Said],
+    dm_ids: Collection[int],
+    consenting: Consenting,
+    count_call: Callable[[], Awaitable[None]] | None,
+    pairs: set[tuple[str, str]],
+) -> bool:
+    """The third question of one batch (#3175): which deeds the party did. Asked again who is
+    recorded (the claims call took seconds), counted like any call, never fatal. Returns False
+    when the run must stop (the AI is out of money). The proposals go to the report."""
+    agreed = await consenting()
+    heard = [s for s in batch if s.user_id in agreed]
+    if not heard:
+        return True
+    rows = [(str(s.number), "DM" if s.user_id in dm_ids else "Player", s.text) for s in heard]
+    dm_lines = {str(s.number) for s in heard if s.user_id in dm_ids}
+    report.calls += 1
+    if count_call is not None:
+        try:
+            await count_call()
+        except Exception as exc:
+            log.warning("Story extractor: couldn't count a call (%s)", type(exc).__name__)
+    try:
+        answer = await asyncio.wait_for(
+            client.complete(DEED_SYSTEM, transcript_of(rows), max_tokens=MAX_TOKENS),
+            CALL_TIMEOUT_S,
+        )
+    except AIOutOfFunds:
+        report.failed += 1
+        report.stopped = "out of funds"
+        return False
+    except Exception as exc:  # never fatal, and the claims above stand
+        log.warning("Story extractor: a deed call failed (%s)", type(exc).__name__)
+        report.deeds_failed += 1
+        return True
+    got = parse_deeds(
+        answer.text, [r[0] for r in rows], dm_lines=dm_lines, cut=answer.cut, covered=pairs
+    )
+    # Asked again after the answer (the call took seconds): a deed whose cited lines include
+    # someone who has stopped being recorded is dropped, as `propose` does for a claim.
+    still = await consenting()
+    speaker = {str(s.number): s.user_id for s in heard}
+    kept = tuple(d for d in got.deeds if all(speaker.get(n) in still for n in d.lines))
+    report.deeds += len(kept)
+    report.deeds_refused += got.refused + (len(got.deeds) - len(kept))
+    report.deeds_repeated += got.repeated
+    if answer.cut:
+        report.deeds_cut += 1
+    report.deed_proposals.extend(kept)
+    return True
 
 
 async def run(
@@ -319,6 +394,7 @@ async def run(
     after_ms: int = 0,
     count_call: Callable[[], Awaitable[None]] | None = None,
     readings: bool = False,
+    deeds: bool = False,
     family_only: bool = False,
     imported: bool = False,
     progress: Callable[[int, int], Awaitable[None]] | None = None,
@@ -343,6 +419,11 @@ async def run(
     what a session may spend. Its answers wait as claims that carry a reading and are placed by
     the DM, never written.
 
+    `deeds` (#3175 slice 4): after each batch's claims, ask a third question of the same lines,
+    which deeds the party did (`deed_reading.py`), inside the same ceilings and counted like any
+    call. What comes back is only *proposed* (`Report.deed_proposals`, held for the DM's press);
+    nothing is recorded here, and one deed for a (doer, viewer) pair holds across the batches.
+
     `imported`: the session was loaded from a file, so its readings carry no moment for the game
     clock's log to be read at (#3091).
 
@@ -358,6 +439,8 @@ async def run(
     rest are counted as `not family` and never stored. No readings are asked in this mode."""
     report = Report()
     readings = readings and not family_only
+    deeds = deeds and not family_only
+    deed_pairs: set[tuple[str, str]] = set()  # the pairs a deed was proposed for, so far
     collected: list[Extracted] = []
     believed: list[Extracted] = []
     everyone: dict[str, int | None] = {}  # every line sent, to who said it
@@ -437,6 +520,15 @@ async def run(
             report.cut += 1
         if not broken:
             reached = end_ms  # (the claims of this batch are in hand: a restart need not redo it)
+        if (
+            deeds
+            and report.calls < max_calls
+            and not await _ask_deeds(
+                client, report, batch, dm_ids, consenting, count_call, deed_pairs
+            )
+        ):
+            report.unsent += sum(len(b) for b in work[index + 1 :])
+            break
         if not readings or report.calls >= max_calls:
             continue
         # The second question. Asked again who is recorded: the first call took seconds, and
