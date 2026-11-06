@@ -1197,6 +1197,8 @@ export interface JobProgress {
   total?: number | null;
   /** What done and total count: a code (`sessions`, `parts` or `lines`). */
   unit?: string | null;
+  /** Running counts of what has been handled so far, by code: `words`, `calls`, `checks`, `names` (#3534). Counts only. */
+  counts?: Record<string, number> | null;
   startedAt?: number | null;
   /** The last time it moved forward (not a heartbeat). Only grows. */
   updatedAt?: number | null;
