@@ -73,3 +73,30 @@ class TheWords(unittest.TestCase):
         players = edges_from([row], can_edit=False)[0]["links"][0]["words"]
         dm = edges_from([row], can_edit=True, is_dm=True)[0]["links"][0]["words"]
         self.assertEqual((players, dm), ("knows", "knows (hostile)"))
+
+
+class TheDiscordCardRows(unittest.TestCase):
+    """The card's rows (also Show all and the Edit menu) read the feeling for the DM alone."""
+
+    def rows(self, *, secrets: bool) -> list[str]:
+        from types import SimpleNamespace
+
+        from dmbot.memory.models import CONFIRMED
+        from dmbot.ui.name_card import _rows
+
+        def entity(eid: str, name: str) -> Any:
+            return SimpleNamespace(id=eid, name=name, type="character", status=CONFIRMED)
+
+        mira, kesh = entity("m" * 32, "Mira"), entity("k" * 32, "Kesh")
+        lookup: Any = SimpleNamespace(entities={mira.id: mira, kesh.id: kesh}, guarded=frozenset())
+        r = Relation(
+            "x" * 32, mira.id, "knows", kesh.id, "hostile", 1.0, CONFIRMED, "dm", (),
+            None, None, None, None, False, 0,
+        )  # fmt: skip
+        return [row.words for row in _rows(lookup, mira.id, [r], secrets)]
+
+    def test_a_player_reads_plain_knows(self) -> None:
+        self.assertEqual(self.rows(secrets=False), ["knows"])
+
+    def test_the_dm_reads_the_feeling(self) -> None:
+        self.assertEqual(self.rows(secrets=True), ["knows (hostile)"])

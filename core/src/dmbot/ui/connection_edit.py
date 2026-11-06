@@ -148,8 +148,9 @@ async def _find(
     return Found(campaign, memory, names, relation, secrets, pinned)
 
 
-def _said(found: Found) -> str:
-    return _md(sentence(found.names, found.relation, feeling=True) or "that connection")
+def _said(found: Found, *, feeling: bool = True) -> str:
+    """The connection as one sentence. `feeling=False` is how a player reads it (#3610)."""
+    return _md(sentence(found.names, found.relation, feeling=feeling) or "that connection")
 
 
 async def show_one(
@@ -506,7 +507,8 @@ class WhoKnows(WhoKnowsMenu):
         said = _said(found)
         undo: int | None = None
         if who == link_edits.EVERYONE:
-            note = f"👁️ Players can see it now: {said}. {UNDO_NOTE}"
+            seen = _said(found, feeling=False)  # (what players read: no feeling word)
+            note = f"👁️ Players can see it now: {seen}. {UNDO_NOTE}"
             undo = written.batch  # (only showing it can be undone; who knew it is set again)
         elif who == link_edits.SOME_CHARACTERS:
             mine = [self.names[x] for x in self.picked if x in self.names]
