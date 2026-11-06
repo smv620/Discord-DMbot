@@ -6,6 +6,7 @@
 // shows it, the same way on every page. The stage is read out when it changes (role="status"); the clocks
 // are not in a live region, so they are not announced every second. Times are the server's seconds; the
 // browser's clock is corrected by `serverNow` so a wrong clock on the computer does not show a wrong age.
+import { Fragment } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import { workWords as words } from "../content/work-progress";
@@ -34,11 +35,40 @@ export interface WorkProgressProps {
   /** The page has no sign of progress to show (a move, a download), so the "last moved" line is left out
    * rather than reading as a stuck job. Only the time running is shown. */
   progressUnknown?: boolean | undefined;
+  /** Running counts (words processed, calls made, ...), each moving smoothly between readings (#3534). */
+  counts?: Record<string, number> | null | undefined;
   /** What to do next, when the page knows better than the general words. */
   whatToDo?: string | undefined;
 }
 
-export default function WorkProgress({ stage, done, total, unit, startedAt, updatedAt, serverNow, state, waiting, frozen, progressUnknown, reason, whatToDo }: WorkProgressProps) {
+const COUNT_ORDER = ["words", "calls", "checks", "names"];
+const visibleCounts = (counts: Record<string, number> | null | undefined): string[] =>
+  counts ? COUNT_ORDER.filter((c) => typeof counts[c] === "number" && (counts[c] as number) > 0) : [];
+
+/** One running count: smoothed between readings like the main count, and "about" only while it is an estimate. */
+function CountItem({ code, value, running, reading }: { code: string; value: number; running: boolean; reading: unknown }) {
+  const smooth = useSmoothCount(value, null, running, reading);
+  const phrase = (words.countPhrase[code] as (n: number) => string)(smooth.shown ?? value);
+  return <span>{smooth.estimated ? words.aboutCount(phrase) : phrase}</span>;
+}
+
+/** The counts line on its own (a session row uses it without a whole panel): only the counts the page has words for, in a fixed order, once something has been handled. */
+export function RunningCounts({ counts, running, reading }: { counts: Record<string, number> | null | undefined; running: boolean; reading: unknown }) {
+  const shown = visibleCounts(counts);
+  if (!counts || shown.length === 0) return null;
+  return (
+    <span class="small muted">
+      {shown.map((code, i) => (
+        <Fragment key={code}>
+          {i > 0 && " · "}
+          <CountItem code={code} value={counts[code] as number} running={running} reading={reading} />
+        </Fragment>
+      ))}
+    </span>
+  );
+}
+
+export default function WorkProgress({ stage, done, total, unit, startedAt, updatedAt, serverNow, state, waiting, frozen, progressUnknown, reason, whatToDo, counts }: WorkProgressProps) {
   // The server's clock now, kept as its gap from this browser's clock when the answer arrived.
   const gap = useRef(0);
   const lastServerNow = useRef<number | null | undefined>(undefined);
@@ -75,6 +105,7 @@ export default function WorkProgress({ stage, done, total, unit, startedAt, upda
           <span> {smooth.estimated ? words.progressAbout(smooth.shown as number, total as number, unit) : words.progress(done as number, total as number, unit)}</span>
         )}
       </p>
+      {state !== "failed" && visibleCounts(counts).length > 0 && <p class="small muted"><RunningCounts counts={counts} running={state === "running" && !waiting && !frozen} reading={serverNow} /></p>}
       {hasCount && (state === "running" || state === "stalled") && !waiting && <progress max={total as number} value={Math.min((smooth.shown ?? done) as number, total as number)} aria-label={words.barLabel(stage)} />}
       {state === "failed" && (
         <>

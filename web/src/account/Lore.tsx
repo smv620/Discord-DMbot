@@ -180,16 +180,20 @@ export default function Lore({ api, path }: { api: AccountApi; path: string }) {
     const done = upload.state === "done";
     const quiet = upload.serverNow - upload.updatedAt;
     // Quiet this long, waiting for the bot or working, is a stall (the panel's `waiting` is for waiting on the person, not on DMbot).
-    const state = failed ? "failed" : done ? "done" : quiet > STALLED_S ? "stalled" : "running";
+    // The server's own word on stalled wins when it sends the shared shape (a queued upload never reads as stalled, #3535).
+    const p = upload.progress;
+    const state = failed ? "failed" : done ? "done" : p ? (p.state === "stalled" ? "stalled" : "running") : quiet > STALLED_S ? "stalled" : "running";
+    const counted = p ? typeof p.done === "number" && typeof p.total === "number" && p.total > 0 : upload.total > 0;
     return (
       <div class="stack">
         {back}
         {opened && open && <p>{words.openNote}</p>}
         <WorkProgress
-          stage={stageWords(words.stages, upload.stage)}
-          done={upload.total > 0 ? upload.done : null}
-          total={upload.total > 0 ? upload.total : null}
-          unit={words.unit}
+          stage={stageWords(words.stages, p?.stage ?? upload.stage)}
+          done={counted ? (p ? p.done : upload.done) : null}
+          total={counted ? (p ? p.total : upload.total) : null}
+          unit={p?.unit ? (words.units[p.unit] ?? words.unit) : words.unit}
+          counts={p?.counts}
           startedAt={upload.createdAt}
           updatedAt={upload.updatedAt}
           serverNow={upload.serverNow}
