@@ -1310,6 +1310,16 @@ class TheProgress(WithImports):
             await conn.execute("UPDATE recap_jobs SET state = 'failed'")
         self.assertEqual((await self.stage(imp))["stage"], "recap_failed")
 
+    async def test_the_words_and_calls_so_far_ride_in_the_progress_shape(self) -> None:
+        """#3534: `counts` appears once something was handled, counts only, and a session that
+        recorded nothing sends the shape it always did."""
+        imp, _, _ = await self.one_import(False)
+        self.assertNotIn("counts", (await self.stage(imp))["progress"])
+        await self.set_import(step_total=900, step_done=420, words_done=5300, calls_made=7)
+        got = (await self.stage(imp))["progress"]
+        self.assertEqual(got["counts"], {"words": 5300, "calls": 7})
+        self.assertEqual((got["done"], got["total"]), (420, 900))
+
     async def test_the_progress_shape_moves_with_the_stages_and_never_goes_back(self) -> None:
         """#2564: stage, counts, startedAt, updatedAt and serverNow, one shape per session and for
         the whole import."""

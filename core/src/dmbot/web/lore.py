@@ -107,15 +107,19 @@ def _progress(up: dict[str, Any]) -> dict[str, Any]:
         stage = "waiting"
     stage = _STAGES.get(stage, stage)
     running = state == "working"
-    return progress_shape.shape(
-        stage,
-        started_at=int(up["createdAt"]),
-        updated_at=int(up["updatedAt"]),
-        now=int(up["serverNow"]),
-        done=int(up["done"]) if running else None,
-        total=int(up["total"]) if running else None,
-        unit=_UNITS.get(stage),
-        reason=(str(up["error"]) or None) if state == "failed" else None,
+    return progress_shape.with_counts(
+        progress_shape.shape(
+            stage,
+            started_at=int(up["createdAt"]),
+            updated_at=int(up["updatedAt"]),
+            now=int(up["serverNow"]),
+            done=int(up["done"]) if running else None,
+            total=int(up["total"]) if running else None,
+            unit=_UNITS.get(stage),
+            reason=(str(up["error"]) or None) if state == "failed" else None,
+        ),
+        words=int(up.get("wordsDone") or 0),
+        calls=int(up.get("callsMade") or 0),
     )
 
 

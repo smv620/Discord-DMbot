@@ -1381,8 +1381,26 @@ class TheSecondLookProgress(unittest.IsolatedAsyncioTestCase):
         await lr.read_lore(
             fake, fake, LONG, {}, Gate(), progress=lambda s, d, t: told.append((s, d, t))
         )
-        first_look = next(i for i, t in enumerate(told) if t[0] == "looking")
-        self.assertTrue(all(t == ("reading", 0, 0) for t in told[:first_look]))
+        stages = [t for t in told if t[0] != "counts"]  # (the live counts are not a stage, #3534)
+        first_look = next(i for i, t in enumerate(stages) if t[0] == "looking")
+        self.assertTrue(all(t == ("reading", 0, 0) for t in stages[:first_look]))
+
+    async def test_the_read_tells_its_words_and_calls_so_far_and_only_counts(self) -> None:
+        """#3534: ("counts", words, calls): the words of the document once pass 1 has read it and
+        the calls made, never going back, and nothing of the text."""
+        fake = SimpleNamespace(
+            complete=AsyncMock(return_value=Reply("NAMES\n\nRELATIONSHIPS\n", False)),
+            model="claude-sonnet-5-5",
+        )
+        told: list[tuple[str, int, int]] = []
+        await lr.read_lore(
+            fake, fake, LONG, {}, Gate(), progress=lambda s, d, t: told.append((s, d, t))
+        )
+        counts = [(d, t) for s, d, t in told if s == "counts"]
+        self.assertTrue(counts)
+        self.assertEqual(counts[-1][0], len(LONG.split()))
+        self.assertGreaterEqual(counts[-1][1], 1)
+        self.assertEqual(counts, sorted(counts))  # words and calls only grow
 
 
 FIRST_THIN = (

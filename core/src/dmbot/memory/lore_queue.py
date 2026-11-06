@@ -111,18 +111,37 @@ class LoreQueue:
         )  # fmt: skip
 
     async def progress(
-        self, guild_id: int, claim: Claim, stage: str, done: int = 0, total: int = 0
+        self,
+        guild_id: int,
+        claim: Claim,
+        stage: str,
+        done: int = 0,
+        total: int = 0,
+        words: int = 0,
+        calls: int = 0,
     ) -> bool:
         """Where the read is: the stage and the counts, and the time (which also keeps the claim
-        alive). Counts and words only, never a word of the document. False: not its row any
-        more."""
+        alive). Counts and words only, never a word of the document. `words` and `calls`: what the
+        read has handled so far (#3534), kept as the most it has reported (a count never goes back).
+        False: not its row any more."""
         total = max(total, 0)
         done = min(max(done, 0), total) if total else 0
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
-                "UPDATE lore_uploads SET stage = %s, done = %s, total = %s, updated_at = %s"
+                "UPDATE lore_uploads SET stage = %s, done = %s, total = %s, updated_at = %s,"
+                " words_done = GREATEST(words_done, %s), calls_made = GREATEST(calls_made, %s)"
                 " WHERE guild_id = %s AND id = %s AND state = 'working' AND claimed_at = %s",
-                (stage, done, total, int(self._now()), guild_id, claim.id, claim.claimed_at),
+                (
+                    stage,
+                    done,
+                    total,
+                    int(self._now()),
+                    max(words, 0),
+                    max(calls, 0),
+                    guild_id,
+                    claim.id,
+                    claim.claimed_at,
+                ),
             )
             return bool(cur.rowcount)
 
