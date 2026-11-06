@@ -389,3 +389,41 @@ class ThePlayerCharacters(unittest.TestCase):
         report = gkc.check(self.entries(roles), self.key(), "lore")
         self.assertEqual(report.players_found, 2)
         self.assertIn("Player characters found: 2 of 4", gkc.render(report, counts_only=True))
+
+
+class TheFeelingScore(unittest.TestCase):
+    """#3606: each key feeling is scored exact, one step off, over-read or under-read."""
+
+    def test_the_scale(self) -> None:
+        from dmbot.memory import reputation_words as w
+
+        self.assertEqual(w.compare("wary", "wary"), w.EXACT)
+        self.assertEqual(w.compare("wary", "distrusts"), w.ONE_STEP)
+        self.assertEqual(w.compare("wary", "hostile"), w.OVER_READ)  # the Belleros and Brewner case
+        self.assertEqual(w.compare("hostile", "wary"), w.UNDER_READ)
+        self.assertEqual(w.compare("friendly", "devoted"), w.OVER_READ)
+        self.assertEqual(w.compare("-", "hostile"), w.EXACT)
+        self.assertEqual(w.compare("+", "hostile"), w.UNDER_READ)
+        self.assertEqual(w.compare("wary", "adores"), w.UNDER_READ)
+
+    def test_a_backup_scores_the_stored_word_against_the_key(self) -> None:
+        key = {
+            "nodes": [
+                {"name": "Belleros", "kind": "person"},
+                {"name": "Brewner", "kind": "person"},
+            ],
+            "pairs": [
+                {
+                    "id": "m081", "a": "Belleros", "relation": "knows", "b": "Brewner",
+                    "feeling": "wary", "tier": "stated", "must_find": False, "in": ["lore"],
+                }
+            ],
+        }  # fmt: skip
+        rel = {
+            "table": "relation", "id": "r1", "subject_id": "e1", "predicate": "knows",
+            "object_id": "e2", "detail": "hostile", "status": "confirmed", "secret": False,
+        }  # fmt: skip
+        data = backup([("e1", "Belleros", "character"), ("e2", "Brewner", "character")], [rel])
+        report = gkc.check(data, key, "lore")
+        self.assertEqual(report.feelings, [("m081", "over_read")])
+        self.assertIn("over-read 1", gkc.render(report, counts_only=True))

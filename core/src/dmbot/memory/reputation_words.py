@@ -88,3 +88,29 @@ def sign_of(detail: str) -> int:
     word = word_of(detail)
     score = score_of(word) if word is not None else None
     return 0 if not score else (score > 0) - (score < 0)
+
+
+EXACT, ONE_STEP, OVER_READ, UNDER_READ = "exact", "one_step_off", "over_read", "under_read"
+
+
+def compare(wanted: str, got: str) -> str:
+    """How a stored feeling word sits against the one a key expects (#3606's score): `exact`, one
+    step off on the nine-word scale, `over_read` (further from neutral than the key says, two or
+    more steps), or `under_read`. The key may give a sign instead of a word ("+", "-", "0"): then
+    only the side is scored (`exact` on the same side, else over or under by whether the stored
+    word is the stronger). Both words go through `word_of`; a word off the list is `under_read`."""
+    sign = {"+": 1, "-": -1, "0": 0}.get(wanted)
+    want = word_of(wanted)
+    have = word_of(got)
+    if have is None or (want is None and sign is None):
+        return UNDER_READ
+    if want is None:
+        return EXACT if sign_of(have) == sign else (UNDER_READ if sign else OVER_READ)
+    gap = WORDS.index(have) - WORDS.index(want)
+    if gap == 0:
+        return EXACT
+    if abs(gap) == 1:
+        return ONE_STEP
+    # further from neutral than the key says is an over-read; nearer (or across) is an under-read
+    mid = WORDS.index(NEUTRAL)
+    return OVER_READ if abs(WORDS.index(have) - mid) > abs(WORDS.index(want) - mid) else UNDER_READ

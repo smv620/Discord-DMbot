@@ -123,6 +123,8 @@ class Report:
     events_expected: int = 0
     players_found: int = 0  # the key's player characters that are entries with that role (#3553)
     players_expected: int = 0
+    # #3606: for each key tie that expects a feeling, (id, how the stored word sits against it)
+    feelings: list[tuple[str, str]] = field(default_factory=list)
 
 
 def _live(row: Mapping[str, Any]) -> bool:
@@ -192,6 +194,30 @@ def _slot(detail: str, kind: str) -> tuple[str, bool]:
 
 def _role(detail: str, roles: frozenset[str]) -> bool:
     return kin.role_of(detail) in roles
+
+
+def _feeling_verdict(tie: Mapping[str, Any], graph: Graph, a: set[str], b: set[str]) -> str | None:
+    """How the stored feeling of a key tie sits against the key's (see `reputation_words.compare`),
+    or None when the key expects none or nothing is stored in the key's direction. An old
+    `enemy_of` counts as "hostile", `ally_of` as "friendly"; a `knows` with no word is "neutral"."""
+    rel = str(tie["relation"])
+    wanted = str(tie.get("feeling") or "") if rel == "knows" else ""
+    if rel == "enemy_of":
+        wanted = reputation_words.HOSTILE
+    if not wanted or tie.get("tier") == "by_rule":
+        return None
+    best: str | None = None
+    for r, forward in graph.between(a, b):
+        pred, detail = str(r["predicate"]), str(r.get("detail") or "")
+        if not forward or pred not in ("knows", "enemy_of", "ally_of"):
+            continue
+        got = {"enemy_of": "hostile", "ally_of": "friendly"}.get(pred) or (
+            reputation_words.word_of(detail) or reputation_words.NEUTRAL
+        )
+        verdict = reputation_words.compare(wanted, got)
+        if best is None or verdict == reputation_words.EXACT:
+            best = verdict
+    return best
 
 
 def _tie_status(
@@ -340,6 +366,13 @@ def check(backup: object, key: Mapping[str, Any], docs: str = "both") -> Report:
         used_relations |= used_here
         if t["tier"] == "inferred" and status == FOUND:
             report.inferred_confirmed.append(t["id"])
+        if (
+            a
+            and b
+            and status in (FOUND, WAITING, WRONG)
+            and (verdict := _feeling_verdict(t, graph, a, b))
+        ):
+            report.feelings.append((str(t["id"]), verdict))
         group = GROUPS.get(t["relation"], "other")
         report.ties.append(
             Row(t["id"], _text(t), status, group, bool(t["must_find"]), t["tier"], why)
@@ -455,6 +488,16 @@ def render(report: Report, counts_only: bool = False) -> str:
     lines.append(f"Must-find ties found only as a waiting suggestion: {len(waiting)}")
     for t in waiting:
         lines.append(f"  {t.id}" + ("" if counts_only else f"  {t.text}"))
+    scored = Counter(v for _, v in report.feelings)
+    lines.append(
+        f"Feelings scored: {len(report.feelings)} (exact {scored[reputation_words.EXACT]}, "
+        f"one step off {scored[reputation_words.ONE_STEP]}, "
+        f"over-read {scored[reputation_words.OVER_READ]}, "
+        f"under-read {scored[reputation_words.UNDER_READ]})"
+    )
+    for tie_id, verdict in report.feelings:
+        if verdict in (reputation_words.OVER_READ, reputation_words.UNDER_READ):
+            lines.append(f"  {tie_id}  {verdict}")
     left = [e for e in report.entries if e.status != FOUND]
     lines.append(f"Entries missing or of the wrong kind: {len(left)}")
     for e in left:
