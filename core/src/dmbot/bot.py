@@ -658,6 +658,8 @@ MOVED_CHECKED_MAX = 100_000  # people remembered as checked; cleared past this
 FORGET_TIMEOUT_S = 10  # removing learned names must not hold up stopping a recording
 DISPLAY_NAME_REFRESH_S = 86400  # a person's Discord name is kept on their account once a day
 DISPLAY_NAME_TIMEOUT_S = 3  # for the background update
+AVATAR_SWEEP_EVERY_S = 24 * 3600.0  # linked players' Discord avatars are read again this often
+AVATARS_PER_ROUND = 25  # ... a few at a time, so a big server never holds up the round
 NAMES_NOTED_MAX = 5000  # people remembered as just noted; the oldest half go past this
 PRESESSION_NOTE_WAIT_S = 15.0  # the longest the pre-session note may take (#1403)
 SECRET_QUESTION_WAITING = (
@@ -996,6 +998,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         # The website's Recap style choices (#3060), applied with the stores above.
         self.web_recap_style = web_style.StyleQueue(recaps.db) if recaps is not None else None
         self._web_style_swept: dict[int, float] = {}  # server -> when its queue was last swept
+        self._avatars_swept: dict[int, float] = {}  # server -> when its avatars were last read
+        self._avatar_queue: dict[int, list[int]] = {}  # server -> players left in this sweep
         self.installs = installs  # which servers the bot is in, and when it left (#2163)
         self.recap_holds = recap_holds  # recaps waiting for the DM's name answers (#2169)
         self.recap_feedback_limit = recap_feedback.FeedbackLimit()
@@ -1915,6 +1919,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 await directory.remember(
                     guild_id, member.id, getattr(member, "global_name", None), member.name
                 )
+                avatar = getattr(member, "avatar", None)  # None: Discord's default picture
+                await directory.set_avatar(guild_id, member.id, getattr(avatar, "key", None))
         except Exception as exc:  # the type only: a database error's text can quote a name
             log.warning("Could not keep a member in the directory: %s", type(exc).__name__)
 
@@ -11739,6 +11745,56 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     log.info("Name action %s: %s", action.action, done.error or "done")
                     if not done.error and self.lookup is not None:
                         self.lookup.mark_stale(guild.id, action.campaign_id)
+
+    async def run_member_avatars(self) -> None:
+        """Once a day, read each linked player's Discord avatar again (#3621): the hash only, for
+        the Story Graph's player character icons. Only players who have agreed (the directory
+        holds no one else). A member who has left (Discord says unknown) loses it. A few players
+        a round (`AVATARS_PER_ROUND`), so many servers or players never hold up the rounds'
+        other work; one player's failure does not stop the rest. Counts only."""
+        directory = self.members
+        if directory is None:
+            return
+        now = time.monotonic()
+        for guild in list(self.guilds):
+            if self._closing:
+                return
+            queue = self._avatar_queue.get(guild.id)
+            if queue is None:  # not part way through a sweep: is it due?
+                if now - self._avatars_swept.get(guild.id, -AVATAR_SWEEP_EVERY_S) < (
+                    AVATAR_SWEEP_EVERY_S
+                ):
+                    continue
+                queue = await directory.linked_players(guild.id)
+                self._avatars_swept[guild.id] = now
+            batch, rest = queue[:AVATARS_PER_ROUND], queue[AVATARS_PER_ROUND:]
+            if rest:
+                self._avatar_queue[guild.id] = rest
+            else:
+                self._avatar_queue.pop(guild.id, None)
+            kept = cleared = failed = 0
+            for user_id in batch:
+                if self._closing:
+                    return
+                try:
+                    member = await guild.fetch_member(user_id)
+                    key = getattr(member.avatar, "key", None)
+                except discord.NotFound:
+                    key = None
+                    cleared += 1
+                except Exception:  # Discord or the database: tried again at the next sweep
+                    failed += 1
+                    continue
+                try:
+                    await directory.set_avatar(guild.id, user_id, key)
+                except Exception:
+                    failed += 1
+                    continue
+                kept += key is not None
+            log.info(
+                "Avatar sweep: %d kept, %d cleared, %d failed, %d to go",
+                kept, cleared, failed, len(rest),
+            )  # fmt: skip
 
     async def run_web_recap_style(self) -> None:
         """The Recap style choices DMs made on the website (#3060): for each server, sweep its
