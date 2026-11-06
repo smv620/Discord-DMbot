@@ -1174,9 +1174,8 @@ def _claim_statement(row: dict[str, Any]) -> str:
     """A claim as one plain line, "Mira Voss knows Far Hall" (the DM's page shows the line and the
     session's date; the words are the claim's own, as the DM screen shows them)."""
     base = f"{row['subject']} {row['relationship']} {row['object']}".strip()
-    details = split_effect_note(str(row.get("details") or ""))[
-        0
-    ].strip()  # (the note is not a detail)
+    details, _ = split_effect_note(str(row.get("details") or ""))  # (the note is not a detail)
+    details = details.strip()
     return f"{base} ({details})" if details else base
 
 
@@ -1216,6 +1215,7 @@ async def read_waiting(
     claims = [
         {
             **c,
+            "details": split_effect_note(str(c.get("details") or ""))[0],  # (never the note)
             "statement": _claim_statement(c),
             "canSecret": _can_be_secret(c),
             **({"choices": choices[str(c["id"])]} if str(c["id"]) in choices else {}),

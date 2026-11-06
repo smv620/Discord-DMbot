@@ -35,6 +35,12 @@ class TheSplit(unittest.TestCase):
         long = EFFECT_NOTE.format(name="Mira Voss")
         self.assertEqual(split_effect_note(f"a (b) {long}"), ("a (b)", long))
 
+    def test_names_with_apostrophes_brackets_and_dots_come_off_too(self) -> None:
+        for name in ("O'Neil", "O\u2019Neil", "A.B", "Mira (Voss)", "Two\nLines"):
+            with self.subTest(name):
+                note = EFFECT_NOTE.format(name=name)
+                self.assertEqual(split_effect_note(f"friendly {note}"), ("friendly", note))
+
     def test_other_words_that_only_start_alike_are_left_alone(self) -> None:
         said = "Told by the DM as something that happened"
         self.assertEqual(split_effect_note(said), (said, ""))
@@ -64,5 +70,5 @@ class OnTheWebsite(unittest.TestCase):
         )
         self.assertEqual(_claim_statement(row(NOTE)), "Belleros knows Brewner")
 
-    def test_the_secret_offer_is_judged_on_the_details_alone(self) -> None:
-        self.assertEqual(_can_be_secret(row(f"friendly {NOTE}")), _can_be_secret(row("friendly")))
+    def test_the_secret_offer_is_still_made_with_the_note_on(self) -> None:
+        self.assertTrue(_can_be_secret(row(f"friendly {NOTE}")))

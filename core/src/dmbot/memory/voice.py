@@ -38,7 +38,8 @@ _NOTE = re.compile(
     + re.escape(EFFECT_NOTE)
     .replace(r"\{name\}", r"(?P<n>.+?)", 1)
     .replace(r"\{name\}", r"(?P=n)", 1)
-    + r"\s*$"
+    + r"\s*$",
+    re.DOTALL,  # (a name may run over a line)
 )
 
 
