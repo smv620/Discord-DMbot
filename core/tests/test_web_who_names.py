@@ -8,7 +8,7 @@ from typing import Any, cast
 
 from dmbot.memory.models import CONFIRMED
 from dmbot.memory.who_answers import ENTITY, NEW, StoredAnswer, WhoAnswers
-from dmbot.web import sessions
+from dmbot.web import name_checks, sessions
 from dmbot.web import who_names as web
 from tests.test_recap_web import BOB, NOW
 from tests.test_web_api import THURSDAY
@@ -154,7 +154,7 @@ class OnTheDoor(WithChecks):
         got = await web.read_answers(self.web, self.session, self.ref, [name])
         self.assertEqual(got[name][0]["answer"], {"action": "same", "known": good})
         # and what the door offers, the answer door takes
-        sent = await web.name_checks.answer(
+        sent = await name_checks.answer(
             self.web, self.session, self.ref, name, got[name][0]["answer"]
         )
         self.assertTrue(sent["answerId"])
