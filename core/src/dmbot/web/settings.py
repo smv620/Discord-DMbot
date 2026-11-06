@@ -77,6 +77,10 @@ class WebSettings:
     # made with. Off until the switch is 1 and a key is set.
     meaning_search: bool = False
     voyage_key: str = field(default="", repr=False)
+    # The admin Costs page (#3671): read-only keys for the two services that let one be scoped
+    # to costs. Empty: that row says "Not connected". Never an Anthropic Admin key.
+    costs_deepgram_key: str = field(default="", repr=False)
+    costs_elevenlabs_key: str = field(default="", repr=False)
     voyage_embed_model: str = "voyage-3.5"
     voyage_rerank_model: str = "rerank-2.5"
     # Where people's emailed replies to a support ticket go (#1717): a subdomain only the mail
@@ -482,6 +486,8 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
         stripe=stripe,
         any_db_role=any_db_role,
         feedback_token=feedback_token,
+        costs_deepgram_key=get("DMBOT_COSTS_DEEPGRAM_KEY"),
+        costs_elevenlabs_key=get("DMBOT_COSTS_ELEVENLABS_KEY"),
         link_token_secret=link_secret.encode("utf-8"),
         mail=mail,
         feedback_repo=feedback_repo,

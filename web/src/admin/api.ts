@@ -161,7 +161,37 @@ export interface AdminWays {
   password: boolean;
 }
 
+/** One service's line on the Costs page (#3671). */
+export interface CostRow {
+  id: string;
+  name: string;
+  covers: string;
+  link: string;
+  state: "read" | "not_connected" | "not_recorded" | "link_only" | "unavailable";
+  amount_cents: number | null;
+  detail: string;
+  read_at: number | null;
+}
+
+export interface CostIncome {
+  plan: string;
+  name: string;
+  state: "not_available";
+  detail: string;
+}
+
+export interface CostsView {
+  month: string;
+  services: CostRow[];
+  spent_cents: number;
+  /** The services whose figure is inside spent_cents. */
+  counted: string[];
+  income: CostIncome[];
+}
+
 export interface AdminApi {
+  /** What each paid service has charged in a month, YYYY-MM (default: this one), #3671. */
+  costs?(month?: string): Promise<CostsView>;
   /** Who is signed in, or null. */
   me(): Promise<AdminMe | null>;
   ways(): Promise<AdminWays>;
@@ -299,6 +329,11 @@ export function httpAdminApi(base: string, fetcher: typeof fetch = fetch): Admin
       });
       if (!response.ok) throw new AdminApiError(await grantProblem(response));
     },
+    async costs(month) {
+      const response = await call(`/admin/costs${month ? `?month=${encodeURIComponent(month)}` : ""}`);
+      if (!response.ok) throw new AdminApiError(await grantProblem(response));
+      return (await response.json()) as CostsView;
+    },
     async tickets(filter = "all", page = 1) {
       const response = await call(
         `/admin/support?status=${encodeURIComponent(filter)}&page=${encodeURIComponent(String(page))}`,
@@ -416,6 +451,43 @@ export function pretendAdminApi(): AdminApi {
     },
   ];
   return {
+    costs: async (month) => {
+      await new Promise((ok) => setTimeout(ok, 400));
+      const at = now();
+      const row = (
+        id: string,
+        name: string,
+        covers: string,
+        state: CostRow["state"],
+        cents: number | null,
+        detail: string,
+      ): CostRow => ({
+        id,
+        name,
+        covers,
+        link: `https://example.com/${id}`,
+        state,
+        amount_cents: cents,
+        detail,
+        read_at: cents === null ? null : at,
+      });
+      return {
+        month: month ?? new Date().toISOString().slice(0, 7),
+        services: [
+          row("deepgram", "Deepgram", "Turns the table's voices into text, live.", "read", 4230, "1 project"),
+          row("anthropic-fast", "Anthropic, fast model", "Quick answers at the table.", "not_recorded", null, "Not recorded yet. Open its page for the figure."),
+          row("elevenlabs", "ElevenLabs", "The voice that reads recaps aloud.", "not_connected", null, "Not connected."),
+        ],
+        spent_cents: 4230,
+        counted: ["deepgram"],
+        income: ["Free tier", "Try It", "Table", "Two-table", "Guild"].map((name) => ({
+          plan: name.toLowerCase(),
+          name,
+          state: "not_available" as const,
+          detail: "Not available yet.",
+        })),
+      };
+    },
     tickets: async (filter = "all", page = 1) => {
       const counts: TicketCounts = { new: 0, answered: 0, closed: 0, escalated: 0 };
       for (const t of tickets) counts[t.status] += 1;
