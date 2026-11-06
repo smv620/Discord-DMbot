@@ -55,6 +55,11 @@ export default function NameThem({
   const [find, setFind] = useState("");
   const [matches, setMatches] = useState<{ id: string; name: string }[] | null>(null);
   const [findFailed, setFindFailed] = useState(false);
+  const [findBack, setFindBack] = useState(false);
+  const [searching, setSearching] = useState(false);
+  const [capped, setCapped] = useState(false);
+  const fromPick = useRef(false); // the question came from the picker, so No goes back to it
+  const pickOpener = useRef<HTMLButtonElement>(null);
   const findBox = useRef<HTMLInputElement>(null);
   const askBox = useRef<HTMLParagraphElement>(null);
   const opener = useRef<HTMLButtonElement>(null);
@@ -99,18 +104,29 @@ export default function NameThem({
     const wanted = find.trim();
     if (!finding || wanted === "" || !api.allNames) {
       setMatches(null);
+      setSearching(false);
       return;
     }
     let live = true;
+    setMatches(null); // (never an old list under a new word)
+    setFindFailed(false);
+    setSearching(true);
     const timer = setTimeout(() => {
       api
         .allNames?.(refId, { q: wanted, kind: "", sort: "name", page: 1, size: 20 })
         .then((got) => {
           if (!live) return;
+          const named = got.names.filter((n) => !n.unnamed && n.id !== row.id);
           setFindFailed(false);
-          setMatches(got.names.filter((n) => !n.unnamed && n.id !== row.id).slice(0, 8).map((n) => ({ id: n.id, name: n.name })));
+          setCapped(named.length > 8);
+          setMatches(named.slice(0, 8).map((n) => ({ id: n.id, name: n.name })));
+          setSearching(false);
         })
-        .catch(() => live && setFindFailed(true));
+        .catch(() => {
+          if (!live) return;
+          setFindFailed(true);
+          setSearching(false);
+        });
     }, 250);
     return () => {
       live = false;
@@ -162,8 +178,15 @@ export default function NameThem({
             <button type="button" class="button secondary" aria-disabled={working} onClick={() => {
                 if (working) return;
                 setQuestion(null);
-                setDeclined(true);
                 setName("");
+                if (fromPick.current) {
+                  fromPick.current = false;
+                  setFinding(true); // the search and its list are kept
+                  setFindBack(true);
+                  setTimeout(() => findBox.current?.focus(), 0);
+                  return;
+                }
+                setDeclined(true);
               }}>
               {w.sameNo}
             </button>
@@ -196,7 +219,8 @@ export default function NameThem({
               <label class="field" for={`${id}-find`}>
                 {w.findLabel}
               </label>
-              <input id={`${id}-find`} ref={findBox} type="text" value={find} autoComplete="off" aria-describedby={`${id}-find-hint`} onInput={(e) => setFind((e.target as HTMLInputElement).value)} />
+              <input id={`${id}-find`} ref={findBox} type="text" value={find} autoComplete="off" aria-describedby={`${id}-find-hint`} onInput={(e) => { setFindBack(false); setFind((e.target as HTMLInputElement).value); }}
+                onKeyDown={(e) => { if (e.key === "Escape") { setFinding(false); setFindBack(false); setTimeout(() => pickOpener.current?.focus(), 0); } }} />
               <p class="small muted" id={`${id}-find-hint`}>
                 {w.findHint}
               </p>
@@ -211,6 +235,7 @@ export default function NameThem({
                         aria-disabled={working}
                         onClick={() => {
                           if (working) return;
+                          fromPick.current = true;
                           setQuestion({ id: m.id, name: m.name });
                           setFinding(false);
                           setTimeout(() => questionBox.current?.focus(), 0);
@@ -222,18 +247,28 @@ export default function NameThem({
                   ))}
                 </ul>
               )}
+              {findBack && <p class="small">{w.findBack}</p>}
+              {capped && <p class="small muted">{w.findMore}</p>}
               <p class="small" role="status">
-                {findFailed ? w.findFailed : matches !== null && matches.length === 0 ? w.findNone : ""}
+                {findFailed
+                  ? w.findFailed
+                  : searching
+                    ? w.findWorking
+                    : matches !== null
+                      ? matches.length === 0
+                        ? w.findNone
+                        : w.findCount(matches.length)
+                      : ""}
               </p>
               <p>
-                <button type="button" class="button secondary" onClick={() => { setFinding(false); setFind(""); setMatches(null); }}>
+                <button type="button" class="button secondary" onClick={() => { setFinding(false); setFind(""); setMatches(null); setFindBack(false); setFindFailed(false); setTimeout(() => pickOpener.current?.focus(), 0); }}>
                   {w.findClose}
                 </button>
               </p>
             </div>
           ) : (
             <p>
-              <button type="button" class="button secondary" aria-disabled={working} onClick={() => { if (working) return; setFinding(true); setTimeout(() => findBox.current?.focus(), 0); }}>
+              <button type="button" class="button secondary" ref={pickOpener} aria-disabled={working} onClick={() => { if (working) return; setDeclined(false); setFinding(true); setTimeout(() => findBox.current?.focus(), 0); }}>
                 {w.samePick}
               </button>
             </p>

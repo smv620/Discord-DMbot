@@ -172,6 +172,29 @@ describe("a name DMbot already knows", () => {
     expect(calls(api, "nameThem")[0]).toContain('"action":"name-join"');
   });
 
+  it("never offers an unnamed person, and Never mind closes the search", async () => {
+    await open();
+    openEditor("Ken's sister");
+    fireEvent.click(screen.getByRole("button", { name: w.samePick }));
+    fireEvent.input(screen.getByLabelText(w.findLabel), { target: { value: "sister" } });
+    await new Promise((r) => setTimeout(r, 600));
+    expect(screen.queryByRole("button", { name: w.pickFor("Ken's sister") })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: w.findClose }));
+    expect(screen.queryByLabelText(w.findLabel)).toBeNull();
+  });
+
+  it("goes back to the search, list kept, on No after a pick", async () => {
+    const api = await open();
+    openEditor("Ken's sister");
+    fireEvent.click(screen.getByRole("button", { name: w.samePick }));
+    fireEvent.input(screen.getByLabelText(w.findLabel), { target: { value: "mira" } });
+    fireEvent.click(await screen.findByRole("button", { name: w.pickFor("Mira Voss") }, slow));
+    fireEvent.click(await screen.findByRole("button", { name: w.sameNo }, slow));
+    expect((screen.getByLabelText(w.findLabel) as HTMLInputElement).value).toBe("mira");
+    expect(await screen.findByText(w.findBack, {}, slow)).toBeTruthy();
+    expect(calls(api, "nameThem")).toHaveLength(0);
+  }, 20000);
+
   it("says so when no known name matches", async () => {
     await open();
     openEditor("Ken's sister");
