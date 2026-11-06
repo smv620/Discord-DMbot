@@ -127,11 +127,12 @@ async def run_upload(bot: Any, queue: LoreQueue, claim: Claim, guild_id: int) ->
     """Read one claimed upload and end it. Never raises: the row must never stay "working" for a
     bug. Counts only in the log."""
     error, names, links = q.FAILED, 0, 0
+    found: dict[str, list[str]] = {}  # the names this read proposed, kind by kind (#3207)
     try:
         # The whole read has a limit: a hung call must not hold the claim (the reporter keeps it
         # alive) or the server's queue for good.
         async with asyncio.timeout(lore_read.LORE_TIME_LIMIT_S + READ_MARGIN_S):
-            error, names, links = await _read(bot, queue, claim, guild_id)
+            error, names, links = await _read(bot, queue, claim, guild_id, found)
     except TimeoutError:
         error = q.OUT_OF_TIME
     except asyncio.CancelledError:
@@ -147,7 +148,9 @@ async def run_upload(bot: Any, queue: LoreQueue, claim: Claim, guild_id: int) ->
         return
     for attempt in (1, 2):  # once more: a row left working is read again, and proposed twice
         try:
-            if not await queue.finish(guild_id, claim, error=error, names=names, links=links):
+            if not await queue.finish(
+                guild_id, claim, error=error, names=names, links=links, found=found
+            ):
                 log.warning("A lore upload was ended by another worker")
                 return
             break
@@ -167,8 +170,11 @@ async def _put_back(queue: LoreQueue, claim: Claim, guild_id: int) -> None:
         log.warning("A lore upload could not be put back: %s", type(exc).__name__)
 
 
-async def _read(bot: Any, queue: LoreQueue, claim: Claim, guild_id: int) -> tuple[str, int, int]:
-    """(error word or "", names, connections). An error word is an upload that read nothing."""
+async def _read(
+    bot: Any, queue: LoreQueue, claim: Claim, guild_id: int, found: dict[str, list[str]]
+) -> tuple[str, int, int]:
+    """(error word or "", names, connections). An error word is an upload that read nothing.
+    `found` is filled with the names the read proposed, by kind, for the website's Add all."""
     campaign = await bot.campaigns.get(guild_id, claim.campaign_id)
     if campaign is None:
         return q.NOT_ALLOWED, 0, 0
@@ -239,6 +245,7 @@ async def _read(bot: Any, queue: LoreQueue, claim: Claim, guild_id: int) -> tupl
             ):  # the claim is another worker's: it ends the row, this one writes nothing
                 return _LOST, 0, 0
             raise
+        found.update({kind: list(ids) for kind, ids in done.stored.items()})
         return _outcome(done)
     finally:
         end_ai_read(guild_id)
