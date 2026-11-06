@@ -4,6 +4,7 @@
 // follows SESSION_NOTES_LIVE, the switch of its What's new entry. Plain words: a few lines each, no technical terms.
 import { INITIATIVE_STYLE_LIVE, STORY_STATES_LIVE } from "./help";
 import { IMPORT_CONFIRM_LIVE } from "./import-words";
+import { PC_ICONS_LIVE } from "./pc-icons-switch";
 import { SPEAKER_REMOVAL_LIVE } from "./speaker-removal-switch";
 import { SESSION_NOTES_LIVE } from "./session-notes-switch";
 
@@ -35,4 +36,12 @@ export const sessionNotesPrivacy = {
   makes:
     "That means a recap, session notes (a numbered list of what happened in each game), story facts, notes for the game master, and anything else DMbot writes from what was said.",
   stays: "Recaps (short summaries of a game) and session notes (a numbered list of what happened in each game) stay.",
+};
+
+/** In "What we keep": the pictures on a campaign's Story Graph (#3622). They load straight from Discord or D&D Beyond, which the
+ * site's security policy allows by exact host (public/_headers). Shown only while the icons are live, with their switch. */
+export const pcIconsLine = {
+  live: PC_ICONS_LIVE,
+  lead: "Pictures of player characters.",
+  text: "On a campaign's Story Graph, a player character can show its player's Discord picture (only for players who agreed to be recorded) or its D&D Beyond portrait. These pictures load straight from Discord or D&D Beyond, and DMbot does not keep a copy. The game master, or the player, can hide it.",
 };
