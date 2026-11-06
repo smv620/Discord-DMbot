@@ -404,6 +404,18 @@ class ThePlaceholders(unittest.TestCase):
         self.assertEqual(sum(report.extra_entries.values()), 0)
         self.assertIn("Player placeholders left out (not extras): 2", gkc.render(report))
 
+    def test_a_placeholder_that_only_plays_a_character_is_left_out(self) -> None:
+        plays = {
+            "table": "relation", "id": "r1", "subject_id": "p1", "predicate": "plays",
+            "object_id": "x1", "detail": "", "status": "confirmed", "secret": False,
+        }  # fmt: skip
+        data = backup(
+            [("p1", "Player 4821", "person"), ("x1", "Cerric Vanya'elen", "character")], [plays]
+        )
+        report = gkc.check(data, self.key(), "lore")
+        self.assertEqual(report.placeholders, 1)
+        self.assertEqual(sum(report.extra_entries.values()), 0)
+
     def test_a_placeholder_with_a_connection_is_still_an_extra(self) -> None:
         rel = {
             "table": "relation", "id": "r1", "subject_id": "p1", "predicate": "knows",

@@ -350,9 +350,10 @@ def check(backup: object, key: Mapping[str, Any], docs: str = "both") -> Report:
             Row(t["id"], _text(t), status, group, bool(t["must_find"]), t["tier"], why)
         )
     # extras: entries and connections the key does not name
-    linked = {str(r["subject_id"]) for r in graph.relations} | {
-        str(r["object_id"]) for r in graph.relations
-    }
+    # a placeholder's own tie is `plays` (the player, to the character they play): that is what
+    # makes it a placeholder, so only another connection makes it a real entry
+    others = [r for r in graph.relations if str(r["predicate"]) != "plays"]
+    linked = {str(r["subject_id"]) for r in others} | {str(r["object_id"]) for r in others}
     for i, e in graph.entities.items():
         if i in matched_ids:
             continue
