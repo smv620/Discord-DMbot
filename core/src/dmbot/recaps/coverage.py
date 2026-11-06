@@ -35,6 +35,11 @@ must-haves. You do not rewrite the recap. For each numbered must-have, answer wi
 it too little room to be understood by someone who missed the session.
 - "not_given": the beat sheet does not show it. A must-have the session did not give is never \
 "missed": the recap must not invent a direction, a journey's length, a feeling or a name.
+A must-have that applies to whatever the recap itself mentions (for example, that every encounter \
+it mentions says how it ended) is "missed" when the recap mentions one and does not do what the \
+line asks, "covered" when each one it mentions is done (or the session stopped first and the recap \
+says so), and "not_given" when the recap mentions none. A recap that gives an outcome the beat \
+sheet does not show is also "missed": it must not invent one.
 
 Reply with JSON only: {"items":[{"n":<must-have number>,"state":"covered"|"missed"|"not_given"}]} \
 with one item for each must-have, in order.

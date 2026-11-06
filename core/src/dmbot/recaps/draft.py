@@ -5,8 +5,8 @@ The prose is written from the beat sheet only, never the transcript, and the che
 the sheet whatever the model says (CLAUDE.md: DMbot never invents story; DM-screen content never
 goes to players):
 
-- it opens with an emotion cue `《…》` and its length follows the session's: about 75 words plus
-  75 for each hour played (`length_for`), at most 450. That is a target in the writer's
+- it opens with an emotion cue `《…》` and its length follows the session's: about 250 words plus
+  150 for each hour played (`length_for`), at most 1,000. That is a target in the writer's
   instructions and never a check: whatever length comes back is used (owner, 2026-10-24, #2597);
 - no quotation, and no run of 6 words in a row taken from the table;
 - every proper noun is in the beat sheet, the confirmed names, the previous recap (the bridge) or
@@ -58,9 +58,9 @@ from dmbot.transcript.import_plan import SPOKEN_WORDS_PER_HOUR as SPOKEN_WORDS_P
 
 log = logging.getLogger(__name__)
 
-BASE_WORDS = 150  # the recap's length: this many words, and 100 more for each hour played (#2954)
-WORDS_PER_HOUR = 100
-WORDS_CEILING = 600  # a 4.5-hour session or longer
+BASE_WORDS = 250  # the recap's length: this many words, and 150 more for each hour played (#3633)
+WORDS_PER_HOUR = 150
+WORDS_CEILING = 1000  # a 5-hour session or longer (about seven minutes read aloud)
 ROOM_TIMES = 2.5  # the output room is sized for a draft this many times the target (a ceiling)
 MIN_SPAN_S = 60  # lines closer in time than this have no real times to measure
 # The recap text the database holds (`recap_jobs.summary`, backups) and the web editor takes: the
@@ -294,9 +294,9 @@ class Length:
 
 
 def length_for(hours: float) -> Length:
-    """150 words and 100 for each hour played, to the nearest 10 with a half rounding up (Python's
-    round() would make 2.5 hours 390) and at most 600: 0.5 hours 200, 1 hour 250, 3 hours 450,
-    4.5 hours or more 600 (#2954; it was 75 + 75 an hour up to 450). The other numbers follow:
+    """250 words and 150 for each hour played, to the nearest 10 with a half rounding up (Python's
+    round() would make 2.5 hours 620) and at most 1,000: 0.5 hours 330, 1 hour 400, 3 hours 700,
+    5 hours or more 1,000 (#3633; it was 150 + 100 an hour up to 600, #2954). The rest follows:
     3 beats an hour (3 to 10), a section for every 70 words (1 to 6), 8 characters for each word
     of the longest room (so the cap never cuts a draft) and a token budget for the words, the
     music prompts and the form. The words are a target in the instructions: no draft is refused

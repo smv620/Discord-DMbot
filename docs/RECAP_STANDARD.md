@@ -51,6 +51,13 @@ Removing every line brings the defaults back, the same way the style examples wo
 8. **Close calls:** any moment a player character came close to death or was in great danger.
 9. **Loot and treasure:** every major treasure, magic item or other prize gained or lost. A large
    hoard is summed up in one short line.
+14. **Every encounter ends:** any encounter the recap mentions (a fight, ambush, threat spotted,
+    creature or stranger met) says how it ended, even a trivial one: fought off, fled, avoided,
+    talked down, or came to nothing. If the session stopped first, the recap says so, and that is
+    the cliffhanger (3). (Owner, 2026-11-06, #3632. It is number 14 because it was added last; it
+    sits with the action lines. Worded to fit the 300-letter line limit.) It works with "never
+    invented": if the session did not say how an encounter ended, the recap leaves the encounter
+    out or says plainly that the session did not say. It never guesses "they drove them off".
 
 ### 🧠 Plot and mystery
 10. **The element of surprise:** unexpected twists, betrayals and shocking dice rolls are always

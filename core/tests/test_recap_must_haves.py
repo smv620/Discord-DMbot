@@ -34,11 +34,19 @@ class TheStore(DatabaseTest):
         self.two = await self.campaigns.create(GUILD, "Strahd", DM)
         self.store = MustStore(self.db)
 
-    def test_there_are_thirteen_defaults_in_five_groups(self) -> None:
+    def test_there_are_fourteen_defaults_in_five_groups(self) -> None:
         found = must_haves.defaults()
-        self.assertEqual(len(found), 13)
+        self.assertEqual(len(found), 14)
         self.assertEqual({d.group for d in found}, set(must_haves.GROUPS))
         self.assertTrue(all(0 < len(d.text) <= must_haves.LINE_CHARS for d in found))
+
+    def test_every_encounter_ends_is_a_default_the_writer_is_told_about(self) -> None:
+        line = next(
+            d.text for d in must_haves.defaults() if d.text.startswith("Every encounter ends")
+        )
+        self.assertLessEqual(len(line), must_haves.LINE_CHARS)
+        self.assertIn("cliffhanger", line)
+        self.assertIn("whatever the recap itself mentions", must_haves.INTRO)
 
     def test_the_five_plainer_default_lines_are_the_owners_choice(self) -> None:
         # (owner, 2026-11-03, #3328): plain words for a DM; each keeps its group
@@ -230,7 +238,7 @@ class OnTheWebsite(Reading):
     async def test_the_read_has_the_defaults_with_groups_until_the_dm_saves_a_list(self) -> None:
         got = await recap_style.read(self.web, self.session, self.cref)
         self.assertTrue(got["musts"]["defaults"])
-        self.assertEqual(len(got["musts"]["lines"]), 13)
+        self.assertEqual(len(got["musts"]["lines"]), 14)
         self.assertEqual(got["musts"]["lines"][0]["group"], "framing")
         self.assertNotIn("mustLines", got)
 
