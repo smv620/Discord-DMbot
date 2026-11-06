@@ -28,7 +28,7 @@ import {
   type JobProgress,
 } from "./api";
 import CampaignNav from "./CampaignNav";
-import WorkProgress from "./WorkProgress";
+import WorkProgress, { RunningCounts } from "./WorkProgress";
 import ClockOffer from "./ClockOffer";
 import { stageWords } from "../content/work-progress";
 
@@ -770,6 +770,7 @@ export default function Import({
             done={progress.import.done}
             total={progress.import.total}
             unit={progress.import.unit ? words.unit[progress.import.unit] : undefined}
+            counts={progress.import.counts}
             startedAt={progress.import.startedAt}
             updatedAt={progress.import.updatedAt}
             serverNow={progress.import.serverNow}
@@ -801,6 +802,7 @@ export default function Import({
                 {lineCount(s) ? ` · ${lineCount(s)}` : ""}
                 {s.progress?.state === "stalled" ? ` · ${words.sessionStalled}` : ""}
               </span>
+              <RunningCounts counts={s.progress?.counts} running={s.progress?.state === "running"} reading={s.progress?.serverNow} />
               {s.stage === "waiting_for_names" && (
                 <a
                   class="small"

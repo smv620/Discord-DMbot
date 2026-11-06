@@ -27,6 +27,13 @@ STALL_AFTER_S: Final[Mapping[str, int | None]] = {
     "cleaning": 10 * 60,  # a chunk of lines, then the next (waiting to be taken counts too)
     "checking_names": 15 * 60,  # the name scan's own retake window
     "finding_names": 15 * 60,
+    # A lore upload (#3534). The bot reads one upload at a time per server, so a queued upload
+    # can wait behind a long read: it never reads as stalled (the door fails one nobody took
+    # within half an hour as `not_taken`). A read that goes quiet is put back by the door at 10
+    # minutes, so these limits are a backstop for the page only.
+    "lore_waiting": None,
+    "lore_reading": 10 * 60,
+    "finding_links": 10 * 60,
     # The story read of an imported session (#3307): a batch is one AI call (up to 5 minutes);
     # waiting for the daily limit never stalls, it carries on by itself.
     "reading_connections": 15 * 60,
