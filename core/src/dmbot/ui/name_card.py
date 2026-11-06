@@ -26,7 +26,7 @@ from discord import app_commands
 
 from dmbot.campaigns import Campaign
 from dmbot.discord_limits import MESSAGE_MAX
-from dmbot.memory import kin, link_edits, name_edits
+from dmbot.memory import kin, link_edits, name_edits, tags
 from dmbot.memory.gate import NameGuard, safe_label
 from dmbot.memory.kinds import kind_phrase
 from dmbot.memory.link_words import (
@@ -403,10 +403,12 @@ def card_text(
     thread_lines: list[str] | None = None,
     book_line: str | None = None,
     more_url: str = "",
+    title: str = "",
 ) -> str | None:
     """The card for one name, or None if it's gone. `player`: who plays it (a player's
     character); `sheet`: its D&D Beyond sheet line (#723). `item`: it is an item, of the core
-    kind or one a campaign added under it (None: only the core kind counts). `more_url`: the
+    kind or one a campaign added under it (None: only the core kind counts). `title`: the name with
+    its tag for the DM's card, when it is only a description (#3431). `more_url`: the
     website page that lists every connection, for the ones that don't fit (#2323)."""
     entity = lookup.entities.get(entity_id)
     if entity is None or entity.status != CONFIRMED:
@@ -432,7 +434,7 @@ def card_text(
     )
     phrase = kind_phrase(entity, lookup.links.get(entity_id, ()))
     what = f"{phrase} · played by **{_md(player)}**" if player else phrase
-    lines = [f"🪪 **{_md(entity.name)}** · {what} · {when}"]
+    lines = [f"🪪 **{_md(title or entity.name)}** · {what} · {when}"]
     if (entity.type == ITEM if item is None else item) and entity.is_unique:
         lines.append(ONLY_ONE if entity.unique_item else ONLY_ONE_GUESS)
     if thread_lines:  # a story thread (#1662): its state, who is involved, what moved it
@@ -588,6 +590,12 @@ async def show_card(
                     for m in mine[:3]
                 )
     site = str(getattr(getattr(_bot(interaction), "settings", None), "site_url", "") or "")
+    title = ""
+    if entity is not None and secrets and tags.needs_tag(entity):
+        # The DM's card tells two look-alike entries apart (#3431); a player's keeps the plain name.
+        ties = await memory.tag_ties(campaign.guild_id, campaign.id, [entity_id])
+        tagged = tags.tag_for(entity, ties.get(entity_id, ()), dm=True)
+        title = "" if tagged == entity.name else tagged
     text = card_text(
         names,
         entity_id,
@@ -600,6 +608,7 @@ async def show_card(
         thread_lines=lines_of_thread,
         book_line=book_line,
         more_url=all_names.page_url(site, campaign.guild_id, campaign.id),
+        title=title,
     )
     if text is None or entity is None:
         if replace:  # never leave the message pressed on a step that's over
@@ -610,7 +619,7 @@ async def show_card(
     cuts = cut_sections(names, entity_id, connections, secrets=secrets)
     if not cuts and text != card_text(
         names, entity_id, connections, secrets=secrets, player=player, sheet=sheet,
-        limit=10**6, item=is_item, thread_lines=lines_of_thread, book_line=book_line,
+        limit=10**6, item=is_item, thread_lines=lines_of_thread, book_line=book_line, title=title,
     ):  # fmt: skip
         # Every section is short, but the whole card still didn't fit one message (a long note,
         # a sheet line, many groups): offer every section that has anything in it.
