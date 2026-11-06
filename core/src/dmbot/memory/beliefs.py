@@ -29,6 +29,7 @@ from dmbot.memory._changes import (
     Changes,
     Scope,
 )
+from dmbot.memory._changes import TOLD as TOLD_ROWS
 from dmbot.memory.evidence import CLAIM, LINE
 from dmbot.memory.models import (
     ACCUSATION,
@@ -701,4 +702,14 @@ async def fold_perspective(w: Changes, keep_id: str, gone_id: str) -> tuple[str,
     await w.update_where(
         ALIAS_KNOWERS, {"perspective_id": target}, " AND perspective_id = %s", [gone_p[0]["id"]]
     )
+    # Who was told an other name is an entry moves with the character (#3089); a telling both had
+    # keeps one row.
+    kept_tellings = {
+        r["alias_id"] for r in await w.select(TOLD_ROWS, " AND character_id = %s", [keep_id])
+    }
+    for row in await w.select(TOLD_ROWS, " AND character_id = %s", [gone_id]):
+        if row["alias_id"] in kept_tellings:
+            await w.delete(TOLD_ROWS, row["id"])
+        else:
+            await w.update(TOLD_ROWS, row["id"], {"character_id": keep_id})
     return str(gone_p[0]["id"]), str(target)  # (who knows what folds with it: #2995)
