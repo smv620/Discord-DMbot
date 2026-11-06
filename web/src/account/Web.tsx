@@ -8,7 +8,6 @@
 // phone can draw it only slowly.
 import { useEffect, useRef, useState } from "preact/hooks";
 
-import { NAME_LIMIT } from "../content/names-words";
 import { NOT_NAMED_LIVE } from "../content/not-named-switch";
 import { BIG_WEB, kindWords, webPage as words } from "../content/web-words";
 import {
@@ -19,7 +18,6 @@ import {
   type WebEdge,
   type WebGraph,
   type WebLinkChange,
-  type WebNode,
   type WebOverview,
   type WebRevealTarget,
   type WebView,
@@ -840,7 +838,7 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
                         {editing === n.id ? words.doneShort : words.changeShort}
                       </button>
                     )}
-                    {canEdit && editing === n.id && <NodePanel node={n} act={actName} />}
+                    {canEdit && editing === n.id && <LazyPanel key={n.id} load={() => import("./WebNodePanel")} what="the name editor" props={{ node: n, act: actName, api, refId: ref }} />}
                   </div>
                 )}
               </li>
@@ -1480,51 +1478,6 @@ function LinkRow({
 }
 
 /** A name's spelling and kind, for a DM. Both go through the same route as the Names page. */
-function NodePanel({ node, act }: { node: WebNode; act: (id: string, change: NameChange, ok: string) => Promise<string | null> }) {
-  const [spelling, setSpelling] = useState(node.name);
-  const [kind, setKind] = useState(node.kind);
-  const [problem, setProblem] = useState<string | null>(null);
-  const kinds = Object.keys(words.kinds).includes(node.kind) ? Object.keys(words.kinds) : [node.kind, ...Object.keys(words.kinds)];
-  return (
-    <div class="stack" role="group" aria-label={words.nodePanel(node.name)}>
-      <label class="field">
-        {words.spellLabel}
-        <input type="text" value={spelling} maxLength={NAME_LIMIT} onInput={(e) => setSpelling((e.target as HTMLInputElement).value)} />
-      </label>
-      <button
-        type="button"
-        class="button secondary"
-        onClick={async () => setProblem(await act(node.id, { action: "spell", name: spelling }, words.saved))}
-      >
-        {words.saveSpelling}
-      </button>
-      <label class="field">
-        {words.kindChange}
-        <select value={kind} onChange={(e) => setKind((e.target as HTMLSelectElement).value)}>
-          {kinds.map((k) => (
-            <option key={k} value={k}>
-              {kindWords(k)}
-            </option>
-          ))}
-        </select>
-      </label>
-      <button
-        type="button"
-        class="button secondary"
-        onClick={async () => setProblem(await act(node.id, { action: "kind", kind }, words.saved))}
-      >
-        {words.saveKind}
-      </button>
-      {problem && (
-        <p class="warn" role="alert">
-          {problem}
-        </p>
-      )}
-    </div>
-  );
-}
-
-
 /** The player's "Peek behind the DM screen" switch. Greyed out, with the reason, when the DM turned
  * peeking off; it stays focusable so a screen reader can read why. */
 function PeekSwitch({
