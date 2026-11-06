@@ -38,6 +38,20 @@ LORE_WAIT_S = 45 * 60
 IMPORT_WAIT_S = 90 * 60
 
 
+def campaign_store(db: Database) -> CampaignStore:
+    """The campaign store with every backup section registered, as the running bot has it: a
+    backup then holds the whole campaign (the answer-key check needs its memory), and deleting a
+    campaign clears what each section holds."""
+    from dmbot.bot import register_backup_sections
+    from dmbot.consent import ConsentStore
+
+    store = CampaignStore(db)
+    register_backup_sections(
+        store, forget_audio=lambda _guild, _campaign: None, consenting=ConsentStore(db).consenting
+    )
+    return store
+
+
 async def require_paid(
     db: Database,
     dm: int,
@@ -343,11 +357,16 @@ def score(path: Path, docs: str) -> list[str]:
     counts-only lines back."""
     from dmbot.devtools import graph_key_check
 
-    out = io.StringIO()
-    with contextlib.redirect_stdout(out):
+    out, err = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
         code = graph_key_check.main([str(path), "--docs", docs, "--counts-only"])
     if code != 0:
-        raise SampleError(f"the answer-key check could not score the {docs} backup")
+        # (the checker's own one-line reason: it names a rule, never a name from the backup)
+        why = err.getvalue().strip().splitlines()[:1]
+        raise SampleError(
+            f"the answer-key check could not score the {docs} backup"
+            + (f": {why[0]}" if why else "")
+        )
     return out.getvalue().splitlines()
 
 

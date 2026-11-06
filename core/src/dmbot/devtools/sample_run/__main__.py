@@ -113,7 +113,6 @@ async def run(
     if not os.environ.get("ANTHROPIC_API_KEY"):
         raise SampleError("ANTHROPIC_API_KEY isn't set")
     folder = steps.keep_folder(args.backup_dir)
-    from dmbot.campaigns.store import CampaignStore
     from dmbot.db import Database
     from dmbot.devtools import common
     from dmbot.memory.store import MemoryStore
@@ -122,7 +121,8 @@ async def run(
     db = await Database.open(url, migrate=False, max_size=4)
     done: list[Step] = []
     try:
-        campaigns, memory, transcripts = CampaignStore(db), MemoryStore(db), TranscriptStore(db)
+        campaigns, memory = steps.campaign_store(db), MemoryStore(db)
+        transcripts = TranscriptStore(db)
         now = int(time.time())
         today = dt.date.today().isoformat()
 

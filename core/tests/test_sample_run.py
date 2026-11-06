@@ -9,7 +9,6 @@ from argparse import Namespace
 from pathlib import Path
 from typing import Any
 
-from dmbot.campaigns import CampaignStore
 from dmbot.campaigns.models import CampaignError
 from dmbot.devtools import graph_key_check
 from dmbot.devtools.sample_run import __main__ as cli
@@ -101,7 +100,7 @@ class Pure(unittest.TestCase):
 class Steps(DatabaseTest):
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
-        self.campaigns = CampaignStore(self.db)
+        self.campaigns = steps.campaign_store(self.db)
         self.transcripts = TranscriptStore(self.db)
         self.said: list[str] = []
 
@@ -271,7 +270,8 @@ class Steps(DatabaseTest):
         self.assertIn("no --players entry", str(err.exception))
         async with self.db.guild(GUILD) as conn:
             await conn.execute(
-                "INSERT INTO consent_refusals (guild_id, user_id, refused_at) VALUES (%s, %s, 1)",
+                "INSERT INTO consent_refusals (guild_id, user_id, kind, refused_at)"
+                " VALUES (%s, %s, 'declined', 1)",
                 (GUILD, JAC),
             )
         with self.assertRaises(SampleError) as no:
@@ -299,9 +299,9 @@ class Steps(DatabaseTest):
         got = await steps.wait_import(self.db, GUILD, sid, say=self.say, sleep=sleep, poll_s=0)
         self.assertEqual(got, {"lines": 2, "words": 11, "calls": 1, "story": "read"})
         # with the story read switched off it ends after a few quiet polls
-        sleep2 = await self.sleep_then(
-            "UPDATE session_imports SET story_state = ''",
-        )
+        async with self.db.guild(GUILD) as conn:
+            await conn.execute("UPDATE session_imports SET story_state = ''")
+        sleep2 = await self.sleep_then("UPDATE session_imports SET story_state = ''")
         got2 = await steps.wait_import(
             self.db, GUILD, sid, say=self.say, sleep=sleep2, poll_s=0, grace_polls=2
         )

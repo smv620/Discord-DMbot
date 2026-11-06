@@ -42,6 +42,19 @@ python -m dmbot.devtools.graph_key_check BACKUP.dmbot.json.gz --docs both      #
 # options: --counts-only (ids and counts, no names)  --json OUT.json  --key OTHER_KEY.json
 ```
 
+### The one command (#3547): what dev1 runs now
+
+`sample_run` does steps 1 to 4 below by itself, with no one in Discord: it deletes the last run's sample campaign and makes a new one (only that exact name, and only when it is plainly the tool's), queues the lore the way the website's upload does and waits for the running bot to read it, accepts what was found, backs up and scores the lore, imports the session file as a past session mapped to the four test accounts, waits for the bot, accepts again, backs up and scores both, and writes the recap with no audio. It prints one block of counts and times to paste on #3545. Download the two documents above as plain text files first (the session in a timestamped form the import reads, such as `[0:00:05] ist: ...`, with the speakers named by the labels you give).
+
+```bash
+cd core
+python -m dmbot.devtools.sample_run --guild GUILD --dm DM_USER_ID \
+    --players ist=ID,jac=ID,eri=ID,owe=ID --lore lore.txt --session session.txt [--keep-old]
+# the first run prints the most paid AI calls it can use and stops; add --yes to run it
+```
+
+It needs `DATABASE_URL` and `ANTHROPIC_API_KEY` in its environment, the bot running with the lore and story switches on as the test plan says, and a DM account with a paid plan or free access (the tool never grants one). Backups go to `--backup-dir` (default `/var/lib/dmbot-sample-backups`, outside the repository). The report names which `DMBOT_` switches were on. The manual steps below are what the command does, for when one step must be run alone.
+
 ### How dev1 runs it each time (a test campaign, never a real one)
 
 Run it after any deploy that changes what the story reader or the story graph does, on a **throw-away test campaign** made only for this. The documents are public, and the report prints their names, so never run it on any other campaign.
