@@ -14,7 +14,7 @@ export const placeSpellingWords = {
   noFor: (spelling: string, place: string): string => `No, ${spelling} and ${place} are two places`,
   working: "Saving your answer…",
   saidYes: (spelling: string, place: string): string => `${spelling} is now another name for ${place}.`,
-  saidNo: (spelling: string, place: string): string => `Kept apart. DMbot won't ask again about ${spelling} and ${place}.`,
+  saidNo: (spelling: string, place: string): string => `Kept as two places. DMbot won't ask about ${spelling} and ${place} again.`,
   failed: "That didn't save. Try again. If it keeps failing, ask on the Help page.",
   loadFailed: "DMbot couldn't check for places written two ways. Reload the page to try again.",
 } as const;

@@ -65,9 +65,9 @@ export default function PlaceSpellings({ api, campaignRef, onSignedOut, onChange
               <strong>{item.place}</strong>
               {w.looksSuffix}
             </p>
-            <p class="small muted">{w.lead}</p>
+            <p class="small">{w.lead}</p>
             <div class="row">
-              <button type="button" class="button" aria-disabled={busy !== null} aria-label={w.yesFor(item.spelling, item.place)} onClick={() => busy === null && void answer(item, true)}>
+              <button type="button" class="button secondary" aria-disabled={busy !== null} aria-label={w.yesFor(item.spelling, item.place)} onClick={() => busy === null && void answer(item, true)}>
                 {w.yes}
               </button>
               <button type="button" class="button secondary" aria-disabled={busy !== null} aria-label={w.noFor(item.spelling, item.place)} onClick={() => busy === null && void answer(item, false)}>
