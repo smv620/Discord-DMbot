@@ -24,6 +24,9 @@ afterEach(() => {
   named.on = false;
 });
 
+// A line's panel loads when the line is chosen, and these tests look through several lines for a revealable one.
+vi.setConfig({ testTimeout: 30000 });
+
 const at = (suffix = ""): string => `/account/web/100.cmp1${suffix}`;
 const calls = (api: ReturnType<typeof mockApi>, prefix: string) => api.calls.filter((c) => c.startsWith(prefix));
 async function open(suffix = "", api = mockApi("table")) {
@@ -115,10 +118,11 @@ describe("a DM's Full View and Players View", () => {
       throw new ApiError("not-found");
     };
     // Open each pair's connections until one that isn't revealed shows its Reveal button.
+    // (the line panel loads when a line is chosen, so each is waited for)
     let button: HTMLButtonElement | undefined;
     for (const see of screen.getAllByRole("button", { name: /^See the connections/ })) {
       fireEvent.click(see);
-      button = screen.queryAllByRole("button", { name: /^Reveal connection \d+ to the players$/ })[0] as HTMLButtonElement | undefined;
+      button = (await screen.findAllByRole("button", { name: /^Reveal connection \d+ to the players$/ }, { timeout: 600 }).catch(() => []))[0] as HTMLButtonElement | undefined;
       if (button) break;
     }
     expect(button).toBeTruthy();
@@ -133,10 +137,11 @@ describe("a connection that can't be shown until its names are (#3426)", () => {
     api.webReveal = async () => {
       throw new ApiError(kind);
     };
+    // (the line panel loads when a line is chosen, so each is waited for)
     let button: HTMLButtonElement | undefined;
     for (const see of screen.getAllByRole("button", { name: /^See the connections/ })) {
       fireEvent.click(see);
-      button = screen.queryAllByRole("button", { name: /^Reveal connection \d+ to the players$/ })[0] as HTMLButtonElement | undefined;
+      button = (await screen.findAllByRole("button", { name: /^Reveal connection \d+ to the players$/ }, { timeout: 600 }).catch(() => []))[0] as HTMLButtonElement | undefined;
       if (button) break;
     }
     expect(button).toBeTruthy();
