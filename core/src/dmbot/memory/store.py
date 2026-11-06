@@ -2581,6 +2581,17 @@ class MemoryStore:
             )
             return {str(r["key"]) for r in await cur.fetchall()}
 
+    async def refused_spellings(self, guild_id: int, campaign_id: str) -> set[tuple[str, str]]:
+        """(entry id, `name_key`) of every other name the DM turned down: "No, two places" (#3037)
+        is remembered, so that spelling is never offered as the same place again."""
+        async with self._read(guild_id, campaign_id) as scope:
+            cur = await scope.conn.execute(
+                "SELECT entity_id, text FROM memory_aliases WHERE guild_id = %s"
+                " AND campaign_id = %s AND status = 'rejected'",
+                scope.ids,
+            )
+            return {(str(r["entity_id"]), name_key(str(r["text"]))) for r in await cur.fetchall()}
+
     async def _confirm_group_memberships(self, w: Changes, entity_id: str) -> None:
         """A name the DM just confirmed takes the memberships the group button decided for it
         (#3383, part 2): a `member_of` the DM proposed for it while it waited becomes a fact."""

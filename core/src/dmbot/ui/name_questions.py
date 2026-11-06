@@ -9,11 +9,20 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+from typing import TYPE_CHECKING
 
 import discord
 
 from dmbot.memory import lore_context
-from dmbot.memory.models import CONFIRMED, DM, REJECTED, Alias, MemoryRuleError
+from dmbot.memory import spellings as place_spellings
+from dmbot.memory.models import (
+    BACKGROUND_SOURCE,
+    CONFIRMED,
+    DM,
+    REJECTED,
+    Alias,
+    MemoryRuleError,
+)
 from dmbot.mentions import NO_PINGS
 from dmbot.ui import logic
 from dmbot.ui.dmbot_commands import _bot, _Button, _Menu, _tell
@@ -25,7 +34,13 @@ from dmbot.ui.name_background import (
     memory_of,
 )
 
+if TYPE_CHECKING:
+    from dmbot.memory.store import MemoryStore
+
 log = logging.getLogger(__name__)
+
+PERSON_YES, PERSON_NO = "✅ Yes, the same person", "❌ No, someone else"
+PLACE_YES, PLACE_NO = "✅ Yes, the same place", "❌ No, two places"
 
 
 class NameQuestions(_Menu):
@@ -42,11 +57,15 @@ class NameQuestions(_Menu):
         self.left = 0
         self.total = 0
         self.busy = asyncio.Lock()  # a second press waits for the first, so none is counted twice
+        # The same place written another way (#3037) is asked in its own words: for it the
+        # buttons and the line say "place", not "person".
+        self.spelling = False
+        self.separate = 0  # spellings answered "No, two places": each became a place of its own
         grey = discord.ButtonStyle.secondary
-        self.add_item(
-            _Button(self._yes, label="✅ Yes, the same person", style=discord.ButtonStyle.success)
-        )
-        self.add_item(_Button(self._no, label="❌ No, someone else", style=grey))
+        self.yes_button = _Button(self._yes, label=PERSON_YES, style=discord.ButtonStyle.success)
+        self.no_button = _Button(self._no, label=PERSON_NO, style=grey)
+        self.add_item(self.yes_button)
+        self.add_item(self.no_button)
         self.add_item(_Button(self._not_now, label="⏭️ Not now", style=grey))
 
     async def _waiting(self, interaction: discord.Interaction) -> list[tuple[Alias, str]]:
@@ -60,6 +79,27 @@ class NameQuestions(_Menu):
         self.left = len(waiting)
         self.total = max(self.total, self.yes + self.no + self.left)
         self.current = waiting[0] if waiting else None
+        self.spelling = False
+
+    async def _mark_spelling(self, interaction: discord.Interaction | None) -> None:
+        """Is the current question one place written two ways? Then it is asked in the words for a
+        place. Read for the one card on show; anything unclear keeps the person words."""
+        memory = memory_of(interaction) if interaction is not None else None
+        if self.current is None or memory is None:
+            return
+        alias, entry = self.current
+        try:
+            entity = await memory.resolve(self.guild_id, self.campaign_id, alias.entity_id)
+        except Exception:  # a failed read costs the place words, nothing else
+            log.exception("The kind of a suggested name could not be read")
+            return
+        self.spelling = (
+            entity is not None
+            and entity.type == place_spellings.PLACE
+            and place_spellings.place_key(alias.text) == place_spellings.place_key(entry)
+        )
+        self.yes_button.label = PLACE_YES if self.spelling else PERSON_YES
+        self.no_button.label = PLACE_NO if self.spelling else PERSON_NO
 
     async def load(self, interaction: discord.Interaction) -> bool:
         campaign = await campaign_for(interaction, self.campaign_id)
@@ -67,11 +107,14 @@ class NameQuestions(_Menu):
             return False
         self.guild_id = campaign.guild_id
         self._set(await self._waiting(interaction))
+        await self._mark_spelling(interaction)
         return self.current is not None
 
     def text(self, interaction: discord.Interaction | None = None) -> str:
         if self.current is None:
-            return f"🔎 Done. {self.yes} added as other names, {self.no} turned down."
+            turned = self.no - self.separate
+            made = f" {self.separate} kept as places of their own." if self.separate else ""
+            return f"🔎 Done. {self.yes} added as other names, {turned} turned down.{made}"
         alias, entry = self.current
         place = f" ({self.yes + self.no + 1} of {self.total})" if self.total > 1 else ""
         said = ""
@@ -79,6 +122,12 @@ class NameQuestions(_Menu):
         if sentence:
             said = f"From your text: “{markdown_safe(logic.shorten(sentence, QUOTE_SHOWN))}”\n"
         hidden = " It is a secret name: players will not see it." if alias.secret else ""
+        if self.spelling:
+            return (
+                f"🔎 **{markdown_safe(alias.text)}** looks like another way of writing "
+                f"**{markdown_safe(entry)}**.{place}\n"
+                f"{said}Nothing changes until you choose.{hidden}"
+            )
         return (
             f"🔎 **Is {markdown_safe(alias.text)} another name of "
             f"{markdown_safe(entry)}?**{place}\n"
@@ -89,6 +138,7 @@ class NameQuestions(_Menu):
         self, interaction: discord.Interaction, waiting: list[tuple[Alias, str]]
     ) -> None:
         self._set(waiting)
+        await self._mark_spelling(interaction)
         if self.current is None:
             self.stop()
         with contextlib.suppress(discord.HTTPException):
@@ -126,8 +176,27 @@ class NameQuestions(_Menu):
                 return
             if self.held is not None:
                 self.held.forget(campaign.guild_id, shown[0].id)
+            if not yes and self.spelling:
+                await self._make_second_place(memory, campaign.guild_id, campaign.id, shown[0])
+                self.separate += 1
             self.yes, self.no = self.yes + int(yes), self.no + int(not yes)
             await self._show(interaction, await self._waiting(interaction))
+
+    async def _make_second_place(
+        self, memory: MemoryStore, guild_id: int, campaign_id: str, alias: Alias
+    ) -> None:
+        """ "No, two places" (#3037): the turned-down spelling is a place of its own, waiting with
+        the other new names. The no is remembered on the first place, so the pair is not asked
+        again. A failure is logged: the answer is saved and the DM can add the place by hand."""
+        try:
+            await memory.add_entity(
+                guild_id, campaign_id, type=place_spellings.PLACE, name=alias.text,
+                source=BACKGROUND_SOURCE,
+            )  # fmt: skip
+        except MemoryRuleError as exc:
+            log.info("The second place could not be made: %s", exc)
+        except Exception:
+            log.exception("The second place could not be made")
 
     async def _yes(self, interaction: discord.Interaction) -> None:
         await self._answer(True, interaction)
