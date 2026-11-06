@@ -182,3 +182,32 @@ class ClaimUndo(Editing):
             ),
             "not_allowed",
         )
+
+
+class TheMigrationKeepsTheList(Editing):
+    async def test_the_list_after_0369_has_every_action_the_door_knows_and_claim_undo(self) -> None:
+        """0369 adds to the live list instead of writing it out, so an action another migration
+        added stays (offer-clear, clock-set, ...). Every action the bot applies is in the list."""
+        import re
+
+        async with self.db.guild(self.g) as conn:
+            cur = await conn.execute(
+                "SELECT pg_get_constraintdef(oid) AS d FROM pg_constraint"
+                " WHERE conname = 'name_actions_action_check'"
+                " AND conrelid = 'name_actions'::regclass"
+            )
+            row = await cur.fetchone()
+        assert row is not None
+        allowed = set(re.findall(r"'([a-z-]+)'", row["d"]))
+        self.assertIn("claim-undo", allowed)
+        self.assertTrue(set(wa.WAITING) <= allowed)
+        self.assertTrue(set(wa.UNNAMED_ACTIONS) <= allowed)
+
+    def test_the_migration_appends_to_the_live_list_and_does_not_write_it_out(self) -> None:
+        from pathlib import Path
+
+        import dmbot.migrations as pkg
+
+        text = (Path(pkg.__file__).parent / "0369_claim_undo_action.py").read_text()
+        self.assertIn("pg_get_constraintdef", text)
+        self.assertNotIn("CHECK (action IN", text)

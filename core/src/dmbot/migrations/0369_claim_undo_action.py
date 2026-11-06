@@ -76,16 +76,23 @@ _STEPS = "".join(
 
 SQL = (
     r"""
-    ALTER TABLE name_actions DROP CONSTRAINT name_actions_action_check;
-    ALTER TABLE name_actions ADD CONSTRAINT name_actions_action_check CHECK (action IN
-        ('spell', 'name', 'name-join', 'name-undo', 'kind', 'add-other', 'remove-other',
-         'secret', 'hide', 'merge', 'merge-many', 'remove', 'link-add', 'link-words',
-         'link-secret', 'link-remove', 'link-pin', 'link-who', 'alias-who',
-         'confirm-kinds', 'confirm-undo', 'claim-confirm', 'claim-reject', 'claim-pick',
-         'claim-unpick', 'claim-undo', 'backstory-keep', 'backstory-skip',
-         'backstory-keep-all', 'backstory-which-pick', 'backstory-which-neither',
-         'reading-place', 'reading-no', 'reading-undo', 'names-fixed-undo',
-         'spelling-yes', 'spelling-no', 'told-add', 'told-remove', 'players-line'));
+    -- The allowed actions, read back from the table as it is and one more added at the end, so an
+    -- action another migration added (offer-clear, clock-set, ...) stays in the list whatever the
+    -- order the migrations merge in.
+    DO $do$
+    DECLARE
+        d text;
+    BEGIN
+        SELECT pg_get_constraintdef(oid) INTO d FROM pg_constraint
+            WHERE conname = 'name_actions_action_check' AND conrelid = 'name_actions'::regclass;
+        IF (length(d) - length(replace(d, '])', ''))) <> 2 THEN
+            RAISE EXCEPTION 'the action list did not have the expected shape';
+        END IF;
+        ALTER TABLE name_actions DROP CONSTRAINT name_actions_action_check;
+        EXECUTE 'ALTER TABLE name_actions ADD CONSTRAINT name_actions_action_check '
+            || replace(d, '])', ', ''claim-undo''::text])');
+    END
+    $do$;
 
     CREATE OR REPLACE FUNCTION pg_temp.swap_n(def text, old text, new text, n integer) RETURNS text
     LANGUAGE plpgsql AS $f$
