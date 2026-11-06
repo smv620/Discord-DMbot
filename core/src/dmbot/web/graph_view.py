@@ -146,7 +146,7 @@ def build(src: dict[str, Any], kn: dict[str, Any], viewer: gate.Viewer) -> Graph
         edges.append(
             {
                 "id": link["id"], "a": a, "b": b, "predicate": link["predicate"],
-                "detail": "" if changed else _label(link, guard),
+                "detail": "" if changed else _label(link, guard, viewer),
                 "directional": link["directional"],
                 "secret": link["secret"], "at": link["at"], "held": None, "knownBy": None,
                 "decided": None, "revealed": True, "pinned": False,
@@ -197,10 +197,13 @@ def _name_guard(kn: dict[str, Any], seen: gate.Visible, shown: Mapping[str, str]
     return gate.NameGuard(forbidden, allowed=shown.values())
 
 
-def _label(link: Mapping[str, Any], guard: gate.NameGuard) -> str:
+def _label(link: Mapping[str, Any], guard: gate.NameGuard, viewer: gate.Viewer) -> str:
     """The link's own words, blanked when the catch-all's free text names something the viewer may
-    not be told. Other kinds carry fixed words and are not looked at."""
+    not be told. A `knows` link's detail is how one name feels about the other: that is the DM's
+    Reputation, so it goes to the DM alone (#3610). Other kinds carry fixed words."""
     detail = str(link["detail"] or "")
+    if link["predicate"] == "knows" and not viewer.dm:
+        return ""
     if link["predicate"] != FALLBACK_PREDICATE or not detail:
         return detail
     return gate.safe_label(detail, guard)

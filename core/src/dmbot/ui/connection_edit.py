@@ -149,7 +149,7 @@ async def _find(
 
 
 def _said(found: Found) -> str:
-    return _md(sentence(found.names, found.relation) or "that connection")
+    return _md(sentence(found.names, found.relation, feeling=True) or "that connection")
 
 
 async def show_one(
@@ -284,7 +284,11 @@ class OneConnection(_Menu):
         subject = found.names.entities.get(first)
         other = found.names.entities.get(second)
         words = link_words(
-            stored.predicate, stored.detail, stored.directional, subject.type if subject else ""
+            stored.predicate,
+            stored.detail,
+            stored.directional,
+            subject.type if subject else "",
+            feeling=True,
         )
         return f"{subject.name if subject else '?'} {words} {other.name if other else '?'}"
 
