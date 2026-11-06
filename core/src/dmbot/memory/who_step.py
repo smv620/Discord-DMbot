@@ -52,6 +52,7 @@ class Report:
 
     names: int = 0  # waiting names looked at
     no_choices: int = 0  # ... of which nothing could be offered (the caller counts these: `build`)
+    no_lines: int = 0  # ... said in a session, but no line of a recorded person is left
     calls: int = 0
     failed: int = 0
     ranked: int = 0  # names with at least one answer kept
@@ -69,6 +70,7 @@ class Report:
         return (
             f"Who is this: {self.names} name(s), {self.ranked} ranked, {self.empty} with no "
             f"answer, {self.omitted} left out, {self.no_choices} with no choice, "
+            f"{self.no_lines} with no lines, "
             f"{self.refused} refused, {self.not_kept} not kept, {self.dropped} answer(s) dropped, "
             f"{self.stopped_early} stopped early, {self.dropped_for_consent} dropped for consent, "
             f"{self.calls} call(s), {self.failed} failed, {self.unsent} left for next time"

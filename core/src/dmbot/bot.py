@@ -8853,26 +8853,40 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 if who_step.is_open_name(e)
             ]
             missing = set(await answers.missing(gid, cid, [e.id for e in open_names]))
-            waiting = [e for e in open_names if e.id in missing][:WHO_PER_SESSION]
-            if not waiting:
-                return
+            waiting = [e for e in open_names if e.id in missing]
+            if not waiting or allowed <= 0:
+                return  # (nothing to ask, or no call left: no lookup or transcript is read)
             agreed = await self.consent.consenting(gid)
             dm_ids = {table.dm_user_id, *table.dm_user_ids}  # (the same set the extractor uses)
             lookup = CampaignLookup.build(await memory.lookup_data(gid, cid))
+            # (every open name is left out, not only the ones asked this time: a name that waits is
+            # never offered as another's choice, even if it is confirmed between the two reads)
             choices = who_step.candidates_from(
-                lookup, include_hidden=True, leave_out=[e.id for e in waiting]
+                lookup, include_hidden=True, leave_out=[e.id for e in open_names]
             )
             report = who_step.Report()
             pending: list[who_step.Pending] = []
             for entity in waiting:
-                lines, speakers = await who_step.lines_for(
-                    entity.id,
-                    lambda i: memory.mentions(gid, cid, i),
-                    transcripts,
-                    gid,
-                    dm_ids,
-                    agreed,
+                if len(pending) >= WHO_PER_SESSION:
+                    break  # (the cap counts names asked about, not names with nothing to offer)
+                report.names += 1
+                probe = who_step.build(
+                    entity, choices, number=0, scene_speaker_ids=(), include_hidden=True
                 )
+                if probe is None:
+                    report.no_choices += 1  # (nothing to offer: its lines are not even read)
+                    continue
+                pointers = await memory.mentions(gid, cid, entity.id)
+
+                async def held(_i: str, found: list[tuple[str, int | None]] = pointers) -> Any:
+                    return found
+
+                lines, speakers = await who_step.lines_for(
+                    entity.id, held, transcripts, gid, dm_ids, agreed
+                )
+                if pointers and not lines:
+                    report.no_lines += 1  # (it was said, but no line of a recorded person is left)
+                    continue
                 built = who_step.build(
                     entity,
                     choices,
@@ -8886,6 +8900,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     report.no_choices += 1
                     continue
                 pending.append(built)
+            if not pending:
+                log.info(report.line())
+                return
 
             async def count_call() -> None:
                 await transcripts.record_extraction(
@@ -8905,7 +8922,6 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 count_call=count_call,
                 report=report,
             )
-            report.names += report.no_choices  # (the names asked about, with and without choices)
             log.info(report.line())
 
     async def extract_claims(self, table: Table, ended_at: int) -> None:
