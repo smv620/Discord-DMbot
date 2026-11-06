@@ -35,7 +35,7 @@ from dmbot.memory.link_words import (
 )
 from dmbot.memory.web_actions import RETAKE_AFTER_S
 from dmbot.memory.who_resolve import checked_line
-from dmbot.web import all_names, graph_view, link_sources, which_choices
+from dmbot.web import all_names, graph_view, link_sources, pc_icons, which_choices
 from dmbot.web.names import _parse
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
 from dmbot.web.sessions import Session
@@ -354,6 +354,8 @@ async def read_web(
     # where each connection came from (#2946): the DM's own view gets the full value, any other
     # look (a player's, or Players View) the player's
     await link_sources.with_link_sources(db, session, ref, page, full=bool(own_view))
+    # each player character's picture, for the nodes this person may see (#3621)
+    await pc_icons.with_icons(db, session, ref, page)
     return page
 
 
