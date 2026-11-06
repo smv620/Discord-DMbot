@@ -694,8 +694,9 @@ def prose_message(
         pairs = "; ".join(f"{quoted(a)} and {quoted(b)}" for a, b in apart[:50])
         parts.append(
             "Each pair of names in <apart> has a connection the Dungeon Master keeps secret. They "
-            "may be in the same scene, but never say or hint that they are connected, and never "
-            f"explain how they know each other.\n<apart>\n{pairs}\n</apart>"
+            "may be in the same scene. You may hint at the connection cryptically, such as a "
+            "familiar look passing between them, but never state it and never explain how they "
+            f"know each other.\n<apart>\n{pairs}\n</apart>"
         )
     parts.append(f"Game day: {day}." if day else "The game day is not known: do not mention a day.")
     return "\n".join(parts)

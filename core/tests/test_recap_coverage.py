@@ -71,7 +71,7 @@ class Pure(unittest.TestCase):
     ) -> None:
         # must-have 14 (#3632): the check reads the outcome, not just the mention
         text = covg.SYSTEM.lower()
-        for phrase in ("says how it ended", "stopped first", "invent"):
+        for phrase in ("says how it ended", "stopped first", "invent", "every name it uses"):
             self.assertIn(phrase, text)
 
     def test_a_campaign_with_must_haves_may_spend_one_more_call_when_waiting(self) -> None:

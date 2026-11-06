@@ -70,6 +70,20 @@ Removing every line brings the defaults back, the same way the style examples wo
     flaws shown, new skills learned, and shifts in ideals, bonds or motivations.
 13. **Characters the party meets (NPCs):** include the ones who matter to the story and leave out
     the ones who only pass by.
+15. **Every name earns its place:** anyone the recap names gets a nod to why they matter in this
+    scene: what they did, or how they tie in. A name that played no part in the session's events is
+    left out, not dropped in as a label. If one is used, it is tied to the moment ("Cerric loosed
+    magic upon their foes; Syllar Sparkwalker taught him well."). Nothing is invented to give a
+    name a reason: if nothing in the session or the players' view supports one, the name goes.
+    (Owner, 2026-11-06, #3664. It is number 15 because it was added last, after 14.)
+
+## Secret connections in a recap (owner, 2026-11-06, #3664; changes #2591)
+
+A pair of characters with a connection the DM keeps secret may appear in the same scene. The recap
+may give a **cryptic nod** ("a familiar look passed between them") but never states the connection
+and never explains how they know each other; the DM reads the script before the table does. A
+**secret name** never appears at all: the name checks, near-secret spelling refusals and retries are
+unchanged.
 
 ## Must-haves and recap examples (owner, 2026-11-03)
 
