@@ -90,7 +90,7 @@ def predicate_for(words: str) -> tuple[str, str]:
     # a catch-all labelled with them (#3606). A word outside the nine stays the catch-all.
     said = _KNOWS_FEELING.fullmatch(clean)
     if said is not None and (word := reputation_words.word_of(said.group(1))) is not None:
-        return "knows", word
+        return "knows", ("" if word == reputation_words.NEUTRAL else word)  # (neutral stores none)
     return FALLBACK_PREDICATE, clean
 
 

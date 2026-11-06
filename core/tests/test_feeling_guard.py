@@ -48,7 +48,53 @@ class TheRule(unittest.TestCase):
             self.assertEqual(words.held_to_the_quote(word, "x"), (word, False))
 
 
+class TheCuesAreWholeWords(unittest.TestCase):
+    def test_a_word_that_only_holds_a_cue_is_no_cue(self) -> None:
+        for quote in (
+            "Orla, a skilled fighter, spoke with Brant",
+            "Orla walked toward Brant",
+            "Orla gave Brant a glove",
+            "Orla was a hunter of the Vale",
+        ):
+            with self.subTest(quote):
+                self.assertEqual(words.held_to_the_quote("hostile", quote), ("distrusts", True))
+        self.assertEqual(
+            words.held_to_the_quote("devoted", "Orla gave Brant a glove"), ("close", True)
+        )
+
+    def test_swearing_revenge_is_not_devotion(self) -> None:
+        self.assertEqual(
+            words.held_to_the_quote("devoted", "Orla swore revenge on Brant"), ("close", True)
+        )
+
+    def test_loyalty_oaths_do_not_make_a_sworn_enemy(self) -> None:
+        self.assertEqual(
+            words.held_to_the_quote("sworn enemy", "Orla is sworn to protect Brant"),
+            ("distrusts", True),
+        )
+        self.assertEqual(
+            words.held_to_the_quote("sworn enemy", "Orla vowed to kill Brant"),
+            ("sworn enemy", False),
+        )
+
+    def test_a_quote_that_says_the_word_keeps_it(self) -> None:
+        self.assertEqual(
+            words.held_to_the_quote("hostile", "Orla was hostile to Brant"), ("hostile", False)
+        )
+        self.assertEqual(
+            words.held_to_the_quote("hostile", "Brant was her foe"), ("hostile", False)
+        )
+
+
 class OnTheLoreRead(unittest.TestCase):
+    def test_the_old_word_enemy_with_no_cue_in_the_quote_is_held_too(self) -> None:
+        text = "Orla and Brant had a heated debate."
+        item = {"a": "Orla", "how": "enemy", "b": "Brant", "quote": text[:-1]}
+        lost: Counter[str] = Counter()
+        got = bg.read_connections(json.dumps({"connections": [item]}), text, dropped=lost)
+        self.assertEqual([(c.how, c.words) for c in got], [("knows", "distrusts")])
+        self.assertEqual(lost["feeling_demoted"], 1)
+
     def test_a_debate_read_as_hostile_is_kept_as_distrusts_and_counted(self) -> None:
         got, lost = read("hostile", "Orla and Brant had a heated debate")
         self.assertEqual(got, [("knows", "distrusts")])

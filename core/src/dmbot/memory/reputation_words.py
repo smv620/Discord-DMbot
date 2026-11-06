@@ -95,15 +95,18 @@ def sign_of(detail: str) -> int:
 # word), so a model that over-reads is still held. They cannot read a negation ("never hated him"):
 # that errs toward keeping the strong word, and the DM's Reputation has the last word anyway.
 _CUES = {
-    SWORN_ENEMY: re.compile(r"sworn|vow|oath|nemesis|arch-?enem|blood feud|vendetta", re.I),
-    HOSTILE: re.compile(
-        r"hate|hatred|enem|kill|murder|fight|fought|war\b|attack|hunt|despis|loath|feud|"
-        r"revenge|vengeance|threat|assault",
+    SWORN_ENEMY: re.compile(
+        r"\bsworn\s+(?:enem|foe)|\bvow\w*\s+(?:to\s+)?(?:kill|destroy|avenge|against)|"
+        r"\bnemesis|\barch-?enem|\bblood feud|\bvendetta",
         re.I,
     ),
-    DEVOTED: re.compile(
-        r"love|loyal|devot|adore|worship|faithful|fealty|swore|sworn|lifelong", re.I
+    HOSTILE: re.compile(
+        r"\bhate|\bhatr|\benem|\bfoe|\bhostil|\bnemesis|\bkill|\bmurder|\bfight(?!er)|"
+        r"\bfought|\bwar\b|\battack|\bhunt(?!er)|\bdespis|\bloath|\bfeud|\brevenge|"
+        r"\bvengeance|\bthreat|\bassault|\bbetray",
+        re.I,
     ),
+    DEVOTED: re.compile(r"\blove|\bloyal|\bdevot|\badore|\bworship|\bfaithful|\bfealty", re.I),
 }
 _DEMOTED = {SWORN_ENEMY: HOSTILE, HOSTILE: DISTRUSTS, DEVOTED: CLOSE}
 

@@ -14,8 +14,9 @@ class ReadBack(unittest.TestCase):
         for word in reputation_words.WORDS:
             with self.subTest(word):
                 words = f"knows ({word})"  # (how `link_words` words it for the DM)
-                self.assertEqual(predicate_for(words), ("knows", word))
-                self.assertEqual(predicate_for_either(words), ("knows", word, False))
+                stored = "" if word == "neutral" else word
+                self.assertEqual(predicate_for(words), ("knows", stored))
+                self.assertEqual(predicate_for_either(words), ("knows", stored, False))
 
     def test_spacing_case_and_hyphens_do_not_matter(self) -> None:
         self.assertEqual(predicate_for("Knows ( Sworn-Enemy )"), ("knows", "sworn enemy"))
@@ -27,6 +28,9 @@ class ReadBack(unittest.TestCase):
         self.assertEqual(
             predicate_for("knows (wary) well"), ("associated_with", "knows (wary) well")
         )
+
+    def test_neutral_stores_no_word_as_a_lore_read_does(self) -> None:
+        self.assertEqual(predicate_for("knows (neutral)"), ("knows", ""))
 
     def test_plain_words_are_as_before(self) -> None:
         self.assertEqual(predicate_for("is a member of"), ("member_of", ""))
