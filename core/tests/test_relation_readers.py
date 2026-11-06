@@ -120,6 +120,7 @@ STORE = {
     "change_relation_words": "requires a confirmed connection",
     "undo_connection": DM_ONLY + ": an Undo",
     "link_party": DM_ONLY + ": a writer's own check (every status); shows players nothing",
+    "record_link_source": "writes: remembers the upload label of a kept connection; reads no tie",
 }
 
 
