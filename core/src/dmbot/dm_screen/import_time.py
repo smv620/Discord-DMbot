@@ -17,6 +17,7 @@ import contextlib
 import logging
 import re
 from collections import OrderedDict
+from dataclasses import dataclass
 from typing import Any
 
 import discord
@@ -26,6 +27,7 @@ from dmbot.dm_screen import clock as clock_screen
 from dmbot.dm_screen import effects as timer_screen
 from dmbot.mentions import NO_PINGS
 from dmbot.timebot import clock as game
+from dmbot.transcript import import_clock as clock_offers
 
 log = logging.getLogger(__name__)
 
@@ -94,6 +96,9 @@ class ImportTimeButton(
                 await _reply(interaction, NOT_A_DM)
                 return
             if self.what == "no":
+                store = getattr(client, "import_clock_offers", None)
+                if store is not None:  # the website's page reads the same row
+                    await store.dismiss_all(campaign.guild_id, campaign.id)
                 await self._close(interaction, "Not now.")
                 return
             await interaction.response.defer()
@@ -141,56 +146,86 @@ class ImportTimeButton(
     ) -> str | None:
         """Set the clock through the same path as a DM's manual set. The note to put on the offer,
         or None if nothing moved (the presser has been told why)."""
-        before = await client.clocks.get(campaign.guild_id, campaign.id)
-        if before is None:
-            await _reply(interaction, NO_CLOCK)
+        offers = getattr(client, "import_clock_offers", None)
+        offer = None
+        if offers is not None:
+            offer = await offers.take_minute(campaign.guild_id, campaign.id, minute)
+            if offer is None and await offers.known_minute(campaign.guild_id, campaign.id, minute):
+                await _reply(interaction, ALREADY)  # answered on the website, or replaced
+                return None
+        done = await set_clock(client, campaign, minute, interaction.user.id)
+        if offers is not None and offer is not None:
+            await offers.finish(campaign.guild_id, campaign.id, offer.session_id, done.state)
+        if done.code != SET:
+            await _reply(interaction, done.text)
             return None
-        if before.split:
-            await _reply(interaction, SPLIT)
-            return None
-        if minute <= before.clock.minute:
-            await _reply(interaction, PAST)  # never backwards, and never "set" to where it is
-            return None
-        try:
-            result = await clock_screen.press(
-                client,
-                campaign.guild_id,
-                campaign.id,
-                interaction.user.id,
-                "set",
-                set_to=minute,
-                refuse_if_split=True,
-            )
-        except CampaignError as exc:
-            await _reply(interaction, str(exc))
-            return None
-        if result.before is None or result.after is None:
-            await _reply(interaction, NO_CLOCK)
-            return None
-        if result.after.minute == result.before.minute:
-            await _reply(interaction, SPLIT)
-            return None
-        # The clock has moved. What follows only shows it: a failure there is logged, never a
-        # reason to leave the buttons on (a second press would set it again).
-        try:
-            stored = await client.clocks.get(campaign.guild_id, campaign.id)
-            if stored is not None:
-                await clock_screen.show(client, campaign, stored)
-                await clock_screen.update_players(client, campaign, "set", result)
-                await timer_screen.announce_due(client, campaign, stored.clock.minute)
-            await clock_screen.say(
-                client,
-                campaign,
-                [
-                    f"🕰️ Clock set to {game.short_label(result.after.minute)} "
-                    "(where the imported session ended).",
-                    *result.lines,
-                ],
-                clock_screen.undo_id(result.before, result.after),
-            )
-        except Exception:
-            log.exception("The clock was set, but showing it failed")
-        return f"Clock set to {game.short_label(result.after.minute)}."
+        return done.text
+
+
+@dataclass(frozen=True, slots=True)
+class Moved:
+    """What `set_clock` did. `code` is SET or why not; `text` is the note on the offer (SET) or
+    the reply that says why nothing moved; `state` is the offer's end for `import_clock_offers`."""
+
+    code: str
+    text: str
+    state: str
+
+
+SET, REFUSED, UNSET, STUCK, BEHIND = "set", "refused", "no_clock", "split", "past"
+
+
+async def set_clock(client: Any, campaign: Any, minute: int, user_id: int) -> Moved:
+    """Set the clock to where an imported session ended, through the same path as a DM's manual
+    set (#2979): the clock redrawn, the players' line, any timers due and a DM-screen note with
+    Undo. Shared by Discord's Set it and the website's queued choice (#3199). The caller has
+    checked that `user_id` is a DM. Never backwards, never on a split party, never with no clock."""
+    before = await client.clocks.get(campaign.guild_id, campaign.id)
+    if before is None:
+        return Moved(UNSET, NO_CLOCK, clock_offers.EXPIRED)
+    if before.split:
+        return Moved(STUCK, SPLIT, clock_offers.SPLIT)
+    if minute <= before.clock.minute:
+        return Moved(
+            BEHIND, PAST, clock_offers.MOVED_ON
+        )  # never backwards, never "set" to where it is
+    try:
+        result = await clock_screen.press(
+            client,
+            campaign.guild_id,
+            campaign.id,
+            user_id,
+            "set",
+            set_to=minute,
+            refuse_if_split=True,
+        )
+    except CampaignError as exc:
+        return Moved(REFUSED, str(exc), clock_offers.OFFERED)
+    if result.before is None or result.after is None:
+        return Moved(UNSET, NO_CLOCK, clock_offers.EXPIRED)
+    if result.after.minute == result.before.minute:
+        return Moved(STUCK, SPLIT, clock_offers.SPLIT)
+    # The clock has moved. What follows only shows it: a failure there is logged, never a
+    # reason to leave the buttons on (a second press would set it again).
+    try:
+        stored = await client.clocks.get(campaign.guild_id, campaign.id)
+        if stored is not None:
+            await clock_screen.show(client, campaign, stored)
+            await clock_screen.update_players(client, campaign, "set", result)
+            await timer_screen.announce_due(client, campaign, stored.clock.minute)
+        await clock_screen.say(
+            client,
+            campaign,
+            [
+                f"🕰️ Clock set to {game.short_label(result.after.minute)} "
+                "(where the imported session ended).",
+                *result.lines,
+            ],
+            clock_screen.undo_id(result.before, result.after),
+        )
+    except Exception:
+        log.exception("The clock was set, but showing it failed")
+    return Moved(SET, f"Clock set to {game.short_label(result.after.minute)}.", clock_offers.SET)
 
 
 async def _reply(interaction: discord.Interaction, text: str) -> None:

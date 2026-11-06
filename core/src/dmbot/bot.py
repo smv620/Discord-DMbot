@@ -426,6 +426,7 @@ from dmbot.timebot.effects import EffectsSection, EffectStore
 from dmbot.timebot.store import ClockSection, ClockStore
 from dmbot.transcript import (
     fix_notes,
+    import_clock,
     left_out,
     lookback,
     name_pass_run,
@@ -457,6 +458,7 @@ from dmbot.transcript.cleaner import (
 )
 from dmbot.transcript.close_calls import CloseCalls
 from dmbot.transcript.export import clock
+from dmbot.transcript.import_clock import ImportClockOffers
 from dmbot.transcript.import_consent import (
     ImportConsentsSection,
     SpeakerErasuresSection,
@@ -929,6 +931,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self.memory = memory
         # Secrets said at the table, recorded for the DM's summary; nothing applies them yet (#2410)
         self.exposures = ExposureStore(memory._db) if memory is not None else None
+        # The offers to set the clock from an imported session, read by the website too (#3199).
+        self.import_clock_offers = ImportClockOffers(memory._db) if memory is not None else None
         self.lookup = (
             LookupCache(memory, in_use=self._campaign_has_a_table) if memory is not None else None
         )
@@ -11190,7 +11194,12 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         if self.clocks is None or self.transcripts is None:
             return
         campaign = await self.campaigns.get(gid, ready.campaign_id)
-        if campaign is None or campaign.dm_screen_channel_id is None:
+        if campaign is None:
+            return
+        # (the website's page reads the offer too, so it is made whether or not the campaign has a
+        # DM screen to post it on; only the Discord post needs the channel)
+        screen = campaign.dm_screen_channel_id
+        if screen is None and self.import_clock_offers is None:
             return
         stored = await self.clocks.get(gid, campaign.id)
         if stored is None:
@@ -11222,14 +11231,64 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         )  # fmt: skip
         if target <= stored.clock.minute:
             return
+        await self._keep_import_clock_offer(
+            gid, campaign.id, ready.session_id, target, split=stored.split
+        )
+        if screen is None:
+            return
         if stored.split:
-            await self.post(campaign.dm_screen_channel_id, import_time_screen.SPLIT_WHY)
+            await self.post(screen, import_time_screen.SPLIT_WHY)
             return
         await self.post(
-            campaign.dm_screen_channel_id,
+            screen,
             import_time.offer_text(target),
             view=import_time_screen.offer_view(campaign.id, target),
         )
+
+    async def _keep_import_clock_offer(
+        self, gid: int, campaign_id: str, session_id: str, minute: int, *, split: bool
+    ) -> None:
+        """Write the offer where the website's page reads it (#3199): a failure is logged by its
+        type and never stops the Discord post."""
+        if self.import_clock_offers is None:
+            return
+        try:
+            await self.import_clock_offers.offer(
+                gid,
+                campaign_id,
+                session_id,
+                minute,
+                import_clock.SPLIT if split else import_clock.OFFERED,
+            )
+        except Exception as exc:
+            log.warning("Import time: the offer could not be kept: %s", type(exc).__name__)
+
+    def _import_clock_choice(self, guild_id: int) -> web_actions.ClockChoiceFn:
+        """The website's answer to an import clock offer (#3199), applied the way Discord's two
+        buttons do it: the offer is held for this answer (a second answer, from either place,
+        finds it taken), the clock is set by the one `set_clock` function, and the offer's row
+        says how it ended. Counts and codes only in the log."""
+
+        async def choose(campaign_id: str, session_id: str, want_set: bool, user_id: int) -> None:
+            offers = self.import_clock_offers
+            campaign = await self.campaigns.get(guild_id, campaign_id)
+            if offers is None or campaign is None or user_id not in campaign.dm_user_ids:
+                return
+            if not want_set:
+                await offers.dismiss(guild_id, campaign_id, session_id)
+                return
+            offer = await offers.take(guild_id, campaign_id, session_id)
+            if offer is None:
+                return  # answered already (in Discord, say) or replaced: the row is the truth
+            try:
+                done = await import_time_screen.set_clock(self, campaign, offer.minute, user_id)
+            except Exception:
+                await offers.finish(guild_id, campaign_id, session_id, import_clock.OFFERED)
+                raise
+            await offers.finish(guild_id, campaign_id, session_id, done.state)
+            log.info("Import time: a website answer, %s", done.code)
+
+        return choose
 
     async def _import_time_total(self, cues: tuple[str, ...], start: int) -> int | None:
         """The one question over an imported session's cue lines: the minutes they pass in all,
@@ -11716,6 +11775,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                                 named_batch=self._named_batch_for(guild.id),
                                 look_up=self._player_lookup(guild.id),
                                 actions=store,
+                                clock=self._import_clock_choice(guild.id),
                             )
                         )
                     except Exception as exc:  # the row must never stay "working" for a bug

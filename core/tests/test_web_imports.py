@@ -1242,6 +1242,7 @@ class TheProgress(WithImports):
                     "namesUnchecked": False,
                     "recap": None,
                     "story": None,  # (the story read has not started)
+                    "clock": None,  # (no offer to set the clock for it, #3199)
                     "progress": {
                         "stage": "cleaning",
                         "startedAt": got["sessions"][0]["progress"]["startedAt"],
@@ -1253,6 +1254,33 @@ class TheProgress(WithImports):
                 }
             ],
         )
+
+    async def test_the_clock_offer_of_a_session_rides_its_row_for_a_dm_only(self) -> None:
+        from dmbot.timebot import clock as game
+        from dmbot.transcript.import_clock import ImportClockOffers
+
+        done = await self.confirm(
+            {"mapping": MAPPING, "sessions": [{"file": "a.txt", "date": "2026-09-14"}]},
+            ("a.txt", CRAIG),
+        )
+        async with self.db.guild(THURSDAY.id) as conn:
+            cur = await conn.execute("SELECT session_id FROM session_imports LIMIT 1")
+            row = await cur.fetchone()
+        assert row is not None
+        minute = game.from_day_and_time(5, 19)
+        offers = ImportClockOffers(self.db)
+        await offers.offer(THURSDAY.id, self.one.id, row["session_id"], minute)
+        got = await imports.progress(
+            self.web, self.session, self.ref_c, done["importId"], outside=None
+        )
+        shown = got["sessions"][0]["clock"]
+        self.assertEqual((shown["state"], shown["label"]), ("offered", game.short_label(minute)))
+        self.assertNotIn("setTo", shown)
+        await offers.settle(THURSDAY.id, self.one.id, row["session_id"], "set")
+        again = await imports.progress(
+            self.web, self.session, self.ref_c, done["importId"], outside=None
+        )
+        self.assertEqual(again["sessions"][0]["clock"]["setTo"], game.short_label(minute))
 
     async def stage(self, imp_id: str) -> dict[str, Any]:
         got = await imports.progress(self.web, self.session, self.ref_c, imp_id, outside=None)

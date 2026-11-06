@@ -107,6 +107,9 @@ NOT_IN_BACKUP: dict[str, str] = {
     "pressing the button again makes it (#3244)",
     "theatre_lines": "the theatrical transcript of a session (DM-only): made from the cleaned "
     "lines by an AI and made again on request, never carries content of its own (#3244)",
+    "import_clock_offers": "the game minute an imported session ended at and what became of the "
+    "offer to set the clock there: a minute and a state code, made again by the next import; a "
+    "pending offer means nothing after a restore (#3199)",
     "memory_link_sources": "the upload label a kept connection came from, for the line panel: "
     "provenance of working data, never a word of the upload; a restored campaign's connections "
     "read as added by hand (#2946)",
