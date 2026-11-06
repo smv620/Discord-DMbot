@@ -118,6 +118,13 @@ class TheQuestion(unittest.IsolatedAsyncioTestCase):
         self.assertIn("2 more after this one.", text)
         self.assertIn("Nothing is saved until you press Record.", text)
 
+    def test_the_card_says_what_kind_of_deed_record_will_keep(self) -> None:
+        rescue = Waiting(
+            PID, "the party", "Saved Brindle", ("Brindle",), "Helped them", 1, "rescue"
+        )
+        self.assertIn("“Saved Brindle” (a rescue)", dc.card(rescue, 1))
+        self.assertNotIn("(a ", dc.card(DEED, 1))  # (no kind: nothing added)
+
     def test_the_tellings_markdown_cannot_format_or_ping(self) -> None:
         text = dc.card(Waiting(PID, "*Cerric*", "@everyone **loud**", ("<@1>",), "Hurt them", 1), 1)
         self.assertIn("\\*\\*loud\\*\\*", text)  # (escaped, so it does not format)

@@ -30,6 +30,11 @@ log = logging.getLogger(__name__)
 ONLY_DMS = "Only a DM of this campaign can answer this."
 NOT_AVAILABLE = "DMbot can't do that right now. Try again in a minute."
 FAILED = "Couldn't do that. Try again in a minute."
+# What kind of deed it was, in words, so the DM sees what Record will keep (#3236)
+KIND_WORDS = {
+    "attack": "fight", "kill": "killing", "rescue": "rescue", "save": "saving",
+    "steal": "theft", "help": "favour",
+}  # fmt: skip
 NONE_LEFT = "No deeds are waiting. DMbot will ask after a later session if it notices more."
 
 
@@ -57,9 +62,10 @@ def card(deed: Waiting, left: int) -> str:
     text = discord.utils.escape_markdown(deed.text)
     viewers = ", ".join(f"**{discord.utils.escape_markdown(v)}**" for v in deed.viewers)
     landed = DEED_VERB.get(deed.effect, "touched")
+    kind = f" (a {KIND_WORDS[deed.kind]})" if deed.kind in KIND_WORDS else ""
     more = f"\n_{left - 1} more after this one._" if left > 1 else ""
     return (
-        f"🛡️ **{who}**: “{text}”\n"
+        f"🛡️ **{who}**: “{text}”{kind}\n"
         f"It mattered to {viewers} (it {landed} them). Record it?{more}\n"
         "Nothing is saved until you press Record."
     )

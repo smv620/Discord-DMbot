@@ -55,7 +55,7 @@ from dmbot.transcript.topics import OFF_TOPIC
 log = logging.getLogger(__name__)
 
 PROMPT_VERSION = "extractor-1"  # bump when SYSTEM changes (it is recorded with every claim)
-DEED_PROMPT_VERSION = "deeds-1"  # bump when deed_reading.DEED_SYSTEM changes (stored with each)
+DEED_PROMPT_VERSION = "deeds-2"  # bump when deed_reading.DEED_SYSTEM changes (stored with each)
 READING_PROMPT_VERSION = "readings-1"  # bump when readings.READING_SYSTEM changes
 MAX_TOKENS = 3000  # per batch: a minute of talk gives a few dozen claims. Haiku 5.5 writes about
 # three times what Haiku 4.5 did (9 of the story answers were cut off at 1500, #2152)
@@ -265,6 +265,7 @@ class Report:
     deeds_failed: int = 0  # deed calls that failed (the claims pass is not affected)
     deeds_cut: int = 0  # deed answers that stopped at the length limit
     deeds_stored: int = 0  # proposals kept for the DM to record (#3175)
+    deeds_kind_dropped: int = 0  # a kind that was not one of the fixed words (#3236)
     # The words: never logged (so never in a repr either). Held for the DM's press; whoever stores
     # them must keep only those whose speakers are all recorded *then* (PR 2b).
     deed_proposals: list[DeedProposal] = field(default_factory=list, repr=False)
@@ -295,7 +296,8 @@ class Report:
             + (
                 f", deeds: {self.deeds} found, {self.deeds_refused} refused,"
                 f" {self.deeds_repeated} repeated, {self.deeds_failed} failed,"
-                f" {self.deeds_cut} cut short, {self.deeds_stored} kept"
+                f" {self.deeds_cut} cut short, {self.deeds_stored} kept,"
+                f" {self.deeds_kind_dropped} unknown kind(s)"
                 if self.deeds
                 or self.deeds_refused
                 or self.deeds_repeated
@@ -365,6 +367,7 @@ async def _ask_deeds(
     report.deeds += len(kept)
     report.deeds_refused += got.refused + (len(got.deeds) - len(kept))
     report.deeds_repeated += got.repeated
+    report.deeds_kind_dropped += got.kind_dropped
     if answer.cut:
         report.deeds_cut += 1
     report.deed_proposals.extend(kept)

@@ -17,7 +17,7 @@ from typing import Any
 
 from dmbot.campaigns.models import CampaignError
 from dmbot.db import Conn
-from dmbot.memory.models import DEED_TEXT_MAX, DEED_VIEWERS_MAX, NAME_MAX, is_id
+from dmbot.memory.models import DEED_KINDS, DEED_TEXT_MAX, DEED_VIEWERS_MAX, NAME_MAX, is_id
 from dmbot.memory.standing import DEED_SCORE
 
 DAMAGED = "This backup file is damaged (bad deed proposals)."
@@ -26,7 +26,7 @@ INT64_MAX = 2**63 - 1
 STATUSES = ("proposed", "recorded", "dismissed")
 _KEYS = {
     "id", "doer", "text", "viewers", "effect", "lines", "speaker_ids", "session_started_at",
-    "prompt_version", "model", "status", "created_at", "decided_at",
+    "prompt_version", "model", "status", "created_at", "decided_at", "kind",
 }  # fmt: skip
 
 Row = tuple[Any, ...]
@@ -46,7 +46,9 @@ def _checked(rows: object) -> list[Row]:
         raise CampaignError(DAMAGED)
     out: list[Row] = []
     ids: set[str] = set()
-    for r in rows:
+    for raw in rows:
+        # A file from before the deed's kind (#3236) has none: it reads as no kind.
+        r = {"kind": "", **raw} if isinstance(raw, dict) else raw
         if not (
             isinstance(r, dict)
             and set(r) == _KEYS
@@ -67,6 +69,7 @@ def _checked(rows: object) -> list[Row]:
             and (r["session_started_at"] is None or _int(r["session_started_at"], 1, INT64_MAX))
             and _text(r["prompt_version"], 1, 40)
             and _text(r["model"], 0, 80)
+            and r["kind"] in ("", *DEED_KINDS)
             and r["status"] in STATUSES
             and _int(r["created_at"], 1, INT64_MAX)
             and (r["decided_at"] is None or _int(r["decided_at"], 1, INT64_MAX))
@@ -90,7 +93,8 @@ class DeedProposalsSection:
     async def dump(self, conn: Conn, guild_id: int, campaign_id: str) -> list[Any]:
         cur = await conn.execute(
             "SELECT id, doer, text, viewers, effect, lines, speaker_ids, session_started_at,"
-            " prompt_version, model, status, created_at, decided_at FROM memory_deed_proposals"
+            " prompt_version, model, status, created_at, decided_at, kind"
+            " FROM memory_deed_proposals"
             " WHERE guild_id = %s AND campaign_id = %s ORDER BY created_at, id LIMIT %s",
             (guild_id, campaign_id, ROWS_MAX),
         )
@@ -105,6 +109,7 @@ class DeedProposalsSection:
                 "prompt_version": r["prompt_version"], "model": r["model"], "status": r["status"],
                 "created_at": int(r["created_at"]),
                 "decided_at": None if r["decided_at"] is None else int(r["decided_at"]),
+                "kind": r["kind"],
             }
             for r in await cur.fetchall()
         ]  # fmt: skip
@@ -122,14 +127,14 @@ class DeedProposalsSection:
             await cursor.executemany(
                 "INSERT INTO memory_deed_proposals (guild_id, campaign_id, id, doer, text,"
                 " viewers, effect, lines, speaker_ids, session_started_at, prompt_version, model,"
-                " status, created_at, decided_at)"
-                " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                " status, created_at, decided_at, kind)"
+                " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
                 [
                     (
                         guild_id, campaign_id, r[at["id"]], r[at["doer"]], r[at["text"]],
                         r[at["viewers"]], r[at["effect"]], r[at["lines"]], r[at["speaker_ids"]],
                         r[at["session_started_at"]], r[at["prompt_version"]], r[at["model"]],
-                        r[at["status"]], r[at["created_at"]], r[at["decided_at"]],
+                        r[at["status"]], r[at["created_at"]], r[at["decided_at"]], r[at["kind"]],
                     )
                     for r in checked
                 ],
