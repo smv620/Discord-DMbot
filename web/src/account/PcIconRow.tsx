@@ -1,5 +1,5 @@
 /** @jsxImportSource preact */
-// The Icon row on a player character's details panel (#3622): Use Discord, Use D&D Beyond, Remove and Hide the icon,
+// The Icon row on a player character's details panel (#3622): Use Discord, Use dndbeyond.com, Remove and Hide the icon,
 // with one Undo. Offered only to the DM and to the player who plays the character (the door says which through
 // `canSetIcon`, and checks again); a button is offered only when it would change something, and a picture only when it
 // exists. Its own file so the Story Graph's page keeps its weight budget.

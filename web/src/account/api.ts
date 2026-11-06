@@ -1608,7 +1608,7 @@ export interface WebNode {
   /** A player character's icon (#3621, #3622): the picture to draw in its circle. `null` or missing: draw 👤. `hidden`: no
    * picture at all. Only on player character names, from an API that has the icons. */
   icon?: { kind: "discord" | "dndbeyond" | "hidden"; url: string | null } | null;
-  /** What was chosen for it; "default" is the usual order (the Discord picture, else the D&D Beyond one, else 👤). */
+  /** What was chosen for it; "default" is the usual order (the Discord picture, else the dndbeyond.com one, else 👤). */
   iconChoice?: IconChoice;
   /** True for the DM and for the player who plays this character: only then are the Icon buttons offered. */
   canSetIcon?: boolean;

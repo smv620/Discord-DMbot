@@ -117,7 +117,7 @@ function PcIcon({ node, r }: { node: WebNode; r: number }) {
   const icon = node.icon;
   const clipId = useId();
   if (icon?.kind === "hidden") return null;
-  // Only an https address is ever drawn (the door sends Discord's and D&D Beyond's, never one a person typed); a failed
+  // Only an https address is ever drawn (the door sends Discord's and dndbeyond.com's, never one a person typed); a failed
   // picture is remembered until its address changes, so a bad link is not retried on every draw.
   const url = icon?.url && /^(https:|data:image\/)/.test(icon.url) ? icon.url : null;
   const clip = `pcc-${clipId.replace(/[^A-Za-z0-9_-]/g, "_")}`; // (one per drawing of one name, never shared)
