@@ -37,6 +37,7 @@ from dmbot.memory import who_reading as reading
 from dmbot.memory.lookup import CampaignLookup
 from dmbot.memory.models import PROPOSED, Entity
 from dmbot.memory.who_answers import ENTITY, MAX_RANK, NEW, StoredAnswer, WhoAnswers
+from dmbot.transcript.store import TranscriptStore
 
 log = logging.getLogger(__name__)
 
@@ -88,6 +89,50 @@ class Pending:
 def is_open_name(entity: Entity) -> bool:
     """A suggestion (a name to check), not merged away. An unnamed person is asked another way."""
     return entity.merged_into is None and entity.status == PROPOSED and not entity.unnamed
+
+
+LINE_POINTERS = 4  # how many of a name's pointers ("Where was it said?") are read for its lines
+
+
+def parse_ref(ref: str) -> tuple[str, int, int] | None:
+    """A line reference (`transcript.models.line_ref`: session, when the line began, who said it)
+    back into its parts."""
+    parts = ref.rsplit(":", 2)
+    if len(parts) != 3:
+        return None
+    try:
+        return parts[0], int(parts[1]), int(parts[2])
+    except ValueError:
+        return None
+
+
+async def lines_for(
+    entity_id: str,
+    mentions: Callable[[str], Awaitable[list[tuple[str, int | None]]]],
+    transcripts: TranscriptStore,
+    guild_id: int,
+    dm_ids: Collection[int],
+    agreed: Collection[int],
+) -> tuple[tuple[str, ...], tuple[int, ...]]:
+    """The lines a waiting name was said in (its pointers' lines with the one before and after),
+    each as "DM: ..." or "Player: ...", and the people who said them. Only lines of people who
+    agree now are read (`transcripts.around` filters to them), so the speakers returned are
+    always recorded."""
+    lines: list[str] = []
+    speakers: set[int] = set()
+    for ref, _at in (await mentions(entity_id))[:LINE_POINTERS]:
+        pointer = parse_ref(ref)
+        if pointer is None:
+            continue
+        around = await transcripts.around(guild_id, pointer[0], pointer[1], pointer[2], agreed)
+        if around is None:
+            continue
+        for seen in (around.before, around.line, around.after):
+            if seen is not None:
+                user, text = seen
+                lines.append(("DM: " if user in dm_ids else "Player: ") + text)
+                speakers.add(user)
+    return tuple(lines), tuple(sorted(speakers))
 
 
 def candidates_from(
