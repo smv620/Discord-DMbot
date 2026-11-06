@@ -2282,6 +2282,10 @@ class ConnectionOffer(_Menu):
             await self._show(interaction, [])
 
 
+# Kinds a yes-to-all never covers: an idea needs a look, a player character needs its player.
+NEEDS_A_LOOK = frozenset({"concept", "player_character"})
+
+
 class BulkConfirm(_Menu):
     """Say yes to every name of a kind from this reading at once ("All 14 places"), undo it, or
     open the checking. Only the names this reading found: never an earlier reading's."""
@@ -2313,8 +2317,8 @@ class BulkConfirm(_Menu):
                 )
             )
         for kind, ids in by_size[:MAX_BULK_BUTTONS]:
-            if kind == "concept":
-                continue  # an idea needs a look: no yes-to-all
+            if kind in NEEDS_A_LOOK:
+                continue  # an idea needs a look, a player character its player: no yes-to-all
             self.add_item(
                 _Button(
                     partial(self._all, kind),
@@ -2356,8 +2360,9 @@ class BulkConfirm(_Menu):
             )
 
     def _addable(self) -> dict[str, list[str]]:
-        """The names a yes-to-all may cover: every kind but ideas, which need a look."""
-        return {k: v for k, v in self.ids.items() if k != "concept" and v}
+        """The names a yes-to-all may cover: every kind but ideas, which need a look, and player
+        characters, which are confirmed one at a time with the player who plays them (#3553)."""
+        return {k: v for k, v in self.ids.items() if k not in NEEDS_A_LOOK and v}
 
     async def _open(self, interaction: discord.Interaction) -> None:
         self.stop()

@@ -2090,7 +2090,9 @@ class MemoryStore:
                 kind, role = resolve_kind(n.type, n.role)
                 onto.active_type(kind)
                 _check_role(onto, kind, role, None)
-                if role == PLAYER_CHARACTER:
+                # A waiting suggestion may be read as a player character (#3553: the text says so);
+                # it is confirmed only once the DM says who plays it. Anything else needs a player.
+                if role == PLAYER_CHARACTER and n.status != PROPOSED:
                     raise MemoryRuleError("A player's character needs its player.")
                 name, name_key_, _ = prep[n.name]
                 if name_key_ in used:

@@ -44,6 +44,9 @@ from dmbot.memory.name_documents import request_text
 from dmbot.memory.unnamed_read import read_unnamed
 from dmbot.memory.who_resolve import UnnamedLink
 
+# The kinds of entry that are people (a player character is one too): a second person in a quote.
+PEOPLE_KINDS = ("npc", "player_character")
+
 log = logging.getLogger(__name__)
 
 # One answer's room never goes past this, whatever the model could write (`ai.max_output`, which
@@ -201,7 +204,11 @@ def read_instructions(own: Mapping[str, str] | None = None) -> str:
         "- Only what the text states. Never invent a name or a relationship, never infer one.\n"
         "- NAMES: every in-world proper noun a player might say at the table (people, places, "
         "kingdoms and towns, groups, gods, ships, named items, named events). A named monster is "
-        f"a person. Each once. Kind: exactly one of {kinds}. Give other names the text uses "
+        "a person. A character the text itself lists as one of the players' own characters (a "
+        "section of player character backgrounds, 'our four adventurers', a character sheet) has "
+        "the kind 'player'; everyone else is a person, hirelings and allies of the party "
+        "included. Never guess who plays one. "
+        f"Each once. Kind: exactly one of {kinds}. Give other names the text uses "
         "openly for the same one; give 'said:' only when the text shows how to say the name; "
         "give 'secret:' only when the text says plainly that a name is a secret identity or "
         f"another name of the SAME person. 'quote:' is {bg.QUOTE_WORDS} words at most, copied "
@@ -1104,7 +1111,7 @@ async def read_lore(
     # through the same path the who-is-it check uses. Counts go with the connections' own.
     # (the persons of this read, to tell a second person in a quote from a place in it)
     people = bg.reach_names(
-        {name_key(x) for f in names if f.kind == "npc" for x in (f.name, *f.also)}
+        {name_key(x) for f in names if f.kind in PEOPLE_KINDS for x in (f.name, *f.also)}
     )
     unnamed = read_unnamed(
         listed.unnamed, text, here, links, [*known_keys, *here], third, stats.dropped, people

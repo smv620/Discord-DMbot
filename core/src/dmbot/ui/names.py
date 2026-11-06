@@ -30,6 +30,7 @@ from dmbot.memory.models import (
     CONFIRMED,
     DM,
     NAME_MAX,
+    PLAYER_CHARACTER,
     PROPOSED,
     REJECTED,
     Entity,
@@ -1048,7 +1049,8 @@ def background_kind(entity: Entity) -> str:
     if entity.source not in (BACKGROUND_SOURCE, "scan"):  # marked by where it came from
         return ""
     if entity.type == "character":
-        return "npc" if entity.role == "npc" else ""
+        # (read from a text that says so, #3553; confirmed with its player)
+        return {"npc": "npc", PLAYER_CHARACTER: PLAYER_CHARACTER}.get(entity.role or "", "")
     return entity.type if entity.type in ("place", "faction", "item", "event") else ""
 
 
@@ -1204,6 +1206,7 @@ async def _offer_add_all(
         kind = background_kind(entity)
         if (
             not kind
+            or kind == PLAYER_CHARACTER  # its player is asked on its own card (#3553)
             or entity.source != "scan"
             or entity.description.startswith(SPELLED_OUT)
             or spelled_fix(entity)
@@ -1660,6 +1663,9 @@ class SuggestionReview(_Menu):
         if current is None:
             return
         campaign, memory, entity = current
+        if entity.role == PLAYER_CHARACTER:  # the text says it is a player's character (#3553)
+            await self._ask_player(interaction, campaign, entity)
+            return
         if self.known_kind:  # it was read with its kind: one press (#2167)
             try:
                 await memory.confirm_entity(
@@ -1692,6 +1698,16 @@ class SuggestionReview(_Menu):
         self.add_item(_Button(self._back, label="Back", style=discord.ButtonStyle.secondary))
         await _replace(interaction, f"**What is {_md(entity.name)}?**", self)
 
+    async def _ask_player(
+        self, interaction: discord.Interaction, campaign: Campaign, entity: Entity
+    ) -> None:
+        """ "Who plays them?": a player character is confirmed with its player, never guessed."""
+        self.clear_items()
+        self.add_item(_UserSelect(self._player_picked))
+        self.add_item(self._type_id(campaign, entity))
+        self.add_item(_Button(self._back, label="Back", style=discord.ButtonStyle.secondary))
+        await _replace(interaction, f"**Who plays {_md(entity.name)}?**", self)
+
     async def _kind_picked(self, interaction: discord.Interaction) -> None:
         current = await self._current(interaction)
         if current is None:
@@ -1699,11 +1715,7 @@ class SuggestionReview(_Menu):
         campaign, memory, entity = current
         kind = self.kind.values[0]
         if kind == PC:  # who plays them?
-            self.clear_items()
-            self.add_item(_UserSelect(self._player_picked))
-            self.add_item(self._type_id(campaign, entity))
-            self.add_item(_Button(self._back, label="Back", style=discord.ButtonStyle.secondary))
-            await _replace(interaction, f"**Who plays {_md(entity.name)}?**", self)
+            await self._ask_player(interaction, campaign, entity)
             return
         try:
             await memory.confirm_entity(campaign.guild_id, campaign.id, entity.id, kind, source=DM)

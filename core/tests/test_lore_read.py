@@ -140,7 +140,7 @@ class TheExamples(unittest.TestCase):
         prompt = lr.read_instructions({"patron_of": "is a mentor of"})
         for rule in ("Only what the text states", "NOT INCLUDED", "copied exactly", "data, not"):
             self.assertIn(rule, prompt)
-        self.assertIn("person, place, group, god, item, event, idea", prompt)
+        self.assertIn("person, player, place, group, god, item, event, idea", prompt)
         self.assertIn("patron_of", prompt)
         self.assertIn(lr.EXAMPLES, prompt)
 
