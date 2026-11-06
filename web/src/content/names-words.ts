@@ -45,6 +45,8 @@ export const namesPage = {
   alsoCalled: "Also called",
   npcLink: "NPC page",
   webLink: "Open the Story Graph",
+  seeInGraph: "See in the story graph",
+  seeInGraphFor: (name: string): string => `See ${name} in the story graph`,
   npcLinkFor: (name: string): string => `Open the NPC page for ${name}`,
   readOnly: "Only this campaign's DM can change names.",
   undoNote: "A change made here can be undone with ↩️ Undo on the name's card in Discord.",

@@ -137,6 +137,7 @@ export default function WebMap({
   onCenter,
   onLine,
   onNodePick,
+  canEdit = false,
   children,
   api,
   onDragging,
@@ -156,6 +157,8 @@ export default function WebMap({
   onLine: (a: string, b: string) => void;
   /** Told when a name is picked, so a line that was chosen gives the panel back to the name. */
   onNodePick?: () => void;
+  /** Only the campaign's DM is offered the links to the full editor (the Names page is the DM's list). */
+  canEdit?: boolean;
   /** The chosen line's panel: drawn inside the map so it stays visible in full screen. */
   children?: ComponentChildren;
 }) {
@@ -823,9 +826,11 @@ export default function WebMap({
           >
             {detailPinned ? words.letMove : words.keepHere}
           </button>
-          <a class="button secondary" href={`/account/names/${encodeURIComponent(refId)}#said=${encodeURIComponent(detail.name)}`}>
-            {words.editFull(detail.name)}
-          </a>
+          {canEdit && (
+            <a class="button secondary" href={`/account/names/${encodeURIComponent(refId)}#said=${encodeURIComponent(detail.name)}`}>
+              {words.editFull(detail.name)}
+            </a>
+          )}
           {detail.id === center ? <p class="small muted">{words.inMiddle}</p> : <p class="small muted">{words.doubleTapHint}</p>}
           {detail.id !== center && (
             <button type="button" class="button secondary" onClick={() => onCenter(detail.id)}>

@@ -740,6 +740,14 @@ function NameItem({ row, kinds, canEdit, ticked, onTick, open, focusSaid, onTogg
         <NameThem id={panel} row={row} api={api} refId={refId} onDone={onNamed} onSignedOut={onSignedOut} />
       )}
       {canEdit && open && !row.unnamed && (
+        // The graph opens with this name in the middle and its details beside it (the address's #centre= is read there).
+        <p>
+          <a class="button secondary" href={`/account/web/${encodeURIComponent(refId)}#centre=${encodeURIComponent(row.id)}`} aria-label={words.seeInGraphFor(row.name)}>
+            {words.seeInGraph}
+          </a>
+        </p>
+      )}
+      {canEdit && open && !row.unnamed && (
         <NameEditor id={panel} row={row} kinds={kinds} act={act} api={api} refId={refId} focusSaid={focusSaid === true} />
       )}
     </li>

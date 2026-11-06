@@ -37,6 +37,11 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
+  try {
+    localStorage.removeItem("dmbot.web.details");
+  } catch {
+    // (no storage: nothing to clear)
+  }
   vi.unstubAllGlobals();
 });
 
@@ -623,11 +628,17 @@ describe("the details beside the map", () => {
     expect(localStorage.getItem("dmbot.web.details")).toBe("left");
     fireEvent.click(button(words.sideUnder));
     expect(stage().className).toContain("web-side-under");
-    localStorage.removeItem("dmbot.web.details");
+    cleanup();
+    draw(); // (the choice is remembered for the next visit)
+    expect(document.querySelector(".web-stage")!.className).toContain("web-side-under");
   });
 
-  it("offers a way to the full editor for the clicked name", () => {
-    draw();
+  it("offers a way to the full editor for the clicked name, to the DM only", () => {
+    draw({ canEdit: false });
+    fireEvent.click(nodeOf("Garrick"));
+    expect(document.querySelector(".web-side a")).toBeNull();
+    cleanup();
+    draw({ canEdit: true });
     fireEvent.click(nodeOf("Garrick"));
     const link = document.querySelector(".web-side a") as HTMLAnchorElement;
     expect(link.textContent).toBe(words.editFull("Garrick"));

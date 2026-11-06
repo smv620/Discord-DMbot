@@ -165,6 +165,7 @@ body:has(.account-wide) .wrap {
 .account .web-map.web-full .web-stage {
   flex: 1;
   min-height: 0;
+  grid-template-rows: minmax(0, 1fr); /* (so a tall details panel scrolls inside its own box, not the window) */
 }
 
 .account .web-map.web-full .web-svg {
