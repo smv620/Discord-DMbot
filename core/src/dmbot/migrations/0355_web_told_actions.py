@@ -1,7 +1,7 @@
 """0355_web_told_actions
 
 The website's "Tell a character" for a secret other name (#3542, the website half of #3089): two
-queued name actions, `told-add` and `told-remove`.
+queued name actions, `told-add` and `told-remove`, and a DM-only read door for the panel.
 """
 
 from __future__ import annotations
@@ -92,6 +92,74 @@ _STEPS = "".join(
     for old, new, n in _SWAPS
 )
 
+# What the "Tell a character" panel reads (#3542): for each confirmed secret other name of a
+# confirmed entry, the player characters who hold it and were not told (`holders`) and those
+# already told (`told`), as id and name. "Holds it" is the store's own rule (a knower row of the
+# character's view for the name that is not asleep, as in the bot), so a button is only offered
+# where the bot will accept it. DM-only, worked out here: anyone else gets NULL. Names are shown
+# to the DM only; nothing is written.
+READ_DOOR = r"""
+    CREATE FUNCTION dmbot_web_told_panel(g BIGINT, c TEXT) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
+           OR NOT EXISTS (SELECT 1 FROM campaign_dms d
+                          WHERE d.guild_id = g AND d.campaign_id = c
+                            AND d.user_id = dmbot_current_user()) THEN
+            RETURN NULL;
+        END IF;
+        RETURN COALESCE((
+            SELECT jsonb_agg(row ORDER BY row->>'entryId', row->>'id')
+            FROM (
+                SELECT jsonb_build_object(
+                    'id', a.id, 'entryId', a.entity_id,
+                    'holders', COALESCE((
+                        SELECT jsonb_agg(jsonb_build_object('id', x.id, 'name', x.name)
+                                         ORDER BY x.name, x.id)
+                        FROM memory_entities x
+                        JOIN memory_perspectives v ON v.guild_id = x.guild_id
+                             AND v.campaign_id = x.campaign_id AND v.entity_id = x.id
+                        WHERE x.guild_id = g AND x.campaign_id = c AND x.type = 'character'
+                          AND x.role = 'player_character' AND x.status = 'confirmed'
+                          AND x.merged_into IS NULL
+                          AND EXISTS (SELECT 1 FROM memory_knowers k
+                                      WHERE k.guild_id = g AND k.campaign_id = c
+                                        AND k.alias_id = a.id AND k.perspective_id = v.id
+                                        AND cardinality(k.hidden_by) = 0)
+                          AND NOT EXISTS (SELECT 1 FROM memory_told t
+                                          WHERE t.guild_id = g AND t.campaign_id = c
+                                            AND t.alias_id = a.id AND t.character_id = x.id)
+                    ), '[]'::jsonb),
+                    'told', COALESCE((
+                        SELECT jsonb_agg(jsonb_build_object('id', x.id, 'name', x.name)
+                                         ORDER BY x.name, x.id)
+                        FROM memory_told t
+                        JOIN memory_entities x ON x.guild_id = t.guild_id
+                             AND x.campaign_id = t.campaign_id AND x.id = t.character_id
+                        WHERE t.guild_id = g AND t.campaign_id = c AND t.alias_id = a.id
+                          AND x.status = 'confirmed' AND x.merged_into IS NULL
+                    ), '[]'::jsonb)) AS row
+                FROM memory_aliases a
+                JOIN memory_entities e ON e.guild_id = a.guild_id
+                     AND e.campaign_id = a.campaign_id AND e.id = a.entity_id
+                WHERE a.guild_id = g AND a.campaign_id = c AND a.status = 'confirmed' AND a.secret
+                  AND e.status = 'confirmed' AND e.type <> 'person' AND e.merged_into IS NULL
+                LIMIT 500) r
+            WHERE jsonb_array_length(row->'holders') + jsonb_array_length(row->'told') > 0
+        ), '[]'::jsonb);
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_told_panel(BIGINT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_web_told_panel(BIGINT, TEXT) FROM PUBLIC;
+"""
+
 SQL = (
     r"""
     ALTER TABLE name_actions DROP CONSTRAINT name_actions_action_check;
@@ -127,8 +195,11 @@ SQL = (
     END
     $do$;
     """
+    + READ_DOOR
 )
 
 ISOLATED_TABLES: tuple[str, ...] = ()
 
-WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = ()
+WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
+    ("dmbot_web_told_panel", "dmbot_web_told_panel(BIGINT, TEXT)"),
+)

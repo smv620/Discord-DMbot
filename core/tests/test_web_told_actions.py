@@ -7,7 +7,7 @@ from __future__ import annotations
 from typing import Any
 
 from dmbot.memory import web_actions as wa
-from dmbot.web import all_names
+from dmbot.web import all_names, told_panel
 from dmbot.web.recaps import RecapError
 from tests.test_recap_web import BOB
 from tests.test_web_api import ALICE, THURSDAY
@@ -110,6 +110,14 @@ class TheAnswers(Telling):
         await self.memory.update_alias(self.g, self.one.id, self.guard, source="dm", secret=False)
         self.assertEqual([o.error for o in await self.apply_all()], ["bad_target"])
 
+    async def test_a_telling_can_be_taken_back_after_the_name_stops_being_secret(self) -> None:
+        await self.tell()
+        await self.apply_all()
+        await self.memory.update_alias(self.g, self.one.id, self.guard, source="dm", secret=False)
+        await self.queue(action="told-remove", alias=self.guard, character=self.okra)
+        self.assertEqual([o.error for o in await self.apply_all()], [""])
+        self.assertEqual(await self.told_rows(), [])
+
     async def test_someone_who_is_no_longer_a_dm_is_not_allowed(self) -> None:
         await self.tell()
         self.assertEqual([o.error for o in await self.apply_all(dms=set())], ["not_allowed"])
@@ -175,3 +183,34 @@ class TheDoor(Telling):
     async def test_the_older_actions_still_pass_the_door(self) -> None:
         answer = await self.queue(action="alias-who", alias=self.guard, who="dm")
         self.assertTrue(answer)
+
+
+class ThePanel(Telling):
+    async def panel(self, by: Any = None, ref: str | None = None) -> list[dict[str, Any]]:
+        got = await told_panel.read_told_panel(self.web, by or self.session, ref or self.cref)
+        names: list[dict[str, Any]] = got["names"]
+        return names
+
+    async def test_a_dm_sees_who_holds_the_secret_name_and_who_was_told(self) -> None:
+        rows = [r for r in await self.panel() if r["id"] == self.guard]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["entryId"], self.ken)
+        self.assertIn(self.okra, [h["id"] for h in rows[0]["holders"]])
+        self.assertEqual(rows[0]["told"], [])
+        await self.tell()
+        await self.apply_all()
+        row = next(r for r in await self.panel() if r["id"] == self.guard)
+        self.assertEqual([t["id"] for t in row["told"]], [self.okra])
+        self.assertNotIn(self.okra, [h["id"] for h in row["holders"]])
+
+    async def test_a_character_who_does_not_hold_the_name_is_not_offered(self) -> None:
+        row = next(r for r in await self.panel() if r["id"] == self.guard)
+        self.assertNotIn(self.wen, [h["id"] for h in row["holders"]])
+
+    async def test_a_player_gets_nothing_and_a_name_that_is_not_secret_is_not_listed(self) -> None:
+        player = await self.signed(BOB, THURSDAY)
+        with self.assertRaises(RecapError) as caught:
+            await self.panel(player)
+        self.assertEqual(caught.exception.code, "not_allowed")
+        await self.memory.update_alias(self.g, self.one.id, self.guard, source="dm", secret=False)
+        self.assertEqual([r for r in await self.panel() if r["id"] == self.guard], [])

@@ -330,7 +330,7 @@ def _arguments(body: object) -> tuple[str, str, str, str, bool]:
             raise RecapError("not_found")
     elif action in ("told-add", "told-remove"):  # the other name is the target; the text is who
         target = str(body.get("alias") or "")
-        text = str(body.get("character") or "")
+        text = str(body.get("character") or "")  # (only its shape here; the door and bot look)
         if not ID_PATTERN.match(target):
             raise RecapError("not_found")
         if not ID_PATTERN.match(text):
