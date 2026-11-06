@@ -137,6 +137,16 @@ class EveryClaimedTableComesBack(DatabaseTest):
                 " perspective_id, created_at) SELECT %s, %s, %s, al.id, p.id, 1 FROM al, p",
                 (g, c, new_id(), A, g, c, new_id(), B, g, c, new_id()),
             ),
+            "memory_told": (
+                # a secret name and the character the DM told it is an entry (#3089)
+                "WITH al AS (INSERT INTO memory_aliases (guild_id, campaign_id, id, entity_id,"
+                " text, key, kind, secret, status, sound_codes, source, created_at)"
+                " VALUES (%s, %s, %s, %s, 'Yy', 'yy', 'title', true, 'confirmed', '{}', 'dm', 1)"
+                " RETURNING id)"
+                " INSERT INTO memory_told (guild_id, campaign_id, id, alias_id, character_id,"
+                " added_entry, created_at) SELECT %s, %s, %s, al.id, %s, true, 1 FROM al",
+                (g, c, new_id(), A, g, c, new_id(), B),
+            ),
             "memory_knowers": (
                 # a character's point of view (the one the secret-name seed made) that knows an
                 # entry exists (#2995)
