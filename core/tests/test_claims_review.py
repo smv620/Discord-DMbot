@@ -195,6 +195,13 @@ class Review(ConfirmedMemoryTest):
         made = [e for e in await self.memory.entities(GUILD_A, self.c, statuses=("proposed",))]
         (moonblade,) = [e for e in made if e.name == "Moonblade"]
         self.assertTrue(moonblade.unique_item)
+        await self.ask(said("Bram", "knows", "Marek"))  # (a person is never stored unique)
+        marek = next(
+            e
+            for e in await self.memory.entities(GUILD_A, self.c, statuses=("proposed",))
+            if e.name == "Marek"
+        )
+        self.assertIsNone(marek.unique_item)
 
     async def test_a_second_holder_says_so_in_plain_words(self) -> None:
         await self.memory.set_unique(GUILD_A, self.c, self.bow, True, source="dm")
