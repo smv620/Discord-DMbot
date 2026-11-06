@@ -19,6 +19,7 @@ EVERY_ACTION = (
     "confirm-kinds", "confirm-undo",  # "Add all" for an upload's names (#3207)
     "claim-pick", "claim-unpick",  # "Which one?" for a kept fact (#3463)
     "spelling-yes", "spelling-no",  # "Is this the same place?" (#3533)
+    "told-add", "told-remove",  # "Tell a character" (#3542)
 )  # fmt: skip
 
 
