@@ -18,7 +18,7 @@ import re
 from typing import Any
 
 from dmbot.db import Database
-from dmbot.memory.link_words import link_words
+from dmbot.memory.link_words import link_words, own_words, quoted
 from dmbot.memory.report_store import STALLED_S
 from dmbot.web.names import _parse
 from dmbot.web.recaps import RecapError, _guild_of, _scoped, session_facts
@@ -53,11 +53,18 @@ def _who(who: dict[str, Any] | None) -> str:
 
 def _words(rel: dict[str, Any]) -> str:
     """A connection as one plain line, "Aldric serves the Ashen Crown"."""
-    said = link_words(
-        str(rel["predicate"]),
-        str(rel.get("detail") or ""),
-        bool(rel.get("directional")),
-        subject_kind=str(rel.get("subjectKind") or ""),
+    detail = str(rel.get("detail") or "")
+    # the table's own words are shown in quotes here too, as on the map and the lines (#3574)
+    said = (
+        quoted(detail)
+        if own_words(str(rel["predicate"]), detail)
+        else link_words(
+            str(rel["predicate"]),
+            detail,
+            bool(rel.get("directional")),
+            subject_kind=str(rel.get("subjectKind") or ""),
+            feeling=True,  # (the report is the DM's alone)
+        )
     )
     return f"{rel['subject']} {said} {rel['object']}"
 

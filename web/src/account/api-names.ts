@@ -11,6 +11,7 @@ import type {
   NamesFixed,
   KindOffer,
   NamesPage,
+  ToldName,
   NpcPage,
   CampaignNameChecks,
   QuestionCounts,
@@ -173,6 +174,8 @@ export default function namesArea({ call, waitForAnswer }: ApiHelpers): Partial<
       }
       throw new ApiError("still-waiting");
     },
+    toldPanel: async (ref) =>
+      ((await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/told-panel`)) as { names: ToldName[] }).names,
     nameThem: async (ref, id, step, onLook) => {
       const base = `/me/campaigns/${encodeURIComponent(ref)}/all-names`;
       const queued = (await call("POST", `${base}/${encodeURIComponent(id)}`, step)) as { answer: string };
@@ -267,7 +270,8 @@ export default function namesArea({ call, waitForAnswer }: ApiHelpers): Partial<
         onLook?.({ waits: look.waits ?? null, progress: countsOf(look.progress) }),
       );
       const kept = (got as { kept?: unknown }).kept;
-      return typeof kept === "number" ? { kept } : {};
+      const batch = (got as { batch?: unknown }).batch; // the change an answer made, for its Undo (#3645)
+      return { ...(typeof kept === "number" ? { kept } : {}), ...(typeof batch === "number" ? { batch } : {}) };
     },
     webReadings: async (ref) =>
       (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/web/readings`)) as Readings,

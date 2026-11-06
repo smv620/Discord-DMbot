@@ -1010,7 +1010,10 @@ class TheAudio(Base):
     async def test_the_audio_under_way_carries_its_progress_in_the_shared_shape(self) -> None:
         await self.approved_with_audio()
         await self.store.set_audio(THURSDAY.id, self.one.id, 100, audio="queued")
-        await self.store.set_audio_progress(
+        # The page tells "running" from "stalled" against the real clock, so the progress is stamped
+        # by the real clock too. `self.store` stamps with `NOW`, read when this file was imported:
+        # in a long run that is more than the stall limit ago and the job read as stalled (#3231).
+        await RecapStore(self.db, clock=time.time).set_audio_progress(
             THURSDAY.id, self.one.id, 100, stage="voice", done=2, total=3
         )
         audio = (await self.client.get(f"/me/recaps/{self.ref}")).json()["audio"]

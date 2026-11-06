@@ -8919,6 +8919,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 skip=skip,
                 after_ms=after_ms,
                 readings=self.settings.story_readings_on,
+                deeds=self.settings.story_deeds_on,
                 family_only=self.settings.story_family_only,
                 imported=await transcripts.is_import(gid, sid),
                 count_call=count_call,
@@ -9088,6 +9089,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 skip=skip,
                 after_ms=0,
                 readings=self.settings.story_readings_on,
+                deeds=self.settings.story_deeds_on,
                 family_only=self.settings.story_family_only,
                 imported=await transcripts.is_import(gid, sid),
                 count_call=lambda: transcripts.record_extraction(
@@ -11715,6 +11717,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                                 self._waiting_answers(guild.id),
                                 named_batch=self._named_batch_for(guild.id),
                                 look_up=self._player_lookup(guild.id),
+                                actions=store,
                             )
                         )
                     except Exception as exc:  # the row must never stay "working" for a bug
@@ -11727,6 +11730,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                             error=done.error,
                             result_id=done.result_id,
                             result_other=done.result_other,
+                            result_counts=done.counts,
+                            result_batches=done.batches,
                         )
                     except Exception as exc:  # taken again later: apply() sees it already done
                         log.warning("A name action could not be marked: %s", type(exc).__name__)

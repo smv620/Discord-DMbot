@@ -57,6 +57,9 @@ HOWS = (HOW_DM, HOW_PLAYER, HOW_PLAN)
 PLAYER_CHARACTER, NPC = "player_character", "npc"
 ROLES = (PLAYER_CHARACTER, NPC)
 ROLE_LABELS = {PLAYER_CHARACTER: "PC", NPC: "NPC"}
+# The kinds a yes-to-all never covers: an idea needs a look, a player character its player (#3553).
+# Discord's Add all (`ui.name_background`) and the website's (`web_actions`) share this set.
+NEEDS_A_LOOK = frozenset({"concept", PLAYER_CHARACTER})
 
 # What a character links to in the rules (by source and name), never kinds of their own:
 # "race" is shown only as the 2014 name, `[Legacy 2014]`. One species and one creature type
