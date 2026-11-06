@@ -197,6 +197,10 @@ PERSPECTIVES = Table(
 ALIAS_KNOWERS = Table(
     "memory_alias_knowers", "id", ("id", "alias_id", "perspective_id", "created_at")
 )
+# Which character was told that a secret other name is an entry (#3089): one row for each (name,
+# character). Logged, so Undo takes a telling back, and carried in backups. Gone with its name or
+# its character by the database.
+TOLD = Table("memory_told", "id", ("id", "alias_id", "character_id", "added_entry", "created_at"))
 # Who knows each statement (#2995; STORY_MEMORY §9b): one row for each (statement, character), the
 # statement being an entry, a state, a connection or an other name (one column set). Logged, so Undo
 # takes a change of who knows back, and an Undo of removing a statement brings who knew it back.
@@ -257,7 +261,7 @@ PLAN_POSITION = Table(
 )
 ALL = (TYPES, PREDICATES, ENTITIES, ALIASES, MENTIONS, RELATIONS, CORRECTIONS, FLAGS, RULE_LINKS,
        STATES, CLAIMS, IMPRESSIONS, ATTITUDES, PLAN_SAME_AS, PLAN_POSITION, PERSPECTIVES,
-       BELIEFS, EVIDENCE, ALIAS_KNOWERS, KNOWERS)  # fmt: skip
+       BELIEFS, EVIDENCE, ALIAS_KNOWERS, KNOWERS, TOLD)  # fmt: skip
 BY_NAME = {t.name: t for t in ALL}
 
 # The columns whose change can change whether the players are shown a statement (#2995).
@@ -520,6 +524,12 @@ class Changes(Scope):
         if table is ALIASES:  # who knows an other name goes with it (#2935)
             for knower in await self.select(ALIAS_KNOWERS, " AND alias_id = %s", [row_id]):
                 await self.delete(ALIAS_KNOWERS, knower["id"])
+        if table is ALIASES:  # who was told it is an entry goes with it (#3089)
+            for told in await self.select(TOLD, " AND alias_id = %s", [row_id]):
+                await self.delete(TOLD, told["id"])
+        if table is ENTITIES:  # and so does what a character was told, each logged (#3089)
+            for told in await self.select(TOLD, " AND character_id = %s", [row_id]):
+                await self.delete(TOLD, told["id"])
         if table.name in _KNOWN_COLUMN:  # who knows a statement goes with it, each logged (#2995)
             column = _KNOWN_COLUMN[table.name]
             for knower in await self.select(KNOWERS, f" AND {column} = %s", [row_id], dormant=True):
