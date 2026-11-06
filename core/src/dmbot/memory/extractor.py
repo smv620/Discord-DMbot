@@ -45,6 +45,7 @@ from dmbot.memory.claims import (
     is_family,
     parse_answer,
 )
+from dmbot.memory.deed_proposals import DeedProposals
 from dmbot.memory.deed_reading import DEED_SYSTEM, DeedProposal, parse_deeds
 from dmbot.memory.ontology import Tally
 from dmbot.memory.readings import READING_SYSTEM, as_claim, parse_readings, proposals
@@ -263,6 +264,7 @@ class Report:
     deeds_repeated: int = 0  # a pair the session already has a deed for
     deeds_failed: int = 0  # deed calls that failed (the claims pass is not affected)
     deeds_cut: int = 0  # deed answers that stopped at the length limit
+    deeds_stored: int = 0  # proposals kept for the DM to record (#3175)
     # The words: never logged (so never in a repr either). Held for the DM's press; whoever stores
     # them must keep only those whose speakers are all recorded *then* (PR 2b).
     deed_proposals: list[DeedProposal] = field(default_factory=list, repr=False)
@@ -293,7 +295,7 @@ class Report:
             + (
                 f", deeds: {self.deeds} found, {self.deeds_refused} refused,"
                 f" {self.deeds_repeated} repeated, {self.deeds_failed} failed,"
-                f" {self.deeds_cut} cut short"
+                f" {self.deeds_cut} cut short, {self.deeds_stored} kept"
                 if self.deeds
                 or self.deeds_refused
                 or self.deeds_repeated
@@ -389,6 +391,7 @@ async def run(
     count_call: Callable[[], Awaitable[None]] | None = None,
     readings: bool = False,
     deeds: bool = False,
+    deed_store: DeedProposals | None = None,
     family_only: bool = False,
     imported: bool = False,
     progress: Callable[[int, int], Awaitable[None]] | None = None,
@@ -435,6 +438,7 @@ async def run(
     readings = readings and not family_only
     deeds = deeds and not family_only
     deed_pairs: set[tuple[str, str]] = set()  # the pairs a deed was proposed for, so far
+    answered: list[list[Said]] = []  # the batches whose claims were read
     collected: list[Extracted] = []
     believed: list[Extracted] = []
     everyone: dict[str, int | None] = {}  # every line sent, to who said it
@@ -500,6 +504,7 @@ async def run(
                 break
             continue
         streak = 0
+        answered.append(batch)  # (read for claims: the deed question may be asked of it later)
         found, bad = parse_answer(reply.text, speakers.keys())
         if family_only:
             family = [c for c in found if is_family(c)]
@@ -514,15 +519,6 @@ async def run(
             report.cut += 1
         if not broken:
             reached = end_ms  # (the claims of this batch are in hand: a restart need not redo it)
-        if (
-            deeds
-            and report.calls < max_calls
-            and not await _ask_deeds(
-                client, report, batch, dm_ids, consenting, count_call, deed_pairs
-            )
-        ):
-            report.unsent += sum(len(b) for b in work[index + 1 :])
-            break
         if not readings or report.calls >= max_calls:
             continue
         # The second question. Asked again who is recorded: the first call took seconds, and
@@ -575,6 +571,39 @@ async def run(
             believed.append(claim)
         everyone.update(speakers)
         heard.update((number, text) for number, _who, text in rows)
+    # The deed question comes last, after every batch's claims and readings: the readings are the
+    # older feature and keep the calls the limit leaves, so deeds only ever use what is left over
+    # (Supervisor, #3585). Only batches that were read for claims are asked.
+    if deeds:
+        for batch in answered:
+            if report.calls >= max_calls or time.monotonic() - started > max_seconds:
+                break
+            if not await _ask_deeds(
+                client, report, batch, dm_ids, consenting, count_call, deed_pairs
+            ):
+                break
+    if deeds and deed_store is not None and report.deed_proposals:
+        agreed = await consenting()  # (asked again, after the last answer)
+        try:
+            saved = await deed_store.store(
+                guild_id,
+                campaign_id,
+                [
+                    (d, tuple(u for n in d.lines if (u := everyone.get(n)) is not None))
+                    for d in report.deed_proposals
+                ],
+                opted_in=agreed,
+                session_started_at=session_started_at,
+                prompt_version=DEED_PROMPT_VERSION,
+                model=answered_by or model(),
+            )
+        except Exception as exc:  # only the type: the row holds the deed's words
+            log.warning("Story extractor: storing the deeds failed (%s)", type(exc).__name__)
+            report.failed += 1
+        else:
+            report.deeds_stored += saved.stored
+            report.deeds_repeated += saved.repeated
+            report.deeds_refused += saved.not_recorded
     # One hand-over for the whole session: the linker picks the most-said new names across all of
     # it, and the campaign's memory is read once, not once a batch. Consent is asked again here,
     # after the last answer (CLAUDE.md: after every async step), and `propose` checks it per claim.

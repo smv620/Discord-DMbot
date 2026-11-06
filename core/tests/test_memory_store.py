@@ -161,6 +161,15 @@ class Isolation(MemoryTest):
         await self.memory.answer_kind_offer(
             GUILD_A, self.c, "sworn on the ashes of", "never", seen=3
         )
+        # and a deed the session reader proposed, waiting for the DM (#3175)
+        from dmbot.memory.deed_proposals import DeedProposals
+        from dmbot.memory.deed_reading import DeedProposal
+
+        proposal = DeedProposal("Cerric", "Saved the mill", ("Brindle",), "Helped them", ("1",))
+        await DeedProposals(self.memory).store(
+            GUILD_A, self.c, [(proposal, (DM,))], opted_in={DM}, session_started_at=1,
+            prompt_version="deeds-1", model="m",
+        )  # fmt: skip
         # and a character who knows an entry exists (#2995)
         await self.memory.set_statement_knowers(GUILD_A, self.c, "entry", b, [view], source="dm")
         await self.relate(a, "located_in", b)  # flagged: Cerric isn't a place
