@@ -1,7 +1,7 @@
 /** @jsxImportSource preact */
 // The Story Graph's line panel (#2324, #2934): every connection between two names, and (for a DM) the controls to change them:
 // words, secret, pin, who knows, the feeling of a "knows" line, remove, add. Its own file, loaded when a line is chosen, so the
-// graph page keeps to its weight budget as features are added (#3659). Which of its parts show is the API's rule and the
+// graph page keeps to its weight budget as features are added. Which of its parts show is the API's rule and the
 // page's switches, as before.
 import { useEffect, useRef, useState } from "preact/hooks";
 
