@@ -65,7 +65,7 @@ import type {
   RuleSharingChoice,
 } from "./api";
 import type { ImportClock, NameAnswerResult, NameGroupHint } from "./api";
-import { ApiError, type HouseFileRequest, type HouseFileState, type LoreUpload, type RecapStyle, type RecapStyleAction, type WebLinkKind, type FixAnswer, type FixMode, type PlotIssue, type PlotMessage, type PlotProposal, type WaitingLook } from "./api";
+import { ApiError, type WaitingClaim, type HouseFileRequest, type HouseFileState, type LoreUpload, type RecapStyle, type RecapStyleAction, type WebLinkKind, type FixAnswer, type FixMode, type PlotIssue, type PlotMessage, type PlotProposal, type WaitingLook } from "./api";
 import { NAME_LIMIT } from "../content/names-words";
 import { FEELINGS, type Feeling } from "../content/knows-feeling-words";
 import { MUSTS_LINE_CHARS, MUSTS_MAX_LINES } from "../content/recap-style-words";
@@ -776,6 +776,7 @@ function pronounWaiting(): Waiting {
 /** The pretend "Fix this line" answers' modes, by answer (#2858). */
 const fixes = new Map<string, FixMode>();
 export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
+  const removedClaims = new Map<string, WaitingClaim>(); // answered claims, kept for "Undo all" (#3645)
   const waitingState: Record<string, Waiting> = {}; // (fresh for each pretend API)
   const readingState: Record<string, { list: Reading[]; kept: Map<string, Reading> }> = {}; // (#2412) by campaign
   console.info(MOCK_MARKER, "pretend API in use:", scenario);
@@ -2103,11 +2104,22 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       look("queued");
       look("working");
       if (answer.action === "keep_all") for (let k = 1; k <= ids.length; k += 1) look("working", { progress: { done: k, total: ids.length } });
+      // Answers to a claim say which change they made, so a press of "All true" / "All secret" can be undone (#3645).
+      if (answer.kind === "claim" && answer.action === "undo") {
+        const back = removedClaims.get(`${ref}:${answer.id}`);
+        if (!back) throw new ApiError("gone");
+        removedClaims.delete(`${ref}:${answer.id}`);
+        waiting.claims.push(back);
+        return {};
+      }
+      if (answer.kind === "claim" && answer.action === "confirm" && ref.endsWith(".bulk-refuse") && answer.id === "c1") throw new ApiError("cannot-write");
       const before = waiting.claims.length + waiting.backstory.length + waiting.which.length;
+      for (const c of waiting.claims) if (ids.includes(c.id)) removedClaims.set(`${ref}:${c.id}`, c);
       waiting.claims = waiting.claims.filter((c) => !ids.includes(c.id));
       waiting.backstory = waiting.backstory.filter((b) => !(ids.includes(b.id) && (b.ready || answer.action === "skip")));
       waiting.which = waiting.which.filter((q) => !ids.includes(q.id));
       if (before === waiting.claims.length + waiting.backstory.length + waiting.which.length) throw new ApiError("gone");
+      if (answer.kind === "claim" && answer.action === "confirm") return { batch: 100 + Number(answer.id.replace(/\D/g, "")) };
       return answer.action === "keep_all" ? { kept: ids.length } : {};
     },
     // What people believe (#2412), the shapes of core PR 2693: DM only (anyone else gets not-found). Placing a
