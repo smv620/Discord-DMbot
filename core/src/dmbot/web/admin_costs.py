@@ -46,7 +46,10 @@ SERVICES: tuple[dict[str, str], ...] = (
     {
         "id": "speechmatics",
         "name": "Speechmatics",
-        "covers": "A backup for voices Deepgram finds hard to understand.",
+        "covers": (
+            "Only used in speech-to-text comparison tests (the bake-off). "
+            "The bot itself doesn't use it."
+        ),
         "link": "https://portal.speechmatics.com/usage/",
         "how": "not_recorded",
     },
@@ -54,7 +57,8 @@ SERVICES: tuple[dict[str, str], ...] = (
         "id": "anthropic-fast",
         "name": "Anthropic, fast model",
         "covers": (
-            "Quick answers at the table, such as rules questions. "
+            "Simple jobs: cleaning the transcript, the off-topic filter, finding names, "
+            "rules lookups and quick answers for the DM. "
             "Same bill as the other Anthropic lines."
         ),
         "link": "https://platform.claude.com/settings/cost",
@@ -63,16 +67,17 @@ SERVICES: tuple[dict[str, str], ...] = (
     {
         "id": "anthropic-careful",
         "name": "Anthropic, careful model",
-        "covers": (
-            "Everyday reading of sessions, notes and lore. Same bill as the other Anthropic lines."
-        ),
+        "covers": ("Changes to house rules. Same bill as the other Anthropic lines."),
         "link": "https://platform.claude.com/settings/cost",
         "how": "not_recorded",
     },
     {
         "id": "anthropic-deep",
         "name": "Anthropic, deep model",
-        "covers": "Recaps and untangling who is who. Same bill as the other Anthropic lines.",
+        "covers": (
+            "Today only the story extractor, when it is set to the deep tier. "
+            "Same bill as the other Anthropic lines."
+        ),
         "link": "https://platform.claude.com/settings/cost",
         "how": "not_recorded",
     },
