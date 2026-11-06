@@ -199,6 +199,11 @@ class EveryClaimedTableComesBack(DatabaseTest):
                 " VALUES (%s, %s, %s, 3, 'mentor', 'plotbot', 100, '{}', 5)",
                 (g, c, A),
             ),
+            "memory_kind_offers": (
+                "INSERT INTO memory_kind_offers (guild_id, campaign_id, words_key, state, seen,"
+                " created_at) VALUES (%s, %s, 'sworn on the ashes of', 'never', 3, 5)",
+                (g, c),
+            ),
             "house_rules": (
                 "INSERT INTO house_rules (guild_id, campaign_id, number, rule, created_by,"
                 " created_at, updated_at) VALUES (%s, %s, 1, 'No flanking', %s, 1, 1),"

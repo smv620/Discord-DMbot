@@ -1362,7 +1362,7 @@ function LinkRow({
   api: AccountApi;
   refId: string;
 }) {
-  const [text, setText] = useState(link.words);
+  const [text, setText] = useState(link.rawWords ?? link.words);
   const [problem, setProblem] = useState<string | null>(null);
   const [asking, setAsking] = useState(false);
   const run = async (change: WebLinkChange, ok: string): Promise<void> => setProblem(await act(change, ok));
