@@ -19,6 +19,7 @@ import dataclasses
 import itertools
 import logging
 import time
+import unicodedata
 from collections.abc import (
     AsyncGenerator,
     AsyncIterator,
@@ -2628,24 +2629,28 @@ class MemoryStore:
             return {(str(r["entity_id"]), name_key(str(r["text"]))) for r in await cur.fetchall()}
 
     async def record_link_source(
-        self, guild_id: int, campaign_id: str, relation_id: str, label: str
+        self, guild_id: int, campaign_id: str, relation_id: str, label: str, quote: str = ""
     ) -> None:
         """Remember the upload a connection was kept from (#2946), so the graph's line panel can
         tell the DM. The label is the DM's own name for the upload, cut to the column's limit;
-        a connection that has one keeps the first. Nothing else about the upload is stored."""
+        a connection that has one keeps the first. `quote`: the reader's own quote for the line
+        (cut to 240), for the DM's "Why?" on the line panel (#3606), shown to the DM alone. Nothing
+        else about the upload is stored."""
         label = clean_text(label)[:120]
+        quote = " ".join(unicodedata.normalize("NFC", quote).split())[:240]  # (spaces collapsed)
         if not label:
             return
         async with self._db.guild(guild_id) as conn:
             await conn.execute(
                 "INSERT INTO memory_link_sources (guild_id, campaign_id, relation_id, label,"
-                " created_at) SELECT %s, %s, id, %s, %s FROM memory_relations"
+                " quote, created_at) SELECT %s, %s, id, %s, %s, %s FROM memory_relations"
                 " WHERE guild_id = %s AND campaign_id = %s AND id = %s"
                 " ON CONFLICT DO NOTHING",
                 (
                     guild_id,
                     campaign_id,
                     label,
+                    quote,
                     int(time.time()),
                     guild_id,
                     campaign_id,

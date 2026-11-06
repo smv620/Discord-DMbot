@@ -266,7 +266,7 @@ async def keep_all(
         # (an older twin's rows are not this upload's), and never a reason to lose the connection.
         if c.upload and made.created_at >= now:
             try:
-                await memory.record_link_source(guild_id, campaign_id, made.id, c.upload)
+                await memory.record_link_source(guild_id, campaign_id, made.id, c.upload, c.quote)
             except Exception as exc:
                 log.warning(
                     "A kept connection's source could not be stored (%s)", type(exc).__name__

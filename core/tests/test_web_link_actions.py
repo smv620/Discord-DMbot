@@ -229,6 +229,29 @@ class TheEdits(Editing):
         self.assertEqual(pair, {"knows"})  # ONE Undo puts the old words back and ends the new ones
         self.assertEqual(len({r["batch"] for r in log}), 1)  # one change: one batch, one Undo
 
+    async def test_a_picked_feeling_keeps_it_a_knows_and_undo_takes_it_back(self) -> None:
+        link = self.links["mira-keep"]
+        before = await self.memory.version(self.g, self.one.id)
+        answer = await self.edit(link, action="feeling", feeling="Wary")
+        await self.apply_all()
+        edge = self.edge_of(await self.poll(answer), self.mira, self.keep)
+        self.assertEqual([x["words"] for x in edge["links"]], ["knows (wary)"])
+        log = await self.log_since(before)
+        self.assertEqual(len({r["batch"] for r in log}), 1)  # one change, one Undo
+        await self.memory.undo(self.g, self.one.id, log[-1]["batch"], source=DM_SOURCE)
+        mine = await self.memory.relations(self.g, self.one.id, entity_id=self.mira)
+        pair = [r for r in mine if self.keep in (r.subject_id, r.object_id)]
+        self.assertEqual([(r.predicate, r.detail) for r in pair], [("knows", "")])
+
+    async def test_a_word_off_the_nine_is_refused_before_anything_is_queued(self) -> None:
+        link = self.links["mira-keep"]
+        for bad in ("adores", "", None, 7):
+            with self.subTest(bad):
+                self.assertEqual(
+                    await self.refused_edit(link=link, action="feeling", feeling=bad),
+                    "bad_action",
+                )
+
     async def test_the_cards_undo_takes_a_reworded_connection_back_whole(self) -> None:
         link = self.links["mira-keep"]
         before = await self.memory.version(self.g, self.one.id)
