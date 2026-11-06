@@ -39,7 +39,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from dmbot.memory.claims import LINES_MAX, reads_like_instruction
-from dmbot.memory.models import DEED_TEXT_MAX, DEED_VIEWERS_MAX, NAME_MAX
+from dmbot.memory.models import DEED_KINDS, DEED_TEXT_MAX, DEED_VIEWERS_MAX, NAME_MAX
 from dmbot.memory.readings import PRONOUNS
 from dmbot.memory.standing import DEED_VERB
 
@@ -64,12 +64,13 @@ for the same doer and the same one it mattered to.
 For each deed give: "doer" (a player character's name, or "the party"), "deed" (what they did, as
 short as possible, in the transcript's words), "mattered_to" (one to five names: the people,
 groups or places it mattered to; never a player character), "effect" (exactly one of: helped,
-pleased, annoyed, hurt) and "lines" (the numbers of the lines it comes from, at least one of them
-the DM's).
+pleased, annoyed, hurt), "kind" (exactly one of: attack, kill, rescue, save, steal, help, other;
+use other when none of those is clearly what happened) and "lines" (the numbers of the lines it
+comes from, at least one of them the DM's).
 
 Answer with JSON only, in this shape:
 {"deeds": [{"doer": "...", "deed": "...", "mattered_to": ["..."], "effect": "helped",
-"lines": [1]}]}
+"kind": "rescue", "lines": [1]}]}
 Answer {"deeds": []} if there are none."""
 
 
@@ -82,6 +83,7 @@ class DeedProposal:
     viewers: tuple[str, ...]
     effect: str  # the DM's stored step, e.g. "Helped them" (`standing.DEED_EFFECTS`)
     lines: tuple[str, ...]
+    kind: str = ""  # one of `DEED_KINDS`, or empty (a word outside the list, or "other")
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,6 +93,7 @@ class Parsed:
     deeds: tuple[DeedProposal, ...] = ()
     refused: int = 0  # not a deed we can read: the shape, the word, the lines or an instruction
     repeated: int = 0  # a deed (or part of one) the same doer already has for that viewer
+    kind_dropped: int = 0  # a kind that was not one of the fixed words: kept as no kind
 
 
 def _text(value: object) -> str:
@@ -155,11 +158,14 @@ def parse_deeds(
     covered = covered if covered is not None else set()  # (doer, viewer) of the session so far
     repeated = 0
     out: list[DeedProposal] = []
+    unknown = 0
     for item in items[:MAX_DEEDS]:
         deed = _deed(item, known, dm)
         if deed is None:
             refused += 1
             continue
+        if isinstance(item, dict) and _kind_word(item) not in ("", "other") and not deed.kind:
+            unknown += 1  # (the word was not one of the fixed ones: no kind, and counted)
         doer = _doer_key(deed.doer)
         fresh = tuple(v for v in deed.viewers if (doer, v.casefold()) not in covered)
         if len(fresh) < len(deed.viewers):
@@ -167,8 +173,12 @@ def parse_deeds(
         if not fresh:
             continue
         covered |= {(doer, v.casefold()) for v in fresh}
-        out.append(DeedProposal(deed.doer, deed.text, fresh, deed.effect, deed.lines))
-    return Parsed(tuple(out), refused, repeated)
+        out.append(DeedProposal(deed.doer, deed.text, fresh, deed.effect, deed.lines, deed.kind))
+    return Parsed(tuple(out), refused, repeated, unknown)
+
+
+def _kind_word(item: dict[str, Any]) -> str:
+    return _text(item.get("kind")).casefold()
 
 
 def _doer_key(doer: str) -> str:
@@ -212,7 +222,9 @@ def _deed(item: Any, known: set[str], dm: set[str]) -> DeedProposal | None:
         return None  # a deed never matters to its doer, and never to the party
     if any(reads_like_instruction(v) for v in (*names, words)):
         return None
-    return DeedProposal(doer, _fit(words), viewers[:DEED_VIEWERS_MAX], effect, lines)
+    word = _kind_word(item)
+    kind = word if word in DEED_KINDS else ""  # "other", empty or any unknown word: no kind
+    return DeedProposal(doer, _fit(words), viewers[:DEED_VIEWERS_MAX], effect, lines, kind)
 
 
 __all__ = ["DEED_SYSTEM", "MAX_DEEDS", "VERBS", "DeedProposal", "Parsed", "parse_deeds"]

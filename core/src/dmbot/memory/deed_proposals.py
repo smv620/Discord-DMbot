@@ -55,6 +55,7 @@ class Waiting:
     viewers: tuple[str, ...]
     effect: str
     session_started_at: int | None
+    kind: str = ""  # what kind of deed (#3236): one of `DEED_KINDS`, or empty
 
 
 def pair_key(doer: str, viewer: str) -> tuple[str, str]:
@@ -112,12 +113,12 @@ class DeedProposals:
                 await scope.conn.execute(
                     "INSERT INTO memory_deed_proposals (guild_id, campaign_id, id, doer, text,"
                     " viewers, effect, lines, speaker_ids, session_started_at, prompt_version,"
-                    " model, status, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s,"
-                    " %s, %s, 'proposed', %s)",
+                    " model, kind, status, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s,"
+                    " %s, %s, %s, %s, %s, 'proposed', %s)",
                     (
                         *scope.ids, new_id(), deed.doer, deed.text, fresh, deed.effect,
                         list(deed.lines), sorted(set(speakers)), session_started_at,
-                        prompt_version[:40], model[:80], int(self._store._clock()),
+                        prompt_version[:40], model[:80], deed.kind, int(self._store._clock()),
                     ),
                 )  # fmt: skip
                 stored += 1
@@ -143,7 +144,7 @@ class DeedProposals:
         await self.purge_stopped(guild_id, campaign_id, opted_in)
         async with self._store._read(guild_id, campaign_id) as scope:
             cur = await scope.conn.execute(
-                "SELECT id, doer, text, viewers, effect, session_started_at"
+                "SELECT id, doer, text, viewers, effect, session_started_at, kind"
                 " FROM memory_deed_proposals WHERE guild_id = %s AND campaign_id = %s"
                 " AND status = 'proposed' ORDER BY created_at, id LIMIT %s",
                 (*scope.ids, WAITING_MAX),
@@ -156,6 +157,7 @@ class DeedProposals:
                     tuple(r["viewers"]),
                     str(r["effect"]),
                     r["session_started_at"],
+                    str(r["kind"]),
                 )
                 for r in await cur.fetchall()
             ]
@@ -209,7 +211,8 @@ class DeedProposals:
         await self.purge_stopped(guild_id, campaign_id, opted_in)
         async with self._store._read(guild_id, campaign_id) as scope:
             cur = await scope.conn.execute(
-                "SELECT doer, text, viewers, effect, session_started_at FROM memory_deed_proposals"
+                "SELECT doer, text, viewers, effect, session_started_at, kind"
+                " FROM memory_deed_proposals"
                 " WHERE guild_id = %s AND campaign_id = %s AND id = %s AND status = 'proposed'",
                 (*scope.ids, proposal_id),
             )
@@ -255,7 +258,7 @@ class DeedProposals:
                 doer_id = (await self._store.ensure_party(guild_id, campaign_id, source=source)).id
             written = await self._store.add_deed(
                 guild_id, campaign_id, doer_id, str(row["text"]), viewer_ids, str(row["effect"]),
-                source=source, from_session_at=row["session_started_at"],
+                source=source, from_session_at=row["session_started_at"], kind=str(row["kind"]),
             )  # fmt: skip
         except BaseException:
             # The store said no (or failed): it waits again, so the DM can fix it and press again.
