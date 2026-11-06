@@ -9,6 +9,8 @@ export const workWords = {
   unknownStage: "DMbot is working on it.",
   /** "3 of 10 sessions", "part 1 of 2". */
   progress: (done: number, total: number, unit?: string): string => (unit ? `${done} of ${total} ${unit}` : `${done} of ${total}`),
+  /** A count that is an estimate between two real readings (#3534): "about 42 of 100 lines". */
+  progressAbout: (done: number, total: number, unit?: string): string => `about ${done} of ${total}${unit ? ` ${unit}` : ""}`,
   running: (elapsed: string): string => `Running for ${elapsed}.`,
   lastChange: (ago: string): string => `Last progress ${ago} ago.`,
   justNow: "Last progress just now.",

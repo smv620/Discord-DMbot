@@ -9,6 +9,7 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import { workWords as words } from "../content/work-progress";
+import { useSmoothCount } from "./useSmoothCount";
 
 export interface WorkProgressProps {
   /** The stage in plain words (the page looks the API's code up with `stageWords`). */
@@ -55,6 +56,8 @@ export default function WorkProgress({ stage, done, total, unit, startedAt, upda
 
   const now = Date.now() / 1000 + gap.current;
   const hasCount = typeof done === "number" && typeof total === "number" && total > 0;
+  // Between two real readings the count moves a few times a second, as "about" (#3534); reduced motion shows the real one.
+  const smooth = useSmoothCount(done, total, state === "running" && !waiting && !frozen, serverNow);
   const elapsed = typeof startedAt === "number" ? words.duration(now - startedAt) : null;
   const since = typeof updatedAt === "number" ? now - updatedAt : null;
 
@@ -68,9 +71,11 @@ export default function WorkProgress({ stage, done, total, unit, startedAt, upda
         ) : (
           <strong role="status">{state === "done" ? words.done : stage}</strong>
         )}
-        {hasCount && state !== "failed" && !waiting && <span> {words.progress(done as number, total as number, unit)}</span>}
+        {hasCount && state !== "failed" && !waiting && (
+          <span> {smooth.estimated ? words.progressAbout(smooth.shown as number, total as number, unit) : words.progress(done as number, total as number, unit)}</span>
+        )}
       </p>
-      {hasCount && (state === "running" || state === "stalled") && !waiting && <progress max={total as number} value={Math.min(done as number, total as number)} aria-label={words.barLabel(stage)} />}
+      {hasCount && (state === "running" || state === "stalled") && !waiting && <progress max={total as number} value={Math.min((smooth.shown ?? done) as number, total as number)} aria-label={words.barLabel(stage)} />}
       {state === "failed" && (
         <>
           {reason && <p>{reason}</p>}
