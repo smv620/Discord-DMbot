@@ -84,6 +84,7 @@ WAITING = (
     "claim-reject",
     "claim-pick",  # "Which one?" for a claim kept because a name could be two entries (#3463)
     "claim-unpick",
+    "claim-undo",  # takes back one fact of an "All true" / "All secret" press (#3645)
     "backstory-keep",
     "backstory-skip",
     "backstory-keep-all",
@@ -312,6 +313,20 @@ class ActionStore:
             row = await cur.fetchone()
         return None if row is None else int(row["result_other"])
 
+    async def claim_batch_made(
+        self, guild_id: int, campaign_id: str, user_id: int, claim_id: str, batch: int
+    ) -> bool:
+        """Whether `batch` is the change this DM's own done `claim-confirm` of this claim made,
+        so an Undo can only take back what they answered themselves from the website (#3645)."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT 1 FROM name_actions WHERE guild_id = %s AND campaign_id = %s"
+                " AND user_id = %s AND action = 'claim-confirm' AND target_id = %s"
+                " AND state = 'done' AND result_other = %s",
+                (guild_id, campaign_id, user_id, claim_id, str(batch)),
+            )
+            return await cur.fetchone() is not None
+
     async def kept_reading(
         self, guild_id: int, campaign_id: str, user_id: int, answer_id: str
     ) -> tuple[str, int] | None:
@@ -407,6 +422,13 @@ async def apply(
     if action.action in UNNAMED_ACTIONS:
         try:
             return await _unnamed(memory, guild_id, cid, action, named_batch)
+        except MemoryRuleError:
+            return _failed(GONE)
+    if action.action == "claim-undo":
+        if actions is None or waiting is None:
+            return _failed(FAILED)
+        try:
+            return await _claim_undo(memory, actions, guild_id, cid, action, waiting)
         except MemoryRuleError:
             return _failed(GONE)
     if (
@@ -933,6 +955,40 @@ async def _answer_which_one(guild_id: int, cid: str, a: Action, w: Waiting) -> O
     return Outcome() if made else _failed(GONE)
 
 
+async def _claim_undo(
+    memory: MemoryStore, actions: ActionStore, guild_id: int, cid: str, a: Action, w: Waiting
+) -> Outcome:
+    """Take back one fact of an "All true" / "All secret" press and ask its question again (#3645):
+    the change log's Undo and `ClaimStore.reopen_in`, the calls of Discord's "Undo all". Only the
+    change this DM's own done `claim-confirm` of that claim made can be undone here. A claim already
+    waiting again, or a batch already undone, is done (a retried job); a later change to what the
+    fact made is refused with `gone`, the page's "something changed since"."""
+    claim = await w.claims.get(guild_id, cid, a.target_id)
+    if claim is None:
+        return _failed(GONE)
+    if claim.status == CLAIM_PROPOSED:
+        return Outcome()  # asked again already
+    if not (a.text.isascii() and a.text.isdecimal()) or len(a.text) > 12:
+        return _failed(GONE)
+    batch = int(a.text)
+    if not await actions.claim_batch_made(guild_id, cid, a.user_id, a.target_id, batch):
+        return _failed(GONE)
+    claim_id = a.target_id
+    try:
+        await memory.undo(
+            guild_id,
+            cid,
+            batch,
+            source=DM,
+            after=lambda changes: ClaimStore.reopen_in(changes, claim_id),
+        )
+    except MemoryRuleError as exc:  # (TooLateToUndo is one)
+        if str(exc) == ALREADY_UNDONE:
+            return Outcome()
+        return _failed(GONE)
+    return Outcome()
+
+
 async def _answer_waiting(
     memory: MemoryStore, guild_id: int, cid: str, a: Action, w: Waiting
 ) -> Outcome:
@@ -963,7 +1019,11 @@ async def _answer_waiting(
             # the page words these: the question is gone, a new name has to be answered first,
             # someone who said it stopped being recorded, or the rules refuse the fact now
             return _failed(CLAIM_REFUSALS.get(str(exc), CANNOT_WRITE))
-        return Outcome(result_id=confirmed.claim.fact_id or "")
+        # The change batch rides on the answer, for the page's one Undo of a press (#3645).
+        return Outcome(
+            result_id=confirmed.claim.fact_id or "",
+            result_other="" if confirmed.batch is None else str(confirmed.batch),
+        )
     if a.action in READING_ACTIONS:
         return await _answer_reading(memory, guild_id, cid, a, w)
     if a.action in NAMES_FIXED_ACTIONS:
