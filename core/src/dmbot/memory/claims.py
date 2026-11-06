@@ -79,7 +79,15 @@ from dmbot.memory.store import (
     _load_ontology,
     _new_alias,
 )
-from dmbot.memory.voice import EFFECT, EFFECT_NOTE, OWN, PARTY, PARTY_REASON, voice
+from dmbot.memory.voice import (
+    EFFECT,
+    EFFECT_NOTE,
+    OWN,
+    PARTY,
+    PARTY_REASON,
+    split_effect_note,
+    voice,
+)
 from dmbot.names import not_names
 from dmbot.word_end import at_word_end
 
@@ -197,15 +205,19 @@ class Claim:
     # The entries the DM picked for a name that could mean two (#3238), ahead of the words.
     subject_picked: str | None = None
     object_picked: str | None = None
+    # Why a player character's line is "something that happened to them" (#2562), apart from the
+    # details: the note is stored run on to them and taken off here (#3624).
+    note: str = ""
 
 
 def claim_of(r: Mapping[str, Any]) -> Claim:
     """A stored claim from its row."""
+    details, note = split_effect_note(str(r["details"] or ""))
     return Claim(
-        r["id"], r["subject"], r["relationship"], r["object"], r["details"], r["how"],
+        r["id"], r["subject"], r["relationship"], r["object"], details, r["how"],
         tuple(r["lines"]), tuple(r["speaker_ids"]), r["source"], r["prompt_version"], r["model"],
         r["status"], r["reason"], r["session_started_at"], r["created_at"], r["decided_at"],
-        r["fact_id"], r.get("reading"), r.get("subject_picked"), r.get("object_picked"),
+        r["fact_id"], r.get("reading"), r.get("subject_picked"), r.get("object_picked"), note,
     )  # fmt: skip
 
 

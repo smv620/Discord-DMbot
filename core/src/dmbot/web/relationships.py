@@ -33,6 +33,7 @@ from dmbot.memory.link_words import (
     quoted,
     reads_both_ways,
 )
+from dmbot.memory.voice import split_effect_note
 from dmbot.memory.web_actions import RETAKE_AFTER_S
 from dmbot.memory.who_resolve import checked_line
 from dmbot.web import all_names, graph_view, link_sources, which_choices
@@ -1164,7 +1165,7 @@ def _can_be_secret(row: dict[str, Any]) -> bool:
     screen's own rule (`claims.condition_of`), so both read it the same way."""
     said = Extracted(
         str(row["subject"]), str(row["relationship"]), str(row["object"]),
-        str(row.get("details") or ""), (), str(row["how"]),
+        split_effect_note(str(row.get("details") or ""))[0], (), str(row["how"]),
     )  # fmt: skip
     return condition_of(said) is None
 
@@ -1173,7 +1174,9 @@ def _claim_statement(row: dict[str, Any]) -> str:
     """A claim as one plain line, "Mira Voss knows Far Hall" (the DM's page shows the line and the
     session's date; the words are the claim's own, as the DM screen shows them)."""
     base = f"{row['subject']} {row['relationship']} {row['object']}".strip()
-    details = str(row.get("details") or "").strip()
+    details = split_effect_note(str(row.get("details") or ""))[
+        0
+    ].strip()  # (the note is not a detail)
     return f"{base} ({details})" if details else base
 
 

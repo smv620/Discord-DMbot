@@ -16,6 +16,7 @@ action stays the DM's). A group's attitude stays the DM's.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Collection
 
 from dmbot.memory.models import NPC, PLAYER_CHARACTER
@@ -29,6 +30,25 @@ INNER_STATE = frozenset(t.key for t in CORE_PREDICATES if t.inner_state)
 
 PARTY_REASON = "A player said that about someone else's character, so it isn't kept as true"
 EFFECT_NOTE = "Told by the DM as something that happened to {name}, not as {name}'s own choice."
+# The note is stored run on to the claim's details (there is no column for it), so every reader
+# takes it off again with `split_effect_note`: it is not a detail, and a feeling word with the note
+# after it ("friendly Told by the DM…") is no longer a word (#3624).
+_NOTE = re.compile(
+    r"\s*"
+    + re.escape(EFFECT_NOTE)
+    .replace(r"\{name\}", r"(?P<n>.+?)", 1)
+    .replace(r"\{name\}", r"(?P=n)", 1)
+    + r"\s*$"
+)
+
+
+def split_effect_note(details: str) -> tuple[str, str]:
+    """(the details without the note, the note or ""): the one place that undoes how
+    `claims.effect_note` stores it."""
+    found = _NOTE.search(details)
+    if found is None:
+        return details, ""
+    return details[: found.start()].strip(), found.group(0).strip()
 
 
 def voice(
