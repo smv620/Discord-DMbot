@@ -22,7 +22,7 @@ class TheAddress(unittest.TestCase):
         self.assertEqual(url, f"{SITE}/account/recaps/7.ab12.1700000000")
 
     def test_no_word_a_person_wrote_can_reach_the_address(self) -> None:
-        for bad in ("Lord Varkus", "x" * 65, "a/b", "a?b", ""):
+        for bad in ("Lord Varkus", "x" * 81, "a/b", "a?b", ""):
             if bad:
                 self.assertEqual(dl.site_link(SITE, "names", 7, "ab12", item=bad), "")
         self.assertEqual(dl.site_link(SITE, "names", 7, "ab12", tail="a b"), "")
@@ -32,6 +32,16 @@ class TheAddress(unittest.TestCase):
         self.assertEqual(dl.site_link(SITE, "secrets", 7, "ab12"), "")
         self.assertEqual(dl.site_link("", "names", 7, "ab12"), "")
         self.assertEqual(dl.site_link("http://x.example.com", "names", 7, "ab12"), "")
+
+    def test_the_story_graph_line_is_two_ids_joined_by_a_dot(self) -> None:
+        url = dl.site_link(SITE, "web", 7, "ab12", item="n1.n2")
+        self.assertEqual(url, f"{SITE}/account/web/7.ab12?item=n1.n2")
+
+    def test_the_clarify_page_has_its_own_shape(self) -> None:
+        url = dl.clarify_link(SITE, 7, "ab12", "n:5")
+        self.assertEqual(url, f"{SITE}/account/clarify?campaign=7.ab12&name=n%3A5")
+        self.assertEqual(dl.clarify_link(SITE, 7, "ab12", "Lord Varkus"), "")
+        self.assertEqual(dl.clarify_link("", 7, "ab12", "n5"), "")
 
     def test_the_jump_link_is_a_discord_address_or_nothing(self) -> None:
         good = SimpleNamespace(jump_url="https://discord.com/channels/1/2/3")

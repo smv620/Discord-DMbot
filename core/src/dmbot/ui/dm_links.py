@@ -21,13 +21,25 @@ DISCORD_ICON = "💬"
 SITE_ICON = "🌐"
 
 ITEM_PARAM = "item"  # the one query parameter every page reads (WebDev, #3663)
-_ITEM = re.compile(r"^[A-Za-z0-9._-]{1,64}$")  # an id, never a word a person wrote
+_ITEM = re.compile(
+    r"^[A-Za-z0-9._:-]{1,80}$"
+)  # an id, never a word a person wrote (WebDev's contract)
 _PAGE = re.compile(r"^[a-z][a-z-]{0,30}$")
 _TAIL = re.compile(r"^[A-Za-z0-9._-]{1,64}$")  # e.g. a recap's session number
 
 # The pages a message may point at; a new one is added here so the test below lists it.
 PAGES = frozenset(
-    {"questions", "names", "recaps", "house-rules", "lore", "import", "timeline", "transcripts"}
+    {
+        "questions",
+        "names",
+        "recaps",
+        "web",  # the Story Graph: `?item=<claim or question id>` or `<idA>.<idB>` for one line
+        "house-rules",
+        "lore",
+        "import",
+        "timeline",
+        "transcripts",
+    }
 )
 
 
@@ -54,6 +66,18 @@ def site_link(
     ref = f"{guild_id}.{campaign_id}" + (f".{tail}" if tail else "")
     query = f"?{ITEM_PARAM}={quote(item, safe='')}" if item else ""
     return f"https://{parts.netloc}/account/{page}/{ref}{query}"
+
+
+def clarify_link(site_url: str, guild_id: int, campaign_id: str, name_id: str) -> str:
+    """The clarify page for one name (#3604). It has its own address shape, not `?item=`; "" when
+    there is no https address or an id is not a plain id."""
+    parts = urlsplit(site_url.strip())
+    if parts.scheme.lower() != "https" or not parts.netloc:
+        return ""
+    if not _TAIL.match(campaign_id) or not _ITEM.match(name_id):
+        return ""
+    ref = quote(f"{guild_id}.{campaign_id}", safe=".")
+    return f"https://{parts.netloc}/account/clarify?campaign={ref}&name={quote(name_id, safe='')}"
 
 
 def jump_link(message: discord.Message | None) -> str:
