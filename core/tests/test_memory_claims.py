@@ -219,7 +219,9 @@ class Judging(unittest.TestCase):
         self.assertEqual(self.judge(said("Nobody", "knows", "Hesper")), claims.UNKNOWN_NAME_REASON)
         self.assertEqual(self.judge(said("Bram", "knows", "Ash")), claims.TWO_ENTRIES_REASON)
         self.assertEqual(self.judge(said("Bram", "knows", "Bram")), claims.SAME_ENTRY_REASON)
-        self.assertIn("doesn't fit", self.judge(said("Veldmoor", "carries", "Chapel")))
+        # (a known word between kinds it doesn't take is kept on the catch-all, not dropped, #3033;
+        # a kind that takes no such pair at all, like a condition, is still refused)
+        self.assertEqual(self.judge(said("Veldmoor", "carries", "Chapel")), "")
         self.assertEqual(self.judge(said("Veldmoor", "is", "dead")), claims.STATE_REASON)  # a place
 
     def test_a_claim_that_reads_like_an_instruction_is_dropped(self) -> None:
@@ -253,7 +255,10 @@ class Steward(unittest.TestCase):
 
     def test_a_near_spelling_reuses_the_existing_term(self) -> None:
         tally = Tally()
-        self.assertEqual(self.place("locatedin", tally), ("located_in", False, ""))
+        term, from_object, label = place_relationship(
+            ONTO, "locatedin", "character", "place", tally
+        )  # (a place tie, so the ends fit it: two characters would keep the words, #3033)
+        self.assertEqual((term.key, from_object, label), ("located_in", False, ""))
         self.assertEqual((tally.reused, tally.accepted, sum(tally.refused.values())), (1, 0, 0))
 
     def test_a_term_nobody_can_vouch_for_goes_on_the_catch_all_with_its_words_as_the_label(

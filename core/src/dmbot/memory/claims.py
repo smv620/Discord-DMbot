@@ -72,7 +72,7 @@ from dmbot.memory.ontology import (
     decide_term,
     resolve_kind,
 )
-from dmbot.memory.store import MemoryStore, _load_ontology, _new_alias
+from dmbot.memory.store import TRAVELS_WITH, MemoryStore, _load_ontology, _new_alias
 from dmbot.memory.voice import EFFECT, EFFECT_NOTE, OWN, PARTY, PARTY_REASON, voice
 from dmbot.names import not_names
 from dmbot.word_end import at_word_end
@@ -415,6 +415,21 @@ def feeling_of(
     return None
 
 
+def _fits(
+    known: tuple[PredicateTerm, bool], subject_kind: str, object_kind: str, onto: Ontology
+) -> bool:
+    """Whether a known relationship's two ends are kinds it takes. A companion link
+    (`travels_with`) is judged by the store's own rule afterwards, so it is never turned into
+    the catch-all here (#3176)."""
+    term, from_object = known
+    if term.key == TRAVELS_WITH:
+        return True
+    s_kind, o_kind = (object_kind, subject_kind) if from_object else (subject_kind, object_kind)
+    return (not term.subject_types or onto.is_any(s_kind, term.subject_types)) and (
+        not term.object_types or onto.is_any(o_kind, term.object_types)
+    )
+
+
 def place_relationship(
     onto: Ontology,
     text: str,
@@ -451,8 +466,10 @@ def place_relationship(
     ):
         return located, False, ""
     known = resolve_relationship(onto, text)
-    if known is not None:
+    if known is not None and _fits(known, subject_kind, object_kind, onto):
         return known[0], known[1], ""
+    # (a known word whose two ends don't fit, "performed" between two characters, is not lost: it
+    # goes on the catch-all with its own words, like a word DMbot does not know, #3033)
     decision = decide_term(
         onto,
         # "link" is only the proposal's key when the words have no letters to make one from.
@@ -463,7 +480,11 @@ def place_relationship(
         decision = Refused(REASON_BETWEEN, Fallback(FALLBACK_PREDICATE, text))
     if tally is not None:
         tally.record(decision)
-    if isinstance(decision, Reused) and decision.existing in onto.predicates:
+    if (
+        isinstance(decision, Reused)
+        and decision.existing in onto.predicates
+        and _fits((onto.predicates[decision.existing], False), subject_kind, object_kind, onto)
+    ):
         return onto.predicates[decision.existing], False, ""
     label = " ".join(text.split())
     if len(label) > DETAIL_MAX:
