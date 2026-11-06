@@ -7,7 +7,7 @@ import io
 import unittest
 from argparse import Namespace
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import psycopg
 
@@ -501,7 +501,7 @@ class TheCommand(unittest.IsolatedAsyncioTestCase):
             lore.write_text("Mira was raised by the Ashen Crown.")
             session.write_text(SESSION)
             args = cli.parse_args(
-                ["--guild", "1", "--dm", "2", "--players", "ist=3,jac=4",
+                ["--guild", "1", "--dm", "2", "--players", "ist=3,jac=4,eri=5,owe=6",
                  "--lore", str(lore), "--session", str(session)]
             )  # fmt: skip
             said: list[str] = []
@@ -516,7 +516,7 @@ class TheCommand(unittest.IsolatedAsyncioTestCase):
             lore, session = Path(tmp) / "lore.txt", Path(tmp) / "session.txt"
             lore.write_text("Mira was raised by the Ashen Crown.")
             session.write_text(SESSION)
-            base = ["--guild", "1", "--dm", "2", "--players", "ist=3,jac=4",
+            base = ["--guild", "1", "--dm", "2", "--players", "ist=3,jac=4,eri=5,owe=6",
                     "--lore", str(lore), "--session", str(session)]  # fmt: skip
             said: list[str] = []
             for extra in (["--lore-choice", "nope"], ["--date", "2999-01-01"]):
@@ -531,3 +531,91 @@ class TheCommand(unittest.IsolatedAsyncioTestCase):
         )  # fmt: skip
         with self.assertRaises(SampleError):
             await cli.run(args, say=lambda _l: None)
+
+
+class ThePlayerCharacters(DatabaseTest):
+    """#3554: the four player characters are set by the run, after counting what the read found."""
+
+    PLAYERS: ClassVar[dict[str, int]] = {"ist": 11, "jac": 12, "eri": 13, "owe": 14}
+
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        from dmbot.memory.store import MemoryStore
+
+        self.campaigns = steps.campaign_store(self.db)
+        self.memory = MemoryStore(self.db)
+        self.sample = await self.campaigns.create(GUILD, NAME, DM)
+
+    async def read(self, name: str, role: str | None = "player_character") -> str:
+        """A name as the lore read leaves it: proposed, with the role it guessed."""
+        from dmbot.memory.models import BACKGROUND_SOURCE
+
+        made = await self.memory.add_entity(
+            GUILD, self.sample.id, type="character", name=name, role=role,
+            source=BACKGROUND_SOURCE,
+        )  # fmt: skip
+        return made.value.id
+
+    async def people(self) -> dict[str, tuple[str, str | None, int | None]]:
+        found = await self.memory.entities(
+            GUILD, self.sample.id, statuses=("proposed", "confirmed")
+        )
+        # (the store itself adds a person for each account and the party: only characters count)
+        return {e.name: (e.status, e.role, e.played_by) for e in found if e.type == "character"}
+
+    async def run_it(self) -> Any:
+        from dmbot.devtools.sample_run import characters
+
+        return await characters.set_player_characters(
+            self.db, self.memory, GUILD, self.sample.id, self.PLAYERS
+        )
+
+    async def test_the_count_of_what_the_read_found_comes_before_the_fix(self) -> None:
+        await self.read("Cerric Vanya'elen")
+        await self.read("Belleros Stormgrace")
+        await self.read("Okthandom Korran", role="npc")  # found, but not as a player character
+        got = await self.run_it()  # (Claude Ambere was not found at all)
+        self.assertEqual((got.found_by_the_read, got.set, got.made), (2, 3, 1))
+
+    async def test_all_four_end_as_confirmed_player_characters_of_their_accounts(self) -> None:
+        await self.read("Cerric Vanya'elen")
+        await self.run_it()
+        people = await self.people()
+        for (name, label), who in zip(plan.PLAYER_CHARACTERS, (11, 12, 13, 14), strict=True):
+            self.assertEqual(people[name], ("confirmed", "player_character", who), label)
+        self.assertEqual(len(people), 4)  # nothing doubled
+
+    async def test_a_first_name_the_read_made_is_the_entry_set_not_a_second_one(self) -> None:
+        await self.read("Cerric")
+        got = await self.run_it()
+        self.assertEqual((got.found_by_the_read, got.set, got.made), (1, 1, 3))
+        people = await self.people()
+        self.assertEqual(
+            sorted(people), ["Belleros Stormgrace", "Cerric", "Claude Ambere", "Okthandom Korran"]
+        )
+        self.assertEqual(people["Cerric"], ("confirmed", "player_character", 11))
+
+    async def test_running_it_again_changes_nothing_more(self) -> None:
+        await self.run_it()
+        again = await self.run_it()
+        self.assertEqual((again.found_by_the_read, again.set, again.made), (4, 4, 0))
+        self.assertEqual(len(await self.people()), 4)
+
+    async def test_another_campaign_is_refused_and_nothing_is_changed(self) -> None:
+        from dmbot.devtools.sample_run import characters
+
+        other = await self.campaigns.create(GUILD, "Frostmaiden", DM)
+        with self.assertRaises(SampleError):
+            await characters.set_player_characters(
+                self.db, self.memory, GUILD, other.id, self.PLAYERS
+            )
+        self.assertEqual(
+            await self.memory.entities(GUILD, other.id, statuses=("proposed", "confirmed")), []
+        )
+
+    def test_the_run_needs_the_four_accounts(self) -> None:
+        plan.require_character_players(self.PLAYERS)
+        for missing in ("ist", "jac", "eri", "owe"):
+            short = {k: v for k, v in self.PLAYERS.items() if k != missing}
+            with self.assertRaises(SampleError):
+                plan.require_character_players(short)

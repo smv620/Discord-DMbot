@@ -28,7 +28,7 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from dmbot.devtools.sample_run import plan, steps
+from dmbot.devtools.sample_run import characters, plan, steps
 from dmbot.devtools.sample_run.plan import SampleError, Step
 from dmbot.transcript import import_plan as ip
 
@@ -102,6 +102,7 @@ async def run(
     # Everything that can refuse the run without a database comes first, so a mistake costs
     # nothing: the players, the files, the choice, the date.
     players = plan.parse_players(args.players)
+    plan.require_character_players(players)
     lore_text, session_text = read_text(args.lore, "lore"), read_text(args.session, "session")
     steps.check_lore(lore_text, args.lore_choice)
     started = session_start(args.date, now)
@@ -130,6 +131,7 @@ async def run(
     from dmbot.consent import ConsentStore
     from dmbot.db import Database
     from dmbot.devtools import common
+    from dmbot.memory.store import MemoryStore
 
     commit = common.commit(
         args.commit, tool="sample_run"
@@ -137,7 +139,7 @@ async def run(
     db = await Database.open(url, migrate=False, max_size=4)
     done: list[Step] = []
     try:
-        campaigns = steps.campaign_store(db)
+        campaigns, memory = steps.campaign_store(db), MemoryStore(db)
         today = dt.date.today().isoformat()
         gid, dm = args.guild, args.dm
         # The checks that need the database, still before anything is changed or spent.
@@ -177,7 +179,17 @@ async def run(
                 say(line)
             return {"lines": len(lines)}
 
+        async def characters_step() -> Mapping[str, int | str]:
+            got = await characters.set_player_characters(db, memory, gid, cid, players)
+            say(f"player characters found by the read: {got.found_by_the_read} of 4")
+            return {
+                "found by the read": f"{got.found_by_the_read} of 4",
+                "set": got.set,
+                "made": got.made,
+            }
+
         await timed("lore read", lore_step())
+        await timed("player characters", characters_step())
         await timed("accept all (lore)", accept_step())
         await timed("backup and score (lore)", score_step("lore", "lore"))
 
