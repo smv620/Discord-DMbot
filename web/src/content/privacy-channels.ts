@@ -43,5 +43,5 @@ export const sessionNotesPrivacy = {
 export const pcIconsLine = {
   live: PC_ICONS_LIVE,
   lead: "Pictures of player characters.",
-  text: "On a campaign's Story Graph, a player character can show its player's Discord picture (only for players who agreed to be recorded) or its D&D Beyond portrait. These pictures load straight from Discord or D&D Beyond, and DMbot does not keep a copy. The game master, or the player, can hide it.",
+  text: "On a campaign's Story Graph (the map of names and how they connect), a player's character can show that player's Discord profile picture, if they said yes to being recorded, or the portrait from its D&D Beyond sheet. Anyone who can see that character on the graph sees the picture. DMbot keeps only the link, never the picture: your browser loads it from Discord or D&D Beyond when you open the graph, and they can see that you did. The player whose character it is, or the game master, can hide it.",
 };
