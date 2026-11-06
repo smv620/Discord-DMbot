@@ -22,7 +22,7 @@ from typing import Any
 from dmbot import progress
 from dmbot.consent import TERMS_VERSION
 from dmbot.db import Database
-from dmbot.memory import gate, kin
+from dmbot.memory import gate, kin, reputation_words, web_actions
 from dmbot.memory.claims import Extracted, condition_of
 from dmbot.memory.link_kinds import link_kind
 from dmbot.memory.link_words import (
@@ -812,9 +812,10 @@ async def queue_add(db: Database, session: Session, ref: str, body: object) -> s
 
 
 async def queue_edit(db: Database, session: Session, ref: str, link_id: str, body: object) -> str:
-    """Queue a change to one connection: `{action: "words", words}`, `{action: "secret",
-    secret}`, `{action: "who", who, characters}`, `{action: "pin", pinned}` or
-    `{action: "remove", confirm: true}`. Returns the answer's id."""
+    """Queue a change to one connection: `{action: "words", words}`, `{action: "feeling", feeling}`
+    (one of the nine words, #3606), `{action: "secret", secret}`, `{action: "who", who,
+    characters}`, `{action: "pin", pinned}` or `{action: "remove", confirm: true}`. Returns the
+    answer's id."""
     if not ID_PATTERN.match(link_id):
         raise RecapError("not_found")
     if not isinstance(body, dict):
@@ -824,6 +825,17 @@ async def queue_edit(db: Database, session: Session, ref: str, link_id: str, bod
         return await _queue(
             db, session, ref, entity=None, action="link-words", target=link_id,
             text=_words(body.get("words")), flag=False,
+        )  # fmt: skip
+    if action == "feeling":  # a feeling picked for a `knows` line (#3606): one of the nine words
+        feeling = reputation_words.word_of(body.get("feeling"))
+        if feeling is None:
+            raise RecapError("bad_action")
+        # the same change as typing "knows (wary)" into the words box (`predicate_for` reads it
+        # back as a feeling) but only on a `knows` connection (checked when it is applied), so the
+        # connection stays a "knows" and Undo is the words' own
+        return await _queue(
+            db, session, ref, entity=None, action="link-words", target=link_id,
+            text=f"{web_actions.FEELING_TEXT}{feeling}", flag=False,
         )  # fmt: skip
     if action == "secret":
         if not isinstance(body.get("secret"), bool):
