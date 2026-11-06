@@ -19,6 +19,30 @@ from dmbot.ui.dmbot_commands import _answer_first, _Button, _Menu, _replace, _te
 from dmbot.ui.names import _md, _memory, changed, sees_secrets
 
 ONLY_DMS = "Only the campaign's DMs can do that."
+PRIVATE_LINE = "Only the characters listed here were told. Nobody else sees this."
+GONE = "That name was removed or changed. Open the name card again."
+# The store's own messages, said for this feature (the store shares some with other pages).
+PLAIN = {
+    "Only the DM can say who knows this.": ONLY_DMS,
+    "That is gone or was never here.": GONE,
+    "Only a secret name can be told to one character.": (
+        "This name isn't secret, so everyone already knows it."
+    ),
+    "That character does not know that name.": (
+        "That character doesn't know this name yet. Add them under "
+        '"👥 Only some characters" first.'
+    ),
+    "That character was not told this.": (
+        "That character wasn't told this, so there is nothing to take back. Open the page again."
+    ),
+}
+
+
+def plain(exc: Exception) -> str:
+    """A store refusal in this feature's words; any other message is shown as it is."""
+    return PLAIN.get(str(exc), str(exc))
+
+
 TELL_PLACEHOLDER = "Tell one character who this is…"
 TAKE_BACK_PLACEHOLDER = "Take back what a character was told…"
 MAX_OPTIONS = 25  # one Discord menu holds this many
@@ -41,8 +65,8 @@ def take_back_question(character: str, alias: str, entry: str) -> str:
 
 def told_lines(told: Sequence[str], names: dict[str, str], alias: str, entry: str) -> str:
     """The page's lines for who was told, escaped for Discord; "" when no one was."""
-    lines = [f"👁️ {_md(was_told(names[c], alias, entry))}" for c in told if c in names]
-    return "\n".join(lines)
+    lines = [f"🗣️ {_md(was_told(names[c], alias, entry))}" for c in told if c in names]
+    return "\n".join([*lines, PRIVATE_LINE]) if lines else ""
 
 
 def tell_options(
@@ -149,11 +173,14 @@ async def tell(
             page.campaign.guild_id, page.campaign.id, alias_id, character_id, source=DM
         )
     except MemoryRuleError as exc:
-        await _tell(interaction, f"Couldn't do that. {exc}")
+        await _tell(interaction, plain(exc))
         return
     changed(interaction, page.campaign)
     who = page.names.get(character_id, "That character")
-    note = f"✅ {_md(now_knows(who, page.alias.text, page.entry))}. Players still see two people."
+    note = (
+        f"✅ {_md(now_knows(who, page.alias.text, page.entry))}. Only {_md(who)} was told; "
+        "everyone else still sees two names."
+    )
     await show_who_page(interaction, campaign_id, entity_id, alias_id, note=note)
 
 
@@ -172,7 +199,7 @@ async def ask_take_back(
     told = await page.memory.told_characters(page.campaign.guild_id, page.campaign.id, alias_id)
     who = page.names.get(character_id)
     if who is None or character_id not in told:
-        await _tell(interaction, "That character was not told this.")
+        await _tell(interaction, PLAIN["That character was not told this."])
         return
     await _replace(
         interaction,
@@ -199,7 +226,7 @@ async def take_back(
             page.campaign.guild_id, page.campaign.id, alias_id, character_id, source=DM
         )
     except MemoryRuleError as exc:
-        await _tell(interaction, f"Couldn't do that. {exc}")
+        await _tell(interaction, plain(exc))
         return
     changed(interaction, page.campaign)
     who = page.names.get(character_id, "That character")

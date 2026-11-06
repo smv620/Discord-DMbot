@@ -42,6 +42,7 @@ class Told(NameWho):
         text, view = await self.page()
         self.assertIn("Mara now knows Bell is Belleros", self.labels(view))
         self.assertNotIn("was told", text)
+        self.assertNotIn(told_name.PRIVATE_LINE, text)  # nothing told: no line about it
 
     async def test_telling_records_it_and_the_page_then_says_so_and_offers_take_back(self) -> None:
         alias, mara = await self.secret_held_by_mara()
@@ -51,6 +52,8 @@ class Told(NameWho):
         text, view = it.response.edited[0]
         self.assertIn("Mara now knows Bell is Belleros", text)
         self.assertIn("Mara was told that Bell is Belleros", text)
+        self.assertIn("Only Mara was told; everyone else still sees two names.", text)
+        self.assertIn(told_name.PRIVATE_LINE, text)  # and the page says it is private
         labels = self.labels(view)
         self.assertIn("Mara was told that Bell is Belleros", labels)  # the take-back choice
         self.assertNotIn("Mara now knows Bell is Belleros", labels)  # not offered twice
@@ -95,15 +98,15 @@ class Told(NameWho):
         alias, mara = await self.secret_held_by_mara()
         no_hold = self.it()
         await told_name.tell(no_hold, self.campaign.id, self.bell.id, alias.id, tavin.id)
-        self.assertIn("does not know that name", self.said(no_hold))
+        self.assertIn("know this name yet", self.said(no_hold))
         nothing = self.it()
         await told_name.ask_take_back(nothing, self.campaign.id, self.bell.id, alias.id, mara.id)
-        self.assertIn("not told this", self.said(nothing))
+        self.assertIn("told this, so there is nothing to take back", self.said(nothing))
         # a name that is not secret any more cannot be told
         await self.memory.update_alias(GUILD, self.campaign.id, alias.id, source="dm", secret=False)
         public = self.it()
         await told_name.tell(public, self.campaign.id, self.bell.id, alias.id, mara.id)
-        self.assertIn("secret name", self.said(public))
+        self.assertIn("secret, so everyone already knows it", self.said(public))
         self.assertEqual(await self.told(alias), [])
 
     async def test_the_page_is_unchanged_when_nothing_is_held_or_told(self) -> None:
