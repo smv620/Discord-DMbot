@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import Any
 
 from dmbot.db import Database
+from dmbot.memory import descriptions
 from dmbot.memory.kinds import KIND_LABELS
 from dmbot.recaps import name_answers
 from dmbot.web import name_checks, recaps
@@ -33,10 +34,16 @@ def kind_word(kind: object) -> str:
 
 def label_of(row: dict[str, Any]) -> str:
     """The words on one answer: another name for an entry that is already in the story, or a new
-    entry of a kind."""
+    entry of a kind. An entry whose name only describes it ("the woman") carries a tag, the one
+    entry it is tied to ("the woman, with Mira"), so two of them can be told apart (#3431)."""
     if row["pick"] == "new":
-        return f"new {KIND_LABELS.get(str(row['newKind']), str(row['newKind']))}"
-    return f"a.k.a. {row['targetName']}, {kind_word(row['targetKind'])}"
+        kind = str(row.get("newKind") or "")
+        return f"new {KIND_LABELS.get(kind, kind)}" if kind else "new entry"
+    name = str(row["targetName"])
+    tie = row.get("targetTie")
+    if tie and descriptions.is_description(name):
+        return f"a.k.a. {name}, with {tie}"
+    return f"a.k.a. {name}, {kind_word(row['targetKind'])}"
 
 
 def answer_of(row: dict[str, Any]) -> dict[str, str]:
@@ -81,11 +88,22 @@ async def read_answers(
 async def read_one(db: Database, session: Session, ref: str, entity_id: str) -> dict[str, Any]:
     """One name to check on its own page: its card from the recap's list, DMbot's answers for it
     (an empty list when it has none yet), and the kinds a new entry can be made as. A name that is
-    not waiting in this recap is "not found"."""
+    not waiting in this recap is "not found" (the recap's list holds suggestions only; a person the
+    story never named is on the Questions page, read with `read_answers`)."""
     ent = name_checks._entity_id(entity_id)
     listed = await name_checks.read_checks(db, session, ref)
     card = next((n for n in listed["names"] if str(n.get("id")) == ent), None)
     if card is None:
         raise RecapError("not_found")
     given = await read_answers(db, session, ref, [ent])
-    return {**card, "answers": given.get(ent, []), "kinds": name_answers.kinds()}
+    # (the card and the answers are two reads: a name answered between them shows a card with no
+    # answers, and the page's next read finds it gone)
+    return {
+        "places": [],
+        "morePlaces": 0,
+        "scene": None,  # (the scene door joins in when the scenes are built, #3596)
+        "answering": False,  # (an answer queued for this name is read with the answer's own door)
+        **card,
+        "answers": given.get(ent, []),
+        "kinds": name_answers.kinds(),
+    }

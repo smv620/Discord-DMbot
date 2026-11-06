@@ -12,9 +12,13 @@ SQL = r"""
     -- server. Each answer names the entry it points at by its main name and kind, so the DM can
     -- read it ("a.k.a. Ilse"); a hidden or secret entry is named too, because only a DM can ask.
     -- Only while the question is open (the name is still a suggestion or an unnamed person, not
-    -- merged away) and the entry it names is still in the story. Ids, kind words, a main name and
-    -- a confidence word: never a line of a transcript. Nothing is written; at most 200 ids are
-    -- read.
+    -- merged away). An answer that points at an entry is given only when the page's own answer
+    -- door would take it ("same as" needs a confirmed entry that is not a table person and has no
+    -- secret spelling, as `dmbot_recap_names_read`'s `known` list and `dmbot_name_answer_add`),
+    -- so a ready answer is never one that fails; a hidden entry is therefore a choice in Discord
+    -- only. `targetTie` is the name of one confirmed, visible entry it is tied to, for the tag of
+    -- an entry whose name only describes it (#3431). Ids, kind words, names and a confidence
+    -- word: never a line of a transcript. Nothing is written; at most 200 ids are read.
     CREATE FUNCTION dmbot_web_who_answers(g BIGINT, c TEXT, ids TEXT[]) RETURNS JSONB
     LANGUAGE plpgsql SECURITY DEFINER AS $fn$
     BEGIN
@@ -34,6 +38,20 @@ SQL = r"""
             SELECT jsonb_agg(jsonb_build_object(
                        'id', a.entity_id, 'rank', a.rank, 'pick', a.pick,
                        'targetId', a.target_id, 'targetName', t.name, 'targetKind', t.type,
+                       'targetTie', (
+                           SELECT n.name FROM memory_relations r
+                           JOIN memory_entities n
+                             ON n.guild_id = r.guild_id AND n.campaign_id = r.campaign_id
+                            AND n.id = CASE WHEN r.subject_id = t.id THEN r.object_id
+                                            ELSE r.subject_id END
+                            AND n.status = 'confirmed' AND n.merged_into IS NULL
+                            AND n.type <> 'person'
+                            AND NOT EXISTS (SELECT 1 FROM memory_aliases s
+                                            WHERE s.guild_id = g AND s.campaign_id = c
+                                              AND s.entity_id = n.id AND s.secret)
+                           WHERE r.guild_id = g AND r.campaign_id = c AND r.status = 'confirmed'
+                             AND NOT r.secret AND t.id IN (r.subject_id, r.object_id)
+                           ORDER BY r.created_at, r.id LIMIT 1),
                        'newKind', a.new_kind, 'confidence', a.confidence)
                    ORDER BY a.entity_id, a.rank)
             FROM memory_who_answers a
@@ -43,7 +61,10 @@ SQL = r"""
              AND (e.status = 'proposed' OR (e.status = 'confirmed' AND e.unnamed))
             LEFT JOIN memory_entities t
               ON t.guild_id = a.guild_id AND t.campaign_id = a.campaign_id AND t.id = a.target_id
-             AND t.merged_into IS NULL AND t.status IN ('proposed', 'confirmed')
+             AND t.merged_into IS NULL AND t.status = 'confirmed' AND t.type <> 'person'
+             AND NOT EXISTS (SELECT 1 FROM memory_aliases s
+                             WHERE s.guild_id = g AND s.campaign_id = c
+                               AND s.entity_id = t.id AND s.secret)
             WHERE a.guild_id = g AND a.campaign_id = c AND a.entity_id = ANY (ids[1:200])
               AND (a.pick = 'new' OR t.id IS NOT NULL)), '[]'::jsonb));
     END

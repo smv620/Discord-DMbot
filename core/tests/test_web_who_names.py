@@ -6,6 +6,7 @@ from __future__ import annotations
 import unittest
 from typing import Any, cast
 
+from dmbot.memory.models import CONFIRMED
 from dmbot.memory.who_answers import ENTITY, NEW, StoredAnswer, WhoAnswers
 from dmbot.web import sessions
 from dmbot.web import who_names as web
@@ -90,12 +91,12 @@ class OnTheDoor(WithChecks):
                 await self.code(web.read_answers(self.web, who, self.ref, [name])), "not_found"
             )
 
-    async def test_a_hidden_entry_is_named_for_the_dm_only(self) -> None:
+    async def test_a_hidden_entry_is_not_offered_and_a_player_is_refused(self) -> None:
         name = await self.suggest("Vale")
         fox = await self.known("The Grey Fox", "character", secret=True)
         await self.keep(name, StoredAnswer(ENTITY, "likely", target_id=fox))
-        mine = await web.read_answers(self.web, self.session, self.ref, [name])
-        self.assertIn("The Grey Fox", mine[name][0]["label"])
+        # (a hidden entry is a Discord-only choice: the page's own door refuses it too)
+        self.assertEqual(await web.read_answers(self.web, self.session, self.ref, [name]), {})
         self.assertEqual(
             await self.code(web.read_answers(self.web, await self.bob(), self.ref, [name])),
             "not_found",
@@ -132,8 +133,61 @@ class OnTheDoor(WithChecks):
             await self.code(web.read_one(self.web, self.session, self.ref, "nonsense")), "not_found"
         )
 
-    async def test_another_campaigns_answers_never_come_back(self) -> None:
+    async def test_an_answer_the_pages_own_door_would_refuse_is_not_offered(self) -> None:
+        name = await self.suggest("Vale")
+        proposed = await self.suggest("Orrin", link=False)  # (a suggestion, not confirmed)
+        person = await self.known("Mara Quill", "character")
+        async with self.db.guild(GUILD) as conn:
+            await conn.execute(
+                "UPDATE memory_entities SET type = 'person' WHERE id = %s", (person,)
+            )
+        fox = await self.known("The Grey Fox", "character", secret=True)
+        good = await self.known("Ilse", "character")
+        await self.keep(
+            name,
+            StoredAnswer(ENTITY, "sure", target_id=proposed),
+            StoredAnswer(ENTITY, "sure", target_id=person),
+            StoredAnswer(ENTITY, "sure", target_id=fox),
+        )
+        self.assertEqual(await web.read_answers(self.web, self.session, self.ref, [name]), {})
+        await self.keep(name, StoredAnswer(ENTITY, "likely", target_id=good))
+        got = await web.read_answers(self.web, self.session, self.ref, [name])
+        self.assertEqual(got[name][0]["answer"], {"action": "same", "known": good})
+        # and what the door offers, the answer door takes
+        sent = await web.name_checks.answer(
+            self.web, self.session, self.ref, name, got[name][0]["answer"]
+        )
+        self.assertTrue(sent["answerId"])
+
+    async def test_an_entry_named_only_by_a_description_carries_a_tag(self) -> None:
+        name = await self.suggest("Vale")
+        woman = await self.known("the woman", "character")
+        mira = await self.known("Mira", "character")
+        await self.memory.add_relation(
+            GUILD, self.one.id, woman, "knows", mira, source="dm", confidence=1.0, status=CONFIRMED
+        )
+        await self.keep(name, StoredAnswer(ENTITY, "likely", target_id=woman))
+        got = await web.read_answers(self.web, self.session, self.ref, [name])
+        self.assertEqual(got[name][0]["label"], "a.k.a. the woman, with Mira")
+
+    async def test_the_page_gets_every_field_it_expects_and_a_card_with_nothing_said(self) -> None:
+        name = await self.suggest("Vale")
+        got = await web.read_one(self.web, self.session, self.ref, name)
+        self.assertEqual(
+            (got["places"], got["morePlaces"], got["scene"], got["answering"]), ([], 0, None, False)
+        )
+        self.assertEqual(web.label_of({"pick": "new", "newKind": None}), "new entry")
+
+    async def test_another_campaigns_and_another_servers_answers_never_come_back(self) -> None:
         name = await self.suggest("Vale")
         await self.keep(name, StoredAnswer(NEW, "sure", new_kind="place"))
-        foreign = await web.read_answers(self.web, self.session, f"{self.ref}", ["f" * 32])
-        self.assertEqual(foreign, {})
+        other = await self.memory.add_entity(
+            GUILD, self.two.id, type="concept", name="Vale", source="scan"
+        )
+        await self.who.keep(
+            GUILD, self.two.id, other.value.id, [StoredAnswer(NEW, "sure", new_kind="item")],
+            speaker_ids=(), opted_in=set(), session_started_at=1, prompt_version="who-1", model="m",
+        )  # fmt: skip
+        got = await web.read_answers(self.web, self.session, self.ref, [name, other.value.id])
+        self.assertEqual(set(got), {name})  # (the other campaign's name is not this campaign's)
+        self.assertEqual(got[name][0]["label"], "new place")
