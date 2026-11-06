@@ -1026,6 +1026,24 @@ export interface PlotMessage {
   at: number;
 }
 
+/** One name to check, opened on its own page (#3604): everything the Discord card shows, without a press, and DMbot's
+ * top answers. `scene` (#3596) and `answers` (#3602) are missing from an API older than their doors. */
+export interface ClarifyName {
+  id: string;
+  name: string;
+  /** What the recap says about it, in the story's words. */
+  note: string;
+  /** A short who, where and what from the story; null when DMbot has none yet. */
+  scene?: string | null;
+  places: NamePlace[];
+  morePlaces: number;
+  /** DMbot's top answers, best first, with the Discord labels ("a.k.a. Ilse", "new NPC"). Each is a ready answer. */
+  answers?: { label: string; answer: NameCheckAnswer }[];
+  /** The kinds a new entry can be made as. */
+  kinds: { key: string; label: string }[];
+  answering: boolean;
+}
+
 export interface NameCheckList {
   names: NameCheck[];
   /** The known names an answer can say a name is the same as. */
@@ -1798,6 +1816,8 @@ export interface NameRow {
   unnamed?: boolean;
   /** For an unnamed person: who they are, in the story's words ("sister"). */
   unnamedWhat?: string;
+  /** A short who, where and what from the story, when the API has one (#3596, #3604). */
+  scene?: string | null;
   /** For an unnamed person: the name they hang from ("Ken"), or null when it is not a name. */
   unnamedAnchor?: string | null;
   /** The line the players are told about this name (#3568, core #3564): a DM's list only, null when there is none. Missing
@@ -2761,6 +2781,8 @@ export interface AccountApi {
   decidePlotProposal?(ref: string, issue: string, proposal: string, action: "save" | "decline"): Promise<PlotProposal>;
   /** Queue one answer for the bot; the name leaves the list once it is applied. */
   answerNameCheck?(ref: string, id: string, answer: NameCheckAnswer): Promise<void>;
+  /** One name to check on its own page (#3604). Missing from an API older than its door. */
+  clarifyName?(ref: string, id: string): Promise<ClarifyName>;
   /** The bot's word on the last answer to this name: its note in plain words, the batch to Undo, the refusal word (#3406). */
   nameAnswerResult?(ref: string, id: string): Promise<NameAnswerResult>;
   sendFix?(ref: string, text: string): Promise<{ requestId: string }>;
@@ -3043,7 +3065,7 @@ export interface ApiHelpers {
 /** The calls of each area, by name: what `httpApi` stands in for until the area's file is loaded. */
 export const ACCOUNT_METHODS = ["emailSignInRequest", "emailSignInUse", "offerHandover", "deleteCampaign", "restoreStage", "restorePart", "restoreGo", "restoreStatus", "restoreCancel", "campaignBackup", "takeBackHandover", "handoverLook", "handoverAccept", "handoverDecline", "removeDiscordAccount", "getMoveCode", "myEmail", "changeEmail", "confirmEmail", "cancelEmailChange", "sendSupport", "mySupport", "supportThread", "signOutEverywhere", "startTryIt", "checkoutUrl", "billingPortalUrl", "renewPlan", "extraHoursUrl", "downloadExport", "characters", "linkServer", "acceptOffer", "declineOffer", "withdrawOffer", "stopRecording", "myLines", "deleteMyLines", "myLinesStatus", "requestDelete", "confirmDelete"] as const satisfies readonly (keyof AccountApi)[];
 export const RECAPS_METHODS = ["recapAudioUrl", "recaps", "pastSessions", "sessionReport", "makeSessionReport", "answerReport", "setBeatPresent", "makeRecap", "addRecap", "recapList", "recap", "saveRecap", "approveRecap", "approveUnchecked", "recapAudioLinks", "recapChoices", "setRecapChoice", "askRecapAudioAgain", "plotCheck", "answerPlotIssue", "plotChatSend", "plotChat", "decidePlotProposal", "recapAudioRemake", "sendFix", "fixResult", "sendVoice", "voiceResult", "rewriteWith", "importPreview", "importMembers", "importConsent", "importCheck", "importStart", "importProgress", "importClock", "shareRecap", "publicRecap", "decideRecap"] as const satisfies readonly (keyof AccountApi)[];
-export const NAMES_METHODS = ["namesFixed", "undoNameFix", "campaignNames", "suggestSaidAs", "respellFromVoice", "saveSaidAs", "nameChecks", "answerNameCheck", "nameAnswerResult", "npcPage", "saveNpcNote", "myNpcNotes", "deleteMyNpcNotes", "allNames", "smartNames", "changeName", "nameThem", "webGraph", "webSize", "webVersion", "webOverview", "webFind", "webNodeSummary", "webViewers", "confirmKinds", "confirmUndo", "confirmAnswer", "webWaiting", "answerWaiting", "myQuestions", "questionsTotal", "campaignNameChecks", "webReadings", "answerReading", "webPeek", "webReveal", "changeWebLink"] as const satisfies readonly (keyof AccountApi)[];
+export const NAMES_METHODS = ["namesFixed", "undoNameFix", "campaignNames", "suggestSaidAs", "respellFromVoice", "saveSaidAs", "nameChecks", "clarifyName", "answerNameCheck", "nameAnswerResult", "npcPage", "saveNpcNote", "myNpcNotes", "deleteMyNpcNotes", "allNames", "smartNames", "changeName", "nameThem", "webGraph", "webSize", "webVersion", "webOverview", "webFind", "webNodeSummary", "webViewers", "confirmKinds", "confirmUndo", "confirmAnswer", "webWaiting", "answerWaiting", "myQuestions", "questionsTotal", "campaignNameChecks", "webReadings", "answerReading", "webPeek", "webReveal", "changeWebLink"] as const satisfies readonly (keyof AccountApi)[];
 export const CAMPAIGN_METHODS = ["transcriptCampaigns", "transcriptSessions", "transcript", "transcriptFile", "transcriptScript", "transcriptStretch", "transcriptPutBack", "transcriptLeaveOut", "sessionNotesList", "sessionNotes", "pictures", "pictureAction", "setCampaignSetting", "campaignOptionalRules", "campaignGameMasters", "campaignSheets", "chooseSheet", "sheetAnswer", "fixTranscriptLine", "fixAnswer", "campaignGameMasterCandidates", "campaignSettingAnswer", "timeline", "sharedRules", "houseRuleCampaigns", "houseRules", "ruleSharing", "chooseRuleSharing", "ruleSharingAnswer", "houseRulesFile", "improvement", "setImprovement", "homebrewCampaigns", "homebrew", "homebrewFile", "campaignPage", "loreAdd", "loreRead", "recapStyle", "changeRecapStyle", "recapStyleAction", "campaignSpeakers", "removeSpeaker", "speakerRemoval", "saveRecapMusts", "recapMustsDefaults", "houseFile", "houseFileAdd"] as const satisfies readonly (keyof AccountApi)[];
 
 /** A stand-in for each call of an area: the first use loads the area's file (once), and every call goes to it. */
