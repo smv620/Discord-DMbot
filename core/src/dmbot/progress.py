@@ -144,6 +144,15 @@ def shape(
     return out
 
 
+def with_counts(shaped: dict[str, Any], *, words: int, calls: int) -> dict[str, Any]:
+    """The shape plus what the job has handled so far (#3534): `counts: {words, calls}`, the words
+    of text read and the AI calls made. Left out until the job has handled something, so a job
+    that records neither (and an older row) sends the shape it always did. Counts only."""
+    if words > 0 or calls > 0:
+        shaped["counts"] = {"words": max(words, 0), "calls": max(calls, 0)}
+    return shaped
+
+
 # The order a job passes through the stages: the whole import is at the earliest one that some
 # session has not finished.
 ORDER: Final[Sequence[str]] = (

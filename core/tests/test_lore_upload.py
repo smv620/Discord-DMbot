@@ -219,6 +219,26 @@ class TheWorker(NamesTest):
         for word in ("Mirelle", "Grey Hand", "Brannoch", SECRET_WORDS):
             self.assertNotIn(word, everything)
 
+    async def test_a_read_leaves_the_words_and_calls_it_handled(self) -> None:
+        """#3534: counts only; written one last time as the read ends, so a quick read keeps
+        them too."""
+        uid = await self.add()
+        await self.work()
+        row = await self.row(uid)
+        self.assertEqual(row["words_done"], len(TEXT.split()))
+        self.assertGreaterEqual(row["calls_made"], 1)
+
+    async def test_a_count_never_goes_back_and_a_lost_claim_writes_nothing(self) -> None:
+        uid = await self.add()
+        claim = await self.queue.claim_next(GUILD)
+        assert claim is not None
+        self.assertTrue(await self.queue.progress(GUILD, claim, "reading", 0, 0, 10, 2))
+        self.assertTrue(await self.queue.progress(GUILD, claim, "reading", 0, 0, 4, 1))
+        row = await self.row(uid)
+        self.assertEqual((row["words_done"], row["calls_made"]), (10, 2))
+        stale = dataclasses.replace(claim, claimed_at=claim.claimed_at + 1)
+        self.assertFalse(await self.queue.progress(GUILD, stale, "reading", 0, 0, 99, 9))
+
     async def test_a_cancelled_read_puts_the_claim_back_for_the_next_start(self) -> None:
         import asyncio
 
