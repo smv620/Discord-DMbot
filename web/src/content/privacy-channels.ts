@@ -38,10 +38,10 @@ export const sessionNotesPrivacy = {
   stays: "Recaps (short summaries of a game) and session notes (a numbered list of what happened in each game) stay.",
 };
 
-/** In "What we keep": the pictures on a campaign's Story Graph (#3622). They load straight from Discord or D&D Beyond, which the
+/** In "What we keep": the pictures on a campaign's Story Graph (#3622). They load straight from Discord or dndbeyond.com, which the
  * site's security policy allows by exact host (public/_headers). Shown only while the icons are live, with their switch. */
 export const pcIconsLine = {
   live: PC_ICONS_LIVE,
   lead: "Pictures of player characters.",
-  text: "On a campaign's Story Graph (the map of names and how they connect), a player's character can show that player's Discord profile picture, if they said yes to being recorded, or the portrait from its D&D Beyond sheet. Anyone who can see that character on the graph sees the picture. DMbot keeps only the link, never the picture: your browser loads it from Discord or D&D Beyond when you open the graph, and they can see that you did. The player whose character it is, or the game master, can hide it. If the player presses Stop recording me, their Discord picture stops showing. A backup keeps only the choice, never a picture, and deleting the campaign deletes the choices.",
+  text: "On a campaign's Story Graph (the map of names and how they connect), a player's character can show that player's Discord profile picture, if they said yes to being recorded, or the portrait from its dndbeyond.com sheet. Anyone who can see that character on the graph sees the picture. DMbot keeps only the link, never the picture: your browser loads it from Discord or dndbeyond.com when you open the graph, and they can see that you did. The player whose character it is, or the game master, can hide it. If the player presses Stop recording me, their Discord picture stops showing. A backup keeps only the choice, never a picture, and deleting the campaign deletes the choices.",
 };
