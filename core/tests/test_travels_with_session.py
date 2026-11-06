@@ -57,6 +57,30 @@ class FromTheSession(NamesTest):
         await self.keep_all()
         self.assertIn(("Old Marn", "travels_with", "The party"), await self.kinds())
 
+    async def waiting(self) -> list[tuple[str, str]]:
+        found = await self.claims.waiting(GUILD, self.campaign.id, opted_in={7})
+        return [(c.subject, c.object) for c in found]
+
+    async def test_two_non_player_characters_are_never_asked(self) -> None:
+        await self.propose(said("Glyph", "travels with", "Old Marn"))
+        self.assertEqual(await self.waiting(), [])
+        self.assertEqual([r for r in await self.kinds() if r[1] == "travels_with"], [])
+
+    async def test_a_player_character_first_is_not_asked(self) -> None:
+        await self.propose(said("Cerric", "travels with", "Glyph"))
+        self.assertEqual(await self.waiting(), [])
+
+    async def test_a_place_as_the_object_is_not_asked(self) -> None:
+        await self.memory.add_entity(
+            GUILD, self.campaign.id, name="Termalaine", type="place", status=CONFIRMED, source="dm"
+        )
+        await self.propose(said("Glyph", "travels with", "Termalaine"))
+        self.assertEqual(await self.waiting(), [])
+
+    async def test_the_order_said_from_the_other_end_is_still_asked(self) -> None:
+        await self.propose(said("Cerric", "is joined by", "Glyph"))
+        self.assertEqual(await self.waiting(), [("Cerric", "Glyph")])
+
     async def test_the_prompt_asks_for_it_and_its_version_moved(self) -> None:
         self.assertIn('"travels with"', extractor.SYSTEM)
         self.assertNotEqual(extractor.PROMPT_VERSION, "extractor-1")
