@@ -9,6 +9,8 @@ from argparse import Namespace
 from pathlib import Path
 from typing import Any
 
+import psycopg
+
 from dmbot.campaigns.models import CampaignError
 from dmbot.devtools import graph_key_check
 from dmbot.devtools.sample_run import __main__ as cli
@@ -273,17 +275,18 @@ class Steps(DatabaseTest):
     async def test_a_stop_half_way_leaves_no_session_to_jam_the_guard(self) -> None:
         camp = await self.made()
         good = await self.planned()
-        with self.assertRaises(Exception):  # noqa: B017 (any database error)
+        # (a file name past the column's limit fails the LAST insert; the database says so)
+        with self.assertRaises(psycopg.errors.CheckViolation):
             await steps.store_import(
                 self.db,
                 GUILD,
                 camp.id,
                 DM,
-                bad,
+                good,
                 started_at=NOW - 86400,
                 now=NOW,
                 file_name="x" * 500,
-            )  # fmt: skip  (a file name past the column's limit fails the LAST insert)
+            )
         async with self.db.guild(GUILD) as conn:
             cur = await conn.execute("SELECT count(*) AS n FROM transcript_sessions")
             self.assertEqual((await cur.fetchone() or {})["n"], 0)
@@ -433,7 +436,7 @@ class Steps(DatabaseTest):
             await conn.execute(
                 "UPDATE campaigns SET owner_user_id = %s WHERE id = %s", (ELSE, old.id)
             )
-        with self.assertRaises(Exception):  # noqa: B017 (the campaign store's refusal)
+        with self.assertRaises(CampaignError):  # the campaign store refuses under its lock
             await steps.fresh_campaign(
                 self.db, self.campaigns, GUILD, DM, keep_old=False, today="d",
                 say=self.say, found=found,
