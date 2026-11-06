@@ -326,6 +326,7 @@ from dmbot.memory.models import (
     name_key,
 )
 from dmbot.memory.ontology import Tally
+from dmbot.memory.party import party_notice
 from dmbot.memory.places import find_spots, spread
 from dmbot.memory.presession import PreSession
 from dmbot.memory.recall import PLAYERS, AsOf, Recall, RecallService
@@ -1033,6 +1034,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self._import_reports: dict[tuple[int, str], list[name_pass_logic.Report]] = {}
         self._import_names: dict[str, list[str]] = {}  # campaign -> names its import scans added
         self._import_unhonoured: dict[str, list[str]] = {}  # campaign -> why recaps weren't made
+        self._import_party: dict[str, int] = {}  # campaign -> player characters linked (#3036)
         # campaign -> the sessions of its import whose recap was queued at once (told in one line)
         self._audio_seen: dict[tuple[int, str, int], tuple[int, int]] = {}
         self._name_pass_asks: dict[str, list[tuple[str, int]]] = {}  # unsure words (#2628)
@@ -8639,7 +8641,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         with log_context(guild_id=gid, campaign_id=cid):
             await self._link_the_party(gid, cid, table.transcript_session_id)
 
-    async def _link_the_party(self, gid: int, cid: str, session_id: str) -> None:
+    async def _link_the_party(self, gid: int, cid: str, session_id: str) -> int:
         """Link the party for one stored session's speakers. Shared by live sessions and imports, so
         the rule and the consent check are the same for both."""
         assert self.memory is not None and self.transcripts is not None
@@ -8653,6 +8655,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             linked.pairs,
             linked.members,
         )
+        return linked.characters
 
     async def learn_people(self, table: Table) -> None:
         """After a session: turn the names people answered to at least twice into waiting
@@ -11231,9 +11234,15 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         if self.memory is None:
             return
         try:
-            await self._link_the_party(gid, ready.campaign_id, ready.session_id)
+            characters = await self._link_the_party(gid, ready.campaign_id, ready.session_id)
         except Exception:
             log.exception("Import: couldn't link the party for a session")
+            return
+        # said once at the end of the import, with the rest of its news (counts only)
+        if characters:
+            self._import_party[ready.campaign_id] = max(
+                characters, self._import_party.get(ready.campaign_id, 0)
+            )
 
     async def _apply_import_plays(self, gid: int, store: ImportStore) -> None:
         """The DM's "plays which character" choices from the import page become links, through a
@@ -11281,6 +11290,13 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 )
                 for extra in views[1:]:  # Discord holds 25 buttons a message: no Undo is lost
                     await self.post(screen, "↩️ More Undo buttons for the report above:", extra)
+        for cid in list(self._import_party):
+            if await store.pending_scans(gid, cid):
+                continue  # once, at the end of the import
+            characters = self._import_party.pop(cid)
+            campaign = await self.campaigns.get(gid, cid)
+            if campaign is not None and campaign.dm_screen_channel_id is not None:
+                await self.post(campaign.dm_screen_channel_id, party_notice(characters))
         for cid in list(self._import_names.keys() | self._import_unchecked.keys()):
             if await store.pending_scans(gid, cid):
                 continue  # the import is not over: say it once at the end
