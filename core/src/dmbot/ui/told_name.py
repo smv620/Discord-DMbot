@@ -65,7 +65,7 @@ def was_told(character: str, alias: str, entry: str) -> str:
 
 def take_back_question(character: str, alias: str, entry: str) -> str:
     """The one confirmation: what changes for that character (plain text, escaped by the caller)."""
-    return f"Take back? {character} will see {alias} and {entry} as two people again."
+    return f"Take back? {character} will see {alias} and {entry} as two different names again."
 
 
 def told_lines(told: Sequence[str], names: dict[str, str], alias: str, entry: str) -> str:
@@ -255,6 +255,6 @@ async def take_back(
     who = page.names.get(character_id, "That character")
     note = (
         f"↩️ Taken back. {_md(who)} will see {_md(page.alias.text)} and {_md(page.entry)} as "
-        "two people again."
+        "two different names again."
     )
     await show_who_page(interaction, campaign_id, entity_id, alias_id, note=note)

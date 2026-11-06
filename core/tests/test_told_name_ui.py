@@ -65,7 +65,9 @@ class Told(NameWho):
         ask = self.it()
         await told_name.ask_take_back(ask, self.campaign.id, self.bell.id, alias.id, mara.id)
         text, confirm = ask.response.edited[0]
-        self.assertEqual(text, "Take back? Mara will see Bell and Belleros as two people again.")
+        self.assertEqual(
+            text, "Take back? Mara will see Bell and Belleros as two different names again."
+        )
         keep = self.it()
         await confirm._no(keep)
         self.assertEqual(await self.told(alias), [mara.id])  # still told
@@ -75,7 +77,7 @@ class Told(NameWho):
         await again.response.edited[0][1]._yes(yes)
         self.assertEqual(await self.told(alias), [])
         self.assertIn(
-            "Taken back. Mara will see Bell and Belleros as two people",
+            "Taken back. Mara will see Bell and Belleros as two different names",
             str(yes.response.edited[0][0]),
         )
 
