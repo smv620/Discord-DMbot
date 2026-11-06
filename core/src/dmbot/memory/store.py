@@ -5484,16 +5484,20 @@ class MemoryStore:
             return await _insert_predicate(w, term, examples, reason, session_started_at)
 
     async def kind_offer(self, guild_id: int, campaign_id: str) -> kind_offers.Offer | None:
-        """The one offer to put to the DM now (#3033): the most-said words on the campaign's
+        """The one offer to put to the DM now: see `kind_offer_list`."""
+        return next(iter(await self.kind_offer_list(guild_id, campaign_id)), None)
+
+    async def kind_offer_list(self, guild_id: int, campaign_id: str) -> list[kind_offers.Offer]:
+        """The offers to put to the DM, most-said first (#3033): the words on the campaign's
         catch-all connections that no kind covers, that could become a kind (the rules on new
-        kinds would accept them) and that the DM has not turned down, or None. Also deletes the
+        kinds would accept them) and that the DM has not turned down. Also deletes the
         answers whose words have left the campaign. Counts only. (The sweep's writes run outside
         `_write` on purpose: they are only this bookkeeping, and one landing beside a Yes at worst
         leaves a row the next sweep deletes.)"""
         async with self._read(guild_id, campaign_id) as scope:
             onto = await _load_ontology(scope)
             found = await kind_offers.sweep(scope, await _covered_words(scope, onto))
-        return next((o for o in found if _kind_problem(onto, o) is None), None)
+        return [o for o in found if _kind_problem(onto, o) is None]
 
     async def answer_kind_offer(
         self, guild_id: int, campaign_id: str, words_key: str, state: str, *, seen: int
@@ -6867,6 +6871,10 @@ def _kind_problem(onto: Ontology, offer: kind_offers.Offer) -> str | None:
     if len(offer.words) > LABEL_MAX:
         return "Those words are too long to be a kind of connection."
     term = _kind_term(offer)
+    if term.key.replace("_", " ") != kind_offers.fold(offer.words):
+        # (a kind reads by its key, which keeps letters and digits only: words with a mark in
+        # them, "Veil's oath", would read differently on the cards than the DM saw)
+        return "Those words have marks in them that a kind of connection can't keep."
     try:
         onto.check_new_term(
             term.key, term.label, term.description, [offer.words], "The same words were kept."
