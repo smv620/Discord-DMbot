@@ -29,7 +29,7 @@ class ClaimUndo(Editing):
     async def queue(self, **body: Any) -> str:
         return await relationships.queue_waiting(self.web, self.session, self.cref, body)
 
-    async def refused(self, who: Any = None, **body: Any) -> str:
+    async def refused_undo(self, who: Any = None, **body: Any) -> str:
         with self.assertRaises(RecapError) as caught:
             await relationships.queue_waiting(self.web, who or self.session, self.cref, body)
         return caught.exception.code
@@ -129,20 +129,56 @@ class ClaimUndo(Editing):
         mine = await self.confirmed(claim)
         # a batch that is not the one this claim's own answer made, and a claim never answered here
         self.assertEqual(
-            await self.refused(kind="claim", action="undo", id=claim, batch=mine + 99), "not_found"
+            await self.refused_undo(kind="claim", action="undo", id=claim, batch=mine + 99),
+            "not_found",
         )
         self.assertEqual(
-            await self.refused(kind="claim", action="undo", id=other, batch=mine), "not_found"
+            await self.refused_undo(kind="claim", action="undo", id=other, batch=mine), "not_found"
         )
         for bad in (0, -1, True, "7", 10**13):
             self.assertEqual(
-                await self.refused(kind="claim", action="undo", id=claim, batch=bad), "not_found"
+                await self.refused_undo(kind="claim", action="undo", id=claim, batch=bad),
+                "not_found",
             )
+
+    async def test_an_answer_pruned_after_its_hour_can_no_longer_be_undone(self) -> None:
+        claim = await self.claim()
+        batch = await self.confirmed(claim)
+        async with self.db.guild(self.g) as conn:  # (rows are deleted an hour after they were made)
+            await conn.execute("DELETE FROM name_actions WHERE action = 'claim-confirm'")
+        self.assertEqual(
+            await self.refused_undo(kind="claim", action="undo", id=claim, batch=batch), "not_found"
+        )
+
+    async def test_a_batch_from_a_rejection_is_not_an_undo_of_a_confirm(self) -> None:
+        claim, other = await self.claim(), await self.claim("Rook", "Greywater Keep")
+        kept = await self.confirmed(claim)
+        await self.queue(kind="claim", action="reject", id=other)
+        await self.work()
+        self.assertEqual(
+            await self.refused_undo(kind="claim", action="undo", id=other, batch=kept), "not_found"
+        )
+
+    async def test_a_batch_already_undone_while_the_claim_was_kept_again_is_gone(self) -> None:
+        claim = await self.claim()
+        batch = await self.confirmed(claim)
+        await self.queue(kind="claim", action="undo", id=claim, batch=batch)
+        await self.work()  # (undone: waiting again)
+        await self.claims.confirm(
+            self.g, self.one.id, claim, opted_in={7}
+        )  # kept again, from Discord
+        await self.queue(kind="claim", action="undo", id=claim, batch=batch)
+        self.assertEqual(
+            [o.error for o in await self.work()], [wa.GONE]
+        )  # (not the old batch's to take)
+        self.assertEqual(await self.status(claim), "confirmed")
 
     async def test_a_player_is_refused(self) -> None:
         claim = await self.claim()
         batch = await self.confirmed(claim)
         self.assertEqual(
-            await self.refused(self.player, kind="claim", action="undo", id=claim, batch=batch),
+            await self.refused_undo(
+                self.player, kind="claim", action="undo", id=claim, batch=batch
+            ),
             "not_allowed",
         )

@@ -966,6 +966,9 @@ async def _claim_undo(
     claim = await w.claims.get(guild_id, cid, a.target_id)
     if claim is None:
         return _failed(GONE)
+    # Before anything else, so a retried job still succeeds when the answer row it came from has
+    # been pruned (rows go after an hour). A reopened claim is hidden from a speaker who stopped
+    # being recorded by the waiting list itself (it filters on who is recorded now).
     if claim.status == CLAIM_PROPOSED:
         return Outcome()  # asked again already
     if not (a.text.isascii() and a.text.isdecimal()) or len(a.text) > 12:
@@ -984,7 +987,12 @@ async def _claim_undo(
         )
     except MemoryRuleError as exc:  # (TooLateToUndo is one)
         if str(exc) == ALREADY_UNDONE:
-            return Outcome()
+            # undone before, so a retry is done: unless the claim was kept again since (from
+            # Discord), when that old batch is not the fact's now
+            again = await w.claims.get(guild_id, cid, claim_id)
+            return (
+                Outcome() if again is not None and again.status == CLAIM_PROPOSED else _failed(GONE)
+            )
         return _failed(GONE)
     return Outcome()
 
