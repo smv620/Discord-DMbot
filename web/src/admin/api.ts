@@ -475,8 +475,8 @@ export function pretendAdminApi(): AdminApi {
         month: month ?? new Date().toISOString().slice(0, 7),
         services: [
           row("deepgram", "Deepgram", "Turns the table's voices into text, live.", "read", 4230, "1 project"),
-          row("anthropic-fast", "Anthropic, fast model", "Quick answers at the table.", "not_recorded", null, "Not recorded yet. Open its page for the figure."),
-          row("elevenlabs", "ElevenLabs", "The voice that reads recaps aloud.", "not_connected", null, "Not connected."),
+          row("anthropic-fast", "Anthropic, fast model", "Quick answers at the table.", "not_recorded", null, "Not counted by DMbot yet. See the figure on its page."),
+          row("elevenlabs", "ElevenLabs", "The voice that reads recaps aloud.", "not_connected", null, "No key set."),
         ],
         spent_cents: 4230,
         counted: ["deepgram"],
@@ -484,7 +484,7 @@ export function pretendAdminApi(): AdminApi {
           plan: name.toLowerCase(),
           name,
           state: "not_available" as const,
-          detail: "Not available yet.",
+          detail: "Not counted yet.",
         })),
       };
     },

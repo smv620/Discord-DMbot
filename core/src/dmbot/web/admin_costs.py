@@ -46,35 +46,40 @@ SERVICES: tuple[dict[str, str], ...] = (
     {
         "id": "speechmatics",
         "name": "Speechmatics",
-        "covers": "A second speech-to-text company for voices Deepgram finds hard.",
+        "covers": "A backup for voices Deepgram finds hard to understand.",
         "link": "https://portal.speechmatics.com/usage/",
         "how": "not_recorded",
     },
     {
         "id": "anthropic-fast",
         "name": "Anthropic, fast model",
-        "covers": "Quick answers at the table, such as rules questions.",
+        "covers": (
+            "Quick answers at the table, such as rules questions. "
+            "Same bill as the other Anthropic lines."
+        ),
         "link": "https://platform.claude.com/settings/cost",
         "how": "not_recorded",
     },
     {
         "id": "anthropic-careful",
         "name": "Anthropic, careful model",
-        "covers": "Everyday reading of sessions, notes and lore.",
+        "covers": (
+            "Everyday reading of sessions, notes and lore. Same bill as the other Anthropic lines."
+        ),
         "link": "https://platform.claude.com/settings/cost",
         "how": "not_recorded",
     },
     {
         "id": "anthropic-deep",
         "name": "Anthropic, deep model",
-        "covers": "The hardest work: recaps and untangling who is who.",
+        "covers": "Recaps and untangling who is who. Same bill as the other Anthropic lines.",
         "link": "https://platform.claude.com/settings/cost",
         "how": "not_recorded",
     },
     {
         "id": "voyage",
         "name": "Voyage",
-        "covers": "Search by meaning on the Names page.",
+        "covers": "Helps the Names page find the right name even when it is spelled differently.",
         "link": "https://dashboard.voyageai.com/organization/usage",
         "how": "not_recorded",
     },
@@ -159,7 +164,10 @@ async def fetch_json(url: str, headers: Mapping[str, str]) -> Any:
     """GET `url` as JSON, ten seconds at most. Raises on any failure; callers say only
     "unavailable" and never repeat the error text, which could echo a key."""
     timeout = aiohttp.ClientTimeout(total=10, sock_connect=5)
-    async with aiohttp.ClientSession(timeout=timeout) as http, http.get(url, headers=headers) as r:
+    async with (
+        aiohttp.ClientSession(timeout=timeout) as http,
+        http.get(url, headers=headers, allow_redirects=False) as r,
+    ):
         r.raise_for_status()
         return await r.json()
 
@@ -193,18 +201,23 @@ async def _deepgram(key: str, month: str, fetch: Fetch) -> tuple[int, str]:
             auth,
         )
         seen += 1
-        for item in body.get("results") or []:
+        if "results" not in body:
+            raise ValueError("no results")
+        for item in body["results"]:
             cents += float(item.get("dollars", 0)) * 100
     if not seen:
         raise ValueError("no project")
-    return round(cents), f"{seen} project{'s' if seen != 1 else ''}"
+    return round(cents), f"Billed for the month, across {seen} project{'s' if seen != 1 else ''}"
 
 
 async def _elevenlabs(key: str, fetch: Fetch) -> str:
     """Characters used this billing period; ElevenLabs shows no dollars to a read-only key."""
     sub = await fetch("https://api.elevenlabs.io/v1/user/subscription", {"xi-api-key": key})
     used, limit = int(sub["character_count"]), int(sub["character_limit"])
-    return f"{used:,} of {limit:,} characters used this period"
+    return (
+        f"{used:,} of {limit:,} characters used this period "
+        "(the current period only, not the month picked)"
+    )
 
 
 async def read_costs(
@@ -223,16 +236,20 @@ async def read_costs(
     async def one(svc: Mapping[str, str]) -> Row:
         how = svc["how"]
         if how == "link":
-            return _row(svc, "link_only", detail="No figure from this service: open its page.")
+            return _row(svc, "link_only", detail="DMbot can't read this one. Check its page.")
         if how == "not_recorded":
             return _row(
                 svc,
                 "not_recorded",
-                detail="Not recorded yet. Open its page for the figure.",
+                detail="Not counted by DMbot yet. See the figure on its page.",
             )
         key = keys[how]
         if not key:
-            return _row(svc, "not_connected", detail="Not connected.")
+            return _row(
+                svc,
+                "not_connected",
+                detail="No key set. Add a read-only key (see .env.example) to see the figure here.",
+            )
         hit = cache.get((svc["id"], month))
         if hit and now - hit[0] < CACHE_SECONDS:
             return hit[1]
@@ -242,10 +259,10 @@ async def read_costs(
                 row = _row(svc, "read", amount_cents=cents, detail=detail, read_at=now)
             else:
                 row = _row(svc, "read", detail=await _elevenlabs(key, fetch), read_at=now)
-        except (aiohttp.ClientError, TimeoutError, ValueError, KeyError, TypeError) as exc:
+        except Exception as exc:  # one service's odd answer must not lose every row
             # Type only: the message could carry the address with the key's project in it.
             log.warning("costs: %s unavailable (%s)", svc["id"], type(exc).__name__)
-            return _row(svc, "unavailable", detail="Couldn't be read just now. Try again.")
+            return _row(svc, "unavailable", detail="Couldn't be read just now. Use Read again.")
         cache[(svc["id"], month)] = (now, row)
         return row
 
@@ -262,7 +279,7 @@ async def read_costs(
                 "plan": plan,
                 "name": name,
                 "state": "not_available",
-                "detail": "Not available yet.",
+                "detail": "Not counted yet.",
             }
             for plan, name in PLANS
         ],

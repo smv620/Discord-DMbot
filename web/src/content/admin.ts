@@ -298,25 +298,25 @@ export function who(name: string | null, discordId: string): string {
 /** The Costs page (#3671): what each paid service has charged DMbot in a month. */
 export const costsText = {
   heading: "Costs",
-  lead: "What each paid service has charged this month. Each line says where its figure comes from.",
+  lead: "What each paid service has charged in the month you pick. Each line says where its figure comes from.",
   month: "Month",
   reading: (seconds: number): string => `Reading each service… ${seconds}s so far.`,
   readingRow: "Reading…",
-  down: "Couldn't read the costs. Try again.",
+  down: "Couldn't read the costs. Try again, or use the cost pages.",
   tryAgain: "Try again",
   refresh: "Read again",
-  openPage: "Open its cost page",
-  spent: (dollars: string, n: number): string =>
-    `${dollars} spent so far, from ${n} ${n === 1 ? "service" : "services"} that gave a figure.`,
+  openPage: "Cost page",
+  spent: (dollars: string, n: number, total: number): string =>
+    `${dollars} from ${n} of ${total} services. The rest aren't counted here.`,
   noneRead: "No service has given a figure yet. Use each cost page below.",
   readAt: (time: string): string => `Read at ${time}`,
   incomeHeading: "Income and costs by plan",
   incomeLead:
-    "Free tier, Try It, Table, Two-table and Guild. Neither is counted per plan yet, so nothing is guessed.",
+    "Not counted per plan yet, so nothing is guessed. For total income, open the Stripe cost page above.",
   plan: "Plan",
   income: "Income",
   costs: "Costs",
-  notAvailable: "Not available yet",
+  notAvailable: "Not counted yet",
 };
 
 /** Cents as dollars, "$42.30". */

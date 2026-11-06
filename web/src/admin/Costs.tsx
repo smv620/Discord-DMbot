@@ -106,12 +106,12 @@ export default function Costs({ api, onSignedOut }: Props) {
           </button>
         </div>
       )}
-      {view && !failed && (
+      {view && !failed && view.month === month && (
         <div class="stack">
           <p>
             <strong>
               {view.counted.length > 0
-                ? words.spent(dollars(view.spent_cents), view.counted.length)
+                ? words.spent(dollars(view.spent_cents), view.counted.length, view.services.length)
                 : words.noneRead}
             </strong>
           </p>
@@ -130,8 +130,13 @@ export default function Costs({ api, onSignedOut }: Props) {
                     ` · ${words.readAt(clock(s.read_at))}`}
                 </span>
                 <br />
-                <a href={s.link} target="_blank" rel="noopener noreferrer">
-                  {words.openPage}: {s.name}
+                <a
+                  href={s.link}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label={`${words.openPage}: ${s.name}`}
+                >
+                  {words.openPage}
                 </a>
               </li>
             ))}

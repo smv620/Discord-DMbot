@@ -113,6 +113,27 @@ class Costs(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("secret", str(got))
         self.assertEqual(self.row(got, "elevenlabs")["state"], "read")
 
+    async def test_a_malformed_answer_stays_on_its_own_row_and_hostile_ids_are_skipped(
+        self,
+    ) -> None:
+        async def odd(url: str, headers: Mapping[str, str]) -> Any:
+            if url.endswith("/v1/projects"):
+                return {"projects": [{"project_id": "../x?"}, {"project_id": "a@evil"}, "oops"]}
+            return await self.fetch(url, headers)
+
+        with self.assertLogs("dmbot.web.admin_costs", "WARNING") as logs:
+            got = await admin_costs.read_costs(
+                month="2027-01",
+                now=NOW,
+                deepgram_key="KEY1",
+                elevenlabs_key="el",
+                cache=self.cache,
+                fetch=odd,
+            )
+        self.assertEqual(self.row(got, "deepgram")["state"], "unavailable")
+        self.assertEqual(self.row(got, "elevenlabs")["state"], "read")
+        self.assertNotIn("KEY1", "".join(logs.output))
+
     async def test_the_cache_holds_figures_and_expires(self) -> None:
         await self.read()
         n = len(self.calls)

@@ -38,7 +38,7 @@ const view: CostsView = {
       link: "https://dashboard.voyageai.com/organization/usage",
       state: "not_recorded",
       amount_cents: null,
-      detail: "Not recorded yet. Open its page for the figure.",
+      detail: "Not counted by DMbot yet. See the figure on its page.",
       read_at: null,
     },
   ],
@@ -48,12 +48,14 @@ const view: CostsView = {
     plan,
     name: plan,
     state: "not_available" as const,
-    detail: "Not available yet.",
+    detail: "Not counted yet.",
   })),
 };
 
-const apiWith = (costs: AdminApi["costs"]): AdminApi =>
-  ({ costs }) as unknown as AdminApi;
+// The page shows a reading only for the month picked, so the fake answers with that month.
+const answer = (m?: string): CostsView => ({ ...view, month: m ?? recentMonths()[0]! });
+const apiWith = (costs: (m?: string) => Promise<CostsView>): AdminApi =>
+  ({ costs: (m?: string) => costs(m).then(() => answer(m)) }) as unknown as AdminApi;
 
 describe("Costs", () => {
   it("lists the months newest first", () => {
@@ -65,9 +67,9 @@ describe("Costs", () => {
 
   it("shows each service's figure, what it covers and its own cost page", async () => {
     render(<Costs api={apiWith(async () => view)} onSignedOut={() => {}} />);
-    await screen.findByText(/\$5\.75 spent so far, from 1 service/);
+    await screen.findByText(/\$5\.75 from 1 of 2 services/);
     expect(screen.getByText("Turns voices into text.")).toBeTruthy();
-    expect(screen.getByText(/Not recorded yet/)).toBeTruthy();
+    expect(screen.getByText(/Not counted by DMbot yet/)).toBeTruthy();
     const links = screen
       .getAllByRole("link")
       .map((a) => a.getAttribute("href"));
@@ -75,7 +77,7 @@ describe("Costs", () => {
     expect(links).toContain(
       "https://dashboard.voyageai.com/organization/usage",
     );
-    expect(screen.getAllByText("Not available yet")).toHaveLength(10);
+    expect(screen.getAllByText("Not counted yet")).toHaveLength(10);
   });
 
   it("says it is reading while it waits", async () => {
@@ -90,13 +92,13 @@ describe("Costs", () => {
       /Reading each service… 0s so far/,
     );
     done(view);
-    await screen.findByText(/spent so far/);
+    await screen.findByText(/from 1 of 2 services/);
   });
 
   it("asks again for another month", async () => {
     const costs = vi.fn(async () => view);
     render(<Costs api={apiWith(costs)} onSignedOut={() => {}} />);
-    await screen.findByText(/spent so far/);
+    await screen.findByText(/from 1 of 2 services/);
     fireEvent.change(screen.getByLabelText("Month"), {
       target: { value: recentMonths()[1] },
     });
@@ -113,7 +115,7 @@ describe("Costs", () => {
     render(<Costs api={apiWith(costs)} onSignedOut={() => {}} />);
     await screen.findByText(/Couldn't read the costs/);
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
-    await screen.findByText(/spent so far/);
+    await screen.findByText(/from 1 of 2 services/);
 
     const out = vi.fn();
     render(
