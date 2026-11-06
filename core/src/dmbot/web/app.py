@@ -117,6 +117,7 @@ from dmbot.web.payments import (
     ResumeRefused,
     paid_plan_ids,
 )
+from dmbot.web.place_spellings import read_place_spellings
 from dmbot.web.plot import answer_issue, answer_proposal, read_chat, read_plot, send_chat
 from dmbot.web.public_paths import TUNNEL_HEADER, is_public, request_host
 from dmbot.web.question_counts import read_questions, read_total
@@ -1105,6 +1106,17 @@ def create_app(
         session, _token = signed
         try:
             return await read_campaign_checks(db, session, ref)
+        except RecapError as err:
+            status, detail = request_status.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    # The new spellings of a place waiting for the DM's yes or no (#3533): ids, the place, the
+    # spelling.
+    @app.get("/me/campaigns/{ref}/place-spellings")
+    async def me_campaign_place_spellings(ref: str, signed: Signed) -> dict[str, Any]:
+        session, _token = signed
+        try:
+            return await read_place_spellings(db, session, ref)
         except RecapError as err:
             status, detail = request_status.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None

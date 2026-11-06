@@ -40,6 +40,7 @@ from dmbot.memory.models import (
     MERGED,
     PLAYER_CHARACTER,
     PRONOUNCED,
+    PROPOSED,
     REJECTED,
     MemoryRuleError,
     Relation,
@@ -92,6 +93,8 @@ READING_ACTIONS = ("reading-place", "reading-no", "reading-undo")
 # People the story described and never named (#2790, #2808): give them a name, say they are a
 # name DMbot knows, take either back. The entry is a proposed unnamed one, not a confirmed name.
 UNNAMED_ACTIONS = ("name", "name-join", "name-undo")
+# "Is this the same place?" (#3533): the DM confirms or turns down a proposed other name of a place.
+SPELLING_ACTIONS = ("spelling-yes", "spelling-no")
 NAMES_FIXED_ACTIONS = ("names-fixed-undo",)  # the recap page puts a name-pass fix back (#2684)
 # What the page is told when a reading cannot be kept (the words are `placing`'s and `beliefs`').
 READING_REFUSALS = {
@@ -443,6 +446,30 @@ async def _other(
     return None
 
 
+async def _spelling(
+    memory: MemoryStore, guild_id: int, campaign_id: str, entity_id: str, a: Action
+) -> Outcome:
+    """Yes confirms the proposed other name, No turns it down (a rejected name is what keeps the
+    same pair from being offered again). The name must still be a proposed one of this place; one
+    that is already in the wanted state is done, so a retaken action is not a failure."""
+    wanted = CONFIRMED if a.action == "spelling-yes" else REJECTED
+    for alias in await memory.aliases(
+        guild_id, campaign_id, entity_id=entity_id, include_secret=True
+    ):
+        if alias.id != a.target_id:
+            continue
+        if alias.status == wanted:
+            return Outcome(result_id=entity_id)
+        if alias.status != PROPOSED:
+            return _failed(GONE)  # answered the other way (in Discord, say) in the meantime
+        await memory.update_alias(guild_id, campaign_id, alias.id, source=DM, status=wanted)
+        return Outcome(result_id=entity_id)
+    # `aliases` leaves out a turned-down name, so a No that is applied a second time (pressed twice
+    # before the bot got to it; the door let both in, as the name was still proposed then) finds
+    # nothing and is done, not failed. A Yes that finds nothing is gone: the name was turned down.
+    return Outcome(result_id=entity_id) if a.action == "spelling-no" else _failed(GONE)
+
+
 @dataclass(frozen=True)
 class PlayerLookup:
     """Who a Discord ID belongs to, for the DM to confirm before DMbot links it (#3004). The name is
@@ -574,6 +601,8 @@ async def _do(
             return _failed(NOT_FOUND)
         await memory.update_alias(guild_id, cid, alias_id, source=DM, status=REJECTED)
         return Outcome(result_id=entity_id)
+    if a.action in SPELLING_ACTIONS:
+        return await _spelling(memory, guild_id, cid, entity_id, a)
     if a.action == "secret":  # one of its other names
         alias_id = await _other(memory, guild_id, cid, entity_id, name, a.text)
         if alias_id is None:
