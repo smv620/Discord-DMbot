@@ -58,6 +58,7 @@ from dmbot.memory.models import (
     CONFIRMED,
     DESCRIPTION_MAX,
     DM,
+    NEEDS_A_LOOK,
     PROPOSED,
     MemoryRuleError,
     MoreNames,
@@ -2370,10 +2371,6 @@ class ConnectionOffer(_Menu):
             await store.remove_all(campaign.guild_id, campaign.id, gone)
             self.left_out += len(gone)
             await self._show(interaction, [])
-
-
-# Kinds a yes-to-all never covers: an idea needs a look, a player character needs its player.
-NEEDS_A_LOOK = frozenset({"concept", "player_character"})
 
 
 class BulkConfirm(_Menu):
