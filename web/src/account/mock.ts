@@ -842,6 +842,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   const kindOfferRows: KindOffer[] = [
     { words: "sworn on the ashes of", state: "never" },
     { words: "carries the lantern for", state: "later" },
+  ];
   // Secret other names and who holds or was told them (#3542): "the guard" is a secret name of the entry n1, held by one
   // player character and told to another.
   const toldRows: ToldName[] = [
@@ -2804,6 +2805,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       const at = kindOfferRows.findIndex((x) => x.words === words);
       if (at < 0) throw new ApiError("not-found");
       kindOfferRows.splice(at, 1);
+    },
     async toldPanel(ref) {
       calls.push(`toldPanel:${ref}`);
       await reachable();
