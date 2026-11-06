@@ -2582,6 +2582,32 @@ class MemoryStore:
             )
             return {str(r["key"]) for r in await cur.fetchall()}
 
+    async def record_link_source(
+        self, guild_id: int, campaign_id: str, relation_id: str, label: str
+    ) -> None:
+        """Remember the upload a connection was kept from (#2946), so the graph's line panel can
+        tell the DM. The label is the DM's own name for the upload, cut to the column's limit;
+        a connection that has one keeps the first. Nothing else about the upload is stored."""
+        label = clean_text(label)[:120]
+        if not label:
+            return
+        async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "INSERT INTO memory_link_sources (guild_id, campaign_id, relation_id, label,"
+                " created_at) SELECT %s, %s, id, %s, %s FROM memory_relations"
+                " WHERE guild_id = %s AND campaign_id = %s AND id = %s"
+                " ON CONFLICT DO NOTHING",
+                (
+                    guild_id,
+                    campaign_id,
+                    label,
+                    int(time.time()),
+                    guild_id,
+                    campaign_id,
+                    relation_id,
+                ),
+            )
+
     async def _confirm_group_memberships(self, w: Changes, entity_id: str) -> None:
         """A name the DM just confirmed takes the memberships the group button decided for it
         (#3383, part 2): a `member_of` the DM proposed for it while it waited becomes a fact."""

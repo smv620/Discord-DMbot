@@ -28,7 +28,7 @@ from dmbot.memory.link_kinds import link_kind
 from dmbot.memory.link_words import back_after, back_words, link_words, reads_both_ways
 from dmbot.memory.web_actions import RETAKE_AFTER_S
 from dmbot.memory.who_resolve import checked_line
-from dmbot.web import all_names, graph_view, which_choices
+from dmbot.web import all_names, graph_view, link_sources, which_choices
 from dmbot.web.names import _parse
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
 from dmbot.web.sessions import Session
@@ -331,8 +331,12 @@ async def read_web(
             db, session, ref, center, hops, size_only=False, view=view, with_knowers=True
         )
     page = page_of(got)
-    if got["canEdit"] and got["seesAll"]:
+    own_view = got["canEdit"] and got["seesAll"]
+    if own_view:
         await with_know_words(db, session, ref, page, known)
+    # where each connection came from (#2946): the DM's own view gets the full value, any other
+    # look (a player's, or Players View) the player's
+    await link_sources.with_link_sources(db, session, ref, page, full=bool(own_view))
     return page
 
 
