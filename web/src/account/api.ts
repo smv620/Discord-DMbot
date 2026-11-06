@@ -2149,6 +2149,8 @@ export type WaitingAnswer =
   | { kind: "claim"; action: "confirm" | "reject"; id: string; secret?: boolean }
   | { kind: "claim"; action: "pick"; id: string; side: "subject" | "object"; entity: string }
   | { kind: "claim"; action: "unpick"; id: string }
+  // Takes back one answer of an "All true" / "All secret" press (#3645): `batch` is the change the answer made.
+  | { kind: "claim"; action: "undo"; id: string; batch: number }
   | { kind: "backstory"; action: "keep" | "skip"; id: string; secret?: boolean }
   | { kind: "backstory"; action: "keep_all"; ids: string[] }
   | { kind: "which"; action: "pick"; id: string; entity: string }
@@ -2632,7 +2634,7 @@ export interface AccountApi {
    * connections a Keep all kept, when the API says. Missing from an API older than that. */
   webWaiting?(ref: string): Promise<Waiting>;
   /** `onLook` hears how the wait stands each time the page looks (#2921). */
-  answerWaiting?(ref: string, answer: WaitingAnswer, onLook?: (look: WaitingLook) => void): Promise<{ kept?: number }>;
+  answerWaiting?(ref: string, answer: WaitingAnswer, onLook?: (look: WaitingLook) => void): Promise<{ kept?: number; batch?: number }>;
   /** What people believe, waiting for the DM, and one answer to it (#2412; DM only: anyone else gets
    * `not-found`). `answerReading` queues the answer for the bot and waits for it, telling `onLook` how the
    * wait stands each time it looks; it resolves with the answer's id and whether it can be undone. */
