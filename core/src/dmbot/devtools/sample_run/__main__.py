@@ -29,6 +29,7 @@ from pathlib import Path
 
 from dmbot.devtools.sample_run import plan, steps
 from dmbot.devtools.sample_run.plan import SampleError, Step
+from dmbot.transcript import import_plan as ip
 
 DEFAULT_BACKUPS = Path("/var/lib/dmbot-sample-backups")
 _ON = {"1", "true", "on", "yes"}
@@ -91,14 +92,21 @@ async def run(
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
 ) -> int:
     say = say or (lambda line: print(line, flush=True))
+    now = int(time.time())
+    # Everything that can refuse the run without a database comes first, so a mistake costs
+    # nothing: the players, the files, the choice, the date.
     players = plan.parse_players(args.players)
     lore_text, session_text = read_text(args.lore, "lore"), read_text(args.session, "session")
+    steps.check_lore(lore_text, args.lore_choice)
+    started = session_start(args.date, now)
     from dmbot.transcript import importer
 
     try:
         transcript = importer.parse(session_text)
     except importer.TranscriptError as exc:
         raise SampleError(f"the session file cannot be read ({exc.code})") from exc
+    if {s.label for s in ip.speakers(transcript)} - set(players):
+        raise SampleError("a speaker in the session file has no --players entry")
     chars = sum(len(u.text) for u in transcript.utterances)
     lore, windows, story, recap = steps.estimate_cost(
         len(lore_text.split()), len(transcript.utterances), chars
@@ -107,24 +115,37 @@ async def run(
     if not args.yes:
         say("Nothing was run. Add --yes to spend the money.")
         return 0
+    if accept is None:
+        raise SampleError("accept_all (#3544) is not in this build; nothing was changed")
     url = os.environ.get("DATABASE_URL", "")
     if not url:
         raise SampleError("DATABASE_URL isn't set")
     if not os.environ.get("ANTHROPIC_API_KEY"):
         raise SampleError("ANTHROPIC_API_KEY isn't set")
     folder = steps.keep_folder(args.backup_dir)
+    from dmbot.consent import ConsentStore
     from dmbot.db import Database
     from dmbot.devtools import common
     from dmbot.memory.store import MemoryStore
-    from dmbot.transcript.store import TranscriptStore
 
+    commit = common.commit(
+        args.commit, tool="sample_run"
+    )  # before the run: it cannot mask an error
     db = await Database.open(url, migrate=False, max_size=4)
     done: list[Step] = []
     try:
         campaigns, memory = steps.campaign_store(db), MemoryStore(db)
-        transcripts = TranscriptStore(db)
-        now = int(time.time())
         today = dt.date.today().isoformat()
+        gid, dm = args.guild, args.dm
+        # The checks that need the database, still before anything is changed or spent.
+        await steps.require_paid(db, dm, now)
+        found = await steps.check_existing(db, campaigns, gid, dm)
+        ids = set(players.values())
+        agreed = await ConsentStore(db).consenting(gid)
+        refused = await steps.refused_accounts(db, gid, ids)
+        planned = await steps.preflight_session(
+            gid, players, session_text, agreed, refused, started_at=started
+        )
 
         async def timed(name: str, work: Awaitable[Mapping[str, int | str]]) -> None:
             began = time.monotonic()
@@ -132,21 +153,19 @@ async def run(
             done.append(Step(name, time.monotonic() - began, counts))
             say(f"{name}: done")
 
-        await steps.require_paid(db, args.dm, now)
         campaign = await steps.fresh_campaign(
-            db, campaigns, args.guild, args.dm, keep_old=args.keep_old, today=today, say=say
+            db, campaigns, gid, dm, keep_old=args.keep_old, today=today, say=say, found=found
         )
-        gid, cid = args.guild, campaign.id
+        cid = campaign.id
 
         async def lore_step() -> Mapping[str, int | str]:
             upload = await steps.queue_lore(
-                db, gid, cid, args.dm, lore_text, choice=args.lore_choice, now=now
+                db, gid, cid, dm, lore_text, choice=args.lore_choice, now=now
             )
             return await steps.wait_lore(db, gid, upload, say=say, sleep=sleep)
 
         async def accept_step() -> Mapping[str, int | str]:
-            if accept is None:
-                raise SampleError("accept_all (#3544) is not in this build")
+            assert accept is not None
             return await accept(memory, gid, cid)
 
         async def score_step(label: str, docs: str) -> Mapping[str, int | str]:
@@ -160,15 +179,10 @@ async def run(
         await timed("accept all (lore)", accept_step())
         await timed("backup and score (lore)", score_step("lore", "lore"))
 
-        started = session_start(args.date, now)
-
         async def import_step() -> Mapping[str, int | str]:
-            sid, kept = await steps.store_import(
-                db, transcripts, gid, cid, args.dm, players, session_text,
-                started_at=started, now=now,
-            )  # fmt: skip
+            sid = await steps.store_import(db, gid, cid, dm, planned, started_at=started, now=now)
             got = await steps.wait_import(db, gid, sid, say=say, sleep=sleep)
-            return {**got, "kept": kept}
+            return {**got, "kept": planned.kept}
 
         await timed("session import", import_step())
         await timed("accept all (session)", accept_step())
@@ -184,9 +198,8 @@ async def run(
     finally:
         await db.close()
         for line in plan.report(
-            done, commit=common.commit(args.commit, tool="sample_run"),
-            switches=switches(os.environ), today=dt.date.today().isoformat(),
-        ):  # fmt: skip
+            done, commit=commit, switches=switches(os.environ), today=dt.date.today().isoformat()
+        ):
             say(line)
     return 0
 
@@ -197,15 +210,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     except SampleError as exc:
         print(f"sample_run: {exc}", file=sys.stderr)
         return 2
+    except Exception as exc:  # the kind only: a database error can quote a row, the lore with it
+        print(f"sample_run: stopped by {type(exc).__name__}", file=sys.stderr)
+        return 1
 
 
 def _accept_all() -> Callable[[object, int, str], Awaitable[Mapping[str, int]]] | None:
     """The 'Accept all' of #3544, when this build has it (None until it merges)."""
     try:
         from dmbot.memory import accept_all  # type: ignore[attr-defined]
-    except ImportError:
+
+        entry: Callable[[object, int, str], Awaitable[Mapping[str, int]]] = accept_all.run
+    except (ImportError, AttributeError):  # not merged yet, or named differently
         return None
-    entry: Callable[[object, int, str], Awaitable[Mapping[str, int]]] = accept_all.run
     return entry
 
 

@@ -53,7 +53,7 @@ python -m dmbot.devtools.sample_run --guild GUILD --dm DM_USER_ID \
 # the first run prints the most paid AI calls it can use and stops; add --yes to run it
 ```
 
-It needs `DATABASE_URL` and `ANTHROPIC_API_KEY` in its environment, the bot running with the lore and story switches on as the test plan says, and a DM account with a paid plan or free access (the tool never grants one). Backups go to `--backup-dir` (default `/var/lib/dmbot-sample-backups`, outside the repository). The report names which `DMBOT_` switches were on. The manual steps below are what the command does, for when one step must be run alone.
+It needs `DATABASE_URL` and `ANTHROPIC_API_KEY` in its environment, the bot running with the lore and story switches on as the test plan says, a DM account with a paid plan or free access (the tool never grants one), and the four test accounts must already have agreed to being recorded in Discord (the tool checks this before it spends anything and stops if one has not, or has said no). Backups go to `--backup-dir` (default `/var/lib/dmbot-sample-backups`, outside the repository). The report names which `DMBOT_` switches were on. The manual steps below are what the command does, for when one step must be run alone.
 
 ### How dev1 runs it each time (a test campaign, never a real one)
 

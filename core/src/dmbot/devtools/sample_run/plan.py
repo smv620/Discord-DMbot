@@ -59,7 +59,6 @@ class Existing:
     dm_user_ids: frozenset[int]
     sessions: int  # how many sessions it holds
     imported: int  # ...of which come from an import (a `session_imports` row)
-    ended_sessions: int = 0
 
 
 def can_replace(existing: Existing, dm: int) -> str | None:
@@ -70,11 +69,6 @@ def can_replace(existing: Existing, dm: int) -> str | None:
     if existing.imported != existing.sessions:
         return "a campaign with that name holds a session that was not imported"
     return None
-
-
-def check_name(name: str) -> None:
-    if name != NAME:
-        raise SampleError(f"this tool only makes and deletes {NAME!r}")
 
 
 @dataclass(slots=True)
