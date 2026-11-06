@@ -54,7 +54,10 @@ CI runs all of the above on every pull request. Never merge red CI.
   still blocks, with one exception (Supervisor, 2026-11-06, after #3532 and #3556 failed within a
   second of starting): when the PR changes nothing under `web/` and every CI job (`web` included) is
   green on the exact head, a Cloudflare Pages failure is Cloudflare's own and doesn't block. A PR
-  that changes `web/` still needs Cloudflare Pages green.
+  that changes `web/` still needs Cloudflare Pages green, but when its `web` job is green and
+  Cloudflare Pages fails, RepoManager re-runs it once by refreshing the PR onto `development` (#3532
+  passed that way). A second failure blocks, goes to the author, and Supervisor asks the owner to
+  look at the Cloudflare dashboard.
   **RepoManager does that refresh itself** (2026-10-08, #516): when the merge of
   `development` into an approved PR's branch is clean and the PR's own change is unchanged
   (same patch-id), RepoManager pushes it and merges on green CI with no new approval or
