@@ -126,12 +126,19 @@ def _whole_items(text: str) -> list[object]:
 
 
 def parse_deeds(
-    text: str, refs: Collection[str], *, dm_lines: Collection[str], cut: bool = False
+    text: str,
+    refs: Collection[str],
+    *,
+    dm_lines: Collection[str],
+    cut: bool = False,
+    covered: set[tuple[str, str]] | None = None,
 ) -> Parsed:
     """The deeds in a model's answer. `refs` are the line numbers the batch had (only lines of
     people recorded now); `dm_lines` (required, so the rule cannot be left out) are the ones the
     DM spoke. `cut`: the answer stopped at the length limit, so the items before the broken one are
-    kept and the broken one is not counted as refused (the caller reports the cut itself)."""
+    kept and the broken one is not counted as refused (the caller reports the cut itself).
+    `covered`: the (doer, viewer) pairs an earlier batch of the same session already has a deed
+    for, added to as this one is read, so one deed for a pair holds across the whole session."""
     try:
         data = json.loads(text)
     except (TypeError, ValueError):
@@ -145,7 +152,7 @@ def parse_deeds(
     known = {str(r) for r in refs}
     dm = {str(n) for n in dm_lines}
     refused = max(0, len(items) - MAX_DEEDS)
-    covered: set[tuple[str, str]] = set()  # (doer, viewer): one deed for a pair in a session
+    covered = covered if covered is not None else set()  # (doer, viewer) of the session so far
     repeated = 0
     out: list[DeedProposal] = []
     for item in items[:MAX_DEEDS]:
