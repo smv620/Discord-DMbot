@@ -34,6 +34,8 @@ TOLD = r"""
             REFERENCES memory_entities (guild_id, campaign_id, id)
             ON DELETE CASCADE ON UPDATE CASCADE
     );
+    -- (the character key is how a deleted or merged character finds its tellings)
+    CREATE INDEX memory_told_by_character ON memory_told (guild_id, campaign_id, character_id);
 
     -- Who was told what, for the API to put through the gate (`memory/gate.py`): the other name
     -- and the character, ids only. The DM is given every row; a member who is not the DM is given
