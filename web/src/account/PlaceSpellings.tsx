@@ -42,7 +42,7 @@ export default function PlaceSpellings({ api, campaignRef, onSignedOut, onChange
     setBusy(item.id);
     setProblem(false);
     try {
-      await api.answerPlaceSpelling(campaignRef, item.id, yes);
+      await api.answerPlaceSpelling(campaignRef, item, yes);
       setItems((now) => (now ?? []).filter((x) => x.id !== item.id));
       setSaid(yes ? w.saidYes(item.spelling, item.place) : w.saidNo(item.spelling, item.place));
       onChanged?.();

@@ -836,9 +836,9 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   const restores = new Map<string, PretendRestore>();
   let restoreCount = 0;
   // Spellings of a place waiting for a yes or no (#3533): the pretend places "Saltmarsh" and "Greywatch" each have a new spelling.
-  const spellingQuestions: { id: string; place: string; spelling: string }[] = [
-    { id: "sp1", place: "Saltmarsh", spelling: "Salt Marsh" },
-    { id: "sp2", place: "Greywatch", spelling: "Grey Watch" },
+  const spellingQuestions: { id: string; placeId: string; place: string; spelling: string }[] = [
+    { id: "sp1", placeId: "n24", place: "Saltmarsh", spelling: "Salt Marsh" },
+    { id: "sp2", placeId: "n25", place: "Greywatch", spelling: "Grey Watch" },
   ];
   // People the story never named (#2803), shown only for a campaign ref ending `.not-named`; what each name/join
   // step changed is kept by the answer id, so an Undo can put it back.
@@ -2755,7 +2755,8 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       if (namesView(ref) !== "dm") throw new ApiError("not-allowed"); // a player never sees a proposed name
       return spellingQuestions.map((x) => ({ ...x }));
     },
-    async answerPlaceSpelling(ref, id, yes) {
+    async answerPlaceSpelling(ref, spelling, yes) {
+      const id = spelling.id;
       calls.push(`answerPlaceSpelling:${ref}:${id}:${yes}`);
       await reachable();
       signedIn();

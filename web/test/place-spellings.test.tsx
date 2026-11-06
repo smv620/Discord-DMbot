@@ -79,7 +79,7 @@ describe("one place written two ways", () => {
   it("drops a question that was already answered somewhere else", async () => {
     const api = await open();
     const yes = await screen.findByRole("button", { name: p.yesFor("Salt Marsh", "Saltmarsh") });
-    await api.answerPlaceSpelling!("100.cmp1", "sp1", false); // (answered in Discord meanwhile)
+    await api.answerPlaceSpelling!("100.cmp1", { id: "sp1", placeId: "n24", place: "Saltmarsh", spelling: "Salt Marsh" }, false); // (answered in Discord meanwhile)
     fireEvent.click(yes);
     await waitFor(() => expect(screen.queryByRole("button", { name: p.yesFor("Salt Marsh", "Saltmarsh") })).toBeNull());
     expect(screen.queryByText(p.failed)).toBeNull();
