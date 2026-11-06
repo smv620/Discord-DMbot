@@ -1622,6 +1622,8 @@ export interface WebBelief {
 /** What sort of connection it is, worked out from its relationship type (core #2942). */
 export type WebLinkKind = "family" | "ally" | "group" | "work" | "other";
 
+/** Where a connection came from (#2946, API #3540). The API cuts it for a player: a session number or unknown, never a label. */
+export type WebLinkSource = { type: "session"; n: number } | { type: "upload"; label: string } | { type: "dm" } | { type: "unknown" };
 export interface WebLink {
   id: string;
   words: string;
@@ -1643,6 +1645,8 @@ export interface WebLink {
    * the line (#3363): "Aldmoor is where Tavin was last seen" is `back` "is where" and `backAfter` "was last seen".
    * Empty or missing for every other connection, and from an API that does not send it yet. */
   backAfter?: string | null;
+  /** Where it came from (#2946). Missing from an older API: the page then shows nothing. */
+  source?: WebLinkSource;
   /** DMbot's check of a pronoun, in plain words, for a DM only (#2859). */
   check?: string;
   /** False: not revealed to the players yet (#2405). */

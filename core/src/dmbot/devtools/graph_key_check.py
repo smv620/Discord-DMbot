@@ -121,6 +121,8 @@ class Report:
     inferred_confirmed: list[str] = field(default_factory=list)
     events_in_backup: int = 0
     events_expected: int = 0
+    players_found: int = 0  # the key's player characters that are entries with that role (#3553)
+    players_expected: int = 0
 
 
 def _live(row: Mapping[str, Any]) -> bool:
@@ -356,6 +358,13 @@ def check(backup: object, key: Mapping[str, Any], docs: str = "both") -> Report:
             and str(r["id"]) not in used_relations
         ):
             report.extra_ties += 1
+    players = key.get("players", {})
+    report.players_expected = len(players)
+    report.players_found = sum(
+        1
+        for name in players
+        if any(graph.entities[i].get("role") == "player_character" for i in graph.ids([name]))
+    )
     report.events_expected = sum(1 for n in nodes if kind_of_key[n["name"]] == "event")
     report.events_in_backup = sum(
         1 for e in graph.entities.values() if e["type"] in ("event", "deed")
@@ -393,6 +402,7 @@ def summarize(report: Report) -> dict[str, Any]:
         "violations": len(report.violations),
         "inferred_confirmed": len(report.inferred_confirmed),
         "event_entries": {"expected": report.events_expected, "in_backup": report.events_in_backup},
+        "player_characters": {"found": report.players_found, "expected": report.players_expected},
     }
 
 
@@ -423,6 +433,7 @@ def render(report: Report, counts_only: bool = False) -> str:
     lines.append(
         f"Event entries: {report.events_in_backup} in the backup, {report.events_expected} expected"
     )
+    lines.append(f"Player characters found: {report.players_found} of {report.players_expected}")
     lines.append(f"Must-not-find names present: {len(report.violations)}")
     if report.violations and not counts_only:
         lines.append("  " + ", ".join(report.violations))

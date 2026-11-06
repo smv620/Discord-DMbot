@@ -140,7 +140,7 @@ class TheExamples(unittest.TestCase):
         prompt = lr.read_instructions({"patron_of": "is a mentor of"})
         for rule in ("Only what the text states", "NOT INCLUDED", "copied exactly", "data, not"):
             self.assertIn(rule, prompt)
-        self.assertIn("person, place, group, god, item, event, idea", prompt)
+        self.assertIn("person, player, place, group, god, item, event, idea", prompt)
         self.assertIn("patron_of", prompt)
         self.assertIn(lr.EXAMPLES, prompt)
 
@@ -1287,7 +1287,7 @@ class TheKeptDirection(unittest.IsolatedAsyncioTestCase):
         def waiting(detail: str) -> Any:
             return SimpleNamespace(
                 subject_id="s", predicate="kin_of", object_id="o", secret=False, detail=detail,
-                truth=False, decided="", known_by="", world=0,
+                truth=False, decided="", known_by="", world=0, upload="",
             )  # fmt: skip
 
         await keep_all(memory, store, 1, "c", [waiting("parent"), waiting("")])  # type: ignore[arg-type]
