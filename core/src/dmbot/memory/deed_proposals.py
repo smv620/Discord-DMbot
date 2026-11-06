@@ -82,8 +82,8 @@ class DeedProposals:
         are not all recorded now is not kept; a pair the session already has a row for is dropped
         from a later one, and a deed left with nobody is not stored. (A session is told apart by
         its start time; sessions without one share a scope, which only ever holds back a repeat.
-        Two extractions of one session are not expected to overlap; if they ever did, a pair could be
-        stored twice, which the DM would simply answer twice.)"""
+        Two extractions of one session are not expected to overlap; if they did, a pair could
+        be stored twice, which the DM would simply answer twice.)"""
         if not proposals:
             return Stored()
         recorded = set(opted_in)
