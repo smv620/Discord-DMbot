@@ -209,6 +209,8 @@ ACTIONS = (
     "alias-who",  # who knows an other name (#2999): {alias, who, characters}
     "confirm-kinds",  # "Add all" for what an upload found (#3207): {upload, kinds | "all"}
     "confirm-undo",  # takes back one press of it: {answer}
+    "spelling-yes",  # "Is this the same place?" (#3533): confirm the proposed other name: {alias}
+    "spelling-no",  # ... or turn it down for good: {alias}
 )
 
 KIND_WORD = re.compile(
@@ -320,6 +322,10 @@ def _arguments(body: object) -> tuple[str, str, str, str, bool]:
             if len(set(kinds)) != len(kinds):
                 raise RecapError("bad_target")
             text = " ".join(kinds)
+    elif action in ("spelling-yes", "spelling-no"):  # the proposed other name is the target
+        target = str(body.get("alias") or "")
+        if not ID_PATTERN.match(target):
+            raise RecapError("not_found")
     elif action == "confirm-undo":  # the answer of the press to take back
         target = str(body.get("answer") or "")
         if not ID_PATTERN.match(target):
