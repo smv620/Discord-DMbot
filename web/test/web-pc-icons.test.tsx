@@ -93,7 +93,7 @@ describe("the Icon row on the page", () => {
     fireEvent.click(within(row).getByRole("button", { name: w.hide }));
     await waitFor(() => expect(api.calls.some((c) => c.endsWith(":n1:hidden"))).toBe(true));
     row = await rowOf();
-    fireEvent.click(await within(row).findByRole("button", { name: w.undo }));
+    fireEvent.click(await within(row).findByRole("button", { name: w.undoLabel }));
     await waitFor(() => expect(api.calls.some((c) => c.endsWith(":n1:default"))).toBe(true));
   });
 

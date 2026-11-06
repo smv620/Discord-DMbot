@@ -3,7 +3,7 @@
 // with one Undo. Offered only to the DM and to the player who plays the character (the door says which through
 // `canSetIcon`, and checks again); a button is offered only when it would change something, and a picture only when it
 // exists. Its own file so the Story Graph's page keeps its weight budget.
-import { useState } from "preact/hooks";
+import { useRef, useState } from "preact/hooks";
 
 import { pcIconWords as w } from "../content/pc-icon-words";
 import type { IconChoice, WebNode } from "./api";
@@ -24,6 +24,7 @@ export default function PcIconRow({
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const [said, setSaid] = useState("");
+  const statusBox = useRef<HTMLParagraphElement>(null); // a pressed button may leave the row: focus goes to what was said
   const choice = node.iconChoice ?? "default";
   const has = node.iconHas ?? { discord: false, dndbeyond: false };
   async function go(run: () => Promise<string | null>, ok: string): Promise<void> {
@@ -34,7 +35,10 @@ export default function PcIconRow({
     try {
       const refused = await run();
       if (refused) setProblem(refused);
-      else setSaid(ok);
+      else {
+        setSaid(ok);
+        setTimeout(() => statusBox.current?.focus(), 0);
+      }
     } finally {
       setBusy(false);
     }
@@ -43,7 +47,10 @@ export default function PcIconRow({
   return (
     <div class="stack" role="group" aria-labelledby={`pc-icon-${node.id}`}>
       <h4 id={`pc-icon-${node.id}`}>{w.heading}</h4>
-      <p class="small muted">{w.showing[choice]}</p>
+      <p class="small muted">{w.scope}</p>
+      <p class="small muted" aria-live="polite">
+        {w.showing[choice]}
+      </p>
       <div class="row">
         {has.discord && choice !== "discord" && (
           <button type="button" class="button secondary" aria-disabled={busy} onClick={pick("discord")}>
@@ -66,13 +73,13 @@ export default function PcIconRow({
           </button>
         )}
         {undo && (
-          <button type="button" class="button secondary" aria-disabled={busy} onClick={() => void go(onUndo, w.undone)}>
+          <button type="button" class="button secondary" aria-label={w.undoLabel} aria-disabled={busy} onClick={() => void go(onUndo, w.undone)}>
             {w.undo}
           </button>
         )}
       </div>
       {choice !== "default" && <p class="small muted">{w.removeHint}</p>}
-      <p class="small" role="status">
+      <p class="small" role="status" tabIndex={-1} ref={statusBox}>
         {busy ? w.working : said}
       </p>
       {problem && (
