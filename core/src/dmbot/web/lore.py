@@ -89,9 +89,11 @@ async def add(db: Database, session: Session, ref: str, body: object) -> dict[st
     return await read(db, session, ref, str(got["id"]))
 
 
-# What a lore read's count measures at each stage (#3534): the pieces of the text, then the names
-# it is shaping. The connection stages report no count of their own.
-_UNITS = {"reading": "parts", "finding_names": "names"}
+# What a lore read's count measures at each stage (#3534): the pieces of the text, the names it is
+# shaping, then the checks of the connections it found. Its stages are its own codes where a shared
+# code means something else for another job ("reading", "waiting").
+_STAGES = {"reading": "lore_reading", "waiting": "lore_waiting"}
+_UNITS = {"lore_reading": "parts", "finding_names": "names", "finding_links": "checks"}
 
 
 def _progress(up: dict[str, Any]) -> dict[str, Any]:
@@ -103,6 +105,7 @@ def _progress(up: dict[str, Any]) -> dict[str, Any]:
         stage = state
     elif state == "waiting":
         stage = "waiting"
+    stage = _STAGES.get(stage, stage)
     running = state == "working"
     return progress_shape.shape(
         stage,
