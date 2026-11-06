@@ -38,6 +38,7 @@ from dmbot.memory import (
     who_resolve,
 )
 from dmbot.memory import reputation_words as feeling_words
+from dmbot.memory import spellings as place_spellings_mod
 from dmbot.memory import unnamed as unnamed_mod
 from dmbot.memory.backstory_links import (
     DONE,
@@ -746,6 +747,16 @@ async def read_background(
         [made], {*known, *spelled}, rules=(campaign.target_ruleset, campaign.fallback_ruleset)
     )
     found = [*found, *made]
+    # One place written two ways (#3037): in this read ("Northhaven", "North Haven") it is one
+    # waiting place; against a place the campaign has, the new spelling is offered as its other
+    # name (below) and not made a second place. Counts only in the log.
+    found, folded = place_spellings_mod.fold_in_read(found)
+    place_spellings, place_names, found = await _near_places(memory, campaign, found)
+    if folded or place_spellings:
+        log.info(
+            "Place spellings: %d folded in the read, %d offered as another name",
+            folded, sum(len(v) for v in place_spellings.values()),
+        )  # fmt: skip
     if pc_counts:
         log.info("Names added next to a player character: %s", dict(pc_counts))  # counts only
     choice = lore_knowledge.normalize(choice)
@@ -782,6 +793,14 @@ async def read_background(
         fold_secret=choice == lore_knowledge.WORLD,
         source=upload.label,
     )
+    await save_place_spellings(
+        memory,
+        campaign,
+        place_spellings,
+        getattr(bot, "lore_context", None),
+        upload.text,
+        upload.label,
+    )
     await save_earlier_names(
         memory,
         campaign,
@@ -814,7 +833,8 @@ async def read_background(
         who_ai=who_ai,
         on_who=on_who,
         until=started + lore_read.LORE_TIME_LIMIT_S - WHO_SUMMARY_MARGIN_S,
-        known_spellings=read.known_spellings,
+        # (a connection the text wrote through a place's new spelling meets that place: #3037)
+        known_spellings=_with_place_spellings(read.known_spellings, place_spellings, place_names),
         secret_spellings=secret_keys,
         world_links=world_links,
         world_all=choice == lore_knowledge.WORLD,
@@ -898,6 +918,72 @@ async def _world(
 campaign_for = _campaign_for
 memory_of = _memory
 markdown_safe = _md
+
+
+def _with_place_spellings(
+    known: Mapping[str, Sequence[str]],
+    joined: Mapping[str, Sequence[str]],
+    names: Mapping[str, str],
+) -> dict[str, Sequence[str]]:
+    """`known`, with each place's new spellings added under the place's name, so a connection
+    written with "North Haven" is kept for "Northhaven" (#3037, #2841)."""
+    out: dict[str, Sequence[str]] = {k: list(v) for k, v in known.items()}
+    for entity_id, spellings in joined.items():
+        if entity_id in names:
+            out[names[entity_id]] = [*out.get(names[entity_id], ()), *spellings]
+    return out
+
+
+async def _near_places(
+    memory: MemoryStore, campaign: Campaign, found: list[bg.Found]
+) -> tuple[dict[str, tuple[str, ...]], dict[str, str], list[bg.Found]]:
+    """The new places of a read that are a place the campaign has, written another way (#3037):
+    (the existing place's id → the spellings, the places' names by id, the rest). Asked only when
+    the read found a place."""
+    if not any(f.kind == place_spellings_mod.PLACE for f in found):
+        return {}, {}, found
+    lookup = CampaignLookup.build(await memory.lookup_data(campaign.guild_id, campaign.id))
+    places: dict[str, list[str]] = {}
+    for entry in lookup.names:
+        owner = lookup.entities.get(entry.entity_id)
+        if owner is not None and owner.type == place_spellings_mod.PLACE:
+            places.setdefault(entry.entity_id, []).append(entry.text)
+    refused = await memory.refused_spellings(campaign.guild_id, campaign.id)
+    joined, rest = place_spellings_mod.near_places(found, places, refused)
+    return joined, {i: lookup.entities[i].name for i in joined}, rest
+
+
+async def save_place_spellings(
+    memory: MemoryStore,
+    campaign: Campaign,
+    joined: Mapping[str, Sequence[str]],
+    held: lore_context.Held | None,
+    text: str,
+    source: str,
+) -> None:
+    """The other spellings of places the campaign has, saved as suggestions on those places, the
+    same way as a lore text's earlier names (#3034): waiting for the DM's yes, seen by no player,
+    never a second place. A refusal is logged and the read goes on."""
+    if not joined:
+        return
+    try:
+        waiting = {a.id for a, _ in await memory.suggested_names(campaign.guild_id, campaign.id)}
+        more = [MoreNames(i, tuple(names), (), proposed=True) for i, names in joined.items()]
+        await memory.add_names(campaign.guild_id, campaign.id, [], source=DM, more=more)
+        added = [
+            a for a, _ in await memory.suggested_names(campaign.guild_id, campaign.id)
+            if a.id not in waiting
+        ]  # fmt: skip
+    except MemoryRuleError as exc:
+        log.info("Skipped the place spellings of a lore text: %s", exc)
+        return
+    except Exception:  # the names of the read are stored already: this must not undo the read
+        log.exception("The place spellings of a lore text could not be saved")
+        return
+    if held is None or not text:
+        return
+    for alias in added:  # the sentence around each, for its question (memory only)
+        held.put(campaign.guild_id, alias.id, lore_context.around(text, "", alias.text), source)
 
 
 async def save_earlier_names(
