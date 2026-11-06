@@ -4718,8 +4718,10 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
     sheet or the transcript gives; such a name goes to the DM's name check as today (#2027). A secret
     name, or an `<apart>` link, is never used.
   - **Only an overall length target.** No paragraph count and no words per beat. The target is
-    **150 words, plus 100 for every hour played**, rounded to the nearest 10, **at most 600** (1 hour
-    250, 3 hours 450; about four minutes read aloud at most). It stays a target, never a check (#2597).
+    **250 words, plus 150 for every hour played**, rounded to the nearest 10, **at most 1,000** (1 hour
+    400, 3 hours 700; about seven minutes read aloud at most). Raised from 150 + 100 (at most 600) by the
+    owner on 2026-11-06 (#3633): recaps were being crunched down too much. It stays a target, never a check
+    (#2597), and the change is scored before and after like any recap-writer change.
   - **What the writer is asked for**, in its instructions: a self-contained short story, not a teaser;
     each scene opens by saying where it is, and a change of place is said in the first sentence of the
     new scene; anything new is introduced from the sheet, and left out only when nothing given explains
