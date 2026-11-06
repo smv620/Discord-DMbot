@@ -576,6 +576,8 @@ class BackgroundOffer(_Menu):
             ) as waiting:
 
                 def on_step(stage: str, done: int, total: int) -> None:
+                    if stage == "counts":
+                        return  # the website's live counts (#3534), not a step on this screen
                     if stage == "reading":
                         # Same words for every pass-1 call: each call is movement, not a new step.
                         waiting.step(f"Step 1 of {steps}: reading it through", keeps=False)

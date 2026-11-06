@@ -129,6 +129,26 @@ class TheJob(DatabaseTest):
         self.assertGreater(row["step_total"], 0)
         self.assertGreater(row["updated_at"], 5)  # moved forward by the steps and the finish
 
+    async def test_cleaning_counts_the_words_it_handled_and_the_ai_calls_it_made(self) -> None:
+        """#3534: counts only, added in the same statement as the lines done."""
+        ai = FakeAI("1. game\n2. other")
+        await self.job(ai).run_round(GUILD)
+        async with self.db.guild(GUILD) as conn:
+            cur = await conn.execute("SELECT words_done, calls_made FROM session_imports")
+            row = await cur.fetchone()
+        assert row is not None
+        words = 6 + 4  # "We meet Kazeth at the gate." and "Anyone seen the pizza?"
+        self.assertEqual((row["words_done"], row["calls_made"]), (words, ai.calls))
+        self.assertGreaterEqual(ai.calls, 1)
+
+    async def test_without_an_ai_it_counts_words_and_no_calls(self) -> None:
+        await self.job(None).run_round(GUILD)
+        async with self.db.guild(GUILD) as conn:
+            cur = await conn.execute("SELECT words_done, calls_made FROM session_imports")
+            row = await cur.fetchone()
+        assert row is not None
+        self.assertEqual((row["words_done"] > 0, row["calls_made"]), (True, 0))
+
     async def test_a_misheard_name_is_fixed_in_the_cleaned_text_only(self) -> None:
         await self.job(None).run_round(GUILD)
         first = (await self.transcripts.lines(GUILD, self.session))[0]

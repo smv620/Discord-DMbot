@@ -434,9 +434,18 @@ class ImportStore:
             )
 
     async def apply(
-        self, guild_id: int, session_id: str, cleaned: Sequence[tuple[int, str | None, str]]
+        self,
+        guild_id: int,
+        session_id: str,
+        cleaned: Sequence[tuple[int, str | None, str]],
+        *,
+        words: int = 0,
+        calls: int = 0,
     ) -> None:
-        """Save (line id, cleaned text or None when unchanged, topic) for lines of this session."""
+        """Save (line id, cleaned text or None when unchanged, topic) for lines of this session.
+        `words` and `calls`: the words this chunk handled and the AI calls it made, added to the
+        session's running counts for the page (#3534); counts only, in the same statement as the
+        lines done."""
         if not cleaned:
             return
         async with self._db.guild(guild_id) as conn:
@@ -453,8 +462,10 @@ class ImportStore:
             )
             # (the row's own trigger stamps `updated_at`: this chunk is a step forward)
             await conn.execute(
-                "UPDATE session_imports SET step_done = step_done + %s WHERE session_id = %s",
-                (len(cleaned), session_id),
+                "UPDATE session_imports SET step_done = step_done + %s,"
+                " words_done = words_done + %s, calls_made = calls_made + %s"
+                " WHERE session_id = %s",
+                (len(cleaned), max(words, 0), max(calls, 0), session_id),
             )
 
 
@@ -529,6 +540,7 @@ class ImportJob:
                         fixed = row.heard  # a line the cleaner can't read stays as heard
                 texts.append(None if fixed == row.heard else fixed)
             topics = [GAME] * len(chunk)
+            windows_before = windows_left
             if self.topic_ai is not None:
                 topics, windows_left, failures, skipped = await self._topics(
                     guild_id,
@@ -542,6 +554,8 @@ class ImportJob:
                 guild_id,
                 session_id,
                 [(r.id, t, topic) for r, t, topic in zip(chunk, texts, topics, strict=True)],
+                words=sum(len(r.heard.split()) for r in chunk),
+                calls=windows_before - windows_left,  # (a window is one AI call)
             )
             await asyncio.sleep(0)  # the live table's work goes first between chunks
         try:

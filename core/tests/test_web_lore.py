@@ -155,6 +155,18 @@ class TheDoors(Reading):
         [row] = await self.rows()
         self.assertEqual((row["text"], row["link"]), ("", ""))
 
+    async def test_the_words_and_calls_so_far_come_back_as_counts_only(self) -> None:
+        await self.add()
+        before = (await lore.read(self.web, self.session, self.cref, None))["upload"]
+        self.assertEqual((before["wordsDone"], before["callsMade"]), (0, 0))
+        await self.sql(
+            "UPDATE lore_uploads SET state = 'working', claimed_at = 1, stage = 'finding_names',"
+            " words_done = 1200, calls_made = 4"
+        )
+        up = (await lore.read(self.web, self.session, self.cref, None))["upload"]
+        self.assertEqual((up["wordsDone"], up["callsMade"]), (1200, 4))
+        self.assertNotIn(WORDS, repr(up))
+
     async def test_a_taken_upload_gone_quiet_goes_back_and_gets_its_own_half_hour(self) -> None:
         await self.add()
         await self.sql(
