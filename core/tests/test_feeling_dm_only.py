@@ -100,3 +100,20 @@ class TheDiscordCardRows(unittest.TestCase):
 
     def test_the_dm_reads_the_feeling(self) -> None:
         self.assertEqual(self.rows(secrets=True), ["knows (hostile)"])
+
+
+class TheOldFriendAndEnemy(unittest.TestCase):
+    """`ally_of` and `enemy_of` are the same Reputation (#3611): plain "knows" for a non-DM."""
+
+    def test_the_words(self) -> None:
+        for kind in ("ally_of", "enemy_of"):
+            self.assertEqual(link_words(kind, ""), "knows")
+        self.assertEqual(link_words("enemy_of", "", feeling=True), "is an enemy of")
+
+    def test_the_graph_door_never_sends_the_kind_to_a_player(self) -> None:
+        for kind in ("ally_of", "enemy_of"):
+            src, kn = world([("l1", MIRA, KESH, kind)], {"l1": [PC]})
+            player = graph_view.build(src, kn, gate.Viewer.player([PC]))
+            dm = graph_view.build(src, kn, gate.Viewer.the_dm())
+            self.assertEqual(next(e for e in player.edges if e["id"] == "l1")["predicate"], "knows")
+            self.assertEqual(next(e for e in dm.edges if e["id"] == "l1")["predicate"], kind)
