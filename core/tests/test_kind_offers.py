@@ -141,6 +141,12 @@ class TheGuards(Base):
         await self.three("3 oaths")  # (a key can't start with a digit)
         self.assertIsNone(await self.offer())
 
+    async def test_words_with_marks_are_not_offered_because_a_kind_would_read_them_differently(
+        self,
+    ) -> None:
+        await self.three("sworn on Veil's ashes")
+        self.assertIsNone(await self.offer())
+
     async def test_an_unmakeable_offer_does_not_block_the_next_one(self) -> None:
         await self.three("忠誠")
         await self.three(WORDS)
