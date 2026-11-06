@@ -63,7 +63,7 @@ from dmbot.memory.search import MAX_RESULTS, Match, find, said_lately
 from dmbot.memory.store import SAID_AS_MAX, MemoryStore
 from dmbot.mentions import NO_PINGS
 from dmbot.transcript.respell import contains, done_note, left_note, recaps_note, undone_note
-from dmbot.ui import all_names, logic, player_id
+from dmbot.ui import all_names, logic, player_id, told_name
 from dmbot.ui import companion as companion_ui
 from dmbot.ui.dmbot_commands import (
     VIEW_TIMEOUT_S,
@@ -2197,37 +2197,7 @@ class OneName(_Menu):
     async def _who(self, interaction: discord.Interaction) -> None:
         """Open the three-way answer for this other name (#2935): the old keep-it-secret and stop
         keeping it secret, and the middle one between them, some player characters."""
-        await _answer_first(interaction, in_place=True)
-        found = await _one_name(interaction, self.campaign_id, self.entity_id, self.alias_id)
-        memory = _memory(interaction)
-        if found is None or memory is None:
-            return
-        campaign, alias, _ = found
-        if not sees_secrets(campaign, interaction.user.id):
-            await _tell(interaction, "Only the campaign's DMs can change secret names.")
-            return
-        pcs = await player_characters(memory, campaign)
-        knowing = (await memory.alias_knowers(campaign.guild_id, campaign.id, [alias.id])).get(
-            alias.id, []
-        )
-        who = name_edits.who_knows_now(alias, knowing)
-        names = dict(pcs)
-        view = WhoKnowsName(
-            self.campaign_id, self.entity_id, alias.id, pcs,
-            chosen=[c for c in knowing if c in names], now=who,
-        )  # fmt: skip
-        await _replace(
-            interaction,
-            who_text(
-                f"**{_md(alias.text)}**",
-                who,
-                knowing,
-                names,
-                has_characters=bool(names),
-                thing="name",
-            ),
-            view,
-        )
+        await show_who_page(interaction, self.campaign_id, self.entity_id, self.alias_id)
 
     async def _not_this(self, interaction: discord.Interaction) -> None:
         await _answer_first(interaction, in_place=True)
@@ -2256,6 +2226,47 @@ class OneName(_Menu):
         await show_card(interaction, self.campaign_id, self.entity_id, replace=True)
 
 
+async def show_who_page(
+    interaction: discord.Interaction,
+    campaign_id: str,
+    entity_id: str,
+    alias_id: str,
+    *,
+    note: str = "",
+) -> None:
+    """The "Who knows this?" page of a secret other name (#2935), with, for the DM, who was told
+    the name is its entry and who still can be (#3542). `note`: what was just done, on top."""
+    await _answer_first(interaction, in_place=True)
+    found = await _one_name(interaction, campaign_id, entity_id, alias_id)
+    memory = _memory(interaction)
+    if found is None or memory is None:
+        return
+    campaign, alias, entry = found
+    if not sees_secrets(campaign, interaction.user.id):
+        await _tell(interaction, "Only the campaign's DMs can change secret names.")
+        return
+    pcs = await player_characters(memory, campaign)
+    knowing = (await memory.alias_knowers(campaign.guild_id, campaign.id, [alias.id])).get(
+        alias.id, []
+    )
+    told = await memory.told_characters(campaign.guild_id, campaign.id, alias.id)
+    who = name_edits.who_knows_now(alias, knowing)
+    names = dict(pcs)
+    view = WhoKnowsName(
+        campaign_id, entity_id, alias.id, pcs,
+        chosen=[c for c in knowing if c in names], now=who,
+        holders=[c for c in knowing if c in names and c not in told],
+        told=[c for c in told if c in names], alias_text=alias.text, entry_name=entry,
+    )  # fmt: skip
+    text = who_text(
+        f"**{_md(alias.text)}**", who, knowing, names, has_characters=bool(names), thing="name"
+    )
+    lines = told_name.told_lines(told, names, alias.text, entry)
+    if lines:
+        text = f"{text}\n{lines}"
+    await _replace(interaction, f"{note}\n\n{text}" if note else text, view)
+
+
 class WhoKnowsName(WhoKnowsMenu):
     """The other name's page (#2935): 🤫 Only the DM, 👥 Only some characters, 👁️ Everyone at the
     table. Every press checks the campaign, the DM and the name again, and reads where it stands
@@ -2270,9 +2281,40 @@ class WhoKnowsName(WhoKnowsMenu):
         *,
         chosen: Sequence[str] = (),
         now: str = "",
+        holders: Sequence[str] = (),
+        told: Sequence[str] = (),
+        alias_text: str = "",
+        entry_name: str = "",
     ) -> None:
         super().__init__(pcs, chosen=chosen, now=now)
         self.campaign_id, self.entity_id, self.alias_id = campaign_id, entity_id, alias_id
+        # Telling one character the name is the entry, and taking it back (#3542): a menu each,
+        # on the two rows under the buttons, only when there is someone to offer.
+        names = dict(pcs)
+        tell_choices = told_name.tell_options(holders, names, alias_text, entry_name)
+        if tell_choices:
+            self.add_item(
+                _Select(self._tell, placeholder=told_name.TELL_PLACEHOLDER, options=tell_choices,
+                        row=3)
+            )  # fmt: skip
+        back_choices = told_name.take_back_options(told, names, alias_text, entry_name)
+        if back_choices:
+            self.add_item(
+                _Select(self._take_back, placeholder=told_name.TAKE_BACK_PLACEHOLDER,
+                        options=back_choices, row=4)
+            )  # fmt: skip
+
+    async def _tell(self, interaction: discord.Interaction) -> None:
+        data: Any = interaction.data or {}
+        chosen = str((data.get("values") or [""])[0])
+        await told_name.tell(interaction, self.campaign_id, self.entity_id, self.alias_id, chosen)
+
+    async def _take_back(self, interaction: discord.Interaction) -> None:
+        data: Any = interaction.data or {}
+        chosen = str((data.get("values") or [""])[0])
+        await told_name.ask_take_back(
+            interaction, self.campaign_id, self.entity_id, self.alias_id, chosen
+        )
 
     async def _back(self, interaction: discord.Interaction) -> None:
         self.stop()
