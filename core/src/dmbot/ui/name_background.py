@@ -685,7 +685,9 @@ async def read_background(
     website's Upload lore (#3022) both come through here, so they cannot drift apart. The caller
     has checked who may ask, the plan and the allowance, and shows the result. `progress(stage,
     done, total)` is told where it is with counts only: "reading", "looking", "shaping" and "who"
-    (working out who a pronoun means). `started` is the monotonic time the wait began. `choice`
+    (working out who a pronoun means), and "counts" (#3534), which is not a step: its two numbers
+    are the words read and the AI calls made so far, for the website, so a screen that words the
+    steps ignores it. `started` is the monotonic time the wait began. `choice`
     (#2959) is what the upload says the player characters know: world general knowledge, spoilers
     (today's behaviour, the default) or the AI's call, statement by statement."""
     memory = bot.memory

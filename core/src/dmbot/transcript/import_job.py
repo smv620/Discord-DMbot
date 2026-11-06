@@ -426,10 +426,12 @@ class ImportStore:
 
     async def set_total(self, guild_id: int, session_id: str, total: int) -> None:
         """How many lines this session's cleaning has to get through, for the page's "n of m"
-        (#2564). Counts only; starting again from the top starts the count again."""
+        (#2564). Counts only; starting again from the top starts every count again, the words and
+        AI calls too (#3534), since the run goes over every line again with its windows renewed."""
         async with self._db.guild(guild_id) as conn:
             await conn.execute(
-                "UPDATE session_imports SET step_total = %s, step_done = 0 WHERE session_id = %s",
+                "UPDATE session_imports SET step_total = %s, step_done = 0, words_done = 0,"
+                " calls_made = 0 WHERE session_id = %s",
                 (total, session_id),
             )
 
@@ -554,7 +556,8 @@ class ImportJob:
                 guild_id,
                 session_id,
                 [(r.id, t, topic) for r, t, topic in zip(chunk, texts, topics, strict=True)],
-                words=sum(len(r.heard.split()) for r in chunk),
+                # (only lines of people still recorded were worked on)
+                words=sum(len(r.heard.split()) for r in chunk if r.user_id in agreed),
                 calls=windows_before - windows_left,  # (a window is one AI call)
             )
             await asyncio.sleep(0)  # the live table's work goes first between chunks
