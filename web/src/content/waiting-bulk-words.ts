@@ -10,7 +10,7 @@ export const bulkWords = {
   hint: "Each button answers everything shown below that is still waiting. You can undo the last press.",
   hintSecret: "A fact that has changed, like \"Roan is dead\", can't be secret, so All secret leaves it for you.",
   stage: "Saving your answers.",
-  unit: "claims",
+  unit: "answers",
   markedTrue: (n: number): string => `You marked ${n} as true.`,
   markedSecret: (n: number): string => `You marked ${n} as secret.`,
   skipped: (n: number): string => `${plural(n, "fact", "facts")} left for you, because they can't be secret.`,

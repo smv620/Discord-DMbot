@@ -137,10 +137,16 @@ export default function WaitingBulk({
     } finally {
       setSaid([left > 0 ? w.couldNotUndo(left) : "", undone > 0 ? w.undid(undone) : ""].filter((x) => x !== ""));
       setLast([]);
-      await onChanged();
-      setRun(null);
-      flight.current = false;
-      summary.current?.focus();
+      // Whatever happens to the re-read, the buttons must work again.
+      try {
+        await onChanged();
+      } catch {
+        // (the list shows what it showed: the summary above is what was done)
+      } finally {
+        setRun(null);
+        flight.current = false;
+        summary.current?.focus();
+      }
     }
   }
 
@@ -160,7 +166,7 @@ export default function WaitingBulk({
             <button type="button" class="button" aria-disabled={busy} aria-describedby="bulk-hint" onClick={() => !busy && void press(false)}>
               {label(w.allTrue(claims.length))}
             </button>
-            <button type="button" class="button secondary" aria-disabled={busy} aria-describedby="bulk-hint bulk-hint-secret" onClick={() => !busy && void press(true)}>
+            <button type="button" class="button secret" aria-disabled={busy} aria-describedby="bulk-hint bulk-hint-secret" onClick={() => !busy && void press(true)}>
               {label(w.allSecret(secretCount))}
             </button>
           </>

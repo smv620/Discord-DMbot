@@ -405,7 +405,7 @@ export default function WebWaiting({
                 {c.canSecret && (
                   <button
                     type="button"
-                    class="button secondary"
+                    class="button secret"
                     disabled={busy}
                     aria-describedby={`wc-${c.id}`}
                     onClick={() =>
