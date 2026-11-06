@@ -8,6 +8,7 @@ import unittest
 from typing import Any
 
 from dmbot.web import link_sources
+from dmbot.web.recaps import _scoped
 from tests.test_web_relationships import Web
 
 LABEL = "Tavin's backstory, 24 Oct"
@@ -110,3 +111,33 @@ class OnThePage(Web):
         await self.memory.record_link_source(self.g, other.id, rel.value[0].id, "Other upload")
         got = await self.sources(center=self.mira, hops=2)
         self.assertNotIn("Other upload", str(got))
+
+
+class OnTheDoor(Web):
+    """The door itself decides who is given the label and reads only the connections asked for."""
+
+    async def door(self, who: Any, ids: list[str]) -> dict[str, dict[str, Any]]:
+        async with self.web.user(who.user_id, session=who.id_hash) as conn:
+            await _scoped(conn, self.g)
+            cur = await conn.execute(
+                "SELECT dmbot_web_link_sources(%s, %s, %s) AS s", (self.g, self.one.id, ids)
+            )
+            found = await cur.fetchone()
+        assert found is not None and found["s"] is not None
+        return {str(r["id"]): r for r in found["s"]["links"]}
+
+    async def test_a_player_calling_the_door_is_never_given_the_label(self) -> None:
+        link = self.links["mira-keep"]
+        await self.memory.record_link_source(self.g, self.one.id, link, LABEL)
+        mine = await self.door(self.session, [link])
+        theirs = await self.door(self.player, [link])
+        self.assertEqual(mine[link]["label"], LABEL)
+        self.assertIsNone(theirs[link]["label"])
+        self.assertNotIn("Tavin", str(theirs))
+
+    async def test_only_the_asked_for_connections_are_read(self) -> None:
+        one, two = self.links["mira-keep"], self.links["mira-rook"]
+        got = await self.door(self.session, [one])
+        self.assertEqual(set(got), {one})
+        self.assertEqual(set(await self.door(self.session, [one, two])), {one, two})
+        self.assertEqual(await self.door(self.session, []), {})

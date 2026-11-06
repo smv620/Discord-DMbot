@@ -29,15 +29,17 @@ LINK_SOURCES = r"""
             ON DELETE CASCADE ON UPDATE CASCADE
     );
 
-    -- Where each confirmed connection of a campaign came from, for the API to put through the
-    -- gate (`web/graph_view.py`): the source the store recorded, the time and number of the
+    -- Where the asked-for confirmed connections of a campaign came from, for the API to put
+    -- through the gate (`web/link_sources.py`): the source the store recorded, the number of the
     -- session its first evidence names (or, for a connection not typed by hand, its own session
-    -- time), and the upload label. Ids, numbers and the label only: never a word of a
-    -- transcript. Sessions are numbered as the Sessions list numbers them (an empty session takes
-    -- no number: 0103). Members of the server only, as `dmbot_web_graph_source`: anyone else
-    -- gets NULL. Nothing is written.
-    CREATE FUNCTION dmbot_web_link_sources(g BIGINT, c TEXT) RETURNS JSONB
+    -- time), and the upload label, given to the campaign's DM only. Ids, numbers and the label
+    -- only: never a word of a transcript. Sessions are numbered as the Sessions list numbers
+    -- them (an empty session takes no number: 0103). Members of the server only, as
+    -- `dmbot_web_graph_source`: anyone else gets NULL. Nothing is written.
+    CREATE FUNCTION dmbot_web_link_sources(g BIGINT, c TEXT, ids TEXT[]) RETURNS JSONB
     LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        is_dm BOOLEAN;
     BEGIN
         IF dmbot_current_guild() IS DISTINCT FROM g
            OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[])) THEN
@@ -46,13 +48,20 @@ LINK_SOURCES = r"""
         IF NOT EXISTS (SELECT 1 FROM campaigns WHERE guild_id = g AND id = c) THEN
             RETURN NULL;
         END IF;
+        -- the upload label is the DM's own name for an upload and can name a private backstory:
+        -- only the campaign's DM is given it, worked out here as the graph doors do
+        SELECT EXISTS (SELECT 1 FROM campaign_dms d
+                       WHERE d.guild_id = g AND d.campaign_id = c
+                         AND d.user_id = dmbot_current_user()) INTO is_dm;
         RETURN jsonb_build_object('status', 'ok', 'links', COALESCE((
             SELECT jsonb_agg(jsonb_build_object(
-                       'id', r.id, 'source', r.source, 'label', s.label,
+                       'id', r.id, 'source', r.source,
+                       'label', CASE WHEN is_dm THEN s.label END,
                        'at', COALESCE(ev.at, CASE WHEN r.source <> 'dm' THEN r.from_session_at END),
                        'n', n.number) ORDER BY r.id)
             FROM (SELECT * FROM memory_relations x
                   WHERE x.guild_id = g AND x.campaign_id = c AND x.status = 'confirmed'
+                    AND x.id = ANY (ids)
                   ORDER BY x.id LIMIT 20000) r
             LEFT JOIN memory_link_sources s
                    ON s.guild_id = g AND s.campaign_id = c AND s.relation_id = r.id
@@ -73,11 +82,11 @@ LINK_SOURCES = r"""
     DO $do$
     BEGIN
         EXECUTE format(
-            'ALTER FUNCTION dmbot_web_link_sources(BIGINT, TEXT)'
+            'ALTER FUNCTION dmbot_web_link_sources(BIGINT, TEXT, TEXT[])'
             ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
     END
     $do$;
-    REVOKE ALL ON FUNCTION dmbot_web_link_sources(BIGINT, TEXT) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_web_link_sources(BIGINT, TEXT, TEXT[]) FROM PUBLIC;
     """ + _isolate("memory_link_sources")
 
 SQL = LINK_SOURCES
@@ -85,5 +94,5 @@ SQL = LINK_SOURCES
 ISOLATED_TABLES: tuple[str, ...] = ("memory_link_sources",)
 
 WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
-    ("dmbot_web_link_sources", "dmbot_web_link_sources(BIGINT, TEXT)"),
+    ("dmbot_web_link_sources", "dmbot_web_link_sources(BIGINT, TEXT, TEXT[])"),
 )

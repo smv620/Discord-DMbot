@@ -54,8 +54,10 @@ async def with_link_sources(
     _guild_of(session, guild_id)
     async with db.user(session.user_id, session=session.id_hash) as conn:
         await _scoped(conn, guild_id)
+        # only this page's connections are read, not the whole campaign's on every load
+        ids = sorted({str(link["id"]) for edge in page.get("edges", []) for link in edge["links"]})
         cur = await conn.execute(
-            "SELECT dmbot_web_link_sources(%s, %s) AS s", (guild_id, campaign_id)
+            "SELECT dmbot_web_link_sources(%s, %s, %s) AS s", (guild_id, campaign_id, ids)
         )
         found = await cur.fetchone()
     # (a campaign that vanished meanwhile has no sources: every line reads `unknown`)
