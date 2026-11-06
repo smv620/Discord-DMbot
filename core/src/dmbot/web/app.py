@@ -157,6 +157,7 @@ from dmbot.web.support_mail import (
     ticket_of,
     verify_signature,
 )
+from dmbot.web.told_panel import read_told_panel
 
 log = logging.getLogger(__name__)
 
@@ -1117,6 +1118,16 @@ def create_app(
         session, _token = signed
         try:
             return await read_place_spellings(db, session, ref)
+        except RecapError as err:
+            status, detail = request_status.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    # Who holds and who was told each secret other name, for "Tell a character" (#3542).
+    @app.get("/me/campaigns/{ref}/told-panel")
+    async def me_campaign_told_panel(ref: str, signed: Signed) -> dict[str, Any]:
+        session, _token = signed
+        try:
+            return await read_told_panel(db, session, ref)
         except RecapError as err:
             status, detail = request_status.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
