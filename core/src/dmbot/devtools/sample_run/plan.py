@@ -60,6 +60,22 @@ def parse_players(text: str) -> dict[str, int]:
     return out
 
 
+# The run's steps, in order (owner, 2026-11-06, #3554): the lore is scored exactly as the reader
+# left it, and only then are the four player characters corrected, before the session import (whose
+# speakers and recap need them). `steps.run_steps` refuses to run if the actions do not match this.
+STEPS: tuple[str, ...] = (
+    "lore read",
+    "player characters found by the read",
+    "accept all (lore)",
+    "backup and score (lore)",
+    "player characters corrected",
+    "session import",
+    "accept all (session)",
+    "backup and score (both)",
+    "recap (no audio)",
+)
+
+
 def require_character_players(players: Mapping[str, int]) -> None:
     """The run sets the four player characters itself, so `--players` must name their accounts."""
     missing = [label for _name, label in PLAYER_CHARACTERS if label not in players]

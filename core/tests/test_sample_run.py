@@ -566,16 +566,20 @@ class ThePlayerCharacters(DatabaseTest):
     async def run_it(self) -> Any:
         from dmbot.devtools.sample_run import characters
 
-        return await characters.set_player_characters(
+        return await characters.correct_player_characters(
             self.db, self.memory, GUILD, self.sample.id, self.PLAYERS
         )
 
     async def test_the_count_of_what_the_read_found_comes_before_the_fix(self) -> None:
+        from dmbot.devtools.sample_run import characters
+
         await self.read("Cerric Vanya'elen")
         await self.read("Belleros Stormgrace")
         await self.read("Okthandom Korran", role="npc")  # found, but not as a player character
-        got = await self.run_it()  # (Claude Ambere was not found at all)
-        self.assertEqual((got.found_by_the_read, got.set, got.made), (2, 3, 1))
+        n = await characters.found_by_the_read(self.db, self.memory, GUILD, self.sample.id)
+        self.assertEqual(n, 2)  # (Claude Ambere was not found at all)
+        got = await self.run_it()
+        self.assertEqual((got.corrected, got.made), (4, 1))
 
     async def test_all_four_end_as_confirmed_player_characters_of_their_accounts(self) -> None:
         await self.read("Cerric Vanya'elen")
@@ -588,7 +592,7 @@ class ThePlayerCharacters(DatabaseTest):
     async def test_a_first_name_the_read_made_is_the_entry_set_not_a_second_one(self) -> None:
         await self.read("Cerric")
         got = await self.run_it()
-        self.assertEqual((got.found_by_the_read, got.set, got.made), (1, 1, 3))
+        self.assertEqual((got.corrected, got.made), (4, 3))
         people = await self.people()
         self.assertEqual(
             sorted(people), ["Belleros Stormgrace", "Cerric", "Claude Ambere", "Okthandom Korran"]
@@ -598,7 +602,7 @@ class ThePlayerCharacters(DatabaseTest):
     async def test_running_it_again_changes_nothing_more(self) -> None:
         await self.run_it()
         again = await self.run_it()
-        self.assertEqual((again.found_by_the_read, again.set, again.made), (4, 4, 0))
+        self.assertEqual((again.corrected, again.made), (0, 0))
         self.assertEqual(len(await self.people()), 4)
 
     async def test_another_campaign_is_refused_and_nothing_is_changed(self) -> None:
@@ -606,7 +610,7 @@ class ThePlayerCharacters(DatabaseTest):
 
         other = await self.campaigns.create(GUILD, "Frostmaiden", DM)
         with self.assertRaises(SampleError):
-            await characters.set_player_characters(
+            await characters.correct_player_characters(
                 self.db, self.memory, GUILD, other.id, self.PLAYERS
             )
         self.assertEqual(
@@ -619,3 +623,139 @@ class ThePlayerCharacters(DatabaseTest):
             short = {k: v for k, v in self.PLAYERS.items() if k != missing}
             with self.assertRaises(SampleError):
                 plan.require_character_players(short)
+
+    async def test_a_secret_alias_or_an_npc_of_the_first_name_is_never_taken(self) -> None:
+        """Only an entry's own name counts, and a first-word match must already be a player
+        character: someone else's secret name, or an NPC called Claude, is left alone."""
+        villain = await self.read("The Pale Hand", role="npc")
+        await self.memory.add_alias(
+            GUILD, self.sample.id, villain, "Cerric", kind="nickname", source="dm",
+            status="confirmed", secret=True,
+        )  # fmt: skip
+        await self.read("Claude", role="npc")
+        got = await self.run_it()
+        self.assertEqual(got.made, 4)  # none of the four was found
+        people = await self.people()
+        self.assertEqual(people["The Pale Hand"][1:], ("npc", None))
+        self.assertEqual(people["Claude"][1:], ("npc", None))
+        self.assertEqual(people["Claude Ambere"], ("confirmed", "player_character", 14))
+
+    async def test_two_characters_with_one_name_or_a_place_with_it_stop_the_step(self) -> None:
+        from dmbot.memory.models import BACKGROUND_SOURCE
+
+        await self.read("Cerric Vanya'elen")
+        await self.read("Cerric Vanya'elen")
+        with self.assertRaises(SampleError) as two:
+            await self.run_it()
+        self.assertIn("two characters", str(two.exception))
+        await self.memory.add_entity(
+            GUILD, self.sample.id, type="place", name="Claude Ambere", source=BACKGROUND_SOURCE
+        )
+        with self.assertRaises(SampleError):  # (the first error already stops it: use a fresh one)
+            await self.run_it()
+
+    async def test_a_place_with_a_characters_name_is_not_doubled(self) -> None:
+        from dmbot.memory.models import BACKGROUND_SOURCE
+
+        await self.memory.add_entity(
+            GUILD, self.sample.id, type="place", name="Okthandom Korran", source=BACKGROUND_SOURCE
+        )
+        with self.assertRaises(SampleError) as err:
+            await self.run_it()
+        self.assertIn("not a character", str(err.exception))
+        people = await self.people()
+        self.assertEqual(people, {})  # nothing was made before it stopped
+
+    async def test_an_entry_already_right_is_left_and_one_with_the_wrong_player_is_corrected(
+        self,
+    ) -> None:
+        from dmbot.devtools.sample_run import characters
+
+        first = await self.run_it()
+        self.assertEqual((first.corrected, first.made), (4, 4))
+        again = await self.run_it()
+        self.assertEqual((again.corrected, again.made), (0, 0))
+        wrong = dict(self.PLAYERS, jac=99)
+        fixed = await characters.correct_player_characters(
+            self.db, self.memory, GUILD, self.sample.id, wrong
+        )
+        self.assertEqual((fixed.corrected, fixed.made), (1, 0))
+        people = await self.people()
+        self.assertEqual(people["Belleros Stormgrace"][2], 99)
+
+    async def test_a_rejected_name_is_not_found_so_the_character_is_made(self) -> None:
+        entry = await self.read("Cerric Vanya'elen")
+        await self.memory.set_entity_status(GUILD, self.sample.id, entry, "rejected", source="dm")
+        got = await self.run_it()
+        self.assertEqual(got.made, 4)
+
+    async def test_the_party_is_linked_after_the_four_are_set(self) -> None:
+        await self.run_it()
+        from dmbot.memory.models import PARTY_SOURCE
+
+        made = await self.memory.entities(GUILD, self.sample.id, statuses=("confirmed",))
+        # (the group the sessions' step makes: found by its source, the way the store's rules do)
+        self.assertTrue([e for e in made if e.type == "faction" and e.source == PARTY_SOURCE])
+
+    async def test_the_count_is_read_only_and_refuses_another_campaign(self) -> None:
+        from dmbot.devtools.sample_run import characters
+
+        await self.read("Cerric Vanya'elen")
+        await self.read("Belleros Stormgrace", role="npc")
+        n = await characters.found_by_the_read(self.db, self.memory, GUILD, self.sample.id)
+        self.assertEqual(n, 1)
+        people = await self.people()
+        self.assertEqual(people["Cerric Vanya'elen"][0], "proposed")  # nothing was changed
+        other = await self.campaigns.create(GUILD, "Frostmaiden", DM)
+        with self.assertRaises(SampleError):
+            await characters.found_by_the_read(self.db, self.memory, GUILD, other.id)
+
+
+class TheStepOrder(DatabaseTest):
+    """#3554 (owner, 2026-11-06): the lore is scored as the reader left it, THEN the four are
+    corrected, and before the session import."""
+
+    async def test_the_four_are_corrected_after_the_lore_score_and_before_the_import(self) -> None:
+        order = plan.STEPS
+        lore_score = order.index("backup and score (lore)")
+        correct = order.index("player characters corrected")
+        found = order.index("player characters found by the read")
+        accepted = order.index("accept all (lore)")
+        imported = order.index("session import")
+        self.assertLess(found, accepted)  # counted before anything is accepted
+        self.assertLess(lore_score, correct)
+        self.assertLess(correct, imported)
+
+    async def test_the_run_follows_that_order_exactly_and_refuses_other_actions(self) -> None:
+        seen: list[str] = []
+        said: list[str] = []
+
+        def act(name: str) -> Any:
+            async def go() -> dict[str, int | str]:
+                seen.append(name)
+                return {"n": 1}
+
+            return go
+
+        done: list[Step] = []
+        await steps.run_steps({name: act(name) for name in plan.STEPS}, done, said.append)
+        self.assertEqual(seen, list(plan.STEPS))
+        self.assertEqual([s.name for s in done], list(plan.STEPS))
+        with self.assertRaises(SampleError):
+            await steps.run_steps({"lore read": act("lore read")}, [], said.append)
+
+    async def test_a_stop_part_way_still_reports_what_was_done(self) -> None:
+        async def fine() -> dict[str, int | str]:
+            return {}
+
+        async def boom() -> dict[str, int | str]:
+            raise SampleError("stopped")
+
+        actions = {name: fine for name in plan.STEPS}
+        actions["accept all (lore)"] = boom
+        done: list[Step] = []
+        with self.assertRaises(SampleError):
+            await steps.run_steps(actions, done, lambda _l: None)
+        self.assertEqual(
+            [s.name for s in done], ["lore read", "player characters found by the read"]
+        )

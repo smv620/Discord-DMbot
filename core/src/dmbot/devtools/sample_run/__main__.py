@@ -152,12 +152,6 @@ async def run(
             gid, players, session_text, agreed, refused, started_at=started
         )
 
-        async def timed(name: str, work: Awaitable[Mapping[str, int | str]]) -> None:
-            began = time.monotonic()
-            counts = await work
-            done.append(Step(name, time.monotonic() - began, counts))
-            say(f"{name}: done")
-
         campaign = await steps.fresh_campaign(
             db, campaigns, gid, dm, keep_old=args.keep_old, today=today, say=say, found=found
         )
@@ -179,28 +173,19 @@ async def run(
                 say(line)
             return {"lines": len(lines)}
 
-        async def characters_step() -> Mapping[str, int | str]:
-            got = await characters.set_player_characters(db, memory, gid, cid, players)
-            say(f"player characters found by the read: {got.found_by_the_read} of 4")
-            return {
-                "found by the read": f"{got.found_by_the_read} of 4",
-                "set": got.set,
-                "made": got.made,
-            }
+        async def found_step() -> Mapping[str, int | str]:
+            n = await characters.found_by_the_read(db, memory, gid, cid)
+            say(f"player characters found by the read: {n} of 4")
+            return {"found by the read": f"{n} of 4"}
 
-        await timed("lore read", lore_step())
-        await timed("player characters", characters_step())
-        await timed("accept all (lore)", accept_step())
-        await timed("backup and score (lore)", score_step("lore", "lore"))
+        async def correct_step() -> Mapping[str, int | str]:
+            got = await characters.correct_player_characters(db, memory, gid, cid, players)
+            return {"corrected": got.corrected, "of those made": got.made}
 
         async def import_step() -> Mapping[str, int | str]:
             sid = await steps.store_import(db, gid, cid, dm, planned, started_at=started, now=now)
             got = await steps.wait_import(db, gid, sid, say=say, sleep=sleep)
             return {**got, "kept": planned.kept}
-
-        await timed("session import", import_step())
-        await timed("accept all (session)", accept_step())
-        await timed("backup and score (both)", score_step("both", "both"))
 
         async def recap_step() -> Mapping[str, int | str]:
             code = await steps.write_recap(gid, cid, started)
@@ -208,7 +193,21 @@ async def run(
                 raise SampleError(f"the recap was not made (recap_run exit {code})")
             return {"made": 1}
 
-        await timed("recap (no audio)", recap_step())
+        await steps.run_steps(
+            {
+                "lore read": lore_step,
+                "player characters found by the read": found_step,
+                "accept all (lore)": accept_step,
+                "backup and score (lore)": lambda: score_step("lore", "lore"),
+                "player characters corrected": correct_step,
+                "session import": import_step,
+                "accept all (session)": accept_step,
+                "backup and score (both)": lambda: score_step("both", "both"),
+                "recap (no audio)": recap_step,
+            },
+            done,
+            say,
+        )
     finally:
         await db.close()
         for line in plan.report(
