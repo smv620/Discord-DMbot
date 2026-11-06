@@ -157,6 +157,10 @@ class Isolation(MemoryTest):
         await importance_rank.ImportanceStore(self.db).add(
             GUILD_A, self.c, [importance_rank.Assessment(a, 2, "recurring")]
         )
+        # and the DM's answer about turning some words into a kind (#3033)
+        await self.memory.answer_kind_offer(
+            GUILD_A, self.c, "sworn on the ashes of", "never", seen=3
+        )
         # and a character who knows an entry exists (#2995)
         await self.memory.set_statement_knowers(GUILD_A, self.c, "entry", b, [view], source="dm")
         await self.relate(a, "located_in", b)  # flagged: Cerric isn't a place

@@ -326,7 +326,9 @@ class RecallService:
         (#3153: "swore on Veil's grave to guard" names an entry the players cannot see). Read
         only when such a fact is in the walk, and only names: the entries the players may not
         see, their other names, and any secret or unconfirmed name of a visible entry."""
-        if not any(f.predicate == FALLBACK_PREDICATE and f.detail for f in walk.facts.values()):
+        if not any(
+            f.predicate == FALLBACK_PREDICATE and f.detail for f in walk.facts.values()
+        ) and not any(e.get("players_text") for e in walk.entities.values()):
             return None
         cur = await scope.conn.execute(
             "SELECT e.name AS word FROM memory_entities e WHERE e.guild_id = %s"
@@ -595,6 +597,8 @@ class RecallService:
         live = ["confirmed"] if audience == PLAYERS or confirmed_only else list(_LIVE)
         # An entry's note is the DM's own: the players' audience never even reads it.
         note = "description" if audience == DM_SCREEN else "'' AS description"
+        # The players' line (#2967) is theirs to be told; the DM's own note never stands in for it.
+        line = "players_text" if audience == PLAYERS else "NULL AS players_text"
         # A clue only some people know (#1649), or an entry the DM hasn't told the players of
         # (#2321), is the DM's alone: the players' audience gets neither it nor, because a fact
         # needs both ends, anyone's fact to it.
@@ -606,7 +610,7 @@ class RecallService:
             else ""
         )
         cur = await scope.conn.execute(
-            f"SELECT id, type, name, {note}, role FROM memory_entities"
+            f"SELECT id, type, name, {note}, {line}, role FROM memory_entities"
             " WHERE guild_id = %s AND campaign_id = %s AND id = ANY(%s)"
             f" AND status = ANY(%s) AND type <> 'person'{hide_clue}",
             (*scope.ids, list(ids), live, *([list(DM_ONLY_TYPES)] if hide_clue else [])),
@@ -785,6 +789,12 @@ class _Found:
         words += ")"
         if self.audience == DM_SCREEN and e["description"]:
             words += f": {e['description']}"
+        if self.audience == PLAYERS and e.get("players_text"):
+            # the players' line (#2967), unless it names an entry or a spelling they may not be
+            # told: then it is left out whole, never shown with a hole
+            line = safe_label(str(e["players_text"]), self.guard) if self.guard else ""
+            if line or not self.guard:
+                words += f": {e['players_text']}"
         return words
 
     def _fact_text(self, f: _Fact) -> str:

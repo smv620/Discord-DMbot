@@ -140,6 +140,9 @@ AUDIENCE: dict[str, str] = {
             "dm_screen.links_ready.ReadyButton",
             "ui.theatre_button.ScriptButton",  # press() checks dm_user_ids (#3244)
             "ui.theatre_button.OldScriptButton",  # the same checks, then the new question (#3478)
+            "ui.kind_offer.OpenButton",  # _is_dm on every press (#3033)
+            "ui.kind_offer.AnswerButton",  # the same
+            "ui.kind_offer.UndoButton",  # the same
             "dm_screen.buttons.StopListeningButton",
             "dm_screen.buttons.VisibilityButton",
             "dm_screen.clock.ClockButton",
