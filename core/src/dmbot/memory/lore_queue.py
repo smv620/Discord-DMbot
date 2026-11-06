@@ -13,10 +13,13 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 
+from psycopg.types.json import Jsonb
+
 from dmbot.db import Database
+from dmbot.memory.models import NEEDS_A_LOOK
 
 log = logging.getLogger(__name__)
 
@@ -39,6 +42,25 @@ NOTHING_FOUND = "nothing_found"
 OUT_OF_TIME = "ran_out_of_time"
 NOT_TAKEN = "not_taken"
 FAILED = "failed"  # a bug: the row must never stay "working" for it
+
+
+FOUND_IDS_MAX = 2500  # ids kept for "Add all" (the column holds 120 kB; an id is about 36 bytes)
+
+
+def _capped(found: Mapping[str, Sequence[str]]) -> dict[str, list[str]]:
+    """The kinds with their ids, the biggest kinds first, cut at `FOUND_IDS_MAX` ids in all. A
+    read this large still adds every name one by one in Check new names."""
+    room = FOUND_IDS_MAX
+    kept: dict[str, list[str]] = {}
+    # (the kinds Add all never covers come last, so a flood of ideas cannot crowd the rest out)
+    for kind, ids in sorted(
+        found.items(), key=lambda item: (item[0] in NEEDS_A_LOOK, -len(item[1]))
+    ):
+        if room <= 0:
+            break
+        kept[kind] = list(ids[:room])
+        room -= len(kept[kind])
+    return kept
 
 
 @dataclass(frozen=True, slots=True)
@@ -158,15 +180,24 @@ class LoreQueue:
             return bool(cur.rowcount)
 
     async def finish(
-        self, guild_id: int, claim: Claim, *, error: str = "", names: int = 0, links: int = 0
+        self,
+        guild_id: int,
+        claim: Claim,
+        *,
+        error: str = "",
+        names: int = 0,
+        links: int = 0,
+        found: Mapping[str, Sequence[str]] | None = None,
     ) -> bool:
         """Done, or failed with a word. The text and the link are blanked in this same statement,
-        whichever way it ends. Only the worker that holds the claim can write. False: not its row
+        whichever way it ends. `found`: the ids of the names this reading proposed, kind by kind,
+        kept with the row for the website's "Add all" (#3207); ids only, capped so the row's size
+        limit is never hit. Only the worker that holds the claim can write. False: not its row
         any more."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "UPDATE lore_uploads SET state = %s, stage = %s, error = %s, names_found = %s,"
-                " links_found = %s, text = '', link = '', updated_at = %s"
+                " links_found = %s, found = %s, text = '', link = '', updated_at = %s"
                 " WHERE guild_id = %s AND id = %s AND state = 'working' AND claimed_at = %s",
                 (
                     "failed" if error else "done",
@@ -174,6 +205,7 @@ class LoreQueue:
                     error,
                     max(names, 0),
                     max(links, 0),
+                    Jsonb({} if error else _capped(found or {})),
                     int(self._now()),
                     guild_id,
                     claim.id,
