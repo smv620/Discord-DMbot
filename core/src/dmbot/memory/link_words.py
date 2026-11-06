@@ -47,7 +47,22 @@ CONNECTION_BACK = {
 }
 # On a card, where several names may follow ("members include Ulfgar, Kesh").
 CARD_BACK = {**CONNECTION_BACK, "member_of": "members include"}
+# The old friend and enemy connections are the same thing as a `knows` with a feeling: how a name
+# feels about another is the DM's Reputation, so a non-DM reads plain "knows" (#3611, #3610).
+OLD_FEELINGS = frozenset({"ally_of", "enemy_of"})
 BOTH_WAYS = frozenset({"ally_of", "enemy_of", "rival_of", "kin_of"})
+
+
+def for_reader(predicate: str, detail: str, *, feeling: bool) -> tuple[str, str]:
+    """The connection a reader is shown: for anyone but the DM, a `knows` with a feeling or an old
+    friend/enemy connection is a plain `knows` with no words (#3610, #3611)."""
+    if feeling:
+        return predicate, detail
+    if predicate in OLD_FEELINGS or (
+        predicate == "knows" and reputation_words.word_of(detail) in reputation_words.WORDS
+    ):
+        return "knows", ""
+    return predicate, detail
 
 
 def connection_words(predicate: str) -> str:
@@ -111,6 +126,7 @@ def link_words(
     `feeling` says the reader is the DM: how a name feels about another is the DM's Reputation, so
     "knows (hostile)" is worded only for a DM-only screen, and everyone else reads plain "knows"
     (#3610)."""
+    predicate, detail = for_reader(predicate, detail, feeling=feeling)
     if predicate == "located_in":
         return place_words.forward(detail, subject_kind)
     if predicate == FALLBACK_PREDICATE and detail:

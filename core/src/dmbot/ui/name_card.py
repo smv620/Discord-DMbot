@@ -34,6 +34,7 @@ from dmbot.memory.link_words import (
     CONNECTION_BACK,
     CONNECTION_WORDS,
     KIN,
+    OLD_FEELINGS,
     back_after,
     back_words,
     campaign_back,
@@ -268,6 +269,8 @@ def _rows(
     for r in connections:
         if r.status != CONFIRMED or (r.secret and not secrets):
             continue
+        if not secrets and r.predicate in OLD_FEELINGS:
+            r = dataclasses.replace(r, predicate="knows", detail="")  # (the DM's Reputation, #3611)
         if r.predicate == "led_to":
             continue  # shown as the "Came from" / "Led to" lines instead (#1679)
         ahead = r.subject_id == entity_id or reads_both_ways(r.predicate, r.detail, r.directional)
