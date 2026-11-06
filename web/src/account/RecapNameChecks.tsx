@@ -15,6 +15,8 @@ import { NAME_MAX_LETTERS, NOTE_MAX_LETTERS, SPELLING_MAX_LETTERS, nameCheckWord
 import { NAME_CHANGE_WORDS_LIVE, NAME_PLACES_LIVE, RECAP_NAME_CHECKS_LIVE, RECAPS_LIVE } from "../content/recap-words";
 import { ApiError, type AccountApi, type NameAnswerResult, type NameCheck, type NameCheckAnswer, type NameCheckList } from "./api";
 import { keepFocus } from "./focus";
+import { currentItem, itemDomId, openItem } from "./itemLink";
+import { itemWords } from "../content/item-words";
 import { useObservedWait } from "./useObservedWait";
 import WorkProgress from "./WorkProgress";
 
@@ -34,6 +36,18 @@ export default function RecapNameChecks({ api, refId }: { api: AccountApi; refId
   const looks = useRef(0);
   const changing = useRef(new Set<string>()); // cards whose last answer was Change the words, for an unknown refusal
   const heading = useRef<HTMLHeadingElement>(null);
+  // A private message's "Open on the website" names a waiting name (#3663): its card is opened once the list is here, or the
+  // page says it has been answered (here or in Discord).
+  const wanted = useRef(currentItem());
+  const [answered, setAnswered] = useState(false);
+  useEffect(() => {
+    if (wanted.current === null || list === null) return;
+    const item = wanted.current;
+    wanted.current = null; // (once: later reads, and the person's own answers, never pull focus back)
+    setTimeout(() => {
+      if (!openItem(item)) setAnswered(true);
+    }, 0);
+  }, [list]);
   // Split, group and Undo (#3406): the bot's word on the last such answer, followed until it is done. The name
   // leaves the list once it is applied, so the line with Undo sits under the list, not on the card.
   const splitOn = NAME_SPLIT_LIVE && api.nameAnswerResult !== undefined;
@@ -204,9 +218,14 @@ export default function RecapNameChecks({ api, refId }: { api: AccountApi; refId
   if (list === null || list.names.length === 0) {
     // Nothing to check; once the last one is answered, the page says so for a moment, then is quiet. A split or
     // group just made can still be taken back, so its line stays.
-    if (said === "" && !last && !taken) return null;
+    if (said === "" && !last && !taken && !answered) return null;
     return (
       <>
+        {answered && (
+          <p class="note" role="status">
+            {itemWords.answered}
+          </p>
+        )}
         {said !== "" && !taken && (
           <p class="small muted" role="status">
             {words.allDone}
@@ -248,6 +267,11 @@ export default function RecapNameChecks({ api, refId }: { api: AccountApi; refId
         {words.heading}
       </h3>
       <p class="muted">{words.lead}</p>
+      {answered && (
+        <p class="note" role="status">
+          {itemWords.answered}
+        </p>
+      )}
       <ul class="name-checks">
         {list.names.map((n) => (
           <NameRow
@@ -327,7 +351,7 @@ function NameRow({
   }, [name.name]);
   return (
     <li>
-      <div class="panel stack" role="group" aria-labelledby={`${id}-name`}>
+      <div class="panel stack" role="group" aria-labelledby={`${id}-name`} id={itemDomId(name.id)} tabIndex={-1}>
         <strong id={`${id}-name`}>{name.name}</strong>
         {name.note && (
           <p class="small muted">
