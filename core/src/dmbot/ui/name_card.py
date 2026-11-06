@@ -46,6 +46,7 @@ from dmbot.memory.models import (
     DM,
     DM_ONLY_TYPES,
     MERGED,
+    PLAYERS_TEXT_MAX,
     PRONOUNCED,
     REJECTED,
     Alias,
@@ -623,6 +624,13 @@ async def show_card(
     )
     if note:
         text = f"{note}\n\n{text}"
+    if secrets and entity.players_text:  # the DM sees what the players are told (#2967)
+        line = (
+            f"\n💬 **Line for the players:** {_md(entity.players_text)} "
+            "(they read this in recaps and answers)"
+        )
+        if len(text) + len(line) <= CARD_MAX:
+            text += line
     # The narrator's spelling: DMs only, spoken recaps on, and not for a secret main name (the
     # narrator's dictionary goes to the voice company; the store refuses it too).
     say = (
@@ -644,6 +652,7 @@ async def show_card(
         led=secrets and (is_thread or entity.type in ("clue", "event")),
         book=book_ok,
         say=say,
+        players_line=(sees_secrets(campaign, interaction.user.id) and entity.type != "person"),
         say_it_url=(
             all_names.say_it_url(site, campaign.guild_id, campaign.id, entity.name)
             if secrets
@@ -811,6 +820,7 @@ class NameCard(_Menu):
         book: bool = False,
         say: bool = False,
         say_it_url: str = "",
+        players_line: bool = False,
         hide: bool | None = None,
         undo_connection: int | None = None,
         undo_spelling: int | None = None,
@@ -881,6 +891,13 @@ class NameCard(_Menu):
             self.add_item(_Button(self._travels, label=companion_ui.BUTTON, style=grey, row=3))
         if clue:  # a clue or secret: who knows it (#1649); an item has the row-3 button instead
             self.add_item(_Button(self._who_knows, label=CLUE_BUTTON, style=grey, row=3))
+        if players_line:  # the DM's line for the players (#2967), on the first row with room
+            for row in (2, 3):
+                if sum(1 for c in self.children if getattr(c, "row", None) == row) < 5:
+                    self.add_item(
+                        _Button(self._players_line, label=PLAYERS_LINE_BUTTON, style=grey, row=row)
+                    )
+                    break
         if cut:
             # One select for every cut section, not a button each: Discord allows five rows.
             self.show_all = _Select(
@@ -1152,6 +1169,23 @@ class NameCard(_Menu):
                     self.campaign_id, self.entity_id, found[1], spoken=spoken, said_as=said
                 )
             )
+
+    async def _players_line(self, interaction: discord.Interaction) -> None:
+        found = await _current(interaction, self.campaign_id, self.entity_id)
+        memory = _memory(interaction)
+        if found is None or memory is None:
+            return
+        campaign, name = found
+        if not sees_secrets(campaign, interaction.user.id):
+            await _tell(interaction, "Only a DM of this campaign can do that.")
+            return
+        entity = await memory.entity(campaign.guild_id, campaign.id, self.entity_id)
+        self.origin = None  # the form's answer replaces this message; cancel keeps it
+        await interaction.response.send_modal(
+            PlayersLineForm(
+                self.campaign_id, self.entity_id, name, entity.players_text if entity else None
+            )
+        )
 
     async def _say(self, interaction: discord.Interaction) -> None:
         found = await _current(interaction, self.campaign_id, self.entity_id)
@@ -1436,7 +1470,59 @@ class FixSpellingForm(discord.ui.Modal, title="Fix spelling"):
 
 
 SAY_BUTTON = "🔊 How to say it"
+PLAYERS_LINE_BUTTON = "💬 Line for the players"  # the players' line for an entry (#2967)
 SAY_NOT_ON = "Spoken recaps aren't on for this campaign, so there's nothing to set."
+
+
+class PlayersLineForm(discord.ui.Modal, title="Line for the players"):
+    """Sets or clears the one short line the players are told about an entry (#2967): what they
+    know it is or does. It is not the DM's note, which players never see; it is shown to a player
+    only where the card of that name is, and never when it names something they may not know."""
+
+    line: discord.ui.TextInput[PlayersLineForm] = discord.ui.TextInput(
+        label="Players will be told this. No secrets.",
+        placeholder="One short line. Example: The lantern glows green when a monster is near.",
+        max_length=PLAYERS_TEXT_MAX,
+        required=False,
+    )
+
+    def __init__(self, campaign_id: str, entity_id: str, name: str, line: str | None) -> None:
+        super().__init__(title=logic.shorten(f"Line for the players: {name}", 45))
+        self.campaign_id = campaign_id
+        self.entity_id = entity_id
+        self.line.default = (line or "")[:PLAYERS_TEXT_MAX]
+
+    async def on_error(  # type: ignore[override]  # a form's has no item (discord.py)
+        self, interaction: discord.Interaction, error: Exception
+    ) -> None:
+        await _failed(interaction, error)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        await _answer_first(interaction, in_place=True)
+        found = await _current(interaction, self.campaign_id, self.entity_id)
+        memory = _memory(interaction)
+        if found is None or memory is None:
+            return
+        campaign, _ = found
+        if not sees_secrets(campaign, interaction.user.id):  # after the wait, as on a press
+            await _tell(interaction, "Only a DM of this campaign can do that.")
+            return
+        text = " ".join(self.line.value.split())
+        try:
+            await memory.set_players_text(
+                campaign.guild_id, campaign.id, self.entity_id, text, source=DM
+            )
+        except MemoryRuleError as exc:
+            await _tell(interaction, f"Couldn't save it. {exc} Try again.")
+            return
+        note = (
+            f"💬 Saved. Players will read this in recaps and answers, only where they can see "
+            f"this entry: “{_md(text)}”. Left out if it names something they don't know yet."
+            if text
+            else "💬 Line for the players removed. Your own note is unchanged."
+        )
+        changed(interaction, campaign)
+        await show_card(interaction, campaign.id, self.entity_id, replace=True, note=note)
 
 
 class SayForm(discord.ui.Modal, title="How to say it"):
