@@ -157,7 +157,7 @@ export default function NameThem({
   };
 
   return (
-    <div class="stack name-them" id={id}>
+    <div class="stack name-them panel" id={id}>
       <p class="small muted">{w.hint}</p>
       {/* A short who, where and what from the story, when the API has one (#3596): room is kept for it. */}
       {row.scene && <p class="small">{row.scene}</p>}
