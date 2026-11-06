@@ -1,0 +1,76 @@
+"""The shared link buttons for private messages to the DM (#3663)."""
+
+from __future__ import annotations
+
+import unittest
+from types import SimpleNamespace
+
+import discord
+
+from dmbot.ui import dm_links as dl
+
+SITE = "https://getdmbot.example.com"
+
+
+class TheAddress(unittest.TestCase):
+    def test_a_page_names_the_campaign_and_the_item_by_ids_only(self) -> None:
+        url = dl.site_link(SITE, "questions", 7, "ab12", item="q9")
+        self.assertEqual(url, f"{SITE}/account/questions/7.ab12?item=q9")
+
+    def test_a_recap_page_carries_its_session_number(self) -> None:
+        url = dl.site_link(SITE, "recaps", 7, "ab12", tail="1700000000")
+        self.assertEqual(url, f"{SITE}/account/recaps/7.ab12.1700000000")
+
+    def test_no_word_a_person_wrote_can_reach_the_address(self) -> None:
+        for bad in ("Lord Varkus", "x" * 65, "a/b", "a?b", ""):
+            if bad:
+                self.assertEqual(dl.site_link(SITE, "names", 7, "ab12", item=bad), "")
+        self.assertEqual(dl.site_link(SITE, "names", 7, "ab12", tail="a b"), "")
+        self.assertEqual(dl.site_link(SITE, "names", 7, "a b"), "")
+
+    def test_an_unknown_page_or_a_missing_or_plain_http_site_gives_nothing(self) -> None:
+        self.assertEqual(dl.site_link(SITE, "secrets", 7, "ab12"), "")
+        self.assertEqual(dl.site_link("", "names", 7, "ab12"), "")
+        self.assertEqual(dl.site_link("http://x.example.com", "names", 7, "ab12"), "")
+
+    def test_the_jump_link_is_a_discord_address_or_nothing(self) -> None:
+        good = SimpleNamespace(jump_url="https://discord.com/channels/1/2/3")
+        self.assertEqual(dl.jump_link(good), "https://discord.com/channels/1/2/3")  # type: ignore[arg-type]
+        self.assertEqual(dl.jump_link(None), "")
+        self.assertEqual(dl.jump_link(SimpleNamespace(jump_url="https://evil.example.com/")), "")  # type: ignore[arg-type]
+
+
+class TheButtons(unittest.IsolatedAsyncioTestCase):
+    async def test_both_links_use_the_same_words_everywhere(self) -> None:
+        links = dl.buttons(discord_url="https://discord.com/channels/1/2/3", site_url="https://s/x")
+        self.assertEqual([b.label for b in links], ["Open in Discord", "Open on the website"])
+        self.assertTrue(all(b.url and b.custom_id is None for b in links))
+
+    async def test_either_one_alone(self) -> None:
+        only_site = dl.buttons(site_url="https://s/x")
+        only_discord = dl.buttons(discord_url="https://discord.com/channels/1/2/3")
+        self.assertEqual([b.label for b in only_site], ["Open on the website"])
+        self.assertEqual([b.label for b in only_discord], ["Open in Discord"])
+        self.assertEqual(dl.buttons(), [])
+
+    async def test_they_go_on_the_row_after_the_views_own_and_nothing_adds_an_empty_row(
+        self,
+    ) -> None:
+        view = discord.ui.View()
+        view.add_item(discord.ui.Button(label="Answer", custom_id="a", row=2))
+        same = dl.add_links(view)
+        self.assertIs(same, view)
+        self.assertEqual(len(view.children), 1)
+        shown = dl.add_links(view, site_url="https://s/x", discord_url="https://discord.com/a")
+        assert shown is not None
+        self.assertEqual([c.row for c in shown.children[1:]], [3, 3])
+
+    async def test_a_message_with_no_buttons_gets_a_view_of_just_the_links(self) -> None:
+        shown = dl.add_links(None, site_url="https://s/x")
+        assert shown is not None
+        self.assertEqual(len(shown.children), 1)
+        self.assertIsNone(dl.add_links(None))
+
+    async def test_the_pages_are_plain_lowercase_words(self) -> None:
+        for page in dl.PAGES:
+            self.assertRegex(page, r"^[a-z][a-z-]{0,30}$")
