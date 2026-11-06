@@ -21,7 +21,7 @@ from dataclasses import dataclass, replace
 
 from dmbot.db import Database
 from dmbot.memory import backstory_keep as keep
-from dmbot.memory import beliefs, evidence, link_edits, placing
+from dmbot.memory import beliefs, evidence, link_edits, placing, told
 from dmbot.memory import claims as claims_mod
 from dmbot.memory import unnamed as unnamed_mod
 from dmbot.memory._changes import ALREADY_UNDONE, CLAIMS, Changes
@@ -95,6 +95,9 @@ READING_ACTIONS = ("reading-place", "reading-no", "reading-undo")
 UNNAMED_ACTIONS = ("name", "name-join", "name-undo")
 # "Is this the same place?" (#3533): the DM confirms or turns down a proposed other name of a place.
 SPELLING_ACTIONS = ("spelling-yes", "spelling-no")
+# "Tell a character" (#3542, #3089): the DM tells one player character that a secret other name is
+# this entry, or takes the telling back.
+TOLD_ACTIONS = ("told-add", "told-remove")
 NAMES_FIXED_ACTIONS = ("names-fixed-undo",)  # the recap page puts a name-pass fix back (#2684)
 # What the page is told when a reading cannot be kept (the words are `placing`'s and `beliefs`').
 READING_REFUSALS = {
@@ -470,6 +473,33 @@ async def _spelling(
     return Outcome(result_id=entity_id) if a.action == "spelling-no" else _failed(GONE)
 
 
+async def _told(
+    memory: MemoryStore, guild_id: int, campaign_id: str, entity_id: str, a: Action
+) -> Outcome:
+    """Tell one character that a secret other name of this entry is the entry, or take that back
+    (#3542). The store holds the rules (only the DM, a secret name, a character who knows the
+    name); a refusal is the page's "bad target", never a half change. Telling again is done, and
+    so is taking back what is already taken back, so a retaken action is not a failure."""
+    own = {
+        x.id
+        for x in await memory.aliases(
+            guild_id, campaign_id, entity_id=entity_id, include_secret=True
+        )
+    }
+    if a.target_id not in own:
+        return _failed(NOT_FOUND)
+    try:
+        if a.action == "told-add":
+            await memory.tell_character(guild_id, campaign_id, a.target_id, a.text, source=DM)
+        else:
+            await memory.take_back_told(guild_id, campaign_id, a.target_id, a.text, source=DM)
+    except MemoryRuleError as exc:
+        if a.action == "told-remove" and str(exc) == told.NOT_TOLD:
+            return Outcome(result_id=entity_id)  # already taken back (pressed twice, or in Discord)
+        return _failed(BAD_TARGET)
+    return Outcome(result_id=entity_id)
+
+
 @dataclass(frozen=True)
 class PlayerLookup:
     """Who a Discord ID belongs to, for the DM to confirm before DMbot links it (#3004). The name is
@@ -603,6 +633,8 @@ async def _do(
         return Outcome(result_id=entity_id)
     if a.action in SPELLING_ACTIONS:
         return await _spelling(memory, guild_id, cid, entity_id, a)
+    if a.action in TOLD_ACTIONS:
+        return await _told(memory, guild_id, cid, entity_id, a)
     if a.action == "secret":  # one of its other names
         alias_id = await _other(memory, guild_id, cid, entity_id, name, a.text)
         if alias_id is None:
