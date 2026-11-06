@@ -14,7 +14,7 @@ import logging
 import re
 import time
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import partial
 from typing import TYPE_CHECKING, Any, cast
 
@@ -23,6 +23,7 @@ from discord import app_commands
 
 from dmbot.campaigns import Campaign
 from dmbot.discord_limits import MESSAGE_MAX, fit_message
+from dmbot.memory import tags
 from dmbot.memory.list_names import split_list
 from dmbot.memory.lookup import CampaignLookup
 from dmbot.memory.models import (
@@ -1096,6 +1097,7 @@ def suggestion_text(
     fix_to: str = "",
     places: str = "",
     context: str = "",
+    tagged: str = "",
 ) -> str:
     # A name read from the DM's writing was read, not heard.
     verb = "written" if entity.source == BACKGROUND_SOURCE else "heard"
@@ -1132,7 +1134,21 @@ def suggestion_text(
     # (links kept as plain text too: a masked link in the DM's text must not become clickable)
     shown = discord.utils.escape_markdown(context, ignore_links=False)
     around = f"\nAround it in your text: \u201c{shown}\u201d" if context else ""
-    return f"📝 **{_md(entity.name)}**{heard}{where}{around}{others}{read}\n{question}{more}"
+    # (`tagged`: the name with its tag, for a description such as "beggar woman", #3431)
+    title = _md(tagged or entity.name)
+    return f"📝 **{title}**{heard}{where}{around}{others}{read}\n{question}{more}"
+
+
+async def tagged_name(memory: MemoryStore, campaign: Campaign, entity: Entity) -> str:
+    """The name with a short tag when it is only a description ("beggar woman (on the dock in
+    Termalaine)", #3431 ruling 2), else "". The tag comes from the entry's confirmed ties only: a
+    waiting name's own note is the "heard 3 times" count shown beside it, not a context."""
+    if not tags.needs_tag(entity):
+        return ""
+    bare = replace(entity, description="")
+    ties = await memory.tag_ties(campaign.guild_id, campaign.id, [entity.id])
+    shown = tags.tag_for(bare, ties.get(entity.id, ()), dm=True)
+    return "" if shown == entity.name else shown
 
 
 def _and(items: list[str]) -> str:
@@ -1386,6 +1402,7 @@ class SuggestionReview(_Menu):
             kind=self.known_kind,
             places=self.places.text(),
             context=self._context(interaction, campaign, entity),
+            tagged=await tagged_name(memory, campaign, entity),
         )
         if self.group is not None:  # say which group, so "Yes, that group" has a "that"
             inside = _and([f"**{_md(logic.shorten(m, 40))}**" for m in self.group.members[:5]])

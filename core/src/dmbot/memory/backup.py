@@ -67,6 +67,7 @@ from dmbot.memory.models import (
     NAME_MAX,
     PERSPECTIVE_KINDS,
     PLAYER_CHARACTER,
+    PLAYERS_TEXT_MAX,
     ROLES,
     SOURCES,
     THREAD_STATES,
@@ -140,6 +141,7 @@ _TEXT_LIMITS = {
     "model": 80,
     "unnamed_role": 40,  # a person the story never names (#2790)
     "unnamed_what": NAME_MAX,
+    "players_text": PLAYERS_TEXT_MAX,  # the players' line for an entry (#2967)
     "decided": 60,  # how a pronoun was settled (#2790): fixed words and a number
 }
 _CHOICES: dict[str, Sequence[str]] = {
@@ -178,7 +180,7 @@ _NULLABLE = {
     "replaced_by", "parent", "from_session_at", "to_session_at", "from_game_time",
     "to_game_time", "game_time", "max_per_subject", "closed_at", "unique_item", "fact_id",
     "session_started_at", "decided_at", "said_as", "from_set", "session_at", "manipulated_by",
-    "unnamed_anchor", "unnamed_role", "unnamed_what", "decided", "via_alias_id",
+    "unnamed_anchor", "unnamed_role", "unnamed_what", "players_text", "decided", "via_alias_id",
     "derived_from", "change_kind", "subject_picked", "object_picked",
 }  # fmt: skip
 
@@ -239,6 +241,8 @@ def _valid(column: str, value: object) -> bool:
     if column in _CHOICES:
         return isinstance(value, str) and value in _CHOICES[column]
     limit = _TEXT_LIMITS.get(column)
+    if column == "players_text":  # the column refuses an empty line: none is NULL (#2967)
+        return isinstance(value, str) and 1 <= len(value) <= PLAYERS_TEXT_MAX
     return limit is not None and isinstance(value, str) and len(value) <= limit
 
 
@@ -535,6 +539,7 @@ def _with_definition_fields(rows: list[Any]) -> list[Any]:
                 "unnamed_anchor": None,
                 "unnamed_role": None,
                 "unnamed_what": None,
+                "players_text": None,  # from before the players' line (#2967)
                 **raw,
             }
         elif isinstance(raw, dict) and raw.get("table") == "belief":
