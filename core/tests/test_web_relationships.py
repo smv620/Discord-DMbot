@@ -402,7 +402,30 @@ class Shaping(unittest.TestCase):
     def test_the_words_of_a_said_connection_are_its_label(self) -> None:
         rows = [self.row("1", "a", "b", "associated_with", 1, detail="sworn on the ashes of")]
         (edge,) = relationships.edges_from(rows, can_edit=True)
-        self.assertEqual(edge["links"][0]["words"], "sworn on the ashes of")
+        # shown in curly quotes so they are not taken for DMbot's wording; the raw words stay
+        # beside them for the edit form, and the label and the back side follow (#3574)
+        link = edge["links"][0]
+        self.assertEqual(link["words"], "\u201csworn on the ashes of\u201d")
+        self.assertEqual(link["rawWords"], "sworn on the ashes of")
+        self.assertEqual(link["back"], "is linked (\u201csworn on the ashes of\u201d) to")
+        self.assertEqual(edge["label"], "\u201csworn on the ashes of\u201d")
+
+    def test_the_quotes_the_page_shows_are_not_stored_if_sent_back(self) -> None:
+        self.assertEqual(
+            relationships._words("\u201csworn on the ashes of\u201d"), "sworn on the ashes of"
+        )
+        self.assertEqual(relationships._words("  plain words  "), "plain words")
+
+    def test_a_fixed_kind_and_a_catch_all_with_no_words_are_not_quoted(self) -> None:
+        rows = [
+            self.row("1", "a", "b", "owns", 1),
+            self.row("2", "c", "d", "associated_with", 2, detail=""),
+        ]
+        first, second = relationships.edges_from(rows, can_edit=True)
+        self.assertEqual(first["links"][0]["words"], "owns")
+        self.assertNotIn("rawWords", first["links"][0])
+        self.assertNotIn("\u201c", second["links"][0]["words"])
+        self.assertNotIn("rawWords", second["links"][0])
 
     def test_label_of_prefers_the_latest_known_one(self) -> None:
         links = [
