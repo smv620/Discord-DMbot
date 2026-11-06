@@ -5427,7 +5427,7 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
   ask for the audio again once every 10 minutes (#1418). **A posted recap's narration can be made
   again** (Supervisor, 2026-10-21, #2183) when its text changed after the narration was made (a
   spelling fix, #2177), or when an earlier remake failed: the recap page gets the new narration,
-  and the message already in Discord keeps the old one, which the page says. The 15,000-credit cap
+  and the message already in Discord keeps the old one, which the page says. The 20,000-credit cap
   is per making, so a remake starts its own count; the monthly meter still counts a recap's audio
   once, in the recap's own month. A recap posted while the audio the DM asked for is still queued
   gets that audio afterwards, for its page. Recaps left in that state before this change (when they
