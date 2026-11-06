@@ -6,7 +6,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/preact";
 import { afterEach, describe, expect, it } from "vitest";
 
-import type { AccountApi, Waiting } from "../src/account/api";
+import { ApiError, type AccountApi, type Waiting } from "../src/account/api";
 import { mockApi } from "../src/account/mock";
 import WebWaiting from "../src/account/WebWaiting";
 import { bulkWords as b } from "../src/content/waiting-bulk-words";
@@ -27,16 +27,16 @@ async function open(ending = "") {
 describe("the buttons", () => {
   it("All true answers every claim shown, one at a time, and says how many", async () => {
     const api = await open();
-    fireEvent.click(screen.getByRole("button", { name: b.allTrue }));
-    expect(await screen.findByText(b.keptTrue(2), { exact: false }, slow)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /All true/ }));
+    expect(await screen.findByText(b.markedTrue(2), { exact: false }, slow)).toBeTruthy();
     expect(calls(api, "answerWaiting").map((c) => c.split(":").slice(2, 5).join(":"))).toEqual(["claim:confirm:c1", "claim:confirm:c2"]);
     expect(calls(api, "answerWaiting").some((c) => c.endsWith(":secret"))).toBe(false);
   });
 
   it("All secret leaves a state for the game master and says so", async () => {
     const api = await open();
-    fireEvent.click(screen.getByRole("button", { name: b.allSecret }));
-    expect(await screen.findByText(new RegExp(b.keptSecret(1).replace(".", "\\.")), {}, slow)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /All secret/ }));
+    expect(await screen.findByText(new RegExp(b.markedSecret(1).replace(".", "\\.")), {}, slow)).toBeTruthy();
     expect(screen.getByText(new RegExp(b.skipped(1).replace(".", "\\.")))).toBeTruthy();
     expect(calls(api, "answerWaiting")).toHaveLength(1);
     expect(calls(api, "answerWaiting")[0]).toContain(":c1:secret");
@@ -45,26 +45,47 @@ describe("the buttons", () => {
 
   it("counts a refused one with its reason, and the rest still go in", async () => {
     const api = await open(".bulk-refuse");
-    fireEvent.click(screen.getByRole("button", { name: b.allTrue }));
-    expect(await screen.findByText(new RegExp(b.keptTrue(1).replace(".", "\\.")), {}, slow)).toBeTruthy();
-    expect(screen.getByText(new RegExp(b.refused(1, w.errors["cannot-write"] as string).slice(0, 30)))).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /All true/ }));
+    expect(await screen.findByText(new RegExp(b.markedTrue(1).replace(".", "\\.")), {}, slow)).toBeTruthy();
+    expect(screen.getByText(new RegExp("could not be saved"))).toBeTruthy();
     expect(calls(api, "answerWaiting")).toHaveLength(2);
   });
 
   it("shows n of N while it runs", async () => {
     await open();
-    fireEvent.click(screen.getByRole("button", { name: b.allTrue }));
+    fireEvent.click(screen.getByRole("button", { name: /All true/ }));
     expect(await screen.findByText(b.stage)).toBeTruthy();
   });
+});
+
+describe("while a press is on", () => {
+  it("a claim's own buttons wait, and everything works again after the re-read fails", async () => {
+    const api = mockApi("table");
+    const read = api.webWaiting!.bind(api);
+    let fail = false;
+    api.webWaiting = async (ref) => {
+      if (fail) throw new ApiError("network");
+      return read(ref);
+    };
+    render(<WebWaiting api={api} campaignRef="100.bulkz" />);
+    await screen.findByRole("heading", { name: w.heading });
+    fail = true; // (the re-read after the press fails)
+    fireEvent.click(screen.getByRole("button", { name: /All true/ }));
+    await waitFor(() => expect(screen.getAllByRole("button", { name: w.confirm }).every((x) => (x as HTMLButtonElement).disabled)).toBe(true));
+    await screen.findByText(b.markedTrue(2), { exact: false }, slow);
+    await waitFor(() => expect(screen.queryByText(b.stage)).toBeNull(), slow);
+    fail = false;
+    expect(screen.getByRole("button", { name: /Undo all 2/ })).toBeTruthy(); // (the buttons are live again)
+  }, 20000);
 });
 
 describe("Undo all", () => {
   it("takes the last press back, answer by answer, and the claims wait again", async () => {
     const api = await open();
-    fireEvent.click(screen.getByRole("button", { name: b.allTrue }));
-    await screen.findByText(b.keptTrue(2), { exact: false }, slow);
+    fireEvent.click(screen.getByRole("button", { name: /All true/ }));
+    await screen.findByText(b.markedTrue(2), { exact: false }, slow);
     await waitFor(() => expect(screen.queryByText(b.stage)).toBeNull(), slow); // (the press is over)
-    fireEvent.click(await screen.findByRole("button", { name: b.undo(2) }, slow));
+    fireEvent.click(await screen.findByRole("button", { name: /Undo all 2/ }, slow));
     expect(await screen.findByText(b.undid(2), { exact: false }, slow)).toBeTruthy();
     expect(calls(api, "answerWaiting").filter((c) => c.includes(":claim:undo:"))).toHaveLength(2);
     expect(await screen.findByText("Mira Voss knows Far Hall")).toBeTruthy();
@@ -80,8 +101,8 @@ describe("Undo all", () => {
     };
     render(<WebWaiting api={api} campaignRef="100.bulkx" />);
     await screen.findByRole("heading", { name: w.heading });
-    fireEvent.click(screen.getByRole("button", { name: b.allTrue }));
-    await screen.findByText(b.keptTrue(2), { exact: false }, slow);
+    fireEvent.click(screen.getByRole("button", { name: /All true/ }));
+    await screen.findByText(b.markedTrue(2), { exact: false }, slow);
     expect(screen.queryByRole("button", { name: /Undo all/ })).toBeNull();
   });
 });
@@ -91,7 +112,7 @@ describe("who sees it", () => {
     const api = mockApi("table");
     render(<WebWaiting api={api} campaignRef="100.cmp1.web-player" />);
     await waitFor(() => expect(api.calls.some((c) => c.startsWith("webWaiting:"))).toBe(true));
-    expect(screen.queryByRole("button", { name: b.allTrue })).toBeNull();
+    expect(screen.queryByRole("button", { name: /All true/ })).toBeNull();
   });
 
   it("nothing waiting, no buttons", async () => {
@@ -99,6 +120,6 @@ describe("who sees it", () => {
     api.webWaiting = async (): Promise<Waiting> => ({ claims: [], backstory: [], which: [], counts: { claims: 0, backstory: 0, ready: 0, which: 0, all: 0 } });
     render(<WebWaiting api={api} campaignRef="100.cmp1" />);
     await screen.findByText(w.none);
-    expect(screen.queryByRole("button", { name: b.allTrue })).toBeNull();
+    expect(screen.queryByRole("button", { name: /All true/ })).toBeNull();
   });
 });

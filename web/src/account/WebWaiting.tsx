@@ -65,6 +65,7 @@ export default function WebWaiting({
   const headingRef = useRef<HTMLHeadingElement>(null);
   const shown = useRef(campaignRef);
   const [said, setSaid] = useState<Said>(null);
+  const [bulkOn, setBulkOn] = useState(false); // an "All true" / "All secret" press is on: every own button waits
   // The claim whose "Which one?" pick can still be taken back (#3463): only the latest pick offers Undo.
   const [undo, setUndo] = useState<string | null>(null);
   const counter = useRef(0);
@@ -139,7 +140,7 @@ export default function WebWaiting({
     );
   if (!list) return null;
 
-  const busy = sending !== null;
+  const busy = sending !== null || bulkOn;
   const { counts } = list;
   const cut = list.claims.length < counts.claims || list.backstory.length < counts.backstory;
   // The DMbot's-check lines below are DM-only by the callers: Web.tsx draws this part for a DM alone, and the API
@@ -378,7 +379,8 @@ export default function WebWaiting({
         api={api}
         campaignRef={campaignRef}
         claims={list.claims.filter((c) => !c.choices?.length)}
-        locked={busy}
+        locked={sending !== null}
+        onRunning={setBulkOn}
         onChanged={async () => {
           await read();
           onChanged?.();
