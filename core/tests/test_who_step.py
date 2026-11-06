@@ -227,7 +227,8 @@ class Running(unittest.IsolatedAsyncioTestCase):
             )
 
         many = [fat(n) for n in range(1, 120)]  # (too many for one request)
-        client, counted = FakeClient(reply(many[0], ("c1", "sure"))), []
+        client = FakeClient(reply(many[0], ("c1", "sure")))
+        counted: list[int] = []
         report = await run(client, FakeAnswers(), many, max_calls=1, counted=counted)
         self.assertEqual((report.calls, len(counted)), (1, 1))  # (each call is counted first)
         self.assertEqual(report.stopped, "call limit")
