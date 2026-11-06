@@ -48,6 +48,7 @@ from dmbot.memory import (
     report_fixed,
     standing,
     states,
+    told,
     whereabouts,
 )
 from dmbot.memory import lies as lies_mod
@@ -4910,6 +4911,25 @@ class MemoryStore:
         async with self._write(guild_id, campaign_id, source) as w:
             chosen = await knowers.set_statement_knowers(w, kind, statement_id, character_ids)
             return Written(chosen, w.batch)
+
+    async def tell_character(
+        self, guild_id: int, campaign_id: str, alias_id: str, character_id: str, *, source: str
+    ) -> Written[bool]:
+        """ "Tavin now knows the guard is Ken" (#3089): tell one character that a secret other
+        name is the entry it belongs to, the entry's name only. One change, so one Undo. Only the
+        DM. Returns whether anything changed."""
+        async with self._write(guild_id, campaign_id, source) as w:
+            changed = await told.tell(w, alias_id, character_id)
+            return Written(changed, w.batch)
+
+    async def take_back_told(
+        self, guild_id: int, campaign_id: str, alias_id: str, character_id: str, *, source: str
+    ) -> Written[bool]:
+        """The DM takes a telling back (#3089), without Undo: the character holds the name and
+        nothing more. Only the DM; refused when the character was not told."""
+        async with self._write(guild_id, campaign_id, source) as w:
+            await told.take_back(w, alias_id, character_id)
+            return Written(True, w.batch)
 
     async def mark_guess(
         self,
