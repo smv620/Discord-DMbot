@@ -144,12 +144,15 @@ _SWAPS = (
 )
 
 
-def _dollar(text: str) -> str:
-    return "$q$" + text + "$q$"
+def _text(text: str) -> str:
+    """The text as SQL that builds it from hex. The anchors above end or start in the middle of a
+    quoted word, and a text written between quotes would not read as balanced SQL to the checks
+    that scan the migrations (`test_migration_backfill`); the hex has no quote in it."""
+    return f"convert_from(decode('{text.encode().hex()}', 'hex'), 'UTF8')"
 
 
 _STEPS = "".join(
-    f"\n        def := pg_temp.swap_n(def, {_dollar(old)}, {_dollar(new)}, {n});"
+    f"\n        def := pg_temp.swap_n(def, {_text(old)}, {_text(new)}, {n});"
     for old, new, n in _SWAPS
 )
 

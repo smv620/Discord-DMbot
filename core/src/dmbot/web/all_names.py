@@ -408,6 +408,31 @@ async def queue_confirm(db: Database, session: Session, ref: str, body: object) 
     return str(got["id"])
 
 
+async def queue_clock(
+    db: Database, session: Session, ref: str, session_id: str, action: str
+) -> str:
+    """Queue the DM's answer to an imported session's clock offer (`clock-set`, `clock-skip`;
+    #3199): the same door and the same answer as any name action, with no name to file it under
+    and the imported session as the target. The door checks again that the offer is waiting."""
+    if action not in ("clock-set", "clock-skip"):
+        raise RecapError("bad_action")
+    guild_id, campaign_id = _parse(ref)
+    _guild_of(session, guild_id)
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        cur = await conn.execute(
+            "SELECT dmbot_web_name_action_add(%s, %s, %s, %s, %s, %s, %s, %s) AS r",
+            (guild_id, campaign_id, None, action, "", session_id, "", False),
+        )
+        found = await cur.fetchone()
+    got = found["r"] if found else None
+    if got is None:
+        raise RecapError("not_allowed")
+    if got["status"] != "ok":
+        raise RecapError(str(got["status"]))
+    return str(got["id"])
+
+
 async def read_action(db: Database, session: Session, ref: str, action_id: str) -> dict[str, Any]:
     """Where one of the caller's own actions stands: `state` (waiting, working, done, failed), the
     `error` word when it failed, the changed (or surviving) name's `row`, and `removed`."""

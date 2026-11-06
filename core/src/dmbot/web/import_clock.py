@@ -13,6 +13,7 @@ from typing import Any
 
 from dmbot.db import Conn, Database
 from dmbot.timebot import clock as game
+from dmbot.web import all_names
 from dmbot.web.names import _parse
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
 from dmbot.web.sessions import Session
@@ -71,13 +72,6 @@ async def choose(db: Database, session: Session, ref: str, import_id: str, body:
         mine = next((r for r in rows if r["file"] == file and r["state"] == "offered"), None)
         if mine is None:
             raise RecapError("not_found")
-        cur = await conn.execute(
-            "SELECT dmbot_web_name_action_add(%s, %s, NULL, %s, '', %s, '', false) AS r",
-            (guild_id, campaign_id, CHOICES[str(choice)], mine["sessionId"]),
-        )
-        added = (await cur.fetchone() or {}).get("r")
-    if added is None:
-        raise RecapError("not_a_dm")
-    if added["status"] != "ok":
-        raise RecapError(str(added["status"]))
-    return str(added["id"])
+    return await all_names.queue_clock(
+        db, session, ref, str(mine["sessionId"]), CHOICES[str(choice)]
+    )
