@@ -441,6 +441,22 @@ class WhenKept(NamesTest):
         (label,) = labels
         self.assertTrue(label.startswith("your background, "), label)
 
+    async def test_a_kept_connection_remembers_the_upload_it_came_from(self) -> None:
+        # #2946: nothing recorded it once kept, so the graph's line panel could not say
+        await self.read()
+        (label,) = {w.upload for w in await self.waiting()}
+        done = await keep.keep_all(
+            self.memory, self.store, GUILD, self.campaign.id, await self.waiting()
+        )
+        self.assertGreaterEqual(len(done.kept), 1)
+        async with self.db.guild(GUILD) as conn:
+            cur = await conn.execute(
+                "SELECT label FROM memory_link_sources WHERE campaign_id = %s",
+                (self.campaign.id,),
+            )
+            labels = {str(r["label"]) for r in await cur.fetchall()}
+        self.assertEqual(labels, {label})
+
     async def test_ready_connections_are_said_once(self) -> None:
         await self.read()
         first = await self.store.take_ready_notices(GUILD, self.campaign.id)
