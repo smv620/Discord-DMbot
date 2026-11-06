@@ -42,6 +42,9 @@ MAX_ALSO = 4
 # What the AI calls a kind, and the kind DMbot keeps it as (the same words Add many reads).
 KINDS = {
     "person": "npc",  # (the AI's word for any named character; a named monster is one too)
+    # a character the text plainly says is one of the players' own (#3553): proposed as a player
+    # character; who plays it is the DM's to say, never guessed from the text
+    "player": "player_character",
     "place": "place",
     "group": "faction",
     "god": "npc",  # a god is an NPC (#2562)
@@ -51,6 +54,7 @@ KINDS = {
 }
 LABELS = {  # for "Yes to all 14 places"
     "npc": ("NPC", "NPCs"),
+    "player_character": ("player character", "PCs"),
     "place": ("place", "places"),
     "faction": ("group", "groups"),
     "item": ("item", "items"),

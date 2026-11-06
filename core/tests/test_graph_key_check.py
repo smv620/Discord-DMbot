@@ -361,3 +361,31 @@ class Scoring(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ThePlayerCharacters(unittest.TestCase):
+    """#3553: the check says how many of the key's player characters the campaign has as such."""
+
+    def key(self) -> dict[str, Any]:
+        return load("lore_key.json")
+
+    def entries(self, roles: dict[str, str | None]) -> dict[str, Any]:
+        data = backup([(f"e{i}", n, "character") for i, n in enumerate(roles)], [])
+        for row, role in zip(data["sections"]["memory"], roles.values(), strict=True):
+            row["role"] = role
+        return data
+
+    def test_it_counts_the_four_that_are_player_characters(self) -> None:
+        names = list(self.key()["players"])
+        data = self.entries({n: "player_character" for n in names})
+        report = gkc.check(data, self.key(), "lore")
+        self.assertEqual((report.players_found, report.players_expected), (4, 4))
+        self.assertIn("Player characters found: 4 of 4", gkc.render(report))
+
+    def test_an_npc_with_a_players_name_does_not_count(self) -> None:
+        names = list(self.key()["players"])
+        roles: dict[str, str | None] = {n: "player_character" for n in names[:2]}
+        roles.update({n: "npc" for n in names[2:]})
+        report = gkc.check(self.entries(roles), self.key(), "lore")
+        self.assertEqual(report.players_found, 2)
+        self.assertIn("Player characters found: 2 of 4", gkc.render(report, counts_only=True))

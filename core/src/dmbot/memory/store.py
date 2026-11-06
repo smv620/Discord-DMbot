@@ -48,6 +48,7 @@ from dmbot.memory import (
     report_fixed,
     standing,
     states,
+    told,
     whereabouts,
 )
 from dmbot.memory import lies as lies_mod
@@ -2090,7 +2091,9 @@ class MemoryStore:
                 kind, role = resolve_kind(n.type, n.role)
                 onto.active_type(kind)
                 _check_role(onto, kind, role, None)
-                if role == PLAYER_CHARACTER:
+                # A waiting suggestion may be read as a player character (#3553: the text says so);
+                # it is confirmed only once the DM says who plays it. Anything else needs a player.
+                if role == PLAYER_CHARACTER and n.status != PROPOSED:
                     raise MemoryRuleError("A player's character needs its player.")
                 name, name_key_, _ = prep[n.name]
                 if name_key_ in used:
@@ -2580,6 +2583,17 @@ class MemoryStore:
                 (*scope.ids, *scope.ids),
             )
             return {str(r["key"]) for r in await cur.fetchall()}
+
+    async def refused_spellings(self, guild_id: int, campaign_id: str) -> set[tuple[str, str]]:
+        """(entry id, `name_key`) of every other name the DM turned down: "No, two places" (#3037)
+        is remembered, so that spelling is never offered as the same place again."""
+        async with self._read(guild_id, campaign_id) as scope:
+            cur = await scope.conn.execute(
+                "SELECT entity_id, text FROM memory_aliases WHERE guild_id = %s"
+                " AND campaign_id = %s AND status = 'rejected'",
+                scope.ids,
+            )
+            return {(str(r["entity_id"]), name_key(str(r["text"]))) for r in await cur.fetchall()}
 
     async def record_link_source(
         self, guild_id: int, campaign_id: str, relation_id: str, label: str
@@ -4899,6 +4913,25 @@ class MemoryStore:
         async with self._write(guild_id, campaign_id, source) as w:
             chosen = await knowers.set_statement_knowers(w, kind, statement_id, character_ids)
             return Written(chosen, w.batch)
+
+    async def tell_character(
+        self, guild_id: int, campaign_id: str, alias_id: str, character_id: str, *, source: str
+    ) -> Written[bool]:
+        """ "Tavin now knows the guard is Ken" (#3089): tell one character that a secret other
+        name is the entry it belongs to, the entry's name only. One change, so one Undo. Only the
+        DM. Returns whether anything changed."""
+        async with self._write(guild_id, campaign_id, source) as w:
+            changed = await told.tell(w, alias_id, character_id)
+            return Written(changed, w.batch)
+
+    async def take_back_told(
+        self, guild_id: int, campaign_id: str, alias_id: str, character_id: str, *, source: str
+    ) -> Written[bool]:
+        """The DM takes a telling back (#3089), without Undo: the character holds the name and
+        nothing more. Only the DM; refused when the character was not told."""
+        async with self._write(guild_id, campaign_id, source) as w:
+            await told.take_back(w, alias_id, character_id)
+            return Written(True, w.batch)
 
     async def mark_guess(
         self,
