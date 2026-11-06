@@ -633,6 +633,9 @@ async def _do(
         return Outcome(result_id=entity_id)
     if a.action in SPELLING_ACTIONS:
         return await _spelling(memory, guild_id, cid, entity_id, a)
+    if a.action == "players-line":  # the line the players are told (#3568); a blank clears it
+        await memory.set_players_text(guild_id, cid, entity_id, a.text, source=DM)
+        return Outcome(result_id=entity_id)
     if a.action in TOLD_ACTIONS:
         return await _told(memory, guild_id, cid, entity_id, a)
     if a.action == "secret":  # one of its other names

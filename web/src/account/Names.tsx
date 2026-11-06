@@ -11,6 +11,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import PageBar from "../admin/PageBar";
 import { NAME_LIMIT, NAMES_PAGE_SIZE, NAMES_PAGE_SIZES, NAMES_SMART_LIVE, namesPage as words } from "../content/names-words";
 import { NOT_NAMED_LIVE } from "../content/not-named-switch";
+import { PLAYERS_LINE_LIVE } from "../content/players-line-switch";
 import { notNamedWords as notNamed } from "../content/not-named-words";
 import {
   type AccountApi,
@@ -923,6 +924,10 @@ function NameEditor({ id, row, kinds, act, api, refId, focusSaid }: EditorProps)
           {words.saveSpelling}
         </button>
       </form>
+
+      {PLAYERS_LINE_LIVE && row.playersText !== undefined && (
+        <LazyPanel load={() => import("./PlayersLine")} what="the line for the players" props={{ row, act: (change: NameChange, ok: string) => act(row, change, ok) }} />
+      )}
 
       {row.aliasId && api.saveSaidAs && (
         <form
