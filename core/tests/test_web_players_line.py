@@ -8,7 +8,7 @@ from typing import Any
 
 from dmbot.memory.models import DM as DM_SOURCE
 from tests.test_recap_web import BOB
-from tests.test_web_api import THURSDAY
+from tests.test_web_api import ALICE, THURSDAY
 from tests.test_web_name_actions import Acting
 
 
@@ -106,6 +106,42 @@ class TheWrite(PlayersLine):
             row = await cur.fetchone()
         assert row is not None
         self.assertIsNone(row["players_text"])
+
+
+class TheDoor(PlayersLine):
+    async def door(
+        self, entity: str, action: str, text: str, target: str = "", flag: bool = False
+    ) -> Any:
+        async with self.web.user(ALICE.id, session=self.session.id_hash) as conn:
+            await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(self.g),))
+            cur = await conn.execute(
+                "SELECT dmbot_web_name_action_add(%s, %s, %s, %s, %s, %s, %s, %s) AS r",
+                (self.g, self.one.id, entity, action, "", target, text, flag),
+            )
+            got = await cur.fetchone()
+        assert got is not None
+        return got["r"]
+
+    async def test_the_door_itself_takes_120_for_the_line_and_only_the_line(self) -> None:
+        self.assertEqual((await self.door(self.keep, "players-line", "z" * 120))["status"], "ok")
+        self.assertEqual(
+            (await self.door(self.keep, "players-line", "z" * 121))["status"], "bad_text"
+        )
+        # the longer limit is the line's alone: every other action keeps 100
+        self.assertEqual((await self.door(self.keep, "spell", "z" * 100))["status"], "ok")
+        self.assertEqual((await self.door(self.keep, "spell", "z" * 101))["status"], "bad_text")
+
+    async def test_the_door_takes_a_blank_line_but_no_target_and_no_flag(self) -> None:
+        self.assertEqual((await self.door(self.keep, "players-line", ""))["status"], "ok")
+        bad_target = await self.door(self.keep, "players-line", "A line", target=self.sword)
+        self.assertEqual(bad_target["status"], "bad_text")
+        bad_flag = await self.door(self.keep, "players-line", "A line", flag=True)
+        self.assertEqual(bad_flag["status"], "bad_text")
+
+    async def test_a_line_for_a_person_is_not_found_by_the_door(self) -> None:
+        # (the door files an action only under a named entry that is there)
+        person = await self.door("f" * 32, "players-line", "A line")
+        self.assertEqual(person["status"], "not_found")
 
 
 class TheRead(PlayersLine):
