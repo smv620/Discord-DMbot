@@ -10,6 +10,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 
 import { waitingWords as w } from "../content/web-waiting";
 import { ApiError, type AccountApi, type Waiting, type WaitingAnswer, type WaitingLook } from "./api";
+import WaitingBulk from "./WaitingBulk";
 import WorkProgress from "./WorkProgress";
 
 /** A session's day for a person ("17 October"), from Unix seconds, the same in every time zone. */
@@ -370,6 +371,21 @@ export default function WebWaiting({
         <div class="stack">
           <h4>{w.claimsHeading}</h4>
           <p class="small">{w.claimsNote}</p>
+        </div>
+      )}
+      {/* Outside the claims list, so a press's summary and its "Undo all" stay after the answered claims have left it. */}
+      <WaitingBulk
+        api={api}
+        campaignRef={campaignRef}
+        claims={list.claims.filter((c) => !c.choices?.length)}
+        locked={busy}
+        onChanged={async () => {
+          await read();
+          onChanged?.();
+        }}
+      />
+      {list.claims.some((c) => !c.choices?.length) && (
+        <div class="stack">
           {list.claims.filter((c) => !c.choices?.length).map((c) => (
             <div key={c.id} class="panel">
               <p id={`wc-${c.id}`}>{c.statement}</p>
