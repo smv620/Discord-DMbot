@@ -428,6 +428,20 @@ async def apply(
             return Outcome()
         if action.action == "merge" and entity.merged_into == action.target_id:
             return Outcome(result_id=action.target_id)
+    if (
+        action.action == "remove"
+        and action.flag
+        and entity is not None
+        and entity.unnamed
+        and entity.status in (PROPOSED, CONFIRMED)
+    ):
+        # A person the story never named (#2803), waiting or kept: removed like any name, in one
+        # change that the card's Undo takes back (the door asked for the confirmation).
+        try:
+            await memory.set_entity_status(guild_id, cid, entity.id, REJECTED, source=DM)
+        except MemoryRuleError:
+            return _failed(NOT_FOUND)
+        return Outcome()
     if entity is None or entity.status != CONFIRMED or entity.type == PERSON:
         return _failed(NOT_FOUND)
     try:

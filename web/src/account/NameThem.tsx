@@ -8,7 +8,7 @@ import { useRef, useState } from "preact/hooks";
 
 import { NAME_LIMIT } from "../content/names-words";
 import { notNamedWords as w } from "../content/not-named-words";
-import { ApiError, type AccountApi, type NameRow, type NameThemResult } from "./api";
+import { ApiError, type AccountApi, type NameChange, type NameRow, type NameThemResult } from "./api";
 import { useObservedWait } from "./useObservedWait";
 import WorkProgress from "./WorkProgress";
 
@@ -27,6 +27,7 @@ export default function NameThem({
   row,
   api,
   refId,
+  act,
   onDone,
   onSignedOut,
 }: {
@@ -34,6 +35,8 @@ export default function NameThem({
   row: NameRow;
   api: AccountApi;
   refId: string;
+  /** The page's own save for a name change (reads the list again, says what happened): used to remove the person. */
+  act: (change: NameChange, ok: string) => Promise<string | null>;
   onDone: (info: NamedInfo) => Promise<void>;
   onSignedOut: () => void;
 }) {
@@ -44,6 +47,8 @@ export default function NameThem({
   const [report, setReport] = useState<string | null>(null);
   const [joining, setJoining] = useState(false);
   const [declined, setDeclined] = useState(false);
+  const [asking, setAsking] = useState(false); // "Remove this person?", asked once
+  const [removing, setRemoving] = useState(false);
   const questionBox = useRef<HTMLParagraphElement>(null);
   const asked = useRef("");
   const flight = useRef(false);
@@ -78,6 +83,18 @@ export default function NameThem({
     }
     // After the try: the name is already applied, so a list that fails to reload must not read as a failed change.
     if (done) await onDone(done).catch(() => undefined);
+  }
+
+  async function remove(): Promise<void> {
+    if (working || removing) return;
+    setRemoving(true);
+    setReport(null);
+    const problem = await act({ action: "remove", confirm: true }, w.removed(row.name));
+    setRemoving(false);
+    if (problem !== null && problem !== "") {
+      setAsking(false);
+      setReport(problem);
+    }
   }
 
   const submit = (e: Event): void => {
@@ -137,9 +154,31 @@ export default function NameThem({
           </p>
         </form>
       )}
-      <p class="warn small" role="alert">
+      {/* Always there (a screen reader hears what is put in it), but drawn only when it says something. */}
+      <p class={report ? "warn small" : "visually-hidden"} role="alert">
         {report ?? ""}
       </p>
+      <div class="stack">
+        {asking ? (
+          <div class="stack" role="group" aria-label={w.removeAsk(row.name)}>
+            <p role="status">{w.removeAsk(row.name)}</p>
+            <div class="row">
+              <button type="button" class="button secondary" aria-disabled={working || removing} onClick={() => void remove()}>
+                {w.removeYes}
+              </button>
+              <button type="button" class="button secondary" aria-disabled={removing} onClick={() => !removing && setAsking(false)}>
+                {w.removeKeep}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <p>
+            <button type="button" class="button secondary" aria-disabled={working || removing} onClick={() => !working && !removing && setAsking(true)}>
+              {w.removeButton}
+            </button>
+          </p>
+        )}
+      </div>
       {working && (
         <WorkProgress
           stage={looks === 0 ? (w.stage["waiting"] as string) : (w.stage[joining ? "joining" : "working"] as string)}

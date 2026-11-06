@@ -23,6 +23,14 @@ export const notNamedWords = {
   undo: "Undo the name",
   undoJoin: "Undo the join",
   undoHint: "You can undo this until your next change.",
+  /** What the Undo button undoes: the sentence said when the name was given ("Ken's sister is now called Ilse."). */
+  undoWhat: (what: string): string => `Just now: ${what}`,
+  // Removing someone who is not worth keeping (a passer-by the story mentioned), from their own row.
+  removeButton: "Remove this person",
+  removeAsk: (who: string): string => `Remove ${who}? DMbot will forget this person.`,
+  removeYes: "Yes, remove them",
+  removeKeep: "Keep them",
+  removed: (who: string): string => `Removed ${who}.`,
   // The wait (owner rule, 2026-10-23): what DMbot is doing, how long, and when it last moved.
   stage: {
     waiting: "Waiting for DMbot to pick it up.",

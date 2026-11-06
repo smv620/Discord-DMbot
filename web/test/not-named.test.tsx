@@ -193,3 +193,39 @@ describe("accessibility", () => {
     expect(found.violations).toEqual([]);
   });
 });
+
+describe("removing a person who is not worth keeping", () => {
+  it("asks once, removes them from the list and says so", async () => {
+    const api = await open();
+    openEditor("Ken's sister");
+    fireEvent.click(await screen.findByRole("button", { name: w.removeButton }));
+    expect(screen.getByText(/^Remove .*\? DMbot will forget this person\.$/)).toBeTruthy();
+    expect(calls(api, "changeName")).toHaveLength(0);
+    fireEvent.click(screen.getByRole("button", { name: w.removeYes }));
+    await waitFor(() => expect(calls(api, "changeName")).toHaveLength(1));
+    expect(calls(api, "changeName")[0]).toContain('"action":"remove"');
+    expect(calls(api, "changeName")[0]).toContain('"confirm":true');
+    await waitFor(() => expect(screen.queryByText("Ken's sister")).toBeNull(), slow);
+  });
+
+  it("keeps them when the DM says keep, and sends nothing", async () => {
+    const api = await open();
+    openEditor("Ken's sister");
+    fireEvent.click(await screen.findByRole("button", { name: w.removeButton }));
+    fireEvent.click(screen.getByRole("button", { name: w.removeKeep }));
+    expect(screen.getByRole("button", { name: w.removeButton })).toBeTruthy();
+    expect(calls(api, "changeName")).toHaveLength(0);
+  });
+});
+
+describe("what Undo undoes", () => {
+  it("says in words what was just done, next to the button", async () => {
+    await open();
+    openEditor("Ken's sister");
+    give("Ilse Voss");
+    const undo = await screen.findByRole("button", { name: w.undo }, slow);
+    // (the sentence said when the name was given, shown beside the button: the news line itself is only read out)
+    const said = screen.getByText(/^Just now: .* is now called Ilse Voss\.$/);
+    expect(said.nextElementSibling?.contains(undo)).toBe(true);
+  });
+});
