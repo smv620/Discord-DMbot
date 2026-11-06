@@ -167,13 +167,15 @@ class Asking(Wiring):
         self,
     ) -> None:
         me = self.fake()
-        nobody = [entity(f"{n:032x}", f"Zorb{n}", PROPOSED) for n in range(1, 126)]
+        nobody = [entity(f"{n:032x}", f"Zorb{n}", PROPOSED) for n in range(1, 151)]
         asked = [entity(f"{n:032x}", "Vale", PROPOSED) for n in range(900, 905)]
         me.memory.entities = AsyncMock(return_value=[*nobody, *asked])
         with self.patches():
             await DMBot.write_who(me, self.table())
         (pending_list,) = self.step_run.await_args.args[2:3]
-        self.assertEqual(len(pending_list), 5)  # (the last five were reached)
+        self.assertEqual(
+            len(pending_list), 5
+        )  # (150 with nothing to offer first, then the 5 that are asked)
         self.assertEqual(me.transcripts.around.await_count, 5)  # (only theirs were read)
 
     async def test_the_cap_counts_names_asked_about(self) -> None:
@@ -183,6 +185,15 @@ class Asking(Wiring):
         with self.patches():
             await DMBot.write_who(me, self.table())
         self.assertEqual(len(self.step_run.await_args.args[2]), 120)
+
+    async def test_names_past_the_scan_bound_wait_for_the_next_session(self) -> None:
+        me = self.fake()
+        nobody = [entity(f"{n:032x}", f"Zorb{n}", PROPOSED) for n in range(1, 601)]
+        asked = [entity(f"{n:032x}", "Vale", PROPOSED) for n in range(900, 903)]
+        me.memory.entities = AsyncMock(return_value=[*nobody, *asked])  # (the good ones are last)
+        with self.patches():
+            await DMBot.write_who(me, self.table())
+        self.assertFalse(self.step_run.await_count)  # (600 scanned, nothing to offer yet)
 
     async def test_a_name_said_in_a_session_but_with_no_readable_line_is_skipped(self) -> None:
         me = self.fake()

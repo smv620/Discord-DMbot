@@ -609,6 +609,7 @@ RULES_CARD_DB_S = 5.0  # the longest a rules card waits for the house rules
 log = logging.getLogger(__name__)
 
 WHO_PER_SESSION = 120  # waiting names ranked in one session's step: about four calls
+WHO_SCAN_BOUND = 600  # names looked at to find them (the rest wait for the next session)
 
 SUMMARY_INTERVAL_S = 15
 # Lines for the transcript channel are grouped and posted this often (#124): well inside
@@ -8866,7 +8867,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             )
             report = who_step.Report()
             pending: list[who_step.Pending] = []
-            for entity in waiting:
+            for entity in waiting[:WHO_SCAN_BOUND]:
                 if len(pending) >= WHO_PER_SESSION:
                     break  # (the cap counts names asked about, not names with nothing to offer)
                 report.names += 1
