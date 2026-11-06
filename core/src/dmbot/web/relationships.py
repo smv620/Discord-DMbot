@@ -22,7 +22,7 @@ from typing import Any
 from dmbot import progress
 from dmbot.consent import TERMS_VERSION
 from dmbot.db import Database
-from dmbot.memory import gate, kin, reputation_words
+from dmbot.memory import gate, kin, reputation_words, web_actions
 from dmbot.memory.claims import Extracted, condition_of
 from dmbot.memory.link_kinds import link_kind
 from dmbot.memory.link_words import (
@@ -831,10 +831,11 @@ async def queue_edit(db: Database, session: Session, ref: str, link_id: str, bod
         if feeling is None:
             raise RecapError("bad_action")
         # the same change as typing "knows (wary)" into the words box (`predicate_for` reads it
-        # back as a feeling), so the connection stays a "knows" and Undo is the words' own
+        # back as a feeling) but only on a `knows` connection (checked when it is applied), so the
+        # connection stays a "knows" and Undo is the words' own
         return await _queue(
             db, session, ref, entity=None, action="link-words", target=link_id,
-            text=f"knows ({feeling})", flag=False,
+            text=f"{web_actions.FEELING_TEXT}{feeling}", flag=False,
         )  # fmt: skip
     if action == "secret":
         if not isinstance(body.get("secret"), bool):

@@ -152,7 +152,16 @@ class OnTheDoor(Web):
         plain = self.links["rook-keep"]
         await self.memory.record_link_source(self.g, self.one.id, plain, LABEL, "a   b \n c")
         self.assertEqual((await self.door(self.session, [plain]))[plain]["quote"], "a b c")
-        none = self.links["mira-rook"]
+        self.assertEqual((await self.door(self.session, [plain]))[plain]["quote"], "a b c")
+
+    async def test_control_and_zero_width_characters_are_dropped_first_quote_stays(self) -> None:
+        link = self.links["mira-rook"]
+        await self.memory.record_link_source(
+            self.g, self.one.id, link, LABEL, "x\u200by\x00z \u00e9"
+        )
+        await self.memory.record_link_source(self.g, self.one.id, link, LABEL, "a later quote")
+        self.assertEqual((await self.door(self.session, [link]))[link]["quote"], "xyz \u00e9")
+        none = self.links["mira-keep"]
         await self.memory.record_link_source(self.g, self.one.id, none, LABEL)
         self.assertEqual((await self.door(self.session, [none]))[none]["quote"], "")  # (none given)
 

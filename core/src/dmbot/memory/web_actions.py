@@ -67,6 +67,10 @@ LOOKUP_FAILED = "lookup_failed"  # Discord could not be asked: nothing is linked
 BAD_PLAYER = "bad_player"  # not an ID the rules take
 BOT_PLAYER = "bot_player"  # the ID is a bot's: a bot cannot play a character
 EXISTS = "exists"  # the spelling is already another name's
+# A feeling picked on the website rides the `link-words` action (the door's text rules are
+# unchanged) as `feeling:<word>`; applying it is the same change as typing "knows (<word>)" but only
+# on a `knows` connection (#3606), so the picker can never turn another kind of connection into one.
+FEELING_TEXT = "feeling:"
 BAD_TARGET = "bad_target"  # a merge, a secret or a removal the rules refuse
 NAMES_NOT_SHOWN = "names_not_shown"  # a connection to a name still held back (#3426)
 NAME_UNNAMED = "name_unnamed"  # ... or to a person the story never named (#3426)
@@ -880,7 +884,10 @@ async def _link(memory: MemoryStore, guild_id: int, cid: str, entity_id: str, a:
                 return _failed(BAD_TARGET)
             await link_edits.remove(memory, guild_id, cid, link)
         elif a.action == "link-words":
-            predicate, detail, swapped = predicate_for_either(a.text)
+            picked = a.text.startswith(FEELING_TEXT)
+            if picked and link.predicate != "knows":
+                return _failed(BAD_TARGET)  # the picker is for a knows line only (#3606)
+            predicate, detail, swapped = predicate_for_either(_words_of(a.text))
             other_end = link.object_id if entity_id == link.subject_id else link.subject_id
             await link_edits.change_words(
                 memory,
@@ -1113,6 +1120,11 @@ async def _answer_reading(
     )
 
 
+def _words_of(text: str) -> str:
+    """The connection words a queued `link-words` text means: a picked feeling is "knows (word)"."""
+    return f"knows ({text[len(FEELING_TEXT) :]})" if text.startswith(FEELING_TEXT) else text
+
+
 async def _already(memory: MemoryStore, guild_id: int, cid: str, link: Relation, a: Action) -> bool:
     """Whether an ended connection is the work of this very action: a removal (it is ended), or
     new words (a live connection with those words stands between the same two names)."""
@@ -1120,7 +1132,7 @@ async def _already(memory: MemoryStore, guild_id: int, cid: str, link: Relation,
         return a.flag
     if a.action != "link-words":
         return False
-    predicate, detail, _ = predicate_for_either(a.text)
+    predicate, detail, _ = predicate_for_either(_words_of(a.text))
     return any(
         r.status == CONFIRMED
         and r.predicate == predicate

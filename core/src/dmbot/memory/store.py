@@ -2637,7 +2637,13 @@ class MemoryStore:
         (cut to 240), for the DM's "Why?" on the line panel (#3606), shown to the DM alone. Nothing
         else about the upload is stored."""
         label = clean_text(label)[:120]
-        quote = " ".join(unicodedata.normalize("NFC", quote).split())[:240]  # (spaces collapsed)
+        # spaces collapsed; control and zero-width characters dropped (the database refuses a NUL)
+        quote = " ".join(
+            "".join(
+                c for c in unicodedata.normalize("NFC", quote) if unicodedata.category(c) != "Cf"
+            ).split()
+        )
+        quote = "".join(c for c in quote if c.isprintable())[:240]
         if not label:
             return
         async with self._db.guild(guild_id) as conn:

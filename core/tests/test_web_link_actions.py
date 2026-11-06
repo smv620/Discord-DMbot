@@ -243,6 +243,40 @@ class TheEdits(Editing):
         pair = [r for r in mine if self.keep in (r.subject_id, r.object_id)]
         self.assertEqual([(r.predicate, r.detail) for r in pair], [("knows", "")])
 
+    async def test_a_picked_feeling_never_turns_another_kind_of_connection_into_a_knows(
+        self,
+    ) -> None:
+        made = await self.add_link(self.mira, self.hall, "is a member of")
+        await self.apply_all()
+        edge = self.edge_of(await self.poll(made), self.mira, self.hall)
+        link = str(edge["links"][0]["id"])
+        answer = await self.edit(link, action="feeling", feeling="hostile")
+        await self.apply_all()
+        done = await self.poll(answer)
+        self.assertEqual(done["state"], "failed")
+        again = await relationships.read_web(self.web, self.session, self.cref, center=self.mira)
+        words = [
+            x["words"]
+            for e in again["edges"]
+            for x in e["links"]
+            if {e["a"], e["b"]} == {self.mira, self.hall}
+        ]
+        self.assertEqual(words, ["is a member of"])  # untouched
+
+    async def test_a_neutral_pick_stores_no_word_and_a_secret_line_stays_secret(self) -> None:
+        link = self.links["mira-keep"]
+        await self.edit(link, action="secret", secret=True)
+        await self.apply_all()
+        await self.edit(link, action="feeling", feeling="neutral")
+        await self.apply_all()
+        mine = await self.memory.relations(
+            self.g, self.one.id, entity_id=self.mira, include_secret=True
+        )
+        (pair,) = [
+            r for r in mine if self.keep in (r.subject_id, r.object_id) and r.status == "confirmed"
+        ]
+        self.assertEqual((pair.predicate, pair.detail, pair.secret), ("knows", "", True))
+
     async def test_a_word_off_the_nine_is_refused_before_anything_is_queued(self) -> None:
         link = self.links["mira-keep"]
         for bad in ("adores", "", None, 7):

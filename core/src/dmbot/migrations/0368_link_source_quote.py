@@ -8,7 +8,9 @@ from __future__ import annotations
 
 SQL = r"""
     -- The reader's quote for a connection kept from an upload (the line the AI quoted, at most 240
-    -- characters). It is the DM's own upload text, so only the campaign's DM is sent it
+    -- characters). This stores a few words of the upload (0352 said none): it exists only for a
+    -- connection kept from an upload the DM confirmed the right to use, and is the DM's own text,
+    -- so only the campaign's DM is sent it
     -- (`dmbot_web_link_sources`); a player gets the session number or "unknown", never this. ''
     -- for a connection kept before this, or from a session. Not carried in backups, as the table
     -- is not. No row is changed, so no row-level security is opened.
@@ -59,13 +61,6 @@ SQL = r"""
                       ev.at, CASE WHEN r.source <> 'dm' THEN r.from_session_at END)), '[]'::jsonb));
     END
     $fn$;
-    DO $do$
-    BEGIN
-        EXECUTE format(
-            'ALTER FUNCTION dmbot_web_link_sources(BIGINT, TEXT, TEXT[])'
-            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
-    END
-    $do$;
     DO $do$
     BEGIN
         EXECUTE format(
