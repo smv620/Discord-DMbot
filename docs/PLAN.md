@@ -4718,8 +4718,9 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
     sheet or the transcript gives; such a name goes to the DM's name check as today (#2027). A secret
     name, or an `<apart>` link, is never used.
   - **Only an overall length target.** No paragraph count and no words per beat. The target is
-    **150 words, plus 100 for every hour played**, rounded to the nearest 10, **at most 600** (1 hour
-    250, 3 hours 450; about four minutes read aloud at most). It stays a target, never a check (#2597).
+    **250 words, plus 150 for every hour played**, rounded to the nearest 10, **at most 1,000** (1 hour
+    400, 3 hours 700; about seven minutes read aloud at most; owner, 2026-11-06, #3633: recaps were
+    being crunched down too much). It stays a target, never a check (#2597).
   - **What the writer is asked for**, in its instructions: a self-contained short story, not a teaser;
     each scene opens by saying where it is, and a change of place is said in the first sentence of the
     new scene; anything new is introduced from the sheet, and left out only when nothing given explains
@@ -5426,7 +5427,7 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
   ask for the audio again once every 10 minutes (#1418). **A posted recap's narration can be made
   again** (Supervisor, 2026-10-21, #2183) when its text changed after the narration was made (a
   spelling fix, #2177), or when an earlier remake failed: the recap page gets the new narration,
-  and the message already in Discord keeps the old one, which the page says. The 15,000-credit cap
+  and the message already in Discord keeps the old one, which the page says. The 20,000-credit cap
   is per making, so a remake starts its own count; the monthly meter still counts a recap's audio
   once, in the recap's own month. A recap posted while the audio the DM asked for is still queued
   gets that audio afterwards, for its page. Recaps left in that state before this change (when they

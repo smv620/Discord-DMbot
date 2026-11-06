@@ -163,7 +163,7 @@ class Settings:
     voyage_key: str = field(default="", repr=False)
     voyage_embed_model: str = "voyage-3.5"
     voyage_rerank_model: str = "rerank-2.5"
-    recap_audio_max_credits: int = 15000  # provider credits one recap may use (about $3)
+    recap_audio_max_credits: int = 20000  # provider credits one recap may use (about $4; #3633)
     # The recap's mood cues reach the voice as delivery tags (#1983); 0 sends only whisper, sigh and
     # pauses, so dev1 can compare the two narrations by ear.
     recap_voice_tags: bool = True
@@ -437,7 +437,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         raise ConfigError(
             'DMBOT_RECAP_VOICE_TAGS must be 1 (on) or 0 (off), got "' + voice_tags_raw + '".'
         )
-    audio_credits_raw = get("DMBOT_RECAP_AUDIO_MAX_CREDITS") or "15000"
+    audio_credits_raw = get("DMBOT_RECAP_AUDIO_MAX_CREDITS") or "20000"
     if not (audio_credits_raw.isascii() and audio_credits_raw.isdigit()) or not (
         1000 <= int(audio_credits_raw) <= 200000
     ):
