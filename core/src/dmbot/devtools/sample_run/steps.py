@@ -22,7 +22,14 @@ from typing import Any
 from dmbot.campaigns.models import Campaign, CampaignError
 from dmbot.campaigns.store import CampaignStore
 from dmbot.db import Database
-from dmbot.devtools.sample_run.plan import NAME, Existing, SampleError, can_replace
+from dmbot.devtools.sample_run.plan import (
+    NAME,
+    STEPS,
+    Existing,
+    SampleError,
+    Step,
+    can_replace,
+)
 from dmbot.lore_upload import TEXT_MAX
 from dmbot.transcript import import_plan as ip
 from dmbot.transcript import importer
@@ -494,3 +501,19 @@ def estimate_cost(
     story = max(1, math.ceil(session_chars / 20_000))
     recap = pl.MAX_CALLS + max(1, math.ceil(session_chars / WINDOW_CHARS)) - 1
     return lore, windows, story, recap
+
+
+async def run_steps(
+    actions: Mapping[str, Callable[[], Awaitable[Mapping[str, int | str]]]],
+    done: list[Step],
+    say: Say,
+) -> None:
+    """Run the actions in `plan.STEPS` order, timing each and adding it to `done` as it finishes
+    (so a stop part way still reports what was done). The actions must be exactly the steps."""
+    if set(actions) != set(STEPS):
+        raise SampleError("the run's actions are not the run's steps")
+    for name in STEPS:
+        began = time.monotonic()
+        counts = await actions[name]()
+        done.append(Step(name, time.monotonic() - began, counts))
+        say(f"{name}: done")
