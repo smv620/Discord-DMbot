@@ -211,6 +211,8 @@ ACTIONS = (
     "confirm-undo",  # takes back one press of it: {answer}
     "spelling-yes",  # "Is this the same place?" (#3533): confirm the proposed other name: {alias}
     "spelling-no",  # ... or turn it down for good: {alias}
+    "told-add",  # tell one character a secret other name is this entry (#3542): {alias, character}
+    "told-remove",  # ... or take that telling back: {alias, character}
 )
 
 KIND_WORD = re.compile(
@@ -326,6 +328,13 @@ def _arguments(body: object) -> tuple[str, str, str, str, bool]:
         target = str(body.get("alias") or "")
         if not ID_PATTERN.match(target):
             raise RecapError("not_found")
+    elif action in ("told-add", "told-remove"):  # the other name is the target; the text is who
+        target = str(body.get("alias") or "")
+        text = str(body.get("character") or "")  # (only its shape here; the door and bot look)
+        if not ID_PATTERN.match(target):
+            raise RecapError("not_found")
+        if not ID_PATTERN.match(text):
+            raise RecapError("bad_target")
     elif action == "confirm-undo":  # the answer of the press to take back
         target = str(body.get("answer") or "")
         if not ID_PATTERN.match(target):

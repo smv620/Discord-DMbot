@@ -4952,6 +4952,12 @@ class MemoryStore:
             changed = await told.tell(w, alias_id, character_id)
             return Written(changed, w.batch)
 
+    async def told_characters(self, guild_id: int, campaign_id: str, alias_id: str) -> list[str]:
+        """The characters told that this secret name is its entry (#3542): the DM's page offers
+        Take back for each, and "Tell" for the others who hold the name."""
+        async with self._read(guild_id, campaign_id, snapshot=True) as scope:
+            return await told.told_characters(scope, alias_id)
+
     async def take_back_told(
         self, guild_id: int, campaign_id: str, alias_id: str, character_id: str, *, source: str
     ) -> Written[bool]:
