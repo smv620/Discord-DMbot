@@ -504,6 +504,7 @@ from dmbot.transcription.factory import build_transcriber
 from dmbot.transcription.pipeline import TranscriptionPipeline, clip_budget_s, speech_sent_line
 from dmbot.ui import (
     contradiction_notes,
+    dm_links,
     image_fix,
     kept_pictures,
     kind_offer,
@@ -10796,7 +10797,17 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             order = sorted(campaign.dm_user_ids, key=lambda u: (u != campaign.owner_user_id, u))
             for user_id in order:
                 try:  # one DM failing must not stop the others
-                    message = await self._dm_message(user_id, marked, make_view())
+                    message = await self._dm_message(
+                        user_id,
+                        marked,
+                        dm_links.for_campaign(
+                            make_view(),
+                            self.settings.site_url,
+                            table.guild_id,
+                            table.campaign_id or campaign.id,
+                            dm_links.DMLinks(),
+                        ),
+                    )
                 except Exception:
                     log.exception("Couldn't ask a DM a live question privately")
                     continue
@@ -10830,7 +10841,14 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 marked = f"❓ **DMbot has a question** · {who}\n{text}"
                 for user_id in sorted(campaign.dm_user_ids):
                     try:  # one DM failing must not stop the others
-                        if await self.sidebar_send_dm(user_id, marked) == "sent":
+                        plain = dm_links.for_campaign(
+                            None,
+                            self.settings.site_url,
+                            table.guild_id,
+                            table.campaign_id or campaign.id,
+                            dm_links.DMLinks(),
+                        )
+                        if await self.sidebar_send_dm(user_id, marked, plain) == "sent":
                             sent = True
                     except Exception:
                         log.exception("Couldn't tell a DM privately")
@@ -10886,7 +10904,12 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         table.asks = None
 
     async def ask_privately(
-        self, guild_id: int, campaign_id: str, text: str, view: discord.ui.View
+        self,
+        guild_id: int,
+        campaign_id: str,
+        text: str,
+        view: discord.ui.View,
+        links: dm_links.DMLinks | None = None,
     ) -> bool:
         """Send a question to each of the campaign's DMs in their private chat (#3210). True when
         at least one got it; False (DMs closed, campaign gone) means the caller keeps its old
@@ -10900,6 +10923,17 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             # one is asking (owner, 2026-11-01, #3210).
             who = discord.utils.escape_markdown(campaign.name)
             text = f"❓ **DMbot has a question** · {who}\n{text}"
+            # The two link buttons (#3663), added once: every DM gets the same view.
+            view = (
+                dm_links.for_campaign(
+                    view,
+                    self.settings.site_url,
+                    guild_id,
+                    campaign_id,
+                    links or dm_links.DMLinks(),
+                )
+                or view
+            )
             for user_id in sorted(campaign.dm_user_ids):
                 # Each DM in its own try: one that fails must not stop the others, nor discard a
                 # send that worked (the caller would then also post on the DM screen, asking

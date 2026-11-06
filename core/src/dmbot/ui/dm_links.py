@@ -10,10 +10,14 @@ and survive a restart."""
 
 from __future__ import annotations
 
+import logging
 import re
+from dataclasses import dataclass
 from urllib.parse import quote, urlsplit
 
 import discord
+
+log = logging.getLogger(__name__)
 
 OPEN_IN_DISCORD = "Open in Discord"
 OPEN_ON_SITE = "Open on the website"
@@ -109,7 +113,36 @@ def add_links(
     shown = view if view is not None else discord.ui.View(timeout=None)
     row = max((item.row for item in shown.children if item.row is not None), default=-1) + 1
     row = min(row, 4)
-    for link in links:
-        link.row = row
-        shown.add_item(link)
+    try:
+        for link in links:
+            link.row = row
+            shown.add_item(link)
+    except ValueError:
+        # A full view (25 items, or the row is full): the message goes without the links rather
+        # than not at all. Counts only.
+        log.info("A private message had no room for its link buttons")
     return shown
+
+
+@dataclass(frozen=True)
+class DMLinks:
+    """What a private message to the DM is about: the website page that answers it (the Questions
+    page unless the sender knows better), the item on it, and the Discord message that holds the
+    question when that is not the private message itself (the DM-screen post)."""
+
+    page: str = "questions"
+    item: str = ""
+    tail: str = ""
+    discord_url: str = ""
+    site_url_override: str = ""  # a page with its own address shape (the clarify page)
+
+
+def for_campaign(
+    view: discord.ui.View | None, site_url: str, guild_id: int, campaign_id: str, links: DMLinks
+) -> discord.ui.View | None:
+    """`view` with the two link buttons for this campaign (the website one only when the site has
+    an https address)."""
+    site = links.site_url_override or site_link(
+        site_url, links.page, guild_id, campaign_id, tail=links.tail, item=links.item
+    )
+    return add_links(view, discord_url=links.discord_url, site_url=site)

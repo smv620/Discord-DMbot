@@ -52,6 +52,7 @@ class AskPrivatelyTest(unittest.IsolatedAsyncioTestCase):
         me = SimpleNamespace(
             campaigns=SimpleNamespace(get=AsyncMock(return_value=campaign)),
             sidebar_send_dm=send_dm,
+            settings=SimpleNamespace(site_url=""),
             sent=sent,
         )
         return me
@@ -89,3 +90,34 @@ class AskPrivatelyTest(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AskPrivatelyLinksTest(unittest.IsolatedAsyncioTestCase):
+    """Every private question ends with the website button when the site has an address (#3663)."""
+
+    async def test_the_question_carries_the_website_link_once_for_every_dm(self) -> None:
+        from unittest.mock import AsyncMock
+
+        import discord
+
+        from dmbot.bot import DMBot
+
+        seen: list[Any] = []
+
+        async def send_dm(user_id: int, text: str, view: Any = None) -> str:
+            seen.append(view)
+            return "sent"
+
+        me = SimpleNamespace(
+            campaigns=SimpleNamespace(
+                get=AsyncMock(return_value=SimpleNamespace(name="T", dm_user_ids={7, 8}))
+            ),
+            sidebar_send_dm=send_dm,
+            settings=SimpleNamespace(site_url="https://dmbot.example.com"),
+        )
+        view = discord.ui.View()
+        self.assertTrue(await DMBot.ask_privately(cast(Any, me), 1, "ab", "Q?", view))
+        self.assertIs(seen[0], seen[1])
+        labels = [getattr(c, "label", "") for c in view.children]
+        self.assertEqual(labels, ["Open on the website"])  # added once, not once for each DM
+        self.assertEqual(view.children[0].url, "https://dmbot.example.com/account/questions/1.ab")  # type: ignore[attr-defined]

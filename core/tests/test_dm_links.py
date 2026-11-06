@@ -84,3 +84,25 @@ class TheButtons(unittest.IsolatedAsyncioTestCase):
     async def test_the_pages_are_plain_lowercase_words(self) -> None:
         for page in dl.PAGES:
             self.assertRegex(page, r"^[a-z][a-z-]{0,30}$")
+
+
+class TheCampaignHelper(unittest.IsolatedAsyncioTestCase):
+    async def test_the_default_is_the_questions_page_with_only_the_website_button(self) -> None:
+        shown = dl.for_campaign(None, SITE, 7, "ab12", dl.DMLinks())
+        assert shown is not None
+        [button] = shown.children
+        self.assertEqual(button.label, "Open on the website")  # type: ignore[attr-defined]
+        self.assertEqual(button.url, f"{SITE}/account/questions/7.ab12")  # type: ignore[attr-defined]
+
+    async def test_no_site_and_no_discord_message_means_nothing_is_added(self) -> None:
+        view = discord.ui.View()
+        self.assertIs(dl.for_campaign(view, "", 7, "ab12", dl.DMLinks()), view)
+        self.assertEqual(len(view.children), 0)
+
+    async def test_a_full_view_goes_without_the_links_instead_of_failing(self) -> None:
+        view = discord.ui.View()
+        for n in range(5):
+            view.add_item(discord.ui.Button(label=str(n), custom_id=f"b{n}", row=4))
+        shown = dl.for_campaign(view, SITE, 7, "ab12", dl.DMLinks())
+        self.assertIs(shown, view)
+        self.assertEqual(len(view.children), 5)

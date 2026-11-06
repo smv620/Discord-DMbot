@@ -138,6 +138,7 @@ class Live(unittest.IsolatedAsyncioTestCase):
 
         return SimpleNamespace(
             campaigns=SimpleNamespace(get=AsyncMock(return_value=campaign)),
+            settings=SimpleNamespace(site_url=""),
             _dm_message=dm_message,
             post_message=AsyncMock(return_value=SimpleNamespace(id=1, edit=AsyncMock())),
             order=order,
