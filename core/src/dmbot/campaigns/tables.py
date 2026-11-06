@@ -39,6 +39,7 @@ SECTION_TABLES: dict[str, tuple[str, ...]] = {
         "character_sheets",
     ),
     "memory_importance": ("memory_importance",),  # PlotBot's importance ranks (#3172)
+    "memory_scenes": ("memory_scenes",),  # the scene of a waiting question (#3596)
     "memory_kind_offers": ("memory_kind_offers",),  # the DM's Not now / Never on kinds (#3033)
     "house_rules": ("house_rules",),
     "house_rule_wins": ("house_rule_wins",),

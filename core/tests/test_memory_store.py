@@ -157,6 +157,13 @@ class Isolation(MemoryTest):
         await importance_rank.ImportanceStore(self.db).add(
             GUILD_A, self.c, [importance_rank.Assessment(a, 2, "recurring")]
         )
+        # and the AI's scene of a waiting question (#3596)
+        from dmbot.memory.scenes import ENTITY, Scene, Scenes
+
+        await Scenes(self.memory).keep(
+            GUILD_A, self.c, [Scene(ENTITY, a, "A scene.", 2, (DM,), 1)], opted_in={DM},
+            prompt_version="scenes-1", model="m",
+        )  # fmt: skip
         # and the DM's answer about turning some words into a kind (#3033)
         await self.memory.answer_kind_offer(
             GUILD_A, self.c, "sworn on the ashes of", "never", seen=3
