@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import unittest
+from typing import Any
 
 from dmbot.memory import who_reading as wr
 from dmbot.memory.who_reading import Choice, WhoItem
@@ -25,7 +26,7 @@ def reply(*rows: object) -> str:
     return json.dumps({"answers": list(rows)})
 
 
-def row(number: int, *ranked: dict[str, str]) -> dict[str, object]:
+def row(number: int, *ranked: Any) -> dict[str, object]:
     return {"item": number, "ranked": list(ranked)}
 
 
