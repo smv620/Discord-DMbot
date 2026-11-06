@@ -153,6 +153,8 @@ class Isolation(MemoryTest):
         await self.memory.set_statement_knowers(GUILD_A, self.c, "entry", b, [view], source="dm")
         await self.relate(a, "located_in", b)  # flagged: Cerric isn't a place
         known = await self.relate(a, "knows", b, status="confirmed")  # and its beliefs (#2409)
+        # and the upload a kept connection came from (#2946)
+        await self.memory.record_link_source(GUILD_A, self.c, known.value[0].id, "Upload, 1 Jan")
         clue = await self.add("A map", type="clue")
         async with self.memory._write(GUILD_A, self.c, "dm") as w:  # and what it stands on (#2662)
             await evidence.add_in(
