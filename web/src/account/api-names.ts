@@ -9,6 +9,7 @@ import type {
   NameAnswerResult,
   NameCheckList,
   NamesFixed,
+  NameSource,
   NamesPage,
   ToldName,
   NpcPage,
@@ -116,11 +117,14 @@ export default function namesArea({ call, waitForAnswer }: ApiHelpers): Partial<
       const params = new URLSearchParams({ q: q.q, kind: q.kind, sort: q.sort, page: String(q.page) });
       if (q.size !== undefined) params.set("size", String(q.size));
       if (q.unnamed) params.set("unnamed", "1");
+      if (q.sources?.length) params.set("sources", q.sources.join(","));
       return (await call(
         "GET",
         `/me/campaigns/${encodeURIComponent(ref)}/all-names?${params.toString()}`,
       )) as NamesPage;
     },
+    nameSources: async (ref) =>
+      ((await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/name-sources`)) as { sources: NameSource[] }).sources,
     smartNames: async (ref, words) =>
       (await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/all-names/search`, { q: words })) as SmartNamesAnswer,
     // The bot applies a name change, so the POST only queues it (202 {answer}); this waits for the

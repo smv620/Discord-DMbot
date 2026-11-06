@@ -10,6 +10,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 
 import PageBar from "../admin/PageBar";
 import { NAME_LIMIT, NAMES_PAGE_SIZE, NAMES_PAGE_SIZES, NAMES_SMART_LIVE, namesPage as words } from "../content/names-words";
+import { NAME_SOURCES_LIVE } from "../content/name-sources-switch";
 import { NOT_NAMED_LIVE } from "../content/not-named-switch";
 import { PLAYERS_LINE_LIVE } from "../content/players-line-switch";
 import { notNamedWords as notNamed } from "../content/not-named-words";
@@ -91,6 +92,9 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
   const kind = kinds.join(",");
   const [size, setSize] = useState<number>(NAMES_PAGE_SIZE);
   const [sort, setSort] = useState<NameSort>("name");
+  // Partial campaign (#3675): the sessions and lore ticked; none is the full campaign.
+  const [sources, setSources] = useState<string[]>([]);
+  const sourceKey = sources.join(",");
   // "Search by meaning" (#2733) is a separate file (NamesSmart, fetched only when it is on and for a DM). Here is
   // only what the list needs of it: the names it found (replacing the list until "Back to all names"), and two
   // counters that tell it a name changed (read the search again) or the list's own controls were used (it is over).
@@ -112,8 +116,8 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
   // Only the newest read may set what is shown, so a slow old answer never overwrites a new one.
   const latest = useRef(0);
   const pageNow = useRef(1);
-  const queryNow = useRef({ q, kind, sort, size });
-  queryNow.current = { q, kind, sort, size };
+  const queryNow = useRef({ q, kind, sort, size, sources });
+  queryNow.current = { q, kind, sort, size, sources };
   // Names ticked for "Merge selected" (#2427): kept across searches and pages, so look-alikes found
   // by different searches can be merged together.
   const [picked, setPicked] = useState<NameRow[]>([]);
@@ -194,7 +198,7 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
     return () => clearTimeout(timer);
     // `load` reads the latest query through a ref, so only these restart the read.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [api, ref, q, kind, sort, size]);
+  }, [api, ref, q, kind, sort, size, sourceKey]);
 
   // The most-mentioned name first, as the one to keep by default.
   const ordered = [...picked].sort(
@@ -429,6 +433,13 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
             ))}
           </select>
         </label>
+        {NAME_SOURCES_LIVE && api.nameSources !== undefined && (
+          <LazyPanel
+            load={() => import("./NameSources")}
+            what="the sessions and lore filter"
+            props={{ api, campaignRef: ref, picked: sources, onPick: setSources }}
+          />
+        )}
         <fieldset class="names-types">
           <legend>{words.kindLabel}</legend>
           <div class="names-type-list">

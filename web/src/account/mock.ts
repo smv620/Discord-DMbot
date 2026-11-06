@@ -21,6 +21,7 @@ import type {
   NameKind,
   NameRow,
   NamesPage,
+  NameSource,
   NamesQuery,
   SmartNamesAnswer,
   Offer,
@@ -418,9 +419,9 @@ export function mockRecaps(): Recap[] {
       sessionSeconds: 2 * 3600 + 35 * 60,
       status: "draft",
       title: "The ferry at dusk",
-      text: "The party crossed the Brynwater at dusk.\n\nThe ferryman asked for a story, not coin.",
+      text: "The party crossed the Brynwater at dusk.\n\nThe ferryman asked Ka'zeth for a story, not coin.",
       summary:
-        "[music: calm] The party crossed the Brynwater at dusk.\n\nThe ferryman asked for a story, not coin.",
+        "[music: calm] The party crossed the Brynwater at dusk.\n\nThe ferryman asked Ka'zeth for a story, not coin.",
       housekeeping: [
         "Mira is down to 4 hit points.",
         "The party owes the ferryman a story.",
@@ -772,6 +773,20 @@ function pronounWaiting(): Waiting {
 }
 /** The pretend "Fix this line" answers' modes, by answer (#2858). */
 const fixes = new Map<string, FixMode>();
+/** The sessions and lore the pretend campaign's names are found in (#3675). */
+const MOCK_NAME_SOURCES: NameSource[] = [
+  { id: "s1", kind: "session", label: "Session 1" },
+  { id: "s2", kind: "session", label: "Session 2" },
+  { id: "s3", kind: "session", label: "Session 3" },
+  { id: "l1", kind: "lore", label: "The Brynwater handout" },
+];
+
+/** Which of those a pretend name is found in: spread by its id so every choice shows something different. */
+function mockSourcesOf(id: string): string[] {
+  const n = [...id].reduce((sum, c) => sum + c.charCodeAt(0), 0);
+  return MOCK_NAME_SOURCES.filter((_, i) => (n + i) % 3 !== 0).map((s) => s.id);
+}
+
 export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   const removedClaims = new Map<string, WaitingClaim>(); // answered claims, kept for "Undo all" (#3645)
   const waitingState: Record<string, Waiting> = {}; // (fresh for each pretend API)
@@ -2640,10 +2655,17 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       npcNotes.clear();
       return n;
     },
+    async nameSources(ref): Promise<NameSource[]> {
+      calls.push(`nameSources:${ref}`);
+      await reachable();
+      signedIn();
+      return MOCK_NAME_SOURCES;
+    },
     async allNames(ref, query: NamesQuery): Promise<NamesPage> {
       calls.push(
         `allNames:${ref}:q=${query.q}:kind=${query.kind}:sort=${query.sort}:page=${query.page}` +
-          (query.size === undefined ? "" : `:size=${query.size}`),
+          (query.size === undefined ? "" : `:size=${query.size}`) +
+          (query.sources?.length ? `:sources=${query.sources.join(",")}` : ""),
       );
       await reachable();
       signedIn();
@@ -2655,6 +2677,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       const needle = query.q.trim().toLowerCase();
       const found = visible
         .filter((n) => query.kind === "" || query.kind.split(",").includes(n.kind))
+        .filter((n) => !query.sources?.length || mockSourcesOf(n.id).some((s) => query.sources!.includes(s)))
         .filter((n) => needle === "" || [n.name, ...n.others].some((x) => x.toLowerCase().includes(needle)));
       const sorted = [...found].sort((a, b) => (query.sort === "name" ? a.name.localeCompare(b.name) : Number(b.id.slice(1)) - Number(a.id.slice(1))));
       const pageSize = query.size ?? 50;
