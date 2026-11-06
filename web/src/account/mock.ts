@@ -40,6 +40,7 @@ import type {
   WebGraph,
   WebGroup,
   WebLink,
+  WebLinkSource,
   WebLinkChange,
   WebNode,
   WebQuery,
@@ -861,6 +862,11 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   };
   /** Edges from connections: one per pair, labelled with the newest known connection (the newest at all
    * if every one is secret and the viewer may see them). */
+  const pretendSource = (id: string, dm: boolean): WebLinkSource => {
+    const n = Number(id.replace(/\D/g, "")) || 0;
+    if (!dm) return n % 2 === 0 ? { type: "session", n: (n % 5) + 1 } : { type: "unknown" };
+    return [{ type: "session", n: (n % 5) + 1 }, { type: "upload", label: "Notes on the Vale" }, { type: "dm" }, { type: "unknown" }][n % 4] as WebLinkSource;
+  };
   const edgesOf = (links: WebState["links"], dm: boolean, full: boolean, pins = false): WebEdge[] => {
     const pairs = new Map<string, WebState["links"]>();
     for (const l of links) {
@@ -884,6 +890,8 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
           // What the real API works out from the relationship type (core #2942), here from the pretend words.
           kind: pretendKind(l.words),
           ...(full ? { revealed: l.revealed !== false } : {}),
+          // Where it came from (#2946): the DM gets all four kinds, a player only a session or unknown (never a label).
+          source: pretendSource(l.id, pins),
           // The DM's alone (#2448): sent to a DM in the full view, never to a player or a peeker.
           ...(pins && l.pinned ? { pinned: true } : {}),
           // DMbot's check is the DM's alone, like a pin: never to a player or a peeker (#2859).

@@ -1368,6 +1368,7 @@ function LinkRow({
   const [problem, setProblem] = useState<string | null>(null);
   const [asking, setAsking] = useState(false);
   const run = async (change: WebLinkChange, ok: string): Promise<void> => setProblem(await act(change, ok));
+  const sourceWords = words.sourceLine(link.source);
   return (
     <li class={dimmedName(link) ? "stack web-dim" : "stack"}>
       {link.kind && (
@@ -1381,6 +1382,7 @@ function LinkRow({
         {words.linkText(a, b, link.words, link.direction)}
         {!link.knowWord && link.secret && <span class="visually-hidden"> ({words.secretWords})</span>}
       </p>
+      {sourceWords && <p class="small muted">{sourceWords}</p>}
       {link.knowWord && words.knowWords[link.knowWord] && <p class="small muted">{words.knowWords[link.knowWord]}</p>}
       {canEdit && link.pinned && <p class="small">{words.pinMark} {words.pinnedWords}</p>}
       {canEdit && link.check && <p class="small">{words.checkLine(link.check)}</p>}
