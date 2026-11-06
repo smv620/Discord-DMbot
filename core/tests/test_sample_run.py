@@ -14,6 +14,7 @@ from dmbot.devtools import graph_key_check
 from dmbot.devtools.sample_run import __main__ as cli
 from dmbot.devtools.sample_run import plan, steps
 from dmbot.devtools.sample_run.plan import NAME, Existing, SampleError, Step
+from dmbot.lore_upload import TEXT_MAX
 from dmbot.transcript.store import TranscriptStore
 from tests.pg import DatabaseTest
 
@@ -272,7 +273,6 @@ class Steps(DatabaseTest):
     async def test_a_stop_half_way_leaves_no_session_to_jam_the_guard(self) -> None:
         camp = await self.made()
         good = await self.planned()
-        bad = Namespace(lines=good.lines, kept=good.kept)
         with self.assertRaises(Exception):  # noqa: B017 (any database error)
             await steps.store_import(
                 self.db,
@@ -416,7 +416,7 @@ class Steps(DatabaseTest):
     async def test_lore_that_the_door_would_refuse_is_refused_up_front(self) -> None:
         steps.check_lore("some words", "smart")
         for text, choice in (
-            ("x" * (steps.TEXT_MAX + 1), "smart"),
+            ("x" * (TEXT_MAX + 1), "smart"),
             ("a\x00b", "smart"),
             ("a\ud800b", "smart"),
             ("  ", "smart"),
