@@ -52,9 +52,12 @@ class Tidy(unittest.TestCase):
 
 class Creatures(unittest.TestCase):
     def test_kinds_the_rules_hold_and_not_a_named_one(self) -> None:
-        for kind in ("owlbears", "an owlbear", "owlbear", "three goblins"):
+        for kind in ("owlbears", "an owlbear", "the owlbear", "owlbear", "three goblins"):
             self.assertTrue(_a_kind_of_creature(kind), kind)
-        for name in ("Owlbear Mama", "Tavin", "Snot", "Wolf", "Azer", "Mimic", "Giles"):
+        for name in (
+            "Owlbear Mama", "Tavin", "Snot", "Wolf", "Azer", "Mimic", "Giles",
+            "The Owlbear", "The owlbear", "An Owlbear", "a Wolf",
+        ):  # fmt: skip
             self.assertFalse(_a_kind_of_creature(name), name)
 
 

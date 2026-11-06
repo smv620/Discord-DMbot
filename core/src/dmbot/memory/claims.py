@@ -794,8 +794,14 @@ def _a_kind_of_creature(name: str) -> bool:
     from dmbot.rules import index  # late: the rules data loads on first use
 
     # said as a kind, not as a name: lower case ("owlbears", "an owlbear", "three goblins"); a
-    # capitalised word ("Azer", "Wolf", "Mimic") may be somebody's name and is left to the DM
-    if name != name.casefold() and not name.casefold().startswith(("a ", "an ", "the ")):
+    # capitalised word ("Azer", "Wolf", "The Owlbear", "Owlbear Mama") may be somebody's name and
+    # is left to the DM. A lower-case article may stand before the kind; nothing else may be capital.
+    rest = name
+    for article in ("a ", "an ", "the "):
+        if name.startswith(article):
+            rest = name[len(article) :]
+            break
+    if rest != rest.casefold():
         return False
     return index.srd().is_monster(name)
 
