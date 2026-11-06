@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from collections import Counter
 from collections.abc import Mapping, Sequence
@@ -93,6 +94,8 @@ PLACE_SLOTS = {
     "was_kept_in": (place_words.KEPT, True),
 }  # fmt: skip
 
+# The stand-in the "who plays" step makes for a player (`store._placeholder_name`, #1559).
+PLACEHOLDER = re.compile(r"Player \d{4}")
 FOUND, WRONG, WAITING, MISSING = "found", "wrong_type", "waiting_only", "missing"
 HEADS = ("total", "found", "waiting", "wrong", "missing", "must-miss")
 WIDTHS = (6, 7, 9, 7, 9, 11)
@@ -123,6 +126,8 @@ class Report:
     events_expected: int = 0
     players_found: int = 0  # the key's player characters that are entries with that role (#3553)
     players_expected: int = 0
+    # `Player 1234` entries the "who plays" step made and nothing uses: not DMbot's extras (#3545)
+    placeholders: int = 0
 
 
 def _live(row: Mapping[str, Any]) -> bool:
@@ -345,9 +350,16 @@ def check(backup: object, key: Mapping[str, Any], docs: str = "both") -> Report:
             Row(t["id"], _text(t), status, group, bool(t["must_find"]), t["tier"], why)
         )
     # extras: entries and connections the key does not name
+    linked = {str(r["subject_id"]) for r in graph.relations} | {
+        str(r["object_id"]) for r in graph.relations
+    }
     for i, e in graph.entities.items():
-        if i not in matched_ids:
-            report.extra_entries[_kind_for(str(e["type"]))] += 1
+        if i in matched_ids:
+            continue
+        if PLACEHOLDER.fullmatch(str(e["name"])) and i not in linked:
+            report.placeholders += 1  # (the who-plays stand-in, #1559: not an extra entry)
+            continue
+        report.extra_entries[_kind_for(str(e["type"]))] += 1
     for name in key.get("must_not_names", ()):
         if graph.ids([name]):
             report.violations.append(name)
@@ -429,6 +441,7 @@ def render(report: Report, counts_only: bool = False) -> str:
         f"Extra entries (not in the key): {sum(report.extra_entries.values())} "
         f"{dict(report.extra_entries)}"
     )
+    lines.append(f"Player placeholders left out (not extras): {report.placeholders}")
     lines.append(f"Extra ties between key entries: {report.extra_ties}")
     lines.append(
         f"Event entries: {report.events_in_backup} in the backup, {report.events_expected} expected"
