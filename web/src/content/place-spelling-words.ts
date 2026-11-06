@@ -4,8 +4,7 @@
 export const placeSpellingWords = {
   heading: "Is this the same place?",
   lead: "Nothing changes until you choose.",
-  // "North Haven looks like another way of writing Northhaven." (the names are bold on the page)
-  looksPrefix: "",
+  // "Salt Marsh looks like another way of writing Saltmarsh." (the names are bold on the page)
   looksMiddle: " looks like another way of writing ",
   looksSuffix: ".",
   yes: "Yes, the same place",

@@ -64,10 +64,40 @@ describe("one place written two ways", () => {
     expect(screen.getByRole("button", { name: p.yesFor("Salt Marsh", "Saltmarsh") })).toBeTruthy();
   });
 
-  it("is not there for someone who can't change names, and not while the switch is off", async () => {
-    await open("/account/names/100.cmp1.names-manager");
+  it("asks once: a page redraw after an answer does not read the questions again, and a double press answers once", async () => {
+    const api = await open();
+    const yes = await screen.findByRole("button", { name: p.yesFor("Salt Marsh", "Saltmarsh") });
+    fireEvent.click(yes);
+    fireEvent.click(yes);
+    await screen.findByText(p.saidYes("Salt Marsh", "Saltmarsh"));
     await new Promise((r) => setTimeout(r, 50));
+    expect(asked(api)).toEqual(["answerPlaceSpelling:100.cmp1:sp1:true"]);
+    expect(api.calls.filter((c) => c.startsWith("placeSpellings")).length).toBe(1);
+    expect(screen.queryByRole("button", { name: p.yesFor("Salt Marsh", "Saltmarsh") })).toBeNull();
+  });
+
+  it("drops a question that was already answered somewhere else", async () => {
+    const api = await open();
+    const yes = await screen.findByRole("button", { name: p.yesFor("Salt Marsh", "Saltmarsh") });
+    await api.answerPlaceSpelling!("100.cmp1", "sp1", false); // (answered in Discord meanwhile)
+    fireEvent.click(yes);
+    await waitFor(() => expect(screen.queryByRole("button", { name: p.yesFor("Salt Marsh", "Saltmarsh") })).toBeNull());
+    expect(screen.queryByText(p.failed)).toBeNull();
+  });
+
+  it("says so when the questions can't be read", async () => {
+    const api = mockApi("table");
+    api.placeSpellings = async () => {
+      throw new Error("down");
+    };
+    await open("/account/names/100.cmp1", api);
+    await screen.findByText(p.loadFailed);
+  });
+
+  it("is not there for someone who can't change names, and not while the switch is off", async () => {
+    const api0 = await open("/account/names/100.cmp1.names-manager");
     expect(screen.queryByText(p.heading)).toBeNull();
+    expect(api0.calls.some((c) => c.startsWith("placeSpellings"))).toBe(false);
     cleanup();
     live.on = false;
     const api = await open();
@@ -80,6 +110,6 @@ describe("one place written two ways", () => {
     await open();
     await screen.findByText(p.heading);
     const result = await axe.run(document.body, { rules: { "color-contrast": { enabled: false }, region: { enabled: false } } });
-    await waitFor(() => expect(result.violations).toEqual([]));
+    expect(result.violations).toEqual([]);
   });
 });

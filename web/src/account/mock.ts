@@ -835,13 +835,13 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   }
   const restores = new Map<string, PretendRestore>();
   let restoreCount = 0;
-  // People the story never named (#2803), shown only for a campaign ref ending `.not-named`; what each name/join
-  // step changed is kept by the answer id, so an Undo can put it back.
   // Spellings of a place waiting for a yes or no (#3533): the pretend places "Saltmarsh" and "Greywatch" each have a new spelling.
   const spellingQuestions: { id: string; place: string; spelling: string }[] = [
     { id: "sp1", place: "Saltmarsh", spelling: "Salt Marsh" },
     { id: "sp2", place: "Greywatch", spelling: "Grey Watch" },
   ];
+  // People the story never named (#2803), shown only for a campaign ref ending `.not-named`; what each name/join
+  // step changed is kept by the answer id, so an Undo can put it back.
   const unnamedPeople: NameRow[] = [
     { id: "u1", name: "Ken's sister", kind: "not_named", others: [], secret: false, npcId: null, unnamed: true, unnamedWhat: "sister", unnamedAnchor: "Ken" },
     { id: "u2", name: "the ferryman's cousin", kind: "not_named", others: [], secret: false, npcId: null, unnamed: true, unnamedWhat: "cousin", unnamedAnchor: "The Ferryman" },

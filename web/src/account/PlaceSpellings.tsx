@@ -15,6 +15,11 @@ export default function PlaceSpellings({ api, campaignRef, onSignedOut, onChange
   const [said, setSaid] = useState<string | null>(null);
   const [problem, setProblem] = useState(false);
   const flight = useRef(false);
+  // The page passes a new function every time it draws; the load must not run again for that (it could bring an
+  // answered question back), so the latest one is kept in a ref.
+  const signedOut = useRef(onSignedOut);
+  signedOut.current = onSignedOut;
+  const box = useRef<HTMLElement>(null);
   useEffect(() => {
     if (!api.placeSpellings) return;
     let live = true;
@@ -23,13 +28,13 @@ export default function PlaceSpellings({ api, campaignRef, onSignedOut, onChange
       .then((got) => live && setItems(got))
       .catch((error) => {
         if (!live) return;
-        if (error instanceof ApiError && error.kind === "signed-out") return onSignedOut();
+        if (error instanceof ApiError && error.kind === "signed-out") return signedOut.current();
         setFailed(true);
       });
     return () => {
       live = false;
     };
-  }, [api, campaignRef, onSignedOut]);
+  }, [api, campaignRef]);
 
   async function answer(item: PlaceSpelling, yes: boolean): Promise<void> {
     if (flight.current || !api.answerPlaceSpelling) return;
@@ -41,9 +46,15 @@ export default function PlaceSpellings({ api, campaignRef, onSignedOut, onChange
       setItems((now) => (now ?? []).filter((x) => x.id !== item.id));
       setSaid(yes ? w.saidYes(item.spelling, item.place) : w.saidNo(item.spelling, item.place));
       onChanged?.();
+      // The answered question leaves, so keyboard focus goes to the box, not to the top of the page.
+      setTimeout(() => box.current?.focus(), 0);
     } catch (error) {
-      if (error instanceof ApiError && error.kind === "signed-out") return onSignedOut();
-      setProblem(true);
+      if (error instanceof ApiError && error.kind === "signed-out") return signedOut.current();
+      // Already answered somewhere else (Discord): the question is gone, so it leaves the list.
+      if (error instanceof ApiError && error.kind === "gone") {
+        setItems((now) => (now ?? []).filter((x) => x.id !== item.id));
+        onChanged?.();
+      } else setProblem(true);
     } finally {
       flight.current = false;
       setBusy(null);
@@ -54,7 +65,7 @@ export default function PlaceSpellings({ api, campaignRef, onSignedOut, onChange
   // Nothing to ask: no heading, no empty box. A answer just given is still said.
   if (!items || (items.length === 0 && !said)) return null;
   return (
-    <section class="panel stack" aria-labelledby="place-spelling-h">
+    <section class="panel stack" aria-labelledby="place-spelling-h" tabIndex={-1} ref={box}>
       <h2 id="place-spelling-h">{w.heading}</h2>
       <ul class="stack plain-list">
         {items.map((item) => (
@@ -77,8 +88,8 @@ export default function PlaceSpellings({ api, campaignRef, onSignedOut, onChange
           </li>
         ))}
       </ul>
-      {busy !== null && <p class="small" role="status">{w.working}</p>}
-      {said && busy === null && <p class="small" role="status">{said}</p>}
+      {/* Always there, so a screen reader hears what is put in it. */}
+      <p class="small" role="status">{busy !== null ? w.working : (said ?? "")}</p>
       {problem && <p class="warn small" role="alert">{w.failed}</p>}
     </section>
   );
