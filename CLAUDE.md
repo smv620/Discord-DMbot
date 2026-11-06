@@ -256,6 +256,13 @@ dev1 as a note on the issue.
   session, accepts every suggestion again, scores it against the master key (lore key + session key),
   and builds the recap with no audio. The counts go on #3545 for GraphEngineer, with a line in
   `docs/testing-history.log`. The steps are in `core/tests/fixtures/story_graph/README.md`.
+  **dev1's checks gate the next deploy; the owner's checks can wait** (owner, 2026-11-06, to clear
+  the deploy backlog). Supervisor marks each deploy-handover check as **dev1** (logs, counts, the
+  sample run) or **owner** (looked at in Discord or on the site, or at the table). The next deploy
+  may go out once that deploy's dev1 checks pass. The owner's checks for up to three deploys can then
+  be done together. Each deploy still needs its own OK from the owner (one message may OK several,
+  naming each). If an owner check fails, dev1 rolls back to the target of the step that
+  introduced the fault.
 
 ### Leads hand off to assistants (owner, 2026-10-28)
 To cut costs, each coding role is two sessions: a **lead** on the larger model and an **assistant**
