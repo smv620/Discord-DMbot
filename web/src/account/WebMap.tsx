@@ -14,7 +14,7 @@ import { mapReadLine } from "./webReading";
 import { kindWords, webPage as words } from "../content/web-words";
 import { kindStyle } from "./webKinds";
 import NodeSummary from "./NodeSummary";
-import type { AccountApi, WebEdge, WebNode } from "./api";
+import type { AccountApi, IconChoice, WebEdge, WebNode } from "./api";
 import {
   MAX_SIM_NAMES,
   MAX_SIM_STEPS,
@@ -34,6 +34,9 @@ import {
   type LayoutMode,
   type SimNode,
 } from "./webForce";
+import { PC_ICONS_LIVE } from "../content/pc-icons-switch";
+import { pcIconWords } from "../content/pc-icon-words";
+import LazyPanel from "./LazyPanel";
 import { DEFAULT_LOOK, readMode, readPlaces, saveMode, savePlaces, type GraphLook } from "./webPrefs";
 import { isTheory, zoomAbout, type View } from "./webLayout";
 import { dimmedName, markSecret } from "./know";
@@ -107,6 +110,33 @@ function Shape({ kind, r }: { kind: string; r: number }) {
   }
 }
 
+/** A player character's icon (#3622): its picture clipped to the circle with a plain border, 👤 when it has none or the picture
+ * does not load, and nothing at all when the icon is hidden. The browser fetches the picture after the drawing is up (an SVG image has no lazy attribute, but it never blocks the paint). */
+function PcIcon({ node, r }: { node: WebNode; r: number }) {
+  const [failed, setFailed] = useState<string | null>(null);
+  const icon = node.icon;
+  if (icon?.kind === "hidden") return null;
+  const url = icon?.url ?? null;
+  if (url && failed !== url) {
+    const clip = `pcc-${node.id.replace(/[^A-Za-z0-9_-]/g, "_")}`;
+    const k = r * 0.78;
+    return (
+      <g class="web-pc-icon" pointer-events="none">
+        <clipPath id={clip}>
+          <circle r={k} />
+        </clipPath>
+        <image href={url} x={-k} y={-k} width={2 * k} height={2 * k} clip-path={`url(#${clip})`} preserveAspectRatio="xMidYMid slice" role="img" aria-label={pcIconWords.alt(node.name)} onError={() => setFailed(url)} />
+        <circle r={k} class="web-pc-icon-border" />
+      </g>
+    );
+  }
+  return (
+    <text class="web-pc-person" y={r * 0.38} text-anchor="middle" font-size={r * 1.05} aria-hidden="true" pointer-events="none">
+      👤
+    </text>
+  );
+}
+
 /** The groups of names, in the order their areas and anchors are given: kinds people first, quests as the door
  * sent them with "not part of a quest" last. */
 function areaKeys(groups: string[], mode: LayoutMode): string[] {
@@ -144,6 +174,8 @@ export default function WebMap({
   onCenter,
   onLine,
   onNodePick,
+  onIcon,
+  iconUndo = null,
   look = DEFAULT_LOOK,
   canEdit = false,
   children,
@@ -165,6 +197,10 @@ export default function WebMap({
   onLine: (a: string, b: string) => void;
   /** Told when a name is picked, so a line that was chosen gives the panel back to the name. */
   onNodePick?: () => void;
+  /** Choose a player character's icon (#3622): a plain-words problem, or null when it was saved. */
+  onIcon?: (id: string, choice: IconChoice) => Promise<string | null>;
+  /** The id of the character whose last icon change can be taken back, and the Undo itself. */
+  iconUndo?: { id: string; undo: () => Promise<string | null> } | null;
   /** How the viewer likes the map drawn (#3620): spacing, sizes and line width. Today's look when missing. */
   look?: GraphLook;
   /** Only the campaign's DM is offered the links to the full editor (the Names page is the DM's list). */
@@ -796,6 +832,7 @@ export default function WebMap({
               >
                 <title>{n.name}</title>
                 <Shape kind={n.kind} r={n.id === center ? R * 1.25 : R} />
+                {PC_ICONS_LIVE && kindStyle(n.kind) === "player_character" && <PcIcon node={n} r={n.id === center ? R * 1.25 : R} />}
                 {place.pinned && <circle class="web-pin" r={5} cx={R * 0.8} cy={-R * 0.8} aria-hidden="true" />}
                 <text y={R * 1.25 + 18 * look.textSize} text-anchor="middle" class="web-node-text">
                   {markSecret(n) ? `${words.secretMark} ` : ""}
@@ -812,6 +849,14 @@ export default function WebMap({
         <aside class="web-side panel stack" aria-labelledby="web-side-h" aria-live="polite">
           <h3 id="web-side-h">{detail.name}</h3>
           <p class="small muted">{kindWords(detail.kind)}</p>
+          {PC_ICONS_LIVE && onIcon && detail.canSetIcon && kindStyle(detail.kind) === "player_character" && (
+            <LazyPanel
+              key={detail.id}
+              load={() => import("./PcIconRow")}
+              what="the icon choices"
+              props={{ node: detail, onChoose: (choice: IconChoice) => onIcon(detail.id, choice), undo: iconUndo?.id === detail.id, onUndo: iconUndo?.undo ?? (async () => null) }}
+            />
+          )}
           {api && <NodeSummary key={detail.id} api={api} refId={refId} id={detail.id} />}
           {(detail.quests?.length ?? 0) > 1 && <p class="small">{words.alsoIn(detail.quests!.slice(1).map((q) => q.name).join(", "))}</p>}
           {sideLines.length === 0 ? (

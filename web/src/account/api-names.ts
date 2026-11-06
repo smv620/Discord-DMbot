@@ -7,6 +7,7 @@ import type {
   MyNpcNote,
   NameAnswer,
   NameAnswerResult,
+  IconChoice,
   NameCheckList,
   NamesFixed,
   NamesPage,
@@ -283,6 +284,9 @@ export default function namesArea({ call, waitForAnswer }: ApiHelpers): Partial<
       await waitForAnswer(`${base}/${where}/answers/${encodeURIComponent(queued.answer)}`);
     },
     // The connection edits are queued too (202 {answer}); this waits for the edge as it now stands.
+    // The icon choice is instant: the door answers with what it was and what it is now (#3621).
+    setPcIcon: async (ref, entityId, choice) =>
+      (await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/pc-icons/${encodeURIComponent(entityId)}`, { choice })) as { previous: IconChoice; now: IconChoice },
     changeWebLink: async (ref, change) => {
       const base = `/me/campaigns/${encodeURIComponent(ref)}/web`;
       let queued: { answer: string };

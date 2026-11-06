@@ -13,6 +13,7 @@ import { BIG_WEB, kindWords, webPage as words } from "../content/web-words";
 import {
   type AccountApi,
   ApiError,
+  type IconChoice,
   type NameChange,
   type NameRow,
   type WebEdge,
@@ -25,6 +26,7 @@ import {
 import WebMap from "./WebMap";
 import WebOverviewPanel from "./WebOverview";
 import { dimmedName, markSecret, plainGraph, plainOverview } from "./know";
+import { pcIconWords } from "../content/pc-icon-words";
 import { KNOWS_FEELING_LIVE } from "../content/knows-feeling-switch";
 import { feelingOf } from "../content/knows-feeling-words";
 import { WHO_KNOWS_LIVE } from "../content/who-knows-switch";
@@ -108,6 +110,8 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
   // How this viewer likes the map drawn (#3620): kept in this browser, never sent anywhere.
   const [look, setLookState] = useState<GraphLook>(readLook);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // The last icon change, so one Undo can post the old choice back (#3622).
+  const [iconBack, setIconBack] = useState<{ id: string; previous: IconChoice } | null>(null);
   const setLook = (next: GraphLook): void => {
     setLookState(next);
     saveLook(next);
@@ -447,6 +451,21 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api, ref]);
 
+  /** A player character's icon (#3622): instant, then the web is read again so the circle shows it. Returns a plain-words problem. */
+  async function chooseIcon(id: string, choice: IconChoice): Promise<string | null> {
+    if (!ref || !api.setPcIcon) return words.errorFallback;
+    try {
+      const got = await api.setPcIcon(ref, id, choice);
+      setIconBack(got.previous === got.now ? null : { id, previous: got.previous });
+      await load(center, hops, true);
+      return null;
+    } catch (error) {
+      const kind = error instanceof ApiError ? error.kind : "network";
+      void load(center, hops, true); // (a picture that went away: the page shows what is left)
+      return pcIconWords.problems[kind] ?? pcIconWords.problems.server ?? words.errorFallback;
+    }
+  }
+
   /** One change to the connections; the web is read again after it so the lines are the API's own. */
   /** `own` words one kind of refusal for this one call (the store's rule saying no to a companion, #3505); every other
    * failure, a network failure, a busy server, being signed out, is worded as it always is. */
@@ -740,6 +759,13 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
               onLine={(a, b) => setLine({ a, b })}
               onNodePick={() => setLine(null)}
               look={look}
+              onIcon={chooseIcon}
+              iconUndo={iconBack ? { id: iconBack.id, undo: async () => {
+                const back = iconBack;
+                const refused = await chooseIcon(back.id, back.previous);
+                if (!refused) setIconBack(null);
+                return refused;
+              } } : null}
               canEdit={canEdit}
             >
               {chosen && (
